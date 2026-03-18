@@ -1,0 +1,13 @@
+.DS_Store
+node_modules
+*.log
+dist
+.output
+.nuxt
+.env
+.env.dev
+.env.prod
+.env.local
+.idea/
+public/assets/fonts
+--port/

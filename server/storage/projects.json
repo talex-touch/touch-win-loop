@@ -1,0 +1,37 @@
+[
+  {
+    "id": "417b3a53-10cd-4375-8941-5e6f4ecc2571",
+    "title": "WinLoop 智能备赛助手",
+    "contestId": "service-outsourcing",
+    "trackId": "service-outsourcing-ai",
+    "problemStatement": "竞赛资料分散、评审标准不统一、答辩准备效率低。",
+    "innovationPoints": [
+      "评分映射驱动改稿",
+      "答辩问题自动生成"
+    ],
+    "techRouteSteps": [
+      "竞赛知识库建模",
+      "多评委评审生成",
+      "答辩演练与复盘"
+    ],
+    "scoringMapping": [
+      "创新性->方案差异化",
+      "可行性->路线与资源",
+      "表达规范->材料一致性"
+    ],
+    "risks": [
+      "数据来源变化",
+      "团队执行偏差"
+    ],
+    "deliverables": [
+      "可运行系统",
+      "评审报告",
+      "答辩清单"
+    ],
+    "summary": "围绕选赛-改稿-答辩闭环提升获奖概率。",
+    "source": "form",
+    "status": "draft",
+    "createdAt": "2026-03-17T13:20:16.421Z",
+    "updatedAt": "2026-03-17T13:20:16.421Z"
+  }
+]
