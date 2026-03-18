@@ -69,6 +69,11 @@ function includesText(source: string, keyword: string): boolean {
   return source.toLowerCase().includes(keyword.toLowerCase())
 }
 
+function resolveDefaultWorkspaceId(auth: AuthMeResult): string {
+  const personal = auth.workspaces.find(item => item.workspace.type === 'personal' && item.workspace.ownerUserId === auth.user.id)
+  return personal?.workspace.id || auth.workspaces[0]?.workspace.id || ''
+}
+
 const naturalQuery = ref('')
 const major = ref('')
 const discipline = ref('')
@@ -286,7 +291,7 @@ async function loadAuthContext(): Promise<boolean> {
 
     const hasCurrent = response.data.workspaces.some(item => item.workspace.id === activeWorkspaceId.value)
     if (!hasCurrent)
-      activeWorkspaceId.value = response.data.workspaces[0]?.workspace.id || ''
+      activeWorkspaceId.value = resolveDefaultWorkspaceId(response.data)
 
     if (!activeWorkspaceId.value)
       statusLine.value = '当前账号未加入任何空间，请先创建 Team。'
@@ -570,12 +575,7 @@ watch(activeWorkspaceId, async (value, previous) => {
     <div class="px-3 py-2 border-b border-slate-200 flex items-center gap-2 text-xs bg-slate-50">
       <span class="text-slate-500">账号：{{ me?.user.username || '-' }}</span>
       <span class="text-slate-300">|</span>
-      <span class="text-slate-500">空间：</span>
-      <select v-model="activeWorkspaceId" class="border border-slate-300 rounded px-2 py-1 text-xs min-w-56">
-        <option v-for="item in workspaceOptions" :key="item.workspace.id" :value="item.workspace.id">
-          {{ item.workspace.name }}（{{ item.workspace.type }}）
-        </option>
-      </select>
+      <span class="text-slate-500">空间：{{ currentWorkspace?.workspace.name || '-' }}</span>
       <span
         v-if="currentWorkspace?.quota"
         class="text-slate-500"
@@ -597,7 +597,10 @@ watch(activeWorkspaceId, async (value, previous) => {
         v-model:track-type="trackType"
         v-model:top-k="topK"
         v-model:selected-contest-id="selectedContestId"
+        v-model:active-workspace-id="activeWorkspaceId"
         :contests="filteredContests"
+        :workspace-options="workspaceOptions"
+        :username="me?.user.username || ''"
         :ai-reasoning="aiReasoning"
         :status-line="statusLine"
         :list-loading="listLoading"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { Contest } from '~~/shared/types/domain'
+import type { Contest, WorkspaceWithQuota } from '~~/shared/types/domain'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   naturalQuery: string
   major: string
   discipline: string
@@ -10,12 +10,17 @@ withDefaults(defineProps<{
   topK: number
   selectedContestId: string
   contests: Contest[]
+  activeWorkspaceId: string
+  workspaceOptions?: WorkspaceWithQuota[]
+  username?: string
   aiReasoning: string
   statusLine: string
   listLoading: boolean
   aiFiltering: boolean
   tokenBalance?: number
 }>(), {
+  workspaceOptions: () => [],
+  username: '',
   tokenBalance: 14204,
 })
 
@@ -27,6 +32,7 @@ const emit = defineEmits<{
   'update:trackType': [value: string]
   'update:topK': [value: number]
   'update:selectedContestId': [value: string]
+  'update:activeWorkspaceId': [value: string]
   'loadContests': []
   'runAiFilter': []
 }>()
@@ -43,6 +49,10 @@ function onTopKInput(event: Event) {
   const value = Number(target.value)
   emit('update:topK', Number.isNaN(value) ? 1 : value)
 }
+
+const currentWorkspace = computed(() => {
+  return props.workspaceOptions.find(item => item.workspace.id === props.activeWorkspaceId) || null
+})
 </script>
 
 <template>
@@ -175,14 +185,44 @@ function onTopKInput(event: Event) {
         </button>
       </div>
     </div>
-    <div class="p-3 border-t border-slate-200 bg-white/70">
-      <div class="flex items-center justify-between text-[10px] text-slate-500 mb-2">
-        <span>AI 运行状态</span>
-        <span class="w-1.5 h-1.5 bg-green-500 rounded-full" />
+    <div class="p-3 border-t border-slate-200 bg-white/70 space-y-3">
+      <div class="space-y-1">
+        <div class="text-[10px] font-semibold text-slate-500">
+          账号
+        </div>
+        <div class="text-xs text-slate-700 truncate">
+          {{ username || '-' }}
+        </div>
       </div>
-      <div class="text-[10px] text-slate-400 leading-relaxed">
-        模型: Analysis-V4-Pro<br>
-        Token 余额: {{ tokenBalance.toLocaleString('zh-CN') }}
+
+      <div class="space-y-1">
+        <div class="text-[10px] font-semibold text-slate-500">
+          工作区
+        </div>
+        <select
+          :value="activeWorkspaceId"
+          class="w-full h-8 rounded border border-slate-300 bg-white px-2 text-xs outline-none focus:border-blue-500"
+          @change="emit('update:activeWorkspaceId', ($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="item in workspaceOptions" :key="item.workspace.id" :value="item.workspace.id">
+            {{ item.workspace.name }}（{{ item.workspace.type }}）
+          </option>
+        </select>
+        <div v-if="currentWorkspace?.quota" class="text-[10px] text-slate-400 leading-relaxed">
+          席位 {{ currentWorkspace.quota.seatUsed }}/{{ currentWorkspace.quota.seatLimit }}，
+          AI {{ currentWorkspace.quota.aiQuotaUsed }}/{{ currentWorkspace.quota.aiQuotaTotal }}
+        </div>
+      </div>
+
+      <div class="pt-2 border-t border-slate-200">
+        <div class="flex items-center justify-between text-[10px] text-slate-500 mb-2">
+          <span>AI 运行状态</span>
+          <span class="w-1.5 h-1.5 bg-green-500 rounded-full" />
+        </div>
+        <div class="text-[10px] text-slate-400 leading-relaxed">
+          模型: Analysis-V4-Pro<br>
+          Token 余额: {{ tokenBalance.toLocaleString('zh-CN') }}
+        </div>
       </div>
     </div>
   </aside>

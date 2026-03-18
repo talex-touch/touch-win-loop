@@ -22,7 +22,7 @@ const errorText = ref('')
 async function checkLoggedIn() {
   try {
     await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
-    await navigateTo('/workspace')
+    await navigateTo('/dashboard')
   }
   catch {
     // ignore
@@ -48,7 +48,7 @@ async function submitLogin() {
         password: secret,
       },
     })
-    await navigateTo('/workspace')
+    await navigateTo('/dashboard')
   }
   catch (error: any) {
     const message = String(error?.data?.message || '')

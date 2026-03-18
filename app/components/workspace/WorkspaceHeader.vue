@@ -15,23 +15,38 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
+const router = useRouter()
+
 function onInput(event: Event) {
   const target = event.target as HTMLInputElement
   emit('update:modelValue', target.value)
+}
+
+function goBack() {
+  if (import.meta.client && window.history.length > 1) {
+    router.back()
+    return
+  }
+
+  navigateTo('/dashboard')
 }
 </script>
 
 <template>
   <header class="h-12 border-b border-slate-200 bg-white flex items-center justify-between px-4 shrink-0 z-10">
     <div class="flex items-center gap-4 min-w-0">
-      <div class="flex items-center gap-2 min-w-0">
+      <button
+        class="flex items-center gap-2 min-w-0 rounded px-1 py-0.5 hover:bg-slate-100"
+        type="button"
+        @click="goBack"
+      >
         <span class="material-symbols-outlined text-blue-600 text-xl">dataset</span>
         <span class="text-sm font-bold tracking-tight truncate">
           竞赛分析工作台
           <span class="text-slate-300 font-normal mx-1">/</span>
           <span class="text-slate-500 font-medium text-xs">{{ projectName }}</span>
         </span>
-      </div>
+      </button>
       <nav class="hidden items-center ml-2 gap-1 lg:flex">
         <button class="px-3 py-1 text-xs font-medium rounded hover:bg-slate-100">
           文件
