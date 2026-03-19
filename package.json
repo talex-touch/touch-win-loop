@@ -15,17 +15,23 @@
     "typecheck": "nuxt typecheck"
   },
   "dependencies": {
+    "@arco-design/web-vue": "catalog:frontend",
+    "@aws-sdk/client-s3": "catalog:",
     "@langchain/core": "catalog:",
     "@langchain/openai": "catalog:",
     "bcryptjs": "catalog:",
+    "deepagents": "catalog:",
     "dotenv": "catalog:",
     "langchain": "catalog:",
+    "pdfjs-dist": "catalog:",
     "pg": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:dev",
     "@iconify-json/carbon": "catalog:icons",
+    "@iconify-json/heroicons-outline": "catalog:icons",
+    "@iconify-json/heroicons-solid": "catalog:icons",
     "@iconify-json/twemoji": "catalog:icons",
     "@nuxt/devtools": "catalog:build",
     "@nuxt/eslint": "catalog:build",

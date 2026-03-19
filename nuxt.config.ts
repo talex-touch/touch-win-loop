@@ -1,6 +1,6 @@
 import { pwa } from './app/config/pwa'
 import { appDescription } from './app/constants'
-import { getEnvPriorityOrder, loadWinloopEnv, resolveEnvNumber, resolveEnvValue } from './config/env'
+import { getEnvPriorityOrder, loadWinloopEnv, resolveEnvBoolean, resolveEnvNumber, resolveEnvValue } from './config/env'
 
 loadWinloopEnv()
 
@@ -42,6 +42,9 @@ export default defineNuxtConfig({
   },
 
   runtimeConfig: {
+    nitro: {
+      envPrefix: 'WINLOOP_',
+    },
     envPriority: getEnvPriorityOrder().join(' > '),
     ai: {
       provider: resolveEnvValue('WINLOOP_AI_PROVIDER', 'openai-compatible'),
@@ -50,6 +53,31 @@ export default defineNuxtConfig({
       model: resolveEnvValue('WINLOOP_AI_MODEL', 'gpt-4o-mini'),
       timeoutMs: resolveEnvNumber('WINLOOP_AI_TIMEOUT_MS', 15000),
       maxRetries: resolveEnvNumber('WINLOOP_AI_MAX_RETRIES', 2),
+    },
+    docAi: {
+      provider: resolveEnvValue('WINLOOP_DOC_AI_PROVIDER', 'openai-compatible'),
+      baseURL: resolveEnvValue('WINLOOP_DOC_AI_BASE_URL', ''),
+      apiKey: resolveEnvValue('WINLOOP_DOC_AI_API_KEY', ''),
+      model: resolveEnvValue('WINLOOP_DOC_AI_MODEL', 'gpt-4o-mini'),
+      timeoutMs: resolveEnvNumber('WINLOOP_DOC_AI_TIMEOUT_MS', 15000),
+      maxRetries: resolveEnvNumber('WINLOOP_DOC_AI_MAX_RETRIES', 2),
+    },
+    storage: {
+      provider: resolveEnvValue('WINLOOP_STORAGE_PROVIDER', 'local'),
+      localRoot: resolveEnvValue('WINLOOP_STORAGE_LOCAL_ROOT', './tmp/document-storage'),
+      endpoint: resolveEnvValue('WINLOOP_STORAGE_ENDPOINT', ''),
+      region: resolveEnvValue('WINLOOP_STORAGE_REGION', ''),
+      bucket: resolveEnvValue('WINLOOP_STORAGE_BUCKET', ''),
+      accessKey: resolveEnvValue('WINLOOP_STORAGE_ACCESS_KEY', ''),
+      secretKey: resolveEnvValue('WINLOOP_STORAGE_SECRET_KEY', ''),
+      forcePathStyle: resolveEnvBoolean('WINLOOP_STORAGE_FORCE_PATH_STYLE', true),
+    },
+    adminAi: {
+      enabled: resolveEnvValue('WINLOOP_ADMIN_AI_ENABLED', 'false'),
+      tavilyApiKey: resolveEnvValue('WINLOOP_TAVILY_API_KEY', ''),
+      webTimeoutMs: resolveEnvNumber('WINLOOP_ADMIN_AI_WEB_TIMEOUT_MS', 12000),
+      maxWebResults: resolveEnvNumber('WINLOOP_ADMIN_AI_MAX_WEB_RESULTS', 5),
+      maxPageChars: resolveEnvNumber('WINLOOP_ADMIN_AI_MAX_PAGE_CHARS', 10000),
     },
     pg: {
       url: resolveEnvValue('WINLOOP_PG_URL', 'postgresql://winloop@127.0.0.1:5432/winloop'),

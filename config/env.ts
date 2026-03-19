@@ -62,3 +62,12 @@ export function resolveEnvNumber(name: string, fallback: number): number {
     return fallback
   return parsed
 }
+
+export function resolveEnvBoolean(name: string, fallback: boolean): boolean {
+  const raw = resolveEnvValue(name, fallback ? 'true' : 'false').trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(raw))
+    return true
+  if (['0', 'false', 'no', 'off'].includes(raw))
+    return false
+  return fallback
+}

@@ -11,3 +11,4 @@ dist
 .idea/
 public/assets/fonts
 --port/
+tmp/document-storage/
