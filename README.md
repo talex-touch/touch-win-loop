@@ -53,9 +53,31 @@ pnpm dev
 ```txt
 WINLOOP_PG_URL=postgresql://user:password@127.0.0.1:5432/winloop
 WINLOOP_REDIS_URL=redis://:password@127.0.0.1:6379/0
+WINLOOP_CONTEST_AUTO_SEED=false
 ```
 
 若缺失或不完整，登录及依赖连接的接口会报连接配置错误。
+
+## 赛事 seed 策略（去 mock 默认）
+
+- 默认不自动注入 legacy 赛事数据（`WINLOOP_CONTEST_AUTO_SEED=false`）。
+- 若需要本地演示数据，请使用 CLI 手动执行（幂等）：
+
+```bash
+pnpm contest:seed:legacy
+```
+
+- 若需要清理 legacy 数据并重置 seed 标记：
+
+```bash
+pnpm contest:clean:legacy
+```
+
+- 查看当前 legacy seed 状态：
+
+```bash
+pnpm contest:seed:status
+```
 
 ## 关键接口
 

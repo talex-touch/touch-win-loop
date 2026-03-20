@@ -59,6 +59,9 @@ export interface RuntimeSettings {
   redis: {
     url: string
   }
+  contest: {
+    autoSeed: boolean
+  }
 }
 
 function toBoolean(raw: unknown, fallback: boolean): boolean {
@@ -123,6 +126,9 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
     },
     redis: {
       url: String(runtime.redis?.url ?? 'redis://127.0.0.1:6379/0'),
+    },
+    contest: {
+      autoSeed: toBoolean(runtime.contest?.autoSeed, false),
     },
   }
 }

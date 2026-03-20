@@ -1,3 +1,4 @@
+import type { ContestImportExecutionPlan } from '~~/server/utils/contest-store'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -9,6 +10,7 @@ import { checkPlatformPermission } from '~~/server/utils/platform-access'
 interface CommitImportBody {
   csvText?: string
   skipInvalid?: boolean
+  executionPlan?: ContestImportExecutionPlan
 }
 
 export default defineEventHandler(async (event) => {
@@ -42,13 +44,15 @@ export default defineEventHandler(async (event) => {
   }
 
   const skipInvalid = body?.skipInvalid !== false
+  const executionPlan = body?.executionPlan
 
   let payload: { preview: Awaited<ReturnType<typeof previewContestImportCsv>>, commit: Awaited<ReturnType<typeof commitContestImportRows>> }
   try {
     payload = await withTransaction(event, async (db) => {
       const preview = await previewContestImportCsv(db, { csvText })
 
-      if (!skipInvalid && preview.invalidCount > 0) {
+      const useLegacyInvalidBlock = !executionPlan
+      if (useLegacyInvalidBlock && !skipInvalid && preview.invalidCount > 0) {
         const err = new Error('IMPORT_PREVIEW_CONTAINS_INVALID_ROWS')
         ;(err as Error & { preview?: typeof preview }).preview = preview
         throw err
@@ -58,6 +62,7 @@ export default defineEventHandler(async (event) => {
         actorUserId: user.id,
         rows: preview.rows,
         skipInvalid,
+        executionPlan,
       })
 
       return {

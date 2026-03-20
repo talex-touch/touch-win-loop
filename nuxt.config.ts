@@ -91,6 +91,9 @@ export default defineNuxtConfig({
     redis: {
       url: resolveEnvValue('WINLOOP_REDIS_URL', 'redis://127.0.0.1:6379/0'),
     },
+    contest: {
+      autoSeed: resolveEnvBoolean('WINLOOP_CONTEST_AUTO_SEED', false),
+    },
     public: {
       apiBaseUrl: resolveEnvValue('WINLOOP_API_BASE_URL', '/api'),
     },

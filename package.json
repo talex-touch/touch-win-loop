@@ -12,7 +12,10 @@
     "start": "node .output/server/index.mjs",
     "start:generate": "npx serve .output/public",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt typecheck",
+    "contest:seed:legacy": "node ./scripts/contest-library.mjs seed",
+    "contest:clean:legacy": "node ./scripts/contest-library.mjs clean",
+    "contest:seed:status": "node ./scripts/contest-library.mjs status"
   },
   "dependencies": {
     "@arco-design/web-vue": "catalog:frontend",

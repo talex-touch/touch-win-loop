@@ -28,6 +28,7 @@ import type {
   WorkspaceBillingEstimate,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+import process from 'node:process'
 import { listContests as listLegacyContests, listResources as listLegacyResources, listRubrics as listLegacyRubrics } from '~~/server/data/catalog'
 
 const CONTEST_LIBRARY_MIGRATION_KEY = 'contest_library_seeded_v2'
@@ -122,24 +123,24 @@ const CONTEST_IMPORT_TEMPLATE_HEADERS = [
 ] as const
 
 const CONTEST_IMPORT_HEADER_ALIASES: Record<string, string[]> = {
-  name: ['name', '竞赛名称', '赛事名称'],
-  level: ['level', '赛事级别', '竞赛级别', '级别'],
-  officialUrl: ['officialUrl', 'official_url', '官网地址', '官网链接', '官方网站'],
-  organizer: ['organizer', '主办单位', '主办方'],
-  coOrganizer: ['coOrganizer', 'co_organizer', '协办单位', '承办单位', '承办方'],
-  currentSeason: ['currentSeason', 'current_season', '当前届次', '届次', '年份'],
-  disciplines: ['disciplines', '学科门类', '学科'],
-  aliases: ['aliases', '赛事别名', '别名'],
-  keywords: ['keywords', '赛事关键词', '关键词'],
-  recommendedFor: ['recommendedFor', 'recommended_for', '推荐人群', '适配人群'],
-  summary: ['summary', '赛事简介', '竞赛简介'],
-  participantRequirements: ['participantRequirements', 'participant_requirements', '参赛对象', '参赛对象/限制'],
-  teamRule: ['teamRule', 'team_rule', '组队规则'],
-  registrationWindow: ['registrationWindow', 'registration_window', '报名时间', '报名窗口'],
-  contestProposition: ['contestProposition', '比赛命题', '赛事命题', '命题'],
-  contestProcess: ['contestProcess', '比赛流程', '竞赛流程', '流程'],
-  scoringCriteria: ['scoringCriteria', '评分标准', '评审标准'],
-  awardRatio: ['awardRatio', '获奖比例'],
+  name: ['name', '竞赛名称', '赛事名称', '竞赛名称（必填）', '赛事名称（必填）', '名称'],
+  level: ['level', '赛事级别', '竞赛级别', '级别', '赛事级别（可选）'],
+  officialUrl: ['officialUrl', 'official_url', '官网地址', '官网链接', '官方网站', '官网', '赛事官网', '官网URL', '官网 URL'],
+  organizer: ['organizer', '主办单位', '主办方', '主办', '主办单位（可选）'],
+  coOrganizer: ['coOrganizer', 'co_organizer', '协办单位', '承办单位', '承办方', '协办单位（可选）'],
+  currentSeason: ['currentSeason', 'current_season', '当前届次', '届次', '年份', '届次/年份'],
+  disciplines: ['disciplines', '学科门类', '学科', '学科门类（可选）'],
+  aliases: ['aliases', '赛事别名', '别名', '别名（可选）'],
+  keywords: ['keywords', '赛事关键词', '关键词', '关键词（可选）'],
+  recommendedFor: ['recommendedFor', 'recommended_for', '推荐人群', '适配人群', '推荐人群（可选）'],
+  summary: ['summary', '赛事简介', '竞赛简介', '简介'],
+  participantRequirements: ['participantRequirements', 'participant_requirements', '参赛对象', '参赛对象/限制', '参赛对象（可选）'],
+  teamRule: ['teamRule', 'team_rule', '组队规则', '组队规则（可选）'],
+  registrationWindow: ['registrationWindow', 'registration_window', '报名时间', '报名窗口', '报名时间（可选）'],
+  contestProposition: ['contestProposition', '比赛命题', '赛事命题', '命题', '比赛命题（可选）'],
+  contestProcess: ['contestProcess', '比赛流程', '竞赛流程', '流程', '比赛流程（可选）'],
+  scoringCriteria: ['scoringCriteria', '评分标准', '评审标准', '评分标准（可选）'],
+  awardRatio: ['awardRatio', '获奖比例', '获奖比例（可选）'],
 }
 
 const CONTEST_LEVEL_ALIASES: Record<string, ContestLevel> = {
@@ -187,6 +188,8 @@ export interface ContestImportPreviewRow {
   inferredYear: number | null
   inferredYearSource?: ContestImportNormalizedRow['inferredYearSource']
   targetContestId?: string
+  suggestedExecute: boolean
+  suggestedOverwriteMode: ContestImportOverwriteMode
   errors: string[]
   warnings: string[]
   structuredWarnings: string[]
@@ -198,7 +201,32 @@ export interface ContestImportPreviewResult {
   total: number
   validCount: number
   invalidCount: number
+  defaultExecutionPlan: ContestImportExecutionPlan
   rows: ContestImportPreviewRow[]
+}
+
+export type ContestImportOverwriteMode = 'preserve_existing' | 'force_replace'
+
+export interface ContestImportExecutionRowDecision {
+  rowNumber: number
+  execute?: boolean
+  overwriteMode?: ContestImportOverwriteMode
+}
+
+export interface ContestImportExecutionPlan {
+  defaultExecute?: boolean
+  defaultOverwriteMode?: ContestImportOverwriteMode
+  rowDecisions?: ContestImportExecutionRowDecision[]
+}
+
+export interface ContestImportCommitRowResult {
+  rowNumber: number
+  action: 'create' | 'update' | 'invalid'
+  decision: 'executed' | 'skipped' | 'invalid' | 'error'
+  overwriteMode: ContestImportOverwriteMode
+  result: 'created' | 'updated' | 'skipped' | 'invalid' | 'error'
+  contestId?: string
+  message?: string
 }
 
 export interface ContestImportCommitResult {
@@ -209,6 +237,7 @@ export interface ContestImportCommitResult {
   createdContestIds: string[]
   updatedContestIds: string[]
   errors: Array<{ rowNumber: number, message: string }>
+  rowResults: ContestImportCommitRowResult[]
 }
 
 function escapeCsvCell(value: string): string {
@@ -258,8 +287,9 @@ function parseCsvLine(line: string): string[] {
 }
 
 function parseCsvText(csvText: string): string[][] {
-  return String(csvText || '')
-    .split(/\n/g)
+  const text = String(csvText || '').replace(/^\uFEFF/, '')
+  return text
+    .split(/\r?\n/g)
     .map(line => line.trimEnd())
     .filter(line => line.length > 0)
     .map(parseCsvLine)
@@ -526,6 +556,11 @@ export async function previewContestImportCsv(
       total: 0,
       validCount: 0,
       invalidCount: 0,
+      defaultExecutionPlan: {
+        defaultExecute: true,
+        defaultOverwriteMode: 'preserve_existing',
+        rowDecisions: [],
+      },
       rows: [],
     }
   }
@@ -668,6 +703,8 @@ export async function previewContestImportCsv(
       inferredYear: normalized?.inferredYear || null,
       inferredYearSource: normalized?.inferredYearSource,
       targetContestId: normalized?.existingContestId,
+      suggestedExecute: errors.length === 0,
+      suggestedOverwriteMode: 'preserve_existing',
       errors,
       warnings,
       structuredWarnings,
@@ -681,6 +718,16 @@ export async function previewContestImportCsv(
     total: indexedRows.length,
     validCount,
     invalidCount: indexedRows.length - validCount,
+    defaultExecutionPlan: {
+      defaultExecute: true,
+      defaultOverwriteMode: 'preserve_existing',
+      rowDecisions: indexedRows
+        .filter(item => item.errors.length > 0)
+        .map(item => ({
+          rowNumber: item.rowNumber,
+          execute: false,
+        })),
+    },
     rows: indexedRows,
   }
 }
@@ -691,9 +738,11 @@ export async function commitContestImportRows(
     actorUserId: string
     rows: ContestImportPreviewRow[]
     skipInvalid?: boolean
+    executionPlan?: ContestImportExecutionPlan
   },
 ): Promise<ContestImportCommitResult> {
   const skipInvalid = input.skipInvalid !== false
+  const resolvedPlan = resolveContestImportExecutionPlan(input.rows, input.executionPlan, skipInvalid)
   const result: ContestImportCommitResult = {
     total: input.rows.length,
     createdCount: 0,
@@ -702,39 +751,79 @@ export async function commitContestImportRows(
     createdContestIds: [],
     updatedContestIds: [],
     errors: [],
+    rowResults: [],
   }
 
   for (const row of input.rows) {
+    const rowDecision = resolvedPlan.rowDecisions.get(row.rowNumber) || {
+      execute: resolvedPlan.defaultExecute,
+      overwriteMode: resolvedPlan.defaultOverwriteMode,
+    }
+
     if (row.errors.length > 0 || !row.normalized) {
-      if (skipInvalid) {
-        result.skippedCount += 1
+      const invalidMessage = row.errors.join('；') || '该行数据无效。'
+      if (rowDecision.execute && !skipInvalid) {
+        result.errors.push({
+          rowNumber: row.rowNumber,
+          message: invalidMessage,
+        })
+        result.rowResults.push({
+          rowNumber: row.rowNumber,
+          action: row.action,
+          decision: 'invalid',
+          overwriteMode: rowDecision.overwriteMode,
+          result: 'invalid',
+          message: invalidMessage,
+        })
         continue
       }
-      result.errors.push({
+      result.skippedCount += 1
+      result.rowResults.push({
         rowNumber: row.rowNumber,
-        message: row.errors.join('；') || '该行数据无效。',
+        action: row.action,
+        decision: 'skipped',
+        overwriteMode: rowDecision.overwriteMode,
+        result: 'invalid',
+        message: invalidMessage,
+      })
+      continue
+    }
+
+    if (!rowDecision.execute) {
+      result.skippedCount += 1
+      result.rowResults.push({
+        rowNumber: row.rowNumber,
+        action: row.normalized.action,
+        decision: 'skipped',
+        overwriteMode: rowDecision.overwriteMode,
+        result: 'skipped',
+        contestId: row.normalized.existingContestId,
       })
       continue
     }
 
     try {
       let contestId = ''
+      let operationResult: ContestImportCommitRowResult['result'] = 'created'
       if (row.normalized.action === 'update' && row.normalized.existingContestId) {
         const updated = await applyContestImportUpdate(db, {
           actorUserId: input.actorUserId,
           contestId: row.normalized.existingContestId,
           normalized: row.normalized,
+          overwriteMode: rowDecision.overwriteMode,
         })
         if (updated) {
           contestId = updated.id
           result.updatedCount += 1
           result.updatedContestIds.push(updated.id)
+          operationResult = 'updated'
         }
         else {
           const created = await createContestFromImport(db, input.actorUserId, row.normalized)
           contestId = created.id
           result.createdCount += 1
           result.createdContestIds.push(created.id)
+          operationResult = 'created'
         }
       }
       else {
@@ -742,6 +831,7 @@ export async function commitContestImportRows(
         contestId = created.id
         result.createdCount += 1
         result.createdContestIds.push(created.id)
+        operationResult = 'created'
       }
 
       if (contestId) {
@@ -749,6 +839,7 @@ export async function commitContestImportRows(
           actorUserId: input.actorUserId,
           contestId,
           normalized: row.normalized,
+          overwriteMode: rowDecision.overwriteMode,
         })
         await upsertImportResources(db, {
           actorUserId: input.actorUserId,
@@ -756,18 +847,85 @@ export async function commitContestImportRows(
           contestName: row.normalized.name,
           officialUrl: row.normalized.officialUrl,
           normalized: row.normalized,
+          overwriteMode: rowDecision.overwriteMode,
         })
       }
+
+      result.rowResults.push({
+        rowNumber: row.rowNumber,
+        action: row.normalized.action,
+        decision: 'executed',
+        overwriteMode: rowDecision.overwriteMode,
+        result: operationResult,
+        contestId,
+      })
     }
     catch (error) {
+      const message = error instanceof Error ? error.message : '创建失败'
       result.errors.push({
         rowNumber: row.rowNumber,
-        message: error instanceof Error ? error.message : '创建失败',
+        message,
+      })
+      result.rowResults.push({
+        rowNumber: row.rowNumber,
+        action: row.normalized.action,
+        decision: 'error',
+        overwriteMode: rowDecision.overwriteMode,
+        result: 'error',
+        contestId: row.normalized.existingContestId,
+        message,
       })
     }
   }
 
   return result
+}
+
+interface ResolvedContestImportExecutionPlan {
+  defaultExecute: boolean
+  defaultOverwriteMode: ContestImportOverwriteMode
+  rowDecisions: Map<number, { execute: boolean, overwriteMode: ContestImportOverwriteMode }>
+}
+
+function normalizeContestImportOverwriteMode(value: unknown): ContestImportOverwriteMode {
+  return value === 'force_replace' ? 'force_replace' : 'preserve_existing'
+}
+
+function resolveContestImportExecutionPlan(
+  rows: ContestImportPreviewRow[],
+  executionPlan: ContestImportExecutionPlan | undefined,
+  skipInvalid: boolean,
+): ResolvedContestImportExecutionPlan {
+  const defaultExecute = executionPlan?.defaultExecute !== false
+  const defaultOverwriteMode = normalizeContestImportOverwriteMode(executionPlan?.defaultOverwriteMode)
+  const rowDecisions = new Map<number, { execute: boolean, overwriteMode: ContestImportOverwriteMode }>()
+
+  for (const row of rows) {
+    rowDecisions.set(row.rowNumber, {
+      execute: row.errors.length > 0 && skipInvalid ? false : defaultExecute,
+      overwriteMode: defaultOverwriteMode,
+    })
+  }
+
+  const sourceDecisions = Array.isArray(executionPlan?.rowDecisions) ? executionPlan?.rowDecisions || [] : []
+  for (const decision of sourceDecisions) {
+    const rowNumber = Number(decision?.rowNumber || 0)
+    if (!Number.isFinite(rowNumber) || rowNumber <= 0 || !rowDecisions.has(rowNumber))
+      continue
+    const previous = rowDecisions.get(rowNumber)!
+    rowDecisions.set(rowNumber, {
+      execute: decision?.execute === undefined ? previous.execute : decision.execute !== false,
+      overwriteMode: decision?.overwriteMode === undefined
+        ? previous.overwriteMode
+        : normalizeContestImportOverwriteMode(decision.overwriteMode),
+    })
+  }
+
+  return {
+    defaultExecute,
+    defaultOverwriteMode,
+    rowDecisions,
+  }
 }
 
 function isBlankText(value: unknown): boolean {
@@ -860,6 +1018,7 @@ async function applyContestImportUpdate(
     actorUserId: string
     contestId: string
     normalized: ContestImportNormalizedRow
+    overwriteMode: ContestImportOverwriteMode
   },
 ): Promise<Contest | null> {
   const detail = await getContestDetail(db, {
@@ -886,10 +1045,15 @@ async function applyContestImportUpdate(
     recommendedFor?: string[]
   } = {}
 
+  const organizer = normalizeString(input.normalized.organizer)
+  const coOrganizer = normalizeString(input.normalized.coOrganizer)
+
   patch.name = input.normalized.name
   patch.level = input.normalized.level
-  patch.organizer = normalizeString(input.normalized.organizer)
-  patch.coOrganizer = normalizeString(input.normalized.coOrganizer)
+  if (organizer)
+    patch.organizer = organizer
+  if (coOrganizer)
+    patch.coOrganizer = coOrganizer
   patch.officialUrl = input.normalized.officialUrl
   patch.currentSeason = normalizeString(input.normalized.currentSeason) || String(input.normalized.inferredYear)
 
@@ -902,11 +1066,11 @@ async function applyContestImportUpdate(
   if (Array.isArray(input.normalized.recommendedFor) && input.normalized.recommendedFor.length > 0)
     patch.recommendedFor = input.normalized.recommendedFor
 
-  if (!isBlankText(input.normalized.summary) && isBlankText(contest.summary))
+  if (!isBlankText(input.normalized.summary) && (input.overwriteMode === 'force_replace' || isBlankText(contest.summary)))
     patch.summary = input.normalized.summary
-  if (!isBlankText(input.normalized.participantRequirements) && isBlankText(contest.participantRequirements))
+  if (!isBlankText(input.normalized.participantRequirements) && (input.overwriteMode === 'force_replace' || isBlankText(contest.participantRequirements)))
     patch.participantRequirements = input.normalized.participantRequirements
-  if (!isBlankText(input.normalized.teamRule) && isBlankText(contest.teamRule))
+  if (!isBlankText(input.normalized.teamRule) && (input.overwriteMode === 'force_replace' || isBlankText(contest.teamRule)))
     patch.teamRule = input.normalized.teamRule
 
   return patchAdminContest(db, {
@@ -922,6 +1086,7 @@ async function upsertImportTimelineNodes(
     actorUserId: string
     contestId: string
     normalized: ContestImportNormalizedRow
+    overwriteMode: ContestImportOverwriteMode
   },
 ): Promise<void> {
   const year = Number(input.normalized.inferredYear || new Date().getFullYear())
@@ -942,11 +1107,12 @@ async function upsertImportTimelineNodes(
       endAt?: string | null
       note?: string
       sourceLink?: string
-    } = {
-      startAt,
-      endAt,
-    }
-    if (noteText && !normalizeString(registration.note))
+    } = {}
+    if (startAt)
+      patch.startAt = startAt
+    if (endAt)
+      patch.endAt = endAt
+    if (noteText && (input.overwriteMode === 'force_replace' || !normalizeString(registration.note)))
       patch.note = `导入模板报名时间：${noteText}`
     if (sourceLink)
       patch.sourceLink = sourceLink
@@ -1013,6 +1179,7 @@ async function upsertImportResources(
     contestName: string
     officialUrl: string
     normalized: ContestImportNormalizedRow
+    overwriteMode: ContestImportOverwriteMode
   },
 ): Promise<void> {
   const specs = buildImportResourceSpecs(input.normalized, input.contestName)
@@ -1078,18 +1245,32 @@ async function upsertImportResources(
       content?: string
       metadata?: Record<string, unknown>
     } = {}
-    if (isBlankText(resource.content))
+    if (input.overwriteMode === 'force_replace') {
       patch.content = spec.content
-    if (isBlankText(resource.summary))
       patch.summary = `来源字段：${spec.label}`
-    if (isBlankText(resource.sourceLink) && normalizeString(input.officialUrl))
-      patch.url = normalizeString(input.officialUrl)
-    if (isBlankText(resource.sourceType))
       patch.sourceType = 'import_csv'
-    if (!resource.metadata || Object.keys(resource.metadata || {}).length === 0) {
+      if (normalizeString(input.officialUrl))
+        patch.url = normalizeString(input.officialUrl)
       patch.metadata = {
+        ...(resource.metadata || {}),
         importField: spec.key,
         importSource: 'contest_csv',
+      }
+    }
+    else {
+      if (isBlankText(resource.content))
+        patch.content = spec.content
+      if (isBlankText(resource.summary))
+        patch.summary = `来源字段：${spec.label}`
+      if (isBlankText(resource.sourceLink) && normalizeString(input.officialUrl))
+        patch.url = normalizeString(input.officialUrl)
+      if (isBlankText(resource.sourceType))
+        patch.sourceType = 'import_csv'
+      if (!resource.metadata || Object.keys(resource.metadata || {}).length === 0) {
+        patch.metadata = {
+          importField: spec.key,
+          importSource: 'contest_csv',
+        }
       }
     }
 
@@ -1617,6 +1798,24 @@ async function hasMigrationFlag(db: Queryable, key: string): Promise<boolean> {
   return result.rows[0]?.value === '1'
 }
 
+async function deleteMigrationFlag(db: Queryable, key: string): Promise<void> {
+  await db.query(
+    'DELETE FROM migrations_meta WHERE key = $1',
+    [key],
+  )
+}
+
+function isContestAutoSeedEnabled(): boolean {
+  const raw = String(process.env.WINLOOP_CONTEST_AUTO_SEED || '').trim().toLowerCase()
+  if (!raw)
+    return false
+  return ['1', 'true', 'yes', 'on'].includes(raw)
+}
+
+export function listLegacyContestIds(): string[] {
+  return listLegacyContests().map(item => item.id)
+}
+
 export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
   const existing = await db.query<{ count: string }>('SELECT COUNT(*)::TEXT AS count FROM billing_plans')
   const total = Number(existing.rows[0]?.count || '0')
@@ -1677,7 +1876,17 @@ export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
   }
 }
 
-export async function ensureContestLibrarySeeded(db: Queryable, actorUserId?: string): Promise<void> {
+export async function ensureContestLibrarySeeded(
+  db: Queryable,
+  input?: string | { actorUserId?: string, forceSeed?: boolean },
+): Promise<void> {
+  const actorUserId = typeof input === 'string' ? input : input?.actorUserId
+  const forceSeed = typeof input === 'object' ? input?.forceSeed === true : false
+  if (!forceSeed && !isContestAutoSeedEnabled()) {
+    await ensureDefaultBillingPlans(db)
+    return
+  }
+
   if (await hasMigrationFlag(db, CONTEST_LIBRARY_MIGRATION_KEY)) {
     await ensureDefaultBillingPlans(db)
     return
@@ -1908,6 +2117,23 @@ export async function ensureContestLibrarySeeded(db: Queryable, actorUserId?: st
 
   await writeMigrationFlag(db, CONTEST_LIBRARY_MIGRATION_KEY)
   await ensureDefaultBillingPlans(db)
+}
+
+export async function resetLegacyContestSeedState(
+  db: Queryable,
+): Promise<{ deletedContestIds: string[] }> {
+  const legacyContestIds = listLegacyContestIds()
+  if (legacyContestIds.length > 0) {
+    await db.query(
+      'DELETE FROM contests WHERE id = ANY($1::TEXT[])',
+      [legacyContestIds],
+    )
+  }
+  await deleteMigrationFlag(db, CONTEST_LIBRARY_MIGRATION_KEY)
+
+  return {
+    deletedContestIds: legacyContestIds,
+  }
 }
 
 async function loadContests(db: Queryable, includeInternal: boolean): Promise<ContestRow[]> {

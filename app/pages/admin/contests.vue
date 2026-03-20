@@ -19,16 +19,50 @@ interface ImportPreviewRow {
   inferredYear: number | null
   inferredYearSource?: string
   targetContestId?: string
+  suggestedExecute: boolean
+  suggestedOverwriteMode: ImportOverwriteMode
   errors: string[]
   warnings: string[]
   structuredWarnings: string[]
+}
+
+type ImportOverwriteMode = 'preserve_existing' | 'force_replace'
+
+interface ImportExecutionRowDecision {
+  rowNumber: number
+  execute?: boolean
+  overwriteMode?: ImportOverwriteMode
+}
+
+interface ImportExecutionPlan {
+  defaultExecute?: boolean
+  defaultOverwriteMode?: ImportOverwriteMode
+  rowDecisions?: ImportExecutionRowDecision[]
 }
 
 interface ImportPreviewResult {
   total: number
   validCount: number
   invalidCount: number
+  defaultExecutionPlan: ImportExecutionPlan
   rows: ImportPreviewRow[]
+}
+
+interface ImportCommitRowResult {
+  rowNumber: number
+  action: 'create' | 'update' | 'invalid'
+  decision: 'executed' | 'skipped' | 'invalid' | 'error'
+  overwriteMode: ImportOverwriteMode
+  result: 'created' | 'updated' | 'skipped' | 'invalid' | 'error'
+  contestId?: string
+  message?: string
+}
+
+interface ImportCommitResult {
+  createdCount: number
+  updatedCount: number
+  skippedCount: number
+  rowResults: ImportCommitRowResult[]
 }
 
 const runtime = useRuntimeConfig()
@@ -83,7 +117,12 @@ const pageSize = ref(10)
 
 const importCsvText = ref('')
 const importPreview = ref<ImportPreviewResult | null>(null)
+const importCommitRows = ref<ImportCommitRowResult[]>([])
 const importLoading = ref(false)
+const importDefaultExecute = ref(true)
+const importDefaultOverwriteMode = ref<ImportOverwriteMode>('preserve_existing')
+const importRowDecisions = ref<Record<number, { execute: boolean, overwriteMode: ImportOverwriteMode }>>({})
+const importFileInputRef = ref<HTMLInputElement | null>(null)
 const syncSourceName = ref('')
 const syncSourceUrl = ref('')
 const syncSources = ref<ContestSyncSource[]>([])
@@ -137,6 +176,12 @@ watch([filteredContests, pageSize], () => {
   const maxPage = Math.max(1, Math.ceil(filteredContests.value.length / pageSize.value))
   if (page.value > maxPage)
     page.value = maxPage
+})
+
+watch(importCsvText, () => {
+  importPreview.value = null
+  importCommitRows.value = []
+  importRowDecisions.value = {}
 })
 
 async function loadPermissions() {
@@ -241,6 +286,156 @@ async function goToContestAiPrompts(contestId?: string) {
   await navigateTo(`/admin/contests/${contestId}/ai-prompts`)
 }
 
+function normalizeImportOverwriteMode(value: unknown): ImportOverwriteMode {
+  return value === 'force_replace' ? 'force_replace' : 'preserve_existing'
+}
+
+function setImportRowDecision(
+  rowNumber: number,
+  patch: Partial<{ execute: boolean, overwriteMode: ImportOverwriteMode }>,
+) {
+  const current = importRowDecisions.value[rowNumber] || {
+    execute: importDefaultExecute.value,
+    overwriteMode: importDefaultOverwriteMode.value,
+  }
+  importRowDecisions.value = {
+    ...importRowDecisions.value,
+    [rowNumber]: {
+      execute: patch.execute === undefined ? current.execute : patch.execute,
+      overwriteMode: patch.overwriteMode || current.overwriteMode,
+    },
+  }
+}
+
+function getImportRowDecision(row: ImportPreviewRow): { execute: boolean, overwriteMode: ImportOverwriteMode } {
+  const existing = importRowDecisions.value[row.rowNumber]
+  if (existing)
+    return existing
+  return {
+    execute: row.suggestedExecute,
+    overwriteMode: normalizeImportOverwriteMode(row.suggestedOverwriteMode),
+  }
+}
+
+function restoreImportExecutionPlan(preview: ImportPreviewResult) {
+  importDefaultExecute.value = preview.defaultExecutionPlan?.defaultExecute !== false
+  importDefaultOverwriteMode.value = normalizeImportOverwriteMode(preview.defaultExecutionPlan?.defaultOverwriteMode)
+
+  const initial: Record<number, { execute: boolean, overwriteMode: ImportOverwriteMode }> = {}
+  for (const row of preview.rows) {
+    initial[row.rowNumber] = {
+      execute: row.suggestedExecute,
+      overwriteMode: normalizeImportOverwriteMode(row.suggestedOverwriteMode),
+    }
+  }
+
+  for (const decision of preview.defaultExecutionPlan?.rowDecisions || []) {
+    const rowNumber = Number(decision.rowNumber || 0)
+    if (!Number.isFinite(rowNumber) || rowNumber <= 0 || !initial[rowNumber])
+      continue
+    initial[rowNumber] = {
+      execute: decision.execute === undefined ? initial[rowNumber]!.execute : decision.execute !== false,
+      overwriteMode: decision.overwriteMode === undefined
+        ? initial[rowNumber]!.overwriteMode
+        : normalizeImportOverwriteMode(decision.overwriteMode),
+    }
+  }
+
+  importRowDecisions.value = initial
+}
+
+function resetImportExecutionPlan() {
+  if (!importPreview.value)
+    return
+  restoreImportExecutionPlan(importPreview.value)
+}
+
+function applyImportBatchOnlyCreate() {
+  if (!importPreview.value)
+    return
+  for (const row of importPreview.value.rows) {
+    setImportRowDecision(row.rowNumber, {
+      execute: row.action === 'create' && row.errors.length === 0,
+    })
+  }
+}
+
+function applyImportBatchOnlyUpdate() {
+  if (!importPreview.value)
+    return
+  for (const row of importPreview.value.rows) {
+    setImportRowDecision(row.rowNumber, {
+      execute: row.action === 'update' && row.errors.length === 0,
+    })
+  }
+}
+
+function applyImportBatchSkipInvalid() {
+  if (!importPreview.value)
+    return
+  for (const row of importPreview.value.rows) {
+    if (row.errors.length > 0) {
+      setImportRowDecision(row.rowNumber, {
+        execute: false,
+      })
+    }
+  }
+}
+
+function applyImportBatchForceUpdateOverwrite() {
+  if (!importPreview.value)
+    return
+  for (const row of importPreview.value.rows) {
+    if (row.action === 'update') {
+      setImportRowDecision(row.rowNumber, {
+        overwriteMode: 'force_replace',
+      })
+    }
+  }
+}
+
+function buildImportExecutionPlan(): ImportExecutionPlan {
+  const rowDecisions = Object.entries(importRowDecisions.value)
+    .map(([rowNumber, decision]) => ({
+      rowNumber: Number(rowNumber),
+      execute: decision.execute,
+      overwriteMode: decision.overwriteMode,
+    }))
+    .filter(item => Number.isFinite(item.rowNumber) && item.rowNumber > 0)
+
+  return {
+    defaultExecute: importDefaultExecute.value,
+    defaultOverwriteMode: importDefaultOverwriteMode.value,
+    rowDecisions,
+  }
+}
+
+function openImportFilePicker() {
+  importFileInputRef.value?.click()
+}
+
+async function onImportFileChange(event: Event) {
+  const target = event.target as HTMLInputElement | null
+  const file = target?.files?.[0]
+  if (!file)
+    return
+
+  try {
+    importCsvText.value = await file.text()
+    importPreview.value = null
+    importCommitRows.value = []
+    successText.value = `已加载文件：${file.name}`
+    errorText.value = ''
+  }
+  catch {
+    errorText.value = 'CSV 文件读取失败。'
+  }
+  finally {
+    if (target)
+      target.value = ''
+  }
+}
+
 async function previewImport() {
   if (!canWrite.value)
     return
@@ -255,10 +450,13 @@ async function previewImport() {
       },
     })
     importPreview.value = response.data
+    importCommitRows.value = []
+    restoreImportExecutionPlan(response.data)
     successText.value = `预检完成：共 ${response.data.total} 行，可导入 ${response.data.validCount} 行。`
   }
   catch (error: any) {
     importPreview.value = null
+    importCommitRows.value = []
     errorText.value = String(error?.data?.message || '导入预检失败。')
   }
   finally {
@@ -266,20 +464,21 @@ async function previewImport() {
   }
 }
 
-async function commitImport(skipInvalid = true) {
+async function commitImport() {
   if (!canWrite.value)
     return
   importLoading.value = true
   errorText.value = ''
   successText.value = ''
   try {
-    const response = await $fetch<ApiResponse<{ commit: { createdCount: number, updatedCount: number, skippedCount: number } }>>(endpoint('/admin/contests/import/commit'), {
+    const response = await $fetch<ApiResponse<{ commit: ImportCommitResult }>>(endpoint('/admin/contests/import/commit'), {
       method: 'POST',
       body: {
         csvText: importCsvText.value,
-        skipInvalid,
+        executionPlan: buildImportExecutionPlan(),
       },
     })
+    importCommitRows.value = response.data.commit.rowResults || []
     successText.value = `导入完成：新增 ${response.data.commit.createdCount} 条，更新 ${response.data.commit.updatedCount} 条，跳过 ${response.data.commit.skippedCount} 条。`
     await loadContests()
   }
@@ -581,63 +780,121 @@ watch(isListRoute, async (value) => {
         <a-collapse :default-active-key="[]" :bordered="false" expand-icon-position="right">
           <a-collapse-item key="import" header="批量导入（CSV）">
             <div class="space-y-2">
-              <a
-                class="text-[11px] text-[#1152d4] inline-flex hover:underline"
-                :href="endpoint('/admin/contests/import/template')"
-                target="_blank"
-              >
-                下载模板
-              </a>
+              <div class="flex flex-wrap gap-2 items-center">
+                <a
+                  class="text-[11px] text-[#1152d4] inline-flex hover:underline"
+                  :href="endpoint('/admin/contests/import/template')"
+                  target="_blank"
+                >
+                  下载模板
+                </a>
+                <input
+                  ref="importFileInputRef"
+                  accept=".csv,text/csv"
+                  class="hidden"
+                  type="file"
+                  @change="onImportFileChange"
+                >
+                <a-button size="mini" @click="openImportFilePicker">
+                  上传 CSV 文件
+                </a-button>
+              </div>
+
               <a-textarea
                 v-model="importCsvText"
                 :auto-size="{ minRows: 6, maxRows: 14 }"
-                placeholder="粘贴 CSV 内容后，先预检再提交导入。"
+                placeholder="支持：飞书多维表格导出 CSV 文件上传，或直接粘贴 CSV 内容。"
               />
+
               <div class="flex flex-wrap gap-2 items-center">
                 <a-button size="small" :loading="importLoading" @click="previewImport">
                   预检
                 </a-button>
-                <a-button size="small" :disabled="!importPreview" :loading="importLoading" type="primary" @click="commitImport(true)">
-                  提交导入（跳过无效）
-                </a-button>
-                <a-button size="small" :disabled="!importPreview" :loading="importLoading" status="danger" @click="commitImport(false)">
-                  提交导入（无效阻断）
+                <a-button size="small" :disabled="!importPreview" :loading="importLoading" type="primary" @click="commitImport">
+                  提交导入（按执行计划）
                 </a-button>
               </div>
 
-              <div v-if="importPreview" class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded">
+              <div v-if="importPreview" class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded space-y-2">
                 <p class="m-0">
                   总行数：{{ importPreview.total }}；可导入：{{ importPreview.validCount }}；无效：{{ importPreview.invalidCount }}
                 </p>
-                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                <p class="text-[10px] text-slate-500 m-0">
                   创建：{{ importPreview.rows.filter(item => item.action === 'create').length }}；
                   更新：{{ importPreview.rows.filter(item => item.action === 'update').length }}
                 </p>
-                <div v-if="importPreview.invalidCount > 0" class="mt-2 space-y-1">
-                  <p class="text-rose-600 font-semibold m-0">
-                    无效行
-                  </p>
-                  <p
-                    v-for="row in importPreview.rows.filter(item => item.errors.length > 0).slice(0, 10)"
-                    :key="row.rowNumber"
-                    class="text-rose-600 m-0"
-                  >
-                    第 {{ row.rowNumber }} 行：{{ row.errors.join('；') }}
-                  </p>
+
+                <div class="flex flex-wrap gap-2 items-center">
+                  <a-button size="mini" @click="applyImportBatchOnlyCreate">
+                    仅执行新增
+                  </a-button>
+                  <a-button size="mini" @click="applyImportBatchOnlyUpdate">
+                    仅执行更新
+                  </a-button>
+                  <a-button size="mini" @click="applyImportBatchSkipInvalid">
+                    跳过有错误行
+                  </a-button>
+                  <a-button size="mini" @click="applyImportBatchForceUpdateOverwrite">
+                    更新行批量强制覆盖
+                  </a-button>
+                  <a-button size="mini" @click="resetImportExecutionPlan">
+                    恢复默认策略
+                  </a-button>
                 </div>
-                <div v-if="importPreview.rows.some(item => item.warnings.length > 0 || item.structuredWarnings.length > 0)" class="mt-2 space-y-1">
-                  <p class="text-amber-700 font-semibold m-0">
-                    结构化提示（最多展示 10 条）
-                  </p>
-                  <p
-                    v-for="row in importPreview.rows.filter(item => item.warnings.length > 0 || item.structuredWarnings.length > 0).slice(0, 10)"
-                    :key="`warn-${row.rowNumber}`"
-                    class="text-amber-700 m-0"
+
+                <div class="max-h-[280px] overflow-auto space-y-1">
+                  <div
+                    v-for="row in importPreview.rows"
+                    :key="`decision-${row.rowNumber}`"
+                    class="p-2 border border-slate-200 rounded bg-slate-50"
                   >
-                    第 {{ row.rowNumber }} 行（{{ row.action }}，年份 {{ row.inferredYear || '-' }}）：
-                    {{ [...row.warnings, ...row.structuredWarnings].join('；') }}
-                  </p>
+                    <div class="gap-2 grid items-center md:grid-cols-[90px_90px_120px_180px_1fr]">
+                      <p class="text-slate-900 m-0">
+                        第 {{ row.rowNumber }} 行
+                      </p>
+                      <a-tag :color="row.action === 'create' ? 'green' : (row.action === 'update' ? 'blue' : 'red')" size="small">
+                        {{ row.action }}
+                      </a-tag>
+                      <a-checkbox
+                        :model-value="getImportRowDecision(row).execute"
+                        @change="(value: any) => setImportRowDecision(row.rowNumber, { execute: Boolean(value) })"
+                      >
+                        执行
+                      </a-checkbox>
+                      <a-select
+                        v-if="row.action === 'update'"
+                        :model-value="getImportRowDecision(row).overwriteMode"
+                        size="mini"
+                        @change="(value: any) => setImportRowDecision(row.rowNumber, { overwriteMode: normalizeImportOverwriteMode(value) })"
+                      >
+                        <a-option value="preserve_existing">
+                          保守合并
+                        </a-option>
+                        <a-option value="force_replace">
+                          强制覆盖
+                        </a-option>
+                      </a-select>
+                      <span v-else class="text-[10px] text-slate-500">-</span>
+                      <p class="text-[10px] m-0" :class="row.errors.length ? 'text-rose-600' : 'text-slate-600'">
+                        {{ row.errors.length ? row.errors.join('；') : [...row.warnings, ...row.structuredWarnings].join('；') || '无' }}
+                      </p>
+                    </div>
+                  </div>
                 </div>
+              </div>
+
+              <div v-if="importCommitRows.length > 0" class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded">
+                <p class="text-slate-900 font-semibold m-0">
+                  最近一次提交结果（最多展示 20 条）
+                </p>
+                <p
+                  v-for="row in importCommitRows.slice(0, 20)"
+                  :key="`commit-${row.rowNumber}`"
+                  class="m-0 mt-1"
+                  :class="row.result === 'error' || row.result === 'invalid' ? 'text-rose-600' : 'text-slate-700'"
+                >
+                  第 {{ row.rowNumber }} 行：{{ row.result }}（{{ row.overwriteMode }}）{{ row.message ? ` - ${row.message}` : '' }}
+                </p>
               </div>
             </div>
           </a-collapse-item>
