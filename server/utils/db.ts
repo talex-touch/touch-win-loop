@@ -202,6 +202,27 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS user_ai_settings (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  memory_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  pilot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  reasoning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  network_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  temperature DOUBLE PRECISION NOT NULL DEFAULT 0.2,
+  selected_model_group TEXT NOT NULL DEFAULT 'auto',
+  selected_model_id TEXT NOT NULL DEFAULT 'auto',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_ai_memories (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  memory_text TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS contest_sync_sources (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -225,6 +246,7 @@ CREATE TABLE IF NOT EXISTS contest_sync_runs (
   preview_valid INTEGER NOT NULL DEFAULT 0,
   preview_invalid INTEGER NOT NULL DEFAULT 0,
   created_count INTEGER NOT NULL DEFAULT 0,
+  updated_count INTEGER NOT NULL DEFAULT 0,
   skipped_count INTEGER NOT NULL DEFAULT 0,
   error_count INTEGER NOT NULL DEFAULT 0,
   error_message TEXT NOT NULL DEFAULT '',
@@ -458,6 +480,7 @@ CREATE INDEX IF NOT EXISTS idx_project_college_bindings_project ON project_colle
 CREATE INDEX IF NOT EXISTS idx_project_advisor_bindings_project ON project_advisor_bindings(project_id);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_updated ON ai_chat_sessions(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session_created ON ai_chat_messages(session_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_token_hash ON invitations(token_hash);
@@ -483,11 +506,35 @@ ALTER TABLE contest_tracks
 ALTER TABLE contest_rubrics
   ADD COLUMN IF NOT EXISTS scoring_mode TEXT NOT NULL DEFAULT 'weighted';
 
+ALTER TABLE contest_sync_runs
+  ADD COLUMN IF NOT EXISTS updated_count INTEGER NOT NULL DEFAULT 0;
+
 ALTER TABLE contest_resources
   ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE contest_resources
   ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE user_ai_settings
+  ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE user_ai_settings
+  ADD COLUMN IF NOT EXISTS pilot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE user_ai_settings
+  ADD COLUMN IF NOT EXISTS reasoning_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE user_ai_settings
+  ADD COLUMN IF NOT EXISTS network_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE user_ai_settings
+  ADD COLUMN IF NOT EXISTS temperature DOUBLE PRECISION NOT NULL DEFAULT 0.2;
+
+ALTER TABLE user_ai_settings
+  ADD COLUMN IF NOT EXISTS selected_model_group TEXT NOT NULL DEFAULT 'auto';
+
+ALTER TABLE user_ai_settings
+  ADD COLUMN IF NOT EXISTS selected_model_id TEXT NOT NULL DEFAULT 'auto';
 
 DO $$
 DECLARE

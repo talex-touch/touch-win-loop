@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type {
+  AiChatMessage,
+  AiChatSession,
   AiContestFilterResult,
   AiProjectChatResult,
   ApiResponse,
@@ -18,6 +20,10 @@ import type {
   WorkspaceSidebarTab,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+
+definePageMeta({
+  layout: 'dashboard',
+})
 
 useHead({
   title: '竞赛分析工作台',
@@ -55,6 +61,13 @@ function arrayToLines(list: string[] | undefined): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
+}
+
+function defaultAssistantGreeting(): ChatMessage {
+  return {
+    role: 'assistant',
+    content: '你好，我是 WinLoop AI。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
+  }
 }
 
 function toTone(score: number): MappingTone {
@@ -98,18 +111,22 @@ const statusLine = ref('')
 const listLoading = ref(false)
 const aiFiltering = ref(false)
 const chatLoading = ref(false)
+const chatSessionsLoading = ref(false)
 const formSubmitting = ref(false)
 const resourcesLoading = ref(false)
 
-const chatMessages = ref<ChatMessage[]>([
-  {
-    role: 'assistant',
-    content: '你好，我是 WinLoop AI。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
-  },
-])
+const chatMessages = ref<ChatMessage[]>([defaultAssistantGreeting()])
+const chatSessions = ref<AiChatSession[]>([])
+const activeChatSessionId = ref('')
 const chatInput = ref('')
 const chatMissingFields = ref<string[]>([])
 const chatDraft = ref<ProjectPayload | null>(null)
+
+function resetChatStateWithGreeting() {
+  chatMessages.value = [defaultAssistantGreeting()]
+  chatDraft.value = null
+  chatMissingFields.value = []
+}
 
 const formState = reactive<WorkspaceFormState>({
   source: 'form',
@@ -259,9 +276,10 @@ const trendBars = computed<number[]>(() => {
 })
 
 const tokenBalance = computed(() => {
-  const base = 14204
-  const used = chatMessages.value.length * 118 + (aiFiltering.value ? 340 : 0)
-  return Math.max(2400, base - used)
+  const quota = currentWorkspace.value?.quota
+  if (quota)
+    return Math.max(0, quota.aiQuotaTotal - quota.aiQuotaUsed)
+  return 0
 })
 
 const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value)
@@ -380,6 +398,129 @@ async function loadProjects() {
   }
 }
 
+async function loadChatMessages(sessionId: string) {
+  if (!activeWorkspaceId.value || !sessionId) {
+    resetChatStateWithGreeting()
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>>(
+      endpoint(`/workspaces/${activeWorkspaceId.value}/chat/sessions/${sessionId}/messages`),
+      {
+        query: {
+          limit: 200,
+        },
+      },
+    )
+
+    const restoredMessages = response.data.messages.map(item => ({
+      role: item.role,
+      content: item.content,
+    })) as ChatMessage[]
+
+    chatMessages.value = restoredMessages.length > 0
+      ? restoredMessages
+      : [defaultAssistantGreeting()]
+  }
+  catch {
+    resetChatStateWithGreeting()
+  }
+}
+
+async function createChatSession(preferredTitle = ''): Promise<string | null> {
+  if (!activeWorkspaceId.value)
+    return null
+
+  try {
+    const response = await $fetch<ApiResponse<AiChatSession>>(
+      endpoint(`/workspaces/${activeWorkspaceId.value}/chat/sessions`),
+      {
+        method: 'POST',
+        body: {
+          title: preferredTitle || `${selectedContest.value?.name || 'AI 对话'}`,
+          contestId: selectedContestId.value,
+          trackId: selectedTrackId.value,
+          major: major.value,
+        },
+      },
+    )
+
+    return response.data.id
+  }
+  catch {
+    return null
+  }
+}
+
+async function loadChatSessions(preferredSessionId = '') {
+  if (!activeWorkspaceId.value) {
+    chatSessions.value = []
+    activeChatSessionId.value = ''
+    resetChatStateWithGreeting()
+    return
+  }
+
+  chatSessionsLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<AiChatSession[]>>(
+      endpoint(`/workspaces/${activeWorkspaceId.value}/chat/sessions`),
+      {
+        query: {
+          limit: 30,
+        },
+      },
+    )
+    chatSessions.value = response.data
+
+    const nextSession = chatSessions.value.find(item => item.id === preferredSessionId)
+      || chatSessions.value.find(item => item.id === activeChatSessionId.value)
+      || chatSessions.value[0]
+
+    if (!nextSession) {
+      const createdId = await createChatSession()
+      if (!createdId) {
+        activeChatSessionId.value = ''
+        resetChatStateWithGreeting()
+        return
+      }
+      activeChatSessionId.value = createdId
+      await loadChatSessions(createdId)
+      return
+    }
+
+    activeChatSessionId.value = nextSession.id
+    await loadChatMessages(nextSession.id)
+  }
+  catch {
+    chatSessions.value = []
+    activeChatSessionId.value = ''
+    resetChatStateWithGreeting()
+  }
+  finally {
+    chatSessionsLoading.value = false
+  }
+}
+
+async function switchChatSession(sessionId: string) {
+  if (!sessionId || sessionId === activeChatSessionId.value)
+    return
+
+  activeChatSessionId.value = sessionId
+  await loadChatMessages(sessionId)
+}
+
+async function startNewChatSession() {
+  const createdId = await createChatSession('新建 AI 对话')
+  if (!createdId) {
+    statusLine.value = '新建对话失败，请稍后重试。'
+    return
+  }
+
+  await loadChatSessions(createdId)
+  statusLine.value = '已创建新对话。'
+}
+
 function syncFormContestTrack() {
   if (!selectedContestId.value || !selectedTrackId.value)
     return
@@ -459,6 +600,15 @@ async function sendChatMessage() {
   if (!content)
     return
 
+  if (!activeChatSessionId.value) {
+    const createdId = await createChatSession()
+    if (!createdId) {
+      statusLine.value = '创建对话会话失败，请稍后重试。'
+      return
+    }
+    activeChatSessionId.value = createdId
+  }
+
   const pendingMessages = [...chatMessages.value, { role: 'user' as const, content }]
   chatMessages.value = pendingMessages
   chatInput.value = ''
@@ -469,6 +619,7 @@ async function sendChatMessage() {
       method: 'POST',
       body: {
         workspaceId: activeWorkspaceId.value,
+        sessionId: activeChatSessionId.value,
         messages: pendingMessages,
         context: {
           workspaceId: activeWorkspaceId.value,
@@ -482,6 +633,8 @@ async function sendChatMessage() {
     chatMessages.value = [...pendingMessages, { role: 'assistant', content: response.data.assistantReply }]
     chatDraft.value = response.data.projectDraft
     chatMissingFields.value = response.data.missingFields
+    activeChatSessionId.value = String(response.data.sessionId || activeChatSessionId.value)
+    await loadChatSessions(activeChatSessionId.value)
     statusLine.value = response.meta.fallbackUsed
       ? '聊天结果来自兜底策略，可继续补充需求后重试。'
       : '聊天已生成结构化草案，可一键回填表单。'
@@ -551,7 +704,7 @@ onMounted(async () => {
   if (!ok)
     return
 
-  await Promise.all([loadContests(), loadResources(), loadProjects()])
+  await Promise.all([loadContests(), loadResources(), loadProjects(), loadChatSessions()])
   syncFormContestTrack()
 })
 
@@ -560,12 +713,12 @@ watch(activeWorkspaceId, async (value, previous) => {
     return
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
-  await loadProjects()
+  await Promise.all([loadProjects(), loadChatSessions()])
 })
 </script>
 
 <template>
-  <div class="workspace-shell h-screen min-h-[680px] flex flex-col overflow-hidden bg-white text-slate-800">
+  <div class="workspace-shell min-h-[680px] flex flex-col overflow-hidden bg-white text-slate-800">
     <WorkspaceHeader
       v-model="headerSearch"
       :contest-name="selectedContest?.name || '未选择竞赛'"
@@ -624,6 +777,9 @@ watch(activeWorkspaceId, async (value, previous) => {
       <WorkspaceRightSidebar
         v-model:sidebar-tab="sidebarTab"
         v-model:chat-input="chatInput"
+        :chat-sessions="chatSessions"
+        :active-chat-session-id="activeChatSessionId"
+        :chat-sessions-loading="chatSessionsLoading"
         :chat-messages="chatMessages"
         :chat-loading="chatLoading"
         :chat-draft="chatDraft"
@@ -637,6 +793,8 @@ watch(activeWorkspaceId, async (value, previous) => {
         :projects="projects"
         @update:form-state="Object.assign(formState, $event)"
         @send-chat="sendChatMessage"
+        @switch-chat-session="switchChatSession"
+        @create-chat-session="startNewChatSession"
         @fill-form="fillFormWithDraft"
         @submit-project="submitProject"
         @open-project="openProject"
@@ -644,7 +802,8 @@ watch(activeWorkspaceId, async (value, previous) => {
     </main>
 
     <WorkspaceStatusBar
-      :status-line="resourcesLoading ? '资料加载中...' : statusLine"
+      :status-line="statusLine"
+      :loading="resourcesLoading"
       :ai-ready="!aiBusy"
       :line="statusCursor.line"
       :column="statusCursor.column"

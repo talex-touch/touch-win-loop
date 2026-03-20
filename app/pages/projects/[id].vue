@@ -56,8 +56,11 @@ onMounted(loadProject)
       </button>
     </div>
 
-    <div v-if="loading" class="p-2 border border-gray-300">
-      加载中...
+    <div v-if="loading" class="p-2 border border-gray-300 space-y-2 animate-pulse">
+      <div class="h-4 w-1/3 rounded bg-gray-200" />
+      <div class="h-3 w-2/3 rounded bg-gray-200" />
+      <div class="h-3 w-full rounded bg-gray-200" />
+      <div class="h-3 w-11/12 rounded bg-gray-200" />
     </div>
 
     <div v-else-if="errorText" class="text-gray-700 p-2 border border-gray-300">

@@ -19,6 +19,12 @@ export interface RuntimeSettings {
     baseURL: string
     apiKey: string
     model: string
+    modelCatalogJson: string
+    temperature: number
+    topP: number
+    maxTokens: number
+    presencePenalty: number
+    frequencyPenalty: number
     timeoutMs: number
     maxRetries: number
   }
@@ -78,6 +84,12 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       baseURL: String(runtime.ai?.baseURL ?? ''),
       apiKey: String(runtime.ai?.apiKey ?? ''),
       model: String(runtime.ai?.model ?? 'gpt-4o-mini'),
+      modelCatalogJson: String(runtime.ai?.modelCatalogJson ?? ''),
+      temperature: toNumber(runtime.ai?.temperature, 0.2),
+      topP: toNumber(runtime.ai?.topP, 1),
+      maxTokens: toNumber(runtime.ai?.maxTokens, 0),
+      presencePenalty: toNumber(runtime.ai?.presencePenalty, 0),
+      frequencyPenalty: toNumber(runtime.ai?.frequencyPenalty, 0),
       timeoutMs: toNumber(runtime.ai?.timeoutMs, 15000),
       maxRetries: toNumber(runtime.ai?.maxRetries, 2),
     },

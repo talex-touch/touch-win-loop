@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type { ApiResponse, Contest, ReviewReport } from '~~/shared/types/domain'
 
+definePageMeta({
+  layout: 'dashboard',
+})
+
 const runtime = useRuntimeConfig()
 const apiBase = runtime.public.apiBaseUrl || '/api'
 

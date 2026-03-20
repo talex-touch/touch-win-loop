@@ -15,8 +15,13 @@ definePageMeta({
 
 interface ImportPreviewRow {
   rowNumber: number
+  action: 'create' | 'update' | 'invalid'
+  inferredYear: number | null
+  inferredYearSource?: string
+  targetContestId?: string
   errors: string[]
   warnings: string[]
+  structuredWarnings: string[]
 }
 
 interface ImportPreviewResult {
@@ -125,7 +130,7 @@ const contestColumns = [
   { title: '级别', dataIndex: 'level', width: 110 },
   { title: '状态', dataIndex: 'status', slotName: 'status', width: 120 },
   { title: '可见性', dataIndex: 'visibility', width: 120 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 260, fixed: 'right' as const },
+  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 320, fixed: 'right' as const },
 ]
 
 watch([filteredContests, pageSize], () => {
@@ -225,10 +230,15 @@ async function goToContestOverviewEditor(contestId?: string) {
     errorText.value = '赛事 ID 缺失，无法进入编辑。'
     return
   }
-  await navigateTo({
-    path: `/admin/contests/${contestId}`,
-    query: { module: 'overview' },
-  })
+  await navigateTo(`/admin/contests/${contestId}/overview/edit`)
+}
+
+async function goToContestAiPrompts(contestId?: string) {
+  if (!contestId) {
+    errorText.value = '赛事 ID 缺失，无法进入 AI 提示词。'
+    return
+  }
+  await navigateTo(`/admin/contests/${contestId}/ai-prompts`)
 }
 
 async function previewImport() {
@@ -263,14 +273,14 @@ async function commitImport(skipInvalid = true) {
   errorText.value = ''
   successText.value = ''
   try {
-    const response = await $fetch<ApiResponse<{ commit: { createdCount: number, skippedCount: number } }>>(endpoint('/admin/contests/import/commit'), {
+    const response = await $fetch<ApiResponse<{ commit: { createdCount: number, updatedCount: number, skippedCount: number } }>>(endpoint('/admin/contests/import/commit'), {
       method: 'POST',
       body: {
         csvText: importCsvText.value,
         skipInvalid,
       },
     })
-    successText.value = `导入完成：新增 ${response.data.commit.createdCount} 条，跳过 ${response.data.commit.skippedCount} 条。`
+    successText.value = `导入完成：新增 ${response.data.commit.createdCount} 条，更新 ${response.data.commit.updatedCount} 条，跳过 ${response.data.commit.skippedCount} 条。`
     await loadContests()
   }
   catch (error: any) {
@@ -350,7 +360,7 @@ async function runSyncSource(sourceId: string) {
     const response = await $fetch<ApiResponse<ContestSyncRun>>(endpoint(`/admin/contests/sync/sources/${sourceId}/run`), {
       method: 'POST',
     })
-    successText.value = `同步完成：状态 ${response.data.status}，新增 ${response.data.createdCount} 条，跳过 ${response.data.skippedCount} 条。`
+    successText.value = `同步完成：状态 ${response.data.status}，新增 ${response.data.createdCount} 条，更新 ${response.data.updatedCount} 条，跳过 ${response.data.skippedCount} 条。`
     await Promise.all([loadContests(), loadSyncData()])
   }
   catch (error: any) {
@@ -528,6 +538,9 @@ watch(isListRoute, async (value) => {
                 <a-button size="mini" @click="goToContestWorkspace(record.id)">
                   工作区
                 </a-button>
+                <a-button v-if="canWrite" size="mini" @click="goToContestAiPrompts(record.id)">
+                  AI提示词
+                </a-button>
                 <a-button
                   v-if="canPublish"
                   size="mini"
@@ -596,6 +609,10 @@ watch(isListRoute, async (value) => {
                 <p class="m-0">
                   总行数：{{ importPreview.total }}；可导入：{{ importPreview.validCount }}；无效：{{ importPreview.invalidCount }}
                 </p>
+                <p class="m-0 mt-1 text-[10px] text-slate-500">
+                  创建：{{ importPreview.rows.filter(item => item.action === 'create').length }}；
+                  更新：{{ importPreview.rows.filter(item => item.action === 'update').length }}
+                </p>
                 <div v-if="importPreview.invalidCount > 0" class="mt-2 space-y-1">
                   <p class="m-0 font-semibold text-rose-600">
                     无效行
@@ -606,6 +623,19 @@ watch(isListRoute, async (value) => {
                     class="m-0 text-rose-600"
                   >
                     第 {{ row.rowNumber }} 行：{{ row.errors.join('；') }}
+                  </p>
+                </div>
+                <div v-if="importPreview.rows.some(item => item.warnings.length > 0 || item.structuredWarnings.length > 0)" class="mt-2 space-y-1">
+                  <p class="m-0 font-semibold text-amber-700">
+                    结构化提示（最多展示 10 条）
+                  </p>
+                  <p
+                    v-for="row in importPreview.rows.filter(item => item.warnings.length > 0 || item.structuredWarnings.length > 0).slice(0, 10)"
+                    :key="`warn-${row.rowNumber}`"
+                    class="m-0 text-amber-700"
+                  >
+                    第 {{ row.rowNumber }} 行（{{ row.action }}，年份 {{ row.inferredYear || '-' }}）：
+                    {{ [...row.warnings, ...row.structuredWarnings].join('；') }}
                   </p>
                 </div>
               </div>
@@ -687,7 +717,7 @@ watch(isListRoute, async (value) => {
                   </div>
                   <p class="m-0 mt-1 text-[10px] text-slate-600">
                     总数 {{ item.previewTotal }} / 有效 {{ item.previewValid }} / 无效 {{ item.previewInvalid }} /
-                    新增 {{ item.createdCount }} / 跳过 {{ item.skippedCount }}
+                    新增 {{ item.createdCount }} / 更新 {{ item.updatedCount }} / 跳过 {{ item.skippedCount }}
                   </p>
                   <p v-if="item.errorMessage" class="m-0 mt-1 text-[10px] text-rose-600">
                     {{ item.errorMessage }}

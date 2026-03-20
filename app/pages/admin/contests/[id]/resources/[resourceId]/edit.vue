@@ -282,8 +282,6 @@ onMounted(loadResource)
       </div>
     </section>
 
-    <ContestWorkspaceTabs :contest-id="contestId" />
-
     <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="6" />

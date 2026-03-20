@@ -1,0 +1,108 @@
+name: WinLoop Image Publish
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: winloop-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-ghcr:
+    name: Build and Push WinLoop Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve image name
+        id: image
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          echo "name=ghcr.io/${owner}/touch-win-loop" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image digest
+        run: |
+          echo "Image: ${{ steps.image.outputs.name }}"
+          echo "Tags:"
+          echo "${{ steps.meta.outputs.tags }}"
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+
+      - name: Trigger deploy-webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.ONEPANEL_WEBHOOK_URL }}
+          WEBHOOK_TOKEN: ${{ secrets.ONEPANEL_WEBHOOK_TOKEN_WINLOOP }}
+          IMAGE_REPO: ${{ steps.image.outputs.name }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK_URL}" ] || [ -z "${WEBHOOK_TOKEN}" ]; then
+            echo "ONEPANEL_WEBHOOK_URL or ONEPANEL_WEBHOOK_TOKEN_WINLOOP is empty, skip webhook trigger."
+            exit 0
+          fi
+
+          webhook_base="${WEBHOOK_URL%/}"
+          payload="$(cat <<JSON
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "branch": "${GITHUB_REF_NAME}",
+            "sha": "${GITHUB_SHA}",
+            "image": "${IMAGE_REPO}",
+            "tag": "latest",
+            "image_ref": "${IMAGE_REPO}@${IMAGE_DIGEST}",
+            "digest": "${IMAGE_DIGEST}",
+            "workflow": "winloop-image"
+          }
+          JSON
+          )"
+
+          curl --fail --show-error --silent \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "X-Deploy-Token: ${WEBHOOK_TOKEN}" \
+            --data "${payload}" \
+            "${webhook_base}/hooks/winloop"

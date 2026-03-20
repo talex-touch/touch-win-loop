@@ -30,6 +30,21 @@ interface ProjectChatChainInput {
   ai: AiRuntimeConfig
   contestName?: string
   trackName?: string
+  injectedPrompt?: string
+}
+
+function buildModePrompt(request: AiProjectChatRequest): string {
+  const aiOptions = request.aiOptions
+  if (!aiOptions)
+    return ''
+
+  const lines: string[] = []
+  if (aiOptions.reasoningEnabled)
+    lines.push('深度思考已开启：输出前先进行完整的假设校验，避免跳步。')
+  if (aiOptions.networkEnabled)
+    lines.push('联网检索已开启：若知识点存在时效性，请明确提示需进一步核验来源。')
+
+  return lines.join('\n')
 }
 
 function toConversation(messages: AiProjectChatRequest['messages']): string {
@@ -47,9 +62,17 @@ export async function runProjectChatChain(input: ProjectChatChainInput): Promise
     name: 'ProjectChatResult',
     strict: false,
   })
+  const modePrompt = buildModePrompt(input.request)
+  const injectedPrompt = input.injectedPrompt?.trim() || ''
+  const promptParts = [
+    '你是大学生竞赛项目教练。你需要生成可执行的项目草案，并指出缺失字段。输出必须是结构化 JSON。',
+    modePrompt,
+    injectedPrompt ? `[附加提示词]\n${injectedPrompt}` : '',
+  ].filter(Boolean)
+  const systemPrompt = promptParts.join('\n\n')
 
   const prompt = ChatPromptTemplate.fromMessages([
-    ['system', '你是大学生竞赛项目教练。你需要生成可执行的项目草案，并指出缺失字段。输出必须是结构化 JSON。'],
+    ['system', systemPrompt],
     ['human', `竞赛：{contestName}\n赛道：{trackName}\n专业：{major}\n对话内容：\n{conversation}`],
   ])
 

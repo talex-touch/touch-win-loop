@@ -31,6 +31,7 @@ interface UserRow {
   id: string
   username: string
   is_platform_admin: boolean
+  is_disabled: boolean
   created_at: string
   updated_at: string
 }
@@ -158,6 +159,7 @@ function mapUser(row: UserRow): AuthUser {
     id: row.id,
     username: row.username,
     isPlatformAdmin: row.is_platform_admin,
+    isDisabled: Boolean(row.is_disabled),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -223,9 +225,45 @@ export async function countUsers(db: Queryable): Promise<number> {
   return Number(result.rows[0]?.count || '0')
 }
 
+export async function ensureBootstrapPlatformSuperAdmin(db: Queryable, userId: string): Promise<boolean> {
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['winloop.bootstrap.platform-super-admin'])
+
+  const hasAdminResult = await db.query<{ has_admin: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1 FROM users WHERE is_platform_admin = TRUE
+      UNION
+      SELECT 1 FROM platform_user_roles WHERE role = 'platform_super_admin'
+    ) AS has_admin`,
+  )
+
+  if (hasAdminResult.rows[0]?.has_admin)
+    return false
+
+  const now = new Date().toISOString()
+  const promoted = await db.query<{ id: string }>(
+    `UPDATE users
+     SET is_platform_admin = TRUE, updated_at = $2
+     WHERE id = $1
+     RETURNING id`,
+    [userId, now],
+  )
+
+  if (!promoted.rows[0]?.id)
+    return false
+
+  await db.query(
+    `INSERT INTO platform_user_roles (id, user_id, role, created_at, updated_at)
+     VALUES ($1, $2, 'platform_super_admin', $3, $3)
+     ON CONFLICT (user_id, role) DO NOTHING`,
+    [randomUUID(), userId, now],
+  )
+
+  return true
+}
+
 export async function findUserByUsername(db: Queryable, username: string): Promise<AuthUser | null> {
   const result = await db.query<UserRow>(
-    'SELECT id, username, is_platform_admin, created_at::TEXT, updated_at::TEXT FROM users WHERE username = $1 LIMIT 1',
+    'SELECT id, username, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT FROM users WHERE username = $1 LIMIT 1',
     [username],
   )
 
@@ -243,7 +281,7 @@ export async function getUserPasswordHashByUsername(db: Queryable, username: str
 
 export async function findUserById(db: Queryable, userId: string): Promise<AuthUser | null> {
   const result = await db.query<UserRow>(
-    'SELECT id, username, is_platform_admin, created_at::TEXT, updated_at::TEXT FROM users WHERE id = $1 LIMIT 1',
+    'SELECT id, username, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT FROM users WHERE id = $1 LIMIT 1',
     [userId],
   )
 
@@ -315,6 +353,7 @@ export async function findAuthBySessionTokenHash(
     user_id: string
     username: string
     is_platform_admin: boolean
+    is_disabled: boolean
     user_created_at: string
     user_updated_at: string
     session_id: string
@@ -325,6 +364,7 @@ export async function findAuthBySessionTokenHash(
       u.id AS user_id,
       u.username,
       u.is_platform_admin,
+      u.is_disabled,
       u.created_at::TEXT AS user_created_at,
       u.updated_at::TEXT AS user_updated_at,
       s.id AS session_id,
@@ -347,6 +387,7 @@ export async function findAuthBySessionTokenHash(
     id: row.user_id,
     username: row.username,
     isPlatformAdmin: row.is_platform_admin,
+    isDisabled: Boolean(row.is_disabled),
     createdAt: row.user_created_at,
     updatedAt: row.user_updated_at,
   }

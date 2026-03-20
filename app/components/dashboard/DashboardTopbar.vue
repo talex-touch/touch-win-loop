@@ -1,12 +1,8 @@
 <script setup lang="ts">
 withDefaults(defineProps<{
   modelValue?: string
-  analystName?: string
-  analystTier?: string
 }>(), {
   modelValue: '',
-  analystName: '分析师 张明',
-  analystTier: '高级会员',
 })
 
 const emit = defineEmits<{
@@ -41,22 +37,6 @@ function onInput(event: Event) {
         <span class="material-symbols-outlined text-slate-600">notifications</span>
         <span class="border-2 border-white rounded-full bg-red-500 h-2 w-2 right-2 top-2 absolute" />
       </button>
-      <div class="bg-slate-200 h-8 w-px hidden sm:block" />
-      <div class="pl-2 gap-3 hidden items-center sm:flex">
-        <div class="text-right">
-          <p class="text-sm font-semibold">
-            {{ analystName }}
-          </p>
-          <p class="text-xs text-slate-500">
-            {{ analystTier }}
-          </p>
-        </div>
-        <img
-          class="border border-slate-200 rounded-full h-10 w-10 object-cover"
-          alt="用户头像"
-          src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgO3szaJLN0mB5xXQFUAcenjGXOhK0fc6jH78_wVb6AgKHW2rx7If2DG7Zro9-woZuymuskn7rGkTJWIN-l2SRqi6dvqXNZqAE8LUhcHv4Z7uY-ptVO0eKI9sZzfUw9Jp1lzLiYTdYykbvVyXdkKLj9TeWaK9DipDXCk0g0Tgtir3CsIXTaFlEbB7EtggaKgtgnWMXjiAiW1uwj-4mVXyLJqdaJfAvFHWfRaX1dosZdLgVxspcp2tPArmit3IFKKQ4HpECByj_ZGI1"
-        >
-      </div>
     </div>
   </header>
 </template>

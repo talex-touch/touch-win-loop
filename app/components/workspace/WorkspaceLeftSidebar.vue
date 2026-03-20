@@ -145,7 +145,8 @@ const currentWorkspace = computed(() => {
             :disabled="listLoading"
             @click="emit('loadContests')"
           >
-            {{ listLoading ? '加载中...' : '结构化筛选' }}
+            <span v-if="listLoading" class="mx-auto inline-block h-3 w-14 rounded bg-slate-300 align-middle animate-pulse" />
+            <span v-else>结构化筛选</span>
           </button>
           <button
             class="h-8 rounded bg-blue-600 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
@@ -220,7 +221,7 @@ const currentWorkspace = computed(() => {
           <span class="w-1.5 h-1.5 bg-green-500 rounded-full" />
         </div>
         <div class="text-[10px] text-slate-400 leading-relaxed">
-          模型: Analysis-V4-Pro<br>
+          模型: 由后端配置<br>
           Token 余额: {{ tokenBalance.toLocaleString('zh-CN') }}
         </div>
       </div>

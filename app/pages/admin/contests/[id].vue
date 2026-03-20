@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import type { ApiResponse, ContestDetailPayload, PublishCheckResult } from '~~/shared/types/domain'
+import type {
+  ApiResponse,
+  ContestDetailPayload,
+  PublishCheckResult,
+} from '~~/shared/types/domain'
 
 definePageMeta({
   layout: 'admin',
@@ -21,95 +25,97 @@ const contestId = computed(() => {
   return Array.isArray(value) ? (value[0] || '') : (value || '')
 })
 
-const isWorkspaceRoute = computed(() => {
-  if (!contestId.value)
-    return false
-  const normalized = route.path.replace(/\/+$/, '')
-  return normalized === `/admin/contests/${contestId.value}`
+const workspaceRootPath = computed(() => `/admin/contests/${contestId.value}`)
+const normalizedRoutePath = computed(() => route.path.replace(/\/+$/, ''))
+
+type WorkspaceModuleKey = 'overview' | 'faq' | 'tracks' | 'timelines' | 'rubrics' | 'resources' | 'prompts' | 'audit'
+
+const workspaceModuleKeys: WorkspaceModuleKey[] = [
+  'overview',
+  'faq',
+  'tracks',
+  'timelines',
+  'rubrics',
+  'resources',
+  'prompts',
+  'audit',
+]
+
+function isWorkspaceModuleKey(value: string): value is WorkspaceModuleKey {
+  return workspaceModuleKeys.includes(value as WorkspaceModuleKey)
+}
+
+const workspaceModules = computed(() => {
+  const id = contestId.value
+  return [
+    { key: 'overview' as const, label: '基础信息', path: `/admin/contests/${id}/overview/edit` },
+    { key: 'faq' as const, label: 'FAQ', path: `/admin/contests/${id}/faq` },
+    { key: 'tracks' as const, label: '赛道管理', path: `/admin/contests/${id}/tracks` },
+    { key: 'timelines' as const, label: '时间节点', path: `/admin/contests/${id}/timelines` },
+    { key: 'rubrics' as const, label: '评委细则', path: `/admin/contests/${id}/rubrics` },
+    { key: 'resources' as const, label: '资料中心', path: `/admin/contests/${id}/resources` },
+    { key: 'prompts' as const, label: 'AI 提示词', path: `/admin/contests/${id}/ai-prompts` },
+    { key: 'audit' as const, label: '审计历史', path: `/admin/contests/${id}/audit` },
+  ]
 })
+
+function resolveModuleFromPath(path: string): WorkspaceModuleKey {
+  const id = contestId.value
+  const normalizedPath = path.replace(/\/+$/, '')
+  const prefix = `/admin/contests/${id}/`
+  if (!normalizedPath.startsWith(prefix))
+    return 'overview'
+
+  const tail = normalizedPath.slice(prefix.length)
+  if (tail.startsWith('overview'))
+    return 'overview'
+  if (tail.startsWith('faq'))
+    return 'faq'
+  if (tail.startsWith('tracks'))
+    return 'tracks'
+  if (tail.startsWith('timelines'))
+    return 'timelines'
+  if (tail.startsWith('rubrics'))
+    return 'rubrics'
+  if (tail.startsWith('resources'))
+    return 'resources'
+  if (tail.startsWith('ai-prompts'))
+    return 'prompts'
+  if (tail.startsWith('audit'))
+    return 'audit'
+  return 'overview'
+}
+
+const activeModule = computed<WorkspaceModuleKey>(() => resolveModuleFromPath(normalizedRoutePath.value))
+
+const legacyQueryModule = computed<WorkspaceModuleKey | ''>(() => {
+  const value = Array.isArray(route.query.module) ? route.query.module[0] : route.query.module
+  const moduleText = String(value || '').trim()
+  if (isWorkspaceModuleKey(moduleText))
+    return moduleText
+  return ''
+})
+
+const defaultModulePath = computed(() => {
+  const preferredKey = legacyQueryModule.value || 'overview'
+  return workspaceModules.value.find(item => item.key === preferredKey)?.path
+    || workspaceModules.value[0]?.path
+    || workspaceRootPath.value
+})
+
+async function switchModule(moduleKey: WorkspaceModuleKey) {
+  const targetPath = workspaceModules.value.find(item => item.key === moduleKey)?.path
+  if (!targetPath || normalizedRoutePath.value === targetPath)
+    return
+  await navigateTo(targetPath)
+}
 
 const loading = ref(false)
 const actionLoading = ref(false)
-const moduleDialogVisible = ref(false)
-const moduleIframeLoading = ref(false)
-const activeModuleKey = ref('')
 const errorText = ref('')
 const successText = ref('')
 const detail = ref<ContestDetailPayload | null>(null)
 const publishCheck = ref<PublishCheckResult | null>(null)
-
-const moduleEntries = computed(() => {
-  const contest = detail.value?.contest
-  const timelineCount = detail.value?.timelines.length || 0
-  const rubricCount = detail.value?.rubrics.length || 0
-  const resourceCount = (detail.value?.resourceStats || []).reduce((sum, item) => sum + Number(item.count || 0), 0)
-  const trackCount = contest?.tracks.length || 0
-
-  return [
-    {
-      key: 'overview',
-      label: '基础信息',
-      desc: '名称、主办方、参赛对象、FAQ 等',
-      to: `/admin/contests/${contestId.value}/overview/edit`,
-      stat: contest?.summary ? '已录入' : '待完善',
-    },
-    {
-      key: 'tracks',
-      label: '赛道管理',
-      desc: '赛道列表、交付物、适配专业',
-      to: `/admin/contests/${contestId.value}/tracks`,
-      stat: `${trackCount} 条`,
-    },
-    {
-      key: 'timelines',
-      label: '时间节点',
-      desc: '报名/提交/初赛/决赛节点',
-      to: `/admin/contests/${contestId.value}/timelines`,
-      stat: `${timelineCount} 条`,
-    },
-    {
-      key: 'rubrics',
-      label: '评分规则',
-      desc: '维度、权重/要点、版本管理',
-      to: `/admin/contests/${contestId.value}/rubrics`,
-      stat: `${rubricCount} 条`,
-    },
-    {
-      key: 'resources',
-      label: '资料入口',
-      desc: '竞赛资料分类录入与维护',
-      to: `/admin/contests/${contestId.value}/resources`,
-      stat: `${resourceCount} 条`,
-    },
-  ]
-})
-
-const activeModuleEntry = computed(() => {
-  return moduleEntries.value.find(item => item.key === activeModuleKey.value) || null
-})
-
-const activeModuleIframeSrc = computed(() => {
-  if (!activeModuleEntry.value)
-    return ''
-  return `${activeModuleEntry.value.to}?embed=1`
-})
-
-function openModuleDialog(moduleKey: string) {
-  const target = moduleEntries.value.find(item => item.key === moduleKey)
-  if (!target)
-    return
-  activeModuleKey.value = moduleKey
-  moduleIframeLoading.value = true
-  moduleDialogVisible.value = true
-}
-
-function onModuleFrameLoad() {
-  moduleIframeLoading.value = false
-}
-
-function closeModuleDialog() {
-  moduleDialogVisible.value = false
-}
 
 async function loadData() {
   if (!contestId.value)
@@ -168,25 +174,26 @@ async function archiveContest() {
   }
 }
 
-async function bootstrapWorkspacePage() {
-  await loadData()
+watch(
+  () => [contestId.value, normalizedRoutePath.value, legacyQueryModule.value],
+  () => {
+    if (!contestId.value)
+      return
+    if (normalizedRoutePath.value === workspaceRootPath.value)
+      void navigateTo(defaultModulePath.value, { replace: true })
+  },
+  { immediate: true },
+)
 
-  const moduleParam = route.query.module
-  const moduleKey = Array.isArray(moduleParam) ? (moduleParam[0] || '') : (moduleParam || '')
-  if (moduleKey)
-    openModuleDialog(moduleKey)
-}
-
-watch(isWorkspaceRoute, async (value) => {
-  if (!value)
+watch(contestId, async (value, oldValue) => {
+  if (!value || value === oldValue)
     return
-  await bootstrapWorkspacePage()
+  await loadData()
 }, { immediate: true })
 </script>
 
 <template>
-  <NuxtPage v-if="!isWorkspaceRoute" />
-  <div v-else class="space-y-4">
+  <div class="space-y-4">
     <section class="rounded-lg border border-slate-200 bg-white p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -194,7 +201,7 @@ watch(isWorkspaceRoute, async (value) => {
             竞赛工作区
           </h1>
           <p class="mt-1 text-xs text-slate-500">
-            赛事 ID：{{ contestId }}，按模块弹窗编辑并手动保存。
+            赛事 ID：{{ contestId }}，统一通过 Tabs 进入各模块。
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -209,23 +216,34 @@ watch(isWorkspaceRoute, async (value) => {
           </button>
         </div>
       </div>
-    </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="6" />
-      </a-skeleton>
-    </section>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button
+          v-for="item in workspaceModules"
+          :key="item.key"
+          class="rounded px-3 py-1.5 text-xs font-medium transition-colors"
+          :class="activeModule === item.key
+            ? 'bg-slate-900 text-white'
+            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+          @click="switchModule(item.key)"
+        >
+          {{ item.label }}
+        </button>
+      </div>
 
-    <template v-else-if="detail && publishCheck">
-      <section class="rounded-lg border border-slate-200 bg-white p-4">
+      <div v-if="loading" class="mt-3 rounded border border-slate-200 bg-slate-50 p-3">
+        <a-skeleton :animation="true">
+          <a-skeleton-line :rows="4" />
+        </a-skeleton>
+      </div>
+      <div v-else-if="detail && publishCheck" class="mt-3 rounded border border-slate-200 bg-slate-50 p-3">
         <h2 class="text-sm font-semibold text-slate-900">
           发布预检
         </h2>
         <p class="mt-2 text-xs text-slate-600">
           完成度：{{ publishCheck.completion }}% ｜ 结果：{{ publishCheck.canPublish ? '可发布' : '存在阻断项' }}
         </p>
-        <div v-if="publishCheck.blockers.length > 0" class="mt-3 rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+        <div v-if="publishCheck.blockers.length > 0" class="mt-2 rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
           <p class="font-semibold">
             阻断项
           </p>
@@ -241,35 +259,10 @@ watch(isWorkspaceRoute, async (value) => {
             · {{ item.message }}
           </p>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="rounded-lg border border-slate-200 bg-white p-3">
-        <a-list
-          :data="moduleEntries"
-          :grid-props="{ xs: 1, sm: 2, md: 2, lg: 3, xl: 3, gutter: 12 }"
-          size="small"
-        >
-          <template #item="{ item }">
-            <a-list-item>
-              <div class="h-full rounded border border-slate-200 bg-white p-4">
-                <h3 class="text-sm font-semibold text-slate-900">
-                  {{ item.label }}
-                </h3>
-                <p class="mt-1 text-xs text-slate-500">
-                  {{ item.desc }}
-                </p>
-                <p class="mt-2 text-xs text-slate-700">
-                  状态：{{ item.stat }}
-                </p>
-                <button class="dense-btn mt-3 inline-flex" @click="openModuleDialog(item.key)">
-                  编辑
-                </button>
-              </div>
-            </a-list-item>
-          </template>
-        </a-list>
-      </section>
-    </template>
+    <NuxtPage />
 
     <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
       {{ errorText }}
@@ -278,49 +271,5 @@ watch(isWorkspaceRoute, async (value) => {
     <section v-if="successText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
       {{ successText }}
     </section>
-
-    <a-modal
-      v-model:visible="moduleDialogVisible"
-      :footer="false"
-      :title="activeModuleEntry ? `模块编辑：${activeModuleEntry.label}` : '模块编辑'"
-      width="1200px"
-      @cancel="closeModuleDialog"
-    >
-      <div class="module-frame-wrap">
-        <div v-if="moduleIframeLoading" class="module-frame-skeleton">
-          <a-skeleton :animation="true">
-            <a-skeleton-line :rows="10" />
-          </a-skeleton>
-        </div>
-        <iframe
-          v-if="activeModuleEntry"
-          :src="activeModuleIframeSrc"
-          class="module-frame"
-          @load="onModuleFrameLoad"
-        />
-      </div>
-    </a-modal>
   </div>
 </template>
-
-<style scoped>
-.module-frame-wrap {
-  position: relative;
-  min-height: 72vh;
-}
-
-.module-frame-skeleton {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: #fff;
-  padding: 12px;
-}
-
-.module-frame {
-  width: 100%;
-  height: 72vh;
-  border: none;
-  background: #f4f6f8;
-}
-</style>

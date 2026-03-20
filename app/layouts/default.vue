@@ -1,17 +1,48 @@
 <script setup lang="ts">
-const route = useRoute()
+import type { ApiResponse, AuthMeResult, PlatformPermission } from '~~/shared/types/domain'
 
-const links = [
-  { to: '/dashboard', label: '首页' },
-  { to: '/workspace', label: '工作台' },
-  { to: '/contests', label: '竞赛库' },
-  { to: '/resources', label: '资料中心' },
-  { to: '/topics', label: '选题建议' },
-  { to: '/reviews', label: '作品评审' },
-  { to: '/defense', label: '模拟答辩' },
-]
+const route = useRoute()
+const runtime = useRuntimeConfig()
+const apiBase = runtime.public.apiBaseUrl || '/api'
+
+function endpoint(path: string): string {
+  if (apiBase.endsWith('/'))
+    return `${apiBase.slice(0, -1)}${path}`
+  return `${apiBase}${path}`
+}
+
+const platformPermissions = ref<PlatformPermission[]>([])
+
+const hasAdminAccess = computed(() => {
+  return platformPermissions.value.length > 0
+})
+
+const links = computed(() => {
+  const baseLinks = [
+    { to: '/dashboard', label: '首页' },
+    { to: '/workspace', label: '工作台' },
+    { to: '/contests', label: '竞赛库' },
+    { to: '/resources', label: '资料中心' },
+    { to: '/topics', label: '选题建议' },
+    { to: '/reviews', label: '作品评审' },
+    { to: '/defense', label: '模拟答辩' },
+  ]
+  if (hasAdminAccess.value)
+    baseLinks.push({ to: '/admin', label: '平台管理' })
+  return baseLinks
+})
 
 const hideGlobalHeader = computed(() => route.path.startsWith('/workspace'))
+
+onMounted(async () => {
+  try {
+    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    platformPermissions.value = response.data.user.platformPermissions || []
+  }
+  catch {
+    platformPermissions.value = []
+  }
+})
 </script>
 
 <template>

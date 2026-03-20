@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  AiChatSession,
   ChatMessage,
   Contest,
   Project,
@@ -11,6 +12,9 @@ import type { WorkspaceFormState, WorkspaceSidebarTab } from '~/types/workspace'
 
 const props = withDefaults(defineProps<{
   sidebarTab?: WorkspaceSidebarTab
+  chatSessions?: AiChatSession[]
+  activeChatSessionId?: string
+  chatSessionsLoading?: boolean
   chatMessages?: ChatMessage[]
   chatInput?: string
   chatLoading?: boolean
@@ -25,6 +29,9 @@ const props = withDefaults(defineProps<{
   projects?: Project[]
 }>(), {
   sidebarTab: 'chat',
+  chatSessions: () => [],
+  activeChatSessionId: '',
+  chatSessionsLoading: false,
   chatMessages: () => [],
   chatInput: '',
   chatLoading: false,
@@ -43,6 +50,8 @@ const emit = defineEmits<{
   'update:chatInput': [value: string]
   'update:formState': [value: WorkspaceFormState]
   'sendChat': []
+  'switchChatSession': [sessionId: string]
+  'createChatSession': []
   'fillForm': [draft: ProjectPayload]
   'submitProject': []
   'openProject': [projectId: string]
@@ -84,6 +93,42 @@ function updateFormField(key: keyof WorkspaceFormState, value: string) {
 
     <div class="flex-1 overflow-y-auto p-4 no-scrollbar">
       <div v-if="sidebarTab === 'chat'" class="space-y-4 h-full flex flex-col">
+        <div class="rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="text-xs font-semibold text-slate-700">
+              对话会话（{{ chatSessions.length }}）
+            </div>
+            <button
+              class="h-7 rounded border border-slate-300 bg-white px-2 text-[11px] font-semibold hover:bg-slate-100"
+              @click="emit('createChatSession')"
+            >
+              新建
+            </button>
+          </div>
+          <div v-if="chatSessionsLoading" class="text-[11px] text-slate-500">
+            会话加载中...
+          </div>
+          <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400">
+            暂无会话，点击“新建”开始。
+          </div>
+          <div v-else class="max-h-28 overflow-y-auto space-y-1">
+            <button
+              v-for="session in chatSessions"
+              :key="session.id"
+              class="w-full rounded border px-2 py-1.5 text-left"
+              :class="session.id === activeChatSessionId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'"
+              @click="emit('switchChatSession', session.id)"
+            >
+              <div class="truncate text-[11px] font-semibold text-slate-700">
+                {{ session.title || 'AI 对话' }}
+              </div>
+              <div class="text-[10px] text-slate-500 mt-1">
+                消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}
+              </div>
+            </button>
+          </div>
+        </div>
+
         <div class="flex-1 space-y-4">
           <div
             v-for="(message, index) in chatMessages"
@@ -140,7 +185,7 @@ function updateFormField(key: keyof WorkspaceFormState, value: string) {
           <div class="relative">
             <textarea
               :value="chatInput"
-              class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-blue-600 focus:border-blue-600 resize-none h-24 placeholder:text-slate-400"
+              class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 pr-10 text-xs focus:ring-1 focus:ring-blue-600 focus:border-blue-600 resize-none h-24 placeholder:text-slate-400"
               placeholder="询问 AI 或输入指令..."
               @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
             />

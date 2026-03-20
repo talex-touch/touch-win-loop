@@ -59,5 +59,14 @@ export async function requireAuth(event: H3Event): Promise<{ user: AuthUser, ses
     })
   }
 
+  if (auth.user.isDisabled) {
+    clearSessionCookie(event)
+    throw createError({
+      statusCode: 403,
+      statusMessage: 'forbidden',
+      message: '当前账号已被禁用，请联系平台管理员。',
+    })
+  }
+
   return auth
 }

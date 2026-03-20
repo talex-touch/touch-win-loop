@@ -1,72 +1,113 @@
-import type { TopicProposal, TopicProposalItem } from '~~/shared/types/domain'
-import { randomUUID } from 'node:crypto'
-import { findContestById, findTrackById } from '~~/server/data/catalog'
+import type { TopicProposal } from '~~/shared/types/domain'
+import { setResponseStatus } from 'h3'
+import { runTopicProposalFallback } from '~~/server/services/ai/fallback'
+import { runTopicProposalChain } from '~~/server/services/ai/topic-proposal-chain'
 import { fail, ok } from '~~/server/utils/api'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { requireAuth } from '~~/server/utils/auth'
+import { getContestDetail, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
+import { withClient, withTransaction } from '~~/server/utils/db'
+import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { runWithRetry } from '~~/server/utils/retry'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveRuntimeSettings(event)
+  const { user } = await requireAuth(event)
   const body = await readBody<{ contestId?: string, trackId?: string, major?: string }>(event)
+  const includeInternal = Boolean(
+    user.isPlatformAdmin
+    || await checkPlatformPermission(event, user, 'contest.read_internal'),
+  )
 
-  const contest = body.contestId ? findContestById(body.contestId) : undefined
-  const track = body.contestId && body.trackId ? findTrackById(body.contestId, body.trackId) : undefined
+  const bundle = await withClient(event, async (db) => {
+    const detail = await getContestDetail(db, {
+      contestId: String(body.contestId || ''),
+      includeInternal,
+    })
+    const injectedPrompt = await resolveAiPromptText(db, {
+      contestId: String(body.contestId || ''),
+      trackId: String(body.trackId || ''),
+      target: 'topic_proposal',
+    })
+    return { detail, injectedPrompt }
+  })
+  const contest = bundle.detail?.contest
+  const track = contest?.tracks.find(item => item.id === body.trackId)
 
   if (!contest || !track) {
+    setResponseStatus(event, 400)
     return fail('contestId 或 trackId 无效', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40001)
+  }
+
+  const onlyFallback = runtime.ai.provider === 'mock' || !runtime.ai.apiKey
+  if (onlyFallback) {
+    const data = runTopicProposalFallback({
+      contest,
+      track,
+      major: body.major,
+    })
+    await withTransaction(event, async (db) => {
+      await recordContestAuditLog(db, {
+        actorUserId: user.id,
+        action: 'ai.invoke.topic_proposals',
+        contestId: contest.id,
+        payload: {
+          trackId: track.id,
+          fallbackUsed: true,
+          attempts: 1,
+        },
+      })
+    })
+    return ok(data, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: true,
       attempts: 1,
-    }, 40001)
+    }, 'fallback used')
   }
 
-  const major = body.major || '目标专业'
+  const result = await runWithRetry<TopicProposal>({
+    maxRetries: runtime.ai.maxRetries,
+    run: () => runTopicProposalChain({
+      contest,
+      track,
+      major: body.major,
+      ai: runtime.ai,
+      injectedPrompt: bundle.injectedPrompt,
+    }),
+    fallback: () => runTopicProposalFallback({
+      contest,
+      track,
+      major: body.major,
+    }),
+  })
 
-  const proposals: TopicProposalItem[] = [
-    {
-      title: `${track.name}：${major} 智能辅导决策平台`,
-      reason: '结合竞赛评分口径与专业能力，具备可展示的工程成果。',
-      innovationPoints: ['评分维度反向驱动迭代', '任务分解可追踪'],
-      techRouteSteps: ['定义问题边界', '设计数据结构', '实现核心流程', '构建可视化评审面板'],
-      scoringMapping: ['创新性', '可行性', '表达规范'],
-      risks: ['数据样本不足', '时间排期冲突'],
-      references: ['竞赛官网评分细则', '往届优秀作品关键词'],
-    },
-    {
-      title: `${track.name}：竞赛资料智能检索与答辩演练`,
-      reason: '从资料管理到答辩训练形成闭环，展示完整产品思路。',
-      innovationPoints: ['多角色评委模拟', '结构化缺口识别'],
-      techRouteSteps: ['聚合资料索引', '构建问答流程', '生成答辩清单'],
-      scoringMapping: ['应用价值', '证据与数据'],
-      risks: ['外部链接失效', '演示复杂度过高'],
-      references: ['竞赛 FAQ', '行业最佳实践'],
-    },
-    {
-      title: `${track.name}：${major} 项目质量评审助手`,
-      reason: '聚焦“可执行修改清单”，直连竞赛交付目标。',
-      innovationPoints: ['章节级建议生成', '工作量分级排期'],
-      techRouteSteps: ['加载 rubric', '执行多维评估', '输出改进计划'],
-      scoringMapping: ['可行性', '表达规范', '应用价值'],
-      risks: ['评审口径偏差', '指标定义不清'],
-      references: ['往届评审意见', '主办方评分标准'],
-    },
-  ]
+  await withTransaction(event, async (db) => {
+    await recordContestAuditLog(db, {
+      actorUserId: user.id,
+      action: 'ai.invoke.topic_proposals',
+      contestId: contest.id,
+      payload: {
+        trackId: track.id,
+        fallbackUsed: result.fallbackUsed,
+        attempts: result.attempts,
+      },
+    })
+  })
 
-  const data: TopicProposal = {
-    id: randomUUID(),
-    contestId: contest.id,
-    trackId: track.id,
-    createdAt: new Date().toISOString(),
-    proposals,
-  }
-
-  return ok(data, {
+  return ok(result.data, {
     startedAt,
     provider: runtime.ai.provider,
     model: runtime.ai.model,
-    fallbackUsed: true,
-    attempts: 1,
-  })
+    fallbackUsed: result.fallbackUsed,
+    attempts: result.attempts,
+  }, result.fallbackUsed ? 'fallback used' : 'ok')
 })

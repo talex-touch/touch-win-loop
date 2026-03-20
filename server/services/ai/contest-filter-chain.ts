@@ -25,6 +25,7 @@ interface ContestFilterChainInput {
   request: AiContestFilterRequest
   contests: Contest[]
   ai: AiRuntimeConfig
+  injectedPrompt?: string
 }
 
 function toContestSummary(contests: Contest[]): string {
@@ -54,9 +55,13 @@ export async function runContestFilterChain(input: ContestFilterChainInput): Pro
     name: 'ContestFilterResult',
     strict: false,
   })
+  const injectedPrompt = input.injectedPrompt?.trim() || ''
+  const systemPrompt = injectedPrompt
+    ? `你是竞赛筛选助手。必须根据候选竞赛列表返回结构化结果，contestIds 只能从给定 id 中选择。\n\n[附加提示词]\n${injectedPrompt}`
+    : '你是竞赛筛选助手。必须根据候选竞赛列表返回结构化结果，contestIds 只能从给定 id 中选择。'
 
   const prompt = ChatPromptTemplate.fromMessages([
-    ['system', '你是竞赛筛选助手。必须根据候选竞赛列表返回结构化结果，contestIds 只能从给定 id 中选择。'],
+    ['system', systemPrompt],
     ['human', `用户查询：{query}\n用户专业：{major}\n用户结构化筛选：{filters}\n候选竞赛列表：\n{contestSummary}`],
   ])
 

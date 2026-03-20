@@ -1,59 +1,127 @@
 import type { ReviewReport } from '~~/shared/types/domain'
-import { randomUUID } from 'node:crypto'
-import { findContestById, findTrackById } from '~~/server/data/catalog'
+import { runReviewFallback } from '~~/server/services/ai/fallback'
+import { runReviewChain } from '~~/server/services/ai/review-chain'
 import { fail, ok } from '~~/server/utils/api'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { requireAuth } from '~~/server/utils/auth'
+import { getContestDetail, getPublishedRubricByTrack, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
+import { withClient, withTransaction } from '~~/server/utils/db'
+import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { runWithRetry } from '~~/server/utils/retry'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveRuntimeSettings(event)
+  const { user } = await requireAuth(event)
   const body = await readBody<{ contestId?: string, trackId?: string, text?: string }>(event)
-
-  const contest = body.contestId ? findContestById(body.contestId) : undefined
-  const track = body.contestId && body.trackId ? findTrackById(body.contestId, body.trackId) : undefined
   const rawText = (body.text || '').trim()
+  const includeInternal = Boolean(
+    user.isPlatformAdmin
+    || await checkPlatformPermission(event, user, 'contest.read_internal'),
+  )
 
-  if (!contest || !track)
-    return fail('contestId 或 trackId 无效', { startedAt, provider: runtime.ai.provider, model: runtime.ai.model, fallbackUsed: true, attempts: 1 }, 40002)
+  if (!body.contestId || !body.trackId)
+    return fail('contestId 或 trackId 无效', { startedAt, provider: runtime.ai.provider, model: runtime.ai.model, fallbackUsed: false, attempts: 1 }, 40002)
 
-  const baseScore = Math.max(58, Math.min(90, Math.round(60 + rawText.length / 25)))
+  const reviewInput = await withClient(event, async (db) => {
+    const detail = await getContestDetail(db, {
+      contestId: body.contestId!,
+      includeInternal,
+    })
+    const rubric = await getPublishedRubricByTrack(db, {
+      contestId: body.contestId!,
+      trackId: body.trackId!,
+    })
 
-  const report: ReviewReport = {
-    id: randomUUID(),
-    contestId: contest.id,
-    trackId: track.id,
-    totalScore: baseScore,
-    dimensionScores: [
-      { role: '学术规范评委', score: Math.max(50, baseScore - 4), comment: '结构完整但证据链需进一步强化。' },
-      { role: '创新价值评委', score: Math.max(52, baseScore - 2), comment: '亮点明确，建议补充差异化对比。' },
-      { role: '专业评委', score: baseScore, comment: '技术路线可行，建议增加关键指标定义。' },
-      { role: '表达规范评委', score: Math.max(55, baseScore - 3), comment: '图表与文字的一致性仍有提升空间。' },
-      { role: '综合评委', score: Math.max(56, baseScore - 1), comment: '优先聚焦可验证成果，提升答辩稳定性。' },
-    ],
-    topPriorities: [
-      '补齐核心指标定义与计算口径。',
-      '增加实验对照或竞品对比证据。',
-      '优化结论页与价值页，突出成果闭环。',
-    ],
-    chapterSuggestions: [
-      { chapter: '摘要', suggestions: ['突出问题-方案-结果链路', '增加量化成果一句话总结'] },
-      { chapter: '方法', suggestions: ['补充数据来源说明', '明确关键参数与实验配置'] },
-      { chapter: '结果', suggestions: ['增加对照组', '展示失败案例与改进过程'] },
-    ],
-    actionItems: [
-      { task: '补充指标口径与计算说明', workload: 'low' },
-      { task: '完善实验对照和结果可视化', workload: 'medium' },
-      { task: '重构答辩故事线与演示脚本', workload: 'high' },
-    ],
-    riskWarnings: ['存在“结论先行、证据不足”的风险', '交付物中技术细节与口头陈述可能不一致'],
-    createdAt: new Date().toISOString(),
+    return {
+      detail,
+      rubric,
+      injectedPrompt: await resolveAiPromptText(db, {
+        contestId: body.contestId,
+        trackId: body.trackId,
+        target: 'review',
+      }),
+    }
+  })
+
+  if (!reviewInput.detail)
+    return fail('contestId 或 trackId 无效', { startedAt, provider: runtime.ai.provider, model: runtime.ai.model, fallbackUsed: false, attempts: 1 }, 40002)
+  const detail = reviewInput.detail
+
+  const track = detail.contest.tracks.find(item => item.id === body.trackId)
+  if (!track)
+    return fail('contestId 或 trackId 无效', { startedAt, provider: runtime.ai.provider, model: runtime.ai.model, fallbackUsed: false, attempts: 1 }, 40002)
+
+  if (!reviewInput.rubric)
+    return fail('该赛道尚未配置已发布评分规则。', { startedAt, provider: runtime.ai.provider, model: runtime.ai.model, fallbackUsed: false, attempts: 1 }, 40003)
+
+  const onlyFallback = runtime.ai.provider === 'mock' || !runtime.ai.apiKey
+  if (onlyFallback) {
+    const report = runReviewFallback({
+      contestId: body.contestId,
+      trackId: track.id,
+      text: rawText,
+      rubric: reviewInput.rubric,
+    })
+
+    await withTransaction(event, async (db) => {
+      await recordContestAuditLog(db, {
+        actorUserId: user.id,
+        action: 'ai.invoke.reviews',
+        contestId: body.contestId,
+        payload: {
+          trackId: body.trackId,
+          fallbackUsed: true,
+          attempts: 1,
+        },
+      })
+    })
+
+    return ok(report, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: true,
+      attempts: 1,
+    }, 'fallback used')
   }
 
-  return ok(report, {
+  const result = await runWithRetry<ReviewReport>({
+    maxRetries: runtime.ai.maxRetries,
+    run: () => runReviewChain({
+      contest: detail.contest,
+      trackId: track.id,
+      text: rawText,
+      rubric: reviewInput.rubric!,
+      ai: runtime.ai,
+      injectedPrompt: reviewInput.injectedPrompt,
+    }),
+    fallback: () => runReviewFallback({
+      contestId: body.contestId!,
+      trackId: track.id,
+      text: rawText,
+      rubric: reviewInput.rubric!,
+    }),
+  })
+
+  await withTransaction(event, async (db) => {
+    await recordContestAuditLog(db, {
+      actorUserId: user.id,
+      action: 'ai.invoke.reviews',
+      contestId: body.contestId,
+      payload: {
+        trackId: body.trackId,
+        fallbackUsed: result.fallbackUsed,
+        attempts: result.attempts,
+      },
+    })
+  })
+
+  return ok(result.data, {
     startedAt,
     provider: runtime.ai.provider,
     model: runtime.ai.model,
-    fallbackUsed: true,
-    attempts: 1,
-  })
+    fallbackUsed: result.fallbackUsed,
+    attempts: result.attempts,
+  }, result.fallbackUsed ? 'fallback used' : 'ok')
 })

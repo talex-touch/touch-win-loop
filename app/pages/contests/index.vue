@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import type { ApiResponse, Contest } from '~~/shared/types/domain'
+import type { ApiResponse, Contest, ContestLevel } from '~~/shared/types/domain'
+
+definePageMeta({
+  layout: 'dashboard',
+})
 
 const runtime = useRuntimeConfig()
 const apiBase = runtime.public.apiBaseUrl || '/api'
@@ -10,43 +14,152 @@ function endpoint(path: string): string {
   return `${apiBase}${path}`
 }
 
+const loading = ref(false)
 const contests = ref<Contest[]>([])
-const loading = ref(true)
+const search = ref('')
+const discipline = ref('')
+const level = ref<ContestLevel | ''>('')
+const deliverableType = ref('')
+const timelineStatus = ref('')
+const sort = ref('composite')
 
-onMounted(async () => {
+const statusOptions = [
+  { label: '全部时间状态', value: '' },
+  { label: '报名中', value: 'registration_open' },
+  { label: '即将截止', value: 'upcoming_deadline' },
+  { label: '已结束', value: 'ended' },
+]
+
+const levelOptions: Array<{ label: string, value: ContestLevel | '' }> = [
+  { label: '全部级别', value: '' },
+  { label: '国家级', value: 'national' },
+  { label: '省级', value: 'provincial' },
+  { label: '校级', value: 'school' },
+  { label: '行业级', value: 'industry' },
+]
+
+async function loadContests() {
   loading.value = true
   try {
-    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'))
+    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
+      query: {
+        q: search.value,
+        discipline: discipline.value,
+        level: level.value,
+        deliverableType: deliverableType.value,
+        timelineStatus: timelineStatus.value,
+        sort: sort.value,
+        page: 1,
+        pageSize: 50,
+      },
+    })
     contests.value = response.data
   }
   finally {
     loading.value = false
   }
-})
+}
+
+onMounted(loadContests)
 </script>
 
 <template>
-  <div class="text-xs p-2">
-    <div class="text-sm font-semibold mb-2 p-2 border border-gray-300">
-      竞赛总库
+  <div class="max-w-6xl mx-auto p-4 space-y-4">
+    <div class="flex flex-col gap-1">
+      <h1 class="text-xl font-semibold text-slate-900">
+        竞赛总库
+      </h1>
+      <p class="text-sm text-slate-500">
+        支持按学科、级别、交付物和时间状态快速筛选。
+      </p>
     </div>
-    <div v-if="loading" class="p-2 border border-gray-300">
-      加载中...
+
+    <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-2 p-3 border border-slate-200 rounded-lg bg-white">
+      <input
+        v-model="search"
+        class="dense-input lg:col-span-2"
+        placeholder="搜索竞赛名称/主办方/关键词"
+      >
+      <input
+        v-model="discipline"
+        class="dense-input"
+        placeholder="学科门类"
+      >
+      <select v-model="level" class="dense-input">
+        <option v-for="item in levelOptions" :key="item.label" :value="item.value">
+          {{ item.label }}
+        </option>
+      </select>
+      <input
+        v-model="deliverableType"
+        class="dense-input"
+        placeholder="交付物类型"
+      >
+      <select v-model="timelineStatus" class="dense-input">
+        <option v-for="item in statusOptions" :key="item.label" :value="item.value">
+          {{ item.label }}
+        </option>
+      </select>
+      <select v-model="sort" class="dense-input">
+        <option value="composite">
+          综合排序
+        </option>
+        <option value="hot">
+          热度优先
+        </option>
+        <option value="deadline">
+          时间临近
+        </option>
+      </select>
+      <button class="dense-btn" @click="loadContests">
+        应用筛选
+      </button>
     </div>
-    <div v-else class="space-y-1">
+
+    <div v-if="loading" class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <article
+        v-for="index in 6"
+        :key="`contest-skeleton-${index}`"
+        class="rounded-lg border border-slate-200 bg-white p-4 animate-pulse"
+      >
+        <div class="flex items-start justify-between gap-2">
+          <div class="h-4 w-2/3 rounded bg-slate-200" />
+          <div class="h-5 w-14 rounded bg-slate-200" />
+        </div>
+        <div class="mt-3 h-3 w-1/2 rounded bg-slate-200" />
+        <div class="mt-3 space-y-2">
+          <div class="h-3 w-11/12 rounded bg-slate-200" />
+          <div class="h-3 w-9/12 rounded bg-slate-200" />
+        </div>
+      </article>
+    </div>
+
+    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-3">
       <NuxtLink
         v-for="contest in contests"
         :key="contest.id"
         :to="`/contests/${contest.id}`"
-        class="p-2 border border-gray-300 block hover:border-black"
+        class="p-4 border border-slate-200 rounded-lg bg-white hover:border-slate-400 transition"
       >
-        <div class="font-medium">
-          {{ contest.name }}
+        <div class="flex items-start justify-between gap-2">
+          <h2 class="text-base font-semibold text-slate-900 leading-snug">
+            {{ contest.name }}
+          </h2>
+          <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 whitespace-nowrap">{{ contest.level }}</span>
         </div>
-        <div class="text-[11px] text-gray-600">
-          {{ contest.level }} / {{ contest.organizer }}
+        <p class="text-sm text-slate-600 mt-2">
+          主办方：{{ contest.organizer || '待补充' }}
+        </p>
+        <div class="text-xs text-slate-500 mt-2 flex flex-wrap gap-x-3 gap-y-1">
+          <span>报名窗口：{{ contest.registrationWindow || '待补充' }}</span>
+          <span>提交截止：{{ contest.submissionDeadline || '待补充' }}</span>
+          <span>赛道数：{{ contest.tracks.length }}</span>
         </div>
       </NuxtLink>
+
+      <div v-if="contests.length === 0" class="p-6 text-center text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg bg-white md:col-span-2">
+        当前筛选条件下暂无赛事
+      </div>
     </div>
   </div>
 </template>

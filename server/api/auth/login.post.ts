@@ -8,12 +8,14 @@ import {
   sanitizeUsername,
   setSessionCookie,
 } from '~~/server/utils/auth'
+import { resolvePlatformAccess } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import {
   countUsers,
   createSession,
   createUserWithPersonalWorkspace,
+  ensureBootstrapPlatformSuperAdmin,
   findUserByUsername,
   getUserPasswordHashByUsername,
   listUserWorkspaces,
@@ -75,6 +77,17 @@ export default defineEventHandler(async (event) => {
         }
       }
 
+      const promotedAsBootstrapAdmin = await ensureBootstrapPlatformSuperAdmin(db, user.id)
+      if (promotedAsBootstrapAdmin) {
+        user = {
+          ...user,
+          isPlatformAdmin: true,
+        }
+      }
+
+      if (user.isDisabled)
+        throw new Error('USER_DISABLED')
+
       const sessionToken = createSessionToken()
       const session = await createSession(db, {
         userId: user.id,
@@ -84,9 +97,14 @@ export default defineEventHandler(async (event) => {
 
       const workspaces = await listUserWorkspaces(db, user.id)
       const teamCount = workspaces.filter(item => item.workspace.type === 'team').length
+      const platformAccess = await resolvePlatformAccess(db, user)
 
       return {
-        user,
+        user: {
+          ...user,
+          platformRoles: platformAccess.roles,
+          platformPermissions: platformAccess.permissions,
+        },
         session,
         workspaces,
         onboarding: {
@@ -133,6 +151,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40101)
+    }
+
+    if (error instanceof Error && error.message === 'USER_DISABLED') {
+      setResponseStatus(event, 403)
+      return fail('当前账号已被禁用，请联系平台管理员。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40311)
     }
 
     throw error

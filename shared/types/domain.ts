@@ -432,6 +432,53 @@ export interface ChatMessage {
   content: string
 }
 
+export interface AiModelOption {
+  id: string
+  label: string
+  provider?: string
+  model?: string
+  description?: string
+}
+
+export interface AiModelGroup {
+  key: string
+  label: string
+  options: AiModelOption[]
+}
+
+export interface AiModelCatalog {
+  groups: AiModelGroup[]
+}
+
+export interface UserAiSettings {
+  memoryEnabled: boolean
+  pilotEnabled: boolean
+  reasoningEnabled: boolean
+  networkEnabled: boolean
+  temperature: number
+  selectedModelGroup: string
+  selectedModelId: string
+  updatedAt?: string
+}
+
+export interface UserAiMemoryItem {
+  id: string
+  userId: string
+  memoryText: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export interface AiAssistantOptions {
+  memoryEnabled: boolean
+  pilotEnabled: boolean
+  reasoningEnabled: boolean
+  networkEnabled: boolean
+  temperature: number
+  selectedModelGroup: string
+  selectedModelId: string
+}
+
 export interface AiChatSession {
   id: string
   workspaceId: string
@@ -479,6 +526,7 @@ export interface AiProjectChatRequest {
   workspaceId?: string
   sessionId?: string
   messages: ChatMessage[]
+  aiOptions?: Partial<AiAssistantOptions>
   context: {
     workspaceId?: string
     contestId?: string
@@ -571,6 +619,7 @@ export interface ContestSyncRun {
   previewValid: number
   previewInvalid: number
   createdCount: number
+  updatedCount: number
   skippedCount: number
   errorCount: number
   errorMessage: string

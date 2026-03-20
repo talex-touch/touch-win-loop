@@ -1,21 +1,42 @@
 import type { AuthMeResult } from '~~/shared/types/domain'
 import { ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { withClient } from '~~/server/utils/db'
+import { resolvePlatformAccess } from '~~/server/utils/contest-store'
+import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { listUserWorkspaces } from '~~/server/utils/platform-store'
+import { ensureBootstrapPlatformSuperAdmin, listUserWorkspaces } from '~~/server/utils/platform-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
 
-  const workspaces = await withClient(event, async (db) => {
-    return listUserWorkspaces(db, user.id)
+  const { userWithAccess, workspaces } = await withTransaction(event, async (db) => {
+    let effectiveUser = user
+
+    const promotedAsBootstrapAdmin = await ensureBootstrapPlatformSuperAdmin(db, user.id)
+    if (promotedAsBootstrapAdmin) {
+      effectiveUser = {
+        ...user,
+        isPlatformAdmin: true,
+      }
+    }
+
+    const workspaces = await listUserWorkspaces(db, user.id)
+    const access = await resolvePlatformAccess(db, effectiveUser)
+
+    return {
+      userWithAccess: {
+        ...effectiveUser,
+        platformRoles: access.roles,
+        platformPermissions: access.permissions,
+      },
+      workspaces,
+    }
   })
 
   const data: AuthMeResult = {
-    user,
+    user: userWithAccess,
     workspaces,
     onboarding: {
       needCreateTeam: workspaces.every(item => item.workspace.type !== 'team'),

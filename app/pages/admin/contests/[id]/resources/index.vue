@@ -109,17 +109,12 @@ onMounted(loadItems)
           </p>
         </div>
         <div class="flex items-center gap-2">
-          <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}`)">
-            返回工作区
-          </NuxtLink>
           <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources/new`)">
             上传 PDF
           </NuxtLink>
         </div>
       </div>
     </section>
-
-    <ContestWorkspaceTabs :contest-id="contestId" />
 
     <section class="rounded-lg border border-slate-200 bg-white p-4">
       <div class="grid gap-2 md:grid-cols-3">
