@@ -21,12 +21,27 @@ export function resolveSessionExpiresAt(): string {
   return new Date(Date.now() + SESSION_TTL_MS).toISOString()
 }
 
+function resolveSecureCookie(event: H3Event): boolean {
+  if (process.env.NODE_ENV !== 'production')
+    return false
+
+  const forwardedProtoHeader = event.node?.req?.headers?.['x-forwarded-proto']
+  const forwardedProto = Array.isArray(forwardedProtoHeader) ? (forwardedProtoHeader[0] || '') : (forwardedProtoHeader || '')
+  if (forwardedProto.trim()) {
+    const firstProto = forwardedProto.split(',')[0] || ''
+    return firstProto.trim().toLowerCase() === 'https'
+  }
+
+  const socket = event.node?.req?.socket as { encrypted?: boolean } | undefined
+  return Boolean(socket?.encrypted)
+}
+
 export function setSessionCookie(event: H3Event, token: string, expiresAt: string): void {
   setCookie(event, SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
-    secure: process.env.NODE_ENV === 'production',
+    secure: resolveSecureCookie(event),
     expires: new Date(expiresAt),
   })
 }
