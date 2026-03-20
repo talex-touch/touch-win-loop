@@ -46,6 +46,9 @@ interface AdminRouteTab {
   label: string
 }
 
+const ADMIN_ROUTE_TABS_STORAGE_KEY = 'winloop.admin.route-tabs.v1'
+const MAX_ADMIN_ROUTE_TAB_COUNT = 30
+
 function endpoint(path: string): string {
   if (apiBase.endsWith('/'))
     return `${apiBase.slice(0, -1)}${path}`
@@ -102,7 +105,7 @@ function onMenuItemClick(key: string | number): void {
   if (!target)
     return
   if (route.path === target.to) {
-    appendRouteTab(route.path, route.fullPath, { force: true })
+    appendRouteTab(route.path, route.fullPath)
     return
   }
   void navigateTo(target.to)
@@ -112,6 +115,25 @@ const adminRouteTabs = ref<AdminRouteTab[]>([])
 
 function createTabId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function normalizeAdminRoutePath(path: string): string {
+  const normalizedPath = path.replace(/\/+$/, '') || '/'
+  if (!normalizedPath.startsWith('/admin'))
+    return ''
+
+  if (normalizedPath === '/admin/contests/new')
+    return normalizedPath
+
+  const contestWorkspaceMatch = normalizedPath.match(/^\/admin\/contests\/([^/]+)(?:\/.*)?$/)
+  if (contestWorkspaceMatch) {
+    const contestId = String(contestWorkspaceMatch[1] || '').trim()
+    if (!contestId || contestId === 'new')
+      return '/admin/contests/new'
+    return `/admin/contests/${contestId}`
+  }
+
+  return normalizedPath
 }
 
 function resolveContestModuleLabel(segment: string): string {
@@ -166,30 +188,113 @@ function resolveRouteTabLabel(path: string): string {
   return current?.label || '管理页'
 }
 
-function appendRouteTab(path: string, fullPath: string, options: { force?: boolean } = {}): void {
-  if (!path.startsWith('/admin'))
+function persistAdminRouteTabs(): void {
+  if (!import.meta.client)
     return
-  if (!options.force) {
-    const last = adminRouteTabs.value[adminRouteTabs.value.length - 1]
-    if (last && last.fullPath === fullPath)
-      return
-  }
-  adminRouteTabs.value.push({
-    id: createTabId(),
-    path,
-    fullPath,
-    label: resolveRouteTabLabel(path),
-  })
-  if (adminRouteTabs.value.length > 30)
-    adminRouteTabs.value.shift()
+
+  localStorage.setItem(ADMIN_ROUTE_TABS_STORAGE_KEY, JSON.stringify(adminRouteTabs.value))
 }
 
-const activeRouteTabId = computed(() => {
-  for (let index = adminRouteTabs.value.length - 1; index >= 0; index -= 1) {
-    const tab = adminRouteTabs.value[index]
-    if (tab && tab.fullPath === route.fullPath)
-      return tab.id
+function normalizeAdminRouteTabs(source: unknown): AdminRouteTab[] {
+  if (!Array.isArray(source))
+    return []
+
+  const result: AdminRouteTab[] = []
+  const indexByPath = new Map<string, number>()
+
+  for (const item of source) {
+    if (!item || typeof item !== 'object')
+      continue
+
+    const candidate = item as Partial<AdminRouteTab>
+    const path = normalizeAdminRoutePath(String(candidate.path || ''))
+    if (!path)
+      continue
+
+    const fullPathText = String(candidate.fullPath || '').trim()
+    const fullPath = fullPathText.startsWith('/admin') ? fullPathText : path
+
+    const nextTab: AdminRouteTab = {
+      id: String(candidate.id || createTabId()),
+      path,
+      fullPath,
+      label: resolveRouteTabLabel(path),
+    }
+
+    const duplicatedIndex = indexByPath.get(path)
+    if (duplicatedIndex !== undefined) {
+      result.splice(duplicatedIndex, 1)
+      for (const [key, value] of indexByPath.entries()) {
+        if (value > duplicatedIndex)
+          indexByPath.set(key, value - 1)
+      }
+    }
+
+    indexByPath.set(path, result.length)
+    result.push(nextTab)
   }
+
+  if (result.length <= MAX_ADMIN_ROUTE_TAB_COUNT)
+    return result
+  return result.slice(-MAX_ADMIN_ROUTE_TAB_COUNT)
+}
+
+function restoreAdminRouteTabs(): void {
+  if (!import.meta.client)
+    return
+
+  const raw = localStorage.getItem(ADMIN_ROUTE_TABS_STORAGE_KEY)
+  if (!raw) {
+    adminRouteTabs.value = []
+    return
+  }
+
+  try {
+    const parsed = JSON.parse(raw)
+    adminRouteTabs.value = normalizeAdminRouteTabs(parsed)
+  }
+  catch {
+    adminRouteTabs.value = []
+  }
+
+  persistAdminRouteTabs()
+}
+
+function appendRouteTab(path: string, fullPath: string): void {
+  const normalizedPath = normalizeAdminRoutePath(path)
+  if (!normalizedPath)
+    return
+
+  const normalizedFullPath = fullPath.startsWith('/admin') ? fullPath : normalizedPath
+  const index = adminRouteTabs.value.findIndex(item => item.path === normalizedPath)
+  if (index >= 0) {
+    const current = adminRouteTabs.value[index]
+    if (!current)
+      return
+    current.fullPath = normalizedFullPath
+    current.label = resolveRouteTabLabel(normalizedPath)
+    persistAdminRouteTabs()
+    return
+  }
+
+  adminRouteTabs.value.push({
+    id: createTabId(),
+    path: normalizedPath,
+    fullPath: normalizedFullPath,
+    label: resolveRouteTabLabel(normalizedPath),
+  })
+
+  if (adminRouteTabs.value.length > MAX_ADMIN_ROUTE_TAB_COUNT)
+    adminRouteTabs.value.splice(0, adminRouteTabs.value.length - MAX_ADMIN_ROUTE_TAB_COUNT)
+
+  persistAdminRouteTabs()
+}
+
+const activeRoutePath = computed(() => normalizeAdminRoutePath(route.path))
+const activeRouteTabId = computed(() => {
+  const active = adminRouteTabs.value.find(tab => tab.path === activeRoutePath.value)
+  if (active)
+    return active.id
   return ''
 })
 
@@ -206,8 +311,9 @@ async function closeRouteTab(tabId: string) {
     return
 
   const target = adminRouteTabs.value[index]
-  const isActive = Boolean(target && target.fullPath === route.fullPath)
+  const isActive = Boolean(target && target.path === activeRoutePath.value)
   adminRouteTabs.value.splice(index, 1)
+  persistAdminRouteTabs()
 
   if (!isActive)
     return
@@ -269,11 +375,20 @@ async function loadProfile() {
 
 onMounted(loadProfile)
 
-watch(() => route.fullPath, (fullPath) => {
-  if (isEmbedMode.value)
-    return
-  appendRouteTab(route.path, fullPath)
-}, { immediate: true })
+if (import.meta.client) {
+  onMounted(() => {
+    if (isEmbedMode.value)
+      return
+    restoreAdminRouteTabs()
+    appendRouteTab(route.path, route.fullPath)
+  })
+
+  watch(() => route.fullPath, (fullPath) => {
+    if (isEmbedMode.value)
+      return
+    appendRouteTab(route.path, fullPath)
+  })
+}
 </script>
 
 <template>
