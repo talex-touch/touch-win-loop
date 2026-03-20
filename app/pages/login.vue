@@ -7,6 +7,7 @@ useHead({
 
 const runtime = useRuntimeConfig()
 const apiBase = runtime.public.apiBaseUrl || '/api'
+const route = useRoute()
 
 function endpoint(path: string): string {
   if (apiBase.endsWith('/'))
@@ -19,10 +20,22 @@ const password = ref('')
 const loading = ref(false)
 const errorText = ref('')
 
+function resolveRedirectTarget(): string {
+  const raw = route.query.redirect
+  const redirect = Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim()
+  if (!redirect)
+    return '/dashboard'
+  if (!redirect.startsWith('/') || redirect.startsWith('//'))
+    return '/dashboard'
+  if (redirect.startsWith('/login'))
+    return '/dashboard'
+  return redirect
+}
+
 async function checkLoggedIn() {
   try {
     await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
-    await navigateTo('/dashboard')
+    await navigateTo(resolveRedirectTarget(), { replace: true })
   }
   catch {
     // ignore
@@ -48,7 +61,7 @@ async function submitLogin() {
         password: secret,
       },
     })
-    await navigateTo('/dashboard')
+    await navigateTo(resolveRedirectTarget(), { replace: true })
   }
   catch (error: any) {
     const message = String(error?.data?.message || '')

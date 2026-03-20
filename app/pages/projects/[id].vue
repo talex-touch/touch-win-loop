@@ -31,7 +31,10 @@ async function loadProject() {
   }
   catch (error: any) {
     if (Number(error?.statusCode || error?.response?.status) === 401) {
-      await navigateTo('/login')
+      await navigateTo({
+        path: '/login',
+        query: { redirect: route.fullPath || `/projects/${projectId.value}` },
+      })
       return
     }
     errorText.value = '项目不存在或加载失败。'

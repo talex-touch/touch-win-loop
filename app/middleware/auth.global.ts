@@ -1,0 +1,94 @@
+import type { ApiResponse, AuthMeResult } from '~~/shared/types/domain'
+
+const PUBLIC_PATH_PREFIXES = [
+  '/login',
+  '/contests',
+  '/resources',
+  '/hi',
+]
+
+const PROTECTED_PATH_PREFIXES = [
+  '/dashboard',
+  '/workspace',
+  '/projects',
+  '/admin',
+  '/topics',
+  '/reviews',
+  '/defense',
+]
+
+function normalizePath(path: string): string {
+  const normalized = path.trim()
+  return normalized || '/'
+}
+
+function isPathMatch(path: string, prefix: string): boolean {
+  if (prefix === '/')
+    return path === '/'
+  return path === prefix || path.startsWith(`${prefix}/`)
+}
+
+function isPublicPath(path: string): boolean {
+  return PUBLIC_PATH_PREFIXES.some(prefix => isPathMatch(path, prefix))
+}
+
+function isProtectedPath(path: string): boolean {
+  return PROTECTED_PATH_PREFIXES.some(prefix => isPathMatch(path, prefix))
+}
+
+function buildApiEndpoint(apiBase: string, path: string): string {
+  if (apiBase.endsWith('/'))
+    return `${apiBase.slice(0, -1)}${path}`
+  return `${apiBase}${path}`
+}
+
+function sanitizeRedirectTarget(value: unknown): string {
+  const redirect = String(value || '').trim()
+  if (!redirect)
+    return '/dashboard'
+  if (!redirect.startsWith('/') || redirect.startsWith('//'))
+    return '/dashboard'
+  if (redirect.startsWith('/login'))
+    return '/dashboard'
+  return redirect
+}
+
+export default defineNuxtRouteMiddleware(async (to) => {
+  const targetPath = normalizePath(to.path)
+  const publicRoute = isPublicPath(targetPath)
+  const protectedRoute = isProtectedPath(targetPath)
+  const loginRoute = isPathMatch(targetPath, '/login')
+
+  if (!publicRoute && !protectedRoute)
+    return
+  if (publicRoute && !loginRoute)
+    return
+
+  const runtime = useRuntimeConfig()
+  const apiBase = runtime.public.apiBaseUrl || '/api'
+  const authEndpoint = buildApiEndpoint(apiBase, '/auth/me')
+
+  let authenticated = false
+  try {
+    const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined
+    await $fetch<ApiResponse<AuthMeResult>>(authEndpoint, { headers })
+    authenticated = true
+  }
+  catch {
+    authenticated = false
+  }
+
+  if (loginRoute && authenticated) {
+    const target = sanitizeRedirectTarget(to.query.redirect)
+    return navigateTo(target, { replace: true })
+  }
+
+  if (!protectedRoute || authenticated)
+    return
+
+  const redirectPath = to.fullPath || targetPath
+  return navigateTo({
+    path: '/login',
+    query: { redirect: redirectPath },
+  }, { replace: true })
+})

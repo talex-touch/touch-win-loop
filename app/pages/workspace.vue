@@ -41,6 +41,7 @@ useHead({
 
 const runtime = useRuntimeConfig()
 const apiBase = runtime.public.apiBaseUrl || '/api'
+const route = useRoute()
 
 function endpoint(path: string): string {
   if (apiBase.endsWith('/'))
@@ -317,7 +318,10 @@ async function loadAuthContext(): Promise<boolean> {
     return true
   }
   catch {
-    await navigateTo('/login')
+    await navigateTo({
+      path: '/login',
+      query: { redirect: route.fullPath || '/workspace' },
+    })
     return false
   }
 }
