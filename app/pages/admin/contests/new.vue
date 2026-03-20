@@ -66,13 +66,13 @@ async function createContest() {
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             新建赛事（阶段一）
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             先创建竞赛骨架，再进入工作区补全赛道、时间轴、评分和资料。
           </p>
         </div>
@@ -82,8 +82,8 @@ async function createContest() {
       </div>
     </section>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="grid gap-2 md:grid-cols-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="gap-2 grid md:grid-cols-2">
         <a-input v-model="form.name" size="small" placeholder="赛事名称（必填）" />
         <a-select v-model="form.level" size="small" placeholder="级别">
           <a-option value="national">
@@ -116,7 +116,7 @@ async function createContest() {
       </a-button>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
   </div>

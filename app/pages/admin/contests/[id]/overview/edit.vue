@@ -216,17 +216,17 @@ onMounted(loadData)
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             基础信息编辑
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex gap-2 items-center">
           <a-button type="primary" size="small" :loading="saving" @click="save">
             保存
           </a-button>
@@ -234,21 +234,21 @@ onMounted(loadData)
       </div>
     </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="7" />
       </a-skeleton>
     </section>
 
-    <section v-else class="rounded-lg border border-slate-200 bg-white p-4">
-      <div v-if="moduleDraft" class="mb-3 rounded border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div v-if="moduleDraft" class="text-xs text-emerald-700 mb-3 p-3 border border-emerald-200 rounded bg-emerald-50">
         <p class="font-semibold">
           检测到 AI 草稿：{{ moduleDraft.title || '基础信息草稿' }}
         </p>
         <p class="mt-1">
           更新时间：{{ draftUpdatedAt }}。应用后不会自动写库，需要手动点击“保存”。
         </p>
-        <div class="mt-2 flex items-center gap-2">
+        <div class="mt-2 flex gap-2 items-center">
           <a-button size="mini" type="outline" @click="applyAiDraft">
             应用到表单
           </a-button>
@@ -258,7 +258,7 @@ onMounted(loadData)
         </div>
       </div>
 
-      <div class="grid gap-2 md:grid-cols-3">
+      <div class="gap-2 grid md:grid-cols-3">
         <a-input v-model="form.name" size="small" placeholder="赛事名称" />
         <a-select v-model="form.level" size="small" placeholder="级别">
           <a-option value="national">
@@ -292,15 +292,15 @@ onMounted(loadData)
         <a-input v-model="form.recommendedForCsv" size="small" class="md:col-span-3" placeholder="适配人群（逗号分隔）" />
       </div>
 
-      <div class="mt-3 rounded border border-slate-200 p-3">
-        <p class="text-xs font-semibold text-slate-700">
+      <div class="mt-3 p-3 border border-slate-200 rounded">
+        <p class="text-xs text-slate-700 font-semibold">
           学科门类（13 大类）
         </p>
-        <div class="mt-2 grid gap-2 md:grid-cols-3">
+        <div class="mt-2 gap-2 grid md:grid-cols-3">
           <div
             v-for="item in disciplineOptions"
             :key="item.code"
-            class="flex items-center gap-2 rounded border border-slate-200 px-2 py-1 text-xs"
+            class="text-xs px-2 py-1 border border-slate-200 rounded flex gap-2 items-center"
           >
             <a-checkbox :model-value="form.disciplines.includes(item.label)" @change="() => toggleDiscipline(item.label)">
               {{ item.label }}
@@ -329,15 +329,15 @@ onMounted(loadData)
       />
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
 
-    <section v-if="successText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="successText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ successText }}
     </section>
 
-    <section v-if="draftText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="draftText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ draftText }}
     </section>
   </div>

@@ -138,13 +138,13 @@ async function save() {
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             新增时间节点
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}
           </p>
         </div>
@@ -154,15 +154,15 @@ async function save() {
       </div>
     </section>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div v-if="moduleDraft" class="mb-3 rounded border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div v-if="moduleDraft" class="text-xs text-emerald-700 mb-3 p-3 border border-emerald-200 rounded bg-emerald-50">
         <p class="font-semibold">
           检测到 AI 草稿：{{ moduleDraft.title || '时间节点草稿' }}
         </p>
         <p class="mt-1">
           更新时间：{{ draftUpdatedAt }}。应用后仍需手动保存。
         </p>
-        <div class="mt-2 flex items-center gap-2">
+        <div class="mt-2 flex gap-2 items-center">
           <a-button size="mini" type="outline" @click="applyAiDraft">
             应用到表单
           </a-button>
@@ -172,7 +172,7 @@ async function save() {
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-2">
+      <div class="gap-2 grid grid-cols-2">
         <a-input-number v-model="form.year" size="small" :min="2000" :max="2100" placeholder="年份" />
         <a-select v-model="form.nodeType" size="small" placeholder="节点类型">
           <a-option value="registration">
@@ -215,11 +215,11 @@ async function save() {
       </a-button>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
 
-    <section v-if="draftText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="draftText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ draftText }}
     </section>
   </div>

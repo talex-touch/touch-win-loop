@@ -399,10 +399,10 @@ watch(isListRoute, async (value) => {
 
 <template>
   <NuxtPage v-if="!isListRoute" />
-  <div v-else class="space-y-3 text-[11px]">
+  <div v-else class="text-[11px] space-y-3">
     <section
       v-if="!permissionLoaded"
-      class="border border-slate-200 bg-white p-3"
+      class="p-3 border border-slate-200 bg-white"
     >
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="6" />
@@ -411,20 +411,20 @@ watch(isListRoute, async (value) => {
 
     <section
       v-else-if="permissionErrorText"
-      class="border border-amber-200 bg-amber-50 p-3 text-amber-700"
+      class="text-amber-700 p-3 border border-amber-200 bg-amber-50"
     >
       {{ permissionErrorText }}
     </section>
     <section
       v-else-if="!canRead"
-      class="border border-rose-200 bg-rose-50 p-3 text-rose-600"
+      class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
     >
       403：当前账号没有赛事管理权限。
     </section>
 
     <template v-else>
-      <section class="border border-slate-200 bg-white p-3">
-        <div class="grid gap-2 lg:grid-cols-[2fr_1fr_2fr_auto]">
+      <section class="p-3 border border-slate-200 bg-white">
+        <div class="gap-2 grid lg:grid-cols-[2fr_1fr_2fr_auto]">
           <a-input
             v-model="search"
             allow-clear
@@ -461,7 +461,7 @@ watch(isListRoute, async (value) => {
               {{ item }}
             </a-option>
           </a-select>
-          <div class="flex items-center gap-2">
+          <div class="flex gap-2 items-center">
             <a-button size="small" type="primary" @click="loadContests">
               查询
             </a-button>
@@ -472,9 +472,9 @@ watch(isListRoute, async (value) => {
         </div>
       </section>
 
-      <section class="border border-slate-200 bg-white p-3">
-        <div class="mb-3 flex items-center justify-between gap-2">
-          <p class="m-0 text-[11px] font-semibold text-slate-900">
+      <section class="p-3 border border-slate-200 bg-white">
+        <div class="mb-3 flex gap-2 items-center justify-between">
+          <p class="text-[11px] text-slate-900 font-semibold m-0">
             赛事列表（{{ filteredContests.length }}）
           </p>
           <NuxtLink v-if="canWrite" to="/admin/contests/new">
@@ -499,10 +499,10 @@ watch(isListRoute, async (value) => {
           >
             <template #name="{ record }">
               <div class="min-w-0">
-                <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
+                <p class="text-[12px] text-slate-900 font-semibold m-0 truncate">
                   {{ record.name }}
                 </p>
-                <p class="m-0 mt-1 truncate text-[10px] text-slate-500">
+                <p class="text-[10px] text-slate-500 m-0 mt-1 truncate">
                   {{ record.officialUrl || '暂无官网链接' }}
                 </p>
               </div>
@@ -531,7 +531,7 @@ watch(isListRoute, async (value) => {
             </template>
 
             <template #actions="{ record }">
-              <div class="flex flex-wrap justify-end gap-1">
+              <div class="flex flex-wrap gap-1 justify-end">
                 <a-button size="mini" @click="goToContestOverviewEditor(record.id)">
                   编辑
                 </a-button>
@@ -577,12 +577,12 @@ watch(isListRoute, async (value) => {
         </template>
       </section>
 
-      <section v-if="canWrite" class="border border-slate-200 bg-white p-3">
+      <section v-if="canWrite" class="p-3 border border-slate-200 bg-white">
         <a-collapse :default-active-key="[]" :bordered="false" expand-icon-position="right">
           <a-collapse-item key="import" header="批量导入（CSV）">
             <div class="space-y-2">
               <a
-                class="inline-flex text-[11px] text-[#1152d4] hover:underline"
+                class="text-[11px] text-[#1152d4] inline-flex hover:underline"
                 :href="endpoint('/admin/contests/import/template')"
                 target="_blank"
               >
@@ -593,7 +593,7 @@ watch(isListRoute, async (value) => {
                 :auto-size="{ minRows: 6, maxRows: 14 }"
                 placeholder="粘贴 CSV 内容后，先预检再提交导入。"
               />
-              <div class="flex flex-wrap items-center gap-2">
+              <div class="flex flex-wrap gap-2 items-center">
                 <a-button size="small" :loading="importLoading" @click="previewImport">
                   预检
                 </a-button>
@@ -605,34 +605,34 @@ watch(isListRoute, async (value) => {
                 </a-button>
               </div>
 
-              <div v-if="importPreview" class="rounded border border-slate-200 p-2 text-[11px] text-slate-700">
+              <div v-if="importPreview" class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded">
                 <p class="m-0">
                   总行数：{{ importPreview.total }}；可导入：{{ importPreview.validCount }}；无效：{{ importPreview.invalidCount }}
                 </p>
-                <p class="m-0 mt-1 text-[10px] text-slate-500">
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
                   创建：{{ importPreview.rows.filter(item => item.action === 'create').length }}；
                   更新：{{ importPreview.rows.filter(item => item.action === 'update').length }}
                 </p>
                 <div v-if="importPreview.invalidCount > 0" class="mt-2 space-y-1">
-                  <p class="m-0 font-semibold text-rose-600">
+                  <p class="text-rose-600 font-semibold m-0">
                     无效行
                   </p>
                   <p
                     v-for="row in importPreview.rows.filter(item => item.errors.length > 0).slice(0, 10)"
                     :key="row.rowNumber"
-                    class="m-0 text-rose-600"
+                    class="text-rose-600 m-0"
                   >
                     第 {{ row.rowNumber }} 行：{{ row.errors.join('；') }}
                   </p>
                 </div>
                 <div v-if="importPreview.rows.some(item => item.warnings.length > 0 || item.structuredWarnings.length > 0)" class="mt-2 space-y-1">
-                  <p class="m-0 font-semibold text-amber-700">
+                  <p class="text-amber-700 font-semibold m-0">
                     结构化提示（最多展示 10 条）
                   </p>
                   <p
                     v-for="row in importPreview.rows.filter(item => item.warnings.length > 0 || item.structuredWarnings.length > 0).slice(0, 10)"
                     :key="`warn-${row.rowNumber}`"
-                    class="m-0 text-amber-700"
+                    class="text-amber-700 m-0"
                   >
                     第 {{ row.rowNumber }} 行（{{ row.action }}，年份 {{ row.inferredYear || '-' }}）：
                     {{ [...row.warnings, ...row.structuredWarnings].join('；') }}
@@ -644,11 +644,11 @@ watch(isListRoute, async (value) => {
         </a-collapse>
       </section>
 
-      <section v-if="canWrite" class="border border-slate-200 bg-white p-3">
+      <section v-if="canWrite" class="p-3 border border-slate-200 bg-white">
         <a-collapse :default-active-key="[]" :bordered="false" expand-icon-position="right">
           <a-collapse-item key="sync" header="自动拉取（CSV URL 手动触发）">
             <div class="space-y-3">
-              <div class="grid gap-2 lg:grid-cols-[200px_1fr_auto]">
+              <div class="gap-2 grid lg:grid-cols-[200px_1fr_auto]">
                 <a-input v-model="syncSourceName" allow-clear size="small" placeholder="数据源名称" />
                 <a-input v-model="syncSourceUrl" allow-clear size="small" placeholder="CSV URL（http/https）" />
                 <a-button size="small" type="primary" :loading="syncLoading" @click="createSyncSource">
@@ -657,7 +657,7 @@ watch(isListRoute, async (value) => {
               </div>
 
               <div class="flex items-center justify-between">
-                <p class="m-0 text-[11px] font-semibold text-slate-900">
+                <p class="text-[11px] text-slate-900 font-semibold m-0">
                   同步源（{{ syncSources.length }}）
                 </p>
                 <a-button size="small" :loading="syncLoading" @click="loadSyncData">
@@ -672,17 +672,17 @@ watch(isListRoute, async (value) => {
                 <div
                   v-for="item in syncSources"
                   :key="item.id"
-                  class="rounded border border-slate-200 p-2"
+                  class="p-2 border border-slate-200 rounded"
                 >
-                  <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex flex-wrap gap-2 items-center justify-between">
                     <div class="min-w-0">
-                      <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
+                      <p class="text-[12px] text-slate-900 font-semibold m-0 truncate">
                         {{ item.name }}
                       </p>
-                      <p class="m-0 mt-1 truncate text-[10px] text-slate-500">
+                      <p class="text-[10px] text-slate-500 m-0 mt-1 truncate">
                         {{ item.sourceUrl }}
                       </p>
-                      <p class="m-0 mt-1 text-[10px] text-slate-500">
+                      <p class="text-[10px] text-slate-500 m-0 mt-1">
                         上次运行：{{ item.lastRunAt || '尚未运行' }}
                       </p>
                     </div>
@@ -694,7 +694,7 @@ watch(isListRoute, async (value) => {
               </div>
 
               <div class="pt-1">
-                <p class="m-0 text-[11px] font-semibold text-slate-900">
+                <p class="text-[11px] text-slate-900 font-semibold m-0">
                   最近运行记录（{{ syncRuns.length }}）
                 </p>
               </div>
@@ -705,21 +705,21 @@ watch(isListRoute, async (value) => {
                 <div
                   v-for="item in syncRuns"
                   :key="item.id"
-                  class="rounded border border-slate-200 p-2"
+                  class="p-2 border border-slate-200 rounded"
                 >
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    <p class="m-0 text-[11px] font-semibold text-slate-900">
+                  <div class="flex flex-wrap gap-2 items-center justify-between">
+                    <p class="text-[11px] text-slate-900 font-semibold m-0">
                       {{ item.sourceName }}
                     </p>
                     <a-tag :color="item.status === 'success' ? 'green' : (item.status === 'partial_success' ? 'orange' : (item.status === 'failed' ? 'red' : 'blue'))" size="small">
                       {{ item.status }}
                     </a-tag>
                   </div>
-                  <p class="m-0 mt-1 text-[10px] text-slate-600">
+                  <p class="text-[10px] text-slate-600 m-0 mt-1">
                     总数 {{ item.previewTotal }} / 有效 {{ item.previewValid }} / 无效 {{ item.previewInvalid }} /
                     新增 {{ item.createdCount }} / 更新 {{ item.updatedCount }} / 跳过 {{ item.skippedCount }}
                   </p>
-                  <p v-if="item.errorMessage" class="m-0 mt-1 text-[10px] text-rose-600">
+                  <p v-if="item.errorMessage" class="text-[10px] text-rose-600 m-0 mt-1">
                     {{ item.errorMessage }}
                   </p>
                 </div>
@@ -730,11 +730,11 @@ watch(isListRoute, async (value) => {
       </section>
     </template>
 
-    <section v-if="errorText" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+    <section v-if="errorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
       {{ errorText }}
     </section>
 
-    <section v-if="successText" class="border border-emerald-200 bg-emerald-50 p-3 text-emerald-700">
+    <section v-if="successText" class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50">
       {{ successText }}
     </section>
   </div>

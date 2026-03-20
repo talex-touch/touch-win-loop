@@ -718,14 +718,14 @@ watch(activeWorkspaceId, async (value, previous) => {
 </script>
 
 <template>
-  <div class="workspace-shell min-h-[680px] flex flex-col overflow-hidden bg-white text-slate-800">
+  <div class="workspace-shell text-slate-800 bg-white flex flex-col min-h-[680px] overflow-hidden">
     <WorkspaceHeader
       v-model="headerSearch"
       :contest-name="selectedContest?.name || '未选择竞赛'"
       :track-name="selectedTrack?.name || '未选择赛道'"
     />
 
-    <div class="px-3 py-2 border-b border-slate-200 flex items-center gap-2 text-xs bg-slate-50">
+    <div class="text-xs px-3 py-2 border-b border-slate-200 bg-slate-50 flex gap-2 items-center">
       <span class="text-slate-500">账号：{{ me?.user.username || '-' }}</span>
       <span class="text-slate-300">|</span>
       <span class="text-slate-500">空间：{{ currentWorkspace?.workspace.name || '-' }}</span>
@@ -736,12 +736,12 @@ watch(activeWorkspaceId, async (value, previous) => {
         席位 {{ currentWorkspace.quota.seatUsed }}/{{ currentWorkspace.quota.seatLimit }}，
         AI {{ currentWorkspace.quota.aiQuotaUsed }}/{{ currentWorkspace.quota.aiQuotaTotal }}
       </span>
-      <button class="ml-auto text-slate-600 hover:text-slate-900" @click="logout">
+      <button class="text-slate-600 ml-auto hover:text-slate-900" @click="logout">
         退出登录
       </button>
     </div>
 
-    <main class="flex-1 min-h-0 flex flex-col xl:flex-row overflow-hidden">
+    <main class="flex flex-1 flex-col min-h-0 overflow-hidden xl:flex-row">
       <WorkspaceLeftSidebar
         v-model:natural-query="naturalQuery"
         v-model:major="major"

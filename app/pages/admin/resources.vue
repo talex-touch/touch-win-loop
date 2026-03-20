@@ -73,18 +73,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-3 text-[11px]">
-    <section v-if="loading" class="border border-slate-200 bg-white p-3">
+  <div class="text-[11px] space-y-3">
+    <section v-if="loading" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else-if="errorText" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+    <section v-else-if="errorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
       {{ errorText }}
     </section>
 
-    <section v-else class="border border-slate-200 bg-white p-3">
+    <section v-else class="p-3 border border-slate-200 bg-white">
       <a-table
         :bordered="{ cell: true }"
         :columns="columns"
@@ -95,10 +95,10 @@ onMounted(async () => {
       >
         <template #contest="{ record }">
           <div class="min-w-0">
-            <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
+            <p class="text-[12px] text-slate-900 font-semibold m-0 truncate">
               {{ record.contestName }}
             </p>
-            <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+            <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
               {{ record.contestId }}
             </p>
           </div>

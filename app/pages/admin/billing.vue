@@ -228,31 +228,31 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <div>
-        <h1 class="text-lg font-semibold text-slate-900">
+        <h1 class="text-lg text-slate-900 font-semibold">
           套餐与席位计费
         </h1>
-        <p class="mt-1 text-xs text-slate-500">
+        <p class="text-xs text-slate-500 mt-1">
           管理套餐参数并按 `seat_used` 实时估算工作区费用（V1 不接支付）。
         </p>
       </div>
     </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else-if="!canWritePricing" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-else-if="!canWritePricing" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       403：当前账号没有 pricing.write 权限。
     </section>
 
     <template v-else>
-      <section class="rounded-lg border border-slate-200 bg-white p-4">
-        <div class="flex items-center justify-between gap-2">
-          <h2 class="text-sm font-semibold text-slate-900">
+      <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <div class="flex gap-2 items-center justify-between">
+          <h2 class="text-sm text-slate-900 font-semibold">
             套餐列表
           </h2>
           <a-button size="small" type="primary" @click="createDialogVisible = true">
@@ -270,10 +270,10 @@ onMounted(async () => {
           >
             <template #name="{ record }">
               <div class="min-w-0">
-                <p class="m-0 truncate font-semibold text-slate-900">
+                <p class="text-slate-900 font-semibold m-0 truncate">
                   {{ record.name }}（{{ record.code }}）
                 </p>
-                <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+                <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                   planId: {{ record.id }}
                 </p>
               </div>
@@ -310,11 +310,11 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section class="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 class="text-sm font-semibold text-slate-900">
+      <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <h2 class="text-sm text-slate-900 font-semibold">
           工作区费用估算
         </h2>
-        <div class="mt-2 grid gap-2 md:grid-cols-4">
+        <div class="mt-2 gap-2 grid md:grid-cols-4">
           <a-select v-model="estimateForm.workspaceId" allow-clear size="small" placeholder="选择工作区">
             <a-option value="">
               选择工作区
@@ -346,7 +346,7 @@ onMounted(async () => {
               yearly
             </a-option>
           </a-select>
-          <div class="flex items-center gap-2">
+          <div class="flex gap-2 items-center">
             <a-button size="small" :loading="saving" :disabled="!estimateForm.workspaceId" @click="loadEstimate">
               仅估算
             </a-button>
@@ -362,22 +362,22 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-if="estimate" class="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+        <div v-if="estimate" class="text-xs text-slate-700 mt-3 p-3 border border-slate-200 rounded bg-slate-50">
           <p>工作区：{{ estimate.workspaceId }}</p>
           <p>套餐：{{ estimate.planCode || '未配置' }}（{{ estimate.planId || '-' }}）</p>
           <p>席位使用：{{ estimate.seatUsed }} / 包含 {{ estimate.includedSeats }}，超额 {{ estimate.extraSeats }}</p>
           <p>基础价：{{ (estimate.basePriceCents / 100).toFixed(2) }} 元，超额单价：{{ (estimate.extraSeatPriceCents / 100).toFixed(2) }} 元</p>
-          <p class="font-semibold text-slate-900">
+          <p class="text-slate-900 font-semibold">
             估算金额：{{ estimate.estimatedAmountYuan.toFixed(2) }} 元
           </p>
         </div>
       </section>
     </template>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
-    <section v-if="successText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="successText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ successText }}
     </section>
 
@@ -387,14 +387,14 @@ onMounted(async () => {
       title="新增套餐"
       width="560px"
     >
-      <div class="grid gap-2 text-[11px] md:grid-cols-2">
+      <div class="text-[11px] gap-2 grid md:grid-cols-2">
         <a-input v-model="createForm.code" size="small" placeholder="套餐编码（如 team_base）" />
         <a-input v-model="createForm.name" size="small" placeholder="套餐名称" />
         <a-input-number v-model="createForm.basePriceCents" size="small" :min="0" placeholder="基础价（分）" />
         <a-input-number v-model="createForm.includedSeats" size="small" :min="0" placeholder="包含席位" />
         <a-input-number v-model="createForm.extraSeatPriceCents" size="small" :min="0" placeholder="超额单价（分）" />
         <a-input-number v-model="createForm.includedAiQuota" size="small" :min="0" placeholder="包含 AI 配额" />
-        <div class="flex items-center gap-2 text-xs text-slate-700 md:col-span-2">
+        <div class="text-xs text-slate-700 flex gap-2 items-center md:col-span-2">
           <a-switch v-model="createForm.isActive" size="small" />
           <span>是否启用</span>
         </div>
@@ -410,7 +410,7 @@ onMounted(async () => {
       title="编辑套餐"
       width="560px"
     >
-      <div class="grid gap-2 text-[11px] md:grid-cols-2">
+      <div class="text-[11px] gap-2 grid md:grid-cols-2">
         <a-input v-model="editForm.planId" size="small" class="md:col-span-2" disabled />
         <a-input v-model="editForm.code" size="small" placeholder="套餐编码" />
         <a-input v-model="editForm.name" size="small" placeholder="套餐名称" />
@@ -418,7 +418,7 @@ onMounted(async () => {
         <a-input-number v-model="editForm.includedSeats" size="small" :min="0" placeholder="包含席位" />
         <a-input-number v-model="editForm.extraSeatPriceCents" size="small" :min="0" placeholder="超额单价（分）" />
         <a-input-number v-model="editForm.includedAiQuota" size="small" :min="0" placeholder="包含 AI 配额" />
-        <div class="flex items-center gap-2 text-xs text-slate-700 md:col-span-2">
+        <div class="text-xs text-slate-700 flex gap-2 items-center md:col-span-2">
           <a-switch v-model="editForm.isActive" size="small" />
           <span>是否启用</span>
         </div>

@@ -209,20 +209,20 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-3 text-[11px]">
-    <section v-if="loading" class="border border-slate-200 bg-white p-3">
+  <div class="text-[11px] space-y-3">
+    <section v-if="loading" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else-if="!canAssign" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+    <section v-else-if="!canAssign" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
       403：当前账号没有 `role.assign` 权限，无法访问用户管理。
     </section>
 
     <template v-else>
       <section>
-        <div class="border border-slate-200 bg-white p-3">
+        <div class="p-3 border border-slate-200 bg-white">
           <a-table
             :bordered="{ cell: true }"
             :columns="columns"
@@ -233,10 +233,10 @@ onMounted(async () => {
           >
             <template #user="{ record }">
               <div class="min-w-0">
-                <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
+                <p class="text-[12px] text-slate-900 font-semibold m-0 truncate">
                   {{ record.username }}
                 </p>
-                <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+                <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                   {{ record.userId }}
                 </p>
               </div>
@@ -291,10 +291,10 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section v-if="errorText" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+      <section v-if="errorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
         {{ errorText }}
       </section>
-      <section v-if="successText" class="border border-emerald-200 bg-emerald-50 p-3 text-emerald-700">
+      <section v-if="successText" class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50">
         {{ successText }}
       </section>
 
@@ -304,29 +304,29 @@ onMounted(async () => {
         title="编辑用户"
         width="520px"
       >
-        <div v-if="selectedUser" class="space-y-3 text-[11px]">
-          <div class="border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-600">
-            <p class="m-0 text-[11px] font-bold text-slate-900">
+        <div v-if="selectedUser" class="text-[11px] space-y-3">
+          <div class="text-[10px] text-slate-600 p-2 border border-slate-200 bg-slate-50">
+            <p class="text-[11px] text-slate-900 font-bold m-0">
               {{ selectedUser.username }}
             </p>
-            <p class="m-0 mt-1 font-mono">
+            <p class="font-mono m-0 mt-1">
               {{ selectedUser.userId }}
             </p>
           </div>
 
           <div class="space-y-2">
-            <p class="m-0 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
               平台角色
             </p>
-            <label class="flex items-center gap-2 text-[11px] text-slate-700">
+            <label class="text-[11px] text-slate-700 flex gap-2 items-center">
               <a-checkbox v-model="form.platformSuperAdmin" />
               platform_super_admin
             </label>
-            <label class="flex items-center gap-2 text-[11px] text-slate-700">
+            <label class="text-[11px] text-slate-700 flex gap-2 items-center">
               <a-checkbox v-model="form.contestAdmin" />
               contest_admin
             </label>
-            <label class="flex items-center gap-2 text-[11px] text-slate-700">
+            <label class="text-[11px] text-slate-700 flex gap-2 items-center">
               <a-checkbox v-model="form.pricingAdmin" />
               pricing_admin
             </label>
@@ -335,8 +335,8 @@ onMounted(async () => {
             </a-button>
           </div>
 
-          <div class="space-y-2 border-t border-slate-200 pt-3">
-            <p class="m-0 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          <div class="pt-3 border-t border-slate-200 space-y-2">
+            <p class="text-[10px] text-slate-500 tracking-wider font-bold m-0 uppercase">
               用户状态
             </p>
             <a-select v-model="form.status" size="small">

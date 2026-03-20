@@ -123,12 +123,12 @@ async function logout() {
           alt="用户头像"
         >
         <div class="min-w-0">
-          <p class="text-sm font-semibold text-slate-900 truncate">
+          <p class="text-sm text-slate-900 font-semibold truncate">
             {{ analystName }}
           </p>
           <p
             v-if="showAdminBadge"
-            class="mt-1 inline-flex rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700"
+            class="text-[10px] text-rose-700 font-semibold mt-1 px-1.5 py-0.5 border border-rose-200 rounded-md bg-rose-50 inline-flex"
           >
             管理页
           </p>
@@ -137,7 +137,7 @@ async function logout() {
           </p>
         </div>
         <button
-          class="ml-auto h-8 w-8 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+          class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
           title="个人设置"
           @click="openProfileDialog"
         >
@@ -150,41 +150,41 @@ async function logout() {
   <Teleport to="body">
     <div
       v-if="profileDialogVisible"
-      class="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
+      class="p-4 bg-black/30 flex items-center inset-0 justify-center fixed z-50"
       @click.self="closeProfileDialog"
     >
-      <div class="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+      <div class="p-4 border border-slate-200 rounded-xl bg-white max-w-sm w-full shadow-xl">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-semibold text-slate-900">
+          <h3 class="text-base text-slate-900 font-semibold">
             个人信息
           </h3>
           <button
-            class="h-7 w-7 flex items-center justify-center rounded text-slate-500 hover:bg-slate-100"
+            class="text-slate-500 rounded flex h-7 w-7 items-center justify-center hover:bg-slate-100"
             @click="closeProfileDialog"
           >
             <span class="material-symbols-outlined text-[18px]">close</span>
           </button>
         </div>
 
-        <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <p class="text-sm font-semibold text-slate-900">
+        <div class="mt-3 p-3 border border-slate-200 rounded-lg bg-slate-50">
+          <p class="text-sm text-slate-900 font-semibold">
             {{ analystName }}
           </p>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             {{ analystTier }}
           </p>
         </div>
 
-        <p v-if="actionError" class="mt-3 text-xs text-rose-600">
+        <p v-if="actionError" class="text-xs text-rose-600 mt-3">
           {{ actionError }}
         </p>
 
-        <div class="mt-4 flex items-center justify-end gap-2">
+        <div class="mt-4 flex gap-2 items-center justify-end">
           <button class="dense-btn" :disabled="loggingOut" @click="closeProfileDialog">
             关闭
           </button>
           <button
-            class="dense-btn !border-rose-300 !text-rose-700 hover:!bg-rose-50"
+            class="dense-btn !text-rose-700 !border-rose-300 hover:!bg-rose-50"
             :disabled="loggingOut"
             @click="logout"
           >

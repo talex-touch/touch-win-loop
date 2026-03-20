@@ -155,35 +155,35 @@ onMounted(loadData)
 </script>
 
 <template>
-  <div class="space-y-3 text-[11px]">
-    <section v-if="loading" class="border border-slate-200 bg-white p-3">
+  <div class="text-[11px] space-y-3">
+    <section v-if="loading" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
     <template v-else-if="data">
-      <section class="border border-slate-200 bg-white p-3">
-        <p class="m-0 text-[12px] font-semibold text-slate-900">
+      <section class="p-3 border border-slate-200 bg-white">
+        <p class="text-[12px] text-slate-900 font-semibold m-0">
           当前登录用户：{{ data.current.username }}（{{ data.current.userId }}）
         </p>
-        <p class="m-0 mt-1 text-[11px] text-slate-600">
+        <p class="text-[11px] text-slate-600 m-0 mt-1">
           角色：{{ data.current.roles.join(', ') || '无' }}
         </p>
-        <p class="m-0 mt-1 text-[11px] text-slate-600">
+        <p class="text-[11px] text-slate-600 m-0 mt-1">
           权限：{{ data.current.permissions.join(', ') || '无' }}
         </p>
       </section>
 
       <section
         v-if="!canAssign"
-        class="border border-rose-200 bg-rose-50 p-3 text-rose-600"
+        class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
       >
         403：当前账号没有 role.assign 权限，仅可查看自身角色信息。
       </section>
 
       <template v-else>
-        <section class="border border-slate-200 bg-white p-3">
+        <section class="p-3 border border-slate-200 bg-white">
           <div class="mb-3 flex items-center justify-end">
             <a-button size="small" type="primary" @click="openCreateDialog">
               新建分配
@@ -200,10 +200,10 @@ onMounted(loadData)
             >
               <template #user="{ record }">
                 <div class="min-w-0">
-                  <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
+                  <p class="text-[12px] text-slate-900 font-semibold m-0 truncate">
                     {{ record.username }}
                   </p>
-                  <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+                  <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                     {{ record.userId }}
                   </p>
                 </div>
@@ -246,10 +246,10 @@ onMounted(loadData)
       </template>
     </template>
 
-    <section v-if="errorText" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+    <section v-if="errorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
       {{ errorText }}
     </section>
-    <section v-if="successText" class="border border-emerald-200 bg-emerald-50 p-3 text-emerald-700">
+    <section v-if="successText" class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50">
       {{ successText }}
     </section>
 
@@ -259,17 +259,17 @@ onMounted(loadData)
       title="角色分配"
       width="460px"
     >
-      <div class="space-y-2 text-[11px]">
+      <div class="text-[11px] space-y-2">
         <a-input v-model="form.targetUserId" size="small" placeholder="目标用户 ID（targetUserId）" />
-        <label class="flex items-center gap-2 text-[11px] text-slate-700">
+        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
           <a-checkbox v-model="form.platformSuperAdmin" />
           platform_super_admin
         </label>
-        <label class="flex items-center gap-2 text-[11px] text-slate-700">
+        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
           <a-checkbox v-model="form.contestAdmin" />
           contest_admin
         </label>
-        <label class="flex items-center gap-2 text-[11px] text-slate-700">
+        <label class="text-[11px] text-slate-700 flex gap-2 items-center">
           <a-checkbox v-model="form.pricingAdmin" />
           pricing_admin
         </label>

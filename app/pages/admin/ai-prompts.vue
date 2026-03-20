@@ -797,14 +797,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-3 text-[11px]">
-    <section class="border border-slate-200 bg-white p-3">
-      <div class="flex items-center justify-between gap-2">
+  <div class="text-[11px] space-y-3">
+    <section class="p-3 border border-slate-200 bg-white">
+      <div class="flex gap-2 items-center justify-between">
         <div>
-          <h1 class="text-[13px] font-bold text-slate-900">
+          <h1 class="text-[13px] text-slate-900 font-bold">
             AI 平台配置
           </h1>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             平台级配置面板：providers / channels / models / audits / logs。赛事级提示词请到赛事工作区内维护。
           </p>
         </div>
@@ -814,12 +814,12 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="border border-slate-200 bg-white p-2">
+    <section class="p-2 border border-slate-200 bg-white">
       <div class="flex flex-wrap gap-1">
         <button
           v-for="tab in tabOptions"
           :key="tab.key"
-          class="rounded border px-3 py-1 text-[11px] font-semibold transition-colors"
+          class="text-[11px] font-semibold px-3 py-1 border rounded transition-colors"
           :class="activeTab === tab.key ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'"
           @click="switchTab(tab.key)"
         >
@@ -828,18 +828,18 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section v-if="activeLoading" class="border border-slate-200 bg-white p-3">
+    <section v-if="activeLoading" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else-if="activeError" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+    <section v-else-if="activeError" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
       {{ activeError }}
     </section>
 
     <section v-else-if="activeTab === 'providers'" class="space-y-3">
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <div class="text-[11px] text-slate-600">
           <p class="m-0">
             API Key 覆盖状态：LLM={{ providers?.overrideState?.aiApiKeyOverridden ? 'override' : 'env' }} ·
@@ -850,12 +850,12 @@ onMounted(async () => {
             最近更新：{{ formatTime(providers?.overrideState?.updatedAt || '') }} · by {{ providers?.overrideState?.updatedByUserId || '-' }}
           </p>
         </div>
-        <p v-if="providerSaveMessage" class="mt-2 text-[11px] text-emerald-600">
+        <p v-if="providerSaveMessage" class="text-[11px] text-emerald-600 mt-2">
           {{ providerSaveMessage }}
         </p>
       </section>
 
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <a-table
           :bordered="{ cell: true }"
           :columns="providerColumns"
@@ -866,13 +866,13 @@ onMounted(async () => {
         >
           <template #config="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate text-[11px] text-slate-900">
+              <p class="text-[11px] text-slate-900 m-0 truncate">
                 provider={{ record.provider }} / model={{ record.model }}
               </p>
-              <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                 baseURL={{ record.baseURL }}
               </p>
-              <p class="m-0 mt-1 text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 m-0 mt-1">
                 timeout={{ record.timeoutMs }}ms · retries={{ record.maxRetries }}
               </p>
             </div>
@@ -899,7 +899,7 @@ onMounted(async () => {
         @cancel="closeProviderEditor"
       >
         <div v-if="providerEditorKey === 'llm'" class="space-y-2">
-          <div class="grid gap-2 md:grid-cols-2">
+          <div class="gap-2 grid md:grid-cols-2">
             <a-input v-model="providerForm.aiProvider" size="small" placeholder="provider" />
             <a-input v-model="providerForm.aiModel" size="small" placeholder="model" />
             <a-input v-model="providerForm.aiBaseURL" size="small" class="md:col-span-2" placeholder="baseURL" />
@@ -916,7 +916,7 @@ onMounted(async () => {
             :auto-size="{ minRows: 4, maxRows: 10 }"
             placeholder="模型目录 JSON（可选）"
           />
-          <div class="grid gap-2 md:grid-cols-[140px_1fr]">
+          <div class="gap-2 grid md:grid-cols-[140px_1fr]">
             <a-select v-model="providerForm.aiApiKeyMode" size="small">
               <a-option value="keep">
                 keep key
@@ -939,14 +939,14 @@ onMounted(async () => {
         </div>
 
         <div v-else class="space-y-2">
-          <div class="grid gap-2 md:grid-cols-2">
+          <div class="gap-2 grid md:grid-cols-2">
             <a-input v-model="providerForm.docAiProvider" size="small" placeholder="provider" />
             <a-input v-model="providerForm.docAiModel" size="small" placeholder="model" />
             <a-input v-model="providerForm.docAiBaseURL" size="small" class="md:col-span-2" placeholder="baseURL" />
             <a-input-number v-model="providerForm.docAiTimeoutMs" size="small" :min="1000" :max="120000" placeholder="timeoutMs" />
             <a-input-number v-model="providerForm.docAiMaxRetries" size="small" :min="0" :max="10" placeholder="maxRetries" />
           </div>
-          <div class="grid gap-2 md:grid-cols-[140px_1fr]">
+          <div class="gap-2 grid md:grid-cols-[140px_1fr]">
             <a-select v-model="providerForm.docAiApiKeyMode" size="small">
               <a-option value="keep">
                 keep key
@@ -968,7 +968,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="mt-4 flex justify-end gap-2">
+        <div class="mt-4 flex gap-2 justify-end">
           <a-button size="small" :disabled="providerSaving" @click="closeProviderEditor">
             取消
           </a-button>
@@ -980,7 +980,7 @@ onMounted(async () => {
     </section>
 
     <section v-else-if="activeTab === 'channels'" class="space-y-3">
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <a-table
           :bordered="{ cell: true }"
           :columns="channelConfigColumns"
@@ -991,16 +991,16 @@ onMounted(async () => {
         >
           <template #config="{ record }">
             <div class="min-w-0">
-              <p class="m-0 text-[11px] text-slate-900">
+              <p class="text-[11px] text-slate-900 m-0">
                 enabled={{ record.enabled ? 'true' : 'false' }} · webTimeout={{ record.webTimeoutMs }}ms
               </p>
-              <p class="m-0 mt-1 text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 m-0 mt-1">
                 maxWebResults={{ record.maxWebResults }} · maxPageChars={{ record.maxPageChars }}
               </p>
             </div>
           </template>
           <template #status="{ record }">
-            <div class="flex flex-wrap items-center gap-1">
+            <div class="flex flex-wrap gap-1 items-center">
               <a-tag :color="record.enabled ? 'green' : 'gray'" size="small">
                 {{ record.enabled ? 'Enabled' : 'Disabled' }}
               </a-tag>
@@ -1015,14 +1015,14 @@ onMounted(async () => {
             </a-button>
           </template>
         </a-table>
-        <p v-if="providerSaveMessage" class="mt-2 text-[11px] text-emerald-600">
+        <p v-if="providerSaveMessage" class="text-[11px] text-emerald-600 mt-2">
           {{ providerSaveMessage }}
         </p>
       </section>
 
-      <section class="border border-slate-200 bg-white p-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
+      <section class="p-3 border border-slate-200 bg-white">
+        <div class="flex flex-wrap gap-2 items-center justify-between">
+          <div class="flex gap-2 items-center">
             <span class="text-[11px] text-slate-600">调用统计窗口</span>
             <a-select v-model="channelDays" size="small" style="width: 100px" @change="loadChannels">
               <a-option :value="1">
@@ -1036,14 +1036,14 @@ onMounted(async () => {
               </a-option>
             </a-select>
           </div>
-          <div class="flex items-center gap-2 text-[11px] text-slate-600">
-            <span>totalCalls: <b class="font-mono text-slate-900">{{ channels?.totalCalls || 0 }}</b></span>
-            <span>totalUnits: <b class="font-mono text-slate-900">{{ channels?.totalUnits || 0 }}</b></span>
+          <div class="text-[11px] text-slate-600 flex gap-2 items-center">
+            <span>totalCalls: <b class="text-slate-900 font-mono">{{ channels?.totalCalls || 0 }}</b></span>
+            <span>totalUnits: <b class="text-slate-900 font-mono">{{ channels?.totalUnits || 0 }}</b></span>
           </div>
         </div>
       </section>
 
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <a-table
           :bordered="{ cell: true }"
           :columns="channelUsageColumns"
@@ -1067,16 +1067,16 @@ onMounted(async () => {
         @cancel="closeChannelEditor"
       >
         <div class="space-y-2">
-          <label class="inline-flex items-center gap-2 text-[11px] text-slate-700">
+          <label class="text-[11px] text-slate-700 inline-flex gap-2 items-center">
             <span>enabled</span>
             <a-switch v-model="providerForm.adminAiEnabled" size="small" />
           </label>
-          <div class="grid gap-2 md:grid-cols-2">
+          <div class="gap-2 grid md:grid-cols-2">
             <a-input-number v-model="providerForm.adminAiWebTimeoutMs" size="small" :min="1000" :max="120000" placeholder="webTimeoutMs" />
             <a-input-number v-model="providerForm.adminAiMaxWebResults" size="small" :min="1" :max="10" placeholder="maxWebResults" />
             <a-input-number v-model="providerForm.adminAiMaxPageChars" size="small" :min="1000" :max="50000" placeholder="maxPageChars" />
           </div>
-          <div class="grid gap-2 md:grid-cols-[140px_1fr]">
+          <div class="gap-2 grid md:grid-cols-[140px_1fr]">
             <a-select v-model="providerForm.adminAiTavilyApiKeyMode" size="small">
               <a-option value="keep">
                 keep key
@@ -1098,7 +1098,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="mt-4 flex justify-end gap-2">
+        <div class="mt-4 flex gap-2 justify-end">
           <a-button size="small" :disabled="providerSaving" @click="closeChannelEditor">
             取消
           </a-button>
@@ -1110,9 +1110,9 @@ onMounted(async () => {
     </section>
 
     <section v-else-if="activeTab === 'models'" class="space-y-3">
-      <section class="border border-slate-200 bg-white p-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
+      <section class="p-3 border border-slate-200 bg-white">
+        <div class="flex flex-wrap gap-2 items-center justify-between">
+          <div class="flex gap-2 items-center">
             <span class="text-[11px] text-slate-600">统计窗口</span>
             <a-select v-model="modelDays" size="small" style="width: 100px" @change="loadModels">
               <a-option :value="1">
@@ -1128,12 +1128,12 @@ onMounted(async () => {
           </div>
           <div class="text-[11px] text-slate-600">
             totalMessages:
-            <b class="font-mono text-slate-900">{{ models?.totalMessages || 0 }}</b>
+            <b class="text-slate-900 font-mono">{{ models?.totalMessages || 0 }}</b>
           </div>
         </div>
       </section>
 
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <a-table
           :bordered="{ cell: true }"
           :columns="modelColumns"
@@ -1162,7 +1162,7 @@ onMounted(async () => {
         title="Model 详情"
         @cancel="closeModelDetail"
       >
-        <div v-if="modelDetailRow" class="space-y-2 text-[11px] text-slate-700">
+        <div v-if="modelDetailRow" class="text-[11px] text-slate-700 space-y-2">
           <p class="m-0">
             provider={{ modelDetailRow.provider || '-' }} / model={{ modelDetailRow.model || '-' }}
           </p>
@@ -1182,8 +1182,8 @@ onMounted(async () => {
     </section>
 
     <section v-else-if="activeTab === 'audits'" class="space-y-3">
-      <section class="border border-slate-200 bg-white p-3">
-        <div class="grid gap-2 md:grid-cols-[1fr_auto]">
+      <section class="p-3 border border-slate-200 bg-white">
+        <div class="gap-2 grid md:grid-cols-[1fr_auto]">
           <a-input
             v-model="auditAction"
             size="small"
@@ -1197,7 +1197,7 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <a-table
           :bordered="{ cell: true }"
           :columns="auditColumns"
@@ -1211,26 +1211,26 @@ onMounted(async () => {
           </template>
           <template #actorName="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate text-[11px] text-slate-900">
+              <p class="text-[11px] text-slate-900 m-0 truncate">
                 {{ record.actorName || '-' }}
               </p>
-              <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                 {{ record.actorUserId || '-' }}
               </p>
             </div>
           </template>
           <template #contestName="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate text-[11px] text-slate-900">
+              <p class="text-[11px] text-slate-900 m-0 truncate">
                 {{ record.contestName || '-' }}
               </p>
-              <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                 {{ record.contestId || '-' }}
               </p>
             </div>
           </template>
           <template #payload="{ record }">
-            <p class="m-0 font-mono text-[10px] text-slate-600">
+            <p class="text-[10px] text-slate-600 font-mono m-0">
               {{ toAuditPayloadPreview(record.payload || {}) }}
             </p>
           </template>
@@ -1261,7 +1261,7 @@ onMounted(async () => {
         title="Audit 详情"
         @cancel="closeAuditDetail"
       >
-        <div v-if="auditDetailRow" class="space-y-2 text-[11px] text-slate-700">
+        <div v-if="auditDetailRow" class="text-[11px] text-slate-700 space-y-2">
           <p class="m-0">
             时间：{{ formatTime(auditDetailRow.createdAt) }}
           </p>
@@ -1274,7 +1274,7 @@ onMounted(async () => {
           <p class="m-0">
             contest={{ auditDetailRow.contestName || '-' }} ({{ auditDetailRow.contestId || '-' }})
           </p>
-          <pre class="max-h-80 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[10px] leading-4">{{ toPrettyJson(auditDetailRow.payload || {}) }}</pre>
+          <pre class="text-[10px] leading-4 font-mono p-2 border border-slate-200 rounded bg-slate-50 max-h-80 overflow-auto">{{ toPrettyJson(auditDetailRow.payload || {}) }}</pre>
         </div>
         <div class="mt-4 flex justify-end">
           <a-button size="small" @click="closeAuditDetail">
@@ -1285,8 +1285,8 @@ onMounted(async () => {
     </section>
 
     <section v-else class="space-y-3">
-      <section class="border border-slate-200 bg-white p-3">
-        <div class="grid gap-2 md:grid-cols-3">
+      <section class="p-3 border border-slate-200 bg-white">
+        <div class="gap-2 grid md:grid-cols-3">
           <a-select v-model="logFilters.days" size="small" placeholder="窗口天数">
             <a-option :value="1">
               1 天
@@ -1304,7 +1304,7 @@ onMounted(async () => {
           <a-input v-model="logFilters.workspaceId" size="small" allow-clear placeholder="workspaceId" />
           <a-input v-model="logFilters.sessionId" size="small" allow-clear placeholder="sessionId" />
         </div>
-        <div class="mt-2 grid gap-2 md:grid-cols-[1fr_auto]">
+        <div class="mt-2 gap-2 grid md:grid-cols-[1fr_auto]">
           <a-input
             v-model="logFilters.q"
             size="small"
@@ -1318,7 +1318,7 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <a-table
           :bordered="{ cell: true }"
           :columns="logColumns"
@@ -1332,43 +1332,43 @@ onMounted(async () => {
           </template>
           <template #session="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate text-[11px] font-semibold text-slate-900">
+              <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
                 {{ record.workspaceName || '-' }}
               </p>
-              <p class="m-0 mt-1 truncate text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 m-0 mt-1 truncate">
                 {{ record.sessionTitle || record.sessionId }}
               </p>
-              <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                 ws={{ record.workspaceId }} · sid={{ record.sessionId }}
               </p>
             </div>
           </template>
           <template #provider="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate text-[11px] text-slate-900">
+              <p class="text-[11px] text-slate-900 m-0 truncate">
                 {{ record.provider || '-' }} / {{ record.model || '-' }}
               </p>
-              <p class="m-0 mt-1 text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 m-0 mt-1">
                 fallback={{ record.fallbackUsed ? 'true' : 'false' }}
               </p>
             </div>
           </template>
           <template #actorName="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate text-[11px] text-slate-900">
+              <p class="text-[11px] text-slate-900 m-0 truncate">
                 {{ record.actorName || '-' }}
               </p>
-              <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                 {{ record.actorUserId || '-' }}
               </p>
             </div>
           </template>
           <template #contentPreview="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate font-mono text-[10px] text-slate-700">
+              <p class="text-[10px] text-slate-700 font-mono m-0 truncate">
                 {{ record.contentPreview || '-' }}
               </p>
-              <p class="m-0 mt-1 truncate text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 m-0 mt-1 truncate">
                 contest={{ record.contestName || record.contestId || '-' }} · track={{ record.trackId || '-' }} · major={{ record.major || '-' }}
               </p>
             </div>
@@ -1400,7 +1400,7 @@ onMounted(async () => {
         title="Log 详情"
         @cancel="closeLogDetail"
       >
-        <div v-if="logDetailRow" class="space-y-2 text-[11px] text-slate-700">
+        <div v-if="logDetailRow" class="text-[11px] text-slate-700 space-y-2">
           <p class="m-0">
             时间：{{ formatTime(logDetailRow.createdAt) }}
           </p>
@@ -1419,7 +1419,7 @@ onMounted(async () => {
           <p class="m-0">
             contest={{ logDetailRow.contestName || logDetailRow.contestId || '-' }} · track={{ logDetailRow.trackId || '-' }} · major={{ logDetailRow.major || '-' }}
           </p>
-          <pre class="max-h-80 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[10px] leading-4">{{ logDetailRow.content || '-' }}</pre>
+          <pre class="text-[10px] leading-4 font-mono p-2 border border-slate-200 rounded bg-slate-50 max-h-80 overflow-auto">{{ logDetailRow.content || '-' }}</pre>
         </div>
         <div class="mt-4 flex justify-end">
           <a-button size="small" @click="closeLogDetail">

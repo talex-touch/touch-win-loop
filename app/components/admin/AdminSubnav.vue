@@ -16,13 +16,13 @@ function isActive(path: string): boolean {
 </script>
 
 <template>
-  <nav class="rounded-lg border border-slate-200 bg-white p-2">
+  <nav class="p-2 border border-slate-200 rounded-lg bg-white">
     <div class="flex flex-wrap gap-2">
       <NuxtLink
         v-for="item in items"
         :key="item.to"
         :to="item.to"
-        class="rounded px-3 py-1.5 text-xs font-medium transition-colors"
+        class="text-xs font-medium px-3 py-1.5 rounded transition-colors"
         :class="isActive(item.to)
           ? 'bg-slate-900 text-white'
           : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"

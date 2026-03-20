@@ -78,13 +78,13 @@ onMounted(loadLogs)
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             审计历史
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             只保留最近 7 天，读操作与 AI 调用会自动压缩去重。
           </p>
         </div>
@@ -94,8 +94,8 @@ onMounted(loadLogs)
       </div>
     </section>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="grid gap-2 md:grid-cols-[1fr_auto]">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="gap-2 grid md:grid-cols-[1fr_auto]">
         <a-input
           v-model="actionFilter"
           size="small"
@@ -109,13 +109,13 @@ onMounted(loadLogs)
       </div>
     </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
       <div v-if="logs.length === 0" class="text-sm text-slate-500">
         当前筛选下暂无审计日志。
       </div>
@@ -123,20 +123,20 @@ onMounted(loadLogs)
         <article
           v-for="item in logs"
           :key="item.id"
-          class="rounded border border-slate-200 p-3"
+          class="p-3 border border-slate-200 rounded"
         >
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <p class="text-xs font-semibold text-slate-900">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <p class="text-xs text-slate-900 font-semibold">
               {{ item.action }}
             </p>
             <p class="text-xs text-slate-500">
               {{ formatTime(item.createdAt) }}
             </p>
           </div>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             actor={{ item.actorUserId || '-' }} · contest={{ item.contestId || '-' }} · resource={{ item.resourceId || '-' }}
           </p>
-          <pre class="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-[11px] text-slate-700">{{ JSON.stringify(item.payload || {}, null, 2) }}</pre>
+          <pre class="text-[11px] text-slate-700 mt-2 p-2 rounded bg-slate-50 overflow-x-auto">{{ JSON.stringify(item.payload || {}, null, 2) }}</pre>
         </article>
       </div>
 
@@ -154,7 +154,7 @@ onMounted(loadLogs)
       </div>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
   </div>

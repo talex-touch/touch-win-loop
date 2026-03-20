@@ -84,18 +84,18 @@ onMounted(loadData)
 
 <template>
   <div class="space-y-4">
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="6" />
       </a-skeleton>
     </section>
 
-    <section v-else class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
       <div class="flex items-center justify-between">
-        <p class="text-xs font-semibold text-slate-700">
+        <p class="text-xs text-slate-700 font-semibold">
           结构化 FAQ
         </p>
-        <div class="flex items-center gap-2">
+        <div class="flex gap-2 items-center">
           <a-button size="mini" type="outline" @click="addFaqItem">
             新增 FAQ
           </a-button>
@@ -109,7 +109,7 @@ onMounted(loadData)
         <div
           v-for="(item, index) in faqItems"
           :key="`faq-${index}`"
-          class="rounded border border-slate-200 p-2"
+          class="p-2 border border-slate-200 rounded"
         >
           <a-input v-model="item.question" size="small" placeholder="问题" />
           <a-textarea
@@ -125,10 +125,10 @@ onMounted(loadData)
       </div>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
-    <section v-if="successText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="successText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ successText }}
     </section>
   </div>

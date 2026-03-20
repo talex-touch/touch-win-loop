@@ -1,292 +1,436 @@
-<!DOCTYPE html>
+<!doctype html>
 
-<html lang="zh-CN"><head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>竞品分析平台 - 后台管理</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        "primary": "#1152d4",
-                        "background-light": "#ffffff",
-                        "background-dark": "#0d1117",
-                        "border-light": "#e1e4e8",
-                        "border-dark": "#30363d",
-                    },
-                    fontFamily: {
-                        "display": ["Inter", "sans-serif"]
-                    },
-                    borderRadius: {
-                        "DEFAULT": "0",
-                        "lg": "0",
-                        "xl": "0",
-                        "full": "0"
-                    },
-                },
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>竞品分析平台 - 后台管理</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+      rel="stylesheet"
+    />
+    <script id="tailwind-config">
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: '#1152d4',
+              'background-light': '#ffffff',
+              'background-dark': '#0d1117',
+              'border-light': '#e1e4e8',
+              'border-dark': '#30363d',
             },
-        }
+            fontFamily: {
+              display: ['Inter', 'sans-serif'],
+            },
+            borderRadius: {
+              DEFAULT: '0',
+              lg: '0',
+              xl: '0',
+              full: '0',
+            },
+          },
+        },
+      }
     </script>
-<style>
-        body {
-            font-family: 'Inter', "Microsoft YaHei", sans-serif;
-            -webkit-font-smoothing: antialiased;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 3px;
-            height: 3px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #d1d5db;
-        }
-        tr:hover td {
-            background-color: #f6f8fa;
-        }
-        .dark tr:hover td {
-            background-color: #161b22;
-        }
-        * {
-            border-radius: 0 !important;
-            box-shadow: none !important;
-        }
-        input, button, select {
-            outline: none !important;
-        }
+    <style>
+      body {
+        font-family: 'Inter', 'Microsoft YaHei', sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 3px;
+        height: 3px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #d1d5db;
+      }
+      tr:hover td {
+        background-color: #f6f8fa;
+      }
+      .dark tr:hover td {
+        background-color: #161b22;
+      }
+      * {
+        border-radius: 0 !important;
+        box-shadow: none !important;
+      }
+      input,
+      button,
+      select {
+        outline: none !important;
+      }
     </style>
-</head>
-<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 text-xs">
-<div class="flex h-screen overflow-hidden">
-<!-- Sidebar -->
-<aside class="w-56 flex-shrink-0 border-r border-border-light dark:border-border-dark bg-[#f8f9fa] dark:bg-slate-900 flex flex-col">
-<div class="h-12 flex items-center gap-2 px-4 border-b border-border-light dark:border-border-dark bg-white dark:bg-slate-950">
-<div class="w-5 h-5 bg-primary flex items-center justify-center text-white">
-<span class="material-symbols-outlined text-sm">analytics</span>
-</div>
-<h1 class="text-xs font-bold tracking-tight">竞品分析平台</h1>
-</div>
-<nav class="flex-1 py-2 overflow-y-auto custom-scrollbar">
-<div class="px-4 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Core</div>
-<a class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group" href="#">
-<span class="material-symbols-outlined text-[18px]">dashboard</span>
-<span>仪表盘</span>
-</a>
-<a class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group" href="#">
-<span class="material-symbols-outlined text-[18px]">bar_chart</span>
-<span>竞争分析</span>
-</a>
-<a class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group" href="#">
-<span class="material-symbols-outlined text-[18px]">database</span>
-<span>数据源</span>
-</a>
-<div class="px-4 py-1.5 mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">System</div>
-<a class="flex items-center gap-2.5 px-4 py-1.5 bg-white dark:bg-slate-800 text-primary border-r-2 border-primary transition-colors group" href="#">
-<span class="material-symbols-outlined text-[18px]">group</span>
-<span class="font-bold">用户管理</span>
-</a>
-<a class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group" href="#">
-<span class="material-symbols-outlined text-[18px]">description</span>
-<span>系统日志</span>
-</a>
-<a class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group" href="#">
-<span class="material-symbols-outlined text-[18px]">settings</span>
-<span>平台设置</span>
-</a>
-</nav>
-<div class="border-t border-border-light dark:border-border-dark bg-white dark:bg-slate-950">
-<div class="flex items-center gap-2 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer border-l-2 border-transparent">
-<div class="w-6 h-6 bg-slate-200 overflow-hidden">
-<img class="w-full h-full object-cover" data-alt="User avatar placeholder" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCqXBnMFSOejvCltZbmP434atB9dogyh-lzAbsdXaoQkke6PFNj_ZDRc1VMoBsbarnmutAYxZM5FfgVM2Jkrp-iQ7jX6ioc7lKRkFwnfoU2YuF3Pg4gkkrFtSufe7TcmK34HXJr7hOQBN2mO4SXz8KiA9qVkSMEZUttcTDQtSZuV1OlCf2HOtNCbkO7Tz52s0GzrwRtn9Um5r1tPOj40OayZPmCoxItYj6nDF3fIgBcp55-NSiFC4g1TKM0mJZyvCkpNo12dQ1ggPK8"/>
-</div>
-<div class="flex flex-col min-w-0">
-<span class="text-[11px] font-bold truncate">张三 (Admin)</span>
-<span class="text-[9px] text-slate-400 truncate tracking-tight">admin@analysis.com</span>
-</div>
-</div>
-</div>
-</aside>
-<!-- Main Content -->
-<main class="flex-1 flex flex-col min-w-0 overflow-hidden">
-<!-- Top Bar -->
-<header class="h-12 border-b border-border-light dark:border-border-dark bg-white dark:bg-slate-950 flex items-center justify-between px-4 flex-shrink-0">
-<div class="flex items-center gap-4 flex-1">
-<div class="relative w-full max-w-sm">
-<span class="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-base">search</span>
-<input class="w-full pl-8 pr-3 py-1 bg-slate-50 dark:bg-slate-900 border border-border-light dark:border-border-dark text-[11px] focus:border-primary transition-colors" placeholder="搜索模块、用户或数据..." type="text"/>
-</div>
-</div>
-<div class="flex items-center gap-1">
-<button class="p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 relative">
-<span class="material-symbols-outlined text-lg">notifications</span>
-<span class="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 border border-white"></span>
-</button>
-<div class="h-4 w-px bg-border-light dark:bg-border-dark mx-2"></div>
-<button class="flex items-center gap-1.5 px-3 py-1 bg-primary text-white font-bold hover:bg-primary/90 transition-colors">
-<span class="material-symbols-outlined text-sm">add</span>
-<span>新增用户</span>
-</button>
-</div>
-</header>
-<!-- Content Area -->
-<div class="flex-1 overflow-y-auto bg-background-light dark:bg-background-dark custom-scrollbar flex flex-col">
-<!-- Toolbar/Breadcrumb Row -->
-<div class="px-4 py-2 border-b border-border-light dark:border-border-dark flex items-center justify-between bg-[#f8f9fa] dark:bg-slate-900/50">
-<nav class="flex items-center gap-1 text-[10px] text-slate-500 font-medium">
-<a class="hover:text-primary" href="#">HOME</a>
-<span class="material-symbols-outlined text-[14px]">chevron_right</span>
-<span class="text-slate-900 dark:text-slate-300">USER_MANAGEMENT</span>
-</nav>
-<div class="flex gap-1">
-<button class="flex items-center gap-1 px-2 py-1 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark text-[10px] font-bold hover:border-slate-400">
-<span class="material-symbols-outlined text-xs">filter_alt</span>
-<span>FILTER</span>
-</button>
-<button class="flex items-center gap-1 px-2 py-1 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark text-[10px] font-bold hover:border-slate-400">
-<span class="material-symbols-outlined text-xs">file_download</span>
-<span>EXPORT</span>
-</button>
-</div>
-</div>
-<div class="p-4 space-y-4">
-<!-- Title & Tabs -->
-<div class="flex items-end justify-between border-b border-border-light dark:border-border-dark">
-<div class="flex gap-4">
-<button class="pb-1.5 px-1 text-[11px] font-bold border-b-2 border-primary text-primary">全部用户 (128)</button>
-<button class="pb-1.5 px-1 text-[11px] font-medium text-slate-400 border-b-2 border-transparent hover:text-slate-600">活跃用户</button>
-<button class="pb-1.5 px-1 text-[11px] font-medium text-slate-400 border-b-2 border-transparent hover:text-slate-600">待审批</button>
-<button class="pb-1.5 px-1 text-[11px] font-medium text-slate-400 border-b-2 border-transparent hover:text-slate-600">已禁用</button>
-</div>
-</div>
-<!-- Table Container -->
-<div class="border border-border-light dark:border-border-dark bg-white dark:bg-slate-950 overflow-hidden">
-<div class="overflow-x-auto custom-scrollbar">
-<table class="w-full text-left border-collapse table-fixed min-w-[900px]">
-<thead>
-<tr class="bg-slate-50 dark:bg-slate-900/50 border-b border-border-light dark:border-border-dark">
-<th class="w-10 px-3 py-2">
-<input class="border-slate-300 text-primary focus:ring-0 w-3 h-3" type="checkbox"/>
-</th>
-<th class="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">User / Email</th>
-<th class="w-32 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Role</th>
-<th class="w-32 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Status</th>
-<th class="w-40 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Data Sources</th>
-<th class="w-48 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Last Active</th>
-<th class="w-32 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter text-right">Actions</th>
-</tr>
-</thead>
-<tbody class="divide-y divide-border-light dark:divide-border-dark">
-<!-- Row 1 -->
-<tr class="group">
-<td class="px-3 py-1.5">
-<input class="border-slate-300 text-primary focus:ring-0 w-3 h-3" type="checkbox"/>
-</td>
-<td class="px-3 py-1.5">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 bg-primary/10 flex items-center justify-center text-primary font-bold text-[9px]">WL</div>
-<div class="flex flex-col truncate">
-<span class="font-bold leading-tight">王立强</span>
-<span class="text-[9px] text-slate-400 leading-tight">wang.lq@corp.com</span>
-</div>
-</div>
-</td>
-<td class="px-3 py-1.5">
-<span class="text-[10px] text-slate-600 dark:text-slate-400 font-medium border border-border-light dark:border-border-dark px-1 bg-slate-50 dark:bg-slate-900">分析师</span>
-</td>
-<td class="px-3 py-1.5">
-<div class="flex items-center gap-1.5">
-<span class="w-1.5 h-1.5 bg-emerald-500"></span>
-<span class="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Active</span>
-</div>
-</td>
-<td class="px-3 py-1.5">
-<div class="flex gap-0.5">
-<span class="w-4 h-4 bg-slate-100 dark:bg-slate-800 border border-border-light dark:border-border-dark flex items-center justify-center text-[8px] font-bold" title="Amazon">A</span>
-<span class="w-4 h-4 bg-slate-100 dark:bg-slate-800 border border-border-light dark:border-border-dark flex items-center justify-center text-[8px] font-bold" title="Google">G</span>
-<span class="w-4 h-4 bg-slate-50 dark:bg-slate-900 border border-border-light dark:border-border-dark flex items-center justify-center text-[8px]">+2</span>
-</div>
-</td>
-<td class="px-3 py-1.5 text-[10px] text-slate-500 font-mono">2023-11-24 14:22</td>
-<td class="px-3 py-1.5 text-right">
-<div class="flex items-center justify-end gap-0.5 opacity-40 group-hover:opacity-100 transition-opacity">
-<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-base">edit_note</span></button>
-<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-base">vpn_key</span></button>
-<button class="p-1 hover:text-red-500 transition-colors"><span class="material-symbols-outlined text-base">delete</span></button>
-</div>
-</td>
-</tr>
-<!-- Row 2 -->
-<tr class="group">
-<td class="px-3 py-1.5"><input class="border-slate-300 text-primary focus:ring-0 w-3 h-3" type="checkbox"/></td>
-<td class="px-3 py-1.5">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-[9px]">ZY</div>
-<div class="flex flex-col truncate">
-<span class="font-bold leading-tight">赵雅静</span>
-<span class="text-[9px] text-slate-400 leading-tight">zhao.yj@analysis.com</span>
-</div>
-</div>
-</td>
-<td class="px-3 py-1.5"><span class="text-[10px] text-primary font-bold border border-primary/20 px-1 bg-primary/5">管理员</span></td>
-<td class="px-3 py-1.5">
-<div class="flex items-center gap-1.5">
-<span class="w-1.5 h-1.5 bg-amber-500"></span>
-<span class="text-[10px] font-bold text-amber-600 uppercase">Pending</span>
-</div>
-</td>
-<td class="px-3 py-1.5"><span class="w-4 h-4 bg-slate-100 border border-border-light flex items-center justify-center text-[8px] font-bold">E</span></td>
-<td class="px-3 py-1.5 text-[10px] text-slate-500 font-mono">2023-11-23 09:15</td>
-<td class="px-3 py-1.5 text-right">
-<div class="flex items-center justify-end gap-0.5 opacity-40 group-hover:opacity-100">
-<button class="p-1 hover:text-primary"><span class="material-symbols-outlined text-base">edit_note</span></button>
-<button class="p-1 hover:text-primary"><span class="material-symbols-outlined text-base">vpn_key</span></button>
-<button class="p-1 hover:text-red-500"><span class="material-symbols-outlined text-base">delete</span></button>
-</div>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-<!-- Footer Info Bar -->
-<div class="px-3 py-1.5 border-t border-border-light dark:border-border-dark bg-[#f8f9fa] dark:bg-slate-900/80 flex items-center justify-between text-[10px] font-medium text-slate-500 uppercase">
-<div>Showing 1 - 2 of 128 results</div>
-<div class="flex items-center gap-2">
-<button class="px-2 py-0.5 border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 disabled:opacity-30" disabled="">PREV</button>
-<div class="flex gap-1">
-<button class="w-5 h-5 flex items-center justify-center bg-primary text-white font-bold">1</button>
-<button class="w-5 h-5 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-slate-700">2</button>
-</div>
-<button class="px-2 py-0.5 border border-border-light dark:border-border-dark bg-white dark:bg-slate-800">NEXT</button>
-</div>
-</div>
-</div>
-<!-- Stats Footer (Highly Condensed) -->
-<div class="grid grid-cols-4 border-t border-border-light dark:border-border-dark">
-<div class="p-3 border-r border-border-light dark:border-border-dark">
-<div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total_Users</div>
-<div class="text-lg font-bold tabular-nums">1,284</div>
-</div>
-<div class="p-3 border-r border-border-light dark:border-border-dark">
-<div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Active_Ratio</div>
-<div class="text-lg font-bold tabular-nums">92.4%</div>
-</div>
-<div class="p-3 border-r border-border-light dark:border-border-dark">
-<div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pending_Approval</div>
-<div class="text-lg font-bold tabular-nums text-amber-600">12</div>
-</div>
-<div class="p-3">
-<div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Data_Nodes</div>
-<div class="text-lg font-bold tabular-nums">48</div>
-</div>
-</div>
-</div>
-</div>
-</main>
-</div>
-</body></html>
+  </head>
+  <body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 text-xs">
+    <div class="flex h-screen overflow-hidden">
+      <!-- Sidebar -->
+      <aside
+        class="w-56 flex-shrink-0 border-r border-border-light dark:border-border-dark bg-[#f8f9fa] dark:bg-slate-900 flex flex-col"
+      >
+        <div
+          class="h-12 flex items-center gap-2 px-4 border-b border-border-light dark:border-border-dark bg-white dark:bg-slate-950"
+        >
+          <div class="w-5 h-5 bg-primary flex items-center justify-center text-white">
+            <span class="material-symbols-outlined text-sm">analytics</span>
+          </div>
+          <h1 class="text-xs font-bold tracking-tight">竞品分析平台</h1>
+        </div>
+        <nav class="flex-1 py-2 overflow-y-auto custom-scrollbar">
+          <div class="px-4 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Core</div>
+          <a
+            class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group"
+            href="#"
+          >
+            <span class="material-symbols-outlined text-[18px]">dashboard</span>
+            <span>仪表盘</span>
+          </a>
+          <a
+            class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group"
+            href="#"
+          >
+            <span class="material-symbols-outlined text-[18px]">bar_chart</span>
+            <span>竞争分析</span>
+          </a>
+          <a
+            class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group"
+            href="#"
+          >
+            <span class="material-symbols-outlined text-[18px]">database</span>
+            <span>数据源</span>
+          </a>
+          <div class="px-4 py-1.5 mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">System</div>
+          <a
+            class="flex items-center gap-2.5 px-4 py-1.5 bg-white dark:bg-slate-800 text-primary border-r-2 border-primary transition-colors group"
+            href="#"
+          >
+            <span class="material-symbols-outlined text-[18px]">group</span>
+            <span class="font-bold">用户管理</span>
+          </a>
+          <a
+            class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group"
+            href="#"
+          >
+            <span class="material-symbols-outlined text-[18px]">description</span>
+            <span>系统日志</span>
+          </a>
+          <a
+            class="flex items-center gap-2.5 px-4 py-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors group"
+            href="#"
+          >
+            <span class="material-symbols-outlined text-[18px]">settings</span>
+            <span>平台设置</span>
+          </a>
+        </nav>
+        <div class="border-t border-border-light dark:border-border-dark bg-white dark:bg-slate-950">
+          <div
+            class="flex items-center gap-2 p-3 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer border-l-2 border-transparent"
+          >
+            <div class="w-6 h-6 bg-slate-200 overflow-hidden">
+              <img
+                class="w-full h-full object-cover"
+                data-alt="User avatar placeholder"
+                src="https://lh3.googleusercontent.com/aida-public/AB6AXuCqXBnMFSOejvCltZbmP434atB9dogyh-lzAbsdXaoQkke6PFNj_ZDRc1VMoBsbarnmutAYxZM5FfgVM2Jkrp-iQ7jX6ioc7lKRkFwnfoU2YuF3Pg4gkkrFtSufe7TcmK34HXJr7hOQBN2mO4SXz8KiA9qVkSMEZUttcTDQtSZuV1OlCf2HOtNCbkO7Tz52s0GzrwRtn9Um5r1tPOj40OayZPmCoxItYj6nDF3fIgBcp55-NSiFC4g1TKM0mJZyvCkpNo12dQ1ggPK8"
+              />
+            </div>
+            <div class="flex flex-col min-w-0">
+              <span class="text-[11px] font-bold truncate">张三 (Admin)</span>
+              <span class="text-[9px] text-slate-400 truncate tracking-tight">admin@analysis.com</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <!-- Main Content -->
+      <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <!-- Top Bar -->
+        <header
+          class="h-12 border-b border-border-light dark:border-border-dark bg-white dark:bg-slate-950 flex items-center justify-between px-4 flex-shrink-0"
+        >
+          <div class="flex items-center gap-4 flex-1">
+            <div class="relative w-full max-w-sm">
+              <span class="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-base"
+                >search</span
+              >
+              <input
+                class="w-full pl-8 pr-3 py-1 bg-slate-50 dark:bg-slate-900 border border-border-light dark:border-border-dark text-[11px] focus:border-primary transition-colors"
+                placeholder="搜索模块、用户或数据..."
+                type="text"
+              />
+            </div>
+          </div>
+          <div class="flex items-center gap-1">
+            <button class="p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 relative">
+              <span class="material-symbols-outlined text-lg">notifications</span>
+              <span class="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-red-500 border border-white"></span>
+            </button>
+            <div class="h-4 w-px bg-border-light dark:bg-border-dark mx-2"></div>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1 bg-primary text-white font-bold hover:bg-primary/90 transition-colors"
+            >
+              <span class="material-symbols-outlined text-sm">add</span>
+              <span>新增用户</span>
+            </button>
+          </div>
+        </header>
+        <!-- Content Area -->
+        <div class="flex-1 overflow-y-auto bg-background-light dark:bg-background-dark custom-scrollbar flex flex-col">
+          <!-- Toolbar/Breadcrumb Row -->
+          <div
+            class="px-4 py-2 border-b border-border-light dark:border-border-dark flex items-center justify-between bg-[#f8f9fa] dark:bg-slate-900/50"
+          >
+            <nav class="flex items-center gap-1 text-[10px] text-slate-500 font-medium">
+              <a class="hover:text-primary" href="#">HOME</a>
+              <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+              <span class="text-slate-900 dark:text-slate-300">USER_MANAGEMENT</span>
+            </nav>
+            <div class="flex gap-1">
+              <button
+                class="flex items-center gap-1 px-2 py-1 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark text-[10px] font-bold hover:border-slate-400"
+              >
+                <span class="material-symbols-outlined text-xs">filter_alt</span>
+                <span>FILTER</span>
+              </button>
+              <button
+                class="flex items-center gap-1 px-2 py-1 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark text-[10px] font-bold hover:border-slate-400"
+              >
+                <span class="material-symbols-outlined text-xs">file_download</span>
+                <span>EXPORT</span>
+              </button>
+            </div>
+          </div>
+          <div class="p-4 space-y-4">
+            <!-- Title & Tabs -->
+            <div class="flex items-end justify-between border-b border-border-light dark:border-border-dark">
+              <div class="flex gap-4">
+                <button class="pb-1.5 px-1 text-[11px] font-bold border-b-2 border-primary text-primary">
+                  全部用户 (128)
+                </button>
+                <button
+                  class="pb-1.5 px-1 text-[11px] font-medium text-slate-400 border-b-2 border-transparent hover:text-slate-600"
+                >
+                  活跃用户
+                </button>
+                <button
+                  class="pb-1.5 px-1 text-[11px] font-medium text-slate-400 border-b-2 border-transparent hover:text-slate-600"
+                >
+                  待审批
+                </button>
+                <button
+                  class="pb-1.5 px-1 text-[11px] font-medium text-slate-400 border-b-2 border-transparent hover:text-slate-600"
+                >
+                  已禁用
+                </button>
+              </div>
+            </div>
+            <!-- Table Container -->
+            <div class="border border-border-light dark:border-border-dark bg-white dark:bg-slate-950 overflow-hidden">
+              <div class="overflow-x-auto custom-scrollbar">
+                <table class="w-full text-left border-collapse table-fixed min-w-[900px]">
+                  <thead>
+                    <tr class="bg-slate-50 dark:bg-slate-900/50 border-b border-border-light dark:border-border-dark">
+                      <th class="w-10 px-3 py-2">
+                        <input class="border-slate-300 text-primary focus:ring-0 w-3 h-3" type="checkbox" />
+                      </th>
+                      <th class="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                        User / Email
+                      </th>
+                      <th class="w-32 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                        Role
+                      </th>
+                      <th class="w-32 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                        Status
+                      </th>
+                      <th class="w-40 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                        Data Sources
+                      </th>
+                      <th class="w-48 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                        Last Active
+                      </th>
+                      <th
+                        class="w-32 px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter text-right"
+                      >
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-border-light dark:divide-border-dark">
+                    <!-- Row 1 -->
+                    <tr class="group">
+                      <td class="px-3 py-1.5">
+                        <input class="border-slate-300 text-primary focus:ring-0 w-3 h-3" type="checkbox" />
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <div class="flex items-center gap-2">
+                          <div
+                            class="w-5 h-5 bg-primary/10 flex items-center justify-center text-primary font-bold text-[9px]"
+                          >
+                            WL
+                          </div>
+                          <div class="flex flex-col truncate">
+                            <span class="font-bold leading-tight">王立强</span>
+                            <span class="text-[9px] text-slate-400 leading-tight">wang.lq@corp.com</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <span
+                          class="text-[10px] text-slate-600 dark:text-slate-400 font-medium border border-border-light dark:border-border-dark px-1 bg-slate-50 dark:bg-slate-900"
+                          >分析师</span
+                        >
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <div class="flex items-center gap-1.5">
+                          <span class="w-1.5 h-1.5 bg-emerald-500"></span>
+                          <span class="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase"
+                            >Active</span
+                          >
+                        </div>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <div class="flex gap-0.5">
+                          <span
+                            class="w-4 h-4 bg-slate-100 dark:bg-slate-800 border border-border-light dark:border-border-dark flex items-center justify-center text-[8px] font-bold"
+                            title="Amazon"
+                            >A</span
+                          >
+                          <span
+                            class="w-4 h-4 bg-slate-100 dark:bg-slate-800 border border-border-light dark:border-border-dark flex items-center justify-center text-[8px] font-bold"
+                            title="Google"
+                            >G</span
+                          >
+                          <span
+                            class="w-4 h-4 bg-slate-50 dark:bg-slate-900 border border-border-light dark:border-border-dark flex items-center justify-center text-[8px]"
+                            >+2</span
+                          >
+                        </div>
+                      </td>
+                      <td class="px-3 py-1.5 text-[10px] text-slate-500 font-mono">2023-11-24 14:22</td>
+                      <td class="px-3 py-1.5 text-right">
+                        <div
+                          class="flex items-center justify-end gap-0.5 opacity-40 group-hover:opacity-100 transition-opacity"
+                        >
+                          <button class="p-1 hover:text-primary transition-colors">
+                            <span class="material-symbols-outlined text-base">edit_note</span>
+                          </button>
+                          <button class="p-1 hover:text-primary transition-colors">
+                            <span class="material-symbols-outlined text-base">vpn_key</span>
+                          </button>
+                          <button class="p-1 hover:text-red-500 transition-colors">
+                            <span class="material-symbols-outlined text-base">delete</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <!-- Row 2 -->
+                    <tr class="group">
+                      <td class="px-3 py-1.5">
+                        <input class="border-slate-300 text-primary focus:ring-0 w-3 h-3" type="checkbox" />
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <div class="flex items-center gap-2">
+                          <div
+                            class="w-5 h-5 bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-[9px]"
+                          >
+                            ZY
+                          </div>
+                          <div class="flex flex-col truncate">
+                            <span class="font-bold leading-tight">赵雅静</span>
+                            <span class="text-[9px] text-slate-400 leading-tight">zhao.yj@analysis.com</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <span class="text-[10px] text-primary font-bold border border-primary/20 px-1 bg-primary/5"
+                          >管理员</span
+                        >
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <div class="flex items-center gap-1.5">
+                          <span class="w-1.5 h-1.5 bg-amber-500"></span>
+                          <span class="text-[10px] font-bold text-amber-600 uppercase">Pending</span>
+                        </div>
+                      </td>
+                      <td class="px-3 py-1.5">
+                        <span
+                          class="w-4 h-4 bg-slate-100 border border-border-light flex items-center justify-center text-[8px] font-bold"
+                          >E</span
+                        >
+                      </td>
+                      <td class="px-3 py-1.5 text-[10px] text-slate-500 font-mono">2023-11-23 09:15</td>
+                      <td class="px-3 py-1.5 text-right">
+                        <div class="flex items-center justify-end gap-0.5 opacity-40 group-hover:opacity-100">
+                          <button class="p-1 hover:text-primary">
+                            <span class="material-symbols-outlined text-base">edit_note</span>
+                          </button>
+                          <button class="p-1 hover:text-primary">
+                            <span class="material-symbols-outlined text-base">vpn_key</span>
+                          </button>
+                          <button class="p-1 hover:text-red-500">
+                            <span class="material-symbols-outlined text-base">delete</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <!-- Footer Info Bar -->
+              <div
+                class="px-3 py-1.5 border-t border-border-light dark:border-border-dark bg-[#f8f9fa] dark:bg-slate-900/80 flex items-center justify-between text-[10px] font-medium text-slate-500 uppercase"
+              >
+                <div>Showing 1 - 2 of 128 results</div>
+                <div class="flex items-center gap-2">
+                  <button
+                    class="px-2 py-0.5 border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 disabled:opacity-30"
+                    disabled=""
+                  >
+                    PREV
+                  </button>
+                  <div class="flex gap-1">
+                    <button class="w-5 h-5 flex items-center justify-center bg-primary text-white font-bold">1</button>
+                    <button class="w-5 h-5 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-slate-700">
+                      2
+                    </button>
+                  </div>
+                  <button
+                    class="px-2 py-0.5 border border-border-light dark:border-border-dark bg-white dark:bg-slate-800"
+                  >
+                    NEXT
+                  </button>
+                </div>
+              </div>
+            </div>
+            <!-- Stats Footer (Highly Condensed) -->
+            <div class="grid grid-cols-4 border-t border-border-light dark:border-border-dark">
+              <div class="p-3 border-r border-border-light dark:border-border-dark">
+                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total_Users</div>
+                <div class="text-lg font-bold tabular-nums">1,284</div>
+              </div>
+              <div class="p-3 border-r border-border-light dark:border-border-dark">
+                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Active_Ratio</div>
+                <div class="text-lg font-bold tabular-nums">92.4%</div>
+              </div>
+              <div class="p-3 border-r border-border-light dark:border-border-dark">
+                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pending_Approval</div>
+                <div class="text-lg font-bold tabular-nums text-amber-600">12</div>
+              </div>
+              <div class="p-3">
+                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Data_Nodes</div>
+                <div class="text-lg font-bold tabular-nums">48</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

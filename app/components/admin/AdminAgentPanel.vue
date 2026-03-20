@@ -458,13 +458,13 @@ watch(activeSessionId, async (value, previous) => {
 </script>
 
 <template>
-  <aside class="rounded-lg border border-slate-200 bg-white p-4">
-    <div class="flex items-center justify-between gap-2">
+  <aside class="p-4 border border-slate-200 rounded-lg bg-white">
+    <div class="flex gap-2 items-center justify-between">
       <div>
-        <h2 class="text-sm font-semibold text-slate-900">
+        <h2 class="text-sm text-slate-900 font-semibold">
           DeepAgent 助手
         </h2>
-        <p class="mt-1 text-xs text-slate-500">
+        <p class="text-xs text-slate-500 mt-1">
           草稿缓存 {{ contestDraftCount }} 份（应用后仍需手动保存）
         </p>
       </div>
@@ -501,7 +501,7 @@ watch(activeSessionId, async (value, previous) => {
         placeholder="评审文本（可选）"
       />
 
-      <div v-if="showDefenseOptions" class="grid grid-cols-2 gap-2">
+      <div v-if="showDefenseOptions" class="gap-2 grid grid-cols-2">
         <a-select v-model="strictness" size="small" placeholder="难度">
           <a-option value="normal">
             normal
@@ -533,41 +533,41 @@ watch(activeSessionId, async (value, previous) => {
       </a-button>
     </div>
 
-    <section v-if="streamError" class="mt-3 rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600">
+    <section v-if="streamError" class="text-xs text-rose-600 mt-3 p-3 border border-rose-200 rounded bg-rose-50">
       {{ streamError }}
     </section>
 
-    <section v-if="assistantReply" class="mt-3 rounded border border-slate-200 p-3">
+    <section v-if="assistantReply" class="mt-3 p-3 border border-slate-200 rounded">
       <div class="mb-2 flex items-center justify-between">
-        <p class="text-xs font-semibold text-slate-700">
+        <p class="text-xs text-slate-700 font-semibold">
           AI 结果
         </p>
         <a-button size="mini" @click="copyReply">
           复制
         </a-button>
       </div>
-      <pre class="max-h-52 overflow-auto whitespace-pre-wrap text-xs text-slate-700">{{ assistantReply }}</pre>
-      <p v-if="runMeta" class="mt-2 text-[11px] text-slate-500">
+      <pre class="text-xs text-slate-700 max-h-52 whitespace-pre-wrap overflow-auto">{{ assistantReply }}</pre>
+      <p v-if="runMeta" class="text-[11px] text-slate-500 mt-2">
         attempts={{ runMeta.attempts }} ｜ fallback={{ runMeta.fallbackUsed ? 'yes' : 'no' }} ｜ latency={{ runMeta.latencyMs }}ms
       </p>
     </section>
 
     <section v-if="artifacts.length > 0" class="mt-3 space-y-2">
-      <p class="text-xs font-semibold text-slate-700">
+      <p class="text-xs text-slate-700 font-semibold">
         结构化产物
       </p>
       <div
         v-for="item in artifacts"
         :key="item.id"
-        class="rounded border border-slate-200 bg-slate-50 p-3"
+        class="p-3 border border-slate-200 rounded bg-slate-50"
       >
-        <p class="text-xs font-semibold text-slate-800">
+        <p class="text-xs text-slate-800 font-semibold">
           {{ item.title }}
         </p>
-        <p class="mt-1 text-xs text-slate-600">
+        <p class="text-xs text-slate-600 mt-1">
           {{ item.summary }}
         </p>
-        <p class="mt-1 text-[11px] text-slate-500">
+        <p class="text-[11px] text-slate-500 mt-1">
           type={{ item.type }}<span v-if="item.module"> ｜ module={{ item.module }}</span>
         </p>
         <div class="mt-2 flex flex-wrap gap-2">
@@ -581,11 +581,11 @@ watch(activeSessionId, async (value, previous) => {
       </div>
     </section>
 
-    <section class="mt-3 rounded border border-slate-200 p-3">
-      <p class="text-xs font-semibold text-slate-700">
+    <section class="mt-3 p-3 border border-slate-200 rounded">
+      <p class="text-xs text-slate-700 font-semibold">
         流式时间线
       </p>
-      <div class="mt-2 max-h-44 overflow-auto space-y-1 text-xs">
+      <div class="text-xs mt-2 max-h-44 overflow-auto space-y-1">
         <p v-for="item in timeline" :key="item.id" class="text-slate-600">
           [{{ formatTime(item.createdAt) }}] {{ item.type }} · {{ item.text }}
         </p>
@@ -595,18 +595,18 @@ watch(activeSessionId, async (value, previous) => {
       </div>
     </section>
 
-    <section class="mt-3 rounded border border-slate-200 p-3">
-      <p class="text-xs font-semibold text-slate-700">
+    <section class="mt-3 p-3 border border-slate-200 rounded">
+      <p class="text-xs text-slate-700 font-semibold">
         会话消息
       </p>
-      <div class="mt-2 max-h-56 overflow-auto space-y-1 text-xs">
+      <div class="text-xs mt-2 max-h-56 overflow-auto space-y-1">
         <p v-if="loadingMessages" class="text-slate-400">
           加载中...
         </p>
         <p v-else-if="chatMessages.length === 0" class="text-slate-400">
           暂无消息
         </p>
-        <p v-for="item in chatMessages" :key="item.id" class="rounded border border-slate-100 bg-slate-50 px-2 py-1 text-slate-600">
+        <p v-for="item in chatMessages" :key="item.id" class="text-slate-600 px-2 py-1 border border-slate-100 rounded bg-slate-50">
           <span class="font-semibold">{{ item.role }}</span>：{{ item.content }}
         </p>
       </div>

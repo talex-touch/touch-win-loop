@@ -239,13 +239,13 @@ async function save() {
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             新增资料
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}。支持结构化录入与 PDF 上传解析两种方式。
           </p>
         </div>
@@ -255,17 +255,17 @@ async function save() {
       </div>
     </section>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="mb-3 flex flex-wrap items-center gap-2 text-xs">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="text-xs mb-3 flex flex-wrap gap-2 items-center">
         <button
-          class="rounded border px-3 py-1.5 transition-colors"
+          class="px-3 py-1.5 border rounded transition-colors"
           :class="createMode === 'manual' ? 'border-slate-800 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'"
           @click="createMode = 'manual'"
         >
           结构化录入
         </button>
         <button
-          class="rounded border px-3 py-1.5 transition-colors"
+          class="px-3 py-1.5 border rounded transition-colors"
           :class="createMode === 'pdf' ? 'border-slate-800 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'"
           @click="createMode = 'pdf'"
         >
@@ -273,14 +273,14 @@ async function save() {
         </button>
       </div>
 
-      <div v-if="moduleDraft" class="mb-3 rounded border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+      <div v-if="moduleDraft" class="text-xs text-emerald-700 mb-3 p-3 border border-emerald-200 rounded bg-emerald-50">
         <p class="font-semibold">
           检测到 AI 草稿：{{ moduleDraft.title || '资料草稿' }}
         </p>
         <p class="mt-1">
           更新时间：{{ draftUpdatedAt }}。应用后仍需手动确认并保存。
         </p>
-        <div class="mt-2 flex items-center gap-2">
+        <div class="mt-2 flex gap-2 items-center">
           <a-button size="mini" type="outline" @click="applyAiDraft">
             应用到表单
           </a-button>
@@ -291,11 +291,11 @@ async function save() {
       </div>
 
       <div v-if="createMode === 'pdf'" class="space-y-2">
-        <label class="block text-xs font-medium text-slate-700">PDF 文件</label>
+        <label class="text-xs text-slate-700 font-medium block">PDF 文件</label>
         <input
           type="file"
           accept="application/pdf,.pdf"
-          class="dense-input block w-full"
+          class="dense-input w-full block"
           @change="onSelectFile"
         >
         <p class="text-xs text-slate-500">
@@ -303,7 +303,7 @@ async function save() {
         </p>
       </div>
 
-      <div class="mt-3 grid gap-2 md:grid-cols-3">
+      <div class="mt-3 gap-2 grid md:grid-cols-3">
         <a-select v-model="form.category" size="small" placeholder="分类">
           <a-option v-for="item in categoryOptions" :key="item.value" :value="item.value">
             {{ item.label }}
@@ -378,11 +378,11 @@ async function save() {
       </a-button>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
 
-    <section v-if="draftText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="draftText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ draftText }}
     </section>
   </div>

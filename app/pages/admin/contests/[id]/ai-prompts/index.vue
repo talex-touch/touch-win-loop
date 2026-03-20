@@ -192,17 +192,17 @@ onMounted(loadData)
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             AI 提示词
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }} · 可注入 5 条 AI 链路
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex gap-2 items-center">
           <button class="dense-btn" @click="createDraft">
             新建提示词
           </button>
@@ -213,37 +213,37 @@ onMounted(loadData)
       </div>
     </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else class="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
-      <aside class="rounded-lg border border-slate-200 bg-white p-3">
-        <p class="text-xs font-semibold text-slate-700">
+    <section v-else class="gap-3 grid lg:grid-cols-[280px_minmax(0,1fr)]">
+      <aside class="p-3 border border-slate-200 rounded-lg bg-white">
+        <p class="text-xs text-slate-700 font-semibold">
           已配置提示词（{{ promptResources.length }}）
         </p>
         <div class="mt-2 space-y-2">
           <button
             v-for="item in promptResources"
             :key="item.id"
-            class="w-full rounded border px-2 py-2 text-left text-xs"
+            class="text-xs px-2 py-2 text-left border rounded w-full"
             :class="activeResourceId === item.id ? 'border-slate-800 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'"
             @click="applyResource(item)"
           >
-            <p class="truncate font-semibold">
+            <p class="font-semibold truncate">
               {{ item.title }}
             </p>
-            <p class="mt-1 truncate opacity-80">
+            <p class="mt-1 opacity-80 truncate">
               {{ ((item.metadata || {}).target as string) || 'project_chat' }} · {{ ((item.metadata || {}).scope as string) || 'contest' }}
             </p>
           </button>
         </div>
       </aside>
 
-      <section class="rounded-lg border border-slate-200 bg-white p-4">
-        <div class="grid gap-2 md:grid-cols-2">
+      <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <div class="gap-2 grid md:grid-cols-2">
           <a-input v-model="form.title" size="small" placeholder="提示词标题" />
           <a-select v-model="form.target" size="small" placeholder="目标链路">
             <a-option v-for="item in targetOptions" :key="item.value" :value="item.value">
@@ -277,7 +277,7 @@ onMounted(loadData)
           </a-select>
         </div>
 
-        <div class="mt-3 flex items-center gap-2 text-xs text-slate-600">
+        <div class="text-xs text-slate-600 mt-3 flex gap-2 items-center">
           <a-checkbox v-model="form.enabled">
             启用（metadata.enabled）
           </a-checkbox>
@@ -292,10 +292,10 @@ onMounted(loadData)
       </section>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
-    <section v-if="successText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="successText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ successText }}
     </section>
   </div>

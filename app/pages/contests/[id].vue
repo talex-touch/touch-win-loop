@@ -170,17 +170,17 @@ onMounted(loadData)
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl space-y-4 p-4">
-    <div class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-4">
+  <div class="mx-auto p-4 max-w-6xl space-y-4">
+    <div class="p-4 border border-slate-200 rounded-lg bg-white flex flex-wrap gap-2 items-center justify-between">
       <div>
-        <h1 class="text-lg font-semibold text-slate-900">
+        <h1 class="text-lg text-slate-900 font-semibold">
           竞赛详情
         </h1>
         <p class="text-xs text-slate-500">
           赛事知识中台：赛道、细则、FAQ、资料与政策统一入口。
         </p>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex gap-2 items-center">
         <NuxtLink class="dense-btn" :to="`/contests/${contestId}/resources`">
           资料中心
         </NuxtLink>
@@ -190,29 +190,29 @@ onMounted(loadData)
       </div>
     </div>
 
-    <div v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <div v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </div>
 
-    <div v-else-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <div v-else-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </div>
 
-    <div v-else-if="!contest" class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500">
+    <div v-else-if="!contest" class="text-sm text-slate-500 p-4 border border-slate-200 rounded-lg bg-white">
       未找到该竞赛。
     </div>
 
     <template v-else>
-      <section class="rounded-lg border border-slate-200 bg-white p-4">
-        <div class="flex flex-wrap items-start justify-between gap-2">
+      <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <div class="flex flex-wrap gap-2 items-start justify-between">
           <div class="space-y-1">
-            <h2 class="text-xl font-semibold text-slate-900">
+            <h2 class="text-xl text-slate-900 font-semibold">
               {{ contest.name }}
             </h2>
-            <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-              <span class="rounded bg-slate-100 px-2 py-1">{{ contest.level }}</span>
+            <div class="text-xs text-slate-600 flex flex-wrap gap-2 items-center">
+              <span class="px-2 py-1 rounded bg-slate-100">{{ contest.level }}</span>
               <span>主办方：{{ contest.organizer || '待补充' }}</span>
               <span>届次：{{ contest.currentSeason || '待补充' }}</span>
               <span>状态：{{ contest.status || 'draft' }}</span>
@@ -227,17 +227,17 @@ onMounted(loadData)
             官方链接
           </a>
         </div>
-        <p class="mt-3 text-sm text-slate-700">
+        <p class="text-sm text-slate-700 mt-3">
           {{ contest.summary || '暂无简介，待补充。' }}
         </p>
       </section>
 
-      <section class="rounded-lg border border-slate-200 bg-white p-2">
+      <section class="p-2 border border-slate-200 rounded-lg bg-white">
         <div class="flex flex-wrap gap-2">
           <button
             v-for="item in tabItems"
             :key="item.key"
-            class="rounded px-3 py-1.5 text-xs font-medium transition-colors"
+            class="text-xs font-medium px-3 py-1.5 rounded transition-colors"
             :class="activeTab === item.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
             @click="activeTab = item.key"
           >
@@ -246,29 +246,29 @@ onMounted(loadData)
         </div>
       </section>
 
-      <section v-if="activeTab === 'overview'" class="grid gap-3 md:grid-cols-2">
-        <article class="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 class="text-sm font-semibold text-slate-900">
+      <section v-if="activeTab === 'overview'" class="gap-3 grid md:grid-cols-2">
+        <article class="p-4 border border-slate-200 rounded-lg bg-white">
+          <h3 class="text-sm text-slate-900 font-semibold">
             参赛信息
           </h3>
-          <div class="mt-2 space-y-2 text-sm text-slate-700">
+          <div class="text-sm text-slate-700 mt-2 space-y-2">
             <p><span class="font-medium">参赛对象：</span>{{ contest.participantRequirements || '待补充' }}</p>
             <p><span class="font-medium">组队规则：</span>{{ contest.teamRule || '待补充' }}</p>
             <p><span class="font-medium">适配人群：</span>{{ contest.recommendedFor?.join(' / ') || '待补充' }}</p>
             <p><span class="font-medium">学科门类：</span>{{ contest.disciplines?.join(' / ') || '待补充' }}</p>
           </div>
         </article>
-        <article class="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 class="text-sm font-semibold text-slate-900">
+        <article class="p-4 border border-slate-200 rounded-lg bg-white">
+          <h3 class="text-sm text-slate-900 font-semibold">
             知识库概览
           </h3>
-          <div class="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+          <div class="text-xs mt-3 gap-2 grid grid-cols-2 md:grid-cols-4">
             <div
               v-for="item in resourceStats"
               :key="item.category"
-              class="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600"
+              class="text-slate-600 px-2 py-1 border border-slate-200 rounded bg-slate-50"
             >
-              <div class="font-medium text-slate-800">
+              <div class="text-slate-800 font-medium">
                 {{ categoryLabels[item.category] }}
               </div>
               <div>{{ item.count }} 条</div>
@@ -278,52 +278,52 @@ onMounted(loadData)
       </section>
 
       <section v-else-if="activeTab === 'track'" class="space-y-3">
-        <article class="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 class="text-sm font-semibold text-slate-900">
+        <article class="p-4 border border-slate-200 rounded-lg bg-white">
+          <h3 class="text-sm text-slate-900 font-semibold">
             赛道设置
           </h3>
-          <div v-if="contest.tracks.length === 0" class="mt-2 text-sm text-slate-500">
+          <div v-if="contest.tracks.length === 0" class="text-sm text-slate-500 mt-2">
             暂无赛道，待补充。
           </div>
-          <div v-else class="mt-3 grid gap-2 md:grid-cols-2">
+          <div v-else class="mt-3 gap-2 grid md:grid-cols-2">
             <article
               v-for="track in contest.tracks"
               :key="track.id"
-              class="rounded border border-slate-200 p-3"
+              class="p-3 border border-slate-200 rounded"
             >
-              <h4 class="text-sm font-medium text-slate-900">
+              <h4 class="text-sm text-slate-900 font-medium">
                 {{ track.name }}
               </h4>
-              <p class="mt-1 text-xs text-slate-600">
+              <p class="text-xs text-slate-600 mt-1">
                 {{ track.summary || '暂无赛道说明。' }}
               </p>
-              <p class="mt-2 text-xs text-slate-600">
+              <p class="text-xs text-slate-600 mt-2">
                 适配专业：{{ track.suitableMajors?.join(' / ') || '待补充' }}
               </p>
-              <p class="mt-1 text-xs text-slate-600">
+              <p class="text-xs text-slate-600 mt-1">
                 交付物：{{ track.deliverableTypes?.join(' / ') || '待补充' }}
               </p>
             </article>
           </div>
         </article>
 
-        <article class="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 class="text-sm font-semibold text-slate-900">
+        <article class="p-4 border border-slate-200 rounded-lg bg-white">
+          <h3 class="text-sm text-slate-900 font-semibold">
             赛道详解条目
           </h3>
-          <div v-if="getCategoryResources('track_details').length === 0" class="mt-2 text-sm text-slate-500">
+          <div v-if="getCategoryResources('track_details').length === 0" class="text-sm text-slate-500 mt-2">
             暂无赛道详解资料。
           </div>
           <div v-else class="mt-3 space-y-2">
             <article
               v-for="item in getCategoryResources('track_details')"
               :key="item.id"
-              class="rounded border border-slate-200 p-3"
+              class="p-3 border border-slate-200 rounded"
             >
-              <p class="text-xs font-semibold text-slate-900">
+              <p class="text-xs text-slate-900 font-semibold">
                 {{ item.title }}
               </p>
-              <p class="mt-1 text-xs text-slate-700 whitespace-pre-wrap">
+              <p class="text-xs text-slate-700 mt-1 whitespace-pre-wrap">
                 {{ item.content || item.summary || '暂无内容。' }}
               </p>
             </article>
@@ -332,38 +332,38 @@ onMounted(loadData)
       </section>
 
       <section v-else-if="activeTab === 'judge'" class="space-y-3">
-        <article class="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 class="text-sm font-semibold text-slate-900">
+        <article class="p-4 border border-slate-200 rounded-lg bg-white">
+          <h3 class="text-sm text-slate-900 font-semibold">
             Rubric 评分标准
           </h3>
-          <div v-if="rubrics.length === 0" class="mt-2 text-sm text-slate-500">
+          <div v-if="rubrics.length === 0" class="text-sm text-slate-500 mt-2">
             该赛事暂未配置评分规则。
           </div>
           <div v-else class="mt-3 space-y-2">
             <article
               v-for="rubric in rubrics"
               :key="rubric.id"
-              class="rounded border border-slate-200 p-3"
+              class="p-3 border border-slate-200 rounded"
             >
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-sm font-medium text-slate-900">
+              <div class="flex flex-wrap gap-2 items-center">
+                <span class="text-sm text-slate-900 font-medium">
                   {{ trackNameMap.get(rubric.trackId) || rubric.trackId }}
                 </span>
-                <span class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">v{{ rubric.version || 1 }}</span>
+                <span class="text-xs text-slate-600 px-2 py-0.5 rounded bg-slate-100">v{{ rubric.version || 1 }}</span>
               </div>
-              <div class="mt-2 grid gap-1 md:grid-cols-2">
+              <div class="mt-2 gap-1 grid md:grid-cols-2">
                 <div
                   v-for="dimension in rubric.dimensions"
                   :key="`${rubric.id}-${dimension.key}`"
-                  class="rounded border border-slate-200 bg-slate-50 p-2 text-xs"
+                  class="text-xs p-2 border border-slate-200 rounded bg-slate-50"
                 >
-                  <p class="font-medium text-slate-800">
+                  <p class="text-slate-800 font-medium">
                     {{ dimension.name }}
                     <template v-if="dimension.weight !== undefined">
                       （{{ dimension.weight }}%）
                     </template>
                   </p>
-                  <p class="mt-1 text-slate-600">
+                  <p class="text-slate-600 mt-1">
                     {{ dimension.description || '待补充评分要点' }}
                   </p>
                 </div>
@@ -372,23 +372,23 @@ onMounted(loadData)
           </div>
         </article>
 
-        <article class="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 class="text-sm font-semibold text-slate-900">
+        <article class="p-4 border border-slate-200 rounded-lg bg-white">
+          <h3 class="text-sm text-slate-900 font-semibold">
             评委补充细则
           </h3>
-          <div v-if="getCategoryResources('judge_guidelines').length === 0" class="mt-2 text-sm text-slate-500">
+          <div v-if="getCategoryResources('judge_guidelines').length === 0" class="text-sm text-slate-500 mt-2">
             暂无补充细则条目。
           </div>
           <div v-else class="mt-3 space-y-2">
             <article
               v-for="item in getCategoryResources('judge_guidelines')"
               :key="item.id"
-              class="rounded border border-slate-200 p-3"
+              class="p-3 border border-slate-200 rounded"
             >
-              <p class="text-xs font-semibold text-slate-900">
+              <p class="text-xs text-slate-900 font-semibold">
                 {{ item.title }}
               </p>
-              <p class="mt-1 text-xs text-slate-700 whitespace-pre-wrap">
+              <p class="text-xs text-slate-700 mt-1 whitespace-pre-wrap">
                 {{ item.content || item.summary || '暂无内容。' }}
               </p>
             </article>
@@ -396,82 +396,82 @@ onMounted(loadData)
         </article>
       </section>
 
-      <section v-else-if="activeTab === 'timeline'" class="rounded-lg border border-slate-200 bg-white p-4">
-        <h3 class="text-sm font-semibold text-slate-900">
+      <section v-else-if="activeTab === 'timeline'" class="p-4 border border-slate-200 rounded-lg bg-white">
+        <h3 class="text-sm text-slate-900 font-semibold">
           时间轴
         </h3>
-        <div v-if="sortedTimelines.length === 0" class="mt-2 text-sm text-slate-500">
+        <div v-if="sortedTimelines.length === 0" class="text-sm text-slate-500 mt-2">
           暂无时间节点，待补充。
         </div>
         <div v-else class="mt-3 space-y-2">
           <div
             v-for="item in sortedTimelines"
             :key="item.id"
-            class="rounded border border-slate-200 p-3 text-sm"
+            class="text-sm p-3 border border-slate-200 rounded"
           >
-            <div class="flex flex-wrap items-center gap-2 text-slate-800">
-              <span class="rounded bg-slate-100 px-2 py-0.5 text-xs">{{ item.year }}</span>
+            <div class="text-slate-800 flex flex-wrap gap-2 items-center">
+              <span class="text-xs px-2 py-0.5 rounded bg-slate-100">{{ item.year }}</span>
               <span class="font-medium">{{ timelineNodeLabels[item.nodeType] }}</span>
             </div>
-            <p class="mt-1 text-xs text-slate-600">
+            <p class="text-xs text-slate-600 mt-1">
               开始：{{ formatDateTime(item.startAt) }}；结束：{{ formatDateTime(item.endAt) }}
             </p>
-            <p class="mt-1 text-xs text-slate-600">
+            <p class="text-xs text-slate-600 mt-1">
               备注：{{ item.note || '待补充' }}
             </p>
           </div>
         </div>
       </section>
 
-      <section v-else-if="activeTab === 'faq'" class="rounded-lg border border-slate-200 bg-white p-4">
-        <h3 class="text-sm font-semibold text-slate-900">
+      <section v-else-if="activeTab === 'faq'" class="p-4 border border-slate-200 rounded-lg bg-white">
+        <h3 class="text-sm text-slate-900 font-semibold">
           FAQ
         </h3>
         <div v-if="faqItems.length > 0" class="mt-2 space-y-2">
           <details
             v-for="(item, index) in faqItems"
             :key="`faq-item-${index}`"
-            class="rounded border border-slate-200 p-2"
+            class="p-2 border border-slate-200 rounded"
           >
-            <summary class="cursor-pointer text-sm font-medium text-slate-800">
+            <summary class="text-sm text-slate-800 font-medium cursor-pointer">
               {{ item.question || `问题 ${index + 1}` }}
             </summary>
-            <p class="mt-2 text-sm text-slate-700">
+            <p class="text-sm text-slate-700 mt-2">
               {{ item.answer || '待补充' }}
             </p>
           </details>
         </div>
-        <p v-else class="mt-2 text-sm text-slate-700">
+        <p v-else class="text-sm text-slate-700 mt-2">
           {{ contest.faq || '暂无 FAQ，待补充。' }}
         </p>
       </section>
 
-      <section v-else-if="activeTab === 'resources'" class="rounded-lg border border-slate-200 bg-white p-4">
-        <h3 class="text-sm font-semibold text-slate-900">
+      <section v-else-if="activeTab === 'resources'" class="p-4 border border-slate-200 rounded-lg bg-white">
+        <h3 class="text-sm text-slate-900 font-semibold">
           资料库
         </h3>
-        <div class="mt-3 grid gap-3 md:grid-cols-2">
+        <div class="mt-3 gap-3 grid md:grid-cols-2">
           <article
             v-for="category in ['basic_info', 'tracks', 'scoring', 'past_questions', 'awarded_works', 'templates', 'submission_examples']"
             :key="category"
-            class="rounded border border-slate-200 p-3"
+            class="p-3 border border-slate-200 rounded"
           >
-            <p class="text-xs font-semibold text-slate-900">
+            <p class="text-xs text-slate-900 font-semibold">
               {{ categoryLabels[category as ResourceCategory] }}
             </p>
-            <div v-if="getCategoryResources(category as ResourceCategory).length === 0" class="mt-2 text-xs text-slate-500">
+            <div v-if="getCategoryResources(category as ResourceCategory).length === 0" class="text-xs text-slate-500 mt-2">
               暂无条目
             </div>
             <div v-else class="mt-2 space-y-2">
               <div
                 v-for="item in getCategoryResources(category as ResourceCategory).slice(0, 3)"
                 :key="item.id"
-                class="rounded border border-slate-200 bg-slate-50 p-2"
+                class="p-2 border border-slate-200 rounded bg-slate-50"
               >
-                <p class="text-xs font-medium text-slate-900">
+                <p class="text-xs text-slate-900 font-medium">
                   {{ item.title }}
                 </p>
-                <p class="mt-1 text-xs text-slate-600 line-clamp-2">
+                <p class="text-xs text-slate-600 mt-1 line-clamp-2">
                   {{ item.content || item.summary || '暂无摘要' }}
                 </p>
               </div>
@@ -480,51 +480,51 @@ onMounted(loadData)
         </div>
       </section>
 
-      <section v-else class="rounded-lg border border-slate-200 bg-white p-4">
-        <h3 class="text-sm font-semibold text-slate-900">
+      <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
+        <h3 class="text-sm text-slate-900 font-semibold">
           政策与合规
         </h3>
         <div class="mt-3 space-y-3">
-          <article class="rounded border border-slate-200 p-3">
-            <p class="text-xs font-semibold text-slate-900">
+          <article class="p-3 border border-slate-200 rounded">
+            <p class="text-xs text-slate-900 font-semibold">
               政策通知
             </p>
-            <div v-if="getCategoryResources('policy_notice').length === 0" class="mt-2 text-xs text-slate-500">
+            <div v-if="getCategoryResources('policy_notice').length === 0" class="text-xs text-slate-500 mt-2">
               暂无政策通知
             </div>
             <div v-else class="mt-2 space-y-2">
               <div
                 v-for="item in getCategoryResources('policy_notice')"
                 :key="item.id"
-                class="rounded border border-slate-200 bg-slate-50 p-2"
+                class="p-2 border border-slate-200 rounded bg-slate-50"
               >
-                <p class="text-xs font-medium text-slate-900">
+                <p class="text-xs text-slate-900 font-medium">
                   {{ item.title }}
                 </p>
-                <p class="mt-1 text-xs text-slate-700 whitespace-pre-wrap">
+                <p class="text-xs text-slate-700 mt-1 whitespace-pre-wrap">
                   {{ item.content || item.summary || '暂无内容。' }}
                 </p>
               </div>
             </div>
           </article>
 
-          <article class="rounded border border-slate-200 p-3">
-            <p class="text-xs font-semibold text-slate-900">
+          <article class="p-3 border border-slate-200 rounded">
+            <p class="text-xs text-slate-900 font-semibold">
               合规与版权
             </p>
-            <div v-if="getCategoryResources('compliance').length === 0" class="mt-2 text-xs text-slate-500">
+            <div v-if="getCategoryResources('compliance').length === 0" class="text-xs text-slate-500 mt-2">
               暂无合规条目
             </div>
             <div v-else class="mt-2 space-y-2">
               <div
                 v-for="item in getCategoryResources('compliance')"
                 :key="item.id"
-                class="rounded border border-slate-200 bg-slate-50 p-2"
+                class="p-2 border border-slate-200 rounded bg-slate-50"
               >
-                <p class="text-xs font-medium text-slate-900">
+                <p class="text-xs text-slate-900 font-medium">
                   {{ item.title }}
                 </p>
-                <p class="mt-1 text-xs text-slate-700 whitespace-pre-wrap">
+                <p class="text-xs text-slate-700 mt-1 whitespace-pre-wrap">
                   {{ item.content || item.summary || '暂无内容。' }}
                 </p>
               </div>

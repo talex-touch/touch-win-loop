@@ -64,9 +64,9 @@ onMounted(loadContests)
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto p-4 space-y-4">
+  <div class="mx-auto p-4 max-w-6xl space-y-4">
     <div class="flex flex-col gap-1">
-      <h1 class="text-xl font-semibold text-slate-900">
+      <h1 class="text-xl text-slate-900 font-semibold">
         竞赛总库
       </h1>
       <p class="text-sm text-slate-500">
@@ -74,7 +74,7 @@ onMounted(loadContests)
       </p>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-2 p-3 border border-slate-200 rounded-lg bg-white">
+    <div class="p-3 border border-slate-200 rounded-lg bg-white gap-2 grid grid-cols-1 lg:grid-cols-6 md:grid-cols-3">
       <input
         v-model="search"
         class="dense-input lg:col-span-2"
@@ -116,36 +116,36 @@ onMounted(loadContests)
       </button>
     </div>
 
-    <div v-if="loading" class="grid grid-cols-1 gap-3 md:grid-cols-2">
+    <div v-if="loading" class="gap-3 grid grid-cols-1 md:grid-cols-2">
       <article
         v-for="index in 6"
         :key="`contest-skeleton-${index}`"
-        class="rounded-lg border border-slate-200 bg-white p-4 animate-pulse"
+        class="p-4 border border-slate-200 rounded-lg bg-white animate-pulse"
       >
-        <div class="flex items-start justify-between gap-2">
-          <div class="h-4 w-2/3 rounded bg-slate-200" />
-          <div class="h-5 w-14 rounded bg-slate-200" />
+        <div class="flex gap-2 items-start justify-between">
+          <div class="rounded bg-slate-200 h-4 w-2/3" />
+          <div class="rounded bg-slate-200 h-5 w-14" />
         </div>
-        <div class="mt-3 h-3 w-1/2 rounded bg-slate-200" />
+        <div class="mt-3 rounded bg-slate-200 h-3 w-1/2" />
         <div class="mt-3 space-y-2">
-          <div class="h-3 w-11/12 rounded bg-slate-200" />
-          <div class="h-3 w-9/12 rounded bg-slate-200" />
+          <div class="rounded bg-slate-200 h-3 w-11/12" />
+          <div class="rounded bg-slate-200 h-3 w-9/12" />
         </div>
       </article>
     </div>
 
-    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-3">
+    <div v-else class="gap-3 grid grid-cols-1 md:grid-cols-2">
       <NuxtLink
         v-for="contest in contests"
         :key="contest.id"
         :to="`/contests/${contest.id}`"
-        class="p-4 border border-slate-200 rounded-lg bg-white hover:border-slate-400 transition"
+        class="p-4 border border-slate-200 rounded-lg bg-white transition hover:border-slate-400"
       >
-        <div class="flex items-start justify-between gap-2">
-          <h2 class="text-base font-semibold text-slate-900 leading-snug">
+        <div class="flex gap-2 items-start justify-between">
+          <h2 class="text-base text-slate-900 leading-snug font-semibold">
             {{ contest.name }}
           </h2>
-          <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600 whitespace-nowrap">{{ contest.level }}</span>
+          <span class="text-xs text-slate-600 px-2 py-1 rounded bg-slate-100 whitespace-nowrap">{{ contest.level }}</span>
         </div>
         <p class="text-sm text-slate-600 mt-2">
           主办方：{{ contest.organizer || '待补充' }}
@@ -157,7 +157,7 @@ onMounted(loadContests)
         </div>
       </NuxtLink>
 
-      <div v-if="contests.length === 0" class="p-6 text-center text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg bg-white md:col-span-2">
+      <div v-if="contests.length === 0" class="text-sm text-slate-500 p-6 text-center border border-slate-300 rounded-lg border-dashed bg-white md:col-span-2">
         当前筛选条件下暂无赛事
       </div>
     </div>

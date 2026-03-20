@@ -178,15 +178,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-3 text-[11px]">
-    <section v-if="loading" class="border border-slate-200 bg-white p-3">
+  <div class="text-[11px] space-y-3">
+    <section v-if="loading" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
     <template v-else>
-      <section class="border border-slate-200 bg-white p-3">
+      <section class="p-3 border border-slate-200 bg-white">
         <a-table
           :bordered="{ cell: true }"
           :columns="columns"
@@ -197,10 +197,10 @@ onMounted(async () => {
         >
           <template #workspace="{ record }">
             <div class="min-w-0">
-              <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
+              <p class="text-[12px] text-slate-900 font-semibold m-0 truncate">
                 {{ record.name }}
               </p>
-              <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+              <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                 {{ record.workspaceId }}
               </p>
             </div>
@@ -252,10 +252,10 @@ onMounted(async () => {
         </div>
       </section>
 
-      <section v-if="errorText" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+      <section v-if="errorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
         {{ errorText }}
       </section>
-      <section v-if="successText" class="border border-emerald-200 bg-emerald-50 p-3 text-emerald-700">
+      <section v-if="successText" class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50">
         {{ successText }}
       </section>
 
@@ -265,12 +265,12 @@ onMounted(async () => {
         title="组织计费设置"
         width="520px"
       >
-        <div v-if="selectedWorkspace" class="space-y-3 text-[11px]">
-          <div class="border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-600">
-            <p class="m-0 text-[11px] font-bold text-slate-900">
+        <div v-if="selectedWorkspace" class="text-[11px] space-y-3">
+          <div class="text-[10px] text-slate-600 p-2 border border-slate-200 bg-slate-50">
+            <p class="text-[11px] text-slate-900 font-bold m-0">
               {{ selectedWorkspace.name }}
             </p>
-            <p class="m-0 mt-1 font-mono">
+            <p class="font-mono m-0 mt-1">
               {{ selectedWorkspace.workspaceId }}
             </p>
             <p class="m-0 mt-1">
@@ -278,7 +278,7 @@ onMounted(async () => {
             </p>
           </div>
 
-          <div class="grid gap-2 md:grid-cols-2">
+          <div class="gap-2 grid md:grid-cols-2">
             <a-select
               v-model="planDraft[selectedWorkspace.workspaceId]"
               allow-clear
@@ -297,13 +297,19 @@ onMounted(async () => {
               v-model="cycleDraft[selectedWorkspace.workspaceId]"
               size="small"
             >
-              <a-option value="monthly">monthly</a-option>
-              <a-option value="quarterly">quarterly</a-option>
-              <a-option value="yearly">yearly</a-option>
+              <a-option value="monthly">
+                monthly
+              </a-option>
+              <a-option value="quarterly">
+                quarterly
+              </a-option>
+              <a-option value="yearly">
+                yearly
+              </a-option>
             </a-select>
           </div>
 
-          <div v-if="estimateMap[selectedWorkspace.workspaceId]" class="rounded border border-slate-200 bg-slate-50 p-2 text-[10px] text-slate-600">
+          <div v-if="estimateMap[selectedWorkspace.workspaceId]" class="text-[10px] text-slate-600 p-2 border border-slate-200 rounded bg-slate-50">
             估算金额：¥{{ estimateMap[selectedWorkspace.workspaceId]?.estimatedAmountYuan?.toFixed(2) || '0.00' }}
           </div>
 

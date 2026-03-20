@@ -56,13 +56,13 @@ onMounted(loadData)
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             赛道详解与评委细则
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             聚合展示 track_details / judge_guidelines / submission_examples
           </p>
         </div>
@@ -72,7 +72,7 @@ onMounted(loadData)
       </div>
     </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
@@ -82,33 +82,33 @@ onMounted(loadData)
       <article
         v-for="section in sections"
         :key="section.category"
-        class="rounded-lg border border-slate-200 bg-white p-4"
+        class="p-4 border border-slate-200 rounded-lg bg-white"
       >
-        <h2 class="text-sm font-semibold text-slate-900">
+        <h2 class="text-sm text-slate-900 font-semibold">
           {{ section.title }}
         </h2>
-        <p class="mt-1 text-xs text-slate-500">
+        <p class="text-xs text-slate-500 mt-1">
           {{ section.desc }}
         </p>
 
-        <div v-if="listByCategory(section.category).length === 0" class="mt-2 text-sm text-slate-500">
+        <div v-if="listByCategory(section.category).length === 0" class="text-sm text-slate-500 mt-2">
           暂无条目，请在资料管理中新增该分类内容。
         </div>
         <div v-else class="mt-3 space-y-2">
           <div
             v-for="item in listByCategory(section.category)"
             :key="item.id"
-            class="rounded border border-slate-200 p-3"
+            class="p-3 border border-slate-200 rounded"
           >
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <p class="text-xs font-semibold text-slate-900">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <p class="text-xs text-slate-900 font-semibold">
                 {{ item.title }}
               </p>
               <NuxtLink class="dense-btn" :to="`/admin/contests/${contestId}/resources/${item.id}/edit`">
                 编辑
               </NuxtLink>
             </div>
-            <p class="mt-2 text-xs text-slate-700 whitespace-pre-wrap">
+            <p class="text-xs text-slate-700 mt-2 whitespace-pre-wrap">
               {{ item.content || item.summary || '暂无内容。' }}
             </p>
           </div>
@@ -116,7 +116,7 @@ onMounted(loadData)
       </article>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
   </div>

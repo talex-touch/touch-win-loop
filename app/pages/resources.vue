@@ -123,18 +123,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl space-y-4 p-4">
-    <div class="rounded-lg border border-slate-200 bg-white p-4">
-      <h1 class="text-lg font-semibold text-slate-900">
+  <div class="mx-auto p-4 max-w-6xl space-y-4">
+    <div class="p-4 border border-slate-200 rounded-lg bg-white">
+      <h1 class="text-lg text-slate-900 font-semibold">
         竞赛资料中心
       </h1>
-      <p class="mt-1 text-xs text-slate-500">
+      <p class="text-xs text-slate-500 mt-1">
         覆盖 14 类资料，可按竞赛、年份和可访问性筛选。
       </p>
     </div>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="grid gap-2 md:grid-cols-5">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="gap-2 grid md:grid-cols-5">
         <select v-model="contestId" class="dense-input">
           <option value="">
             全部竞赛
@@ -181,29 +181,29 @@ onMounted(async () => {
           应用筛选
         </button>
       </div>
-      <div v-if="loadingContests" class="mt-2 h-3 w-40 rounded bg-slate-200 animate-pulse" />
+      <div v-if="loadingContests" class="mt-2 rounded bg-slate-200 h-3 w-40 animate-pulse" />
     </section>
 
-    <div v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <div v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </div>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <div v-if="loading" class="space-y-3">
         <article
           v-for="index in 5"
           :key="`resource-skeleton-${index}`"
-          class="rounded border border-slate-200 p-3 animate-pulse"
+          class="p-3 border border-slate-200 rounded animate-pulse"
         >
-          <div class="flex items-start justify-between gap-2">
-            <div class="w-full max-w-xl space-y-2">
-              <div class="h-4 w-3/5 rounded bg-slate-200" />
-              <div class="h-3 w-2/5 rounded bg-slate-200" />
+          <div class="flex gap-2 items-start justify-between">
+            <div class="max-w-xl w-full space-y-2">
+              <div class="rounded bg-slate-200 h-4 w-3/5" />
+              <div class="rounded bg-slate-200 h-3 w-2/5" />
             </div>
-            <div class="h-3 w-16 rounded bg-slate-200" />
+            <div class="rounded bg-slate-200 h-3 w-16" />
           </div>
-          <div class="mt-3 h-3 w-full rounded bg-slate-200" />
-          <div class="mt-2 h-3 w-11/12 rounded bg-slate-200" />
+          <div class="mt-3 rounded bg-slate-200 h-3 w-full" />
+          <div class="mt-2 rounded bg-slate-200 h-3 w-11/12" />
         </article>
       </div>
       <div v-else-if="resources.length === 0" class="text-sm text-slate-500">
@@ -213,14 +213,14 @@ onMounted(async () => {
         <article
           v-for="item in resources"
           :key="item.id"
-          class="rounded border border-slate-200 p-3"
+          class="p-3 border border-slate-200 rounded"
         >
-          <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="flex flex-wrap gap-2 items-start justify-between">
             <div>
-              <h2 class="text-sm font-medium text-slate-900">
+              <h2 class="text-sm text-slate-900 font-medium">
                 {{ item.title }}
               </h2>
-              <p class="mt-1 text-xs text-slate-600">
+              <p class="text-xs text-slate-600 mt-1">
                 {{ contestNameMap.get(item.contestId) || item.contestId }} · {{ item.year }} · {{ item.category || '未分类' }}
               </p>
             </div>
@@ -233,10 +233,10 @@ onMounted(async () => {
               打开来源
             </a>
           </div>
-          <p class="mt-2 text-xs text-slate-700">
+          <p class="text-xs text-slate-700 mt-2">
             {{ item.content || item.summary || '暂无摘要。' }}
           </p>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             可访问性：{{ availabilityLabelMap[item.availability] || item.availability }}；版权：{{ item.copyrightNote || '待补充' }}
           </p>
         </article>

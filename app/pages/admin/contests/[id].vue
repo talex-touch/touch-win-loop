@@ -194,17 +194,17 @@ watch(contestId, async (value, oldValue) => {
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             竞赛工作区
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}，统一通过 Tabs 进入各模块。
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex gap-2 items-center">
           <NuxtLink class="dense-btn" to="/admin/contests">
             返回赛事列表
           </NuxtLink>
@@ -221,7 +221,7 @@ watch(contestId, async (value, oldValue) => {
         <button
           v-for="item in workspaceModules"
           :key="item.key"
-          class="rounded px-3 py-1.5 text-xs font-medium transition-colors"
+          class="text-xs font-medium px-3 py-1.5 rounded transition-colors"
           :class="activeModule === item.key
             ? 'bg-slate-900 text-white'
             : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
@@ -231,19 +231,19 @@ watch(contestId, async (value, oldValue) => {
         </button>
       </div>
 
-      <div v-if="loading" class="mt-3 rounded border border-slate-200 bg-slate-50 p-3">
+      <div v-if="loading" class="mt-3 p-3 border border-slate-200 rounded bg-slate-50">
         <a-skeleton :animation="true">
           <a-skeleton-line :rows="4" />
         </a-skeleton>
       </div>
-      <div v-else-if="detail && publishCheck" class="mt-3 rounded border border-slate-200 bg-slate-50 p-3">
-        <h2 class="text-sm font-semibold text-slate-900">
+      <div v-else-if="detail && publishCheck" class="mt-3 p-3 border border-slate-200 rounded bg-slate-50">
+        <h2 class="text-sm text-slate-900 font-semibold">
           发布预检
         </h2>
-        <p class="mt-2 text-xs text-slate-600">
+        <p class="text-xs text-slate-600 mt-2">
           完成度：{{ publishCheck.completion }}% ｜ 结果：{{ publishCheck.canPublish ? '可发布' : '存在阻断项' }}
         </p>
-        <div v-if="publishCheck.blockers.length > 0" class="mt-2 rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+        <div v-if="publishCheck.blockers.length > 0" class="text-xs text-rose-700 mt-2 p-3 border border-rose-200 rounded bg-rose-50">
           <p class="font-semibold">
             阻断项
           </p>
@@ -251,7 +251,7 @@ watch(contestId, async (value, oldValue) => {
             · {{ item.message }}
           </p>
         </div>
-        <div v-if="publishCheck.warnings.length > 0" class="mt-2 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+        <div v-if="publishCheck.warnings.length > 0" class="text-xs text-amber-700 mt-2 p-3 border border-amber-200 rounded bg-amber-50">
           <p class="font-semibold">
             提示项
           </p>
@@ -264,11 +264,11 @@ watch(contestId, async (value, oldValue) => {
 
     <NuxtPage />
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
 
-    <section v-if="successText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="successText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ successText }}
     </section>
   </div>

@@ -189,10 +189,10 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="border border-slate-200 rounded-2xl bg-white p-5">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-5 border border-slate-200 rounded-2xl bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <h3 class="text-lg text-slate-900 font-bold flex gap-2 items-center">
             <span class="material-symbols-outlined text-blue-700">hub</span>
             平台能力中心
           </h3>
@@ -203,33 +203,33 @@ onMounted(async () => {
         <NuxtLink
           v-if="hasPlatformPortal"
           to="/admin"
-          class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+          class="text-xs text-slate-700 font-semibold px-3 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50"
         >
           进入平台管理
         </NuxtLink>
       </div>
 
-      <div class="grid gap-3 mt-4 md:grid-cols-2 xl:grid-cols-3">
+      <div class="mt-4 gap-3 grid md:grid-cols-2 xl:grid-cols-3">
         <NuxtLink
           v-for="item in portalCards"
           :key="item.id"
           :to="item.to"
-          class="border border-slate-100 rounded-xl p-4 transition-all hover:border-blue-200 hover:bg-blue-50/40"
+          class="p-4 border border-slate-100 rounded-xl transition-all hover:border-blue-200 hover:bg-blue-50/40"
         >
-          <div class="flex items-center gap-2 text-slate-900 font-semibold">
+          <div class="text-slate-900 font-semibold flex gap-2 items-center">
             <span class="material-symbols-outlined text-blue-700">{{ item.icon }}</span>
             {{ item.title }}
           </div>
-          <p class="text-xs text-slate-600 mt-2 leading-relaxed">
+          <p class="text-xs text-slate-600 leading-relaxed mt-2">
             {{ item.desc }}
           </p>
         </NuxtLink>
       </div>
 
-      <div class="grid gap-4 mt-4 xl:grid-cols-2">
-        <article class="border border-slate-100 rounded-xl p-4">
+      <div class="mt-4 gap-4 grid xl:grid-cols-2">
+        <article class="p-4 border border-slate-100 rounded-xl">
           <div class="flex items-center justify-between">
-            <h4 class="text-sm font-semibold text-slate-900">
+            <h4 class="text-sm text-slate-900 font-semibold">
               最近赛事动态
             </h4>
             <NuxtLink to="/contests" class="text-xs text-blue-700 hover:underline">
@@ -240,44 +240,44 @@ onMounted(async () => {
             <div
               v-for="index in 4"
               :key="`dashboard-contest-skeleton-${index}`"
-              class="h-8 rounded-lg border border-slate-100 bg-slate-100 animate-pulse"
+              class="border border-slate-100 rounded-lg bg-slate-100 h-8 animate-pulse"
             />
           </div>
           <div v-else-if="platformContests.length === 0" class="text-xs text-slate-500 mt-3">
             暂无可展示赛事。
           </div>
-          <div v-else class="space-y-2 mt-3">
+          <div v-else class="mt-3 space-y-2">
             <NuxtLink
               v-for="item in platformContests"
               :key="item.id"
               :to="`/contests/${item.id}`"
-              class="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 hover:border-slate-300"
+              class="px-3 py-2 border border-slate-100 rounded-lg flex items-center justify-between hover:border-slate-300"
             >
-              <span class="text-xs text-slate-700 truncate pr-2">{{ item.name }}</span>
+              <span class="text-xs text-slate-700 pr-2 truncate">{{ item.name }}</span>
               <span class="text-[10px] text-slate-500 whitespace-nowrap">{{ item.status || 'published' }}</span>
             </NuxtLink>
           </div>
         </article>
 
-        <article class="border border-slate-100 rounded-xl p-4">
-          <h4 class="text-sm font-semibold text-slate-900">
+        <article class="p-4 border border-slate-100 rounded-xl">
+          <h4 class="text-sm text-slate-900 font-semibold">
             当前平台权限
           </h4>
           <div v-if="platformLoading" class="mt-3 flex flex-wrap gap-2">
             <span
               v-for="index in 4"
               :key="`dashboard-permission-skeleton-${index}`"
-              class="h-5 w-28 rounded-full bg-slate-200 animate-pulse"
+              class="rounded-full bg-slate-200 h-5 w-28 animate-pulse"
             />
           </div>
           <div v-else-if="platformPermissions.length === 0" class="text-xs text-slate-500 mt-3">
             当前账号暂无平台管理权限（普通用户模式）。
           </div>
-          <div v-else class="flex flex-wrap gap-2 mt-3">
+          <div v-else class="mt-3 flex flex-wrap gap-2">
             <span
               v-for="permission in platformPermissions"
               :key="permission"
-              class="rounded-full bg-emerald-50 text-emerald-700 px-2 py-1 text-[10px] font-semibold"
+              class="text-[10px] text-emerald-700 font-semibold px-2 py-1 rounded-full bg-emerald-50"
             >
               {{ permission }}
             </span>
@@ -289,11 +289,11 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section v-if="overviewLoading" class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500">
+    <section v-if="overviewLoading" class="text-sm text-slate-500 p-4 border border-slate-200 rounded-lg bg-white">
       正在加载 Dashboard 概览...
     </section>
 
-    <section v-if="overviewError" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="overviewError" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ overviewError }}
     </section>
 

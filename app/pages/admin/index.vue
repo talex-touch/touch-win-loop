@@ -55,49 +55,49 @@ onMounted(loadPermissions)
 </script>
 
 <template>
-  <div class="space-y-3 text-[11px]">
-    <section class="border border-slate-200 bg-white p-3">
-      <h1 class="text-[13px] font-bold tracking-tight text-slate-900 uppercase">
+  <div class="text-[11px] space-y-3">
+    <section class="p-3 border border-slate-200 bg-white">
+      <h1 class="text-[13px] text-slate-900 tracking-tight font-bold uppercase">
         平台管理总览
       </h1>
-      <p class="mt-1 text-[11px] text-slate-500">
+      <p class="text-[11px] text-slate-500 mt-1">
         最小可用录入台：赛事、资料、计费、权限。
       </p>
     </section>
 
-    <section v-if="loading" class="border border-slate-200 bg-white p-3">
+    <section v-if="loading" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="5" />
       </a-skeleton>
     </section>
 
-    <section v-else-if="errorText" class="border border-rose-200 bg-rose-50 p-3 text-rose-600">
+    <section v-else-if="errorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
       {{ errorText }}
     </section>
 
     <section
       v-else-if="!canManageContest && !canManagePricing && !canManageRoles"
-      class="border border-rose-200 bg-rose-50 p-3 text-rose-600"
+      class="text-rose-600 p-3 border border-rose-200 bg-rose-50"
     >
       403：当前账号没有平台管理权限。
     </section>
 
     <template v-else>
       <section class="border border-slate-200 bg-white overflow-hidden">
-        <div class="border-b border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
           Permission Summary
         </div>
         <div class="grid grid-cols-2 md:grid-cols-4">
           <div
             v-for="item in summaryRows"
             :key="item.label"
-            class="border-r border-b border-slate-200 px-3 py-2 last:border-r-0"
+            class="px-3 py-2 border-b border-r border-slate-200 last:border-r-0"
           >
-            <p class="text-[10px] uppercase text-slate-400 tracking-wider">
+            <p class="text-[10px] text-slate-400 tracking-wider uppercase">
               {{ item.label }}
             </p>
             <p
-              class="mt-1 text-[12px] font-bold"
+              class="text-[12px] font-bold mt-1"
               :class="item.tone === 'ok' ? 'text-emerald-600' : 'text-slate-700'"
             >
               {{ item.value }}
@@ -106,21 +106,21 @@ onMounted(loadPermissions)
         </div>
       </section>
 
-      <section class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        <NuxtLink to="/admin/users" class="border border-slate-200 bg-white p-3 hover:bg-slate-50">
-          <p class="text-[12px] font-bold text-slate-900">
+      <section class="gap-2 grid md:grid-cols-2 xl:grid-cols-3">
+        <NuxtLink to="/admin/users" class="p-3 border border-slate-200 bg-white hover:bg-slate-50">
+          <p class="text-[12px] text-slate-900 font-bold">
             用户管理
           </p>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             用户状态、角色、会话治理
           </p>
         </NuxtLink>
 
-        <NuxtLink to="/admin/organizations" class="border border-slate-200 bg-white p-3 hover:bg-slate-50">
-          <p class="text-[12px] font-bold text-slate-900">
+        <NuxtLink to="/admin/organizations" class="p-3 border border-slate-200 bg-white hover:bg-slate-50">
+          <p class="text-[12px] text-slate-900 font-bold">
             组织管理
           </p>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             席位、套餐、组织维度配置
           </p>
         </NuxtLink>
@@ -128,12 +128,12 @@ onMounted(loadPermissions)
         <NuxtLink
           v-if="canManageContest"
           to="/admin/contests"
-          class="border border-slate-200 bg-white p-3 hover:bg-slate-50"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
         >
-          <p class="text-[12px] font-bold text-slate-900">
+          <p class="text-[12px] text-slate-900 font-bold">
             赛事管理
           </p>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             赛事基础信息、赛道、时间轴、rubric
           </p>
         </NuxtLink>
@@ -141,12 +141,12 @@ onMounted(loadPermissions)
         <NuxtLink
           v-if="canManageContest"
           to="/admin/ai-prompts"
-          class="border border-slate-200 bg-white p-3 hover:bg-slate-50"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
         >
-          <p class="text-[12px] font-bold text-slate-900">
+          <p class="text-[12px] text-slate-900 font-bold">
             AI 配置
           </p>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             Providers / Channels / Models / Audits / Logs 平台控制台
           </p>
         </NuxtLink>
@@ -154,12 +154,12 @@ onMounted(loadPermissions)
         <NuxtLink
           v-if="canManageContest"
           to="/admin/resources"
-          class="border border-slate-200 bg-white p-3 hover:bg-slate-50"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
         >
-          <p class="text-[12px] font-bold text-slate-900">
+          <p class="text-[12px] text-slate-900 font-bold">
             资料管理
           </p>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             14 类资料入口、状态流转
           </p>
         </NuxtLink>
@@ -167,12 +167,12 @@ onMounted(loadPermissions)
         <NuxtLink
           v-if="canManagePricing"
           to="/admin/billing"
-          class="border border-slate-200 bg-white p-3 hover:bg-slate-50"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
         >
-          <p class="text-[12px] font-bold text-slate-900">
+          <p class="text-[12px] text-slate-900 font-bold">
             套餐计费
           </p>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             套餐规则配置、费用估算
           </p>
         </NuxtLink>
@@ -180,12 +180,12 @@ onMounted(loadPermissions)
         <NuxtLink
           v-if="canManageRoles"
           to="/admin/roles"
-          class="border border-slate-200 bg-white p-3 hover:bg-slate-50"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
         >
-          <p class="text-[12px] font-bold text-slate-900">
+          <p class="text-[12px] text-slate-900 font-bold">
             角色权限
           </p>
-          <p class="mt-1 text-[11px] text-slate-500">
+          <p class="text-[11px] text-slate-500 mt-1">
             分配 platform / contest / pricing 角色
           </p>
         </NuxtLink>

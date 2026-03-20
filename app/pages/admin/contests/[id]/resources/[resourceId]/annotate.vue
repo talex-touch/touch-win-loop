@@ -428,17 +428,17 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             PDF 标注编辑
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             resource_id：{{ resourceId }}；解析状态：{{ analysisPayload?.parseStatus || '-' }}
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex gap-2 items-center">
           <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources/${resourceId}/edit`)">
             返回资料编辑
           </NuxtLink>
@@ -449,22 +449,22 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
-    <section v-if="successText" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    <section v-if="successText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
       {{ successText }}
     </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="8" />
       </a-skeleton>
     </section>
 
-    <section v-else class="grid gap-4 lg:grid-cols-[minmax(0,1fr),340px]">
-      <div class="rounded-lg border border-slate-200 bg-white p-3">
-        <div class="mb-2 flex items-center gap-2">
+    <section v-else class="gap-4 grid lg:grid-cols-[minmax(0,1fr),340px]">
+      <div class="p-3 border border-slate-200 rounded-lg bg-white">
+        <div class="mb-2 flex gap-2 items-center">
           <label class="text-xs text-slate-600">页码</label>
           <select v-model.number="selectedPage" class="dense-input w-28">
             <option v-for="pageNo in pageList" :key="pageNo" :value="pageNo">
@@ -474,14 +474,14 @@ onBeforeUnmount(() => {
           <span v-if="renderLoading" class="text-xs text-slate-500">渲染中...</span>
         </div>
 
-        <div class="relative overflow-auto rounded border border-slate-200 bg-slate-50">
+        <div class="border border-slate-200 rounded bg-slate-50 relative overflow-auto">
           <canvas ref="canvasRef" class="mx-auto block" />
 
           <template v-if="currentPage">
             <div
               v-for="(item, index) in currentPage.blocks"
               :key="item.id"
-              class="absolute cursor-move border-2 border-blue-500 bg-blue-500/8"
+              class="border-2 border-blue-500 bg-blue-500/8 cursor-move absolute"
               :class="{ 'ring-2 ring-blue-300': selectedType === 'block' && selectedIndex === index }"
               :style="{
                 left: `${item.bbox.x * canvasSize.width}px`,
@@ -492,9 +492,9 @@ onBeforeUnmount(() => {
               @mousedown="event => startDrag(event, 'block', index, 'move')"
               @click.stop="setSelected('block', index)"
             >
-              <span class="absolute -top-5 left-0 rounded bg-blue-600 px-1 text-[10px] text-white">{{ item.type }}</span>
+              <span class="text-[10px] text-white px-1 rounded bg-blue-600 left-0 absolute -top-5">{{ item.type }}</span>
               <button
-                class="absolute -right-2 -bottom-2 h-3 w-3 cursor-se-resize rounded-full border border-blue-700 bg-blue-300"
+                class="border border-blue-700 rounded-full bg-blue-300 h-3 w-3 cursor-se-resize absolute -bottom-2 -right-2"
                 @mousedown.stop="event => startDrag(event, 'block', index, 'resize')"
               />
             </div>
@@ -502,7 +502,7 @@ onBeforeUnmount(() => {
             <div
               v-for="(item, index) in currentPage.fields"
               :key="item.id"
-              class="absolute cursor-move border-2 border-emerald-500 bg-emerald-500/8"
+              class="border-2 border-emerald-500 bg-emerald-500/8 cursor-move absolute"
               :class="{ 'ring-2 ring-emerald-300': selectedType === 'field' && selectedIndex === index }"
               :style="{
                 left: `${item.bbox.x * canvasSize.width}px`,
@@ -513,9 +513,9 @@ onBeforeUnmount(() => {
               @mousedown="event => startDrag(event, 'field', index, 'move')"
               @click.stop="setSelected('field', index)"
             >
-              <span class="absolute -top-5 left-0 rounded bg-emerald-600 px-1 text-[10px] text-white">{{ item.key }}</span>
+              <span class="text-[10px] text-white px-1 rounded bg-emerald-600 left-0 absolute -top-5">{{ item.key }}</span>
               <button
-                class="absolute -right-2 -bottom-2 h-3 w-3 cursor-se-resize rounded-full border border-emerald-700 bg-emerald-300"
+                class="border border-emerald-700 rounded-full bg-emerald-300 h-3 w-3 cursor-se-resize absolute -bottom-2 -right-2"
                 @mousedown.stop="event => startDrag(event, 'field', index, 'resize')"
               />
             </div>
@@ -524,8 +524,8 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="space-y-3">
-        <section class="rounded-lg border border-slate-200 bg-white p-3">
-          <div class="flex flex-wrap items-center gap-2">
+        <section class="p-3 border border-slate-200 rounded-lg bg-white">
+          <div class="flex flex-wrap gap-2 items-center">
             <a-button size="small" @click="addBlock">
               新增块
             </a-button>
@@ -538,8 +538,8 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="rounded-lg border border-slate-200 bg-white p-3">
-          <h3 class="mb-2 text-sm font-semibold text-slate-800">
+        <section class="p-3 border border-slate-200 rounded-lg bg-white">
+          <h3 class="text-sm text-slate-800 font-semibold mb-2">
             选中元素
           </h3>
           <div v-if="selectedBlock" class="space-y-2">
@@ -554,7 +554,7 @@ onBeforeUnmount(() => {
             请先在左侧画布中选择一个框。
           </p>
 
-          <div v-if="selectedBlock || selectedField" class="mt-2 grid grid-cols-2 gap-2">
+          <div v-if="selectedBlock || selectedField" class="mt-2 gap-2 grid grid-cols-2">
             <a-input-number
               :model-value="(selectedBlock || selectedField)?.bbox.x"
               size="small"
@@ -594,7 +594,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+        <section class="text-xs text-slate-600 p-3 border border-slate-200 rounded-lg bg-white">
           <p>解析错误：{{ analysisPayload?.parseError || '-' }}</p>
           <p>最近任务：{{ documentInfo?.latestTask?.status || '-' }}</p>
           <p>提示：蓝框=版面块，绿框=字段。</p>

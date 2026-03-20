@@ -98,17 +98,17 @@ onMounted(loadItems)
 
 <template>
   <div class="space-y-4">
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="flex flex-wrap gap-2 items-center justify-between">
         <div>
-          <h1 class="text-lg font-semibold text-slate-900">
+          <h1 class="text-lg text-slate-900 font-semibold">
             资料管理
           </h1>
-          <p class="mt-1 text-xs text-slate-500">
+          <p class="text-xs text-slate-500 mt-1">
             赛事 ID：{{ contestId }}
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex gap-2 items-center">
           <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources/new`)">
             上传 PDF
           </NuxtLink>
@@ -116,8 +116,8 @@ onMounted(loadItems)
       </div>
     </section>
 
-    <section class="rounded-lg border border-slate-200 bg-white p-4">
-      <div class="grid gap-2 md:grid-cols-3">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
+      <div class="gap-2 grid md:grid-cols-3">
         <a-select v-model="statusFilter" allow-clear size="small" placeholder="全部状态">
           <a-option value="active">
             active
@@ -143,13 +143,13 @@ onMounted(loadItems)
       </div>
     </section>
 
-    <section v-if="loading" class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="6" />
       </a-skeleton>
     </section>
 
-    <section v-else class="rounded-lg border border-slate-200 bg-white p-4">
+    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
       <a-table
         :data="items"
         :columns="resourceColumns"
@@ -158,7 +158,7 @@ onMounted(loadItems)
         :pagination="{ pageSize: 10, showTotal: true, size: 'mini' }"
       >
         <template #title="{ record }">
-          <span class="text-xs font-semibold text-slate-900">{{ record.title }}</span>
+          <span class="text-xs text-slate-900 font-semibold">{{ record.title }}</span>
         </template>
         <template #category="{ record }">
           <span class="text-xs text-slate-600">{{ categoryLabelMap.get(record.category) || record.category }}</span>
@@ -176,7 +176,7 @@ onMounted(loadItems)
       </a-table>
     </section>
 
-    <section v-if="errorText" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
     </section>
   </div>
