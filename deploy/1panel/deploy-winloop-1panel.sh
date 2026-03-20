@@ -322,7 +322,9 @@ autodetect_compose_target() {
   if [[ -z "$best_file" ]]; then
     return 1
   fi
-  if ((best_score <= 0)); then
+  # At least one strong signal is required (service/image match),
+  # otherwise a generic docker-compose.yml may be selected by mistake.
+  if ((best_score < 2)); then
     return 1
   fi
 
