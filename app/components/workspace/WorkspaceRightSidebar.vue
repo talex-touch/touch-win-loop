@@ -27,6 +27,7 @@ const props = withDefaults(defineProps<{
   formState: WorkspaceFormState
   formSubmitting?: boolean
   projects?: Project[]
+  isAdminView?: boolean
 }>(), {
   sidebarTab: 'chat',
   chatSessions: () => [],
@@ -43,6 +44,7 @@ const props = withDefaults(defineProps<{
   selectedResources: () => [],
   formSubmitting: false,
   projects: () => [],
+  isAdminView: false,
 })
 
 const emit = defineEmits<{
@@ -218,11 +220,19 @@ function updateFormField(key: keyof WorkspaceFormState, value: string) {
             报名窗口：{{ selectedContest?.registrationWindow || '—' }}
           </div>
         </div>
-        <div class="p-3 border border-slate-200 rounded bg-white">
+        <div v-if="isAdminView" class="p-3 border border-slate-200 rounded bg-white">
+          <div class="text-xs text-slate-700 font-semibold mb-2">
+            标准化筛选结果（管理员）
+          </div>
+          <pre class="text-[11px] text-slate-600 m-0 whitespace-pre-wrap">{{ normalizedInfo || '{ }' }}</pre>
+        </div>
+        <div v-else class="p-3 border border-slate-200 rounded bg-white">
           <div class="text-xs text-slate-700 font-semibold mb-2">
             标准化筛选结果
           </div>
-          <pre class="text-[11px] text-slate-600 m-0 whitespace-pre-wrap">{{ normalizedInfo || '{ }' }}</pre>
+          <p class="text-[11px] text-slate-500 m-0">
+            当前仅展示简版结果，完整参数仅管理员可见。
+          </p>
         </div>
         <div class="p-3 border border-slate-200 rounded bg-white">
           <div class="text-xs text-slate-700 font-semibold mb-2">

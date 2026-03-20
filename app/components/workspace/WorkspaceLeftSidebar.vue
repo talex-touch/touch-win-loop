@@ -14,14 +14,18 @@ const props = withDefaults(defineProps<{
   workspaceOptions?: WorkspaceWithQuota[]
   username?: string
   aiReasoning: string
+  normalizedInfo?: string
   statusLine: string
   listLoading: boolean
   aiFiltering: boolean
   tokenBalance?: number
+  isAdminView?: boolean
 }>(), {
   workspaceOptions: () => [],
   username: '',
   tokenBalance: 14204,
+  normalizedInfo: '',
+  isAdminView: false,
 })
 
 const emit = defineEmits<{
@@ -52,6 +56,53 @@ function onTopKInput(event: Event) {
 
 const currentWorkspace = computed(() => {
   return props.workspaceOptions.find(item => item.workspace.id === props.activeWorkspaceId) || null
+})
+
+const showReason = ref(false)
+const showAdminDetails = ref(false)
+
+const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
+
+const analysisStateLabel = computed(() => {
+  if (props.aiFiltering)
+    return '分析中'
+  if (hasReasoning.value)
+    return '分析完成'
+  return '等待分析'
+})
+
+const analysisStateClass = computed(() => {
+  if (props.aiFiltering)
+    return 'bg-blue-100 text-blue-700'
+  if (hasReasoning.value)
+    return 'bg-emerald-100 text-emerald-700'
+  return 'bg-slate-100 text-slate-600'
+})
+
+const compactHint = computed(() => {
+  if (props.aiFiltering)
+    return '正在执行筛选，请稍候。'
+
+  const status = props.statusLine?.trim() || ''
+  if (status.includes('失败') || status.includes('不可用'))
+    return status
+
+  if (hasReasoning.value)
+    return '点击“展开原因”查看本次筛选依据。'
+
+  return '点击“AI筛选竞赛”后可查看分析结果。'
+})
+
+watch(() => props.aiFiltering, (next) => {
+  if (next) {
+    showReason.value = false
+    showAdminDetails.value = false
+  }
+})
+
+watch(hasReasoning, (next) => {
+  if (!next)
+    showReason.value = false
 })
 </script>
 
@@ -156,11 +207,60 @@ const currentWorkspace = computed(() => {
             {{ aiFiltering ? 'AI处理中...' : 'AI筛选竞赛' }}
           </button>
         </div>
-        <div class="text-[11px] text-slate-500 min-h-4">
-          {{ statusLine || '等待筛选指令...' }}
-        </div>
-        <div class="text-[11px] text-slate-600 p-2 border border-slate-200 rounded bg-slate-50 min-h-16 whitespace-pre-wrap">
-          {{ aiReasoning || '等待 AI 返回筛选解释...' }}
+        <div class="p-2 border border-slate-200 rounded bg-slate-50 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-slate-600">分析状态</span>
+            <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" :class="analysisStateClass">
+              {{ analysisStateLabel }}
+            </span>
+          </div>
+
+          <p class="text-[11px] text-slate-500 m-0 min-h-4">
+            {{ compactHint }}
+          </p>
+
+          <button
+            v-if="hasReasoning"
+            class="text-[11px] text-blue-700 font-semibold hover:text-blue-600"
+            @click="showReason = !showReason"
+          >
+            {{ showReason ? '收起原因' : '展开原因' }}
+          </button>
+
+          <div
+            v-if="showReason"
+            class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-white whitespace-pre-wrap"
+          >
+            {{ aiReasoning }}
+          </div>
+
+          <template v-if="isAdminView">
+            <button
+              class="text-[11px] text-slate-700 font-semibold hover:text-slate-900"
+              @click="showAdminDetails = !showAdminDetails"
+            >
+              {{ showAdminDetails ? '收起详情' : '点击详情' }}
+            </button>
+            <div
+              v-if="showAdminDetails"
+              class="text-[11px] text-slate-700 p-2 border border-slate-200 rounded bg-white space-y-2"
+            >
+              <div>
+                <div class="text-[10px] text-slate-500 mb-1">
+                  运行状态
+                </div>
+                <div class="whitespace-pre-wrap">
+                  {{ statusLine || '-' }}
+                </div>
+              </div>
+              <div>
+                <div class="text-[10px] text-slate-500 mb-1">
+                  标准化筛选参数
+                </div>
+                <pre class="text-[10px] text-slate-600 m-0 whitespace-pre-wrap">{{ normalizedInfo || '{ }' }}</pre>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 

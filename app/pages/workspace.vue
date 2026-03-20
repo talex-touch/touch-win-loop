@@ -144,6 +144,7 @@ const formState = reactive<WorkspaceFormState>({
 const selectedContest = computed(() => contests.value.find(contest => contest.id === selectedContestId.value) || null)
 const selectedTrack = computed(() => selectedContest.value?.tracks.find(track => track.id === selectedTrackId.value) || null)
 const workspaceOptions = computed(() => me.value?.workspaces || [])
+const isAdminView = computed(() => Boolean(me.value?.user.isPlatformAdmin))
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
 })
@@ -759,10 +760,12 @@ watch(activeWorkspaceId, async (value, previous) => {
         :workspace-options="workspaceOptions"
         :username="me?.user.username || ''"
         :ai-reasoning="aiReasoning"
+        :normalized-info="normalizedInfo"
         :status-line="statusLine"
         :list-loading="listLoading"
         :ai-filtering="aiFiltering"
         :token-balance="tokenBalance"
+        :is-admin-view="isAdminView"
         @load-contests="loadContests"
         @run-ai-filter="runAiFilter"
       />
@@ -795,6 +798,7 @@ watch(activeWorkspaceId, async (value, previous) => {
         :form-state="formState"
         :form-submitting="formSubmitting"
         :projects="projects"
+        :is-admin-view="isAdminView"
         @update:form-state="Object.assign(formState, $event)"
         @send-chat="sendChatMessage"
         @switch-chat-session="switchChatSession"
