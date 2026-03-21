@@ -1413,7 +1413,7 @@ interface ContestAuditLogRow {
   created_at: string
 }
 
-type AiPromptTarget = 'contest_filter' | 'project_chat'
+type AiPromptTarget = 'contest_filter' | 'project_chat' | 'topic_proposal' | 'review' | 'defense'
 
 interface AiPromptSpec {
   target: AiPromptTarget
@@ -4148,14 +4148,18 @@ export async function markResourceInvalid(
   return mapResource(row)
 }
 
-const AI_PROMPT_TARGETS: AiPromptTarget[] = ['contest_filter', 'project_chat']
+const AI_PROMPT_TARGETS: AiPromptTarget[] = ['contest_filter', 'project_chat', 'topic_proposal', 'review', 'defense']
 
 function normalizeAiPromptTarget(value: unknown): AiPromptTarget | null {
   const normalized = normalizeString(value).toLowerCase()
   if (!normalized)
     return null
+  if (normalized === 'contest-filter')
+    return 'contest_filter'
   if (normalized === 'project-chat')
     return 'project_chat'
+  if (normalized === 'topic-proposal')
+    return 'topic_proposal'
   const matched = AI_PROMPT_TARGETS.find(item => item === normalized)
   return matched || null
 }
