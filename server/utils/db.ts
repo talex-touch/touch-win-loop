@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
   provider TEXT NOT NULL DEFAULT 'mock',
   model TEXT NOT NULL DEFAULT '',
   fallback_used BOOLEAN NOT NULL DEFAULT FALSE,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -513,6 +514,9 @@ ALTER TABLE contest_resources
   ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE contest_resources
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE ai_chat_messages
   ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
 
 ALTER TABLE user_ai_settings
