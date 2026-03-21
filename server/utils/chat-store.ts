@@ -25,8 +25,28 @@ interface AiChatMessageRow {
   provider: string
   model: string
   fallback_used: boolean
+  metadata: unknown
   created_by_user_id: string
   created_at: string
+}
+
+function toMetadataRecord(value: unknown): Record<string, unknown> {
+  if (!value)
+    return {}
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+        return parsed as Record<string, unknown>
+      return {}
+    }
+    catch {
+      return {}
+    }
+  }
+  if (typeof value === 'object' && !Array.isArray(value))
+    return value as Record<string, unknown>
+  return {}
 }
 
 function mapChatSession(row: AiChatSessionRow): AiChatSession {
@@ -55,6 +75,7 @@ function mapChatMessage(row: AiChatMessageRow): AiChatMessage {
     provider: row.provider,
     model: row.model,
     fallbackUsed: Boolean(row.fallback_used),
+    metadata: toMetadataRecord(row.metadata),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
   }
@@ -206,6 +227,7 @@ export async function listAiChatMessagesBySession(
       provider,
       model,
       fallback_used,
+      metadata,
       created_by_user_id,
       created_at::TEXT
      FROM ai_chat_messages
@@ -229,6 +251,7 @@ export async function appendAiChatMessage(
     provider: string
     model: string
     fallbackUsed: boolean
+    metadata?: Record<string, unknown>
     createdByUserId: string
   },
 ): Promise<AiChatMessage> {
@@ -242,10 +265,11 @@ export async function appendAiChatMessage(
       provider,
       model,
       fallback_used,
+      metadata,
       created_by_user_id,
       created_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8, $9::JSONB, $10, NOW()
     )
     RETURNING
       id,
@@ -256,6 +280,7 @@ export async function appendAiChatMessage(
       provider,
       model,
       fallback_used,
+      metadata,
       created_by_user_id,
       created_at::TEXT`,
     [
@@ -267,6 +292,7 @@ export async function appendAiChatMessage(
       input.provider,
       input.model,
       input.fallbackUsed,
+      JSON.stringify(input.metadata || {}),
       input.createdByUserId,
     ],
   )

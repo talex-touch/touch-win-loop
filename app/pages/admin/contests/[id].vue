@@ -30,21 +30,6 @@ const normalizedRoutePath = computed(() => route.path.replace(/\/+$/, ''))
 
 type WorkspaceModuleKey = 'overview' | 'faq' | 'tracks' | 'timelines' | 'rubrics' | 'resources' | 'prompts' | 'audit'
 
-const workspaceModuleKeys: WorkspaceModuleKey[] = [
-  'overview',
-  'faq',
-  'tracks',
-  'timelines',
-  'rubrics',
-  'resources',
-  'prompts',
-  'audit',
-]
-
-function isWorkspaceModuleKey(value: string): value is WorkspaceModuleKey {
-  return workspaceModuleKeys.includes(value as WorkspaceModuleKey)
-}
-
 const workspaceModules = computed(() => {
   const id = contestId.value
   return [
@@ -88,18 +73,8 @@ function resolveModuleFromPath(path: string): WorkspaceModuleKey {
 
 const activeModule = computed<WorkspaceModuleKey>(() => resolveModuleFromPath(normalizedRoutePath.value))
 
-const legacyQueryModule = computed<WorkspaceModuleKey | ''>(() => {
-  const value = Array.isArray(route.query.module) ? route.query.module[0] : route.query.module
-  const moduleText = String(value || '').trim()
-  if (isWorkspaceModuleKey(moduleText))
-    return moduleText
-  return ''
-})
-
 const defaultModulePath = computed(() => {
-  const preferredKey = legacyQueryModule.value || 'overview'
-  return workspaceModules.value.find(item => item.key === preferredKey)?.path
-    || workspaceModules.value[0]?.path
+  return workspaceModules.value[0]?.path
     || workspaceRootPath.value
 })
 
@@ -175,7 +150,7 @@ async function archiveContest() {
 }
 
 watch(
-  () => [contestId.value, normalizedRoutePath.value, legacyQueryModule.value],
+  () => [contestId.value, normalizedRoutePath.value],
   () => {
     if (!contestId.value)
       return

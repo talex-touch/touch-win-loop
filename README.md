@@ -1,6 +1,6 @@
 # Touch WinLoop (Nuxt + LangChain)
 
-WinLoop AI（赛帮帮）V0 骨架项目，面向“选赛 -> 选题 -> 评审 -> 答辩”的一站式竞赛工作台。
+WinLoop AI（赛帮帮）V0 骨架项目，面向“选赛 -> 建项 -> 协作 -> 交付”的一站式竞赛工作台。
 
 ## 特性
 
@@ -17,7 +17,7 @@ WinLoop AI（赛帮帮）V0 骨架项目，面向“选赛 -> 选题 -> 评审 -
   - `POST /api/ai/contest-filter`
   - `POST /api/ai/project-chat`
 - 模型失败自动重试并兜底，保证演示稳定性。
-- PostgreSQL 持久化（包含一次性旧 `projects.json` 迁移逻辑）。
+- PostgreSQL 持久化（不再依赖 `projects.json` 本地迁移链路）。
 
 ## 快速启动
 
@@ -26,7 +26,7 @@ pnpm install
 pnpm dev
 ```
 
-打开 `http://localhost:3000/workspace`。
+打开 `http://localhost:3510/workspace`。
 
 ## 环境变量
 
@@ -60,20 +60,20 @@ WINLOOP_CONTEST_AUTO_SEED=false
 
 ## 赛事 seed 策略（去 mock 默认）
 
-- 默认不自动注入 legacy 赛事数据（`WINLOOP_CONTEST_AUTO_SEED=false`）。
+- 默认不自动注入 catalog 赛事数据（`WINLOOP_CONTEST_AUTO_SEED=false`）。
 - 若需要本地演示数据，请使用 CLI 手动执行（幂等）：
 
 ```bash
-pnpm contest:seed:legacy
+pnpm contest:seed:catalog
 ```
 
-- 若需要清理 legacy 数据并重置 seed 标记：
+- 若需要清理 catalog 数据并重置 seed 标记：
 
 ```bash
-pnpm contest:clean:legacy
+pnpm contest:clean:catalog
 ```
 
-- 查看当前 legacy seed 状态：
+- 查看当前 catalog seed 状态：
 
 ```bash
 pnpm contest:seed:status
@@ -92,9 +92,6 @@ pnpm contest:seed:status
 - `GET /api/contests`
 - `GET /api/contests/:id`
 - `GET /api/resources`
-- `POST /api/topic-proposals`
-- `POST /api/reviews`
-- `POST /api/defense/simulate`
 - `POST /api/ai/contest-filter`
 - `POST /api/ai/project-chat`
 - `GET /api/projects`
@@ -113,6 +110,8 @@ pnpm contest:seed:status
 - `server/utils/platform-store.ts`：账号、空间、项目、邀请、配额主数据访问层。
 - `shared/types/domain.ts`：前后端共享类型定义。
 
-## 后续接真实基础设施
+## 基础设施说明
 
-当前 PostgreSQL / Redis 仅做 env 占位，不建立连接。后续可在不改接口的前提下，将 `project-store` 与数据源替换为真实持久层。
+- PostgreSQL 为当前运行时强依赖：服务启动后会自动初始化 schema。
+- Redis 目前主要用于配置展示与预留（`/api/health` 会返回连接信息），业务核心流程暂未直接读写 Redis。
+- 若未正确配置 `WINLOOP_PG_URL`，登录、工作区、项目与管理侧接口将不可用。

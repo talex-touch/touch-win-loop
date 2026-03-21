@@ -99,6 +99,15 @@ export default defineNuxtConfig({
     },
   },
 
+  routeRules: {
+    '/topics': { redirect: { to: '/workspace', statusCode: 301 } },
+    '/topics/**': { redirect: { to: '/workspace', statusCode: 301 } },
+    '/reviews': { redirect: { to: '/workspace', statusCode: 301 } },
+    '/reviews/**': { redirect: { to: '/workspace', statusCode: 301 } },
+    '/defense': { redirect: { to: '/workspace', statusCode: 301 } },
+    '/defense/**': { redirect: { to: '/workspace', statusCode: 301 } },
+  },
+
   devServer: {
     port: 3510,
   },
@@ -120,10 +129,6 @@ export default defineNuxtConfig({
       options: {
         target: 'esnext',
       },
-    },
-    prerender: {
-      crawlLinks: false,
-      routes: ['/workspace'],
     },
   },
 

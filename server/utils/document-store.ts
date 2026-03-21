@@ -477,6 +477,75 @@ export async function updateDocumentPageCount(
   )
 }
 
+export async function updateResourceDocumentFileAsset(
+  db: Queryable,
+  input: {
+    documentId: string
+    objectKey: string
+    fileName: string
+    mimeType: string
+    fileSize: number
+    actorUserId?: string
+  },
+): Promise<void> {
+  await db.query(
+    `UPDATE contest_resource_documents
+     SET object_key = $2,
+         file_name = $3,
+         mime_type = $4,
+         file_size = $5,
+         updated_by_user_id = $6,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      input.documentId,
+      input.objectKey,
+      input.fileName,
+      input.mimeType,
+      Math.max(0, Number(input.fileSize || 0)),
+      String(input.actorUserId || '').trim() || null,
+    ],
+  )
+}
+
+export async function listSucceededResourceDocumentsByContest(
+  db: Queryable,
+  input: {
+    contestId: string
+    limit?: number
+  },
+): Promise<ResourceDocument[]> {
+  const limit = Math.max(1, Math.min(50, Number(input.limit || 8)))
+  const result = await db.query<ResourceDocumentRow>(
+    `SELECT
+      id,
+      contest_id,
+      resource_id,
+      object_key,
+      storage_provider,
+      file_name,
+      mime_type,
+      file_size::TEXT,
+      page_count,
+      parse_status,
+      parse_error,
+      parser_provider,
+      parser_model,
+      analysis_json,
+      annotation_json,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM contest_resource_documents
+     WHERE contest_id = $1
+       AND parse_status = 'succeeded'
+     ORDER BY updated_at DESC
+     LIMIT $2`,
+    [input.contestId, limit],
+  )
+
+  return result.rows.map(mapDocument)
+}
+
 export async function finishDocumentTaskSuccess(
   db: Queryable,
   input: {

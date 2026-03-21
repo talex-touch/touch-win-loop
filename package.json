@@ -13,8 +13,9 @@
     "start:generate": "npx serve .output/public",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
-    "contest:seed:legacy": "node ./scripts/contest-library.mjs seed",
-    "contest:clean:legacy": "node ./scripts/contest-library.mjs clean",
+    "ci:smoke": "node ./scripts/ci-smoke.mjs",
+    "contest:seed:catalog": "node ./scripts/contest-library.mjs seed",
+    "contest:clean:catalog": "node ./scripts/contest-library.mjs clean",
     "contest:seed:status": "node ./scripts/contest-library.mjs status"
   },
   "dependencies": {

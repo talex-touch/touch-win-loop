@@ -23,9 +23,6 @@ const links = computed(() => {
     { to: '/workspace', label: '工作台' },
     { to: '/contests', label: '竞赛库' },
     { to: '/resources', label: '资料中心' },
-    { to: '/topics', label: '选题建议' },
-    { to: '/reviews', label: '作品评审' },
-    { to: '/defense', label: '模拟答辩' },
   ]
   if (hasAdminAccess.value)
     baseLinks.push({ to: '/admin', label: '平台管理' })

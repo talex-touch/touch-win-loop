@@ -5,6 +5,7 @@ import type {
   ProjectPayload,
   Resource,
   Track,
+  WorkspaceAiMode,
 } from '~~/shared/types/domain'
 
 export type WorkspaceSidebarTab = 'chat' | 'rules' | 'submit'
@@ -45,6 +46,7 @@ export interface WorkspaceStatusToneMeta {
 }
 
 export interface WorkspaceChatPanelState {
+  mode: WorkspaceAiMode
   messages: ChatMessage[]
   input: string
   loading: boolean

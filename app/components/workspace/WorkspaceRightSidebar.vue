@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import type {
   AiChatSession,
+  AiDefenseJudgeRound,
+  AiDefenseScorecard,
   ChatMessage,
   Contest,
   Project,
   ProjectPayload,
   Resource,
+  TopicProposalItem,
   Track,
+  WorkspaceAiMode,
 } from '~~/shared/types/domain'
 import type { WorkspaceFormState, WorkspaceSidebarTab } from '~/types/workspace'
 
@@ -18,8 +22,12 @@ const props = withDefaults(defineProps<{
   chatMessages?: ChatMessage[]
   chatInput?: string
   chatLoading?: boolean
+  aiMode?: WorkspaceAiMode
   chatDraft?: ProjectPayload | null
   chatMissingFields?: string[]
+  topicProposals?: TopicProposalItem[]
+  defenseRounds?: AiDefenseJudgeRound[]
+  defenseScorecard?: AiDefenseScorecard | null
   normalizedInfo?: string
   selectedContest?: Contest | null
   selectedTrack?: Track | null
@@ -36,8 +44,12 @@ const props = withDefaults(defineProps<{
   chatMessages: () => [],
   chatInput: '',
   chatLoading: false,
+  aiMode: 'project_chat',
   chatDraft: null,
   chatMissingFields: () => [],
+  topicProposals: () => [],
+  defenseRounds: () => [],
+  defenseScorecard: null,
   normalizedInfo: '',
   selectedContest: null,
   selectedTrack: null,
@@ -50,11 +62,13 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'update:sidebarTab': [value: WorkspaceSidebarTab]
   'update:chatInput': [value: string]
+  'update:aiMode': [value: WorkspaceAiMode]
   'update:formState': [value: WorkspaceFormState]
   'sendChat': []
   'switchChatSession': [sessionId: string]
   'createChatSession': []
   'fillForm': [draft: ProjectPayload]
+  'applyTopicProposal': [item: TopicProposalItem]
   'submitProject': []
   'openProject': [projectId: string]
 }>()
@@ -65,6 +79,14 @@ function updateFormField(key: keyof WorkspaceFormState, value: string) {
     [key]: value,
   })
 }
+
+const inputPlaceholder = computed(() => {
+  if (props.aiMode === 'topic_proposal')
+    return '描述你想做的方向，例如：AI+供应链，偏工程落地，可两个月完成。'
+  if (props.aiMode === 'defense')
+    return '输入答辩要点或追问，例如：请继续追问技术可行性。'
+  return '询问 AI 或输入指令...'
+})
 </script>
 
 <template>
@@ -95,6 +117,35 @@ function updateFormField(key: keyof WorkspaceFormState, value: string) {
 
     <div class="no-scrollbar p-4 flex-1 overflow-y-auto">
       <div v-if="sidebarTab === 'chat'" class="flex flex-col h-full space-y-4">
+        <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
+          <div class="text-xs text-slate-700 font-semibold">
+            AI 模式
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            <button
+              class="text-[11px] px-2 py-1.5 rounded border transition-colors"
+              :class="aiMode === 'project_chat' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
+              @click="emit('update:aiMode', 'project_chat')"
+            >
+              项目聊天
+            </button>
+            <button
+              class="text-[11px] px-2 py-1.5 rounded border transition-colors"
+              :class="aiMode === 'topic_proposal' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
+              @click="emit('update:aiMode', 'topic_proposal')"
+            >
+              选题助手
+            </button>
+            <button
+              class="text-[11px] px-2 py-1.5 rounded border transition-colors"
+              :class="aiMode === 'defense' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
+              @click="emit('update:aiMode', 'defense')"
+            >
+              答辩模拟
+            </button>
+          </div>
+        </div>
+
         <div class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
           <div class="flex items-center justify-between">
             <div class="text-xs text-slate-700 font-semibold">
@@ -165,7 +216,7 @@ function updateFormField(key: keyof WorkspaceFormState, value: string) {
           </div>
         </div>
 
-        <div v-if="chatDraft" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+        <div v-if="aiMode === 'project_chat' && chatDraft" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
           <div class="text-xs text-slate-700 font-semibold">
             草案预览：{{ chatDraft.title }}
           </div>
@@ -183,12 +234,74 @@ function updateFormField(key: keyof WorkspaceFormState, value: string) {
           </button>
         </div>
 
+        <div v-if="aiMode === 'topic_proposal' && topicProposals.length > 0" class="space-y-2">
+          <div class="text-xs text-slate-700 font-semibold">
+            候选命题（{{ topicProposals.length }}）
+          </div>
+          <div
+            v-for="(item, index) in topicProposals"
+            :key="`${item.title}-${index}`"
+            class="p-3 border border-slate-200 rounded bg-slate-50"
+          >
+            <p class="text-xs text-slate-800 font-semibold">
+              {{ index + 1 }}. {{ item.title }}
+            </p>
+            <p class="text-[11px] text-slate-600 mt-1">
+              {{ item.reason }}
+            </p>
+            <div class="mt-2 text-[11px] text-slate-500">
+              风险：{{ item.risks.slice(0, 2).join('；') || '—' }}
+            </div>
+            <button
+              class="mt-2 text-[11px] font-semibold px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100"
+              @click="emit('applyTopicProposal', item)"
+            >
+              回填为项目草案
+            </button>
+          </div>
+        </div>
+
+        <div v-if="aiMode === 'defense'" class="space-y-2">
+          <div v-if="defenseScorecard" class="p-3 border border-slate-200 rounded bg-slate-50">
+            <div class="text-xs text-slate-700 font-semibold">
+              答辩评分
+            </div>
+            <p class="text-[11px] text-slate-600 mt-1">
+              技术 {{ defenseScorecard.technical }} / 业务 {{ defenseScorecard.business }} / 表达 {{ defenseScorecard.expression }} / 总分 {{ defenseScorecard.total }}
+            </p>
+            <p class="text-[11px] text-slate-500 mt-1">
+              {{ defenseScorecard.summary }}
+            </p>
+            <p v-if="defenseScorecard.materialGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
+              材料缺口：{{ defenseScorecard.materialGaps.join('；') }}
+            </p>
+            <p v-if="defenseScorecard.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-1">
+              改进动作：{{ defenseScorecard.actionItems.join('；') }}
+            </p>
+          </div>
+          <div
+            v-for="(round, index) in defenseRounds"
+            :key="`${round.judge}-${index}`"
+            class="p-3 border border-slate-200 rounded bg-white"
+          >
+            <p class="text-xs font-semibold text-slate-700">
+              {{ round.judge }} 评委（{{ round.score }}）
+            </p>
+            <p class="text-[11px] text-slate-700 mt-1">
+              问题：{{ round.question }}
+            </p>
+            <p class="text-[11px] text-slate-500 mt-1">
+              追问：{{ round.followUp }}
+            </p>
+          </div>
+        </div>
+
         <div class="mt-auto pt-4 border-t border-slate-100">
           <div class="relative">
             <textarea
               :value="chatInput"
               class="text-xs p-2.5 pr-10 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-              placeholder="询问 AI 或输入指令..."
+              :placeholder="inputPlaceholder"
               @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
             />
             <button

@@ -12,13 +12,16 @@ const PROTECTED_PATH_PREFIXES = [
   '/workspace',
   '/projects',
   '/admin',
-  '/topics',
-  '/reviews',
-  '/defense',
 ]
 
+const RETIRED_ROUTE_REDIRECT_MAP: Record<string, string> = {
+  '/topics': '/workspace',
+  '/reviews': '/workspace',
+  '/defense': '/workspace',
+}
+
 function normalizePath(path: string): string {
-  const normalized = path.trim()
+  const normalized = path.trim().replace(/\/+$/, '')
   return normalized || '/'
 }
 
@@ -55,6 +58,14 @@ function sanitizeRedirectTarget(value: unknown): string {
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const targetPath = normalizePath(to.path)
+  const retiredRedirectTarget = RETIRED_ROUTE_REDIRECT_MAP[targetPath]
+  if (retiredRedirectTarget) {
+    return navigateTo(retiredRedirectTarget, {
+      redirectCode: 301,
+      replace: true,
+    })
+  }
+
   const publicRoute = isPublicPath(targetPath)
   const protectedRoute = isProtectedPath(targetPath)
   const loginRoute = isPathMatch(targetPath, '/login')

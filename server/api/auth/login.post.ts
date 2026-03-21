@@ -19,7 +19,6 @@ import {
   findUserByUsername,
   getUserPasswordHashByUsername,
   listUserWorkspaces,
-  migrateLegacyProjectsIfNeeded,
 } from '~~/server/utils/platform-store'
 import { createSessionToken, hashPassword, hashToken, verifyPassword } from '~~/server/utils/security'
 
@@ -115,17 +114,6 @@ export default defineEventHandler(async (event) => {
     })
 
     setSessionCookie(event, result.sessionToken, result.session.expiresAt)
-
-    const personalWorkspace = result.workspaces
-      .map(item => item.workspace)
-      .find(item => item.type === 'personal' && item.ownerUserId === result.user.id)
-
-    if (personalWorkspace) {
-      await migrateLegacyProjectsIfNeeded(event, {
-        ownerUserId: result.user.id,
-        workspaceId: personalWorkspace.id,
-      })
-    }
 
     return ok<AuthLoginResult>({
       user: result.user,

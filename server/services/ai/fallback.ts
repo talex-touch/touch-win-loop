@@ -1,20 +1,18 @@
 import type {
   AiContestFilterRequest,
   AiContestFilterResult,
+  AiDefenseRequest,
+  AiDefenseResult,
   AiProjectChatRequest,
   AiProjectChatResult,
+  AiTopicProposalRequest,
+  AiTopicProposalResult,
   Contest,
   ContestFilterInput,
   ContestLevel,
-  DefenseSession,
   ProjectPayload,
-  ReviewReport,
-  Rubric,
-  TopicProposal,
   TopicProposalItem,
-  Track,
 } from '~~/shared/types/domain'
-import { randomUUID } from 'node:crypto'
 import { filterContests, findContestById, findTrackById } from '~~/server/data/catalog'
 
 const levelHints: Array<{ keyword: string, level: ContestLevel }> = [
@@ -172,148 +170,139 @@ export function runProjectChatFallback(request: AiProjectChatRequest): AiProject
   }
 }
 
-export function runTopicProposalFallback(input: {
-  contest: Contest
-  track: Track
-  major?: string
-}): TopicProposal {
-  const major = String(input.major || '').trim() || '目标专业'
+function toFallbackTopicItem(input: {
+  index: number
+  query: string
+  major: string
+}): TopicProposalItem {
+  const suffix = input.index + 1
+  const query = input.query || '智能化赛题'
+  const major = input.major || '跨专业'
+  return {
+    title: `${query} 方向命题方案 ${suffix}`,
+    reason: `结合${major}能力模型与竞赛评分维度，方案 ${suffix} 更容易形成可验证成果。`,
+    innovationPoints: [
+      '围绕真实业务痛点设计可量化指标。',
+      '通过低成本原型快速验证核心假设。',
+      '将评审标准直接映射到章节与证据材料。',
+    ],
+    techRouteSteps: [
+      '拆解赛题约束，建立验收标准。',
+      '构建最小可行数据与实验闭环。',
+      '实现核心功能并准备演示脚本。',
+      '补齐答辩证据：指标、对比、风险与备选。',
+    ],
+    scoringMapping: [
+      '创新性 -> 差异化方法与实验对比',
+      '可行性 -> 路线、资源与里程碑',
+      '完整性 -> 文档规范与演示闭环',
+    ],
+    risks: [
+      '数据获取周期不稳定影响实验进度',
+      '功能范围膨胀导致答辩准备时间不足',
+      '指标定义不清导致评委质疑可行性',
+    ],
+    references: [],
+  }
+}
 
-  const proposals: TopicProposalItem[] = [
+export function runTopicProposalFallback(request: AiTopicProposalRequest): AiTopicProposalResult {
+  const latestUserMessage = [...request.messages]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
+
+  const topK = Math.max(1, Math.min(5, Number(request.topK || 3)))
+  const proposals = Array.from({ length: topK }).map((_, index) => {
+    return toFallbackTopicItem({
+      index,
+      query: latestUserMessage,
+      major: request.context.major || '',
+    })
+  })
+
+  const missingFields: string[] = []
+  if (!request.context.contestId)
+    missingFields.push('contestId')
+  if (!request.context.trackId)
+    missingFields.push('trackId')
+  if (!request.context.major)
+    missingFields.push('major')
+
+  return {
+    assistantReply: `已生成 ${proposals.length} 个候选命题，可继续追问细化技术路线与答辩策略。`,
+    proposals,
+    references: [],
+    missingFields,
+    webSearchEnabled: false,
+  }
+}
+
+export function runDefenseFallback(request: AiDefenseRequest): AiDefenseResult {
+  const latestUserMessage = [...request.messages]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || '请基于当前方案进行模拟答辩。'
+
+  const rounds: AiDefenseResult['rounds'] = [
     {
-      title: `${input.track.name}：${major} 智能辅导决策平台`,
-      reason: '结合竞赛评分口径与专业能力，具备可展示的工程成果。',
-      innovationPoints: ['评分维度反向驱动迭代', '任务分解可追踪'],
-      techRouteSteps: ['定义问题边界', '设计数据结构', '实现核心流程', '构建可视化评审面板'],
-      scoringMapping: ['创新性', '可行性', '表达规范'],
-      risks: ['数据样本不足', '时间排期冲突'],
-      references: ['竞赛官网评分细则', '往届优秀作品关键词'],
+      judge: 'technical',
+      question: '请说明核心技术路线与基线方案相比的优势。',
+      score: 78,
+      comment: '技术方向明确，但实验对比指标需要再量化。',
+      followUp: '如果关键依赖失败，是否有可替代实现路径？',
     },
     {
-      title: `${input.track.name}：竞赛资料智能检索与答辩演练`,
-      reason: '从资料管理到答辩训练形成闭环，展示完整产品思路。',
-      innovationPoints: ['多角色评委模拟', '结构化缺口识别'],
-      techRouteSteps: ['聚合资料索引', '构建问答流程', '生成答辩清单'],
-      scoringMapping: ['应用价值', '证据与数据'],
-      risks: ['外部链接失效', '演示复杂度过高'],
-      references: ['竞赛 FAQ', '行业最佳实践'],
+      judge: 'business',
+      question: '该方案在真实场景的落地路径和价值闭环是什么？',
+      score: 74,
+      comment: '场景描述清晰，但商业收益测算较粗。',
+      followUp: '你如何证明方案在 3 个月内可被试点采用？',
     },
     {
-      title: `${input.track.name}：${major} 项目质量评审助手`,
-      reason: '聚焦“可执行修改清单”，直连竞赛交付目标。',
-      innovationPoints: ['章节级建议生成', '工作量分级排期'],
-      techRouteSteps: ['加载 rubric', '执行多维评估', '输出改进计划'],
-      scoringMapping: ['可行性', '表达规范', '应用价值'],
-      risks: ['评审口径偏差', '指标定义不清'],
-      references: ['往届评审意见', '主办方评分标准'],
+      judge: 'expression',
+      question: '请用 90 秒说明项目结论、证据与风险。',
+      score: 80,
+      comment: '表达结构较完整，建议减少术语堆叠。',
+      followUp: '如果评委质疑创新性，你的第一反驳点是什么？',
     },
   ]
 
-  return {
-    id: randomUUID(),
-    contestId: input.contest.id,
-    trackId: input.track.id,
-    createdAt: new Date().toISOString(),
-    proposals,
-  }
-}
-
-export function runReviewFallback(input: {
-  contestId: string
-  trackId: string
-  text: string
-  rubric: Rubric
-}): ReviewReport {
-  const rawText = String(input.text || '').trim()
-  const baseScore = Math.max(55, Math.min(93, Math.round(58 + rawText.length / 28)))
-
-  const dimensionScores = input.rubric.dimensions.map((dimension) => {
-    const variance = Math.min(8, Math.max(2, Math.round((dimension.weight || 0) / 5)))
-    const score = Math.max(50, Math.min(96, baseScore + Math.round(((dimension.weight || 0) - 20) / 4) - variance))
-    return {
-      role: `${dimension.name}评委`,
-      score,
-      comment: dimension.description || `${dimension.name}维度建议补充更多可验证证据。`,
-    }
-  })
-
-  const totalScore = Math.round(
-    dimensionScores.reduce((sum, item, index) => {
-      const weight = input.rubric.dimensions[index]?.weight || 0
-      return sum + item.score * (weight / 100)
-    }, 0),
-  )
-
-  return {
-    id: randomUUID(),
-    contestId: input.contestId,
-    trackId: input.trackId,
-    totalScore,
-    dimensionScores,
-    topPriorities: [
-      '补齐核心指标定义与计算口径。',
-      '增加实验对照或竞品对比证据。',
-      '优化结论页与价值页，突出成果闭环。',
-    ],
-    chapterSuggestions: [
-      { chapter: '摘要', suggestions: ['突出问题-方案-结果链路', '增加量化成果一句话总结'] },
-      { chapter: '方法', suggestions: ['补充数据来源说明', '明确关键参数与实验配置'] },
-      { chapter: '结果', suggestions: ['增加对照组', '展示失败案例与改进过程'] },
+  const scorecard = {
+    technical: 78,
+    business: 74,
+    expression: 80,
+    total: 77,
+    summary: '整体可答辩，建议优先补齐量化证据与业务价值测算。',
+    materialGaps: [
+      '缺少与公开基线的量化对比表',
+      '商业价值与ROI估算不够具体',
     ],
     actionItems: [
-      { task: '补充指标口径与计算说明', workload: 'low' },
-      { task: '完善实验对照和结果可视化', workload: 'medium' },
-      { task: '重构答辩故事线与演示脚本', workload: 'high' },
+      '补充核心指标对比图（精度、时延、成本）',
+      '准备 3 个高频追问的 30 秒版本回答',
+      '将风险与备选方案写成一页答辩卡',
     ],
-    riskWarnings: ['存在“结论先行、证据不足”的风险', '交付物中技术细节与口头陈述可能不一致'],
-    createdAt: new Date().toISOString(),
   }
-}
 
-export function runDefenseFallback(input: {
-  contest: Contest
-  track: Track
-  strictness?: 'normal' | 'strict'
-  rounds?: number
-}): DefenseSession {
-  const strictness = input.strictness || 'normal'
-  const rounds = Math.max(1, Math.min(5, input.rounds || 3))
+  const missingFields: string[] = []
+  if (!request.context.contestId)
+    missingFields.push('contestId')
+  if (!request.context.trackId)
+    missingFields.push('trackId')
+  if (!request.context.major)
+    missingFields.push('major')
+
+  const judgeSummary = rounds
+    .map(item => `${item.judge}(${item.score})`)
+    .join(' / ')
 
   return {
-    id: randomUUID(),
-    contestId: input.contest.id,
-    trackId: input.track.id,
-    topQuestions: [
-      '你们方案相较于现有方案的核心差异是什么？',
-      `为什么选择 ${input.track.name} 作为切入点，而不是其他赛道？`,
-      '关键指标如何定义？是否有客观可复现的计算方式？',
-      '若核心数据不可得，方案如何降级仍能完成演示？',
-      '你们的结论是否存在样本偏差？如何证明结果稳定？',
-      '若评委质疑创新点“只是功能叠加”，你将如何回应？',
-      '技术路线中风险最高的一步是什么？应对策略是什么？',
-      '项目落地后，如何衡量真实应用价值？',
-      '团队分工如何保证在截止日前完成高质量交付？',
-      `请在 ${strictness === 'strict' ? '30 秒内' : '90 秒内'} 给出最有说服力的总结陈述。`,
-    ],
-    answer30s: [
-      '结论：我们解决的是高频、可量化、可复现的问题。',
-      '依据：已有实验数据和对照分析支撑。',
-      '方案：采用可落地的分阶段实施路线。',
-      '指标：覆盖准确率、效率和用户价值三类关键指标。',
-      '风险：已准备数据不足与资源受限两套降级方案。',
-    ],
-    answer90s: [
-      '先明确问题背景与目标人群，再给出现有方案痛点。',
-      '说明核心创新点与技术路线，并展示阶段性结果。',
-      '补充对照实验、边界条件与失败案例复盘。',
-      '给出落地路径、成本收益估算和后续迭代方向。',
-    ],
-    materialGaps: [
-      '缺可复现的数据采样过程说明',
-      '缺竞品对比基线和评价标准',
-      '缺落地场景中成本与收益测算',
-      `建议至少完成 ${rounds} 轮模拟答辩并记录修订项`,
-    ],
-    createdAt: new Date().toISOString(),
+    assistantReply: `模拟答辩已完成：${judgeSummary}\n用户输入：${latestUserMessage}\n总评：${scorecard.summary}`,
+    rounds,
+    scorecard,
+    missingFields,
   }
 }

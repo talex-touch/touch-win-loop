@@ -48,8 +48,6 @@ export function useDashboardWorkspace() {
     { id: 'overview', label: '首页概览', icon: 'dashboard', to: '/dashboard' },
     { id: 'contests', label: '赛事总库', icon: 'trophy', to: '/contests' },
     { id: 'resources', label: '资料中心', icon: 'folder_open', to: '/resources' },
-    { id: 'insights', label: '选题洞察', icon: 'insights', to: '/topics' },
-    { id: 'reviews', label: '评审中心', icon: 'grading', to: '/reviews' },
     { id: 'workspace', label: '项目工作台', icon: 'construction', to: '/workspace' },
   ]
 
@@ -61,7 +59,6 @@ export function useDashboardWorkspace() {
 
   const quickActions: DashboardQuickAction[] = [
     { id: 'report', label: '撰写报告', icon: 'edit_square', to: '/workspace' },
-    { id: 'history', label: '历史战绩', icon: 'history', to: '/reviews' },
     { id: 'upload', label: '材料上传', icon: 'cloud_upload', to: '/resources' },
     { id: 'rules', label: '规则查阅', icon: 'help', to: '/contests' },
   ]

@@ -1,5 +1,6 @@
 import { analyzePdfBufferWithDocAi } from '~~/server/services/document/analysis'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
+import { convertWordBufferToPdf, isPdfDocument, isWordDocument } from '~~/server/services/document/convert'
+import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   claimNextQueuedDocumentTask,
@@ -9,6 +10,7 @@ import {
   resetStaleDocumentTasks,
   setDocumentParseStatus,
   updateDocumentPageCount,
+  updateResourceDocumentFileAsset,
 } from '~~/server/utils/document-store'
 import { readRuntimeSettings } from '~~/server/utils/env'
 
@@ -67,9 +69,49 @@ async function processSingleTask(): Promise<boolean> {
     return false
 
   try {
-    const buffer = await storage.getObjectBuffer(context.document.objectKey)
-    const parsed = await analyzePdfBufferWithDocAi(buffer, {
-      fileName: context.document.fileName,
+    const sourceBuffer = await storage.getObjectBuffer(context.document.objectKey)
+    let parseBuffer = sourceBuffer
+    let parseFileName = context.document.fileName
+    let conversionPayload: Record<string, unknown> | null = null
+
+    if (isWordDocument({ fileName: context.document.fileName, mimeType: context.document.mimeType })) {
+      const converted = await convertWordBufferToPdf({
+        fileName: context.document.fileName,
+        sourceBuffer,
+      })
+
+      const convertedObjectKey = buildDocumentObjectKey(context.resource.contestId, converted.fileName)
+      await storage.putObject({
+        key: convertedObjectKey,
+        body: converted.pdfBuffer,
+      })
+
+      await withTransaction(undefined, async (db) => {
+        await updateResourceDocumentFileAsset(db, {
+          documentId: context.document.id,
+          objectKey: convertedObjectKey,
+          fileName: converted.fileName,
+          mimeType: 'application/pdf',
+          fileSize: converted.pdfBuffer.length,
+        })
+      })
+
+      parseBuffer = converted.pdfBuffer
+      parseFileName = converted.fileName
+      conversionPayload = {
+        sourceFileName: context.document.fileName,
+        sourceObjectKey: context.document.objectKey,
+        convertedFileName: converted.fileName,
+        convertedObjectKey,
+      }
+    }
+
+    if (!isPdfDocument({ fileName: parseFileName, mimeType: context.document.mimeType })) {
+      throw new Error('DOCUMENT_TYPE_NOT_SUPPORTED')
+    }
+
+    const parsed = await analyzePdfBufferWithDocAi(parseBuffer, {
+      fileName: parseFileName,
       runtime,
     })
 
@@ -87,6 +129,7 @@ async function processSingleTask(): Promise<boolean> {
         resultPayload: {
           source: parsed.analysis.source,
           pageCount: parsed.pageCount,
+          conversion: conversionPayload,
         },
       })
     })
@@ -108,6 +151,11 @@ async function processSingleTask(): Promise<boolean> {
   return true
 }
 
+function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
+  const prefix = stage === 'bootstrap' ? '[document-worker] bootstrap failed:' : '[document-worker] tick failed:'
+  console.error(prefix, toErrorMessage(error))
+}
+
 async function runTick(state: WorkerState): Promise<void> {
   if (state.ticking)
     return
@@ -121,6 +169,9 @@ async function runTick(state: WorkerState): Promise<void> {
         break
       count += 1
     }
+  }
+  catch (error) {
+    logWorkerError('tick', error)
   }
   finally {
     state.ticking = false
@@ -137,6 +188,8 @@ export default defineNitroPlugin((nitroApp) => {
     await resetStaleDocumentTasks(db, {
       staleMinutes: 15,
     })
+  }).catch((error) => {
+    logWorkerError('bootstrap', error)
   })
 
   const intervalMs = 2500

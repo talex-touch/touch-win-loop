@@ -27,8 +27,8 @@ if (!pgUrl) {
 
 const {
   ensureContestLibrarySeeded,
-  listLegacyContestIds,
-  resetLegacyContestSeedState,
+  listCatalogContestIds,
+  resetCatalogContestSeedState,
 } = jiti(resolve(rootDir, 'server/utils/contest-store.ts'))
 
 const action = String(process.argv[2] || 'help').trim().toLowerCase()
@@ -54,30 +54,30 @@ async function run() {
         actorUserId,
         forceSeed: true,
       })
-      console.log('legacy 赛事 seed 执行完成（幂等）。')
+      console.log('catalog 赛事 seed 执行完成（幂等）。')
       return
     }
 
     if (action === 'clean') {
-      const output = await resetLegacyContestSeedState(pool)
-      console.log(`legacy 赛事清理完成，共处理 ${output.deletedContestIds.length} 个 legacy contest id。`)
+      const output = await resetCatalogContestSeedState(pool)
+      console.log(`catalog 赛事清理完成，共处理 ${output.deletedContestIds.length} 个内置 contest id。`)
       return
     }
 
-    const legacyIds = listLegacyContestIds()
+    const catalogIds = listCatalogContestIds()
     const countResult = await pool.query(
       'SELECT COUNT(*)::TEXT AS count FROM contests WHERE id = ANY($1::TEXT[])',
-      [legacyIds],
+      [catalogIds],
     )
     const flagResult = await pool.query(
       'SELECT value FROM migrations_meta WHERE key = $1 LIMIT 1',
       ['contest_library_seeded_v2'],
     )
 
-    const legacyCount = Number(countResult.rows[0]?.count || '0')
+    const catalogCount = Number(countResult.rows[0]?.count || '0')
     const migrationFlag = flagResult.rows[0]?.value || '0'
 
-    console.log(`legacy 赛事数量：${legacyCount}`)
+    console.log(`catalog 赛事数量：${catalogCount}`)
     console.log(`seed 迁移标记：${migrationFlag === '1' ? '已写入' : '未写入'}`)
   }
   catch (error) {

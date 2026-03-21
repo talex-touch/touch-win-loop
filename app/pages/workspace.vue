@@ -3,7 +3,12 @@ import type {
   AiChatMessage,
   AiChatSession,
   AiContestFilterResult,
+  AiDefenseJudgeRound,
+  AiDefenseScorecard,
+  AiDefenseStreamEvent,
+  AiDefenseStreamEventType,
   AiProjectChatResult,
+  AiTopicProposalResult,
   ApiResponse,
   AuthMeResult,
   ChatMessage,
@@ -11,6 +16,8 @@ import type {
   Project,
   ProjectPayload,
   Resource,
+  TopicProposalItem,
+  WorkspaceAiMode,
 } from '~~/shared/types/domain'
 import type {
   MappingTone,
@@ -122,11 +129,18 @@ const activeChatSessionId = ref('')
 const chatInput = ref('')
 const chatMissingFields = ref<string[]>([])
 const chatDraft = ref<ProjectPayload | null>(null)
+const aiMode = ref<WorkspaceAiMode>('project_chat')
+const topicProposals = ref<TopicProposalItem[]>([])
+const defenseRounds = ref<AiDefenseJudgeRound[]>([])
+const defenseScorecard = ref<AiDefenseScorecard | null>(null)
 
 function resetChatStateWithGreeting() {
   chatMessages.value = [defaultAssistantGreeting()]
   chatDraft.value = null
   chatMissingFields.value = []
+  topicProposals.value = []
+  defenseRounds.value = []
+  defenseScorecard.value = null
 }
 
 const formState = reactive<WorkspaceFormState>({
@@ -424,6 +438,11 @@ async function loadChatMessages(sessionId: string) {
       content: item.content,
     })) as ChatMessage[]
 
+    chatDraft.value = null
+    chatMissingFields.value = []
+    topicProposals.value = []
+    defenseRounds.value = []
+    defenseScorecard.value = null
     chatMessages.value = restoredMessages.length > 0
       ? restoredMessages
       : [defaultAssistantGreeting()]
@@ -431,6 +450,17 @@ async function loadChatMessages(sessionId: string) {
   catch {
     resetChatStateWithGreeting()
   }
+}
+
+function buildSessionTitleByMode(): string {
+  const contestName = selectedContest.value?.name || '未选择竞赛'
+  const trackName = selectedTrack.value?.name || '未选择赛道'
+
+  if (aiMode.value === 'topic_proposal')
+    return `选题助手 · ${contestName} · ${trackName}`
+  if (aiMode.value === 'defense')
+    return `答辩模拟 · ${contestName} · ${trackName}`
+  return `${contestName} · ${trackName}`
 }
 
 async function createChatSession(preferredTitle = ''): Promise<string | null> {
@@ -443,7 +473,7 @@ async function createChatSession(preferredTitle = ''): Promise<string | null> {
       {
         method: 'POST',
         body: {
-          title: preferredTitle || `${selectedContest.value?.name || 'AI 对话'}`,
+          title: preferredTitle || buildSessionTitleByMode(),
           contestId: selectedContestId.value,
           trackId: selectedTrackId.value,
           major: major.value,
@@ -516,7 +546,12 @@ async function switchChatSession(sessionId: string) {
 }
 
 async function startNewChatSession() {
-  const createdId = await createChatSession('新建 AI 对话')
+  const modeTitle = aiMode.value === 'topic_proposal'
+    ? '新建选题会话'
+    : aiMode.value === 'defense'
+      ? '新建答辩会话'
+      : '新建 AI 对话'
+  const createdId = await createChatSession(modeTitle)
   if (!createdId) {
     statusLine.value = '新建对话失败，请稍后重试。'
     return
@@ -595,6 +630,228 @@ function fillFormWithDraft(draft: ProjectPayload) {
   sidebarTab.value = 'submit'
 }
 
+function topicProposalToDraft(item: TopicProposalItem): ProjectPayload {
+  return {
+    title: item.title,
+    contestId: selectedContestId.value,
+    trackId: selectedTrackId.value,
+    problemStatement: item.reason,
+    innovationPoints: item.innovationPoints,
+    techRouteSteps: item.techRouteSteps,
+    scoringMapping: item.scoringMapping,
+    risks: item.risks,
+    deliverables: ['方案书', '演示 PPT', '答辩问题清单'],
+    summary: item.reason,
+  }
+}
+
+function applyTopicProposal(item: TopicProposalItem) {
+  fillFormWithDraft(topicProposalToDraft(item))
+}
+
+function parseSseBlock(rawBlock: string): { eventType: string, dataText: string } | null {
+  const block = rawBlock.trim()
+  if (!block)
+    return null
+
+  const lines = block.split('\n').map(line => line.replace(/\r$/, ''))
+  let eventType = 'message'
+  const dataLines: string[] = []
+
+  for (const line of lines) {
+    if (line.startsWith('event:'))
+      eventType = line.slice(6).trim()
+    else if (line.startsWith('data:'))
+      dataLines.push(line.slice(5).trimStart())
+  }
+
+  return {
+    eventType,
+    dataText: dataLines.join('\n'),
+  }
+}
+
+function toJsonPayload(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return {}
+  return value as Record<string, unknown>
+}
+
+async function sendProjectChatMessage(pendingMessages: ChatMessage[]) {
+  const response = await $fetch<ApiResponse<AiProjectChatResult>>(endpoint('/ai/project-chat'), {
+    method: 'POST',
+    body: {
+      workspaceId: activeWorkspaceId.value,
+      sessionId: activeChatSessionId.value,
+      messages: pendingMessages,
+      context: {
+        workspaceId: activeWorkspaceId.value,
+        contestId: selectedContestId.value,
+        trackId: selectedTrackId.value,
+        major: major.value,
+      },
+    },
+  })
+
+  chatMessages.value = [...pendingMessages, { role: 'assistant', content: response.data.assistantReply }]
+  chatDraft.value = response.data.projectDraft
+  chatMissingFields.value = response.data.missingFields
+  topicProposals.value = []
+  defenseRounds.value = []
+  defenseScorecard.value = null
+  activeChatSessionId.value = String(response.data.sessionId || activeChatSessionId.value)
+  await loadChatSessions(activeChatSessionId.value)
+  statusLine.value = response.meta.fallbackUsed
+    ? '聊天结果来自兜底策略，可继续补充需求后重试。'
+    : '聊天已生成结构化草案，可一键回填表单。'
+}
+
+async function sendTopicProposalMessage(pendingMessages: ChatMessage[]) {
+  const response = await $fetch<ApiResponse<AiTopicProposalResult>>(endpoint('/ai/topic-proposal'), {
+    method: 'POST',
+    body: {
+      workspaceId: activeWorkspaceId.value,
+      sessionId: activeChatSessionId.value,
+      messages: pendingMessages,
+      topK: 3,
+      context: {
+        workspaceId: activeWorkspaceId.value,
+        contestId: selectedContestId.value,
+        trackId: selectedTrackId.value,
+        major: major.value,
+      },
+    },
+  })
+
+  chatMessages.value = [...pendingMessages, { role: 'assistant', content: response.data.assistantReply }]
+  topicProposals.value = response.data.proposals || []
+  chatMissingFields.value = response.data.missingFields
+  chatDraft.value = null
+  defenseRounds.value = []
+  defenseScorecard.value = null
+  activeChatSessionId.value = String(response.data.sessionId || activeChatSessionId.value)
+  await loadChatSessions(activeChatSessionId.value)
+  statusLine.value = response.meta.fallbackUsed
+    ? '选题结果来自兜底策略，建议继续补充上下文。'
+    : `已生成 ${topicProposals.value.length} 个候选命题，可一键回填草案。`
+}
+
+async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
+  chatDraft.value = null
+  topicProposals.value = []
+  chatMissingFields.value = []
+  defenseRounds.value = []
+  defenseScorecard.value = null
+  let assistantText = ''
+
+  const response = await fetch(endpoint('/ai/defense/stream'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      workspaceId: activeWorkspaceId.value,
+      sessionId: activeChatSessionId.value,
+      messages: pendingMessages,
+      context: {
+        workspaceId: activeWorkspaceId.value,
+        contestId: selectedContestId.value,
+        trackId: selectedTrackId.value,
+        major: major.value,
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    const fallbackMessage = `请求失败：HTTP ${response.status}`
+    const data = await response.json().catch(() => null) as ApiResponse<null> | null
+    throw new Error(String(data?.message || fallbackMessage))
+  }
+
+  if (!response.body)
+    throw new Error('未收到可读取的流式响应。')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done)
+      break
+    buffer += decoder.decode(value, { stream: true })
+
+    while (true) {
+      const separatorIndex = buffer.indexOf('\n\n')
+      if (separatorIndex < 0)
+        break
+
+      const block = buffer.slice(0, separatorIndex)
+      buffer = buffer.slice(separatorIndex + 2)
+      const parsed = parseSseBlock(block)
+      if (!parsed)
+        continue
+
+      const payload = parsed.dataText
+        ? JSON.parse(parsed.dataText) as AiDefenseStreamEvent
+        : null
+      const eventType = (payload?.event || parsed.eventType) as AiDefenseStreamEventType
+      const data = toJsonPayload(payload?.data)
+
+      if (eventType === 'progress') {
+        statusLine.value = String(data.message || '答辩模拟处理中...')
+        if (data.sessionId)
+          activeChatSessionId.value = String(data.sessionId)
+        continue
+      }
+      if (eventType === 'judge') {
+        const round = data.round as AiDefenseJudgeRound | undefined
+        if (round)
+          defenseRounds.value = [...defenseRounds.value, round]
+        continue
+      }
+      if (eventType === 'score') {
+        const scorecard = data.scorecard as AiDefenseScorecard | undefined
+        if (scorecard)
+          defenseScorecard.value = scorecard
+        continue
+      }
+      if (eventType === 'delta') {
+        assistantText += String(data.text || '')
+        chatMessages.value = [...pendingMessages, { role: 'assistant', content: assistantText }]
+        continue
+      }
+      if (eventType === 'done') {
+        const result = toJsonPayload(data.result)
+        assistantText = String(result.assistantReply || assistantText)
+        chatMessages.value = [...pendingMessages, { role: 'assistant', content: assistantText }]
+        if (Array.isArray(result.rounds))
+          defenseRounds.value = result.rounds as AiDefenseJudgeRound[]
+        const scorecard = result.scorecard as AiDefenseScorecard | undefined
+        if (scorecard)
+          defenseScorecard.value = scorecard
+        if (Array.isArray(result.missingFields))
+          chatMissingFields.value = result.missingFields.map(item => String(item))
+        if (result.sessionId)
+          activeChatSessionId.value = String(result.sessionId)
+        statusLine.value = '模拟答辩完成，可继续追问下一轮。'
+        continue
+      }
+      if (eventType === 'error')
+        throw new Error(String(data.message || '模拟答辩失败。'))
+    }
+  }
+
+  buffer += decoder.decode()
+  const tail = parseSseBlock(buffer)
+  if (tail?.dataText) {
+    const payload = JSON.parse(tail.dataText) as AiDefenseStreamEvent
+    if (payload.event === 'error')
+      throw new Error(String(toJsonPayload(payload.data).message || '模拟答辩失败。'))
+  }
+}
+
 async function sendChatMessage() {
   if (!activeWorkspaceId.value) {
     statusLine.value = '请先选择一个空间。'
@@ -620,36 +877,21 @@ async function sendChatMessage() {
   chatLoading.value = true
 
   try {
-    const response = await $fetch<ApiResponse<AiProjectChatResult>>(endpoint('/ai/project-chat'), {
-      method: 'POST',
-      body: {
-        workspaceId: activeWorkspaceId.value,
-        sessionId: activeChatSessionId.value,
-        messages: pendingMessages,
-        context: {
-          workspaceId: activeWorkspaceId.value,
-          contestId: selectedContestId.value,
-          trackId: selectedTrackId.value,
-          major: major.value,
-        },
-      },
-    })
-
-    chatMessages.value = [...pendingMessages, { role: 'assistant', content: response.data.assistantReply }]
-    chatDraft.value = response.data.projectDraft
-    chatMissingFields.value = response.data.missingFields
-    activeChatSessionId.value = String(response.data.sessionId || activeChatSessionId.value)
-    await loadChatSessions(activeChatSessionId.value)
-    statusLine.value = response.meta.fallbackUsed
-      ? '聊天结果来自兜底策略，可继续补充需求后重试。'
-      : '聊天已生成结构化草案，可一键回填表单。'
+    if (aiMode.value === 'topic_proposal')
+      await sendTopicProposalMessage(pendingMessages)
+    else if (aiMode.value === 'defense')
+      await sendDefenseMessage(pendingMessages)
+    else
+      await sendProjectChatMessage(pendingMessages)
   }
-  catch {
-    chatMessages.value = [...pendingMessages, { role: 'assistant', content: '聊天服务暂不可用，请稍后重试。' }]
-    statusLine.value = '聊天接口调用失败。'
+  catch (error) {
+    const message = error instanceof Error ? error.message : '聊天接口调用失败。'
+    chatMessages.value = [...pendingMessages, { role: 'assistant', content: message || '聊天服务暂不可用，请稍后重试。' }]
+    statusLine.value = message || '聊天接口调用失败。'
   }
   finally {
     chatLoading.value = false
+    await loadChatSessions(activeChatSessionId.value)
   }
 }
 
@@ -723,7 +965,7 @@ watch(activeWorkspaceId, async (value, previous) => {
 </script>
 
 <template>
-  <div class="workspace-shell text-slate-800 bg-white flex flex-col min-h-[680px] overflow-hidden">
+  <div class="workspace-shell text-slate-800 bg-white flex flex-col h-full min-h-0 overflow-hidden">
     <WorkspaceHeader
       v-model="headerSearch"
       :contest-name="selectedContest?.name || '未选择竞赛'"
@@ -784,6 +1026,7 @@ watch(activeWorkspaceId, async (value, previous) => {
       <WorkspaceRightSidebar
         v-model:sidebar-tab="sidebarTab"
         v-model:chat-input="chatInput"
+        v-model:ai-mode="aiMode"
         :chat-sessions="chatSessions"
         :active-chat-session-id="activeChatSessionId"
         :chat-sessions-loading="chatSessionsLoading"
@@ -791,6 +1034,9 @@ watch(activeWorkspaceId, async (value, previous) => {
         :chat-loading="chatLoading"
         :chat-draft="chatDraft"
         :chat-missing-fields="chatMissingFields"
+        :topic-proposals="topicProposals"
+        :defense-rounds="defenseRounds"
+        :defense-scorecard="defenseScorecard"
         :normalized-info="normalizedInfo"
         :selected-contest="selectedContest"
         :selected-track="selectedTrack"
@@ -804,6 +1050,7 @@ watch(activeWorkspaceId, async (value, previous) => {
         @switch-chat-session="switchChatSession"
         @create-chat-session="startNewChatSession"
         @fill-form="fillFormWithDraft"
+        @apply-topic-proposal="applyTopicProposal"
         @submit-project="submitProject"
         @open-project="openProject"
       />

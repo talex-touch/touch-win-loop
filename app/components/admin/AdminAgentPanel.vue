@@ -58,9 +58,6 @@ function toJsonPayload(value: unknown): Record<string, unknown> {
 
 const taskTypeOptions: Array<{ value: AdminAgentTaskType, label: string }> = [
   { value: 'publish_assistant', label: '发布助手' },
-  { value: 'topic_proposals', label: '选题建议' },
-  { value: 'review', label: '作品评审' },
-  { value: 'defense', label: '模拟答辩' },
   { value: 'import_sync_analysis', label: '导入/同步分析' },
   { value: 'general', label: '通用咨询' },
 ]
@@ -78,9 +75,6 @@ const taskType = ref<AdminAgentTaskType>('publish_assistant')
 const message = ref('')
 const trackId = ref('')
 const major = ref('')
-const reviewText = ref('')
-const strictness = ref<'normal' | 'strict'>('normal')
-const rounds = ref(3)
 const csvText = ref('')
 const sourceId = ref('')
 const sourceUrl = ref('')
@@ -96,8 +90,6 @@ const runMeta = ref<{
 
 const contestDraftCount = computed(() => draftBridge.listDrafts(props.contestId).length)
 
-const showReviewText = computed(() => taskType.value === 'review')
-const showDefenseOptions = computed(() => taskType.value === 'defense')
 const showImportOptions = computed(() => taskType.value === 'import_sync_analysis')
 
 const modulePathMap: Record<AdminDraftModule, string> = {
@@ -239,12 +231,6 @@ function buildRequestBody(): AdminAgentRunRequest {
     context.trackId = trackId.value
   if (major.value)
     context.major = major.value
-  if (showReviewText.value && reviewText.value.trim())
-    context.reviewText = reviewText.value.trim()
-  if (showDefenseOptions.value) {
-    context.strictness = strictness.value
-    context.rounds = Number(rounds.value || 3)
-  }
   if (showImportOptions.value) {
     if (csvText.value.trim())
       context.csvText = csvText.value.trim()
@@ -493,25 +479,6 @@ watch(activeSessionId, async (value, previous) => {
       </a-select>
 
       <a-input v-model="major" size="small" placeholder="专业（可选）" />
-
-      <a-textarea
-        v-if="showReviewText"
-        v-model="reviewText"
-        :auto-size="{ minRows: 2, maxRows: 4 }"
-        placeholder="评审文本（可选）"
-      />
-
-      <div v-if="showDefenseOptions" class="gap-2 grid grid-cols-2">
-        <a-select v-model="strictness" size="small" placeholder="难度">
-          <a-option value="normal">
-            normal
-          </a-option>
-          <a-option value="strict">
-            strict
-          </a-option>
-        </a-select>
-        <a-input-number v-model="rounds" size="small" :min="1" :max="5" placeholder="轮次" />
-      </div>
 
       <template v-if="showImportOptions">
         <a-input v-model="sourceId" size="small" placeholder="同步源 ID（可选）" />

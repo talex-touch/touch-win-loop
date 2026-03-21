@@ -4,10 +4,7 @@ import type {
   AdminAgentRunResult,
   AdminAgentTaskType,
   Contest,
-  DefenseSession,
-  ReviewReport,
   Rubric,
-  TopicProposal,
   Track,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
@@ -15,20 +12,14 @@ import { createDeepAgent } from 'deepagents'
 import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
-import { runDefenseChain } from '~~/server/services/ai/defense-chain'
-import {
-  runDefenseFallback,
-  runReviewFallback,
-  runTopicProposalFallback,
-} from '~~/server/services/ai/fallback'
 import { createChatModel } from '~~/server/services/ai/llm-client'
-import { runReviewChain } from '~~/server/services/ai/review-chain'
-import { runTopicProposalChain } from '~~/server/services/ai/topic-proposal-chain'
 import { getContestDetail, getContestPublishCheck, getPublishedRubricByTrack, previewContestImportCsv } from '~~/server/utils/contest-store'
 import { listContestSyncRuns, listContestSyncSources } from '~~/server/utils/contest-sync-store'
 import { withClient } from '~~/server/utils/db'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
+
+type EffectiveRuntime = Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime']
 
 export interface AdminAgentHooks {
   onProgress?: (message: string) => Promise<void> | void
@@ -80,12 +71,6 @@ function resolveTaskType(taskType: AdminAgentTaskType, message: string): AdminAg
     return taskType
 
   const text = message.toLowerCase()
-  if (text.includes('选题'))
-    return 'topic_proposals'
-  if (text.includes('评审') || text.includes('报告'))
-    return 'review'
-  if (text.includes('答辩'))
-    return 'defense'
   if (text.includes('导入') || text.includes('同步') || text.includes('csv'))
     return 'import_sync_analysis'
   return 'publish_assistant'
@@ -328,136 +313,8 @@ function extractAssistantText(payload: unknown): string {
   return ''
 }
 
-async function runTopicProposalTask(input: {
-  contest: Contest
-  track: Track | null
-  major?: string
-  runtime: ReturnType<typeof readRuntimeSettings>
-}): Promise<TopicProposal | null> {
-  if (!input.track)
-    return null
-
-  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
-  if (onlyFallback) {
-    return runTopicProposalFallback({
-      contest: input.contest,
-      track: input.track,
-      major: input.major,
-    })
-  }
-
-  const result = await runWithRetry<TopicProposal>({
-    maxRetries: input.runtime.ai.maxRetries,
-    run: () => runTopicProposalChain({
-      contest: input.contest,
-      track: input.track!,
-      major: input.major,
-      ai: input.runtime.ai,
-    }),
-    fallback: () => runTopicProposalFallback({
-      contest: input.contest,
-      track: input.track!,
-      major: input.major,
-    }),
-  })
-
-  return result.data
-}
-
-async function runReviewTask(event: Parameters<typeof withClient>[0], input: {
-  contest: Contest
-  track: Track | null
-  runtime: ReturnType<typeof readRuntimeSettings>
-  reviewText: string
-}): Promise<ReviewReport | null> {
-  if (!input.track)
-    return null
-
-  const rubric = await withClient(event, async (db) => {
-    return getPublishedRubricByTrack(db, {
-      contestId: input.contest.id,
-      trackId: input.track!.id,
-    })
-  })
-
-  if (!rubric)
-    return null
-
-  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
-  if (onlyFallback) {
-    return runReviewFallback({
-      contestId: input.contest.id,
-      trackId: input.track.id,
-      text: input.reviewText,
-      rubric,
-    })
-  }
-
-  const result = await runWithRetry<ReviewReport>({
-    maxRetries: input.runtime.ai.maxRetries,
-    run: () => runReviewChain({
-      contest: input.contest,
-      trackId: input.track!.id,
-      text: input.reviewText,
-      rubric,
-      ai: input.runtime.ai,
-    }),
-    fallback: () => runReviewFallback({
-      contestId: input.contest.id,
-      trackId: input.track!.id,
-      text: input.reviewText,
-      rubric,
-    }),
-  })
-
-  return result.data
-}
-
-async function runDefenseTask(input: {
-  contest: Contest
-  track: Track | null
-  runtime: ReturnType<typeof readRuntimeSettings>
-  strictness?: 'normal' | 'strict'
-  rounds?: number
-}): Promise<DefenseSession | null> {
-  if (!input.track)
-    return null
-
-  const strictness = input.strictness || 'normal'
-  const rounds = Math.max(1, Math.min(5, Number(input.rounds || 3)))
-  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
-
-  if (onlyFallback) {
-    return runDefenseFallback({
-      contest: input.contest,
-      track: input.track,
-      strictness,
-      rounds,
-    })
-  }
-
-  const result = await runWithRetry<DefenseSession>({
-    maxRetries: input.runtime.ai.maxRetries,
-    run: () => runDefenseChain({
-      contest: input.contest,
-      track: input.track!,
-      strictness,
-      rounds,
-      ai: input.runtime.ai,
-    }),
-    fallback: () => runDefenseFallback({
-      contest: input.contest,
-      track: input.track!,
-      strictness,
-      rounds,
-    }),
-  })
-
-  return result.data
-}
-
 async function buildAssistantReplyWithDeepAgent(input: {
-  runtime: ReturnType<typeof readRuntimeSettings>
+  runtime: EffectiveRuntime
   request: AdminAgentRunRequest
   resolvedTaskType: AdminAgentTaskType
   contest: Contest
@@ -546,9 +403,9 @@ async function buildAssistantReplyWithDeepAgent(input: {
           tools: [getArtifactContext, webSearch, fetchWebPage],
         },
         {
-          name: 'coach-agent',
-          description: '擅长选题、评审、答辩建议与表达优化。',
-          systemPrompt: '聚焦选题质量、评审建议可执行性与答辩表现提升。',
+          name: 'ops-agent',
+          description: '擅长运营治理、导入同步分析与配置诊断。',
+          systemPrompt: '聚焦导入质量、同步状态、风险识别与可执行修复步骤。',
           tools: [getArtifactContext, webSearch, fetchWebPage],
         },
       ],
@@ -642,74 +499,6 @@ export async function executeAdminAgent(event: Parameters<typeof withClient>[0],
     }))
   }
 
-  if (resolvedTaskType === 'topic_proposals') {
-    await hooks.onProgress?.('生成选题建议...')
-    const proposal = await runTopicProposalTask({
-      contest,
-      track,
-      major: request.context?.major,
-      runtime,
-    })
-
-    if (proposal) {
-      artifacts.push(createArtifact({
-        type: 'topic_proposal',
-        title: '选题建议结果',
-        summary: `共生成 ${proposal.proposals.length} 个候选主题。`,
-        payload: proposal as unknown as Record<string, unknown>,
-      }))
-    }
-  }
-
-  if (resolvedTaskType === 'review') {
-    await hooks.onProgress?.('生成评审报告...')
-    const report = await runReviewTask(event, {
-      contest,
-      track,
-      runtime,
-      reviewText: toText(request.context?.reviewText) || toText(request.message),
-    })
-
-    if (report) {
-      artifacts.push(createArtifact({
-        type: 'review',
-        title: '作品评审报告',
-        summary: `总分 ${report.totalScore}，优先事项 ${report.topPriorities.length} 条。`,
-        payload: report as unknown as Record<string, unknown>,
-      }))
-    }
-    else {
-      artifacts.push(createArtifact({
-        type: 'review',
-        title: '作品评审报告',
-        summary: '评审失败：当前赛道缺少已发布 rubric。',
-        payload: {
-          error: 'RUBRIC_NOT_FOUND',
-        },
-      }))
-    }
-  }
-
-  if (resolvedTaskType === 'defense') {
-    await hooks.onProgress?.('生成答辩清单...')
-    const session = await runDefenseTask({
-      contest,
-      track,
-      runtime,
-      strictness: request.context?.strictness,
-      rounds: request.context?.rounds,
-    })
-
-    if (session) {
-      artifacts.push(createArtifact({
-        type: 'defense',
-        title: '模拟答辩结果',
-        summary: `尖锐问题 ${session.topQuestions.length} 条。`,
-        payload: session as unknown as Record<string, unknown>,
-      }))
-    }
-  }
-
   if (resolvedTaskType === 'import_sync_analysis') {
     await hooks.onProgress?.('分析导入与同步状态...')
 
@@ -755,8 +544,6 @@ export async function executeAdminAgent(event: Parameters<typeof withClient>[0],
     missingFields.push('workspaceId')
   if (!request.contestId)
     missingFields.push('contestId')
-  if ((resolvedTaskType === 'topic_proposals' || resolvedTaskType === 'review' || resolvedTaskType === 'defense') && !track)
-    missingFields.push('trackId')
 
   const assistant = await buildAssistantReplyWithDeepAgent({
     runtime,

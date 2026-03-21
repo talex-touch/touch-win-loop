@@ -18,9 +18,6 @@ import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform
 
 const ALLOWED_TASK_TYPES: AdminAgentTaskType[] = [
   'publish_assistant',
-  'topic_proposals',
-  'review',
-  'defense',
   'import_sync_analysis',
   'general',
 ]
@@ -32,7 +29,6 @@ function normalizeTaskType(value: unknown): AdminAgentTaskType {
 
 function normalizeRequest(body: Partial<AdminAgentRunRequest> | null | undefined): AdminAgentRunRequest {
   const context = body?.context || {}
-  const strictness = context.strictness === 'strict' ? 'strict' : 'normal'
 
   return {
     workspaceId: String(body?.workspaceId || '').trim(),
@@ -43,9 +39,6 @@ function normalizeRequest(body: Partial<AdminAgentRunRequest> | null | undefined
     context: {
       trackId: String(context.trackId || '').trim() || undefined,
       major: String(context.major || '').trim() || undefined,
-      reviewText: String(context.reviewText || '').trim() || undefined,
-      strictness,
-      rounds: Number.isFinite(Number(context.rounds)) ? Number(context.rounds) : undefined,
       csvText: String(context.csvText || '').trim() || undefined,
       sourceId: String(context.sourceId || '').trim() || undefined,
       sourceUrl: String(context.sourceUrl || '').trim() || undefined,
@@ -57,9 +50,6 @@ function normalizeRequest(body: Partial<AdminAgentRunRequest> | null | undefined
 function buildSessionTitle(request: AdminAgentRunRequest): string {
   const map: Record<AdminAgentTaskType, string> = {
     publish_assistant: '发布助手',
-    topic_proposals: '选题建议',
-    review: '作品评审',
-    defense: '模拟答辩',
     import_sync_analysis: '导入同步分析',
     general: '管理助手',
   }

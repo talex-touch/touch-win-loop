@@ -502,6 +502,7 @@ export interface AiChatMessage {
   provider: string
   model: string
   fallbackUsed: boolean
+  metadata?: Record<string, unknown>
   createdByUserId: string
   createdAt: string
 }
@@ -542,11 +543,85 @@ export interface AiProjectChatResult {
   sessionId?: string
 }
 
+export type WorkspaceAiMode = 'project_chat' | 'topic_proposal' | 'defense'
+
+export interface AiTopicProposalRequest {
+  workspaceId?: string
+  sessionId?: string
+  messages: ChatMessage[]
+  topK?: number
+  aiOptions?: Partial<AiAssistantOptions>
+  context: {
+    workspaceId?: string
+    contestId?: string
+    trackId?: string
+    major?: string
+  }
+}
+
+export interface AiTopicReference {
+  title: string
+  url: string
+  snippet: string
+}
+
+export interface AiTopicProposalResult {
+  assistantReply: string
+  proposals: TopicProposalItem[]
+  references: AiTopicReference[]
+  missingFields: string[]
+  sessionId?: string
+  webSearchEnabled?: boolean
+}
+
+export interface AiDefenseJudgeRound {
+  judge: 'technical' | 'business' | 'expression'
+  question: string
+  score: number
+  comment: string
+  followUp: string
+}
+
+export interface AiDefenseScorecard {
+  technical: number
+  business: number
+  expression: number
+  total: number
+  summary: string
+  materialGaps: string[]
+  actionItems: string[]
+}
+
+export interface AiDefenseRequest {
+  workspaceId?: string
+  sessionId?: string
+  messages: ChatMessage[]
+  aiOptions?: Partial<AiAssistantOptions>
+  context: {
+    workspaceId?: string
+    contestId?: string
+    trackId?: string
+    major?: string
+  }
+}
+
+export interface AiDefenseResult {
+  assistantReply: string
+  rounds: AiDefenseJudgeRound[]
+  scorecard: AiDefenseScorecard
+  missingFields: string[]
+  sessionId?: string
+}
+
+export type AiDefenseStreamEventType = 'progress' | 'delta' | 'judge' | 'score' | 'done' | 'error'
+
+export interface AiDefenseStreamEvent {
+  event: AiDefenseStreamEventType
+  data: Record<string, unknown>
+}
+
 export type AdminAgentTaskType
   = 'publish_assistant'
-    | 'topic_proposals'
-    | 'review'
-    | 'defense'
     | 'import_sync_analysis'
     | 'general'
 
@@ -561,9 +636,6 @@ export interface AdminAgentRunRequest {
   context?: {
     trackId?: string
     major?: string
-    reviewText?: string
-    strictness?: 'normal' | 'strict'
-    rounds?: number
     csvText?: string
     sourceId?: string
     sourceUrl?: string
@@ -573,7 +645,7 @@ export interface AdminAgentRunRequest {
 
 export interface AdminAgentArtifact {
   id: string
-  type: 'draft' | 'publish_fix' | 'topic_proposal' | 'review' | 'defense' | 'import_sync'
+  type: 'draft' | 'publish_fix' | 'import_sync'
   title: string
   summary: string
   module?: AdminDraftModule

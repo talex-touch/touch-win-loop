@@ -53,6 +53,10 @@ const showAdminBadge = computed(() => {
   return canEnterAdmin.value && route.path.startsWith('/admin')
 })
 
+const isWorkspaceFullscreen = computed(() => {
+  return route.path === '/workspace' || route.path.startsWith('/workspace/')
+})
+
 useHead({
   link: [
     {
@@ -82,7 +86,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="dashboard-shell text-slate-900 bg-[#f6f6f8] flex h-screen overflow-hidden">
+  <div
+    v-if="isWorkspaceFullscreen"
+    class="dashboard-shell workspace-fullscreen text-slate-900 bg-white h-screen overflow-hidden"
+  >
+    <slot />
+  </div>
+
+  <div v-else class="dashboard-shell text-slate-900 bg-[#f6f6f8] flex h-screen overflow-hidden">
     <DashboardSidebar
       :menu-items="menuItems"
       :topics="hotTopics"
@@ -104,6 +115,10 @@ onMounted(async () => {
 <style scoped>
 .dashboard-shell {
   font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.workspace-fullscreen {
+  width: 100%;
 }
 
 .dashboard-scrollbar::-webkit-scrollbar {

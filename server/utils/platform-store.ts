@@ -18,14 +18,9 @@ import type {
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
-import process from 'node:process'
-import { withTransaction } from '~~/server/utils/db'
 
 const FULL_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['team_owner', 'team_admin', 'school_admin']
 const MANAGER_PROJECT_ROLES: ProjectMemberRole[] = ['owner', 'manager']
-const LEGACY_MIGRATION_KEY = 'legacy_projects_migrated_v1'
 
 interface UserRow {
   id: string
@@ -1270,118 +1265,4 @@ export async function consumeAiQuota(
     allowed: true,
     remaining: Math.max(0, quota.aiQuotaTotal - nextUsed),
   }
-}
-
-async function hasMigrationFlag(db: Queryable): Promise<boolean> {
-  const result = await db.query<{ value: string }>(
-    'SELECT value FROM migrations_meta WHERE key = $1 LIMIT 1',
-    [LEGACY_MIGRATION_KEY],
-  )
-
-  return result.rows[0]?.value === '1'
-}
-
-async function setMigrationFlag(db: Queryable): Promise<void> {
-  await db.query(
-    `INSERT INTO migrations_meta (key, value, updated_at)
-     VALUES ($1, '1', NOW())
-     ON CONFLICT (key)
-     DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
-    [LEGACY_MIGRATION_KEY],
-  )
-}
-
-export async function migrateLegacyProjectsIfNeeded(
-  event: Parameters<typeof withTransaction>[0],
-  input: {
-    ownerUserId: string
-    workspaceId: string
-  },
-): Promise<void> {
-  await withTransaction(event, async (db) => {
-    if (await hasMigrationFlag(db))
-      return
-
-    const existsResult = await db.query<{ count: string }>('SELECT COUNT(*)::TEXT AS count FROM projects')
-    const total = Number(existsResult.rows[0]?.count || '0')
-    if (total > 0) {
-      await setMigrationFlag(db)
-      return
-    }
-
-    const legacyPath = resolve(process.cwd(), 'server/storage/projects.json')
-    let raw = '[]'
-    try {
-      raw = await readFile(legacyPath, 'utf8')
-    }
-    catch {
-      await setMigrationFlag(db)
-      return
-    }
-
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      await setMigrationFlag(db)
-      return
-    }
-
-    for (const item of parsed) {
-      const record = item as Record<string, unknown>
-      const now = new Date().toISOString()
-      const projectId = String(record.id || randomUUID())
-
-      await db.query(
-        `INSERT INTO projects (
-          id,
-          workspace_id,
-          owner_user_id,
-          creator_user_id,
-          payer_user_id,
-          title,
-          contest_id,
-          track_id,
-          problem_statement,
-          innovation_points,
-          tech_route_steps,
-          scoring_mapping,
-          risks,
-          deliverables,
-          summary,
-          source,
-          status,
-          created_at,
-          updated_at
-        ) VALUES (
-          $1, $2, $3, $3, $3,
-          $4, $5, $6, $7,
-          $8::TEXT[], $9::TEXT[], $10::TEXT[], $11::TEXT[], $12::TEXT[],
-          $13, $14, $15, $16, $17
-        )
-        ON CONFLICT (id) DO NOTHING`,
-        [
-          projectId,
-          input.workspaceId,
-          input.ownerUserId,
-          String(record.title || '未命名项目'),
-          String(record.contestId || ''),
-          String(record.trackId || ''),
-          String(record.problemStatement || ''),
-          normalizeStringArray(record.innovationPoints as string[]),
-          normalizeStringArray(record.techRouteSteps as string[]),
-          normalizeStringArray(record.scoringMapping as string[]),
-          normalizeStringArray(record.risks as string[]),
-          normalizeStringArray(record.deliverables as string[]),
-          String(record.summary || ''),
-          (record.source === 'chat' ? 'chat' : 'form') as ProjectSource,
-          (record.status === 'in_progress' || record.status === 'completed' ? record.status : 'draft') as ProjectStatus,
-          String(record.createdAt || now),
-          String(record.updatedAt || now),
-        ],
-      )
-
-      await ensureProjectOwnerMember(db, projectId, input.ownerUserId)
-    }
-
-    await setMigrationFlag(db)
-  })
 }

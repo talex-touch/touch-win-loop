@@ -246,6 +246,10 @@ export default defineEventHandler(async (event) => {
     ?.trim() || ''
 
   await withTransaction(event, async (db) => {
+    const modeMetadata = {
+      mode: 'project_chat',
+    }
+
     if (latestUserMessage) {
       await appendAiChatMessage(db, {
         workspaceId,
@@ -255,6 +259,7 @@ export default defineEventHandler(async (event) => {
         provider: runtime.ai.provider,
         model: runtime.ai.model,
         fallbackUsed: false,
+        metadata: modeMetadata,
         createdByUserId: user.id,
       })
     }
@@ -267,6 +272,7 @@ export default defineEventHandler(async (event) => {
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: result.fallbackUsed,
+      metadata: modeMetadata,
       createdByUserId: user.id,
     })
 

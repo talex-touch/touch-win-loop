@@ -51,8 +51,8 @@ export default defineEventHandler(async (event) => {
     payload = await withTransaction(event, async (db) => {
       const preview = await previewContestImportCsv(db, { csvText })
 
-      const useLegacyInvalidBlock = !executionPlan
-      if (useLegacyInvalidBlock && !skipInvalid && preview.invalidCount > 0) {
+      const shouldApplyDefaultInvalidBlock = !executionPlan
+      if (shouldApplyDefaultInvalidBlock && !skipInvalid && preview.invalidCount > 0) {
         const err = new Error('IMPORT_PREVIEW_CONTAINS_INVALID_ROWS')
         ;(err as Error & { preview?: typeof preview }).preview = preview
         throw err

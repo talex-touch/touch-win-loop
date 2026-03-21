@@ -55,10 +55,17 @@ const form = reactive<{
 const targetOptions: Array<{ value: PromptTarget, label: string }> = [
   { value: 'contest_filter', label: '选赛过滤' },
   { value: 'project_chat', label: '项目聊天' },
-  { value: 'topic_proposal', label: '选题建议' },
+  { value: 'topic_proposal', label: '选题助手' },
   { value: 'review', label: '评审建议' },
   { value: 'defense', label: '答辩模拟' },
 ]
+
+function normalizePromptTarget(value: unknown): PromptTarget {
+  const text = String(value || '').trim()
+  if (text === 'contest_filter' || text === 'project_chat' || text === 'topic_proposal' || text === 'review' || text === 'defense')
+    return text
+  return 'project_chat'
+}
 
 function resetForm() {
   form.title = ''
@@ -76,7 +83,7 @@ function applyResource(item: Resource) {
   activeResourceId.value = item.id
   form.title = item.title || ''
   form.prompt = String(metadata.prompt || item.content || item.summary || '')
-  form.target = String(metadata.target || 'project_chat') as PromptTarget
+  form.target = normalizePromptTarget(metadata.target)
   form.scope = String(metadata.scope || 'contest') as PromptScope
   form.trackId = String(metadata.trackId || metadata.track_id || '')
   form.priority = Number(metadata.priority || 0)
@@ -199,7 +206,7 @@ onMounted(loadData)
             AI 提示词
           </h1>
           <p class="text-xs text-slate-500 mt-1">
-            赛事 ID：{{ contestId }} · 可注入 5 条 AI 链路
+            赛事 ID：{{ contestId }} · 可注入 {{ targetOptions.length }} 条 AI 链路
           </p>
         </div>
         <div class="flex gap-2 items-center">

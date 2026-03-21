@@ -141,7 +141,7 @@ function onSelectFile(event: Event) {
   const file = target.files?.[0] || null
   selectedFile.value = file
   if (file && !form.title.trim()) {
-    form.title = file.name.replace(/\.pdf$/i, '')
+    form.title = file.name.replace(/\.(pdf|docx?)$/i, '')
   }
 }
 
@@ -187,14 +187,20 @@ async function saveManual() {
   await navigateTo(withEmbed(`/admin/contests/${contestId.value}/resources/${response.data.id}/edit`))
 }
 
-async function savePdf() {
+function isSupportedDocumentFile(file: File): boolean {
+  const lowerName = file.name.toLowerCase()
+  return lowerName.endsWith('.pdf')
+    || lowerName.endsWith('.doc')
+    || lowerName.endsWith('.docx')
+}
+
+async function saveDocument() {
   if (!selectedFile.value) {
-    throw new Error('请先选择 PDF 文件。')
+    throw new Error('请先选择文档文件。')
   }
 
-  const lowerName = selectedFile.value.name.toLowerCase()
-  if (!lowerName.endsWith('.pdf'))
-    throw new Error('仅支持上传 PDF 文件。')
+  if (!isSupportedDocumentFile(selectedFile.value))
+    throw new Error('仅支持上传 PDF/DOC/DOCX 文件。')
 
   const formData = new FormData()
   formData.append('file', selectedFile.value)
@@ -202,7 +208,7 @@ async function savePdf() {
   formData.append('title', form.title.trim())
   formData.append('year', String(Number(form.year || new Date().getFullYear())))
   formData.append('accessLevel', form.accessLevel)
-  formData.append('sourceType', form.sourceType.trim() || 'upload-pdf')
+  formData.append('sourceType', form.sourceType.trim() || 'upload-document')
   formData.append('summary', form.summary.trim())
   formData.append('copyrightNote', form.copyrightNote.trim())
   formData.append('status', form.status)
@@ -211,7 +217,7 @@ async function savePdf() {
     resource: { id: string }
     document: ResourceDocument
     task: ResourceDocumentTask
-  }>>(endpoint(`/admin/contests/${contestId.value}/resources/pdf`), {
+  }>>(endpoint(`/admin/contests/${contestId.value}/resources/document`), {
     method: 'POST',
     body: formData,
   })
@@ -226,7 +232,7 @@ async function save() {
     if (createMode.value === 'manual')
       await saveManual()
     else
-      await savePdf()
+      await saveDocument()
   }
   catch (error: any) {
     errorText.value = String(error?.data?.message || error?.message || '保存失败。')
@@ -246,7 +252,7 @@ async function save() {
             新增资料
           </h1>
           <p class="text-xs text-slate-500 mt-1">
-            赛事 ID：{{ contestId }}。支持结构化录入与 PDF 上传解析两种方式。
+            赛事 ID：{{ contestId }}。支持结构化录入与文档上传解析两种方式。
           </p>
         </div>
         <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources`)">
@@ -269,7 +275,7 @@ async function save() {
           :class="createMode === 'pdf' ? 'border-slate-800 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'"
           @click="createMode = 'pdf'"
         >
-          PDF 上传解析
+          文档上传解析
         </button>
       </div>
 
@@ -291,15 +297,15 @@ async function save() {
       </div>
 
       <div v-if="createMode === 'pdf'" class="space-y-2">
-        <label class="text-xs text-slate-700 font-medium block">PDF 文件</label>
+        <label class="text-xs text-slate-700 font-medium block">文档文件</label>
         <input
           type="file"
-          accept="application/pdf,.pdf"
+          accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           class="dense-input w-full block"
           @change="onSelectFile"
         >
         <p class="text-xs text-slate-500">
-          {{ selectedFile ? `已选择：${selectedFile.name} (${Math.ceil(selectedFile.size / 1024)} KB)` : '请上传 PDF（当前版本仅支持 PDF）。' }}
+          {{ selectedFile ? `已选择：${selectedFile.name} (${Math.ceil(selectedFile.size / 1024)} KB)` : '请上传 PDF/DOC/DOCX。' }}
         </p>
       </div>
 
@@ -322,7 +328,7 @@ async function save() {
             unavailable
           </a-option>
         </a-select>
-        <a-input v-model="form.sourceType" size="small" placeholder="来源类型（如 manual / upload-pdf）" />
+        <a-input v-model="form.sourceType" size="small" placeholder="来源类型（如 manual / upload-document）" />
         <a-select v-model="form.status" size="small" placeholder="状态">
           <a-option value="active">
             active
