@@ -122,6 +122,8 @@ const importLoading = ref(false)
 const importDefaultExecute = ref(true)
 const importDefaultOverwriteMode = ref<ImportOverwriteMode>('preserve_existing')
 const importRowDecisions = ref<Record<number, { execute: boolean, overwriteMode: ImportOverwriteMode }>>({})
+const IMPORT_PREVIEW_RENDER_LIMIT = 200
+const importShowAllRows = ref(false)
 const importFileInputRef = ref<HTMLInputElement | null>(null)
 const syncSourceName = ref('')
 const syncSourceUrl = ref('')
@@ -163,6 +165,18 @@ const pagedContests = computed(() => {
   return filteredContests.value.slice(start, end)
 })
 
+const importDisplayedRows = computed(() => {
+  const rows = importPreview.value?.rows || []
+  if (importShowAllRows.value)
+    return rows
+  return rows.slice(0, IMPORT_PREVIEW_RENDER_LIMIT)
+})
+
+const hasImportHiddenRows = computed(() => {
+  const total = importPreview.value?.rows.length || 0
+  return !importShowAllRows.value && total > IMPORT_PREVIEW_RENDER_LIMIT
+})
+
 const contestColumns = [
   { title: '赛事', dataIndex: 'name', slotName: 'name', ellipsis: true, tooltip: true },
   { title: '主办单位', dataIndex: 'organizers', slotName: 'organizers', width: 280 },
@@ -182,6 +196,7 @@ watch(importCsvText, () => {
   importPreview.value = null
   importCommitRows.value = []
   importRowDecisions.value = {}
+  importShowAllRows.value = false
 })
 
 async function loadPermissions() {
@@ -451,6 +466,7 @@ async function previewImport() {
     })
     importPreview.value = response.data
     importCommitRows.value = []
+    importShowAllRows.value = false
     restoreImportExecutionPlan(response.data)
     successText.value = `预检完成：共 ${response.data.total} 行，可导入 ${response.data.validCount} 行。`
   }
@@ -823,6 +839,9 @@ watch(isListRoute, async (value) => {
                   创建：{{ importPreview.rows.filter(item => item.action === 'create').length }}；
                   更新：{{ importPreview.rows.filter(item => item.action === 'update').length }}
                 </p>
+                <p class="text-[10px] text-slate-500 m-0">
+                  预览渲染：{{ importDisplayedRows.length }}/{{ importPreview.rows.length }} 行
+                </p>
 
                 <div class="flex flex-wrap gap-2 items-center">
                   <a-button size="mini" @click="applyImportBatchOnlyCreate">
@@ -840,11 +859,22 @@ watch(isListRoute, async (value) => {
                   <a-button size="mini" @click="resetImportExecutionPlan">
                     恢复默认策略
                   </a-button>
+                  <a-button
+                    v-if="importPreview.rows.length > IMPORT_PREVIEW_RENDER_LIMIT"
+                    size="mini"
+                    @click="importShowAllRows = !importShowAllRows"
+                  >
+                    {{ importShowAllRows ? `仅展示前 ${IMPORT_PREVIEW_RENDER_LIMIT} 行` : `显示全部 ${importPreview.rows.length} 行` }}
+                  </a-button>
                 </div>
+
+                <p v-if="hasImportHiddenRows" class="text-[10px] text-slate-500 m-0">
+                  已自动限制预览渲染条数以提升性能；导入执行计划仍会作用于全部行。
+                </p>
 
                 <div class="max-h-[280px] overflow-auto space-y-1">
                   <div
-                    v-for="row in importPreview.rows"
+                    v-for="row in importDisplayedRows"
                     :key="`decision-${row.rowNumber}`"
                     class="p-2 border border-slate-200 rounded bg-slate-50"
                   >

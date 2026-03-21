@@ -29,7 +29,7 @@ import type {
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { listContests as listLegacyContests, listResources as listLegacyResources, listRubrics as listLegacyRubrics } from '~~/server/data/catalog'
+import { listContests as listCatalogContests, listResources as listCatalogResources, listRubrics as listCatalogRubrics } from '~~/server/data/catalog'
 
 const CONTEST_LIBRARY_MIGRATION_KEY = 'contest_library_seeded_v2'
 
@@ -253,18 +253,36 @@ function splitMultiValue(value: string): string[] {
     .filter(Boolean)
 }
 
-function parseCsvLine(line: string): string[] {
-  const result: string[] = []
-  let current = ''
+function parseCsvText(csvText: string): string[][] {
+  const text = String(csvText || '').replace(/^\uFEFF/, '')
+  const rows: string[][] = []
+  let currentRow: string[] = []
+  let currentCell = ''
   let inQuotes = false
 
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i]
-    const next = line[i + 1]
+  const pushCell = () => {
+    currentRow.push(currentCell)
+    currentCell = ''
+  }
+
+  const pushRow = () => {
+    if (currentRow.length === 0)
+      return
+    if (currentRow.every(cell => normalizeString(cell).length === 0)) {
+      currentRow = []
+      return
+    }
+    rows.push(currentRow.map(cell => cell.replace(/\r/g, '')))
+    currentRow = []
+  }
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    const next = text[i + 1]
 
     if (char === '"') {
       if (inQuotes && next === '"') {
-        current += '"'
+        currentCell += '"'
         i++
       }
       else {
@@ -274,25 +292,35 @@ function parseCsvLine(line: string): string[] {
     }
 
     if (char === ',' && !inQuotes) {
-      result.push(current)
-      current = ''
+      pushCell()
       continue
     }
 
-    current += char
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      pushCell()
+      pushRow()
+      if (char === '\r' && next === '\n')
+        i++
+      continue
+    }
+
+    if (char === '\r' && inQuotes && next === '\n') {
+      currentCell += '\n'
+      i++
+      continue
+    }
+
+    if (char === '\r' && inQuotes) {
+      currentCell += '\n'
+      continue
+    }
+
+    currentCell += char
   }
 
-  result.push(current)
-  return result.map(item => item.replace(/\r/g, ''))
-}
-
-function parseCsvText(csvText: string): string[][] {
-  const text = String(csvText || '').replace(/^\uFEFF/, '')
-  return text
-    .split(/\r?\n/g)
-    .map(line => line.trimEnd())
-    .filter(line => line.length > 0)
-    .map(parseCsvLine)
+  pushCell()
+  pushRow()
+  return rows
 }
 
 function normalizeImportLevel(value: string): ContestLevel | null {
@@ -586,6 +614,8 @@ export async function previewContestImportCsv(
 
   for (const [index, cells] of rows.entries()) {
     const rowNumber = index + 2
+    const rowColumnCount = cells.length
+    const headerColumnCount = headers.length
     const name = readImportCell(cells, headerIndex, 'name')
     const levelRaw = readImportCell(cells, headerIndex, 'level')
     const parsedLevel = normalizeImportLevel(levelRaw)
@@ -627,6 +657,13 @@ export async function previewContestImportCsv(
     const errors: string[] = []
     const warnings: string[] = []
     const structuredWarnings: string[] = []
+
+    if (headerColumnCount > 0 && rowColumnCount < headerColumnCount) {
+      errors.push(`CSV 列数不足：表头 ${headerColumnCount} 列，当前行仅 ${rowColumnCount} 列。请检查该行是否存在未正确闭合的引号或分隔符。`)
+    }
+    else if (headerColumnCount > 0 && rowColumnCount > headerColumnCount) {
+      warnings.push(`CSV 列数超出：表头 ${headerColumnCount} 列，当前行 ${rowColumnCount} 列。超出列将被忽略。`)
+    }
 
     if (!name)
       errors.push('name 不能为空。')
@@ -1376,7 +1413,7 @@ interface ContestAuditLogRow {
   created_at: string
 }
 
-type AiPromptTarget = 'contest_filter' | 'project_chat' | 'topic_proposal' | 'review' | 'defense'
+type AiPromptTarget = 'contest_filter' | 'project_chat'
 
 interface AiPromptSpec {
   target: AiPromptTarget
@@ -1760,7 +1797,7 @@ export async function setPlatformRolesByUserId(
   }
 }
 
-function mapLegacyResourceTypeToCategory(type: string): ResourceCategory {
+function mapCatalogResourceTypeToCategory(type: string): ResourceCategory {
   const normalized = type.toLowerCase()
   if (normalized.includes('时间'))
     return 'timeline'
@@ -1812,8 +1849,8 @@ function isContestAutoSeedEnabled(): boolean {
   return ['1', 'true', 'yes', 'on'].includes(raw)
 }
 
-export function listLegacyContestIds(): string[] {
-  return listLegacyContests().map(item => item.id)
+export function listCatalogContestIds(): string[] {
+  return listCatalogContests().map(item => item.id)
 }
 
 export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
@@ -1892,9 +1929,9 @@ export async function ensureContestLibrarySeeded(
     return
   }
 
-  const contests = listLegacyContests()
-  const resources = listLegacyResources()
-  const rubrics = listLegacyRubrics()
+  const contests = listCatalogContests()
+  const resources = listCatalogResources()
+  const rubrics = listCatalogRubrics()
   const now = new Date().toISOString()
 
   for (const contest of contests) {
@@ -2100,7 +2137,7 @@ export async function ensureContestLibrarySeeded(
       [
         resource.id,
         resource.contestId,
-        resource.category || mapLegacyResourceTypeToCategory(resource.type),
+        resource.category || mapCatalogResourceTypeToCategory(resource.type),
         resource.title,
         Number(resource.year || 2026),
         resource.sourceLink,
@@ -2119,20 +2156,20 @@ export async function ensureContestLibrarySeeded(
   await ensureDefaultBillingPlans(db)
 }
 
-export async function resetLegacyContestSeedState(
+export async function resetCatalogContestSeedState(
   db: Queryable,
 ): Promise<{ deletedContestIds: string[] }> {
-  const legacyContestIds = listLegacyContestIds()
-  if (legacyContestIds.length > 0) {
+  const contestIds = listCatalogContestIds()
+  if (contestIds.length > 0) {
     await db.query(
       'DELETE FROM contests WHERE id = ANY($1::TEXT[])',
-      [legacyContestIds],
+      [contestIds],
     )
   }
   await deleteMigrationFlag(db, CONTEST_LIBRARY_MIGRATION_KEY)
 
   return {
-    deletedContestIds: legacyContestIds,
+    deletedContestIds: contestIds,
   }
 }
 
@@ -4111,14 +4148,12 @@ export async function markResourceInvalid(
   return mapResource(row)
 }
 
-const AI_PROMPT_TARGETS: AiPromptTarget[] = ['contest_filter', 'project_chat', 'topic_proposal', 'review', 'defense']
+const AI_PROMPT_TARGETS: AiPromptTarget[] = ['contest_filter', 'project_chat']
 
 function normalizeAiPromptTarget(value: unknown): AiPromptTarget | null {
   const normalized = normalizeString(value).toLowerCase()
   if (!normalized)
     return null
-  if (normalized === 'topic-proposal')
-    return 'topic_proposal'
   if (normalized === 'project-chat')
     return 'project_chat'
   const matched = AI_PROMPT_TARGETS.find(item => item === normalized)
