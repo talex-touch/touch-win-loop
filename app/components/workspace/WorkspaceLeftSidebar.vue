@@ -18,12 +18,10 @@ const props = withDefaults(defineProps<{
   statusLine: string
   listLoading: boolean
   aiFiltering: boolean
-  tokenBalance?: number
   isAdminView?: boolean
 }>(), {
   workspaceOptions: () => [],
   username: '',
-  tokenBalance: 14204,
   normalizedInfo: '',
   isAdminView: false,
 })
@@ -53,10 +51,6 @@ function onTopKInput(event: Event) {
   const value = Number(target.value)
   emit('update:topK', Number.isNaN(value) ? 1 : value)
 }
-
-const currentWorkspace = computed(() => {
-  return props.workspaceOptions.find(item => item.workspace.id === props.activeWorkspaceId) || null
-})
 
 const showReason = ref(false)
 const showAdminDetails = ref(false)
@@ -296,35 +290,14 @@ watch(hasReasoning, (next) => {
         </div>
       </div>
 
-      <div class="space-y-1">
-        <div class="text-[10px] text-slate-500 font-semibold">
-          工作区
-        </div>
-        <select
-          :value="activeWorkspaceId"
-          class="text-xs px-2 outline-none border border-slate-300 rounded bg-white h-8 w-full focus:border-blue-500"
-          @change="emit('update:activeWorkspaceId', ($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="item in workspaceOptions" :key="item.workspace.id" :value="item.workspace.id">
-            {{ item.workspace.name }}（{{ item.workspace.type }}）
-          </option>
-        </select>
-        <div v-if="currentWorkspace?.quota" class="text-[10px] text-slate-400 leading-relaxed">
-          席位 {{ currentWorkspace.quota.seatUsed }}/{{ currentWorkspace.quota.seatLimit }}，
-          AI {{ currentWorkspace.quota.aiQuotaUsed }}/{{ currentWorkspace.quota.aiQuotaTotal }}
-        </div>
-      </div>
-
-      <div class="pt-2 border-t border-slate-200">
-        <div class="text-[10px] text-slate-500 mb-2 flex items-center justify-between">
-          <span>AI 运行状态</span>
-          <span class="rounded-full bg-green-500 h-1.5 w-1.5" />
-        </div>
-        <div class="text-[10px] text-slate-400 leading-relaxed">
-          模型: 由后端配置<br>
-          Token 余额: {{ tokenBalance.toLocaleString('zh-CN') }}
-        </div>
-      </div>
+      <WorkspaceSwitchEntry
+        mode="select"
+        label="工作区"
+        :model-value="activeWorkspaceId"
+        :workspace-options="workspaceOptions"
+        :show-quota="true"
+        @update:model-value="emit('update:activeWorkspaceId', $event)"
+      />
     </div>
   </aside>
 </template>

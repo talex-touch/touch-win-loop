@@ -61,6 +61,7 @@ interface ProjectRow {
   title: string
   contest_id: string
   track_id: string
+  contest_ids: string[] | null
   problem_statement: string
   innovation_points: string[]
   tech_route_steps: string[]
@@ -120,6 +121,7 @@ interface ProjectBindingPatch {
   collegeBindings?: ProjectCollegeBinding[]
   advisorUserIds?: string[]
   advisorUsernames?: string[]
+  contestIds?: string[]
 }
 
 interface WorkspaceAccess {
@@ -132,6 +134,32 @@ function normalizeStringArray(value: string[] | null | undefined): string[] {
   if (!Array.isArray(value))
     return []
   return value.map(item => String(item || '').trim()).filter(Boolean)
+}
+
+function uniqueStringArray(value: string[] | null | undefined): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+
+  for (const item of normalizeStringArray(value)) {
+    if (seen.has(item))
+      continue
+    seen.add(item)
+    result.push(item)
+  }
+
+  return result
+}
+
+function normalizeProjectContestIds(primaryContestId: string, contestIds: string[] | null | undefined): string[] {
+  const normalizedPrimary = String(primaryContestId || '').trim()
+  const normalizedList = uniqueStringArray(contestIds)
+
+  if (!normalizedPrimary)
+    return normalizedList
+  if (normalizedList.length === 0)
+    return [normalizedPrimary]
+
+  return uniqueStringArray([normalizedPrimary, ...normalizedList])
 }
 
 function dedupeBy<T>(items: T[], keyOf: (item: T) => string): T[] {
@@ -190,6 +218,7 @@ function mapProject(
   collegeBindings: ProjectCollegeBinding[],
   advisorBindings: ProjectAdvisorBinding[],
 ): Project {
+  const contestIds = normalizeProjectContestIds(row.contest_id, row.contest_ids)
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -199,6 +228,7 @@ function mapProject(
     title: row.title,
     contestId: row.contest_id,
     trackId: row.track_id,
+    contestIds,
     problemStatement: row.problem_statement,
     innovationPoints: normalizeStringArray(row.innovation_points),
     techRouteSteps: normalizeStringArray(row.tech_route_steps),
@@ -837,6 +867,8 @@ async function loadProjectBindingsByIds(
 export async function createProject(db: Queryable, input: CreateProjectInput): Promise<Project> {
   const now = new Date().toISOString()
   const projectId = randomUUID()
+  const contestIds = normalizeProjectContestIds(input.contestId, input.contestIds)
+  const primaryContestId = contestIds[0] || input.contestId
 
   const createResult = await db.query<ProjectRow>(
     `INSERT INTO projects (
@@ -848,6 +880,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       title,
       contest_id,
       track_id,
+      contest_ids,
       problem_statement,
       innovation_points,
       tech_route_steps,
@@ -861,9 +894,9 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       updated_at
     ) VALUES (
       $1, $2, $3, $4, $5,
-      $6, $7, $8, $9, $10::TEXT[],
-      $11::TEXT[], $12::TEXT[], $13::TEXT[], $14::TEXT[],
-      $15, $16, $17, $18, $18
+      $6, $7, $8, $9::TEXT[], $10, $11::TEXT[],
+      $12::TEXT[], $13::TEXT[], $14::TEXT[], $15::TEXT[],
+      $16, $17, $18, $19, $19
     )
     RETURNING
       id,
@@ -874,6 +907,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       title,
       contest_id,
       track_id,
+      contest_ids,
       problem_statement,
       innovation_points,
       tech_route_steps,
@@ -892,8 +926,9 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       input.creatorUserId,
       input.payerUserId || null,
       input.title,
-      input.contestId,
+      primaryContestId,
       input.trackId,
+      contestIds,
       input.problemStatement,
       normalizeStringArray(input.innovationPoints),
       normalizeStringArray(input.techRouteSteps),
@@ -947,6 +982,7 @@ export async function batchCreateProjects(
       title: project.title,
       contestId: project.contestId,
       trackId: project.trackId,
+      contestIds: project.contestIds,
       problemStatement: project.problemStatement,
       innovationPoints: project.innovationPoints,
       techRouteSteps: project.techRouteSteps,
@@ -989,6 +1025,7 @@ export async function listVisibleProjects(
         title,
         contest_id,
         track_id,
+        contest_ids,
         problem_statement,
         innovation_points,
         tech_route_steps,
@@ -1019,6 +1056,7 @@ export async function listVisibleProjects(
       p.title,
       p.contest_id,
       p.track_id,
+      p.contest_ids,
       p.problem_statement,
       p.innovation_points,
       p.tech_route_steps,
@@ -1144,6 +1182,31 @@ export async function patchProjectBindings(
   actorUserId: string,
   input: ProjectBindingPatch,
 ): Promise<Project | null> {
+  if (Array.isArray(input.contestIds)) {
+    const currentResult = await db.query<{ contest_id: string }>(
+      `SELECT contest_id
+       FROM projects
+       WHERE id = $1
+       LIMIT 1`,
+      [projectId],
+    )
+
+    const currentContestId = String(currentResult.rows[0]?.contest_id || '').trim()
+    const nextContestIds = normalizeProjectContestIds(currentContestId, input.contestIds)
+    const nextPrimaryContestId = nextContestIds[0] || currentContestId
+
+    if (nextPrimaryContestId) {
+      await db.query(
+        `UPDATE projects
+         SET contest_id = $2,
+             contest_ids = $3::TEXT[],
+             updated_at = NOW()
+         WHERE id = $1`,
+        [projectId, nextPrimaryContestId, nextContestIds],
+      )
+    }
+  }
+
   if (input.collegeBindings)
     await replaceCollegeBindings(db, projectId, input.collegeBindings)
 
@@ -1160,6 +1223,7 @@ export async function patchProjectBindings(
       title,
       contest_id,
       track_id,
+      contest_ids,
       problem_statement,
       innovation_points,
       tech_route_steps,

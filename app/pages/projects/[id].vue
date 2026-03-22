@@ -22,6 +22,16 @@ const project = ref<Project | null>(null)
 const loading = ref(true)
 const errorText = ref('')
 
+const linkedContestIds = computed(() => {
+  if (!project.value)
+    return []
+
+  if (Array.isArray(project.value.contestIds) && project.value.contestIds.length > 0)
+    return project.value.contestIds
+
+  return project.value.contestId ? [project.value.contestId] : []
+})
+
 async function loadProject() {
   loading.value = true
   errorText.value = ''
@@ -76,6 +86,16 @@ onMounted(loadProject)
       </div>
       <div class="text-[11px] text-gray-600">
         source={{ project.source }} / status={{ project.status }} / updated={{ project.updatedAt }}
+      </div>
+      <div>
+        <div class="font-medium mb-1">
+          关联竞赛
+        </div>
+        <ul class="m-0 pl-4">
+          <li v-for="item in linkedContestIds" :key="item">
+            {{ item }}
+          </li>
+        </ul>
       </div>
       <div>
         <div class="font-medium mb-1">

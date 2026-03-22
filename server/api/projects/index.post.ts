@@ -21,13 +21,14 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const body = await readBody<CreateProjectBody>(event)
+  const body = (await readBody<CreateProjectBody>(event)) || {}
   const workspaceId = String(body.workspaceId || '').trim()
 
   const payload: ProjectPayload = {
     title: String(body.title || '').trim(),
     contestId: String(body.contestId || '').trim(),
     trackId: String(body.trackId || '').trim(),
+    contestIds: ensureStringArray(body.contestIds),
     problemStatement: String(body.problemStatement || '').trim(),
     innovationPoints: ensureStringArray(body.innovationPoints),
     techRouteSteps: ensureStringArray(body.techRouteSteps),

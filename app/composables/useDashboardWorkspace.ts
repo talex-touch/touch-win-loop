@@ -58,7 +58,7 @@ export function useDashboardWorkspace() {
   ]
 
   const quickActions: DashboardQuickAction[] = [
-    { id: 'report', label: '撰写报告', icon: 'edit_square', to: '/workspace' },
+    { id: 'report', label: '撰写报告', icon: 'edit_square', to: '/workspace?create=1' },
     { id: 'upload', label: '材料上传', icon: 'cloud_upload', to: '/resources' },
     { id: 'rules', label: '规则查阅', icon: 'help', to: '/contests' },
   ]

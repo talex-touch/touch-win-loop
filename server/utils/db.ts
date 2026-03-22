@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS projects (
   title TEXT NOT NULL,
   contest_id TEXT NOT NULL,
   track_id TEXT NOT NULL,
+  contest_ids TEXT[] NOT NULL DEFAULT '{}',
   problem_statement TEXT NOT NULL,
   innovation_points TEXT[] NOT NULL DEFAULT '{}',
   tech_route_steps TEXT[] NOT NULL DEFAULT '{}',
@@ -518,6 +519,17 @@ ALTER TABLE contest_resources
 
 ALTER TABLE ai_chat_messages
   ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS contest_ids TEXT[] NOT NULL DEFAULT '{}';
+
+UPDATE projects
+SET contest_ids = ARRAY[contest_id]
+WHERE contest_id IS NOT NULL
+  AND (
+    contest_ids IS NULL
+    OR array_length(contest_ids, 1) IS NULL
+  );
 
 ALTER TABLE user_ai_settings
   ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN NOT NULL DEFAULT TRUE;

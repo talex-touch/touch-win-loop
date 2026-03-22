@@ -404,6 +404,7 @@ export interface ProjectPayload {
   title: string
   contestId: string
   trackId: string
+  contestIds?: string[]
   problemStatement: string
   innovationPoints: string[]
   techRouteSteps: string[]

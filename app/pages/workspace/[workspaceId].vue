@@ -90,10 +90,30 @@ function includesText(source: string, keyword: string): boolean {
   return source.toLowerCase().includes(keyword.toLowerCase())
 }
 
-function resolveDefaultWorkspaceId(auth: AuthMeResult): string {
-  const personal = auth.workspaces.find(item => item.workspace.type === 'personal' && item.workspace.ownerUserId === auth.user.id)
-  return personal?.workspace.id || auth.workspaces[0]?.workspace.id || ''
+function normalizeRouteParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value))
+    return String(value[0] || '').trim()
+  return String(value || '').trim()
 }
+
+function normalizeQueryParam(value: unknown): string {
+  if (Array.isArray(value))
+    return String(value[0] || '').trim()
+  if (value === null || value === undefined)
+    return ''
+  return String(value).trim()
+}
+
+function workspaceDetailPath(workspaceId: string): string {
+  return `/workspace/${workspaceId}`
+}
+
+const routeWorkspaceId = computed(() => {
+  const params = route.params as Record<string, string | string[] | undefined>
+  return normalizeRouteParam(params.workspaceId)
+})
+
+const highlightedProjectId = computed(() => normalizeQueryParam(route.query.projectId))
 
 const naturalQuery = ref('')
 const major = ref('')
@@ -161,6 +181,23 @@ const workspaceOptions = computed(() => me.value?.workspaces || [])
 const isAdminView = computed(() => Boolean(me.value?.user.isPlatformAdmin))
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
+})
+
+const activeProject = computed(() => {
+  if (highlightedProjectId.value) {
+    const matched = projects.value.find(item => item.id === highlightedProjectId.value)
+    if (matched)
+      return matched
+  }
+  return projects.value[0] || null
+})
+
+const headerProjectName = computed(() => {
+  if (activeProject.value?.title)
+    return activeProject.value.title
+  if (formState.title.trim())
+    return formState.title.trim()
+  return currentWorkspace.value?.workspace.name || '未命名项目'
 })
 
 const filteredContests = computed(() => {
@@ -322,13 +359,23 @@ async function loadAuthContext(): Promise<boolean> {
   try {
     const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
     me.value = response.data
+    const targetWorkspaceId = routeWorkspaceId.value
 
-    const hasCurrent = response.data.workspaces.some(item => item.workspace.id === activeWorkspaceId.value)
-    if (!hasCurrent)
-      activeWorkspaceId.value = resolveDefaultWorkspaceId(response.data)
+    if (!targetWorkspaceId) {
+      await navigateTo('/workspace', { replace: true })
+      return false
+    }
 
-    if (!activeWorkspaceId.value)
-      statusLine.value = '当前账号未加入任何空间，请先创建 Team。'
+    const hasCurrent = response.data.workspaces.some(item => item.workspace.id === targetWorkspaceId)
+    if (!hasCurrent) {
+      await navigateTo({
+        path: '/workspace',
+        query: { deniedWorkspaceId: targetWorkspaceId },
+      }, { replace: true })
+      return false
+    }
+
+    activeWorkspaceId.value = targetWorkspaceId
 
     return true
   }
@@ -338,15 +385,6 @@ async function loadAuthContext(): Promise<boolean> {
       query: { redirect: route.fullPath || '/workspace' },
     })
     return false
-  }
-}
-
-async function logout() {
-  try {
-    await $fetch(endpoint('/auth/logout'), { method: 'POST' })
-  }
-  finally {
-    await navigateTo('/login')
   }
 }
 
@@ -916,6 +954,7 @@ async function submitProject() {
       title: formState.title.trim(),
       contestId: selectedContestId.value,
       trackId: selectedTrackId.value,
+      contestIds: selectedContestId.value ? [selectedContestId.value] : [],
       problemStatement: formState.problemStatement.trim(),
       innovationPoints: linesToArray(formState.innovationPointsText),
       techRouteSteps: linesToArray(formState.techRouteStepsText),
@@ -953,14 +992,49 @@ onMounted(async () => {
 
   await Promise.all([loadContests(), loadResources(), loadProjects(), loadChatSessions()])
   syncFormContestTrack()
+  if (highlightedProjectId.value) {
+    const target = projects.value.find(item => item.id === highlightedProjectId.value)
+    if (target)
+      statusLine.value = `已定位项目：${target.title}`
+  }
 })
 
 watch(activeWorkspaceId, async (value, previous) => {
   if (!value || value === previous)
     return
 
+  if (value !== routeWorkspaceId.value)
+    await navigateTo(workspaceDetailPath(value), { replace: true })
+})
+
+watch(routeWorkspaceId, async (value, previous) => {
+  if (!value || value === previous)
+    return
+
+  if (!me.value) {
+    activeWorkspaceId.value = value
+    return
+  }
+
+  const hasCurrent = me.value.workspaces.some(item => item.workspace.id === value)
+  if (!hasCurrent) {
+    await navigateTo({
+      path: '/workspace',
+      query: { deniedWorkspaceId: value },
+    }, { replace: true })
+    return
+  }
+
+  if (activeWorkspaceId.value !== value)
+    activeWorkspaceId.value = value
+
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
   await Promise.all([loadProjects(), loadChatSessions()])
+  if (highlightedProjectId.value) {
+    const target = projects.value.find(item => item.id === highlightedProjectId.value)
+    if (target)
+      statusLine.value = `已定位项目：${target.title}`
+  }
 })
 </script>
 
@@ -968,25 +1042,10 @@ watch(activeWorkspaceId, async (value, previous) => {
   <div class="workspace-shell text-slate-800 bg-white flex flex-col h-full min-h-0 overflow-hidden">
     <WorkspaceHeader
       v-model="headerSearch"
+      :project-name="headerProjectName"
       :contest-name="selectedContest?.name || '未选择竞赛'"
       :track-name="selectedTrack?.name || '未选择赛道'"
     />
-
-    <div class="text-xs px-3 py-2 border-b border-slate-200 bg-slate-50 flex gap-2 items-center">
-      <span class="text-slate-500">账号：{{ me?.user.username || '-' }}</span>
-      <span class="text-slate-300">|</span>
-      <span class="text-slate-500">空间：{{ currentWorkspace?.workspace.name || '-' }}</span>
-      <span
-        v-if="currentWorkspace?.quota"
-        class="text-slate-500"
-      >
-        席位 {{ currentWorkspace.quota.seatUsed }}/{{ currentWorkspace.quota.seatLimit }}，
-        AI {{ currentWorkspace.quota.aiQuotaUsed }}/{{ currentWorkspace.quota.aiQuotaTotal }}
-      </span>
-      <button class="text-slate-600 ml-auto hover:text-slate-900" @click="logout">
-        退出登录
-      </button>
-    </div>
 
     <main class="flex flex-1 flex-col min-h-0 overflow-hidden xl:flex-row">
       <WorkspaceLeftSidebar
@@ -1006,7 +1065,6 @@ watch(activeWorkspaceId, async (value, previous) => {
         :status-line="statusLine"
         :list-loading="listLoading"
         :ai-filtering="aiFiltering"
-        :token-balance="tokenBalance"
         :is-admin-view="isAdminView"
         @load-contests="loadContests"
         @run-ai-filter="runAiFilter"
@@ -1060,6 +1118,8 @@ watch(activeWorkspaceId, async (value, previous) => {
       :status-line="statusLine"
       :loading="resourcesLoading"
       :ai-ready="!aiBusy"
+      ai-model-label="由后端配置"
+      :token-balance="tokenBalance"
       :line="statusCursor.line"
       :column="statusCursor.column"
     />

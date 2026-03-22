@@ -6,7 +6,7 @@ withDefaults(defineProps<{
   trackName?: string
 }>(), {
   modelValue: '',
-  projectName: '项目分析-01',
+  projectName: '未命名项目',
   contestName: '未选择竞赛',
   trackName: '未选择赛道',
 })

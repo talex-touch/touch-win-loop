@@ -180,7 +180,7 @@ onMounted(async () => {
           导出报告
         </button>
         <NuxtLink
-          to="/workspace"
+          :to="{ path: '/workspace', query: { create: '1' } }"
           class="text-sm text-white font-semibold px-4 py-2 rounded-lg bg-blue-700 flex gap-2 transition-colors items-center hover:bg-blue-600"
         >
           <span class="material-symbols-outlined text-lg">add</span>

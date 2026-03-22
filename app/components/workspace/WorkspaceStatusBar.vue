@@ -3,12 +3,16 @@ withDefaults(defineProps<{
   statusLine?: string
   loading?: boolean
   aiReady?: boolean
+  aiModelLabel?: string
+  tokenBalance?: number
   line?: number
   column?: number
 }>(), {
   statusLine: '',
   loading: false,
   aiReady: true,
+  aiModelLabel: '由后端配置',
+  tokenBalance: 0,
   line: 12,
   column: 45,
 })
@@ -28,6 +32,14 @@ withDefaults(defineProps<{
       <div class="max-w-72 truncate">
         <span v-if="loading" class="align-middle rounded bg-slate-200 h-2.5 w-28 inline-block animate-pulse" />
         <span v-else>{{ statusLine || '系统就绪' }}</span>
+      </div>
+      <div class="gap-1 flex items-center">
+        <span class="rounded-full bg-green-500 h-1.5 w-1.5" />
+        <span>AI运行状态</span>
+      </div>
+      <div class="gap-2 hidden items-center md:flex">
+        <span>模型: {{ aiModelLabel }}</span>
+        <span>Token: {{ tokenBalance.toLocaleString('zh-CN') }}</span>
       </div>
     </div>
     <div class="text-[10px] text-slate-500 font-medium gap-4 hidden items-center md:flex">

@@ -10,6 +10,7 @@ interface PatchBindingsBody {
   collegeBindings?: ProjectCollegeBinding[]
   advisorUserIds?: string[]
   advisorUsernames?: string[]
+  contestIds?: string[]
 }
 
 export default defineEventHandler(async (event) => {
@@ -17,7 +18,7 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = getRouterParam(event, 'id') || ''
-  const body = await readBody<PatchBindingsBody>(event)
+  const body = (await readBody<PatchBindingsBody>(event)) || {}
 
   if (!projectId) {
     setResponseStatus(event, 400)
@@ -40,6 +41,7 @@ export default defineEventHandler(async (event) => {
         collegeBindings: Array.isArray(body?.collegeBindings) ? body.collegeBindings : undefined,
         advisorUserIds: Array.isArray(body?.advisorUserIds) ? body.advisorUserIds : undefined,
         advisorUsernames: Array.isArray(body?.advisorUsernames) ? body.advisorUsernames : undefined,
+        contestIds: Array.isArray(body?.contestIds) ? body.contestIds.map(item => String(item || '').trim()).filter(Boolean) : undefined,
       })
     })
 

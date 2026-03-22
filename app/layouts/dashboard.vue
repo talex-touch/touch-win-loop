@@ -54,7 +54,8 @@ const showAdminBadge = computed(() => {
 })
 
 const isWorkspaceFullscreen = computed(() => {
-  return route.path === '/workspace' || route.path.startsWith('/workspace/')
+  const normalizedPath = route.path.replace(/\/+$/, '') || '/'
+  return /^\/workspace\/[^/]+$/.test(normalizedPath)
 })
 
 useHead({
