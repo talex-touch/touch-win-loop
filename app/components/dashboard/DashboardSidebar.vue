@@ -23,6 +23,7 @@ const apiBase = runtime.public.apiBaseUrl || '/api'
 const profileDialogVisible = ref(false)
 const loggingOut = ref(false)
 const actionError = ref('')
+const isWorkspaceListRoute = computed(() => route.path.replace(/\/+$/, '') === '/workspace')
 
 function endpoint(path: string): string {
   if (apiBase.endsWith('/'))
@@ -108,42 +109,43 @@ async function logout() {
         </ul>
       </div>
 
-      <NuxtLink
-        to="/workspace"
-        class="text-slate-500 mt-4 px-3 py-2 flex gap-3 transition-colors items-center hover:text-slate-900"
-      >
-        <span class="material-symbols-outlined">settings</span>
-        <span class="text-sm font-medium">系统设置</span>
-      </NuxtLink>
+      <template v-if="!isWorkspaceListRoute">
+        <WorkspaceSwitchEntry
+          mode="link"
+          label="工作区"
+          icon="workspaces"
+          to="/workspace"
+        />
 
-      <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
-        <img
-          :src="analystAvatar"
-          class="border border-slate-200 rounded-full h-10 w-10 object-cover"
-          alt="用户头像"
-        >
-        <div class="min-w-0">
-          <p class="text-sm text-slate-900 font-semibold truncate">
-            {{ analystName }}
-          </p>
-          <p
-            v-if="showAdminBadge"
-            class="text-[10px] text-rose-700 font-semibold mt-1 px-1.5 py-0.5 border border-rose-200 rounded-md bg-rose-50 inline-flex"
+        <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
+          <img
+            :src="analystAvatar"
+            class="border border-slate-200 rounded-full h-10 w-10 object-cover"
+            alt="用户头像"
           >
-            管理页
-          </p>
-          <p class="text-xs text-slate-500 truncate">
-            {{ analystTier }}
-          </p>
+          <div class="min-w-0">
+            <p class="text-sm text-slate-900 font-semibold truncate">
+              {{ analystName }}
+            </p>
+            <p
+              v-if="showAdminBadge"
+              class="text-[10px] text-rose-700 font-semibold mt-1 px-1.5 py-0.5 border border-rose-200 rounded-md bg-rose-50 inline-flex"
+            >
+              管理页
+            </p>
+            <p class="text-xs text-slate-500 truncate">
+              {{ analystTier }}
+            </p>
+          </div>
+          <button
+            class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
+            title="个人设置"
+            @click="openProfileDialog"
+          >
+            <span class="material-symbols-outlined text-[20px]">settings</span>
+          </button>
         </div>
-        <button
-          class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
-          title="个人设置"
-          @click="openProfileDialog"
-        >
-          <span class="material-symbols-outlined text-[20px]">settings</span>
-        </button>
-      </div>
+      </template>
     </div>
   </aside>
 

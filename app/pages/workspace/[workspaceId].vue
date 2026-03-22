@@ -108,6 +108,25 @@ function workspaceDetailPath(workspaceId: string): string {
   return `/workspace/${workspaceId}`
 }
 
+interface WorkspaceQuickSwitchProject {
+  projectId: string
+  workspaceId: string
+  title: string
+  workspaceName: string
+  updatedAt: string
+}
+
+function parseTimestamp(value: string): number {
+  const time = new Date(value).getTime()
+  if (Number.isNaN(time))
+    return 0
+  return time
+}
+
+function sortByUpdatedAtDesc(items: Project[]): Project[] {
+  return [...items].sort((a, b) => parseTimestamp(b.updatedAt) - parseTimestamp(a.updatedAt))
+}
+
 const routeWorkspaceId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
   return normalizeRouteParam(params.workspaceId)
@@ -125,6 +144,7 @@ const topK = ref(6)
 const contests = ref<Contest[]>([])
 const resources = ref<Resource[]>([])
 const projects = ref<Project[]>([])
+const allProjects = ref<Project[]>([])
 const me = ref<AuthMeResult | null>(null)
 const activeWorkspaceId = ref('')
 const selectedContestId = ref('')
@@ -179,8 +199,46 @@ const selectedContest = computed(() => contests.value.find(contest => contest.id
 const selectedTrack = computed(() => selectedContest.value?.tracks.find(track => track.id === selectedTrackId.value) || null)
 const workspaceOptions = computed(() => me.value?.workspaces || [])
 const isAdminView = computed(() => Boolean(me.value?.user.isPlatformAdmin))
+const workspaceNameMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const item of workspaceOptions.value)
+    map.set(item.workspace.id, item.workspace.name)
+  return map
+})
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
+})
+const quickSwitchSourceProjects = computed(() => {
+  if (allProjects.value.length > 0)
+    return allProjects.value
+  return projects.value
+})
+const sortedQuickSwitchProjects = computed(() => sortByUpdatedAtDesc(quickSwitchSourceProjects.value))
+
+function toQuickSwitchProject(project: Project): WorkspaceQuickSwitchProject {
+  return {
+    projectId: project.id,
+    workspaceId: project.workspaceId,
+    title: project.title || '未命名项目',
+    workspaceName: workspaceNameMap.value.get(project.workspaceId) || project.workspaceId,
+    updatedAt: project.updatedAt,
+  }
+}
+
+const myQuickSwitchProjects = computed<WorkspaceQuickSwitchProject[]>(() => {
+  const userId = me.value?.user.id || ''
+  if (!userId)
+    return []
+  return sortedQuickSwitchProjects.value
+    .filter(item => item.ownerUserId === userId)
+    .slice(0, 8)
+    .map(toQuickSwitchProject)
+})
+
+const recentQuickSwitchProjects = computed<WorkspaceQuickSwitchProject[]>(() => {
+  return sortedQuickSwitchProjects.value
+    .slice(0, 8)
+    .map(toQuickSwitchProject)
 })
 
 const activeProject = computed(() => {
@@ -452,6 +510,16 @@ async function loadProjects() {
   }
   catch {
     projects.value = []
+  }
+}
+
+async function loadQuickSwitchProjects() {
+  try {
+    const response = await $fetch<ApiResponse<Project[]>>(endpoint('/projects'))
+    allProjects.value = response.data
+  }
+  catch {
+    allProjects.value = []
   }
 }
 
@@ -970,7 +1038,7 @@ async function submitProject() {
     })
 
     statusLine.value = `项目已创建：${response.data.title}`
-    await loadProjects()
+    await Promise.all([loadProjects(), loadQuickSwitchProjects()])
     sidebarTab.value = 'submit'
   }
   catch {
@@ -985,12 +1053,25 @@ function openProject(projectId: string) {
   navigateTo(`/projects/${projectId}`)
 }
 
+async function switchProjectFromHeader(payload: { projectId: string, workspaceId: string }) {
+  const target = quickSwitchSourceProjects.value.find(item => item.id === payload.projectId)
+  if (target)
+    statusLine.value = `已定位项目：${target.title}`
+
+  await navigateTo({
+    path: workspaceDetailPath(payload.workspaceId),
+    query: {
+      projectId: payload.projectId,
+    },
+  })
+}
+
 onMounted(async () => {
   const ok = await loadAuthContext()
   if (!ok)
     return
 
-  await Promise.all([loadContests(), loadResources(), loadProjects(), loadChatSessions()])
+  await Promise.all([loadContests(), loadResources(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
   syncFormContestTrack()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
@@ -1029,7 +1110,7 @@ watch(routeWorkspaceId, async (value, previous) => {
     activeWorkspaceId.value = value
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
-  await Promise.all([loadProjects(), loadChatSessions()])
+  await Promise.all([loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -1045,6 +1126,9 @@ watch(routeWorkspaceId, async (value, previous) => {
       :project-name="headerProjectName"
       :contest-name="selectedContest?.name || '未选择竞赛'"
       :track-name="selectedTrack?.name || '未选择赛道'"
+      :my-projects="myQuickSwitchProjects"
+      :recent-projects="recentQuickSwitchProjects"
+      @quick-switch-project="switchProjectFromHeader"
     />
 
     <main class="flex flex-1 flex-col min-h-0 overflow-hidden xl:flex-row">
@@ -1056,10 +1140,7 @@ watch(routeWorkspaceId, async (value, previous) => {
         v-model:track-type="trackType"
         v-model:top-k="topK"
         v-model:selected-contest-id="selectedContestId"
-        v-model:active-workspace-id="activeWorkspaceId"
         :contests="filteredContests"
-        :workspace-options="workspaceOptions"
-        :username="me?.user.username || ''"
         :ai-reasoning="aiReasoning"
         :normalized-info="normalizedInfo"
         :status-line="statusLine"

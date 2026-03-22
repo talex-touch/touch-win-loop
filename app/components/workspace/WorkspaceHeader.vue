@@ -1,25 +1,75 @@
 <script setup lang="ts">
-withDefaults(defineProps<{
+interface WorkspaceQuickSwitchProject {
+  projectId: string
+  workspaceId: string
+  title: string
+  workspaceName: string
+  updatedAt: string
+}
+
+const props = withDefaults(defineProps<{
   modelValue?: string
   projectName?: string
   contestName?: string
   trackName?: string
+  myProjects?: WorkspaceQuickSwitchProject[]
+  recentProjects?: WorkspaceQuickSwitchProject[]
 }>(), {
   modelValue: '',
   projectName: '未命名项目',
   contestName: '未选择竞赛',
   trackName: '未选择赛道',
+  myProjects: () => [],
+  recentProjects: () => [],
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string]
+  (event: 'update:modelValue', value: string): void
+  (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
 }>()
 
 const router = useRouter()
+const quickSwitchOpen = ref(false)
+const quickSwitchRef = ref<HTMLElement | null>(null)
+
+const hasQuickSwitchOptions = computed(() => {
+  return props.myProjects.length > 0 || props.recentProjects.length > 0
+})
 
 function onInput(event: Event) {
   const target = event.target as HTMLInputElement
   emit('update:modelValue', target.value)
+}
+
+function formatShortTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return '-'
+
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${month}-${day} ${hour}:${minute}`
+}
+
+function toggleQuickSwitch() {
+  if (!hasQuickSwitchOptions.value)
+    return
+
+  quickSwitchOpen.value = !quickSwitchOpen.value
+}
+
+function closeQuickSwitch() {
+  quickSwitchOpen.value = false
+}
+
+function switchProject(item: WorkspaceQuickSwitchProject) {
+  emit('quickSwitchProject', {
+    projectId: item.projectId,
+    workspaceId: item.workspaceId,
+  })
+  closeQuickSwitch()
 }
 
 function goBack() {
@@ -30,11 +80,46 @@ function goBack() {
 
   navigateTo('/dashboard')
 }
+
+function handleGlobalPointerDown(event: Event) {
+  if (!quickSwitchOpen.value)
+    return
+
+  const container = quickSwitchRef.value
+  const target = event.target as Node | null
+  if (!container || !target)
+    return
+
+  if (container.contains(target))
+    return
+
+  closeQuickSwitch()
+}
+
+function handleGlobalEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape')
+    return
+  closeQuickSwitch()
+}
+
+onMounted(() => {
+  if (!import.meta.client)
+    return
+  document.addEventListener('pointerdown', handleGlobalPointerDown)
+  document.addEventListener('keydown', handleGlobalEscape)
+})
+
+onBeforeUnmount(() => {
+  if (!import.meta.client)
+    return
+  document.removeEventListener('pointerdown', handleGlobalPointerDown)
+  document.removeEventListener('keydown', handleGlobalEscape)
+})
 </script>
 
 <template>
   <header class="px-4 border-b border-slate-200 bg-white flex shrink-0 h-12 items-center justify-between z-10">
-    <div class="flex gap-4 min-w-0 items-center">
+    <div class="flex gap-2 min-w-0 items-center">
       <button
         class="px-1 py-0.5 rounded flex gap-2 min-w-0 items-center hover:bg-slate-100"
         type="button"
@@ -47,6 +132,73 @@ function goBack() {
           <span class="text-xs text-slate-500 font-medium">{{ projectName }}</span>
         </span>
       </button>
+      <div ref="quickSwitchRef" class="relative">
+        <button
+          class="text-slate-500 p-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100"
+          :disabled="!hasQuickSwitchOptions"
+          title="快速切换项目"
+          type="button"
+          @click.stop="toggleQuickSwitch"
+        >
+          <span class="material-symbols-outlined text-xl">swap_horiz</span>
+        </button>
+
+        <div
+          v-if="quickSwitchOpen"
+          class="border border-slate-200 rounded-lg shadow-lg bg-white w-80 max-h-96 left-0 mt-2 p-2 top-full absolute overflow-y-auto z-20"
+        >
+          <div class="text-[11px] text-slate-500 px-2 pt-1 pb-2">
+            快速切换
+          </div>
+          <section class="space-y-1">
+            <p class="text-[11px] text-slate-500 px-2">
+              我的项目
+            </p>
+            <button
+              v-for="item in props.myProjects"
+              :key="`mine-${item.projectId}`"
+              class="text-left rounded-md px-2 py-1.5 w-full transition-colors hover:bg-slate-50"
+              type="button"
+              @click="switchProject(item)"
+            >
+              <div class="text-xs text-slate-800 truncate font-medium">
+                {{ item.title }}
+              </div>
+              <div class="text-[11px] text-slate-500 flex gap-2 items-center justify-between">
+                <span class="truncate">{{ item.workspaceName }}</span>
+                <span class="shrink-0">{{ formatShortTime(item.updatedAt) }}</span>
+              </div>
+            </button>
+            <p v-if="props.myProjects.length === 0" class="text-[11px] text-slate-400 px-2 py-1">
+              暂无可切换项目
+            </p>
+          </section>
+
+          <section class="space-y-1 border-t border-slate-100 mt-2 pt-2">
+            <p class="text-[11px] text-slate-500 px-2">
+              最近项目
+            </p>
+            <button
+              v-for="item in props.recentProjects"
+              :key="`recent-${item.projectId}`"
+              class="text-left rounded-md px-2 py-1.5 w-full transition-colors hover:bg-slate-50"
+              type="button"
+              @click="switchProject(item)"
+            >
+              <div class="text-xs text-slate-800 truncate font-medium">
+                {{ item.title }}
+              </div>
+              <div class="text-[11px] text-slate-500 flex gap-2 items-center justify-between">
+                <span class="truncate">{{ item.workspaceName }}</span>
+                <span class="shrink-0">{{ formatShortTime(item.updatedAt) }}</span>
+              </div>
+            </button>
+            <p v-if="props.recentProjects.length === 0" class="text-[11px] text-slate-400 px-2 py-1">
+              暂无最近项目
+            </p>
+          </section>
+        </div>
+      </div>
       <nav class="ml-2 gap-1 hidden items-center lg:flex">
         <button class="text-xs font-medium px-3 py-1 rounded hover:bg-slate-100">
           文件

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Contest, WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { Contest } from '~~/shared/types/domain'
 
 const props = withDefaults(defineProps<{
   naturalQuery: string
@@ -10,9 +10,6 @@ const props = withDefaults(defineProps<{
   topK: number
   selectedContestId: string
   contests: Contest[]
-  activeWorkspaceId: string
-  workspaceOptions?: WorkspaceWithQuota[]
-  username?: string
   aiReasoning: string
   normalizedInfo?: string
   statusLine: string
@@ -20,8 +17,6 @@ const props = withDefaults(defineProps<{
   aiFiltering: boolean
   isAdminView?: boolean
 }>(), {
-  workspaceOptions: () => [],
-  username: '',
   normalizedInfo: '',
   isAdminView: false,
 })
@@ -34,7 +29,6 @@ const emit = defineEmits<{
   'update:trackType': [value: string]
   'update:topK': [value: number]
   'update:selectedContestId': [value: string]
-  'update:activeWorkspaceId': [value: string]
   'loadContests': []
   'runAiFilter': []
 }>()
