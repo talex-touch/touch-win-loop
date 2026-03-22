@@ -280,25 +280,6 @@ watch(hasReasoning, (next) => {
         </button>
       </div>
     </div>
-    <div class="p-3 border-t border-slate-200 bg-white/70 space-y-3">
-      <div class="space-y-1">
-        <div class="text-[10px] text-slate-500 font-semibold">
-          账号
-        </div>
-        <div class="text-xs text-slate-700 truncate">
-          {{ username || '-' }}
-        </div>
-      </div>
-
-      <WorkspaceSwitchEntry
-        mode="select"
-        label="工作区"
-        :model-value="activeWorkspaceId"
-        :workspace-options="workspaceOptions"
-        :show-quota="true"
-        @update:model-value="emit('update:activeWorkspaceId', $event)"
-      />
-    </div>
   </aside>
 </template>
 
