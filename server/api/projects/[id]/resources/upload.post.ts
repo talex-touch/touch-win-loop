@@ -1,16 +1,30 @@
 import type {
+  Resource,
   ResourceAvailability,
   ResourceCategory,
 } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import { setResponseStatus } from 'h3'
+import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
 import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { canManageProject, getVisibleProjectById } from '~~/server/utils/platform-store'
-import { createProjectUploadedResource } from '~~/server/utils/project-resource-store'
+import {
+  createProjectResourceDocumentWithTask,
+  createProjectUploadedResource,
+  getProjectUploadedStorageUsageBytes,
+} from '~~/server/utils/project-resource-store'
+import {
+  formatFileSize,
+  isProjectResourceUploadFileSupported,
+  PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
+  PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
+  PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
+  PROJECT_RESOURCE_UPLOAD_TYPES_LABEL,
+} from '~~/shared/constants/project-resource-upload'
 
 const RESOURCE_CATEGORIES: ResourceCategory[] = [
   'basic_info',
@@ -54,6 +68,13 @@ function normalizeAccessLevel(raw: string): ResourceAvailability {
   return 'public'
 }
 
+interface ProjectUploadFile {
+  fileName: string
+  mimeType: string
+  buffer: Buffer
+  objectKey: string
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -80,7 +101,8 @@ export default defineEventHandler(async (event) => {
     if (!manageable)
       return { ok: false as const, reason: 'FORBIDDEN' as const }
 
-    return { ok: true as const }
+    const usedBytes = await getProjectUploadedStorageUsageBytes(db, projectId)
+    return { ok: true as const, usedBytes }
   })
 
   if (!hasAccess.ok) {
@@ -117,8 +139,8 @@ export default defineEventHandler(async (event) => {
     }, 40066)
   }
 
-  const filePart = parts.find(part => part.name === 'file' && part.filename)
-  if (!filePart?.filename || !filePart.data) {
+  const fileParts = parts.filter(part => part.name === 'file' && part.filename)
+  if (!fileParts.length) {
     setResponseStatus(event, 400)
     return fail('缺少文件字段 file。', {
       startedAt,
@@ -129,50 +151,155 @@ export default defineEventHandler(async (event) => {
     }, 40067)
   }
 
-  const fields = toStringMap(parts)
-  const fileName = normalizeString(filePart.filename) || 'upload.bin'
-  const mimeType = normalizeString(filePart.type) || 'application/octet-stream'
-  const objectKey = buildDocumentObjectKey(`project-${projectId}`, fileName)
-  const category = normalizeCategory(normalizeString(fields.category))
-  const accessLevel = normalizeAccessLevel(normalizeString(fields.accessLevel))
-  const title = normalizeString(fields.title)
-  const summary = normalizeString(fields.summary)
-
-  const storage = getDocumentStorage()
-  const fileBuffer = Buffer.from(filePart.data)
-
-  await storage.putObject({
-    key: objectKey,
-    body: fileBuffer,
-  })
-
-  try {
-    const resource = await withTransaction(event, async (db) => {
-      return createProjectUploadedResource(db, {
-        projectId,
-        actorUserId: user.id,
-        fileName,
-        mimeType,
-        fileSize: fileBuffer.length,
-        objectKey,
-        storageProvider: storage.provider,
-        title,
-        summary,
-        category,
-        accessLevel,
-      })
-    })
-
-    return ok(resource, {
+  if (fileParts.length > PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH) {
+    setResponseStatus(event, 400)
+    return fail(`单次最多上传 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个文件。`, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
+    }, 40068)
+  }
+
+  const fields = toStringMap(parts)
+  const category = normalizeCategory(normalizeString(fields.category))
+  const accessLevel = normalizeAccessLevel(normalizeString(fields.accessLevel))
+  const title = normalizeString(fields.title)
+  const summary = normalizeString(fields.summary)
+  const files: ProjectUploadFile[] = fileParts.map((part) => {
+    const fileName = normalizeString(part.filename) || 'upload.bin'
+    const mimeType = normalizeString(part.type) || 'application/octet-stream'
+    const buffer = Buffer.from(part.data || Buffer.alloc(0))
+    const objectKey = buildDocumentObjectKey(`project-${projectId}`, fileName)
+    return {
+      fileName,
+      mimeType,
+      buffer,
+      objectKey,
+    }
+  })
+
+  const emptyFile = files.find(file => file.buffer.length === 0)
+  if (emptyFile) {
+    setResponseStatus(event, 400)
+    return fail(`文件为空：${emptyFile.fileName}。`, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40069)
+  }
+
+  const unsupportedFiles = files
+    .filter(file => !isProjectResourceUploadFileSupported(file.fileName))
+    .map(file => file.fileName)
+
+  if (unsupportedFiles.length > 0) {
+    setResponseStatus(event, 400)
+    return fail(`文件格式不支持：${unsupportedFiles.slice(0, 3).join('、')}。支持格式：${PROJECT_RESOURCE_UPLOAD_TYPES_LABEL}。`, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40070)
+  }
+
+  const oversizedFile = files.find(file => file.buffer.length > PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)
+  if (oversizedFile) {
+    setResponseStatus(event, 400)
+    return fail(`文件过大：${oversizedFile.fileName}，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40071)
+  }
+
+  const incomingBytes = files.reduce((sum, file) => sum + file.buffer.length, 0)
+  if (hasAccess.usedBytes + incomingBytes > PROJECT_RESOURCE_STORAGE_LIMIT_BYTES) {
+    setResponseStatus(event, 400)
+    return fail(`当前项目容量超限：最多 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40072)
+  }
+
+  const storage = getDocumentStorage()
+  const uploadedObjectKeys: string[] = []
+
+  try {
+    for (const file of files) {
+      await storage.putObject({
+        key: file.objectKey,
+        body: file.buffer,
+      })
+      uploadedObjectKeys.push(file.objectKey)
+    }
+
+    const resources = await withTransaction(event, async (db) => {
+      const nextResources: Resource[] = []
+      for (const file of files) {
+        const resource = await createProjectUploadedResource(db, {
+          projectId,
+          actorUserId: user.id,
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+          fileSize: file.buffer.length,
+          objectKey: file.objectKey,
+          storageProvider: storage.provider,
+          title: files.length === 1 ? title : '',
+          summary,
+          category,
+          accessLevel,
+        })
+
+        await createProjectResourceDocumentWithTask(db, {
+          projectId,
+          projectResourceId: resource.id,
+          objectKey: file.objectKey,
+          storageProvider: storage.provider,
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+          fileSize: file.buffer.length,
+          actorUserId: user.id,
+        })
+
+        nextResources.push(resource)
+      }
+      return nextResources
     })
+
+    await withTransaction(event, async (db) => {
+      await generateAndSaveProjectOutline(db, {
+        projectId,
+        user,
+        reason: 'upload_success',
+      })
+    }).catch(() => undefined)
+
+    return ok({
+      resources,
+      uploadedCount: resources.length,
+      totalBytes: incomingBytes,
+      usedBytes: hasAccess.usedBytes + incomingBytes,
+      limitBytes: PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
+    }, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, files.length === 1 ? '上传成功。' : `批量上传成功（${resources.length} 个文件）。`)
   }
   catch (error) {
-    await storage.deleteObject(objectKey)
+    await Promise.allSettled(uploadedObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
     throw error
   }
 })

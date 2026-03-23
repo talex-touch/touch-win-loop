@@ -7,7 +7,28 @@ import type {
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 
-interface ResourceRow {
+interface ProjectResourceRow {
+  id: string
+  project_id: string
+  source: 'upload' | 'library'
+  linked_contest_resource_id: string | null
+  title: string
+  mime_type: string
+  category: ResourceCategory
+  year: number
+  source_link: string
+  availability: ResourceAvailability
+  summary: string
+  content: string
+  metadata: Record<string, unknown>
+  status: ResourceStatus
+  created_by_user_id: string | null
+  updated_by_user_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface ContestResourceRow {
   id: string
   contest_id: string
   category: ResourceCategory
@@ -21,18 +42,22 @@ interface ResourceRow {
   metadata: Record<string, unknown>
   copyright_note: string
   status: ResourceStatus
+  created_by_user_id: string | null
+  updated_by_user_id: string | null
   created_at: string
   updated_at: string
 }
 
-interface ProjectContestRow {
-  contest_id: string
+interface ProjectUploadStorageUsageRow {
+  used_bytes: string
 }
 
-interface UploadFileRow {
-  title: string
-  source_type: string
-  metadata: Record<string, unknown>
+interface ProjectResourceDocumentIdRow {
+  id: string
+}
+
+interface ProjectExistsRow {
+  id: string
 }
 
 export interface ProjectUploadedFileRef {
@@ -65,27 +90,6 @@ function parseResourceMetadata(value: unknown): Record<string, unknown> {
   return normalizeRecord(value)
 }
 
-function toResource(row: ResourceRow): Resource {
-  return {
-    id: row.id,
-    contestId: row.contest_id,
-    category: row.category,
-    title: row.title,
-    type: row.category,
-    year: Number(row.year || 0),
-    sourceLink: row.url,
-    availability: row.access_level,
-    sourceType: row.source_type,
-    summary: row.summary,
-    content: row.content,
-    metadata: parseResourceMetadata(row.metadata),
-    copyrightNote: row.copyright_note,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
-}
-
 function normalizeUploadTitle(fileName: string, inputTitle?: string): string {
   const trimmedInput = normalizeString(inputTitle)
   if (trimmedInput)
@@ -101,48 +105,103 @@ function normalizeUploadTitle(fileName: string, inputTitle?: string): string {
   return '上传资料'
 }
 
-async function getProjectContestId(db: Queryable, projectId: string): Promise<string | null> {
-  const projectResult = await db.query<ProjectContestRow>(
-    `SELECT contest_id
+function toResource(row: ProjectResourceRow): Resource {
+  const metadata = parseResourceMetadata(row.metadata)
+  const originContestId = normalizeString(metadata.originContestId)
+
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    contestId: originContestId,
+    title: row.title,
+    type: row.category,
+    year: Number(row.year || 0),
+    sourceLink: row.source_link,
+    availability: row.availability,
+    sourceType: row.source,
+    source: row.source,
+    linkedContestResourceId: row.linked_contest_resource_id,
+    summary: row.summary,
+    content: row.content,
+    metadata,
+    category: row.category,
+    copyrightNote: '',
+    status: row.status,
+    createdBy: row.created_by_user_id || undefined,
+    updatedBy: row.updated_by_user_id || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function toLibraryResource(row: ContestResourceRow): Resource {
+  const metadata = parseResourceMetadata(row.metadata)
+
+  return {
+    id: row.id,
+    contestId: row.contest_id,
+    title: row.title,
+    type: row.category,
+    year: Number(row.year || 0),
+    sourceLink: row.url,
+    availability: row.access_level,
+    sourceType: row.source_type,
+    source: 'library',
+    linkedContestResourceId: row.id,
+    summary: row.summary,
+    content: row.content,
+    metadata,
+    category: row.category,
+    copyrightNote: row.copyright_note,
+    status: row.status,
+    createdBy: row.created_by_user_id || undefined,
+    updatedBy: row.updated_by_user_id || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+async function ensureProjectExists(db: Queryable, projectId: string): Promise<void> {
+  const result = await db.query<ProjectExistsRow>(
+    `SELECT id
      FROM projects
      WHERE id = $1
      LIMIT 1`,
     [projectId],
   )
 
-  const contestId = normalizeString(projectResult.rows[0]?.contest_id)
-  if (!contestId)
-    return null
-
-  return contestId
+  if (!result.rows[0]?.id)
+    throw new Error('PROJECT_NOT_FOUND')
 }
 
 export async function listProjectResources(
   db: Queryable,
   projectId: string,
 ): Promise<Resource[]> {
-  const result = await db.query<ResourceRow>(
+  const result = await db.query<ProjectResourceRow>(
     `SELECT
-      r.id,
-      r.contest_id,
-      r.category,
-      r.title,
-      r.year,
-      r.url,
-      r.access_level,
-      r.source_type,
-      r.summary,
-      r.content,
-      r.metadata,
-      r.copyright_note,
-      r.status,
-      r.created_at::TEXT,
-      r.updated_at::TEXT
-     FROM project_resource_bindings b
-     JOIN contest_resources r ON r.id = b.resource_id
-     WHERE b.project_id = $1
-       AND r.status = 'active'
-     ORDER BY b.created_at DESC`,
+      id,
+      project_id,
+      source,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_resources
+     WHERE project_id = $1
+       AND status = 'active'
+     ORDER BY created_at DESC`,
     [projectId],
   )
 
@@ -153,7 +212,7 @@ export async function listProjectLibraryResources(
   db: Queryable,
   projectId: string,
 ): Promise<Resource[]> {
-  const result = await db.query<ResourceRow>(
+  const result = await db.query<ContestResourceRow>(
     `SELECT
       r.id,
       r.contest_id,
@@ -168,25 +227,26 @@ export async function listProjectLibraryResources(
       r.metadata,
       r.copyright_note,
       r.status,
+      r.created_by_user_id,
+      r.updated_by_user_id,
       r.created_at::TEXT,
       r.updated_at::TEXT
-     FROM projects p
-     JOIN contest_resources r ON r.contest_id = p.contest_id
-     WHERE p.id = $1
-       AND r.status = 'active'
+     FROM contest_resources r
+     WHERE r.status = 'active'
        AND COALESCE(r.source_type, '') <> 'project_upload'
        AND NOT EXISTS (
          SELECT 1
-         FROM project_resource_bindings b
-         WHERE b.project_id = p.id
-           AND b.resource_id = r.id
+         FROM project_resources pr
+         WHERE pr.project_id = $1
+           AND pr.linked_contest_resource_id = r.id
+           AND pr.status = 'active'
        )
      ORDER BY r.year DESC, r.created_at DESC
      LIMIT 80`,
     [projectId],
   )
 
-  return result.rows.map(toResource)
+  return result.rows.map(toLibraryResource)
 }
 
 export async function bindLibraryResourceToProject(
@@ -197,7 +257,40 @@ export async function bindLibraryResourceToProject(
     actorUserId: string
   },
 ): Promise<Resource> {
-  const resourceResult = await db.query<ResourceRow>(
+  await ensureProjectExists(db, input.projectId)
+
+  const existing = await db.query<ProjectResourceRow>(
+    `SELECT
+      id,
+      project_id,
+      source,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_resources
+     WHERE project_id = $1
+       AND linked_contest_resource_id = $2
+       AND status = 'active'
+     LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  if (existing.rows[0])
+    return toResource(existing.rows[0])
+
+  const resourceResult = await db.query<ContestResourceRow>(
     `SELECT
       r.id,
       r.contest_id,
@@ -212,36 +305,92 @@ export async function bindLibraryResourceToProject(
       r.metadata,
       r.copyright_note,
       r.status,
+      r.created_by_user_id,
+      r.updated_by_user_id,
       r.created_at::TEXT,
       r.updated_at::TEXT
-     FROM projects p
-     JOIN contest_resources r ON r.contest_id = p.contest_id
-     WHERE p.id = $1
-       AND r.id = $2
+     FROM contest_resources r
+     WHERE r.id = $1
        AND r.status = 'active'
        AND COALESCE(r.source_type, '') <> 'project_upload'
      LIMIT 1`,
-    [input.projectId, input.resourceId],
+    [input.resourceId],
   )
 
   const resourceRow = resourceResult.rows[0]
   if (!resourceRow)
     throw new Error('RESOURCE_NOT_FOUND')
 
-  await db.query(
-    `INSERT INTO project_resource_bindings (
+  const now = new Date().toISOString()
+  const projectResourceId = randomUUID()
+  const metadata = {
+    ...parseResourceMetadata(resourceRow.metadata),
+    originContestId: normalizeString(resourceRow.contest_id),
+    originResourceId: normalizeString(resourceRow.id),
+    importedAt: now,
+  }
+
+  const inserted = await db.query<ProjectResourceRow>(
+    `INSERT INTO project_resources (
       id,
       project_id,
-      resource_id,
       source,
-      added_by_user_id,
-      created_at
-    ) VALUES ($1, $2, $3, 'library', $4, NOW())
-    ON CONFLICT (project_id, resource_id) DO NOTHING`,
-    [randomUUID(), input.projectId, input.resourceId, input.actorUserId],
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, 'library', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::JSONB, 'active', $13, $13, $14, $14
+    )
+    RETURNING
+      id,
+      project_id,
+      source,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT`,
+    [
+      projectResourceId,
+      input.projectId,
+      resourceRow.id,
+      resourceRow.title,
+      normalizeString((resourceRow.metadata || {}).mimeType) || 'application/octet-stream',
+      resourceRow.category,
+      resourceRow.year,
+      resourceRow.url,
+      resourceRow.access_level,
+      resourceRow.summary,
+      resourceRow.content,
+      JSON.stringify(metadata),
+      input.actorUserId,
+      now,
+    ],
   )
 
-  return toResource(resourceRow)
+  return toResource(inserted.rows[0]!)
 }
 
 export async function createProjectUploadedResource(
@@ -260,9 +409,7 @@ export async function createProjectUploadedResource(
     category?: ResourceCategory
   },
 ): Promise<Resource> {
-  const contestId = await getProjectContestId(db, input.projectId)
-  if (!contestId)
-    throw new Error('PROJECT_NOT_FOUND')
+  await ensureProjectExists(db, input.projectId)
 
   const resourceId = randomUUID()
   const now = new Date().toISOString()
@@ -277,33 +424,54 @@ export async function createProjectUploadedResource(
     uploadedAt: now,
   }
 
-  await db.query(
-    `INSERT INTO contest_resources (
+  const result = await db.query<ProjectResourceRow>(
+    `INSERT INTO project_resources (
       id,
-      contest_id,
-      category,
+      project_id,
+      source,
+      linked_contest_resource_id,
       title,
+      mime_type,
+      category,
       year,
-      url,
-      access_level,
-      source_type,
+      source_link,
+      availability,
       summary,
       content,
       metadata,
-      copyright_note,
       status,
       created_by_user_id,
       updated_by_user_id,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, 'project_upload', $8, '', $9::JSONB, '', 'active', $10, $10, $11, $11
-    )`,
+      $1, $2, 'upload', NULL, $3, $4, $5, $6, $7, $8, $9, '', $10::JSONB, 'active', $11, $11, $12, $12
+    )
+    RETURNING
+      id,
+      project_id,
+      source,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT`,
     [
       resourceId,
-      contestId,
-      input.category || 'templates',
+      input.projectId,
       title,
+      normalizeString(input.mimeType) || 'application/octet-stream',
+      input.category || 'templates',
       new Date().getFullYear(),
       sourceLink,
       input.accessLevel || 'public',
@@ -314,50 +482,111 @@ export async function createProjectUploadedResource(
     ],
   )
 
-  await db.query(
-    `INSERT INTO project_resource_bindings (
+  return toResource(result.rows[0]!)
+}
+
+export async function createProjectResourceDocumentWithTask(
+  db: Queryable,
+  input: {
+    projectId: string
+    projectResourceId: string
+    objectKey: string
+    storageProvider: string
+    fileName: string
+    mimeType: string
+    fileSize: number
+    actorUserId: string
+  },
+): Promise<{ documentId: string, taskId: string }> {
+  const now = new Date().toISOString()
+  const documentId = randomUUID()
+  const taskId = randomUUID()
+
+  await db.query<ProjectResourceDocumentIdRow>(
+    `INSERT INTO project_resource_documents (
       id,
       project_id,
-      resource_id,
-      source,
-      added_by_user_id,
-      created_at
+      project_resource_id,
+      object_key,
+      storage_provider,
+      file_name,
+      mime_type,
+      file_size,
+      page_count,
+      parse_status,
+      parse_error,
+      parser_provider,
+      parser_model,
+      analysis_json,
+      annotation_json,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
     ) VALUES (
-      $1, $2, $3, 'upload', $4, $5
+      $1, $2, $3, $4, $5, $6, $7, $8, 0, 'queued', '', '', '', '{}'::JSONB, '{}'::JSONB, $9, $9, $10, $10
     )`,
     [
-      randomUUID(),
+      documentId,
       input.projectId,
-      resourceId,
+      input.projectResourceId,
+      normalizeString(input.objectKey),
+      normalizeString(input.storageProvider) || 'runtime',
+      normalizeString(input.fileName),
+      normalizeString(input.mimeType) || 'application/octet-stream',
+      Math.max(0, Number(input.fileSize || 0)),
       input.actorUserId,
       now,
     ],
   )
 
-  const result = await db.query<ResourceRow>(
-    `SELECT
+  await db.query(
+    `INSERT INTO project_resource_document_tasks (
       id,
-      contest_id,
-      category,
-      title,
-      year,
-      url,
-      access_level,
-      source_type,
-      summary,
-      content,
-      metadata,
-      copyright_note,
+      document_id,
       status,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM contest_resources
-     WHERE id = $1
-     LIMIT 1`,
-    [resourceId],
+      attempt,
+      error_message,
+      result_payload,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, 'queued', 0, '', '{}'::JSONB, $3, $3, $4, $4
+    )`,
+    [taskId, documentId, input.actorUserId, now],
   )
 
-  return toResource(result.rows[0]!)
+  return {
+    documentId,
+    taskId,
+  }
+}
+
+export async function getProjectUploadedStorageUsageBytes(
+  db: Queryable,
+  projectId: string,
+): Promise<number> {
+  const result = await db.query<ProjectUploadStorageUsageRow>(
+    `SELECT COALESCE(SUM(
+      CASE
+        WHEN COALESCE(metadata->>'fileSize', '') ~ '^[0-9]+$'
+          THEN (metadata->>'fileSize')::BIGINT
+        ELSE 0
+      END
+    ), 0)::TEXT AS used_bytes
+     FROM project_resources
+     WHERE project_id = $1
+       AND status = 'active'
+       AND source = 'upload'`,
+    [projectId],
+  )
+
+  const usedBytes = Number(result.rows[0]?.used_bytes || 0)
+  if (!Number.isFinite(usedBytes) || usedBytes <= 0)
+    return 0
+  return usedBytes
 }
 
 export async function getProjectUploadedFileRef(
@@ -367,16 +596,16 @@ export async function getProjectUploadedFileRef(
     resourceId: string
   },
 ): Promise<ProjectUploadedFileRef | null> {
-  const result = await db.query<UploadFileRow>(
+  const result = await db.query<Pick<ProjectResourceRow, 'title' | 'mime_type' | 'metadata'>>(
     `SELECT
-      r.title,
-      r.source_type,
-      r.metadata
-     FROM project_resource_bindings b
-     JOIN contest_resources r ON r.id = b.resource_id
-     WHERE b.project_id = $1
-       AND b.resource_id = $2
-       AND r.status = 'active'
+      title,
+      mime_type,
+      metadata
+     FROM project_resources
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'
+       AND source = 'upload'
      LIMIT 1`,
     [input.projectId, input.resourceId],
   )
@@ -385,16 +614,13 @@ export async function getProjectUploadedFileRef(
   if (!row)
     return null
 
-  if (normalizeString(row.source_type) !== 'project_upload')
-    return null
-
   const metadata = parseResourceMetadata(row.metadata)
   const objectKey = normalizeString(metadata.objectKey)
   if (!objectKey)
     return null
 
   const fileName = normalizeString(metadata.fileName) || `${normalizeString(row.title) || 'resource'}.bin`
-  const mimeType = normalizeString(metadata.mimeType) || 'application/octet-stream'
+  const mimeType = normalizeString(row.mime_type) || normalizeString(metadata.mimeType) || 'application/octet-stream'
 
   return {
     objectKey,

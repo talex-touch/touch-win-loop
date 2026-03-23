@@ -14,7 +14,11 @@ import type {
   ChatMessage,
   Contest,
   Project,
+  ProjectContestAdaptation,
   ProjectPayload,
+  ProjectSettingsDraft,
+  ProjectSettingsDraftPayload,
+  ProjectSettingsSnapshot,
   Resource,
   TopicProposalItem,
   WorkspaceAiMode,
@@ -24,9 +28,19 @@ import type {
   WorkspaceFormState,
   WorkspaceKeyword,
   WorkspaceMappingRow,
-  WorkspaceSidebarTab,
+  WorkspaceProjectAdaptationForm,
+  WorkspaceProjectCommonForm,
+  WorkspaceProjectContestBindingForm,
+  WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+import {
+  formatFileSize,
+  isProjectResourceUploadFileSupported,
+  PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
+  PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
+  PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
+} from '~~/shared/constants/project-resource-upload'
 
 definePageMeta({
   layout: 'dashboard',
@@ -48,6 +62,7 @@ useHead({
 
 const runtime = useRuntimeConfig()
 const apiBase = runtime.public.apiBaseUrl || '/api'
+const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 
 function endpoint(path: string): string {
@@ -65,6 +80,117 @@ function linesToArray(text: string): string[] {
 
 function arrayToLines(list: string[] | undefined): string {
   return (list || []).join('\n')
+}
+
+function createEmptyProjectCommonForm(): WorkspaceProjectCommonForm {
+  return {
+    title: '',
+    summary: '',
+    problemStatement: '',
+    innovationPointsText: '',
+    techRouteStepsText: '',
+    scoringMappingText: '',
+    risksText: '',
+    deliverablesText: '',
+  }
+}
+
+function createProjectCommonFormFromProject(project: Project | null): WorkspaceProjectCommonForm {
+  if (!project)
+    return createEmptyProjectCommonForm()
+
+  return {
+    title: project.title || '',
+    summary: project.summary || '',
+    problemStatement: project.problemStatement || '',
+    innovationPointsText: arrayToLines(project.innovationPoints),
+    techRouteStepsText: arrayToLines(project.techRouteSteps),
+    scoringMappingText: arrayToLines(project.scoringMapping),
+    risksText: arrayToLines(project.risks),
+    deliverablesText: arrayToLines(project.deliverables),
+  }
+}
+
+function cloneProjectCommonForm(value: WorkspaceProjectCommonForm): WorkspaceProjectCommonForm {
+  return {
+    title: value.title,
+    summary: value.summary,
+    problemStatement: value.problemStatement,
+    innovationPointsText: value.innovationPointsText,
+    techRouteStepsText: value.techRouteStepsText,
+    scoringMappingText: value.scoringMappingText,
+    risksText: value.risksText,
+    deliverablesText: value.deliverablesText,
+  }
+}
+
+function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
+  return {
+    contestId,
+    trackId,
+    problemStatement: '',
+    innovationPointsText: '',
+    techRouteStepsText: '',
+    scoringMappingText: '',
+    risksText: '',
+    deliverablesText: '',
+    summary: '',
+  }
+}
+
+function createProjectAdaptationFormFromSnapshot(
+  adaptation: ProjectContestAdaptation | null,
+  project: Project | null,
+  contestId: string,
+  trackId: string,
+): WorkspaceProjectAdaptationForm {
+  if (!adaptation) {
+    return {
+      contestId,
+      trackId,
+      problemStatement: project?.problemStatement || '',
+      innovationPointsText: arrayToLines(project?.innovationPoints),
+      techRouteStepsText: arrayToLines(project?.techRouteSteps),
+      scoringMappingText: arrayToLines(project?.scoringMapping),
+      risksText: arrayToLines(project?.risks),
+      deliverablesText: arrayToLines(project?.deliverables),
+      summary: project?.summary || '',
+    }
+  }
+
+  return {
+    contestId,
+    trackId,
+    problemStatement: adaptation.problemStatement || '',
+    innovationPointsText: arrayToLines(adaptation.innovationPoints),
+    techRouteStepsText: arrayToLines(adaptation.techRouteSteps),
+    scoringMappingText: arrayToLines(adaptation.scoringMapping),
+    risksText: arrayToLines(adaptation.risks),
+    deliverablesText: arrayToLines(adaptation.deliverables),
+    summary: adaptation.summary || '',
+  }
+}
+
+function cloneProjectAdaptationForm(value: WorkspaceProjectAdaptationForm): WorkspaceProjectAdaptationForm {
+  return {
+    contestId: value.contestId,
+    trackId: value.trackId,
+    problemStatement: value.problemStatement,
+    innovationPointsText: value.innovationPointsText,
+    techRouteStepsText: value.techRouteStepsText,
+    scoringMappingText: value.scoringMappingText,
+    risksText: value.risksText,
+    deliverablesText: value.deliverablesText,
+    summary: value.summary,
+  }
+}
+
+function cloneProjectContestBindings(value: WorkspaceProjectContestBindingForm[]): WorkspaceProjectContestBindingForm[] {
+  return value.map(item => ({
+    contestId: item.contestId,
+    trackId: item.trackId,
+    sortOrder: item.sortOrder,
+  }))
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -122,6 +248,70 @@ function resolveApiErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+function parseFileSizeFromResource(resource: Resource): number {
+  if (String(resource.sourceType || '').trim() !== 'project_upload')
+    return 0
+
+  const metadata = resource.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return 0
+
+  const rawSize = (metadata as Record<string, unknown>).fileSize
+  const size = Number(rawSize)
+  if (!Number.isFinite(size) || size <= 0)
+    return 0
+  return size
+}
+
+function validateUploadFiles(files: File[], usedBytes: number): string | null {
+  if (!files.length)
+    return '未检测到可上传文件。'
+
+  if (files.length > PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH) {
+    return `单次最多上传 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个文件。`
+  }
+
+  const invalidTypeFiles = files
+    .filter(file => !isProjectResourceUploadFileSupported(file.name))
+    .slice(0, 3)
+    .map(file => file.name)
+
+  if (invalidTypeFiles.length) {
+    return `文件格式不支持：${invalidTypeFiles.join('、')}。`
+  }
+
+  const oversizeFile = files.find(file => file.size > PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)
+  if (oversizeFile) {
+    return `文件过大：${oversizeFile.name}，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`
+  }
+
+  const incomingBytes = files.reduce((sum, file) => sum + Math.max(0, Number(file.size || 0)), 0)
+  if (usedBytes + incomingBytes > PROJECT_RESOURCE_STORAGE_LIMIT_BYTES) {
+    return `当前项目容量超限：上限 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`
+  }
+
+  return null
+}
+
+function resolveApiStatusCode(error: unknown): number {
+  if (!error || typeof error !== 'object')
+    return 0
+
+  const statusCode = Number((error as { statusCode?: number }).statusCode || 0)
+  if (Number.isFinite(statusCode) && statusCode > 0)
+    return statusCode
+
+  const responseStatus = Number((error as { response?: { status?: number } }).response?.status || 0)
+  if (Number.isFinite(responseStatus) && responseStatus > 0)
+    return responseStatus
+
+  const dataStatus = Number((error as { data?: { statusCode?: number } }).data?.statusCode || 0)
+  if (Number.isFinite(dataStatus) && dataStatus > 0)
+    return dataStatus
+
+  return 0
+}
+
 interface WorkspaceQuickSwitchProject {
   projectId: string
   workspaceId: string
@@ -129,6 +319,11 @@ interface WorkspaceQuickSwitchProject {
   workspaceName: string
   updatedAt: string
 }
+
+type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
+
+const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
+const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
 
 function parseTimestamp(value: string): number {
   const time = new Date(value).getTime()
@@ -156,6 +351,7 @@ const trackType = ref('')
 const topK = ref(6)
 
 const contests = ref<Contest[]>([])
+const contestCatalog = ref<Contest[]>([])
 const resources = ref<Resource[]>([])
 const resourceLibrary = ref<Resource[]>([])
 const projects = ref<Project[]>([])
@@ -165,12 +361,28 @@ const activeWorkspaceId = ref('')
 const selectedContestId = ref('')
 const selectedTrackId = ref('')
 
-const sidebarTab = ref<WorkspaceSidebarTab>('chat')
 const openSettingsSignal = ref(0)
+const openFlowSignal = ref(0)
 const headerSearch = ref('')
 const aiReasoning = ref('')
 const normalizedInfo = ref('')
 const statusLine = ref('')
+const projectSettingsLoading = ref(false)
+const projectSettingsSaveState = ref<WorkspaceProjectSaveState>('idle')
+const projectSettingsCommon = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
+const projectSettingsBindings = ref<WorkspaceProjectContestBindingForm[]>([])
+const projectSettingsCurrentContestId = ref('')
+const projectSettingsAdaptation = reactive<WorkspaceProjectAdaptationForm>(createEmptyProjectAdaptationForm())
+const projectSettingsAdaptationDrafts = ref<Record<string, WorkspaceProjectAdaptationForm>>({})
+const projectSettingsHydrating = ref(false)
+const projectSettingsCommonDirty = ref(false)
+const projectSettingsBindingsDirty = ref(false)
+const projectSettingsDirtyAdaptationContestIds = ref<string[]>([])
+const projectSettingsDraftServerRevision = ref<number | null>(null)
+const projectSettingsDraftDeviceId = ref('')
+
+let projectSettingsDraftTimer: ReturnType<typeof setTimeout> | null = null
+let projectSettingsDraftPersistSeq = 0
 
 const listLoading = ref(false)
 const aiFiltering = ref(false)
@@ -190,6 +402,115 @@ const aiMode = ref<WorkspaceAiMode>('project_chat')
 const topicProposals = ref<TopicProposalItem[]>([])
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
+
+function getProjectSettingsDraftStorageKey(projectId: string): string {
+  if (!import.meta.client)
+    return ''
+  const normalizedProjectId = String(projectId || '').trim()
+  const userId = String(me.value?.user.id || '').trim()
+  if (!normalizedProjectId || !userId)
+    return ''
+  return `${PROJECT_SETTINGS_DRAFT_PREFIX}.${userId}.${normalizedProjectId}`
+}
+
+function getProjectSettingsDraftDeviceStorageKey(): string {
+  if (!import.meta.client)
+    return ''
+  const userId = String(me.value?.user.id || '').trim()
+  if (!userId)
+    return ''
+  return `${PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX}.${userId}`
+}
+
+function generateProjectSettingsDraftDeviceId(): string {
+  if (import.meta.client && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+    return crypto.randomUUID()
+  return `draft-device-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function ensureProjectSettingsDraftDeviceId(): string {
+  if (!import.meta.client)
+    return ''
+  if (projectSettingsDraftDeviceId.value)
+    return projectSettingsDraftDeviceId.value
+
+  const key = getProjectSettingsDraftDeviceStorageKey()
+  if (!key)
+    return ''
+
+  try {
+    const cached = String(localStorage.getItem(key) || '').trim()
+    if (cached) {
+      projectSettingsDraftDeviceId.value = cached
+      return cached
+    }
+
+    const created = generateProjectSettingsDraftDeviceId()
+    localStorage.setItem(key, created)
+    projectSettingsDraftDeviceId.value = created
+    return created
+  }
+  catch {
+    const fallback = generateProjectSettingsDraftDeviceId()
+    projectSettingsDraftDeviceId.value = fallback
+    return fallback
+  }
+}
+
+function resetProjectSettingsDraftServerState() {
+  projectSettingsDraftServerRevision.value = null
+}
+
+function readProjectSettingsDraftCache(projectId: string): WorkspaceProjectSettingsDraftCache | null {
+  const key = getProjectSettingsDraftStorageKey(projectId)
+  if (!key)
+    return null
+
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw)
+      return null
+
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object')
+      return null
+
+    return normalizeProjectSettingsDraftCachePayload(parsed)
+  }
+  catch {
+    return null
+  }
+}
+
+function writeProjectSettingsDraftCache(projectId: string, payload: WorkspaceProjectSettingsDraftCache): boolean {
+  const key = getProjectSettingsDraftStorageKey(projectId)
+  if (!key)
+    return false
+
+  try {
+    const normalized = normalizeProjectSettingsDraftCachePayload(payload)
+    if (!normalized)
+      return false
+    localStorage.setItem(key, JSON.stringify(normalized))
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+function clearProjectSettingsDraftCache(projectId: string): void {
+  const key = getProjectSettingsDraftStorageKey(projectId)
+  if (!key)
+    return
+
+  try {
+    localStorage.removeItem(key)
+  }
+  catch {
+    // ignore local cache cleanup errors
+  }
+}
 
 function resetChatStateWithGreeting() {
   chatMessages.value = [defaultAssistantGreeting()]
@@ -212,8 +533,27 @@ const formState = reactive<WorkspaceFormState>({
   summary: '',
 })
 
-const selectedContest = computed(() => contests.value.find(contest => contest.id === selectedContestId.value) || null)
+const contestSource = computed(() => {
+  return contestCatalog.value.length > 0 ? contestCatalog.value : contests.value
+})
+const selectedContest = computed(() => contestSource.value.find(contest => contest.id === selectedContestId.value) || null)
 const selectedTrack = computed(() => selectedContest.value?.tracks.find(track => track.id === selectedTrackId.value) || null)
+const contestMap = computed(() => {
+  const map = new Map<string, Contest>()
+  for (const contest of contestSource.value)
+    map.set(contest.id, contest)
+  return map
+})
+const projectSettingsBindingMap = computed(() => {
+  const map = new Map<string, WorkspaceProjectContestBindingForm>()
+  for (const binding of projectSettingsBindings.value)
+    map.set(binding.contestId, binding)
+  return map
+})
+const projectSettingsHasCurrentContest = computed(() => {
+  const contestId = String(projectSettingsCurrentContestId.value || '').trim()
+  return Boolean(contestId && projectSettingsBindingMap.value.has(contestId))
+})
 const workspaceOptions = computed(() => me.value?.workspaces || [])
 const isAdminView = computed(() => Boolean(me.value?.user.isPlatformAdmin))
 const workspaceNameMap = computed(() => {
@@ -412,6 +752,10 @@ const tokenBalance = computed(() => {
   return 0
 })
 
+const projectUploadStorageUsedBytes = computed(() => {
+  return selectedResources.value.reduce((sum, resource) => sum + parseFileSizeFromResource(resource), 0)
+})
+
 const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value)
 
 const statusCursor = computed(() => {
@@ -423,9 +767,955 @@ const statusCursor = computed(() => {
   }
 })
 
+function mergeProjectIntoCollections(project: Project) {
+  const merge = (list: Project[]): Project[] => {
+    const index = list.findIndex(item => item.id === project.id)
+    if (index < 0)
+      return list
+
+    const next = [...list]
+    next[index] = project
+    return next
+  }
+
+  projects.value = merge(projects.value)
+  allProjects.value = merge(allProjects.value)
+}
+
+function resetProjectSettingsState(project: Project | null) {
+  projectSettingsHydrating.value = true
+  try {
+    Object.assign(projectSettingsCommon, createProjectCommonFormFromProject(project))
+    projectSettingsBindings.value = []
+    projectSettingsCurrentContestId.value = ''
+    Object.assign(projectSettingsAdaptation, createEmptyProjectAdaptationForm())
+    projectSettingsAdaptationDrafts.value = {}
+    projectSettingsCommonDirty.value = false
+    projectSettingsBindingsDirty.value = false
+    projectSettingsDirtyAdaptationContestIds.value = []
+    projectSettingsSaveState.value = 'idle'
+    projectSettingsDraftPersistSeq += 1
+    resetProjectSettingsDraftServerState()
+  }
+  finally {
+    projectSettingsHydrating.value = false
+  }
+}
+
+function clearProjectSettingsAutoTimers() {
+  if (!projectSettingsDraftTimer)
+    return
+  clearTimeout(projectSettingsDraftTimer)
+  projectSettingsDraftTimer = null
+}
+
+function markProjectSettingsAdaptationDirty(contestId: string) {
+  const normalizedContestId = String(contestId || '').trim()
+  if (!normalizedContestId)
+    return
+  if (projectSettingsDirtyAdaptationContestIds.value.includes(normalizedContestId))
+    return
+  projectSettingsDirtyAdaptationContestIds.value = [
+    ...projectSettingsDirtyAdaptationContestIds.value,
+    normalizedContestId,
+  ]
+}
+
+function clearProjectSettingsAdaptationDirty(contestId: string) {
+  const normalizedContestId = String(contestId || '').trim()
+  if (!normalizedContestId)
+    return
+  projectSettingsDirtyAdaptationContestIds.value = projectSettingsDirtyAdaptationContestIds.value
+    .filter(item => item !== normalizedContestId)
+}
+
+function isProjectSettingsAdaptationDirty(contestId: string): boolean {
+  const normalizedContestId = String(contestId || '').trim()
+  if (!normalizedContestId)
+    return false
+  return projectSettingsDirtyAdaptationContestIds.value.includes(normalizedContestId)
+}
+
+function upsertProjectSettingsAdaptationDraft(form: WorkspaceProjectAdaptationForm) {
+  const contestId = String(form.contestId || '').trim()
+  if (!contestId)
+    return
+  projectSettingsAdaptationDrafts.value = {
+    ...projectSettingsAdaptationDrafts.value,
+    [contestId]: cloneProjectAdaptationForm(form),
+  }
+}
+
+function buildProjectSettingsCommonPatch() {
+  return {
+    title: projectSettingsCommon.title.trim(),
+    summary: projectSettingsCommon.summary.trim(),
+    problemStatement: projectSettingsCommon.problemStatement.trim(),
+    innovationPoints: linesToArray(projectSettingsCommon.innovationPointsText),
+    techRouteSteps: linesToArray(projectSettingsCommon.techRouteStepsText),
+    scoringMapping: linesToArray(projectSettingsCommon.scoringMappingText),
+    risks: linesToArray(projectSettingsCommon.risksText),
+    deliverables: linesToArray(projectSettingsCommon.deliverablesText),
+  }
+}
+
+function buildProjectSettingsAdaptationPatch(form: WorkspaceProjectAdaptationForm) {
+  return {
+    problemStatement: form.problemStatement.trim(),
+    innovationPoints: linesToArray(form.innovationPointsText),
+    techRouteSteps: linesToArray(form.techRouteStepsText),
+    scoringMapping: linesToArray(form.scoringMappingText),
+    risks: linesToArray(form.risksText),
+    deliverables: linesToArray(form.deliverablesText),
+    summary: form.summary.trim(),
+  }
+}
+
+function normalizeProjectSettingsBindings(
+  rows: WorkspaceProjectContestBindingForm[],
+): WorkspaceProjectContestBindingForm[] {
+  const uniqueContestIds = new Set<string>()
+  const normalized: WorkspaceProjectContestBindingForm[] = []
+
+  for (const row of rows) {
+    const contestId = String(row.contestId || '').trim()
+    if (!contestId || uniqueContestIds.has(contestId))
+      continue
+
+    const contest = contestMap.value.get(contestId)
+    const rawTrackId = String(row.trackId || '').trim()
+    const resolvedTrackId = contest
+      ? (contest.tracks.find(track => track.id === rawTrackId)?.id || contest.tracks[0]?.id || '')
+      : rawTrackId
+
+    if (!resolvedTrackId)
+      continue
+
+    uniqueContestIds.add(contestId)
+    normalized.push({
+      contestId,
+      trackId: resolvedTrackId,
+      sortOrder: normalized.length,
+    })
+  }
+
+  return normalized
+}
+
+function ensureProjectSettingsCurrentContest(preferredContestId = ''): string {
+  const preferred = String(preferredContestId || '').trim()
+  const current = String(projectSettingsCurrentContestId.value || '').trim()
+  const selected = String(selectedContestId.value || '').trim()
+  const available = projectSettingsBindings.value
+
+  const fallbackContestId = (
+    (preferred && available.some(item => item.contestId === preferred) && preferred)
+    || (current && available.some(item => item.contestId === current) && current)
+    || (selected && available.some(item => item.contestId === selected) && selected)
+    || (available[0]?.contestId || '')
+  )
+
+  projectSettingsCurrentContestId.value = fallbackContestId
+  return fallbackContestId
+}
+
+function syncProjectSettingsAdaptationFormByContest(contestId: string) {
+  const normalizedContestId = String(contestId || '').trim()
+  if (!normalizedContestId) {
+    projectSettingsHydrating.value = true
+    try {
+      Object.assign(projectSettingsAdaptation, createEmptyProjectAdaptationForm())
+    }
+    finally {
+      projectSettingsHydrating.value = false
+    }
+    return
+  }
+
+  const binding = projectSettingsBindingMap.value.get(normalizedContestId)
+  if (!binding) {
+    projectSettingsHydrating.value = true
+    try {
+      Object.assign(projectSettingsAdaptation, createEmptyProjectAdaptationForm())
+    }
+    finally {
+      projectSettingsHydrating.value = false
+    }
+    return
+  }
+
+  const existing = projectSettingsAdaptationDrafts.value[normalizedContestId]
+  const nextDraft = existing
+    ? {
+        ...existing,
+        contestId: normalizedContestId,
+        trackId: binding.trackId,
+      }
+    : createProjectAdaptationFormFromSnapshot(
+        null,
+        activeProject.value,
+        normalizedContestId,
+        binding.trackId,
+      )
+
+  upsertProjectSettingsAdaptationDraft(nextDraft)
+
+  projectSettingsHydrating.value = true
+  try {
+    Object.assign(projectSettingsAdaptation, cloneProjectAdaptationForm(nextDraft))
+  }
+  finally {
+    projectSettingsHydrating.value = false
+  }
+}
+
+function applyProjectSettingsSnapshot(snapshot: ProjectSettingsSnapshot, preferredContestId = '') {
+  projectSettingsHydrating.value = true
+  try {
+    mergeProjectIntoCollections(snapshot.project)
+    Object.assign(projectSettingsCommon, createProjectCommonFormFromProject(snapshot.project))
+
+    const normalizedBindings = normalizeProjectSettingsBindings(
+      snapshot.contestBindings.map(item => ({
+        contestId: item.contestId,
+        trackId: item.trackId,
+        sortOrder: item.sortOrder,
+      })),
+    )
+
+    projectSettingsBindings.value = normalizedBindings
+
+    const allowedContestIds = new Set(normalizedBindings.map(item => item.contestId))
+    const keptDrafts: Record<string, WorkspaceProjectAdaptationForm> = {}
+    for (const [contestId, draft] of Object.entries(projectSettingsAdaptationDrafts.value)) {
+      if (allowedContestIds.has(contestId))
+        keptDrafts[contestId] = draft
+    }
+    projectSettingsAdaptationDrafts.value = keptDrafts
+
+    const adaptationContestId = String(snapshot.currentContestId || '').trim()
+    if (adaptationContestId) {
+      const adaptationBinding = projectSettingsBindingMap.value.get(adaptationContestId)
+      const nextAdaptation = createProjectAdaptationFormFromSnapshot(
+        snapshot.currentAdaptation,
+        snapshot.project,
+        adaptationContestId,
+        adaptationBinding?.trackId || '',
+      )
+      upsertProjectSettingsAdaptationDraft(nextAdaptation)
+    }
+
+    const nextContestId = ensureProjectSettingsCurrentContest(preferredContestId || adaptationContestId)
+    if (nextContestId)
+      selectedContestId.value = nextContestId
+    else if (!normalizedBindings.length)
+      selectedContestId.value = ''
+
+    const selectedBinding = projectSettingsBindingMap.value.get(nextContestId)
+    if (selectedBinding)
+      selectedTrackId.value = selectedBinding.trackId
+
+    syncProjectSettingsAdaptationFormByContest(nextContestId)
+
+    projectSettingsCommonDirty.value = false
+    projectSettingsBindingsDirty.value = false
+    if (nextContestId)
+      clearProjectSettingsAdaptationDirty(nextContestId)
+  }
+  finally {
+    projectSettingsHydrating.value = false
+  }
+}
+
+function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspaceProjectSettingsDraftCache | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    return null
+
+  const source = input as Record<string, unknown>
+  const normalizedBindings = normalizeProjectSettingsBindings(Array.isArray(source.bindings)
+    ? source.bindings as WorkspaceProjectContestBindingForm[]
+    : [])
+  const allowedContestIds = new Set(normalizedBindings.map(item => item.contestId))
+  const adaptationDrafts: Record<string, WorkspaceProjectAdaptationForm> = {}
+  const adaptationSource = source.adaptationDrafts && typeof source.adaptationDrafts === 'object' && !Array.isArray(source.adaptationDrafts)
+    ? source.adaptationDrafts as Record<string, unknown>
+    : {}
+
+  for (const [contestId, rawValue] of Object.entries(adaptationSource)) {
+    const normalizedContestId = String(contestId || '').trim()
+    if (!normalizedContestId || !allowedContestIds.has(normalizedContestId))
+      continue
+
+    const record = rawValue && typeof rawValue === 'object'
+      ? rawValue as Record<string, unknown>
+      : {}
+    const binding = normalizedBindings.find(item => item.contestId === normalizedContestId)
+    adaptationDrafts[normalizedContestId] = cloneProjectAdaptationForm({
+      contestId: normalizedContestId,
+      trackId: binding?.trackId || String(record.trackId || '').trim(),
+      problemStatement: String(record.problemStatement || ''),
+      innovationPointsText: String(record.innovationPointsText || ''),
+      techRouteStepsText: String(record.techRouteStepsText || ''),
+      scoringMappingText: String(record.scoringMappingText || ''),
+      risksText: String(record.risksText || ''),
+      deliverablesText: String(record.deliverablesText || ''),
+      summary: String(record.summary || ''),
+    })
+  }
+
+  const commonSource = source.common && typeof source.common === 'object' && !Array.isArray(source.common)
+    ? source.common as Record<string, unknown>
+    : {}
+  const currentContestIdRaw = String(source.currentContestId || '').trim()
+  const currentContestId = currentContestIdRaw && allowedContestIds.has(currentContestIdRaw)
+    ? currentContestIdRaw
+    : (normalizedBindings[0]?.contestId || '')
+
+  return {
+    updatedAt: String(source.updatedAt || '').trim() || new Date().toISOString(),
+    deviceId: String(source.deviceId || '').trim() || undefined,
+    common: {
+      title: String(commonSource.title || ''),
+      summary: String(commonSource.summary || ''),
+      problemStatement: String(commonSource.problemStatement || ''),
+      innovationPointsText: String(commonSource.innovationPointsText || ''),
+      techRouteStepsText: String(commonSource.techRouteStepsText || ''),
+      scoringMappingText: String(commonSource.scoringMappingText || ''),
+      risksText: String(commonSource.risksText || ''),
+      deliverablesText: String(commonSource.deliverablesText || ''),
+    },
+    bindings: normalizedBindings,
+    currentContestId,
+    adaptationDrafts,
+  }
+}
+
+function serializeProjectSettingsDraftCachePayload(payload: WorkspaceProjectSettingsDraftCache): string {
+  const adaptationEntries = Object.keys(payload.adaptationDrafts || {})
+    .sort((left, right) => left.localeCompare(right))
+    .map((contestId) => {
+      const item = payload.adaptationDrafts[contestId]
+      if (!item) {
+        return [
+          contestId,
+          createEmptyProjectAdaptationForm(contestId, ''),
+        ] as const
+      }
+      return [
+        contestId,
+        {
+          contestId: item.contestId,
+          trackId: item.trackId,
+          problemStatement: item.problemStatement,
+          innovationPointsText: item.innovationPointsText,
+          techRouteStepsText: item.techRouteStepsText,
+          scoringMappingText: item.scoringMappingText,
+          risksText: item.risksText,
+          deliverablesText: item.deliverablesText,
+          summary: item.summary,
+        },
+      ]
+    })
+
+  const comparable = {
+    common: payload.common,
+    bindings: [...payload.bindings].sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder)
+        return left.sortOrder - right.sortOrder
+      return left.contestId.localeCompare(right.contestId)
+    }),
+    currentContestId: payload.currentContestId,
+    adaptationDrafts: Object.fromEntries(adaptationEntries),
+  }
+
+  return JSON.stringify(comparable)
+}
+
+function isProjectSettingsDraftCacheEqual(
+  left: WorkspaceProjectSettingsDraftCache,
+  right: WorkspaceProjectSettingsDraftCache,
+): boolean {
+  return serializeProjectSettingsDraftCachePayload(left) === serializeProjectSettingsDraftCachePayload(right)
+}
+
+function buildProjectSettingsDraftCachePayload(): WorkspaceProjectSettingsDraftCache {
+  const currentContestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
+  const nextAdaptationDrafts = { ...projectSettingsAdaptationDrafts.value }
+  if (currentContestId) {
+    nextAdaptationDrafts[currentContestId] = cloneProjectAdaptationForm({
+      ...projectSettingsAdaptation,
+      contestId: currentContestId,
+      trackId: projectSettingsBindingMap.value.get(currentContestId)?.trackId || projectSettingsAdaptation.trackId,
+    })
+  }
+
+  return {
+    updatedAt: new Date().toISOString(),
+    deviceId: ensureProjectSettingsDraftDeviceId() || undefined,
+    common: cloneProjectCommonForm(projectSettingsCommon),
+    bindings: cloneProjectContestBindings(projectSettingsBindings.value),
+    currentContestId,
+    adaptationDrafts: nextAdaptationDrafts,
+  }
+}
+
+function applyProjectSettingsDraftCachePayload(
+  payload: WorkspaceProjectSettingsDraftCache,
+  saveState: WorkspaceProjectSaveState,
+): boolean {
+  const draft = normalizeProjectSettingsDraftCachePayload(payload)
+  if (!draft)
+    return false
+
+  const hasCommonDraft = Object.values(draft.common).some(value => String(value || '').trim().length > 0)
+  const normalizedBindings = normalizeProjectSettingsBindings(Array.isArray(draft.bindings) ? draft.bindings : [])
+  const allowedContestIds = new Set(normalizedBindings.map(item => item.contestId))
+  const nextAdaptationDrafts: Record<string, WorkspaceProjectAdaptationForm> = {}
+
+  for (const [contestId, form] of Object.entries(draft.adaptationDrafts || {})) {
+    if (!allowedContestIds.has(contestId))
+      continue
+    const binding = normalizedBindings.find(item => item.contestId === contestId)
+    nextAdaptationDrafts[contestId] = cloneProjectAdaptationForm({
+      contestId,
+      trackId: binding?.trackId || form.trackId,
+      problemStatement: String(form.problemStatement || ''),
+      innovationPointsText: String(form.innovationPointsText || ''),
+      techRouteStepsText: String(form.techRouteStepsText || ''),
+      scoringMappingText: String(form.scoringMappingText || ''),
+      risksText: String(form.risksText || ''),
+      deliverablesText: String(form.deliverablesText || ''),
+      summary: String(form.summary || ''),
+    })
+  }
+
+  const hasDraftContent = hasCommonDraft || normalizedBindings.length > 0 || Object.keys(nextAdaptationDrafts).length > 0
+  if (!hasDraftContent)
+    return false
+
+  projectSettingsHydrating.value = true
+  try {
+    Object.assign(projectSettingsCommon, createEmptyProjectCommonForm(), draft.common || {})
+
+    if (normalizedBindings.length > 0)
+      projectSettingsBindings.value = normalizedBindings
+
+    projectSettingsAdaptationDrafts.value = nextAdaptationDrafts
+
+    const preferredContestId = String(draft.currentContestId || '').trim()
+    const nextContestId = ensureProjectSettingsCurrentContest(preferredContestId)
+    if (nextContestId)
+      selectedContestId.value = nextContestId
+
+    const selectedBinding = projectSettingsBindingMap.value.get(nextContestId)
+    if (selectedBinding)
+      selectedTrackId.value = selectedBinding.trackId
+
+    syncProjectSettingsAdaptationFormByContest(nextContestId)
+
+    projectSettingsCommonDirty.value = hasCommonDraft
+    projectSettingsBindingsDirty.value = normalizedBindings.length > 0
+    projectSettingsDirtyAdaptationContestIds.value = Object.keys(nextAdaptationDrafts)
+    projectSettingsSaveState.value = saveState
+  }
+  finally {
+    projectSettingsHydrating.value = false
+  }
+  return true
+}
+
+function applyProjectSettingsDraftServerRecord(record: ProjectSettingsDraft | null): WorkspaceProjectSettingsDraftCache | null {
+  if (!record) {
+    resetProjectSettingsDraftServerState()
+    return null
+  }
+
+  projectSettingsDraftServerRevision.value = Number(record.revision || 0) || null
+
+  const normalized = normalizeProjectSettingsDraftCachePayload(record.payload)
+  if (!normalized)
+    return null
+
+  return {
+    ...normalized,
+    updatedAt: normalized.updatedAt || String(record.updatedAt || ''),
+    deviceId: normalized.deviceId || String(record.deviceId || ''),
+  }
+}
+
+async function fetchProjectSettingsDraftFromServer(projectId: string): Promise<WorkspaceProjectSettingsDraftCache | null> {
+  const response = await $fetch<ApiResponse<ProjectSettingsDraft | null>>(endpoint(`/projects/${projectId}/settings-draft`))
+  return applyProjectSettingsDraftServerRecord(response.data)
+}
+
+function pickProjectSettingsDraftForHydration(
+  localDraft: WorkspaceProjectSettingsDraftCache | null,
+  serverDraft: WorkspaceProjectSettingsDraftCache | null,
+): { draft: WorkspaceProjectSettingsDraftCache | null, source: 'local' | 'server' | '', hasConflict: boolean } {
+  if (!localDraft && !serverDraft)
+    return { draft: null, source: '', hasConflict: false }
+  if (localDraft && !serverDraft)
+    return { draft: localDraft, source: 'local', hasConflict: false }
+  if (!localDraft && serverDraft)
+    return { draft: serverDraft, source: 'server', hasConflict: false }
+
+  const left = localDraft!
+  const right = serverDraft!
+  const localTime = parseTimestamp(left.updatedAt)
+  const serverTime = parseTimestamp(right.updatedAt)
+  const source: 'local' | 'server' = localTime >= serverTime ? 'local' : 'server'
+  const draft = source === 'local' ? left : right
+  const samePayload = isProjectSettingsDraftCacheEqual(left, right)
+  const localDeviceId = String(left.deviceId || '').trim()
+  const serverDeviceId = String(right.deviceId || '').trim()
+  const hasConflict = !samePayload && (
+    (localDeviceId && serverDeviceId && localDeviceId !== serverDeviceId)
+    || (localTime > 0 && serverTime > 0 && localTime !== serverTime)
+  )
+
+  return {
+    draft,
+    source,
+    hasConflict,
+  }
+}
+
+async function loadProjectSettings(preferredContestId = '') {
+  if (!activeProjectId.value) {
+    resetProjectSettingsState(null)
+    return
+  }
+
+  const activeId = activeProjectId.value
+  projectSettingsLoading.value = true
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
+      endpoint(`/projects/${activeId}/settings`),
+      {
+        query: preferredContestId
+          ? { contestId: preferredContestId }
+          : undefined,
+      },
+    )
+
+    if (activeProjectId.value !== activeId)
+      return
+
+    applyProjectSettingsSnapshot(response.data, preferredContestId)
+
+    const localDraft = readProjectSettingsDraftCache(activeId)
+    let serverDraft: WorkspaceProjectSettingsDraftCache | null = null
+    try {
+      serverDraft = await fetchProjectSettingsDraftFromServer(activeId)
+    }
+    catch {
+      resetProjectSettingsDraftServerState()
+    }
+
+    if (activeProjectId.value !== activeId)
+      return
+
+    const picked = pickProjectSettingsDraftForHydration(localDraft, serverDraft)
+    if (!picked.draft)
+      return
+
+    const applied = applyProjectSettingsDraftCachePayload(
+      picked.draft,
+      picked.hasConflict ? 'conflict' : 'saved_auto',
+    )
+    if (!applied)
+      return
+
+    if (picked.source === 'server')
+      writeProjectSettingsDraftCache(activeId, picked.draft)
+
+    if (picked.hasConflict) {
+      statusLine.value = picked.source === 'local'
+        ? '检测到多端草稿差异，已优先使用本地较新草稿。'
+        : '检测到多端草稿差异，已优先使用云端较新草稿。'
+      return
+    }
+
+    statusLine.value = picked.source === 'server'
+      ? '已恢复云端草稿（未提交）。'
+      : '已恢复本地草稿（未提交）。'
+  }
+  catch (error) {
+    if (activeProjectId.value !== activeId)
+      return
+
+    resetProjectSettingsState(activeProject.value)
+    projectSettingsSaveState.value = 'error'
+    statusLine.value = resolveApiErrorMessage(error, '加载项目设置失败，请稍后重试。')
+  }
+  finally {
+    if (activeProjectId.value === activeId)
+      projectSettingsLoading.value = false
+  }
+}
+
+async function refreshProjectSettingsDraftServerRevision(projectId: string): Promise<void> {
+  try {
+    await fetchProjectSettingsDraftFromServer(projectId)
+  }
+  catch {
+    // ignore refresh failures
+  }
+}
+
+async function persistProjectSettingsDraftToServer(
+  projectId: string,
+  payload: WorkspaceProjectSettingsDraftCache,
+  persistSeq: number,
+): Promise<'success' | 'conflict' | 'error' | 'stale'> {
+  const expectedRevision = projectSettingsDraftServerRevision.value
+  const deviceId = ensureProjectSettingsDraftDeviceId()
+  const requestPayload: WorkspaceProjectSettingsDraftCache = {
+    ...payload,
+    deviceId: payload.deviceId || deviceId || undefined,
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectSettingsDraft>>(
+      endpoint(`/projects/${projectId}/settings-draft`),
+      {
+        method: 'PATCH',
+        body: {
+          payload: requestPayload,
+          expectedRevision,
+          deviceId,
+        },
+      },
+    )
+
+    if (activeProjectId.value !== projectId || persistSeq !== projectSettingsDraftPersistSeq)
+      return 'stale'
+
+    applyProjectSettingsDraftServerRecord(response.data)
+    return 'success'
+  }
+  catch (error) {
+    if (activeProjectId.value !== projectId || persistSeq !== projectSettingsDraftPersistSeq)
+      return 'stale'
+
+    if (resolveApiStatusCode(error) === 409) {
+      await refreshProjectSettingsDraftServerRevision(projectId)
+      if (activeProjectId.value === projectId && persistSeq === projectSettingsDraftPersistSeq) {
+        projectSettingsSaveState.value = 'conflict'
+        statusLine.value = '检测到多设备草稿冲突，已保留本地编辑。请再次保存或刷新后处理。'
+      }
+      return 'conflict'
+    }
+
+    return 'error'
+  }
+}
+
+async function persistProjectSettingsDraftCache() {
+  if (projectSettingsHydrating.value || !activeProjectId.value)
+    return
+
+  const projectId = activeProjectId.value
+  const persistSeq = ++projectSettingsDraftPersistSeq
+  const payload = buildProjectSettingsDraftCachePayload()
+  const localSuccess = writeProjectSettingsDraftCache(projectId, payload)
+  const serverResult = await persistProjectSettingsDraftToServer(projectId, payload, persistSeq)
+
+  if (activeProjectId.value !== projectId || persistSeq !== projectSettingsDraftPersistSeq)
+    return
+
+  if (serverResult === 'conflict')
+    return
+
+  if (!localSuccess && serverResult !== 'success') {
+    projectSettingsSaveState.value = 'error'
+    statusLine.value = '草稿缓存失败（可重试）'
+    return
+  }
+
+  projectSettingsSaveState.value = 'saved_auto'
+
+  if (localSuccess && serverResult === 'success') {
+    statusLine.value = '草稿已缓存（本地 + 云端，未提交）'
+    return
+  }
+  if (localSuccess && serverResult === 'error') {
+    statusLine.value = '草稿已本地缓存，云端同步失败（稍后重试）'
+    return
+  }
+  if (!localSuccess && serverResult === 'success') {
+    statusLine.value = '草稿已云端缓存，本地写入失败（可重试）'
+    return
+  }
+
+  statusLine.value = '草稿已自动缓存（未提交）'
+}
+
+function scheduleProjectSettingsDraftPersist() {
+  if (projectSettingsHydrating.value || !activeProjectId.value)
+    return
+
+  if (projectSettingsDraftTimer)
+    clearTimeout(projectSettingsDraftTimer)
+
+  projectSettingsDraftTimer = setTimeout(() => {
+    projectSettingsDraftTimer = null
+    void persistProjectSettingsDraftCache()
+  }, 1200)
+}
+
+async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cleared' | 'none' | 'conflict' | 'error'> {
+  const expectedRevision = projectSettingsDraftServerRevision.value
+  if (!expectedRevision)
+    return 'none'
+
+  try {
+    await $fetch<ApiResponse<ProjectSettingsDraft | null>>(
+      endpoint(`/projects/${projectId}/settings-draft`),
+      {
+        method: 'DELETE',
+        body: {
+          expectedRevision,
+        },
+      },
+    )
+    resetProjectSettingsDraftServerState()
+    return 'cleared'
+  }
+  catch (error) {
+    if (resolveApiStatusCode(error) === 409) {
+      await refreshProjectSettingsDraftServerRevision(projectId)
+      return 'conflict'
+    }
+    return 'error'
+  }
+}
+
+async function flushProjectSettingsSave(): Promise<boolean> {
+  if (!activeProjectId.value)
+    return true
+
+  if (!projectSettingsCommonDirty.value && !projectSettingsBindingsDirty.value)
+    return true
+
+  projectSettingsSaveState.value = 'saving'
+  statusLine.value = '保存中...'
+
+  try {
+    const body: Record<string, unknown> = {
+      currentContestId: projectSettingsCurrentContestId.value || selectedContestId.value || '',
+    }
+
+    if (projectSettingsCommonDirty.value)
+      body.common = buildProjectSettingsCommonPatch()
+    if (projectSettingsBindingsDirty.value)
+      body.contestBindings = cloneProjectContestBindings(projectSettingsBindings.value)
+
+    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
+      endpoint(`/projects/${activeProjectId.value}/settings`),
+      {
+        method: 'PATCH',
+        body,
+      },
+    )
+
+    applyProjectSettingsSnapshot(response.data, projectSettingsCurrentContestId.value || selectedContestId.value)
+    projectSettingsSaveState.value = 'saved_manual'
+    statusLine.value = '手动保存成功'
+    return true
+  }
+  catch (error) {
+    projectSettingsSaveState.value = 'error'
+    statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
+    return false
+  }
+}
+
+async function flushProjectAdaptationSave(
+  contestId: string,
+): Promise<boolean> {
+  const normalizedContestId = String(contestId || '').trim()
+  if (!activeProjectId.value || !normalizedContestId)
+    return true
+
+  if (!isProjectSettingsAdaptationDirty(normalizedContestId))
+    return true
+
+  const draft = projectSettingsAdaptationDrafts.value[normalizedContestId]
+  if (!draft)
+    return true
+
+  const preferredContestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
+  projectSettingsSaveState.value = 'saving'
+  statusLine.value = '保存中...'
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
+      endpoint(`/projects/${activeProjectId.value}/adaptations/${normalizedContestId}`),
+      {
+        method: 'PATCH',
+        body: buildProjectSettingsAdaptationPatch(draft),
+      },
+    )
+
+    applyProjectSettingsSnapshot(response.data, preferredContestId)
+    clearProjectSettingsAdaptationDirty(normalizedContestId)
+    projectSettingsSaveState.value = 'saved_manual'
+    statusLine.value = '手动保存成功'
+    return true
+  }
+  catch (error) {
+    projectSettingsSaveState.value = 'error'
+    statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
+    return false
+  }
+}
+
+async function saveProjectSettingsManually() {
+  clearProjectSettingsAutoTimers()
+
+  const commonSaved = await flushProjectSettingsSave()
+  if (!commonSaved)
+    return
+
+  const pendingContestIds = [...projectSettingsDirtyAdaptationContestIds.value]
+  for (const contestId of pendingContestIds) {
+    const saved = await flushProjectAdaptationSave(contestId)
+    if (!saved)
+      return
+  }
+
+  const projectId = activeProjectId.value
+  if (projectId)
+    clearProjectSettingsDraftCache(projectId)
+
+  const clearResult = projectId
+    ? await clearProjectSettingsDraftOnServer(projectId)
+    : 'none'
+
+  if (clearResult === 'conflict') {
+    projectSettingsSaveState.value = 'conflict'
+    statusLine.value = '项目已保存，但检测到其他设备有更新草稿，云端缓存未清除。'
+    return
+  }
+
+  if (clearResult === 'error') {
+    projectSettingsSaveState.value = 'error'
+    statusLine.value = '项目已保存，但清理云端草稿失败（可重试）。'
+    return
+  }
+
+  projectSettingsSaveState.value = 'saved_manual'
+  statusLine.value = '手动保存成功'
+}
+
+function onProjectSettingsCommonChange(next: WorkspaceProjectCommonForm) {
+  if (projectSettingsHydrating.value)
+    return
+  Object.assign(projectSettingsCommon, cloneProjectCommonForm(next))
+  projectSettingsCommonDirty.value = true
+  scheduleProjectSettingsDraftPersist()
+}
+
+function onProjectSettingsBindingsChange(next: WorkspaceProjectContestBindingForm[]) {
+  if (projectSettingsHydrating.value)
+    return
+
+  const normalized = normalizeProjectSettingsBindings(next)
+  projectSettingsBindings.value = normalized
+  projectSettingsBindingsDirty.value = true
+
+  const allowedContestIds = new Set(normalized.map(item => item.contestId))
+  const keptDrafts: Record<string, WorkspaceProjectAdaptationForm> = {}
+  for (const [contestId, draft] of Object.entries(projectSettingsAdaptationDrafts.value)) {
+    if (!allowedContestIds.has(contestId))
+      continue
+    const binding = normalized.find(item => item.contestId === contestId)
+    keptDrafts[contestId] = {
+      ...draft,
+      trackId: binding?.trackId || draft.trackId,
+    }
+  }
+  projectSettingsAdaptationDrafts.value = keptDrafts
+  projectSettingsDirtyAdaptationContestIds.value = projectSettingsDirtyAdaptationContestIds.value
+    .filter(contestId => allowedContestIds.has(contestId))
+
+  const nextContestId = ensureProjectSettingsCurrentContest(selectedContestId.value)
+  if (nextContestId)
+    selectedContestId.value = nextContestId
+  else if (!normalized.length)
+    selectedContestId.value = ''
+
+  const binding = projectSettingsBindingMap.value.get(nextContestId)
+  selectedTrackId.value = binding?.trackId || ''
+  syncProjectSettingsAdaptationFormByContest(nextContestId)
+  scheduleProjectSettingsDraftPersist()
+}
+
+function onProjectSettingsAdaptationChange(next: WorkspaceProjectAdaptationForm) {
+  if (projectSettingsHydrating.value)
+    return
+
+  const contestId = String(next.contestId || projectSettingsCurrentContestId.value || '').trim()
+  if (!contestId)
+    return
+
+  const binding = projectSettingsBindingMap.value.get(contestId)
+  if (!binding)
+    return
+
+  const nextDraft: WorkspaceProjectAdaptationForm = {
+    ...cloneProjectAdaptationForm(next),
+    contestId,
+    trackId: binding.trackId,
+  }
+
+  projectSettingsHydrating.value = true
+  try {
+    Object.assign(projectSettingsAdaptation, nextDraft)
+  }
+  finally {
+    projectSettingsHydrating.value = false
+  }
+
+  upsertProjectSettingsAdaptationDraft(nextDraft)
+  markProjectSettingsAdaptationDirty(contestId)
+  scheduleProjectSettingsDraftPersist()
+}
+
 watch(selectedContestId, (contestId) => {
-  const contest = contests.value.find(item => item.id === contestId)
-  selectedTrackId.value = contest?.tracks[0]?.id || ''
+  if (projectSettingsHydrating.value) {
+    syncFormContestTrack()
+    return
+  }
+
+  const normalizedContestId = String(contestId || '').trim()
+  if (!normalizedContestId) {
+    selectedTrackId.value = ''
+    projectSettingsCurrentContestId.value = ''
+    syncProjectSettingsAdaptationFormByContest('')
+    syncFormContestTrack()
+    return
+  }
+
+  const binding = projectSettingsBindingMap.value.get(normalizedContestId)
+  const contest = contestMap.value.get(normalizedContestId)
+  selectedTrackId.value = binding?.trackId || contest?.tracks[0]?.id || ''
+
+  if (!binding) {
+    projectSettingsCurrentContestId.value = ''
+    syncProjectSettingsAdaptationFormByContest('')
+    syncFormContestTrack()
+    return
+  }
+
+  const hasExistingDraft = Boolean(projectSettingsAdaptationDrafts.value[normalizedContestId])
+  projectSettingsCurrentContestId.value = normalizedContestId
+  syncProjectSettingsAdaptationFormByContest(normalizedContestId)
+  if (!hasExistingDraft && activeProjectId.value)
+    void loadProjectSettings(normalizedContestId)
+  syncFormContestTrack()
 })
 
 watch([selectedContestId, selectedTrackId], () => {
@@ -434,7 +1724,7 @@ watch([selectedContestId, selectedTrackId], () => {
 
 async function loadAuthContext(): Promise<boolean> {
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     me.value = response.data
     const targetWorkspaceId = routeWorkspaceId.value
 
@@ -453,6 +1743,7 @@ async function loadAuthContext(): Promise<boolean> {
     }
 
     activeWorkspaceId.value = targetWorkspaceId
+    ensureProjectSettingsDraftDeviceId()
 
     return true
   }
@@ -462,6 +1753,17 @@ async function loadAuthContext(): Promise<boolean> {
       query: { redirect: route.fullPath || '/workspace' },
     })
     return false
+  }
+}
+
+async function loadContestCatalog() {
+  try {
+    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'))
+    contestCatalog.value = response.data
+  }
+  catch {
+    if (contestCatalog.value.length === 0)
+      contestCatalog.value = contests.value
   }
 }
 
@@ -479,12 +1781,19 @@ async function loadContests() {
     })
 
     contests.value = response.data
+    const catalogMap = new Map<string, Contest>()
+    for (const contest of contestCatalog.value)
+      catalogMap.set(contest.id, contest)
+    for (const contest of response.data)
+      catalogMap.set(contest.id, contest)
+    contestCatalog.value = [...catalogMap.values()]
+
     const firstContest = contests.value[0]
     if (!selectedContestId.value && firstContest)
       selectedContestId.value = firstContest.id
 
     if (selectedContestId.value) {
-      const hit = contests.value.some(contest => contest.id === selectedContestId.value)
+      const hit = contestCatalog.value.some(contest => contest.id === selectedContestId.value)
       if (!hit)
         selectedContestId.value = contests.value[0]?.id || ''
     }
@@ -591,21 +1900,31 @@ async function addResourceFromLibrary(resourceId: string) {
   }
 }
 
-async function uploadResourceToProject(file: File) {
+async function uploadResourcesToProject(files: File[]) {
   if (!activeProjectId.value)
     return
 
+  const normalizedFiles = Array.from(files || []).filter(file => file instanceof File)
+  const validationError = validateUploadFiles(normalizedFiles, projectUploadStorageUsedBytes.value)
+  if (validationError) {
+    statusLine.value = validationError
+    return
+  }
+
   resourceMutating.value = true
   const formData = new FormData()
-  formData.set('file', file, file.name)
+  normalizedFiles.forEach((file) => {
+    formData.append('file', file, file.name)
+  })
 
   try {
-    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/upload`), {
+    const response = await $fetch<ApiResponse<{ uploadedCount?: number }>>(endpoint(`/projects/${activeProjectId.value}/resources/upload`), {
       method: 'POST',
       body: formData,
     })
     await refreshProjectResourceContext()
-    statusLine.value = `上传成功：${file.name}`
+    const uploadedCount = Math.max(0, Number(response.data?.uploadedCount || normalizedFiles.length))
+    statusLine.value = `上传成功：${uploadedCount} 个文件`
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
@@ -796,6 +2115,13 @@ async function runAiFilter() {
     })
 
     contests.value = response.data.contests
+    const catalogMap = new Map<string, Contest>()
+    for (const contest of contestCatalog.value)
+      catalogMap.set(contest.id, contest)
+    for (const contest of response.data.contests)
+      catalogMap.set(contest.id, contest)
+    contestCatalog.value = [...catalogMap.values()]
+
     aiReasoning.value = response.data.reasoning
     normalizedInfo.value = JSON.stringify(response.data.normalizedFilters, null, 2)
 
@@ -825,7 +2151,6 @@ function fillFormWithDraft(draft: ProjectPayload) {
   formState.risksText = arrayToLines(draft.risks)
   formState.deliverablesText = arrayToLines(draft.deliverables)
   formState.summary = draft.summary || ''
-  sidebarTab.value = 'submit'
 }
 
 function topicProposalToDraft(item: TopicProposalItem): ProjectPayload {
@@ -1093,13 +2418,16 @@ async function sendChatMessage() {
   }
 }
 
-async function submitProject() {
+async function submitProject(target?: { contestId?: string, trackId?: string }) {
   if (!activeWorkspaceId.value) {
     statusLine.value = '请先选择一个空间。'
     return
   }
 
-  if (!selectedContestId.value || !selectedTrackId.value) {
+  const contestId = String(target?.contestId || selectedContestId.value || '').trim()
+  const trackId = String(target?.trackId || selectedTrackId.value || '').trim()
+
+  if (!contestId || !trackId) {
     statusLine.value = '请先选择竞赛和赛道。'
     return
   }
@@ -1108,13 +2436,20 @@ async function submitProject() {
   statusLine.value = ''
 
   try {
+    const contestIds = projectSettingsBindings.value.length > 0
+      ? projectSettingsBindings.value.map(item => String(item.contestId || '').trim()).filter(Boolean)
+      : []
+
+    if (!contestIds.includes(contestId))
+      contestIds.unshift(contestId)
+
     const payload = {
       workspaceId: activeWorkspaceId.value,
       source: formState.source,
       title: formState.title.trim(),
-      contestId: selectedContestId.value,
-      trackId: selectedTrackId.value,
-      contestIds: selectedContestId.value ? [selectedContestId.value] : [],
+      contestId,
+      trackId,
+      contestIds,
       problemStatement: formState.problemStatement.trim(),
       innovationPoints: linesToArray(formState.innovationPointsText),
       techRouteSteps: linesToArray(formState.techRouteStepsText),
@@ -1131,7 +2466,6 @@ async function submitProject() {
 
     statusLine.value = `项目已创建：${response.data.title}`
     await Promise.all([loadProjects(), loadQuickSwitchProjects()])
-    sidebarTab.value = 'submit'
   }
   catch {
     statusLine.value = '项目创建失败，请检查字段是否完整。'
@@ -1139,10 +2473,6 @@ async function submitProject() {
   finally {
     formSubmitting.value = false
   }
-}
-
-function openProject(projectId: string) {
-  navigateTo(`/projects/${projectId}`)
 }
 
 async function switchProjectFromHeader(payload: { projectId: string, workspaceId: string }) {
@@ -1159,13 +2489,13 @@ async function switchProjectFromHeader(payload: { projectId: string, workspaceId
 }
 
 function openFinalReviewFromHeader() {
-  sidebarTab.value = 'submit'
-  statusLine.value = '已切换到终审视图。'
+  openFlowSignal.value += 1
+  statusLine.value = '已打开申报流程梳理，可按流程推进终审。'
 }
 
 function openSettingsFromLeftSidebar() {
   openSettingsSignal.value += 1
-  statusLine.value = '已打开设置页，可在中间区域配置当前详细信息。'
+  statusLine.value = '已打开项目设置页，可在中间区域配置项目底座与竞赛适配稿。'
 }
 
 onMounted(async () => {
@@ -1173,14 +2503,19 @@ onMounted(async () => {
   if (!ok)
     return
 
-  await Promise.all([loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
+  await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
   await refreshProjectResourceContext()
+  await loadProjectSettings(selectedContestId.value)
   syncFormContestTrack()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
       statusLine.value = `已定位项目：${target.title}`
   }
+})
+
+onBeforeUnmount(() => {
+  clearProjectSettingsAutoTimers()
 })
 
 watch(activeWorkspaceId, async (value, previous) => {
@@ -1213,8 +2548,9 @@ watch(routeWorkspaceId, async (value, previous) => {
     activeWorkspaceId.value = value
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
-  await Promise.all([loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
+  await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
   await refreshProjectResourceContext()
+  await loadProjectSettings(selectedContestId.value)
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -1226,7 +2562,14 @@ watch(activeProjectId, async (next, previous) => {
   if (next === previous)
     return
 
+  clearProjectSettingsAutoTimers()
   await refreshProjectResourceContext()
+  if (!next) {
+    resetProjectSettingsState(null)
+    return
+  }
+  resetProjectSettingsState(activeProject.value)
+  await loadProjectSettings(selectedContestId.value)
 })
 </script>
 
@@ -1265,7 +2608,7 @@ watch(activeProjectId, async (next, previous) => {
         @run-ai-filter="runAiFilter"
         @open-settings-panel="openSettingsFromLeftSidebar"
         @add-resource-from-library="addResourceFromLibrary"
-        @upload-resource="uploadResourceToProject"
+        @upload-resources="uploadResourcesToProject"
       />
 
       <WorkspaceMainPanel
@@ -1278,17 +2621,33 @@ watch(activeProjectId, async (next, previous) => {
         v-model:selected-contest-id="selectedContestId"
         :selected-contest="selectedContest"
         :selected-track="selectedTrack"
-        :contests="filteredContests"
+        :contests="contestSource"
+        :active-project="activeProject"
         :open-settings-signal="openSettingsSignal"
+        :open-flow-signal="openFlowSignal"
         :selected-resources="selectedResources"
         :mapping-rows="mappingRows"
         :keyword-cloud="keywordCloud"
         :trend-bars="trendBars"
+        :form-state="formState"
+        :form-submitting="formSubmitting"
         :tone-meta="toneMeta"
+        :project-settings-loading="projectSettingsLoading"
+        :project-settings-save-state="projectSettingsSaveState"
+        :project-settings-common="projectSettingsCommon"
+        :project-settings-bindings="projectSettingsBindings"
+        :project-settings-current-contest-id="projectSettingsCurrentContestId"
+        :project-settings-adaptation="projectSettingsAdaptation"
+        :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+        @update:form-state="Object.assign(formState, $event)"
+        @submit-project-for-contest="submitProject"
+        @update:project-settings-common="onProjectSettingsCommonChange"
+        @update:project-settings-bindings="onProjectSettingsBindingsChange"
+        @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
+        @save-project-settings="saveProjectSettingsManually"
       />
 
       <WorkspaceRightSidebar
-        v-model:sidebar-tab="sidebarTab"
         v-model:chat-input="chatInput"
         v-model:ai-mode="aiMode"
         :chat-sessions="chatSessions"
@@ -1301,22 +2660,14 @@ watch(activeProjectId, async (next, previous) => {
         :topic-proposals="topicProposals"
         :defense-rounds="defenseRounds"
         :defense-scorecard="defenseScorecard"
-        :normalized-info="normalizedInfo"
         :selected-contest="selectedContest"
         :selected-track="selectedTrack"
         :selected-resources="selectedResources"
-        :form-state="formState"
-        :form-submitting="formSubmitting"
-        :projects="projects"
-        :is-admin-view="isAdminView"
-        @update:form-state="Object.assign(formState, $event)"
         @send-chat="sendChatMessage"
         @switch-chat-session="switchChatSession"
         @create-chat-session="startNewChatSession"
         @fill-form="fillFormWithDraft"
         @apply-topic-proposal="applyTopicProposal"
-        @submit-project="submitProject"
-        @open-project="openProject"
       />
     </main>
 
@@ -1326,6 +2677,8 @@ watch(activeProjectId, async (next, previous) => {
       :ai-ready="!aiBusy"
       ai-model-label="由后端配置"
       :token-balance="tokenBalance"
+      :project-storage-used-bytes="projectUploadStorageUsedBytes"
+      :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
       :line="statusCursor.line"
       :column="statusCursor.column"
     />

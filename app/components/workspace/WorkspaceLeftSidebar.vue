@@ -24,6 +24,8 @@ interface OutlineItem {
   level: number
 }
 
+type ResourceSectionId = 'projectResources' | 'systemLibrary' | 'outline'
+
 const props = withDefaults(defineProps<{
   naturalQuery: string
   major: string
@@ -64,7 +66,7 @@ const emit = defineEmits<{
   'runAiFilter': []
   'openSettingsPanel': []
   'addResourceFromLibrary': [resourceId: string]
-  'uploadResource': [file: File]
+  'uploadResources': [files: File[]]
 }>()
 
 const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
@@ -91,9 +93,9 @@ const modules: WorkspaceLeftModule[] = [
   },
   {
     id: 'project_config',
-    title: '项目配置',
+    title: '项目分析',
     icon: 'manage_search',
-    hint: '偏好参数',
+    hint: '分析偏好与 AI 建议',
   },
 ]
 
@@ -123,10 +125,14 @@ const filterPresets: FilterPreset[] = [
 
 const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
 const activeResourceId = ref('')
-const activeOutlineId = ref('advantage')
-const isDragOver = ref(false)
-const libraryKeyword = ref('')
-const fileInputRef = ref<HTMLInputElement | null>(null)
+const activeOutlineId = ref('')
+const libraryModalKeyword = ref('')
+const libraryModalVisible = ref(false)
+const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
+  projectResources: true,
+  systemLibrary: true,
+  outline: true,
+})
 
 const showReason = ref(false)
 const showAdminDetails = ref(false)
@@ -135,40 +141,110 @@ const activeModuleMeta = computed<WorkspaceLeftModule>(() => {
   return modules.find(item => item.id === activeModule.value) ?? modules[0]!
 })
 
-const selectedContest = computed(() => {
-  return props.contests.find(contest => contest.id === props.selectedContestId) || null
-})
-
 const visibleResources = computed(() => props.selectedResources.slice(0, 10))
 const visibleLibraryResources = computed(() => {
-  const keyword = libraryKeyword.value.trim().toLowerCase()
+  const keyword = libraryModalKeyword.value.trim().toLowerCase()
   if (!keyword)
-    return props.resourceLibrary.slice(0, 10)
+    return props.resourceLibrary
 
   return props.resourceLibrary
     .filter((item) => {
       const context = [item.title, item.summary, item.type, item.year].join(' ').toLowerCase()
       return context.includes(keyword)
     })
-    .slice(0, 10)
 })
 
-const outlineItems = computed<OutlineItem[]>(() => {
-  const dynamicTail = selectedContest.value?.tracks?.slice(0, 2).map((track, index) => ({
-    id: `track-${track.id}`,
-    label: `${4 + index}. ${track.name}`,
-    level: 0,
-  })) || []
+function normalizeOutlineLabel(value: string): string {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/[：:;；，。,、]+$/g, '')
+    .trim()
+}
 
-  return [
-    { id: 'background', label: '1. 项目背景', level: 0 },
-    { id: 'pain', label: '2. 核心技术痛点', level: 0 },
-    { id: 'advantage', label: '3. 竞争优势分析', level: 0 },
-    { id: 'barrier', label: '3.1 技术壁垒', level: 1 },
-    { id: 'business-model', label: '3.2 商业模式', level: 1 },
-    ...dynamicTail,
-    { id: 'commercial', label: '6. 商业化路径', level: 0 },
-  ]
+function stripOutlineHeadingPrefix(value: string): string {
+  return normalizeOutlineLabel(value)
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^第[一二三四五六七八九十百千\d]+[章节部分篇]\s*/, '')
+    .replace(/^\d+(?:\.\d+){0,3}[、.．\s]+/, '')
+    .replace(/^[一二三四五六七八九十]+[、.．\s]+/, '')
+    .replace(/^[（(]?[一二三四五六七八九十\d]+[)）][、.．\s]*/, '')
+    .replace(/^[-*•]\s+/, '')
+    .trim()
+}
+
+function isHeadingLine(line: string): boolean {
+  if (!line)
+    return false
+
+  return /^#{1,6}\s+/.test(line)
+    || /^\d+(?:\.\d+){0,3}[、.．\s]+/.test(line)
+    || /^[一二三四五六七八九十]+[、.．\s]+/.test(line)
+    || /^第[一二三四五六七八九十百千\d]+[章节部分篇]\s*/.test(line)
+    || /^[（(]?[一二三四五六七八九十\d]+[)）][、.．\s]*/.test(line)
+    || /^[-*•]\s+/.test(line)
+}
+
+function extractResourceOutlineChildren(resource: Resource): string[] {
+  const source = [resource.summary, resource.content].map(value => String(value || '').trim()).filter(Boolean).join('\n')
+  if (!source)
+    return []
+
+  const title = normalizeOutlineLabel(resourceDisplayTitle(resource))
+  const titleKey = title.toLowerCase()
+  const dedupe = new Set<string>()
+  const result: string[] = []
+  const lines = source
+    .split(/\r?\n+/)
+    .map(item => normalizeOutlineLabel(item))
+    .filter(Boolean)
+
+  for (const line of lines) {
+    if (result.length >= 4)
+      break
+    if (line.length < 2 || line.length > 48)
+      continue
+    if (!isHeadingLine(line))
+      continue
+
+    const normalized = stripOutlineHeadingPrefix(line)
+    const dedupeKey = normalized.toLowerCase()
+    if (!normalized || normalized === title || dedupeKey === titleKey || dedupe.has(dedupeKey))
+      continue
+    if (normalized.length > 36)
+      continue
+
+    dedupe.add(dedupeKey)
+    result.push(normalized)
+  }
+
+  return result
+}
+
+const outlineItems = computed<OutlineItem[]>(() => {
+  const items: OutlineItem[] = []
+
+  visibleResources.value.forEach((resource, resourceIndex) => {
+    const topIndex = resourceIndex + 1
+    const topId = `resource-${resource.id || topIndex}`
+    const topLabel = normalizeOutlineLabel(resourceDisplayTitle(resource)) || `资料 ${topIndex}`
+
+    items.push({
+      id: topId,
+      label: `${topIndex}. ${topLabel}`,
+      level: 0,
+    })
+
+    const children = extractResourceOutlineChildren(resource)
+    children.forEach((childLabel, childIndex) => {
+      items.push({
+        id: `${topId}-child-${childIndex + 1}`,
+        label: `${topIndex}.${childIndex + 1} ${childLabel}`,
+        level: 1,
+      })
+    })
+  })
+
+  return items
 })
 
 const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
@@ -209,6 +285,27 @@ const compactHint = computed(() => {
   return '点击“AI筛选竞赛”后可查看分析结果。'
 })
 
+const analysisSuggestions = computed(() => {
+  const suggestions: string[] = []
+
+  if (!props.selectedContestId)
+    suggestions.push('先在“竞赛分析”中锁定至少 1 个目标竞赛与赛道。')
+
+  if (!hasReasoning.value)
+    suggestions.push('执行一次 AI 筛选，系统会输出可解释排序与推荐理由。')
+
+  if (hasReasoning.value)
+    suggestions.push('已得到 AI 分析结果，下一步建议进入“项目设置”补全项目底座与竞赛适配稿。')
+
+  if (props.selectedResources.length === 0)
+    suggestions.push('资料池当前为空，建议先在资源管理器补齐规则文档和往届样例。')
+
+  if (suggestions.length === 0)
+    suggestions.push('当前信息较完整，可直接进入 Dashboard 推进提交与终审准备。')
+
+  return suggestions.slice(0, 4)
+})
+
 function switchModule(moduleId: string) {
   if (!isWorkspaceLeftModuleId(moduleId))
     return
@@ -221,6 +318,10 @@ function selectResource(resourceId: string) {
 
 function selectOutline(itemId: string) {
   activeOutlineId.value = itemId
+}
+
+function toggleSection(sectionId: ResourceSectionId) {
+  sectionExpanded[sectionId] = !sectionExpanded[sectionId]
 }
 
 function openSettingsPanel() {
@@ -279,39 +380,19 @@ function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId 
   return value === 'resource_manager' || value === 'analysis' || value === 'project_config'
 }
 
-function triggerFilePicker() {
-  fileInputRef.value?.click()
-}
-
-function handleFile(file: File | null | undefined) {
-  if (!file || props.resourceMutating || !props.hasActiveProject)
+function openLibraryModal() {
+  if (props.resourceMutating)
     return
-  emit('uploadResource', file)
+
+  libraryModalKeyword.value = ''
+  libraryModalVisible.value = true
 }
 
-function onFileInputChange(event: Event) {
-  const target = event.target as HTMLInputElement
-  const file = target.files?.[0]
-  handleFile(file)
-  target.value = ''
-}
-
-function onDrop(event: DragEvent) {
-  event.preventDefault()
-  isDragOver.value = false
-  const file = event.dataTransfer?.files?.[0]
-  handleFile(file)
-}
-
-function onDragOver(event: DragEvent) {
-  event.preventDefault()
-  if (!props.hasActiveProject || props.resourceMutating)
+function handleResourceUpload(files: File[] | null | undefined) {
+  const normalizedFiles = Array.from(files || []).filter(file => file instanceof File)
+  if (!normalizedFiles.length || props.resourceMutating || !props.hasActiveProject)
     return
-  isDragOver.value = true
-}
-
-function onDragLeave() {
-  isDragOver.value = false
+  emit('uploadResources', normalizedFiles)
 }
 
 function addLibraryResource(resourceId: string) {
@@ -333,6 +414,19 @@ watch(() => props.selectedResources, (nextResources) => {
   activeResourceId.value = nextResources[0]?.id || ''
 }, { immediate: true, deep: true })
 
+watch(outlineItems, (nextItems) => {
+  if (!nextItems.length) {
+    activeOutlineId.value = ''
+    return
+  }
+
+  const stillExists = nextItems.some(item => item.id === activeOutlineId.value)
+  if (stillExists)
+    return
+
+  activeOutlineId.value = nextItems[0]?.id || ''
+}, { immediate: true })
+
 watch(() => props.aiFiltering, (next) => {
   if (!next)
     return
@@ -344,6 +438,12 @@ watch(hasReasoning, (next) => {
   if (next)
     return
   showReason.value = false
+})
+
+watch(() => props.hasActiveProject, (next) => {
+  if (next)
+    return
+  libraryModalVisible.value = false
 })
 
 onMounted(() => {
@@ -387,125 +487,152 @@ watch(activeModule, (value) => {
 
       <div class="workspace-left-panel__body no-scrollbar">
         <template v-if="activeModule === 'resource_manager'">
-          <section class="workspace-upload-block">
-            <input
-              ref="fileInputRef"
-              type="file"
-              class="workspace-upload-block__input"
-              @change="onFileInputChange"
-            >
+          <section class="workspace-tree-block">
+            <div class="workspace-tree-block__title-row">
+              <button
+                class="workspace-tree-block__title"
+                type="button"
+                :aria-expanded="sectionExpanded.projectResources"
+                @click="toggleSection('projectResources')"
+              >
+                <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.projectResources }">
+                  keyboard_arrow_down
+                </span>
+                <span>PROJECT_RESOURCES</span>
+              </button>
+              <button
+                class="workspace-tree-block__title-action"
+                type="button"
+                title="添加资源"
+                aria-label="添加资源"
+                :disabled="resourceMutating"
+                @click="openLibraryModal"
+              >
+                <span class="material-symbols-outlined">add</span>
+              </button>
+            </div>
 
-            <button
-              class="workspace-upload-block__drop"
-              :class="{
-                'workspace-upload-block__drop--active': isDragOver,
-                'workspace-upload-block__drop--disabled': !hasActiveProject || resourceMutating,
-              }"
-              type="button"
-              :disabled="!hasActiveProject || resourceMutating"
-              @click="triggerFilePicker"
-              @drop="onDrop"
-              @dragover="onDragOver"
-              @dragleave="onDragLeave"
-            >
-              <span class="material-symbols-outlined">upload_file</span>
-              <div>
-                <p>{{ resourceMutating ? '处理中...' : '拖拽文件到这里上传，或点击选择文件' }}</p>
-                <small>支持从本地添加到当前项目资源</small>
-              </div>
-            </button>
+            <div v-show="sectionExpanded.projectResources">
+              <button
+                v-for="resource in visibleResources"
+                :key="resource.id"
+                class="workspace-tree-item"
+                :class="{ 'workspace-tree-item--active': resource.id === activeResourceId }"
+                type="button"
+                @click="selectResource(resource.id)"
+              >
+                <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
+                  {{ resourceIcon(resource) }}
+                </span>
+                <span class="workspace-tree-item__label">{{ resourceDisplayTitle(resource) }}</span>
+              </button>
+
+              <p v-if="visibleResources.length === 0" class="workspace-empty-text">
+                暂无资源
+              </p>
+            </div>
           </section>
 
           <section class="workspace-tree-block">
-            <div class="workspace-tree-block__title">
-              <span class="material-symbols-outlined">keyboard_arrow_down</span>
-              <span>PROJECT_RESOURCES</span>
-            </div>
-
             <button
-              v-for="resource in visibleResources"
-              :key="resource.id"
-              class="workspace-tree-item"
-              :class="{ 'workspace-tree-item--active': resource.id === activeResourceId }"
+              class="workspace-tree-block__title"
               type="button"
-              @click="selectResource(resource.id)"
+              :aria-expanded="sectionExpanded.systemLibrary"
+              @click="toggleSection('systemLibrary')"
             >
-              <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
-                {{ resourceIcon(resource) }}
+              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.systemLibrary }">
+                keyboard_arrow_down
               </span>
-              <span class="workspace-tree-item__label">{{ resourceDisplayTitle(resource) }}</span>
+              <span>SYSTEM_LIBRARY</span>
             </button>
 
-            <p v-if="visibleResources.length === 0" class="workspace-empty-text">
-              {{ hasActiveProject ? '当前项目暂无资源。可拖拽上传，或从系统库手动添加。' : '请先创建或选择项目。' }}
-            </p>
+            <div v-show="sectionExpanded.systemLibrary" class="workspace-tree-block__content">
+              <p class="workspace-empty-text">
+                暂无资源
+              </p>
+            </div>
           </section>
 
           <section class="workspace-tree-block">
-            <div class="workspace-tree-block__title">
-              <span class="material-symbols-outlined">keyboard_arrow_down</span>
-              <span>SYSTEM_LIBRARY</span>
-            </div>
+            <button
+              class="workspace-tree-block__title"
+              type="button"
+              :aria-expanded="sectionExpanded.outline"
+              @click="toggleSection('outline')"
+            >
+              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.outline }">
+                keyboard_arrow_down
+              </span>
+              <span>OUTLINE (结构大纲)</span>
+            </button>
 
-            <div class="workspace-library-toolbar">
+            <div v-show="sectionExpanded.outline">
+              <button
+                v-for="item in outlineItems"
+                :key="item.id"
+                class="workspace-outline-item"
+                :class="[
+                  item.level > 0 ? 'workspace-outline-item--child' : '',
+                  activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
+                ]"
+                type="button"
+                @click="selectOutline(item.id)"
+              >
+                {{ item.label }}
+              </button>
+
+              <p v-if="outlineItems.length === 0" class="workspace-empty-text">
+                上传文件后自动生成大纲
+              </p>
+            </div>
+          </section>
+
+          <a-modal
+            v-model:visible="libraryModalVisible"
+            title="添加项目资源"
+            width="560px"
+            :footer="false"
+            :esc-to-close="!resourceMutating"
+            :mask-closable="!resourceMutating"
+          >
+            <div class="workspace-library-modal">
               <input
-                v-model="libraryKeyword"
+                v-model="libraryModalKeyword"
                 class="workspace-library-search"
                 placeholder="搜索系统库资源"
                 type="text"
               >
-            </div>
 
-            <div class="workspace-library-list no-scrollbar">
-              <div
-                v-for="item in visibleLibraryResources"
-                :key="item.id"
-                class="workspace-library-item"
-              >
-                <div class="workspace-library-item__content">
-                  <div class="workspace-library-item__title">
-                    {{ resourceDisplayTitle(item) }}
-                  </div>
-                  <div class="workspace-library-item__meta">
-                    {{ item.type }} · {{ item.year }}
-                  </div>
-                </div>
-                <button
-                  class="workspace-library-item__add"
-                  type="button"
-                  :disabled="resourceMutating || !hasActiveProject"
-                  @click="addLibraryResource(item.id)"
+              <div class="workspace-library-list no-scrollbar">
+                <div
+                  v-for="item in visibleLibraryResources"
+                  :key="item.id"
+                  class="workspace-library-item"
                 >
-                  添加
-                </button>
+                  <div class="workspace-library-item__content">
+                    <div class="workspace-library-item__title">
+                      {{ resourceDisplayTitle(item) }}
+                    </div>
+                    <div class="workspace-library-item__meta">
+                      {{ item.type }} · {{ item.year }}
+                    </div>
+                  </div>
+                  <button
+                    class="workspace-library-item__add"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click="addLibraryResource(item.id)"
+                  >
+                    添加
+                  </button>
+                </div>
               </div>
+
+              <p v-if="visibleLibraryResources.length === 0" class="workspace-empty-text workspace-empty-text--modal">
+                暂无资源
+              </p>
             </div>
-
-            <p v-if="visibleLibraryResources.length === 0" class="workspace-empty-text">
-              {{ hasActiveProject ? '系统库暂无可添加资源。' : '请先创建或选择项目。' }}
-            </p>
-          </section>
-
-          <section class="workspace-tree-block">
-            <div class="workspace-tree-block__title">
-              <span class="material-symbols-outlined">keyboard_arrow_down</span>
-              <span>OUTLINE (结构大纲)</span>
-            </div>
-
-            <button
-              v-for="item in outlineItems"
-              :key="item.id"
-              class="workspace-outline-item"
-              :class="[
-                item.level > 0 ? 'workspace-outline-item--child' : '',
-                activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
-              ]"
-              type="button"
-              @click="selectOutline(item.id)"
-            >
-              {{ item.label }}
-            </button>
-          </section>
+          </a-modal>
         </template>
 
         <template v-else-if="activeModule === 'analysis'">
@@ -611,7 +738,19 @@ watch(activeModule, (value) => {
 
         <template v-else>
           <section class="workspace-card">
-            <h3>项目配置</h3>
+            <h3>项目分析</h3>
+            <ul class="workspace-suggestion-list">
+              <li
+                v-for="(item, index) in analysisSuggestions"
+                :key="`suggestion-${index}-${item}`"
+              >
+                {{ item }}
+              </li>
+            </ul>
+          </section>
+
+          <section class="workspace-card">
+            <h3>分析参数</h3>
             <div class="workspace-form-grid">
               <input
                 :value="major"
@@ -690,6 +829,14 @@ watch(activeModule, (value) => {
           </section>
         </template>
       </div>
+
+      <WorkspaceResourceUploadHint
+        v-if="activeModule === 'resource_manager'"
+        class="workspace-left-panel__footer"
+        :busy="resourceMutating"
+        :disabled="!hasActiveProject || resourceMutating"
+        @select-files="handleResourceUpload"
+      />
     </section>
   </aside>
 </template>
@@ -765,81 +912,83 @@ watch(activeModule, (value) => {
   flex: 1;
 }
 
-.workspace-upload-block {
-  margin: 0 12px 10px;
-}
-
-.workspace-upload-block__input {
-  display: none;
-}
-
-.workspace-upload-block__drop {
-  width: 100%;
-  border: 1px dashed #b8c7e3;
-  background: #f7faff;
-  border-radius: 10px;
-  color: #3f567e;
-  padding: 10px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.workspace-upload-block__drop .material-symbols-outlined {
-  font-size: 22px;
-  color: #2f6af2;
-}
-
-.workspace-upload-block__drop p {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.workspace-upload-block__drop small {
-  display: block;
-  margin-top: 2px;
-  color: #7283a4;
-  font-size: 11px;
-}
-
-.workspace-upload-block__drop:hover {
-  border-color: #7ca3f8;
-  background: #edf4ff;
-}
-
-.workspace-upload-block__drop--active {
-  border-color: #2f6af2;
-  background: #e6efff;
-}
-
-.workspace-upload-block__drop--disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
+.workspace-left-panel__footer {
+  padding: 8px 12px 12px;
+  border-top: 1px solid #e2e8f2;
+  background: #ffffff;
+  flex-shrink: 0;
 }
 
 .workspace-tree-block {
   margin-bottom: 8px;
 }
 
+.workspace-tree-block__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 10px;
+}
+
 .workspace-tree-block__title {
+  width: 100%;
+  border: none;
+  background: transparent;
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.02em;
   color: #7888a2;
   padding: 4px 14px;
   text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-tree-block__title:hover {
+  color: #556888;
 }
 
 .workspace-tree-block__title .material-symbols-outlined {
   font-size: 18px;
+  transition: transform 0.2s ease;
+}
+
+.workspace-tree-block__arrow--collapsed {
+  transform: rotate(-90deg);
+}
+
+.workspace-tree-block__title-action {
+  border: 1px solid #d3dbe8;
+  background: #ffffff;
+  color: #43629c;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.workspace-tree-block__title-action:hover:enabled {
+  background: #edf3ff;
+}
+
+.workspace-tree-block__title-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.workspace-tree-block__title-action .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.workspace-tree-block__content {
+  padding-bottom: 6px;
 }
 
 .workspace-tree-item {
@@ -933,13 +1082,10 @@ watch(activeModule, (value) => {
 }
 
 .workspace-empty-text {
-  margin: 6px 14px 0;
+  margin: 6px 0 0;
   color: #9ba7bc;
   font-size: 12px;
-}
-
-.workspace-library-toolbar {
-  padding: 4px 14px 8px;
+  text-align: center;
 }
 
 .workspace-library-search {
@@ -962,6 +1108,22 @@ watch(activeModule, (value) => {
 .workspace-library-list {
   max-height: 196px;
   overflow-y: auto;
+}
+
+.workspace-library-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workspace-library-modal .workspace-library-list {
+  border: 1px solid #dbe2ef;
+  border-radius: 8px;
+  max-height: 300px;
+}
+
+.workspace-empty-text--modal {
+  margin: 0;
 }
 
 .workspace-library-item {
@@ -1033,6 +1195,17 @@ watch(activeModule, (value) => {
   color: #3b4a66;
   font-size: 13px;
   font-weight: 700;
+}
+
+.workspace-suggestion-list {
+  margin: 0;
+  padding: 0 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #4b5a75;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .workspace-textarea {
