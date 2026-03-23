@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Contest, ProjectOutlineNode, Resource } from '~~/shared/types/domain'
+import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config'
 
@@ -24,7 +25,12 @@ interface OutlineItem {
   level: number
 }
 
-type ResourceSectionId = 'projectResources' | 'recycleBin' | 'systemLibrary' | 'outline'
+interface ResourceAttributeField {
+  label: string
+  value: string
+}
+
+type ResourceSectionId = 'projectResources' | 'systemLibrary' | 'outline'
 
 const props = withDefaults(defineProps<{
   naturalQuery: string
@@ -39,6 +45,9 @@ const props = withDefaults(defineProps<{
   recycleResources?: Resource[]
   resourceLibrary?: Resource[]
   projectOutline?: ProjectOutlineNode[]
+  projectResourcesLoading?: boolean
+  resourceLibraryLoading?: boolean
+  projectOutlineLoading?: boolean
   resourceMutating?: boolean
   hasActiveProject?: boolean
   aiReasoning: string
@@ -47,15 +56,26 @@ const props = withDefaults(defineProps<{
   listLoading: boolean
   aiFiltering: boolean
   isAdminView?: boolean
+  activeMainTabId?: string
+  currentUserId?: string
+  currentUsername?: string
+  projectStorageLimitBytes?: number
 }>(), {
   selectedResources: () => [],
   recycleResources: () => [],
   resourceLibrary: () => [],
   projectOutline: () => [],
+  projectResourcesLoading: false,
+  resourceLibraryLoading: false,
+  projectOutlineLoading: false,
   resourceMutating: false,
   hasActiveProject: false,
   normalizedInfo: '',
   isAdminView: false,
+  activeMainTabId: '',
+  currentUserId: '',
+  currentUsername: '',
+  projectStorageLimitBytes: 0,
 })
 
 const emit = defineEmits<{
@@ -69,7 +89,11 @@ const emit = defineEmits<{
   'loadContests': []
   'runAiFilter': []
   'openSettingsPanel': []
+  'openFlowPanel': []
   'addResourceFromLibrary': [resourceId: string]
+  'openResource': [resourceId: string]
+  'downloadProjectResource': [resourceId: string]
+  'shareProjectResource': [resourceId: string]
   'removeProjectResource': [resourceId: string]
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
@@ -131,19 +155,23 @@ const filterPresets: FilterPreset[] = [
 ]
 
 const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
+const recyclePanelOpen = ref(false)
 const activeResourceId = ref('')
 const activeOutlineId = ref('')
 const resourceActionOpenId = ref('')
+const projectResourceAddMenuOpen = ref(false)
 const removeTargetResourceId = ref('')
 const removeResourceModalVisible = ref(false)
 const purgeTargetResourceId = ref('')
 const purgeResourceModalVisible = ref(false)
+const resourceDetailTargetId = ref('')
+const resourceDetailModalVisible = ref(false)
 const libraryModalKeyword = ref('')
 const libraryModalVisible = ref(false)
+const projectResourceUploadInputRef = ref<HTMLInputElement | null>(null)
 const sidebarPanelRef = ref<HTMLElement | null>(null)
 const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   projectResources: true,
-  recycleBin: true,
   systemLibrary: true,
   outline: true,
 })
@@ -151,9 +179,7 @@ const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
 const showReason = ref(false)
 const showAdminDetails = ref(false)
 
-const activeModuleMeta = computed<WorkspaceLeftModule>(() => {
-  return modules.find(item => item.id === activeModule.value) ?? modules[0]!
-})
+const suppressResourceSelection = computed(() => props.activeMainTabId === 'dashboard')
 
 const visibleResources = computed(() => props.selectedResources.slice(0, 10))
 const visibleRecycleResources = computed(() => props.recycleResources.slice(0, 20))
@@ -169,6 +195,10 @@ const visibleLibraryResources = computed(() => {
     })
 })
 
+const projectResourceSkeletonRows = [1, 2, 3, 4]
+const resourceLibrarySkeletonRows = [1, 2, 3]
+const projectOutlineSkeletonRows = [1, 2, 3, 4, 5]
+
 const recycleRetentionDays = 30
 
 const removeTargetResourceLabel = computed(() => {
@@ -183,6 +213,81 @@ const purgeTargetResourceLabel = computed(() => {
     return '该文件'
   const target = props.recycleResources.find(item => item.id === purgeTargetResourceId.value)
   return target ? resourceDisplayTitle(target) : '该文件'
+})
+
+const resourceDetailTarget = computed(() => {
+  const targetResourceId = String(resourceDetailTargetId.value || '').trim()
+  if (!targetResourceId)
+    return null
+  return props.selectedResources.find(item => item.id === targetResourceId) || null
+})
+
+const resourceDetailTitle = computed(() => {
+  const target = resourceDetailTarget.value
+  if (!target)
+    return '未选择资源'
+  return resourceDisplayTitle(target)
+})
+
+const resourceDetailRows = computed<ResourceAttributeField[]>(() => {
+  const target = resourceDetailTarget.value
+  if (!target)
+    return []
+
+  const uploadedAt = resolveResourceUploadedAt(target)
+  const createdAt = String(target.createdAt || '').trim()
+  const updatedAt = String(target.updatedAt || '').trim()
+
+  return [
+    {
+      label: '占用空间',
+      value: resourceStorageLabel(target),
+    },
+    {
+      label: '占项目总容量',
+      value: resourceProjectCapacityShareLabel(target),
+    },
+    {
+      label: '上传者',
+      value: resourceUploaderLabel(target),
+    },
+    {
+      label: '上传时间',
+      value: formatDateTime(uploadedAt),
+    },
+    {
+      label: '创建时间',
+      value: formatDateTime(createdAt),
+    },
+    {
+      label: '更新时间',
+      value: formatDateTime(updatedAt),
+    },
+    {
+      label: '文件名',
+      value: metadataFileName(target) || '-',
+    },
+    {
+      label: 'MIME 类型',
+      value: metadataMimeType(target) || '-',
+    },
+    {
+      label: '来源',
+      value: resourceSourceLabel(target),
+    },
+    {
+      label: '访问权限',
+      value: resourceAvailabilityLabel(target),
+    },
+    {
+      label: '预览状态',
+      value: resourcePreviewStatusLabel(target),
+    },
+    {
+      label: '资源 ID',
+      value: String(target.id || '-').trim() || '-',
+    },
+  ]
 })
 
 function normalizeOutlineLabel(value: string): string {
@@ -375,12 +480,26 @@ const analysisSuggestions = computed(() => {
 function switchModule(moduleId: string) {
   if (!isWorkspaceLeftModuleId(moduleId))
     return
+  recyclePanelOpen.value = false
+  projectResourceAddMenuOpen.value = false
   activeModule.value = moduleId
 }
 
 function selectResource(resourceId: string) {
   activeResourceId.value = resourceId
   resourceActionOpenId.value = ''
+}
+
+function openResource(resource: Resource) {
+  const resourceId = String(resource.id || '').trim()
+  if (!resourceId)
+    return
+  selectResource(resourceId)
+
+  const source = String(resource.source || resource.sourceType || '').trim()
+  const kind = String(resource.resourceKind || '').trim()
+  if (source === 'upload' || source === 'project_upload' || kind === 'binary')
+    emit('openResource', resourceId)
 }
 
 function selectOutline(itemId: string) {
@@ -395,6 +514,12 @@ function openSettingsPanel() {
   emit('openSettingsPanel')
 }
 
+function openRecycleBinPanel() {
+  recyclePanelOpen.value = true
+  projectResourceAddMenuOpen.value = false
+  resourceActionOpenId.value = ''
+}
+
 function onTopKInput(event: Event) {
   const target = event.target as HTMLInputElement
   const value = Number(target.value)
@@ -407,11 +532,89 @@ function applyFilterPreset(preset: FilterPreset) {
   emit('update:topK', preset.topK)
 }
 
+function metadataRecord(resource: Resource): Record<string, unknown> {
+  const metadata = resource.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return {}
+  return metadata as Record<string, unknown>
+}
+
+function normalizeMetadataString(resource: Resource, key: string): string {
+  const metadata = metadataRecord(resource)
+  return String(metadata[key] || '').trim()
+}
+
+function metadataFileName(resource: Resource): string {
+  return normalizeMetadataString(resource, 'fileName')
+}
+
+function metadataMimeType(resource: Resource): string {
+  return normalizeMetadataString(resource, 'mimeType').toLowerCase()
+}
+
+function metadataUploadedAt(resource: Resource): string {
+  return normalizeMetadataString(resource, 'uploadedAt')
+}
+
+function metadataUploader(resource: Resource): string {
+  const metadata = metadataRecord(resource)
+  const candidates = [
+    metadata.uploaderName,
+    metadata.uploadedByName,
+    metadata.uploader,
+    metadata.uploadedBy,
+  ]
+  for (const item of candidates) {
+    const value = String(item || '').trim()
+    if (value)
+      return value
+  }
+  return ''
+}
+
+function metadataFileSize(resource: Resource): number {
+  const metadata = metadataRecord(resource)
+  const fileSize = Number(metadata.fileSize)
+  if (!Number.isFinite(fileSize) || fileSize <= 0)
+    return 0
+  return Math.max(0, Math.floor(fileSize))
+}
+
+function extractExtension(text: string): string {
+  const value = String(text || '').trim().toLowerCase()
+  const dotIndex = value.lastIndexOf('.')
+  if (dotIndex < 0 || dotIndex === value.length - 1)
+    return ''
+  return value.slice(dotIndex + 1)
+}
+
+function resolveResourceExtension(resource: Resource): string {
+  const fileName = metadataFileName(resource)
+  const title = String(resource.title || '').trim()
+  const sourceLink = String(resource.sourceLink || '').trim()
+  return extractExtension(fileName) || extractExtension(title) || extractExtension(sourceLink)
+}
+
 function normalizeResourceType(resource: Resource): string {
   return String(resource.type || '').trim().toLowerCase()
 }
 
 function resourceIcon(resource: Resource): string {
+  const extension = resolveResourceExtension(resource)
+  const mimeType = metadataMimeType(resource)
+  if (extension === 'pdf' || mimeType.includes('pdf'))
+    return 'picture_as_pdf'
+  if (extension === 'doc' || extension === 'docx')
+    return 'description'
+  if (extension === 'xls' || extension === 'xlsx' || extension === 'csv')
+    return 'table_chart'
+  if (extension === 'ppt' || extension === 'pptx')
+    return 'slideshow'
+  if (extension === 'md' || extension === 'markdown' || extension === 'txt' || extension === 'json')
+    return 'article'
+  if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'webp')
+    return 'image'
+
   const type = normalizeResourceType(resource)
   if (type.includes('pdf'))
     return 'picture_as_pdf'
@@ -423,6 +626,21 @@ function resourceIcon(resource: Resource): string {
 }
 
 function resourceIconClass(resource: Resource): string {
+  const extension = resolveResourceExtension(resource)
+  const mimeType = metadataMimeType(resource)
+  if (extension === 'pdf' || mimeType.includes('pdf'))
+    return 'workspace-icon--pdf'
+  if (extension === 'doc' || extension === 'docx')
+    return 'workspace-icon--doc'
+  if (extension === 'xls' || extension === 'xlsx' || extension === 'csv')
+    return 'workspace-icon--table'
+  if (extension === 'ppt' || extension === 'pptx')
+    return 'workspace-icon--slide'
+  if (extension === 'md' || extension === 'markdown' || extension === 'txt' || extension === 'json')
+    return 'workspace-icon--text'
+  if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'webp')
+    return 'workspace-icon--image'
+
   const type = normalizeResourceType(resource)
   if (type.includes('pdf'))
     return 'workspace-icon--pdf'
@@ -443,19 +661,184 @@ function resourceDisplayTitle(resource: Resource): string {
   return '未命名文档'
 }
 
+function hasDownloadableSource(resource: Resource): boolean {
+  const sourceDownloadUrl = String(resource.sourceDownloadUrl || '').trim()
+  const sourceLink = String(resource.sourceLink || '').trim()
+  return Boolean(sourceDownloadUrl || sourceLink)
+}
+
+function hasPreviewableSource(resource: Resource): boolean {
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source === 'upload' || source === 'project_upload')
+    return true
+  if (String(resource.documentId || '').trim())
+    return true
+  if (String(resource.previewUrl || '').trim())
+    return true
+  return false
+}
+
+function resourceSourceLabel(resource: Resource): string {
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source === 'upload' || source === 'project_upload')
+    return '项目上传'
+  if (source === 'library')
+    return '系统资料库'
+  return source || '-'
+}
+
+function resourceAvailabilityLabel(resource: Resource): string {
+  const availability = String(resource.availability || '').trim()
+  if (availability === 'public')
+    return '公开'
+  if (availability === 'login_required')
+    return '登录后可见'
+  if (availability === 'unavailable')
+    return '不可访问'
+  return availability || '-'
+}
+
+function resourcePreviewStatusLabel(resource: Resource): string {
+  const status = String(resource.previewStatus || '').trim()
+  if (!status)
+    return '未生成'
+  if (status === 'queued')
+    return '排队中'
+  if (status === 'converting')
+    return '转换中'
+  if (status === 'finalizing')
+    return '整理中'
+  if (status === 'succeeded')
+    return '可预览'
+  if (status === 'failed')
+    return '预览失败'
+  return status
+}
+
+function resolveResourceUploadedAt(resource: Resource): string {
+  const fromMetadata = metadataUploadedAt(resource)
+  if (fromMetadata)
+    return fromMetadata
+  return String(resource.createdAt || '').trim()
+}
+
+function formatDateTime(value: string): string {
+  const normalized = String(value || '').trim()
+  if (!normalized)
+    return '-'
+
+  const date = new Date(normalized)
+  if (!Number.isFinite(date.getTime()))
+    return normalized
+
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function resourceUploaderLabel(resource: Resource): string {
+  const fromMetadata = metadataUploader(resource)
+  if (fromMetadata)
+    return fromMetadata
+
+  const createdBy = String(resource.createdBy || '').trim()
+  if (!createdBy)
+    return '-'
+
+  const currentUserId = String(props.currentUserId || '').trim()
+  if (currentUserId && createdBy === currentUserId) {
+    const currentUsername = String(props.currentUsername || '').trim()
+    return currentUsername ? `${currentUsername}（我）` : '我'
+  }
+
+  return createdBy
+}
+
+function resourceStorageLabel(resource: Resource): string {
+  const size = metadataFileSize(resource)
+  if (size > 0)
+    return formatFileSize(size)
+
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source === 'library')
+    return '0 B（系统库引用）'
+
+  return '未知'
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0)
+    return '0%'
+
+  const normalized = Math.max(0, value)
+  if (normalized >= 10)
+    return `${normalized.toFixed(1).replace(/\.0$/, '')}%`
+  return `${normalized.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`
+}
+
+function resourceProjectCapacityShareLabel(resource: Resource): string {
+  const limitBytes = Math.max(0, Number(props.projectStorageLimitBytes || 0))
+  const resourceSize = metadataFileSize(resource)
+  if (resourceSize <= 0 || limitBytes <= 0)
+    return '-'
+
+  const percentage = (resourceSize / limitBytes) * 100
+  return `${formatPercent(percentage)}（${formatFileSize(resourceSize)} / ${formatFileSize(limitBytes)}）`
+}
+
 function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId {
-  return value === 'resource_manager' || value === 'analysis' || value === 'project_config'
+  return value === 'resource_manager'
+    || value === 'analysis'
+    || value === 'project_config'
 }
 
 function openLibraryModal() {
-  if (props.resourceMutating)
+  if (props.resourceMutating || !props.hasActiveProject)
     return
 
   libraryModalKeyword.value = ''
   libraryModalVisible.value = true
 }
 
-function handleResourceUpload(files: File[] | null | undefined) {
+function toggleProjectResourceAddMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = !projectResourceAddMenuOpen.value
+}
+
+function openCollaborativeDocFromMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = false
+  emit('openSettingsPanel')
+}
+
+function openInfiniteCanvasFromMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = false
+  emit('openFlowPanel')
+}
+
+function openLibraryFromMenu() {
+  projectResourceAddMenuOpen.value = false
+  openLibraryModal()
+}
+
+function openLocalUploadFromMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = false
+  nextTick(() => {
+    projectResourceUploadInputRef.value?.click()
+  })
+}
+
+function handleProjectResourceUploadInputChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  handleResourceUpload(target.files)
+  target.value = ''
+}
+
+function handleResourceUpload(files: FileList | File[] | null | undefined) {
   const normalizedFiles = Array.from(files || []).filter(file => file instanceof File)
   if (!normalizedFiles.length || props.resourceMutating || !props.hasActiveProject)
     return
@@ -494,6 +877,49 @@ function requestRemoveResource(resourceId: string) {
   resourceActionOpenId.value = ''
   removeTargetResourceId.value = targetResourceId
   removeResourceModalVisible.value = true
+}
+
+function requestDownloadResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  resourceActionOpenId.value = ''
+  emit('downloadProjectResource', targetResourceId)
+}
+
+function requestPreviewResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  resourceActionOpenId.value = ''
+  activeResourceId.value = targetResourceId
+  emit('openResource', targetResourceId)
+}
+
+function requestShareResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  resourceActionOpenId.value = ''
+  emit('shareProjectResource', targetResourceId)
+}
+
+function requestViewResourceDetails(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId)
+    return
+
+  resourceActionOpenId.value = ''
+  resourceDetailTargetId.value = targetResourceId
+  resourceDetailModalVisible.value = true
+}
+
+function closeResourceDetailPanel() {
+  resourceDetailModalVisible.value = false
+  resourceDetailTargetId.value = ''
 }
 
 function closeRemoveResourceModal() {
@@ -574,20 +1000,27 @@ function recycleHint(resource: Resource): string {
 }
 
 function closeResourceActionMenuByOutside(event: PointerEvent) {
-  if (!resourceActionOpenId.value)
+  if (!resourceActionOpenId.value && !projectResourceAddMenuOpen.value)
     return
 
   const target = event.target as HTMLElement | null
-  if (target?.closest('.workspace-resource-actions') || target?.closest('.workspace-recycle-item__actions'))
+  if (
+    target?.closest('.workspace-resource-actions')
+    || target?.closest('.workspace-recycle-item__actions')
+    || target?.closest('.workspace-project-add-actions')
+  ) {
     return
+  }
 
   resourceActionOpenId.value = ''
+  projectResourceAddMenuOpen.value = false
 }
 
 function closeResourceActionMenuByEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape')
     return
   resourceActionOpenId.value = ''
+  projectResourceAddMenuOpen.value = false
 }
 
 watch(() => props.selectedResources, (nextResources) => {
@@ -597,8 +1030,15 @@ watch(() => props.selectedResources, (nextResources) => {
     removeTargetResourceId.value = ''
     removeResourceModalVisible.value = false
   }
+  if (resourceDetailTargetId.value && !nextResources.some(item => item.id === resourceDetailTargetId.value))
+    closeResourceDetailPanel()
 
   if (!nextResources.length) {
+    activeResourceId.value = ''
+    return
+  }
+
+  if (suppressResourceSelection.value) {
     activeResourceId.value = ''
     return
   }
@@ -609,6 +1049,23 @@ watch(() => props.selectedResources, (nextResources) => {
 
   activeResourceId.value = nextResources[0]?.id || ''
 }, { immediate: true, deep: true })
+
+watch(suppressResourceSelection, (next) => {
+  if (next) {
+    activeResourceId.value = ''
+    resourceActionOpenId.value = ''
+    return
+  }
+
+  if (!props.selectedResources.length)
+    return
+
+  const stillExists = props.selectedResources.some(item => item.id === activeResourceId.value)
+  if (stillExists)
+    return
+
+  activeResourceId.value = props.selectedResources[0]?.id || ''
+}, { immediate: true })
 
 watch(() => props.recycleResources, (nextResources) => {
   if (purgeTargetResourceId.value && !nextResources.some(item => item.id === purgeTargetResourceId.value)) {
@@ -647,7 +1104,9 @@ watch(() => props.hasActiveProject, (next) => {
   if (next)
     return
   libraryModalVisible.value = false
+  projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
+  closeResourceDetailPanel()
   removeTargetResourceId.value = ''
   removeResourceModalVisible.value = false
   purgeTargetResourceId.value = ''
@@ -657,12 +1116,14 @@ watch(() => props.hasActiveProject, (next) => {
 watch(() => sectionExpanded.projectResources, (expanded) => {
   if (expanded)
     return
+  projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
 })
 
 watch(() => props.resourceMutating, (next) => {
   if (!next)
     return
+  projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
 })
 
@@ -700,23 +1161,65 @@ onBeforeUnmount(() => {
     <WorkspaceLeftRail
       :items="modules"
       :active-id="activeModule"
+      :recycle-active="recyclePanelOpen"
       @select="switchModule"
+      @open-recycle-bin="openRecycleBinPanel"
       @open-settings="openSettingsPanel"
     />
 
     <section class="workspace-left-panel">
-      <header class="workspace-left-panel__header">
-        <div>
-          <h2>{{ activeModuleMeta.title }}</h2>
-          <p>{{ activeModuleMeta.hint }}</p>
-        </div>
-        <button class="workspace-left-panel__more" title="更多操作" aria-label="更多操作" type="button">
-          <span class="material-symbols-outlined">more_horiz</span>
-        </button>
-      </header>
-
       <div class="workspace-left-panel__body no-scrollbar">
-        <template v-if="activeModule === 'resource_manager'">
+        <template v-if="recyclePanelOpen">
+          <section class="workspace-tree-block workspace-tree-block--recycle-panel">
+            <header class="workspace-recycle-panel__header">
+              <span class="material-symbols-outlined">delete</span>
+              <h3>项目回收站</h3>
+            </header>
+            <p class="workspace-recycle-panel__hint">
+              删除后文件默认保留 30 天，你可在此恢复文件或彻底删除。
+            </p>
+
+            <div
+              v-for="resource in visibleRecycleResources"
+              :key="`recycle-${resource.id}`"
+              class="workspace-recycle-item"
+            >
+              <div class="workspace-recycle-item__content">
+                <div class="workspace-recycle-item__title" :title="resourceDisplayTitle(resource)">
+                  {{ resourceDisplayTitle(resource) }}
+                </div>
+                <div class="workspace-recycle-item__meta">
+                  {{ recycleHint(resource) }}
+                </div>
+              </div>
+
+              <div class="workspace-recycle-item__actions">
+                <button
+                  class="workspace-recycle-item__action workspace-recycle-item__action--ghost"
+                  type="button"
+                  :disabled="resourceMutating || !hasActiveProject"
+                  @click="restoreRecycleResource(resource.id)"
+                >
+                  恢复
+                </button>
+                <button
+                  class="workspace-recycle-item__action workspace-recycle-item__action--danger"
+                  type="button"
+                  :disabled="resourceMutating || !hasActiveProject"
+                  @click="requestPurgeRecycleResource(resource.id)"
+                >
+                  彻底删除
+                </button>
+              </div>
+            </div>
+
+            <p v-if="visibleRecycleResources.length === 0" class="workspace-empty-text">
+              暂无已删除文件
+            </p>
+          </section>
+        </template>
+
+        <template v-else-if="activeModule === 'resource_manager'">
           <section class="workspace-tree-block">
             <div class="workspace-tree-block__title-row">
               <button
@@ -730,127 +1233,178 @@ onBeforeUnmount(() => {
                 </span>
                 <span>项目资料</span>
               </button>
-              <button
-                class="workspace-tree-block__title-action"
-                type="button"
-                title="添加资源"
-                aria-label="添加资源"
-                :disabled="resourceMutating"
-                @click="openLibraryModal"
-              >
-                <span class="material-symbols-outlined">add</span>
-              </button>
+              <div class="workspace-project-add-actions">
+                <input
+                  ref="projectResourceUploadInputRef"
+                  class="workspace-project-add-actions__input"
+                  type="file"
+                  multiple
+                  :accept="PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR"
+                  @change="handleProjectResourceUploadInputChange"
+                >
+                <button
+                  class="workspace-tree-block__title-action"
+                  type="button"
+                  title="添加资源"
+                  aria-label="添加资源"
+                  :aria-expanded="projectResourceAddMenuOpen"
+                  :disabled="resourceMutating || !hasActiveProject"
+                  @click.stop="toggleProjectResourceAddMenu"
+                >
+                  <span class="material-symbols-outlined">add</span>
+                </button>
+                <div
+                  v-if="projectResourceAddMenuOpen"
+                  class="workspace-project-add-actions__menu"
+                  role="menu"
+                >
+                  <button
+                    class="workspace-project-add-actions__menu-item"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click.stop="openCollaborativeDocFromMenu"
+                  >
+                    新建协作文档
+                  </button>
+                  <button
+                    class="workspace-project-add-actions__menu-item"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click.stop="openInfiniteCanvasFromMenu"
+                  >
+                    新建无边画布
+                  </button>
+                  <div class="workspace-project-add-actions__divider" />
+                  <button
+                    class="workspace-project-add-actions__menu-item"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click.stop="openLibraryFromMenu"
+                  >
+                    从系统资源库导入
+                  </button>
+                  <button
+                    class="workspace-project-add-actions__menu-item"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click.stop="openLocalUploadFromMenu"
+                  >
+                    从本地设备中上传
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div v-show="sectionExpanded.projectResources">
-              <div
-                v-for="resource in visibleResources"
-                :key="resource.id"
-                class="workspace-tree-item-row"
-                :class="{
-                  'workspace-tree-item-row--active': resource.id === activeResourceId,
-                  'workspace-tree-item-row--menu-open': resourceActionOpenId === resource.id,
-                }"
-                @contextmenu="handleResourceItemContextMenu(resource.id, $event)"
-              >
-                <button
-                  class="workspace-tree-item"
-                  :class="{ 'workspace-tree-item--active': resource.id === activeResourceId }"
-                  type="button"
-                  @click="selectResource(resource.id)"
+              <template v-if="projectResourcesLoading">
+                <div
+                  v-for="row in projectResourceSkeletonRows"
+                  :key="`resource-skeleton-${row}`"
+                  class="workspace-tree-item-row workspace-tree-item-row--skeleton"
+                  aria-hidden="true"
                 >
-                  <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
-                    {{ resourceIcon(resource) }}
-                  </span>
-                  <span class="workspace-tree-item__label" :title="resourceDisplayTitle(resource)">{{ resourceDisplayTitle(resource) }}</span>
-                </button>
-
-                <div class="workspace-resource-actions">
+                  <div class="workspace-tree-item workspace-tree-item--skeleton">
+                    <span class="workspace-tree-item__icon-skeleton workspace-skeleton" />
+                    <span class="workspace-tree-item__content-skeleton">
+                      <span class="workspace-tree-item__label-skeleton workspace-skeleton" />
+                      <span class="workspace-tree-item__meta-skeleton workspace-skeleton" />
+                    </span>
+                    <span class="workspace-tree-item__action-skeleton workspace-skeleton" />
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <div
+                  v-for="resource in visibleResources"
+                  :key="resource.id"
+                  class="workspace-tree-item-row"
+                  :class="{
+                    'workspace-tree-item-row--active': !suppressResourceSelection && resource.id === activeResourceId,
+                    'workspace-tree-item-row--menu-open': resourceActionOpenId === resource.id,
+                  }"
+                  @contextmenu="handleResourceItemContextMenu(resource.id, $event)"
+                >
                   <button
-                    class="workspace-resource-actions__trigger"
+                    class="workspace-tree-item"
+                    :class="{ 'workspace-tree-item--active': !suppressResourceSelection && resource.id === activeResourceId }"
+                    :title="resourceDisplayTitle(resource)"
                     type="button"
-                    title="资源操作"
-                    aria-label="资源操作"
-                    :disabled="resourceMutating || !hasActiveProject"
-                    @click.stop="toggleResourceActionMenu(resource.id)"
+                    @click="openResource(resource)"
                   >
-                    <span class="material-symbols-outlined">more_horiz</span>
+                    <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
+                      {{ resourceIcon(resource) }}
+                    </span>
+                    <span class="workspace-tree-item__label">{{ resourceDisplayTitle(resource) }}</span>
                   </button>
 
-                  <div
-                    v-if="resourceActionOpenId === resource.id"
-                    class="workspace-resource-actions__menu"
-                    role="menu"
-                  >
+                  <div class="workspace-resource-actions">
                     <button
-                      class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
+                      class="workspace-resource-actions__trigger"
                       type="button"
+                      title="资源操作"
+                      aria-label="资源操作"
                       :disabled="resourceMutating || !hasActiveProject"
-                      @click.stop="requestRemoveResource(resource.id)"
+                      @click.stop="toggleResourceActionMenu(resource.id)"
                     >
-                      删除文件
+                      <span class="material-symbols-outlined">more_horiz</span>
                     </button>
+
+                    <div
+                      v-if="resourceActionOpenId === resource.id"
+                      class="workspace-resource-actions__menu"
+                      role="menu"
+                    >
+                      <button
+                        v-if="hasDownloadableSource(resource)"
+                        class="workspace-resource-actions__menu-item"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click.stop="requestDownloadResource(resource.id)"
+                      >
+                        下载原文件
+                      </button>
+                      <div v-if="hasDownloadableSource(resource)" class="workspace-resource-actions__divider" />
+                      <button
+                        class="workspace-resource-actions__menu-item"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(resource)"
+                        @click.stop="requestPreviewResource(resource.id)"
+                      >
+                        预览
+                      </button>
+                      <button
+                        class="workspace-resource-actions__menu-item"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(resource)"
+                        @click.stop="requestShareResource(resource.id)"
+                      >
+                        分享
+                      </button>
+                      <button
+                        class="workspace-resource-actions__menu-item"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click.stop="requestViewResourceDetails(resource.id)"
+                      >
+                        文档属性
+                      </button>
+                      <div class="workspace-resource-actions__divider" />
+                      <button
+                        class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click.stop="requestRemoveResource(resource.id)"
+                      >
+                        删除文件
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <p v-if="visibleResources.length === 0" class="workspace-empty-text">
-                暂无资源
-              </p>
-            </div>
-          </section>
-
-          <section class="workspace-tree-block">
-            <button
-              class="workspace-tree-block__title"
-              type="button"
-              :aria-expanded="sectionExpanded.recycleBin"
-              @click="toggleSection('recycleBin')"
-            >
-              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.recycleBin }">
-                keyboard_arrow_down
-              </span>
-              <span>项目回收站</span>
-            </button>
-
-            <div v-show="sectionExpanded.recycleBin">
-              <div
-                v-for="resource in visibleRecycleResources"
-                :key="`recycle-${resource.id}`"
-                class="workspace-recycle-item"
-              >
-                <div class="workspace-recycle-item__content">
-                  <div class="workspace-recycle-item__title" :title="resourceDisplayTitle(resource)">
-                    {{ resourceDisplayTitle(resource) }}
-                  </div>
-                  <div class="workspace-recycle-item__meta">
-                    {{ recycleHint(resource) }}
-                  </div>
-                </div>
-
-                <div class="workspace-recycle-item__actions">
-                  <button
-                    class="workspace-recycle-item__action workspace-recycle-item__action--ghost"
-                    type="button"
-                    :disabled="resourceMutating || !hasActiveProject"
-                    @click="restoreRecycleResource(resource.id)"
-                  >
-                    恢复
-                  </button>
-                  <button
-                    class="workspace-recycle-item__action workspace-recycle-item__action--danger"
-                    type="button"
-                    :disabled="resourceMutating || !hasActiveProject"
-                    @click="requestPurgeRecycleResource(resource.id)"
-                  >
-                    彻底删除
-                  </button>
-                </div>
-              </div>
-
-              <p v-if="visibleRecycleResources.length === 0" class="workspace-empty-text">
-                暂无已删除文件
-              </p>
+                <p v-if="visibleResources.length === 0" class="workspace-empty-text">
+                  暂无资源
+                </p>
+              </template>
             </div>
           </section>
 
@@ -868,7 +1422,24 @@ onBeforeUnmount(() => {
             </button>
 
             <div v-show="sectionExpanded.systemLibrary" class="workspace-tree-block__content">
-              <p class="workspace-empty-text">
+              <template v-if="resourceLibraryLoading">
+                <div
+                  v-for="row in resourceLibrarySkeletonRows"
+                  :key="`library-skeleton-${row}`"
+                  class="workspace-library-skeleton-item"
+                  aria-hidden="true"
+                >
+                  <div class="workspace-library-skeleton-item__left">
+                    <span class="workspace-library-skeleton-item__icon workspace-skeleton" />
+                    <div class="workspace-library-skeleton-item__content">
+                      <div class="workspace-library-skeleton-item__title workspace-skeleton" />
+                      <div class="workspace-library-skeleton-item__meta workspace-skeleton" />
+                    </div>
+                  </div>
+                  <span class="workspace-library-skeleton-item__action workspace-skeleton" />
+                </div>
+              </template>
+              <p v-else class="workspace-empty-text">
                 暂无资源
               </p>
             </div>
@@ -888,24 +1459,38 @@ onBeforeUnmount(() => {
             </button>
 
             <div v-show="sectionExpanded.outline">
-              <button
-                v-for="item in outlineItems"
-                :key="item.id"
-                class="workspace-outline-item"
-                :class="[
-                  item.level > 0 ? 'workspace-outline-item--child' : '',
-                  activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
-                ]"
-                type="button"
-                :title="item.label"
-                @click="selectOutline(item.id)"
-              >
-                {{ item.label }}
-              </button>
+              <template v-if="projectOutlineLoading">
+                <div
+                  v-for="row in projectOutlineSkeletonRows"
+                  :key="`outline-skeleton-${row}`"
+                  class="workspace-outline-skeleton-row"
+                  :class="{ 'workspace-outline-skeleton-row--child': row % 2 === 0 }"
+                  aria-hidden="true"
+                >
+                  <span class="workspace-outline-skeleton__dot workspace-skeleton" />
+                  <div class="workspace-outline-skeleton workspace-skeleton" />
+                </div>
+              </template>
+              <template v-else>
+                <button
+                  v-for="item in outlineItems"
+                  :key="item.id"
+                  class="workspace-outline-item"
+                  :class="[
+                    item.level > 0 ? 'workspace-outline-item--child' : '',
+                    activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
+                  ]"
+                  type="button"
+                  :title="item.label"
+                  @click="selectOutline(item.id)"
+                >
+                  {{ item.label }}
+                </button>
 
-              <p v-if="outlineItems.length === 0" class="workspace-empty-text">
-                上传文件后自动生成大纲
-              </p>
+                <p v-if="outlineItems.length === 0" class="workspace-empty-text">
+                  上传文件后自动生成大纲
+                </p>
+              </template>
             </div>
           </section>
 
@@ -1029,8 +1614,35 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </a-modal>
-        </template>
 
+          <a-modal
+            v-model:visible="resourceDetailModalVisible"
+            title="文档属性"
+            width="520px"
+            :footer="false"
+            :esc-to-close="true"
+            :mask-closable="true"
+            @cancel="closeResourceDetailPanel"
+          >
+            <div class="workspace-resource-detail">
+              <div class="workspace-resource-detail__title" :title="resourceDetailTitle">
+                {{ resourceDetailTitle }}
+              </div>
+
+              <a-descriptions :column="1" bordered size="small">
+                <a-descriptions-item v-for="item in resourceDetailRows" :key="item.label" :label="item.label">
+                  <span class="workspace-resource-detail__value" :title="item.value">{{ item.value }}</span>
+                </a-descriptions-item>
+              </a-descriptions>
+
+              <div class="workspace-resource-detail__actions">
+                <a-button size="small" @click="closeResourceDetailPanel">
+                  关闭
+                </a-button>
+              </div>
+            </div>
+          </a-modal>
+        </template>
         <template v-else-if="activeModule === 'analysis'">
           <section class="workspace-card">
             <h3>AI 竞赛分析</h3>
@@ -1227,7 +1839,7 @@ onBeforeUnmount(() => {
       </div>
 
       <WorkspaceResourceUploadHint
-        v-if="activeModule === 'resource_manager'"
+        v-if="activeModule === 'resource_manager' && !recyclePanelOpen"
         class="workspace-left-panel__footer"
         :busy="resourceMutating"
         :disabled="!hasActiveProject || resourceMutating"
@@ -1261,47 +1873,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.workspace-left-panel__header {
-  border-bottom: 1px solid #e2e8f2;
-  padding: 16px 16px 12px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  background: #ffffff;
-}
-
-.workspace-left-panel__header h2 {
-  font-size: 16px;
-  line-height: 1.2;
-  font-weight: 700;
-  color: #3b4d6d;
-  margin: 0;
-}
-
-.workspace-left-panel__header p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #8a97ae;
-}
-
-.workspace-left-panel__more {
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: #8a95ab;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.workspace-left-panel__more:hover {
-  background: #f2f5fa;
-  color: #4a5e83;
-}
-
 .workspace-left-panel__body {
   padding: 10px 0 14px;
   overflow-y: auto;
@@ -1319,11 +1890,48 @@ onBeforeUnmount(() => {
   margin-bottom: 8px;
 }
 
+.workspace-tree-block--recycle-panel {
+  margin-bottom: 0;
+}
+
+.workspace-recycle-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 0;
+  color: #5b6f92;
+}
+
+.workspace-recycle-panel__header .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.workspace-recycle-panel__header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workspace-recycle-panel__hint {
+  margin: 4px 14px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8b98ad;
+}
+
 .workspace-tree-block__title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding-right: 10px;
+}
+
+.workspace-project-add-actions {
+  position: relative;
+}
+
+.workspace-project-add-actions__input {
+  display: none;
 }
 
 .workspace-tree-block__title {
@@ -1383,8 +1991,71 @@ onBeforeUnmount(() => {
   font-size: 16px;
 }
 
+.workspace-project-add-actions__menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  min-width: 168px;
+  border: 1px solid #d6deec;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(31, 45, 70, 0.14);
+  padding: 4px;
+  z-index: 24;
+}
+
+.workspace-project-add-actions__menu-item {
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #475977;
+  min-height: 30px;
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.workspace-project-add-actions__menu-item:hover:enabled {
+  background: #edf2fb;
+}
+
+.workspace-project-add-actions__menu-item:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.workspace-project-add-actions__divider {
+  height: 1px;
+  background: #e6ecf6;
+  margin: 4px 6px;
+}
+
 .workspace-tree-block__content {
   padding-bottom: 6px;
+}
+
+.workspace-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #e7edf7;
+}
+
+.workspace-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.82), transparent);
+  animation: workspace-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes workspace-skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .workspace-tree-item-row {
@@ -1416,6 +2087,61 @@ onBeforeUnmount(() => {
   color: #2f4368;
 }
 
+.workspace-tree-item-row--skeleton .workspace-tree-item--skeleton {
+  cursor: default;
+  pointer-events: none;
+}
+
+.workspace-tree-item--skeleton {
+  gap: 10px;
+  align-items: center;
+}
+
+.workspace-tree-item__icon-skeleton {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.workspace-tree-item__content-skeleton {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.workspace-tree-item__label-skeleton {
+  height: 11px;
+  width: 78%;
+}
+
+.workspace-tree-item__meta-skeleton {
+  height: 8px;
+  width: 48%;
+  border-radius: 999px;
+}
+
+.workspace-tree-item__action-skeleton {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.workspace-tree-item-row--skeleton:nth-child(2n) .workspace-tree-item__label-skeleton {
+  width: 66%;
+}
+
+.workspace-tree-item-row--skeleton:nth-child(3n) .workspace-tree-item__label-skeleton {
+  width: 72%;
+}
+
+.workspace-tree-item-row--skeleton:nth-child(2n) .workspace-tree-item__meta-skeleton {
+  width: 40%;
+}
+
 .workspace-tree-item__icon {
   font-size: 18px;
   width: 18px;
@@ -1424,7 +2150,8 @@ onBeforeUnmount(() => {
 }
 
 .workspace-tree-item__label {
-  font-size: 14px;
+  font-size: 12px;
+  line-height: 1.3;
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -1483,13 +2210,19 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 28px;
   right: 0;
-  min-width: 116px;
+  min-width: 136px;
   border: 1px solid #d6deec;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 12px 24px rgba(31, 45, 70, 0.14);
   padding: 4px;
   z-index: 20;
+}
+
+.workspace-resource-actions__divider {
+  height: 1px;
+  background: #e6ecf6;
+  margin: 4px 6px;
 }
 
 .workspace-resource-actions__menu-item {
@@ -1598,6 +2331,105 @@ onBeforeUnmount(() => {
 
 .workspace-icon--pdf {
   color: #f04d4d;
+}
+
+.workspace-icon--slide {
+  color: #f97316;
+}
+
+.workspace-icon--text {
+  color: #0f766e;
+}
+
+.workspace-icon--image {
+  color: #7c3aed;
+}
+
+.workspace-library-skeleton-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+}
+
+.workspace-library-skeleton-item__left {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace-library-skeleton-item__icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.workspace-library-skeleton-item__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-library-skeleton-item__title {
+  height: 11px;
+  width: 64%;
+}
+
+.workspace-library-skeleton-item__meta {
+  margin-top: 6px;
+  height: 8px;
+  width: 40%;
+  border-radius: 999px;
+}
+
+.workspace-library-skeleton-item__action {
+  width: 36px;
+  height: 18px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.workspace-library-skeleton-item:nth-child(2n) .workspace-library-skeleton-item__title {
+  width: 58%;
+}
+
+.workspace-library-skeleton-item:nth-child(3n) .workspace-library-skeleton-item__meta {
+  width: 34%;
+}
+
+.workspace-outline-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+}
+
+.workspace-outline-skeleton-row--child {
+  padding-left: 36px;
+}
+
+.workspace-outline-skeleton__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.workspace-outline-skeleton {
+  height: 10px;
+  width: 76%;
+  border-radius: 999px;
+}
+
+.workspace-outline-skeleton-row:nth-child(2n) .workspace-outline-skeleton {
+  width: 62%;
+}
+
+.workspace-outline-skeleton-row:nth-child(3n) .workspace-outline-skeleton {
+  width: 70%;
 }
 
 .workspace-outline-item {
@@ -1797,6 +2629,31 @@ onBeforeUnmount(() => {
 .workspace-delete-modal__btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.workspace-resource-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace-resource-detail__title {
+  margin: 0;
+  color: #344866;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.workspace-resource-detail__value {
+  color: #415373;
+  word-break: break-all;
+}
+
+.workspace-resource-detail__actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .workspace-card {

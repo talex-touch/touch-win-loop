@@ -8,21 +8,22 @@ interface WorkspaceLeftRailItem {
 withDefaults(defineProps<{
   items?: WorkspaceLeftRailItem[]
   activeId?: string
+  recycleActive?: boolean
 }>(), {
   items: () => [],
   activeId: '',
+  recycleActive: false,
 })
 
 const emit = defineEmits<{
   select: [id: string]
+  openRecycleBin: []
   openSettings: []
 }>()
 </script>
 
 <template>
   <div class="workspace-left-rail">
-    <div class="workspace-left-rail__decor" aria-hidden="true" />
-
     <nav class="workspace-left-rail__menu" aria-label="工作区左侧导航">
       <button
         v-for="item in items"
@@ -41,16 +42,30 @@ const emit = defineEmits<{
       </button>
     </nav>
 
-    <button
-      class="workspace-left-rail__setting"
-      title="打开设置面板"
-      aria-label="打开设置面板"
-      data-tooltip="打开设置面板"
-      type="button"
-      @click="emit('openSettings')"
-    >
-      <span class="material-symbols-outlined">settings</span>
-    </button>
+    <div class="workspace-left-rail__footer">
+      <button
+        class="workspace-left-rail__shortcut"
+        :class="{ 'workspace-left-rail__shortcut--active': recycleActive }"
+        title="打开项目回收站"
+        aria-label="打开项目回收站"
+        data-tooltip="打开项目回收站"
+        type="button"
+        @click="emit('openRecycleBin')"
+      >
+        <span class="material-symbols-outlined">delete</span>
+      </button>
+
+      <button
+        class="workspace-left-rail__setting"
+        title="打开设置面板"
+        aria-label="打开设置面板"
+        data-tooltip="打开设置面板"
+        type="button"
+        @click="emit('openSettings')"
+      >
+        <span class="material-symbols-outlined">settings</span>
+      </button>
+    </div>
   </div>
 </template>
 
@@ -66,20 +81,19 @@ const emit = defineEmits<{
   position: relative;
 }
 
-.workspace-left-rail__decor {
-  height: 12px;
-  margin: 12px auto 8px;
-  width: 20px;
-  border-top: 1px solid #ced7e8;
-  border-bottom: 1px solid #e2e7f1;
-  opacity: 1;
-}
-
 .workspace-left-rail__menu {
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 4px 7px 0;
+}
+
+.workspace-left-rail__footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 7px 12px;
 }
 
 .workspace-left-rail__item {
@@ -98,7 +112,10 @@ const emit = defineEmits<{
 }
 
 .workspace-left-rail__item .material-symbols-outlined {
-  font-size: 26px;
+  width: 32px;
+  height: 32px;
+  font-size: 32px;
+  line-height: 32px;
 }
 
 .workspace-left-rail__item:hover {
@@ -122,15 +139,13 @@ const emit = defineEmits<{
   background: #8fa1be;
 }
 
+.workspace-left-rail__shortcut,
 .workspace-left-rail__setting {
-  margin-top: auto;
-  margin-bottom: 12px;
-  margin-inline: 7px;
+  position: relative;
   width: 48px;
   height: 48px;
   border: none;
   border-radius: 12px;
-  color: #7c8ca6;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -139,8 +154,25 @@ const emit = defineEmits<{
   transition: all 0.2s ease;
 }
 
+.workspace-left-rail__shortcut .material-symbols-outlined,
 .workspace-left-rail__setting .material-symbols-outlined {
-  font-size: 26px;
+  width: 32px;
+  height: 32px;
+  font-size: 32px;
+  line-height: 32px;
+}
+
+.workspace-left-rail__shortcut {
+  color: #d04a4a;
+}
+
+.workspace-left-rail__setting {
+  color: #7c8ca6;
+}
+
+.workspace-left-rail__shortcut:hover {
+  color: #b52f2f;
+  background: #fff0f0;
 }
 
 .workspace-left-rail__setting:hover {
@@ -148,7 +180,13 @@ const emit = defineEmits<{
   background: #f5f8fd;
 }
 
+.workspace-left-rail__shortcut--active {
+  color: #a92323;
+  background: #ffe4e4;
+}
+
 .workspace-left-rail__item[data-tooltip]::after,
+.workspace-left-rail__shortcut[data-tooltip]::after,
 .workspace-left-rail__setting[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
@@ -169,6 +207,7 @@ const emit = defineEmits<{
 }
 
 .workspace-left-rail__item[data-tooltip]:hover::after,
+.workspace-left-rail__shortcut[data-tooltip]:hover::after,
 .workspace-left-rail__setting[data-tooltip]:hover::after {
   opacity: 1;
 }
