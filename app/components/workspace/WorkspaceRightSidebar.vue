@@ -3,19 +3,17 @@ import type {
   AiChatSession,
   AiDefenseJudgeRound,
   AiDefenseScorecard,
+  AiProjectChangeRequest,
   ChatMessage,
   Contest,
-  Project,
-  ProjectPayload,
+  ProjectIssue,
+  ProjectIssueReport,
   Resource,
-  TopicProposalItem,
   Track,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
-import type { WorkspaceFormState, WorkspaceSidebarTab } from '~/types/workspace'
 
 const props = withDefaults(defineProps<{
-  sidebarTab?: WorkspaceSidebarTab
   chatSessions?: AiChatSession[]
   activeChatSessionId?: string
   chatSessionsLoading?: boolean
@@ -23,129 +21,164 @@ const props = withDefaults(defineProps<{
   chatInput?: string
   chatLoading?: boolean
   aiMode?: WorkspaceAiMode
-  chatDraft?: ProjectPayload | null
-  chatMissingFields?: string[]
-  topicProposals?: TopicProposalItem[]
+  changeRequests?: AiProjectChangeRequest[]
+  changeRequestsLoading?: boolean
+  issueReport?: ProjectIssueReport | null
+  projectIssues?: ProjectIssue[]
+  issueLoading?: boolean
+  changeActingIds?: string[]
+  changeSecondConfirmIds?: string[]
   defenseRounds?: AiDefenseJudgeRound[]
   defenseScorecard?: AiDefenseScorecard | null
-  normalizedInfo?: string
   selectedContest?: Contest | null
   selectedTrack?: Track | null
   selectedResources?: Resource[]
-  formState: WorkspaceFormState
-  formSubmitting?: boolean
-  projects?: Project[]
-  isAdminView?: boolean
 }>(), {
-  sidebarTab: 'chat',
   chatSessions: () => [],
   activeChatSessionId: '',
   chatSessionsLoading: false,
   chatMessages: () => [],
   chatInput: '',
   chatLoading: false,
-  aiMode: 'project_chat',
-  chatDraft: null,
-  chatMissingFields: () => [],
-  topicProposals: () => [],
+  aiMode: 'dialog_ask',
+  changeRequests: () => [],
+  changeRequestsLoading: false,
+  issueReport: null,
+  projectIssues: () => [],
+  issueLoading: false,
+  changeActingIds: () => [],
+  changeSecondConfirmIds: () => [],
   defenseRounds: () => [],
   defenseScorecard: null,
-  normalizedInfo: '',
   selectedContest: null,
   selectedTrack: null,
   selectedResources: () => [],
-  formSubmitting: false,
-  projects: () => [],
-  isAdminView: false,
 })
 
 const emit = defineEmits<{
-  'update:sidebarTab': [value: WorkspaceSidebarTab]
   'update:chatInput': [value: string]
   'update:aiMode': [value: WorkspaceAiMode]
-  'update:formState': [value: WorkspaceFormState]
   'sendChat': []
   'switchChatSession': [sessionId: string]
   'createChatSession': []
-  'fillForm': [draft: ProjectPayload]
-  'applyTopicProposal': [item: TopicProposalItem]
-  'submitProject': []
-  'openProject': [projectId: string]
+  'approveChange': [change: AiProjectChangeRequest]
+  'rejectChange': [change: AiProjectChangeRequest]
 }>()
 
-function updateFormField(key: keyof WorkspaceFormState, value: string) {
-  emit('update:formState', {
-    ...props.formState,
-    [key]: value,
-  })
-}
+const PRIMARY_MODES: Array<{ value: Exclude<WorkspaceAiMode, 'defense'>, label: string }> = [
+  { value: 'dialog_ask', label: '对话询问' },
+  { value: 'auto_optimize', label: '自动优化' },
+  { value: 'issue_discovery', label: '寻疑发现' },
+]
 
 const inputPlaceholder = computed(() => {
-  if (props.aiMode === 'topic_proposal')
-    return '描述你想做的方向，例如：AI+供应链，偏工程落地，可两个月完成。'
+  if (props.aiMode === 'auto_optimize')
+    return '描述你想自动优化的目标，例如：统一摘要结构并补齐关键字段。'
+  if (props.aiMode === 'issue_discovery')
+    return '描述你希望重点扫描的风险，例如：评分映射、证据链、可行性。'
   if (props.aiMode === 'defense')
     return '输入答辩要点或追问，例如：请继续追问技术可行性。'
-  return '询问 AI 或输入指令...'
+  return '请输入问题，AI 将仅做只读分析，不改动项目。'
 })
+
+const pendingChangeRequests = computed(() => {
+  return props.changeRequests.filter(item => item.status === 'pending')
+})
+
+function isChangeActing(changeId: string): boolean {
+  return props.changeActingIds.includes(changeId)
+}
+
+function requiresSecondConfirm(change: AiProjectChangeRequest): boolean {
+  if (!change.destructive)
+    return false
+  return props.changeSecondConfirmIds.includes(change.id)
+}
+
+function modeLabel(mode: WorkspaceAiMode): string {
+  if (mode === 'auto_optimize')
+    return '自动优化'
+  if (mode === 'issue_discovery')
+    return '寻疑发现'
+  if (mode === 'defense')
+    return '答辩模拟'
+  return '对话询问'
+}
+
+function severityLabel(value: string): string {
+  if (value === 'critical')
+    return '严重'
+  if (value === 'high')
+    return '高'
+  if (value === 'low')
+    return '低'
+  return '中'
+}
+
+function severityClass(value: string): string {
+  if (value === 'critical')
+    return 'workspace-issue-pill workspace-issue-pill--critical'
+  if (value === 'high')
+    return 'workspace-issue-pill workspace-issue-pill--high'
+  if (value === 'low')
+    return 'workspace-issue-pill workspace-issue-pill--low'
+  return 'workspace-issue-pill workspace-issue-pill--medium'
+}
+
+function selectMode(mode: Exclude<WorkspaceAiMode, 'defense'>) {
+  emit('update:aiMode', mode)
+}
+
+function modeSelectValue(): Exclude<WorkspaceAiMode, 'defense'> | '' {
+  if (props.aiMode === 'defense')
+    return ''
+  return props.aiMode
+}
+
+function handleModeSelectChange(event: Event) {
+  const value = String((event.target as HTMLSelectElement).value || '').trim()
+  if (!value)
+    return
+  if (value === 'dialog_ask' || value === 'auto_optimize' || value === 'issue_discovery')
+    selectMode(value)
+}
+
+function cyclePrimaryMode() {
+  const currentIndex = PRIMARY_MODES.findIndex(item => item.value === props.aiMode)
+  const nextIndex = currentIndex < 0
+    ? 0
+    : (currentIndex + 1) % PRIMARY_MODES.length
+  emit('update:aiMode', PRIMARY_MODES[nextIndex]!.value)
+}
+
+function handleModeCycleHotkey(event: KeyboardEvent) {
+  if (event.key !== 'Tab' || !event.shiftKey)
+    return
+  event.preventDefault()
+  cyclePrimaryMode()
+}
 </script>
 
 <template>
-  <aside class="border-l border-slate-200 bg-white flex shrink-0 flex-col w-full xl:w-88">
-    <div class="border-b border-slate-200 flex">
-      <button
-        class="text-[11px] tracking-tight font-bold py-3 flex-1"
-        :class="sidebarTab === 'chat' ? 'ide-tab-active' : 'ide-tab-inactive'"
-        @click="emit('update:sidebarTab', 'chat')"
-      >
-        AI 辅助
-      </button>
-      <button
-        class="text-[11px] tracking-tight font-bold py-3 flex-1"
-        :class="sidebarTab === 'rules' ? 'ide-tab-active' : 'ide-tab-inactive'"
-        @click="emit('update:sidebarTab', 'rules')"
-      >
-        规则详情
-      </button>
-      <button
-        class="text-[11px] tracking-tight font-bold py-3 flex-1"
-        :class="sidebarTab === 'submit' ? 'ide-tab-active' : 'ide-tab-inactive'"
-        @click="emit('update:sidebarTab', 'submit')"
-      >
-        提交表单
-      </button>
+  <aside
+    class="border-l border-slate-200 bg-white flex shrink-0 flex-col w-full xl:w-88"
+    tabindex="0"
+    @keydown.capture="handleModeCycleHotkey"
+  >
+    <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70">
+      <div class="text-xs text-slate-800 font-semibold">
+        智能辅助
+      </div>
+      <div class="text-[11px] text-slate-500 mt-1">
+        当前竞赛：{{ selectedContest?.name || '未选择竞赛' }} / {{ selectedTrack?.name || '未选择赛道' }}
+      </div>
+      <div class="text-[10px] text-slate-500 mt-1">
+        当前模式：{{ modeLabel(aiMode) }}
+      </div>
     </div>
 
     <div class="no-scrollbar p-4 flex-1 overflow-y-auto">
-      <div v-if="sidebarTab === 'chat'" class="flex flex-col h-full space-y-4">
-        <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
-          <div class="text-xs text-slate-700 font-semibold">
-            AI 模式
-          </div>
-          <div class="gap-2 grid grid-cols-3">
-            <button
-              class="text-[11px] px-2 py-1.5 border rounded transition-colors"
-              :class="aiMode === 'project_chat' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
-              @click="emit('update:aiMode', 'project_chat')"
-            >
-              项目聊天
-            </button>
-            <button
-              class="text-[11px] px-2 py-1.5 border rounded transition-colors"
-              :class="aiMode === 'topic_proposal' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
-              @click="emit('update:aiMode', 'topic_proposal')"
-            >
-              选题助手
-            </button>
-            <button
-              class="text-[11px] px-2 py-1.5 border rounded transition-colors"
-              :class="aiMode === 'defense' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
-              @click="emit('update:aiMode', 'defense')"
-            >
-              答辩模拟
-            </button>
-          </div>
-        </div>
-
+      <div class="flex flex-col h-full space-y-4">
         <div class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
           <div class="flex items-center justify-between">
             <div class="text-xs text-slate-700 font-semibold">
@@ -216,48 +249,103 @@ const inputPlaceholder = computed(() => {
           </div>
         </div>
 
-        <div v-if="aiMode === 'project_chat' && chatDraft" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
-          <div class="text-xs text-slate-700 font-semibold">
-            草案预览：{{ chatDraft.title }}
-          </div>
-          <div class="text-[11px] text-slate-500">
-            {{ chatDraft.summary || '暂无摘要' }}
-          </div>
-          <div v-if="chatMissingFields.length > 0" class="text-[11px] text-amber-700">
-            缺失字段：{{ chatMissingFields.join(', ') }}
-          </div>
-          <button
-            class="text-xs font-semibold border border-slate-300 rounded bg-white h-8 w-full hover:bg-slate-100"
-            @click="emit('fillForm', chatDraft)"
-          >
-            回填到表单继续完善
-          </button>
+        <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 p-3 border border-emerald-200 rounded bg-emerald-50">
+          当前为只读对话模式，不会触发任何项目写入动作。
         </div>
 
-        <div v-if="aiMode === 'topic_proposal' && topicProposals.length > 0" class="space-y-2">
-          <div class="text-xs text-slate-700 font-semibold">
-            候选命题（{{ topicProposals.length }}）
+        <div v-if="aiMode === 'auto_optimize'" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="text-xs text-slate-700 font-semibold">
+              待审批变更（{{ pendingChangeRequests.length }}）
+            </div>
+            <span v-if="changeRequestsLoading" class="text-[10px] text-slate-500">刷新中...</span>
+          </div>
+          <div v-if="pendingChangeRequests.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+            暂无待审批提案，发送优化请求后会自动生成。
           </div>
           <div
-            v-for="(item, index) in topicProposals"
-            :key="`${item.title}-${index}`"
+            v-for="change in pendingChangeRequests"
+            :key="change.id"
             class="p-3 border border-slate-200 rounded bg-slate-50"
           >
-            <p class="text-xs text-slate-800 font-semibold">
-              {{ index + 1 }}. {{ item.title }}
-            </p>
-            <p class="text-[11px] text-slate-600 mt-1">
-              {{ item.reason }}
-            </p>
-            <div class="text-[11px] text-slate-500 mt-2">
-              风险：{{ item.risks.slice(0, 2).join('；') || '—' }}
+            <div class="flex gap-2 items-start justify-between">
+              <div class="text-xs text-slate-800 leading-5 font-semibold">
+                {{ change.title }}
+              </div>
+              <span
+                v-if="change.destructive"
+                class="text-[10px] text-rose-600 px-1.5 py-0.5 border border-rose-200 rounded bg-rose-50"
+              >
+                破坏性
+              </span>
             </div>
-            <button
-              class="text-[11px] font-semibold mt-2 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100"
-              @click="emit('applyTopicProposal', item)"
-            >
-              回填为项目草案
-            </button>
+            <div class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
+              {{ change.summary }}
+            </div>
+            <div class="text-[10px] text-slate-500 mt-1">
+              类型：{{ change.changeType }}
+            </div>
+            <div class="mt-2 flex gap-2 items-center">
+              <button
+                class="text-[11px] text-emerald-700 px-2 py-1 border border-emerald-300 rounded bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
+                :disabled="isChangeActing(change.id)"
+                @click="emit('approveChange', change)"
+              >
+                {{ isChangeActing(change.id)
+                  ? '处理中...'
+                  : (requiresSecondConfirm(change) ? '再次确认通过' : '通过') }}
+              </button>
+              <button
+                class="text-[11px] text-slate-700 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-60"
+                :disabled="isChangeActing(change.id)"
+                @click="emit('rejectChange', change)"
+              >
+                拒绝
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="aiMode === 'issue_discovery'" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="text-xs text-slate-700 font-semibold">
+              寻疑结果
+            </div>
+            <span v-if="issueLoading" class="text-[10px] text-slate-500">刷新中...</span>
+          </div>
+
+          <div v-if="issueReport" class="p-3 border border-amber-200 rounded bg-amber-50">
+            <div class="text-xs text-amber-800 font-semibold">
+              {{ issueReport.title }}
+            </div>
+            <div class="text-[11px] text-amber-700 mt-1 whitespace-pre-wrap">
+              {{ issueReport.summary }}
+            </div>
+          </div>
+
+          <div
+            v-for="issue in projectIssues.slice(0, 8)"
+            :key="issue.id"
+            class="p-3 border border-slate-200 rounded bg-white"
+          >
+            <div class="flex gap-2 items-center justify-between">
+              <div class="text-[11px] text-slate-800 leading-5 font-semibold">
+                {{ issue.title }}
+              </div>
+              <span :class="severityClass(issue.severity)">
+                {{ severityLabel(issue.severity) }}
+              </span>
+            </div>
+            <div class="text-[11px] text-slate-600 mt-1">
+              证据：{{ issue.evidence || '暂无' }}
+            </div>
+            <div class="text-[11px] text-emerald-700 mt-1">
+              建议：{{ issue.recommendation || '暂无' }}
+            </div>
+          </div>
+
+          <div v-if="projectIssues.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+            暂无 issue 条目，执行一次“寻疑发现”后会自动落地。
           </div>
         </div>
 
@@ -312,148 +400,27 @@ const inputPlaceholder = computed(() => {
               <span class="material-symbols-outlined text-sm">{{ chatLoading ? 'hourglass_top' : 'send' }}</span>
             </button>
           </div>
-        </div>
-      </div>
 
-      <div v-else-if="sidebarTab === 'rules'" class="space-y-3">
-        <div class="p-3 border border-slate-200 rounded bg-slate-50">
-          <div class="text-xs text-slate-700 font-semibold">
-            当前竞赛
-          </div>
-          <div class="text-[11px] text-slate-600 mt-1">
-            {{ selectedContest?.name || '未选择竞赛' }}
-          </div>
-          <div class="text-[11px] text-slate-500 mt-1">
-            赛道：{{ selectedTrack?.name || '未选择赛道' }}
-          </div>
-          <div class="text-[11px] text-slate-500 mt-1">
-            主办方：{{ selectedContest?.organizer || '—' }}
-          </div>
-          <div class="text-[11px] text-slate-500 mt-1">
-            报名窗口：{{ selectedContest?.registrationWindow || '—' }}
-          </div>
-        </div>
-        <div v-if="isAdminView" class="p-3 border border-slate-200 rounded bg-white">
-          <div class="text-xs text-slate-700 font-semibold mb-2">
-            标准化筛选结果（管理员）
-          </div>
-          <pre class="text-[11px] text-slate-600 m-0 whitespace-pre-wrap">{{ normalizedInfo || '{ }' }}</pre>
-        </div>
-        <div v-else class="p-3 border border-slate-200 rounded bg-white">
-          <div class="text-xs text-slate-700 font-semibold mb-2">
-            标准化筛选结果
-          </div>
-          <p class="text-[11px] text-slate-500 m-0">
-            当前仅展示简版结果，完整参数仅管理员可见。
-          </p>
-        </div>
-        <div class="p-3 border border-slate-200 rounded bg-white">
-          <div class="text-xs text-slate-700 font-semibold mb-2">
-            资料索引（{{ selectedResources.length }}）
-          </div>
-          <div class="max-h-72 overflow-y-auto space-y-2">
-            <div
-              v-for="resource in selectedResources"
-              :key="resource.id"
-              class="p-2 border border-slate-200 rounded bg-slate-50"
+          <div class="mt-2 flex gap-2 items-center justify-between">
+            <div class="text-[10px] text-slate-400">
+              已关联资料：{{ selectedResources.length }} · Shift+Tab 切换模式
+            </div>
+            <select
+              class="workspace-mode-select"
+              :value="modeSelectValue()"
+              @change="handleModeSelectChange"
             >
-              <div class="text-[11px] text-slate-700 font-semibold">
-                {{ resource.title }}
-              </div>
-              <div class="text-[10px] text-slate-500 mt-1">
-                {{ resource.type }} / {{ resource.year }} / {{ resource.availability }}
-              </div>
-            </div>
-            <div v-if="selectedResources.length === 0" class="text-[11px] text-slate-400">
-              当前暂无可展示资料。
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else class="space-y-3">
-        <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
-          <div class="text-[11px] text-slate-500">
-            当前竞赛：{{ selectedContest?.name || '未选择' }} / {{ selectedTrack?.name || '未选择赛道' }}
-          </div>
-          <input
-            :value="formState.title"
-            class="text-xs px-2 outline-none border border-slate-200 rounded h-8 w-full focus:border-blue-500"
-            placeholder="项目标题"
-            @input="updateFormField('title', ($event.target as HTMLInputElement).value)"
-          >
-          <textarea
-            :value="formState.problemStatement"
-            class="text-xs p-2 outline-none border border-slate-200 rounded min-h-16 w-full focus:border-blue-500"
-            placeholder="问题定义"
-            @input="updateFormField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <textarea
-            :value="formState.innovationPointsText"
-            class="text-xs p-2 outline-none border border-slate-200 rounded min-h-14 w-full focus:border-blue-500"
-            placeholder="创新点（每行一条）"
-            @input="updateFormField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <textarea
-            :value="formState.techRouteStepsText"
-            class="text-xs p-2 outline-none border border-slate-200 rounded min-h-14 w-full focus:border-blue-500"
-            placeholder="技术路线（每行一步）"
-            @input="updateFormField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <textarea
-            :value="formState.scoringMappingText"
-            class="text-xs p-2 outline-none border border-slate-200 rounded min-h-14 w-full focus:border-blue-500"
-            placeholder="评分映射（每行一条）"
-            @input="updateFormField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <textarea
-            :value="formState.risksText"
-            class="text-xs p-2 outline-none border border-slate-200 rounded min-h-14 w-full focus:border-blue-500"
-            placeholder="风险项（每行一条）"
-            @input="updateFormField('risksText', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <textarea
-            :value="formState.deliverablesText"
-            class="text-xs p-2 outline-none border border-slate-200 rounded min-h-14 w-full focus:border-blue-500"
-            placeholder="交付物（每行一条）"
-            @input="updateFormField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <textarea
-            :value="formState.summary"
-            class="text-xs p-2 outline-none border border-slate-200 rounded min-h-12 w-full focus:border-blue-500"
-            placeholder="摘要"
-            @input="updateFormField('summary', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <button
-            class="text-xs text-white font-semibold rounded bg-blue-600 h-9 w-full hover:bg-blue-500 disabled:opacity-60"
-            :disabled="formSubmitting"
-            @click="emit('submitProject')"
-          >
-            {{ formSubmitting ? '提交中...' : '创建项目' }}
-          </button>
-        </div>
-
-        <div class="p-3 border border-slate-200 rounded bg-white">
-          <div class="text-xs text-slate-700 font-semibold mb-2">
-            已创建项目（{{ projects.length }}）
-          </div>
-          <div class="max-h-62 overflow-y-auto space-y-2">
-            <button
-              v-for="project in projects"
-              :key="project.id"
-              class="p-2 text-left border border-slate-200 rounded w-full hover:border-slate-300"
-              @click="emit('openProject', project.id)"
-            >
-              <div class="text-xs text-slate-700 font-semibold">
-                {{ project.title }}
-              </div>
-              <div class="text-[10px] text-slate-500 mt-1">
-                source={{ project.source }} / status={{ project.status }} / {{ project.updatedAt }}
-              </div>
-            </button>
-            <div v-if="projects.length === 0" class="text-[11px] text-slate-400">
-              还没有项目记录，先通过 AI 对话或表单创建一个。
-            </div>
+              <option v-if="aiMode === 'defense'" value="" disabled>
+                答辩模拟（左侧入口）
+              </option>
+              <option
+                v-for="mode in PRIMARY_MODES"
+                :key="mode.value"
+                :value="mode.value"
+              >
+                {{ mode.label }}
+              </option>
+            </select>
           </div>
         </div>
       </div>
@@ -471,17 +438,55 @@ const inputPlaceholder = computed(() => {
   scrollbar-width: none;
 }
 
-.ide-tab-active {
-  border-bottom: 2px solid #2563eb;
-  color: #2563eb;
+.workspace-mode-select {
+  min-width: 124px;
+  height: 26px;
+  border: 1px solid #d9e1ef;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #395077;
+  font-size: 11px;
+  padding: 0 24px 0 8px;
+  outline: none;
 }
 
-.ide-tab-inactive {
-  color: #64748b;
+.workspace-mode-select:focus {
+  border-color: #86aefb;
+  box-shadow: 0 0 0 1px #86aefb;
 }
 
-.ide-tab-inactive:hover {
-  color: #1e293b;
-  background-color: #f1f5f9;
+.workspace-issue-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 7px;
+}
+
+.workspace-issue-pill--critical {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.workspace-issue-pill--high {
+  border-color: #fed7aa;
+  color: #b45309;
+  background: #ffedd5;
+}
+
+.workspace-issue-pill--medium {
+  border-color: #fde68a;
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.workspace-issue-pill--low {
+  border-color: #bbf7d0;
+  color: #166534;
+  background: #dcfce7;
 }
 </style>

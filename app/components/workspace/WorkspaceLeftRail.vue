@@ -9,14 +9,17 @@ withDefaults(defineProps<{
   items?: WorkspaceLeftRailItem[]
   activeId?: string
   recycleActive?: boolean
+  defenseActive?: boolean
 }>(), {
   items: () => [],
   activeId: '',
   recycleActive: false,
+  defenseActive: false,
 })
 
 const emit = defineEmits<{
   select: [id: string]
+  openDefense: []
   openRecycleBin: []
   openSettings: []
 }>()
@@ -43,6 +46,18 @@ const emit = defineEmits<{
     </nav>
 
     <div class="workspace-left-rail__footer">
+      <button
+        class="workspace-left-rail__defense"
+        :class="{ 'workspace-left-rail__defense--active': defenseActive }"
+        title="进入答辩模拟"
+        aria-label="进入答辩模拟"
+        data-tooltip="进入答辩模拟"
+        type="button"
+        @click="emit('openDefense')"
+      >
+        <span class="material-symbols-outlined">record_voice_over</span>
+      </button>
+
       <button
         class="workspace-left-rail__shortcut"
         :class="{ 'workspace-left-rail__shortcut--active': recycleActive }"
@@ -71,7 +86,7 @@ const emit = defineEmits<{
 
 <style scoped>
 .workspace-left-rail {
-  width: 62px;
+  width: 54px;
   background: #ffffff;
   border-right: 1px solid #d9e0ec;
   display: flex;
@@ -84,24 +99,26 @@ const emit = defineEmits<{
 .workspace-left-rail__menu {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 12px;
-  padding: 4px 7px 0;
+  padding: 4px 0 0;
 }
 
 .workspace-left-rail__footer {
   margin-top: auto;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 8px;
-  padding: 0 7px 12px;
+  padding: 0 0 12px;
 }
 
 .workspace-left-rail__item {
   position: relative;
   border: none;
   border-radius: 12px;
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
   color: #6e7e99;
   display: flex;
   align-items: center;
@@ -112,10 +129,10 @@ const emit = defineEmits<{
 }
 
 .workspace-left-rail__item .material-symbols-outlined {
-  width: 32px;
-  height: 32px;
-  font-size: 32px;
-  line-height: 32px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+  line-height: 16px;
 }
 
 .workspace-left-rail__item:hover {
@@ -131,19 +148,20 @@ const emit = defineEmits<{
 .workspace-left-rail__item--active::before {
   content: '';
   position: absolute;
-  left: -7px;
-  top: 9px;
-  width: 3px;
-  height: 30px;
+  left: 0;
+  top: 6px;
+  width: 4px;
+  height: 20px;
   border-radius: 3px;
-  background: #8fa1be;
+  background: #2f6af2;
 }
 
 .workspace-left-rail__shortcut,
+.workspace-left-rail__defense,
 .workspace-left-rail__setting {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: 12px;
   display: flex;
@@ -155,11 +173,16 @@ const emit = defineEmits<{
 }
 
 .workspace-left-rail__shortcut .material-symbols-outlined,
+.workspace-left-rail__defense .material-symbols-outlined,
 .workspace-left-rail__setting .material-symbols-outlined {
-  width: 32px;
-  height: 32px;
-  font-size: 32px;
-  line-height: 32px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+  line-height: 16px;
+}
+
+.workspace-left-rail__defense {
+  color: #2f6af2;
 }
 
 .workspace-left-rail__shortcut {
@@ -168,6 +191,11 @@ const emit = defineEmits<{
 
 .workspace-left-rail__setting {
   color: #7c8ca6;
+}
+
+.workspace-left-rail__defense:hover {
+  color: #1d4ed8;
+  background: #eef2ff;
 }
 
 .workspace-left-rail__shortcut:hover {
@@ -180,12 +208,18 @@ const emit = defineEmits<{
   background: #f5f8fd;
 }
 
+.workspace-left-rail__defense--active {
+  color: #1e40af;
+  background: #dbeafe;
+}
+
 .workspace-left-rail__shortcut--active {
   color: #a92323;
   background: #ffe4e4;
 }
 
 .workspace-left-rail__item[data-tooltip]::after,
+.workspace-left-rail__defense[data-tooltip]::after,
 .workspace-left-rail__shortcut[data-tooltip]::after,
 .workspace-left-rail__setting[data-tooltip]::after {
   content: attr(data-tooltip);
@@ -207,6 +241,7 @@ const emit = defineEmits<{
 }
 
 .workspace-left-rail__item[data-tooltip]:hover::after,
+.workspace-left-rail__defense[data-tooltip]:hover::after,
 .workspace-left-rail__shortcut[data-tooltip]:hover::after,
 .workspace-left-rail__setting[data-tooltip]:hover::after {
   opacity: 1;

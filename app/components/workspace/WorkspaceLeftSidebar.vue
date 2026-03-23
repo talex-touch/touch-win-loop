@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import type { Contest, ProjectOutlineNode, Resource } from '~~/shared/types/domain'
+import type {
+  Contest,
+  ProjectIssue,
+  ProjectIssueReport,
+  ProjectOutlineNode,
+  ProjectResourceShareDurationPreset,
+  ProjectResourceShareVisibility,
+  Resource,
+} from '~~/shared/types/domain'
 import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
 
-type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config'
+type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
 
 interface WorkspaceLeftModule {
   id: WorkspaceLeftModuleId
@@ -30,6 +38,12 @@ interface ResourceAttributeField {
   value: string
 }
 
+interface ShareProjectResourcePayload {
+  resourceId: string
+  visibility: ProjectResourceShareVisibility
+  duration: ProjectResourceShareDurationPreset
+}
+
 type ResourceSectionId = 'projectResources' | 'systemLibrary' | 'outline'
 
 const props = withDefaults(defineProps<{
@@ -45,6 +59,9 @@ const props = withDefaults(defineProps<{
   recycleResources?: Resource[]
   resourceLibrary?: Resource[]
   projectOutline?: ProjectOutlineNode[]
+  issueReports?: ProjectIssueReport[]
+  projectIssues?: ProjectIssue[]
+  issueLoading?: boolean
   projectResourcesLoading?: boolean
   resourceLibraryLoading?: boolean
   projectOutlineLoading?: boolean
@@ -57,6 +74,7 @@ const props = withDefaults(defineProps<{
   aiFiltering: boolean
   isAdminView?: boolean
   activeMainTabId?: string
+  defenseActive?: boolean
   currentUserId?: string
   currentUsername?: string
   projectStorageLimitBytes?: number
@@ -65,6 +83,9 @@ const props = withDefaults(defineProps<{
   recycleResources: () => [],
   resourceLibrary: () => [],
   projectOutline: () => [],
+  issueReports: () => [],
+  projectIssues: () => [],
+  issueLoading: false,
   projectResourcesLoading: false,
   resourceLibraryLoading: false,
   projectOutlineLoading: false,
@@ -73,6 +94,7 @@ const props = withDefaults(defineProps<{
   normalizedInfo: '',
   isAdminView: false,
   activeMainTabId: '',
+  defenseActive: false,
   currentUserId: '',
   currentUsername: '',
   projectStorageLimitBytes: 0,
@@ -90,10 +112,15 @@ const emit = defineEmits<{
   'runAiFilter': []
   'openSettingsPanel': []
   'openFlowPanel': []
+  'createCollabResource': [kind: 'markdown' | 'draw']
+  'openDefenseMode': []
+  'reloadIssues': []
   'addResourceFromLibrary': [resourceId: string]
   'openResource': [resourceId: string]
   'downloadProjectResource': [resourceId: string]
-  'shareProjectResource': [resourceId: string]
+  'copyProjectResourceName': [resourceId: string]
+  'shareProjectResource': [payload: ShareProjectResourcePayload]
+  'duplicateProjectResource': [resourceId: string]
   'removeProjectResource': [resourceId: string]
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
@@ -127,6 +154,12 @@ const modules: WorkspaceLeftModule[] = [
     title: '项目分析',
     icon: 'manage_search',
     hint: '分析偏好与 AI 建议',
+  },
+  {
+    id: 'issue_center',
+    title: 'Issue',
+    icon: 'bug_report',
+    hint: '寻疑报告与问题清单',
   },
 ]
 
@@ -164,6 +197,10 @@ const removeTargetResourceId = ref('')
 const removeResourceModalVisible = ref(false)
 const purgeTargetResourceId = ref('')
 const purgeResourceModalVisible = ref(false)
+const shareTargetResourceId = ref('')
+const shareResourceModalVisible = ref(false)
+const shareVisibility = ref<ProjectResourceShareVisibility>('public')
+const shareDuration = ref<ProjectResourceShareDurationPreset>('7d')
 const resourceDetailTargetId = ref('')
 const resourceDetailModalVisible = ref(false)
 const libraryModalKeyword = ref('')
@@ -212,6 +249,13 @@ const purgeTargetResourceLabel = computed(() => {
   if (!purgeTargetResourceId.value)
     return '该文件'
   const target = props.recycleResources.find(item => item.id === purgeTargetResourceId.value)
+  return target ? resourceDisplayTitle(target) : '该文件'
+})
+
+const shareTargetResourceLabel = computed(() => {
+  if (!shareTargetResourceId.value)
+    return '该文件'
+  const target = visibleResources.value.find(item => item.id === shareTargetResourceId.value)
   return target ? resourceDisplayTitle(target) : '该文件'
 })
 
@@ -477,6 +521,34 @@ const analysisSuggestions = computed(() => {
   return suggestions.slice(0, 4)
 })
 
+const latestIssueReport = computed(() => {
+  return props.issueReports[0] || null
+})
+
+const visibleIssues = computed(() => {
+  return props.projectIssues.slice(0, 20)
+})
+
+function issueSeverityLabel(value: string): string {
+  if (value === 'critical')
+    return '严重'
+  if (value === 'high')
+    return '高'
+  if (value === 'low')
+    return '低'
+  return '中'
+}
+
+function issueSeverityClass(value: string): string {
+  if (value === 'critical')
+    return 'workspace-issue-tag workspace-issue-tag--critical'
+  if (value === 'high')
+    return 'workspace-issue-tag workspace-issue-tag--high'
+  if (value === 'low')
+    return 'workspace-issue-tag workspace-issue-tag--low'
+  return 'workspace-issue-tag workspace-issue-tag--medium'
+}
+
 function switchModule(moduleId: string) {
   if (!isWorkspaceLeftModuleId(moduleId))
     return
@@ -496,6 +568,11 @@ function openResource(resource: Resource) {
     return
   selectResource(resourceId)
 
+  if (isCollabResource(resource)) {
+    emit('openResource', resourceId)
+    return
+  }
+
   const source = String(resource.source || resource.sourceType || '').trim()
   const kind = String(resource.resourceKind || '').trim()
   if (source === 'upload' || source === 'project_upload' || kind === 'binary')
@@ -512,6 +589,14 @@ function toggleSection(sectionId: ResourceSectionId) {
 
 function openSettingsPanel() {
   emit('openSettingsPanel')
+}
+
+function openDefenseMode() {
+  emit('openDefenseMode')
+}
+
+function reloadIssueCenter() {
+  emit('reloadIssues')
 }
 
 function openRecycleBinPanel() {
@@ -599,7 +684,22 @@ function normalizeResourceType(resource: Resource): string {
   return String(resource.type || '').trim().toLowerCase()
 }
 
+function isCollabResource(resource: Resource): boolean {
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  const kind = String(resource.resourceKind || '').trim().toLowerCase()
+  return source === 'collab' || kind === 'markdown' || kind === 'draw'
+}
+
 function resourceIcon(resource: Resource): string {
+  const kind = String(resource.resourceKind || '').trim().toLowerCase()
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (kind === 'draw')
+    return 'draw'
+  if (kind === 'markdown')
+    return 'edit_note'
+  if (source === 'collab')
+    return 'edit_note'
+
   const extension = resolveResourceExtension(resource)
   const mimeType = metadataMimeType(resource)
   if (extension === 'pdf' || mimeType.includes('pdf'))
@@ -626,6 +726,11 @@ function resourceIcon(resource: Resource): string {
 }
 
 function resourceIconClass(resource: Resource): string {
+  const kind = String(resource.resourceKind || '').trim().toLowerCase()
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (kind === 'draw' || kind === 'markdown' || source === 'collab')
+    return 'workspace-icon--collab'
+
   const extension = resolveResourceExtension(resource)
   const mimeType = metadataMimeType(resource)
   if (extension === 'pdf' || mimeType.includes('pdf'))
@@ -669,6 +774,9 @@ function hasDownloadableSource(resource: Resource): boolean {
 
 function hasPreviewableSource(resource: Resource): boolean {
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  const kind = String(resource.resourceKind || '').trim().toLowerCase()
+  if (source === 'collab' || kind === 'markdown' || kind === 'draw')
+    return true
   if (source === 'upload' || source === 'project_upload')
     return true
   if (String(resource.documentId || '').trim())
@@ -678,8 +786,16 @@ function hasPreviewableSource(resource: Resource): boolean {
   return false
 }
 
+function canDuplicateResource(resource: Resource): boolean {
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  const kind = String(resource.resourceKind || '').trim().toLowerCase()
+  return source !== 'collab' && kind !== 'markdown' && kind !== 'draw'
+}
+
 function resourceSourceLabel(resource: Resource): string {
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source === 'collab')
+    return '协作资源'
   if (source === 'upload' || source === 'project_upload')
     return '项目上传'
   if (source === 'library')
@@ -788,6 +904,7 @@ function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId 
   return value === 'resource_manager'
     || value === 'analysis'
     || value === 'project_config'
+    || value === 'issue_center'
 }
 
 function openLibraryModal() {
@@ -808,14 +925,14 @@ function openCollaborativeDocFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('openSettingsPanel')
+  emit('createCollabResource', 'markdown')
 }
 
 function openInfiniteCanvasFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('openFlowPanel')
+  emit('createCollabResource', 'draw')
 }
 
 function openLibraryFromMenu() {
@@ -904,7 +1021,54 @@ function requestShareResource(resourceId: string) {
     return
 
   resourceActionOpenId.value = ''
-  emit('shareProjectResource', targetResourceId)
+  shareTargetResourceId.value = targetResourceId
+  shareVisibility.value = 'public'
+  shareDuration.value = '7d'
+  shareResourceModalVisible.value = true
+}
+
+function closeShareResourceModal(force = false) {
+  if (props.resourceMutating && !force)
+    return
+  shareResourceModalVisible.value = false
+  shareTargetResourceId.value = ''
+}
+
+function confirmShareResource() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+
+  const targetResourceId = String(shareTargetResourceId.value || '').trim()
+  if (!targetResourceId)
+    return
+
+  const visibility = shareVisibility.value
+  const duration = shareDuration.value
+  shareResourceModalVisible.value = false
+  shareTargetResourceId.value = ''
+  emit('shareProjectResource', {
+    resourceId: targetResourceId,
+    visibility,
+    duration,
+  })
+}
+
+function copyResourceName(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  resourceActionOpenId.value = ''
+  emit('copyProjectResourceName', targetResourceId)
+}
+
+function createResourceDuplicate(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  resourceActionOpenId.value = ''
+  emit('duplicateProjectResource', targetResourceId)
 }
 
 function requestViewResourceDetails(resourceId: string) {
@@ -1032,6 +1196,8 @@ watch(() => props.selectedResources, (nextResources) => {
   }
   if (resourceDetailTargetId.value && !nextResources.some(item => item.id === resourceDetailTargetId.value))
     closeResourceDetailPanel()
+  if (shareTargetResourceId.value && !nextResources.some(item => item.id === shareTargetResourceId.value))
+    closeShareResourceModal(true)
 
   if (!nextResources.length) {
     activeResourceId.value = ''
@@ -1107,6 +1273,8 @@ watch(() => props.hasActiveProject, (next) => {
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
   closeResourceDetailPanel()
+  shareTargetResourceId.value = ''
+  shareResourceModalVisible.value = false
   removeTargetResourceId.value = ''
   removeResourceModalVisible.value = false
   purgeTargetResourceId.value = ''
@@ -1118,6 +1286,8 @@ watch(() => sectionExpanded.projectResources, (expanded) => {
     return
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
+  shareTargetResourceId.value = ''
+  shareResourceModalVisible.value = false
 })
 
 watch(() => props.resourceMutating, (next) => {
@@ -1162,7 +1332,9 @@ onBeforeUnmount(() => {
       :items="modules"
       :active-id="activeModule"
       :recycle-active="recyclePanelOpen"
+      :defense-active="defenseActive"
       @select="switchModule"
+      @open-defense="openDefenseMode"
       @open-recycle-bin="openRecycleBinPanel"
       @open-settings="openSettingsPanel"
     />
@@ -1355,16 +1527,6 @@ onBeforeUnmount(() => {
                       role="menu"
                     >
                       <button
-                        v-if="hasDownloadableSource(resource)"
-                        class="workspace-resource-actions__menu-item"
-                        type="button"
-                        :disabled="resourceMutating || !hasActiveProject"
-                        @click.stop="requestDownloadResource(resource.id)"
-                      >
-                        下载原文件
-                      </button>
-                      <div v-if="hasDownloadableSource(resource)" class="workspace-resource-actions__divider" />
-                      <button
                         class="workspace-resource-actions__menu-item"
                         type="button"
                         :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(resource)"
@@ -1378,8 +1540,25 @@ onBeforeUnmount(() => {
                         :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(resource)"
                         @click.stop="requestShareResource(resource.id)"
                       >
-                        分享
+                        分享链接
                       </button>
+                      <button
+                        class="workspace-resource-actions__menu-item"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click.stop="copyResourceName(resource.id)"
+                      >
+                        复制名称
+                      </button>
+                      <button
+                        class="workspace-resource-actions__menu-item"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject || !canDuplicateResource(resource)"
+                        @click.stop="createResourceDuplicate(resource.id)"
+                      >
+                        创建副本
+                      </button>
+                      <div class="workspace-resource-actions__divider" />
                       <button
                         class="workspace-resource-actions__menu-item"
                         type="button"
@@ -1387,6 +1566,14 @@ onBeforeUnmount(() => {
                         @click.stop="requestViewResourceDetails(resource.id)"
                       >
                         文档属性
+                      </button>
+                      <button
+                        class="workspace-resource-actions__menu-item"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(resource)"
+                        @click.stop="requestDownloadResource(resource.id)"
+                      >
+                        下载原文件
                       </button>
                       <div class="workspace-resource-actions__divider" />
                       <button
@@ -1538,6 +1725,81 @@ onBeforeUnmount(() => {
               <p v-if="visibleLibraryResources.length === 0" class="workspace-empty-text workspace-empty-text--modal">
                 暂无资源
               </p>
+            </div>
+          </a-modal>
+
+          <a-modal
+            v-model:visible="shareResourceModalVisible"
+            title="分享链接"
+            width="480px"
+            :footer="false"
+            :esc-to-close="!resourceMutating"
+            :mask-closable="!resourceMutating"
+          >
+            <div class="workspace-share-modal">
+              <p class="workspace-share-modal__target">
+                文件：{{ shareTargetResourceLabel }}
+              </p>
+
+              <label class="workspace-share-modal__field">
+                <span>可见范围</span>
+                <select
+                  v-model="shareVisibility"
+                  class="workspace-share-modal__select"
+                  :disabled="resourceMutating"
+                >
+                  <option value="public">
+                    公开可见
+                  </option>
+                  <option value="workspace">
+                    组织内成员可见
+                  </option>
+                </select>
+              </label>
+
+              <label class="workspace-share-modal__field">
+                <span>有效期</span>
+                <select
+                  v-model="shareDuration"
+                  class="workspace-share-modal__select"
+                  :disabled="resourceMutating"
+                >
+                  <option value="1h">
+                    1h
+                  </option>
+                  <option value="1d">
+                    1d
+                  </option>
+                  <option value="3d">
+                    3d
+                  </option>
+                  <option value="7d">
+                    7d
+                  </option>
+                  <option value="1mon">
+                    1mon
+                  </option>
+                </select>
+              </label>
+
+              <div class="workspace-share-modal__actions">
+                <button
+                  class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
+                  type="button"
+                  :disabled="resourceMutating"
+                  @click="closeShareResourceModal()"
+                >
+                  取消
+                </button>
+                <button
+                  class="workspace-delete-modal__btn workspace-share-modal__btn--primary"
+                  type="button"
+                  :disabled="resourceMutating"
+                  @click="confirmShareResource"
+                >
+                  {{ resourceMutating ? '生成中...' : '生成分享链接' }}
+                </button>
+              </div>
             </div>
           </a-modal>
 
@@ -1744,7 +2006,7 @@ onBeforeUnmount(() => {
           </section>
         </template>
 
-        <template v-else>
+        <template v-else-if="activeModule === 'project_config'">
           <section class="workspace-card">
             <h3>项目分析</h3>
             <ul class="workspace-suggestion-list">
@@ -1834,6 +2096,68 @@ onBeforeUnmount(() => {
             >
               以当前配置执行 AI 分析
             </button>
+          </section>
+        </template>
+
+        <template v-else>
+          <section class="workspace-card">
+            <div class="workspace-issue-panel__header">
+              <h3>Issue 中心</h3>
+              <button
+                class="workspace-btn workspace-btn--ghost"
+                :disabled="issueLoading"
+                type="button"
+                @click="reloadIssueCenter"
+              >
+                {{ issueLoading ? '刷新中...' : '刷新' }}
+              </button>
+            </div>
+            <p class="workspace-issue-panel__hint">
+              自动汇总寻疑报告与结构化问题项，便于统一跟踪风险与改进动作。
+            </p>
+
+            <div v-if="latestIssueReport" class="workspace-issue-report-card">
+              <div class="workspace-issue-report-card__title">
+                {{ latestIssueReport.title }}
+              </div>
+              <p>{{ latestIssueReport.summary || '暂无摘要。' }}</p>
+              <div class="workspace-issue-report-card__meta">
+                更新时间：{{ formatDateTime(latestIssueReport.updatedAt || latestIssueReport.createdAt) }}
+              </div>
+            </div>
+            <div v-else class="workspace-empty-text">
+              尚未生成 issue 报告，先在右侧切到“寻疑发现”执行一次扫描。
+            </div>
+          </section>
+
+          <section class="workspace-card">
+            <h3>问题条目（{{ visibleIssues.length }}）</h3>
+            <div v-if="visibleIssues.length === 0" class="workspace-empty-text">
+              暂无问题条目。
+            </div>
+            <div v-else class="workspace-issue-list no-scrollbar">
+              <article
+                v-for="issue in visibleIssues"
+                :key="issue.id"
+                class="workspace-issue-item"
+              >
+                <div class="workspace-issue-item__head">
+                  <span class="workspace-issue-item__title">{{ issue.title }}</span>
+                  <span :class="issueSeverityClass(issue.severity)">
+                    {{ issueSeverityLabel(issue.severity) }}
+                  </span>
+                </div>
+                <p class="workspace-issue-item__line">
+                  证据：{{ issue.evidence || '暂无' }}
+                </p>
+                <p class="workspace-issue-item__line workspace-issue-item__line--suggestion">
+                  建议：{{ issue.recommendation || '暂无' }}
+                </p>
+                <p class="workspace-issue-item__meta">
+                  状态：{{ issue.status }} · {{ formatDateTime(issue.updatedAt || issue.createdAt) }}
+                </p>
+              </article>
+            </div>
           </section>
         </template>
       </div>
@@ -2345,6 +2669,10 @@ onBeforeUnmount(() => {
   color: #7c3aed;
 }
 
+.workspace-icon--collab {
+  color: #0f766e;
+}
+
 .workspace-library-skeleton-item {
   display: flex;
   align-items: center;
@@ -2570,6 +2898,61 @@ onBeforeUnmount(() => {
 .workspace-library-item__add:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.workspace-share-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace-share-modal__target {
+  margin: 0;
+  color: #415373;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.workspace-share-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #667794;
+}
+
+.workspace-share-modal__select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #d5ddea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #415373;
+  font-size: 12px;
+  padding: 0 10px;
+  outline: none;
+}
+
+.workspace-share-modal__select:focus {
+  border-color: #7ba0e8;
+}
+
+.workspace-share-modal__actions {
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workspace-share-modal__btn--primary {
+  border-color: #4f7ddf;
+  background: #3d6ddd;
+  color: #ffffff;
+}
+
+.workspace-share-modal__btn--primary:hover:enabled {
+  background: #3565d4;
 }
 
 .workspace-delete-modal {
@@ -2930,6 +3313,128 @@ onBeforeUnmount(() => {
 
 .workspace-preset-item:hover {
   background: #edf3ff;
+}
+
+.workspace-issue-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-issue-panel__hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #667790;
+}
+
+.workspace-issue-report-card {
+  margin-top: 8px;
+  border: 1px solid #fde7b1;
+  border-radius: 8px;
+  background: #fffbeb;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-issue-report-card__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #7a4f0f;
+}
+
+.workspace-issue-report-card p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a631d;
+}
+
+.workspace-issue-report-card__meta {
+  font-size: 10px;
+  color: #a17a37;
+}
+
+.workspace-issue-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-issue-item {
+  border: 1px solid #dce3f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.workspace-issue-item__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-issue-item__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #344a6c;
+  line-height: 1.5;
+}
+
+.workspace-issue-item__line {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #5b6f90;
+}
+
+.workspace-issue-item__line--suggestion {
+  color: #156f4f;
+}
+
+.workspace-issue-item__meta {
+  margin: 6px 0 0;
+  font-size: 10px;
+  color: #8392a8;
+}
+
+.workspace-issue-tag {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.workspace-issue-tag--critical {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.workspace-issue-tag--high {
+  border-color: #fed7aa;
+  color: #b45309;
+  background: #ffedd5;
+}
+
+.workspace-issue-tag--medium {
+  border-color: #fde68a;
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.workspace-issue-tag--low {
+  border-color: #bbf7d0;
+  color: #166534;
+  background: #dcfce7;
 }
 
 .no-scrollbar::-webkit-scrollbar {

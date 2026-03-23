@@ -320,6 +320,46 @@ CREATE TABLE IF NOT EXISTS contest_tracks (
   UNIQUE(contest_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS project_contest_bindings (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+  track_id TEXT NOT NULL REFERENCES contest_tracks(id) ON DELETE RESTRICT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(project_id, contest_id)
+);
+
+CREATE TABLE IF NOT EXISTS project_contest_adaptations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+  track_id TEXT NOT NULL REFERENCES contest_tracks(id) ON DELETE RESTRICT,
+  problem_statement TEXT NOT NULL DEFAULT '',
+  innovation_points TEXT[] NOT NULL DEFAULT '{}',
+  tech_route_steps TEXT[] NOT NULL DEFAULT '{}',
+  scoring_mapping TEXT[] NOT NULL DEFAULT '{}',
+  risks TEXT[] NOT NULL DEFAULT '{}',
+  deliverables TEXT[] NOT NULL DEFAULT '{}',
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(project_id, contest_id)
+);
+
+CREATE TABLE IF NOT EXISTS project_settings_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  revision BIGINT NOT NULL DEFAULT 1,
+  device_id TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, project_id)
+);
+
 CREATE TABLE IF NOT EXISTS contest_timelines (
   id TEXT PRIMARY KEY,
   contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
@@ -386,6 +426,43 @@ CREATE TABLE IF NOT EXISTS contest_resources (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_resources (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK (source IN ('upload', 'library', 'collab')),
+  resource_kind TEXT NOT NULL DEFAULT 'binary' CHECK (resource_kind IN ('binary', 'markdown', 'draw')),
+  linked_contest_resource_id TEXT REFERENCES contest_resources(id) ON DELETE SET NULL,
+  title TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  category TEXT NOT NULL CHECK (category IN (
+    'basic_info',
+    'timeline',
+    'tracks',
+    'scoring',
+    'past_questions',
+    'awarded_works',
+    'templates',
+    'faq',
+    'judge_guidelines',
+    'track_details',
+    'ai_prompts',
+    'submission_examples',
+    'policy_notice',
+    'compliance'
+  )),
+  year INTEGER NOT NULL DEFAULT 0,
+  source_link TEXT NOT NULL DEFAULT '',
+  availability TEXT NOT NULL DEFAULT 'public' CHECK (availability IN ('public', 'login_required', 'unavailable')),
+  summary TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'invalid', 'pending_verify', 'archived')),
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS project_resource_bindings (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -394,6 +471,20 @@ CREATE TABLE IF NOT EXISTS project_resource_bindings (
   added_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(project_id, resource_id)
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_shares (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+  share_key TEXT NOT NULL UNIQUE,
+  visibility TEXT NOT NULL CHECK (visibility IN ('public', 'workspace')),
+  duration TEXT NOT NULL CHECK (duration IN ('1h', '1d', '3d', '7d', '1mon')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS contest_resource_documents (
@@ -429,6 +520,147 @@ CREATE TABLE IF NOT EXISTS contest_resource_document_tasks (
   finished_at TIMESTAMPTZ,
   created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_documents (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  project_resource_id TEXT NOT NULL UNIQUE REFERENCES project_resources(id) ON DELETE CASCADE,
+  object_key TEXT NOT NULL,
+  source_object_key TEXT NOT NULL DEFAULT '',
+  preview_object_key TEXT NOT NULL DEFAULT '',
+  storage_provider TEXT NOT NULL DEFAULT 'local',
+  source_storage_provider TEXT NOT NULL DEFAULT 'local',
+  preview_storage_provider TEXT NOT NULL DEFAULT 'local',
+  file_name TEXT NOT NULL DEFAULT '',
+  source_file_name TEXT NOT NULL DEFAULT '',
+  preview_file_name TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT 'application/pdf',
+  source_mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  preview_mime_type TEXT NOT NULL DEFAULT 'application/pdf',
+  file_size BIGINT NOT NULL DEFAULT 0,
+  source_file_size BIGINT NOT NULL DEFAULT 0,
+  preview_file_size BIGINT NOT NULL DEFAULT 0,
+  page_count INTEGER NOT NULL DEFAULT 0,
+  parse_status TEXT NOT NULL DEFAULT 'queued' CHECK (parse_status IN ('queued', 'processing', 'succeeded', 'failed')),
+  preview_status TEXT NOT NULL DEFAULT 'queued' CHECK (preview_status IN ('queued', 'converting', 'finalizing', 'succeeded', 'failed')),
+  preview_stage TEXT NOT NULL DEFAULT 'queued' CHECK (preview_stage IN ('queued', 'converting', 'finalizing', 'succeeded', 'failed')),
+  preview_progress_percent INTEGER NOT NULL DEFAULT 0,
+  preview_eta_seconds INTEGER NOT NULL DEFAULT 0,
+  preview_error TEXT NOT NULL DEFAULT '',
+  parse_error TEXT NOT NULL DEFAULT '',
+  queued_at TIMESTAMPTZ,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  last_attempt_duration_ms INTEGER NOT NULL DEFAULT 0,
+  total_attempt_duration_ms INTEGER NOT NULL DEFAULT 0,
+  parser_provider TEXT NOT NULL DEFAULT '',
+  parser_model TEXT NOT NULL DEFAULT '',
+  analysis_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  annotation_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_collab_docs (
+  resource_id TEXT PRIMARY KEY REFERENCES project_resources(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('markdown', 'draw')),
+  ydoc_update BYTEA NOT NULL DEFAULT '\\x',
+  revision BIGINT NOT NULL DEFAULT 1,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_document_tasks (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES project_resource_documents(id) ON DELETE CASCADE,
+  task_type TEXT NOT NULL DEFAULT 'convert_preview_pdf',
+  provider TEXT NOT NULL DEFAULT 'onlyoffice',
+  stage TEXT NOT NULL DEFAULT 'queued' CHECK (stage IN ('queued', 'converting', 'finalizing', 'succeeded', 'failed')),
+  eta_seconds INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'succeeded', 'failed')),
+  attempt INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT NOT NULL DEFAULT '',
+  result_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_outline_snapshots (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  context_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  payload_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  reason TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ai_project_change_requests (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES ai_chat_sessions(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense')),
+  change_type TEXT NOT NULL CHECK (change_type IN (
+    'settings_common_patch',
+    'contest_bindings_replace',
+    'adaptation_patch',
+    'resource_bind_library',
+    'resource_update_metadata',
+    'resource_archive',
+    'resource_restore',
+    'resource_purge'
+  )),
+  title TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  destructive BOOLEAN NOT NULL DEFAULT FALSE,
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'failed')),
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  approved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  approved_at TIMESTAMPTZ,
+  rejected_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  rejected_at TIMESTAMPTZ,
+  rejected_reason TEXT NOT NULL DEFAULT '',
+  executed_result JSONB NOT NULL DEFAULT '{}'::JSONB,
+  failed_reason TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_issue_reports (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES ai_chat_sessions(id) ON DELETE CASCADE,
+  source_mode TEXT NOT NULL CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense')),
+  title TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  markdown TEXT NOT NULL DEFAULT '',
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_issues (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  report_id TEXT NOT NULL REFERENCES project_issue_reports(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  severity TEXT NOT NULL DEFAULT 'medium' CHECK (severity IN ('critical', 'high', 'medium', 'low')),
+  evidence TEXT NOT NULL DEFAULT '',
+  recommendation TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved', 'ignored')),
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -484,14 +716,35 @@ CREATE TABLE IF NOT EXISTS migrations_meta (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 先补齐旧库在索引依赖上的缺失列，避免 CREATE INDEX 因列不存在而中断整段迁移。
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_status TEXT NOT NULL DEFAULT 'queued';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ;
+
+ALTER TABLE project_resource_document_tasks
+  ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'queued';
+
 CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_user ON workspace_members(workspace_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_workspace_updated ON projects(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_members_project_user ON project_members(project_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_project_college_bindings_project ON project_college_bindings(project_id);
 CREATE INDEX IF NOT EXISTS idx_project_advisor_bindings_project ON project_advisor_bindings(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_contest_bindings_project_sort ON project_contest_bindings(project_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_project_contest_bindings_contest ON project_contest_bindings(contest_id);
+CREATE INDEX IF NOT EXISTS idx_project_contest_adaptations_project ON project_contest_adaptations(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_contest_adaptations_contest ON project_contest_adaptations(contest_id);
+CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_user_project ON project_settings_drafts(user_id, project_id);
+CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_project ON project_settings_drafts(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_updated ON ai_chat_sessions(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session_created ON ai_chat_messages(session_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_ai_project_change_requests_project_status ON ai_project_change_requests(project_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_project_change_requests_session ON ai_project_change_requests(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_issue_reports_project_created ON project_issue_reports(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_issues_project_status ON project_issues(project_id, status, severity, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_issues_report ON project_issues(report_id);
 CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);
@@ -506,6 +759,22 @@ CREATE INDEX IF NOT EXISTS idx_contest_resources_contest_category ON contest_res
 CREATE INDEX IF NOT EXISTS idx_contest_resources_status ON contest_resources(status);
 CREATE INDEX IF NOT EXISTS idx_project_resource_bindings_project_created ON project_resource_bindings(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_bindings_resource ON project_resource_bindings(resource_id);
+CREATE INDEX IF NOT EXISTS idx_project_resources_project_created ON project_resources(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resources_linked_contest_resource ON project_resources(linked_contest_resource_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_resources_project_linked_unique
+  ON project_resources(project_id, linked_contest_resource_id)
+  WHERE linked_contest_resource_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_project_resource_shares_project_created ON project_resource_shares(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_shares_resource ON project_resource_shares(resource_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_resource_shares_share_key ON project_resource_shares(share_key);
+CREATE INDEX IF NOT EXISTS idx_project_resource_documents_project_status ON project_resource_documents(project_id, parse_status);
+CREATE INDEX IF NOT EXISTS idx_project_resource_documents_resource ON project_resource_documents(project_resource_id);
+CREATE INDEX IF NOT EXISTS idx_project_resource_documents_preview_status ON project_resource_documents(project_id, preview_status, queued_at);
+CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_status_created ON project_resource_document_tasks(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_document ON project_resource_document_tasks(document_id);
+CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_stage ON project_resource_document_tasks(stage, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_collab_docs_project_resource ON project_resource_collab_docs(project_id, resource_id);
+CREATE INDEX IF NOT EXISTS idx_project_resource_collab_docs_project_updated ON project_resource_collab_docs(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_resource_documents_contest_status ON contest_resource_documents(contest_id, parse_status);
 CREATE INDEX IF NOT EXISTS idx_resource_documents_resource ON contest_resource_documents(resource_id);
 CREATE INDEX IF NOT EXISTS idx_resource_document_tasks_status_created ON contest_resource_document_tasks(status, created_at);
@@ -535,6 +804,172 @@ ALTER TABLE ai_chat_messages
 ALTER TABLE projects
   ADD COLUMN IF NOT EXISTS contest_ids TEXT[] NOT NULL DEFAULT '{}';
 
+ALTER TABLE project_resources
+  ADD COLUMN IF NOT EXISTS resource_kind TEXT NOT NULL DEFAULT 'binary';
+
+UPDATE project_resources
+SET resource_kind = 'binary'
+WHERE COALESCE(resource_kind, '') NOT IN ('binary', 'markdown', 'draw');
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS source_object_key TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_object_key TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS source_storage_provider TEXT NOT NULL DEFAULT 'local';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_storage_provider TEXT NOT NULL DEFAULT 'local';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS source_file_name TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_file_name TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS source_mime_type TEXT NOT NULL DEFAULT 'application/octet-stream';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_mime_type TEXT NOT NULL DEFAULT 'application/pdf';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS source_file_size BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_file_size BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_status TEXT NOT NULL DEFAULT 'queued';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_stage TEXT NOT NULL DEFAULT 'queued';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_progress_percent INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_eta_seconds INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS preview_error TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS last_attempt_duration_ms INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE project_resource_documents
+  ADD COLUMN IF NOT EXISTS total_attempt_duration_ms INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE project_resource_document_tasks
+  ADD COLUMN IF NOT EXISTS task_type TEXT NOT NULL DEFAULT 'convert_preview_pdf';
+
+ALTER TABLE project_resource_document_tasks
+  ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'onlyoffice';
+
+ALTER TABLE project_resource_document_tasks
+  ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'queued';
+
+ALTER TABLE project_resource_document_tasks
+  ADD COLUMN IF NOT EXISTS eta_seconds INTEGER NOT NULL DEFAULT 0;
+
+UPDATE project_resource_documents
+SET source_object_key = object_key
+WHERE COALESCE(source_object_key, '') = ''
+  AND COALESCE(object_key, '') <> '';
+
+UPDATE project_resource_documents
+SET source_storage_provider = storage_provider
+WHERE COALESCE(source_storage_provider, '') = ''
+  AND COALESCE(storage_provider, '') <> '';
+
+UPDATE project_resource_documents
+SET source_file_name = file_name
+WHERE COALESCE(source_file_name, '') = ''
+  AND COALESCE(file_name, '') <> '';
+
+UPDATE project_resource_documents
+SET source_mime_type = mime_type
+WHERE COALESCE(source_mime_type, '') = ''
+  AND COALESCE(mime_type, '') <> '';
+
+UPDATE project_resource_documents
+SET source_file_size = file_size
+WHERE COALESCE(source_file_size, 0) = 0
+  AND COALESCE(file_size, 0) > 0;
+
+UPDATE project_resource_documents
+SET preview_object_key = object_key
+WHERE COALESCE(preview_object_key, '') = ''
+  AND COALESCE(object_key, '') <> ''
+  AND (
+    COALESCE(preview_mime_type, '') ILIKE '%pdf%'
+    OR COALESCE(mime_type, '') ILIKE '%pdf%'
+    OR COALESCE(file_name, '') ILIKE '%.pdf'
+  );
+
+UPDATE project_resource_documents
+SET preview_storage_provider = storage_provider
+WHERE COALESCE(preview_storage_provider, '') = ''
+  AND COALESCE(storage_provider, '') <> '';
+
+UPDATE project_resource_documents
+SET preview_file_name = CASE
+  WHEN COALESCE(file_name, '') ILIKE '%.pdf' THEN file_name
+  ELSE ''
+END
+WHERE COALESCE(preview_file_name, '') = '';
+
+UPDATE project_resource_documents
+SET preview_mime_type = CASE
+  WHEN COALESCE(mime_type, '') ILIKE '%pdf%' THEN mime_type
+  ELSE preview_mime_type
+END
+WHERE COALESCE(preview_mime_type, '') = '';
+
+UPDATE project_resource_documents
+SET preview_file_size = CASE
+  WHEN COALESCE(mime_type, '') ILIKE '%pdf%' THEN file_size
+  ELSE preview_file_size
+END
+WHERE COALESCE(preview_file_size, 0) = 0;
+
+UPDATE project_resource_documents
+SET preview_status = CASE
+  WHEN parse_status = 'processing' THEN 'converting'
+  ELSE parse_status
+END
+WHERE COALESCE(preview_status, '') = ''
+   OR preview_status = 'queued';
+
+UPDATE project_resource_documents
+SET preview_stage = preview_status
+WHERE COALESCE(preview_stage, '') = '';
+
+UPDATE project_resource_documents
+SET preview_stage = preview_status
+WHERE COALESCE(preview_stage, '') = 'queued'
+  AND COALESCE(preview_status, '') <> 'queued';
+
+UPDATE project_resource_documents
+SET preview_progress_percent = CASE
+  WHEN preview_status = 'succeeded' THEN 100
+  WHEN preview_status = 'failed' THEN 100
+  WHEN preview_status = 'converting' THEN 45
+  ELSE 0
+END
+WHERE COALESCE(preview_progress_percent, 0) <= 0;
+
 UPDATE projects
 SET contest_ids = ARRAY[contest_id]
 WHERE contest_id IS NOT NULL
@@ -542,6 +977,117 @@ WHERE contest_id IS NOT NULL
     contest_ids IS NULL
     OR array_length(contest_ids, 1) IS NULL
   );
+
+INSERT INTO project_resources (
+  id,
+  project_id,
+  source,
+  resource_kind,
+  linked_contest_resource_id,
+  title,
+  mime_type,
+  category,
+  year,
+  source_link,
+  availability,
+  summary,
+  content,
+  metadata,
+  status,
+  created_by_user_id,
+  updated_by_user_id,
+  created_at,
+  updated_at
+)
+SELECT
+  CONCAT('pr_', b.id),
+  b.project_id,
+  CASE WHEN COALESCE(r.source_type, '') = 'project_upload' THEN 'upload' ELSE 'library' END,
+  'binary',
+  CASE WHEN COALESCE(r.source_type, '') = 'project_upload' THEN NULL ELSE r.id END,
+  r.title,
+  COALESCE(r.metadata->>'mimeType', 'application/octet-stream'),
+  r.category,
+  r.year,
+  r.url,
+  r.access_level,
+  r.summary,
+  r.content,
+  r.metadata,
+  r.status,
+  r.created_by_user_id,
+  r.updated_by_user_id,
+  b.created_at,
+  r.updated_at
+FROM project_resource_bindings b
+JOIN contest_resources r ON r.id = b.resource_id
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO project_contest_bindings (
+  id,
+  project_id,
+  contest_id,
+  track_id,
+  sort_order,
+  created_at,
+  updated_at
+)
+SELECT
+  CONCAT('pcb_', p.id, '_', p.contest_id),
+  p.id,
+  p.contest_id,
+  p.track_id,
+  0,
+  NOW(),
+  NOW()
+FROM projects p
+JOIN contests c ON c.id = p.contest_id
+JOIN contest_tracks ct ON ct.id = p.track_id
+  AND ct.contest_id = p.contest_id
+WHERE p.contest_id IS NOT NULL
+  AND p.contest_id <> ''
+  AND p.track_id IS NOT NULL
+  AND p.track_id <> ''
+ON CONFLICT (project_id, contest_id) DO NOTHING;
+
+INSERT INTO project_contest_adaptations (
+  id,
+  project_id,
+  contest_id,
+  track_id,
+  problem_statement,
+  innovation_points,
+  tech_route_steps,
+  scoring_mapping,
+  risks,
+  deliverables,
+  summary,
+  created_at,
+  updated_at
+)
+SELECT
+  CONCAT('pca_', p.id, '_', p.contest_id),
+  p.id,
+  p.contest_id,
+  p.track_id,
+  p.problem_statement,
+  p.innovation_points,
+  p.tech_route_steps,
+  p.scoring_mapping,
+  p.risks,
+  p.deliverables,
+  COALESCE(p.summary, ''),
+  NOW(),
+  NOW()
+FROM projects p
+JOIN contests c ON c.id = p.contest_id
+JOIN contest_tracks ct ON ct.id = p.track_id
+  AND ct.contest_id = p.contest_id
+WHERE p.contest_id IS NOT NULL
+  AND p.contest_id <> ''
+  AND p.track_id IS NOT NULL
+  AND p.track_id <> ''
+ON CONFLICT (project_id, contest_id) DO NOTHING;
 
 ALTER TABLE user_ai_settings
   ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN NOT NULL DEFAULT TRUE;
@@ -563,6 +1109,60 @@ ALTER TABLE user_ai_settings
 
 ALTER TABLE user_ai_settings
   ADD COLUMN IF NOT EXISTS selected_model_id TEXT NOT NULL DEFAULT 'auto';
+
+DO $$
+DECLARE
+  source_check_name TEXT;
+BEGIN
+  SELECT con.conname INTO source_check_name
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  WHERE rel.relname = 'project_resources'
+    AND con.contype = 'c'
+    AND pg_get_constraintdef(con.oid) ILIKE '%source%'
+    AND pg_get_constraintdef(con.oid) ILIKE '%upload%'
+    AND pg_get_constraintdef(con.oid) ILIKE '%library%'
+  ORDER BY con.conname
+  LIMIT 1;
+
+  IF source_check_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE project_resources DROP CONSTRAINT %I', source_check_name);
+  END IF;
+
+  BEGIN
+    ALTER TABLE project_resources
+      ADD CONSTRAINT project_resources_source_check
+      CHECK (source IN ('upload', 'library', 'collab'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
+
+DO $$
+DECLARE
+  resource_kind_check_name TEXT;
+BEGIN
+  SELECT con.conname INTO resource_kind_check_name
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  WHERE rel.relname = 'project_resources'
+    AND con.contype = 'c'
+    AND pg_get_constraintdef(con.oid) ILIKE '%resource_kind%'
+  ORDER BY con.conname
+  LIMIT 1;
+
+  IF resource_kind_check_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE project_resources DROP CONSTRAINT %I', resource_kind_check_name);
+  END IF;
+
+  BEGIN
+    ALTER TABLE project_resources
+      ADD CONSTRAINT project_resources_resource_kind_check
+      CHECK (resource_kind IN ('binary', 'markdown', 'draw'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
 
 DO $$
 DECLARE

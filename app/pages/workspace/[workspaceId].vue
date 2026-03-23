@@ -7,21 +7,30 @@ import type {
   AiDefenseScorecard,
   AiDefenseStreamEvent,
   AiDefenseStreamEventType,
-  AiProjectChatResult,
-  AiTopicProposalResult,
+  AiProjectChangeRequest,
+  AiWorkspaceRequest,
+  AiWorkspaceResult,
+  AiWorkspaceStreamEvent,
+  AiWorkspaceStreamEventType,
   ApiResponse,
+  ApproveChangeRequestPayload,
   AuthMeResult,
   ChatMessage,
   Contest,
   Project,
   ProjectContestAdaptation,
+  ProjectIssue,
+  ProjectIssueReport,
   ProjectOutlineSnapshot,
   ProjectPayload,
+  ProjectResourceShare,
+  ProjectResourceShareDurationPreset,
+  ProjectResourceShareVisibility,
   ProjectSettingsDraft,
   ProjectSettingsDraftPayload,
   ProjectSettingsSnapshot,
   Resource,
-  TopicProposalItem,
+  ResourcePreviewStatus,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 import type {
@@ -35,6 +44,7 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+import * as Y from 'yjs'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -61,16 +71,10 @@ useHead({
   ],
 })
 
-const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint, resolveApiUrl } = useApiEndpoint()
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const workspaceRealtime = useWorkspaceRealtime()
 
 function linesToArray(text: string): string[] {
   return text
@@ -250,7 +254,8 @@ function resolveApiErrorMessage(error: unknown, fallback: string): string {
 }
 
 function parseFileSizeFromResource(resource: Resource): number {
-  if (String(resource.sourceType || '').trim() !== 'project_upload')
+  const sourceType = String(resource.sourceType || resource.source || '').trim()
+  if (sourceType !== 'project_upload' && sourceType !== 'upload')
     return 0
 
   const metadata = resource.metadata
@@ -321,7 +326,56 @@ interface WorkspaceQuickSwitchProject {
   updatedAt: string
 }
 
+interface ResourcePreviewStatusPayload {
+  documentId: string
+  status: ResourcePreviewStatus
+  stage: ResourcePreviewStatus
+  progressPercent: number
+  etaSeconds: number
+  queuePosition: number
+  attempt: number
+  error: string
+  previewUrl: string
+  previewUrlExpiresAt: string
+  sourceDownloadUrl: string
+  sourceDownloadUrlExpiresAt: string
+}
+
+interface CollabSnapshotPayload {
+  kind: 'markdown' | 'draw'
+  revision: number
+  updateBase64: string
+  updatedAt?: string
+}
+
+interface WorkspaceRealtimeEnvelope {
+  type: string
+  requestId?: string
+  workspaceId?: string
+  projectId?: string
+  resourceId?: string
+  revision?: number
+  payload?: Record<string, unknown>
+}
+
+interface WorkspaceCollabPresenceMember {
+  peerId: string
+  userId: string
+  username: string
+  cursorX?: number
+  cursorY?: number
+  updatedAt?: string
+}
+
+interface ProjectResourceShareCreatePayload {
+  resourceId: string
+  visibility: ProjectResourceShareVisibility
+  duration: ProjectResourceShareDurationPreset
+}
+
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
+type WorkspaceMainTabId = 'dashboard' | 'flow' | 'settings' | 'preview'
+type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
@@ -335,6 +389,37 @@ function parseTimestamp(value: string): number {
 
 function sortByUpdatedAtDesc(items: Project[]): Project[] {
   return [...items].sort((a, b) => parseTimestamp(b.updatedAt) - parseTimestamp(a.updatedAt))
+}
+
+function encodeBytesToBase64(bytes: Uint8Array): string {
+  if (!bytes.length)
+    return ''
+  if (!import.meta.client)
+    return ''
+
+  let binary = ''
+  for (const value of bytes)
+    binary += String.fromCharCode(value)
+  return window.btoa(binary)
+}
+
+function decodeBase64ToBytes(rawBase64: string): Uint8Array {
+  const normalized = String(rawBase64 || '').trim()
+  if (!normalized)
+    return new Uint8Array()
+  if (!import.meta.client)
+    return new Uint8Array()
+
+  try {
+    const binary = window.atob(normalized)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1)
+      bytes[i] = binary.charCodeAt(i)
+    return bytes
+  }
+  catch {
+    return new Uint8Array()
+  }
 }
 
 const routeWorkspaceId = computed(() => {
@@ -356,6 +441,7 @@ const contestCatalog = ref<Contest[]>([])
 const resources = ref<Resource[]>([])
 const recycleResources = ref<Resource[]>([])
 const resourceLibrary = ref<Resource[]>([])
+const projectResourceShares = ref<ProjectResourceShare[]>([])
 const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
 const projects = ref<Project[]>([])
 const allProjects = ref<Project[]>([])
@@ -366,10 +452,44 @@ const selectedTrackId = ref('')
 
 const openSettingsSignal = ref(0)
 const openFlowSignal = ref(0)
+const openPreviewSignal = ref(0)
+const closePreviewSignal = ref(0)
+const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const headerSearch = ref('')
 const aiReasoning = ref('')
 const normalizedInfo = ref('')
 const statusLine = ref('')
+const previewResourceId = ref('')
+const previewStatusLoading = ref(false)
+const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
+const previewMode = ref<WorkspacePreviewMode>('binary')
+const collabResourceKind = ref<'' | 'markdown' | 'draw'>('')
+const collabRevision = ref(0)
+const collabMarkdownValue = ref('')
+const collabDrawValue = ref('[]')
+const collabDrawError = ref('')
+const collabPresenceMembers = ref<WorkspaceCollabPresenceMember[]>([])
+const collabDocRef = shallowRef<Y.Doc | null>(null)
+const collabApplyingRemote = ref(false)
+const collabConnected = computed(() => workspaceRealtime.connected.value)
+const collabStatusText = computed(() => {
+  if (!collabConnected.value)
+    return '离线编辑（待重连）'
+
+  const signal = String(statusLine.value || '').toLowerCase()
+  const backendErrorSignals = [
+    'connection terminated',
+    'timeout',
+    'timed out',
+    '数据库',
+    '请求失败',
+    'request error',
+  ]
+  if (backendErrorSignals.some(keyword => signal.includes(keyword.toLowerCase())))
+    return 'WS 已连接（后端服务异常）'
+
+  return '实时连接中'
+})
 const projectSettingsLoading = ref(false)
 const projectSettingsSaveState = ref<WorkspaceProjectSaveState>('idle')
 const projectSettingsCommon = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
@@ -387,6 +507,11 @@ const projectSettingsDraftDeviceId = ref('')
 let projectSettingsDraftTimer: ReturnType<typeof setTimeout> | null = null
 let projectSettingsDraftPersistSeq = 0
 let projectOutlineGenerateTimer: ReturnType<typeof setTimeout> | null = null
+let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
+let collabDocDispose: (() => void) | null = null
+let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
+let unsubscribeRealtimeMessages: (() => void) | null = null
 
 const listLoading = ref(false)
 const aiFiltering = ref(false)
@@ -394,6 +519,9 @@ const chatLoading = ref(false)
 const chatSessionsLoading = ref(false)
 const formSubmitting = ref(false)
 const resourcesLoading = ref(false)
+const resourceLibraryLoading = ref(false)
+const projectOutlineLoading = ref(false)
+const projectResourceSharesLoading = ref(false)
 const resourceMutating = ref(false)
 
 const chatMessages = ref<ChatMessage[]>([defaultAssistantGreeting()])
@@ -402,8 +530,14 @@ const activeChatSessionId = ref('')
 const chatInput = ref('')
 const chatMissingFields = ref<string[]>([])
 const chatDraft = ref<ProjectPayload | null>(null)
-const aiMode = ref<WorkspaceAiMode>('project_chat')
-const topicProposals = ref<TopicProposalItem[]>([])
+const aiMode = ref<WorkspaceAiMode>('dialog_ask')
+const aiChangeRequests = ref<AiProjectChangeRequest[]>([])
+const aiChangeRequestsLoading = ref(false)
+const aiChangeActingIds = ref<string[]>([])
+const aiChangeSecondConfirmIds = ref<string[]>([])
+const projectIssueReports = ref<ProjectIssueReport[]>([])
+const projectIssues = ref<ProjectIssue[]>([])
+const issueCenterLoading = ref(false)
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
 
@@ -520,7 +654,6 @@ function resetChatStateWithGreeting() {
   chatMessages.value = [defaultAssistantGreeting()]
   chatDraft.value = null
   chatMissingFields.value = []
-  topicProposals.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
 }
@@ -566,13 +699,15 @@ const workspaceNameMap = computed(() => {
     map.set(item.workspace.id, item.workspace.name)
   return map
 })
+const visibleWorkspaceIdSet = computed(() => {
+  return new Set(workspaceOptions.value.map(item => item.workspace.id))
+})
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
 })
 const quickSwitchSourceProjects = computed(() => {
-  if (allProjects.value.length > 0)
-    return allProjects.value
-  return projects.value
+  const source = allProjects.value.length > 0 ? allProjects.value : projects.value
+  return source.filter(project => visibleWorkspaceIdSet.value.has(project.workspaceId))
 })
 const sortedQuickSwitchProjects = computed(() => sortByUpdatedAtDesc(quickSwitchSourceProjects.value))
 
@@ -641,6 +776,352 @@ const filteredContests = computed(() => {
 
 const selectedResources = computed(() => resources.value)
 const projectOutlineItems = computed(() => projectOutlineSnapshot.value?.items || [])
+const latestIssueReport = computed(() => projectIssueReports.value[0] || null)
+const previewResource = computed(() => {
+  const targetId = String(previewResourceId.value || '').trim()
+  if (!targetId)
+    return null
+  return resources.value.find(item => item.id === targetId) || null
+})
+const previewResourceTitle = computed(() => {
+  const title = String(previewResource.value?.title || '').trim()
+  if (title)
+    return title
+  return '文档预览'
+})
+function resolveResourceSourceDownloadUrl(resource: Resource | null | undefined): string {
+  const rawUrl = String(resource?.sourceDownloadUrl || resource?.sourceLink || '').trim()
+  if (!rawUrl)
+    return ''
+  return resolveApiUrl(rawUrl)
+}
+
+function resolveProjectResourceShareUrl(rawUrl: string): string {
+  const normalized = String(rawUrl || '').trim()
+  if (!normalized)
+    return ''
+
+  const resolved = resolveApiUrl(normalized)
+  if (!import.meta.client)
+    return resolved
+  if (/^https?:\/\//i.test(resolved))
+    return resolved
+  if (resolved.startsWith('/'))
+    return `${window.location.origin}${resolved}`
+  return resolved
+}
+const previewSourceDownloadUrl = computed(() => {
+  const fromStatus = String(previewStatusPayload.value?.sourceDownloadUrl || '').trim()
+  if (fromStatus)
+    return resolveApiUrl(fromStatus)
+  return resolveResourceSourceDownloadUrl(previewResource.value)
+})
+const previewPdfUrl = computed(() => {
+  const fromStatus = String(previewStatusPayload.value?.previewUrl || '').trim()
+  if (fromStatus)
+    return resolveApiUrl(fromStatus)
+  const projectId = String(activeProjectId.value || '').trim()
+  const resourceId = String(previewResourceId.value || '').trim()
+  if (!projectId || !resourceId)
+    return ''
+  return endpoint(`/projects/${projectId}/resources/${resourceId}/preview`)
+})
+
+const activeCollabRoomKey = computed(() => {
+  const projectId = String(activeProjectId.value || '').trim()
+  const resourceId = String(previewResourceId.value || '').trim()
+  if (!projectId || !resourceId || !collabResourceKind.value)
+    return ''
+  return `${projectId}:${resourceId}`
+})
+
+function isCollabResource(resource: Resource | null | undefined): resource is Resource {
+  if (!resource)
+    return false
+  const kind = String(resource.resourceKind || '').trim().toLowerCase()
+  if (kind === 'markdown' || kind === 'draw')
+    return true
+  return String(resource.source || '').trim().toLowerCase() === 'collab'
+}
+
+function resolveCollabNodesArray(doc: Y.Doc): Y.Array<unknown> {
+  const drawMap = doc.getMap('draw')
+  const existingNodes = drawMap.get('nodes')
+  if (existingNodes instanceof Y.Array)
+    return existingNodes
+
+  const created = new Y.Array<unknown>()
+  drawMap.set('nodes', created)
+  return created
+}
+
+function syncCollabDraftFromDoc(): void {
+  const doc = collabDocRef.value
+  if (!doc)
+    return
+
+  if (collabResourceKind.value === 'markdown') {
+    collabMarkdownValue.value = doc.getText('content').toString()
+    return
+  }
+
+  if (collabResourceKind.value === 'draw') {
+    const nodes = resolveCollabNodesArray(doc).toArray()
+    collabDrawValue.value = JSON.stringify(nodes, null, 2)
+  }
+}
+
+function disposeCollabDocBinding(leaveRoom = true): void {
+  if (collabDocDispose) {
+    collabDocDispose()
+    collabDocDispose = null
+  }
+
+  const projectId = String(activeProjectId.value || '').trim()
+  const resourceId = String(previewResourceId.value || '').trim()
+  if (leaveRoom && projectId && resourceId)
+    workspaceRealtime.leaveCollab(projectId, resourceId)
+
+  collabDocRef.value = null
+  collabResourceKind.value = ''
+  collabRevision.value = 0
+  collabMarkdownValue.value = ''
+  collabDrawValue.value = '[]'
+  collabDrawError.value = ''
+  collabPresenceMembers.value = []
+}
+
+function bindCollabDoc(doc: Y.Doc): void {
+  if (collabDocDispose)
+    collabDocDispose()
+
+  const handleDocUpdate = (update: Uint8Array, origin: unknown) => {
+    if (origin === 'remote' || origin === 'bootstrap')
+      return
+
+    const projectId = String(activeProjectId.value || '').trim()
+    const resourceId = String(previewResourceId.value || '').trim()
+    if (!projectId || !resourceId)
+      return
+
+    workspaceRealtime.sendCollabUpdate({
+      projectId,
+      resourceId,
+      revision: collabRevision.value,
+      updateBase64: encodeBytesToBase64(update),
+    })
+  }
+
+  const text = doc.getText('content')
+  const handleTextChange = () => {
+    if (collabResourceKind.value !== 'markdown')
+      return
+    if (collabApplyingRemote.value)
+      return
+    collabMarkdownValue.value = text.toString()
+  }
+
+  const nodes = resolveCollabNodesArray(doc)
+  const handleNodesChange = () => {
+    if (collabResourceKind.value !== 'draw')
+      return
+    if (collabApplyingRemote.value)
+      return
+    collabDrawValue.value = JSON.stringify(nodes.toArray(), null, 2)
+  }
+
+  doc.on('update', handleDocUpdate)
+  text.observe(handleTextChange)
+  nodes.observe(handleNodesChange)
+  collabDocDispose = () => {
+    doc.off('update', handleDocUpdate)
+    text.unobserve(handleTextChange)
+    nodes.unobserve(handleNodesChange)
+    doc.destroy()
+  }
+}
+
+function applyCollabSnapshot(snapshot: CollabSnapshotPayload): void {
+  const doc = new Y.Doc()
+  const initialUpdate = decodeBase64ToBytes(snapshot.updateBase64)
+  if (initialUpdate.length > 0)
+    Y.applyUpdate(doc, initialUpdate, 'bootstrap')
+
+  if (snapshot.kind === 'markdown') {
+    doc.getText('content')
+  }
+  else {
+    resolveCollabNodesArray(doc)
+  }
+
+  collabDocRef.value = doc
+  collabResourceKind.value = snapshot.kind
+  collabRevision.value = Math.max(0, Number(snapshot.revision || 0))
+  collabDrawError.value = ''
+  bindCollabDoc(doc)
+  syncCollabDraftFromDoc()
+}
+
+function scheduleRealtimeProjectRefresh(): void {
+  if (realtimeProjectRefreshTimer)
+    return
+
+  realtimeProjectRefreshTimer = setTimeout(() => {
+    realtimeProjectRefreshTimer = null
+    void (async () => {
+      await refreshProjectResourceContext()
+      await loadProjectOutline()
+    })()
+  }, 300)
+}
+
+function clearRealtimeProjectRefreshTimer(): void {
+  if (!realtimeProjectRefreshTimer)
+    return
+  clearTimeout(realtimeProjectRefreshTimer)
+  realtimeProjectRefreshTimer = null
+}
+
+function clearFallbackResourceRefreshTimer(): void {
+  if (!fallbackResourceRefreshTimer)
+    return
+  clearInterval(fallbackResourceRefreshTimer)
+  fallbackResourceRefreshTimer = null
+}
+
+function startFallbackResourceRefreshTimer(): void {
+  clearFallbackResourceRefreshTimer()
+  if (!activeProjectId.value)
+    return
+
+  fallbackResourceRefreshTimer = setInterval(() => {
+    void (async () => {
+      await refreshProjectResourceContext()
+      await loadProjectOutline()
+    })()
+  }, 30_000)
+}
+
+function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
+  const messageType = String(message.type || '').trim()
+  if (!messageType)
+    return
+
+  if (messageType === 'error') {
+    const payload = message.payload || {}
+    const code = String(payload.code || '').trim().toUpperCase()
+    const text = String(payload.message || '').trim()
+    if (code === 'WS_UNAUTHORIZED' || code === 'UNAUTHORIZED' || code === 'FORBIDDEN' || code === 'WS_FORBIDDEN') {
+      statusLine.value = text || '实时连接鉴权失败，请重新登录后重试。'
+      return
+    }
+    if (text)
+      statusLine.value = text
+    return
+  }
+
+  if (messageType === 'project.resources.changed' || messageType === 'project.outline.changed') {
+    const workspaceId = String(message.workspaceId || '').trim()
+    const projectId = String(message.projectId || '').trim()
+    if (workspaceId && workspaceId !== activeWorkspaceId.value)
+      return
+    if (projectId && projectId !== activeProjectId.value)
+      return
+    scheduleRealtimeProjectRefresh()
+    return
+  }
+
+  if (messageType === 'ack') {
+    const payload = message.payload || {}
+    const ackType = String(payload.type || '').trim()
+    if (ackType !== 'collab.update')
+      return
+
+    const projectId = String(payload.projectId || message.projectId || '').trim()
+    const resourceId = String(payload.resourceId || message.resourceId || '').trim()
+    if (projectId !== activeProjectId.value || resourceId !== previewResourceId.value)
+      return
+
+    const revision = Math.max(0, Number(payload.revision || message.revision || 0))
+    if (revision > 0)
+      collabRevision.value = Math.max(collabRevision.value, revision)
+    return
+  }
+
+  if (messageType === 'collab.bootstrap') {
+    const projectId = String(message.projectId || '').trim()
+    const resourceId = String(message.resourceId || '').trim()
+    if (projectId !== activeProjectId.value || resourceId !== previewResourceId.value)
+      return
+
+    const payload = message.payload || {}
+    const kind = String(payload.kind || '').trim().toLowerCase()
+    if (kind !== 'markdown' && kind !== 'draw')
+      return
+
+    applyCollabSnapshot({
+      kind,
+      revision: Math.max(0, Number(message.revision || payload.revision || 0)),
+      updateBase64: String(payload.updateBase64 || '').trim(),
+      updatedAt: String(payload.updatedAt || ''),
+    })
+    return
+  }
+
+  if (messageType === 'collab.update') {
+    const projectId = String(message.projectId || '').trim()
+    const resourceId = String(message.resourceId || '').trim()
+    const roomKey = activeCollabRoomKey.value
+    if (!roomKey)
+      return
+    if (projectId !== activeProjectId.value || resourceId !== previewResourceId.value)
+      return
+
+    const payload = message.payload || {}
+    const updateBase64 = String(payload.updateBase64 || '').trim()
+    if (!updateBase64)
+      return
+
+    const doc = collabDocRef.value
+    if (!doc)
+      return
+
+    const update = decodeBase64ToBytes(updateBase64)
+    if (!update.length)
+      return
+
+    collabApplyingRemote.value = true
+    try {
+      Y.applyUpdate(doc, update, 'remote')
+      collabRevision.value = Math.max(collabRevision.value, Math.max(0, Number(message.revision || 0)))
+      syncCollabDraftFromDoc()
+    }
+    finally {
+      collabApplyingRemote.value = false
+    }
+    return
+  }
+
+  if (messageType === 'collab.presence') {
+    const payload = message.payload || {}
+    const roomKey = String(payload.roomKey || '').trim()
+    if (!roomKey || roomKey !== activeCollabRoomKey.value)
+      return
+
+    const members = Array.isArray(payload.members) ? payload.members : []
+    collabPresenceMembers.value = members.map((item) => {
+      const record = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+      return {
+        peerId: String(record.peerId || '').trim(),
+        userId: String(record.userId || '').trim(),
+        username: String(record.username || '').trim(),
+        cursorX: Number.isFinite(Number(record.cursorX)) ? Number(record.cursorX) : undefined,
+        cursorY: Number.isFinite(Number(record.cursorY)) ? Number(record.cursorY) : undefined,
+        updatedAt: String(record.updatedAt || '').trim(),
+      }
+    })
+  }
+}
 
 const toneMeta: Record<MappingTone, WorkspaceStatusToneMeta> = {
   complete: {
@@ -1840,8 +2321,10 @@ async function loadProjectResources() {
 }
 
 async function loadProjectResourceLibrary() {
+  resourceLibraryLoading.value = true
   if (!activeProjectId.value) {
     resourceLibrary.value = []
+    resourceLibraryLoading.value = false
     return
   }
 
@@ -1851,6 +2334,9 @@ async function loadProjectResourceLibrary() {
   }
   catch {
     resourceLibrary.value = []
+  }
+  finally {
+    resourceLibraryLoading.value = false
   }
 }
 
@@ -1869,11 +2355,35 @@ async function loadProjectRecycleResources() {
   }
 }
 
+async function loadProjectResourceShares() {
+  projectResourceSharesLoading.value = true
+  if (!activeProjectId.value) {
+    projectResourceShares.value = []
+    projectResourceSharesLoading.value = false
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectResourceShare[]>>(endpoint(`/projects/${activeProjectId.value}/resources/shares`))
+    projectResourceShares.value = response.data.map(item => ({
+      ...item,
+      shareUrl: resolveProjectResourceShareUrl(String(item.shareUrl || '').trim()),
+    }))
+  }
+  catch {
+    projectResourceShares.value = []
+  }
+  finally {
+    projectResourceSharesLoading.value = false
+  }
+}
+
 async function refreshProjectResourceContext() {
   await Promise.all([
     loadProjectResources(),
     loadProjectResourceLibrary(),
     loadProjectRecycleResources(),
+    loadProjectResourceShares(),
   ])
 }
 
@@ -1896,9 +2406,11 @@ function clearProjectOutlineGenerateTimer() {
 }
 
 async function loadProjectOutline() {
+  projectOutlineLoading.value = true
   const projectId = activeProjectId.value
   if (!projectId) {
     projectOutlineSnapshot.value = null
+    projectOutlineLoading.value = false
     return
   }
 
@@ -1913,6 +2425,173 @@ async function loadProjectOutline() {
   catch {
     if (activeProjectId.value === projectId)
       projectOutlineSnapshot.value = null
+  }
+  finally {
+    if (activeProjectId.value === projectId)
+      projectOutlineLoading.value = false
+    else if (!activeProjectId.value)
+      projectOutlineLoading.value = false
+  }
+}
+
+async function loadAiChangeRequests() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    aiChangeRequests.value = []
+    return
+  }
+
+  aiChangeRequestsLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<AiProjectChangeRequest[]>>(endpoint(`/projects/${projectId}/ai/changes`), {
+      query: {
+        statuses: 'pending,approved,rejected,failed',
+        limit: 100,
+      },
+    })
+    if (activeProjectId.value !== projectId)
+      return
+    aiChangeRequests.value = response.data
+    const pendingIds = new Set(
+      response.data
+        .filter(item => item.status === 'pending')
+        .map(item => item.id),
+    )
+    aiChangeSecondConfirmIds.value = aiChangeSecondConfirmIds.value
+      .filter(item => pendingIds.has(item))
+  }
+  catch {
+    if (activeProjectId.value === projectId) {
+      aiChangeRequests.value = []
+      aiChangeSecondConfirmIds.value = []
+    }
+  }
+  finally {
+    if (activeProjectId.value === projectId)
+      aiChangeRequestsLoading.value = false
+  }
+}
+
+interface ProjectIssuesBundle {
+  reports: ProjectIssueReport[]
+  issues: ProjectIssue[]
+}
+
+async function loadProjectIssues() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    projectIssueReports.value = []
+    projectIssues.value = []
+    return
+  }
+
+  issueCenterLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<ProjectIssuesBundle>>(endpoint(`/projects/${projectId}/issues`), {
+      query: {
+        statuses: 'open,in_progress,resolved,ignored',
+        reportLimit: 20,
+        issueLimit: 200,
+      },
+    })
+    if (activeProjectId.value !== projectId)
+      return
+    projectIssueReports.value = response.data.reports || []
+    projectIssues.value = response.data.issues || []
+  }
+  catch {
+    if (activeProjectId.value === projectId) {
+      projectIssueReports.value = []
+      projectIssues.value = []
+    }
+  }
+  finally {
+    if (activeProjectId.value === projectId)
+      issueCenterLoading.value = false
+  }
+}
+
+function setAiChangeActing(changeId: string, active: boolean) {
+  const normalizedId = String(changeId || '').trim()
+  if (!normalizedId)
+    return
+  if (active) {
+    if (!aiChangeActingIds.value.includes(normalizedId))
+      aiChangeActingIds.value = [...aiChangeActingIds.value, normalizedId]
+    return
+  }
+  aiChangeActingIds.value = aiChangeActingIds.value.filter(item => item !== normalizedId)
+}
+
+async function approveAiChange(change: AiProjectChangeRequest) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const changeId = String(change.id || '').trim()
+  if (!projectId || !changeId)
+    return
+
+  const requiresSecondConfirm = change.destructive && !aiChangeSecondConfirmIds.value.includes(changeId)
+  if (requiresSecondConfirm) {
+    aiChangeSecondConfirmIds.value = [...aiChangeSecondConfirmIds.value, changeId]
+    statusLine.value = '该提案包含破坏性操作，请再次点击“通过”确认执行。'
+    return
+  }
+
+  setAiChangeActing(changeId, true)
+  try {
+    const payload: ApproveChangeRequestPayload = {
+      destructiveConfirm: Boolean(change.destructive),
+    }
+    await $fetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/approve`), {
+      method: 'POST',
+      body: payload,
+    })
+    aiChangeSecondConfirmIds.value = aiChangeSecondConfirmIds.value.filter(item => item !== changeId)
+    statusLine.value = `变更已通过：${change.title}`
+    await Promise.all([
+      loadAiChangeRequests(),
+      loadProjectIssues(),
+      refreshProjectResourceContext(),
+      loadProjectSettings(selectedContestId.value),
+      loadProjectOutline(),
+    ])
+  }
+  catch (error) {
+    const statusCode = resolveApiStatusCode(error)
+    if (statusCode === 409 && change.destructive) {
+      if (!aiChangeSecondConfirmIds.value.includes(changeId))
+        aiChangeSecondConfirmIds.value = [...aiChangeSecondConfirmIds.value, changeId]
+      statusLine.value = '破坏性提案需要二次确认，请再次点击“通过”。'
+      return
+    }
+    aiChangeSecondConfirmIds.value = aiChangeSecondConfirmIds.value.filter(item => item !== changeId)
+    statusLine.value = resolveApiErrorMessage(error, '审批通过失败，请稍后重试。')
+  }
+  finally {
+    setAiChangeActing(changeId, false)
+  }
+}
+
+async function rejectAiChange(change: AiProjectChangeRequest) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const changeId = String(change.id || '').trim()
+  if (!projectId || !changeId)
+    return
+
+  setAiChangeActing(changeId, true)
+  try {
+    await $fetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/reject`), {
+      method: 'POST',
+      body: {},
+    })
+    aiChangeSecondConfirmIds.value = aiChangeSecondConfirmIds.value.filter(item => item !== changeId)
+    statusLine.value = `已拒绝变更：${change.title}`
+    await loadAiChangeRequests()
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '拒绝变更失败，请稍后重试。')
+  }
+  finally {
+    setAiChangeActing(changeId, false)
   }
 }
 
@@ -2007,6 +2686,42 @@ async function addResourceFromLibrary(resourceId: string) {
   }
 }
 
+async function createCollabResource(kind: 'markdown' | 'draw') {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId)
+    return
+
+  resourceMutating.value = true
+  try {
+    const response = await $fetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
+      method: 'POST',
+      body: {
+        kind,
+      },
+    })
+
+    await refreshProjectResourceContext()
+
+    const createdResource = response.data?.resource
+    const snapshot = response.data?.snapshot
+    if (createdResource?.id) {
+      await openProjectCollabResource(createdResource.id, snapshot || null)
+      statusLine.value = kind === 'draw'
+        ? '已创建无边画布，协作模式已打开。'
+        : '已创建协作文档，协作模式已打开。'
+      return
+    }
+
+    statusLine.value = '协作资源已创建。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '创建协作资源失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
 async function removeProjectResource(resourceId: string) {
   const targetResourceId = String(resourceId || '').trim()
   if (!activeProjectId.value || !targetResourceId)
@@ -2014,12 +2729,15 @@ async function removeProjectResource(resourceId: string) {
 
   const target = resources.value.find(item => item.id === targetResourceId)
   const targetTitle = target?.title ? `「${target.title}」` : '资源'
+  const isRemovingPreviewResource = previewResourceId.value === targetResourceId
 
   resourceMutating.value = true
   try {
     await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}`), {
       method: 'DELETE',
     })
+    if (isRemovingPreviewResource)
+      closeProjectResourcePreview()
     await refreshProjectResourceContext()
     await generateProjectOutline('resource_delete_success', true)
     statusLine.value = `${targetTitle} 已移入项目回收站，结构大纲已刷新。`
@@ -2075,6 +2793,31 @@ async function purgeProjectResource(resourceId: string) {
   }
 }
 
+async function duplicateProjectResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!activeProjectId.value || !targetResourceId)
+    return
+
+  resourceMutating.value = true
+  try {
+    const response = await $fetch<ApiResponse<Resource>>(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/duplicate`), {
+      method: 'POST',
+    })
+    await refreshProjectResourceContext()
+    await generateProjectOutline('resource_duplicate_success', true)
+    const duplicatedTitle = String(response.data?.title || '').trim()
+    statusLine.value = duplicatedTitle
+      ? `已创建副本：${duplicatedTitle}`
+      : '已创建文件副本。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '创建副本失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
 async function uploadResourcesToProject(files: File[]) {
   if (!activeProjectId.value)
     return
@@ -2110,6 +2853,369 @@ async function uploadResourcesToProject(files: File[]) {
   }
 }
 
+function clearPreviewStatusPolling() {
+  if (!previewStatusPollTimer)
+    return
+  clearInterval(previewStatusPollTimer)
+  previewStatusPollTimer = null
+}
+
+function updateCollabMarkdownContent(value: string): void {
+  collabMarkdownValue.value = value
+  if (collabResourceKind.value !== 'markdown')
+    return
+
+  const doc = collabDocRef.value
+  if (!doc)
+    return
+
+  const text = doc.getText('content')
+  const nextValue = String(value || '')
+  if (text.toString() === nextValue)
+    return
+
+  doc.transact(() => {
+    text.delete(0, text.length)
+    text.insert(0, nextValue)
+  }, 'local-input')
+}
+
+function updateCollabDrawContent(value: string): void {
+  collabDrawValue.value = value
+  collabDrawError.value = ''
+  if (collabResourceKind.value !== 'draw')
+    return
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  }
+  catch {
+    collabDrawError.value = 'JSON 解析失败，修复后会自动继续同步。'
+    return
+  }
+
+  if (!Array.isArray(parsed)) {
+    collabDrawError.value = '画布模型必须是数组。'
+    return
+  }
+
+  const doc = collabDocRef.value
+  if (!doc)
+    return
+
+  const nodes = resolveCollabNodesArray(doc)
+  doc.transact(() => {
+    nodes.delete(0, nodes.length)
+    if (parsed.length > 0)
+      nodes.insert(0, parsed as unknown[])
+  }, 'local-input')
+}
+
+async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPayload | null> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetResourceId = String(resourceId || '').trim()
+  if (!projectId || !targetResourceId)
+    return null
+
+  try {
+    const response = await $fetch<ApiResponse<CollabSnapshotPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/collab`))
+    return response.data
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '读取协作资源失败，请稍后重试。')
+    return null
+  }
+}
+
+async function openProjectCollabResource(resourceId: string, snapshot?: CollabSnapshotPayload | null): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetResourceId = String(resourceId || '').trim()
+  if (!projectId || !targetResourceId)
+    return
+
+  const targetSnapshot = snapshot || await fetchCollabSnapshot(targetResourceId)
+  if (!targetSnapshot)
+    return
+
+  disposeCollabDocBinding(true)
+  clearPreviewStatusPolling()
+  previewStatusPayload.value = null
+  previewStatusLoading.value = false
+  previewMode.value = targetSnapshot.kind
+  previewResourceId.value = targetResourceId
+  openPreviewSignal.value += 1
+  applyCollabSnapshot(targetSnapshot)
+
+  workspaceRealtime.subscribeProject(projectId)
+  workspaceRealtime.joinCollab(projectId, targetResourceId)
+}
+
+async function fetchResourcePreviewStatus(resourceId: string, silent = false) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetResourceId = String(resourceId || '').trim()
+  if (!projectId || !targetResourceId)
+    return
+
+  if (!silent)
+    previewStatusLoading.value = true
+
+  try {
+    const response = await $fetch<ApiResponse<ResourcePreviewStatusPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/preview-status`))
+    previewStatusPayload.value = response.data
+
+    if (response.data.status === 'succeeded' || response.data.status === 'failed')
+      clearPreviewStatusPolling()
+  }
+  catch (error) {
+    if (!silent)
+      statusLine.value = resolveApiErrorMessage(error, '获取预览状态失败。')
+  }
+  finally {
+    if (!silent)
+      previewStatusLoading.value = false
+  }
+}
+
+function startPreviewStatusPolling(resourceId: string) {
+  clearPreviewStatusPolling()
+  previewStatusPollTimer = setInterval(() => {
+    void fetchResourcePreviewStatus(resourceId, true)
+  }, 2000)
+}
+
+async function openProjectResourcePreview(resourceId: string) {
+  const targetResource = resources.value.find(item => item.id === resourceId) || null
+  if (isCollabResource(targetResource)) {
+    await openProjectCollabResource(resourceId)
+    return
+  }
+
+  const targetResourceId = String(resourceId || '').trim()
+  if (!activeProjectId.value || !targetResourceId)
+    return
+
+  disposeCollabDocBinding(true)
+  previewMode.value = 'binary'
+  previewResourceId.value = targetResourceId
+  openPreviewSignal.value += 1
+  previewStatusPayload.value = null
+
+  await fetchResourcePreviewStatus(targetResourceId)
+  const currentStatus = ((previewStatusPayload.value as any)?.status || '') as ResourcePreviewStatus | ''
+  if (currentStatus !== 'succeeded' && currentStatus !== 'failed')
+    startPreviewStatusPolling(targetResourceId)
+}
+
+function closeProjectResourcePreview() {
+  disposeCollabDocBinding(true)
+  previewMode.value = 'binary'
+  previewStatusPayload.value = null
+  previewStatusLoading.value = false
+  previewResourceId.value = ''
+  clearPreviewStatusPolling()
+  closePreviewSignal.value += 1
+}
+
+function downloadProjectResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId)
+    return
+
+  const targetResource = resources.value.find(item => item.id === targetResourceId)
+  const targetUrl = resolveResourceSourceDownloadUrl(targetResource)
+  if (!targetUrl) {
+    statusLine.value = '当前资源缺少可下载原文件地址。'
+    return
+  }
+
+  if (import.meta.client)
+    window.open(targetUrl, '_blank', 'noopener,noreferrer')
+}
+
+function copyTextWithFallback(text: string): boolean {
+  if (!import.meta.client || !text)
+    return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '-9999px'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  }
+  catch {
+    copied = false
+  }
+  document.body.removeChild(textarea)
+  return copied
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!text)
+    return false
+
+  if (import.meta.client && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+    catch {
+      // ignore clipboard permissions errors and fallback to execCommand
+    }
+  }
+
+  return copyTextWithFallback(text)
+}
+
+async function copyProjectResourceName(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId)
+    return
+
+  const targetResource = resources.value.find(item => item.id === targetResourceId)
+  const targetName = String(targetResource?.title || '').trim()
+  if (!targetName) {
+    statusLine.value = '资源名称为空，无法复制。'
+    return
+  }
+
+  const copied = await copyTextToClipboard(targetName)
+  statusLine.value = copied
+    ? '文件名已复制。'
+    : `文件名：${targetName}`
+}
+
+async function shareProjectResource(payload: ProjectResourceShareCreatePayload) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetResourceId = String(payload?.resourceId || '').trim()
+  const visibility = payload?.visibility
+  const duration = payload?.duration
+  if (!projectId || !targetResourceId || !visibility || !duration)
+    return
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectResourceShare>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/shares`), {
+      method: 'POST',
+      body: {
+        visibility,
+        duration,
+      },
+    })
+
+    const share = response.data
+    const shareUrl = resolveProjectResourceShareUrl(String(share?.shareUrl || '').trim())
+    await loadProjectResourceShares()
+
+    if (!shareUrl) {
+      statusLine.value = '分享链接已创建，请在项目设置中查看。'
+      return
+    }
+
+    const copied = await copyTextToClipboard(shareUrl)
+    statusLine.value = copied
+      ? '分享链接已生成并复制。'
+      : `分享链接：${shareUrl}`
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '创建分享链接失败，请稍后重试。')
+  }
+}
+
+async function copyProjectResourceShare(shareId: string) {
+  const targetShareId = String(shareId || '').trim()
+  if (!targetShareId)
+    return
+
+  const target = projectResourceShares.value.find(item => item.id === targetShareId)
+  const shareUrl = resolveProjectResourceShareUrl(String(target?.shareUrl || '').trim())
+  if (!shareUrl) {
+    statusLine.value = '分享链接不存在，或已失效。'
+    return
+  }
+
+  const copied = await copyTextToClipboard(shareUrl)
+  statusLine.value = copied
+    ? '分享链接已复制。'
+    : `分享链接：${shareUrl}`
+}
+
+async function revokeProjectResourceShare(shareId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetShareId = String(shareId || '').trim()
+  if (!projectId || !targetShareId)
+    return
+
+  try {
+    await $fetch(endpoint(`/projects/${projectId}/resources/shares/${targetShareId}`), {
+      method: 'DELETE',
+    })
+    await loadProjectResourceShares()
+    statusLine.value = '分享链接已失效。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '失效分享链接失败，请稍后重试。')
+  }
+}
+
+async function downloadPreviewSource() {
+  const projectId = String(activeProjectId.value || '').trim()
+  const resourceId = String(previewResourceId.value || '').trim()
+  if (!projectId || !resourceId)
+    return
+
+  const popup = import.meta.client
+    ? window.open('', '_blank', 'noopener,noreferrer')
+    : null
+
+  await fetchResourcePreviewStatus(resourceId, true).catch(() => undefined)
+  const target = String(previewSourceDownloadUrl.value || '').trim()
+  if (!target) {
+    popup?.close()
+    statusLine.value = '当前资源缺少可下载源文件地址。'
+    return
+  }
+
+  if (popup) {
+    popup.location.href = target
+    return
+  }
+
+  if (import.meta.client)
+    window.open(target, '_blank', 'noopener,noreferrer')
+}
+
+async function reconvertProjectResourcePreview() {
+  const projectId = String(activeProjectId.value || '').trim()
+  const resourceId = String(previewResourceId.value || '').trim()
+  if (!projectId || !resourceId)
+    return
+
+  previewStatusLoading.value = true
+  try {
+    await $fetch(endpoint(`/projects/${projectId}/resources/${resourceId}/reconvert`), {
+      method: 'POST',
+    })
+    statusLine.value = '已重新加入转换队列。'
+    await fetchResourcePreviewStatus(resourceId, true)
+    startPreviewStatusPolling(resourceId)
+    await refreshProjectResourceContext()
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '重新转换失败，请稍后重试。')
+  }
+  finally {
+    previewStatusLoading.value = false
+  }
+}
+
 async function loadChatMessages(sessionId: string) {
   if (!activeWorkspaceId.value || !sessionId) {
     resetChatStateWithGreeting()
@@ -2133,7 +3239,6 @@ async function loadChatMessages(sessionId: string) {
 
     chatDraft.value = null
     chatMissingFields.value = []
-    topicProposals.value = []
     defenseRounds.value = []
     defenseScorecard.value = null
     chatMessages.value = restoredMessages.length > 0
@@ -2149,11 +3254,13 @@ function buildSessionTitleByMode(): string {
   const contestName = selectedContest.value?.name || '未选择竞赛'
   const trackName = selectedTrack.value?.name || '未选择赛道'
 
-  if (aiMode.value === 'topic_proposal')
-    return `选题助手 · ${contestName} · ${trackName}`
+  if (aiMode.value === 'auto_optimize')
+    return `自动优化 · ${contestName} · ${trackName}`
+  if (aiMode.value === 'issue_discovery')
+    return `寻疑发现 · ${contestName} · ${trackName}`
   if (aiMode.value === 'defense')
     return `答辩模拟 · ${contestName} · ${trackName}`
-  return `${contestName} · ${trackName}`
+  return `对话询问 · ${contestName} · ${trackName}`
 }
 
 async function createChatSession(preferredTitle = ''): Promise<string | null> {
@@ -2201,9 +3308,7 @@ async function loadChatSessions(preferredSessionId = '') {
     )
     chatSessions.value = response.data
 
-    const nextSession = chatSessions.value.find(item => item.id === preferredSessionId)
-      || chatSessions.value.find(item => item.id === activeChatSessionId.value)
-      || chatSessions.value[0]
+    const nextSession = chatSessions.value.find(item => item.id === preferredSessionId) || chatSessions.value.find(item => item.id === activeChatSessionId.value) || chatSessions.value[0]
 
     if (!nextSession) {
       const createdId = await createChatSession()
@@ -2239,11 +3344,13 @@ async function switchChatSession(sessionId: string) {
 }
 
 async function startNewChatSession() {
-  const modeTitle = aiMode.value === 'topic_proposal'
-    ? '新建选题会话'
-    : aiMode.value === 'defense'
-      ? '新建答辩会话'
-      : '新建 AI 对话'
+  let modeTitle = '新建 AI 对话'
+  if (aiMode.value === 'defense')
+    modeTitle = '新建答辩会话'
+  else if (aiMode.value === 'auto_optimize')
+    modeTitle = '新建自动优化会话'
+  else if (aiMode.value === 'issue_discovery')
+    modeTitle = '新建寻疑发现会话'
   const createdId = await createChatSession(modeTitle)
   if (!createdId) {
     statusLine.value = '新建对话失败，请稍后重试。'
@@ -2317,37 +3424,6 @@ async function runAiFilter() {
   }
 }
 
-function fillFormWithDraft(draft: ProjectPayload) {
-  formState.source = 'chat'
-  formState.title = draft.title
-  formState.problemStatement = draft.problemStatement
-  formState.innovationPointsText = arrayToLines(draft.innovationPoints)
-  formState.techRouteStepsText = arrayToLines(draft.techRouteSteps)
-  formState.scoringMappingText = arrayToLines(draft.scoringMapping)
-  formState.risksText = arrayToLines(draft.risks)
-  formState.deliverablesText = arrayToLines(draft.deliverables)
-  formState.summary = draft.summary || ''
-}
-
-function topicProposalToDraft(item: TopicProposalItem): ProjectPayload {
-  return {
-    title: item.title,
-    contestId: selectedContestId.value,
-    trackId: selectedTrackId.value,
-    problemStatement: item.reason,
-    innovationPoints: item.innovationPoints,
-    techRouteSteps: item.techRouteSteps,
-    scoringMapping: item.scoringMapping,
-    risks: item.risks,
-    deliverables: ['方案书', '演示 PPT', '答辩问题清单'],
-    summary: item.reason,
-  }
-}
-
-function applyTopicProposal(item: TopicProposalItem) {
-  fillFormWithDraft(topicProposalToDraft(item))
-}
-
 function parseSseBlock(rawBlock: string): { eventType: string, dataText: string } | null {
   const block = rawBlock.trim()
   if (!block)
@@ -2376,70 +3452,155 @@ function toJsonPayload(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-async function sendProjectChatMessage(pendingMessages: ChatMessage[]) {
-  const response = await $fetch<ApiResponse<AiProjectChatResult>>(endpoint('/ai/project-chat'), {
-    method: 'POST',
-    body: {
-      workspaceId: activeWorkspaceId.value,
-      sessionId: activeChatSessionId.value,
-      messages: pendingMessages,
-      context: {
-        workspaceId: activeWorkspaceId.value,
-        projectId: activeProjectId.value,
-        contestId: selectedContestId.value,
-        trackId: selectedTrackId.value,
-        major: major.value,
-      },
-    },
-  })
-
-  chatMessages.value = [...pendingMessages, { role: 'assistant', content: response.data.assistantReply }]
-  chatDraft.value = response.data.projectDraft
-  chatMissingFields.value = response.data.missingFields
-  topicProposals.value = []
-  defenseRounds.value = []
-  defenseScorecard.value = null
-  activeChatSessionId.value = String(response.data.sessionId || activeChatSessionId.value)
-  await loadChatSessions(activeChatSessionId.value)
-  statusLine.value = response.meta.fallbackUsed
-    ? '聊天结果来自兜底策略，可继续补充需求后重试。'
-    : '聊天已生成结构化草案，可一键回填表单。'
-}
-
-async function sendTopicProposalMessage(pendingMessages: ChatMessage[]) {
-  const response = await $fetch<ApiResponse<AiTopicProposalResult>>(endpoint('/ai/topic-proposal'), {
-    method: 'POST',
-    body: {
-      workspaceId: activeWorkspaceId.value,
-      sessionId: activeChatSessionId.value,
-      messages: pendingMessages,
-      topK: 3,
-      context: {
-        workspaceId: activeWorkspaceId.value,
-        projectId: activeProjectId.value,
-        contestId: selectedContestId.value,
-        trackId: selectedTrackId.value,
-        major: major.value,
-      },
-    },
-  })
-
-  chatMessages.value = [...pendingMessages, { role: 'assistant', content: response.data.assistantReply }]
-  topicProposals.value = response.data.proposals || []
-  chatMissingFields.value = response.data.missingFields
+async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[]) {
+  const runningMode = aiMode.value
   chatDraft.value = null
+  chatMissingFields.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
-  activeChatSessionId.value = String(response.data.sessionId || activeChatSessionId.value)
-  await loadChatSessions(activeChatSessionId.value)
-  statusLine.value = response.meta.fallbackUsed
-    ? '选题结果来自兜底策略，建议继续补充上下文。'
-    : `已生成 ${topicProposals.value.length} 个候选命题，可一键回填草案。`
+  let assistantText = ''
+
+  const requestBody: AiWorkspaceRequest = {
+    workspaceId: activeWorkspaceId.value,
+    projectId: activeProjectId.value,
+    sessionId: activeChatSessionId.value,
+    mode: runningMode,
+    messages: pendingMessages,
+    context: {
+      workspaceId: activeWorkspaceId.value,
+      projectId: activeProjectId.value,
+      contestId: selectedContestId.value,
+      trackId: selectedTrackId.value,
+      major: major.value,
+    },
+  }
+
+  const response = await fetch(endpoint('/ai/workspace/stream'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  })
+
+  if (!response.ok) {
+    const fallbackMessage = `请求失败：HTTP ${response.status}`
+    const data = await response.json().catch(() => null) as ApiResponse<null> | null
+    throw new Error(String(data?.message || fallbackMessage))
+  }
+
+  if (!response.body)
+    throw new Error('未收到可读取的流式响应。')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done)
+      break
+
+    buffer += decoder.decode(value, { stream: true })
+    while (true) {
+      const separatorIndex = buffer.indexOf('\n\n')
+      if (separatorIndex < 0)
+        break
+
+      const block = buffer.slice(0, separatorIndex)
+      buffer = buffer.slice(separatorIndex + 2)
+      const parsed = parseSseBlock(block)
+      if (!parsed)
+        continue
+
+      const payload = parsed.dataText
+        ? JSON.parse(parsed.dataText) as AiWorkspaceStreamEvent
+        : null
+      const eventType = (payload?.event || parsed.eventType) as AiWorkspaceStreamEventType
+      const data = toJsonPayload(payload?.data)
+
+      if (eventType === 'progress') {
+        statusLine.value = String(data.message || 'AI 处理中...')
+        if (data.sessionId)
+          activeChatSessionId.value = String(data.sessionId)
+        continue
+      }
+
+      if (eventType === 'tool') {
+        const name = String(data.name || '').trim()
+        if (name)
+          statusLine.value = `AI 正在调用工具：${name}`
+        continue
+      }
+
+      if (eventType === 'delta') {
+        assistantText += String(data.text || '')
+        chatMessages.value = [...pendingMessages, { role: 'assistant', content: assistantText }]
+        continue
+      }
+
+      if (eventType === 'done') {
+        const result = toJsonPayload(data.result) as Partial<AiWorkspaceResult>
+        assistantText = String(result.assistantReply || assistantText)
+        chatMessages.value = [...pendingMessages, { role: 'assistant', content: assistantText }]
+
+        if (result.sessionId)
+          activeChatSessionId.value = String(result.sessionId)
+
+        if (runningMode === 'auto_optimize') {
+          const createdCount = Array.isArray(result.proposals) ? result.proposals.length : 0
+          statusLine.value = createdCount > 0
+            ? `已生成 ${createdCount} 条待审批变更。`
+            : '自动优化已完成，暂未生成可审批提案。'
+        }
+        else if (runningMode === 'issue_discovery') {
+          const report = result.report as ProjectIssueReport | null | undefined
+          const issues = Array.isArray(result.issues) ? result.issues as ProjectIssue[] : []
+          if (report) {
+            projectIssueReports.value = [
+              report,
+              ...projectIssueReports.value.filter(item => item.id !== report.id),
+            ]
+          }
+          if (issues.length > 0) {
+            const merged = [...issues, ...projectIssues.value]
+            const dedupe = new Map<string, ProjectIssue>()
+            for (const item of merged)
+              dedupe.set(item.id, item)
+            projectIssues.value = [...dedupe.values()]
+          }
+          statusLine.value = issues.length > 0
+            ? `寻疑扫描完成，发现 ${issues.length} 条问题。`
+            : '寻疑扫描完成。'
+        }
+        else {
+          statusLine.value = '只读对话完成。'
+        }
+        continue
+      }
+
+      if (eventType === 'error')
+        throw new Error(String(data.message || '工作台 AI 调用失败。'))
+    }
+  }
+
+  buffer += decoder.decode()
+  const tail = parseSseBlock(buffer)
+  if (tail?.dataText) {
+    const payload = JSON.parse(tail.dataText) as AiWorkspaceStreamEvent
+    if (payload.event === 'error')
+      throw new Error(String(toJsonPayload(payload.data).message || '工作台 AI 调用失败。'))
+  }
+
+  if (runningMode === 'auto_optimize')
+    await loadAiChangeRequests()
+  if (runningMode === 'issue_discovery')
+    await loadProjectIssues()
 }
 
 async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
   chatDraft.value = null
-  topicProposals.value = []
   chatMissingFields.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
@@ -2579,17 +3740,15 @@ async function sendChatMessage() {
   chatLoading.value = true
 
   try {
-    if (aiMode.value === 'topic_proposal')
-      await sendTopicProposalMessage(pendingMessages)
-    else if (aiMode.value === 'defense')
+    if (aiMode.value === 'defense')
       await sendDefenseMessage(pendingMessages)
     else
-      await sendProjectChatMessage(pendingMessages)
+      await sendWorkspaceAiMessage(pendingMessages)
   }
   catch (error) {
-    const message = error instanceof Error ? error.message : '聊天接口调用失败。'
+    const message = error instanceof Error ? error.message : 'AI 调用失败。'
     chatMessages.value = [...pendingMessages, { role: 'assistant', content: message || '聊天服务暂不可用，请稍后重试。' }]
-    statusLine.value = message || '聊天接口调用失败。'
+    statusLine.value = message || 'AI 调用失败。'
   }
   finally {
     chatLoading.value = false
@@ -2677,15 +3836,38 @@ function openSettingsFromLeftSidebar() {
   statusLine.value = '已打开项目设置页，可在中间区域配置项目底座与竞赛适配稿。'
 }
 
+function openFlowFromLeftSidebar() {
+  openFlowSignal.value += 1
+  statusLine.value = '已打开无边画布，可继续协作梳理项目流程。'
+}
+
+function openDefenseFromLeftSidebar() {
+  aiMode.value = 'defense'
+  statusLine.value = '已切换到答辩模拟模式，可直接发起多评委追问。'
+}
+
 onMounted(async () => {
   const ok = await loadAuthContext()
   if (!ok)
     return
 
+  workspaceRealtime.connect()
+  if (unsubscribeRealtimeMessages)
+    unsubscribeRealtimeMessages()
+  unsubscribeRealtimeMessages = workspaceRealtime.onMessage(handleRealtimeEnvelope)
+  if (activeWorkspaceId.value)
+    workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
+
   await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
+  if (activeWorkspaceId.value)
+    workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
+  if (activeProjectId.value)
+    workspaceRealtime.subscribeProject(activeProjectId.value)
   await refreshProjectResourceContext()
   await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
+  await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
+  startFallbackResourceRefreshTimer()
   syncFormContestTrack()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
@@ -2697,11 +3879,22 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   clearProjectSettingsAutoTimers()
   clearProjectOutlineGenerateTimer()
+  clearPreviewStatusPolling()
+  clearRealtimeProjectRefreshTimer()
+  clearFallbackResourceRefreshTimer()
+  if (unsubscribeRealtimeMessages) {
+    unsubscribeRealtimeMessages()
+    unsubscribeRealtimeMessages = null
+  }
+  disposeCollabDocBinding(true)
+  workspaceRealtime.disconnect()
 })
 
 watch(activeWorkspaceId, async (value, previous) => {
   if (!value || value === previous)
     return
+
+  workspaceRealtime.subscribeWorkspace(value)
 
   if (value !== routeWorkspaceId.value)
     await navigateTo(workspaceDetailPath(value), { replace: true })
@@ -2727,12 +3920,14 @@ watch(routeWorkspaceId, async (value, previous) => {
 
   if (activeWorkspaceId.value !== value)
     activeWorkspaceId.value = value
+  workspaceRealtime.subscribeWorkspace(value)
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
   await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
   await refreshProjectResourceContext()
   await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
+  await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -2746,15 +3941,28 @@ watch(activeProjectId, async (next, previous) => {
 
   clearProjectSettingsAutoTimers()
   clearProjectOutlineGenerateTimer()
+  clearRealtimeProjectRefreshTimer()
+  clearFallbackResourceRefreshTimer()
+  closeProjectResourcePreview()
+  if (next)
+    workspaceRealtime.subscribeProject(next)
   await refreshProjectResourceContext()
   if (!next) {
     projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
+    aiChangeRequests.value = []
+    projectIssueReports.value = []
+    projectIssues.value = []
     return
   }
+  startFallbackResourceRefreshTimer()
   resetProjectSettingsState(activeProject.value)
-  await loadProjectOutline()
-  await loadProjectSettings(selectedContestId.value)
+  await Promise.all([
+    loadProjectOutline(),
+    loadProjectSettings(selectedContestId.value),
+    loadAiChangeRequests(),
+    loadProjectIssues(),
+  ])
 })
 </script>
 
@@ -2783,6 +3991,12 @@ watch(activeProjectId, async (next, previous) => {
         :recycle-resources="recycleResources"
         :resource-library="resourceLibrary"
         :project-outline="projectOutlineItems"
+        :issue-reports="projectIssueReports"
+        :project-issues="projectIssues"
+        :issue-loading="issueCenterLoading"
+        :project-resources-loading="resourcesLoading"
+        :resource-library-loading="resourceLibraryLoading"
+        :project-outline-loading="projectOutlineLoading"
         :resource-mutating="resourceMutating"
         :has-active-project="Boolean(activeProjectId)"
         :ai-reasoning="aiReasoning"
@@ -2791,9 +4005,23 @@ watch(activeProjectId, async (next, previous) => {
         :list-loading="listLoading"
         :ai-filtering="aiFiltering"
         :is-admin-view="isAdminView"
+        :active-main-tab-id="activeMainTabId"
+        :defense-active="aiMode === 'defense'"
+        :current-user-id="me?.user.id || ''"
+        :current-username="me?.user.username || ''"
+        :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
         @load-contests="loadContests"
         @run-ai-filter="runAiFilter"
         @open-settings-panel="openSettingsFromLeftSidebar"
+        @open-flow-panel="openFlowFromLeftSidebar"
+        @create-collab-resource="createCollabResource"
+        @open-defense-mode="openDefenseFromLeftSidebar"
+        @reload-issues="loadProjectIssues"
+        @open-resource="openProjectResourcePreview"
+        @download-project-resource="downloadProjectResource"
+        @copy-project-resource-name="copyProjectResourceName"
+        @share-project-resource="shareProjectResource"
+        @duplicate-project-resource="duplicateProjectResource"
         @add-resource-from-library="addResourceFromLibrary"
         @remove-project-resource="removeProjectResource"
         @restore-project-resource="restoreProjectResource"
@@ -2815,6 +4043,21 @@ watch(activeProjectId, async (next, previous) => {
         :active-project="activeProject"
         :open-settings-signal="openSettingsSignal"
         :open-flow-signal="openFlowSignal"
+        :open-preview-signal="openPreviewSignal"
+        :close-preview-signal="closePreviewSignal"
+        :preview-resource-title="previewResourceTitle"
+        :preview-status="previewStatusPayload"
+        :preview-status-loading="previewStatusLoading"
+        :preview-mode="previewMode"
+        :preview-pdf-url="previewPdfUrl"
+        :preview-source-download-url="previewSourceDownloadUrl"
+        :collab-markdown-value="collabMarkdownValue"
+        :collab-draw-value="collabDrawValue"
+        :collab-draw-error="collabDrawError"
+        :collab-revision="collabRevision"
+        :collab-connected="collabConnected"
+        :collab-status-text="collabStatusText"
+        :collab-presence-members="collabPresenceMembers"
         :selected-resources="selectedResources"
         :mapping-rows="mappingRows"
         :keyword-cloud="keywordCloud"
@@ -2829,12 +4072,23 @@ watch(activeProjectId, async (next, previous) => {
         :project-settings-current-contest-id="projectSettingsCurrentContestId"
         :project-settings-adaptation="projectSettingsAdaptation"
         :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+        :project-resource-shares="projectResourceShares"
+        :project-resource-shares-loading="projectResourceSharesLoading"
+        @update:active-tab-id="activeMainTabId = $event"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
         @update:project-settings-common="onProjectSettingsCommonChange"
         @update:project-settings-bindings="onProjectSettingsBindingsChange"
         @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
+        @load-contests="loadContests"
         @save-project-settings="saveProjectSettingsManually"
+        @copy-project-resource-share="copyProjectResourceShare"
+        @revoke-project-resource-share="revokeProjectResourceShare"
+        @reconvert-preview="reconvertProjectResourcePreview"
+        @download-preview-source="downloadPreviewSource"
+        @close-preview-tab="closeProjectResourcePreview"
+        @update:collab-markdown-value="updateCollabMarkdownContent"
+        @update:collab-draw-value="updateCollabDrawContent"
       />
 
       <WorkspaceRightSidebar
@@ -2845,9 +4099,13 @@ watch(activeProjectId, async (next, previous) => {
         :chat-sessions-loading="chatSessionsLoading"
         :chat-messages="chatMessages"
         :chat-loading="chatLoading"
-        :chat-draft="chatDraft"
-        :chat-missing-fields="chatMissingFields"
-        :topic-proposals="topicProposals"
+        :change-requests="aiChangeRequests"
+        :change-requests-loading="aiChangeRequestsLoading"
+        :change-acting-ids="aiChangeActingIds"
+        :change-second-confirm-ids="aiChangeSecondConfirmIds"
+        :issue-report="latestIssueReport"
+        :project-issues="projectIssues"
+        :issue-loading="issueCenterLoading"
         :defense-rounds="defenseRounds"
         :defense-scorecard="defenseScorecard"
         :selected-contest="selectedContest"
@@ -2856,8 +4114,8 @@ watch(activeProjectId, async (next, previous) => {
         @send-chat="sendChatMessage"
         @switch-chat-session="switchChatSession"
         @create-chat-session="startNewChatSession"
-        @fill-form="fillFormWithDraft"
-        @apply-topic-proposal="applyTopicProposal"
+        @approve-change="approveAiChange"
+        @reject-change="rejectAiChange"
       />
     </main>
 

@@ -8,7 +8,6 @@ import type {
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 
-export type WorkspaceSidebarTab = 'chat' | 'rules' | 'submit'
 export type MappingTone = 'complete' | 'warning' | 'todo'
 
 export interface WorkspaceMappingRow {
@@ -66,3 +65,34 @@ export interface WorkspaceSubmitPanelState {
   submitting: boolean
   projects: Project[]
 }
+
+export interface WorkspaceProjectContestBindingForm {
+  contestId: string
+  trackId: string
+  sortOrder: number
+}
+
+export interface WorkspaceProjectCommonForm {
+  title: string
+  summary: string
+  problemStatement: string
+  innovationPointsText: string
+  techRouteStepsText: string
+  scoringMappingText: string
+  risksText: string
+  deliverablesText: string
+}
+
+export interface WorkspaceProjectAdaptationForm {
+  contestId: string
+  trackId: string
+  problemStatement: string
+  innovationPointsText: string
+  techRouteStepsText: string
+  scoringMappingText: string
+  risksText: string
+  deliverablesText: string
+  summary: string
+}
+
+export type WorkspaceProjectSaveState = 'idle' | 'saving' | 'saved_auto' | 'saved_manual' | 'conflict' | 'error'

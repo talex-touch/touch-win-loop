@@ -19,6 +19,10 @@ export type BillingCycle = 'monthly' | 'quarterly' | 'yearly'
 export type DocumentParseStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
 export type DocumentTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
 export type DocumentBlockType = 'title' | 'paragraph' | 'table' | 'image' | 'header' | 'footer' | 'unknown' | 'ocr_candidate'
+export type ResourceKind = 'binary' | 'markdown' | 'draw'
+export type ResourcePreviewStatus = 'queued' | 'converting' | 'finalizing' | 'succeeded' | 'failed'
+export type ProjectResourceShareVisibility = 'public' | 'workspace'
+export type ProjectResourceShareDurationPreset = '1h' | '1d' | '3d' | '7d' | '1mon'
 
 export type ResourceCategory
   = 'basic_info'
@@ -146,10 +150,22 @@ export interface PublishCheckResult {
 export interface Resource {
   id: string
   contestId: string
+  projectId?: string
+  resourceKind?: ResourceKind
+  revision?: number
+  documentId?: string
   title: string
   type: string
   year: number
   sourceLink: string
+  sourceDownloadUrl?: string
+  sourceDownloadUrlExpiresAt?: string
+  previewUrl?: string
+  previewUrlExpiresAt?: string
+  previewStatus?: ResourcePreviewStatus
+  previewProgressPercent?: number
+  previewEtaSeconds?: number
+  previewError?: string
   availability: ResourceAvailability
   summary: string
   copyrightNote: string
@@ -157,11 +173,29 @@ export interface Resource {
   metadata?: Record<string, unknown>
   category?: ResourceCategory
   sourceType?: string
+  source?: 'upload' | 'library' | 'collab'
+  linkedContestResourceId?: string | null
   status?: ResourceStatus
   createdBy?: string
   updatedBy?: string
   createdAt?: string
   updatedAt?: string
+}
+
+export interface ProjectResourceShare {
+  id: string
+  projectId: string
+  resourceId: string
+  resourceTitle: string
+  shareKey: string
+  shareUrl: string
+  visibility: ProjectResourceShareVisibility
+  duration: ProjectResourceShareDurationPreset
+  expiresAt: string
+  revokedAt?: string | null
+  createdBy?: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface DocumentBBox {
@@ -428,6 +462,106 @@ export interface Project extends ProjectPayload {
   updatedAt: string
 }
 
+export interface ProjectContestBinding {
+  contestId: string
+  trackId: string
+  sortOrder: number
+  updatedAt?: string
+}
+
+export interface ProjectContestAdaptation {
+  contestId: string
+  trackId: string
+  problemStatement: string
+  innovationPoints: string[]
+  techRouteSteps: string[]
+  scoringMapping: string[]
+  risks: string[]
+  deliverables: string[]
+  summary: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ProjectSettingsSnapshot {
+  project: Project
+  contestBindings: ProjectContestBinding[]
+  currentContestId: string
+  currentAdaptation: ProjectContestAdaptation | null
+}
+
+export interface ProjectOutlineNode {
+  id: string
+  title: string
+  level: number
+  order: number
+  sourceResourceIds: string[]
+  confidence: number
+  children: ProjectOutlineNode[]
+}
+
+export interface ProjectOutlineSnapshot {
+  projectId: string
+  context: {
+    contestId: string
+    trackId: string
+    major: string
+    discipline: string
+    level: string
+    trackType: string
+  }
+  items: ProjectOutlineNode[]
+  generatedAt: string
+  reason: string
+}
+
+export interface ProjectSettingsDraftCommon {
+  title: string
+  summary: string
+  problemStatement: string
+  innovationPointsText: string
+  techRouteStepsText: string
+  scoringMappingText: string
+  risksText: string
+  deliverablesText: string
+}
+
+export interface ProjectSettingsDraftBinding {
+  contestId: string
+  trackId: string
+  sortOrder: number
+}
+
+export interface ProjectSettingsDraftAdaptation {
+  contestId: string
+  trackId: string
+  problemStatement: string
+  innovationPointsText: string
+  techRouteStepsText: string
+  scoringMappingText: string
+  risksText: string
+  deliverablesText: string
+  summary: string
+}
+
+export interface ProjectSettingsDraftPayload {
+  updatedAt: string
+  deviceId?: string
+  common: ProjectSettingsDraftCommon
+  bindings: ProjectSettingsDraftBinding[]
+  currentContestId: string
+  adaptationDrafts: Record<string, ProjectSettingsDraftAdaptation>
+}
+
+export interface ProjectSettingsDraft {
+  projectId: string
+  payload: ProjectSettingsDraftPayload
+  revision: number
+  deviceId: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface ChatMessage {
   role: 'system' | 'assistant' | 'user'
   content: string
@@ -531,6 +665,7 @@ export interface AiProjectChatRequest {
   aiOptions?: Partial<AiAssistantOptions>
   context: {
     workspaceId?: string
+    projectId?: string
     contestId?: string
     trackId?: string
     major?: string
@@ -544,7 +679,7 @@ export interface AiProjectChatResult {
   sessionId?: string
 }
 
-export type WorkspaceAiMode = 'project_chat' | 'topic_proposal' | 'defense'
+export type WorkspaceAiMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'defense'
 
 export interface AiTopicProposalRequest {
   workspaceId?: string
@@ -554,6 +689,7 @@ export interface AiTopicProposalRequest {
   aiOptions?: Partial<AiAssistantOptions>
   context: {
     workspaceId?: string
+    projectId?: string
     contestId?: string
     trackId?: string
     major?: string
@@ -600,6 +736,7 @@ export interface AiDefenseRequest {
   aiOptions?: Partial<AiAssistantOptions>
   context: {
     workspaceId?: string
+    projectId?: string
     contestId?: string
     trackId?: string
     major?: string
@@ -619,6 +756,117 @@ export type AiDefenseStreamEventType = 'progress' | 'delta' | 'judge' | 'score' 
 export interface AiDefenseStreamEvent {
   event: AiDefenseStreamEventType
   data: Record<string, unknown>
+}
+
+export type AiProjectChangeStatus = 'pending' | 'approved' | 'rejected' | 'failed'
+
+export type AiProjectChangeType
+  = 'settings_common_patch'
+    | 'contest_bindings_replace'
+    | 'adaptation_patch'
+    | 'resource_bind_library'
+    | 'resource_update_metadata'
+    | 'resource_archive'
+    | 'resource_restore'
+    | 'resource_purge'
+
+export interface AiProjectChangeRequest {
+  id: string
+  workspaceId: string
+  projectId: string
+  sessionId: string
+  mode: WorkspaceAiMode
+  changeType: AiProjectChangeType
+  title: string
+  summary: string
+  destructive: boolean
+  payload: Record<string, unknown>
+  status: AiProjectChangeStatus
+  createdByUserId: string
+  approvedByUserId?: string
+  approvedAt?: string
+  rejectedByUserId?: string
+  rejectedAt?: string
+  rejectedReason?: string
+  executedResult?: Record<string, unknown>
+  failedReason?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type ProjectIssueSeverity = 'critical' | 'high' | 'medium' | 'low'
+export type ProjectIssueStatus = 'open' | 'in_progress' | 'resolved' | 'ignored'
+
+export interface ProjectIssueReport {
+  id: string
+  workspaceId: string
+  projectId: string
+  sessionId: string
+  title: string
+  summary: string
+  markdown: string
+  sourceMode: WorkspaceAiMode
+  createdByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectIssue {
+  id: string
+  workspaceId: string
+  projectId: string
+  reportId: string
+  title: string
+  severity: ProjectIssueSeverity
+  evidence: string
+  recommendation: string
+  status: ProjectIssueStatus
+  createdByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ApproveChangeRequestPayload {
+  destructiveConfirm?: boolean
+}
+
+export type AiWorkspaceStreamEventType = 'progress' | 'tool' | 'proposal' | 'issue' | 'delta' | 'done' | 'error'
+
+export interface AiWorkspaceStreamEvent {
+  event: AiWorkspaceStreamEventType
+  data: Record<string, unknown>
+}
+
+export interface AiWorkspaceRequest {
+  workspaceId?: string
+  projectId?: string
+  sessionId?: string
+  mode?: WorkspaceAiMode
+  messages: ChatMessage[]
+  context?: {
+    workspaceId?: string
+    projectId?: string
+    contestId?: string
+    trackId?: string
+    major?: string
+  }
+  aiOptions?: Partial<AiAssistantOptions>
+}
+
+export interface AiWorkspaceIssueDraft {
+  title: string
+  severity: ProjectIssueSeverity
+  evidence: string
+  recommendation: string
+}
+
+export interface AiWorkspaceResult {
+  assistantReply: string
+  mode: WorkspaceAiMode
+  sessionId?: string
+  proposals?: AiProjectChangeRequest[]
+  issues?: ProjectIssue[]
+  report?: ProjectIssueReport | null
 }
 
 export type AdminAgentTaskType
