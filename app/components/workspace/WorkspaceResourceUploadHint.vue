@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import {
   formatFileSize,
-  PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
   PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR,
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
-  PROJECT_RESOURCE_UPLOAD_SUPPORTED_EXTENSIONS,
   PROJECT_RESOURCE_UPLOAD_TYPES_LABEL,
 } from '~~/shared/constants/project-resource-upload'
 
@@ -24,11 +22,9 @@ const emit = defineEmits<{
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isDragOver = ref(false)
 const maxFileSizeLabel = formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)
-const projectStorageLimitLabel = formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)
 const uploadRuleDescription = [
-  `支持格式：${PROJECT_RESOURCE_UPLOAD_SUPPORTED_EXTENSIONS.map(ext => ext.toUpperCase()).join(' / ')}`,
-  `上传限制：单文件 ≤ ${maxFileSizeLabel}；单次最多 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个`,
-  `项目容量：总量 ≤ ${projectStorageLimitLabel}`,
+  `格式：${PROJECT_RESOURCE_UPLOAD_TYPES_LABEL}`,
+  `限制：单文件 ≤ ${maxFileSizeLabel}；单次最多 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个`,
 ].join('\n')
 
 function emitFiles(files: File[] | FileList | null | undefined) {
@@ -88,15 +84,6 @@ watch(() => props.disabled, (next) => {
       @change="onFileInputChange"
     >
 
-    <div class="workspace-upload-hint__info" :title="uploadRuleDescription">
-      <span class="workspace-upload-hint__info-icon">!</span>
-      <div class="workspace-upload-hint__tooltip">
-        <p>{{ `支持格式：${PROJECT_RESOURCE_UPLOAD_SUPPORTED_EXTENSIONS.map(ext => ext.toUpperCase()).join(' / ')}` }}</p>
-        <p>{{ `上传限制：单文件 ≤ ${maxFileSizeLabel}；单次最多 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个` }}</p>
-        <p>{{ `项目容量：总量 ≤ ${projectStorageLimitLabel}` }}</p>
-      </div>
-    </div>
-
     <button
       class="workspace-upload-hint__drop"
       :class="{
@@ -112,9 +99,17 @@ watch(() => props.disabled, (next) => {
     >
       <span class="material-symbols-outlined">upload_file</span>
       <div>
-        <p>{{ busy ? '处理中...' : '拖拽文件到这里上传，或点击选择文件（支持多选）' }}</p>
-        <small>支持格式：{{ PROJECT_RESOURCE_UPLOAD_TYPES_LABEL }}</small>
-        <small>单文件 ≤ {{ maxFileSizeLabel }}，单次最多 {{ PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH }} 个</small>
+        <p>{{ busy ? '处理中...' : '拖拽文件到这里上传，或点击选择文件' }}</p>
+        <small class="workspace-upload-hint__meta-row">
+          <span class="workspace-upload-hint__info" :title="uploadRuleDescription" tabindex="0" @click.stop.prevent>
+            <span class="workspace-upload-hint__info-icon">!</span>
+            <div class="workspace-upload-hint__tooltip">
+              <p>{{ `格式：${PROJECT_RESOURCE_UPLOAD_TYPES_LABEL}` }}</p>
+              <p>{{ `限制：单文件 ≤ ${maxFileSizeLabel}；单次最多 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个` }}</p>
+            </div>
+          </span>
+          <span>限制：{{ maxFileSizeLabel }}/文件，最多 {{ PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH }} 个/次</span>
+        </small>
       </div>
     </button>
   </section>
@@ -125,15 +120,13 @@ watch(() => props.disabled, (next) => {
   display: none;
 }
 
-.workspace-upload-hint {
-  position: relative;
-}
-
 .workspace-upload-hint__info {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 3;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  z-index: 5;
+  outline: none;
 }
 
 .workspace-upload-hint__info-icon {
@@ -154,8 +147,9 @@ watch(() => props.disabled, (next) => {
 
 .workspace-upload-hint__tooltip {
   position: absolute;
-  right: 0;
   bottom: calc(100% + 8px);
+  top: auto;
+  left: 0;
   min-width: 280px;
   max-width: 360px;
   border-radius: 8px;
@@ -169,6 +163,7 @@ watch(() => props.disabled, (next) => {
   opacity: 0;
   transform: translateY(4px);
   pointer-events: none;
+  z-index: 20;
   transition:
     opacity 0.18s ease,
     transform 0.18s ease;
@@ -182,7 +177,8 @@ watch(() => props.disabled, (next) => {
   margin-top: 4px;
 }
 
-.workspace-upload-hint__info:hover .workspace-upload-hint__tooltip {
+.workspace-upload-hint__info:hover .workspace-upload-hint__tooltip,
+.workspace-upload-hint__info:focus .workspace-upload-hint__tooltip {
   opacity: 1;
   transform: translateY(0);
 }
@@ -221,6 +217,11 @@ watch(() => props.disabled, (next) => {
   margin-top: 2px;
   color: #7283a4;
   font-size: 11px;
+}
+
+.workspace-upload-hint__meta-row {
+  display: inline-flex;
+  align-items: center;
 }
 
 .workspace-upload-hint__drop:hover {
