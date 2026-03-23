@@ -4,11 +4,11 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { getVisibleProjectById } from '~~/server/utils/platform-store'
+import { canManageProject, getVisibleProjectById } from '~~/server/utils/platform-store'
 import {
-  listProjectResources,
   PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS,
   purgeExpiredProjectResourcesFromRecycleBin,
+  purgeProjectResourceFromRecycleBin,
 } from '~~/server/utils/project-resource-store'
 
 export default defineEventHandler(async (event) => {
@@ -16,16 +16,17 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
+  const resourceId = String(getRouterParam(event, 'resourceId') || '').trim()
 
-  if (!projectId) {
+  if (!projectId || !resourceId) {
     setResponseStatus(event, 400)
-    return fail('缺少 projectId。', {
+    return fail('缺少 projectId 或 resourceId。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40061)
+    }, 40086)
   }
 
   try {
@@ -34,27 +35,37 @@ export default defineEventHandler(async (event) => {
       if (!project)
         throw new Error('PROJECT_NOT_FOUND')
 
+      const manageable = await canManageProject(db, user, projectId)
+      if (!manageable)
+        throw new Error('FORBIDDEN')
+
+      const purged = await purgeProjectResourceFromRecycleBin(db, {
+        projectId,
+        resourceId,
+      })
+
       const expiredPurged = await purgeExpiredProjectResourcesFromRecycleBin(db, {
         projectId,
         retentionDays: PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS,
       })
-      const resources = await listProjectResources(db, projectId)
+
       return {
-        resources,
+        purged,
         expiredPurged,
       }
     })
 
-    const expiredUploadObjectKeys = result.expiredPurged
-      .filter(item => item.source === 'upload' && item.objectKey)
-      .map(item => item.objectKey)
+    const uploadObjectKeys = [
+      ...result.expiredPurged.filter(item => item.source === 'upload' && item.objectKey).map(item => item.objectKey),
+      ...(result.purged.source === 'upload' && result.purged.objectKey ? [result.purged.objectKey] : []),
+    ]
 
-    if (expiredUploadObjectKeys.length > 0) {
+    if (uploadObjectKeys.length > 0) {
       const storage = getDocumentStorage()
-      await Promise.allSettled(expiredUploadObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
+      await Promise.allSettled(uploadObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
     }
 
-    return ok(result.resources, {
+    return ok({ resourceId: result.purged.resourceId }, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -71,7 +82,29 @@ export default defineEventHandler(async (event) => {
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 40461)
+      }, 40488)
+    }
+
+    if (error instanceof Error && error.message === 'FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return fail('当前用户无权管理项目资源。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40386)
+    }
+
+    if (error instanceof Error && error.message === 'RESOURCE_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('资源不存在，或不在回收站中。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40489)
     }
 
     throw error

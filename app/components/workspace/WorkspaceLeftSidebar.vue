@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Contest, Resource } from '~~/shared/types/domain'
+import type { Contest, ProjectOutlineNode, Resource } from '~~/shared/types/domain'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config'
 
@@ -24,7 +24,7 @@ interface OutlineItem {
   level: number
 }
 
-type ResourceSectionId = 'projectResources' | 'systemLibrary' | 'outline'
+type ResourceSectionId = 'projectResources' | 'recycleBin' | 'systemLibrary' | 'outline'
 
 const props = withDefaults(defineProps<{
   naturalQuery: string
@@ -36,7 +36,9 @@ const props = withDefaults(defineProps<{
   selectedContestId: string
   contests: Contest[]
   selectedResources?: Resource[]
+  recycleResources?: Resource[]
   resourceLibrary?: Resource[]
+  projectOutline?: ProjectOutlineNode[]
   resourceMutating?: boolean
   hasActiveProject?: boolean
   aiReasoning: string
@@ -47,7 +49,9 @@ const props = withDefaults(defineProps<{
   isAdminView?: boolean
 }>(), {
   selectedResources: () => [],
+  recycleResources: () => [],
   resourceLibrary: () => [],
+  projectOutline: () => [],
   resourceMutating: false,
   hasActiveProject: false,
   normalizedInfo: '',
@@ -66,6 +70,9 @@ const emit = defineEmits<{
   'runAiFilter': []
   'openSettingsPanel': []
   'addResourceFromLibrary': [resourceId: string]
+  'removeProjectResource': [resourceId: string]
+  'restoreProjectResource': [resourceId: string]
+  'purgeProjectResource': [resourceId: string]
   'uploadResources': [files: File[]]
 }>()
 
@@ -126,10 +133,17 @@ const filterPresets: FilterPreset[] = [
 const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
 const activeResourceId = ref('')
 const activeOutlineId = ref('')
+const resourceActionOpenId = ref('')
+const removeTargetResourceId = ref('')
+const removeResourceModalVisible = ref(false)
+const purgeTargetResourceId = ref('')
+const purgeResourceModalVisible = ref(false)
 const libraryModalKeyword = ref('')
 const libraryModalVisible = ref(false)
+const sidebarPanelRef = ref<HTMLElement | null>(null)
 const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   projectResources: true,
+  recycleBin: true,
   systemLibrary: true,
   outline: true,
 })
@@ -142,6 +156,7 @@ const activeModuleMeta = computed<WorkspaceLeftModule>(() => {
 })
 
 const visibleResources = computed(() => props.selectedResources.slice(0, 10))
+const visibleRecycleResources = computed(() => props.recycleResources.slice(0, 20))
 const visibleLibraryResources = computed(() => {
   const keyword = libraryModalKeyword.value.trim().toLowerCase()
   if (!keyword)
@@ -152,6 +167,22 @@ const visibleLibraryResources = computed(() => {
       const context = [item.title, item.summary, item.type, item.year].join(' ').toLowerCase()
       return context.includes(keyword)
     })
+})
+
+const recycleRetentionDays = 30
+
+const removeTargetResourceLabel = computed(() => {
+  if (!removeTargetResourceId.value)
+    return '该文件'
+  const target = visibleResources.value.find(item => item.id === removeTargetResourceId.value)
+  return target ? resourceDisplayTitle(target) : '该文件'
+})
+
+const purgeTargetResourceLabel = computed(() => {
+  if (!purgeTargetResourceId.value)
+    return '该文件'
+  const target = props.recycleResources.find(item => item.id === purgeTargetResourceId.value)
+  return target ? resourceDisplayTitle(target) : '该文件'
 })
 
 function normalizeOutlineLabel(value: string): string {
@@ -220,7 +251,35 @@ function extractResourceOutlineChildren(resource: Resource): string[] {
   return result
 }
 
-const outlineItems = computed<OutlineItem[]>(() => {
+function flattenProjectOutlineNodes(
+  nodes: ProjectOutlineNode[],
+  parentOrders: number[] = [],
+): OutlineItem[] {
+  const result: OutlineItem[] = []
+  const sorted = [...nodes].sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
+
+  for (const node of sorted) {
+    const order = Math.max(1, Number(node.order || 1))
+    const numberChain = [...parentOrders, order]
+    const title = normalizeOutlineLabel(String(node.title || ''))
+    if (!title)
+      continue
+
+    result.push({
+      id: String(node.id || numberChain.join('.')),
+      label: `${numberChain.join('.')} ${title}`,
+      level: Math.max(0, numberChain.length - 1),
+    })
+
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      result.push(...flattenProjectOutlineNodes(node.children, numberChain))
+    }
+  }
+
+  return result
+}
+
+const fallbackOutlineItems = computed<OutlineItem[]>(() => {
   const items: OutlineItem[] = []
 
   visibleResources.value.forEach((resource, resourceIndex) => {
@@ -245,6 +304,13 @@ const outlineItems = computed<OutlineItem[]>(() => {
   })
 
   return items
+})
+
+const outlineItems = computed<OutlineItem[]>(() => {
+  const backendItems = flattenProjectOutlineNodes(props.projectOutline)
+  if (backendItems.length > 0)
+    return backendItems
+  return fallbackOutlineItems.value
 })
 
 const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
@@ -314,6 +380,7 @@ function switchModule(moduleId: string) {
 
 function selectResource(resourceId: string) {
   activeResourceId.value = resourceId
+  resourceActionOpenId.value = ''
 }
 
 function selectOutline(itemId: string) {
@@ -401,7 +468,136 @@ function addLibraryResource(resourceId: string) {
   emit('addResourceFromLibrary', resourceId)
 }
 
+function toggleResourceActionMenu(resourceId: string) {
+  if (!resourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  if (resourceActionOpenId.value === resourceId) {
+    resourceActionOpenId.value = ''
+    return
+  }
+  resourceActionOpenId.value = resourceId
+}
+
+function handleResourceItemContextMenu(resourceId: string, event: MouseEvent) {
+  event.preventDefault()
+  if (!resourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  activeResourceId.value = resourceId
+  resourceActionOpenId.value = resourceId
+}
+
+function requestRemoveResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  resourceActionOpenId.value = ''
+  removeTargetResourceId.value = targetResourceId
+  removeResourceModalVisible.value = true
+}
+
+function closeRemoveResourceModal() {
+  if (props.resourceMutating)
+    return
+  removeResourceModalVisible.value = false
+  removeTargetResourceId.value = ''
+}
+
+function confirmRemoveResource() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+
+  const targetResourceId = String(removeTargetResourceId.value || '').trim()
+  if (!targetResourceId)
+    return
+
+  removeResourceModalVisible.value = false
+  removeTargetResourceId.value = ''
+  emit('removeProjectResource', targetResourceId)
+}
+
+function restoreRecycleResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  emit('restoreProjectResource', targetResourceId)
+}
+
+function requestPurgeRecycleResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  purgeTargetResourceId.value = targetResourceId
+  purgeResourceModalVisible.value = true
+}
+
+function closePurgeResourceModal() {
+  if (props.resourceMutating)
+    return
+  purgeResourceModalVisible.value = false
+  purgeTargetResourceId.value = ''
+}
+
+function confirmPurgeResource() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+
+  const targetResourceId = String(purgeTargetResourceId.value || '').trim()
+  if (!targetResourceId)
+    return
+
+  purgeResourceModalVisible.value = false
+  purgeTargetResourceId.value = ''
+  emit('purgeProjectResource', targetResourceId)
+}
+
+function recycleDaysLeft(resource: Resource): number {
+  const deletedAt = new Date(String(resource.updatedAt || resource.createdAt || '')).getTime()
+  if (!Number.isFinite(deletedAt) || deletedAt <= 0)
+    return recycleRetentionDays
+
+  const oneDayMs = 24 * 60 * 60 * 1000
+  const expiresAt = deletedAt + recycleRetentionDays * oneDayMs
+  const leftMs = expiresAt - Date.now()
+  if (leftMs <= 0)
+    return 0
+  return Math.ceil(leftMs / oneDayMs)
+}
+
+function recycleHint(resource: Resource): string {
+  const leftDays = recycleDaysLeft(resource)
+  if (leftDays <= 0)
+    return '即将自动清理'
+  return `${leftDays} 天后自动清理`
+}
+
+function closeResourceActionMenuByOutside(event: PointerEvent) {
+  if (!resourceActionOpenId.value)
+    return
+
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.workspace-resource-actions') || target?.closest('.workspace-recycle-item__actions'))
+    return
+
+  resourceActionOpenId.value = ''
+}
+
+function closeResourceActionMenuByEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape')
+    return
+  resourceActionOpenId.value = ''
+}
+
 watch(() => props.selectedResources, (nextResources) => {
+  if (resourceActionOpenId.value && !nextResources.some(item => item.id === resourceActionOpenId.value))
+    resourceActionOpenId.value = ''
+  if (removeTargetResourceId.value && !nextResources.some(item => item.id === removeTargetResourceId.value)) {
+    removeTargetResourceId.value = ''
+    removeResourceModalVisible.value = false
+  }
+
   if (!nextResources.length) {
     activeResourceId.value = ''
     return
@@ -412,6 +608,13 @@ watch(() => props.selectedResources, (nextResources) => {
     return
 
   activeResourceId.value = nextResources[0]?.id || ''
+}, { immediate: true, deep: true })
+
+watch(() => props.recycleResources, (nextResources) => {
+  if (purgeTargetResourceId.value && !nextResources.some(item => item.id === purgeTargetResourceId.value)) {
+    purgeTargetResourceId.value = ''
+    purgeResourceModalVisible.value = false
+  }
 }, { immediate: true, deep: true })
 
 watch(outlineItems, (nextItems) => {
@@ -444,6 +647,23 @@ watch(() => props.hasActiveProject, (next) => {
   if (next)
     return
   libraryModalVisible.value = false
+  resourceActionOpenId.value = ''
+  removeTargetResourceId.value = ''
+  removeResourceModalVisible.value = false
+  purgeTargetResourceId.value = ''
+  purgeResourceModalVisible.value = false
+})
+
+watch(() => sectionExpanded.projectResources, (expanded) => {
+  if (expanded)
+    return
+  resourceActionOpenId.value = ''
+})
+
+watch(() => props.resourceMutating, (next) => {
+  if (!next)
+    return
+  resourceActionOpenId.value = ''
 })
 
 onMounted(() => {
@@ -456,6 +676,9 @@ onMounted(() => {
 
   if (isWorkspaceLeftModuleId(saved))
     activeModule.value = saved
+
+  document.addEventListener('pointerdown', closeResourceActionMenuByOutside)
+  document.addEventListener('keydown', closeResourceActionMenuByEscape)
 })
 
 watch(activeModule, (value) => {
@@ -463,10 +686,17 @@ watch(activeModule, (value) => {
     return
   localStorage.setItem(LEFT_MODULE_STORAGE_KEY, value)
 })
+
+onBeforeUnmount(() => {
+  if (!import.meta.client)
+    return
+  document.removeEventListener('pointerdown', closeResourceActionMenuByOutside)
+  document.removeEventListener('keydown', closeResourceActionMenuByEscape)
+})
 </script>
 
 <template>
-  <aside class="workspace-left-dock">
+  <aside ref="sidebarPanelRef" class="workspace-left-dock">
     <WorkspaceLeftRail
       :items="modules"
       :active-id="activeModule"
@@ -498,7 +728,7 @@ watch(activeModule, (value) => {
                 <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.projectResources }">
                   keyboard_arrow_down
                 </span>
-                <span>PROJECT_RESOURCES</span>
+                <span>项目资料</span>
               </button>
               <button
                 class="workspace-tree-block__title-action"
@@ -513,22 +743,113 @@ watch(activeModule, (value) => {
             </div>
 
             <div v-show="sectionExpanded.projectResources">
-              <button
+              <div
                 v-for="resource in visibleResources"
                 :key="resource.id"
-                class="workspace-tree-item"
-                :class="{ 'workspace-tree-item--active': resource.id === activeResourceId }"
-                type="button"
-                @click="selectResource(resource.id)"
+                class="workspace-tree-item-row"
+                :class="{
+                  'workspace-tree-item-row--active': resource.id === activeResourceId,
+                  'workspace-tree-item-row--menu-open': resourceActionOpenId === resource.id,
+                }"
+                @contextmenu="handleResourceItemContextMenu(resource.id, $event)"
               >
-                <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
-                  {{ resourceIcon(resource) }}
-                </span>
-                <span class="workspace-tree-item__label">{{ resourceDisplayTitle(resource) }}</span>
-              </button>
+                <button
+                  class="workspace-tree-item"
+                  :class="{ 'workspace-tree-item--active': resource.id === activeResourceId }"
+                  type="button"
+                  @click="selectResource(resource.id)"
+                >
+                  <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
+                    {{ resourceIcon(resource) }}
+                  </span>
+                  <span class="workspace-tree-item__label" :title="resourceDisplayTitle(resource)">{{ resourceDisplayTitle(resource) }}</span>
+                </button>
+
+                <div class="workspace-resource-actions">
+                  <button
+                    class="workspace-resource-actions__trigger"
+                    type="button"
+                    title="资源操作"
+                    aria-label="资源操作"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click.stop="toggleResourceActionMenu(resource.id)"
+                  >
+                    <span class="material-symbols-outlined">more_horiz</span>
+                  </button>
+
+                  <div
+                    v-if="resourceActionOpenId === resource.id"
+                    class="workspace-resource-actions__menu"
+                    role="menu"
+                  >
+                    <button
+                      class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
+                      type="button"
+                      :disabled="resourceMutating || !hasActiveProject"
+                      @click.stop="requestRemoveResource(resource.id)"
+                    >
+                      删除文件
+                    </button>
+                  </div>
+                </div>
+              </div>
 
               <p v-if="visibleResources.length === 0" class="workspace-empty-text">
                 暂无资源
+              </p>
+            </div>
+          </section>
+
+          <section class="workspace-tree-block">
+            <button
+              class="workspace-tree-block__title"
+              type="button"
+              :aria-expanded="sectionExpanded.recycleBin"
+              @click="toggleSection('recycleBin')"
+            >
+              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.recycleBin }">
+                keyboard_arrow_down
+              </span>
+              <span>项目回收站</span>
+            </button>
+
+            <div v-show="sectionExpanded.recycleBin">
+              <div
+                v-for="resource in visibleRecycleResources"
+                :key="`recycle-${resource.id}`"
+                class="workspace-recycle-item"
+              >
+                <div class="workspace-recycle-item__content">
+                  <div class="workspace-recycle-item__title" :title="resourceDisplayTitle(resource)">
+                    {{ resourceDisplayTitle(resource) }}
+                  </div>
+                  <div class="workspace-recycle-item__meta">
+                    {{ recycleHint(resource) }}
+                  </div>
+                </div>
+
+                <div class="workspace-recycle-item__actions">
+                  <button
+                    class="workspace-recycle-item__action workspace-recycle-item__action--ghost"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click="restoreRecycleResource(resource.id)"
+                  >
+                    恢复
+                  </button>
+                  <button
+                    class="workspace-recycle-item__action workspace-recycle-item__action--danger"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click="requestPurgeRecycleResource(resource.id)"
+                  >
+                    彻底删除
+                  </button>
+                </div>
+              </div>
+
+              <p v-if="visibleRecycleResources.length === 0" class="workspace-empty-text">
+                暂无已删除文件
               </p>
             </div>
           </section>
@@ -543,7 +864,7 @@ watch(activeModule, (value) => {
               <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.systemLibrary }">
                 keyboard_arrow_down
               </span>
-              <span>SYSTEM_LIBRARY</span>
+              <span>系统资料库</span>
             </button>
 
             <div v-show="sectionExpanded.systemLibrary" class="workspace-tree-block__content">
@@ -563,7 +884,7 @@ watch(activeModule, (value) => {
               <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.outline }">
                 keyboard_arrow_down
               </span>
-              <span>OUTLINE (结构大纲)</span>
+              <span>结构大纲</span>
             </button>
 
             <div v-show="sectionExpanded.outline">
@@ -576,6 +897,7 @@ watch(activeModule, (value) => {
                   activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
                 ]"
                 type="button"
+                :title="item.label"
                 @click="selectOutline(item.id)"
               >
                 {{ item.label }}
@@ -631,6 +953,80 @@ watch(activeModule, (value) => {
               <p v-if="visibleLibraryResources.length === 0" class="workspace-empty-text workspace-empty-text--modal">
                 暂无资源
               </p>
+            </div>
+          </a-modal>
+
+          <a-modal
+            v-model:visible="removeResourceModalVisible"
+            title="删除项目资源"
+            width="460px"
+            :footer="false"
+            :esc-to-close="!resourceMutating"
+            :mask-closable="!resourceMutating"
+          >
+            <div class="workspace-delete-modal">
+              <p>
+                确认删除资源「{{ removeTargetResourceLabel }}」吗？
+              </p>
+              <p class="workspace-delete-modal__hint">
+                删除后文件将移入项目回收站，30 天后自动清理；你也可在回收站手动彻底删除。
+              </p>
+
+              <div class="workspace-delete-modal__actions">
+                <button
+                  class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
+                  type="button"
+                  :disabled="resourceMutating"
+                  @click="closeRemoveResourceModal"
+                >
+                  取消
+                </button>
+                <button
+                  class="workspace-delete-modal__btn workspace-delete-modal__btn--danger"
+                  type="button"
+                  :disabled="resourceMutating"
+                  @click="confirmRemoveResource"
+                >
+                  {{ resourceMutating ? '删除中...' : '确认删除' }}
+                </button>
+              </div>
+            </div>
+          </a-modal>
+
+          <a-modal
+            v-model:visible="purgeResourceModalVisible"
+            title="彻底删除资源"
+            width="460px"
+            :footer="false"
+            :esc-to-close="!resourceMutating"
+            :mask-closable="!resourceMutating"
+          >
+            <div class="workspace-delete-modal">
+              <p>
+                确认彻底删除「{{ purgeTargetResourceLabel }}」吗？
+              </p>
+              <p class="workspace-delete-modal__hint">
+                彻底删除后将立即释放存储空间，且无法恢复。
+              </p>
+
+              <div class="workspace-delete-modal__actions">
+                <button
+                  class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
+                  type="button"
+                  :disabled="resourceMutating"
+                  @click="closePurgeResourceModal"
+                >
+                  取消
+                </button>
+                <button
+                  class="workspace-delete-modal__btn workspace-delete-modal__btn--danger"
+                  type="button"
+                  :disabled="resourceMutating"
+                  @click="confirmPurgeResource"
+                >
+                  {{ resourceMutating ? '删除中...' : '确认彻底删除' }}
+                </button>
+              </div>
             </div>
           </a-modal>
         </template>
@@ -991,6 +1387,10 @@ watch(activeModule, (value) => {
   padding-bottom: 6px;
 }
 
+.workspace-tree-item-row {
+  position: relative;
+}
+
 .workspace-tree-item {
   width: 100%;
   border: none;
@@ -999,7 +1399,7 @@ watch(activeModule, (value) => {
   align-items: center;
   gap: 10px;
   height: 44px;
-  padding: 0 14px;
+  padding: 0 42px 0 14px;
   color: #4f5f7f;
   cursor: pointer;
   text-align: left;
@@ -1025,9 +1425,167 @@ watch(activeModule, (value) => {
 
 .workspace-tree-item__label {
   font-size: 14px;
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.workspace-resource-actions {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  z-index: 10;
+}
+
+.workspace-resource-actions__trigger {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #7f8ba0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.workspace-tree-item-row:hover .workspace-resource-actions__trigger,
+.workspace-tree-item-row--menu-open .workspace-resource-actions__trigger {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workspace-resource-actions__trigger:hover:enabled {
+  background: #e9effa;
+  color: #3f5d96;
+}
+
+.workspace-resource-actions__trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.workspace-resource-actions__trigger .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.workspace-resource-actions__menu {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  min-width: 116px;
+  border: 1px solid #d6deec;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(31, 45, 70, 0.14);
+  padding: 4px;
+  z-index: 20;
+}
+
+.workspace-resource-actions__menu-item {
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #475977;
+  height: 30px;
+  font-size: 12px;
+  text-align: left;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.workspace-resource-actions__menu-item:hover:enabled {
+  background: #edf2fb;
+}
+
+.workspace-resource-actions__menu-item--danger {
+  color: #cb3b3b;
+}
+
+.workspace-resource-actions__menu-item--danger:hover:enabled {
+  background: #fff0f0;
+}
+
+.workspace-resource-actions__menu-item:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.workspace-recycle-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+}
+
+.workspace-recycle-item:hover {
+  background: #f7f9fd;
+}
+
+.workspace-recycle-item__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-recycle-item__title {
+  font-size: 12px;
+  color: #52617c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-recycle-item__meta {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #8d99ae;
+}
+
+.workspace-recycle-item__actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.workspace-recycle-item__action {
+  border: 1px solid #d4dce9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4a5f84;
+  height: 24px;
+  min-width: 56px;
+  padding: 0 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workspace-recycle-item__action--ghost:hover:enabled {
+  background: #edf3ff;
+}
+
+.workspace-recycle-item__action--danger {
+  color: #c74343;
+  border-color: #efc0c0;
+}
+
+.workspace-recycle-item__action--danger:hover:enabled {
+  background: #fff4f4;
+}
+
+.workspace-recycle-item__action:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 
 .workspace-icon--doc {
@@ -1053,6 +1611,9 @@ watch(activeModule, (value) => {
   padding: 9px 14px;
   cursor: pointer;
   position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workspace-outline-item:hover {
@@ -1176,6 +1737,65 @@ watch(activeModule, (value) => {
 
 .workspace-library-item__add:disabled {
   opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.workspace-delete-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-delete-modal p {
+  margin: 0;
+  color: #405272;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.workspace-delete-modal__hint {
+  color: #7b89a0 !important;
+  font-size: 12px !important;
+}
+
+.workspace-delete-modal__actions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workspace-delete-modal__btn {
+  border: 1px solid #d4dbe8;
+  border-radius: 8px;
+  min-width: 86px;
+  height: 34px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workspace-delete-modal__btn--ghost {
+  background: #ffffff;
+  color: #405272;
+}
+
+.workspace-delete-modal__btn--ghost:hover:enabled {
+  background: #f4f7fc;
+}
+
+.workspace-delete-modal__btn--danger {
+  border-color: #dd5a5a;
+  background: #e55252;
+  color: #ffffff;
+}
+
+.workspace-delete-modal__btn--danger:hover:enabled {
+  background: #d84b4b;
+}
+
+.workspace-delete-modal__btn:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
 }
 

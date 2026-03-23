@@ -66,6 +66,14 @@ export interface ProjectUploadedFileRef {
   mimeType: string
 }
 
+export interface PurgedProjectResourceRef {
+  resourceId: string
+  source: 'upload' | 'library'
+  objectKey: string
+}
+
+export const PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS = 30
+
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
@@ -97,6 +105,8 @@ function normalizeUploadTitle(fileName: string, inputTitle?: string): string {
 
   const base = normalizeString(fileName)
     .replace(/\.[^/.]+$/, '')
+    .replace(/[（(]\d+[)）]\s*$/g, '')
+    .replace(/[-_ ]?副本(?:\s*\d+)?$/g, '')
     .trim()
 
   if (base)
@@ -208,6 +218,40 @@ export async function listProjectResources(
   return result.rows.map(toResource)
 }
 
+export async function listProjectRecycleResources(
+  db: Queryable,
+  projectId: string,
+): Promise<Resource[]> {
+  const result = await db.query<ProjectResourceRow>(
+    `SELECT
+      id,
+      project_id,
+      source,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_resources
+     WHERE project_id = $1
+       AND status = 'archived'
+     ORDER BY updated_at DESC`,
+    [projectId],
+  )
+
+  return result.rows.map(toResource)
+}
+
 export async function listProjectLibraryResources(
   db: Queryable,
   projectId: string,
@@ -282,13 +326,47 @@ export async function bindLibraryResourceToProject(
      FROM project_resources
      WHERE project_id = $1
        AND linked_contest_resource_id = $2
-       AND status = 'active'
      LIMIT 1`,
     [input.projectId, input.resourceId],
   )
 
-  if (existing.rows[0])
-    return toResource(existing.rows[0])
+  const existingRow = existing.rows[0]
+  if (existingRow) {
+    if (existingRow.status === 'active')
+      return toResource(existingRow)
+
+    const now = new Date().toISOString()
+    const restored = await db.query<ProjectResourceRow>(
+      `UPDATE project_resources
+       SET status = 'active',
+           updated_by_user_id = $3,
+           updated_at = $4
+       WHERE id = $1
+         AND project_id = $2
+       RETURNING
+         id,
+         project_id,
+         source,
+         linked_contest_resource_id,
+         title,
+         mime_type,
+         category,
+         year,
+         source_link,
+         availability,
+         summary,
+         content,
+         metadata,
+         status,
+         created_by_user_id,
+         updated_by_user_id,
+         created_at::TEXT,
+         updated_at::TEXT`,
+      [existingRow.id, input.projectId, input.actorUserId, now],
+    )
+
+    return toResource(restored.rows[0]!)
+  }
 
   const resourceResult = await db.query<ContestResourceRow>(
     `SELECT
@@ -627,4 +705,175 @@ export async function getProjectUploadedFileRef(
     fileName,
     mimeType,
   }
+}
+
+export async function moveProjectResourceToRecycleBin(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+  },
+): Promise<PurgedProjectResourceRef> {
+  const now = new Date().toISOString()
+  const result = await db.query<Pick<ProjectResourceRow, 'id' | 'source' | 'metadata'>>(
+    `UPDATE project_resources
+     SET status = 'archived',
+         updated_by_user_id = $3,
+         updated_at = $4
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'
+     RETURNING id, source, metadata`,
+    [input.projectId, input.resourceId, input.actorUserId, now],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  const metadata = parseResourceMetadata(row.metadata)
+
+  return {
+    resourceId: row.id,
+    source: row.source,
+    objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
+  }
+}
+
+export async function restoreProjectResourceFromRecycleBin(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+  },
+): Promise<Resource> {
+  const now = new Date().toISOString()
+  const result = await db.query<ProjectResourceRow>(
+    `UPDATE project_resources
+     SET status = 'active',
+         updated_by_user_id = $3,
+         updated_at = $4
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'archived'
+     RETURNING
+       id,
+       project_id,
+       source,
+       linked_contest_resource_id,
+       title,
+       mime_type,
+       category,
+       year,
+       source_link,
+       availability,
+       summary,
+       content,
+       metadata,
+       status,
+       created_by_user_id,
+       updated_by_user_id,
+       created_at::TEXT,
+       updated_at::TEXT`,
+    [input.projectId, input.resourceId, input.actorUserId, now],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  return toResource(row)
+}
+
+export async function purgeProjectResourceFromRecycleBin(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<PurgedProjectResourceRef> {
+  const result = await db.query<Pick<ProjectResourceRow, 'id' | 'source' | 'metadata'>>(
+    `DELETE FROM project_resources
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'archived'
+     RETURNING id, source, metadata`,
+    [input.projectId, input.resourceId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  const metadata = parseResourceMetadata(row.metadata)
+
+  return {
+    resourceId: row.id,
+    source: row.source,
+    objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
+  }
+}
+
+export async function purgeExpiredProjectResourcesFromRecycleBin(
+  db: Queryable,
+  input: {
+    projectId: string
+    retentionDays?: number
+  },
+): Promise<PurgedProjectResourceRef[]> {
+  const retentionDays = Math.max(1, Math.trunc(Number(input.retentionDays || PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS)))
+  const result = await db.query<Pick<ProjectResourceRow, 'id' | 'source' | 'metadata'>>(
+    `DELETE FROM project_resources
+     WHERE project_id = $1
+       AND status = 'archived'
+       AND updated_at <= (NOW() - ($2::TEXT || ' days')::INTERVAL)
+     RETURNING id, source, metadata`,
+    [input.projectId, retentionDays],
+  )
+
+  return result.rows.map((row) => {
+    const metadata = parseResourceMetadata(row.metadata)
+    return {
+      resourceId: row.id,
+      source: row.source,
+      objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
+    }
+  })
+}
+
+export async function purgeExpiredProjectResourcesFromRecycleBinGlobal(
+  db: Queryable,
+  input?: {
+    retentionDays?: number
+    limit?: number
+  },
+): Promise<PurgedProjectResourceRef[]> {
+  const retentionDays = Math.max(1, Math.trunc(Number(input?.retentionDays || PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS)))
+  const limit = Math.max(20, Math.min(2000, Math.trunc(Number(input?.limit || 200))))
+  const result = await db.query<Pick<ProjectResourceRow, 'id' | 'source' | 'metadata'>>(
+    `WITH expired AS (
+      SELECT id
+      FROM project_resources
+      WHERE status = 'archived'
+        AND updated_at <= (NOW() - ($1::TEXT || ' days')::INTERVAL)
+      ORDER BY updated_at ASC
+      LIMIT $2
+    )
+    DELETE FROM project_resources pr
+    USING expired
+    WHERE pr.id = expired.id
+    RETURNING pr.id, pr.source, pr.metadata`,
+    [retentionDays, limit],
+  )
+
+  return result.rows.map((row) => {
+    const metadata = parseResourceMetadata(row.metadata)
+    return {
+      resourceId: row.id,
+      source: row.source,
+      objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
+    }
+  })
 }

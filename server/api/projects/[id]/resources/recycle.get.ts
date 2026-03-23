@@ -4,9 +4,9 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { getVisibleProjectById } from '~~/server/utils/platform-store'
+import { canManageProject, getVisibleProjectById } from '~~/server/utils/platform-store'
 import {
-  listProjectResources,
+  listProjectRecycleResources,
   PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS,
   purgeExpiredProjectResourcesFromRecycleBin,
 } from '~~/server/utils/project-resource-store'
@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40061)
+    }, 40084)
   }
 
   try {
@@ -34,11 +34,16 @@ export default defineEventHandler(async (event) => {
       if (!project)
         throw new Error('PROJECT_NOT_FOUND')
 
+      const manageable = await canManageProject(db, user, projectId)
+      if (!manageable)
+        throw new Error('FORBIDDEN')
+
       const expiredPurged = await purgeExpiredProjectResourcesFromRecycleBin(db, {
         projectId,
         retentionDays: PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS,
       })
-      const resources = await listProjectResources(db, projectId)
+
+      const resources = await listProjectRecycleResources(db, projectId)
       return {
         resources,
         expiredPurged,
@@ -71,7 +76,18 @@ export default defineEventHandler(async (event) => {
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 40461)
+      }, 40485)
+    }
+
+    if (error instanceof Error && error.message === 'FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return fail('当前用户无权管理项目回收站。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40384)
     }
 
     throw error

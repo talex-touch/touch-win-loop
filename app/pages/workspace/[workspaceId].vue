@@ -15,6 +15,7 @@ import type {
   Contest,
   Project,
   ProjectContestAdaptation,
+  ProjectOutlineSnapshot,
   ProjectPayload,
   ProjectSettingsDraft,
   ProjectSettingsDraftPayload,
@@ -353,7 +354,9 @@ const topK = ref(6)
 const contests = ref<Contest[]>([])
 const contestCatalog = ref<Contest[]>([])
 const resources = ref<Resource[]>([])
+const recycleResources = ref<Resource[]>([])
 const resourceLibrary = ref<Resource[]>([])
+const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
 const projects = ref<Project[]>([])
 const allProjects = ref<Project[]>([])
 const me = ref<AuthMeResult | null>(null)
@@ -383,6 +386,7 @@ const projectSettingsDraftDeviceId = ref('')
 
 let projectSettingsDraftTimer: ReturnType<typeof setTimeout> | null = null
 let projectSettingsDraftPersistSeq = 0
+let projectOutlineGenerateTimer: ReturnType<typeof setTimeout> | null = null
 
 const listLoading = ref(false)
 const aiFiltering = ref(false)
@@ -636,6 +640,7 @@ const filteredContests = computed(() => {
 })
 
 const selectedResources = computed(() => resources.value)
+const projectOutlineItems = computed(() => projectOutlineSnapshot.value?.items || [])
 
 const toneMeta: Record<MappingTone, WorkspaceStatusToneMeta> = {
   complete: {
@@ -1606,8 +1611,9 @@ async function saveProjectSettingsManually() {
     return
   }
 
+  await generateProjectOutline('settings_saved', true)
   projectSettingsSaveState.value = 'saved_manual'
-  statusLine.value = '手动保存成功'
+  statusLine.value = '手动保存成功，结构大纲已刷新。'
 }
 
 function onProjectSettingsCommonChange(next: WorkspaceProjectCommonForm) {
@@ -1720,6 +1726,11 @@ watch(selectedContestId, (contestId) => {
 
 watch([selectedContestId, selectedTrackId], () => {
   syncFormContestTrack()
+  if (projectSettingsHydrating.value)
+    return
+  if (!activeProjectId.value)
+    return
+  scheduleProjectOutlineGenerate('contest_track_switched')
 })
 
 async function loadAuthContext(): Promise<boolean> {
@@ -1843,8 +1854,103 @@ async function loadProjectResourceLibrary() {
   }
 }
 
+async function loadProjectRecycleResources() {
+  if (!activeProjectId.value) {
+    recycleResources.value = []
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/recycle`))
+    recycleResources.value = response.data
+  }
+  catch {
+    recycleResources.value = []
+  }
+}
+
 async function refreshProjectResourceContext() {
-  await Promise.all([loadProjectResources(), loadProjectResourceLibrary()])
+  await Promise.all([
+    loadProjectResources(),
+    loadProjectResourceLibrary(),
+    loadProjectRecycleResources(),
+  ])
+}
+
+function buildProjectOutlineContextPayload() {
+  return {
+    contestId: selectedContestId.value,
+    trackId: selectedTrackId.value,
+    major: major.value,
+    discipline: discipline.value,
+    level: level.value,
+    trackType: trackType.value,
+  }
+}
+
+function clearProjectOutlineGenerateTimer() {
+  if (!projectOutlineGenerateTimer)
+    return
+  clearTimeout(projectOutlineGenerateTimer)
+  projectOutlineGenerateTimer = null
+}
+
+async function loadProjectOutline() {
+  const projectId = activeProjectId.value
+  if (!projectId) {
+    projectOutlineSnapshot.value = null
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline`), {
+      query: buildProjectOutlineContextPayload(),
+    })
+    if (activeProjectId.value !== projectId)
+      return
+    projectOutlineSnapshot.value = response.data
+  }
+  catch {
+    if (activeProjectId.value === projectId)
+      projectOutlineSnapshot.value = null
+  }
+}
+
+async function generateProjectOutline(reason: string, silent = false) {
+  const projectId = activeProjectId.value
+  if (!projectId)
+    return
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline/generate`), {
+      method: 'POST',
+      body: {
+        reason,
+        context: buildProjectOutlineContextPayload(),
+      },
+    })
+    if (activeProjectId.value !== projectId)
+      return
+    projectOutlineSnapshot.value = response.data
+    if (!silent)
+      statusLine.value = '结构大纲已更新。'
+  }
+  catch (error) {
+    if (silent || activeProjectId.value !== projectId)
+      return
+    statusLine.value = resolveApiErrorMessage(error, '结构大纲生成失败，请稍后重试。')
+  }
+}
+
+function scheduleProjectOutlineGenerate(reason: string) {
+  if (!activeProjectId.value)
+    return
+
+  clearProjectOutlineGenerateTimer()
+  projectOutlineGenerateTimer = setTimeout(() => {
+    projectOutlineGenerateTimer = null
+    void generateProjectOutline(reason, true)
+  }, 2000)
 }
 
 async function loadProjects() {
@@ -1890,10 +1996,79 @@ async function addResourceFromLibrary(resourceId: string) {
       },
     })
     await refreshProjectResourceContext()
-    statusLine.value = '已从系统库添加资源。'
+    await generateProjectOutline('library_add_success', true)
+    statusLine.value = '已从系统库添加资源，并刷新结构大纲。'
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '添加资源失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
+async function removeProjectResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!activeProjectId.value || !targetResourceId)
+    return
+
+  const target = resources.value.find(item => item.id === targetResourceId)
+  const targetTitle = target?.title ? `「${target.title}」` : '资源'
+
+  resourceMutating.value = true
+  try {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}`), {
+      method: 'DELETE',
+    })
+    await refreshProjectResourceContext()
+    await generateProjectOutline('resource_delete_success', true)
+    statusLine.value = `${targetTitle} 已移入项目回收站，结构大纲已刷新。`
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '删除资源失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
+async function restoreProjectResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!activeProjectId.value || !targetResourceId)
+    return
+
+  resourceMutating.value = true
+  try {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/restore`), {
+      method: 'POST',
+    })
+    await refreshProjectResourceContext()
+    await generateProjectOutline('resource_restore_success', true)
+    statusLine.value = '资源已从回收站恢复，结构大纲已刷新。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '恢复资源失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
+async function purgeProjectResource(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!activeProjectId.value || !targetResourceId)
+    return
+
+  resourceMutating.value = true
+  try {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/purge`), {
+      method: 'DELETE',
+    })
+    await refreshProjectResourceContext()
+    statusLine.value = '资源已彻底删除并释放存储空间。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '彻底删除资源失败，请稍后重试。')
   }
   finally {
     resourceMutating.value = false
@@ -1923,8 +2098,9 @@ async function uploadResourcesToProject(files: File[]) {
       body: formData,
     })
     await refreshProjectResourceContext()
+    await generateProjectOutline('upload_success', true)
     const uploadedCount = Math.max(0, Number(response.data?.uploadedCount || normalizedFiles.length))
-    statusLine.value = `上传成功：${uploadedCount} 个文件`
+    statusLine.value = `上传成功：${uploadedCount} 个文件，结构大纲已刷新。`
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
@@ -2209,6 +2385,7 @@ async function sendProjectChatMessage(pendingMessages: ChatMessage[]) {
       messages: pendingMessages,
       context: {
         workspaceId: activeWorkspaceId.value,
+        projectId: activeProjectId.value,
         contestId: selectedContestId.value,
         trackId: selectedTrackId.value,
         major: major.value,
@@ -2239,6 +2416,7 @@ async function sendTopicProposalMessage(pendingMessages: ChatMessage[]) {
       topK: 3,
       context: {
         workspaceId: activeWorkspaceId.value,
+        projectId: activeProjectId.value,
         contestId: selectedContestId.value,
         trackId: selectedTrackId.value,
         major: major.value,
@@ -2279,6 +2457,7 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
       messages: pendingMessages,
       context: {
         workspaceId: activeWorkspaceId.value,
+        projectId: activeProjectId.value,
         contestId: selectedContestId.value,
         trackId: selectedTrackId.value,
         major: major.value,
@@ -2505,6 +2684,7 @@ onMounted(async () => {
 
   await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
   await refreshProjectResourceContext()
+  await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
   syncFormContestTrack()
   if (highlightedProjectId.value) {
@@ -2516,6 +2696,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearProjectSettingsAutoTimers()
+  clearProjectOutlineGenerateTimer()
 })
 
 watch(activeWorkspaceId, async (value, previous) => {
@@ -2550,6 +2731,7 @@ watch(routeWorkspaceId, async (value, previous) => {
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
   await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
   await refreshProjectResourceContext()
+  await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
@@ -2563,12 +2745,15 @@ watch(activeProjectId, async (next, previous) => {
     return
 
   clearProjectSettingsAutoTimers()
+  clearProjectOutlineGenerateTimer()
   await refreshProjectResourceContext()
   if (!next) {
+    projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
     return
   }
   resetProjectSettingsState(activeProject.value)
+  await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
 })
 </script>
@@ -2595,7 +2780,9 @@ watch(activeProjectId, async (next, previous) => {
         v-model:selected-contest-id="selectedContestId"
         :contests="filteredContests"
         :selected-resources="selectedResources"
+        :recycle-resources="recycleResources"
         :resource-library="resourceLibrary"
+        :project-outline="projectOutlineItems"
         :resource-mutating="resourceMutating"
         :has-active-project="Boolean(activeProjectId)"
         :ai-reasoning="aiReasoning"
@@ -2608,6 +2795,9 @@ watch(activeProjectId, async (next, previous) => {
         @run-ai-filter="runAiFilter"
         @open-settings-panel="openSettingsFromLeftSidebar"
         @add-resource-from-library="addResourceFromLibrary"
+        @remove-project-resource="removeProjectResource"
+        @restore-project-resource="restoreProjectResource"
+        @purge-project-resource="purgeProjectResource"
         @upload-resources="uploadResourcesToProject"
       />
 

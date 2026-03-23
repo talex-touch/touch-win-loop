@@ -20,6 +20,7 @@ export interface RuntimeSettings {
     apiKey: string
     model: string
     modelCatalogJson: string
+    modelPricingJson: string
     temperature: number
     topP: number
     maxTokens: number
@@ -33,6 +34,7 @@ export interface RuntimeSettings {
     baseURL: string
     apiKey: string
     model: string
+    modelPricingJson: string
     timeoutMs: number
     maxRetries: number
   }
@@ -62,6 +64,12 @@ export interface RuntimeSettings {
   contest: {
     autoSeed: boolean
   }
+  resourceRecycle: {
+    enabled: boolean
+    intervalMs: number
+    retentionDays: number
+    batchSize: number
+  }
 }
 
 function toBoolean(raw: unknown, fallback: boolean): boolean {
@@ -88,6 +96,7 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       apiKey: String(runtime.ai?.apiKey ?? ''),
       model: String(runtime.ai?.model ?? 'gpt-4o-mini'),
       modelCatalogJson: String(runtime.ai?.modelCatalogJson ?? ''),
+      modelPricingJson: String(runtime.ai?.modelPricingJson ?? ''),
       temperature: toNumber(runtime.ai?.temperature, 0.2),
       topP: toNumber(runtime.ai?.topP, 1),
       maxTokens: toNumber(runtime.ai?.maxTokens, 0),
@@ -101,6 +110,7 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       baseURL: String(runtime.docAi?.baseURL ?? ''),
       apiKey: String(runtime.docAi?.apiKey ?? ''),
       model: String(runtime.docAi?.model ?? 'gpt-4o-mini'),
+      modelPricingJson: String(runtime.docAi?.modelPricingJson ?? ''),
       timeoutMs: toNumber(runtime.docAi?.timeoutMs, 15000),
       maxRetries: toNumber(runtime.docAi?.maxRetries, 2),
     },
@@ -129,6 +139,12 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
     },
     contest: {
       autoSeed: toBoolean(runtime.contest?.autoSeed, false),
+    },
+    resourceRecycle: {
+      enabled: toBoolean(runtime.resourceRecycle?.enabled, true),
+      intervalMs: Math.max(60_000, Math.min(24 * 60 * 60 * 1000, toNumber(runtime.resourceRecycle?.intervalMs, 1_800_000))),
+      retentionDays: Math.max(1, Math.min(365, Math.trunc(toNumber(runtime.resourceRecycle?.retentionDays, 30)))),
+      batchSize: Math.max(20, Math.min(1000, Math.trunc(toNumber(runtime.resourceRecycle?.batchSize, 200)))),
     },
   }
 }
