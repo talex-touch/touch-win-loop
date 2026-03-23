@@ -121,23 +121,23 @@ const inputPlaceholder = computed(() => {
           <div class="text-xs text-slate-700 font-semibold">
             AI 模式
           </div>
-          <div class="grid grid-cols-3 gap-2">
+          <div class="gap-2 grid grid-cols-3">
             <button
-              class="text-[11px] px-2 py-1.5 rounded border transition-colors"
+              class="text-[11px] px-2 py-1.5 border rounded transition-colors"
               :class="aiMode === 'project_chat' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
               @click="emit('update:aiMode', 'project_chat')"
             >
               项目聊天
             </button>
             <button
-              class="text-[11px] px-2 py-1.5 rounded border transition-colors"
+              class="text-[11px] px-2 py-1.5 border rounded transition-colors"
               :class="aiMode === 'topic_proposal' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
               @click="emit('update:aiMode', 'topic_proposal')"
             >
               选题助手
             </button>
             <button
-              class="text-[11px] px-2 py-1.5 rounded border transition-colors"
+              class="text-[11px] px-2 py-1.5 border rounded transition-colors"
               :class="aiMode === 'defense' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'"
               @click="emit('update:aiMode', 'defense')"
             >
@@ -249,11 +249,11 @@ const inputPlaceholder = computed(() => {
             <p class="text-[11px] text-slate-600 mt-1">
               {{ item.reason }}
             </p>
-            <div class="mt-2 text-[11px] text-slate-500">
+            <div class="text-[11px] text-slate-500 mt-2">
               风险：{{ item.risks.slice(0, 2).join('；') || '—' }}
             </div>
             <button
-              class="mt-2 text-[11px] font-semibold px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100"
+              class="text-[11px] font-semibold mt-2 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100"
               @click="emit('applyTopicProposal', item)"
             >
               回填为项目草案
@@ -284,7 +284,7 @@ const inputPlaceholder = computed(() => {
             :key="`${round.judge}-${index}`"
             class="p-3 border border-slate-200 rounded bg-white"
           >
-            <p class="text-xs font-semibold text-slate-700">
+            <p class="text-xs text-slate-700 font-semibold">
               {{ round.judge }} 评委（{{ round.score }}）
             </p>
             <p class="text-[11px] text-slate-700 mt-1">
@@ -457,13 +457,6 @@ const inputPlaceholder = computed(() => {
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="p-4 border-t border-slate-200 bg-slate-50/60">
-      <button class="text-xs text-white font-bold py-2.5 rounded-lg bg-slate-900 flex gap-2 w-full transition-opacity items-center justify-center hover:opacity-90">
-        <span>预览最终申报材料</span>
-        <span class="material-symbols-outlined text-sm">visibility</span>
-      </button>
     </div>
   </aside>
 </template>

@@ -108,6 +108,20 @@ function workspaceDetailPath(workspaceId: string): string {
   return `/workspace/${workspaceId}`
 }
 
+function resolveApiErrorMessage(error: unknown, fallback: string): string {
+  if (error && typeof error === 'object') {
+    const maybeData = (error as { data?: { message?: string } }).data
+    const message = String(maybeData?.message || '').trim()
+    if (message)
+      return message
+  }
+
+  if (error instanceof Error && error.message.trim())
+    return error.message.trim()
+
+  return fallback
+}
+
 interface WorkspaceQuickSwitchProject {
   projectId: string
   workspaceId: string
@@ -143,6 +157,7 @@ const topK = ref(6)
 
 const contests = ref<Contest[]>([])
 const resources = ref<Resource[]>([])
+const resourceLibrary = ref<Resource[]>([])
 const projects = ref<Project[]>([])
 const allProjects = ref<Project[]>([])
 const me = ref<AuthMeResult | null>(null)
@@ -151,6 +166,7 @@ const selectedContestId = ref('')
 const selectedTrackId = ref('')
 
 const sidebarTab = ref<WorkspaceSidebarTab>('chat')
+const openSettingsSignal = ref(0)
 const headerSearch = ref('')
 const aiReasoning = ref('')
 const normalizedInfo = ref('')
@@ -162,6 +178,7 @@ const chatLoading = ref(false)
 const chatSessionsLoading = ref(false)
 const formSubmitting = ref(false)
 const resourcesLoading = ref(false)
+const resourceMutating = ref(false)
 
 const chatMessages = ref<ChatMessage[]>([defaultAssistantGreeting()])
 const chatSessions = ref<AiChatSession[]>([])
@@ -250,6 +267,8 @@ const activeProject = computed(() => {
   return projects.value[0] || null
 })
 
+const activeProjectId = computed(() => activeProject.value?.id || '')
+
 const headerProjectName = computed(() => {
   if (activeProject.value?.title)
     return activeProject.value.title
@@ -276,7 +295,7 @@ const filteredContests = computed(() => {
   })
 })
 
-const selectedResources = computed(() => resources.value.filter(item => item.contestId === selectedContestId.value))
+const selectedResources = computed(() => resources.value)
 
 const toneMeta: Record<MappingTone, WorkspaceStatusToneMeta> = {
   complete: {
@@ -480,10 +499,16 @@ async function loadContests() {
   }
 }
 
-async function loadResources() {
+async function loadProjectResources() {
   resourcesLoading.value = true
+  if (!activeProjectId.value) {
+    resources.value = []
+    resourcesLoading.value = false
+    return
+  }
+
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint('/resources'))
+    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources`))
     resources.value = response.data
   }
   catch {
@@ -492,6 +517,25 @@ async function loadResources() {
   finally {
     resourcesLoading.value = false
   }
+}
+
+async function loadProjectResourceLibrary() {
+  if (!activeProjectId.value) {
+    resourceLibrary.value = []
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/library`))
+    resourceLibrary.value = response.data
+  }
+  catch {
+    resourceLibrary.value = []
+  }
+}
+
+async function refreshProjectResourceContext() {
+  await Promise.all([loadProjectResources(), loadProjectResourceLibrary()])
 }
 
 async function loadProjects() {
@@ -520,6 +564,54 @@ async function loadQuickSwitchProjects() {
   }
   catch {
     allProjects.value = []
+  }
+}
+
+async function addResourceFromLibrary(resourceId: string) {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!activeProjectId.value || !targetResourceId)
+    return
+
+  resourceMutating.value = true
+  try {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/library`), {
+      method: 'POST',
+      body: {
+        resourceId: targetResourceId,
+      },
+    })
+    await refreshProjectResourceContext()
+    statusLine.value = '已从系统库添加资源。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '添加资源失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
+async function uploadResourceToProject(file: File) {
+  if (!activeProjectId.value)
+    return
+
+  resourceMutating.value = true
+  const formData = new FormData()
+  formData.set('file', file, file.name)
+
+  try {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/upload`), {
+      method: 'POST',
+      body: formData,
+    })
+    await refreshProjectResourceContext()
+    statusLine.value = `上传成功：${file.name}`
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
   }
 }
 
@@ -1066,12 +1158,23 @@ async function switchProjectFromHeader(payload: { projectId: string, workspaceId
   })
 }
 
+function openFinalReviewFromHeader() {
+  sidebarTab.value = 'submit'
+  statusLine.value = '已切换到终审视图。'
+}
+
+function openSettingsFromLeftSidebar() {
+  openSettingsSignal.value += 1
+  statusLine.value = '已打开设置页，可在中间区域配置当前详细信息。'
+}
+
 onMounted(async () => {
   const ok = await loadAuthContext()
   if (!ok)
     return
 
-  await Promise.all([loadContests(), loadResources(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
+  await Promise.all([loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
+  await refreshProjectResourceContext()
   syncFormContestTrack()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
@@ -1111,11 +1214,19 @@ watch(routeWorkspaceId, async (value, previous) => {
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
   await Promise.all([loadProjects(), loadQuickSwitchProjects(), loadChatSessions()])
+  await refreshProjectResourceContext()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
       statusLine.value = `已定位项目：${target.title}`
   }
+})
+
+watch(activeProjectId, async (next, previous) => {
+  if (next === previous)
+    return
+
+  await refreshProjectResourceContext()
 })
 </script>
 
@@ -1124,10 +1235,9 @@ watch(routeWorkspaceId, async (value, previous) => {
     <WorkspaceHeader
       v-model="headerSearch"
       :project-name="headerProjectName"
-      :contest-name="selectedContest?.name || '未选择竞赛'"
-      :track-name="selectedTrack?.name || '未选择赛道'"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
+      @final-review="openFinalReviewFromHeader"
       @quick-switch-project="switchProjectFromHeader"
     />
 
@@ -1141,6 +1251,10 @@ watch(routeWorkspaceId, async (value, previous) => {
         v-model:top-k="topK"
         v-model:selected-contest-id="selectedContestId"
         :contests="filteredContests"
+        :selected-resources="selectedResources"
+        :resource-library="resourceLibrary"
+        :resource-mutating="resourceMutating"
+        :has-active-project="Boolean(activeProjectId)"
         :ai-reasoning="aiReasoning"
         :normalized-info="normalizedInfo"
         :status-line="statusLine"
@@ -1149,12 +1263,23 @@ watch(routeWorkspaceId, async (value, previous) => {
         :is-admin-view="isAdminView"
         @load-contests="loadContests"
         @run-ai-filter="runAiFilter"
+        @open-settings-panel="openSettingsFromLeftSidebar"
+        @add-resource-from-library="addResourceFromLibrary"
+        @upload-resource="uploadResourceToProject"
       />
 
       <WorkspaceMainPanel
         v-model:selected-track-id="selectedTrackId"
+        v-model:major="major"
+        v-model:discipline="discipline"
+        v-model:level="level"
+        v-model:track-type="trackType"
+        v-model:top-k="topK"
+        v-model:selected-contest-id="selectedContestId"
         :selected-contest="selectedContest"
         :selected-track="selectedTrack"
+        :contests="filteredContests"
+        :open-settings-signal="openSettingsSignal"
         :selected-resources="selectedResources"
         :mapping-rows="mappingRows"
         :keyword-cloud="keywordCloud"

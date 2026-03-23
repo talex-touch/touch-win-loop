@@ -386,6 +386,16 @@ CREATE TABLE IF NOT EXISTS contest_resources (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_resource_bindings (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL REFERENCES contest_resources(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'library' CHECK (source IN ('library', 'upload')),
+  added_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(project_id, resource_id)
+);
+
 CREATE TABLE IF NOT EXISTS contest_resource_documents (
   id TEXT PRIMARY KEY,
   contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
@@ -494,6 +504,8 @@ CREATE INDEX IF NOT EXISTS idx_contest_timelines_contest ON contest_timelines(co
 CREATE INDEX IF NOT EXISTS idx_contest_rubrics_contest_track ON contest_rubrics(contest_id, track_id);
 CREATE INDEX IF NOT EXISTS idx_contest_resources_contest_category ON contest_resources(contest_id, category);
 CREATE INDEX IF NOT EXISTS idx_contest_resources_status ON contest_resources(status);
+CREATE INDEX IF NOT EXISTS idx_project_resource_bindings_project_created ON project_resource_bindings(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_bindings_resource ON project_resource_bindings(resource_id);
 CREATE INDEX IF NOT EXISTS idx_resource_documents_contest_status ON contest_resource_documents(contest_id, parse_status);
 CREATE INDEX IF NOT EXISTS idx_resource_documents_resource ON contest_resource_documents(resource_id);
 CREATE INDEX IF NOT EXISTS idx_resource_document_tasks_status_created ON contest_resource_document_tasks(status, created_at);

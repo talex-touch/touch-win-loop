@@ -10,15 +10,11 @@ interface WorkspaceQuickSwitchProject {
 const props = withDefaults(defineProps<{
   modelValue?: string
   projectName?: string
-  contestName?: string
-  trackName?: string
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
 }>(), {
   modelValue: '',
   projectName: '未命名项目',
-  contestName: '未选择竞赛',
-  trackName: '未选择赛道',
   myProjects: () => [],
   recentProjects: () => [],
 })
@@ -26,9 +22,9 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
   (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
+  (event: 'finalReview'): void
 }>()
 
-const router = useRouter()
 const quickSwitchOpen = ref(false)
 const quickSwitchRef = ref<HTMLElement | null>(null)
 
@@ -72,13 +68,14 @@ function switchProject(item: WorkspaceQuickSwitchProject) {
   closeQuickSwitch()
 }
 
-function goBack() {
-  if (import.meta.client && window.history.length > 1) {
-    router.back()
-    return
-  }
+function goWorkspaceList() {
+  closeQuickSwitch()
+  navigateTo('/workspace')
+}
 
-  navigateTo('/dashboard')
+function openFinalReview() {
+  closeQuickSwitch()
+  emit('finalReview')
 }
 
 function handleGlobalPointerDown(event: Event) {
@@ -118,122 +115,112 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <header class="px-4 border-b border-slate-200 bg-white flex shrink-0 h-12 items-center justify-between z-10">
-    <div class="flex gap-2 min-w-0 items-center">
-      <button
-        class="px-1 py-0.5 rounded flex gap-2 min-w-0 items-center hover:bg-slate-100"
-        type="button"
-        @click="goBack"
+  <header class="px-4 border-b border-slate-200 bg-white flex shrink-0 gap-3 h-12 items-center z-10">
+    <div class="flex flex-1 gap-2 min-w-0 items-center">
+      <nav
+        aria-label="工作区面包屑"
+        class="flex gap-1 min-w-0 items-center"
       >
         <span class="material-symbols-outlined text-xl text-blue-600">dataset</span>
-        <span class="text-sm tracking-tight font-bold truncate">
-          竞赛分析工作台
-          <span class="text-slate-300 font-normal mx-1">/</span>
-          <span class="text-xs text-slate-500 font-medium">{{ projectName }}</span>
-        </span>
-      </button>
-      <div ref="quickSwitchRef" class="relative">
         <button
-          class="text-slate-500 p-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100"
-          :disabled="!hasQuickSwitchOptions"
-          title="快速切换项目"
+          class="text-sm text-slate-900 font-bold px-1 py-0.5 rounded transition-colors hover:bg-slate-100"
           type="button"
-          @click.stop="toggleQuickSwitch"
+          @click="goWorkspaceList"
         >
-          <span class="material-symbols-outlined text-xl">swap_horiz</span>
+          竞赛分析工作台
         </button>
+        <span class="text-slate-300 font-normal mx-0.5">/</span>
 
-        <div
-          v-if="quickSwitchOpen"
-          class="border border-slate-200 rounded-lg shadow-lg bg-white w-80 max-h-96 left-0 mt-2 p-2 top-full absolute overflow-y-auto z-20"
-        >
-          <div class="text-[11px] text-slate-500 px-2 pt-1 pb-2">
-            快速切换
+        <div ref="quickSwitchRef" class="min-w-0 relative">
+          <button
+            class="text-xs text-slate-600 font-semibold px-1 py-0.5 rounded inline-flex gap-1 max-w-72 min-w-0 transition-colors items-center hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            :disabled="!hasQuickSwitchOptions"
+            title="快速切换项目"
+            type="button"
+            @click.stop="toggleQuickSwitch"
+          >
+            <span class="truncate">{{ projectName }}</span>
+            <span class="material-symbols-outlined text-sm shrink-0 block rotate-90">swap_horiz</span>
+          </button>
+
+          <div
+            v-if="quickSwitchOpen"
+            class="mt-2 p-2 border border-slate-200 rounded-lg bg-white max-h-96 w-80 shadow-lg left-0 top-full absolute z-20 overflow-y-auto"
+          >
+            <div class="text-[11px] text-slate-500 px-2 pb-2 pt-1">
+              快速切换
+            </div>
+            <section class="space-y-1">
+              <p class="text-[11px] text-slate-500 px-2">
+                我的项目
+              </p>
+              <button
+                v-for="item in props.myProjects"
+                :key="`mine-${item.projectId}`"
+                class="px-2 py-1.5 text-left rounded-md w-full transition-colors hover:bg-slate-50"
+                type="button"
+                @click="switchProject(item)"
+              >
+                <div class="text-xs text-slate-800 font-medium truncate">
+                  {{ item.title }}
+                </div>
+                <div class="text-[11px] text-slate-500 flex gap-2 items-center justify-between">
+                  <span class="truncate">{{ item.workspaceName }}</span>
+                  <span class="shrink-0">{{ formatShortTime(item.updatedAt) }}</span>
+                </div>
+              </button>
+              <p v-if="props.myProjects.length === 0" class="text-[11px] text-slate-400 px-2 py-1">
+                暂无可切换项目
+              </p>
+            </section>
+
+            <section class="mt-2 pt-2 border-t border-slate-100 space-y-1">
+              <p class="text-[11px] text-slate-500 px-2">
+                最近项目
+              </p>
+              <button
+                v-for="item in props.recentProjects"
+                :key="`recent-${item.projectId}`"
+                class="px-2 py-1.5 text-left rounded-md w-full transition-colors hover:bg-slate-50"
+                type="button"
+                @click="switchProject(item)"
+              >
+                <div class="text-xs text-slate-800 font-medium truncate">
+                  {{ item.title }}
+                </div>
+                <div class="text-[11px] text-slate-500 flex gap-2 items-center justify-between">
+                  <span class="truncate">{{ item.workspaceName }}</span>
+                  <span class="shrink-0">{{ formatShortTime(item.updatedAt) }}</span>
+                </div>
+              </button>
+              <p v-if="props.recentProjects.length === 0" class="text-[11px] text-slate-400 px-2 py-1">
+                暂无最近项目
+              </p>
+            </section>
           </div>
-          <section class="space-y-1">
-            <p class="text-[11px] text-slate-500 px-2">
-              我的项目
-            </p>
-            <button
-              v-for="item in props.myProjects"
-              :key="`mine-${item.projectId}`"
-              class="text-left rounded-md px-2 py-1.5 w-full transition-colors hover:bg-slate-50"
-              type="button"
-              @click="switchProject(item)"
-            >
-              <div class="text-xs text-slate-800 truncate font-medium">
-                {{ item.title }}
-              </div>
-              <div class="text-[11px] text-slate-500 flex gap-2 items-center justify-between">
-                <span class="truncate">{{ item.workspaceName }}</span>
-                <span class="shrink-0">{{ formatShortTime(item.updatedAt) }}</span>
-              </div>
-            </button>
-            <p v-if="props.myProjects.length === 0" class="text-[11px] text-slate-400 px-2 py-1">
-              暂无可切换项目
-            </p>
-          </section>
-
-          <section class="space-y-1 border-t border-slate-100 mt-2 pt-2">
-            <p class="text-[11px] text-slate-500 px-2">
-              最近项目
-            </p>
-            <button
-              v-for="item in props.recentProjects"
-              :key="`recent-${item.projectId}`"
-              class="text-left rounded-md px-2 py-1.5 w-full transition-colors hover:bg-slate-50"
-              type="button"
-              @click="switchProject(item)"
-            >
-              <div class="text-xs text-slate-800 truncate font-medium">
-                {{ item.title }}
-              </div>
-              <div class="text-[11px] text-slate-500 flex gap-2 items-center justify-between">
-                <span class="truncate">{{ item.workspaceName }}</span>
-                <span class="shrink-0">{{ formatShortTime(item.updatedAt) }}</span>
-              </div>
-            </button>
-            <p v-if="props.recentProjects.length === 0" class="text-[11px] text-slate-400 px-2 py-1">
-              暂无最近项目
-            </p>
-          </section>
         </div>
-      </div>
-      <nav class="ml-2 gap-1 hidden items-center lg:flex">
-        <button class="text-xs font-medium px-3 py-1 rounded hover:bg-slate-100">
-          文件
-        </button>
-        <button class="text-xs font-medium px-3 py-1 rounded hover:bg-slate-100">
-          编辑
-        </button>
-        <button class="text-xs font-medium px-3 py-1 rounded hover:bg-slate-100">
-          视图
-        </button>
-        <button class="text-xs text-blue-600 font-medium px-3 py-1 rounded bg-blue-50 hover:bg-blue-100">
-          智能辅助
-        </button>
       </nav>
     </div>
-    <div class="flex gap-3 items-center">
-      <div class="w-76 hidden relative lg:block">
-        <span class="material-symbols-outlined text-sm text-slate-400 left-2.5 top-1/2 absolute -translate-y-1/2">search</span>
-        <input
-          :value="modelValue"
-          class="text-xs py-1 pl-8 pr-4 outline-none border border-slate-200 rounded bg-slate-50 w-full focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-          placeholder="搜索资源、文档或指令..."
-          type="text"
-          @input="onInput"
-        >
-        <span class="text-[10px] text-slate-400 px-1 border border-slate-200 rounded right-2 top-1/2 absolute -translate-y-1/2">⌘K</span>
-      </div>
-      <div class="text-[11px] text-slate-500 text-right hidden lg:block">
-        <div class="text-slate-700 font-medium max-w-64 truncate">
-          {{ contestName }}
-        </div>
-        <div class="max-w-64 truncate">
-          {{ trackName }}
-        </div>
-      </div>
+    <div class="shrink-0 max-w-[40vw] w-96 relative">
+      <span class="material-symbols-outlined text-sm text-slate-400 left-2.5 top-1/2 absolute -translate-y-1/2">search</span>
+      <input
+        :value="modelValue"
+        class="text-xs py-1 pl-8 pr-4 outline-none border border-slate-200 rounded bg-slate-50 w-full focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+        placeholder="搜索资源、文档或指令..."
+        type="text"
+        @input="onInput"
+      >
+      <span class="text-[10px] text-slate-400 px-1 border border-slate-200 rounded right-2 top-1/2 absolute -translate-y-1/2">⌘K</span>
+    </div>
+
+    <div class="flex flex-1 gap-2 items-center justify-end">
+      <button
+        class="text-xs text-white font-semibold px-3 py-1.5 rounded bg-slate-900 hover:opacity-90"
+        type="button"
+        @click="openFinalReview"
+      >
+        终审
+      </button>
       <button class="text-slate-500 p-1.5 rounded transition-colors hover:bg-slate-100">
         <span class="material-symbols-outlined text-xl">notifications</span>
       </button>
