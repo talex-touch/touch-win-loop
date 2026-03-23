@@ -1,19 +1,16 @@
 <script setup lang="ts">
 import type { ApiResponse, AuthLoginResult, AuthMeResult } from '~~/shared/types/domain'
 
+definePageMeta({
+  layout: false,
+})
+
 useHead({
   title: '登录 - WinLoop',
 })
 
-const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
 const route = useRoute()
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const authApiFetch = useAuthApiFetch()
 
 const username = ref('')
 const password = ref('')
@@ -34,7 +31,7 @@ function resolveRedirectTarget(): string {
 
 async function checkLoggedIn() {
   try {
-    await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     await navigateTo(resolveRedirectTarget(), { replace: true })
   }
   catch {
@@ -54,7 +51,7 @@ async function submitLogin() {
 
   loading.value = true
   try {
-    await $fetch<ApiResponse<AuthLoginResult>>(endpoint('/auth/login'), {
+    await authApiFetch<ApiResponse<AuthLoginResult>>('/auth/login', {
       method: 'POST',
       body: {
         username: account,

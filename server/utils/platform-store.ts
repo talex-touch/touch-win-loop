@@ -370,6 +370,16 @@ export async function revokeSessionByTokenHash(db: Queryable, tokenHash: string)
   )
 }
 
+export async function extendSessionExpiresAtById(db: Queryable, sessionId: string, expiresAt: string): Promise<void> {
+  await db.query(
+    `UPDATE sessions
+     SET expires_at = $2
+     WHERE id = $1
+       AND revoked_at IS NULL`,
+    [sessionId, expiresAt],
+  )
+}
+
 export async function findAuthBySessionTokenHash(
   db: Queryable,
   tokenHash: string,

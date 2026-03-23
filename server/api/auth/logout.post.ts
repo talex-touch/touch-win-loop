@@ -1,6 +1,5 @@
-import { getCookie } from 'h3'
 import { ok } from '~~/server/utils/api'
-import { clearSessionCookie, SESSION_COOKIE_NAME } from '~~/server/utils/auth'
+import { clearSessionCookie, readSessionToken } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { revokeSessionByTokenHash } from '~~/server/utils/platform-store'
@@ -9,7 +8,7 @@ import { hashToken } from '~~/server/utils/security'
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
-  const token = getCookie(event, SESSION_COOKIE_NAME)
+  const token = readSessionToken(event)
 
   if (token) {
     await withClient(event, async (db) => {

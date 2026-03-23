@@ -82,7 +82,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
   let authenticated = false
   try {
     const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined
-    await $fetch<ApiResponse<AuthMeResult>>(authEndpoint, { headers })
+    await $fetch<ApiResponse<AuthMeResult>>(authEndpoint, {
+      headers,
+      credentials: 'include',
+    })
     authenticated = true
   }
   catch {
