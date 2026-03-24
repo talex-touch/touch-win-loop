@@ -229,7 +229,6 @@ async function loadTeamDashboard() {
     const legacyProjectId = normalizeQueryValue(route.query.projectId)
     if (legacyProjectId) {
       await navigateTo(teamProjectPath(teamId, legacyProjectId), { replace: true })
-      return
     }
   }
   catch (error: any) {

@@ -452,9 +452,7 @@ export function applyRemoteRealtimeRoomPresence(input: {
   }
 
   const members = Array.isArray(input.members)
-    ? input.members
-      .map(item => normalizePeerPresence(item))
-      .filter((item): item is RealtimePeerPresence => Boolean(item))
+    ? input.members.map(item => normalizePeerPresence(item)).filter((item): item is RealtimePeerPresence => Boolean(item))
     : []
 
   snapshots.set(originInstanceId, {

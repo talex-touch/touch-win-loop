@@ -37,6 +37,7 @@ catalogs:
     eslint: ^9.39.2
     eslint-plugin-format: ^1.4.0
     typescript: ^5.9.3
+    vitest: ^3.2.4
     vue-tsc: ^3.2.4
   frontend:
     '@arco-design/web-vue': ^2.57.0

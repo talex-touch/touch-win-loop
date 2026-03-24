@@ -11,7 +11,7 @@ import type {
 } from '~~/shared/types/domain'
 
 export type TeamQuotaResponse = Omit<TeamQuota, 'workspaceId'>
-export type TeamWithQuotaResponse = {
+export interface TeamWithQuotaResponse {
   team: WorkspaceWithQuota['workspace']
   quota: TeamQuotaResponse | null
 }
