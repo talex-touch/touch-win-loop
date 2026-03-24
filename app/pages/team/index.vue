@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ApiResponse, AuthMeResult, Contest, Project, WorkspaceWithQuota } from '~~/shared/types/domain'
+import { readActiveWorkspacePreference, writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 definePageMeta({
   layout: 'dashboard',
@@ -38,8 +39,16 @@ function resolveWorkspaceOptions(auth: AuthMeResult): WorkspaceWithQuota[] {
   return auth.workspaces
 }
 
-function resolveDefaultTeamId(auth: AuthMeResult): string {
+function resolveDefaultTeamId(auth: AuthMeResult, preferredTeamId: string): string {
   const options = resolveWorkspaceOptions(auth)
+  const preferred = String(preferredTeamId || '').trim()
+  if (preferred && options.some(item => item.workspace.id === preferred))
+    return preferred
+
+  const firstTeam = options.find(item => item.workspace.type === 'team')
+  if (firstTeam)
+    return firstTeam.workspace.id
+
   const personal = options.find(item => item.workspace.type === 'personal' && item.workspace.ownerUserId === auth.user.id)
   return personal?.workspace.id || options[0]?.workspace.id || ''
 }
@@ -126,7 +135,9 @@ function pickPreferredTeamId(): string {
   if (!me.value)
     return ''
 
-  return resolveDefaultTeamId(me.value)
+  const routePreferredTeamId = normalizeQueryValue(route.query.teamId || route.query.workspaceId)
+  const storedPreferredTeamId = readActiveWorkspacePreference()
+  return resolveDefaultTeamId(me.value, routePreferredTeamId || storedPreferredTeamId)
 }
 
 function openTeamProject(project: Project) {
@@ -134,6 +145,7 @@ function openTeamProject(project: Project) {
   const projectId = String(project.id || '').trim()
   if (!teamId || !projectId)
     return
+  writeActiveWorkspacePreference(teamId)
   navigateTo(teamProjectPath(teamId, projectId))
 }
 
@@ -186,6 +198,7 @@ async function submitQuickCreate() {
     const createdTeamId = String(created.teamId || created.workspaceId || '').trim()
     if (!createdTeamId)
       throw new Error('TEAM_ID_MISSING')
+    writeActiveWorkspacePreference(createdTeamId)
     await navigateTo(teamProjectPath(createdTeamId, created.id))
   }
   catch (error: any) {
@@ -226,8 +239,10 @@ async function loadTeamList() {
     me.value = meResponse.data
     projects.value = projectsResponse.data
     contests.value = contestsResponse.data
-    if (!createForm.teamId)
+    if (!createForm.teamId || !teamMetaMap.value.has(createForm.teamId))
       createForm.teamId = pickPreferredTeamId()
+    if (createForm.teamId)
+      writeActiveWorkspacePreference(createForm.teamId)
   }
   catch (error: any) {
     const statusCode = Number(error?.statusCode || error?.response?.status)
@@ -261,6 +276,13 @@ onMounted(async () => {
 
   if (shouldOpenCreateDialog(route.query.create))
     openCreateDialog()
+})
+
+watch(() => createForm.teamId, (value) => {
+  const normalized = String(value || '').trim()
+  if (!normalized || !teamMetaMap.value.has(normalized))
+    return
+  writeActiveWorkspacePreference(normalized)
 })
 </script>
 

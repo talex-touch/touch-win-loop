@@ -52,3 +52,22 @@ it('canManageProject owner/admin 全局可管理，manager 仅限分配项目', 
     'canManageProject 缺少 manager 仅限已分配项目的分支',
   )
 })
+
+it('createProject creator 与 owner 不同时自动补齐 creator 项目成员', async () => {
+  const source = await readFile(TARGET_FILE, 'utf8')
+  assert.match(
+    source,
+    /const creatorIsDifferentOwner = input\.creatorUserId !== input\.ownerUserId/,
+    'createProject 缺少 creator/owner 差异判断，创建者可能无法自动加入项目成员',
+  )
+  assert.match(
+    source,
+    /await assertProjectSeatAvailable\(db, projectId, input\.workspaceId, creatorIsDifferentOwner \? 2 : 1\)/,
+    'createProject 未按 creator/owner 人数差异校验项目席位，可能导致成员写入后超限',
+  )
+  assert.match(
+    source,
+    /await ensureProjectOwnerMember\(db, projectId, input\.ownerUserId\)\s+if \(creatorIsDifferentOwner\)\s+await ensureProjectManagerMember\(db, projectId, input\.creatorUserId\)/,
+    'createProject 缺少 creator 自动入组逻辑，可能导致创建者看不见自己创建的项目',
+  )
+})

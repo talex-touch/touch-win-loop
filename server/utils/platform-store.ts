@@ -1317,6 +1317,19 @@ async function ensureProjectOwnerMember(db: Queryable, projectId: string, userId
   )
 }
 
+async function ensureProjectManagerMember(db: Queryable, projectId: string, userId: string): Promise<void> {
+  const now = new Date().toISOString()
+  await db.query(
+    `INSERT INTO project_members (id, project_id, user_id, role, added_by_user_id, created_at, updated_at)
+     VALUES ($1, $2, $3, 'manager', $3, $4, $4)
+     ON CONFLICT (project_id, user_id)
+     DO UPDATE SET
+       role = CASE WHEN project_members.role = 'owner' THEN 'owner' ELSE 'manager' END,
+       updated_at = EXCLUDED.updated_at`,
+    [randomUUID(), projectId, userId, now],
+  )
+}
+
 async function upsertProjectManagers(db: Queryable, projectId: string, actorUserId: string, userIds: string[]): Promise<void> {
   const targets = dedupeBy(normalizeStringArray(userIds), item => item)
   if (targets.length === 0)
@@ -2123,6 +2136,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
   const projectId = randomUUID()
   const contestIds = normalizeProjectContestIds(input.contestId, input.contestIds)
   const primaryContestId = contestIds[0] || input.contestId
+  const creatorIsDifferentOwner = input.creatorUserId !== input.ownerUserId
 
   await assertWorkspaceProjectCreationAllowed(db, input.workspaceId)
 
@@ -2209,8 +2223,10 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
     throw new Error('failed to create project')
 
   await ensureProjectSeatQuota(db, projectId, input.workspaceId)
-  await assertProjectSeatAvailable(db, projectId, input.workspaceId, 1)
+  await assertProjectSeatAvailable(db, projectId, input.workspaceId, creatorIsDifferentOwner ? 2 : 1)
   await ensureProjectOwnerMember(db, projectId, input.ownerUserId)
+  if (creatorIsDifferentOwner)
+    await ensureProjectManagerMember(db, projectId, input.creatorUserId)
   await refreshProjectSeatUsage(db, projectId)
 
   if (input.collegeBindings)

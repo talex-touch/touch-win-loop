@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { WorkspaceWithQuota } from '~~/shared/types/domain'
 import type { DashboardMenuItem, DashboardTopic } from '~/types/dashboard'
+import { readActiveWorkspacePreference, writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 const props = withDefaults(defineProps<{
   menuItems?: DashboardMenuItem[]
@@ -45,9 +46,19 @@ watch(
     const workspaceList = options || []
     if (currentId && workspaceList.some(item => item.workspace.id === currentId)) {
       selectedWorkspaceId.value = currentId
+      writeActiveWorkspacePreference(currentId)
       return
     }
+
+    const storedWorkspaceId = readActiveWorkspacePreference()
+    if (storedWorkspaceId && workspaceList.some(item => item.workspace.id === storedWorkspaceId)) {
+      selectedWorkspaceId.value = storedWorkspaceId
+      return
+    }
+
     selectedWorkspaceId.value = workspaceList[0]?.workspace.id || ''
+    if (selectedWorkspaceId.value)
+      writeActiveWorkspacePreference(selectedWorkspaceId.value)
   },
   { immediate: true },
 )
@@ -85,6 +96,9 @@ async function onWorkspaceSwitch(workspaceId: string) {
   const targetId = String(workspaceId || '').trim()
   if (!targetId)
     return
+
+  selectedWorkspaceId.value = targetId
+  writeActiveWorkspacePreference(targetId)
 
   if (routeTeamId.value === targetId)
     return
