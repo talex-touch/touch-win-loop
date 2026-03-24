@@ -28,6 +28,7 @@ import type {
   ProjectResourceShareVisibility,
   ProjectSettingsDraft,
   ProjectSettingsDraftPayload,
+  ProjectSettingsDraftUi,
   ProjectSettingsSnapshot,
   Resource,
   ResourcePreviewStatus,
@@ -492,6 +493,9 @@ const openMemberManagementSignal = ref(0)
 const openFlowSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
+const leftSidebarCollapsed = ref(false)
+const rightSidebarCollapsed = ref(false)
+const sidebarLayoutHydrating = ref(false)
 const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const headerSearch = ref('')
 const aiReasoning = ref('')
@@ -1398,6 +1402,10 @@ function mergeProjectIntoCollections(project: Project) {
 function resetProjectSettingsState(project: Project | null) {
   projectSettingsHydrating.value = true
   try {
+    applySidebarLayoutState({
+      leftSidebarCollapsed: false,
+      rightSidebarCollapsed: false,
+    })
     Object.assign(projectSettingsCommon, createProjectCommonFormFromProject(project))
     projectSettingsBindings.value = []
     projectSettingsCurrentContestId.value = ''
@@ -1645,6 +1653,26 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
     return null
 
   const source = input as Record<string, unknown>
+  const normalizeDraftBoolean = (value: unknown): boolean => {
+    if (typeof value === 'boolean')
+      return value
+    if (typeof value === 'number')
+      return value !== 0
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase()
+      return normalized === '1' || normalized === 'true' || normalized === 'yes'
+    }
+    return false
+  }
+  const normalizeUi = (value: unknown): ProjectSettingsDraftUi => {
+    const uiSource = value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {}
+    return {
+      leftSidebarCollapsed: normalizeDraftBoolean(uiSource.leftSidebarCollapsed),
+      rightSidebarCollapsed: normalizeDraftBoolean(uiSource.rightSidebarCollapsed),
+    }
+  }
   const normalizedBindings = normalizeProjectSettingsBindings(Array.isArray(source.bindings)
     ? source.bindings as WorkspaceProjectContestBindingForm[]
     : [])
@@ -1700,6 +1728,23 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
     bindings: normalizedBindings,
     currentContestId,
     adaptationDrafts,
+    ui: normalizeUi(source.ui),
+  }
+}
+
+function applySidebarLayoutState(value: ProjectSettingsDraftUi | null | undefined): void {
+  const nextLeftCollapsed = Boolean(value?.leftSidebarCollapsed)
+  const nextRightCollapsed = Boolean(value?.rightSidebarCollapsed)
+  if (leftSidebarCollapsed.value === nextLeftCollapsed && rightSidebarCollapsed.value === nextRightCollapsed)
+    return
+
+  sidebarLayoutHydrating.value = true
+  try {
+    leftSidebarCollapsed.value = nextLeftCollapsed
+    rightSidebarCollapsed.value = nextRightCollapsed
+  }
+  finally {
+    sidebarLayoutHydrating.value = false
   }
 }
 
@@ -1739,6 +1784,10 @@ function serializeProjectSettingsDraftCachePayload(payload: WorkspaceProjectSett
     }),
     currentContestId: payload.currentContestId,
     adaptationDrafts: Object.fromEntries(adaptationEntries),
+    ui: {
+      leftSidebarCollapsed: Boolean(payload.ui?.leftSidebarCollapsed),
+      rightSidebarCollapsed: Boolean(payload.ui?.rightSidebarCollapsed),
+    },
   }
 
   return JSON.stringify(comparable)
@@ -1769,6 +1818,10 @@ function buildProjectSettingsDraftCachePayload(): WorkspaceProjectSettingsDraftC
     bindings: cloneProjectContestBindings(projectSettingsBindings.value),
     currentContestId,
     adaptationDrafts: nextAdaptationDrafts,
+    ui: {
+      leftSidebarCollapsed: leftSidebarCollapsed.value,
+      rightSidebarCollapsed: rightSidebarCollapsed.value,
+    },
   }
 }
 
@@ -1802,7 +1855,9 @@ function applyProjectSettingsDraftCachePayload(
     })
   }
 
-  const hasDraftContent = hasCommonDraft || normalizedBindings.length > 0 || Object.keys(nextAdaptationDrafts).length > 0
+  applySidebarLayoutState(draft.ui)
+  const hasLayoutDraft = Boolean(draft.ui?.leftSidebarCollapsed || draft.ui?.rightSidebarCollapsed)
+  const hasDraftContent = hasCommonDraft || normalizedBindings.length > 0 || Object.keys(nextAdaptationDrafts).length > 0 || hasLayoutDraft
   if (!hasDraftContent)
     return false
 
@@ -4425,6 +4480,14 @@ watch(activeProjectId, async (next, previous) => {
   ])
 })
 
+watch([leftSidebarCollapsed, rightSidebarCollapsed], ([nextLeft, nextRight], [prevLeft, prevRight]) => {
+  if (nextLeft === prevLeft && nextRight === prevRight)
+    return
+  if (sidebarLayoutHydrating.value || !activeProjectId.value)
+    return
+  scheduleProjectSettingsDraftPersist()
+})
+
 watch(aiMode, async (next, previous) => {
   if (next === previous)
     return
@@ -4457,62 +4520,85 @@ watch(() => workspaceRealtime.connected.value, () => {
       @quick-switch-project="switchProjectFromHeader"
     />
 
-    <main class="flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
-      <WorkspaceLeftSidebar
-        class="min-h-0 overflow-hidden"
-        v-model:natural-query="naturalQuery"
-        v-model:major="major"
-        v-model:discipline="discipline"
-        v-model:level="level"
-        v-model:track-type="trackType"
-        v-model:top-k="topK"
-        v-model:selected-contest-id="selectedContestId"
-        :contests="filteredContests"
-        :selected-resources="selectedResources"
-        :recycle-resources="recycleResources"
-        :resource-library="resourceLibrary"
-        :project-outline="projectOutlineItems"
-        :issue-reports="projectIssueReports"
-        :project-issues="projectIssues"
-        :issue-loading="issueCenterLoading"
-        :project-resources-loading="resourcesLoading"
-        :resource-library-loading="resourceLibraryLoading"
-        :project-outline-loading="projectOutlineFirstLoadLoading"
-        :resource-mutating="resourceMutating"
-        :has-active-project="Boolean(activeProjectId)"
-        :ai-reasoning="aiReasoning"
-        :normalized-info="normalizedInfo"
-        :status-line="statusLine"
-        :list-loading="listLoading"
-        :ai-filtering="aiFiltering"
-        :is-admin-view="isAdminView"
-        :active-main-tab-id="activeMainTabId"
-        :defense-active="aiMode === 'defense'"
-        :current-user-id="me?.user.id || ''"
-        :current-username="me?.user.username || ''"
-        :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
-        @load-contests="loadContests"
-        @run-ai-filter="runAiFilter"
-        @open-settings-panel="openSettingsFromLeftSidebar"
-        @open-member-management-panel="openMemberManagementFromLeftSidebar"
-        @open-flow-panel="openFlowFromLeftSidebar"
-        @create-collab-resource="createCollabResource"
-        @open-defense-mode="openDefenseFromLeftSidebar"
-        @reload-issues="loadProjectIssues"
-        @open-resource="openProjectResourcePreview"
-        @download-project-resource="downloadProjectResource"
-        @copy-project-resource-name="copyProjectResourceName"
-        @share-project-resource="shareProjectResource"
-        @duplicate-project-resource="duplicateProjectResource"
-        @add-resource-from-library="addResourceFromLibrary"
-        @remove-project-resource="removeProjectResource"
-        @restore-project-resource="restoreProjectResource"
-        @purge-project-resource="purgeProjectResource"
-        @upload-resources="uploadResourcesToProject"
-      />
+    <main class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
+      <div v-if="!leftSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--left">
+        <WorkspaceLeftSidebar
+          v-model:natural-query="naturalQuery"
+          v-model:major="major"
+          v-model:discipline="discipline"
+          v-model:level="level"
+          v-model:track-type="trackType"
+          v-model:top-k="topK"
+          v-model:selected-contest-id="selectedContestId"
+          class="min-h-0 overflow-hidden"
+          :contests="filteredContests"
+          :selected-resources="selectedResources"
+          :recycle-resources="recycleResources"
+          :resource-library="resourceLibrary"
+          :project-outline="projectOutlineItems"
+          :issue-reports="projectIssueReports"
+          :project-issues="projectIssues"
+          :issue-loading="issueCenterLoading"
+          :project-resources-loading="resourcesLoading"
+          :resource-library-loading="resourceLibraryLoading"
+          :project-outline-loading="projectOutlineFirstLoadLoading"
+          :resource-mutating="resourceMutating"
+          :has-active-project="Boolean(activeProjectId)"
+          :ai-reasoning="aiReasoning"
+          :normalized-info="normalizedInfo"
+          :status-line="statusLine"
+          :list-loading="listLoading"
+          :ai-filtering="aiFiltering"
+          :is-admin-view="isAdminView"
+          :active-main-tab-id="activeMainTabId"
+          :defense-active="aiMode === 'defense'"
+          :current-user-id="me?.user.id || ''"
+          :current-username="me?.user.username || ''"
+          :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
+          @load-contests="loadContests"
+          @run-ai-filter="runAiFilter"
+          @open-settings-panel="openSettingsFromLeftSidebar"
+          @open-member-management-panel="openMemberManagementFromLeftSidebar"
+          @open-flow-panel="openFlowFromLeftSidebar"
+          @create-collab-resource="createCollabResource"
+          @open-defense-mode="openDefenseFromLeftSidebar"
+          @reload-issues="loadProjectIssues"
+          @open-resource="openProjectResourcePreview"
+          @download-project-resource="downloadProjectResource"
+          @copy-project-resource-name="copyProjectResourceName"
+          @share-project-resource="shareProjectResource"
+          @duplicate-project-resource="duplicateProjectResource"
+          @add-resource-from-library="addResourceFromLibrary"
+          @remove-project-resource="removeProjectResource"
+          @restore-project-resource="restoreProjectResource"
+          @purge-project-resource="purgeProjectResource"
+          @upload-resources="uploadResourcesToProject"
+        />
+        <div class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-expanded">
+          <button
+            class="workspace-side-toggle"
+            type="button"
+            title="收起左侧栏"
+            aria-label="收起左侧栏"
+            @click="leftSidebarCollapsed = true"
+          >
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+        </div>
+      </div>
+      <div v-else class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-collapsed">
+        <button
+          class="workspace-side-toggle"
+          type="button"
+          title="展开左侧栏"
+          aria-label="展开左侧栏"
+          @click="leftSidebarCollapsed = false"
+        >
+          <span class="material-symbols-outlined">chevron_right</span>
+        </button>
+      </div>
 
       <WorkspaceMainPanel
-        class="min-h-0 overflow-hidden"
         v-model:selected-track-id="selectedTrackId"
         v-model:major="major"
         v-model:discipline="discipline"
@@ -4520,6 +4606,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         v-model:track-type="trackType"
         v-model:top-k="topK"
         v-model:selected-contest-id="selectedContestId"
+        class="min-h-0 overflow-hidden"
         :selected-contest="selectedContest"
         :selected-track="selectedTrack"
         :contests="contestSource"
@@ -4598,33 +4685,57 @@ watch(() => workspaceRealtime.connected.value, () => {
         @update:collab-draw-value="updateCollabDrawContent"
       />
 
-      <WorkspaceRightSidebar
-        class="min-h-0 overflow-hidden"
-        v-model:chat-input="chatInput"
-        v-model:ai-mode="aiMode"
-        :chat-sessions="chatSessions"
-        :active-chat-session-id="activeChatSessionId"
-        :chat-sessions-loading="chatSessionsLoading"
-        :chat-messages="chatMessages"
-        :chat-loading="chatLoading"
-        :change-requests="aiChangeRequests"
-        :change-requests-loading="aiChangeRequestsLoading"
-        :change-acting-ids="aiChangeActingIds"
-        :change-second-confirm-ids="aiChangeSecondConfirmIds"
-        :issue-report="latestIssueReport"
-        :project-issues="projectIssues"
-        :issue-loading="issueCenterLoading"
-        :defense-rounds="defenseRounds"
-        :defense-scorecard="defenseScorecard"
-        :selected-contest="selectedContest"
-        :selected-track="selectedTrack"
-        :selected-resources="selectedResources"
-        @send-chat="sendChatMessage"
-        @switch-chat-session="switchChatSession"
-        @create-chat-session="startNewChatSession"
-        @approve-change="approveAiChange"
-        @reject-change="rejectAiChange"
-      />
+      <div v-if="!rightSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--right">
+        <div class="workspace-side-handle workspace-side-handle--right workspace-side-handle--right-expanded">
+          <button
+            class="workspace-side-toggle"
+            type="button"
+            title="收起右侧栏"
+            aria-label="收起右侧栏"
+            @click="rightSidebarCollapsed = true"
+          >
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
+        <WorkspaceRightSidebar
+          v-model:chat-input="chatInput"
+          v-model:ai-mode="aiMode"
+          class="min-h-0 overflow-hidden"
+          :chat-sessions="chatSessions"
+          :active-chat-session-id="activeChatSessionId"
+          :chat-sessions-loading="chatSessionsLoading"
+          :chat-messages="chatMessages"
+          :chat-loading="chatLoading"
+          :change-requests="aiChangeRequests"
+          :change-requests-loading="aiChangeRequestsLoading"
+          :change-acting-ids="aiChangeActingIds"
+          :change-second-confirm-ids="aiChangeSecondConfirmIds"
+          :issue-report="latestIssueReport"
+          :project-issues="projectIssues"
+          :issue-loading="issueCenterLoading"
+          :defense-rounds="defenseRounds"
+          :defense-scorecard="defenseScorecard"
+          :selected-contest="selectedContest"
+          :selected-track="selectedTrack"
+          :selected-resources="selectedResources"
+          @send-chat="sendChatMessage"
+          @switch-chat-session="switchChatSession"
+          @create-chat-session="startNewChatSession"
+          @approve-change="approveAiChange"
+          @reject-change="rejectAiChange"
+        />
+      </div>
+      <div v-else class="workspace-side-handle workspace-side-handle--right workspace-side-handle--right-collapsed">
+        <button
+          class="workspace-side-toggle"
+          type="button"
+          title="展开右侧栏"
+          aria-label="展开右侧栏"
+          @click="rightSidebarCollapsed = false"
+        >
+          <span class="material-symbols-outlined">chevron_left</span>
+        </button>
+      </div>
     </main>
 
     <WorkspaceStatusBar
@@ -4650,5 +4761,108 @@ watch(() => workspaceRealtime.connected.value, () => {
   min-height: 0;
   max-height: 100%;
   overflow: hidden;
+}
+
+.workspace-layout {
+  min-width: 0;
+  position: relative;
+}
+
+.workspace-side-anchor {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: visible;
+}
+
+.workspace-side-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 22px;
+  z-index: 30;
+  pointer-events: auto;
+}
+
+.workspace-side-handle--left-expanded {
+  right: 0;
+  transform: translateX(50%);
+}
+
+.workspace-side-handle--left-collapsed {
+  left: 0;
+  transform: none;
+}
+
+.workspace-side-handle--right-expanded {
+  left: 0;
+  transform: translateX(-50%);
+}
+
+.workspace-side-handle--right-collapsed {
+  right: 0;
+  transform: none;
+}
+
+.workspace-side-toggle {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: #8a99b2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.workspace-side-handle--left .workspace-side-toggle {
+  border-right: 1px solid transparent;
+}
+
+.workspace-side-handle--right .workspace-side-toggle {
+  border-left: 1px solid transparent;
+}
+
+.workspace-side-toggle .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity 0.16s ease,
+    color 0.2s ease;
+}
+
+.workspace-side-handle:hover .workspace-side-toggle,
+.workspace-side-toggle:focus-visible {
+  background: #f3f6fc;
+}
+
+.workspace-side-handle--left:hover .workspace-side-toggle,
+.workspace-side-handle--left .workspace-side-toggle:focus-visible {
+  border-right-color: #d3d8e4;
+}
+
+.workspace-side-handle--right:hover .workspace-side-toggle,
+.workspace-side-handle--right .workspace-side-toggle:focus-visible {
+  border-left-color: #d3d8e4;
+}
+
+.workspace-side-toggle:focus-visible {
+  outline: 2px solid #2f6af2;
+  outline-offset: -2px;
+}
+
+.workspace-side-handle:hover .material-symbols-outlined,
+.workspace-side-toggle:focus-visible .material-symbols-outlined {
+  opacity: 1;
+  color: #2f6af2;
 }
 </style>

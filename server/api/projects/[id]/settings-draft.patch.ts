@@ -3,6 +3,7 @@ import type {
   ProjectSettingsDraftAdaptation,
   ProjectSettingsDraftCommon,
   ProjectSettingsDraftPayload,
+  ProjectSettingsDraftUi,
 } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
@@ -97,6 +98,29 @@ function normalizeAdaptationDrafts(value: unknown): ProjectSettingsDraftPayload[
   return output
 }
 
+function normalizeBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean')
+    return value
+  if (typeof value === 'number')
+    return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === '1' || normalized === 'true' || normalized === 'yes'
+  }
+  return false
+}
+
+function normalizeUiDraft(value: unknown): ProjectSettingsDraftUi {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+
+  return {
+    leftSidebarCollapsed: normalizeBoolean(source.leftSidebarCollapsed),
+    rightSidebarCollapsed: normalizeBoolean(source.rightSidebarCollapsed),
+  }
+}
+
 function normalizeDraftPayload(value: unknown): ProjectSettingsDraftPayload {
   const source = value && typeof value === 'object'
     ? value as Record<string, unknown>
@@ -109,6 +133,7 @@ function normalizeDraftPayload(value: unknown): ProjectSettingsDraftPayload {
     bindings: normalizeBindings(source.bindings),
     currentContestId: String(source.currentContestId || '').trim(),
     adaptationDrafts: normalizeAdaptationDrafts(source.adaptationDrafts),
+    ui: normalizeUiDraft(source.ui),
   }
 }
 

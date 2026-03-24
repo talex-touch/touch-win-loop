@@ -590,6 +590,11 @@ export interface ProjectSettingsDraftAdaptation {
   summary: string
 }
 
+export interface ProjectSettingsDraftUi {
+  leftSidebarCollapsed: boolean
+  rightSidebarCollapsed: boolean
+}
+
 export interface ProjectSettingsDraftPayload {
   updatedAt: string
   deviceId?: string
@@ -597,6 +602,7 @@ export interface ProjectSettingsDraftPayload {
   bindings: ProjectSettingsDraftBinding[]
   currentContestId: string
   adaptationDrafts: Record<string, ProjectSettingsDraftAdaptation>
+  ui?: ProjectSettingsDraftUi
 }
 
 export interface ProjectSettingsDraft {

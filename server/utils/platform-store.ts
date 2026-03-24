@@ -335,6 +335,10 @@ function createEmptyProjectSettingsDraftPayload(): ProjectSettingsDraftPayload {
     bindings: [],
     currentContestId: '',
     adaptationDrafts: {},
+    ui: {
+      leftSidebarCollapsed: false,
+      rightSidebarCollapsed: false,
+    },
   }
 }
 
