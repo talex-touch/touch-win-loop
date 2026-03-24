@@ -42,6 +42,9 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Project Visibility Guard
+        run: pnpm run test:project-visibility
+
   build_and_smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30

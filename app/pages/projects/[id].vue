@@ -2,7 +2,7 @@
 import type { ApiResponse, Project } from '~~/shared/types/domain'
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 const projectId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
@@ -11,12 +11,6 @@ const projectId = computed(() => {
     return value[0] ?? ''
   return value ?? ''
 })
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 const project = ref<Project | null>(null)
 const loading = ref(true)
@@ -64,7 +58,7 @@ onMounted(loadProject)
       <div class="text-sm font-semibold">
         项目详情
       </div>
-      <button class="dense-btn" @click="navigateTo('/workspace')">
+      <button class="dense-btn" @click="navigateTo('/team')">
         返回工作台
       </button>
     </div>

@@ -7,6 +7,7 @@ import type {
 import { createEventStream, setResponseStatus } from 'h3'
 import { runDefenseChain } from '~~/server/services/ai/defense-chain'
 import { runDefenseFallback } from '~~/server/services/ai/fallback'
+import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import {
@@ -18,6 +19,7 @@ import {
 import { getContestDetail, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { runWithRetry } from '~~/server/utils/retry'
@@ -28,6 +30,7 @@ function toText(value: unknown): string {
 
 function normalizeRequest(body: Partial<AiDefenseRequest> | null | undefined, workspaceId: string): AiDefenseRequest {
   return {
+    teamId: workspaceId,
     workspaceId,
     sessionId: toText(body?.sessionId),
     messages: Array.isArray(body?.messages) ? body!.messages! : [],
@@ -37,7 +40,9 @@ function normalizeRequest(body: Partial<AiDefenseRequest> | null | undefined, wo
       temperature: Number.isFinite(Number(body?.aiOptions?.temperature)) ? Number(body?.aiOptions?.temperature) : undefined,
     },
     context: {
+      teamId: workspaceId,
       workspaceId,
+      projectId: toText(body?.context?.projectId),
       contestId: toText(body?.context?.contestId),
       trackId: toText(body?.context?.trackId),
       major: toText(body?.context?.major),
@@ -74,17 +79,19 @@ function toErrorMessage(error: unknown): string {
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, 'defense')
+  const channelAiConfig = channelRuntime.ai
   const { user } = await requireAuth(event)
   const rawBody = await readBody<Partial<AiDefenseRequest>>(event).catch(() => ({} as Partial<AiDefenseRequest>))
-  const workspaceId = toText(rawBody?.workspaceId || rawBody?.context?.workspaceId)
+  const workspaceId = toText(rawBody?.teamId || rawBody?.workspaceId || rawBody?.context?.teamId || rawBody?.context?.workspaceId)
   const request = normalizeRequest(rawBody, workspaceId)
 
   if (!workspaceId) {
     setResponseStatus(event, 400)
-    return fail('调用答辩模拟时必须传 workspaceId。', {
+    return fail('调用答辩模拟时必须传 teamId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40074)
@@ -95,23 +102,61 @@ export default defineEventHandler(async (event) => {
     || await checkPlatformPermission(event, user, 'contest.read_internal'),
   )
 
-  const contextBundle = request.context.contestId
-    ? await withClient(event, async (db) => {
-        const detail = await getContestDetail(db, {
-          contestId: request.context.contestId || '',
-          includeInternal,
-        })
-        const injectedPrompt = await resolveAiPromptText(db, {
-          contestId: request.context.contestId,
-          trackId: request.context.trackId,
-          target: 'defense',
-        })
-        return {
-          detail,
-          injectedPrompt,
-        }
+  let contextBundle: {
+    detail: Awaited<ReturnType<typeof getContestDetail>> | null
+    injectedPrompt: string
+    localContext: string
+  }
+
+  try {
+    contextBundle = await withClient(event, async (db) => {
+      const detail = request.context.contestId
+        ? await getContestDetail(db, {
+            contestId: request.context.contestId || '',
+            includeInternal,
+          })
+        : null
+      const injectedPrompt = request.context.contestId
+        ? await resolveAiPromptText(db, {
+            contestId: request.context.contestId,
+            trackId: request.context.trackId,
+            target: 'defense',
+          })
+        : ''
+
+      const resources = await loadVisibleProjectResourcesForAi(db, user, {
+        workspaceId,
+        projectId: request.context.projectId,
       })
-    : { detail: null, injectedPrompt: '' }
+      const contestName = detail?.contest?.name || ''
+      const trackName = detail?.contest?.tracks.find(item => item.id === request.context.trackId)?.name || ''
+      const localContext = buildProjectResourceLocalContext(resources, {
+        contestName,
+        trackName,
+        major: request.context.major,
+        limit: 8,
+      })
+
+      return {
+        detail,
+        injectedPrompt,
+        localContext,
+      }
+    })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('project not found', {
+        startedAt,
+        provider: channelAiConfig.provider,
+        model: channelAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40478)
+    }
+    throw error
+  }
 
   const contest = contextBundle.detail?.contest
   const track = contest?.tracks.find(item => item.id === request.context.trackId)
@@ -179,8 +224,8 @@ export default defineEventHandler(async (event) => {
   if (!prepared) {
     return fail('当前用户无权使用该空间。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40375)
@@ -188,8 +233,8 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'SESSION_NOT_FOUND') {
     return fail('会话不存在，请刷新后重试。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40475)
@@ -197,8 +242,8 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'QUOTA_EXCEEDED') {
     return fail('Team AI 额度不足，请扩容或等待重置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 42975)
@@ -224,11 +269,12 @@ export default defineEventHandler(async (event) => {
       })
 
       const effectiveAiConfig = {
-        ...runtime.ai,
+        ...channelAiConfig,
         temperature: Number.isFinite(Number(request.aiOptions?.temperature))
           ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
-          : runtime.ai.temperature,
+          : channelAiConfig.temperature,
       }
+      const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
 
       const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
       const execution = onlyFallback
@@ -238,13 +284,14 @@ export default defineEventHandler(async (event) => {
             attempts: 1,
           }
         : await runWithRetry<AiDefenseResult>({
-            maxRetries: runtime.ai.maxRetries,
+            maxRetries: effectiveAiConfig.maxRetries,
             run: () => runDefenseChain({
               request,
               ai: effectiveAiConfig,
               contestName: contest?.name,
               trackName: track?.name,
-              injectedPrompt: contextBundle.injectedPrompt,
+              injectedPrompt: mergedInjectedPrompt,
+              localContext: contextBundle.localContext,
             }),
             fallback: () => runDefenseFallback(request),
           })
@@ -276,10 +323,14 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             role: 'user',
             content: latestUserMessage,
-            provider: runtime.ai.provider,
-            model: runtime.ai.model,
+            provider: effectiveAiConfig.provider,
+            model: effectiveAiConfig.model,
             fallbackUsed: false,
-            metadata: modeMetadata,
+            metadata: {
+              ...modeMetadata,
+              channelKey: channelRuntime.key,
+              providerId: channelRuntime.provider?.id || null,
+            },
             createdByUserId: user.id,
           })
         }
@@ -289,10 +340,14 @@ export default defineEventHandler(async (event) => {
           sessionId: prepared.sessionId,
           role: 'assistant',
           content: execution.data.assistantReply,
-          provider: runtime.ai.provider,
-          model: runtime.ai.model,
+          provider: effectiveAiConfig.provider,
+          model: effectiveAiConfig.model,
           fallbackUsed: execution.fallbackUsed,
-          metadata: modeMetadata,
+          metadata: {
+            ...modeMetadata,
+            channelKey: channelRuntime.key,
+            providerId: channelRuntime.provider?.id || null,
+          },
           createdByUserId: user.id,
         })
 
@@ -304,7 +359,10 @@ export default defineEventHandler(async (event) => {
             route: '/api/ai/defense/stream',
             workspaceId,
             sessionId: prepared.sessionId,
+            projectId: request.context.projectId,
             trackId: request.context.trackId,
+            channelKey: channelRuntime.key,
+            providerId: channelRuntime.provider?.id || null,
             fallbackUsed: execution.fallbackUsed,
             attempts: execution.attempts,
             latencyMs: Date.now() - startedAt,

@@ -4,7 +4,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { estimateWorkspaceBilling, setWorkspaceBillingPlan } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { hasWorkspaceMembership } from '~~/server/utils/platform-store'
+import { hasWorkspaceRoles } from '~~/server/utils/platform-store'
 
 interface PatchWorkspaceBillingBody {
   planId?: string
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
   let estimate = null
   try {
     estimate = await withTransaction(event, async (db) => {
-      const canAccess = await hasWorkspaceMembership(db, user, workspaceId)
+      const canAccess = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
       if (!canAccess)
         throw new Error('FORBIDDEN')
 

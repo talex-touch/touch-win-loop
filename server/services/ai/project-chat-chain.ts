@@ -31,6 +31,7 @@ interface ProjectChatChainInput {
   contestName?: string
   trackName?: string
   injectedPrompt?: string
+  localContext?: string
 }
 
 function buildModePrompt(request: AiProjectChatRequest): string {
@@ -64,6 +65,7 @@ export async function runProjectChatChain(input: ProjectChatChainInput): Promise
   })
   const modePrompt = buildModePrompt(input.request)
   const injectedPrompt = input.injectedPrompt?.trim() || ''
+  const localContext = input.localContext?.trim() || '项目资料池暂无可用资料。'
   const promptParts = [
     '你是大学生竞赛项目教练。你需要生成可执行的项目草案，并指出缺失字段。输出必须是结构化 JSON。',
     modePrompt,
@@ -73,13 +75,14 @@ export async function runProjectChatChain(input: ProjectChatChainInput): Promise
 
   const prompt = ChatPromptTemplate.fromMessages([
     ['system', systemPrompt],
-    ['human', `竞赛：{contestName}\n赛道：{trackName}\n专业：{major}\n对话内容：\n{conversation}`],
+    ['human', `竞赛：{contestName}\n赛道：{trackName}\n专业：{major}\n项目资料池上下文：\n{localContext}\n对话内容：\n{conversation}`],
   ])
 
   const promptValue = await prompt.invoke({
     contestName: input.contestName ?? '未选择',
     trackName: input.trackName ?? '未选择',
     major: input.request.context.major ?? '未提供',
+    localContext,
     conversation: toConversation(input.request.messages),
   })
 

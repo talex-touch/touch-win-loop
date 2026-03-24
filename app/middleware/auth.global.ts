@@ -9,15 +9,16 @@ const PUBLIC_PATH_PREFIXES = [
 
 const PROTECTED_PATH_PREFIXES = [
   '/dashboard',
+  '/team',
   '/workspace',
   '/projects',
   '/admin',
 ]
 
 const RETIRED_ROUTE_REDIRECT_MAP: Record<string, string> = {
-  '/topics': '/workspace',
-  '/reviews': '/workspace',
-  '/defense': '/workspace',
+  '/topics': '/team',
+  '/reviews': '/team',
+  '/defense': '/team',
 }
 
 function normalizePath(path: string): string {
@@ -37,12 +38,6 @@ function isPublicPath(path: string): boolean {
 
 function isProtectedPath(path: string): boolean {
   return PROTECTED_PATH_PREFIXES.some(prefix => isPathMatch(path, prefix))
-}
-
-function buildApiEndpoint(apiBase: string, path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
 }
 
 function sanitizeRedirectTarget(value: unknown): string {
@@ -76,8 +71,8 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return
 
   const runtime = useRuntimeConfig()
-  const apiBase = runtime.public.apiBaseUrl || '/api'
-  const authEndpoint = buildApiEndpoint(apiBase, '/auth/me')
+  const { endpoint } = useApiEndpoint(runtime)
+  const authEndpoint = endpoint('/auth/me')
 
   let authenticated = false
   try {

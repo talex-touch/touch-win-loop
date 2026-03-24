@@ -8,7 +8,8 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const workspaceId = String(getQuery(event).workspaceId || '').trim() || undefined
+  const query = getQuery(event)
+  const workspaceId = String(query.teamId || query.workspaceId || '').trim() || undefined
 
   const projects = await withClient(event, async (db) => {
     return listVisibleProjects(db, user, workspaceId)

@@ -28,13 +28,8 @@ const {
 } = useDashboardWorkspace()
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const { endpoint } = useApiEndpoint(runtime)
+const authApiFetch = useAuthApiFetch()
 
 const platformPermissions = ref<PlatformPermission[]>([])
 const platformContests = ref<Contest[]>([])
@@ -124,7 +119,7 @@ async function loadPlatformPanel() {
   platformLoading.value = true
   platformError.value = ''
   try {
-    const meResponse = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    const meResponse = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     platformPermissions.value = meResponse.data.user.platformPermissions || []
 
     if (canManageContest.value) {
@@ -180,7 +175,7 @@ onMounted(async () => {
           导出报告
         </button>
         <NuxtLink
-          :to="{ path: '/workspace', query: { create: '1' } }"
+          :to="{ path: '/team', query: { create: '1' } }"
           class="text-sm text-white font-semibold px-4 py-2 rounded-lg bg-blue-700 flex gap-2 transition-colors items-center hover:bg-blue-600"
         >
           <span class="material-symbols-outlined text-lg">add</span>

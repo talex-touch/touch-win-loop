@@ -37,6 +37,7 @@ export default defineEventHandler(async (event) => {
 
   const data: AuthMeResult = {
     user: userWithAccess,
+    teams: workspaces.map(item => ({ team: item.workspace, quota: item.quota })),
     workspaces,
     onboarding: {
       needCreateTeam: workspaces.every(item => item.workspace.type !== 'team'),

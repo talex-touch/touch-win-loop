@@ -14,13 +14,8 @@ definePageMeta({
 })
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const { endpoint } = useApiEndpoint(runtime)
+const authApiFetch = useAuthApiFetch()
 
 const permissions = ref<PlatformPermission[]>([])
 const workspaces = ref<WorkspaceWithQuota[]>([])
@@ -108,7 +103,7 @@ function openEditDialog(plan: BillingPlan) {
 }
 
 async function loadContext() {
-  const me = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+  const me = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
   permissions.value = me.data.user.platformPermissions || []
   workspaces.value = me.data.workspaces
   if (!estimateForm.workspaceId && workspaces.value[0])

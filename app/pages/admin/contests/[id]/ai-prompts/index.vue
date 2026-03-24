@@ -9,14 +9,8 @@ type PromptTarget = 'contest_filter' | 'project_chat' | 'topic_proposal' | 'revi
 type PromptScope = 'contest' | 'track'
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 const contestId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>

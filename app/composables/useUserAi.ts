@@ -83,13 +83,7 @@ function normalizeCatalog(input: AiModelCatalog | null | undefined): AiModelCata
 
 export function useUserAiApi() {
   const runtime = useRuntimeConfig()
-  const apiBase = runtime.public.apiBaseUrl || '/api'
-
-  function endpoint(path: string): string {
-    if (apiBase.endsWith('/'))
-      return `${apiBase.slice(0, -1)}${path}`
-    return `${apiBase}${path}`
-  }
+  const { endpoint } = useApiEndpoint(runtime)
 
   async function loadSettings(): Promise<UserAiSettings> {
     const response = await $fetch<ApiResponse<UserAiSettings>>(endpoint('/user/ai/settings'))

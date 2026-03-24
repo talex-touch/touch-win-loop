@@ -301,6 +301,7 @@ export async function executeWorkspaceAi(input: {
   runtime: WorkspaceAiRuntime
   mode: WorkspaceAiMode
   context: WorkspaceAiExecutionContext
+  channelPrompt?: string
   hooks?: WorkspaceAiHooks
 }): Promise<{
   data: WorkspaceAiExecutionResult
@@ -327,6 +328,7 @@ export async function executeWorkspaceAi(input: {
 
   const contextSnapshot = buildContextSnapshot(input.context)
   const webEnabled = Boolean(input.runtime.adminAi.tavilyApiKey)
+  const channelPrompt = toText(input.channelPrompt)
 
   const runOnce = async () => {
     await hooks.onProgress?.('调用 DeepAgent 处理中...')
@@ -505,8 +507,9 @@ export async function executeWorkspaceAi(input: {
       systemPrompt: [
         '你是 WinLoop 工作台 AI 助手。',
         buildModePrompt(input.mode),
+        channelPrompt ? `[场景提示词]\n${channelPrompt}` : '',
         '必须先获取上下文再作答，避免与上下文冲突。',
-      ].join('\n'),
+      ].filter(Boolean).join('\n'),
     })
 
     const response = await agent.invoke({

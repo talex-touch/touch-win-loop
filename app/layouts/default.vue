@@ -2,14 +2,7 @@
 import type { ApiResponse, AuthMeResult, PlatformPermission } from '~~/shared/types/domain'
 
 const route = useRoute()
-const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const authApiFetch = useAuthApiFetch()
 
 const platformPermissions = ref<PlatformPermission[]>([])
 
@@ -20,7 +13,7 @@ const hasAdminAccess = computed(() => {
 const links = computed(() => {
   const baseLinks = [
     { to: '/dashboard', label: '首页' },
-    { to: '/workspace', label: '工作台' },
+    { to: '/team', label: '工作台' },
     { to: '/contests', label: '竞赛库' },
     { to: '/resources', label: '资料中心' },
   ]
@@ -29,11 +22,23 @@ const links = computed(() => {
   return baseLinks
 })
 
-const hideGlobalHeader = computed(() => route.path.startsWith('/workspace'))
+const hideGlobalHeader = computed(() => route.path.startsWith('/team') || route.path.startsWith('/workspace'))
+
+const shellClass = computed(() => {
+  if (hideGlobalHeader.value)
+    return 'text-black bg-white h-screen overflow-hidden'
+  return 'text-black bg-white min-h-screen'
+})
+
+const mainClass = computed(() => {
+  if (hideGlobalHeader.value)
+    return 'h-full min-h-0 overflow-hidden'
+  return 'min-h-[calc(100vh-44px)]'
+})
 
 onMounted(async () => {
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     platformPermissions.value = response.data.user.platformPermissions || []
   }
   catch {
@@ -43,7 +48,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="text-black bg-white min-h-screen">
+  <div :class="shellClass">
     <header v-if="!hideGlobalHeader" class="px-2 border-b border-gray-300 flex gap-2 h-11 items-center justify-between">
       <div class="text-xs tracking-wide font-semibold whitespace-nowrap">
         WINLOOP AI WORKBENCH
@@ -60,7 +65,7 @@ onMounted(async () => {
         </NuxtLink>
       </nav>
     </header>
-    <main :class="hideGlobalHeader ? 'min-h-screen' : 'min-h-[calc(100vh-44px)]'">
+    <main :class="mainClass">
       <slot />
     </main>
   </div>

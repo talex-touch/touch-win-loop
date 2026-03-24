@@ -1,10 +1,12 @@
 import { setResponseStatus } from 'h3'
+import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { canManageProject, getVisibleProjectById } from '~~/server/utils/platform-store'
 import { bindLibraryResourceToProject } from '~~/server/utils/project-resource-store'
+import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
 interface AddLibraryResourceBody {
   resourceId?: string
@@ -30,7 +32,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const resource = await withTransaction(event, async (db) => {
+    const result = await withTransaction(event, async (db) => {
       const project = await getVisibleProjectById(db, user, projectId)
       if (!project)
         throw new Error('PROJECT_NOT_FOUND')
@@ -39,14 +41,40 @@ export default defineEventHandler(async (event) => {
       if (!manageable)
         throw new Error('FORBIDDEN')
 
-      return bindLibraryResourceToProject(db, {
+      const resource = await bindLibraryResourceToProject(db, {
         projectId,
         resourceId,
         actorUserId: user.id,
       })
+
+      return {
+        resource,
+        workspaceId: project.workspaceId,
+      }
     })
 
-    return ok(resource, {
+    await withTransaction(event, async (db) => {
+      await generateAndSaveProjectOutline(db, {
+        projectId,
+        user,
+        reason: 'library_add_success',
+      })
+    }).catch(() => undefined)
+
+    await Promise.allSettled([
+      emitRealtimeEvent({
+        type: 'project.resources.changed',
+        workspaceId: result.workspaceId,
+        projectId,
+      }),
+      emitRealtimeEvent({
+        type: 'project.outline.changed',
+        workspaceId: result.workspaceId,
+        projectId,
+      }),
+    ])
+
+    return ok(result.resource, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -79,7 +107,7 @@ export default defineEventHandler(async (event) => {
 
     if (error instanceof Error && error.message === 'RESOURCE_NOT_FOUND') {
       setResponseStatus(event, 404)
-      return fail('资源不存在，或不属于当前项目对应的系统库。', {
+      return fail('资源不存在，或当前不可加入项目资料池。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

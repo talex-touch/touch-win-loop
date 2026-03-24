@@ -12,7 +12,7 @@ definePageMeta({
 })
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
 const activeTab = ref<'overview' | 'track' | 'judge' | 'timeline' | 'faq' | 'resources' | 'policy'>('overview')
@@ -40,12 +40,6 @@ const timelineNodeLabels: Record<TimelineNodeType, string> = {
   preliminary: '初赛',
   final: '决赛',
   other: '其他',
-}
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
 }
 
 function formatDateTime(value?: string | null): string {

@@ -6,14 +6,8 @@ definePageMeta({
 })
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 function fromDatetimeLocal(value: string): string | null {
   const text = value.trim()

@@ -31,7 +31,9 @@ import type {
   ProjectSettingsSnapshot,
   Resource,
   ResourcePreviewStatus,
+  TeamQuota,
   WorkspaceAiMode,
+  WorkspaceBillingEstimate,
   WorkspaceInvitationSummary,
   WorkspaceMemberManagementSnapshot,
   WorkspaceMemberRole,
@@ -401,7 +403,7 @@ interface WorkspaceInvitationCreatePayload {
 }
 
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
-type WorkspaceMainTabId = 'dashboard' | 'flow' | 'settings' | 'preview'
+type WorkspaceMainTabId = 'dashboard' | 'members' | 'flow' | 'settings' | 'preview'
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
@@ -486,6 +488,7 @@ const selectedContestId = ref('')
 const selectedTrackId = ref('')
 
 const openSettingsSignal = ref(0)
+const openMemberManagementSignal = ref(0)
 const openFlowSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
@@ -580,6 +583,11 @@ const issueCenterLoading = ref(false)
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
 const workspaceInvitationLink = ref('')
+const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
+const workspaceBillingEstimateLoading = ref(false)
+const workspaceSeatLimitSaveLoading = ref(false)
+const workspaceSeatLimitError = ref('')
+const workspaceSeatLimitUpdatedSignal = ref(0)
 
 function getProjectSettingsDraftStorageKey(projectId: string): string {
   if (!import.meta.client)
@@ -758,15 +766,32 @@ const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
 })
 const workspaceCanManageMembers = computed(() => {
-  const workspaceType = currentWorkspace.value?.workspace.type || ''
-  if (workspaceType !== 'team')
-    return false
-
   if (me.value?.user.isPlatformAdmin)
     return true
 
   const roles = currentWorkspace.value?.workspace.roles || []
   return roles.some(role => WORKSPACE_MEMBER_MANAGE_ROLES.includes(role))
+})
+const workspaceCanManageBillingSeats = computed(() => {
+  if (me.value?.user.isPlatformAdmin)
+    return true
+  const roles = currentWorkspace.value?.workspace.roles || []
+  return roles.includes('owner') || roles.includes('admin')
+})
+const workspaceSupportsSeatAdd = computed(() => {
+  return currentWorkspace.value?.workspace.type === 'team'
+})
+const workspaceSeatUsed = computed(() => {
+  if (!workspaceMemberManagementLoading.value && workspaceMembers.value.length > 0)
+    return workspaceMembers.value.length
+  const quotaSeatUsed = Number(currentWorkspace.value?.quota?.seatUsed || 0)
+  return Math.max(0, Math.trunc(quotaSeatUsed))
+})
+const workspaceSeatLimit = computed<number | null>(() => {
+  const raw = Number(currentWorkspace.value?.quota?.seatLimit)
+  if (!Number.isFinite(raw) || raw <= 0)
+    return null
+  return Math.max(1, Math.trunc(raw))
 })
 const quickSwitchSourceProjects = computed(() => {
   const source = allProjects.value.length > 0 ? allProjects.value : projects.value
@@ -2316,6 +2341,16 @@ watch([selectedContestId, selectedTrackId], () => {
   scheduleProjectOutlineGenerate('contest_track_switched')
 })
 
+async function refreshAuthContextSnapshot(): Promise<void> {
+  try {
+    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
+    me.value = response.data
+  }
+  catch {
+    // ignore soft refresh failures and keep current in-memory auth snapshot
+  }
+}
+
 async function loadAuthContext(): Promise<boolean> {
   try {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
@@ -2791,6 +2826,81 @@ async function loadWorkspaceMemberManagement() {
   finally {
     if (activeWorkspaceId.value === workspaceId || !activeWorkspaceId.value)
       workspaceMemberManagementLoading.value = false
+  }
+}
+
+async function loadWorkspaceBillingEstimate(silent = false) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId) {
+    workspaceBillingEstimate.value = null
+    return
+  }
+
+  workspaceBillingEstimateLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<WorkspaceBillingEstimate>>(endpoint(`/teams/${workspaceId}/billing/estimate`))
+    if (activeWorkspaceId.value !== workspaceId)
+      return
+    workspaceBillingEstimate.value = response.data
+  }
+  catch (error) {
+    if (activeWorkspaceId.value !== workspaceId)
+      return
+    workspaceBillingEstimate.value = null
+    if (!silent)
+      workspaceSeatLimitError.value = resolveApiErrorMessage(error, '加载计费估算失败，请稍后重试。')
+  }
+  finally {
+    if (activeWorkspaceId.value === workspaceId || !activeWorkspaceId.value)
+      workspaceBillingEstimateLoading.value = false
+  }
+}
+
+function openWorkspaceSeatModal() {
+  workspaceSeatLimitError.value = ''
+  void loadWorkspaceBillingEstimate(true)
+}
+
+async function saveWorkspaceSeatLimit(seatLimit: number) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId) {
+    workspaceSeatLimitError.value = '请先选择 Team。'
+    return
+  }
+
+  if (!workspaceCanManageBillingSeats.value) {
+    workspaceSeatLimitError.value = '当前账号无 add seat 权限。'
+    return
+  }
+
+  workspaceSeatLimitSaveLoading.value = true
+  workspaceSeatLimitError.value = ''
+  try {
+    await $fetch<ApiResponse<Omit<TeamQuota, 'workspaceId'>>>(endpoint(`/teams/${workspaceId}/seats`), {
+      method: 'PATCH',
+      body: {
+        seatLimit: Math.max(1, Math.trunc(Number(seatLimit || 1))),
+      },
+    })
+
+    if (activeWorkspaceId.value !== workspaceId)
+      return
+
+    await Promise.all([
+      refreshAuthContextSnapshot(),
+      loadWorkspaceMemberManagement(),
+      loadWorkspaceBillingEstimate(true),
+    ])
+
+    workspaceSeatLimitUpdatedSignal.value += 1
+    statusLine.value = 'Team 席位已更新。'
+  }
+  catch (error) {
+    workspaceSeatLimitError.value = resolveApiErrorMessage(error, '更新 Team 席位失败。')
+    statusLine.value = workspaceSeatLimitError.value
+  }
+  finally {
+    workspaceSeatLimitSaveLoading.value = false
   }
 }
 
@@ -4148,6 +4258,11 @@ function openSettingsFromLeftSidebar() {
   statusLine.value = '已打开设置页，可配置项目底座并管理空间成员邀请。'
 }
 
+function openMemberManagementFromLeftSidebar() {
+  openMemberManagementSignal.value += 1
+  statusLine.value = '已打开成员管理，可查看席位并发起邀请。'
+}
+
 function openFlowFromLeftSidebar() {
   openFlowSignal.value += 1
   statusLine.value = '已打开无边画布，可继续协作梳理项目流程。'
@@ -4234,6 +4349,8 @@ watch(routeWorkspaceId, async (value, previous) => {
     activeWorkspaceId.value = value
   workspaceRealtime.subscribeWorkspace(value)
   workspaceInvitationLink.value = ''
+  workspaceBillingEstimate.value = null
+  workspaceSeatLimitError.value = ''
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
   await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement()])
@@ -4332,6 +4449,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         @load-contests="loadContests"
         @run-ai-filter="runAiFilter"
         @open-settings-panel="openSettingsFromLeftSidebar"
+        @open-member-management-panel="openMemberManagementFromLeftSidebar"
         @open-flow-panel="openFlowFromLeftSidebar"
         @create-collab-resource="createCollabResource"
         @open-defense-mode="openDefenseFromLeftSidebar"
@@ -4368,9 +4486,19 @@ watch(() => workspaceRealtime.connected.value, () => {
         :workspace-invitations="workspaceInvitations"
         :workspace-member-management-loading="workspaceMemberManagementLoading"
         :workspace-can-manage-members="workspaceCanManageMembers"
+        :workspace-can-manage-billing-seats="workspaceCanManageBillingSeats"
+        :workspace-seat-used="workspaceSeatUsed"
+        :workspace-seat-limit="workspaceSeatLimit"
+        :workspace-supports-seat-add="workspaceSupportsSeatAdd"
         :workspace-invitation-submitting="workspaceInvitationSubmitting"
         :workspace-invitation-link="workspaceInvitationLink"
+        :workspace-billing-estimate="workspaceBillingEstimate"
+        :workspace-billing-estimate-loading="workspaceBillingEstimateLoading"
+        :workspace-seat-limit-save-loading="workspaceSeatLimitSaveLoading"
+        :workspace-seat-limit-error="workspaceSeatLimitError"
+        :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
         :open-settings-signal="openSettingsSignal"
+        :open-member-management-signal="openMemberManagementSignal"
         :open-flow-signal="openFlowSignal"
         :open-preview-signal="openPreviewSignal"
         :close-preview-signal="closePreviewSignal"
@@ -4414,6 +4542,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         @reload-workspace-member-management="loadWorkspaceMemberManagement"
         @create-workspace-invitation="createWorkspaceInvitation"
         @copy-workspace-invitation-link="copyWorkspaceInvitationLink"
+        @open-workspace-seat-modal="openWorkspaceSeatModal"
+        @save-workspace-seat-limit="saveWorkspaceSeatLimit"
         @copy-project-resource-share="copyProjectResourceShare"
         @revoke-project-resource-share="revokeProjectResourceShare"
         @reconvert-preview="reconvertProjectResourcePreview"

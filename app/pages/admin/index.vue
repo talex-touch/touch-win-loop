@@ -5,14 +5,7 @@ definePageMeta({
   layout: 'admin',
 })
 
-const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const authApiFetch = useAuthApiFetch()
 
 const loading = ref(true)
 const errorText = ref('')
@@ -39,7 +32,7 @@ async function loadPermissions() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     permissions.value = response.data.user.platformPermissions || []
   }
   catch (error: any) {
@@ -140,19 +133,6 @@ onMounted(loadPermissions)
 
         <NuxtLink
           v-if="canManageContest"
-          to="/admin/ai-prompts"
-          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
-        >
-          <p class="text-[12px] text-slate-900 font-bold">
-            AI 配置
-          </p>
-          <p class="text-[11px] text-slate-500 mt-1">
-            Providers / Channels / Models / Audits / Logs 平台控制台
-          </p>
-        </NuxtLink>
-
-        <NuxtLink
-          v-if="canManageContest"
           to="/admin/resources"
           class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
         >
@@ -161,6 +141,32 @@ onMounted(loadPermissions)
           </p>
           <p class="text-[11px] text-slate-500 mt-1">
             14 类资料入口、状态流转
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canManageContest"
+          to="/admin/resource-preview-worker"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            文档转换监控
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            查看转换任务进度、调度状态、成功率、调用次数与失败分析
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canManageContest"
+          to="/admin/resource-recycle-worker"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            回收站清理
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            查看清理任务状态、最近运行结果与回收站积压
           </p>
         </NuxtLink>
 

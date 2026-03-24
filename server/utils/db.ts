@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   type TEXT NOT NULL CHECK (type IN ('personal', 'team')),
   name TEXT NOT NULL,
   owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  school_profile JSONB,
+  team_profile JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -63,8 +63,7 @@ CREATE TABLE IF NOT EXISTS workspace_members (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('team_owner', 'team_admin', 'school_admin', 'college_admin', 'advisor', 'member')),
-  college_codes TEXT[] NOT NULL DEFAULT '{}',
+  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'manager', 'member')),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -262,8 +261,7 @@ CREATE TABLE IF NOT EXISTS invitations (
   token_hash TEXT NOT NULL UNIQUE,
   invited_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   invitee_username TEXT,
-  role TEXT NOT NULL CHECK (role IN ('team_owner', 'team_admin', 'school_admin', 'college_admin', 'advisor', 'member')),
-  college_codes TEXT[] NOT NULL DEFAULT '{}',
+  role TEXT NOT NULL CHECK (role IN ('admin', 'manager', 'member')),
   expires_at TIMESTAMPTZ NOT NULL,
   accepted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -690,10 +688,18 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
+  plan_tier TEXT NOT NULL DEFAULT 'business_team' CHECK (plan_tier IN ('personal_team', 'business_team')),
   base_price_cents INTEGER NOT NULL DEFAULT 0,
   included_seats INTEGER NOT NULL DEFAULT 0,
   extra_seat_price_cents INTEGER NOT NULL DEFAULT 0,
   included_ai_quota INTEGER NOT NULL DEFAULT 0,
+  included_projects INTEGER NOT NULL DEFAULT 0,
+  projects_unlimited BOOLEAN NOT NULL DEFAULT FALSE,
+  extra_project_slot_price_cents INTEGER NOT NULL DEFAULT 0,
+  default_project_seat_limit INTEGER NOT NULL DEFAULT 5,
+  project_seat_price_cents INTEGER NOT NULL DEFAULT 0,
+  min_charged_project_seats INTEGER NOT NULL DEFAULT 0,
+  charge_all_project_seats BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -703,10 +709,19 @@ CREATE TABLE IF NOT EXISTS workspace_billing (
   workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   plan_id TEXT REFERENCES billing_plans(id) ON DELETE SET NULL,
   billing_cycle TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly', 'quarterly', 'yearly')),
+  extra_project_slots INTEGER NOT NULL DEFAULT 0,
   estimated_amount_cents INTEGER NOT NULL DEFAULT 0,
   snapshot_seat_used INTEGER NOT NULL DEFAULT 0,
   snapshot_seat_limit INTEGER NOT NULL DEFAULT 0,
   snapshot_ai_quota_total INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_seat_quotas (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  seat_limit INTEGER NOT NULL DEFAULT 5,
+  seat_used INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -779,6 +794,227 @@ CREATE INDEX IF NOT EXISTS idx_resource_documents_contest_status ON contest_reso
 CREATE INDEX IF NOT EXISTS idx_resource_documents_resource ON contest_resource_documents(resource_id);
 CREATE INDEX IF NOT EXISTS idx_resource_document_tasks_status_created ON contest_resource_document_tasks(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_resource_document_tasks_document ON contest_resource_document_tasks(document_id);
+CREATE INDEX IF NOT EXISTS idx_project_seat_quotas_workspace ON project_seat_quotas(workspace_id);
+
+ALTER TABLE workspaces
+  ADD COLUMN IF NOT EXISTS team_profile JSONB;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspaces'
+      AND column_name = 'school_profile'
+  ) THEN
+    UPDATE workspaces
+    SET team_profile = school_profile
+    WHERE team_profile IS NULL
+      AND school_profile IS NOT NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspaces'
+      AND column_name = 'school_profile'
+  ) THEN
+    ALTER TABLE workspaces
+      DROP COLUMN school_profile;
+  END IF;
+END $$;
+
+ALTER TABLE workspace_members
+  DROP COLUMN IF EXISTS college_codes;
+
+DO $$
+DECLARE
+  role_check_name TEXT;
+BEGIN
+  FOR role_check_name IN
+    SELECT con.conname
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    WHERE rel.relname = 'workspace_members'
+      AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) ILIKE '%role%'
+  LOOP
+    EXECUTE format('ALTER TABLE workspace_members DROP CONSTRAINT %I', role_check_name);
+  END LOOP;
+END $$;
+
+WITH normalized AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY workspace_id, user_id, CASE
+        WHEN role = 'team_owner' THEN 'owner'
+        WHEN role = 'team_admin' THEN 'admin'
+        WHEN role = 'school_admin' THEN 'manager'
+        WHEN role = 'college_admin' THEN 'manager'
+        WHEN role = 'advisor' THEN 'member'
+        WHEN role IN ('owner', 'admin', 'manager', 'member') THEN role
+        ELSE 'member'
+      END
+      ORDER BY created_at ASC, id ASC
+    ) AS rn
+  FROM workspace_members
+)
+DELETE FROM workspace_members wm
+USING normalized n
+WHERE wm.id = n.id
+  AND n.rn > 1;
+
+UPDATE workspace_members
+SET role = CASE
+  WHEN role = 'team_owner' THEN 'owner'
+  WHEN role = 'team_admin' THEN 'admin'
+  WHEN role = 'school_admin' THEN 'manager'
+  WHEN role = 'college_admin' THEN 'manager'
+  WHEN role = 'advisor' THEN 'member'
+  WHEN role IN ('owner', 'admin', 'manager', 'member') THEN role
+  ELSE 'member'
+END;
+
+DO $$
+BEGIN
+  BEGIN
+    ALTER TABLE workspace_members
+      ADD CONSTRAINT workspace_members_role_check
+      CHECK (role IN ('owner', 'admin', 'manager', 'member'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
+
+ALTER TABLE invitations
+  DROP COLUMN IF EXISTS college_codes;
+
+DO $$
+DECLARE
+  invitation_role_check_name TEXT;
+BEGIN
+  FOR invitation_role_check_name IN
+    SELECT con.conname
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    WHERE rel.relname = 'invitations'
+      AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) ILIKE '%role%'
+  LOOP
+    EXECUTE format('ALTER TABLE invitations DROP CONSTRAINT %I', invitation_role_check_name);
+  END LOOP;
+END $$;
+
+UPDATE invitations
+SET role = CASE
+  WHEN role = 'team_owner' THEN 'admin'
+  WHEN role = 'team_admin' THEN 'admin'
+  WHEN role = 'school_admin' THEN 'manager'
+  WHEN role = 'college_admin' THEN 'manager'
+  WHEN role = 'advisor' THEN 'member'
+  WHEN role IN ('admin', 'manager', 'member') THEN role
+  ELSE 'member'
+END;
+
+DO $$
+BEGIN
+  BEGIN
+    ALTER TABLE invitations
+      ADD CONSTRAINT invitations_role_check
+      CHECK (role IN ('admin', 'manager', 'member'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'business_team';
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS included_projects INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS projects_unlimited BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS extra_project_slot_price_cents INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS default_project_seat_limit INTEGER NOT NULL DEFAULT 5;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS project_seat_price_cents INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS min_charged_project_seats INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS charge_all_project_seats BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE workspace_billing
+  ADD COLUMN IF NOT EXISTS extra_project_slots INTEGER NOT NULL DEFAULT 0;
+
+UPDATE billing_plans
+SET plan_tier = CASE
+  WHEN code ILIKE 'personal%' THEN 'personal_team'
+  ELSE 'business_team'
+END
+WHERE COALESCE(plan_tier, '') NOT IN ('personal_team', 'business_team');
+
+DO $$
+DECLARE
+  plan_tier_check_name TEXT;
+BEGIN
+  SELECT con.conname INTO plan_tier_check_name
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  WHERE rel.relname = 'billing_plans'
+    AND con.contype = 'c'
+    AND pg_get_constraintdef(con.oid) ILIKE '%plan_tier%'
+  ORDER BY con.conname
+  LIMIT 1;
+
+  IF plan_tier_check_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE billing_plans DROP CONSTRAINT %I', plan_tier_check_name);
+  END IF;
+
+  BEGIN
+    ALTER TABLE billing_plans
+      ADD CONSTRAINT billing_plans_plan_tier_check
+      CHECK (plan_tier IN ('personal_team', 'business_team'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
+
+INSERT INTO project_seat_quotas (
+  project_id,
+  workspace_id,
+  seat_limit,
+  seat_used,
+  updated_at
+)
+SELECT
+  p.id,
+  p.workspace_id,
+  5,
+  COALESCE(member_count.used, 0),
+  NOW()
+FROM projects p
+LEFT JOIN LATERAL (
+  SELECT COUNT(DISTINCT pm.user_id)::INTEGER AS used
+  FROM project_members pm
+  WHERE pm.project_id = p.id
+) member_count ON TRUE
+ON CONFLICT (project_id)
+DO UPDATE SET
+  workspace_id = EXCLUDED.workspace_id,
+  seat_used = EXCLUDED.seat_used,
+  updated_at = EXCLUDED.updated_at;
 
 ALTER TABLE contests
   ADD COLUMN IF NOT EXISTS faq_items JSONB NOT NULL DEFAULT '[]'::JSONB;
@@ -1209,6 +1445,128 @@ CREATE INDEX IF NOT EXISTS idx_contest_trends_contest_year ON contest_trends(con
 CREATE INDEX IF NOT EXISTS idx_contest_audit_logs_contest_created ON contest_audit_logs(contest_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_audit_logs_action_created ON contest_audit_logs(action, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_billing_plan ON workspace_billing(plan_id);
+
+-- Team-First: 增量引入 team 命名与 team_id 别名列（兼容旧 workspace_id 读写）
+CREATE OR REPLACE VIEW teams AS
+SELECT
+  id,
+  type,
+  name,
+  owner_user_id,
+  team_profile,
+  created_at,
+  updated_at
+FROM workspaces;
+
+CREATE OR REPLACE VIEW team_members AS
+SELECT
+  id,
+  workspace_id AS team_id,
+  user_id,
+  role,
+  is_active,
+  created_at,
+  updated_at
+FROM workspace_members;
+
+CREATE OR REPLACE VIEW team_billing AS
+SELECT
+  workspace_id AS team_id,
+  plan_id,
+  billing_cycle,
+  extra_project_slots,
+  estimated_amount_cents,
+  snapshot_seat_used,
+  snapshot_seat_limit,
+  snapshot_ai_quota_total,
+  updated_at
+FROM workspace_billing;
+
+CREATE OR REPLACE FUNCTION sync_team_workspace_ids()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.team_id IS NULL AND NEW.workspace_id IS NOT NULL THEN
+    NEW.team_id := NEW.workspace_id;
+  END IF;
+
+  IF NEW.workspace_id IS NULL AND NEW.team_id IS NOT NULL THEN
+    NEW.workspace_id := NEW.team_id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+DECLARE
+  tbl TEXT;
+  fk_name TEXT;
+  trigger_name TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY[
+    'projects',
+    'groups',
+    'team_subscriptions',
+    'team_quotas',
+    'invitations',
+    'workspace_billing',
+    'ai_chat_sessions',
+    'ai_chat_messages',
+    'ai_usage_ledger',
+    'ai_project_change_requests',
+    'project_issue_reports',
+    'project_issues',
+    'project_seat_quotas'
+  ]
+  LOOP
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns c
+      WHERE c.table_schema = 'public'
+        AND c.table_name = tbl
+        AND c.column_name = 'workspace_id'
+    ) THEN
+      EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS team_id TEXT', tbl);
+      EXECUTE format('UPDATE %I SET team_id = workspace_id WHERE team_id IS NULL AND workspace_id IS NOT NULL', tbl);
+
+      fk_name := format('%s_team_id_fkey', tbl);
+      IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints tc
+        WHERE tc.table_schema = 'public'
+          AND tc.table_name = tbl
+          AND tc.constraint_name = fk_name
+      ) THEN
+        EXECUTE format(
+          'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (team_id) REFERENCES workspaces(id) ON DELETE CASCADE',
+          tbl,
+          fk_name
+        );
+      END IF;
+
+      EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I(team_id)', format('idx_%s_team_id', tbl), tbl);
+
+      trigger_name := format('%s_sync_team_workspace_ids', tbl);
+      IF EXISTS (
+        SELECT 1
+        FROM pg_trigger t
+        JOIN pg_class rel ON rel.oid = t.tgrelid
+        WHERE rel.relname = tbl
+          AND t.tgname = trigger_name
+      ) THEN
+        EXECUTE format('DROP TRIGGER %I ON %I', trigger_name, tbl);
+      END IF;
+
+      EXECUTE format(
+        'CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION sync_team_workspace_ids()',
+        trigger_name,
+        tbl
+      );
+    END IF;
+  END LOOP;
+END $$;
 `
 
 async function ensureSchemaReady(poolRef: PgPoolType) {

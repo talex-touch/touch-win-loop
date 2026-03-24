@@ -13,6 +13,7 @@
     "start:generate": "npx serve .output/public",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
+    "test:project-visibility": "vitest run ./scripts/tests/project-visibility.test.mjs",
     "ci:smoke": "node ./scripts/ci-smoke.mjs",
     "contest:seed:catalog": "node ./scripts/contest-library.mjs seed",
     "contest:clean:catalog": "node ./scripts/contest-library.mjs clean",
@@ -29,6 +30,7 @@
     "langchain": "catalog:",
     "pdfjs-dist": "catalog:",
     "pg": "catalog:",
+    "yjs": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

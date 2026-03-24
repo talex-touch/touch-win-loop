@@ -28,14 +28,8 @@ const props = withDefaults(defineProps<{
 })
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
 const draftBridge = useAdminAgentDraft()
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 function formatTime(value: string | null | undefined): string {
   const text = String(value || '').trim()

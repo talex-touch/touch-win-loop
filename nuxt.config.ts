@@ -53,6 +53,8 @@ export default defineNuxtConfig({
       model: resolveEnvValue('WINLOOP_AI_MODEL', 'gpt-4o-mini'),
       modelCatalogJson: resolveEnvValue('WINLOOP_AI_MODEL_CATALOG_JSON', ''),
       modelPricingJson: resolveEnvValue('WINLOOP_AI_MODEL_PRICING_JSON', ''),
+      providersJson: resolveEnvValue('WINLOOP_AI_PROVIDERS_JSON', ''),
+      channelsJson: resolveEnvValue('WINLOOP_AI_CHANNELS_JSON', ''),
       temperature: resolveEnvNumber('WINLOOP_AI_TEMPERATURE', 0.2),
       topP: resolveEnvNumber('WINLOOP_AI_TOP_P', 1),
       maxTokens: resolveEnvNumber('WINLOOP_AI_MAX_TOKENS', 0),
@@ -69,6 +71,14 @@ export default defineNuxtConfig({
       modelPricingJson: resolveEnvValue('WINLOOP_DOC_AI_MODEL_PRICING_JSON', ''),
       timeoutMs: resolveEnvNumber('WINLOOP_DOC_AI_TIMEOUT_MS', 15000),
       maxRetries: resolveEnvNumber('WINLOOP_DOC_AI_MAX_RETRIES', 2),
+    },
+    onlyOffice: {
+      endpoint: resolveEnvValue('WINLOOP_ONLYOFFICE_ENDPOINT', ''),
+      jwtSecret: resolveEnvValue('WINLOOP_ONLYOFFICE_JWT_SECRET', ''),
+      sourceBaseURL: resolveEnvValue('WINLOOP_PUBLIC_BASE_URL', ''),
+    },
+    projectResource: {
+      accessUrlTtlSeconds: resolveEnvNumber('WINLOOP_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS', 600),
     },
     storage: {
       provider: resolveEnvValue('WINLOOP_STORAGE_PROVIDER', 'local'),
@@ -133,10 +143,19 @@ export default defineNuxtConfig({
   compatibilityDate: '2024-08-14',
 
   nitro: {
+    experimental: {
+      websocket: true,
+    },
     esbuild: {
       options: {
         target: 'esnext',
       },
+    },
+  },
+
+  vite: {
+    server: {
+      allowedHosts: true,
     },
   },
 

@@ -12,11 +12,13 @@ import { requireAuth } from '~~/server/utils/auth'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { canManageProject, getVisibleProjectById } from '~~/server/utils/platform-store'
+import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
+import { createProjectPreviewDocumentWithTask } from '~~/server/utils/project-resource-document-store'
 import {
-  createProjectResourceDocumentWithTask,
   createProjectUploadedResource,
   getProjectUploadedStorageUsageBytes,
 } from '~~/server/utils/project-resource-store'
+import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -102,7 +104,11 @@ export default defineEventHandler(async (event) => {
       return { ok: false as const, reason: 'FORBIDDEN' as const }
 
     const usedBytes = await getProjectUploadedStorageUsageBytes(db, projectId)
-    return { ok: true as const, usedBytes }
+    return {
+      ok: true as const,
+      usedBytes,
+      workspaceId: project.workspaceId,
+    }
   })
 
   if (!hasAccess.ok) {
@@ -260,18 +266,36 @@ export default defineEventHandler(async (event) => {
           accessLevel,
         })
 
-        await createProjectResourceDocumentWithTask(db, {
+        const created = await createProjectPreviewDocumentWithTask(db, {
           projectId,
           projectResourceId: resource.id,
-          objectKey: file.objectKey,
-          storageProvider: storage.provider,
-          fileName: file.fileName,
-          mimeType: file.mimeType,
-          fileSize: file.buffer.length,
+          sourceObjectKey: file.objectKey,
+          sourceStorageProvider: storage.provider,
+          sourceFileName: file.fileName,
+          sourceMimeType: file.mimeType,
+          sourceFileSize: file.buffer.length,
           actorUserId: user.id,
         })
 
-        nextResources.push(resource)
+        const signedUrls = buildProjectResourceSignedUrls({
+          projectId,
+          resourceId: resource.id,
+        })
+
+        nextResources.push({
+          ...resource,
+          resourceKind: 'binary',
+          documentId: created.document.id,
+          previewStatus: created.document.previewStatus,
+          previewProgressPercent: created.document.previewProgressPercent,
+          previewEtaSeconds: created.document.previewEtaSeconds,
+          previewError: created.document.previewError || undefined,
+          previewUrl: signedUrls.previewUrl,
+          previewUrlExpiresAt: signedUrls.previewUrlExpiresAt,
+          sourceDownloadUrl: signedUrls.sourceDownloadUrl,
+          sourceDownloadUrlExpiresAt: signedUrls.sourceDownloadUrlExpiresAt,
+          sourceLink: signedUrls.sourceDownloadUrl,
+        })
       }
       return nextResources
     })
@@ -283,6 +307,19 @@ export default defineEventHandler(async (event) => {
         reason: 'upload_success',
       })
     }).catch(() => undefined)
+
+    await Promise.allSettled([
+      emitRealtimeEvent({
+        type: 'project.resources.changed',
+        workspaceId: hasAccess.workspaceId,
+        projectId,
+      }),
+      emitRealtimeEvent({
+        type: 'project.outline.changed',
+        workspaceId: hasAccess.workspaceId,
+        projectId,
+      }),
+    ])
 
     return ok({
       resources,

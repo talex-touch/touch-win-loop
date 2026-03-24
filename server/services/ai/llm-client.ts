@@ -1,10 +1,13 @@
-import { ChatOpenAI } from '@langchain/openai'
+import { ChatOpenAI, ChatOpenAIResponses } from '@langchain/openai'
+
+export type AiModelFormat = 'openai-compatible' | 'response'
 
 export interface AiRuntimeConfig {
   provider: string
   baseURL: string
   apiKey: string
   model: string
+  format?: AiModelFormat
   temperature?: number
   topP?: number
   maxTokens?: number
@@ -14,7 +17,7 @@ export interface AiRuntimeConfig {
   maxRetries: number
 }
 
-export function createChatModel(config: AiRuntimeConfig): ChatOpenAI {
+export function createChatModel(config: AiRuntimeConfig): ChatOpenAI | ChatOpenAIResponses {
   if (!config.apiKey)
     throw new Error('AI 模型密钥未配置，无法调用真实模型')
 
@@ -33,8 +36,10 @@ export function createChatModel(config: AiRuntimeConfig): ChatOpenAI {
   const normalizedFrequencyPenalty = Number.isFinite(Number(config.frequencyPenalty))
     ? Math.max(-2, Math.min(2, Number(config.frequencyPenalty)))
     : undefined
-
-  return new ChatOpenAI({
+  const normalizedRetries = Number.isFinite(Number(config.maxRetries))
+    ? Math.max(0, Math.min(10, Math.round(Number(config.maxRetries))))
+    : 0
+  const modelFields = {
     model: config.model,
     temperature: normalizedTemperature,
     topP: normalizedTopP,
@@ -42,8 +47,13 @@ export function createChatModel(config: AiRuntimeConfig): ChatOpenAI {
     presencePenalty: normalizedPresencePenalty,
     frequencyPenalty: normalizedFrequencyPenalty,
     timeout: config.timeoutMs,
-    maxRetries: 0,
+    maxRetries: normalizedRetries,
     apiKey: config.apiKey,
     configuration: config.baseURL ? { baseURL: config.baseURL } : undefined,
-  })
+  }
+
+  if (config.format === 'response')
+    return new ChatOpenAIResponses(modelFields)
+
+  return new ChatOpenAI(modelFields)
 }

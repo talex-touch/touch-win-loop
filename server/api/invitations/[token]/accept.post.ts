@@ -65,10 +65,9 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 40331)
     }
-
-    if (error instanceof Error && error.message === 'SEAT_LIMIT_REACHED') {
+    if (error instanceof Error && error.message === 'TEAM_SEAT_LIMIT_REACHED') {
       setResponseStatus(event, 409)
-      return fail('Team 席位已满，请扩容后重试。', {
+      return fail('Team 席位已满，请联系管理员扩容后重试。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,
@@ -76,7 +75,6 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 40931)
     }
-
     throw error
   }
 })

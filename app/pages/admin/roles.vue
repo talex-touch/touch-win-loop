@@ -21,7 +21,7 @@ interface RoleApiResult {
 }
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
 
 const loading = ref(true)
 const saving = ref(false)
@@ -44,12 +44,6 @@ const columns = [
   { title: '角色', dataIndex: 'roles', slotName: 'roles' },
   { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 120 },
 ]
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 const canAssign = computed(() => {
   return data.value?.current.permissions.includes('role.assign') || false

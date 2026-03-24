@@ -1428,10 +1428,18 @@ interface BillingPlanRow {
   id: string
   code: string
   name: string
+  plan_tier: 'personal_team' | 'business_team'
   base_price_cents: number
   included_seats: number
   extra_seat_price_cents: number
   included_ai_quota: number
+  included_projects: number
+  projects_unlimited: boolean
+  extra_project_slot_price_cents: number
+  default_project_seat_limit: number
+  project_seat_price_cents: number
+  min_charged_project_seats: number
+  charge_all_project_seats: boolean
   is_active: boolean
   created_at: string
   updated_at: string
@@ -1659,10 +1667,18 @@ function mapBillingPlan(row: BillingPlanRow): BillingPlan {
     id: row.id,
     code: row.code,
     name: row.name,
+    planTier: row.plan_tier || 'business_team',
     basePriceCents: Number(row.base_price_cents || 0),
     includedSeats: Number(row.included_seats || 0),
     extraSeatPriceCents: Number(row.extra_seat_price_cents || 0),
     includedAiQuota: Number(row.included_ai_quota || 0),
+    includedProjects: Math.max(0, Number(row.included_projects || 0)),
+    projectsUnlimited: Boolean(row.projects_unlimited),
+    extraProjectSlotPriceCents: Math.max(0, Number(row.extra_project_slot_price_cents || 0)),
+    defaultProjectSeatLimit: Math.max(1, Number(row.default_project_seat_limit || 5)),
+    projectSeatPriceCents: Math.max(0, Number(row.project_seat_price_cents || 0)),
+    minChargedProjectSeats: Math.max(0, Number(row.min_charged_project_seats || 0)),
+    chargeAllProjectSeats: Boolean(row.charge_all_project_seats),
     isActive: Boolean(row.is_active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1854,31 +1870,42 @@ export function listCatalogContestIds(): string[] {
 }
 
 export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
-  const existing = await db.query<{ count: string }>('SELECT COUNT(*)::TEXT AS count FROM billing_plans')
-  const total = Number(existing.rows[0]?.count || '0')
-  if (total > 0)
-    return
-
   const now = new Date().toISOString()
   const plans: Array<Omit<BillingPlan, 'createdAt' | 'updatedAt'>> = [
     {
       id: randomUUID(),
-      code: 'team-basic',
-      name: '团队基础版',
-      basePriceCents: 99900,
-      includedSeats: 100,
-      extraSeatPriceCents: 1000,
-      includedAiQuota: 1000,
+      code: 'personal-team',
+      name: 'Personal Team',
+      planTier: 'personal_team',
+      basePriceCents: 0,
+      includedSeats: 5,
+      extraSeatPriceCents: 0,
+      includedAiQuota: 500,
+      includedProjects: 2,
+      projectsUnlimited: false,
+      extraProjectSlotPriceCents: 0,
+      defaultProjectSeatLimit: 5,
+      projectSeatPriceCents: 0,
+      minChargedProjectSeats: 0,
+      chargeAllProjectSeats: false,
       isActive: true,
     },
     {
       id: randomUUID(),
-      code: 'team-pro',
-      name: '团队专业版',
-      basePriceCents: 199900,
-      includedSeats: 300,
-      extraSeatPriceCents: 800,
+      code: 'business-team',
+      name: 'Business Team',
+      planTier: 'business_team',
+      basePriceCents: 99900,
+      includedSeats: 20,
+      extraSeatPriceCents: 1000,
       includedAiQuota: 5000,
+      includedProjects: 0,
+      projectsUnlimited: true,
+      extraProjectSlotPriceCents: 0,
+      defaultProjectSeatLimit: 5,
+      projectSeatPriceCents: 1000,
+      minChargedProjectSeats: 3,
+      chargeAllProjectSeats: true,
       isActive: true,
     },
   ]
@@ -1889,23 +1916,61 @@ export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
         id,
         code,
         name,
+        plan_tier,
         base_price_cents,
         included_seats,
         extra_seat_price_cents,
         included_ai_quota,
+        included_projects,
+        projects_unlimited,
+        extra_project_slot_price_cents,
+        default_project_seat_limit,
+        project_seat_price_cents,
+        min_charged_project_seats,
+        charge_all_project_seats,
         is_active,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-      ON CONFLICT (code) DO NOTHING`,
+      ) VALUES (
+        $1, $2, $3, $4,
+        $5, $6, $7, $8,
+        $9, $10, $11, $12,
+        $13, $14, $15,
+        $16, $17, $17
+      )
+      ON CONFLICT (code)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        plan_tier = EXCLUDED.plan_tier,
+        base_price_cents = EXCLUDED.base_price_cents,
+        included_seats = EXCLUDED.included_seats,
+        extra_seat_price_cents = EXCLUDED.extra_seat_price_cents,
+        included_ai_quota = EXCLUDED.included_ai_quota,
+        included_projects = EXCLUDED.included_projects,
+        projects_unlimited = EXCLUDED.projects_unlimited,
+        extra_project_slot_price_cents = EXCLUDED.extra_project_slot_price_cents,
+        default_project_seat_limit = EXCLUDED.default_project_seat_limit,
+        project_seat_price_cents = EXCLUDED.project_seat_price_cents,
+        min_charged_project_seats = EXCLUDED.min_charged_project_seats,
+        charge_all_project_seats = EXCLUDED.charge_all_project_seats,
+        is_active = EXCLUDED.is_active,
+        updated_at = EXCLUDED.updated_at`,
       [
         plan.id,
         plan.code,
         plan.name,
+        plan.planTier,
         plan.basePriceCents,
         plan.includedSeats,
         plan.extraSeatPriceCents,
         plan.includedAiQuota,
+        plan.includedProjects,
+        plan.projectsUnlimited,
+        plan.extraProjectSlotPriceCents,
+        plan.defaultProjectSeatLimit,
+        plan.projectSeatPriceCents,
+        plan.minChargedProjectSeats,
+        plan.chargeAllProjectSeats,
         plan.isActive,
         now,
       ],
@@ -4258,10 +4323,18 @@ export async function listBillingPlans(db: Queryable, includeInactive = true): P
       id,
       code,
       name,
+      plan_tier,
       base_price_cents,
       included_seats,
       extra_seat_price_cents,
       included_ai_quota,
+      included_projects,
+      projects_unlimited,
+      extra_project_slot_price_cents,
+      default_project_seat_limit,
+      project_seat_price_cents,
+      min_charged_project_seats,
+      charge_all_project_seats,
       is_active,
       created_at::TEXT,
       updated_at::TEXT
@@ -4279,10 +4352,18 @@ export async function createBillingPlan(
   input: {
     code: string
     name: string
+    planTier?: 'personal_team' | 'business_team'
     basePriceCents: number
     includedSeats: number
     extraSeatPriceCents: number
     includedAiQuota: number
+    includedProjects?: number
+    projectsUnlimited?: boolean
+    extraProjectSlotPriceCents?: number
+    defaultProjectSeatLimit?: number
+    projectSeatPriceCents?: number
+    minChargedProjectSeats?: number
+    chargeAllProjectSeats?: boolean
     isActive?: boolean
   },
 ): Promise<BillingPlan> {
@@ -4294,24 +4375,44 @@ export async function createBillingPlan(
       id,
       code,
       name,
+      plan_tier,
       base_price_cents,
       included_seats,
       extra_seat_price_cents,
       included_ai_quota,
+      included_projects,
+      projects_unlimited,
+      extra_project_slot_price_cents,
+      default_project_seat_limit,
+      project_seat_price_cents,
+      min_charged_project_seats,
+      charge_all_project_seats,
       is_active,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $9
+      $1, $2, $3, $4,
+      $5, $6, $7, $8,
+      $9, $10, $11, $12,
+      $13, $14, $15,
+      $16, $17, $17
     )`,
     [
       planId,
       normalizeString(input.code),
       normalizeString(input.name),
+      input.planTier || 'business_team',
       Math.max(0, Number(input.basePriceCents || 0)),
       Math.max(0, Number(input.includedSeats || 0)),
       Math.max(0, Number(input.extraSeatPriceCents || 0)),
       Math.max(0, Number(input.includedAiQuota || 0)),
+      Math.max(0, Number(input.includedProjects || 0)),
+      input.projectsUnlimited === true,
+      Math.max(0, Number(input.extraProjectSlotPriceCents || 0)),
+      Math.max(1, Number(input.defaultProjectSeatLimit || 5)),
+      Math.max(0, Number(input.projectSeatPriceCents || 0)),
+      Math.max(0, Number(input.minChargedProjectSeats || 0)),
+      input.chargeAllProjectSeats === true,
       input.isActive !== false,
       now,
     ],
@@ -4322,10 +4423,18 @@ export async function createBillingPlan(
       id,
       code,
       name,
+      plan_tier,
       base_price_cents,
       included_seats,
       extra_seat_price_cents,
       included_ai_quota,
+      included_projects,
+      projects_unlimited,
+      extra_project_slot_price_cents,
+      default_project_seat_limit,
+      project_seat_price_cents,
+      min_charged_project_seats,
+      charge_all_project_seats,
       is_active,
       created_at::TEXT,
       updated_at::TEXT
@@ -4345,10 +4454,18 @@ export async function patchBillingPlan(
     patch: {
       code?: string
       name?: string
+      planTier?: 'personal_team' | 'business_team'
       basePriceCents?: number
       includedSeats?: number
       extraSeatPriceCents?: number
       includedAiQuota?: number
+      includedProjects?: number
+      projectsUnlimited?: boolean
+      extraProjectSlotPriceCents?: number
+      defaultProjectSeatLimit?: number
+      projectSeatPriceCents?: number
+      minChargedProjectSeats?: number
+      chargeAllProjectSeats?: boolean
       isActive?: boolean
     }
   },
@@ -4365,6 +4482,8 @@ export async function patchBillingPlan(
     addSet('code', normalizeString(input.patch.code))
   if (input.patch.name !== undefined)
     addSet('name', normalizeString(input.patch.name))
+  if (input.patch.planTier !== undefined)
+    addSet('plan_tier', input.patch.planTier)
   if (input.patch.basePriceCents !== undefined)
     addSet('base_price_cents', Math.max(0, Number(input.patch.basePriceCents || 0)))
   if (input.patch.includedSeats !== undefined)
@@ -4373,6 +4492,20 @@ export async function patchBillingPlan(
     addSet('extra_seat_price_cents', Math.max(0, Number(input.patch.extraSeatPriceCents || 0)))
   if (input.patch.includedAiQuota !== undefined)
     addSet('included_ai_quota', Math.max(0, Number(input.patch.includedAiQuota || 0)))
+  if (input.patch.includedProjects !== undefined)
+    addSet('included_projects', Math.max(0, Number(input.patch.includedProjects || 0)))
+  if (input.patch.projectsUnlimited !== undefined)
+    addSet('projects_unlimited', input.patch.projectsUnlimited)
+  if (input.patch.extraProjectSlotPriceCents !== undefined)
+    addSet('extra_project_slot_price_cents', Math.max(0, Number(input.patch.extraProjectSlotPriceCents || 0)))
+  if (input.patch.defaultProjectSeatLimit !== undefined)
+    addSet('default_project_seat_limit', Math.max(1, Number(input.patch.defaultProjectSeatLimit || 1)))
+  if (input.patch.projectSeatPriceCents !== undefined)
+    addSet('project_seat_price_cents', Math.max(0, Number(input.patch.projectSeatPriceCents || 0)))
+  if (input.patch.minChargedProjectSeats !== undefined)
+    addSet('min_charged_project_seats', Math.max(0, Number(input.patch.minChargedProjectSeats || 0)))
+  if (input.patch.chargeAllProjectSeats !== undefined)
+    addSet('charge_all_project_seats', input.patch.chargeAllProjectSeats)
   if (input.patch.isActive !== undefined)
     addSet('is_active', input.patch.isActive)
 
@@ -4393,10 +4526,18 @@ export async function patchBillingPlan(
       id,
       code,
       name,
+      plan_tier,
       base_price_cents,
       included_seats,
       extra_seat_price_cents,
       included_ai_quota,
+      included_projects,
+      projects_unlimited,
+      extra_project_slot_price_cents,
+      default_project_seat_limit,
+      project_seat_price_cents,
+      min_charged_project_seats,
+      charge_all_project_seats,
       is_active,
       created_at::TEXT,
       updated_at::TEXT
@@ -4413,11 +4554,31 @@ export async function patchBillingPlan(
 async function resolveWorkspacePlan(
   db: Queryable,
   workspaceId: string,
-): Promise<BillingPlan | null> {
+): Promise<{ plan: BillingPlan | null, workspaceType: 'personal' | 'team' | null }> {
+  const workspaceResult = await db.query<{ type: 'personal' | 'team' }>(
+    `SELECT type
+     FROM workspaces
+     WHERE id = $1
+     LIMIT 1`,
+    [workspaceId],
+  )
+
+  const workspaceType = workspaceResult.rows[0]?.type || null
+  if (!workspaceType)
+    return { plan: null, workspaceType: null }
+
   const existing = await db.query<{
     plan_id: string | null
+    billing_cycle: string
+    extra_project_slots: number
   }>(
-    'SELECT plan_id FROM workspace_billing WHERE workspace_id = $1 LIMIT 1',
+    `SELECT
+      plan_id,
+      billing_cycle,
+      extra_project_slots
+     FROM workspace_billing
+     WHERE workspace_id = $1
+     LIMIT 1`,
     [workspaceId],
   )
 
@@ -4429,10 +4590,18 @@ async function resolveWorkspacePlan(
         id,
         code,
         name,
+        plan_tier,
         base_price_cents,
         included_seats,
         extra_seat_price_cents,
         included_ai_quota,
+        included_projects,
+        projects_unlimited,
+        extra_project_slot_price_cents,
+        default_project_seat_limit,
+        project_seat_price_cents,
+        min_charged_project_seats,
+        charge_all_project_seats,
         is_active,
         created_at::TEXT,
         updated_at::TEXT
@@ -4443,50 +4612,154 @@ async function resolveWorkspacePlan(
     )
 
     const row = result.rows[0]
-    return row ? mapBillingPlan(row) : null
+    if (row)
+      return { plan: mapBillingPlan(row), workspaceType }
   }
 
+  const preferredPlanTier = workspaceType === 'personal' ? 'personal_team' : 'business_team'
   const firstActive = await db.query<BillingPlanRow>(
     `SELECT
       id,
       code,
       name,
+      plan_tier,
       base_price_cents,
       included_seats,
       extra_seat_price_cents,
       included_ai_quota,
+      included_projects,
+      projects_unlimited,
+      extra_project_slot_price_cents,
+      default_project_seat_limit,
+      project_seat_price_cents,
+      min_charged_project_seats,
+      charge_all_project_seats,
       is_active,
       created_at::TEXT,
       updated_at::TEXT
      FROM billing_plans
      WHERE is_active = TRUE
+       AND plan_tier = $1
      ORDER BY created_at ASC
      LIMIT 1`,
+    [preferredPlanTier],
   )
 
-  const plan = firstActive.rows[0] ? mapBillingPlan(firstActive.rows[0]) : null
+  const fallbackActive = firstActive.rows[0]
+    ? null
+    : await db.query<BillingPlanRow>(
+        `SELECT
+          id,
+          code,
+          name,
+          plan_tier,
+          base_price_cents,
+          included_seats,
+          extra_seat_price_cents,
+          included_ai_quota,
+          included_projects,
+          projects_unlimited,
+          extra_project_slot_price_cents,
+          default_project_seat_limit,
+          project_seat_price_cents,
+          min_charged_project_seats,
+          charge_all_project_seats,
+          is_active,
+          created_at::TEXT,
+          updated_at::TEXT
+         FROM billing_plans
+         WHERE is_active = TRUE
+         ORDER BY created_at ASC
+         LIMIT 1`,
+      )
+
+  const planRow = firstActive.rows[0] || fallbackActive?.rows[0]
+  const plan = planRow ? mapBillingPlan(planRow) : null
 
   if (plan) {
+    const billingCycle = existing.rows[0]?.billing_cycle || 'monthly'
+    const extraProjectSlots = Math.max(0, Number(existing.rows[0]?.extra_project_slots || 0))
     await db.query(
       `INSERT INTO workspace_billing (
         workspace_id,
         plan_id,
         billing_cycle,
+        extra_project_slots,
         estimated_amount_cents,
         snapshot_seat_used,
         snapshot_seat_limit,
         snapshot_ai_quota_total,
         updated_at
       ) VALUES (
-        $1, $2, 'monthly', 0, 0, 0, 0, NOW()
+        $1, $2, $3, $4, 0, 0, 0, 0, NOW()
       )
       ON CONFLICT (workspace_id)
-      DO UPDATE SET plan_id = EXCLUDED.plan_id, updated_at = EXCLUDED.updated_at`,
-      [workspaceId, plan.id],
+      DO UPDATE SET
+        plan_id = EXCLUDED.plan_id,
+        billing_cycle = EXCLUDED.billing_cycle,
+        extra_project_slots = EXCLUDED.extra_project_slots,
+        updated_at = EXCLUDED.updated_at`,
+      [workspaceId, plan.id, billingCycle, extraProjectSlots],
     )
   }
 
-  return plan
+  return {
+    plan,
+    workspaceType,
+  }
+}
+
+async function ensureWorkspaceProjectSeatQuotas(
+  db: Queryable,
+  workspaceId: string,
+  defaultProjectSeatLimit: number,
+): Promise<void> {
+  const normalizedDefaultSeatLimit = Math.max(1, Math.trunc(Number(defaultProjectSeatLimit || 1)))
+  await db.query(
+    `INSERT INTO project_seat_quotas (
+      project_id,
+      workspace_id,
+      seat_limit,
+      seat_used,
+      updated_at
+    )
+    SELECT
+      p.id,
+      p.workspace_id,
+      $2,
+      COALESCE(member_count.used, 0),
+      NOW()
+    FROM projects p
+    LEFT JOIN project_seat_quotas psq ON psq.project_id = p.id
+    LEFT JOIN LATERAL (
+      SELECT COUNT(DISTINCT pm.user_id)::INTEGER AS used
+      FROM project_members pm
+      WHERE pm.project_id = p.id
+    ) member_count ON TRUE
+    WHERE p.workspace_id = $1
+      AND psq.project_id IS NULL
+    ON CONFLICT (project_id)
+    DO UPDATE SET
+      workspace_id = EXCLUDED.workspace_id,
+      seat_used = EXCLUDED.seat_used,
+      updated_at = EXCLUDED.updated_at`,
+    [workspaceId, normalizedDefaultSeatLimit],
+  )
+
+  await db.query(
+    `UPDATE project_seat_quotas psq
+     SET seat_used = member_count.used,
+         updated_at = NOW()
+     FROM (
+       SELECT p.id AS project_id, COALESCE(COUNT(DISTINCT pm.user_id), 0)::INTEGER AS used
+       FROM projects p
+       LEFT JOIN project_members pm ON pm.project_id = p.id
+       WHERE p.workspace_id = $1
+       GROUP BY p.id
+     ) member_count
+     WHERE psq.project_id = member_count.project_id`,
+    [workspaceId],
+  )
 }
 
 export async function estimateWorkspaceBilling(
@@ -4497,31 +4770,112 @@ export async function estimateWorkspaceBilling(
 ): Promise<WorkspaceBillingEstimate | null> {
   await ensureDefaultBillingPlans(db)
 
-  const quotaResult = await db.query<{
-    seat_used: number
+  const resolved = await resolveWorkspacePlan(db, input.workspaceId)
+  const plan = resolved.plan
+  const workspaceType = resolved.workspaceType
+  if (!workspaceType)
+    return null
+
+  const workspaceMemberStats = await db.query<{
+    seat_used: string
+  }>(
+    `SELECT COUNT(DISTINCT wm.user_id)::TEXT AS seat_used
+     FROM workspace_members wm
+     WHERE wm.workspace_id = $1
+       AND wm.is_active = TRUE`,
+    [input.workspaceId],
+  )
+
+  const teamQuotaResult = await db.query<{
     seat_limit: number
     ai_quota_total: number
   }>(
-    `SELECT seat_used, seat_limit, ai_quota_total
+    `SELECT
+      seat_limit,
+      ai_quota_total
      FROM team_quotas
      WHERE workspace_id = $1
      LIMIT 1`,
     [input.workspaceId],
   )
 
-  const quota = quotaResult.rows[0]
-  if (!quota)
-    return null
+  const seatUsed = Math.max(0, Number(workspaceMemberStats.rows[0]?.seat_used || '0'))
+  const planTier = plan?.planTier || (workspaceType === 'personal' ? 'personal_team' : 'business_team')
+  const includedProjects = Math.max(0, Number(plan?.includedProjects || (workspaceType === 'personal' ? 2 : 0)))
+  const projectsUnlimited = plan?.projectsUnlimited ?? (workspaceType !== 'personal')
+  const extraProjectSlotPriceCents = Math.max(0, Number(plan?.extraProjectSlotPriceCents || 0))
+  const defaultProjectSeatLimit = Math.max(1, Number(plan?.defaultProjectSeatLimit || 5))
+  const projectSeatPriceCents = Math.max(0, Number(plan?.projectSeatPriceCents || 0))
+  const minChargedProjectSeats = Math.max(0, Number(plan?.minChargedProjectSeats || 0))
+  const chargeAllProjectSeats = Boolean(plan?.chargeAllProjectSeats)
 
-  const plan = await resolveWorkspacePlan(db, input.workspaceId)
+  await ensureWorkspaceProjectSeatQuotas(db, input.workspaceId, defaultProjectSeatLimit)
 
-  const seatUsed = Number(quota.seat_used || 0)
+  const projectCountResult = await db.query<{ count: string }>(
+    `SELECT COUNT(*)::TEXT AS count
+     FROM projects
+     WHERE workspace_id = $1`,
+    [input.workspaceId],
+  )
+  const projectCount = Math.max(0, Number(projectCountResult.rows[0]?.count || '0'))
+
+  const projectSeatRows = await db.query<{
+    seat_limit: number
+    seat_used: number
+  }>(
+    `SELECT seat_limit, seat_used
+     FROM project_seat_quotas
+     WHERE workspace_id = $1`,
+    [input.workspaceId],
+  )
+
+  const projectSeatLimitTotal = projectSeatRows.rows.reduce((sum, row) => {
+    return sum + Math.max(1, Number(row.seat_limit || 1))
+  }, 0)
+  const projectSeatUsedTotal = projectSeatRows.rows.reduce((sum, row) => {
+    return sum + Math.max(0, Number(row.seat_used || 0))
+  }, 0)
+
+  const chargedProjectSeatsTotal = projectSeatRows.rows.reduce((sum, row) => {
+    const seatUsedForProject = Math.max(0, Number(row.seat_used || 0))
+    if (!chargeAllProjectSeats)
+      return sum + seatUsedForProject
+    return sum + Math.max(seatUsedForProject, minChargedProjectSeats)
+  }, 0)
+
+  const billingResult = await db.query<{
+    billing_cycle: string
+    extra_project_slots: number
+    updated_at: string
+  }>(
+    `SELECT
+      billing_cycle,
+      extra_project_slots,
+      updated_at::TEXT
+     FROM workspace_billing
+     WHERE workspace_id = $1
+     LIMIT 1`,
+    [input.workspaceId],
+  )
+
+  const billingCycle = (billingResult.rows[0]?.billing_cycle || 'monthly') as 'monthly' | 'quarterly' | 'yearly'
+  const extraProjectSlots = Math.max(0, Number(billingResult.rows[0]?.extra_project_slots || 0))
+  const extraProjects = projectsUnlimited ? 0 : Math.max(0, projectCount - includedProjects - extraProjectSlots)
+  const projectExtraAmountCents = extraProjects * extraProjectSlotPriceCents
+  const projectSeatAmountCents = chargedProjectSeatsTotal * projectSeatPriceCents
+
   const includedSeats = Number(plan?.includedSeats || 0)
   const extraSeats = Math.max(0, seatUsed - includedSeats)
   const basePriceCents = Number(plan?.basePriceCents || 0)
   const extraSeatPriceCents = Number(plan?.extraSeatPriceCents || 0)
-  const estimatedAmountCents = basePriceCents + extraSeats * extraSeatPriceCents
-  const aiQuotaTotal = Number(quota.ai_quota_total || 0)
+  const estimatedAmountCents = basePriceCents
+    + extraSeats * extraSeatPriceCents
+    + projectExtraAmountCents
+    + projectSeatAmountCents
+  const aiQuotaTotal = Math.max(
+    Number(teamQuotaResult.rows[0]?.ai_quota_total || 0),
+    Number(plan?.includedAiQuota || 0),
+  )
   const includedAiQuota = Number(plan?.includedAiQuota || 0)
 
   await db.query(
@@ -4529,6 +4883,7 @@ export async function estimateWorkspaceBilling(
       workspace_id,
       plan_id,
       billing_cycle,
+      extra_project_slots,
       estimated_amount_cents,
       snapshot_seat_used,
       snapshot_seat_limit,
@@ -4537,16 +4892,19 @@ export async function estimateWorkspaceBilling(
     ) VALUES (
       $1,
       $2,
-      'monthly',
       $3,
       $4,
       $5,
       $6,
+      $7,
+      $8,
       NOW()
     )
     ON CONFLICT (workspace_id)
     DO UPDATE SET
       plan_id = EXCLUDED.plan_id,
+      billing_cycle = EXCLUDED.billing_cycle,
+      extra_project_slots = EXCLUDED.extra_project_slots,
       estimated_amount_cents = EXCLUDED.estimated_amount_cents,
       snapshot_seat_used = EXCLUDED.snapshot_seat_used,
       snapshot_seat_limit = EXCLUDED.snapshot_seat_limit,
@@ -4555,34 +4913,41 @@ export async function estimateWorkspaceBilling(
     [
       input.workspaceId,
       plan?.id || null,
+      billingCycle,
+      extraProjectSlots,
       estimatedAmountCents,
       seatUsed,
-      Number(quota.seat_limit || 0),
+      Math.max(Number(teamQuotaResult.rows[0]?.seat_limit || 0), seatUsed),
       aiQuotaTotal,
     ],
   )
 
-  const billingResult = await db.query<{
-    billing_cycle: string
-    updated_at: string
-  }>(
-    `SELECT billing_cycle, updated_at::TEXT
-     FROM workspace_billing
-     WHERE workspace_id = $1
-     LIMIT 1`,
-    [input.workspaceId],
-  )
-
   return {
+    teamId: input.workspaceId,
     workspaceId: input.workspaceId,
     planId: plan?.id || null,
     planCode: plan?.code || null,
-    billingCycle: (billingResult.rows[0]?.billing_cycle || 'monthly') as 'monthly',
+    planTier,
+    billingCycle,
     seatUsed,
     includedSeats,
     extraSeats,
     basePriceCents,
     extraSeatPriceCents,
+    projectCount,
+    includedProjects,
+    projectsUnlimited,
+    extraProjectSlots,
+    extraProjects,
+    projectSeatLimitTotal,
+    projectSeatUsedTotal,
+    chargedProjectSeatsTotal,
+    defaultProjectSeatLimit,
+    projectSeatPriceCents,
+    minChargedProjectSeats,
+    chargeAllProjectSeats,
+    projectExtraAmountCents,
+    projectSeatAmountCents,
     estimatedAmountCents,
     estimatedAmountYuan: Number((estimatedAmountCents / 100).toFixed(2)),
     aiQuotaTotal,
@@ -4617,6 +4982,62 @@ export async function setWorkspaceBillingPlan(
       updated_at = EXCLUDED.updated_at`,
     [input.workspaceId, input.planId, input.billingCycle || 'monthly'],
   )
+}
+
+export async function patchWorkspaceBillingAddons(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    extraProjectSlots: number
+  },
+): Promise<WorkspaceBillingEstimate | null> {
+  await ensureDefaultBillingPlans(db)
+
+  const resolved = await resolveWorkspacePlan(db, input.workspaceId)
+  if (!resolved.workspaceType)
+    return null
+
+  const existing = await db.query<{
+    plan_id: string | null
+    billing_cycle: 'monthly' | 'quarterly' | 'yearly' | null
+  }>(
+    `SELECT
+      plan_id,
+      billing_cycle
+     FROM workspace_billing
+     WHERE workspace_id = $1
+     LIMIT 1`,
+    [input.workspaceId],
+  )
+
+  const planId = existing.rows[0]?.plan_id || resolved.plan?.id || null
+  const billingCycle = existing.rows[0]?.billing_cycle || 'monthly'
+  const extraProjectSlots = Math.max(0, Math.trunc(Number(input.extraProjectSlots || 0)))
+
+  await db.query(
+    `INSERT INTO workspace_billing (
+      workspace_id,
+      plan_id,
+      billing_cycle,
+      extra_project_slots,
+      estimated_amount_cents,
+      snapshot_seat_used,
+      snapshot_seat_limit,
+      snapshot_ai_quota_total,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, 0, 0, 0, 0, NOW()
+    )
+    ON CONFLICT (workspace_id)
+    DO UPDATE SET
+      plan_id = EXCLUDED.plan_id,
+      billing_cycle = EXCLUDED.billing_cycle,
+      extra_project_slots = EXCLUDED.extra_project_slots,
+      updated_at = EXCLUDED.updated_at`,
+    [input.workspaceId, planId, billingCycle, extraProjectSlots],
+  )
+
+  return estimateWorkspaceBilling(db, { workspaceId: input.workspaceId })
 }
 
 export async function getPublishedRubricByTrack(

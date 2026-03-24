@@ -7,6 +7,7 @@ import { readRuntimeSettings } from '~~/server/utils/env'
 import { batchCreateProjects, hasWorkspaceRoles } from '~~/server/utils/platform-store'
 
 interface BatchCreateBody {
+  teamId?: string
   workspaceId?: string
   projects?: Array<ProjectPayload & { source?: 'form' | 'chat' }>
 }
@@ -35,12 +36,12 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const body = await readBody<BatchCreateBody>(event)
-  const workspaceId = String(body?.workspaceId || '').trim()
+  const workspaceId = String(body?.teamId || body?.workspaceId || '').trim()
   const projects = Array.isArray(body?.projects) ? body.projects : []
 
   if (!workspaceId || projects.length === 0) {
     setResponseStatus(event, 400)
-    return fail('workspaceId 与 projects 不能为空。', {
+    return fail('teamId 与 projects 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -63,7 +64,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const created = await withTransaction(event, async (db) => {
-      const canBatchCreate = await hasWorkspaceRoles(db, user, workspaceId, ['team_owner', 'team_admin', 'school_admin'])
+      const canBatchCreate = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin', 'manager'])
       if (!canBatchCreate)
         throw new Error('FORBIDDEN')
 
@@ -79,7 +80,7 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
-    if (error instanceof Error && error.message === 'FORBIDDEN') {
+    if (error instanceof Error && (error.message === 'FORBIDDEN' || error.message === 'WORKSPACE_MEMBER_REQUIRED')) {
       setResponseStatus(event, 403)
       return fail('当前用户无权批量创建项目。', {
         startedAt,
@@ -88,6 +89,16 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40341)
+    }
+    if (error instanceof Error && error.message === 'WORKSPACE_PROJECT_LIMIT_REACHED') {
+      setResponseStatus(event, 409)
+      return fail('当前空间项目数量已达上限，批量创建被中断。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40941)
     }
     throw error
   }

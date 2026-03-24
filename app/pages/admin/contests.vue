@@ -66,14 +66,9 @@ interface ImportCommitResult {
 }
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
+const authApiFetch = useAuthApiFetch()
 const route = useRoute()
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 function splitOrganizerText(value?: string): string[] {
   if (!value)
@@ -201,7 +196,7 @@ watch(importCsvText, () => {
 
 async function loadPermissions() {
   permissionErrorText.value = ''
-  const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+  const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
   permissions.value = response.data.user.platformPermissions || []
   isPlatformAdmin.value = Boolean(response.data.user.isPlatformAdmin)
 }

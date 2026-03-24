@@ -5,7 +5,8 @@ export type ProjectSource = 'chat' | 'form'
 export type ProjectStatus = 'draft' | 'in_progress' | 'completed'
 
 export type WorkspaceType = 'personal' | 'team'
-export type WorkspaceMemberRole = 'team_owner' | 'team_admin' | 'school_admin' | 'college_admin' | 'advisor' | 'member'
+export type TeamType = WorkspaceType
+export type WorkspaceMemberRole = 'owner' | 'admin' | 'manager' | 'member'
 export type ProjectMemberRole = 'owner' | 'manager' | 'editor' | 'viewer'
 export type GroupPermission = string
 
@@ -336,30 +337,27 @@ export interface DefenseSession {
   createdAt: string
 }
 
-export interface SchoolCollege {
-  code: string
-  name: string
-  parentCode?: string
-}
-
-export interface SchoolProfile {
-  schoolId: string
-  schoolName: string
-  colleges?: SchoolCollege[]
+export interface TeamProfile {
+  orgName?: string
+  orgCode?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface Workspace {
   id: string
-  type: WorkspaceType
+  type: TeamType
   name: string
   ownerUserId: string
-  schoolProfile: SchoolProfile | null
+  teamProfile: TeamProfile | null
   roles: WorkspaceMemberRole[]
   createdAt: string
   updatedAt: string
 }
 
+export type Team = Workspace
+
 export interface TeamQuota {
+  teamId: string
   workspaceId: string
   seatLimit: number
   seatUsed: number
@@ -371,6 +369,11 @@ export interface TeamQuota {
 
 export interface WorkspaceWithQuota {
   workspace: Workspace
+  quota: TeamQuota | null
+}
+
+export interface TeamWithQuota {
+  team: Team
   quota: TeamQuota | null
 }
 
@@ -395,6 +398,7 @@ export interface AuthSession {
 export interface AuthLoginResult {
   user: AuthUser
   session: AuthSession
+  teams: TeamWithQuota[]
   workspaces: WorkspaceWithQuota[]
   onboarding: {
     needCreateTeam: boolean
@@ -403,6 +407,7 @@ export interface AuthLoginResult {
 
 export interface AuthMeResult {
   user: AuthUser
+  teams: TeamWithQuota[]
   workspaces: WorkspaceWithQuota[]
   onboarding: {
     needCreateTeam: boolean
@@ -411,10 +416,10 @@ export interface AuthMeResult {
 
 export interface Invitation {
   id: string
+  teamId: string
   workspaceId: string
   role: WorkspaceMemberRole
   inviteeUsername: string | null
-  collegeCodes: string[]
   expiresAt: string
   acceptedAt: string | null
   createdAt: string
@@ -422,6 +427,27 @@ export interface Invitation {
 
 export interface InvitationWithToken extends Invitation {
   token: string
+}
+
+export interface WorkspaceMemberSummary {
+  userId: string
+  username: string
+  roles: WorkspaceMemberRole[]
+  joinedAt: string
+  updatedAt: string
+}
+
+export interface WorkspaceInvitationSummary extends Invitation {
+  invitedByUserId: string
+  invitedByUsername: string
+  isExpired: boolean
+}
+
+export interface WorkspaceMemberManagementSnapshot {
+  teamId: string
+  workspaceId: string
+  members: WorkspaceMemberSummary[]
+  invitations: WorkspaceInvitationSummary[]
 }
 
 export interface ProjectCollegeBinding {
@@ -450,6 +476,7 @@ export interface ProjectPayload {
 
 export interface Project extends ProjectPayload {
   id: string
+  teamId: string
   workspaceId: string
   ownerUserId: string
   creatorUserId: string
@@ -460,6 +487,25 @@ export interface Project extends ProjectPayload {
   advisorBindings: ProjectAdvisorBinding[]
   createdAt: string
   updatedAt: string
+}
+
+export interface ProjectMemberSummary {
+  projectId: string
+  userId: string
+  username: string
+  role: ProjectMemberRole
+  addedByUserId: string
+  addedByUsername: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectMemberManagementSnapshot {
+  projectId: string
+  teamId: string
+  workspaceId: string
+  members: ProjectMemberSummary[]
+  seatQuota: ProjectSeatQuota | null
 }
 
 export interface ProjectContestBinding {
@@ -615,6 +661,7 @@ export interface AiAssistantOptions {
 }
 
 export interface AiChatSession {
+  teamId?: string
   id: string
   workspaceId: string
   createdByUserId: string
@@ -629,6 +676,7 @@ export interface AiChatSession {
 }
 
 export interface AiChatMessage {
+  teamId?: string
   id: string
   workspaceId: string
   sessionId: string
@@ -643,6 +691,7 @@ export interface AiChatMessage {
 }
 
 export interface AiContestFilterRequest {
+  teamId?: string
   workspaceId?: string
   query: string
   major?: string
@@ -659,11 +708,13 @@ export interface AiContestFilterResult {
 }
 
 export interface AiProjectChatRequest {
+  teamId?: string
   workspaceId?: string
   sessionId?: string
   messages: ChatMessage[]
   aiOptions?: Partial<AiAssistantOptions>
   context: {
+    teamId?: string
     workspaceId?: string
     projectId?: string
     contestId?: string
@@ -682,12 +733,14 @@ export interface AiProjectChatResult {
 export type WorkspaceAiMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'defense'
 
 export interface AiTopicProposalRequest {
+  teamId?: string
   workspaceId?: string
   sessionId?: string
   messages: ChatMessage[]
   topK?: number
   aiOptions?: Partial<AiAssistantOptions>
   context: {
+    teamId?: string
     workspaceId?: string
     projectId?: string
     contestId?: string
@@ -730,11 +783,13 @@ export interface AiDefenseScorecard {
 }
 
 export interface AiDefenseRequest {
+  teamId?: string
   workspaceId?: string
   sessionId?: string
   messages: ChatMessage[]
   aiOptions?: Partial<AiAssistantOptions>
   context: {
+    teamId?: string
     workspaceId?: string
     projectId?: string
     contestId?: string
@@ -838,12 +893,14 @@ export interface AiWorkspaceStreamEvent {
 }
 
 export interface AiWorkspaceRequest {
+  teamId?: string
   workspaceId?: string
   projectId?: string
   sessionId?: string
   mode?: WorkspaceAiMode
   messages: ChatMessage[]
   context?: {
+    teamId?: string
     workspaceId?: string
     projectId?: string
     contestId?: string
@@ -952,25 +1009,58 @@ export interface BillingPlan {
   id: string
   code: string
   name: string
+  planTier: 'personal_team' | 'business_team'
   basePriceCents: number
   includedSeats: number
   extraSeatPriceCents: number
   includedAiQuota: number
+  includedProjects: number
+  projectsUnlimited: boolean
+  extraProjectSlotPriceCents: number
+  defaultProjectSeatLimit: number
+  projectSeatPriceCents: number
+  minChargedProjectSeats: number
+  chargeAllProjectSeats: boolean
   isActive: boolean
   createdAt: string
   updatedAt: string
 }
 
+export interface ProjectSeatQuota {
+  projectId: string
+  teamId: string
+  workspaceId: string
+  seatLimit: number
+  seatUsed: number
+  updatedAt: string
+}
+
 export interface WorkspaceBillingEstimate {
+  teamId: string
   workspaceId: string
   planId: string | null
   planCode: string | null
+  planTier: 'personal_team' | 'business_team' | null
   billingCycle: BillingCycle
   seatUsed: number
   includedSeats: number
   extraSeats: number
   basePriceCents: number
   extraSeatPriceCents: number
+  projectCount: number
+  includedProjects: number
+  projectsUnlimited: boolean
+  extraProjectSlots: number
+  extraProjects: number
+  projectSeatLimitTotal: number
+  projectSeatUsedTotal: number
+  chargedProjectSeatsTotal: number
+  defaultProjectSeatLimit: number
+  projectSeatPriceCents: number
+  minChargedProjectSeats: number
+  chargeAllProjectSeats: boolean
+  projectExtraAmountCents: number
+  projectSeatAmountCents: number
   estimatedAmountCents: number
   estimatedAmountYuan: number
   aiQuotaTotal: number

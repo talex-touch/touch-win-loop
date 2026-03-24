@@ -319,6 +319,7 @@ async function buildAssistantReplyWithDeepAgent(input: {
   resolvedTaskType: AdminAgentTaskType
   contest: Contest
   artifacts: AdminAgentArtifact[]
+  channelPrompt?: string
   hooks: AdminAgentHooks
 }): Promise<{ text: string, fallbackUsed: boolean, attempts: number }> {
   const fallback = summarizeArtifacts(input.resolvedTaskType, input.artifacts, Boolean(input.runtime.adminAi.tavilyApiKey))
@@ -392,9 +393,10 @@ async function buildAssistantReplyWithDeepAgent(input: {
       tools: [getArtifactContext, webSearch, fetchWebPage],
       systemPrompt: [
         '你是 WinLoop 平台管理 AI 助手。',
+        toText(input.channelPrompt) ? `[场景提示词]\n${toText(input.channelPrompt)}` : '',
         '你需要基于结构化产物给出明确、可执行、模块可落地的建议。',
         '禁止输出 SQL 或直接写库建议。必须强调“管理员确认后手动保存”。',
-      ].join('\n'),
+      ].filter(Boolean).join('\n'),
       subagents: [
         {
           name: 'publish-governor',
@@ -444,8 +446,16 @@ async function buildAssistantReplyWithDeepAgent(input: {
   }
 }
 
-export async function executeAdminAgent(event: Parameters<typeof withClient>[0], request: AdminAgentRunRequest, hooks: AdminAgentHooks = {}): Promise<AdminAgentExecutionResult> {
-  const { runtime } = await readEffectiveRuntimeSettings(event)
+export async function executeAdminAgent(
+  event: Parameters<typeof withClient>[0],
+  request: AdminAgentRunRequest,
+  hooks: AdminAgentHooks = {},
+  options: {
+    runtime?: EffectiveRuntime
+    channelPrompt?: string
+  } = {},
+): Promise<AdminAgentExecutionResult> {
+  const runtime = options.runtime || (await readEffectiveRuntimeSettings(event)).runtime
 
   await hooks.onProgress?.('加载赛事上下文...')
 
@@ -551,6 +561,7 @@ export async function executeAdminAgent(event: Parameters<typeof withClient>[0],
     resolvedTaskType,
     contest,
     artifacts,
+    channelPrompt: options.channelPrompt,
     hooks,
   })
 

@@ -1,7 +1,8 @@
-import type { AiTopicProposalRequest, AiTopicProposalResult, Resource } from '~~/shared/types/domain'
+import type { AiTopicProposalRequest, AiTopicProposalResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { searchWithTavily } from '~~/server/services/admin-ai/web'
 import { runTopicProposalFallback } from '~~/server/services/ai/fallback'
+import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { runTopicProposalChain } from '~~/server/services/ai/topic-proposal-chain'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -13,13 +14,12 @@ import {
 } from '~~/server/utils/chat-store'
 import {
   getContestDetail,
-  listContestResourcesByContestId,
   recordContestAuditLog,
   resolveAiPromptText,
 } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { listSucceededResourceDocumentsByContest } from '~~/server/utils/document-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { runWithRetry } from '~~/server/utils/retry'
@@ -47,6 +47,7 @@ function toText(value: unknown): string {
 
 function normalizeRequest(body: Partial<AiTopicProposalRequest> | null | undefined, workspaceId: string): AiTopicProposalRequest {
   return {
+    teamId: workspaceId,
     workspaceId,
     sessionId: toText(body?.sessionId),
     messages: Array.isArray(body?.messages) ? body!.messages! : [],
@@ -57,7 +58,9 @@ function normalizeRequest(body: Partial<AiTopicProposalRequest> | null | undefin
       temperature: Number.isFinite(Number(body?.aiOptions?.temperature)) ? Number(body?.aiOptions?.temperature) : undefined,
     },
     context: {
+      teamId: workspaceId,
       workspaceId,
+      projectId: toText(body?.context?.projectId),
       contestId: toText(body?.context?.contestId),
       trackId: toText(body?.context?.trackId),
       major: toText(body?.context?.major),
@@ -65,48 +68,22 @@ function normalizeRequest(body: Partial<AiTopicProposalRequest> | null | undefin
   }
 }
 
-function summarizeResources(resources: Resource[], limit = 8): string {
-  if (resources.length === 0)
-    return '暂无站内资料。'
-
-  return resources.slice(0, limit).map((item, index) => {
-    const summary = toText(item.summary || item.content).slice(0, 160)
-    return `${index + 1}. [${item.category}] ${item.title}（${item.year}）\n${summary}`
-  }).join('\n')
-}
-
-function summarizeDocumentAnalyses(input: Awaited<ReturnType<typeof listSucceededResourceDocumentsByContest>>): string {
-  if (input.length === 0)
-    return '暂无已解析文档。'
-
-  const lines: string[] = []
-  for (const document of input) {
-    const analysis = document.annotationJson || document.analysisJson
-    if (!analysis?.pages?.length)
-      continue
-    const firstPage = analysis.pages[0]
-    const sampleBlocks = (firstPage?.blocks || []).slice(0, 4).map(item => item.text).filter(Boolean)
-    if (sampleBlocks.length === 0)
-      continue
-    lines.push(`- ${document.fileName}: ${sampleBlocks.join(' | ').slice(0, 280)}`)
-  }
-  return lines.length > 0 ? lines.join('\n') : '暂无可用文档文本。'
-}
-
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, 'topic_proposal')
+  const channelAiConfig = channelRuntime.ai
   const { user } = await requireAuth(event)
   const rawBody = await readBody<Partial<AiTopicProposalRequest>>(event).catch(() => ({} as Partial<AiTopicProposalRequest>))
-  const workspaceId = toText(rawBody?.workspaceId || rawBody?.context?.workspaceId)
+  const workspaceId = toText(rawBody?.teamId || rawBody?.workspaceId || rawBody?.context?.teamId || rawBody?.context?.workspaceId)
   const request = normalizeRequest(rawBody, workspaceId)
 
   if (!workspaceId) {
     setResponseStatus(event, 400)
-    return fail('调用选题助手时必须传 workspaceId。', {
+    return fail('调用选题助手时必须传 teamId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40073)
@@ -117,40 +94,62 @@ export default defineEventHandler(async (event) => {
     || await checkPlatformPermission(event, user, 'contest.read_internal'),
   )
 
-  const contextBundle = request.context.contestId
-    ? await withClient(event, async (db) => {
-        const detail = await getContestDetail(db, {
-          contestId: request.context.contestId || '',
-          includeInternal,
-        })
-        const injectedPrompt = await resolveAiPromptText(db, {
-          contestId: request.context.contestId,
-          trackId: request.context.trackId,
-          target: 'topic_proposal',
-        })
+  let contextBundle: {
+    detail: Awaited<ReturnType<typeof getContestDetail>> | null
+    injectedPrompt: string
+    localContext: string
+  }
 
-        const resources = await listContestResourcesByContestId(db, {
-          contestId: request.context.contestId || '',
-          includeInternal,
-        })
-        const documents = await listSucceededResourceDocumentsByContest(db, {
-          contestId: request.context.contestId || '',
-          limit: 6,
-        })
+  try {
+    contextBundle = await withClient(event, async (db) => {
+      const detail = request.context.contestId
+        ? await getContestDetail(db, {
+            contestId: request.context.contestId || '',
+            includeInternal,
+          })
+        : null
+      const injectedPrompt = request.context.contestId
+        ? await resolveAiPromptText(db, {
+            contestId: request.context.contestId,
+            trackId: request.context.trackId,
+            target: 'topic_proposal',
+          })
+        : ''
 
-        return {
-          detail,
-          injectedPrompt,
-          resources,
-          documents,
-        }
+      const resources = await loadVisibleProjectResourcesForAi(db, user, {
+        workspaceId,
+        projectId: request.context.projectId,
       })
-    : {
-        detail: null,
-        injectedPrompt: '',
-        resources: [] as Resource[],
-        documents: [],
+
+      const contestName = detail?.contest?.name || ''
+      const trackName = detail?.contest?.tracks.find(item => item.id === request.context.trackId)?.name || ''
+      const localContext = buildProjectResourceLocalContext(resources, {
+        contestName,
+        trackName,
+        major: request.context.major,
+        limit: 12,
+      })
+
+      return {
+        detail,
+        injectedPrompt,
+        localContext,
       }
+    })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('project not found', {
+        startedAt,
+        provider: channelAiConfig.provider,
+        model: channelAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40477)
+    }
+    throw error
+  }
 
   const contest = contextBundle.detail?.contest
   const track = contest?.tracks.find(item => item.id === request.context.trackId)
@@ -160,10 +159,7 @@ export default defineEventHandler(async (event) => {
     ?.content
     ?.trim() || ''
 
-  const localContext = [
-    `竞赛资料摘要：\n${summarizeResources(contextBundle.resources)}`,
-    `文档解析摘要：\n${summarizeDocumentAnalyses(contextBundle.documents)}`,
-  ].join('\n\n')
+  const localContext = contextBundle.localContext
 
   let webSearchEnabled = Boolean(runtime.adminAi.tavilyApiKey)
   const webReferences: AiTopicProposalResult['references'] = []
@@ -241,8 +237,8 @@ export default defineEventHandler(async (event) => {
   if (!activeSession) {
     return fail('当前用户无权使用该空间。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40373)
@@ -251,8 +247,8 @@ export default defineEventHandler(async (event) => {
   if (activeSession === 'SESSION_NOT_FOUND') {
     return fail('会话不存在，请刷新后重试。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40473)
@@ -280,8 +276,8 @@ export default defineEventHandler(async (event) => {
   if (!quotaResult) {
     return fail('当前用户无权使用该空间。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40374)
@@ -291,19 +287,20 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 429)
     return fail('Team AI 额度不足，请扩容或等待重置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 42973)
   }
 
   const effectiveAiConfig = {
-    ...runtime.ai,
+    ...channelAiConfig,
     temperature: Number.isFinite(Number(request.aiOptions?.temperature))
       ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
-      : runtime.ai.temperature,
+      : channelAiConfig.temperature,
   }
+  const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
 
   const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
   const result = onlyFallback
@@ -313,13 +310,13 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }
     : await runWithRetry({
-        maxRetries: runtime.ai.maxRetries,
+        maxRetries: effectiveAiConfig.maxRetries,
         run: () => runTopicProposalChain({
           request,
           ai: effectiveAiConfig,
           contestName: contest?.name,
           trackName: track?.name,
-          injectedPrompt: contextBundle.injectedPrompt,
+          injectedPrompt: mergedInjectedPrompt,
           localContext,
           webContext,
         }),
@@ -334,6 +331,8 @@ export default defineEventHandler(async (event) => {
     const modeMetadata = {
       mode: 'topic_proposal',
       webSearchEnabled,
+      channelKey: channelRuntime.key,
+      providerId: channelRuntime.provider?.id || null,
     }
 
     if (latestUserMessage) {
@@ -342,8 +341,8 @@ export default defineEventHandler(async (event) => {
         sessionId: activeSession.id,
         role: 'user',
         content: latestUserMessage,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: effectiveAiConfig.provider,
+        model: effectiveAiConfig.model,
         fallbackUsed: false,
         metadata: modeMetadata,
         createdByUserId: user.id,
@@ -355,8 +354,8 @@ export default defineEventHandler(async (event) => {
       sessionId: activeSession.id,
       role: 'assistant',
       content: result.data.assistantReply,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: effectiveAiConfig.provider,
+      model: effectiveAiConfig.model,
       fallbackUsed: result.fallbackUsed,
       metadata: modeMetadata,
       createdByUserId: user.id,
@@ -377,7 +376,10 @@ export default defineEventHandler(async (event) => {
       contestId: request.context.contestId,
       payload: {
         sessionId: activeSession.id,
+        projectId: request.context.projectId,
         trackId: request.context.trackId,
+        channelKey: channelRuntime.key,
+        providerId: channelRuntime.provider?.id || null,
         fallbackUsed: result.fallbackUsed,
         attempts: result.attempts,
         webSearchEnabled,
@@ -387,8 +389,8 @@ export default defineEventHandler(async (event) => {
 
   return ok(result.data, {
     startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
+    provider: effectiveAiConfig.provider,
+    model: effectiveAiConfig.model,
     fallbackUsed: result.fallbackUsed,
     attempts: result.attempts,
   }, result.fallbackUsed ? 'fallback used' : 'ok')

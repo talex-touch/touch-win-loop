@@ -13,6 +13,9 @@ export interface PlatformAiRuntimeOverrides {
     apiKey?: string
     model?: string
     modelCatalogJson?: string
+    modelPricingJson?: string
+    providersJson?: string
+    channelsJson?: string
     temperature?: number
     topP?: number
     maxTokens?: number
@@ -26,6 +29,7 @@ export interface PlatformAiRuntimeOverrides {
     baseURL?: string
     apiKey?: string
     model?: string
+    modelPricingJson?: string
     timeoutMs?: number
     maxRetries?: number
   }
@@ -85,6 +89,12 @@ function normalizeAiSection(raw: unknown): PlatformAiRuntimeOverrides['ai'] {
     output.model = toText(source.model)
   if (hasOwn(source, 'modelCatalogJson'))
     output.modelCatalogJson = String(source.modelCatalogJson || '')
+  if (hasOwn(source, 'modelPricingJson'))
+    output.modelPricingJson = String(source.modelPricingJson || '')
+  if (hasOwn(source, 'providersJson'))
+    output.providersJson = String(source.providersJson || '')
+  if (hasOwn(source, 'channelsJson'))
+    output.channelsJson = String(source.channelsJson || '')
   if (hasOwn(source, 'temperature'))
     output.temperature = toNumber(source.temperature)
   if (hasOwn(source, 'topP'))
@@ -118,6 +128,8 @@ function normalizeDocAiSection(raw: unknown): PlatformAiRuntimeOverrides['docAi'
     output.apiKey = String(source.apiKey || '')
   if (hasOwn(source, 'model'))
     output.model = toText(source.model)
+  if (hasOwn(source, 'modelPricingJson'))
+    output.modelPricingJson = String(source.modelPricingJson || '')
   if (hasOwn(source, 'timeoutMs'))
     output.timeoutMs = toNumber(source.timeoutMs)
   if (hasOwn(source, 'maxRetries'))
@@ -235,6 +247,12 @@ export function applyPlatformAiRuntimeOverrides(
       next.ai.model = ai.model || next.ai.model
     if (ai.modelCatalogJson !== undefined)
       next.ai.modelCatalogJson = ai.modelCatalogJson
+    if (ai.modelPricingJson !== undefined)
+      next.ai.modelPricingJson = ai.modelPricingJson
+    if (ai.providersJson !== undefined)
+      next.ai.providersJson = ai.providersJson
+    if (ai.channelsJson !== undefined)
+      next.ai.channelsJson = ai.channelsJson
     if (ai.temperature !== undefined)
       next.ai.temperature = clamp(ai.temperature, next.ai.temperature, 0, 1)
     if (ai.topP !== undefined)
@@ -261,6 +279,8 @@ export function applyPlatformAiRuntimeOverrides(
       next.docAi.apiKey = docAi.apiKey
     if (docAi.model !== undefined)
       next.docAi.model = docAi.model || next.docAi.model
+    if (docAi.modelPricingJson !== undefined)
+      next.docAi.modelPricingJson = docAi.modelPricingJson
     if (docAi.timeoutMs !== undefined)
       next.docAi.timeoutMs = clamp(docAi.timeoutMs, next.docAi.timeoutMs, 1000, 120000)
     if (docAi.maxRetries !== undefined)

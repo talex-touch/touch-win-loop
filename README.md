@@ -58,6 +58,16 @@ WINLOOP_CONTEST_AUTO_SEED=false
 
 若缺失或不完整，登录及依赖连接的接口会报连接配置错误。
 
+### ONLYOFFICE 回源与临时访问地址
+
+- `WINLOOP_PUBLIC_BASE_URL`：应用外网基地址（推荐），例如 `https://app.example.com`（不要带 `/api`）。
+- `WINLOOP_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS`：项目资源下载/预览临时地址有效期（秒），默认 `600`。
+
+说明：
+
+- 项目资源接口返回的 `previewUrl` 与 `sourceDownloadUrl` 为临时签名地址，到期后需要重新请求接口获取新地址。
+- 若以上外网基地址未设置，将尝试根据 `WINLOOP_API_BASE_URL` 或请求头推断；仍无法推断时会回退到本地地址（并输出告警）。
+
 ## 赛事 seed 策略（去 mock 默认）
 
 - 默认不自动注入 catalog 赛事数据（`WINLOOP_CONTEST_AUTO_SEED=false`）。

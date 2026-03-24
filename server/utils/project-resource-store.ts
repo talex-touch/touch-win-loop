@@ -3,14 +3,20 @@ import type {
   Resource,
   ResourceAvailability,
   ResourceCategory,
+  ResourceKind,
   ResourceStatus,
 } from '~~/shared/types/domain'
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
+import * as Y from 'yjs'
+import { buildServerApiEndpoint, resolveServerApiUrl } from '~~/server/utils/api-url'
+import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
 
 interface ProjectResourceRow {
   id: string
   project_id: string
-  source: 'upload' | 'library'
+  source: 'upload' | 'library' | 'collab'
+  resource_kind?: ResourceKind | string | null
   linked_contest_resource_id: string | null
   title: string
   mime_type: string
@@ -26,6 +32,26 @@ interface ProjectResourceRow {
   updated_by_user_id: string | null
   created_at: string
   updated_at: string
+  document_id?: string | null
+  preview_status?: string | null
+  preview_progress_percent?: number | null
+  preview_eta_seconds?: number | null
+  preview_error?: string | null
+  collab_revision?: number | string | null
+}
+
+interface ProjectCollabDocRow {
+  resource_id: string
+  project_id: string
+  kind: ResourceKind | string
+  ydoc_update: Buffer | Uint8Array | string | null
+  revision: number | string
+  updated_by_user_id?: string | null
+  updated_at: string
+  workspace_id?: string
+  source?: string
+  status?: string
+  resource_kind?: ResourceKind | string | null
 }
 
 interface ContestResourceRow {
@@ -60,6 +86,15 @@ interface ProjectExistsRow {
   id: string
 }
 
+interface ProjectWorkspaceRow {
+  id: string
+  workspace_id: string
+}
+
+interface ObjectKeyRow {
+  object_key: string
+}
+
 export interface ProjectUploadedFileRef {
   objectKey: string
   fileName: string
@@ -68,8 +103,18 @@ export interface ProjectUploadedFileRef {
 
 export interface PurgedProjectResourceRef {
   resourceId: string
-  source: 'upload' | 'library'
+  source: 'upload' | 'library' | 'collab'
   objectKey: string
+}
+
+export interface ProjectCollabSnapshot {
+  projectId: string
+  resourceId: string
+  workspaceId: string
+  kind: Extract<ResourceKind, 'markdown' | 'draw'>
+  revision: number
+  update: Uint8Array
+  updatedAt: string
 }
 
 export const PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS = 30
@@ -98,6 +143,64 @@ function parseResourceMetadata(value: unknown): Record<string, unknown> {
   return normalizeRecord(value)
 }
 
+function parseCollabKind(value: unknown): Extract<ResourceKind, 'markdown' | 'draw'> | null {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'markdown' || normalized === 'draw')
+    return normalized
+  return null
+}
+
+function parseResourceKind(value: unknown): ResourceKind | null {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'binary' || normalized === 'markdown' || normalized === 'draw')
+    return normalized
+  return null
+}
+
+function parseRevision(value: unknown): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed))
+    return 0
+  return Math.max(0, Math.trunc(parsed))
+}
+
+function toUint8Array(value: unknown): Uint8Array {
+  if (!value)
+    return new Uint8Array()
+
+  if (value instanceof Uint8Array)
+    return value
+
+  if (Buffer.isBuffer(value))
+    return new Uint8Array(value)
+
+  if (typeof value === 'string') {
+    try {
+      const decoded = Buffer.from(value, 'base64')
+      return new Uint8Array(decoded)
+    }
+    catch {
+      return new Uint8Array()
+    }
+  }
+
+  return new Uint8Array()
+}
+
+function ensureCollabDocShape(kind: Extract<ResourceKind, 'markdown' | 'draw'>, doc: Y.Doc): void {
+  if (kind === 'markdown') {
+    doc.getText('content')
+    return
+  }
+
+  const drawMap = doc.getMap('draw')
+  const existingNodes = drawMap.get('nodes')
+  if (existingNodes instanceof Y.Array)
+    return
+  const nodes = new Y.Array<unknown>()
+  drawMap.set('nodes', nodes)
+}
+
 function normalizeUploadTitle(fileName: string, inputTitle?: string): string {
   const trimmedInput = normalizeString(inputTitle)
   if (trimmedInput)
@@ -115,21 +218,80 @@ function normalizeUploadTitle(fileName: string, inputTitle?: string): string {
   return '上传资料'
 }
 
+function normalizeDuplicateTitle(title: string): string {
+  const normalized = normalizeString(title)
+  if (!normalized)
+    return '未命名文档（副本）'
+  if (/（副本(?:\s*\d+)?）$/.test(normalized)) {
+    return normalized.replace(/（副本(?:\s*(\d+))?）$/, (_, countText: string | undefined) => {
+      const next = Math.max(2, Number(countText || 1) + 1)
+      return `（副本 ${next}）`
+    })
+  }
+  return `${normalized}（副本）`
+}
+
+function resolveCollabResourceTitle(kind: Extract<ResourceKind, 'markdown' | 'draw'>, inputTitle?: string): string {
+  const normalized = normalizeString(inputTitle)
+  if (normalized)
+    return normalized
+  return kind === 'draw' ? '无边画布' : '协作文档'
+}
+
 function toResource(row: ProjectResourceRow): Resource {
   const metadata = parseResourceMetadata(row.metadata)
   const originContestId = normalizeString(metadata.originContestId)
+  const sourceType = normalizeString(row.source).toLowerCase() as ProjectResourceRow['source']
+  const persistedKind = parseResourceKind(row.resource_kind)
+  const metadataKind = parseResourceKind(metadata.resourceKind)
+  const collabKind = parseCollabKind(row.resource_kind) || parseCollabKind(metadata.resourceKind) || 'markdown'
+  const resourceKind: ResourceKind = persistedKind
+    || metadataKind
+    || (sourceType === 'collab' ? collabKind : 'binary')
+  const collabRevision = parseRevision(row.collab_revision)
+  const documentId = normalizeString(row.document_id)
+  const signedUrls = sourceType === 'upload'
+    ? buildProjectResourceSignedUrls({
+        projectId: row.project_id,
+        resourceId: row.id,
+      })
+    : null
+  const collabSourceLink = sourceType === 'collab'
+    ? buildServerApiEndpoint(`/projects/${row.project_id}/resources/${row.id}/collab`)
+    : ''
+  const sourceDownloadUrl = sourceType === 'upload'
+    ? signedUrls?.sourceDownloadUrl
+    : undefined
+  const previewStatus = normalizeString(row.preview_status) as Resource['previewStatus']
+  const previewUrl = sourceType === 'upload' && documentId
+    ? signedUrls?.previewUrl
+    : undefined
 
   return {
     id: row.id,
     projectId: row.project_id,
+    resourceKind,
+    documentId: documentId || undefined,
     contestId: originContestId,
     title: row.title,
     type: row.category,
     year: Number(row.year || 0),
-    sourceLink: row.source_link,
+    sourceLink: sourceType === 'upload'
+      ? (sourceDownloadUrl || resolveServerApiUrl(row.source_link))
+      : sourceType === 'collab'
+        ? collabSourceLink
+        : resolveServerApiUrl(row.source_link),
+    sourceDownloadUrl,
+    sourceDownloadUrlExpiresAt: signedUrls?.sourceDownloadUrlExpiresAt,
+    previewUrl,
+    previewUrlExpiresAt: previewUrl ? signedUrls?.previewUrlExpiresAt : undefined,
+    previewStatus: previewStatus || undefined,
+    previewProgressPercent: Number.isFinite(Number(row.preview_progress_percent)) ? Number(row.preview_progress_percent) : undefined,
+    previewEtaSeconds: Number.isFinite(Number(row.preview_eta_seconds)) ? Number(row.preview_eta_seconds) : undefined,
+    previewError: normalizeString(row.preview_error) || undefined,
     availability: row.availability,
-    sourceType: row.source,
-    source: row.source,
+    sourceType,
+    source: sourceType,
     linkedContestResourceId: row.linked_contest_resource_id,
     summary: row.summary,
     content: row.content,
@@ -141,6 +303,7 @@ function toResource(row: ProjectResourceRow): Resource {
     updatedBy: row.updated_by_user_id || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    revision: collabRevision > 0 ? collabRevision : undefined,
   }
 }
 
@@ -153,7 +316,7 @@ function toLibraryResource(row: ContestResourceRow): Resource {
     title: row.title,
     type: row.category,
     year: Number(row.year || 0),
-    sourceLink: row.url,
+    sourceLink: resolveServerApiUrl(row.url),
     availability: row.access_level,
     sourceType: row.source_type,
     source: 'library',
@@ -190,28 +353,39 @@ export async function listProjectResources(
 ): Promise<Resource[]> {
   const result = await db.query<ProjectResourceRow>(
     `SELECT
-      id,
-      project_id,
-      source,
-      linked_contest_resource_id,
-      title,
-      mime_type,
-      category,
-      year,
-      source_link,
-      availability,
-      summary,
-      content,
-      metadata,
-      status,
-      created_by_user_id,
-      updated_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM project_resources
-     WHERE project_id = $1
-       AND status = 'active'
-     ORDER BY created_at DESC`,
+      pr.id,
+      pr.project_id,
+      pr.source,
+      pr.resource_kind,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.mime_type,
+      pr.category,
+      pr.year,
+      pr.source_link,
+      pr.availability,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.status,
+      pr.created_by_user_id,
+      pr.updated_by_user_id,
+      pr.created_at::TEXT,
+      pr.updated_at::TEXT,
+      prd.id AS document_id,
+      prd.preview_status,
+      prd.preview_progress_percent,
+      prd.preview_eta_seconds,
+      prd.preview_error,
+      prc.revision AS collab_revision
+     FROM project_resources pr
+     LEFT JOIN project_resource_documents prd
+       ON prd.project_resource_id = pr.id
+     LEFT JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+     WHERE pr.project_id = $1
+       AND pr.status = 'active'
+     ORDER BY pr.created_at DESC`,
     [projectId],
   )
 
@@ -224,28 +398,39 @@ export async function listProjectRecycleResources(
 ): Promise<Resource[]> {
   const result = await db.query<ProjectResourceRow>(
     `SELECT
-      id,
-      project_id,
-      source,
-      linked_contest_resource_id,
-      title,
-      mime_type,
-      category,
-      year,
-      source_link,
-      availability,
-      summary,
-      content,
-      metadata,
-      status,
-      created_by_user_id,
-      updated_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM project_resources
-     WHERE project_id = $1
-       AND status = 'archived'
-     ORDER BY updated_at DESC`,
+      pr.id,
+      pr.project_id,
+      pr.source,
+      pr.resource_kind,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.mime_type,
+      pr.category,
+      pr.year,
+      pr.source_link,
+      pr.availability,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.status,
+      pr.created_by_user_id,
+      pr.updated_by_user_id,
+      pr.created_at::TEXT,
+      pr.updated_at::TEXT,
+      prd.id AS document_id,
+      prd.preview_status,
+      prd.preview_progress_percent,
+      prd.preview_eta_seconds,
+      prd.preview_error,
+      prc.revision AS collab_revision
+     FROM project_resources pr
+     LEFT JOIN project_resource_documents prd
+       ON prd.project_resource_id = pr.id
+     LEFT JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+     WHERE pr.project_id = $1
+       AND pr.status = 'archived'
+     ORDER BY pr.updated_at DESC`,
     [projectId],
   )
 
@@ -308,6 +493,7 @@ export async function bindLibraryResourceToProject(
       id,
       project_id,
       source,
+      resource_kind,
       linked_contest_resource_id,
       title,
       mime_type,
@@ -347,6 +533,7 @@ export async function bindLibraryResourceToProject(
          id,
          project_id,
          source,
+         resource_kind,
          linked_contest_resource_id,
          title,
          mime_type,
@@ -413,6 +600,7 @@ export async function bindLibraryResourceToProject(
       id,
       project_id,
       source,
+      resource_kind,
       linked_contest_resource_id,
       title,
       mime_type,
@@ -429,12 +617,13 @@ export async function bindLibraryResourceToProject(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, 'library', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::JSONB, 'active', $13, $13, $14, $14
+      $1, $2, 'library', 'binary', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::JSONB, 'active', $13, $13, $14, $14
     )
     RETURNING
       id,
       project_id,
       source,
+      resource_kind,
       linked_contest_resource_id,
       title,
       mime_type,
@@ -492,8 +681,9 @@ export async function createProjectUploadedResource(
   const resourceId = randomUUID()
   const now = new Date().toISOString()
   const title = normalizeUploadTitle(input.fileName, input.title)
-  const sourceLink = `/api/projects/${input.projectId}/resources/${resourceId}/file`
+  const sourceLink = buildServerApiEndpoint(`/projects/${input.projectId}/resources/${resourceId}/source`)
   const metadata = {
+    resourceKind: 'binary',
     objectKey: normalizeString(input.objectKey),
     fileName: normalizeString(input.fileName),
     mimeType: normalizeString(input.mimeType) || 'application/octet-stream',
@@ -507,6 +697,7 @@ export async function createProjectUploadedResource(
       id,
       project_id,
       source,
+      resource_kind,
       linked_contest_resource_id,
       title,
       mime_type,
@@ -523,12 +714,13 @@ export async function createProjectUploadedResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, 'upload', NULL, $3, $4, $5, $6, $7, $8, $9, '', $10::JSONB, 'active', $11, $11, $12, $12
+      $1, $2, 'upload', 'binary', NULL, $3, $4, $5, $6, $7, $8, $9, '', $10::JSONB, 'active', $11, $11, $12, $12
     )
     RETURNING
       id,
       project_id,
       source,
+      resource_kind,
       linked_contest_resource_id,
       title,
       mime_type,
@@ -561,6 +753,673 @@ export async function createProjectUploadedResource(
   )
 
   return toResource(result.rows[0]!)
+}
+
+export async function createProjectCollabResource(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    kind: Extract<ResourceKind, 'markdown' | 'draw'>
+    title?: string
+  },
+): Promise<{ resource: Resource, snapshot: ProjectCollabSnapshot }> {
+  const projectResult = await db.query<ProjectWorkspaceRow>(
+    `SELECT id, workspace_id
+     FROM projects
+     WHERE id = $1
+     LIMIT 1`,
+    [input.projectId],
+  )
+
+  const workspaceId = normalizeString(projectResult.rows[0]?.workspace_id)
+  if (!workspaceId)
+    throw new Error('PROJECT_NOT_FOUND')
+
+  const kind = parseCollabKind(input.kind)
+  if (!kind)
+    throw new Error('INVALID_COLLAB_KIND')
+
+  const now = new Date().toISOString()
+  const resourceId = randomUUID()
+  const title = resolveCollabResourceTitle(kind, input.title)
+  const sourceLink = buildServerApiEndpoint(`/projects/${input.projectId}/resources/${resourceId}/collab`)
+  const mimeType = kind === 'markdown'
+    ? 'text/markdown'
+    : 'application/vnd.winloop.draw+json'
+
+  const doc = new Y.Doc()
+  ensureCollabDocShape(kind, doc)
+  const initialUpdate = Y.encodeStateAsUpdate(doc)
+
+  await db.query(
+    `INSERT INTO project_resources (
+      id,
+      project_id,
+      source,
+      resource_kind,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, 'collab', $3, NULL, $4, $5, 'templates', $6, $7, 'login_required', '', '', $8::JSONB, 'active', $9, $9, $10, $10
+    )`,
+    [
+      resourceId,
+      input.projectId,
+      kind,
+      title,
+      mimeType,
+      new Date().getFullYear(),
+      sourceLink,
+      JSON.stringify({
+        resourceKind: kind,
+        collab: true,
+        createdAt: now,
+      }),
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  await db.query(
+    `INSERT INTO project_resource_collab_docs (
+      resource_id,
+      project_id,
+      kind,
+      ydoc_update,
+      revision,
+      updated_by_user_id,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4::BYTEA, 1, $5, $6
+    )`,
+    [
+      resourceId,
+      input.projectId,
+      kind,
+      Buffer.from(initialUpdate),
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  const resourceResult = await db.query<ProjectResourceRow>(
+    `SELECT
+      pr.id,
+      pr.project_id,
+      pr.source,
+      pr.resource_kind,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.mime_type,
+      pr.category,
+      pr.year,
+      pr.source_link,
+      pr.availability,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.status,
+      pr.created_by_user_id,
+      pr.updated_by_user_id,
+      pr.created_at::TEXT,
+      pr.updated_at::TEXT,
+      prc.revision AS collab_revision
+     FROM project_resources pr
+     LEFT JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+     WHERE pr.project_id = $1
+       AND pr.id = $2
+     LIMIT 1`,
+    [input.projectId, resourceId],
+  )
+
+  const row = resourceResult.rows[0]
+  if (!row)
+    throw new Error('RESOURCE_CREATE_FAILED')
+
+  return {
+    resource: toResource(row),
+    snapshot: {
+      projectId: input.projectId,
+      resourceId,
+      workspaceId,
+      kind,
+      revision: 1,
+      update: initialUpdate,
+      updatedAt: now,
+    },
+  }
+}
+
+export async function getProjectCollabSnapshot(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<ProjectCollabSnapshot | null> {
+  const result = await db.query<ProjectCollabDocRow>(
+    `SELECT
+      prcd.resource_id,
+      prcd.project_id,
+      prcd.kind,
+      prcd.ydoc_update,
+      prcd.revision,
+      prcd.updated_by_user_id,
+      prcd.updated_at::TEXT,
+      p.workspace_id,
+      pr.source,
+      pr.status,
+      pr.resource_kind
+     FROM project_resource_collab_docs prcd
+     JOIN project_resources pr
+       ON pr.id = prcd.resource_id
+      AND pr.project_id = prcd.project_id
+     JOIN projects p
+       ON p.id = prcd.project_id
+     WHERE prcd.project_id = $1
+       AND prcd.resource_id = $2
+       AND pr.source = 'collab'
+       AND pr.status = 'active'
+     LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  const kind = parseCollabKind(row.kind) || parseCollabKind(row.resource_kind)
+  if (!kind)
+    return null
+
+  const doc = new Y.Doc()
+  const encodedState = toUint8Array(row.ydoc_update)
+  if (encodedState.length > 0)
+    Y.applyUpdate(doc, encodedState)
+  ensureCollabDocShape(kind, doc)
+
+  const normalizedUpdate = Y.encodeStateAsUpdate(doc)
+  const revision = Math.max(1, parseRevision(row.revision))
+
+  return {
+    projectId: row.project_id,
+    resourceId: row.resource_id,
+    workspaceId: normalizeString(row.workspace_id),
+    kind,
+    revision,
+    update: normalizedUpdate,
+    updatedAt: normalizeString(row.updated_at) || new Date().toISOString(),
+  }
+}
+
+export async function applyProjectCollabUpdate(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    update: Uint8Array
+  },
+): Promise<ProjectCollabSnapshot> {
+  const incomingUpdate = input.update instanceof Uint8Array
+    ? input.update
+    : toUint8Array(input.update)
+  if (incomingUpdate.length === 0)
+    throw new Error('INVALID_COLLAB_UPDATE')
+
+  const currentResult = await db.query<ProjectCollabDocRow>(
+    `SELECT
+      prcd.resource_id,
+      prcd.project_id,
+      prcd.kind,
+      prcd.ydoc_update,
+      prcd.revision,
+      prcd.updated_by_user_id,
+      prcd.updated_at::TEXT,
+      p.workspace_id,
+      pr.source,
+      pr.status,
+      pr.resource_kind
+     FROM project_resource_collab_docs prcd
+     JOIN project_resources pr
+       ON pr.id = prcd.resource_id
+      AND pr.project_id = prcd.project_id
+     JOIN projects p
+       ON p.id = prcd.project_id
+     WHERE prcd.project_id = $1
+       AND prcd.resource_id = $2
+     FOR UPDATE`,
+    [input.projectId, input.resourceId],
+  )
+
+  const current = currentResult.rows[0]
+  if (!current || normalizeString(current.source) !== 'collab' || normalizeString(current.status) !== 'active')
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  const kind = parseCollabKind(current.kind) || parseCollabKind(current.resource_kind)
+  if (!kind)
+    throw new Error('COLLAB_KIND_INVALID')
+
+  const doc = new Y.Doc()
+  const existingUpdate = toUint8Array(current.ydoc_update)
+  if (existingUpdate.length > 0)
+    Y.applyUpdate(doc, existingUpdate)
+  ensureCollabDocShape(kind, doc)
+  Y.applyUpdate(doc, incomingUpdate)
+
+  const mergedUpdate = Y.encodeStateAsUpdate(doc)
+  const nextRevision = Math.max(1, parseRevision(current.revision) + 1)
+  const now = new Date().toISOString()
+
+  await db.query(
+    `UPDATE project_resource_collab_docs
+     SET ydoc_update = $3::BYTEA,
+         revision = $4,
+         updated_by_user_id = $5,
+         updated_at = $6
+     WHERE project_id = $1
+       AND resource_id = $2`,
+    [
+      input.projectId,
+      input.resourceId,
+      Buffer.from(mergedUpdate),
+      nextRevision,
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  return {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+    workspaceId: normalizeString(current.workspace_id),
+    kind,
+    revision: nextRevision,
+    update: mergedUpdate,
+    updatedAt: now,
+  }
+}
+
+export async function duplicateProjectResource(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+  },
+): Promise<Resource> {
+  await ensureProjectExists(db, input.projectId)
+
+  const sourceResult = await db.query<ProjectResourceRow>(
+    `SELECT
+      pr.id,
+      pr.project_id,
+      pr.source,
+      pr.resource_kind,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.mime_type,
+      pr.category,
+      pr.year,
+      pr.source_link,
+      pr.availability,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.status,
+      pr.created_by_user_id,
+      pr.updated_by_user_id,
+      pr.created_at::TEXT,
+      pr.updated_at::TEXT,
+      prd.id AS document_id,
+      prd.preview_status,
+      prd.preview_progress_percent,
+      prd.preview_eta_seconds,
+      prd.preview_error,
+      prc.revision AS collab_revision
+     FROM project_resources pr
+     LEFT JOIN project_resource_documents prd
+       ON prd.project_resource_id = pr.id
+     LEFT JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+     WHERE pr.project_id = $1
+       AND pr.id = $2
+       AND pr.status = 'active'
+     LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  const source = sourceResult.rows[0]
+  if (!source)
+    throw new Error('RESOURCE_NOT_FOUND')
+  if (normalizeString(source.source) === 'collab')
+    throw new Error('RESOURCE_DUPLICATE_UNSUPPORTED')
+
+  const now = new Date().toISOString()
+  const duplicatedResourceId = randomUUID()
+  const normalizedMetadata = parseResourceMetadata(source.metadata)
+  const sourceType = normalizeString(source.source).toLowerCase()
+  const duplicatedLinkedContestResourceId = sourceType === 'library'
+    ? null
+    : source.linked_contest_resource_id
+  const duplicatedMetadata = {
+    ...normalizedMetadata,
+    duplicatedFromResourceId: source.id,
+    duplicatedAt: now,
+  }
+
+  const duplicatedSourceLink = sourceType === 'upload'
+    ? buildServerApiEndpoint(`/projects/${input.projectId}/resources/${duplicatedResourceId}/source`)
+    : normalizeString(source.source_link)
+
+  await db.query(
+    `INSERT INTO project_resources (
+      id,
+      project_id,
+      source,
+      resource_kind,
+      linked_contest_resource_id,
+      title,
+      mime_type,
+      category,
+      year,
+      source_link,
+      availability,
+      summary,
+      content,
+      metadata,
+      status,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, 'binary', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::JSONB, 'active', $14, $14, $15, $15
+    )`,
+    [
+      duplicatedResourceId,
+      input.projectId,
+      source.source,
+      duplicatedLinkedContestResourceId,
+      normalizeDuplicateTitle(source.title),
+      normalizeString(source.mime_type) || 'application/octet-stream',
+      source.category,
+      Math.max(0, Number(source.year || 0)),
+      duplicatedSourceLink,
+      source.availability,
+      normalizeString(source.summary),
+      normalizeString(source.content),
+      JSON.stringify(duplicatedMetadata),
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  await db.query(
+    `INSERT INTO project_resource_documents (
+      id,
+      project_id,
+      project_resource_id,
+      object_key,
+      source_object_key,
+      preview_object_key,
+      storage_provider,
+      source_storage_provider,
+      preview_storage_provider,
+      file_name,
+      source_file_name,
+      preview_file_name,
+      mime_type,
+      source_mime_type,
+      preview_mime_type,
+      file_size,
+      source_file_size,
+      preview_file_size,
+      page_count,
+      parse_status,
+      parse_error,
+      preview_status,
+      preview_stage,
+      preview_progress_percent,
+      preview_eta_seconds,
+      preview_error,
+      queued_at,
+      started_at,
+      finished_at,
+      last_attempt_duration_ms,
+      total_attempt_duration_ms,
+      parser_provider,
+      parser_model,
+      analysis_json,
+      annotation_json,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    )
+    SELECT
+      $1,
+      project_id,
+      $2,
+      object_key,
+      source_object_key,
+      preview_object_key,
+      storage_provider,
+      source_storage_provider,
+      preview_storage_provider,
+      file_name,
+      source_file_name,
+      preview_file_name,
+      mime_type,
+      source_mime_type,
+      preview_mime_type,
+      file_size,
+      source_file_size,
+      preview_file_size,
+      page_count,
+      parse_status,
+      parse_error,
+      preview_status,
+      preview_stage,
+      preview_progress_percent,
+      preview_eta_seconds,
+      preview_error,
+      queued_at,
+      started_at,
+      finished_at,
+      last_attempt_duration_ms,
+      total_attempt_duration_ms,
+      parser_provider,
+      parser_model,
+      analysis_json,
+      annotation_json,
+      $3,
+      $3,
+      $4,
+      $4
+    FROM project_resource_documents
+    WHERE project_id = $5
+      AND project_resource_id = $6
+    LIMIT 1`,
+    [
+      randomUUID(),
+      duplicatedResourceId,
+      input.actorUserId,
+      now,
+      input.projectId,
+      input.resourceId,
+    ],
+  )
+
+  await db.query(
+    `INSERT INTO project_resource_collab_docs (
+      resource_id,
+      project_id,
+      kind,
+      ydoc_update,
+      revision,
+      updated_by_user_id,
+      updated_at
+    )
+    SELECT
+      $1,
+      project_id,
+      kind,
+      ydoc_update,
+      revision,
+      $2,
+      $3
+    FROM project_resource_collab_docs
+    WHERE project_id = $4
+      AND resource_id = $5
+    LIMIT 1`,
+    [
+      duplicatedResourceId,
+      input.actorUserId,
+      now,
+      input.projectId,
+      input.resourceId,
+    ],
+  )
+
+  const duplicatedResult = await db.query<ProjectResourceRow>(
+    `SELECT
+      pr.id,
+      pr.project_id,
+      pr.source,
+      pr.resource_kind,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.mime_type,
+      pr.category,
+      pr.year,
+      pr.source_link,
+      pr.availability,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.status,
+      pr.created_by_user_id,
+      pr.updated_by_user_id,
+      pr.created_at::TEXT,
+      pr.updated_at::TEXT,
+      prd.id AS document_id,
+      prd.preview_status,
+      prd.preview_progress_percent,
+      prd.preview_eta_seconds,
+      prd.preview_error,
+      prc.revision AS collab_revision
+     FROM project_resources pr
+     LEFT JOIN project_resource_documents prd
+       ON prd.project_resource_id = pr.id
+     LEFT JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+     WHERE pr.project_id = $1
+       AND pr.id = $2
+     LIMIT 1`,
+    [input.projectId, duplicatedResourceId],
+  )
+
+  const duplicated = duplicatedResult.rows[0]
+  if (!duplicated)
+    throw new Error('RESOURCE_DUPLICATE_FAILED')
+
+  return toResource(duplicated)
+}
+
+export async function patchProjectResourceMetadata(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    title?: string
+    summary?: string
+    category?: ResourceCategory
+    availability?: ResourceAvailability
+  },
+): Promise<Resource> {
+  const sets: string[] = []
+  const values: unknown[] = [input.projectId, input.resourceId]
+  let index = values.length + 1
+
+  if (input.title !== undefined) {
+    sets.push(`title = $${index}`)
+    values.push(normalizeString(input.title))
+    index += 1
+  }
+
+  if (input.summary !== undefined) {
+    sets.push(`summary = $${index}`)
+    values.push(normalizeString(input.summary))
+    index += 1
+  }
+
+  if (input.category !== undefined) {
+    sets.push(`category = $${index}`)
+    values.push(input.category)
+    index += 1
+  }
+
+  if (input.availability !== undefined) {
+    sets.push(`availability = $${index}`)
+    values.push(input.availability)
+    index += 1
+  }
+
+  sets.push(`updated_by_user_id = $${index}`)
+  values.push(input.actorUserId)
+  index += 1
+  sets.push(`updated_at = $${index}`)
+  values.push(new Date().toISOString())
+
+  const result = await db.query<ProjectResourceRow>(
+    `UPDATE project_resources
+     SET ${sets.join(', ')}
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'
+     RETURNING
+       id,
+       project_id,
+       source,
+       resource_kind,
+       linked_contest_resource_id,
+       title,
+       mime_type,
+       category,
+       year,
+       source_link,
+       availability,
+       summary,
+       content,
+       metadata,
+       status,
+       created_by_user_id,
+       updated_by_user_id,
+       created_at::TEXT,
+       updated_at::TEXT`,
+    values,
+  )
+  const row = result.rows[0]
+  if (!row)
+    throw new Error('RESOURCE_NOT_FOUND')
+  return toResource(row)
 }
 
 export async function createProjectResourceDocumentWithTask(
@@ -762,6 +1621,7 @@ export async function restoreProjectResourceFromRecycleBin(
        id,
        project_id,
        source,
+       resource_kind,
        linked_contest_resource_id,
        title,
        mime_type,
@@ -876,4 +1736,32 @@ export async function purgeExpiredProjectResourcesFromRecycleBinGlobal(
       objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
     }
   })
+}
+
+export async function listUnreferencedUploadObjectKeys(
+  db: Queryable,
+  objectKeys: string[],
+): Promise<string[]> {
+  const normalizedKeys = [...new Set(
+    objectKeys
+      .map(item => normalizeString(item))
+      .filter(Boolean),
+  )]
+
+  if (normalizedKeys.length === 0)
+    return []
+
+  const result = await db.query<ObjectKeyRow>(
+    `SELECT t.object_key
+     FROM UNNEST($1::TEXT[]) AS t(object_key)
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM project_resources pr
+       WHERE pr.source = 'upload'
+         AND COALESCE(pr.metadata->>'objectKey', '') = t.object_key
+     )`,
+    [normalizedKeys],
+  )
+
+  return result.rows.map(item => normalizeString(item.object_key)).filter(Boolean)
 }

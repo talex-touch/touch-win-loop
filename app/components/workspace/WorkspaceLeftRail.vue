@@ -10,17 +10,20 @@ withDefaults(defineProps<{
   activeId?: string
   recycleActive?: boolean
   defenseActive?: boolean
+  memberManagementActive?: boolean
 }>(), {
   items: () => [],
   activeId: '',
   recycleActive: false,
   defenseActive: false,
+  memberManagementActive: false,
 })
 
 const emit = defineEmits<{
   select: [id: string]
   openDefense: []
   openRecycleBin: []
+  openMemberManagement: []
   openSettings: []
 }>()
 </script>
@@ -68,6 +71,18 @@ const emit = defineEmits<{
         @click="emit('openRecycleBin')"
       >
         <span class="material-symbols-outlined">delete</span>
+      </button>
+
+      <button
+        class="workspace-left-rail__members"
+        :class="{ 'workspace-left-rail__members--active': memberManagementActive }"
+        title="成员管理"
+        aria-label="成员管理"
+        data-tooltip="成员管理"
+        type="button"
+        @click="emit('openMemberManagement')"
+      >
+        <span class="material-symbols-outlined">group</span>
       </button>
 
       <button
@@ -158,6 +173,7 @@ const emit = defineEmits<{
 
 .workspace-left-rail__shortcut,
 .workspace-left-rail__defense,
+.workspace-left-rail__members,
 .workspace-left-rail__setting {
   position: relative;
   width: 32px;
@@ -174,6 +190,7 @@ const emit = defineEmits<{
 
 .workspace-left-rail__shortcut .material-symbols-outlined,
 .workspace-left-rail__defense .material-symbols-outlined,
+.workspace-left-rail__members .material-symbols-outlined,
 .workspace-left-rail__setting .material-symbols-outlined {
   width: 16px;
   height: 16px;
@@ -187,6 +204,10 @@ const emit = defineEmits<{
 
 .workspace-left-rail__shortcut {
   color: #d04a4a;
+}
+
+.workspace-left-rail__members {
+  color: #2e5b99;
 }
 
 .workspace-left-rail__setting {
@@ -203,6 +224,11 @@ const emit = defineEmits<{
   background: #fff0f0;
 }
 
+.workspace-left-rail__members:hover {
+  color: #1e3a74;
+  background: #eef4ff;
+}
+
 .workspace-left-rail__setting:hover {
   color: #3d516f;
   background: #f5f8fd;
@@ -216,6 +242,11 @@ const emit = defineEmits<{
 .workspace-left-rail__shortcut--active {
   color: #a92323;
   background: #ffe4e4;
+}
+
+.workspace-left-rail__members--active {
+  color: #1e3a74;
+  background: #dbeafe;
 }
 
 .workspace-left-rail__item[data-tooltip]::after,

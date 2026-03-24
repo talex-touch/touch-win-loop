@@ -12,7 +12,7 @@ definePageMeta({
 })
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint, resolveApiUrl } = useApiEndpoint(runtime)
 const route = useRoute()
 
 const categoryOptions: Array<{ value: ResourceCategory, label: string }> = [
@@ -38,12 +38,6 @@ const availabilityOptions: Array<{ value: ResourceAvailability | '', label: stri
   { value: 'login_required', label: '需登录' },
   { value: 'unavailable', label: '不可用' },
 ]
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 const contestId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
@@ -248,7 +242,7 @@ onMounted(async () => {
                 {{ item.year }} · {{ item.category || '未分类' }} · {{ availabilityLabelMap[item.availability] || item.availability }}
               </p>
             </div>
-            <a v-if="item.sourceLink" :href="item.sourceLink" target="_blank" class="text-xs text-blue-600 underline">
+            <a v-if="item.sourceLink" :href="resolveApiUrl(item.sourceLink)" target="_blank" class="text-xs text-blue-600 underline">
               打开来源
             </a>
           </div>

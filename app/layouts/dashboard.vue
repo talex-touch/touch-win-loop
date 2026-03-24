@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { ApiResponse, AuthMeResult, PlatformPermission } from '~~/shared/types/domain'
+import type {
+  ApiResponse,
+  AuthMeResult,
+  PlatformPermission,
+  WorkspaceWithQuota,
+} from '~~/shared/types/domain'
 
 const {
   analystProfile,
@@ -7,20 +12,13 @@ const {
   hotTopics,
 } = useDashboardWorkspace()
 const route = useRoute()
-
-const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const authApiFetch = useAuthApiFetch()
 
 const searchQuery = ref('')
 const platformPermissions = ref<PlatformPermission[]>([])
 const analystName = ref(analystProfile.name)
 const isPlatformAdmin = ref(false)
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const workspaceOptions = ref<WorkspaceWithQuota[]>([])
 
 const canEnterAdmin = computed(() => {
   if (isPlatformAdmin.value)
@@ -55,7 +53,7 @@ const showAdminBadge = computed(() => {
 
 const isWorkspaceFullscreen = computed(() => {
   const normalizedPath = route.path.replace(/\/+$/, '') || '/'
-  return /^\/workspace\/[^/]+$/.test(normalizedPath)
+  return /^\/team\/[^/]+(?:\/project\/[^/]+)?$/.test(normalizedPath) || /^\/workspace\/[^/]+$/.test(normalizedPath)
 })
 
 useHead({
@@ -71,17 +69,37 @@ useHead({
   ],
 })
 
+useHead(() => ({
+  htmlAttrs: {
+    class: {
+      'wl-scroll-lock': isWorkspaceFullscreen.value,
+    },
+  },
+  bodyAttrs: {
+    class: {
+      'wl-scroll-lock': isWorkspaceFullscreen.value,
+    },
+  },
+}))
+
 onMounted(async () => {
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     platformPermissions.value = response.data.user.platformPermissions || []
     analystName.value = response.data.user.username || analystProfile.name
     isPlatformAdmin.value = Boolean(response.data.user.isPlatformAdmin)
+    if (Array.isArray(response.data.teams) && response.data.teams.length > 0) {
+      workspaceOptions.value = response.data.teams.map(item => ({ workspace: item.team, quota: item.quota }))
+    }
+    else {
+      workspaceOptions.value = response.data.workspaces || []
+    }
   }
   catch {
     platformPermissions.value = []
     analystName.value = analystProfile.name
     isPlatformAdmin.value = false
+    workspaceOptions.value = []
   }
 })
 </script>
@@ -89,7 +107,7 @@ onMounted(async () => {
 <template>
   <div
     v-if="isWorkspaceFullscreen"
-    class="dashboard-shell workspace-fullscreen text-slate-900 bg-white h-screen overflow-hidden"
+    class="dashboard-shell workspace-fullscreen text-slate-900 bg-white h-screen overflow-hidden fixed inset-0"
   >
     <slot />
   </div>
@@ -101,6 +119,7 @@ onMounted(async () => {
       :analyst-name="analystName"
       :analyst-tier="analystTier"
       :show-admin-badge="showAdminBadge"
+      :workspace-options="workspaceOptions"
     />
 
     <main class="flex flex-1 flex-col min-w-0 overflow-hidden">
@@ -120,6 +139,8 @@ onMounted(async () => {
 
 .workspace-fullscreen {
   width: 100%;
+  height: 100dvh;
+  min-height: 0;
 }
 
 .dashboard-scrollbar::-webkit-scrollbar {

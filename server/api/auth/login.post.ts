@@ -95,6 +95,7 @@ export default defineEventHandler(async (event) => {
       })
 
       const workspaces = await listUserWorkspaces(db, user.id)
+      const teams = workspaces.map(item => ({ team: item.workspace, quota: item.quota }))
       const teamCount = workspaces.filter(item => item.workspace.type === 'team').length
       const platformAccess = await resolvePlatformAccess(db, user)
 
@@ -105,6 +106,7 @@ export default defineEventHandler(async (event) => {
           platformPermissions: platformAccess.permissions,
         },
         session,
+        teams,
         workspaces,
         onboarding: {
           needCreateTeam: teamCount === 0,
@@ -118,6 +120,7 @@ export default defineEventHandler(async (event) => {
     return ok<AuthLoginResult>({
       user: result.user,
       session: result.session,
+      teams: result.teams,
       workspaces: result.workspaces,
       onboarding: result.onboarding,
     }, {

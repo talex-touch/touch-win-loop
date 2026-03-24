@@ -1,5 +1,17 @@
 <script setup lang="ts">
-import type { Contest, Project, ProjectResourceShare, Resource, ResourcePreviewStatus, Track } from '~~/shared/types/domain'
+import type {
+  Contest,
+  Project,
+  ProjectResourceShare,
+  Resource,
+  ResourcePreviewStatus,
+  Track,
+  WorkspaceBillingEstimate,
+  WorkspaceInvitationSummary,
+  WorkspaceMemberRole,
+  WorkspaceMemberSummary,
+  WorkspaceType,
+} from '~~/shared/types/domain'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -26,6 +38,7 @@ const props = withDefaults(defineProps<{
   trackType?: string
   topK?: number
   openSettingsSignal?: number
+  openMemberManagementSignal?: number
   openFlowSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
@@ -48,6 +61,24 @@ const props = withDefaults(defineProps<{
   formState?: WorkspaceFormState
   formSubmitting?: boolean
   activeProject?: Project | null
+  workspaceName?: string
+  workspaceType?: WorkspaceType | ''
+  workspaceRoles?: WorkspaceMemberRole[]
+  workspaceMembers?: WorkspaceMemberSummary[]
+  workspaceInvitations?: WorkspaceInvitationSummary[]
+  workspaceMemberManagementLoading?: boolean
+  workspaceCanManageMembers?: boolean
+  workspaceCanManageBillingSeats?: boolean
+  workspaceSeatUsed?: number
+  workspaceSeatLimit?: number | null
+  workspaceSupportsSeatAdd?: boolean
+  workspaceInvitationSubmitting?: boolean
+  workspaceInvitationLink?: string
+  workspaceBillingEstimate?: WorkspaceBillingEstimate | null
+  workspaceBillingEstimateLoading?: boolean
+  workspaceSeatLimitSaveLoading?: boolean
+  workspaceSeatLimitError?: string
+  workspaceSeatLimitUpdatedSignal?: number
   projectSettingsLoading?: boolean
   projectSettingsSaveState?: WorkspaceProjectSaveState
   projectSettingsCommon?: WorkspaceProjectCommonForm
@@ -71,6 +102,7 @@ const props = withDefaults(defineProps<{
   trackType: '',
   topK: 6,
   openSettingsSignal: 0,
+  openMemberManagementSignal: 0,
   openFlowSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
@@ -103,6 +135,24 @@ const props = withDefaults(defineProps<{
   }),
   formSubmitting: false,
   activeProject: null,
+  workspaceName: '',
+  workspaceType: '',
+  workspaceRoles: () => [],
+  workspaceMembers: () => [],
+  workspaceInvitations: () => [],
+  workspaceMemberManagementLoading: false,
+  workspaceCanManageMembers: false,
+  workspaceCanManageBillingSeats: false,
+  workspaceSeatUsed: 0,
+  workspaceSeatLimit: null,
+  workspaceSupportsSeatAdd: false,
+  workspaceInvitationSubmitting: false,
+  workspaceInvitationLink: '',
+  workspaceBillingEstimate: null,
+  workspaceBillingEstimateLoading: false,
+  workspaceSeatLimitSaveLoading: false,
+  workspaceSeatLimitError: '',
+  workspaceSeatLimitUpdatedSignal: 0,
   projectSettingsLoading: false,
   projectSettingsSaveState: 'idle',
   projectSettingsCommon: () => ({
@@ -148,6 +198,11 @@ const emit = defineEmits<{
   'update:projectSettingsBindings': [value: WorkspaceProjectContestBindingForm[]]
   'update:projectSettingsAdaptation': [value: WorkspaceProjectAdaptationForm]
   'saveProjectSettings': []
+  'reloadWorkspaceMemberManagement': []
+  'createWorkspaceInvitation': [value: { inviteeUsername: string, role: WorkspaceMemberRole, expiresInDays: number }]
+  'copyWorkspaceInvitationLink': []
+  'openWorkspaceSeatModal': []
+  'saveWorkspaceSeatLimit': [seatLimit: number]
   'copyProjectResourceShare': [shareId: string]
   'revokeProjectResourceShare': [shareId: string]
   'loadContests': []
@@ -158,7 +213,7 @@ const emit = defineEmits<{
   'update:collabDrawValue': [value: string]
 }>()
 
-type WorkspaceMainTabId = 'dashboard' | 'flow' | 'settings' | 'preview'
+type WorkspaceMainTabId = 'dashboard' | 'members' | 'flow' | 'settings' | 'preview'
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 interface WorkspaceMainTab {
@@ -202,6 +257,11 @@ const allTabs: WorkspaceMainTab[] = [
     id: 'dashboard',
     title: '仪表盘',
     icon: 'space_dashboard',
+  },
+  {
+    id: 'members',
+    title: '成员管理',
+    icon: 'group',
   },
   {
     id: 'flow',
@@ -284,6 +344,27 @@ const projectSettingsAddContestModalTrackOptions = computed<Track[]>(() => {
   return projectSettingsAddContestCandidates.value.find(item => item.id === contestId)?.tracks || []
 })
 
+const WORKSPACE_ROLE_OPTIONS: WorkspaceMemberRole[] = ['member', 'manager', 'admin']
+const workspaceInviteRoleOptions = computed<WorkspaceMemberRole[]>(() => {
+  if (props.workspaceRoles.includes('owner') || props.workspaceRoles.includes('admin'))
+    return WORKSPACE_ROLE_OPTIONS
+  return ['member']
+})
+const workspaceInviteForm = reactive<{
+  inviteeUsername: string
+  role: WorkspaceMemberRole
+  expiresInDays: number
+}>({
+  inviteeUsername: '',
+  role: 'member',
+  expiresInDays: 7,
+})
+
+watchEffect(() => {
+  if (!workspaceInviteRoleOptions.value.includes(workspaceInviteForm.role))
+    workspaceInviteForm.role = 'member'
+})
+
 const materialCoverage = computed(() => Math.min(props.selectedResources.length * 20, 100))
 
 const dashboardGuide = computed(() => {
@@ -327,6 +408,9 @@ const breadcrumbItems = computed(() => {
     base.push('项目设置')
     return base
   }
+
+  if (activeTabId.value === 'members')
+    return ['竞赛分析', '成员管理']
 
   if (activeTabId.value === 'flow') {
     if (props.selectedContest?.name) {
@@ -763,6 +847,68 @@ const collabConnectionText = computed(() => {
   return props.collabConnected ? '实时连接中' : '离线编辑（待重连）'
 })
 
+const canSubmitWorkspaceInvitation = computed(() => {
+  return props.workspaceCanManageMembers && !props.workspaceInvitationSubmitting
+})
+
+const workspaceInviteUnavailableMessage = computed(() => {
+  return '当前角色无邀请权限，仅可查看成员与邀请记录。'
+})
+
+const workspaceSeatModalVisible = ref(false)
+const workspaceSeatLimitDraft = ref<number | null>(null)
+
+const normalizedWorkspaceSeatUsed = computed(() => {
+  return Math.max(0, Math.trunc(Number(props.workspaceSeatUsed || 0)))
+})
+
+const normalizedWorkspaceSeatLimit = computed<number | null>(() => {
+  const raw = Number(props.workspaceSeatLimit)
+  if (!Number.isFinite(raw) || raw <= 0)
+    return null
+  return Math.max(1, Math.trunc(raw))
+})
+
+const workspaceCanAddSeat = computed(() => {
+  return props.workspaceSupportsSeatAdd && props.workspaceCanManageBillingSeats
+})
+
+const workspaceSeatDraftTooSmall = computed(() => {
+  const draft = Number(workspaceSeatLimitDraft.value || 0)
+  if (!Number.isFinite(draft))
+    return true
+  return Math.max(1, Math.trunc(draft)) < normalizedWorkspaceSeatUsed.value
+})
+
+const canSubmitWorkspaceSeatLimit = computed(() => {
+  if (!workspaceCanAddSeat.value || props.workspaceSeatLimitSaveLoading)
+    return false
+  const draft = Number(workspaceSeatLimitDraft.value || 0)
+  if (!Number.isFinite(draft) || draft <= 0)
+    return false
+  return !workspaceSeatDraftTooSmall.value
+})
+
+function openWorkspaceSeatModal(): void {
+  if (!workspaceCanAddSeat.value)
+    return
+
+  workspaceSeatLimitDraft.value = normalizedWorkspaceSeatLimit.value || Math.max(1, normalizedWorkspaceSeatUsed.value || 1)
+  workspaceSeatModalVisible.value = true
+  emit('openWorkspaceSeatModal')
+}
+
+function closeWorkspaceSeatModal(): void {
+  workspaceSeatModalVisible.value = false
+}
+
+function submitWorkspaceSeatLimit(): void {
+  const draft = Number(workspaceSeatLimitDraft.value || 0)
+  if (!Number.isFinite(draft))
+    return
+  emit('saveWorkspaceSeatLimit', Math.max(1, Math.trunc(draft)))
+}
+
 function collabMemberLabel(member: WorkspaceCollabPresenceMember): string {
   const username = String(member.username || '').trim()
   if (username)
@@ -778,6 +924,75 @@ function onCollabMarkdownInput(event: Event): void {
 function onCollabDrawInput(event: Event): void {
   const target = event.target as HTMLTextAreaElement
   emit('update:collabDrawValue', target.value)
+}
+
+function workspaceTypeLabel(value: WorkspaceType | ''): string {
+  if (value === 'personal')
+    return 'Personal Team'
+  if (value === 'team')
+    return 'Business Team'
+  return '未识别空间'
+}
+
+function workspaceRoleLabel(role: WorkspaceMemberRole): string {
+  if (role === 'owner')
+    return '所有者'
+  if (role === 'admin')
+    return '管理员'
+  if (role === 'manager')
+    return '管理者'
+  return '成员'
+}
+
+function workspaceRoleBadgeClass(role: WorkspaceMemberRole): string {
+  if (role === 'owner')
+    return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (role === 'admin')
+    return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (role === 'manager')
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  return 'border-slate-200 bg-slate-50 text-slate-600'
+}
+
+function workspaceMemberRoleSummary(member: WorkspaceMemberSummary): string {
+  const labels = member.roles.map(workspaceRoleLabel)
+  if (labels.length === 0)
+    return '未设置角色'
+  return labels.join(' / ')
+}
+
+function workspaceInvitationStatus(invitation: WorkspaceInvitationSummary): 'pending' | 'expired' | 'accepted' {
+  if (String(invitation.acceptedAt || '').trim())
+    return 'accepted'
+  if (invitation.isExpired)
+    return 'expired'
+  return 'pending'
+}
+
+function workspaceInvitationStatusLabel(invitation: WorkspaceInvitationSummary): string {
+  const status = workspaceInvitationStatus(invitation)
+  if (status === 'accepted')
+    return '已接受'
+  if (status === 'expired')
+    return '已过期'
+  return '待接受'
+}
+
+function workspaceInvitationStatusBadgeClass(invitation: WorkspaceInvitationSummary): string {
+  const status = workspaceInvitationStatus(invitation)
+  if (status === 'accepted')
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (status === 'expired')
+    return 'border-rose-200 bg-rose-50 text-rose-600'
+  return 'border-blue-200 bg-blue-50 text-blue-700'
+}
+
+function submitWorkspaceInvitation(): void {
+  emit('createWorkspaceInvitation', {
+    inviteeUsername: workspaceInviteForm.inviteeUsername.trim(),
+    role: workspaceInviteForm.role,
+    expiresInDays: Math.max(1, Math.min(30, Number(workspaceInviteForm.expiresInDays || 7))),
+  })
 }
 
 function formatDateTime(value: string): string {
@@ -838,10 +1053,22 @@ watch(projectSettingsAddContestModalContestId, () => {
   syncProjectSettingsAddContestModalSelection()
 })
 
+watch(() => props.workspaceInvitationLink, (next, previous) => {
+  if (!next || next === previous)
+    return
+  workspaceInviteForm.inviteeUsername = ''
+})
+
 watch(() => props.openSettingsSignal, (next, previous) => {
   if (next === previous)
     return
   ensureTabOpen('settings', true)
+})
+
+watch(() => props.openMemberManagementSignal, (next, previous) => {
+  if (next === previous)
+    return
+  ensureTabOpen('members', true)
 })
 
 watch(() => props.openFlowSignal, (next, previous) => {
@@ -862,13 +1089,19 @@ watch(() => props.closePreviewSignal, (next, previous) => {
   closeTabById('preview', false)
 })
 
+watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
+  if (next === previous)
+    return
+  workspaceSeatModalVisible.value = false
+})
+
 watch(activeTabId, (next) => {
   emit('update:activeTabId', next)
 }, { immediate: true })
 </script>
 
 <template>
-  <section class="bg-slate-50 flex flex-1 flex-col min-w-0 overflow-hidden">
+  <section class="bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
     <div class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center">
       <template v-if="openTabs.length > 0">
         <div
@@ -927,8 +1160,8 @@ watch(activeTabId, (next) => {
     </div>
 
     <div
-      class="flex-1 min-h-0"
-      :class="activeTabId === 'preview' ? 'overflow-hidden' : 'overflow-auto p-4 md:p-6'"
+      class="flex-1 h-0 min-h-0"
+      :class="activeTabId === 'preview' ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
     >
       <div v-if="activeTabId === 'dashboard'" class="mx-auto max-w-5xl space-y-4">
         <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
@@ -1333,6 +1566,266 @@ watch(activeTabId, (next) => {
             </li>
           </ol>
         </div>
+      </div>
+
+      <div v-else-if="activeTabId === 'members'" class="mx-auto max-w-5xl space-y-4">
+        <section class="p-4 border border-slate-200 rounded-lg bg-white">
+          <div class="mb-3 flex flex-wrap gap-3 items-start justify-between">
+            <div class="flex gap-3 items-center">
+              <span class="material-symbols-outlined text-xl text-blue-600">group</span>
+              <div>
+                <h3 class="text-xs text-slate-700 font-semibold">
+                  空间成员管理
+                </h3>
+                <p class="text-[11px] text-slate-500 mt-0.5">
+                  {{ workspaceName || '当前空间' }} · {{ workspaceTypeLabel(workspaceType) }}
+                </p>
+              </div>
+            </div>
+
+            <button
+              class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="button"
+              :disabled="workspaceMemberManagementLoading"
+              @click="emit('reloadWorkspaceMemberManagement')"
+            >
+              刷新
+            </button>
+          </div>
+
+          <div class="mb-3 gap-3 grid grid-cols-1 lg:grid-cols-[1.2fr,1fr]">
+            <article class="p-3 border border-slate-200 rounded bg-slate-50/60">
+              <p class="text-[11px] text-slate-600 font-semibold">
+                席位概览
+              </p>
+
+              <template v-if="workspaceType === 'team'">
+                <p class="text-sm text-slate-800 font-bold mt-1">
+                  {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-1">
+                  Business Team 支持按成员席位扩容。
+                </p>
+              </template>
+
+              <template v-else>
+                <p class="text-sm text-slate-800 font-bold mt-1">
+                  当前成员占用 {{ normalizedWorkspaceSeatUsed }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-1">
+                  Personal Team 席位只读，暂不支持 add seat。
+                </p>
+              </template>
+
+              <div class="mt-2 flex flex-wrap gap-2 items-center">
+                <button
+                  v-if="workspaceCanAddSeat"
+                  class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700"
+                  type="button"
+                  @click="openWorkspaceSeatModal"
+                >
+                  Add Seat
+                </button>
+                <span
+                  v-else
+                  class="text-[11px] px-2.5 py-1 border rounded"
+                  :class="workspaceType === 'team' ? 'text-amber-700 border-amber-200 bg-amber-50' : 'text-slate-600 border-slate-200 bg-slate-100'"
+                >
+                  {{ workspaceType === 'team' ? '仅 owner/admin 可 add seat' : 'Personal Team 只读席位' }}
+                </span>
+              </div>
+
+              <p v-if="workspaceBillingEstimate" class="text-[11px] text-slate-500 mt-2">
+                当前估算费用：¥{{ Number(workspaceBillingEstimate.estimatedAmountYuan || 0).toFixed(2) }}
+              </p>
+            </article>
+
+            <article class="p-3 border border-slate-200 rounded bg-white">
+              <p class="text-[11px] text-slate-600 font-semibold mb-2">
+                当前账号角色
+              </p>
+              <div class="flex flex-wrap gap-2 items-center">
+                <span
+                  v-for="role in workspaceRoles"
+                  :key="`workspace-role-${role}`"
+                  class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
+                  :class="workspaceRoleBadgeClass(role)"
+                >
+                  {{ workspaceRoleLabel(role) }}
+                </span>
+                <span v-if="workspaceRoles.length === 0" class="text-[11px] text-slate-500">
+                  当前账号未识别到空间角色。
+                </span>
+              </div>
+            </article>
+          </div>
+
+          <div v-if="workspaceMemberManagementLoading" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
+            正在加载空间成员...
+          </div>
+
+          <template v-else>
+            <div class="gap-3 grid grid-cols-1 xl:grid-cols-[1.2fr,1fr]">
+              <section class="border border-slate-200 rounded bg-slate-50/40">
+                <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-white">
+                  成员列表（{{ workspaceMembers.length }}）
+                </div>
+
+                <div v-if="workspaceMembers.length === 0" class="text-[11px] text-slate-500 px-3 py-3">
+                  当前空间暂无成员记录。
+                </div>
+
+                <div v-else class="divide-slate-200 divide-y">
+                  <article
+                    v-for="member in workspaceMembers"
+                    :key="member.userId"
+                    class="px-3 py-2.5"
+                  >
+                    <div class="flex flex-wrap gap-2 items-center justify-between">
+                      <p class="text-xs text-slate-800 font-semibold">
+                        {{ member.username }}
+                      </p>
+                      <p class="text-[11px] text-slate-500">
+                        加入于 {{ formatDateTime(member.joinedAt) }}
+                      </p>
+                    </div>
+                    <p class="text-[11px] text-slate-600 mt-1">
+                      {{ workspaceMemberRoleSummary(member) }}
+                    </p>
+                  </article>
+                </div>
+              </section>
+
+              <section class="space-y-3">
+                <div class="border border-slate-200 rounded bg-white">
+                  <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-slate-50">
+                    邀请成员
+                  </div>
+
+                  <div class="p-3 space-y-2">
+                    <template v-if="workspaceCanManageMembers">
+                      <label class="text-[11px] text-slate-600 block space-y-1">
+                        <span class="block">邀请用户名（可选）</span>
+                        <input
+                          v-model="workspaceInviteForm.inviteeUsername"
+                          class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                          placeholder="留空时生成通用邀请"
+                        >
+                      </label>
+
+                      <div class="gap-2 grid grid-cols-2">
+                        <label class="text-[11px] text-slate-600 block space-y-1">
+                          <span class="block">角色</span>
+                          <select
+                            v-model="workspaceInviteForm.role"
+                            class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                          >
+                            <option
+                              v-for="role in workspaceInviteRoleOptions"
+                              :key="`workspace-role-option-${role}`"
+                              :value="role"
+                            >
+                              {{ workspaceRoleLabel(role) }}
+                            </option>
+                          </select>
+                        </label>
+
+                        <label class="text-[11px] text-slate-600 block space-y-1">
+                          <span class="block">有效期</span>
+                          <select
+                            v-model.number="workspaceInviteForm.expiresInDays"
+                            class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                          >
+                            <option :value="1">
+                              1 天
+                            </option>
+                            <option :value="3">
+                              3 天
+                            </option>
+                            <option :value="7">
+                              7 天
+                            </option>
+                            <option :value="14">
+                              14 天
+                            </option>
+                            <option :value="30">
+                              30 天
+                            </option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <button
+                        class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="!canSubmitWorkspaceInvitation"
+                        @click="submitWorkspaceInvitation"
+                      >
+                        {{ workspaceInvitationSubmitting ? '生成中...' : '生成邀请链接' }}
+                      </button>
+                    </template>
+
+                    <p v-else class="text-[11px] text-amber-700 px-2.5 py-2 border border-amber-200 rounded bg-amber-50">
+                      {{ workspaceInviteUnavailableMessage }}
+                    </p>
+
+                    <div v-if="workspaceInvitationLink" class="text-[11px] text-slate-600 px-2.5 py-2 border border-slate-200 rounded bg-slate-50">
+                      <p class="text-slate-700 font-semibold">
+                        最新邀请链接
+                      </p>
+                      <p class="mt-1 break-all">
+                        {{ workspaceInvitationLink }}
+                      </p>
+                      <button
+                        class="text-[11px] font-semibold mt-2 px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50"
+                        type="button"
+                        @click="emit('copyWorkspaceInvitationLink')"
+                      >
+                        复制邀请链接
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="border border-slate-200 rounded bg-white">
+                  <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-slate-50">
+                    邀请记录（{{ workspaceInvitations.length }}）
+                  </div>
+
+                  <div v-if="workspaceInvitations.length === 0" class="text-[11px] text-slate-500 px-3 py-3">
+                    暂无邀请记录。
+                  </div>
+
+                  <div v-else class="divide-slate-200 divide-y">
+                    <article
+                      v-for="invitation in workspaceInvitations"
+                      :key="invitation.id"
+                      class="px-3 py-2.5"
+                    >
+                      <div class="flex flex-wrap gap-2 items-center justify-between">
+                        <p class="text-xs text-slate-800 font-semibold">
+                          {{ invitation.inviteeUsername || '通用邀请（未绑定用户）' }}
+                        </p>
+                        <span
+                          class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
+                          :class="workspaceInvitationStatusBadgeClass(invitation)"
+                        >
+                          {{ workspaceInvitationStatusLabel(invitation) }}
+                        </span>
+                      </div>
+                      <p class="text-[11px] text-slate-600 mt-1">
+                        {{ workspaceRoleLabel(invitation.role) }} · 发起人 {{ invitation.invitedByUsername }}
+                      </p>
+                      <p class="text-[11px] text-slate-500 mt-1">
+                        过期时间：{{ formatDateTime(invitation.expiresAt) }}
+                      </p>
+                    </article>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </template>
+        </section>
       </div>
 
       <div v-else-if="activeTabId === 'settings'" class="mx-auto max-w-5xl space-y-4">
@@ -1798,6 +2291,73 @@ watch(activeTabId, (next) => {
         </div>
       </div>
     </div>
+
+    <a-modal
+      v-model:visible="workspaceSeatModalVisible"
+      title="Add Seat"
+      width="560px"
+      :footer="false"
+    >
+      <div class="text-[11px] space-y-3">
+        <div class="p-2 border border-slate-200 rounded bg-slate-50">
+          <p class="text-[11px] text-slate-800 font-semibold m-0">
+            当前席位
+          </p>
+          <p class="m-0 mt-1 text-[12px] text-slate-700">
+            {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
+          </p>
+        </div>
+
+        <div v-if="workspaceBillingEstimateLoading" class="text-slate-500 p-2 border border-slate-200 rounded bg-slate-50">
+          正在加载计费估算...
+        </div>
+
+        <div v-else-if="workspaceBillingEstimate" class="text-slate-600 p-2 border border-slate-200 rounded bg-white">
+          <p class="m-0">
+            计费方案：{{ workspaceBillingEstimate.planCode || '-' }} · {{ workspaceBillingEstimate.billingCycle }}
+          </p>
+          <p class="m-0 mt-1">
+            当前估算：¥{{ Number(workspaceBillingEstimate.estimatedAmountYuan || 0).toFixed(2) }}
+          </p>
+        </div>
+
+        <label class="text-[11px] text-slate-600 block space-y-1">
+          <span class="block">目标席位上限</span>
+          <a-input-number
+            v-model="workspaceSeatLimitDraft"
+            :min="1"
+            :step="1"
+            :precision="0"
+            size="small"
+            class="w-full"
+            placeholder="输入新的 seat limit"
+          />
+        </label>
+
+        <p v-if="workspaceSeatDraftTooSmall" class="text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
+          seatLimit 不能小于当前已使用席位（{{ normalizedWorkspaceSeatUsed }}）。
+        </p>
+
+        <p v-if="workspaceSeatLimitError" class="text-rose-600 p-2 border border-rose-200 rounded bg-rose-50">
+          {{ workspaceSeatLimitError }}
+        </p>
+
+        <div class="flex justify-end gap-2">
+          <a-button size="small" @click="closeWorkspaceSeatModal">
+            取消
+          </a-button>
+          <a-button
+            size="small"
+            type="primary"
+            :loading="workspaceSeatLimitSaveLoading"
+            :disabled="!canSubmitWorkspaceSeatLimit"
+            @click="submitWorkspaceSeatLimit"
+          >
+            保存席位
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
 
     <a-modal
       v-model:visible="projectSettingsAddContestModalVisible"

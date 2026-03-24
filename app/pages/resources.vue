@@ -12,7 +12,7 @@ definePageMeta({
 })
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint, resolveApiUrl } = useApiEndpoint(runtime)
 
 const categoryOptions: Array<{ value: ResourceCategory | '', label: string }> = [
   { value: '', label: '全部分类' },
@@ -38,12 +38,6 @@ const availabilityOptions: Array<{ value: ResourceAvailability | '', label: stri
   { value: 'login_required', label: '需登录' },
   { value: 'unavailable', label: '不可用' },
 ]
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 const loading = ref(false)
 const loadingContests = ref(false)
@@ -226,7 +220,7 @@ onMounted(async () => {
             </div>
             <a
               v-if="item.sourceLink"
-              :href="item.sourceLink"
+              :href="resolveApiUrl(item.sourceLink)"
               target="_blank"
               class="text-xs text-blue-600 underline"
             >

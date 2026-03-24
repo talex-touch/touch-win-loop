@@ -111,6 +111,7 @@ const emit = defineEmits<{
   'loadContests': []
   'runAiFilter': []
   'openSettingsPanel': []
+  'openMemberManagementPanel': []
   'openFlowPanel': []
   'createCollabResource': [kind: 'markdown' | 'draw']
   'openDefenseMode': []
@@ -589,6 +590,10 @@ function toggleSection(sectionId: ResourceSectionId) {
 
 function openSettingsPanel() {
   emit('openSettingsPanel')
+}
+
+function openMemberManagementPanel() {
+  emit('openMemberManagementPanel')
 }
 
 function openDefenseMode() {
@@ -1333,9 +1338,11 @@ onBeforeUnmount(() => {
       :active-id="activeModule"
       :recycle-active="recyclePanelOpen"
       :defense-active="defenseActive"
+      :member-management-active="props.activeMainTabId === 'members'"
       @select="switchModule"
       @open-defense="openDefenseMode"
       @open-recycle-bin="openRecycleBinPanel"
+      @open-member-management="openMemberManagementPanel"
       @open-settings="openSettingsPanel"
     />
 
@@ -2180,6 +2187,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-shrink: 0;
   min-height: 0;
+  overflow: hidden;
   width: 100%;
 }
 
@@ -2194,6 +2202,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-height: 0;
   min-width: 0;
 }
 
@@ -2201,6 +2210,8 @@ onBeforeUnmount(() => {
   padding: 10px 0 14px;
   overflow-y: auto;
   flex: 1;
+  height: 0;
+  min-height: 0;
 }
 
 .workspace-left-panel__footer {

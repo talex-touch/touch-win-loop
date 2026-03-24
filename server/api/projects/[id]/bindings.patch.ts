@@ -75,6 +75,18 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 40351)
     }
+
+    if (error instanceof Error && error.message === 'TRACK_NOT_FOUND') {
+      setResponseStatus(event, 400)
+      return fail('目标竞赛没有可用赛道，无法完成绑定。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40052)
+    }
+
     throw error
   }
 })

@@ -1,4 +1,4 @@
-import type { SchoolProfile } from '~~/shared/types/domain'
+import type { TeamProfile } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -8,7 +8,7 @@ import { createTeamWorkspace } from '~~/server/utils/platform-store'
 
 interface CreateWorkspaceBody {
   name?: string
-  schoolProfile?: SchoolProfile | null
+  teamProfile?: TeamProfile | null
   seatLimit?: number
   aiQuotaTotal?: number
   resetCycle?: string
@@ -36,7 +36,7 @@ export default defineEventHandler(async (event) => {
     return createTeamWorkspace(db, {
       ownerUserId: user.id,
       name,
-      schoolProfile: body?.schoolProfile || null,
+      teamProfile: body?.teamProfile || null,
       seatLimit: Number(body?.seatLimit || 20),
       aiQuotaTotal: Number(body?.aiQuotaTotal || 1000),
       resetCycle: String(body?.resetCycle || 'monthly'),

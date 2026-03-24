@@ -4,6 +4,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { aggregatePlatformAiModels } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
 interface ModelRow {
@@ -34,6 +35,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const payload = await withClient(event, async (db) => {
+    const catalogItems = aggregatePlatformAiModels(runtime)
     const result = await db.query<ModelRow>(
       `SELECT
         provider,
@@ -65,6 +67,8 @@ export default defineEventHandler(async (event) => {
       days,
       totalMessages: items.reduce((sum, item) => sum + item.messages, 0),
       items,
+      totalCatalogModels: catalogItems.length,
+      catalogItems,
     }
   })
 

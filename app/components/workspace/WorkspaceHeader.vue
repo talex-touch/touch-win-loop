@@ -70,7 +70,7 @@ function switchProject(item: WorkspaceQuickSwitchProject) {
 
 function goWorkspaceList() {
   closeQuickSwitch()
-  navigateTo('/workspace')
+  navigateTo('/team')
 }
 
 function openFinalReview() {

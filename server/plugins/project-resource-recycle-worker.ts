@@ -1,28 +1,33 @@
 import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { purgeExpiredProjectResourcesFromRecycleBinGlobal } from '~~/server/utils/project-resource-store'
+import {
+  getProjectResourceRecycleWorkerState,
+  pushProjectResourceRecycleWorkerRunRecord,
+} from '~~/server/utils/project-resource-recycle-worker-state'
+import {
+  listUnreferencedUploadObjectKeys,
+  purgeExpiredProjectResourcesFromRecycleBinGlobal,
+} from '~~/server/utils/project-resource-store'
 
-const WORKER_STATE_KEY = Symbol.for('winloop.project-resource-recycle-worker.state')
+const WORKER_RUNTIME_STATE_KEY = Symbol.for('winloop.project-resource-recycle-worker.runtime.v1')
 
-interface WorkerState {
-  started: boolean
+interface WorkerRuntimeState {
+  booted: boolean
   timer: NodeJS.Timeout | null
-  ticking: boolean
 }
 
-function getWorkerState(): WorkerState {
+function getWorkerRuntimeState(): WorkerRuntimeState {
   const globalRef = globalThis as Record<symbol, unknown>
-  const existing = globalRef[WORKER_STATE_KEY] as WorkerState | undefined
+  const existing = globalRef[WORKER_RUNTIME_STATE_KEY] as WorkerRuntimeState | undefined
   if (existing)
     return existing
 
-  const created: WorkerState = {
-    started: false,
+  const created: WorkerRuntimeState = {
+    booted: false,
     timer: null,
-    ticking: false,
   }
-  globalRef[WORKER_STATE_KEY] = created
+  globalRef[WORKER_RUNTIME_STATE_KEY] = created
   return created
 }
 
@@ -41,19 +46,33 @@ function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
   console.error(prefix, toErrorMessage(error))
 }
 
-async function runTick(state: WorkerState): Promise<void> {
-  if (state.ticking)
+async function runTick(): Promise<void> {
+  const workerState = getProjectResourceRecycleWorkerState()
+  if (workerState.ticking)
     return
 
-  state.ticking = true
-  try {
-    const runtime = readRuntimeSettings()
-    if (!runtime.resourceRecycle.enabled)
-      return
+  const runtime = readRuntimeSettings()
+  workerState.enabled = runtime.resourceRecycle.enabled
+  workerState.intervalMs = runtime.resourceRecycle.intervalMs
+  workerState.retentionDays = runtime.resourceRecycle.retentionDays
+  workerState.batchSize = runtime.resourceRecycle.batchSize
 
+  if (!workerState.enabled)
+    return
+
+  workerState.ticking = true
+  const startedAtMs = Date.now()
+  const startedAt = new Date(startedAtMs).toISOString()
+  workerState.lastStartedAt = startedAt
+  workerState.lastError = ''
+
+  let totalPurged = 0
+  let totalObjectDeleted = 0
+  let success = false
+  let errorMessage = ''
+
+  try {
     const storage = getDocumentStorage()
-    let totalPurged = 0
-    let totalObjectDeleted = 0
 
     for (let round = 0; round < 5; round += 1) {
       const purged = await withTransaction(undefined, async (db) => {
@@ -72,8 +91,12 @@ async function runTick(state: WorkerState): Promise<void> {
         .filter(item => item.source === 'upload' && item.objectKey)
         .map(item => item.objectKey)
 
-      if (uploadObjectKeys.length > 0) {
-        const deleteResults = await Promise.allSettled(uploadObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
+      const deletableObjectKeys = uploadObjectKeys.length > 0
+        ? await withTransaction(undefined, async db => listUnreferencedUploadObjectKeys(db, uploadObjectKeys))
+        : []
+
+      if (deletableObjectKeys.length > 0) {
+        const deleteResults = await Promise.allSettled(deletableObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
         totalObjectDeleted += deleteResults.filter(item => item.status === 'fulfilled').length
       }
 
@@ -81,42 +104,81 @@ async function runTick(state: WorkerState): Promise<void> {
         break
     }
 
+    success = true
     if (totalPurged > 0) {
       console.warn(`[project-resource-recycle-worker] purged=${totalPurged} deleted_objects=${totalObjectDeleted}`)
     }
   }
   catch (error) {
+    errorMessage = toErrorMessage(error)
+    workerState.lastError = errorMessage
     logWorkerError('tick', error)
   }
   finally {
-    state.ticking = false
+    const finishedAtMs = Date.now()
+    const finishedAt = new Date(finishedAtMs).toISOString()
+
+    workerState.ticking = false
+    workerState.lastFinishedAt = finishedAt
+    workerState.runCount += 1
+    workerState.lastPurgedCount = totalPurged
+    workerState.lastDeletedObjects = totalObjectDeleted
+    workerState.totalPurgedCount += totalPurged
+    workerState.totalDeletedObjects += totalObjectDeleted
+
+    if (success) {
+      workerState.successCount += 1
+      workerState.lastSuccessAt = finishedAt
+    }
+    else {
+      workerState.failureCount += 1
+    }
+
+    pushProjectResourceRecycleWorkerRunRecord(workerState, {
+      id: `${startedAtMs}-${Math.random().toString(36).slice(2, 8)}`,
+      startedAt,
+      finishedAt,
+      durationMs: Math.max(0, finishedAtMs - startedAtMs),
+      purgedCount: totalPurged,
+      deletedObjects: totalObjectDeleted,
+      success,
+      errorMessage,
+    })
   }
 }
 
 export default defineNitroPlugin((nitroApp) => {
-  const state = getWorkerState()
-  if (state.started)
+  const runtimeState = getWorkerRuntimeState()
+  if (runtimeState.booted)
     return
 
-  state.started = true
-
+  runtimeState.booted = true
+  const workerState = getProjectResourceRecycleWorkerState()
+  workerState.started = true
   const runtime = readRuntimeSettings()
-  if (!runtime.resourceRecycle.enabled)
+  workerState.enabled = runtime.resourceRecycle.enabled
+  workerState.intervalMs = runtime.resourceRecycle.intervalMs
+  workerState.retentionDays = runtime.resourceRecycle.retentionDays
+  workerState.batchSize = runtime.resourceRecycle.batchSize
+
+  if (!workerState.enabled)
     return
 
-  void runTick(state).catch((error) => {
+  void runTick().catch((error) => {
     logWorkerError('bootstrap', error)
   })
 
-  state.timer = setInterval(() => {
-    void runTick(state)
+  runtimeState.timer = setInterval(() => {
+    void runTick()
   }, runtime.resourceRecycle.intervalMs)
-  state.timer.unref?.()
+  runtimeState.timer.unref?.()
 
   nitroApp.hooks.hookOnce('close', () => {
-    if (state.timer)
-      clearInterval(state.timer)
-    state.timer = null
-    state.started = false
+    if (runtimeState.timer)
+      clearInterval(runtimeState.timer)
+    runtimeState.timer = null
+    runtimeState.booted = false
+    workerState.started = false
+    workerState.ticking = false
   })
 })

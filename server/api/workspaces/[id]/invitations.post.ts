@@ -4,18 +4,17 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createInvitation, hasWorkspaceRoles } from '~~/server/utils/platform-store'
+import { createInvitation, getWorkspaceType, hasWorkspaceRoles } from '~~/server/utils/platform-store'
 import { createSessionToken, hashToken } from '~~/server/utils/security'
 
 interface InvitationBody {
   inviteeUsername?: string
   role?: WorkspaceMemberRole
-  collegeCodes?: string[]
   expiresInDays?: number
 }
 
-const MANAGE_INVITATION_ROLES: WorkspaceMemberRole[] = ['team_owner', 'team_admin', 'school_admin']
-const ALLOWED_ROLES: WorkspaceMemberRole[] = ['team_owner', 'team_admin', 'school_admin', 'college_admin', 'advisor', 'member']
+const MANAGE_INVITATION_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
+const ALLOWED_ROLES: WorkspaceMemberRole[] = ['admin', 'manager', 'member']
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -40,9 +39,6 @@ export default defineEventHandler(async (event) => {
     : 'member'
 
   const inviteeUsername = String(body?.inviteeUsername || '').trim() || null
-  const collegeCodes = Array.isArray(body?.collegeCodes)
-    ? body!.collegeCodes!.map(item => String(item || '').trim()).filter(Boolean)
-    : []
   const expiresInDays = Math.max(1, Math.min(30, Number(body?.expiresInDays || 7)))
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString()
 
@@ -51,9 +47,17 @@ export default defineEventHandler(async (event) => {
 
   try {
     const invitation = await withTransaction(event, async (db) => {
+      const workspaceType = await getWorkspaceType(db, workspaceId)
+      if (!workspaceType)
+        throw new Error('WORKSPACE_NOT_FOUND')
+
       const canManage = await hasWorkspaceRoles(db, user, workspaceId, MANAGE_INVITATION_ROLES)
       if (!canManage)
         throw new Error('FORBIDDEN')
+
+      const canAssignHigherRole = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
+      if (!canAssignHigherRole && role !== 'member')
+        throw new Error('MANAGER_CAN_ONLY_INVITE_MEMBER')
 
       return createInvitation(db, {
         workspaceId,
@@ -61,7 +65,6 @@ export default defineEventHandler(async (event) => {
         tokenHash,
         inviteeUsername,
         role,
-        collegeCodes,
         expiresAt,
       })
     })
@@ -78,6 +81,16 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
+    if (error instanceof Error && error.message === 'WORKSPACE_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('空间不存在。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40421)
+    }
     if (error instanceof Error && error.message === 'FORBIDDEN') {
       setResponseStatus(event, 403)
       return fail('当前用户无权发送邀请。', {
@@ -87,6 +100,16 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40321)
+    }
+    if (error instanceof Error && error.message === 'MANAGER_CAN_ONLY_INVITE_MEMBER') {
+      setResponseStatus(event, 403)
+      return fail('manager 仅可邀请 member。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40322)
     }
     throw error
   }

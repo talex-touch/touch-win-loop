@@ -29,7 +29,8 @@ interface OrgRow {
 }
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
+const authApiFetch = useAuthApiFetch()
 
 const loading = ref(true)
 const errorText = ref('')
@@ -57,12 +58,6 @@ const columns = [
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 160 },
   { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 280, fixed: 'right' as const },
 ]
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 function formatDate(value: string): string {
   return value?.replace('T', ' ').slice(0, 16) || '-'
@@ -94,7 +89,7 @@ function hydrateDrafts() {
 }
 
 async function loadPermissions() {
-  const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+  const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
   permissions.value = response.data.user.platformPermissions || []
 }
 

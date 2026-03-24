@@ -3,9 +3,10 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createProject, hasWorkspaceMembership } from '~~/server/utils/platform-store'
+import { createProject, hasWorkspaceRoles } from '~~/server/utils/platform-store'
 
 interface QuickCreateBody {
+  teamId?: string
   workspaceId?: string
   title?: string
   summary?: string
@@ -18,7 +19,7 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const body = (await readBody<QuickCreateBody>(event)) || {}
 
-  const workspaceId = String(body.workspaceId || '').trim()
+  const workspaceId = String(body.teamId || body.workspaceId || '').trim()
   const title = String(body.title || '').trim()
   const summary = String(body.summary || '').trim()
   const contestIds = Array.isArray(body.contestIds)
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
 
   if (!workspaceId || !title) {
     setResponseStatus(event, 400)
-    return fail('workspaceId 与项目名称不能为空。', {
+    return fail('teamId 与项目名称不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -39,7 +40,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const project = await withTransaction(event, async (db) => {
-      const canCreate = await hasWorkspaceMembership(db, user, workspaceId)
+      const canCreate = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin', 'manager'])
       if (!canCreate)
         throw new Error('FORBIDDEN')
 
@@ -73,7 +74,7 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
-    if (error instanceof Error && error.message === 'FORBIDDEN') {
+    if (error instanceof Error && (error.message === 'FORBIDDEN' || error.message === 'WORKSPACE_MEMBER_REQUIRED')) {
       setResponseStatus(event, 403)
       return fail('当前用户无权在该空间创建项目。', {
         startedAt,
@@ -82,6 +83,16 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40343)
+    }
+    if (error instanceof Error && error.message === 'WORKSPACE_PROJECT_LIMIT_REACHED') {
+      setResponseStatus(event, 409)
+      return fail('当前空间项目数量已达上限，请先扩容项目配额。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40943)
     }
 
     throw error

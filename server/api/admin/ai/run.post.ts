@@ -13,6 +13,7 @@ import {
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
 
@@ -57,18 +58,28 @@ function buildSessionTitle(request: AdminAgentRunRequest): string {
   return `管理助手 · ${map[request.taskType]}`
 }
 
+function resolveAdminChannelKey(taskType: AdminAgentTaskType): 'admin_general' | 'admin_publish_assistant' | 'admin_import_sync_analysis' {
+  if (taskType === 'publish_assistant')
+    return 'admin_publish_assistant'
+  if (taskType === 'import_sync_analysis')
+    return 'admin_import_sync_analysis'
+  return 'admin_general'
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AdminAgentRunRequest>>(event).catch(() => ({})))
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, resolveAdminChannelKey(request.taskType))
+  const adminAiConfig = channelRuntime.ai
 
   if (!runtime.adminAi.enabled) {
     setResponseStatus(event, 404)
     return fail('管理侧 AI 助手未启用。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40491)
@@ -78,8 +89,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('workspaceId、contestId、message 不能为空。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40091)
@@ -90,8 +101,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权使用管理侧 AI 助手。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40391)
@@ -161,8 +172,8 @@ export default defineEventHandler(async (event) => {
   if (!prepared) {
     return fail('当前用户无权使用该空间。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40392)
@@ -171,8 +182,8 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'SESSION_NOT_FOUND') {
     return fail('会话不存在，请刷新后重试。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40492)
@@ -181,14 +192,23 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'QUOTA_EXCEEDED') {
     return fail('Team AI 额度不足，请扩容或等待重置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 42992)
   }
 
-  const execution: AdminAgentExecutionResult | 'CONTEST_NOT_FOUND' = await executeAdminAgent(event, request).catch((error) => {
+  const execution: AdminAgentExecutionResult | 'CONTEST_NOT_FOUND' = await executeAdminAgent(event, request, {}, {
+    runtime: {
+      ...runtime,
+      ai: {
+        ...runtime.ai,
+        ...adminAiConfig,
+      },
+    },
+    channelPrompt: channelRuntime.prompt,
+  }).catch((error) => {
     if (error instanceof Error && error.message === 'CONTEST_NOT_FOUND') {
       setResponseStatus(event, 404)
       return 'CONTEST_NOT_FOUND'
@@ -199,8 +219,8 @@ export default defineEventHandler(async (event) => {
   if (execution === 'CONTEST_NOT_FOUND') {
     return fail('赛事不存在或无权访问。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40495)
@@ -217,8 +237,8 @@ export default defineEventHandler(async (event) => {
         sessionId: prepared.sessionId,
         role: 'user',
         content: request.message,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: adminAiConfig.provider,
+        model: adminAiConfig.model,
         fallbackUsed: false,
         createdByUserId: user.id,
       })
@@ -229,8 +249,8 @@ export default defineEventHandler(async (event) => {
       sessionId: prepared.sessionId,
       role: 'assistant',
       content: execution.data.assistantReply,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: execution.fallbackUsed,
       createdByUserId: user.id,
     })
@@ -253,6 +273,8 @@ export default defineEventHandler(async (event) => {
         workspaceId: request.workspaceId,
         sessionId: prepared.sessionId,
         taskType: request.taskType,
+        channelKey: channelRuntime.key,
+        providerId: channelRuntime.provider?.id || null,
         fallbackUsed: execution.fallbackUsed,
         attempts: execution.attempts,
         latencyMs: Date.now() - startedAt,
@@ -266,8 +288,8 @@ export default defineEventHandler(async (event) => {
     sessionId: prepared.sessionId,
   }, {
     startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
+    provider: adminAiConfig.provider,
+    model: adminAiConfig.model,
     fallbackUsed: execution.fallbackUsed,
     attempts: execution.attempts,
   }, execution.fallbackUsed ? 'fallback used' : 'ok')

@@ -17,6 +17,7 @@ import {
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
 
@@ -67,18 +68,28 @@ function toErrorMessage(error: unknown): string {
   return 'UNKNOWN_ERROR'
 }
 
+function resolveAdminChannelKey(taskType: AdminAgentTaskType): 'admin_general' | 'admin_publish_assistant' | 'admin_import_sync_analysis' {
+  if (taskType === 'publish_assistant')
+    return 'admin_publish_assistant'
+  if (taskType === 'import_sync_analysis')
+    return 'admin_import_sync_analysis'
+  return 'admin_general'
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AdminAgentRunRequest>>(event).catch(() => ({})))
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, resolveAdminChannelKey(request.taskType))
+  const adminAiConfig = channelRuntime.ai
 
   if (!runtime.adminAi.enabled) {
     setResponseStatus(event, 404)
     return fail('管理侧 AI 助手未启用。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40493)
@@ -88,8 +99,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('workspaceId、contestId、message 不能为空。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40093)
@@ -100,8 +111,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 403)
     return fail('当前用户无权使用管理侧 AI 助手。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40393)
@@ -171,8 +182,8 @@ export default defineEventHandler(async (event) => {
   if (!prepared) {
     return fail('当前用户无权使用该空间。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40394)
@@ -181,8 +192,8 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'SESSION_NOT_FOUND') {
     return fail('会话不存在，请刷新后重试。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40494)
@@ -191,8 +202,8 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'QUOTA_EXCEEDED') {
     return fail('Team AI 额度不足，请扩容或等待重置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: adminAiConfig.provider,
+      model: adminAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 42994)
@@ -227,6 +238,15 @@ export default defineEventHandler(async (event) => {
         }),
         onDelta: text => pushEvent('delta', { text }),
         onArtifact: artifact => pushEvent('artifact', { artifact }),
+      }, {
+        runtime: {
+          ...runtime,
+          ai: {
+            ...runtime.ai,
+            ...adminAiConfig,
+          },
+        },
+        channelPrompt: channelRuntime.prompt,
       })
 
       await withTransaction(event, async (db) => {
@@ -240,8 +260,8 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             role: 'user',
             content: request.message,
-            provider: runtime.ai.provider,
-            model: runtime.ai.model,
+            provider: adminAiConfig.provider,
+            model: adminAiConfig.model,
             fallbackUsed: false,
             createdByUserId: user.id,
           })
@@ -252,8 +272,8 @@ export default defineEventHandler(async (event) => {
           sessionId: prepared.sessionId,
           role: 'assistant',
           content: execution.data.assistantReply,
-          provider: runtime.ai.provider,
-          model: runtime.ai.model,
+          provider: adminAiConfig.provider,
+          model: adminAiConfig.model,
           fallbackUsed: execution.fallbackUsed,
           createdByUserId: user.id,
         })
@@ -276,6 +296,8 @@ export default defineEventHandler(async (event) => {
             workspaceId: request.workspaceId,
             sessionId: prepared.sessionId,
             taskType: request.taskType,
+            channelKey: channelRuntime.key,
+            providerId: channelRuntime.provider?.id || null,
             fallbackUsed: execution.fallbackUsed,
             attempts: execution.attempts,
             latencyMs: Date.now() - startedAt,
@@ -309,6 +331,8 @@ export default defineEventHandler(async (event) => {
             workspaceId: request.workspaceId,
             sessionId: prepared.sessionId,
             taskType: request.taskType,
+            channelKey: channelRuntime.key,
+            providerId: channelRuntime.provider?.id || null,
             error: message,
             latencyMs: Date.now() - startedAt,
           },

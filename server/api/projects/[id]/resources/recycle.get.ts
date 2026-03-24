@@ -2,11 +2,12 @@ import { setResponseStatus } from 'h3'
 import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { withTransaction } from '~~/server/utils/db'
+import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { canManageProject, getVisibleProjectById } from '~~/server/utils/platform-store'
 import {
   listProjectRecycleResources,
+  listUnreferencedUploadObjectKeys,
   PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS,
   purgeExpiredProjectResourcesFromRecycleBin,
 } from '~~/server/utils/project-resource-store'
@@ -54,9 +55,13 @@ export default defineEventHandler(async (event) => {
       .filter(item => item.source === 'upload' && item.objectKey)
       .map(item => item.objectKey)
 
-    if (expiredUploadObjectKeys.length > 0) {
+    const deletableObjectKeys = expiredUploadObjectKeys.length > 0
+      ? await withClient(event, async db => listUnreferencedUploadObjectKeys(db, expiredUploadObjectKeys))
+      : []
+
+    if (deletableObjectKeys.length > 0) {
       const storage = getDocumentStorage()
-      await Promise.allSettled(expiredUploadObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
+      await Promise.allSettled(deletableObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
     }
 
     return ok(result.resources, {

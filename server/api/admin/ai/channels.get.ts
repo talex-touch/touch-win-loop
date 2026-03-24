@@ -4,6 +4,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { aggregatePlatformAiModels, getPlatformAiChannelDefinitions, resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
 interface ChannelRow {
@@ -37,6 +38,8 @@ export default defineEventHandler(async (event) => {
     }, 40396)
   }
 
+  const registry = resolvePlatformAiRegistry(runtime)
+  const providerModelItems = aggregatePlatformAiModels(runtime)
   const payload = await withClient(event, async (db) => {
     const itemsResult = await db.query<ChannelRow>(
       `SELECT
@@ -70,6 +73,18 @@ export default defineEventHandler(async (event) => {
         units: Number(row.units || 0),
         lastAt: row.last_at,
       })),
+      channelItems: registry.channels,
+      channelDefinitions: getPlatformAiChannelDefinitions(),
+      providers: registry.providers.map(item => ({
+        id: item.id,
+        name: item.name,
+        adapter: item.adapter,
+        provider: item.provider,
+        enabled: item.enabled,
+        apiKeyConfigured: Boolean(item.apiKey),
+        models: item.models,
+      })),
+      providerModelItems,
     }
   })
 

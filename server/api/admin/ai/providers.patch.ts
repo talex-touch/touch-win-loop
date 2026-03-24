@@ -1,9 +1,16 @@
 import { setResponseStatus } from 'h3'
+import { aggregatePlatformAiProviderUsage } from '~~/server/services/admin-ai/provider-usage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
-import { withTransaction } from '~~/server/utils/db'
+import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import {
+  buildPlatformAiChannelsJson,
+  buildPlatformAiRegistryJson,
+  getPlatformAiChannelDefinitions,
+  resolvePlatformAiRegistry,
+} from '~~/server/utils/platform-ai-channels'
 import {
   applyPlatformAiRuntimeOverrides,
   getPlatformAiOverrideState,
@@ -21,6 +28,9 @@ interface ProvidersPatchBody {
     baseURL?: string
     model?: string
     modelCatalogJson?: string
+    modelPricingJson?: string
+    providers?: unknown
+    channels?: unknown
     temperature?: number
     topP?: number
     maxTokens?: number
@@ -35,6 +45,7 @@ interface ProvidersPatchBody {
     provider?: string
     baseURL?: string
     model?: string
+    modelPricingJson?: string
     timeoutMs?: number
     maxRetries?: number
     apiKey?: string
@@ -98,6 +109,29 @@ export default defineEventHandler(async (event) => {
         ai.model = String(aiBody.model || '').trim()
       if (hasOwn(aiBody, 'modelCatalogJson'))
         ai.modelCatalogJson = String(aiBody.modelCatalogJson || '')
+      if (hasOwn(aiBody, 'modelPricingJson'))
+        ai.modelPricingJson = String(aiBody.modelPricingJson || '')
+      if (hasOwn(aiBody, 'providers')) {
+        ai.providersJson = buildPlatformAiRegistryJson({
+          ...runtime,
+          ai: {
+            ...runtime.ai,
+            ...ai,
+          },
+        }, aiBody.providers)
+      }
+      if (hasOwn(aiBody, 'channels')) {
+        const providersRuntime = {
+          ...runtime,
+          ai: {
+            ...runtime.ai,
+            ...ai,
+            providersJson: ai.providersJson || runtime.ai.providersJson,
+          },
+        }
+        const providers = resolvePlatformAiRegistry(providersRuntime).providers
+        ai.channelsJson = buildPlatformAiChannelsJson(providersRuntime, aiBody.channels, providers)
+      }
       if (hasOwn(aiBody, 'temperature'))
         ai.temperature = Number(aiBody.temperature)
       if (hasOwn(aiBody, 'topP'))
@@ -131,6 +165,8 @@ export default defineEventHandler(async (event) => {
         docAi.baseURL = String(docAiBody.baseURL || '').trim()
       if (hasOwn(docAiBody, 'model'))
         docAi.model = String(docAiBody.model || '').trim()
+      if (hasOwn(docAiBody, 'modelPricingJson'))
+        docAi.modelPricingJson = String(docAiBody.modelPricingJson || '')
       if (hasOwn(docAiBody, 'timeoutMs'))
         docAi.timeoutMs = Number(docAiBody.timeoutMs)
       if (hasOwn(docAiBody, 'maxRetries'))
@@ -178,18 +214,25 @@ export default defineEventHandler(async (event) => {
         hasAiUpdate: Boolean(aiBody),
         hasDocAiUpdate: Boolean(docAiBody),
         hasAdminAiUpdate: Boolean(adminAiBody),
+        hasProviderRegistryUpdate: Boolean(aiBody && hasOwn(aiBody, 'providers')),
+        hasChannelConfigUpdate: Boolean(aiBody && hasOwn(aiBody, 'channels')),
       },
     })
     return normalized
   })
 
   const effectiveRuntime = applyPlatformAiRuntimeOverrides(runtime, nextOverrides)
+  const registry = resolvePlatformAiRegistry(effectiveRuntime)
+  const providerStats = await withClient(event, db => aggregatePlatformAiProviderUsage(db, registry.providers))
   const payload = {
     llm: {
       provider: effectiveRuntime.ai.provider,
       baseURL: effectiveRuntime.ai.baseURL,
       model: effectiveRuntime.ai.model,
       modelCatalogJson: effectiveRuntime.ai.modelCatalogJson,
+      modelPricingJson: effectiveRuntime.ai.modelPricingJson,
+      providersJson: effectiveRuntime.ai.providersJson,
+      channelsJson: effectiveRuntime.ai.channelsJson,
       temperature: effectiveRuntime.ai.temperature,
       topP: effectiveRuntime.ai.topP,
       maxTokens: effectiveRuntime.ai.maxTokens,
@@ -203,6 +246,7 @@ export default defineEventHandler(async (event) => {
       provider: effectiveRuntime.docAi.provider,
       baseURL: effectiveRuntime.docAi.baseURL,
       model: effectiveRuntime.docAi.model,
+      modelPricingJson: effectiveRuntime.docAi.modelPricingJson,
       timeoutMs: effectiveRuntime.docAi.timeoutMs,
       maxRetries: effectiveRuntime.docAi.maxRetries,
       apiKeyConfigured: Boolean(effectiveRuntime.docAi.apiKey),
@@ -213,6 +257,23 @@ export default defineEventHandler(async (event) => {
       webTimeoutMs: effectiveRuntime.adminAi.webTimeoutMs,
       maxWebResults: effectiveRuntime.adminAi.maxWebResults,
       maxPageChars: effectiveRuntime.adminAi.maxPageChars,
+    },
+    registry: {
+      providers: registry.providers.map(item => ({
+        id: item.id,
+        name: item.name,
+        adapter: item.adapter,
+        provider: item.provider,
+        baseURL: item.baseURL,
+        enabled: item.enabled,
+        timeoutMs: item.timeoutMs,
+        maxRetries: item.maxRetries,
+        apiKeyConfigured: Boolean(item.apiKey),
+        models: item.models,
+      })),
+      providerStats,
+      channels: registry.channels,
+      channelDefinitions: getPlatformAiChannelDefinitions(),
     },
     overrideState: getPlatformAiOverrideState(nextOverrides),
   }

@@ -2,16 +2,10 @@ import type { Buffer } from 'node:buffer'
 import type { RuntimeSettings } from '~~/server/utils/env'
 import type { DocumentAnalysis, DocumentBBox, DocumentBlock, DocumentField } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+import { ChatPromptTemplate } from '@langchain/core/prompts'
+import { createChatModel } from '~~/server/services/ai/llm-client'
 import { buildAnalysisFromDraft, extractPdfDraftFromBuffer } from '~~/server/services/document/pdf-layout'
 import { runWithRetry } from '~~/server/utils/retry'
-
-interface OpenAiCompatibleResponse {
-  choices?: Array<{
-    message?: {
-      content?: string
-    }
-  }>
-}
 
 interface NormalizedPage {
   page: number
@@ -126,6 +120,26 @@ function extractJsonFromText(content: string): string {
   return '{}'
 }
 
+function extractMessageText(content: unknown): string {
+  if (typeof content === 'string')
+    return content.trim()
+
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === 'string')
+          return item
+        if (item && typeof item === 'object' && 'text' in item)
+          return String((item as { text?: unknown }).text || '')
+        return ''
+      })
+      .join('\n')
+      .trim()
+  }
+
+  return ''
+}
+
 async function invokeDocAi(input: {
   baseURL: string
   apiKey: string
@@ -133,41 +147,32 @@ async function invokeDocAi(input: {
   timeoutMs: number
   payload: Record<string, unknown>
 }): Promise<DocumentAnalysis | null> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), Math.max(2000, input.timeoutMs))
-
   try {
-    const response = await fetch(`${input.baseURL.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${input.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: input.model,
-        temperature: 0,
-        response_format: {
-          type: 'json_object',
-        },
-        messages: [
-          {
-            role: 'system',
-            content: '你是文档解析引擎。请将输入中的每页文本行归并成 blocks 与 fields，并返回 JSON。坐标必须是 0~1 的归一化 bbox={x,y,w,h}，并且每项包含 page。',
-          },
-          {
-            role: 'user',
-            content: JSON.stringify(input.payload),
-          },
-        ],
-      }),
-      signal: controller.signal,
+    const model = createChatModel({
+      provider: 'doc-ai',
+      baseURL: input.baseURL,
+      apiKey: input.apiKey,
+      model: input.model,
+      timeoutMs: Math.max(2000, input.timeoutMs),
+      maxRetries: 0,
+      temperature: 0,
     })
 
-    if (!response.ok)
-      return null
+    const prompt = ChatPromptTemplate.fromMessages([
+      ['system', [
+        '你是文档解析引擎。',
+        '请将输入中的每页文本行归并成 blocks 与 fields，并返回 JSON。',
+        '坐标必须是 0~1 的归一化 bbox={x,y,w,h}，并且每项包含 page。',
+      ].join('\n')],
+      ['human', '{payload}'],
+    ])
 
-    const raw = await response.json() as OpenAiCompatibleResponse
-    const content = raw.choices?.[0]?.message?.content || '{}'
+    const promptValue = await prompt.invoke({
+      payload: JSON.stringify(input.payload),
+    })
+
+    const output = await model.invoke(promptValue)
+    const content = extractMessageText(output.content) || '{}'
     const parsed = JSON.parse(extractJsonFromText(content)) as DocumentAnalysis
     if (!parsed || typeof parsed !== 'object')
       return null
@@ -175,9 +180,6 @@ async function invokeDocAi(input: {
   }
   catch {
     return null
-  }
-  finally {
-    clearTimeout(timer)
   }
 }
 

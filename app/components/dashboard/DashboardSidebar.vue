@@ -1,13 +1,15 @@
 <script setup lang="ts">
+import type { WorkspaceWithQuota } from '~~/shared/types/domain'
 import type { DashboardMenuItem, DashboardTopic } from '~/types/dashboard'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   menuItems?: DashboardMenuItem[]
   topics?: DashboardTopic[]
   analystName?: string
   analystTier?: string
   analystAvatar?: string
   showAdminBadge?: boolean
+  workspaceOptions?: WorkspaceWithQuota[]
 }>(), {
   menuItems: () => [],
   topics: () => [],
@@ -15,27 +17,40 @@ withDefaults(defineProps<{
   analystTier: '高级会员',
   analystAvatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAgO3szaJLN0mB5xXQFUAcenjGXOhK0fc6jH78_wVb6AgKHW2rx7If2DG7Zro9-woZuymuskn7rGkTJWIN-l2SRqi6dvqXNZqAE8LUhcHv4Z7uY-ptVO0eKI9sZzfUw9Jp1lzLiYTdYykbvVyXdkKLj9TeWaK9DipDXCk0g0Tgtir3CsIXTaFlEbB7EtggaKgtgnWMXjiAiW1uwj-4mVXyLJqdaJfAvFHWfRaX1dosZdLgVxspcp2tPArmit3IFKKQ4HpECByj_ZGI1',
   showAdminBadge: false,
+  workspaceOptions: () => [],
 })
 
 const route = useRoute()
-const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const authApiFetch = useAuthApiFetch()
 const profileDialogVisible = ref(false)
 const loggingOut = ref(false)
 const actionError = ref('')
-const isWorkspaceListRoute = computed(() => route.path.replace(/\/+$/, '') === '/workspace')
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
+const selectedWorkspaceId = ref('')
 
 function isMenuItemActive(item: DashboardMenuItem): boolean {
   if (item.to === '/dashboard')
     return route.path === '/dashboard'
   return route.path === item.to || route.path.startsWith(`${item.to}/`)
 }
+
+const routeTeamId = computed(() => {
+  const normalizedPath = route.path.replace(/\/+$/, '')
+  const matched = normalizedPath.match(/^\/team\/([^/]+)(?:\/project\/[^/]+)?$/)
+  return matched?.[1] || ''
+})
+
+watch(
+  [routeTeamId, () => props.workspaceOptions],
+  ([currentId, options]) => {
+    const workspaceList = options || []
+    if (currentId && workspaceList.some(item => item.workspace.id === currentId)) {
+      selectedWorkspaceId.value = currentId
+      return
+    }
+    selectedWorkspaceId.value = workspaceList[0]?.workspace.id || ''
+  },
+  { immediate: true },
+)
 
 function openProfileDialog() {
   actionError.value = ''
@@ -52,7 +67,7 @@ async function logout() {
   loggingOut.value = true
   actionError.value = ''
   try {
-    await $fetch(endpoint('/auth/logout'), {
+    await authApiFetch('/auth/logout', {
       method: 'POST',
     })
     profileDialogVisible.value = false
@@ -64,6 +79,17 @@ async function logout() {
   finally {
     loggingOut.value = false
   }
+}
+
+async function onWorkspaceSwitch(workspaceId: string) {
+  const targetId = String(workspaceId || '').trim()
+  if (!targetId)
+    return
+
+  if (routeTeamId.value === targetId)
+    return
+
+  await navigateTo(`/team/${targetId}`)
 }
 </script>
 
@@ -80,7 +106,7 @@ async function logout() {
 
     <nav class="px-4 flex-1 space-y-1">
       <NuxtLink
-        v-for="item in menuItems"
+        v-for="item in props.menuItems"
         :key="item.id"
         :to="item.to"
         class="px-3 py-2 rounded-lg flex gap-3 transition-colors items-center"
@@ -100,7 +126,7 @@ async function logout() {
         </p>
         <ul class="text-sm space-y-2">
           <li
-            v-for="topic in topics"
+            v-for="topic in props.topics"
             :key="topic.id"
             class="text-slate-600 flex gap-2 items-center hover:text-blue-700"
           >
@@ -109,43 +135,52 @@ async function logout() {
         </ul>
       </div>
 
-      <template v-if="!isWorkspaceListRoute">
-        <WorkspaceSwitchEntry
-          mode="link"
-          label="工作区"
-          icon="workspaces"
-          to="/workspace"
-        />
+      <WorkspaceSwitchEntry
+        v-if="props.workspaceOptions.length > 0"
+        class="mt-4"
+        mode="select"
+        label="工作空间切换"
+        :model-value="selectedWorkspaceId"
+        :workspace-options="props.workspaceOptions"
+        :show-quota="false"
+        @update:model-value="onWorkspaceSwitch"
+      />
+      <WorkspaceSwitchEntry
+        v-else
+        mode="link"
+        label="Team"
+        icon="workspaces"
+        to="/team"
+      />
 
-        <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
-          <img
-            :src="analystAvatar"
-            class="border border-slate-200 rounded-full h-10 w-10 object-cover"
-            alt="用户头像"
+      <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
+        <img
+          :src="props.analystAvatar"
+          class="border border-slate-200 rounded-full h-10 w-10 object-cover"
+          alt="用户头像"
+        >
+        <div class="min-w-0">
+          <p class="text-sm text-slate-900 font-semibold truncate">
+            {{ props.analystName }}
+          </p>
+          <p
+            v-if="props.showAdminBadge"
+            class="text-[10px] text-rose-700 font-semibold mt-1 px-1.5 py-0.5 border border-rose-200 rounded-md bg-rose-50 inline-flex"
           >
-          <div class="min-w-0">
-            <p class="text-sm text-slate-900 font-semibold truncate">
-              {{ analystName }}
-            </p>
-            <p
-              v-if="showAdminBadge"
-              class="text-[10px] text-rose-700 font-semibold mt-1 px-1.5 py-0.5 border border-rose-200 rounded-md bg-rose-50 inline-flex"
-            >
-              管理页
-            </p>
-            <p class="text-xs text-slate-500 truncate">
-              {{ analystTier }}
-            </p>
-          </div>
-          <button
-            class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
-            title="个人设置"
-            @click="openProfileDialog"
-          >
-            <span class="material-symbols-outlined text-[20px]">settings</span>
-          </button>
+            管理页
+          </p>
+          <p class="text-xs text-slate-500 truncate">
+            {{ props.analystTier }}
+          </p>
         </div>
-      </template>
+        <button
+          class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
+          title="个人设置"
+          @click="openProfileDialog"
+        >
+          <span class="material-symbols-outlined text-[20px]">settings</span>
+        </button>
+      </div>
     </div>
   </aside>
 
@@ -170,10 +205,10 @@ async function logout() {
 
         <div class="mt-3 p-3 border border-slate-200 rounded-lg bg-slate-50">
           <p class="text-sm text-slate-900 font-semibold">
-            {{ analystName }}
+            {{ props.analystName }}
           </p>
           <p class="text-xs text-slate-500 mt-1">
-            {{ analystTier }}
+            {{ props.analystTier }}
           </p>
         </div>
 

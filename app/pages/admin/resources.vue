@@ -15,7 +15,7 @@ interface ResourceAdminRow {
 }
 
 const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const { endpoint } = useApiEndpoint(runtime)
 
 const loading = ref(true)
 const errorText = ref('')
@@ -30,12 +30,6 @@ const columns = [
   { title: '失效条目', dataIndex: 'invalidCount', slotName: 'invalidCount', width: 120 },
   { title: '待核验', dataIndex: 'pendingVerifyCount', slotName: 'pendingVerifyCount', width: 120 },
 ]
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 const tableRows = computed(() => {
   return rows.value.map(item => ({

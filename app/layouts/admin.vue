@@ -16,8 +16,7 @@ interface AdminNavItem {
 }
 
 const route = useRoute()
-const runtime = useRuntimeConfig()
-const apiBase = runtime.public.apiBaseUrl || '/api'
+const authApiFetch = useAuthApiFetch()
 
 const userName = ref('平台管理员')
 const platformRoles = ref<PlatformRole[]>([])
@@ -35,6 +34,8 @@ const navItems: AdminNavItem[] = [
   { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-resources', to: '/admin/resources', label: '资料管理', icon: 'i-heroicons-outline-folder-open', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-resource-preview-worker', to: '/admin/resource-preview-worker', label: '文档转换监控', icon: 'i-heroicons-outline-arrow-path', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-resource-recycle-worker', to: '/admin/resource-recycle-worker', label: '回收站清理', icon: 'i-heroicons-outline-trash', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-billing', to: '/admin/billing', label: '套餐计费', icon: 'i-heroicons-outline-currency-dollar', section: 'system', requiredAny: ['pricing.write'] },
   { key: 'admin-roles', to: '/admin/roles', label: '角色权限', icon: 'i-heroicons-outline-shield-check', section: 'system', requiredAny: ['role.assign'] },
 ]
@@ -48,12 +49,6 @@ interface AdminRouteTab {
 
 const ADMIN_ROUTE_TABS_STORAGE_KEY = 'winloop.admin.route-tabs.v1'
 const MAX_ADMIN_ROUTE_TAB_COUNT = 30
-
-function endpoint(path: string): string {
-  if (apiBase.endsWith('/'))
-    return `${apiBase.slice(0, -1)}${path}`
-  return `${apiBase}${path}`
-}
 
 function isRouteActive(path: string): boolean {
   if (path === '/admin')
@@ -341,7 +336,7 @@ async function logout() {
   loggingOut.value = true
   actionError.value = ''
   try {
-    await $fetch(endpoint('/auth/logout'), { method: 'POST' })
+    await authApiFetch('/auth/logout', { method: 'POST' })
     profileDialogVisible.value = false
     await navigateTo('/login')
   }
@@ -356,7 +351,7 @@ async function logout() {
 async function loadProfile() {
   loadingProfile.value = true
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
+    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     userName.value = response.data.user.username || '平台管理员'
     platformRoles.value = response.data.user.platformRoles || []
     permissions.value = response.data.user.platformPermissions || []

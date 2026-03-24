@@ -37,6 +37,7 @@ interface DefenseChainInput {
   contestName?: string
   trackName?: string
   injectedPrompt?: string
+  localContext?: string
 }
 
 function toConversation(messages: AiDefenseRequest['messages']): string {
@@ -56,6 +57,7 @@ export async function runDefenseChain(input: DefenseChainInput): Promise<AiDefen
   })
 
   const injectedPrompt = input.injectedPrompt?.trim() || ''
+  const localContext = input.localContext?.trim() || '项目资料池暂无可用资料。'
 
   const prompt = ChatPromptTemplate.fromMessages([
     ['system', [
@@ -68,6 +70,8 @@ export async function runDefenseChain(input: DefenseChainInput): Promise<AiDefen
       '竞赛：{contestName}',
       '赛道：{trackName}',
       '专业：{major}',
+      '项目资料池上下文：',
+      '{localContext}',
       '对话内容：',
       '{conversation}',
     ].join('\n')],
@@ -77,6 +81,7 @@ export async function runDefenseChain(input: DefenseChainInput): Promise<AiDefen
     contestName: input.contestName || '未选择',
     trackName: input.trackName || '未选择',
     major: input.request.context.major || '未提供',
+    localContext,
     conversation: toConversation(input.request.messages),
   })
 

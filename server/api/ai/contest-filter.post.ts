@@ -7,6 +7,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { listContestLibrary, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { runWithRetry } from '~~/server/utils/retry'
@@ -14,14 +15,17 @@ import { runWithRetry } from '~~/server/utils/retry'
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, 'contest_filter')
+  const activeAiConfig = channelRuntime.ai
   const { user } = await requireAuth(event)
   const request = await readBody<AiContestFilterRequest>(event)
   const includeInternal = Boolean(
     user.isPlatformAdmin
     || await checkPlatformPermission(event, user, 'contest.read_internal'),
   )
-  const workspaceId = String(request?.workspaceId || '').trim()
+  const workspaceId = String(request?.teamId || request?.workspaceId || '').trim()
   const safeRequest: AiContestFilterRequest = {
+    teamId: workspaceId,
     workspaceId,
     query: request?.query || '',
     major: request?.major || '',
@@ -33,10 +37,10 @@ export default defineEventHandler(async (event) => {
 
   if (!workspaceId) {
     setResponseStatus(event, 400)
-    return fail('调用 AI 筛选时必须传 workspaceId。', {
+    return fail('调用 AI 筛选时必须传 teamId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: activeAiConfig.provider,
+      model: activeAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40061)
@@ -62,8 +66,8 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 403)
       return fail('当前用户无权使用该空间。', {
         startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
+        provider: activeAiConfig.provider,
+        model: activeAiConfig.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40361)
@@ -75,8 +79,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 429)
     return fail('Team AI 额度不足，请扩容或等待重置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: activeAiConfig.provider,
+      model: activeAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 42961)
@@ -106,8 +110,9 @@ export default defineEventHandler(async (event) => {
       target: 'contest_filter',
     })
   })
+  const mergedPrompt = buildMergedPrompt(channelRuntime.prompt, injectedPrompt)
 
-  const onlyFallback = runtime.ai.provider === 'mock' || !runtime.ai.apiKey
+  const onlyFallback = activeAiConfig.provider === 'mock' || !activeAiConfig.apiKey
   if (onlyFallback) {
     const data = runContestFilterFallback(safeRequest, contests)
     await withTransaction(event, async (db) => {
@@ -118,6 +123,8 @@ export default defineEventHandler(async (event) => {
         payload: {
           trackId: safeRequest.trackId,
           workspaceId,
+          channelKey: channelRuntime.key,
+          providerId: channelRuntime.provider?.id || null,
           fallbackUsed: true,
           attempts: 1,
         },
@@ -125,16 +132,16 @@ export default defineEventHandler(async (event) => {
     })
     return ok(data, {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: activeAiConfig.provider,
+      model: activeAiConfig.model,
       fallbackUsed: true,
       attempts: 1,
     }, 'fallback used')
   }
 
   const result = await runWithRetry({
-    maxRetries: runtime.ai.maxRetries,
-    run: () => runContestFilterChain({ request: safeRequest, contests, ai: runtime.ai, injectedPrompt }),
+    maxRetries: activeAiConfig.maxRetries,
+    run: () => runContestFilterChain({ request: safeRequest, contests, ai: activeAiConfig, injectedPrompt: mergedPrompt }),
     fallback: () => runContestFilterFallback(safeRequest, contests),
   })
 
@@ -146,6 +153,8 @@ export default defineEventHandler(async (event) => {
       payload: {
         trackId: safeRequest.trackId,
         workspaceId,
+        channelKey: channelRuntime.key,
+        providerId: channelRuntime.provider?.id || null,
         fallbackUsed: result.fallbackUsed,
         attempts: result.attempts,
       },
@@ -154,8 +163,8 @@ export default defineEventHandler(async (event) => {
 
   return ok(result.data, {
     startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
+    provider: activeAiConfig.provider,
+    model: activeAiConfig.model,
     fallbackUsed: result.fallbackUsed,
     attempts: result.attempts,
   }, result.fallbackUsed ? 'fallback used' : 'ok')

@@ -1,5 +1,6 @@
 import type { H3Event } from 'h3'
 import { useRuntimeConfig } from '#imports'
+import { normalizeApiBase } from '~~/shared/utils/api-url'
 
 function toNumber(raw: unknown, fallback: number): number {
   if (typeof raw === 'number' && Number.isFinite(raw))
@@ -12,8 +13,129 @@ function toNumber(raw: unknown, fallback: number): number {
   return fallback
 }
 
+const DEFAULT_ONLYOFFICE_SOURCE_BASE_URL = 'http://127.0.0.1:3510'
+const DEFAULT_ONLYOFFICE_TIMEOUT_MS = 120000
+const DEFAULT_ONLYOFFICE_RETRY_LIMIT = 3
+const DEFAULT_ONLYOFFICE_WORKER_INTERVAL_MS = 2500
+const DEFAULT_ONLYOFFICE_WORKER_BATCH_SIZE = 2
+const DEFAULT_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS = 600
+const ONLYOFFICE_SOURCE_BASE_HINT_KEY = Symbol.for('winloop.onlyoffice.source-base.hint.v1')
+
+interface OnlyOfficeSourceBaseHintState {
+  value: string
+  warnedFallback: boolean
+}
+
+function trimTrailingSlash(value: string): string {
+  return String(value || '').trim().replace(/\/+$/g, '')
+}
+
+function getOnlyOfficeSourceBaseHintState(): OnlyOfficeSourceBaseHintState {
+  const globalRef = globalThis as Record<symbol, unknown>
+  const existing = globalRef[ONLYOFFICE_SOURCE_BASE_HINT_KEY] as OnlyOfficeSourceBaseHintState | undefined
+  if (existing)
+    return existing
+
+  const created: OnlyOfficeSourceBaseHintState = {
+    value: '',
+    warnedFallback: false,
+  }
+  globalRef[ONLYOFFICE_SOURCE_BASE_HINT_KEY] = created
+  return created
+}
+
+function getFirstHeaderValue(rawValue: string | string[] | undefined): string {
+  const first = Array.isArray(rawValue) ? (rawValue[0] || '') : (rawValue || '')
+  return String(first).split(',')[0]?.trim() || ''
+}
+
+function resolveRequestOrigin(event?: H3Event): string {
+  if (!event)
+    return ''
+
+  const req = event.node?.req
+  if (!req)
+    return ''
+
+  const forwardedProto = getFirstHeaderValue(req.headers['x-forwarded-proto'])
+  const forwardedHost = getFirstHeaderValue(req.headers['x-forwarded-host'])
+  const host = forwardedHost || getFirstHeaderValue(req.headers.host)
+  if (!host)
+    return ''
+
+  const socket = req.socket as { encrypted?: boolean } | undefined
+  const proto = forwardedProto
+    ? forwardedProto.toLowerCase()
+    : (socket?.encrypted ? 'https' : 'http')
+  const protocol = proto === 'https' ? 'https' : 'http'
+
+  try {
+    return trimTrailingSlash(new URL(`${protocol}://${host}`).origin)
+  }
+  catch {
+    return ''
+  }
+}
+
+function isLoopbackHttpUrl(rawUrl: string): boolean {
+  const normalized = trimTrailingSlash(rawUrl)
+  if (!/^https?:\/\//i.test(normalized))
+    return false
+
+  try {
+    const parsed = new URL(normalized)
+    const host = String(parsed.hostname || '').toLowerCase()
+    return host === '127.0.0.1'
+      || host === 'localhost'
+      || host === '::1'
+      || host === '0.0.0.0'
+  }
+  catch {
+    return false
+  }
+}
+
+function resolveOnlyOfficeSourceBaseURL(runtime: ReturnType<typeof useRuntimeConfig>, event?: H3Event): string {
+  const hintState = getOnlyOfficeSourceBaseHintState()
+  const explicitSourceBase = trimTrailingSlash(String(runtime.onlyOffice?.sourceBaseURL ?? ''))
+  if (/^https?:\/\//i.test(explicitSourceBase)) {
+    hintState.value = explicitSourceBase
+    return explicitSourceBase
+  }
+
+  const apiBaseUrl = String(runtime.public?.apiBaseUrl ?? '').trim()
+  if (/^https?:\/\//i.test(apiBaseUrl)) {
+    try {
+      const origin = trimTrailingSlash(new URL(apiBaseUrl).origin)
+      hintState.value = origin
+      return origin
+    }
+    catch {
+      return DEFAULT_ONLYOFFICE_SOURCE_BASE_URL
+    }
+  }
+
+  const requestOrigin = resolveRequestOrigin(event)
+  if (requestOrigin) {
+    hintState.value = requestOrigin
+    return requestOrigin
+  }
+
+  if (hintState.value)
+    return hintState.value
+
+  const endpoint = trimTrailingSlash(String(runtime.onlyOffice?.endpoint ?? ''))
+  if (endpoint && !isLoopbackHttpUrl(endpoint) && !hintState.warnedFallback) {
+    hintState.warnedFallback = true
+    console.warn('[runtime-settings] ONLYOFFICE sourceBaseURL 未配置且无法从请求推断，当前回退到本地地址。请设置 WINLOOP_PUBLIC_BASE_URL。')
+  }
+
+  return DEFAULT_ONLYOFFICE_SOURCE_BASE_URL
+}
+
 export interface RuntimeSettings {
   envPriority: string
+  apiBaseUrl: string
   ai: {
     provider: string
     baseURL: string
@@ -21,6 +143,8 @@ export interface RuntimeSettings {
     model: string
     modelCatalogJson: string
     modelPricingJson: string
+    providersJson: string
+    channelsJson: string
     temperature: number
     topP: number
     maxTokens: number
@@ -37,6 +161,16 @@ export interface RuntimeSettings {
     modelPricingJson: string
     timeoutMs: number
     maxRetries: number
+  }
+  onlyOffice: {
+    endpoint: string
+    sourceBaseURL: string
+    jwtSecret: string
+    timeoutMs: number
+    retryLimit: number
+    workerEnabled: boolean
+    workerIntervalMs: number
+    workerBatchSize: number
   }
   storage: {
     provider: string
@@ -70,6 +204,9 @@ export interface RuntimeSettings {
     retentionDays: number
     batchSize: number
   }
+  projectResource: {
+    accessUrlTtlSeconds: number
+  }
 }
 
 function toBoolean(raw: unknown, fallback: boolean): boolean {
@@ -90,6 +227,7 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
 
   return {
     envPriority: String(runtime.envPriority ?? '.env.local > .env.prod > .env.dev > .env'),
+    apiBaseUrl: normalizeApiBase(String(runtime.public?.apiBaseUrl ?? '/api')),
     ai: {
       provider: String(runtime.ai?.provider ?? 'openai-compatible'),
       baseURL: String(runtime.ai?.baseURL ?? ''),
@@ -97,6 +235,8 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       model: String(runtime.ai?.model ?? 'gpt-4o-mini'),
       modelCatalogJson: String(runtime.ai?.modelCatalogJson ?? ''),
       modelPricingJson: String(runtime.ai?.modelPricingJson ?? ''),
+      providersJson: String(runtime.ai?.providersJson ?? ''),
+      channelsJson: String(runtime.ai?.channelsJson ?? ''),
       temperature: toNumber(runtime.ai?.temperature, 0.2),
       topP: toNumber(runtime.ai?.topP, 1),
       maxTokens: toNumber(runtime.ai?.maxTokens, 0),
@@ -113,6 +253,16 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       modelPricingJson: String(runtime.docAi?.modelPricingJson ?? ''),
       timeoutMs: toNumber(runtime.docAi?.timeoutMs, 15000),
       maxRetries: toNumber(runtime.docAi?.maxRetries, 2),
+    },
+    onlyOffice: {
+      endpoint: String(runtime.onlyOffice?.endpoint ?? ''),
+      sourceBaseURL: resolveOnlyOfficeSourceBaseURL(runtime, event),
+      jwtSecret: String(runtime.onlyOffice?.jwtSecret ?? ''),
+      timeoutMs: DEFAULT_ONLYOFFICE_TIMEOUT_MS,
+      retryLimit: DEFAULT_ONLYOFFICE_RETRY_LIMIT,
+      workerEnabled: true,
+      workerIntervalMs: DEFAULT_ONLYOFFICE_WORKER_INTERVAL_MS,
+      workerBatchSize: DEFAULT_ONLYOFFICE_WORKER_BATCH_SIZE,
     },
     storage: {
       provider: String(runtime.storage?.provider ?? 'local'),
@@ -145,6 +295,9 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       intervalMs: Math.max(60_000, Math.min(24 * 60 * 60 * 1000, toNumber(runtime.resourceRecycle?.intervalMs, 1_800_000))),
       retentionDays: Math.max(1, Math.min(365, Math.trunc(toNumber(runtime.resourceRecycle?.retentionDays, 30)))),
       batchSize: Math.max(20, Math.min(1000, Math.trunc(toNumber(runtime.resourceRecycle?.batchSize, 200)))),
+    },
+    projectResource: {
+      accessUrlTtlSeconds: Math.max(60, Math.min(2 * 60 * 60, Math.trunc(toNumber(runtime.projectResource?.accessUrlTtlSeconds, DEFAULT_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS)))),
     },
   }
 }

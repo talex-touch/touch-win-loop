@@ -1,0 +1,148 @@
+import type { ResourceKind } from '~~/shared/types/domain'
+import { Buffer } from 'node:buffer'
+import { setResponseStatus } from 'h3'
+import { fail, ok } from '~~/server/utils/api'
+import { requireAuth } from '~~/server/utils/auth'
+import { withTransaction } from '~~/server/utils/db'
+import { readRuntimeSettings } from '~~/server/utils/env'
+import { createProjectCollabResource } from '~~/server/utils/project-resource-store'
+import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
+import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
+
+interface CreateCollabResourceBody {
+  kind?: ResourceKind
+  title?: string
+}
+
+interface ProjectWorkspaceRow {
+  workspace_id: string
+}
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function normalizeCollabKind(rawKind: unknown): Extract<ResourceKind, 'markdown' | 'draw'> | null {
+  const normalized = normalizeString(rawKind).toLowerCase()
+  if (normalized === 'markdown' || normalized === 'draw')
+    return normalized
+  return null
+}
+
+export default defineEventHandler(async (event) => {
+  const startedAt = Date.now()
+  const runtime = readRuntimeSettings(event)
+  const { user } = await requireAuth(event)
+  const projectId = normalizeString(getRouterParam(event, 'id'))
+  const body = (await readBody<CreateCollabResourceBody>(event).catch(() => ({} as CreateCollabResourceBody))) || {}
+  const kind = normalizeCollabKind(body.kind)
+  const title = normalizeString(body.title)
+
+  if (!projectId) {
+    setResponseStatus(event, 400)
+    return fail('缺少 projectId。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40087)
+  }
+
+  if (!kind) {
+    setResponseStatus(event, 400)
+    return fail('kind 仅支持 markdown 或 draw。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40088)
+  }
+
+  try {
+    const created = await withTransaction(event, async (db) => {
+      const projectResult = await db.query<ProjectWorkspaceRow>(
+        `SELECT workspace_id
+         FROM projects
+         WHERE id = $1
+         LIMIT 1`,
+        [projectId],
+      )
+
+      const workspaceId = normalizeString(projectResult.rows[0]?.workspace_id)
+      if (!workspaceId)
+        throw new Error('PROJECT_NOT_FOUND')
+
+      const access = await resolveProjectRealtimeAccess(db, user, projectId)
+      if (!access)
+        throw new Error('FORBIDDEN')
+
+      const result = await createProjectCollabResource(db, {
+        projectId,
+        actorUserId: user.id,
+        kind,
+        title,
+      })
+
+      return {
+        ...result,
+        workspaceId: access.workspaceId,
+      }
+    })
+
+    await Promise.allSettled([
+      emitRealtimeEvent({
+        type: 'project.resources.changed',
+        workspaceId: created.workspaceId,
+        projectId,
+      }),
+      emitRealtimeEvent({
+        type: 'project.outline.changed',
+        workspaceId: created.workspaceId,
+        projectId,
+      }),
+    ])
+
+    return ok({
+      resource: created.resource,
+      snapshot: {
+        kind: created.snapshot.kind,
+        revision: created.snapshot.revision,
+        updateBase64: Buffer.from(created.snapshot.update).toString('base64'),
+        updatedAt: created.snapshot.updatedAt,
+      },
+    }, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('project not found', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40490)
+    }
+
+    if (error instanceof Error && error.message === 'FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return fail('当前用户无权创建协作资源。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40387)
+    }
+
+    throw error
+  }
+})
