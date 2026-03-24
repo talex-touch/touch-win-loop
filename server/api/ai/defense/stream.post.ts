@@ -160,25 +160,36 @@ export default defineEventHandler(async (event) => {
 
   const contest = contextBundle.detail?.contest
   const track = contest?.tracks.find(item => item.id === request.context.trackId)
+  const scopeProjectId = String(request.context.projectId || '').trim()
+  const scopeMode = 'defense' as const
 
   const prepared = await withTransaction(event, async (db) => {
     const canUseWorkspace = await hasWorkspaceMembership(db, user, workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 
-    const session = request.sessionId
+    let session = request.sessionId
       ? await getAiChatSessionById(db, {
           workspaceId,
           sessionId: request.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          strictScope: Boolean(scopeProjectId),
         })
-      : await createAiChatSession(db, {
-          workspaceId,
-          createdByUserId: user.id,
-          title: buildSessionTitle(contest?.name || '', track?.name || ''),
-          contestId: request.context.contestId,
-          trackId: request.context.trackId,
-          major: request.context.major,
-        })
+      : null
+
+    if (!session) {
+      session = await createAiChatSession(db, {
+        workspaceId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        createdByUserId: user.id,
+        title: buildSessionTitle(contest?.name || '', track?.name || ''),
+        contestId: request.context.contestId,
+        trackId: request.context.trackId,
+        major: request.context.major,
+      })
+    }
 
     if (!session)
       throw new Error('SESSION_NOT_FOUND')
@@ -186,6 +197,8 @@ export default defineEventHandler(async (event) => {
     await patchAiChatSessionContext(db, {
       workspaceId,
       sessionId: session.id,
+      projectId: scopeProjectId,
+      mode: scopeMode,
       contestId: request.context.contestId,
       trackId: request.context.trackId,
       major: request.context.major,
@@ -314,7 +327,8 @@ export default defineEventHandler(async (event) => {
 
       await withTransaction(event, async (db) => {
         const modeMetadata = {
-          mode: 'defense',
+          mode: scopeMode,
+          projectId: scopeProjectId,
         }
 
         if (latestUserMessage) {

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '~~/shared/types/domain'
+import type { ChatMessage, WorkspaceAiMode } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -22,19 +22,29 @@ interface CreateChatMessageBody {
   }
 }
 
+function parseMode(value: unknown): WorkspaceAiMode | null {
+  const text = String(value || '').trim()
+  if (text === 'dialog_ask' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense')
+    return text
+  return null
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const workspaceId = String(getRouterParam(event, 'id') || '').trim()
   const sessionId = String(getRouterParam(event, 'sessionId') || '').trim()
+  const query = getQuery(event)
+  const projectId = String(query.projectId || '').trim()
+  const mode = parseMode(query.mode)
   const body = await readBody<CreateChatMessageBody>(event)
   const role = body?.role || 'user'
   const content = String(body?.content || '').trim()
 
-  if (!workspaceId || !sessionId || !content) {
+  if (!workspaceId || !sessionId || !projectId || !mode || !content) {
     setResponseStatus(event, 400)
-    return fail('teamId、sessionId、content 不能为空。', {
+    return fail('teamId、sessionId、projectId、mode、content 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -62,6 +72,9 @@ export default defineEventHandler(async (event) => {
     const session = await getAiChatSessionById(db, {
       workspaceId,
       sessionId,
+      projectId,
+      mode,
+      strictScope: true,
     })
     if (!session)
       throw new Error('SESSION_NOT_FOUND')
@@ -69,6 +82,8 @@ export default defineEventHandler(async (event) => {
     await patchAiChatSessionContext(db, {
       workspaceId,
       sessionId,
+      projectId,
+      mode,
       contestId: body?.context?.contestId,
       trackId: body?.context?.trackId,
       major: body?.context?.major,

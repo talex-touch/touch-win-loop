@@ -1,3 +1,4 @@
+import type { WorkspaceAiMode } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -7,6 +8,13 @@ import { readRuntimeSettings } from '~~/server/utils/env'
 import { hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { toTeamChatMessageResponse, toTeamChatSessionResponse } from '~~/server/utils/team-api-presenter'
 
+function parseMode(value: unknown): WorkspaceAiMode | null {
+  const text = String(value || '').trim()
+  if (text === 'dialog_ask' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense')
+    return text
+  return null
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -14,11 +22,13 @@ export default defineEventHandler(async (event) => {
   const workspaceId = String(getRouterParam(event, 'id') || '').trim()
   const sessionId = String(getRouterParam(event, 'sessionId') || '').trim()
   const query = getQuery(event)
+  const projectId = String(query.projectId || '').trim()
+  const mode = parseMode(query.mode)
   const limit = Number(query.limit || 200)
 
-  if (!workspaceId || !sessionId) {
+  if (!workspaceId || !sessionId || !projectId || !mode) {
     setResponseStatus(event, 400)
-    return fail('teamId 或 sessionId 不能为空。', {
+    return fail('teamId、sessionId、projectId、mode 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -35,6 +45,9 @@ export default defineEventHandler(async (event) => {
     const session = await getAiChatSessionById(db, {
       workspaceId,
       sessionId,
+      projectId,
+      mode,
+      strictScope: true,
     })
     if (!session)
       throw new Error('SESSION_NOT_FOUND')
@@ -42,6 +55,9 @@ export default defineEventHandler(async (event) => {
     const messages = await listAiChatMessagesBySession(db, {
       workspaceId,
       sessionId,
+      projectId,
+      mode,
+      strictScope: true,
       limit,
     })
 

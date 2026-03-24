@@ -153,6 +153,8 @@ export default defineEventHandler(async (event) => {
 
   const contest = contextBundle.detail?.contest
   const track = contest?.tracks.find(item => item.id === request.context.trackId)
+  const scopeProjectId = String(request.context.projectId || '').trim()
+  const scopeMode = 'dialog_ask' as const
   const latestUserMessage = [...request.messages]
     .reverse()
     .find(item => item.role === 'user')
@@ -201,12 +203,17 @@ export default defineEventHandler(async (event) => {
       const existing = await getAiChatSessionById(db, {
         workspaceId,
         sessionId: request.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        strictScope: Boolean(scopeProjectId),
       })
       if (!existing)
         throw new Error('SESSION_NOT_FOUND')
       await patchAiChatSessionContext(db, {
         workspaceId,
         sessionId: request.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
         contestId: request.context.contestId,
         trackId: request.context.trackId,
         major: request.context.major,
@@ -216,6 +223,8 @@ export default defineEventHandler(async (event) => {
 
     return createAiChatSession(db, {
       workspaceId,
+      projectId: scopeProjectId,
+      mode: scopeMode,
       createdByUserId: user.id,
       title: buildSessionTitle(contest?.name || '', track?.name || ''),
       contestId: request.context.contestId,
@@ -329,7 +338,9 @@ export default defineEventHandler(async (event) => {
 
   await withTransaction(event, async (db) => {
     const modeMetadata = {
-      mode: 'topic_proposal',
+      mode: scopeMode,
+      sourceMode: 'topic_proposal',
+      projectId: scopeProjectId,
       webSearchEnabled,
       channelKey: channelRuntime.key,
       providerId: channelRuntime.provider?.id || null,
@@ -364,6 +375,8 @@ export default defineEventHandler(async (event) => {
     await patchAiChatSessionContext(db, {
       workspaceId,
       sessionId: activeSession.id,
+      projectId: scopeProjectId,
+      mode: scopeMode,
       contestId: request.context.contestId,
       trackId: request.context.trackId,
       major: request.context.major,

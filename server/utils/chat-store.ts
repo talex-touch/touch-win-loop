@@ -1,10 +1,19 @@
 import type { Queryable } from '~~/server/utils/db'
-import type { AiChatMessage, AiChatSession, ChatMessage } from '~~/shared/types/domain'
+import type { AiChatMessage, AiChatSession, ChatMessage, WorkspaceAiMode } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+
+const CHAT_SESSION_MODE_SET = new Set<WorkspaceAiMode>([
+  'dialog_ask',
+  'auto_optimize',
+  'issue_discovery',
+  'defense',
+])
 
 interface AiChatSessionRow {
   id: string
   workspace_id: string
+  project_id: string
+  mode: string
   created_by_user_id: string
   title: string
   contest_id: string
@@ -49,10 +58,23 @@ function toMetadataRecord(value: unknown): Record<string, unknown> {
   return {}
 }
 
+function normalizeProjectId(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function normalizeChatSessionMode(value: unknown): WorkspaceAiMode {
+  const text = String(value || '').trim() as WorkspaceAiMode
+  if (CHAT_SESSION_MODE_SET.has(text))
+    return text
+  return 'dialog_ask'
+}
+
 function mapChatSession(row: AiChatSessionRow): AiChatSession {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    projectId: row.project_id || '',
+    mode: normalizeChatSessionMode(row.mode),
     createdByUserId: row.created_by_user_id,
     title: row.title,
     contestId: row.contest_id || '',
@@ -85,6 +107,8 @@ export async function createAiChatSession(
   db: Queryable,
   input: {
     workspaceId: string
+    projectId?: string
+    mode?: WorkspaceAiMode
     createdByUserId: string
     title?: string
     contestId?: string
@@ -96,6 +120,8 @@ export async function createAiChatSession(
     `INSERT INTO ai_chat_sessions (
       id,
       workspace_id,
+      project_id,
+      mode,
       created_by_user_id,
       title,
       contest_id,
@@ -104,11 +130,13 @@ export async function createAiChatSession(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, NOW(), NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()
     )
     RETURNING
       id,
       workspace_id,
+      project_id,
+      mode,
       created_by_user_id,
       title,
       contest_id,
@@ -121,6 +149,8 @@ export async function createAiChatSession(
     [
       randomUUID(),
       input.workspaceId,
+      normalizeProjectId(input.projectId),
+      normalizeChatSessionMode(input.mode),
       input.createdByUserId,
       String(input.title || '').trim() || 'AI 对话',
       String(input.contestId || '').trim(),
@@ -136,14 +166,43 @@ export async function listAiChatSessionsByWorkspace(
   db: Queryable,
   input: {
     workspaceId: string
+    projectId?: string
+    mode?: WorkspaceAiMode
+    strictScope?: boolean
     limit?: number
   },
 ): Promise<AiChatSession[]> {
+  const strictScope = Boolean(input.strictScope)
+  const hasProjectFilter = input.projectId !== undefined
+  const hasModeFilter = input.mode !== undefined
+  const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
+  const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
+
+  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+    return []
+
   const limit = Math.max(1, Math.min(100, Number(input.limit || 20)))
+  const where: string[] = ['s.workspace_id = $1']
+  const values: unknown[] = [input.workspaceId]
+
+  if (hasProjectFilter) {
+    values.push(normalizedProjectId)
+    where.push(`s.project_id = $${values.length}`)
+  }
+
+  if (hasModeFilter) {
+    values.push(normalizedMode)
+    where.push(`s.mode = $${values.length}`)
+  }
+
+  values.push(limit)
+
   const result = await db.query<AiChatSessionRow>(
     `SELECT
       s.id,
       s.workspace_id,
+      s.project_id,
+      s.mode,
       s.created_by_user_id,
       s.title,
       s.contest_id,
@@ -161,10 +220,10 @@ export async function listAiChatSessionsByWorkspace(
        FROM ai_chat_messages
        WHERE session_id = s.id
      ) m ON TRUE
-     WHERE s.workspace_id = $1
+     WHERE ${where.join(' AND ')}
      ORDER BY COALESCE(m.last_message_at, s.updated_at::TEXT) DESC
-     LIMIT $2`,
-    [input.workspaceId, limit],
+     LIMIT $${values.length}`,
+    values,
   )
 
   return result.rows.map(mapChatSession)
@@ -175,12 +234,39 @@ export async function getAiChatSessionById(
   input: {
     workspaceId: string
     sessionId: string
+    projectId?: string
+    mode?: WorkspaceAiMode
+    strictScope?: boolean
   },
 ): Promise<AiChatSession | null> {
+  const strictScope = Boolean(input.strictScope)
+  const hasProjectFilter = input.projectId !== undefined
+  const hasModeFilter = input.mode !== undefined
+  const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
+  const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
+
+  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+    return null
+
+  const where: string[] = ['s.workspace_id = $1', 's.id = $2']
+  const values: unknown[] = [input.workspaceId, input.sessionId]
+
+  if (hasProjectFilter) {
+    values.push(normalizedProjectId)
+    where.push(`s.project_id = $${values.length}`)
+  }
+
+  if (hasModeFilter) {
+    values.push(normalizedMode)
+    where.push(`s.mode = $${values.length}`)
+  }
+
   const result = await db.query<AiChatSessionRow>(
     `SELECT
       s.id,
       s.workspace_id,
+      s.project_id,
+      s.mode,
       s.created_by_user_id,
       s.title,
       s.contest_id,
@@ -198,10 +284,9 @@ export async function getAiChatSessionById(
        FROM ai_chat_messages
        WHERE session_id = s.id
      ) m ON TRUE
-     WHERE s.workspace_id = $1
-       AND s.id = $2
+     WHERE ${where.join(' AND ')}
      LIMIT 1`,
-    [input.workspaceId, input.sessionId],
+    values,
   )
 
   const row = result.rows[0]
@@ -213,29 +298,61 @@ export async function listAiChatMessagesBySession(
   input: {
     workspaceId: string
     sessionId: string
+    projectId?: string
+    mode?: WorkspaceAiMode
+    strictScope?: boolean
     limit?: number
   },
 ): Promise<AiChatMessage[]> {
+  const strictScope = Boolean(input.strictScope)
+  const hasProjectFilter = input.projectId !== undefined
+  const hasModeFilter = input.mode !== undefined
+  const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
+  const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
+
+  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+    return []
+
   const limit = Math.max(1, Math.min(500, Number(input.limit || 200)))
+  const where: string[] = [
+    'm.workspace_id = $1',
+    'm.session_id = $2',
+  ]
+  const values: unknown[] = [input.workspaceId, input.sessionId]
+
+  if (hasProjectFilter) {
+    values.push(normalizedProjectId)
+    where.push(`s.project_id = $${values.length}`)
+  }
+
+  if (hasModeFilter) {
+    values.push(normalizedMode)
+    where.push(`s.mode = $${values.length}`)
+  }
+
+  values.push(limit)
+
   const result = await db.query<AiChatMessageRow>(
     `SELECT
-      id,
-      workspace_id,
-      session_id,
-      role,
-      content,
-      provider,
-      model,
-      fallback_used,
-      metadata,
-      created_by_user_id,
-      created_at::TEXT
-     FROM ai_chat_messages
-     WHERE workspace_id = $1
-       AND session_id = $2
-     ORDER BY created_at ASC
-     LIMIT $3`,
-    [input.workspaceId, input.sessionId, limit],
+      m.id,
+      m.workspace_id,
+      m.session_id,
+      m.role,
+      m.content,
+      m.provider,
+      m.model,
+      m.fallback_used,
+      m.metadata,
+      m.created_by_user_id,
+      m.created_at::TEXT
+     FROM ai_chat_messages m
+     JOIN ai_chat_sessions s
+       ON s.id = m.session_id
+      AND s.workspace_id = m.workspace_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY m.created_at ASC
+     LIMIT $${values.length}`,
+    values,
   )
 
   return result.rows.map(mapChatMessage)
@@ -313,6 +430,8 @@ export async function patchAiChatSessionContext(
   input: {
     workspaceId: string
     sessionId: string
+    projectId?: string
+    mode?: WorkspaceAiMode
     contestId?: string
     trackId?: string
     major?: string
@@ -332,6 +451,12 @@ export async function patchAiChatSessionContext(
     if (title)
       addSet('title', title)
   }
+
+  if (input.projectId !== undefined)
+    addSet('project_id', normalizeProjectId(input.projectId))
+
+  if (input.mode !== undefined)
+    addSet('mode', normalizeChatSessionMode(input.mode))
 
   if (input.contestId !== undefined)
     addSet('contest_id', String(input.contestId || '').trim())

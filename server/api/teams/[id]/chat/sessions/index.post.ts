@@ -1,3 +1,4 @@
+import type { WorkspaceAiMode } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -8,10 +9,19 @@ import { hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { toTeamChatSessionResponse } from '~~/server/utils/team-api-presenter'
 
 interface CreateChatSessionBody {
+  projectId?: string
+  mode?: WorkspaceAiMode
   title?: string
   contestId?: string
   trackId?: string
   major?: string
+}
+
+function parseMode(value: unknown): WorkspaceAiMode | null {
+  const text = String(value || '').trim()
+  if (text === 'dialog_ask' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense')
+    return text
+  return null
 }
 
 export default defineEventHandler(async (event) => {
@@ -20,10 +30,12 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const workspaceId = String(getRouterParam(event, 'id') || '').trim()
   const body = await readBody<CreateChatSessionBody>(event)
+  const projectId = String(body?.projectId || '').trim()
+  const mode = parseMode(body?.mode)
 
-  if (!workspaceId) {
+  if (!workspaceId || !projectId || !mode) {
     setResponseStatus(event, 400)
-    return fail('teamId 不能为空。', {
+    return fail('teamId、projectId、mode 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -39,6 +51,8 @@ export default defineEventHandler(async (event) => {
 
     return createAiChatSession(db, {
       workspaceId,
+      projectId,
+      mode,
       createdByUserId: user.id,
       title: body?.title,
       contestId: body?.contestId,

@@ -3564,7 +3564,8 @@ async function reconvertProjectResourcePreview() {
 }
 
 async function loadChatMessages(sessionId: string) {
-  if (!activeWorkspaceId.value || !sessionId) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!activeWorkspaceId.value || !projectId || !sessionId) {
     resetChatStateWithGreeting()
     return
   }
@@ -3574,6 +3575,8 @@ async function loadChatMessages(sessionId: string) {
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions/${sessionId}/messages`),
       {
         query: {
+          projectId,
+          mode: aiMode.value,
           limit: 200,
         },
       },
@@ -3611,7 +3614,8 @@ function buildSessionTitleByMode(): string {
 }
 
 async function createChatSession(preferredTitle = ''): Promise<string | null> {
-  if (!activeWorkspaceId.value)
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!activeWorkspaceId.value || !projectId)
     return null
 
   try {
@@ -3620,6 +3624,8 @@ async function createChatSession(preferredTitle = ''): Promise<string | null> {
       {
         method: 'POST',
         body: {
+          projectId,
+          mode: aiMode.value,
           title: preferredTitle || buildSessionTitleByMode(),
           contestId: selectedContestId.value,
           trackId: selectedTrackId.value,
@@ -3636,7 +3642,8 @@ async function createChatSession(preferredTitle = ''): Promise<string | null> {
 }
 
 async function loadChatSessions(preferredSessionId = '') {
-  if (!activeWorkspaceId.value) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!activeWorkspaceId.value || !projectId) {
     chatSessions.value = []
     activeChatSessionId.value = ''
     resetChatStateWithGreeting()
@@ -3649,6 +3656,8 @@ async function loadChatSessions(preferredSessionId = '') {
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions`),
       {
         query: {
+          projectId,
+          mode: aiMode.value,
           limit: 30,
         },
       },
@@ -4139,6 +4148,11 @@ async function sendChatMessage() {
     return
   }
 
+  if (!activeProjectId.value) {
+    statusLine.value = '请先选择一个项目。'
+    return
+  }
+
   const content = chatInput.value.trim()
   if (!content)
     return
@@ -4150,6 +4164,17 @@ async function sendChatMessage() {
       return
     }
     activeChatSessionId.value = createdId
+  }
+
+  const sessionInScope = chatSessions.value.some(item => item.id === activeChatSessionId.value)
+  if (!sessionInScope) {
+    const recreatedId = await createChatSession()
+    if (!recreatedId) {
+      statusLine.value = '当前会话不属于该项目作用域，且重建失败。'
+      return
+    }
+    activeChatSessionId.value = recreatedId
+    await loadChatSessions(recreatedId)
   }
 
   const pendingMessages = [...chatMessages.value, { role: 'user' as const, content }]
@@ -4384,6 +4409,9 @@ watch(activeProjectId, async (next, previous) => {
     aiChangeRequests.value = []
     projectIssueReports.value = []
     projectIssues.value = []
+    chatSessions.value = []
+    activeChatSessionId.value = ''
+    resetChatStateWithGreeting()
     return
   }
   syncFallbackResourceRefreshTimer()
@@ -4393,7 +4421,24 @@ watch(activeProjectId, async (next, previous) => {
     loadProjectSettings(selectedContestId.value),
     loadAiChangeRequests(),
     loadProjectIssues(),
+    loadChatSessions(),
   ])
+})
+
+watch(aiMode, async (next, previous) => {
+  if (next === previous)
+    return
+
+  if (!activeWorkspaceId.value || !activeProjectId.value) {
+    chatSessions.value = []
+    activeChatSessionId.value = ''
+    resetChatStateWithGreeting()
+    return
+  }
+
+  activeChatSessionId.value = ''
+  resetChatStateWithGreeting()
+  await loadChatSessions()
 })
 
 watch(() => workspaceRealtime.connected.value, () => {

@@ -664,6 +664,8 @@ export interface AiChatSession {
   teamId?: string
   id: string
   workspaceId: string
+  projectId?: string
+  mode?: WorkspaceAiMode
   createdByUserId: string
   title: string
   contestId?: string

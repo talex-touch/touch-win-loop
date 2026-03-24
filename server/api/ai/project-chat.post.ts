@@ -154,6 +154,8 @@ export default defineEventHandler(async (event) => {
     temperature: effectiveAiSettings.temperature,
   }
   const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
+  const scopeProjectId = String(safeRequest.context.projectId || '').trim()
+  const scopeMode = 'dialog_ask' as const
 
   const activeSession = await withTransaction(event, async (db) => {
     const canUseWorkspace = await hasWorkspaceMembership(db, user, workspaceId)
@@ -164,6 +166,9 @@ export default defineEventHandler(async (event) => {
       const existing = await getAiChatSessionById(db, {
         workspaceId,
         sessionId: safeRequest.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        strictScope: Boolean(scopeProjectId),
       })
       if (!existing)
         throw new Error('SESSION_NOT_FOUND')
@@ -171,6 +176,8 @@ export default defineEventHandler(async (event) => {
       await patchAiChatSessionContext(db, {
         workspaceId,
         sessionId: safeRequest.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
         contestId: safeRequest.context.contestId,
         trackId: safeRequest.context.trackId,
         major: safeRequest.context.major,
@@ -180,6 +187,8 @@ export default defineEventHandler(async (event) => {
 
     const created = await createAiChatSession(db, {
       workspaceId,
+      projectId: scopeProjectId,
+      mode: scopeMode,
       createdByUserId: user.id,
       title: buildSessionTitle(contest?.name || '', track?.name || ''),
       contestId: safeRequest.context.contestId,
@@ -296,7 +305,9 @@ export default defineEventHandler(async (event) => {
 
   await withTransaction(event, async (db) => {
     const modeMetadata = {
-      mode: 'project_chat',
+      mode: scopeMode,
+      sourceMode: 'project_chat',
+      projectId: scopeProjectId,
     }
 
     if (latestUserMessage) {
@@ -336,6 +347,8 @@ export default defineEventHandler(async (event) => {
     await patchAiChatSessionContext(db, {
       workspaceId,
       sessionId: activeSession.id,
+      projectId: scopeProjectId,
+      mode: scopeMode,
       contestId: safeRequest.context.contestId,
       trackId: safeRequest.context.trackId,
       major: safeRequest.context.major,

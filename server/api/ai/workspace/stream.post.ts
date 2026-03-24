@@ -222,25 +222,36 @@ export default defineEventHandler(async (event) => {
     : null
   const contestName = contestDetail?.contest?.name || ''
   const trackName = contestDetail?.contest?.tracks.find(item => item.id === request.context?.trackId)?.name || ''
+  const scopeProjectId = String(request.projectId || '').trim()
+  const scopeMode = request.mode || 'dialog_ask'
 
   const prepared = await withTransaction(event, async (db) => {
     const canUseWorkspace = await hasWorkspaceMembership(db, user, request.workspaceId || '')
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 
-    const session = request.sessionId
+    let session = request.sessionId
       ? await getAiChatSessionById(db, {
           workspaceId: request.workspaceId || '',
           sessionId: request.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          strictScope: Boolean(scopeProjectId),
         })
-      : await createAiChatSession(db, {
-          workspaceId: request.workspaceId || '',
-          createdByUserId: user.id,
-          title: buildSessionTitle(request.mode || 'dialog_ask', contestName, trackName),
-          contestId: request.context?.contestId,
-          trackId: request.context?.trackId,
-          major: request.context?.major,
-        })
+      : null
+
+    if (!session) {
+      session = await createAiChatSession(db, {
+        workspaceId: request.workspaceId || '',
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        createdByUserId: user.id,
+        title: buildSessionTitle(scopeMode, contestName, trackName),
+        contestId: request.context?.contestId,
+        trackId: request.context?.trackId,
+        major: request.context?.major,
+      })
+    }
 
     if (!session)
       throw new Error('SESSION_NOT_FOUND')
@@ -248,10 +259,12 @@ export default defineEventHandler(async (event) => {
     await patchAiChatSessionContext(db, {
       workspaceId: request.workspaceId || '',
       sessionId: session.id,
+      projectId: scopeProjectId,
+      mode: scopeMode,
       contestId: request.context?.contestId,
       trackId: request.context?.trackId,
       major: request.context?.major,
-      title: buildSessionTitle(request.mode || 'dialog_ask', contestName, trackName),
+      title: buildSessionTitle(scopeMode, contestName, trackName),
     })
 
     const quota = await consumeAiQuota(db, {
@@ -406,7 +419,8 @@ export default defineEventHandler(async (event) => {
 
       const persisted = await withTransaction(event, async (db) => {
         const baseMetadata = {
-          mode: request.mode,
+          mode: scopeMode,
+          projectId: scopeProjectId,
           channelKey: channelRuntime.key,
           providerId: channelRuntime.provider?.id || null,
         }
@@ -458,10 +472,12 @@ export default defineEventHandler(async (event) => {
         await patchAiChatSessionContext(db, {
           workspaceId: request.workspaceId || '',
           sessionId: prepared.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
           contestId: request.context?.contestId,
           trackId: request.context?.trackId,
           major: request.context?.major,
-          title: buildSessionTitle(request.mode || 'dialog_ask', contestName, trackName),
+          title: buildSessionTitle(scopeMode, contestName, trackName),
         })
 
         const proposals = request.projectId

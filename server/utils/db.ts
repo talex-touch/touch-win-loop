@@ -180,6 +180,8 @@ CREATE TABLE IF NOT EXISTS ai_usage_ledger (
 CREATE TABLE IF NOT EXISTS ai_chat_sessions (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL DEFAULT '',
+  mode TEXT NOT NULL DEFAULT 'dialog_ask' CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense')),
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT '',
   contest_id TEXT NOT NULL DEFAULT '',
@@ -1036,6 +1038,26 @@ ALTER TABLE contest_resources
 
 ALTER TABLE ai_chat_messages
   ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE ai_chat_sessions
+  ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE ai_chat_sessions
+  ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'dialog_ask';
+
+UPDATE ai_chat_sessions
+SET mode = 'dialog_ask'
+WHERE COALESCE(mode, '') NOT IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense');
+
+ALTER TABLE ai_chat_sessions
+  DROP CONSTRAINT IF EXISTS ai_chat_sessions_mode_check;
+
+ALTER TABLE ai_chat_sessions
+  ADD CONSTRAINT ai_chat_sessions_mode_check
+  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense'));
+
+CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_project_mode_updated
+  ON ai_chat_sessions(workspace_id, project_id, mode, updated_at DESC);
 
 ALTER TABLE projects
   ADD COLUMN IF NOT EXISTS contest_ids TEXT[] NOT NULL DEFAULT '{}';
