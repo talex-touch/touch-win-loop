@@ -19,6 +19,7 @@ import {
 import { getContestDetail, recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { consumeAiQuota, getProjectSettingsSnapshot, hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import {
@@ -44,15 +45,17 @@ function normalizeMode(value: unknown): WorkspaceAiMode {
 
 function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined): AiWorkspaceRequest {
   const context = body?.context || {}
-  const workspaceId = toText(body?.workspaceId || context.workspaceId)
+  const workspaceId = toText(body?.teamId || body?.workspaceId || context.teamId || context.workspaceId)
   const projectId = toText(body?.projectId || context.projectId)
   return {
+    teamId: workspaceId,
     workspaceId,
     projectId,
     sessionId: toText(body?.sessionId),
     mode: normalizeMode(body?.mode),
     messages: Array.isArray(body?.messages) ? body.messages : [],
     context: {
+      teamId: workspaceId,
       workspaceId,
       projectId,
       contestId: toText(context.contestId),
@@ -119,18 +122,75 @@ function toErrorMessage(error: unknown): string {
   return 'UNKNOWN_ERROR'
 }
 
+interface WorkspaceSystemStreamMessage {
+  eventType: 'progress' | 'tool'
+  seq: number
+  content: string
+}
+
+function summarizeToolPayload(payload: unknown, maxLength = 180): string {
+  if (payload === null || payload === undefined)
+    return ''
+
+  const normalized = typeof payload === 'string'
+    ? payload.trim()
+    : (() => {
+        try {
+          return JSON.stringify(payload)
+        }
+        catch {
+          return ''
+        }
+      })()
+
+  if (!normalized || normalized === '{}' || normalized === '[]')
+    return ''
+
+  if (normalized.length <= maxLength)
+    return normalized
+  return `${normalized.slice(0, maxLength)}...`
+}
+
+function buildWorkspaceSystemEventContent(eventType: 'progress' | 'tool', data: Record<string, unknown>): string {
+  if (eventType === 'progress') {
+    const message = String(data.message || 'AI 处理中...').trim() || 'AI 处理中...'
+    return `进度：${message}`
+  }
+
+  const toolName = String(data.name || '').trim() || 'unknown_tool'
+  const payloadSummary = summarizeToolPayload(data.payload)
+  if (!payloadSummary)
+    return `工具：${toolName}`
+  return `工具：${toolName} · ${payloadSummary}`
+}
+
+function resolveWorkspaceChannelKey(mode: WorkspaceAiMode): 'workspace_dialog_ask' | 'workspace_auto_optimize' | 'workspace_issue_discovery' {
+  if (mode === 'auto_optimize')
+    return 'workspace_auto_optimize'
+  if (mode === 'issue_discovery')
+    return 'workspace_issue_discovery'
+  return 'workspace_dialog_ask'
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AiWorkspaceRequest>>(event).catch(() => ({})))
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, resolveWorkspaceChannelKey(request.mode || 'dialog_ask'))
+  const workspaceAiConfig = {
+    ...channelRuntime.ai,
+    temperature: Number.isFinite(Number(request.aiOptions?.temperature))
+      ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
+      : channelRuntime.ai.temperature,
+  }
 
   if (!request.workspaceId) {
     setResponseStatus(event, 400)
-    return fail('调用工作台 AI 时必须传 workspaceId。', {
+    return fail('调用工作台 AI 时必须传 teamId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: workspaceAiConfig.provider,
+      model: workspaceAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40095)
@@ -140,8 +200,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('自动优化与寻疑发现模式必须传 projectId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: workspaceAiConfig.provider,
+      model: workspaceAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40096)
@@ -226,8 +286,8 @@ export default defineEventHandler(async (event) => {
   if (!prepared) {
     return fail('当前用户无权使用该空间。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: workspaceAiConfig.provider,
+      model: workspaceAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40395)
@@ -236,8 +296,8 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'SESSION_NOT_FOUND') {
     return fail('会话不存在，请刷新后重试。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: workspaceAiConfig.provider,
+      model: workspaceAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40495)
@@ -246,15 +306,26 @@ export default defineEventHandler(async (event) => {
   if (prepared === 'QUOTA_EXCEEDED') {
     return fail('Team AI 额度不足，请扩容或等待重置。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: workspaceAiConfig.provider,
+      model: workspaceAiConfig.model,
       fallbackUsed: false,
       attempts: 1,
     }, 42995)
   }
 
   const stream = createEventStream(event)
+  const streamSystemMessages: WorkspaceSystemStreamMessage[] = []
+  let streamSystemSeq = 0
   const pushEvent = async (eventType: AiWorkspaceStreamEventType, data: Record<string, unknown>) => {
+    if (eventType === 'progress' || eventType === 'tool') {
+      streamSystemSeq += 1
+      streamSystemMessages.push({
+        eventType,
+        seq: streamSystemSeq,
+        content: buildWorkspaceSystemEventContent(eventType, data),
+      })
+    }
+
     const payload: AiWorkspaceStreamEvent = {
       event: eventType,
       data,
@@ -306,7 +377,7 @@ export default defineEventHandler(async (event) => {
 
       const execution = await executeWorkspaceAi({
         runtime: {
-          ai: runtime.ai,
+          ai: workspaceAiConfig,
           adminAi: runtime.adminAi,
         },
         mode: request.mode || 'dialog_ask',
@@ -323,6 +394,7 @@ export default defineEventHandler(async (event) => {
           resourceSummary: contextBundle.resourceSummary,
           latestUserMessage,
         },
+        channelPrompt: channelRuntime.prompt,
         hooks: {
           onProgress: message => pushEvent('progress', { message }),
           onTool: (name, payload) => pushEvent('tool', { name, payload }),
@@ -333,17 +405,39 @@ export default defineEventHandler(async (event) => {
       })
 
       const persisted = await withTransaction(event, async (db) => {
+        const baseMetadata = {
+          mode: request.mode,
+          channelKey: channelRuntime.key,
+          providerId: channelRuntime.provider?.id || null,
+        }
+
         if (latestUserMessage) {
           await appendAiChatMessage(db, {
             workspaceId: request.workspaceId || '',
             sessionId: prepared.sessionId,
             role: 'user',
             content: latestUserMessage,
-            provider: runtime.ai.provider,
-            model: runtime.ai.model,
+            provider: workspaceAiConfig.provider,
+            model: workspaceAiConfig.model,
+            fallbackUsed: false,
+            metadata: baseMetadata,
+            createdByUserId: user.id,
+          })
+        }
+
+        for (const systemMessage of streamSystemMessages) {
+          await appendAiChatMessage(db, {
+            workspaceId: request.workspaceId || '',
+            sessionId: prepared.sessionId,
+            role: 'system',
+            content: systemMessage.content,
+            provider: workspaceAiConfig.provider,
+            model: workspaceAiConfig.model,
             fallbackUsed: false,
             metadata: {
-              mode: request.mode,
+              ...baseMetadata,
+              eventType: systemMessage.eventType,
+              seq: systemMessage.seq,
             },
             createdByUserId: user.id,
           })
@@ -354,12 +448,10 @@ export default defineEventHandler(async (event) => {
           sessionId: prepared.sessionId,
           role: 'assistant',
           content: execution.data.assistantReply,
-          provider: runtime.ai.provider,
-          model: runtime.ai.model,
+          provider: workspaceAiConfig.provider,
+          model: workspaceAiConfig.model,
           fallbackUsed: execution.fallbackUsed,
-          metadata: {
-            mode: request.mode,
-          },
+          metadata: baseMetadata,
           createdByUserId: user.id,
         })
 
@@ -409,6 +501,8 @@ export default defineEventHandler(async (event) => {
             projectId: request.projectId,
             sessionId: prepared.sessionId,
             mode: request.mode,
+            channelKey: channelRuntime.key,
+            providerId: channelRuntime.provider?.id || null,
             proposals: proposals.length,
             issues: issuePayload?.issues.length || 0,
             fallbackUsed: execution.fallbackUsed,

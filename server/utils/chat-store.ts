@@ -156,7 +156,7 @@ export async function listAiChatSessionsByWorkspace(
      FROM ai_chat_sessions s
      LEFT JOIN LATERAL (
        SELECT
-         COUNT(*)::INT AS message_count,
+         COUNT(*) FILTER (WHERE role IN ('user', 'assistant'))::INT AS message_count,
          MAX(created_at)::TEXT AS last_message_at
        FROM ai_chat_messages
        WHERE session_id = s.id
@@ -193,7 +193,7 @@ export async function getAiChatSessionById(
      FROM ai_chat_sessions s
      LEFT JOIN LATERAL (
        SELECT
-         COUNT(*)::INT AS message_count,
+         COUNT(*) FILTER (WHERE role IN ('user', 'assistant'))::INT AS message_count,
          MAX(created_at)::TEXT AS last_message_at
        FROM ai_chat_messages
        WHERE session_id = s.id

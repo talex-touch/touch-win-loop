@@ -95,16 +95,6 @@ function requiresSecondConfirm(change: AiProjectChangeRequest): boolean {
   return props.changeSecondConfirmIds.includes(change.id)
 }
 
-function modeLabel(mode: WorkspaceAiMode): string {
-  if (mode === 'auto_optimize')
-    return '自动优化'
-  if (mode === 'issue_discovery')
-    return '寻疑发现'
-  if (mode === 'defense')
-    return '答辩模拟'
-  return '对话询问'
-}
-
 function severityLabel(value: string): string {
   if (value === 'critical')
     return '严重'
@@ -161,61 +151,49 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
 
 <template>
   <aside
-    class="border-l border-slate-200 bg-white flex shrink-0 flex-col w-full xl:w-88"
+    class="border-l border-slate-200 bg-white flex shrink-0 flex-col min-h-0 w-full overflow-hidden xl:w-88"
     tabindex="0"
     @keydown.capture="handleModeCycleHotkey"
   >
-    <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70">
-      <div class="text-xs text-slate-800 font-semibold">
-        智能辅助
+    <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70 space-y-2">
+      <div class="flex items-center justify-between">
+        <div class="text-xs text-slate-800 font-semibold">
+          对话会话（{{ chatSessions.length }}）
+        </div>
+        <button
+          class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
+          @click="emit('createChatSession')"
+        >
+          新建
+        </button>
       </div>
-      <div class="text-[11px] text-slate-500 mt-1">
-        当前竞赛：{{ selectedContest?.name || '未选择竞赛' }} / {{ selectedTrack?.name || '未选择赛道' }}
+      <div v-if="chatSessionsLoading" class="text-[11px] text-slate-500">
+        会话加载中...
       </div>
-      <div class="text-[10px] text-slate-500 mt-1">
-        当前模式：{{ modeLabel(aiMode) }}
+      <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400">
+        暂无会话，点击“新建”开始。
+      </div>
+      <div v-else class="pr-1 max-h-28 overflow-y-auto space-y-1">
+        <button
+          v-for="session in chatSessions"
+          :key="session.id"
+          class="px-2 py-1.5 text-left border rounded w-full"
+          :class="session.id === activeChatSessionId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'"
+          @click="emit('switchChatSession', session.id)"
+        >
+          <div class="text-[11px] text-slate-700 font-semibold truncate">
+            {{ session.title || 'AI 对话' }}
+          </div>
+          <div class="text-[10px] text-slate-500 mt-1">
+            消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}
+          </div>
+        </button>
       </div>
     </div>
 
-    <div class="no-scrollbar p-4 flex-1 overflow-y-auto">
-      <div class="flex flex-col h-full space-y-4">
-        <div class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
-          <div class="flex items-center justify-between">
-            <div class="text-xs text-slate-700 font-semibold">
-              对话会话（{{ chatSessions.length }}）
-            </div>
-            <button
-              class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
-              @click="emit('createChatSession')"
-            >
-              新建
-            </button>
-          </div>
-          <div v-if="chatSessionsLoading" class="text-[11px] text-slate-500">
-            会话加载中...
-          </div>
-          <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400">
-            暂无会话，点击“新建”开始。
-          </div>
-          <div v-else class="max-h-28 overflow-y-auto space-y-1">
-            <button
-              v-for="session in chatSessions"
-              :key="session.id"
-              class="px-2 py-1.5 text-left border rounded w-full"
-              :class="session.id === activeChatSessionId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'"
-              @click="emit('switchChatSession', session.id)"
-            >
-              <div class="text-[11px] text-slate-700 font-semibold truncate">
-                {{ session.title || 'AI 对话' }}
-              </div>
-              <div class="text-[10px] text-slate-500 mt-1">
-                消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}
-              </div>
-            </button>
-          </div>
-        </div>
-
-        <div class="flex-1 space-y-4">
+    <div class="no-scrollbar p-4 flex-1 h-0 min-h-0 overflow-y-auto">
+      <div class="flex flex-col min-h-full">
+        <div class="pb-36 space-y-4">
           <div
             v-for="(message, index) in chatMessages"
             :key="`${message.role}-${index}`"
@@ -223,17 +201,28 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
             :class="message.role === 'user' ? 'justify-end' : ''"
           >
             <div
-              v-if="message.role !== 'user'"
+              v-if="message.role === 'assistant'"
               class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
             >
               <span class="material-symbols-outlined text-sm">smart_toy</span>
             </div>
             <div
+              v-else-if="message.role === 'system'"
+              class="text-slate-700 border border-slate-300 rounded bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center"
+            >
+              <span class="text-[9px] font-semibold">SYS</span>
+            </div>
+            <div
               class="text-[11px] leading-relaxed p-3 rounded-lg max-w-[86%] whitespace-pre-wrap"
               :class="message.role === 'user'
                 ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none'
-                : 'bg-slate-100 text-slate-700 rounded-tl-none'"
+                : message.role === 'system'
+                  ? 'bg-slate-50 border border-slate-200 text-slate-600 rounded-tl-sm'
+                  : 'bg-slate-100 text-slate-700 rounded-tl-none'"
             >
+              <div v-if="message.role === 'system'" class="text-[10px] text-slate-500 tracking-wide font-semibold mb-1">
+                SYSTEM
+              </div>
               {{ message.content }}
             </div>
             <div
@@ -384,7 +373,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
           </div>
         </div>
 
-        <div class="mt-auto pt-4 border-t border-slate-100">
+        <div class="workspace-chat-composer mt-auto">
           <div class="relative">
             <textarea
               :value="chatInput"
@@ -436,6 +425,16 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+.workspace-chat-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, #ffffff 22px);
 }
 
 .workspace-mode-select {
