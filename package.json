@@ -27,6 +27,8 @@
     "bcryptjs": "catalog:",
     "deepagents": "catalog:",
     "dotenv": "catalog:",
+    "json-rules-engine": "catalog:",
+    "jsonata": "catalog:",
     "langchain": "catalog:",
     "pdfjs-dist": "catalog:",
     "pg": "catalog:",

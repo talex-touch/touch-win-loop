@@ -278,6 +278,243 @@ CREATE TABLE IF NOT EXISTS platform_user_roles (
   UNIQUE(user_id, role)
 );
 
+CREATE TABLE IF NOT EXISTS auth_identities (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  profile_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(provider, provider_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS feishu_bitable_tasks (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  target_type TEXT NOT NULL CHECK (target_type IN ('contest', 'track', 'resource')),
+  app_token TEXT NOT NULL,
+  table_id TEXT NOT NULL,
+  view_id TEXT NOT NULL DEFAULT '',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  mapping_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  options_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  last_run_at TIMESTAMPTZ,
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS feishu_bitable_sync_runs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES feishu_bitable_tasks(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('running', 'success', 'partial_success', 'failed')),
+  trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual', 'event')),
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  fetched_count INTEGER NOT NULL DEFAULT 0,
+  created_count INTEGER NOT NULL DEFAULT 0,
+  updated_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT NOT NULL DEFAULT '',
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS feishu_external_refs (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('feishu_bitable')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  external_id TEXT NOT NULL,
+  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
+  entity_id TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(provider, scope, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS activity_catalog (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  activity_type TEXT NOT NULL CHECK (activity_type IN ('competition', 'exam', 'application')),
+  aliases TEXT[] NOT NULL DEFAULT '{}',
+  official_url TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS activity_instances (
+  id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL REFERENCES activity_catalog(id) ON DELETE CASCADE,
+  year INTEGER,
+  batch_label TEXT NOT NULL DEFAULT '',
+  region TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL DEFAULT '',
+  track TEXT NOT NULL DEFAULT '',
+  registration_start_at TIMESTAMPTZ,
+  registration_end_at TIMESTAMPTZ,
+  event_start_at TIMESTAMPTZ,
+  event_end_at TIMESTAMPTZ,
+  location_text TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS source_documents (
+  id TEXT PRIMARY KEY,
+  activity_id TEXT REFERENCES activity_catalog(id) ON DELETE SET NULL,
+  instance_id TEXT REFERENCES activity_instances(id) ON DELETE SET NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('web', 'wechat', 'pdf', 'word', 'excel', 'manual', 'feishu_bitable')),
+  title TEXT NOT NULL,
+  source_url TEXT NOT NULL DEFAULT '',
+  file_url TEXT NOT NULL DEFAULT '',
+  content_text TEXT NOT NULL DEFAULT '',
+  publish_time TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS semantic_paths (
+  id TEXT PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL DEFAULT '',
+  value_type TEXT NOT NULL CHECK (value_type IN ('string', 'number', 'boolean', 'date', 'array', 'object')),
+  description TEXT NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS rule_versions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('draft', 'published')),
+  note TEXT NOT NULL DEFAULT '',
+  published_at TIMESTAMPTZ,
+  published_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  rolled_back_from_version_id TEXT REFERENCES rule_versions(id) ON DELETE SET NULL,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS rule_definitions (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL REFERENCES rule_versions(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN ('eligibility', 'material', 'workflow', 'reminder')),
+  severity TEXT NOT NULL CHECK (severity IN ('error', 'warning', 'info')),
+  when_expr JSONB NOT NULL DEFAULT '{}'::JSONB,
+  assert_expr JSONB NOT NULL DEFAULT '{}'::JSONB,
+  message_template TEXT NOT NULL DEFAULT '',
+  target_path TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(version_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS rule_bindings (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL REFERENCES rule_versions(id) ON DELETE CASCADE,
+  rule_id TEXT NOT NULL REFERENCES rule_definitions(id) ON DELETE CASCADE,
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('global', 'activity', 'instance', 'region', 'stage', 'track', 'policy')),
+  scope_value TEXT NOT NULL DEFAULT '*',
+  priority INTEGER NOT NULL DEFAULT 0,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  effective_start_at TIMESTAMPTZ,
+  effective_end_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS obligation_definitions (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL REFERENCES rule_versions(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  required BOOLEAN NOT NULL DEFAULT TRUE,
+  when_expr JSONB NOT NULL DEFAULT '{}'::JSONB,
+  satisfied_by_expr JSONB NOT NULL DEFAULT '{}'::JSONB,
+  message_when_missing TEXT NOT NULL DEFAULT '',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(version_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS obligation_bindings (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL REFERENCES rule_versions(id) ON DELETE CASCADE,
+  obligation_id TEXT NOT NULL REFERENCES obligation_definitions(id) ON DELETE CASCADE,
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('global', 'activity', 'instance', 'region', 'stage', 'track', 'policy')),
+  scope_value TEXT NOT NULL DEFAULT '*',
+  priority INTEGER NOT NULL DEFAULT 0,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS rule_annotations (
+  id TEXT PRIMARY KEY,
+  rule_id TEXT NOT NULL REFERENCES rule_definitions(id) ON DELETE CASCADE,
+  source_type TEXT NOT NULL CHECK (source_type IN ('feishu', 'document', 'manual')),
+  source_id TEXT NOT NULL,
+  source_field TEXT NOT NULL DEFAULT '',
+  source_path TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS feishu_sync_issues (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES feishu_bitable_tasks(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK (target_type IN ('contest', 'track', 'resource')),
+  record_id TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'ignored')),
+  reason_code TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  resolution TEXT NOT NULL DEFAULT '' CHECK (resolution IN ('', 'manual_bind', 'ignored')),
+  resolution_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  resolved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(task_id, record_id, external_id)
+);
+
 CREATE TABLE IF NOT EXISTS contests (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -767,6 +1004,23 @@ CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sour
 CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_token_hash ON invitations(token_hash);
 CREATE INDEX IF NOT EXISTS idx_platform_user_roles_user ON platform_user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_user ON auth_identities(provider, provider_user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_updated ON feishu_bitable_tasks(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_runs_task_started ON feishu_bitable_sync_runs(task_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_external_refs_entity ON feishu_external_refs(scope, entity_id);
+CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_task_status ON feishu_sync_issues(task_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_record ON feishu_sync_issues(task_id, record_id, external_id);
+CREATE INDEX IF NOT EXISTS idx_activity_catalog_type ON activity_catalog(activity_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_instances_activity ON activity_instances(activity_id, year DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_source_documents_instance ON source_documents(instance_id, publish_time DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_source_documents_activity ON source_documents(activity_id, publish_time DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rule_versions_status_updated ON rule_versions(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rule_definitions_version_code ON rule_definitions(version_id, code);
+CREATE INDEX IF NOT EXISTS idx_rule_bindings_version_scope ON rule_bindings(version_id, scope_type, scope_value, priority DESC);
+CREATE INDEX IF NOT EXISTS idx_obligation_definitions_version_code ON obligation_definitions(version_id, code);
+CREATE INDEX IF NOT EXISTS idx_obligation_bindings_version_scope ON obligation_bindings(version_id, scope_type, scope_value, priority DESC);
+CREATE INDEX IF NOT EXISTS idx_rule_annotations_rule ON rule_annotations(rule_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contests_status_visibility ON contests(status, visibility);
 CREATE INDEX IF NOT EXISTS idx_contests_level ON contests(level);
 CREATE INDEX IF NOT EXISTS idx_contest_tracks_contest ON contest_tracks(contest_id);

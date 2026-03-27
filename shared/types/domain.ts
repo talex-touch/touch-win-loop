@@ -1084,6 +1084,314 @@ export interface PlatformRoleAssignment {
   updatedAt: string
 }
 
+export type FeishuBitableTaskTargetType = 'contest' | 'track' | 'resource'
+export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
+export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event'
+export type RuleSeverity = 'error' | 'warning' | 'info'
+export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder'
+export type RuleVersionStatus = 'draft' | 'published'
+export type ScopeType = 'global' | 'activity' | 'instance' | 'region' | 'stage' | 'track' | 'policy'
+export type FeishuSyncIssueStatus = 'open' | 'resolved' | 'ignored'
+export type FeishuSyncIssueResolution = 'manual_bind' | 'ignored'
+
+export interface EngineContext {
+  activity?: Record<string, unknown>
+  instance?: Record<string, unknown>
+  team?: Record<string, unknown>
+  submission?: Record<string, unknown>
+  policy?: Record<string, unknown>
+  now?: string
+  [key: string]: unknown
+}
+
+export type ValueExpr
+  = { type: 'const', value: unknown }
+    | { type: 'var', path: string }
+    | { type: 'count', path: string }
+    | { type: 'exists', path: string }
+
+export type PredicateExpr
+  = { op: 'eq', left: ValueExpr, right: ValueExpr }
+    | { op: 'neq', left: ValueExpr, right: ValueExpr }
+    | { op: 'lt', left: ValueExpr, right: ValueExpr }
+    | { op: 'lte', left: ValueExpr, right: ValueExpr }
+    | { op: 'gt', left: ValueExpr, right: ValueExpr }
+    | { op: 'gte', left: ValueExpr, right: ValueExpr }
+    | { op: 'contains', left: ValueExpr, right: ValueExpr }
+    | { op: 'in_set', left: ValueExpr, right: ValueExpr }
+    | { op: 'regex', left: ValueExpr, right: ValueExpr }
+    | { op: 'date_before', left: ValueExpr, right: ValueExpr }
+    | { op: 'date_after', left: ValueExpr, right: ValueExpr }
+    | { op: 'date_between', target: ValueExpr, start: ValueExpr, end: ValueExpr }
+    | { op: 'any_match', path: string, child: PredicateExpr }
+    | { op: 'all_match', path: string, child: PredicateExpr }
+    | { op: 'none_match', path: string, child: PredicateExpr }
+    | { op: 'and', children: PredicateExpr[] }
+    | { op: 'or', children: PredicateExpr[] }
+    | { op: 'not', child: PredicateExpr }
+
+export interface RuleDefinition {
+  id: string
+  code: string
+  name: string
+  category: RuleCategory
+  severity: RuleSeverity
+  when?: PredicateExpr
+  assert: PredicateExpr
+  messageTemplate: string
+  targetPath?: string
+  metadata?: Record<string, unknown>
+  versionId?: string
+  createdByUserId?: string
+  updatedByUserId?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface RuleBinding {
+  id: string
+  ruleId: string
+  scopeType: ScopeType
+  scopeValue: string
+  priority: number
+  enabled: boolean
+  effectiveStartAt?: string | null
+  effectiveEndAt?: string | null
+  metadata?: Record<string, unknown>
+  versionId?: string
+  createdByUserId?: string
+  updatedByUserId?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface RuleVersion {
+  id: string
+  name: string
+  status: RuleVersionStatus
+  note?: string
+  publishedAt?: string | null
+  publishedByUserId?: string | null
+  rolledBackFromVersionId?: string | null
+  createdByUserId: string
+  updatedByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface RuleResultTrace {
+  whenMatched: boolean
+  assertMatched: boolean
+  details: string[]
+}
+
+export interface RuleResult {
+  ruleId: string
+  ruleCode: string
+  severity: RuleSeverity
+  passed: boolean
+  message: string
+  targetPath?: string
+  skipped?: boolean
+  trace: RuleResultTrace
+}
+
+export interface EngineOutput {
+  passed: boolean
+  results: RuleResult[]
+  errors: RuleResult[]
+  warnings: RuleResult[]
+  infos: RuleResult[]
+}
+
+export interface ObligationDefinition {
+  id: string
+  code: string
+  name: string
+  required: boolean
+  when?: PredicateExpr
+  satisfiedBy?: PredicateExpr
+  messageWhenMissing?: string
+  metadata?: Record<string, unknown>
+  versionId?: string
+  createdByUserId?: string
+  updatedByUserId?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ObligationBinding {
+  id: string
+  obligationId: string
+  scopeType: ScopeType
+  scopeValue: string
+  priority: number
+  enabled: boolean
+  metadata?: Record<string, unknown>
+  versionId?: string
+  createdByUserId?: string
+  updatedByUserId?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ChecklistItem {
+  code: string
+  name: string
+  status: 'completed' | 'missing' | 'optional'
+  message?: string
+}
+
+export interface RuleAnnotation {
+  id: string
+  ruleId: string
+  sourceType: 'feishu' | 'document' | 'manual'
+  sourceId: string
+  sourceField?: string
+  sourcePath?: string
+  note?: string
+  createdByUserId: string
+  updatedByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SemanticPathDictionaryItem {
+  id: string
+  path: string
+  label: string
+  valueType: 'string' | 'number' | 'boolean' | 'date' | 'array' | 'object'
+  description?: string
+  enabled: boolean
+  createdByUserId?: string
+  updatedByUserId?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface FeishuMappingV1 {
+  externalIdField?: string
+  contestExternalIdField?: string
+  trackExternalIdField?: string
+  fieldMap?: Record<string, string>
+}
+
+export interface FeishuMappingFieldBinding {
+  key?: string
+  targetPath: string
+  sourceField?: string
+  transform?: string
+}
+
+export interface FeishuMappingLayer {
+  id: string
+  scopeType: ScopeType
+  scopeValue: string
+  priority: number
+  enabled: boolean
+  fieldMap?: Record<string, string>
+  fieldBindings?: FeishuMappingFieldBinding[]
+  defaults?: Record<string, unknown>
+}
+
+export interface FeishuMappingConfigV2 {
+  schemaVersion: 2
+  match?: {
+    externalIdField?: string
+    contestExternalIdField?: string
+    trackExternalIdField?: string
+  }
+  layers: FeishuMappingLayer[]
+}
+
+export interface FeishuSyncIssue {
+  id: string
+  taskId: string
+  targetType: FeishuBitableTaskTargetType
+  recordId: string
+  externalId: string
+  status: FeishuSyncIssueStatus
+  reasonCode: string
+  message: string
+  payload: Record<string, unknown>
+  resolvedByUserId?: string | null
+  resolvedAt?: string | null
+  resolution?: FeishuSyncIssueResolution | null
+  resolutionPayload?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FeishuFieldInspectionItem {
+  fieldName: string
+  sampleValues: string[]
+  sampleCount: number
+}
+
+export interface FeishuConfigValidationResult {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+}
+
+export interface FeishuIntegrationConfig {
+  enabled: boolean
+  appId: string
+  appSecretConfigured: boolean
+  oauthRedirectUri: string
+  eventTokenConfigured: boolean
+  eventEncryptKeyConfigured: boolean
+  adminGroupIds: string[]
+  webSdkScriptUrl: string
+  updatedAt: string
+  updatedByUserId: string
+}
+
+export interface FeishuAdminGroupReconcileResult {
+  synchronizedAt: string
+  groupIds: string[]
+  totalGroupMembers: number
+  createdUsers: number
+  grantedContestAdmin: number
+  revokedContestAdmin: number
+  skippedMembers: number
+}
+
+export interface FeishuBitableTask {
+  id: string
+  name: string
+  targetType: FeishuBitableTaskTargetType
+  appToken: string
+  tableId: string
+  viewId: string
+  isActive: boolean
+  mapping: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
+  options: Record<string, unknown>
+  lastRunAt: string | null
+  createdByUserId: string
+  updatedByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FeishuBitableSyncRun {
+  id: string
+  taskId: string
+  taskName: string
+  status: FeishuBitableSyncRunStatus
+  triggerSource: FeishuBitableSyncRunTriggerSource
+  startedAt: string
+  finishedAt: string | null
+  fetchedCount: number
+  createdCount: number
+  updatedCount: number
+  skippedCount: number
+  errorCount: number
+  errorMessage: string
+  createdByUserId: string | null
+  createdAt: string
+}
+
 export interface ContestDetailPayload {
   contest: Contest
   timelines: ContestTimeline[]

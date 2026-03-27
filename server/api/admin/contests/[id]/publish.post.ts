@@ -2,9 +2,10 @@ import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { publishAdminContest } from '~~/server/utils/contest-store'
-import { withTransaction } from '~~/server/utils/db'
+import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { getContestPublishCheckWithRules } from '~~/server/utils/publish-rule-check'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -33,6 +34,48 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40364)
+  }
+
+  const publishCheck = await withClient(event, async (db) => {
+    return getContestPublishCheckWithRules(db, { contestId })
+  })
+  if (!publishCheck) {
+    setResponseStatus(event, 404)
+    return fail('contest not found', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40464)
+  }
+
+  if (!publishCheck.canPublish) {
+    const blockerText = (publishCheck.blockers || [])
+      .map((item) => {
+        const code = String(item.code || '').trim()
+        const message = String(item.message || '').trim()
+        const field = String(item.field || '').trim()
+        if (code && field)
+          return `${code}: ${message}（${field}）`
+        if (code)
+          return `${code}: ${message}`
+        return message
+      })
+      .filter(Boolean)
+      .join('；')
+    setResponseStatus(event, 400)
+    return fail(
+      blockerText ? `发布校验未通过：${blockerText}` : '发布校验未通过，请先补全阻断项。',
+      {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      },
+      40066,
+    )
   }
 
   let patched = null
