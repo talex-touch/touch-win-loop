@@ -129,7 +129,7 @@ onBeforeUnmount(() => {
         >
           竞赛分析工作台
         </button>
-        <span class="text-slate-300 font-normal mx-0.5">/</span>
+        <span class="text-slate-300/75 text-sm font-normal leading-none mx-0.5">/</span>
 
         <div ref="quickSwitchRef" class="min-w-0 relative">
           <button
@@ -139,8 +139,8 @@ onBeforeUnmount(() => {
             type="button"
             @click.stop="toggleQuickSwitch"
           >
-            <span class="truncate">{{ projectName }}</span>
-            <span class="material-symbols-outlined text-sm shrink-0 block rotate-90">swap_horiz</span>
+            <span class="truncate leading-none">{{ projectName }}</span>
+            <span class="material-symbols-outlined text-[12px] text-slate-500/70 shrink-0 block leading-none translate-y-[0.5px] rotate-90">swap_horiz</span>
           </button>
 
           <div

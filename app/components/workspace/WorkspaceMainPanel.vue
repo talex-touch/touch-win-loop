@@ -68,6 +68,10 @@ const props = withDefaults(defineProps<{
   workspaceInvitations?: WorkspaceInvitationSummary[]
   workspaceMemberManagementLoading?: boolean
   workspaceCanManageMembers?: boolean
+  workspaceCanEditMembers?: boolean
+  workspaceMemberRoleUpdatingUserId?: string
+  workspaceMemberRemovingUserId?: string
+  workspaceInvitationRevokingId?: string
   workspaceCanManageBillingSeats?: boolean
   workspaceSeatUsed?: number
   workspaceSeatLimit?: number | null
@@ -113,7 +117,7 @@ const props = withDefaults(defineProps<{
   previewPdfUrl: '',
   previewSourceDownloadUrl: '',
   collabMarkdownValue: '',
-  collabDrawValue: '',
+  collabDrawValue: '{}',
   collabDrawError: '',
   collabRevision: 0,
   collabConnected: false,
@@ -142,6 +146,10 @@ const props = withDefaults(defineProps<{
   workspaceInvitations: () => [],
   workspaceMemberManagementLoading: false,
   workspaceCanManageMembers: false,
+  workspaceCanEditMembers: false,
+  workspaceMemberRoleUpdatingUserId: '',
+  workspaceMemberRemovingUserId: '',
+  workspaceInvitationRevokingId: '',
   workspaceCanManageBillingSeats: false,
   workspaceSeatUsed: 0,
   workspaceSeatLimit: null,
@@ -200,6 +208,9 @@ const emit = defineEmits<{
   'saveProjectSettings': []
   'reloadWorkspaceMemberManagement': []
   'createWorkspaceInvitation': [value: { inviteeUsername: string, role: WorkspaceMemberRole, expiresInDays: number }]
+  'patchWorkspaceMemberRole': [value: { userId: string, role: 'admin' | 'manager' | 'member' }]
+  'removeWorkspaceMember': [userId: string]
+  'revokeWorkspaceInvitation': [invitationId: string]
   'copyWorkspaceInvitationLink': []
   'openWorkspaceSeatModal': []
   'saveWorkspaceSeatLimit': [seatLimit: number]
@@ -345,6 +356,50 @@ const projectSettingsAddContestModalTrackOptions = computed<Track[]>(() => {
 })
 
 const WORKSPACE_ROLE_OPTIONS: WorkspaceMemberRole[] = ['member', 'manager', 'admin']
+type PatchableWorkspaceRole = 'admin' | 'manager' | 'member'
+
+const workspaceMemberRoleDraftMap = reactive<Record<string, PatchableWorkspaceRole>>({})
+
+function toPatchableWorkspaceRole(role: WorkspaceMemberRole): PatchableWorkspaceRole {
+  if (role === 'admin' || role === 'manager')
+    return role
+  return 'member'
+}
+
+function workspaceMemberPrimaryRole(member: WorkspaceMemberSummary): WorkspaceMemberRole {
+  if (member.roles.includes('owner'))
+    return 'owner'
+  if (member.roles.includes('admin'))
+    return 'admin'
+  if (member.roles.includes('manager'))
+    return 'manager'
+  return 'member'
+}
+
+function ensureWorkspaceMemberRoleDraft(member: WorkspaceMemberSummary): PatchableWorkspaceRole {
+  const userId = String(member.userId || '').trim()
+  if (!userId)
+    return 'member'
+
+  const existing = workspaceMemberRoleDraftMap[userId]
+  if (existing)
+    return existing
+
+  const role = toPatchableWorkspaceRole(workspaceMemberPrimaryRole(member))
+  workspaceMemberRoleDraftMap[userId] = role
+  return role
+}
+
+watch(() => props.workspaceMembers, (members) => {
+  const activeUserIdSet = new Set((members || []).map(item => String(item.userId || '').trim()).filter(Boolean))
+  for (const member of members || [])
+    ensureWorkspaceMemberRoleDraft(member)
+  for (const userId of Object.keys(workspaceMemberRoleDraftMap)) {
+    if (!activeUserIdSet.has(userId))
+      delete workspaceMemberRoleDraftMap[userId]
+  }
+}, { deep: true, immediate: true })
+
 const workspaceInviteRoleOptions = computed<WorkspaceMemberRole[]>(() => {
   if (props.workspaceRoles.includes('owner') || props.workspaceRoles.includes('admin'))
     return WORKSPACE_ROLE_OPTIONS
@@ -836,10 +891,6 @@ const normalizedPreviewMode = computed<WorkspacePreviewMode>(() => {
   return 'binary'
 })
 
-const collabPresenceCount = computed(() => {
-  return props.collabPresenceMembers.length
-})
-
 const collabConnectionText = computed(() => {
   const customText = String(props.collabStatusText || '').trim()
   if (customText)
@@ -849,6 +900,10 @@ const collabConnectionText = computed(() => {
 
 const canSubmitWorkspaceInvitation = computed(() => {
   return props.workspaceCanManageMembers && !props.workspaceInvitationSubmitting
+})
+
+const canEditWorkspaceMembers = computed(() => {
+  return props.workspaceCanEditMembers
 })
 
 const workspaceInviteUnavailableMessage = computed(() => {
@@ -909,21 +964,13 @@ function submitWorkspaceSeatLimit(): void {
   emit('saveWorkspaceSeatLimit', Math.max(1, Math.trunc(draft)))
 }
 
-function collabMemberLabel(member: WorkspaceCollabPresenceMember): string {
-  const username = String(member.username || '').trim()
-  if (username)
-    return username
-  return String(member.userId || member.peerId || '未知成员').trim() || '未知成员'
-}
-
 function onCollabMarkdownInput(event: Event): void {
   const target = event.target as HTMLTextAreaElement
   emit('update:collabMarkdownValue', target.value)
 }
 
-function onCollabDrawInput(event: Event): void {
-  const target = event.target as HTMLTextAreaElement
-  emit('update:collabDrawValue', target.value)
+function onCollabDrawModelUpdate(value: string): void {
+  emit('update:collabDrawValue', value)
 }
 
 function workspaceTypeLabel(value: WorkspaceType | ''): string {
@@ -987,12 +1034,43 @@ function workspaceInvitationStatusBadgeClass(invitation: WorkspaceInvitationSumm
   return 'border-blue-200 bg-blue-50 text-blue-700'
 }
 
+function revokeWorkspaceInvitation(invitationId: string): void {
+  const normalizedInvitationId = String(invitationId || '').trim()
+  if (!normalizedInvitationId || !props.workspaceCanManageMembers)
+    return
+  emit('revokeWorkspaceInvitation', normalizedInvitationId)
+}
+
 function submitWorkspaceInvitation(): void {
   emit('createWorkspaceInvitation', {
     inviteeUsername: workspaceInviteForm.inviteeUsername.trim(),
     role: workspaceInviteForm.role,
     expiresInDays: Math.max(1, Math.min(30, Number(workspaceInviteForm.expiresInDays || 7))),
   })
+}
+
+function submitWorkspaceMemberRole(member: WorkspaceMemberSummary): void {
+  const userId = String(member.userId || '').trim()
+  if (!userId || !canEditWorkspaceMembers.value)
+    return
+  const primaryRole = workspaceMemberPrimaryRole(member)
+  if (primaryRole === 'owner')
+    return
+
+  const nextRole = ensureWorkspaceMemberRoleDraft(member)
+  emit('patchWorkspaceMemberRole', {
+    userId,
+    role: nextRole,
+  })
+}
+
+function removeWorkspaceMember(member: WorkspaceMemberSummary): void {
+  const userId = String(member.userId || '').trim()
+  if (!userId || !canEditWorkspaceMembers.value)
+    return
+  if (workspaceMemberPrimaryRole(member) === 'owner')
+    return
+  emit('removeWorkspaceMember', userId)
 }
 
 function formatDateTime(value: string): string {
@@ -1692,6 +1770,39 @@ watch(activeTabId, (next) => {
                     <p class="text-[11px] text-slate-600 mt-1">
                       {{ workspaceMemberRoleSummary(member) }}
                     </p>
+                    <div
+                      v-if="canEditWorkspaceMembers && workspaceMemberPrimaryRole(member) !== 'owner'"
+                      class="mt-2 flex flex-wrap gap-2 items-center"
+                    >
+                      <select
+                        v-model="workspaceMemberRoleDraftMap[member.userId]"
+                        class="text-[11px] px-2 outline-none border border-slate-200 rounded bg-white h-7 focus:border-blue-500"
+                      >
+                        <option
+                          v-for="role in WORKSPACE_ROLE_OPTIONS"
+                          :key="`member-role-option-${member.userId}-${role}`"
+                          :value="role"
+                        >
+                          {{ workspaceRoleLabel(role) }}
+                        </option>
+                      </select>
+                      <button
+                        class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="workspaceMemberRoleUpdatingUserId === member.userId || workspaceMemberRemovingUserId === member.userId"
+                        @click="submitWorkspaceMemberRole(member)"
+                      >
+                        {{ workspaceMemberRoleUpdatingUserId === member.userId ? '更新中...' : '更新角色' }}
+                      </button>
+                      <button
+                        class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="workspaceMemberRoleUpdatingUserId === member.userId || workspaceMemberRemovingUserId === member.userId"
+                        @click="removeWorkspaceMember(member)"
+                      >
+                        {{ workspaceMemberRemovingUserId === member.userId ? '移除中...' : '移除成员' }}
+                      </button>
+                    </div>
                   </article>
                 </div>
               </section>
@@ -1819,6 +1930,15 @@ watch(activeTabId, (next) => {
                       <p class="text-[11px] text-slate-500 mt-1">
                         过期时间：{{ formatDateTime(invitation.expiresAt) }}
                       </p>
+                      <button
+                        v-if="workspaceCanManageMembers && workspaceInvitationStatus(invitation) === 'pending'"
+                        class="text-[11px] text-rose-600 font-semibold mt-2 px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="workspaceInvitationRevokingId === invitation.id"
+                        @click="revokeWorkspaceInvitation(invitation.id)"
+                      >
+                        {{ workspaceInvitationRevokingId === invitation.id ? '撤销中...' : '撤销邀请' }}
+                      </button>
                     </article>
                   </div>
                 </div>
@@ -2171,30 +2291,14 @@ watch(activeTabId, (next) => {
                   placeholder="在这里输入协作文档内容..."
                   @input="onCollabMarkdownInput"
                 />
-                <aside class="px-3 py-3 border-t border-slate-200 bg-slate-50 md:border-l md:border-t-0">
-                  <div class="text-xs text-slate-700 font-semibold">
-                    在线成员（{{ collabPresenceCount }}）
-                  </div>
-                  <ul class="mt-2 space-y-1.5">
-                    <li
-                      v-for="member in collabPresenceMembers"
-                      :key="`${member.peerId}-${member.userId}`"
-                      class="text-[11px] text-slate-600 px-2 py-1 border border-slate-200 rounded bg-white"
-                    >
-                      {{ collabMemberLabel(member) }}
-                    </li>
-                    <li v-if="collabPresenceMembers.length === 0" class="text-[11px] text-slate-400">
-                      暂无其他在线成员
-                    </li>
-                  </ul>
-                </aside>
+                <CollabPresencePanel :members="collabPresenceMembers" />
               </div>
             </template>
 
             <template v-else-if="normalizedPreviewMode === 'draw'">
               <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
                 <div class="text-xs text-slate-600">
-                  无边画布（JSON 模型）
+                  无边画布
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
                 <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
@@ -2203,33 +2307,18 @@ watch(activeTabId, (next) => {
               </div>
               <div class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
                 <div class="flex flex-col h-full">
-                  <textarea
-                    :value="collabDrawValue"
-                    class="text-xs text-slate-700 leading-5 font-mono px-4 py-3 outline-none border-0 bg-white h-full min-h-0 w-full resize-none"
-                    placeholder="请输入画布节点 JSON（数组）..."
-                    @input="onCollabDrawInput"
+                  <WorkspaceTldrawCanvas
+                    class="h-full min-h-0 w-full"
+                    :model-value="collabDrawValue"
+                    :persistence-key="`workspace-collab-${previewResourceTitle || 'whiteboard'}`"
+                    :readonly="false"
+                    @update:model-value="onCollabDrawModelUpdate"
                   />
                   <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
                     {{ collabDrawError }}
                   </p>
                 </div>
-                <aside class="px-3 py-3 border-t border-slate-200 bg-slate-50 md:border-l md:border-t-0">
-                  <div class="text-xs text-slate-700 font-semibold">
-                    在线成员（{{ collabPresenceCount }}）
-                  </div>
-                  <ul class="mt-2 space-y-1.5">
-                    <li
-                      v-for="member in collabPresenceMembers"
-                      :key="`${member.peerId}-${member.userId}`"
-                      class="text-[11px] text-slate-600 px-2 py-1 border border-slate-200 rounded bg-white"
-                    >
-                      {{ collabMemberLabel(member) }}
-                    </li>
-                    <li v-if="collabPresenceMembers.length === 0" class="text-[11px] text-slate-400">
-                      暂无其他在线成员
-                    </li>
-                  </ul>
-                </aside>
+                <CollabPresencePanel :members="collabPresenceMembers" />
               </div>
             </template>
 

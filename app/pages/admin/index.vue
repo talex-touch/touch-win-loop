@@ -18,6 +18,9 @@ const canManageContest = computed(() => {
 })
 const canManagePricing = computed(() => permissions.value.includes('pricing.write'))
 const canManageRoles = computed(() => permissions.value.includes('role.assign'))
+const canManageIntegrations = computed(() => {
+  return canManageRoles.value || permissions.value.includes('contest.write')
+})
 
 const summaryRows = computed(() => {
   return [
@@ -141,6 +144,19 @@ onMounted(loadPermissions)
           </p>
           <p class="text-[11px] text-slate-500 mt-1">
             14 类资料入口、状态流转
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canManageIntegrations"
+          to="/admin/integrations"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            集成中心
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            飞书登录、管理员组同步、Bitable 映射任务
           </p>
         </NuxtLink>
 

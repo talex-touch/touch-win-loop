@@ -56,6 +56,12 @@ const taskTypeOptions: Array<{ value: AdminAgentTaskType, label: string }> = [
   { value: 'general', label: '通用咨询' },
 ]
 
+const adminChatMode = 'dialog_ask' as const
+const adminChatProjectId = computed(() => {
+  const normalizedContestId = String(props.contestId || '').trim() || 'general'
+  return `admin:contest:${normalizedContestId}`
+})
+
 const loadingSessions = ref(false)
 const loadingMessages = ref(false)
 const sending = ref(false)
@@ -151,8 +157,14 @@ async function loadSessions(preferredSessionId = '') {
   loadingSessions.value = true
   try {
     const response = await $fetch<ApiResponse<AiChatSession[]>>(
-      endpoint(`/workspaces/${props.workspaceId}/chat/sessions`),
-      { query: { limit: 30 } },
+      endpoint(`/teams/${props.workspaceId}/chat/sessions`),
+      {
+        query: {
+          limit: 30,
+          projectId: adminChatProjectId.value,
+          mode: adminChatMode,
+        },
+      },
     )
 
     sessions.value = response.data
@@ -185,8 +197,14 @@ async function loadMessages(sessionId: string) {
   loadingMessages.value = true
   try {
     const response = await $fetch<ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>>(
-      endpoint(`/workspaces/${props.workspaceId}/chat/sessions/${sessionId}/messages`),
-      { query: { limit: 120 } },
+      endpoint(`/teams/${props.workspaceId}/chat/sessions/${sessionId}/messages`),
+      {
+        query: {
+          limit: 120,
+          projectId: adminChatProjectId.value,
+          mode: adminChatMode,
+        },
+      },
     )
     chatMessages.value = response.data.messages
   }

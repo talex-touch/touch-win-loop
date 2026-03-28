@@ -112,6 +112,12 @@ export default defineNuxtConfig({
       retentionDays: resolveEnvNumber('WINLOOP_RESOURCE_RECYCLE_RETENTION_DAYS', 30),
       batchSize: resolveEnvNumber('WINLOOP_RESOURCE_RECYCLE_WORKER_BATCH_SIZE', 200),
     },
+    feishuScheduler: {
+      enabled: resolveEnvBoolean('WINLOOP_FEISHU_SCHEDULER_ENABLED', true),
+      intervalMs: resolveEnvNumber('WINLOOP_FEISHU_SCHEDULER_INTERVAL_MS', 60000),
+      batchSize: resolveEnvNumber('WINLOOP_FEISHU_SCHEDULER_BATCH_SIZE', 20),
+      lockTtlMs: resolveEnvNumber('WINLOOP_FEISHU_SCHEDULER_LOCK_TTL_MS', 600000),
+    },
     public: {
       apiBaseUrl: resolveEnvValue('WINLOOP_API_BASE_URL', '/api'),
     },

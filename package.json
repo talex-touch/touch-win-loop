@@ -32,6 +32,9 @@
     "langchain": "catalog:",
     "pdfjs-dist": "catalog:",
     "pg": "catalog:",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tldraw": "^4.5.4",
     "yjs": "catalog:",
     "zod": "catalog:"
   },
@@ -47,6 +50,8 @@
     "@pinia/nuxt": "catalog:build",
     "@types/node": "catalog:dev",
     "@types/pg": "catalog:dev",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@unocss/eslint-config": "catalog:build",
     "@unocss/nuxt": "catalog:build",
     "@vite-pwa/nuxt": "catalog:build",

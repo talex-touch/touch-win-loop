@@ -41,6 +41,7 @@ import type {
   WorkspaceMemberSummary,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -52,7 +53,6 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
-import * as Y from 'yjs'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -60,6 +60,7 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
+import { useCollabSession } from '~/composables/useCollabSession'
 
 definePageMeta({
   layout: 'dashboard',
@@ -365,32 +366,6 @@ interface ResourcePreviewStatusPayload {
   sourceDownloadUrlExpiresAt: string
 }
 
-interface CollabSnapshotPayload {
-  kind: 'markdown' | 'draw'
-  revision: number
-  updateBase64: string
-  updatedAt?: string
-}
-
-interface WorkspaceRealtimeEnvelope {
-  type: string
-  requestId?: string
-  workspaceId?: string
-  projectId?: string
-  resourceId?: string
-  revision?: number
-  payload?: Record<string, unknown>
-}
-
-interface WorkspaceCollabPresenceMember {
-  peerId: string
-  userId: string
-  username: string
-  cursorX?: number
-  cursorY?: number
-  updatedAt?: string
-}
-
 interface ProjectResourceShareCreatePayload {
   resourceId: string
   visibility: ProjectResourceShareVisibility
@@ -401,6 +376,11 @@ interface WorkspaceInvitationCreatePayload {
   inviteeUsername: string
   role: WorkspaceMemberRole
   expiresInDays: number
+}
+
+interface WorkspaceMemberRolePatchPayload {
+  userId: string
+  role: 'admin' | 'manager' | 'member'
 }
 
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
@@ -420,37 +400,6 @@ function parseTimestamp(value: string): number {
 
 function sortByUpdatedAtDesc(items: Project[]): Project[] {
   return [...items].sort((a, b) => parseTimestamp(b.updatedAt) - parseTimestamp(a.updatedAt))
-}
-
-function encodeBytesToBase64(bytes: Uint8Array): string {
-  if (!bytes.length)
-    return ''
-  if (!import.meta.client)
-    return ''
-
-  let binary = ''
-  for (const value of bytes)
-    binary += String.fromCharCode(value)
-  return window.btoa(binary)
-}
-
-function decodeBase64ToBytes(rawBase64: string): Uint8Array {
-  const normalized = String(rawBase64 || '').trim()
-  if (!normalized)
-    return new Uint8Array()
-  if (!import.meta.client)
-    return new Uint8Array()
-
-  try {
-    const binary = window.atob(normalized)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i += 1)
-      bytes[i] = binary.charCodeAt(i)
-    return bytes
-  }
-  catch {
-    return new Uint8Array()
-  }
 }
 
 const routeWorkspaceId = computed(() => {
@@ -505,33 +454,6 @@ const previewResourceId = ref('')
 const previewStatusLoading = ref(false)
 const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
 const previewMode = ref<WorkspacePreviewMode>('binary')
-const collabResourceKind = ref<'' | 'markdown' | 'draw'>('')
-const collabRevision = ref(0)
-const collabMarkdownValue = ref('')
-const collabDrawValue = ref('[]')
-const collabDrawError = ref('')
-const collabPresenceMembers = ref<WorkspaceCollabPresenceMember[]>([])
-const collabDocRef = shallowRef<Y.Doc | null>(null)
-const collabApplyingRemote = ref(false)
-const collabConnected = computed(() => workspaceRealtime.connected.value)
-const collabStatusText = computed(() => {
-  if (!collabConnected.value)
-    return '离线编辑（待重连）'
-
-  const signal = String(statusLine.value || '').toLowerCase()
-  const backendErrorSignals = [
-    'connection terminated',
-    'timeout',
-    'timed out',
-    '数据库',
-    '请求失败',
-    'request error',
-  ]
-  if (backendErrorSignals.some(keyword => signal.includes(keyword.toLowerCase())))
-    return 'WS 已连接（后端服务异常）'
-
-  return '实时连接中'
-})
 const projectSettingsLoading = ref(false)
 const projectSettingsSaveState = ref<WorkspaceProjectSaveState>('idle')
 const projectSettingsCommon = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
@@ -550,8 +472,6 @@ let projectSettingsDraftTimer: ReturnType<typeof setTimeout> | null = null
 let projectSettingsDraftPersistSeq = 0
 let projectOutlineGenerateTimer: ReturnType<typeof setTimeout> | null = null
 let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
-let collabSnapshotPollTimer: ReturnType<typeof setInterval> | null = null
-let collabDocDispose: (() => void) | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let unsubscribeRealtimeMessages: (() => void) | null = null
@@ -568,6 +488,9 @@ const projectOutlineFirstLoaded = ref(false)
 const projectResourceSharesLoading = ref(false)
 const workspaceMemberManagementLoading = ref(false)
 const workspaceInvitationSubmitting = ref(false)
+const workspaceMemberRoleUpdatingUserId = ref('')
+const workspaceMemberRemovingUserId = ref('')
+const workspaceInvitationRevokingId = ref('')
 const resourceMutating = ref(false)
 
 const chatMessages = ref<ChatMessage[]>([defaultAssistantGreeting()])
@@ -776,6 +699,12 @@ const workspaceCanManageMembers = computed(() => {
   const roles = currentWorkspace.value?.workspace.roles || []
   return roles.some(role => WORKSPACE_MEMBER_MANAGE_ROLES.includes(role))
 })
+const workspaceCanEditMembers = computed(() => {
+  if (me.value?.user.isPlatformAdmin)
+    return true
+  const roles = currentWorkspace.value?.workspace.roles || []
+  return roles.includes('owner') || roles.includes('admin')
+})
 const workspaceCanManageBillingSeats = computed(() => {
   if (me.value?.user.isPlatformAdmin)
     return true
@@ -841,6 +770,20 @@ const activeProject = computed(() => {
 })
 
 const activeProjectId = computed(() => activeProject.value?.id || '')
+const collabSession = useCollabSession({
+  workspaceRealtime,
+  projectId: activeProjectId,
+  resourceId: previewResourceId,
+  statusLine,
+  fetchSnapshot: async resourceId => await fetchCollabSnapshot(resourceId),
+})
+const collabRevision = collabSession.revision
+const collabMarkdownValue = collabSession.markdownValue
+const collabDrawValue = collabSession.drawValue
+const collabDrawError = collabSession.drawError
+const collabPresenceMembers = collabSession.presenceMembers
+const collabConnected = collabSession.connected
+const collabStatusText = collabSession.statusText
 
 const headerProjectName = computed(() => {
   if (activeProject.value?.title)
@@ -927,6 +870,14 @@ function resolveWorkspaceInvitationUrl(token: string): string {
 function resetWorkspaceMemberManagementState(): void {
   workspaceMembers.value = []
   workspaceInvitations.value = []
+  workspaceMemberRoleUpdatingUserId.value = ''
+  workspaceMemberRemovingUserId.value = ''
+  workspaceInvitationRevokingId.value = ''
+}
+
+function applyWorkspaceMemberManagementSnapshot(snapshot: WorkspaceMemberManagementSnapshot): void {
+  workspaceMembers.value = Array.isArray(snapshot.members) ? snapshot.members : []
+  workspaceInvitations.value = Array.isArray(snapshot.invitations) ? snapshot.invitations : []
 }
 const previewSourceDownloadUrl = computed(() => {
   const fromStatus = String(previewStatusPayload.value?.sourceDownloadUrl || '').trim()
@@ -945,14 +896,6 @@ const previewPdfUrl = computed(() => {
   return endpoint(`/projects/${projectId}/resources/${resourceId}/preview`)
 })
 
-const activeCollabRoomKey = computed(() => {
-  const projectId = String(activeProjectId.value || '').trim()
-  const resourceId = String(previewResourceId.value || '').trim()
-  if (!projectId || !resourceId || !collabResourceKind.value)
-    return ''
-  return `${projectId}:${resourceId}`
-})
-
 function isCollabResource(resource: Resource | null | undefined): resource is Resource {
   if (!resource)
     return false
@@ -962,127 +905,12 @@ function isCollabResource(resource: Resource | null | undefined): resource is Re
   return String(resource.source || '').trim().toLowerCase() === 'collab'
 }
 
-function resolveCollabNodesArray(doc: Y.Doc): Y.Array<unknown> {
-  const drawMap = doc.getMap('draw')
-  const existingNodes = drawMap.get('nodes')
-  if (existingNodes instanceof Y.Array)
-    return existingNodes
-
-  const created = new Y.Array<unknown>()
-  drawMap.set('nodes', created)
-  return created
-}
-
-function syncCollabDraftFromDoc(): void {
-  const doc = collabDocRef.value
-  if (!doc)
-    return
-
-  if (collabResourceKind.value === 'markdown') {
-    collabMarkdownValue.value = doc.getText('content').toString()
-    return
-  }
-
-  if (collabResourceKind.value === 'draw') {
-    const nodes = resolveCollabNodesArray(doc).toArray()
-    collabDrawValue.value = JSON.stringify(nodes, null, 2)
-  }
-}
-
 function disposeCollabDocBinding(leaveRoom = true): void {
-  if (collabDocDispose) {
-    collabDocDispose()
-    collabDocDispose = null
-  }
-
-  if (collabSnapshotPollTimer) {
-    clearInterval(collabSnapshotPollTimer)
-    collabSnapshotPollTimer = null
-  }
-
-  const projectId = String(activeProjectId.value || '').trim()
-  const resourceId = String(previewResourceId.value || '').trim()
-  if (leaveRoom && projectId && resourceId)
-    workspaceRealtime.leaveCollab(projectId, resourceId)
-
-  collabDocRef.value = null
-  collabResourceKind.value = ''
-  collabRevision.value = 0
-  collabMarkdownValue.value = ''
-  collabDrawValue.value = '[]'
-  collabDrawError.value = ''
-  collabPresenceMembers.value = []
-}
-
-function bindCollabDoc(doc: Y.Doc): void {
-  if (collabDocDispose)
-    collabDocDispose()
-
-  const handleDocUpdate = (update: Uint8Array, origin: unknown) => {
-    if (origin === 'remote' || origin === 'bootstrap')
-      return
-
-    const projectId = String(activeProjectId.value || '').trim()
-    const resourceId = String(previewResourceId.value || '').trim()
-    if (!projectId || !resourceId)
-      return
-
-    workspaceRealtime.sendCollabUpdate({
-      projectId,
-      resourceId,
-      revision: collabRevision.value,
-      updateBase64: encodeBytesToBase64(update),
-    })
-  }
-
-  const text = doc.getText('content')
-  const handleTextChange = () => {
-    if (collabResourceKind.value !== 'markdown')
-      return
-    if (collabApplyingRemote.value)
-      return
-    collabMarkdownValue.value = text.toString()
-  }
-
-  const nodes = resolveCollabNodesArray(doc)
-  const handleNodesChange = () => {
-    if (collabResourceKind.value !== 'draw')
-      return
-    if (collabApplyingRemote.value)
-      return
-    collabDrawValue.value = JSON.stringify(nodes.toArray(), null, 2)
-  }
-
-  doc.on('update', handleDocUpdate)
-  text.observe(handleTextChange)
-  nodes.observe(handleNodesChange)
-  collabDocDispose = () => {
-    doc.off('update', handleDocUpdate)
-    text.unobserve(handleTextChange)
-    nodes.unobserve(handleNodesChange)
-    doc.destroy()
-  }
+  collabSession.dispose(leaveRoom)
 }
 
 function applyCollabSnapshot(snapshot: CollabSnapshotPayload): void {
-  const doc = new Y.Doc()
-  const initialUpdate = decodeBase64ToBytes(snapshot.updateBase64)
-  if (initialUpdate.length > 0)
-    Y.applyUpdate(doc, initialUpdate, 'bootstrap')
-
-  if (snapshot.kind === 'markdown') {
-    doc.getText('content')
-  }
-  else {
-    resolveCollabNodesArray(doc)
-  }
-
-  collabDocRef.value = doc
-  collabResourceKind.value = snapshot.kind
-  collabRevision.value = Math.max(0, Number(snapshot.revision || 0))
-  collabDrawError.value = ''
-  bindCollabDoc(doc)
-  syncCollabDraftFromDoc()
+  collabSession.applySnapshot(snapshot)
 }
 
 function scheduleRealtimeProjectRefresh(): void {
@@ -1162,96 +990,7 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
     return
   }
 
-  if (messageType === 'ack') {
-    const payload = message.payload || {}
-    const ackType = String(payload.type || '').trim()
-    if (ackType !== 'collab.update')
-      return
-
-    const projectId = String(payload.projectId || message.projectId || '').trim()
-    const resourceId = String(payload.resourceId || message.resourceId || '').trim()
-    if (projectId !== activeProjectId.value || resourceId !== previewResourceId.value)
-      return
-
-    const revision = Math.max(0, Number(payload.revision || message.revision || 0))
-    if (revision > 0)
-      collabRevision.value = Math.max(collabRevision.value, revision)
-    return
-  }
-
-  if (messageType === 'collab.bootstrap') {
-    const projectId = String(message.projectId || '').trim()
-    const resourceId = String(message.resourceId || '').trim()
-    if (projectId !== activeProjectId.value || resourceId !== previewResourceId.value)
-      return
-
-    const payload = message.payload || {}
-    const kind = String(payload.kind || '').trim().toLowerCase()
-    if (kind !== 'markdown' && kind !== 'draw')
-      return
-
-    applyCollabSnapshot({
-      kind,
-      revision: Math.max(0, Number(message.revision || payload.revision || 0)),
-      updateBase64: String(payload.updateBase64 || '').trim(),
-      updatedAt: String(payload.updatedAt || ''),
-    })
-    return
-  }
-
-  if (messageType === 'collab.update') {
-    const projectId = String(message.projectId || '').trim()
-    const resourceId = String(message.resourceId || '').trim()
-    const roomKey = activeCollabRoomKey.value
-    if (!roomKey)
-      return
-    if (projectId !== activeProjectId.value || resourceId !== previewResourceId.value)
-      return
-
-    const payload = message.payload || {}
-    const updateBase64 = String(payload.updateBase64 || '').trim()
-    if (!updateBase64)
-      return
-
-    const doc = collabDocRef.value
-    if (!doc)
-      return
-
-    const update = decodeBase64ToBytes(updateBase64)
-    if (!update.length)
-      return
-
-    collabApplyingRemote.value = true
-    try {
-      Y.applyUpdate(doc, update, 'remote')
-      collabRevision.value = Math.max(collabRevision.value, Math.max(0, Number(message.revision || 0)))
-      syncCollabDraftFromDoc()
-    }
-    finally {
-      collabApplyingRemote.value = false
-    }
-    return
-  }
-
-  if (messageType === 'collab.presence') {
-    const payload = message.payload || {}
-    const roomKey = String(payload.roomKey || '').trim()
-    if (!roomKey || roomKey !== activeCollabRoomKey.value)
-      return
-
-    const members = Array.isArray(payload.members) ? payload.members : []
-    collabPresenceMembers.value = members.map((item) => {
-      const record = item && typeof item === 'object' ? item as Record<string, unknown> : {}
-      return {
-        peerId: String(record.peerId || '').trim(),
-        userId: String(record.userId || '').trim(),
-        username: String(record.username || '').trim(),
-        cursorX: Number.isFinite(Number(record.cursorX)) ? Number(record.cursorX) : undefined,
-        cursorY: Number.isFinite(Number(record.cursorY)) ? Number(record.cursorY) : undefined,
-        updatedAt: String(record.updatedAt || '').trim(),
-      }
-    })
-  }
+  collabSession.handleRealtimeEnvelope(message)
 }
 
 const toneMeta: Record<MappingTone, WorkspaceStatusToneMeta> = {
@@ -2871,8 +2610,7 @@ async function loadWorkspaceMemberManagement() {
     const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(endpoint(`/teams/${workspaceId}/members`))
     if (activeWorkspaceId.value !== workspaceId)
       return
-    workspaceMembers.value = Array.isArray(response.data.members) ? response.data.members : []
-    workspaceInvitations.value = Array.isArray(response.data.invitations) ? response.data.invitations : []
+    applyWorkspaceMemberManagementSnapshot(response.data)
   }
   catch {
     if (activeWorkspaceId.value === workspaceId)
@@ -2992,6 +2730,93 @@ async function createWorkspaceInvitation(payload: WorkspaceInvitationCreatePaylo
   }
   finally {
     workspaceInvitationSubmitting.value = false
+  }
+}
+
+async function patchWorkspaceMemberRole(payload: WorkspaceMemberRolePatchPayload) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const userId = String(payload.userId || '').trim()
+  if (!workspaceId || !userId)
+    return
+  if (!workspaceCanEditMembers.value) {
+    statusLine.value = '当前账号无成员角色管理权限。'
+    return
+  }
+
+  workspaceMemberRoleUpdatingUserId.value = userId
+  try {
+    const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(
+      endpoint(`/teams/${workspaceId}/members/${userId}/role`),
+      {
+        method: 'PATCH',
+        body: { role: payload.role },
+      },
+    )
+    applyWorkspaceMemberManagementSnapshot(response.data)
+    statusLine.value = '成员角色已更新。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '更新成员角色失败，请稍后重试。')
+  }
+  finally {
+    if (workspaceMemberRoleUpdatingUserId.value === userId)
+      workspaceMemberRoleUpdatingUserId.value = ''
+  }
+}
+
+async function removeWorkspaceMember(userId: string) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const normalizedUserId = String(userId || '').trim()
+  if (!workspaceId || !normalizedUserId)
+    return
+  if (!workspaceCanEditMembers.value) {
+    statusLine.value = '当前账号无成员移除权限。'
+    return
+  }
+
+  workspaceMemberRemovingUserId.value = normalizedUserId
+  try {
+    const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(
+      endpoint(`/teams/${workspaceId}/members/${normalizedUserId}`),
+      { method: 'DELETE' },
+    )
+    applyWorkspaceMemberManagementSnapshot(response.data)
+    statusLine.value = '成员已移除。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '移除成员失败，请稍后重试。')
+  }
+  finally {
+    if (workspaceMemberRemovingUserId.value === normalizedUserId)
+      workspaceMemberRemovingUserId.value = ''
+  }
+}
+
+async function revokeWorkspaceInvitation(invitationId: string) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const normalizedInvitationId = String(invitationId || '').trim()
+  if (!workspaceId || !normalizedInvitationId)
+    return
+  if (!workspaceCanManageMembers.value) {
+    statusLine.value = '当前账号无邀请撤销权限。'
+    return
+  }
+
+  workspaceInvitationRevokingId.value = normalizedInvitationId
+  try {
+    const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot & { revoked?: boolean }>>(
+      endpoint(`/teams/${workspaceId}/invitations/${normalizedInvitationId}/revoke`),
+      { method: 'POST' },
+    )
+    applyWorkspaceMemberManagementSnapshot(response.data)
+    statusLine.value = response.data.revoked ? '邀请已撤销。' : '该邀请已失效，无需重复撤销。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '撤销邀请失败，请稍后重试。')
+  }
+  finally {
+    if (workspaceInvitationRevokingId.value === normalizedInvitationId)
+      workspaceInvitationRevokingId.value = ''
   }
 }
 
@@ -3216,55 +3041,11 @@ function clearPreviewStatusPolling() {
 }
 
 function updateCollabMarkdownContent(value: string): void {
-  collabMarkdownValue.value = value
-  if (collabResourceKind.value !== 'markdown')
-    return
-
-  const doc = collabDocRef.value
-  if (!doc)
-    return
-
-  const text = doc.getText('content')
-  const nextValue = String(value || '')
-  if (text.toString() === nextValue)
-    return
-
-  doc.transact(() => {
-    text.delete(0, text.length)
-    text.insert(0, nextValue)
-  }, 'local-input')
+  collabSession.updateMarkdown(String(value || ''))
 }
 
 function updateCollabDrawContent(value: string): void {
-  collabDrawValue.value = value
-  collabDrawError.value = ''
-  if (collabResourceKind.value !== 'draw')
-    return
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(value)
-  }
-  catch {
-    collabDrawError.value = 'JSON 解析失败，修复后会自动继续同步。'
-    return
-  }
-
-  if (!Array.isArray(parsed)) {
-    collabDrawError.value = '画布模型必须是数组。'
-    return
-  }
-
-  const doc = collabDocRef.value
-  if (!doc)
-    return
-
-  const nodes = resolveCollabNodesArray(doc)
-  doc.transact(() => {
-    nodes.delete(0, nodes.length)
-    if (parsed.length > 0)
-      nodes.insert(0, parsed as unknown[])
-  }, 'local-input')
+  collabSession.updateDraw(String(value || ''))
 }
 
 async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPayload | null> {
@@ -3281,52 +3062,6 @@ async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPa
     statusLine.value = resolveApiErrorMessage(error, '读取协作资源失败，请稍后重试。')
     return null
   }
-}
-
-async function syncCollabSnapshotIfStale(): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const resourceId = String(previewResourceId.value || '').trim()
-  const expectedKind = collabResourceKind.value
-  const doc = collabDocRef.value
-  if (!projectId || !resourceId || !expectedKind || !doc)
-    return
-
-  const snapshot = await fetchCollabSnapshot(resourceId)
-  if (!snapshot)
-    return
-  if (snapshot.kind !== expectedKind)
-    return
-  if (Number(snapshot.revision || 0) <= collabRevision.value)
-    return
-
-  const update = decodeBase64ToBytes(snapshot.updateBase64)
-  if (!update.length)
-    return
-
-  collabApplyingRemote.value = true
-  try {
-    Y.applyUpdate(doc, update, 'remote')
-    collabRevision.value = Math.max(collabRevision.value, Math.max(0, Number(snapshot.revision || 0)))
-    syncCollabDraftFromDoc()
-  }
-  finally {
-    collabApplyingRemote.value = false
-  }
-}
-
-function startCollabSnapshotPollTimer(): void {
-  if (collabSnapshotPollTimer) {
-    clearInterval(collabSnapshotPollTimer)
-    collabSnapshotPollTimer = null
-  }
-
-  const roomKey = activeCollabRoomKey.value
-  if (!roomKey)
-    return
-
-  collabSnapshotPollTimer = setInterval(() => {
-    void syncCollabSnapshotIfStale()
-  }, 5000)
 }
 
 async function openProjectCollabResource(resourceId: string, snapshot?: CollabSnapshotPayload | null): Promise<void> {
@@ -3348,9 +3083,7 @@ async function openProjectCollabResource(resourceId: string, snapshot?: CollabSn
   openPreviewSignal.value += 1
   applyCollabSnapshot(targetSnapshot)
 
-  workspaceRealtime.subscribeProject(projectId)
-  workspaceRealtime.joinCollab(projectId, targetResourceId)
-  startCollabSnapshotPollTimer()
+  collabSession.activateRoom()
 }
 
 async function fetchResourcePreviewStatus(resourceId: string, silent = false) {
@@ -4618,6 +4351,10 @@ watch(() => workspaceRealtime.connected.value, () => {
         :workspace-invitations="workspaceInvitations"
         :workspace-member-management-loading="workspaceMemberManagementLoading"
         :workspace-can-manage-members="workspaceCanManageMembers"
+        :workspace-can-edit-members="workspaceCanEditMembers"
+        :workspace-member-role-updating-user-id="workspaceMemberRoleUpdatingUserId"
+        :workspace-member-removing-user-id="workspaceMemberRemovingUserId"
+        :workspace-invitation-revoking-id="workspaceInvitationRevokingId"
         :workspace-can-manage-billing-seats="workspaceCanManageBillingSeats"
         :workspace-seat-used="workspaceSeatUsed"
         :workspace-seat-limit="workspaceSeatLimit"
@@ -4673,6 +4410,9 @@ watch(() => workspaceRealtime.connected.value, () => {
         @save-project-settings="saveProjectSettingsManually"
         @reload-workspace-member-management="loadWorkspaceMemberManagement"
         @create-workspace-invitation="createWorkspaceInvitation"
+        @patch-workspace-member-role="patchWorkspaceMemberRole"
+        @remove-workspace-member="removeWorkspaceMember"
+        @revoke-workspace-invitation="revokeWorkspaceInvitation"
         @copy-workspace-invitation-link="copyWorkspaceInvitationLink"
         @open-workspace-seat-modal="openWorkspaceSeatModal"
         @save-workspace-seat-limit="saveWorkspaceSeatLimit"

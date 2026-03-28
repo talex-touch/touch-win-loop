@@ -120,7 +120,7 @@ async function loadPlans() {
 async function loadEstimate() {
   if (!estimateForm.workspaceId)
     return
-  const response = await $fetch<ApiResponse<WorkspaceBillingEstimate>>(endpoint(`/workspaces/${estimateForm.workspaceId}/billing/estimate`))
+  const response = await $fetch<ApiResponse<WorkspaceBillingEstimate>>(endpoint(`/teams/${estimateForm.workspaceId}/billing/estimate`))
   estimate.value = response.data
 }
 
@@ -192,7 +192,7 @@ async function switchWorkspacePlan() {
   if (!estimateForm.workspaceId || !estimateForm.planId)
     return
   await runAction(async () => {
-    await $fetch(endpoint(`/workspaces/${estimateForm.workspaceId}/billing`), {
+    await $fetch(endpoint(`/teams/${estimateForm.workspaceId}/billing`), {
       method: 'PATCH',
       body: {
         planId: estimateForm.planId,

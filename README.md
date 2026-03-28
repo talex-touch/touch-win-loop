@@ -93,6 +93,9 @@ pnpm contest:seed:status
 
 - `GET /api/health`
 - `POST /api/auth/login`
+- `GET /api/auth/feishu/authorize`
+- `GET /api/auth/feishu/callback`
+- `POST /api/auth/feishu/websdk-login`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
 - `GET /api/workspaces`
@@ -109,6 +112,36 @@ pnpm contest:seed:status
 - `POST /api/projects/batch`
 - `GET /api/projects/:id`
 - `PATCH /api/projects/:id/bindings`
+
+## 飞书集成（集成中心）
+
+管理入口：`/admin/integrations`（需平台权限）
+
+### 功能范围
+
+- 登录双通道：账号密码 + 飞书 OAuth / Web SDK 自动登录（仅在 `/login` 页面自动尝试一次）。
+- 管理员组同步：飞书指定组成员自动授予 `contest_admin`，脱组自动撤销。
+- Bitable 同步：支持 `contest / track / resource` 多任务映射、预检、执行、运行日志。
+
+### 最小配置步骤
+
+1. 在飞书开放平台创建应用，获取 `app_id`、`app_secret`。
+2. 在应用后台配置 OAuth 回调地址：`https://<your-domain>/api/auth/feishu/callback`。
+3. 在应用后台配置事件订阅回调：`https://<your-domain>/api/integrations/feishu/events`。
+4. 在本项目“集成中心”保存飞书配置（支持 secret 字段 `keep/replace/clear`）。
+5. 配置管理员组 ID，执行一次“手动全量对账管理员组”。
+6. 按目标类型创建 Bitable 任务，先 `preview` 再 `run`。
+
+### 权限门禁
+
+- 飞书配置与管理员组对账：`role.assign`
+- Bitable 任务与执行：`contest.write`
+
+### 扩展更多 Integration 的建议模型
+
+- 认证绑定统一落在 `auth_identities`（`provider + provider_user_id` 唯一）。
+- 第三方配置统一走“集成中心”管理页与配置接口。
+- 外部数据映射统一采用“任务 + 运行日志 + external refs”三层结构，保证幂等与可追踪。
 
 ## 目录概览
 

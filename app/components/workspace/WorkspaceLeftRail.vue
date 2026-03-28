@@ -143,11 +143,15 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 
-.workspace-left-rail__item .material-symbols-outlined {
-  width: 16px;
-  height: 16px;
-  font-size: 16px;
-  line-height: 16px;
+.workspace-left-rail__item .material-symbols-outlined,
+.workspace-left-rail__shortcut .material-symbols-outlined,
+.workspace-left-rail__defense .material-symbols-outlined,
+.workspace-left-rail__members .material-symbols-outlined,
+.workspace-left-rail__setting .material-symbols-outlined {
+  width: 32px;
+  height: 32px;
+  font-size: 32px;
+  line-height: 32px;
 }
 
 .workspace-left-rail__item:hover {
@@ -163,7 +167,7 @@ const emit = defineEmits<{
 .workspace-left-rail__item--active::before {
   content: '';
   position: absolute;
-  left: 0;
+  left: calc((32px - 54px) / 2);
   top: 6px;
   width: 4px;
   height: 20px;
@@ -186,16 +190,6 @@ const emit = defineEmits<{
   background: transparent;
   cursor: pointer;
   transition: all 0.2s ease;
-}
-
-.workspace-left-rail__shortcut .material-symbols-outlined,
-.workspace-left-rail__defense .material-symbols-outlined,
-.workspace-left-rail__members .material-symbols-outlined,
-.workspace-left-rail__setting .material-symbols-outlined {
-  width: 16px;
-  height: 16px;
-  font-size: 16px;
-  line-height: 16px;
 }
 
 .workspace-left-rail__defense {

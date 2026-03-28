@@ -4,6 +4,7 @@ const route = useRoute()
 const items = [
   { to: '/admin', label: '管理首页' },
   { to: '/admin/contests', label: '赛事管理' },
+  { to: '/admin/integrations', label: '集成中心' },
   { to: '/admin/billing', label: '套餐计费' },
   { to: '/admin/roles', label: '角色分配' },
 ]
