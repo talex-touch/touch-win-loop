@@ -3,8 +3,10 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { acceptInvitation, listUserWorkspaces } from '~~/server/utils/platform-store'
 import { hashToken } from '~~/server/utils/security'
+import { toTeamInvitationResponse, toTeamWithQuotaResponse } from '~~/server/utils/team-api-presenter'
+import { teamAcceptInvitation } from '~~/server/utils/team-invitation-store'
+import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -25,7 +27,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const invitation = await withTransaction(event, async (db) => {
-      return acceptInvitation(db, hashToken(token), user)
+      return teamAcceptInvitation(db, hashToken(token), user)
     })
 
     if (!invitation) {
@@ -40,12 +42,12 @@ export default defineEventHandler(async (event) => {
     }
 
     const workspaces = await withTransaction(event, async (db) => {
-      return listUserWorkspaces(db, user.id)
+      return teamListUserWorkspaces(db, user.id)
     })
 
     return ok({
-      invitation,
-      workspaces,
+      invitation: toTeamInvitationResponse(invitation),
+      teams: workspaces.map(toTeamWithQuotaResponse),
     }, {
       startedAt,
       provider: runtime.ai.provider,

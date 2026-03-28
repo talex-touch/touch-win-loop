@@ -5,8 +5,8 @@ import { requireAuth } from '~~/server/utils/auth'
 import { listAiChatSessionsByWorkspace } from '~~/server/utils/chat-store'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { toTeamChatSessionResponse } from '~~/server/utils/team-api-presenter'
+import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 function parseMode(value: unknown): WorkspaceAiMode | null {
   const text = String(value || '').trim()
@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const sessions = await withClient(event, async (db) => {
-    const canUseWorkspace = await hasWorkspaceMembership(db, user, workspaceId)
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 

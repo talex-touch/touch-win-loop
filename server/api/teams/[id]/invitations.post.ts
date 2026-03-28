@@ -4,9 +4,11 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createInvitation, getWorkspaceType, hasWorkspaceRoles } from '~~/server/utils/platform-store'
 import { createSessionToken, hashToken } from '~~/server/utils/security'
 import { toTeamInvitationWithTokenResponse } from '~~/server/utils/team-api-presenter'
+import { teamCreateInvitation } from '~~/server/utils/team-invitation-store'
+import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
+import { teamGetWorkspaceType } from '~~/server/utils/team-quota-store'
 
 interface InvitationBody {
   inviteeUsername?: string
@@ -48,19 +50,19 @@ export default defineEventHandler(async (event) => {
 
   try {
     const invitation = await withTransaction(event, async (db) => {
-      const workspaceType = await getWorkspaceType(db, workspaceId)
+      const workspaceType = await teamGetWorkspaceType(db, workspaceId)
       if (!workspaceType)
         throw new Error('WORKSPACE_NOT_FOUND')
 
-      const canManage = await hasWorkspaceRoles(db, user, workspaceId, MANAGE_INVITATION_ROLES)
+      const canManage = await teamHasWorkspaceRoles(db, user, workspaceId, MANAGE_INVITATION_ROLES)
       if (!canManage)
         throw new Error('FORBIDDEN')
 
-      const canAssignHigherRole = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
+      const canAssignHigherRole = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
       if (!canAssignHigherRole && role !== 'member')
         throw new Error('MANAGER_CAN_ONLY_INVITE_MEMBER')
 
-      return createInvitation(db, {
+      return teamCreateInvitation(db, {
         workspaceId,
         invitedByUserId: user.id,
         tokenHash,

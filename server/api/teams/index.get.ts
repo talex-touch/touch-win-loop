@@ -2,8 +2,8 @@ import { ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { listUserWorkspaces } from '~~/server/utils/platform-store'
 import { toTeamWithQuotaResponse } from '~~/server/utils/team-api-presenter'
+import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
 
   const workspaces = await withClient(event, async (db) => {
-    return listUserWorkspaces(db, user.id)
+    return teamListUserWorkspaces(db, user.id)
   })
   const teams = workspaces.map(toTeamWithQuotaResponse)
 

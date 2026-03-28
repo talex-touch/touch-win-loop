@@ -4,8 +4,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createTeamWorkspace } from '~~/server/utils/platform-store'
 import { toTeamWithQuotaResponse } from '~~/server/utils/team-api-presenter'
+import { teamCreateWorkspace } from '~~/server/utils/team-workspace-store'
 
 interface CreateWorkspaceBody {
   name?: string
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const workspace = await withTransaction(event, async (db) => {
-    return createTeamWorkspace(db, {
+    return teamCreateWorkspace(db, {
       ownerUserId: user.id,
       name,
       teamProfile: body?.teamProfile || null,

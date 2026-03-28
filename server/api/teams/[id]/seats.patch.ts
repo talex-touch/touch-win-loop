@@ -3,8 +3,9 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { hasWorkspaceRoles, patchWorkspaceSeatLimit } from '~~/server/utils/platform-store'
 import { toTeamQuotaResponse } from '~~/server/utils/team-api-presenter'
+import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
+import { teamPatchSeatLimit } from '~~/server/utils/team-quota-store'
 
 interface PatchTeamSeatLimitBody {
   seatLimit?: number
@@ -33,11 +34,11 @@ export default defineEventHandler(async (event) => {
 
   try {
     const quota = await withTransaction(event, async (db) => {
-      const canManage = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
+      const canManage = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
       if (!canManage)
         throw new Error('FORBIDDEN')
 
-      return patchWorkspaceSeatLimit(db, {
+      return teamPatchSeatLimit(db, {
         workspaceId,
         seatLimit,
       })

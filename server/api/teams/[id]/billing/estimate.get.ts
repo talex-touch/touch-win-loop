@@ -4,8 +4,8 @@ import { requireAuth } from '~~/server/utils/auth'
 import { estimateWorkspaceBilling } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { toTeamBillingEstimateResponse } from '~~/server/utils/team-api-presenter'
+import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   let estimate = null
   try {
     estimate = await withClient(event, async (db) => {
-      const canAccess = await hasWorkspaceMembership(db, user, workspaceId)
+      const canAccess = await teamHasWorkspaceMembership(db, user, workspaceId)
       if (!canAccess)
         throw new Error('FORBIDDEN')
 

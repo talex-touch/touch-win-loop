@@ -5,8 +5,8 @@ import { requireAuth } from '~~/server/utils/auth'
 import { createAiChatSession } from '~~/server/utils/chat-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { hasWorkspaceMembership } from '~~/server/utils/platform-store'
 import { toTeamChatSessionResponse } from '~~/server/utils/team-api-presenter'
+import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 interface CreateChatSessionBody {
   projectId?: string
@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const session = await withTransaction(event, async (db) => {
-    const canUseWorkspace = await hasWorkspaceMembership(db, user, workspaceId)
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 

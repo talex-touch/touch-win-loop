@@ -4,8 +4,8 @@ import { requireAuth } from '~~/server/utils/auth'
 import { estimateWorkspaceBilling, patchWorkspaceBillingAddons } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { hasWorkspaceRoles } from '~~/server/utils/platform-store'
 import { toTeamBillingEstimateResponse } from '~~/server/utils/team-api-presenter'
+import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
 
 interface PatchWorkspaceBillingAddonBody {
   extraProjectSlots?: number
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const estimate = await withTransaction(event, async (db) => {
-      const canManageBilling = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
+      const canManageBilling = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin'])
       if (!canManageBilling)
         throw new Error('FORBIDDEN')
 
