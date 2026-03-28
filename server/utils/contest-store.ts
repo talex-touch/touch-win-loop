@@ -12,6 +12,7 @@ import type {
   ContestTimeline,
   ContestVisibility,
   DisciplineDictionaryItem,
+  FeishuBitableTaskTargetType,
   PlatformPermission,
   PlatformRole,
   PlatformRoleAssignment,
@@ -3046,11 +3047,38 @@ export async function createAdminContest(
   return detail.contest
 }
 
+async function assertFeishuSourceOfTruthPatchAllowed(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableTaskTargetType
+    entityId: string
+    bypass?: boolean
+  },
+): Promise<void> {
+  if (input.bypass)
+    return
+
+  const result = await db.query<{ id: string }>(
+    `SELECT id
+     FROM feishu_external_refs
+     WHERE provider = 'feishu_bitable'
+       AND scope = $1
+       AND entity_id = $2
+     LIMIT 1`,
+    [input.scope, input.entityId],
+  )
+  if (!result.rows[0]?.id)
+    return
+
+  throw new Error('FEISHU_SOURCE_OF_TRUTH_CONFLICT')
+}
+
 export async function patchAdminContest(
   db: Queryable,
   input: {
     actorUserId: string
     contestId: string
+    bypassSourceOfTruthGuard?: boolean
     patch: {
       name?: string
       level?: ContestLevel
@@ -3117,6 +3145,12 @@ export async function patchAdminContest(
 
   if (sets.length === 0)
     return getContestDetail(db, { contestId: input.contestId, includeInternal: true }).then(item => item?.contest || null)
+
+  await assertFeishuSourceOfTruthPatchAllowed(db, {
+    scope: 'contest',
+    entityId: input.contestId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
 
   addSet('updated_by_user_id', input.actorUserId)
   sets.push(`updated_at = NOW()`)
@@ -3433,6 +3467,7 @@ export async function patchAdminTrack(
     actorUserId: string
     contestId: string
     trackId: string
+    bypassSourceOfTruthGuard?: boolean
     patch: {
       name?: string
       summary?: string
@@ -3469,6 +3504,12 @@ export async function patchAdminTrack(
 
   if (sets.length === 0)
     return null
+
+  await assertFeishuSourceOfTruthPatchAllowed(db, {
+    scope: 'track',
+    entityId: input.trackId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
 
   sets.push('updated_at = NOW()')
 
@@ -4058,6 +4099,7 @@ export async function patchAdminResource(
     actorUserId: string
     contestId: string
     resourceId: string
+    bypassSourceOfTruthGuard?: boolean
     patch: {
       category?: ResourceCategory
       title?: string
@@ -4106,6 +4148,12 @@ export async function patchAdminResource(
 
   if (sets.length === 0)
     return null
+
+  await assertFeishuSourceOfTruthPatchAllowed(db, {
+    scope: 'resource',
+    entityId: input.resourceId,
+    bypass: input.bypassSourceOfTruthGuard,
+  })
 
   addSet('updated_by_user_id', input.actorUserId)
   sets.push('updated_at = NOW()')

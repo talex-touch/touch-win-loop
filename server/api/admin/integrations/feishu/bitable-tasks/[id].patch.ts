@@ -1,4 +1,10 @@
-import type { FeishuBitableTask, FeishuBitableTaskTargetType, FeishuTaskScheduleConfig } from '~~/shared/types/domain'
+import type {
+  FeishuBitableSourceConfig,
+  FeishuBitableTask,
+  FeishuBitableTaskTargetType,
+  FeishuBitableWritebackConfig,
+  FeishuTaskScheduleConfig,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -13,6 +19,8 @@ interface PatchTaskBody {
   appToken?: string
   tableId?: string
   viewId?: string
+  source?: FeishuBitableSourceConfig
+  writeback?: FeishuBitableWritebackConfig
   isActive?: boolean
   mapping?: Record<string, unknown>
   options?: Record<string, unknown>
@@ -62,6 +70,19 @@ export default defineEventHandler(async (event) => {
     patch.tableId = String(body.tableId || '').trim()
   if (body.viewId !== undefined)
     patch.viewId = String(body.viewId || '').trim()
+  if (body.source !== undefined) {
+    const sourcePatchAppToken = String(body.source?.appToken || '').trim()
+    const sourcePatchTableId = String(body.source?.tableId || '').trim()
+    const sourcePatchViewId = String(body.source?.viewId || '').trim()
+    patch.source = {
+      ...(body.source || {}),
+      appToken: String(body.appToken || sourcePatchAppToken || '').trim(),
+      tableId: String(body.tableId || sourcePatchTableId || '').trim(),
+      viewId: String(body.viewId || sourcePatchViewId || '').trim(),
+    }
+  }
+  if (body.writeback !== undefined)
+    patch.writeback = body.writeback
   if (body.isActive !== undefined)
     patch.isActive = Boolean(body.isActive)
   if (body.mapping !== undefined)

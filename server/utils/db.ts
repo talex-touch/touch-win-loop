@@ -296,6 +296,8 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_tasks (
   app_token TEXT NOT NULL,
   table_id TEXT NOT NULL,
   view_id TEXT NOT NULL DEFAULT '',
+  source_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  writeback_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   mapping_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   options_json JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -321,6 +323,8 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_runs (
   task_id TEXT NOT NULL REFERENCES feishu_bitable_tasks(id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('running', 'success', 'partial_success', 'failed')),
   trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual', 'event', 'scheduled')),
+  mode TEXT NOT NULL DEFAULT 'full' CHECK (mode IN ('full', 'delta')),
+  delta_record_count INTEGER NOT NULL DEFAULT 0,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ,
   fetched_count INTEGER NOT NULL DEFAULT 0,
@@ -344,6 +348,117 @@ CREATE TABLE IF NOT EXISTS feishu_external_refs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(provider, scope, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS feishu_bitable_event_dedup (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  event_type TEXT NOT NULL DEFAULT '',
+  app_token TEXT NOT NULL DEFAULT '',
+  table_id TEXT NOT NULL DEFAULT '',
+  record_ids TEXT[] NOT NULL DEFAULT '{}',
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS feishu_post_sync_tasks (
+  id TEXT PRIMARY KEY,
+  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
+  run_id TEXT REFERENCES feishu_bitable_sync_runs(id) ON DELETE SET NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  entity_id TEXT NOT NULL,
+  external_id TEXT NOT NULL DEFAULT '',
+  task_type TEXT NOT NULL CHECK (task_type IN ('embedding_upsert', 'search_index_refresh', 'entity_analysis', 'writeback_retry')),
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'succeeded', 'failed', 'dead_letter')),
+  attempt INTEGER NOT NULL DEFAULT 0,
+  max_attempt INTEGER NOT NULL DEFAULT 6,
+  source_hash TEXT NOT NULL DEFAULT '',
+  next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  error_message TEXT NOT NULL DEFAULT '',
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(task_type, scope, entity_id, source_hash)
+);
+
+DO $$
+BEGIN
+  BEGIN
+    CREATE EXTENSION IF NOT EXISTS vector;
+  EXCEPTION
+    WHEN OTHERS THEN
+      NULL;
+  END;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_type
+    WHERE typname = 'vector'
+  ) THEN
+    CREATE TABLE IF NOT EXISTS feishu_vectors (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+      entity_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL DEFAULT 0,
+      content TEXT NOT NULL DEFAULT '',
+      embedding vector,
+      source_hash TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(scope, entity_id, chunk_index, source_hash)
+    );
+  ELSE
+    CREATE TABLE IF NOT EXISTS feishu_vectors (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+      entity_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL DEFAULT 0,
+      content TEXT NOT NULL DEFAULT '',
+      embedding_json JSONB NOT NULL DEFAULT '[]'::JSONB,
+      source_hash TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(scope, entity_id, chunk_index, source_hash)
+    );
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS feishu_search_index (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  entity_id TEXT NOT NULL,
+  external_id TEXT NOT NULL DEFAULT '',
+  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
+  run_id TEXT REFERENCES feishu_bitable_sync_runs(id) ON DELETE SET NULL,
+  source_hash TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  keywords TEXT[] NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(scope, entity_id, source_hash)
+);
+
+CREATE TABLE IF NOT EXISTS feishu_entity_analysis (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  entity_id TEXT NOT NULL,
+  external_id TEXT NOT NULL DEFAULT '',
+  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
+  run_id TEXT REFERENCES feishu_bitable_sync_runs(id) ON DELETE SET NULL,
+  source_hash TEXT NOT NULL DEFAULT '',
+  provider TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  analysis_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(scope, entity_id, source_hash)
 );
 
 CREATE TABLE IF NOT EXISTS activity_catalog (
@@ -994,6 +1109,12 @@ ALTER TABLE feishu_bitable_tasks
   ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
 ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS source_json JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS writeback_json JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE feishu_bitable_tasks
   ADD COLUMN IF NOT EXISTS schedule_mode TEXT NOT NULL DEFAULT 'interval';
 
 ALTER TABLE feishu_bitable_tasks
@@ -1028,11 +1149,24 @@ ALTER TABLE feishu_bitable_tasks
   CHECK (schedule_mode IN ('interval', 'cron'));
 
 ALTER TABLE feishu_bitable_sync_runs
+  ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'full';
+
+ALTER TABLE feishu_bitable_sync_runs
+  ADD COLUMN IF NOT EXISTS delta_record_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE feishu_bitable_sync_runs
   DROP CONSTRAINT IF EXISTS feishu_bitable_sync_runs_trigger_source_check;
 
 ALTER TABLE feishu_bitable_sync_runs
   ADD CONSTRAINT feishu_bitable_sync_runs_trigger_source_check
   CHECK (trigger_source IN ('manual', 'event', 'scheduled'));
+
+ALTER TABLE feishu_bitable_sync_runs
+  DROP CONSTRAINT IF EXISTS feishu_bitable_sync_runs_mode_check;
+
+ALTER TABLE feishu_bitable_sync_runs
+  ADD CONSTRAINT feishu_bitable_sync_runs_mode_check
+  CHECK (mode IN ('full', 'delta'));
 
 CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_user ON workspace_members(workspace_id, user_id);
@@ -1066,9 +1200,17 @@ CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_schedule_scan
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_schedule_lock
   ON feishu_bitable_tasks(schedule_locked_at);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_runs_task_started ON feishu_bitable_sync_runs(task_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_runs_task_mode_started ON feishu_bitable_sync_runs(task_id, mode, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_external_refs_entity ON feishu_external_refs(scope, entity_id);
 CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_task_status ON feishu_sync_issues(task_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_record ON feishu_sync_issues(task_id, record_id, external_id);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_event_dedup_created ON feishu_bitable_event_dedup(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_post_sync_tasks_status_next ON feishu_post_sync_tasks(status, next_run_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_feishu_post_sync_tasks_scope_entity ON feishu_post_sync_tasks(scope, entity_id, task_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_vectors_scope_entity ON feishu_vectors(scope, entity_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_search_index_scope_entity ON feishu_search_index(scope, entity_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_search_index_keywords ON feishu_search_index USING GIN(keywords);
+CREATE INDEX IF NOT EXISTS idx_feishu_entity_analysis_scope_entity ON feishu_entity_analysis(scope, entity_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_catalog_type ON activity_catalog(activity_type, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_instances_activity ON activity_instances(activity_id, year DESC, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_documents_instance ON source_documents(instance_id, publish_time DESC, updated_at DESC);

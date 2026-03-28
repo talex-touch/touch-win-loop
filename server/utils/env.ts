@@ -141,6 +141,7 @@ export interface RuntimeSettings {
     baseURL: string
     apiKey: string
     model: string
+    embeddingModel: string
     modelCatalogJson: string
     modelPricingJson: string
     providersJson: string
@@ -239,6 +240,7 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       baseURL: String(runtime.ai?.baseURL ?? ''),
       apiKey: String(runtime.ai?.apiKey ?? ''),
       model: String(runtime.ai?.model ?? 'gpt-4o-mini'),
+      embeddingModel: String(runtime.ai?.embeddingModel ?? 'text-embedding-3-small'),
       modelCatalogJson: String(runtime.ai?.modelCatalogJson ?? ''),
       modelPricingJson: String(runtime.ai?.modelPricingJson ?? ''),
       providersJson: String(runtime.ai?.providersJson ?? ''),

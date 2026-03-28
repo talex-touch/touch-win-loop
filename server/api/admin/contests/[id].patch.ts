@@ -57,31 +57,47 @@ export default defineEventHandler(async (event) => {
     }, 40363)
   }
 
-  const patched = await withTransaction(event, async (db) => {
-    return patchAdminContest(db, {
-      actorUserId: user.id,
-      contestId,
-      patch: {
-        name: body?.name,
-        level: body?.level,
-        organizer: body?.organizer,
-        coOrganizer: body?.coOrganizer,
-        officialUrl: body?.officialUrl,
-        summary: body?.summary,
-        participantRequirements: body?.participantRequirements,
-        teamRule: body?.teamRule,
-        currentSeason: body?.currentSeason,
-        disciplines: body?.disciplines,
-        aliases: body?.aliases,
-        keywords: body?.keywords,
-        recommendedFor: body?.recommendedFor,
-        faq: body?.faq,
-        faqItems: body?.faqItems,
-        hotScore: body?.hotScore,
-        visibility: body?.visibility,
-      },
+  let patched
+  try {
+    patched = await withTransaction(event, async (db) => {
+      return patchAdminContest(db, {
+        actorUserId: user.id,
+        contestId,
+        patch: {
+          name: body?.name,
+          level: body?.level,
+          organizer: body?.organizer,
+          coOrganizer: body?.coOrganizer,
+          officialUrl: body?.officialUrl,
+          summary: body?.summary,
+          participantRequirements: body?.participantRequirements,
+          teamRule: body?.teamRule,
+          currentSeason: body?.currentSeason,
+          disciplines: body?.disciplines,
+          aliases: body?.aliases,
+          keywords: body?.keywords,
+          recommendedFor: body?.recommendedFor,
+          faq: body?.faq,
+          faqItems: body?.faqItems,
+          hotScore: body?.hotScore,
+          visibility: body?.visibility,
+        },
+      })
     })
-  })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'FEISHU_SOURCE_OF_TRUTH_CONFLICT') {
+      setResponseStatus(event, 409)
+      return fail('当前赛事由飞书多维主库托管，请在飞书侧修改后同步。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40963)
+    }
+    throw error
+  }
 
   if (!patched) {
     setResponseStatus(event, 404)

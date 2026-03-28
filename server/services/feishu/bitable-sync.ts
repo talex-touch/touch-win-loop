@@ -6,13 +6,20 @@ import type {
   FeishuBitableSyncRunTriggerSource,
   FeishuBitableTaskTargetType,
   FeishuFieldInspectionItem,
+  FeishuSyncRunMode,
   ResourceAvailability,
   ResourceCategory,
   ResourceStatus,
   ScopeType,
 } from '~~/shared/types/domain'
+import { createHash } from 'node:crypto'
 import jsonata from 'jsonata'
-import { getFeishuTenantAccessToken, listFeishuBitableRecords } from '~~/server/services/feishu/client'
+import {
+  batchUpdateFeishuBitableRecords,
+  getFeishuTenantAccessToken,
+  listFeishuBitableRecords,
+  listFeishuBitableRecordsByIds,
+} from '~~/server/services/feishu/client'
 import {
   createAdminContest,
   createAdminResource,
@@ -25,6 +32,7 @@ import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   completeFeishuBitableSyncRun,
   createFeishuBitableSyncRun,
+  enqueueFeishuPostSyncTask,
   getFeishuBitableTaskById,
   getFeishuExternalRef,
   readFeishuIntegrationConfig,
@@ -38,6 +46,8 @@ interface SyncSummary {
   updatedCount: number
   skippedCount: number
   errorCount: number
+  writebackSuccessCount: number
+  writebackErrorCount: number
   errors: Array<{ recordId: string, message: string }>
 }
 
@@ -74,6 +84,24 @@ interface ApplyRecordResult {
   reasonCode?: string
   message?: string
   payload?: Record<string, unknown>
+}
+
+interface NormalizedWriteback {
+  enabled: boolean
+  fields: {
+    status: string
+    syncedAt: string
+    errorMessage: string
+    reasonCode: string
+    entityId: string
+    runId: string
+    triggerSource: string
+  }
+  values: {
+    success: string
+    failed: string
+    skipped: string
+  }
 }
 
 function parseJsonObject(raw: unknown): Record<string, unknown> {
@@ -398,6 +426,58 @@ function normalizeOptions(raw: unknown, mappingDefaults: Record<string, unknown>
   }
 }
 
+function normalizeWritebackConfig(raw: unknown): NormalizedWriteback {
+  const source = parseJsonObject(raw)
+  const fields = parseJsonObject(source.fields)
+  const values = parseJsonObject(source.values)
+  return {
+    enabled: source.enabled !== false,
+    fields: {
+      status: toText(fields.status),
+      syncedAt: toText(fields.syncedAt),
+      errorMessage: toText(fields.errorMessage),
+      reasonCode: toText(fields.reasonCode),
+      entityId: toText(fields.entityId),
+      runId: toText(fields.runId),
+      triggerSource: toText(fields.triggerSource),
+    },
+    values: {
+      success: toText(values.success) || '已同步',
+      failed: toText(values.failed) || '失败',
+      skipped: toText(values.skipped) || '跳过',
+    },
+  }
+}
+
+function normalizeWritebackValue(raw: unknown): unknown {
+  if (raw === undefined || raw === null)
+    return ''
+  if (typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean')
+    return raw
+  if (Array.isArray(raw))
+    return raw.map(item => normalizeSpecialText(item)).filter(Boolean).join(' | ')
+  try {
+    return JSON.stringify(raw)
+  }
+  catch {
+    return ''
+  }
+}
+
+function buildPostSyncSourceHash(input: {
+  scope: FeishuBitableTaskTargetType
+  externalId: string
+  record: FeishuBitableRecord
+}): string {
+  const payload = JSON.stringify({
+    scope: input.scope,
+    externalId: input.externalId,
+    recordId: input.record.recordId,
+    fields: input.record.fields || {},
+  })
+  return createHash('sha256').update(payload).digest('hex')
+}
+
 function createRecordResolver(record: FeishuBitableRecord, mapping: NormalizedMapping): RecordValueResolver {
   const valueCache = new Map<string, Promise<unknown>>()
 
@@ -552,6 +632,8 @@ function buildSummaryBase(records: FeishuBitableRecord[]): SyncSummary {
     updatedCount: 0,
     skippedCount: 0,
     errorCount: 0,
+    writebackSuccessCount: 0,
+    writebackErrorCount: 0,
     errors: [],
   }
 }
@@ -594,6 +676,7 @@ async function applyContestRecord(
       await patchAdminContest(db, {
         actorUserId: input.actorUserId,
         contestId: existingRef.entityId,
+        bypassSourceOfTruthGuard: true,
         patch: {
           name,
           level: mapContestLevel(await input.resolver.getText('level')),
@@ -708,6 +791,7 @@ async function applyTrackRecord(
         actorUserId: input.actorUserId,
         contestId: contestLink.contestId,
         trackId: existingRef.entityId,
+        bypassSourceOfTruthGuard: true,
         patch: {
           name,
           summary: await input.resolver.getText('summary'),
@@ -832,6 +916,7 @@ async function applyResourceRecord(
         actorUserId: input.actorUserId,
         contestId: contestLink.contestId,
         resourceId: existingRef.entityId,
+        bypassSourceOfTruthGuard: true,
         patch: {
           category,
           title,
@@ -964,19 +1049,63 @@ async function applySingleRecord(
   })
 }
 
+function buildWritebackFields(input: {
+  config: NormalizedWriteback
+  result: ApplyRecordResult
+  entityId: string
+  runId: string
+  triggerSource: FeishuBitableSyncRunTriggerSource
+}): Record<string, unknown> {
+  const fields: Record<string, unknown> = {}
+  if (!input.config.enabled)
+    return fields
+
+  const statusText = input.result.status === 'created' || input.result.status === 'updated'
+    ? input.config.values.success
+    : input.result.status === 'skipped'
+      ? input.config.values.skipped
+      : input.config.values.failed
+  if (input.config.fields.status)
+    fields[input.config.fields.status] = statusText
+  if (input.config.fields.syncedAt)
+    fields[input.config.fields.syncedAt] = new Date().toISOString()
+  if (input.config.fields.errorMessage) {
+    fields[input.config.fields.errorMessage] = input.result.status === 'created' || input.result.status === 'updated'
+      ? ''
+      : toText(input.result.message || '')
+  }
+  if (input.config.fields.reasonCode)
+    fields[input.config.fields.reasonCode] = toText(input.result.reasonCode || '')
+  if (input.config.fields.entityId)
+    fields[input.config.fields.entityId] = input.entityId
+  if (input.config.fields.runId)
+    fields[input.config.fields.runId] = input.runId
+  if (input.config.fields.triggerSource)
+    fields[input.config.fields.triggerSource] = input.triggerSource
+
+  return fields
+}
+
 async function executeRecords(
   db: Queryable,
   input: {
     actorUserId: string
+    runId?: string
+    triggerSource: FeishuBitableSyncRunTriggerSource
     taskId: string
     taskTargetType: FeishuBitableTaskTargetType
     mapping: NormalizedMapping
     options: NormalizedOptions
+    writeback: NormalizedWriteback
+    tenantAccessToken?: string
+    appToken: string
+    tableId: string
     records: FeishuBitableRecord[]
     dryRun: boolean
   },
 ): Promise<SyncSummary> {
   const summary = buildSummaryBase(input.records)
+  const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
 
   for (const record of input.records) {
     try {
@@ -997,6 +1126,62 @@ async function executeRecords(
       else
         summary.skippedCount += 1
 
+      if (!input.dryRun && (result.status === 'created' || result.status === 'updated')) {
+        const ref = await getFeishuExternalRef(db, {
+          scope: input.taskTargetType,
+          externalId: result.externalId,
+        })
+        if (ref?.entityId && input.runId) {
+          const sourceHash = buildPostSyncSourceHash({
+            scope: input.taskTargetType,
+            externalId: result.externalId,
+            record,
+          })
+          await enqueueFeishuPostSyncTask(db, {
+            taskId: input.taskId,
+            runId: input.runId,
+            scope: input.taskTargetType,
+            entityId: ref.entityId,
+            externalId: result.externalId,
+            taskType: 'embedding_upsert',
+            sourceHash,
+            payload: {
+              recordId: record.recordId,
+              externalId: result.externalId,
+              recordFields: record.fields || {},
+            },
+          })
+          await enqueueFeishuPostSyncTask(db, {
+            taskId: input.taskId,
+            runId: input.runId,
+            scope: input.taskTargetType,
+            entityId: ref.entityId,
+            externalId: result.externalId,
+            taskType: 'search_index_refresh',
+            sourceHash,
+            payload: {
+              recordId: record.recordId,
+              externalId: result.externalId,
+            },
+          })
+          await enqueueFeishuPostSyncTask(db, {
+            taskId: input.taskId,
+            runId: input.runId,
+            scope: input.taskTargetType,
+            entityId: ref.entityId,
+            externalId: result.externalId,
+            taskType: 'entity_analysis',
+            sourceHash,
+            payload: {
+              recordId: record.recordId,
+              externalId: result.externalId,
+              entityId: ref.entityId,
+              recordFields: record.fields || {},
+            },
+          })
+        }
+      }
+
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         await upsertFeishuSyncIssue(db, {
           taskId: input.taskId,
@@ -1012,6 +1197,33 @@ async function executeRecords(
           },
         })
       }
+
+      if (!input.dryRun && input.writeback.enabled && input.runId) {
+        const ref = await getFeishuExternalRef(db, {
+          scope: input.taskTargetType,
+          externalId: result.externalId,
+        })
+        const writebackFields = buildWritebackFields({
+          config: input.writeback,
+          result,
+          entityId: ref?.entityId || '',
+          runId: input.runId,
+          triggerSource: input.triggerSource,
+        })
+        const normalizedFields: Record<string, unknown> = {}
+        for (const [fieldName, value] of Object.entries(writebackFields)) {
+          const key = toText(fieldName)
+          if (!key)
+            continue
+          normalizedFields[key] = normalizeWritebackValue(value)
+        }
+        if (Object.keys(normalizedFields).length > 0) {
+          writebackRecords.push({
+            recordId: record.recordId,
+            fields: normalizedFields,
+          })
+        }
+      }
     }
     catch (error) {
       summary.errorCount += 1
@@ -1019,6 +1231,47 @@ async function executeRecords(
         recordId: record.recordId,
         message: error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR'),
       })
+    }
+  }
+
+  if (!input.dryRun && input.tenantAccessToken && writebackRecords.length > 0) {
+    const chunkSize = 200
+    for (let index = 0; index < writebackRecords.length; index += chunkSize) {
+      const chunk = writebackRecords.slice(index, index + chunkSize)
+      try {
+        await batchUpdateFeishuBitableRecords({
+          tenantAccessToken: input.tenantAccessToken,
+          appToken: input.appToken,
+          tableId: input.tableId,
+          records: chunk,
+        })
+        summary.writebackSuccessCount += chunk.length
+      }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error || 'WRITEBACK_FAILED')
+        summary.writebackErrorCount += chunk.length
+        if (input.runId) {
+          await enqueueFeishuPostSyncTask(db, {
+            taskId: input.taskId,
+            runId: input.runId,
+            scope: input.taskTargetType,
+            entityId: input.taskId,
+            externalId: '',
+            taskType: 'writeback_retry',
+            sourceHash: createHash('sha256').update(JSON.stringify(chunk)).digest('hex'),
+            payload: {
+              appToken: input.appToken,
+              tableId: input.tableId,
+              records: chunk,
+              errorMessage: message,
+            },
+          })
+        }
+        summary.errors.push({
+          recordId: chunk[0]?.recordId || '',
+          message: `WRITEBACK_FAILED:${message}`,
+        })
+      }
     }
   }
 
@@ -1057,12 +1310,17 @@ export async function previewFeishuBitableTask(
   return withClient(event, async (db) => {
     const mapping = normalizeMapping(task.mapping, task.options, task.targetType)
     const options = normalizeOptions(task.options, mapping.defaults)
+    const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback)
     return executeRecords(db, {
       actorUserId: input.actorUserId,
+      triggerSource: 'manual',
       taskId: task.id,
       taskTargetType: task.targetType,
       mapping,
       options,
+      writeback,
+      appToken: task.appToken,
+      tableId: task.tableId,
       records,
       dryRun: true,
     })
@@ -1075,9 +1333,13 @@ export async function runFeishuBitableTask(
     taskId: string
     actorUserId: string
     triggerSource?: FeishuBitableSyncRunTriggerSource
+    mode?: FeishuSyncRunMode
+    recordIds?: string[]
   },
 ): Promise<SyncSummary & { runId: string, status: 'success' | 'partial_success' | 'failed' }> {
   const triggerSource = input.triggerSource || 'manual'
+  const mode: FeishuSyncRunMode = input.mode === 'delta' ? 'delta' : 'full'
+  const deltaRecordIds = [...new Set((input.recordIds || []).map(item => toText(item)).filter(Boolean))]
   const configAndTask = await withClient(event, async (db) => {
     const config = await readFeishuIntegrationConfig(db)
     const task = await getFeishuBitableTaskById(db, input.taskId)
@@ -1096,34 +1358,50 @@ export async function runFeishuBitableTask(
     return createFeishuBitableSyncRun(db, {
       taskId: task.id,
       triggerSource,
+      mode,
+      deltaRecordCount: deltaRecordIds.length,
       createdByUserId: input.actorUserId,
     })
   })
 
   try {
     const tenantAccessToken = await getFeishuTenantAccessToken(configAndTask.config)
-    const records = await listFeishuBitableRecords({
-      tenantAccessToken,
-      appToken: task.appToken,
-      tableId: task.tableId,
-      viewId: task.viewId,
-    })
+    const records = mode === 'delta'
+      ? await listFeishuBitableRecordsByIds({
+          tenantAccessToken,
+          appToken: task.appToken,
+          tableId: task.tableId,
+          recordIds: deltaRecordIds,
+        })
+      : await listFeishuBitableRecords({
+          tenantAccessToken,
+          appToken: task.appToken,
+          tableId: task.tableId,
+          viewId: task.viewId,
+        })
 
     const summary = await withTransaction(event, async (db) => {
       const mapping = normalizeMapping(task.mapping, task.options, task.targetType)
       const options = normalizeOptions(task.options, mapping.defaults)
+      const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback)
       return executeRecords(db, {
         actorUserId: input.actorUserId,
+        runId,
+        triggerSource,
         taskId: task.id,
         taskTargetType: task.targetType,
         mapping,
         options,
+        writeback,
+        tenantAccessToken,
+        appToken: task.appToken,
+        tableId: task.tableId,
         records,
         dryRun: false,
       })
     })
 
-    const status = summary.errorCount > 0
+    const status = (summary.errorCount > 0 || summary.writebackErrorCount > 0)
       ? ((summary.createdCount > 0 || summary.updatedCount > 0) ? 'partial_success' : 'failed')
       : 'success'
 
@@ -1184,6 +1462,70 @@ function toInspectionValues(raw: unknown): string[] {
   return text ? [text] : []
 }
 
+function summarizeInspectionRecords(
+  records: FeishuBitableRecord[],
+  maxRecords: number,
+): FeishuFieldInspectionItem[] {
+  const fieldMap = new Map<string, { count: number, samples: Set<string> }>()
+  for (const record of records.slice(0, maxRecords)) {
+    for (const [fieldName, rawValue] of Object.entries(record.fields || {})) {
+      const normalizedFieldName = toText(fieldName)
+      if (!normalizedFieldName)
+        continue
+
+      const bucket = fieldMap.get(normalizedFieldName) || { count: 0, samples: new Set<string>() }
+      bucket.count += 1
+      for (const sample of toInspectionValues(rawValue)) {
+        if (!sample || bucket.samples.size >= 5)
+          continue
+        bucket.samples.add(sample)
+      }
+      fieldMap.set(normalizedFieldName, bucket)
+    }
+  }
+
+  return [...fieldMap.entries()]
+    .map(([fieldName, bucket]) => ({
+      fieldName,
+      sampleValues: [...bucket.samples],
+      sampleCount: bucket.count,
+    }))
+    .sort((a, b) => b.sampleCount - a.sampleCount || a.fieldName.localeCompare(b.fieldName))
+}
+
+export async function inspectFeishuBitableSourceFields(
+  event: H3Event,
+  input: {
+    appToken: string
+    tableId: string
+    viewId?: string
+    sampleRecords?: number
+  },
+): Promise<FeishuFieldInspectionItem[]> {
+  const appToken = toText(input.appToken)
+  const tableId = toText(input.tableId)
+  const viewId = toText(input.viewId)
+  if (!appToken || !tableId)
+    throw new Error('APP_TOKEN_AND_TABLE_ID_REQUIRED')
+
+  const config = await withClient(event, async (db) => {
+    return readFeishuIntegrationConfig(db)
+  })
+
+  if (!config.enabled)
+    throw new Error('FEISHU_INTEGRATION_DISABLED')
+
+  const tenantAccessToken = await getFeishuTenantAccessToken(config)
+  const records = await listFeishuBitableRecords({
+    tenantAccessToken,
+    appToken,
+    tableId,
+    viewId,
+  })
+  const maxRecords = Math.max(1, Math.min(500, Number(input.sampleRecords || 120)))
+  return summarizeInspectionRecords(records, maxRecords)
+}
+
 export async function inspectFeishuBitableTaskFields(
   event: H3Event,
   input: {
@@ -1214,29 +1556,5 @@ export async function inspectFeishuBitableTaskFields(
   })
 
   const maxRecords = Math.max(1, Math.min(500, Number(input.sampleRecords || 120)))
-  const fieldMap = new Map<string, { count: number, samples: Set<string> }>()
-  for (const record of records.slice(0, maxRecords)) {
-    for (const [fieldName, rawValue] of Object.entries(record.fields || {})) {
-      const normalizedFieldName = toText(fieldName)
-      if (!normalizedFieldName)
-        continue
-
-      const bucket = fieldMap.get(normalizedFieldName) || { count: 0, samples: new Set<string>() }
-      bucket.count += 1
-      for (const sample of toInspectionValues(rawValue)) {
-        if (!sample || bucket.samples.size >= 5)
-          continue
-        bucket.samples.add(sample)
-      }
-      fieldMap.set(normalizedFieldName, bucket)
-    }
-  }
-
-  return [...fieldMap.entries()]
-    .map(([fieldName, bucket]) => ({
-      fieldName,
-      sampleValues: [...bucket.samples],
-      sampleCount: bucket.count,
-    }))
-    .sort((a, b) => b.sampleCount - a.sampleCount || a.fieldName.localeCompare(b.fieldName))
+  return summarizeInspectionRecords(records, maxRecords)
 }

@@ -1,4 +1,10 @@
-import type { FeishuBitableTask, FeishuBitableTaskTargetType, FeishuTaskScheduleConfig } from '~~/shared/types/domain'
+import type {
+  FeishuBitableSourceConfig,
+  FeishuBitableTask,
+  FeishuBitableTaskTargetType,
+  FeishuBitableWritebackConfig,
+  FeishuTaskScheduleConfig,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -13,6 +19,8 @@ interface CreateTaskBody {
   appToken?: string
   tableId?: string
   viewId?: string
+  source?: FeishuBitableSourceConfig
+  writeback?: FeishuBitableWritebackConfig
   isActive?: boolean
   mapping?: Record<string, unknown>
   options?: Record<string, unknown>
@@ -43,8 +51,12 @@ export default defineEventHandler(async (event) => {
   const targetType = TARGET_TYPES.includes(body.targetType as FeishuBitableTaskTargetType)
     ? body.targetType as FeishuBitableTaskTargetType
     : null
-  const appToken = String(body.appToken || '').trim()
-  const tableId = String(body.tableId || '').trim()
+  const sourceAppToken = String(body.source?.appToken || '').trim()
+  const sourceTableId = String(body.source?.tableId || '').trim()
+  const sourceViewId = String(body.source?.viewId || '').trim()
+  const appToken = String(body.appToken || sourceAppToken || '').trim()
+  const tableId = String(body.tableId || sourceTableId || '').trim()
+  const viewId = String(body.viewId || sourceViewId || '').trim()
 
   if (!name || !targetType || !appToken || !tableId) {
     setResponseStatus(event, 400)
@@ -66,7 +78,14 @@ export default defineEventHandler(async (event) => {
         targetType,
         appToken,
         tableId,
-        viewId: String(body.viewId || '').trim(),
+        viewId,
+        source: {
+          ...(body.source || {}),
+          appToken,
+          tableId,
+          viewId,
+        },
+        writeback: body.writeback,
         isActive: body.isActive !== false,
         mapping: body.mapping || {},
         options: body.options || {},

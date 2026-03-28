@@ -7,7 +7,9 @@ export const feishuBitableWorkflowProvider: WorkflowProvider = {
     return runFeishuBitableTask(input.event, {
       taskId: input.taskId,
       actorUserId: input.actorUserId,
-      triggerSource: input.triggerSource === 'webhook' ? 'manual' : input.triggerSource,
+      triggerSource: input.triggerSource === 'webhook' ? 'event' : input.triggerSource,
+      mode: input.mode,
+      recordIds: input.recordIds,
     })
   },
 }

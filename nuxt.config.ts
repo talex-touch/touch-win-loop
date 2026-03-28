@@ -51,6 +51,7 @@ export default defineNuxtConfig({
       baseURL: resolveEnvValue('WINLOOP_AI_BASE_URL', ''),
       apiKey: resolveEnvValue('WINLOOP_AI_API_KEY', ''),
       model: resolveEnvValue('WINLOOP_AI_MODEL', 'gpt-4o-mini'),
+      embeddingModel: resolveEnvValue('WINLOOP_AI_EMBEDDING_MODEL', 'text-embedding-3-small'),
       modelCatalogJson: resolveEnvValue('WINLOOP_AI_MODEL_CATALOG_JSON', ''),
       modelPricingJson: resolveEnvValue('WINLOOP_AI_MODEL_PRICING_JSON', ''),
       providersJson: resolveEnvValue('WINLOOP_AI_PROVIDERS_JSON', ''),

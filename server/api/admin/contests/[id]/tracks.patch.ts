@@ -48,22 +48,38 @@ export default defineEventHandler(async (event) => {
     }, 40369)
   }
 
-  const track = await withTransaction(event, async (db) => {
-    return patchAdminTrack(db, {
-      actorUserId: user.id,
-      contestId,
-      trackId: body.trackId!,
-      patch: {
-        name: body?.name,
-        summary: body?.summary,
-        suitableMajors: body?.suitableMajors,
-        deliverableTypes: body?.deliverableTypes,
-        rubricId: body?.rubricId,
-        sortOrder: body?.sortOrder,
-        status: body?.status,
-      },
+  let track
+  try {
+    track = await withTransaction(event, async (db) => {
+      return patchAdminTrack(db, {
+        actorUserId: user.id,
+        contestId,
+        trackId: body.trackId!,
+        patch: {
+          name: body?.name,
+          summary: body?.summary,
+          suitableMajors: body?.suitableMajors,
+          deliverableTypes: body?.deliverableTypes,
+          rubricId: body?.rubricId,
+          sortOrder: body?.sortOrder,
+          status: body?.status,
+        },
+      })
     })
-  })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'FEISHU_SOURCE_OF_TRUTH_CONFLICT') {
+      setResponseStatus(event, 409)
+      return fail('当前赛道由飞书多维主库托管，请在飞书侧修改后同步。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40969)
+    }
+    throw error
+  }
 
   if (!track) {
     setResponseStatus(event, 404)

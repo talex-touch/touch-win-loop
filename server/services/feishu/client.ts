@@ -105,6 +105,41 @@ interface BitableListRecordsData {
   }>
 }
 
+interface BitableListAppsData {
+  has_more?: boolean
+  page_token?: string
+  items?: Array<{
+    app_token?: string
+    name?: string
+  }>
+}
+
+interface BitableListTablesData {
+  has_more?: boolean
+  page_token?: string
+  items?: Array<{
+    table_id?: string
+    name?: string
+  }>
+}
+
+interface BitableListViewsData {
+  has_more?: boolean
+  page_token?: string
+  items?: Array<{
+    view_id?: string
+    view_name?: string
+    name?: string
+  }>
+}
+
+interface BitableGetRecordData {
+  record?: {
+    record_id?: string
+    fields?: Record<string, unknown>
+  }
+}
+
 function normalizeBaseUrl(raw: string): string {
   const value = String(raw || '').trim().replace(/\/+$/g, '')
   return value || DEFAULT_FEISHU_API_BASE_URL
@@ -726,4 +761,222 @@ export async function listFeishuBitableRecords(input: {
   }
 
   return records
+}
+
+export async function getFeishuBitableRecordById(input: {
+  tenantAccessToken: string
+  appToken: string
+  tableId: string
+  recordId: string
+}): Promise<FeishuBitableRecord | null> {
+  const appToken = String(input.appToken || '').trim()
+  const tableId = String(input.tableId || '').trim()
+  const recordId = String(input.recordId || '').trim()
+  if (!appToken || !tableId || !recordId)
+    return null
+
+  const data = await requestFeishu<BitableGetRecordData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: `/open-apis/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`,
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+  }).catch(() => null)
+
+  const record = data?.record
+  const normalizedId = String(record?.record_id || '').trim()
+  if (!normalizedId)
+    return null
+
+  return {
+    recordId: normalizedId,
+    fields: record?.fields || {},
+  }
+}
+
+export async function listFeishuBitableRecordsByIds(input: {
+  tenantAccessToken: string
+  appToken: string
+  tableId: string
+  recordIds: string[]
+}): Promise<FeishuBitableRecord[]> {
+  const recordIds = [...new Set((input.recordIds || []).map(item => String(item || '').trim()).filter(Boolean))]
+  if (!recordIds.length)
+    return []
+
+  const records: FeishuBitableRecord[] = []
+  for (const recordId of recordIds) {
+    const record = await getFeishuBitableRecordById({
+      tenantAccessToken: input.tenantAccessToken,
+      appToken: input.appToken,
+      tableId: input.tableId,
+      recordId,
+    })
+    if (record)
+      records.push(record)
+  }
+  return records
+}
+
+export async function batchUpdateFeishuBitableRecords(input: {
+  tenantAccessToken: string
+  appToken: string
+  tableId: string
+  records: Array<{ recordId: string, fields: Record<string, unknown> }>
+}): Promise<void> {
+  const appToken = String(input.appToken || '').trim()
+  const tableId = String(input.tableId || '').trim()
+  if (!appToken || !tableId)
+    return
+
+  const records = (input.records || [])
+    .map(item => ({
+      record_id: String(item.recordId || '').trim(),
+      fields: item.fields || {},
+    }))
+    .filter(item => Boolean(item.record_id))
+  if (!records.length)
+    return
+
+  await requestFeishu<Record<string, unknown>>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: `/open-apis/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/batch_update`,
+    method: 'POST',
+    bearerToken: input.tenantAccessToken,
+    body: {
+      records,
+    },
+  })
+}
+
+export async function listFeishuBitableApps(input: {
+  tenantAccessToken: string
+  keyword?: string
+  limit?: number
+}): Promise<Array<{ appToken: string, name: string }>> {
+  const keyword = String(input.keyword || '').trim()
+  const limit = Math.max(1, Math.min(100, Number(input.limit || 20)))
+  let pageToken = ''
+  let hasMore = true
+  const apps: Array<{ appToken: string, name: string }> = []
+
+  while (hasMore && apps.length < limit) {
+    const data = await requestFeishu<BitableListAppsData>({
+      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+      path: '/open-apis/bitable/v1/apps',
+      method: 'GET',
+      bearerToken: input.tenantAccessToken,
+      query: {
+        page_size: 100,
+        page_token: pageToken || '',
+      },
+    })
+
+    for (const item of (data.items || [])) {
+      const appToken = String(item.app_token || '').trim()
+      const name = String(item.name || '').trim()
+      if (!appToken)
+        continue
+      if (keyword && !(`${appToken} ${name}`.toLowerCase().includes(keyword.toLowerCase())))
+        continue
+      apps.push({
+        appToken,
+        name: name || appToken,
+      })
+      if (apps.length >= limit)
+        break
+    }
+
+    hasMore = Boolean(data.has_more)
+    pageToken = String(data.page_token || '').trim()
+    if (hasMore && !pageToken)
+      hasMore = false
+  }
+
+  return apps
+}
+
+export async function listFeishuBitableTables(input: {
+  tenantAccessToken: string
+  appToken: string
+}): Promise<Array<{ tableId: string, name: string }>> {
+  const appToken = String(input.appToken || '').trim()
+  if (!appToken)
+    return []
+  let pageToken = ''
+  let hasMore = true
+  const tables: Array<{ tableId: string, name: string }> = []
+
+  while (hasMore) {
+    const data = await requestFeishu<BitableListTablesData>({
+      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+      path: `/open-apis/bitable/v1/apps/${encodeURIComponent(appToken)}/tables`,
+      method: 'GET',
+      bearerToken: input.tenantAccessToken,
+      query: {
+        page_size: 200,
+        page_token: pageToken || '',
+      },
+    })
+
+    for (const item of (data.items || [])) {
+      const tableId = String(item.table_id || '').trim()
+      if (!tableId)
+        continue
+      tables.push({
+        tableId,
+        name: String(item.name || '').trim() || tableId,
+      })
+    }
+
+    hasMore = Boolean(data.has_more)
+    pageToken = String(data.page_token || '').trim()
+    if (hasMore && !pageToken)
+      hasMore = false
+  }
+
+  return tables
+}
+
+export async function listFeishuBitableViews(input: {
+  tenantAccessToken: string
+  appToken: string
+  tableId: string
+}): Promise<Array<{ viewId: string, name: string }>> {
+  const appToken = String(input.appToken || '').trim()
+  const tableId = String(input.tableId || '').trim()
+  if (!appToken || !tableId)
+    return []
+  let pageToken = ''
+  let hasMore = true
+  const views: Array<{ viewId: string, name: string }> = []
+
+  while (hasMore) {
+    const data = await requestFeishu<BitableListViewsData>({
+      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+      path: `/open-apis/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`,
+      method: 'GET',
+      bearerToken: input.tenantAccessToken,
+      query: {
+        page_size: 200,
+        page_token: pageToken || '',
+      },
+    })
+
+    for (const item of (data.items || [])) {
+      const viewId = String(item.view_id || '').trim()
+      if (!viewId)
+        continue
+      views.push({
+        viewId,
+        name: String(item.view_name || item.name || '').trim() || viewId,
+      })
+    }
+
+    hasMore = Boolean(data.has_more)
+    pageToken = String(data.page_token || '').trim()
+    if (hasMore && !pageToken)
+      hasMore = false
+  }
+
+  return views
 }

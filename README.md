@@ -122,6 +122,9 @@ pnpm contest:seed:status
 - 登录双通道：账号密码 + 飞书 OAuth / Web SDK 自动登录（仅在 `/login` 页面自动尝试一次）。
 - 管理员组同步：飞书指定组成员自动授予 `contest_admin`，脱组自动撤销。
 - Bitable 同步：支持 `contest / track / resource` 多任务映射、预检、执行、运行日志。
+- 多维主库化：支持来源检索/粘贴解析、`full + delta` 双执行模式、事件触发增量同步、定时兜底补偿。
+- 同步状态回填：按任务 `writeback` 配置回写“已同步/失败/跳过”等字段，不强依赖固定列名。
+- 后处理队列：同步成功后自动入队 `embedding_upsert / search_index_refresh / entity_analysis`，并支持失败重试。
 
 ### 最小配置步骤
 
@@ -131,6 +134,20 @@ pnpm contest:seed:status
 4. 在本项目“集成中心”保存飞书配置（支持 secret 字段 `keep/replace/clear`）。
 5. 配置管理员组 ID，执行一次“手动全量对账管理员组”。
 6. 按目标类型创建 Bitable 任务，先 `preview` 再 `run`。
+
+### Bitable 任务配置结构（摘要）
+
+- `source`：多维来源元信息（`appToken/tableId/viewId` + 可选名称/URL）。
+- `mapping`：字段映射（兼容 v1，推荐 v2 layer 结构）。
+- `writeback`：回填配置（字段名映射 + success/failed/skipped 值）。
+
+### 新增管理接口（摘要）
+
+- `GET /api/admin/integrations/feishu/bitable/sources/search`
+- `POST /api/admin/integrations/feishu/bitable/sources/resolve`
+- `GET /api/admin/integrations/feishu/bitable/sources/:appToken/tables/:tableId/views`
+- `GET /api/admin/integrations/feishu/post-sync-tasks`
+- `POST /api/admin/integrations/feishu/post-sync-tasks/:id/retry`
 
 ### 权限门禁
 

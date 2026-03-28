@@ -67,26 +67,42 @@ export default defineEventHandler(async (event) => {
     }, 40382)
   }
 
-  const resource = await withTransaction(event, async (db) => {
-    return patchAdminResource(db, {
-      actorUserId: user.id,
-      contestId,
-      resourceId: body.resourceId!,
-      patch: {
-        category: body?.category,
-        title: body?.title,
-        year: body?.year,
-        url: body?.url,
-        accessLevel: body?.accessLevel,
-        sourceType: body?.sourceType,
-        summary: body?.summary,
-        content: body?.content,
-        metadata: body?.metadata,
-        copyrightNote: body?.copyrightNote,
-        status: body?.status,
-      },
+  let resource
+  try {
+    resource = await withTransaction(event, async (db) => {
+      return patchAdminResource(db, {
+        actorUserId: user.id,
+        contestId,
+        resourceId: body.resourceId!,
+        patch: {
+          category: body?.category,
+          title: body?.title,
+          year: body?.year,
+          url: body?.url,
+          accessLevel: body?.accessLevel,
+          sourceType: body?.sourceType,
+          summary: body?.summary,
+          content: body?.content,
+          metadata: body?.metadata,
+          copyrightNote: body?.copyrightNote,
+          status: body?.status,
+        },
+      })
     })
-  })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'FEISHU_SOURCE_OF_TRUTH_CONFLICT') {
+      setResponseStatus(event, 409)
+      return fail('当前资料由飞书多维主库托管，请在飞书侧修改后同步。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40982)
+    }
+    throw error
+  }
 
   if (!resource) {
     setResponseStatus(event, 404)

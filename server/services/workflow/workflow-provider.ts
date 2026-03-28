@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import type { FeishuSyncRunMode } from '~~/shared/types/domain'
 
 export type WorkflowTriggerSource = 'manual' | 'scheduled' | 'webhook'
 
@@ -7,9 +8,11 @@ export interface WorkflowRunInput {
   taskId: string
   actorUserId: string
   triggerSource: WorkflowTriggerSource
+  mode?: FeishuSyncRunMode
+  recordIds?: string[]
 }
 
 export interface WorkflowProvider {
   readonly providerName: string
-  run(input: WorkflowRunInput): Promise<unknown>
+  run: (input: WorkflowRunInput) => Promise<unknown>
 }

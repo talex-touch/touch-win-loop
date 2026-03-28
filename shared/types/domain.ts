@@ -1087,6 +1087,7 @@ export interface PlatformRoleAssignment {
 export type FeishuBitableTaskTargetType = 'contest' | 'track' | 'resource'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
+export type FeishuSyncRunMode = 'full' | 'delta'
 export type FeishuTaskScheduleMode = 'interval' | 'cron'
 export type RuleSeverity = 'error' | 'warning' | 'info'
 export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder'
@@ -1335,6 +1336,49 @@ export interface FeishuConfigValidationResult {
   warnings: string[]
 }
 
+export interface FeishuBitableSourceConfig {
+  appToken: string
+  tableId: string
+  viewId?: string
+  appName?: string
+  tableName?: string
+  viewName?: string
+  sourceUrl?: string
+}
+
+export interface FeishuBitableWritebackConfig {
+  enabled?: boolean
+  fields?: {
+    status?: string
+    syncedAt?: string
+    errorMessage?: string
+    reasonCode?: string
+    entityId?: string
+    runId?: string
+    triggerSource?: string
+  }
+  values?: {
+    success?: string
+    failed?: string
+    skipped?: string
+  }
+}
+
+export interface FeishuBitableAppMeta {
+  appToken: string
+  name: string
+}
+
+export interface FeishuBitableTableMeta {
+  tableId: string
+  name: string
+}
+
+export interface FeishuBitableViewMeta {
+  viewId: string
+  name: string
+}
+
 export interface FeishuIntegrationConfig {
   enabled: boolean
   appId: string
@@ -1475,6 +1519,8 @@ export interface FeishuBitableTask {
   appToken: string
   tableId: string
   viewId: string
+  source?: FeishuBitableSourceConfig
+  writeback?: FeishuBitableWritebackConfig
   isActive: boolean
   mapping: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
   options: Record<string, unknown>
@@ -1500,6 +1546,8 @@ export interface FeishuBitableSyncRun {
   taskName: string
   status: FeishuBitableSyncRunStatus
   triggerSource: FeishuBitableSyncRunTriggerSource
+  mode?: FeishuSyncRunMode
+  deltaRecordCount?: number
   startedAt: string
   finishedAt: string | null
   fetchedCount: number
@@ -1510,6 +1558,30 @@ export interface FeishuBitableSyncRun {
   errorMessage: string
   createdByUserId: string | null
   createdAt: string
+}
+
+export type FeishuPostSyncTaskType = 'embedding_upsert' | 'search_index_refresh' | 'entity_analysis' | 'writeback_retry'
+export type FeishuPostSyncTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'dead_letter'
+
+export interface FeishuPostSyncTask {
+  id: string
+  taskId: string | null
+  runId: string | null
+  scope: FeishuBitableTaskTargetType
+  entityId: string
+  externalId: string
+  taskType: FeishuPostSyncTaskType
+  status: FeishuPostSyncTaskStatus
+  attempt: number
+  maxAttempt: number
+  sourceHash: string
+  nextRunAt: string
+  errorMessage: string
+  payload: Record<string, unknown>
+  startedAt: string | null
+  finishedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ContestDetailPayload {
