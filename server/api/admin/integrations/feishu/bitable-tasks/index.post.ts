@@ -1,4 +1,4 @@
-import type { FeishuBitableTask, FeishuBitableTaskTargetType } from '~~/shared/types/domain'
+import type { FeishuBitableTask, FeishuBitableTaskTargetType, FeishuTaskScheduleConfig } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -16,6 +16,7 @@ interface CreateTaskBody {
   isActive?: boolean
   mapping?: Record<string, unknown>
   options?: Record<string, unknown>
+  schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
 const TARGET_TYPES: FeishuBitableTaskTargetType[] = ['contest', 'track', 'resource']
@@ -56,19 +57,33 @@ export default defineEventHandler(async (event) => {
     }, 40100)
   }
 
-  const task = await withTransaction(event, async (db) => {
-    return createFeishuBitableTask(db, {
-      actorUserId: user.id,
-      name,
-      targetType,
-      appToken,
-      tableId,
-      viewId: String(body.viewId || '').trim(),
-      isActive: body.isActive !== false,
-      mapping: body.mapping || {},
-      options: body.options || {},
+  let task: FeishuBitableTask
+  try {
+    task = await withTransaction(event, async (db) => {
+      return createFeishuBitableTask(db, {
+        actorUserId: user.id,
+        name,
+        targetType,
+        appToken,
+        tableId,
+        viewId: String(body.viewId || '').trim(),
+        isActive: body.isActive !== false,
+        mapping: body.mapping || {},
+        options: body.options || {},
+        schedule: body.schedule || {},
+      })
     })
-  })
+  }
+  catch (error) {
+    setResponseStatus(event, 400)
+    return fail(error instanceof Error ? error.message : '任务创建失败。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40107)
+  }
 
   return ok<FeishuBitableTask>(task, {
     startedAt,

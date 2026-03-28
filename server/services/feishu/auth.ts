@@ -15,9 +15,14 @@ import { createSessionToken, hashToken } from '~~/server/utils/security'
 export async function loginWithFeishuProfile(
   event: H3Event,
   profile: FeishuOAuthLoginProfile,
+  input: {
+    preferredUserId?: string | null
+  } = {},
 ): Promise<AuthLoginResult & { sessionToken: string }> {
   return withTransaction(event, async (db) => {
-    const provisioned = await ensureLocalUserByFeishuProfile(db, profile)
+    const provisioned = await ensureLocalUserByFeishuProfile(db, profile, {
+      preferredUserId: input.preferredUserId,
+    })
     let user = provisioned.user
 
     const promotedAsBootstrapAdmin = await ensureBootstrapPlatformSuperAdmin(db, user.id)

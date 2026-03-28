@@ -300,6 +300,16 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_tasks (
   mapping_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   options_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   last_run_at TIMESTAMPTZ,
+  schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  schedule_mode TEXT NOT NULL DEFAULT 'interval' CHECK (schedule_mode IN ('interval', 'cron')),
+  schedule_interval_minutes INTEGER,
+  schedule_cron_expr TEXT,
+  schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+  schedule_next_run_at TIMESTAMPTZ,
+  schedule_last_run_at TIMESTAMPTZ,
+  schedule_last_error TEXT NOT NULL DEFAULT '',
+  schedule_locked_at TIMESTAMPTZ,
+  schedule_lock_token TEXT,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -310,7 +320,7 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_runs (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES feishu_bitable_tasks(id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('running', 'success', 'partial_success', 'failed')),
-  trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual', 'event')),
+  trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual', 'event', 'scheduled')),
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ,
   fetched_count INTEGER NOT NULL DEFAULT 0,
@@ -980,6 +990,50 @@ ALTER TABLE project_resource_documents
 ALTER TABLE project_resource_document_tasks
   ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'queued';
 
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_mode TEXT NOT NULL DEFAULT 'interval';
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_interval_minutes INTEGER;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_cron_expr TEXT;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai';
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_next_run_at TIMESTAMPTZ;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_last_run_at TIMESTAMPTZ;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_last_error TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_locked_at TIMESTAMPTZ;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD COLUMN IF NOT EXISTS schedule_lock_token TEXT;
+
+ALTER TABLE feishu_bitable_tasks
+  DROP CONSTRAINT IF EXISTS feishu_bitable_tasks_schedule_mode_check;
+
+ALTER TABLE feishu_bitable_tasks
+  ADD CONSTRAINT feishu_bitable_tasks_schedule_mode_check
+  CHECK (schedule_mode IN ('interval', 'cron'));
+
+ALTER TABLE feishu_bitable_sync_runs
+  DROP CONSTRAINT IF EXISTS feishu_bitable_sync_runs_trigger_source_check;
+
+ALTER TABLE feishu_bitable_sync_runs
+  ADD CONSTRAINT feishu_bitable_sync_runs_trigger_source_check
+  CHECK (trigger_source IN ('manual', 'event', 'scheduled'));
+
 CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_user ON workspace_members(workspace_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_workspace_updated ON projects(workspace_id, updated_at DESC);
@@ -1007,6 +1061,10 @@ CREATE INDEX IF NOT EXISTS idx_platform_user_roles_user ON platform_user_roles(u
 CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_user ON auth_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_updated ON feishu_bitable_tasks(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_schedule_scan
+  ON feishu_bitable_tasks(is_active, schedule_enabled, schedule_next_run_at);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_schedule_lock
+  ON feishu_bitable_tasks(schedule_locked_at);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_runs_task_started ON feishu_bitable_sync_runs(task_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_external_refs_entity ON feishu_external_refs(scope, entity_id);
 CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_task_status ON feishu_sync_issues(task_id, status, created_at DESC);

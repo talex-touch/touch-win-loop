@@ -1,7 +1,8 @@
 import type { FeishuIntegrationConfigInternal } from '~~/server/utils/feishu-integration-store'
 
 const DEFAULT_FEISHU_API_BASE_URL = 'https://open.feishu.cn'
-const DEFAULT_PAGE_SIZE = 200
+const DEFAULT_GROUP_MEMBER_PAGE_SIZE = 200
+const DEFAULT_CONTACT_PAGE_SIZE = 50
 
 interface FeishuApiEnvelope<T> {
   code?: number
@@ -60,6 +61,40 @@ interface GroupMembersData {
   items?: GroupMemberItem[]
 }
 
+interface DepartmentItem {
+  department_id?: string
+  open_department_id?: string
+}
+
+interface DepartmentChildrenData {
+  has_more?: boolean
+  page_token?: string
+  items?: DepartmentItem[]
+}
+
+interface DepartmentUserItem {
+  user_id?: string
+  open_id?: string
+  union_id?: string
+  name?: string
+  en_name?: string
+  email?: string
+  mobile?: string
+  avatar?: {
+    avatar_72?: string
+    avatar_240?: string
+    avatar_origin?: string
+  }
+}
+
+interface DepartmentUsersData {
+  has_more?: boolean
+  page_token?: string
+  items?: DepartmentUserItem[]
+}
+
+type DepartmentIdType = 'open_department_id' | 'department_id'
+
 interface BitableListRecordsData {
   has_more?: boolean
   page_token?: string
@@ -92,6 +127,20 @@ function toErrorMessage(raw: unknown): string {
   if (raw instanceof Error)
     return raw.message || 'UNKNOWN_FEISHU_ERROR'
   return String(raw || 'UNKNOWN_FEISHU_ERROR')
+}
+
+function isFieldValidationError(raw: unknown): boolean {
+  const message = toErrorMessage(raw).toLowerCase()
+  if (!message)
+    return false
+  return message.includes('field validation failed')
+    || message.includes('invalid param')
+    || message.includes('invalid parameter')
+    || message.includes('参数')
+}
+
+function hasOwn(source: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(source, key)
 }
 
 async function parseEnvelope<T>(response: Response): Promise<FeishuApiEnvelope<T>> {
@@ -131,17 +180,36 @@ async function requestFeishu<T>(input: {
   if (!response.ok) {
     const envelope = await parseEnvelope<T>(response)
     const remoteMessage = String(envelope.msg || envelope.message || '')
-    throw new Error(remoteMessage || `FEISHU_HTTP_${response.status}`)
+    const fallbackMessage = `FEISHU_HTTP_${response.status}`
+    const baseMessage = remoteMessage || fallbackMessage
+    if (baseMessage.toLowerCase().includes('field validation failed'))
+      throw new Error(`${baseMessage} (${input.path})`)
+    throw new Error(baseMessage)
   }
 
   const envelope = await parseEnvelope<T>(response)
   const code = Number(envelope.code || 0)
   if (code !== 0) {
     const message = String(envelope.msg || envelope.message || '')
-    throw new Error(message || `FEISHU_API_${code}`)
+    const fallbackMessage = `FEISHU_API_${code}`
+    const baseMessage = message || fallbackMessage
+    if (baseMessage.toLowerCase().includes('field validation failed'))
+      throw new Error(`${baseMessage} (${input.path})`)
+    throw new Error(baseMessage)
   }
 
-  return (envelope.data || {}) as T
+  if (hasOwn(envelope, 'data'))
+    return (envelope.data || {}) as T
+
+  // Some Feishu APIs (e.g. tenant token) return payload fields at top-level, not inside data.
+  const rawEnvelope = envelope as unknown as Record<string, unknown>
+  const rawPayload: Record<string, unknown> = {
+    ...rawEnvelope,
+  }
+  delete rawPayload.code
+  delete rawPayload.msg
+  delete rawPayload.message
+  return rawPayload as T
 }
 
 function resolveOAuthRedirectUri(config: FeishuIntegrationConfigInternal, requestOrigin = ''): string {
@@ -323,7 +391,7 @@ async function listGroupMembersOnce(input: {
     method: 'GET',
     bearerToken: input.tenantAccessToken,
     query: {
-      page_size: DEFAULT_PAGE_SIZE,
+      page_size: DEFAULT_GROUP_MEMBER_PAGE_SIZE,
       page_token: input.pageToken || '',
       member_id_type: 'union_id',
     },
@@ -332,6 +400,25 @@ async function listGroupMembersOnce(input: {
 
 function toMemberUnionId(item: GroupMemberItem): string {
   return String(item?.union_id || item?.member_id || item?.open_id || item?.user_id || '').trim()
+}
+
+function toDepartmentId(item: DepartmentItem): string {
+  return String(item?.open_department_id || item?.department_id || '').trim()
+}
+
+function toProfileFromDepartmentUser(item: DepartmentUserItem): FeishuOAuthLoginProfile | null {
+  const unionId = String(item.union_id || '').trim()
+  if (!unionId)
+    return null
+  return {
+    unionId,
+    openId: String(item.open_id || '').trim(),
+    name: String(item.name || '').trim(),
+    enName: String(item.en_name || '').trim(),
+    avatarUrl: String(item.avatar?.avatar_origin || item.avatar?.avatar_240 || item.avatar?.avatar_72 || '').trim(),
+    email: String(item.email || '').trim(),
+    mobile: String(item.mobile || '').trim(),
+  }
 }
 
 export async function listFeishuGroupMemberUnionIds(input: {
@@ -383,6 +470,215 @@ export async function listFeishuGroupMemberUnionIds(input: {
   }
 
   return [...unionIds]
+}
+
+async function listDepartmentChildrenOnce(input: {
+  tenantAccessToken: string
+  departmentId: string
+  departmentIdType: DepartmentIdType
+  pageToken?: string
+}): Promise<DepartmentChildrenData> {
+  return requestFeishu<DepartmentChildrenData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: `/open-apis/contact/v3/departments/${encodeURIComponent(input.departmentId)}/children`,
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      department_id_type: input.departmentIdType,
+      page_size: DEFAULT_CONTACT_PAGE_SIZE,
+      page_token: input.pageToken || '',
+    },
+  })
+}
+
+async function listDepartmentUsersOnce(input: {
+  tenantAccessToken: string
+  departmentId: string
+  departmentIdType: DepartmentIdType
+  pageToken?: string
+}): Promise<DepartmentUsersData> {
+  return requestFeishu<DepartmentUsersData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/contact/v3/users',
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      department_id: input.departmentId,
+      department_id_type: input.departmentIdType,
+      user_id_type: 'union_id',
+      page_size: DEFAULT_CONTACT_PAGE_SIZE,
+      page_token: input.pageToken || '',
+    },
+  })
+}
+
+async function listDepartmentUsersWithFallback(input: {
+  tenantAccessToken: string
+  departmentId: string
+  pageToken?: string
+}): Promise<DepartmentUsersData> {
+  try {
+    return await listDepartmentUsersOnce({
+      ...input,
+      departmentIdType: 'open_department_id',
+    })
+  }
+  catch (error) {
+    if (!isFieldValidationError(error))
+      throw error
+    return listDepartmentUsersOnce({
+      ...input,
+      departmentIdType: 'department_id',
+    })
+  }
+}
+
+async function listUsersDirectlyOnce(input: {
+  tenantAccessToken: string
+  pageToken?: string
+}): Promise<DepartmentUsersData> {
+  return requestFeishu<DepartmentUsersData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/contact/v3/users',
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      user_id_type: 'union_id',
+      page_size: DEFAULT_CONTACT_PAGE_SIZE,
+      page_token: input.pageToken || '',
+    },
+  })
+}
+
+async function listFeishuUsersDirectlyByPaging(input: {
+  tenantAccessToken: string
+  maxUsers: number
+}): Promise<FeishuOAuthLoginProfile[]> {
+  const users = new Map<string, FeishuOAuthLoginProfile>()
+  let pageToken = ''
+  let hasMore = true
+
+  while (hasMore && users.size < input.maxUsers) {
+    const data = await listUsersDirectlyOnce({
+      tenantAccessToken: input.tenantAccessToken,
+      pageToken,
+    })
+
+    for (const item of (data.items || [])) {
+      const profile = toProfileFromDepartmentUser(item)
+      if (!profile)
+        continue
+      if (!users.has(profile.unionId))
+        users.set(profile.unionId, profile)
+    }
+
+    hasMore = Boolean(data.has_more)
+    pageToken = String(data.page_token || '').trim()
+    if (hasMore && !pageToken)
+      hasMore = false
+  }
+
+  return [...users.values()]
+}
+
+async function listDepartmentChildrenWithFallback(input: {
+  tenantAccessToken: string
+  departmentId: string
+  pageToken?: string
+}): Promise<DepartmentChildrenData> {
+  try {
+    return await listDepartmentChildrenOnce({
+      ...input,
+      departmentIdType: 'open_department_id',
+    })
+  }
+  catch (error) {
+    if (!isFieldValidationError(error))
+      throw error
+    return listDepartmentChildrenOnce({
+      ...input,
+      departmentIdType: 'department_id',
+    })
+  }
+}
+
+export async function listFeishuTenantUsers(input: {
+  tenantAccessToken: string
+  maxUsers?: number
+  rootDepartmentId?: string
+}): Promise<FeishuOAuthLoginProfile[]> {
+  const rootDepartmentId = String(input.rootDepartmentId || '0').trim() || '0'
+  const maxUsers = Math.max(50, Math.min(20_000, Number(input.maxUsers || 3000)))
+
+  try {
+    const directUsers = await listFeishuUsersDirectlyByPaging({
+      tenantAccessToken: input.tenantAccessToken,
+      maxUsers,
+    })
+    if (directUsers.length > 0)
+      return directUsers
+  }
+  catch (error) {
+    if (!isFieldValidationError(error))
+      throw error
+  }
+
+  const queue: string[] = [rootDepartmentId]
+  const visited = new Set<string>()
+  const users = new Map<string, FeishuOAuthLoginProfile>()
+
+  while (queue.length > 0 && users.size < maxUsers) {
+    const departmentId = String(queue.shift() || '').trim()
+    if (!departmentId || visited.has(departmentId))
+      continue
+    visited.add(departmentId)
+
+    let userPageToken = ''
+    let userHasMore = true
+    while (userHasMore && users.size < maxUsers) {
+      const data = await listDepartmentUsersWithFallback({
+        tenantAccessToken: input.tenantAccessToken,
+        departmentId,
+        pageToken: userPageToken,
+      })
+
+      for (const item of (data.items || [])) {
+        const profile = toProfileFromDepartmentUser(item)
+        if (!profile)
+          continue
+        if (!users.has(profile.unionId))
+          users.set(profile.unionId, profile)
+      }
+
+      userHasMore = Boolean(data.has_more)
+      userPageToken = String(data.page_token || '').trim()
+      if (userHasMore && !userPageToken)
+        userHasMore = false
+    }
+
+    let childPageToken = ''
+    let childHasMore = true
+    while (childHasMore) {
+      const data = await listDepartmentChildrenWithFallback({
+        tenantAccessToken: input.tenantAccessToken,
+        departmentId,
+        pageToken: childPageToken,
+      })
+
+      for (const item of (data.items || [])) {
+        const childDepartmentId = toDepartmentId(item)
+        if (childDepartmentId && !visited.has(childDepartmentId))
+          queue.push(childDepartmentId)
+      }
+
+      childHasMore = Boolean(data.has_more)
+      childPageToken = String(data.page_token || '').trim()
+      if (childHasMore && !childPageToken)
+        childHasMore = false
+    }
+  }
+
+  return [...users.values()]
 }
 
 export async function listFeishuBitableRecords(input: {

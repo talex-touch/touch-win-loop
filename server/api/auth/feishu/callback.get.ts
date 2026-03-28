@@ -1,11 +1,11 @@
 import { sendRedirect } from 'h3'
-import { loginByFeishuOAuthCode } from '~~/server/services/feishu/login-flow'
+import { loginByFeishuOAuthCode, resolveFeishuLoginErrorInfo } from '~~/server/services/feishu/login-flow'
 import {
   clearFeishuOAuthState,
   consumeFeishuOAuthRedirect,
   verifyFeishuOAuthState,
 } from '~~/server/services/feishu/security'
-import { clearSessionCookie } from '~~/server/utils/auth'
+import { clearSessionCookie, getAuthFromEvent } from '~~/server/utils/auth'
 
 function sanitizeRedirectTarget(value: unknown): string {
   const redirect = String(value || '').trim()
@@ -18,10 +18,43 @@ function sanitizeRedirectTarget(value: unknown): string {
   return redirect
 }
 
-function buildFailedRedirect(message: string): string {
+function buildFailedRedirect(input: {
+  message: string
+  code?: string
+  boundUserHint?: string
+}): string {
   const searchParams = new URLSearchParams()
-  searchParams.set('feishuError', message.slice(0, 120))
+  searchParams.set('feishuError', String(input.message || '').slice(0, 120))
+  if (input.code)
+    searchParams.set('feishuConflictCode', String(input.code || '').slice(0, 80))
+  if (input.boundUserHint)
+    searchParams.set('feishuBoundUser', String(input.boundUserHint || '').slice(0, 60))
   return `/login?${searchParams.toString()}`
+}
+
+function buildBindErrorRedirect(input: {
+  targetPath: string
+  message: string
+  code?: string
+  boundUserHint?: string
+}): string {
+  const target = sanitizeRedirectTarget(input.targetPath) || '/dashboard'
+  const separator = target.includes('?') ? '&' : '?'
+  const searchParams = new URLSearchParams()
+  searchParams.set('feishuBindError', String(input.message || '').slice(0, 120))
+  if (input.code)
+    searchParams.set('feishuConflictCode', String(input.code || '').slice(0, 80))
+  if (input.boundUserHint)
+    searchParams.set('feishuBoundUser', String(input.boundUserHint || '').slice(0, 60))
+  return `${target}${separator}${searchParams.toString()}`
+}
+
+function shouldKeepCurrentSessionOnError(errorCode: string): boolean {
+  return [
+    'FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER',
+    'FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY',
+    'FEISHU_PREFERRED_USER_NOT_FOUND',
+  ].includes(errorCode)
 }
 
 export default defineEventHandler(async (event) => {
@@ -30,15 +63,13 @@ export default defineEventHandler(async (event) => {
   const state = String(query.state || '').trim()
 
   if (!code || !state) {
-    clearSessionCookie(event)
     clearFeishuOAuthState(event)
-    return sendRedirect(event, buildFailedRedirect('缺少飞书登录参数。'), 302)
+    return sendRedirect(event, buildFailedRedirect({ message: '缺少飞书登录参数。' }), 302)
   }
 
   if (!verifyFeishuOAuthState(event, state)) {
-    clearSessionCookie(event)
     clearFeishuOAuthState(event)
-    return sendRedirect(event, buildFailedRedirect('飞书登录状态校验失败，请重试。'), 302)
+    return sendRedirect(event, buildFailedRedirect({ message: '飞书登录状态校验失败，请重试。' }), 302)
   }
 
   try {
@@ -50,9 +81,31 @@ export default defineEventHandler(async (event) => {
     return sendRedirect(event, target, 302)
   }
   catch (error) {
-    clearSessionCookie(event)
+    const info = resolveFeishuLoginErrorInfo(error)
+    if (!shouldKeepCurrentSessionOnError(info.code))
+      clearSessionCookie(event)
+
+    const redirectFromCookie = consumeFeishuOAuthRedirect(event)
+    const redirectFromQuery = sanitizeRedirectTarget(query.redirect)
     clearFeishuOAuthState(event)
-    const message = error instanceof Error ? error.message : '飞书登录失败。'
-    return sendRedirect(event, buildFailedRedirect(message), 302)
+
+    if (shouldKeepCurrentSessionOnError(info.code)) {
+      const auth = await getAuthFromEvent(event).catch(() => null)
+      if (auth?.user?.id) {
+        const target = redirectFromCookie || redirectFromQuery || '/dashboard'
+        return sendRedirect(event, buildBindErrorRedirect({
+          targetPath: target,
+          message: info.message,
+          code: info.code,
+          boundUserHint: info.boundUserHint,
+        }), 302)
+      }
+    }
+
+    return sendRedirect(event, buildFailedRedirect({
+      message: info.message,
+      code: info.code,
+      boundUserHint: info.boundUserHint,
+    }), 302)
   }
 })

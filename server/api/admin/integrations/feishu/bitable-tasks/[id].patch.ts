@@ -1,4 +1,4 @@
-import type { FeishuBitableTask, FeishuBitableTaskTargetType } from '~~/shared/types/domain'
+import type { FeishuBitableTask, FeishuBitableTaskTargetType, FeishuTaskScheduleConfig } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -16,6 +16,7 @@ interface PatchTaskBody {
   isActive?: boolean
   mapping?: Record<string, unknown>
   options?: Record<string, unknown>
+  schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
 const TARGET_TYPES: FeishuBitableTaskTargetType[] = ['contest', 'track', 'resource']
@@ -67,14 +68,29 @@ export default defineEventHandler(async (event) => {
     patch.mapping = body.mapping
   if (body.options !== undefined)
     patch.options = body.options
+  if (body.schedule !== undefined)
+    patch.schedule = body.schedule
 
-  const task = await withTransaction(event, async (db) => {
-    return patchFeishuBitableTask(db, {
-      actorUserId: user.id,
-      taskId,
-      patch,
+  let task: FeishuBitableTask | null = null
+  try {
+    task = await withTransaction(event, async (db) => {
+      return patchFeishuBitableTask(db, {
+        actorUserId: user.id,
+        taskId,
+        patch,
+      })
     })
-  })
+  }
+  catch (error) {
+    setResponseStatus(event, 400)
+    return fail(error instanceof Error ? error.message : '任务更新失败。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40108)
+  }
 
   if (!task) {
     setResponseStatus(event, 404)

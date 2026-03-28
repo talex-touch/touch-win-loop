@@ -204,6 +204,12 @@ export interface RuntimeSettings {
     retentionDays: number
     batchSize: number
   }
+  feishuScheduler: {
+    enabled: boolean
+    intervalMs: number
+    batchSize: number
+    lockTtlMs: number
+  }
   projectResource: {
     accessUrlTtlSeconds: number
   }
@@ -295,6 +301,12 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       intervalMs: Math.max(60_000, Math.min(24 * 60 * 60 * 1000, toNumber(runtime.resourceRecycle?.intervalMs, 1_800_000))),
       retentionDays: Math.max(1, Math.min(365, Math.trunc(toNumber(runtime.resourceRecycle?.retentionDays, 30)))),
       batchSize: Math.max(20, Math.min(1000, Math.trunc(toNumber(runtime.resourceRecycle?.batchSize, 200)))),
+    },
+    feishuScheduler: {
+      enabled: toBoolean(runtime.feishuScheduler?.enabled, true),
+      intervalMs: Math.max(15_000, Math.min(24 * 60 * 60 * 1000, toNumber(runtime.feishuScheduler?.intervalMs, 60_000))),
+      batchSize: Math.max(1, Math.min(200, Math.trunc(toNumber(runtime.feishuScheduler?.batchSize, 20)))),
+      lockTtlMs: Math.max(60_000, Math.min(24 * 60 * 60 * 1000, toNumber(runtime.feishuScheduler?.lockTtlMs, 10 * 60 * 1000))),
     },
     projectResource: {
       accessUrlTtlSeconds: Math.max(60, Math.min(2 * 60 * 60, Math.trunc(toNumber(runtime.projectResource?.accessUrlTtlSeconds, DEFAULT_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS)))),

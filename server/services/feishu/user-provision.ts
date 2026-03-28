@@ -1,7 +1,11 @@
 import type { FeishuOAuthLoginProfile } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type { AuthUser } from '~~/shared/types/domain'
-import { findAuthIdentityByProviderUserId, upsertAuthIdentity } from '~~/server/utils/feishu-integration-store'
+import {
+  findAuthIdentityByProviderAndUserId,
+  findAuthIdentityByProviderUserId,
+  upsertAuthIdentity,
+} from '~~/server/utils/feishu-integration-store'
 import {
   countUsers,
   createUserWithPersonalWorkspace,
@@ -26,6 +30,12 @@ function normalizeUsernameSeed(profile: FeishuOAuthLoginProfile): string {
   return 'fs_user'
 }
 
+function buildErrorWithDetail(code: string, detail: string): Error {
+  const normalizedCode = String(code || '').trim()
+  const normalizedDetail = encodeURIComponent(String(detail || '').trim())
+  return new Error(normalizedDetail ? `${normalizedCode}:${normalizedDetail}` : normalizedCode)
+}
+
 async function allocateUniqueUsername(db: Queryable, seed: string): Promise<string> {
   const base = String(seed || 'fs_user').trim().slice(0, 30) || 'fs_user'
   const safeBase = base.replace(/\s+/g, '_')
@@ -44,7 +54,11 @@ async function allocateUniqueUsername(db: Queryable, seed: string): Promise<stri
 export async function ensureLocalUserByFeishuProfile(
   db: Queryable,
   profile: FeishuOAuthLoginProfile,
+  input: {
+    preferredUserId?: string | null
+  } = {},
 ): Promise<{ user: AuthUser, created: boolean }> {
+  const preferredUserId = String(input.preferredUserId || '').trim()
   const identity = await findAuthIdentityByProviderUserId(db, {
     provider: 'feishu',
     providerUserId: profile.unionId,
@@ -53,6 +67,9 @@ export async function ensureLocalUserByFeishuProfile(
   if (identity) {
     const existing = await findUserById(db, identity.user_id)
     if (existing) {
+      if (preferredUserId && existing.id !== preferredUserId)
+        throw buildErrorWithDetail('FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER', existing.username)
+
       await upsertAuthIdentity(db, {
         provider: 'feishu',
         providerUserId: profile.unionId,
@@ -71,6 +88,39 @@ export async function ensureLocalUserByFeishuProfile(
         user: existing,
         created: false,
       }
+    }
+  }
+
+  if (preferredUserId) {
+    const preferredUser = await findUserById(db, preferredUserId)
+    if (!preferredUser)
+      throw new Error('FEISHU_PREFERRED_USER_NOT_FOUND')
+
+    const existingFeishuIdentity = await findAuthIdentityByProviderAndUserId(db, {
+      provider: 'feishu',
+      userId: preferredUser.id,
+    })
+    if (existingFeishuIdentity && existingFeishuIdentity.provider_user_id !== profile.unionId)
+      throw buildErrorWithDetail('FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY', existingFeishuIdentity.provider_user_id)
+
+    await upsertAuthIdentity(db, {
+      provider: 'feishu',
+      providerUserId: profile.unionId,
+      userId: preferredUser.id,
+      profile: {
+        unionId: profile.unionId,
+        openId: profile.openId,
+        name: profile.name,
+        enName: profile.enName,
+        avatarUrl: profile.avatarUrl,
+        email: profile.email,
+        mobile: profile.mobile,
+      },
+    })
+
+    return {
+      user: preferredUser,
+      created: false,
     }
   }
 

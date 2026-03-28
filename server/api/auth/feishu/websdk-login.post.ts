@@ -1,6 +1,6 @@
 import type { AuthLoginResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { loginByFeishuOAuthCode } from '~~/server/services/feishu/login-flow'
+import { loginByFeishuOAuthCode, resolveFeishuLoginErrorInfo } from '~~/server/services/feishu/login-flow'
 import { fail, ok } from '~~/server/utils/api'
 import { readRuntimeSettings } from '~~/server/utils/env'
 
@@ -36,18 +36,21 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
-    const message = error instanceof Error ? error.message : '飞书自动登录失败。'
-    if (message === 'FEISHU_INTEGRATION_DISABLED' || message === 'FEISHU_APP_CONFIG_INCOMPLETE') {
+    const info = resolveFeishuLoginErrorInfo(error)
+    if (info.code === 'FEISHU_INTEGRATION_DISABLED' || info.code === 'FEISHU_APP_CONFIG_INCOMPLETE') {
       setResponseStatus(event, 400)
     }
-    else if (message === 'USER_DISABLED') {
+    else if (info.code === 'USER_DISABLED') {
       setResponseStatus(event, 403)
+    }
+    else if (info.code === 'FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER' || info.code === 'FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY') {
+      setResponseStatus(event, 409)
     }
     else {
       setResponseStatus(event, 401)
     }
 
-    return fail(message, {
+    return fail(info.message, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

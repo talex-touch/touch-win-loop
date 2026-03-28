@@ -3,6 +3,7 @@ import type { FeishuBitableRecord } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type {
   ContestLevel,
+  FeishuBitableSyncRunTriggerSource,
   FeishuBitableTaskTargetType,
   FeishuFieldInspectionItem,
   ResourceAvailability,
@@ -30,8 +31,6 @@ import {
   upsertFeishuExternalRef,
   upsertFeishuSyncIssue,
 } from '~~/server/utils/feishu-integration-store'
-
-type SyncTriggerSource = 'manual' | 'event'
 
 interface SyncSummary {
   fetchedCount: number
@@ -1071,11 +1070,11 @@ export async function previewFeishuBitableTask(
 }
 
 export async function runFeishuBitableTask(
-  event: H3Event,
+  event: H3Event | undefined,
   input: {
     taskId: string
     actorUserId: string
-    triggerSource?: SyncTriggerSource
+    triggerSource?: FeishuBitableSyncRunTriggerSource
   },
 ): Promise<SyncSummary & { runId: string, status: 'success' | 'partial_success' | 'failed' }> {
   const triggerSource = input.triggerSource || 'manual'

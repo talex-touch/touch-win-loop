@@ -1,8 +1,10 @@
+import type { FeishuBitableTaskDetail } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { getFeishuBitableTaskDetail } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 export default defineEventHandler(async (event) => {
@@ -10,17 +12,19 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const taskId = String(getRouterParam(event, 'id') || '').trim()
+  const runLimit = Math.max(1, Math.min(100, Number(getQuery(event).runLimit || 20)))
+  const issueLimit = Math.max(1, Math.min(200, Number(getQuery(event).issueLimit || 50)))
 
-  const canWrite = await checkPlatformPermission(event, user, 'contest.write')
-  if (!canWrite) {
+  const canRead = await checkPlatformPermission(event, user, 'contest.write')
+  if (!canRead) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权执行飞书 Bitable 同步。', {
+    return fail('当前用户无权查看飞书 Bitable 任务详情。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40403)
+    }, 40411)
   }
 
   if (!taskId) {
@@ -31,34 +35,33 @@ export default defineEventHandler(async (event) => {
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40103)
+    }, 40109)
   }
 
-  try {
-    const summary = await runWorkflow({
-      providerName: 'feishu_bitable',
-      event,
+  const detail = await withClient(event, async (db) => {
+    return getFeishuBitableTaskDetail(db, {
       taskId,
-      actorUserId: user.id,
-      triggerSource: 'manual',
+      runLimit,
+      issueLimit,
     })
+  })
 
-    return ok(summary, {
+  if (!detail) {
+    setResponseStatus(event, 404)
+    return fail('任务不存在。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    })
+    }, 40412)
   }
-  catch (error) {
-    setResponseStatus(event, 400)
-    return fail(error instanceof Error ? error.message : '同步执行失败。', {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 50099)
-  }
+
+  return ok<FeishuBitableTaskDetail>(detail, {
+    startedAt,
+    provider: runtime.ai.provider,
+    model: runtime.ai.model,
+    fallbackUsed: false,
+    attempts: 1,
+  })
 })

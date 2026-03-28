@@ -358,7 +358,7 @@ export type Team = Workspace
 
 export interface TeamQuota {
   teamId: string
-  workspaceId: string
+  workspaceId?: string
   seatLimit: number
   seatUsed: number
   aiQuotaTotal: number
@@ -417,7 +417,7 @@ export interface AuthMeResult {
 export interface Invitation {
   id: string
   teamId: string
-  workspaceId: string
+  workspaceId?: string
   role: WorkspaceMemberRole
   inviteeUsername: string | null
   expiresAt: string
@@ -445,7 +445,7 @@ export interface WorkspaceInvitationSummary extends Invitation {
 
 export interface WorkspaceMemberManagementSnapshot {
   teamId: string
-  workspaceId: string
+  workspaceId?: string
   members: WorkspaceMemberSummary[]
   invitations: WorkspaceInvitationSummary[]
 }
@@ -477,7 +477,7 @@ export interface ProjectPayload {
 export interface Project extends ProjectPayload {
   id: string
   teamId: string
-  workspaceId: string
+  workspaceId?: string
   ownerUserId: string
   creatorUserId: string
   payerUserId: string | null
@@ -503,7 +503,7 @@ export interface ProjectMemberSummary {
 export interface ProjectMemberManagementSnapshot {
   projectId: string
   teamId: string
-  workspaceId: string
+  workspaceId?: string
   members: ProjectMemberSummary[]
   seatQuota: ProjectSeatQuota | null
 }
@@ -669,7 +669,7 @@ export interface AiAssistantOptions {
 export interface AiChatSession {
   teamId?: string
   id: string
-  workspaceId: string
+  workspaceId?: string
   projectId?: string
   mode?: WorkspaceAiMode
   createdByUserId: string
@@ -686,7 +686,7 @@ export interface AiChatSession {
 export interface AiChatMessage {
   teamId?: string
   id: string
-  workspaceId: string
+  workspaceId?: string
   sessionId: string
   role: ChatMessage['role']
   content: string
@@ -1086,7 +1086,8 @@ export interface PlatformRoleAssignment {
 
 export type FeishuBitableTaskTargetType = 'contest' | 'track' | 'resource'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
-export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event'
+export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
+export type FeishuTaskScheduleMode = 'interval' | 'cron'
 export type RuleSeverity = 'error' | 'warning' | 'info'
 export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder'
 export type RuleVersionStatus = 'draft' | 'published'
@@ -1347,6 +1348,29 @@ export interface FeishuIntegrationConfig {
   updatedByUserId: string
 }
 
+export interface FeishuAuthBindStatus {
+  linked: boolean
+  unionId?: string
+  name?: string
+  enName?: string
+  email?: string
+  mobile?: string
+  updatedAt?: string
+}
+
+export interface FeishuAuthUnbindResult {
+  removedCount: number
+  removedUnionIds: string[]
+  status: FeishuAuthBindStatus
+}
+
+export interface FeishuAuthAuditItem {
+  id: string
+  action: 'auth.feishu.bind.self' | 'auth.feishu.unbind.self'
+  createdAt: string
+  payload: Record<string, unknown>
+}
+
 export interface FeishuAdminGroupReconcileResult {
   synchronizedAt: string
   groupIds: string[]
@@ -1355,6 +1379,93 @@ export interface FeishuAdminGroupReconcileResult {
   grantedContestAdmin: number
   revokedContestAdmin: number
   skippedMembers: number
+}
+
+export interface FeishuAdminOverviewGroupMember {
+  unionId: string
+  userId?: string | null
+  username?: string | null
+  inContestAdmin: boolean
+}
+
+export interface FeishuAdminOverviewContestAdmin {
+  userId: string
+  username: string
+  unionId?: string | null
+}
+
+export interface FeishuAdminOverview {
+  groupIds: string[]
+  groupMembers: FeishuAdminOverviewGroupMember[]
+  contestAdmins: FeishuAdminOverviewContestAdmin[]
+  notice?: string
+}
+
+export interface FeishuAdminCandidate {
+  userId: string
+  username: string
+  unionId?: string | null
+  hasContestAdmin: boolean
+  isPlatformSuperAdmin: boolean
+}
+
+export interface FeishuDirectoryUserCandidate {
+  unionId: string
+  name: string
+  enName?: string
+  email?: string
+  mobile?: string
+  userId?: string | null
+  username?: string | null
+  hasContestAdmin: boolean
+}
+
+export interface FeishuDirectorySearchResult {
+  items: FeishuDirectoryUserCandidate[]
+  notice?: string
+  source?: 'tenant' | 'group_fallback'
+  fromCache?: boolean
+  fetchedAt?: string
+  cacheExpiresAt?: string
+  totalMembers?: number
+  permissionHint?: string
+}
+
+export interface FeishuAdminManualAddResult {
+  userId: string
+  username: string
+  granted: boolean
+}
+
+export interface FeishuTaskScheduleConfig {
+  enabled: boolean
+  mode: FeishuTaskScheduleMode
+  intervalMinutes: number | null
+  cronExpr: string | null
+  timezone: string
+}
+
+export interface FeishuTaskScheduleRuntime {
+  nextRunAt: string | null
+  lastRunAt: string | null
+  lastError: string
+}
+
+export interface FeishuTaskLatestRunSummary {
+  runId: string
+  status: FeishuBitableSyncRunStatus
+  triggerSource: FeishuBitableSyncRunTriggerSource
+  startedAt: string
+  finishedAt: string | null
+  errorCount: number
+  errorMessage: string
+}
+
+export interface FeishuTaskIssueStats {
+  total: number
+  open: number
+  resolved: number
+  ignored: number
 }
 
 export interface FeishuBitableTask {
@@ -1368,10 +1479,19 @@ export interface FeishuBitableTask {
   mapping: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
   options: Record<string, unknown>
   lastRunAt: string | null
+  schedule: FeishuTaskScheduleConfig
+  scheduleRuntime: FeishuTaskScheduleRuntime
+  latestRunSummary: FeishuTaskLatestRunSummary | null
   createdByUserId: string
   updatedByUserId: string
   createdAt: string
   updatedAt: string
+}
+
+export interface FeishuBitableTaskDetail extends FeishuBitableTask {
+  recentRuns: FeishuBitableSyncRun[]
+  issues: FeishuSyncIssue[]
+  issueStats: FeishuTaskIssueStats
 }
 
 export interface FeishuBitableSyncRun {

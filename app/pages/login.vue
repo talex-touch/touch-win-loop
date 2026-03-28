@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ApiResponse, AuthLoginResult, AuthMeResult } from '~~/shared/types/domain'
+import type { ApiResponse, AuthLoginResult, AuthMeResult, FeishuIntegrationConfig } from '~~/shared/types/domain'
 
 definePageMeta({
   layout: false,
@@ -11,11 +11,17 @@ useHead({
 
 const route = useRoute()
 const authApiFetch = useAuthApiFetch()
+const runtime = useRuntimeConfig()
+const { endpoint } = useApiEndpoint(runtime)
 
 const username = ref('')
 const password = ref('')
 const loading = ref(false)
 const errorText = ref('')
+const feishuLoading = ref(false)
+const feishuMeta = ref<FeishuIntegrationConfig | null>(null)
+const feishuConflictCode = ref('')
+const feishuBoundUser = ref('')
 
 function resolveRedirectTarget(): string {
   const raw = route.query.redirect
@@ -29,13 +35,57 @@ function resolveRedirectTarget(): string {
   return redirect
 }
 
-async function checkLoggedIn() {
+function readFeishuErrorFromQuery(): string {
+  const raw = route.query.feishuError
+  const value = Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim()
+  return value
+}
+
+function readQueryText(name: string): string {
+  const raw = route.query[name]
+  const value = Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim()
+  return value
+}
+
+const hasFeishuConflict = computed(() => Boolean(feishuConflictCode.value))
+
+const feishuConflictTitle = computed(() => {
+  if (feishuConflictCode.value === 'FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER')
+    return '飞书账号已绑定其他平台账号'
+  if (feishuConflictCode.value === 'FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY')
+    return '当前平台账号已绑定其他飞书账号'
+  return '飞书账号绑定冲突'
+})
+
+function isFeishuContainer(): boolean {
+  if (!import.meta.client)
+    return false
+  const ua = String(window.navigator.userAgent || '').toLowerCase()
+  return ua.includes('lark') || ua.includes('feishu')
+}
+
+async function loadFeishuMeta() {
+  if (feishuMeta.value)
+    return feishuMeta.value
+  try {
+    const response = await authApiFetch<ApiResponse<FeishuIntegrationConfig>>('/auth/feishu/meta')
+    feishuMeta.value = response.data
+    return response.data
+  }
+  catch {
+    feishuMeta.value = null
+    return null
+  }
+}
+
+async function checkLoggedIn(): Promise<boolean> {
   try {
     await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     await navigateTo(resolveRedirectTarget(), { replace: true })
+    return true
   }
   catch {
-    // ignore
+    return false
   }
 }
 
@@ -74,7 +124,122 @@ async function submitLogin() {
   }
 }
 
-onMounted(checkLoggedIn)
+async function startFeishuOAuthRedirect() {
+  const redirectTarget = resolveRedirectTarget()
+  const url = endpoint(`/auth/feishu/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
+  window.location.href = url
+}
+
+async function requestAuthCodeBySdk(appId: string): Promise<string> {
+  const w = window as any
+
+  if (w.h5sdk?.biz?.util?.getAuthCode) {
+    return new Promise((resolve, reject) => {
+      w.h5sdk.biz.util.getAuthCode({
+        appId,
+        success: (res: any) => resolve(String(res?.code || res?.authCode || '').trim()),
+        fail: (error: any) => reject(error),
+      })
+    })
+  }
+
+  if (w.tt?.requestAuthCode) {
+    return new Promise((resolve, reject) => {
+      w.tt.requestAuthCode({
+        appId,
+        success: (res: any) => resolve(String(res?.code || res?.authCode || '').trim()),
+        fail: (error: any) => reject(error),
+      })
+    })
+  }
+
+  return ''
+}
+
+async function ensureFeishuSdkLoaded(scriptUrl: string): Promise<void> {
+  const w = window as any
+  if (w.h5sdk || w.tt)
+    return
+
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = scriptUrl
+    script.async = true
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('FEISHU_SDK_LOAD_FAILED'))
+    document.head.appendChild(script)
+  })
+}
+
+async function loginByFeishuCode(code: string): Promise<boolean> {
+  const normalizedCode = String(code || '').trim()
+  if (!normalizedCode)
+    return false
+
+  await authApiFetch<ApiResponse<AuthLoginResult>>('/auth/feishu/websdk-login', {
+    method: 'POST',
+    body: {
+      code: normalizedCode,
+    },
+  })
+  await navigateTo(resolveRedirectTarget(), { replace: true })
+  return true
+}
+
+async function manualFeishuLogin() {
+  errorText.value = ''
+  const meta = await loadFeishuMeta()
+  if (!meta?.enabled) {
+    errorText.value = '飞书登录尚未启用。'
+    return
+  }
+  await startFeishuOAuthRedirect()
+}
+
+async function tryFeishuAutoLogin() {
+  if (!import.meta.client)
+    return
+  if (!isFeishuContainer())
+    return
+
+  const alreadyTried = sessionStorage.getItem('wl_feishu_auto_login_tried')
+  if (alreadyTried === '1')
+    return
+  sessionStorage.setItem('wl_feishu_auto_login_tried', '1')
+
+  const meta = await loadFeishuMeta()
+  if (!meta?.enabled)
+    return
+
+  feishuLoading.value = true
+  try {
+    await ensureFeishuSdkLoaded(meta.webSdkScriptUrl)
+    const authCode = await requestAuthCodeBySdk(meta.appId)
+    const success = await loginByFeishuCode(authCode)
+    if (!success)
+      await startFeishuOAuthRedirect()
+  }
+  catch {
+    // 自动尝试失败后回退到普通登录表单，不中断页面。
+  }
+  finally {
+    feishuLoading.value = false
+  }
+}
+
+onMounted(async () => {
+  const loggedIn = await checkLoggedIn()
+  if (loggedIn)
+    return
+
+  const feishuError = readFeishuErrorFromQuery()
+  if (feishuError)
+    errorText.value = feishuError
+  feishuConflictCode.value = readQueryText('feishuConflictCode')
+  feishuBoundUser.value = readQueryText('feishuBoundUser')
+
+  await tryFeishuAutoLogin()
+})
 </script>
 
 <template>
@@ -86,6 +251,29 @@ onMounted(checkLoggedIn)
       <p class="text-xs text-slate-500">
         首次登录将自动注册，并初始化 Personal 空间。
       </p>
+      <p class="text-xs text-slate-500">
+        已有账号需合并时，请先账号密码登录，再到“个人信息-飞书账号”执行绑定。
+      </p>
+
+      <div v-if="hasFeishuConflict" class="p-3 border border-amber-200 rounded-lg bg-amber-50 space-y-2">
+        <p class="text-xs text-amber-800 font-semibold m-0">
+          {{ feishuConflictTitle }}
+        </p>
+        <p v-if="feishuBoundUser" class="text-xs text-amber-700 m-0">
+          该飞书账号当前绑定到平台账号：<span class="font-mono">{{ feishuBoundUser }}</span>
+        </p>
+        <p class="text-xs text-amber-700 m-0">
+          处理建议：先用绑定账号密码登录；如需迁移绑定，请联系管理员先解绑再重绑。
+        </p>
+      </div>
+
+      <button
+        class="text-sm text-slate-800 py-2 border border-slate-300 rounded bg-white w-full disabled:opacity-60"
+        :disabled="feishuLoading"
+        @click="manualFeishuLogin"
+      >
+        {{ feishuLoading ? '飞书登录准备中...' : '使用飞书登录' }}
+      </button>
 
       <div class="space-y-3">
         <label class="text-xs text-slate-600 font-medium block">

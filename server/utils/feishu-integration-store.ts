@@ -1,10 +1,16 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  FeishuAdminCandidate,
   FeishuAdminGroupReconcileResult,
+  FeishuAdminManualAddResult,
+  FeishuAdminOverviewContestAdmin,
+  FeishuAuthBindStatus,
+  FeishuAuthUnbindResult,
   FeishuBitableSyncRun,
   FeishuBitableSyncRunStatus,
   FeishuBitableSyncRunTriggerSource,
   FeishuBitableTask,
+  FeishuBitableTaskDetail,
   FeishuBitableTaskTargetType,
   FeishuConfigValidationResult,
   FeishuIntegrationConfig,
@@ -12,9 +18,19 @@ import type {
   FeishuSyncIssue,
   FeishuSyncIssueResolution,
   FeishuSyncIssueStatus,
+  FeishuTaskIssueStats,
+  FeishuTaskLatestRunSummary,
+  FeishuTaskScheduleConfig,
   PlatformRole,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+import {
+  computeNextScheduledRunAtOrNull,
+  getDefaultFeishuTaskScheduleConfig,
+  mergeFeishuTaskSchedulePatch,
+  normalizeFeishuTaskScheduleConfig,
+  validateFeishuTaskScheduleConfig,
+} from '~~/server/utils/feishu-task-schedule'
 
 const FEISHU_CONFIG_META_KEY = 'feishu_integration_config.v1'
 const DEFAULT_WEBSDK_SCRIPT_URL = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js'
@@ -40,6 +56,21 @@ interface FeishuBitableTaskRow {
   mapping_json: Record<string, unknown>
   options_json: Record<string, unknown>
   last_run_at: string | null
+  schedule_enabled: boolean
+  schedule_mode: 'interval' | 'cron'
+  schedule_interval_minutes: number | string | null
+  schedule_cron_expr: string | null
+  schedule_timezone: string
+  schedule_next_run_at: string | null
+  schedule_last_run_at: string | null
+  schedule_last_error: string | null
+  latest_run_id: string | null
+  latest_run_status: FeishuBitableSyncRunStatus | null
+  latest_run_trigger_source: FeishuBitableSyncRunTriggerSource | null
+  latest_run_started_at: string | null
+  latest_run_finished_at: string | null
+  latest_run_error_count: number | string | null
+  latest_run_error_message: string | null
   created_by_user_id: string
   updated_by_user_id: string
   created_at: string
@@ -80,6 +111,30 @@ interface FeishuSyncIssueRow {
   resolved_at: string | null
   created_at: string
   updated_at: string
+}
+
+interface FeishuSyncIssueStatsRow {
+  status: FeishuSyncIssueStatus
+  issue_count: number | string
+}
+
+interface FeishuContestAdminDirectoryRow {
+  user_id: string
+  username: string
+  union_id: string | null
+}
+
+interface FeishuAdminCandidateRow {
+  user_id: string
+  username: string
+  union_id: string | null
+  has_contest_admin: boolean
+  is_platform_admin: boolean
+}
+
+export interface ClaimedFeishuBitableTask {
+  task: FeishuBitableTask
+  lockToken: string
 }
 
 export interface FeishuIntegrationConfigInternal {
@@ -137,6 +192,36 @@ function parseJsonObject(raw: unknown): Record<string, unknown> {
   return raw as Record<string, unknown>
 }
 
+function parseTaskSchedule(row: Pick<FeishuBitableTaskRow, 'schedule_enabled' | 'schedule_mode' | 'schedule_interval_minutes' | 'schedule_cron_expr' | 'schedule_timezone'>): FeishuTaskScheduleConfig {
+  try {
+    return normalizeFeishuTaskScheduleConfig({
+      enabled: Boolean(row.schedule_enabled),
+      mode: row.schedule_mode || 'interval',
+      intervalMinutes: row.schedule_interval_minutes === null ? null : Number(row.schedule_interval_minutes || 0),
+      cronExpr: row.schedule_cron_expr || null,
+      timezone: row.schedule_timezone || getDefaultFeishuTaskScheduleConfig().timezone,
+    })
+  }
+  catch {
+    return getDefaultFeishuTaskScheduleConfig()
+  }
+}
+
+function toLatestRunSummary(row: FeishuBitableTaskRow): FeishuTaskLatestRunSummary | null {
+  if (!row.latest_run_id || !row.latest_run_status || !row.latest_run_trigger_source || !row.latest_run_started_at)
+    return null
+
+  return {
+    runId: row.latest_run_id,
+    status: row.latest_run_status,
+    triggerSource: row.latest_run_trigger_source,
+    startedAt: row.latest_run_started_at,
+    finishedAt: row.latest_run_finished_at || null,
+    errorCount: Number(row.latest_run_error_count || 0),
+    errorMessage: row.latest_run_error_message || '',
+  }
+}
+
 function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInternal {
   const source = parseJsonObject(raw)
   return {
@@ -154,6 +239,7 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
 }
 
 function toTask(row: FeishuBitableTaskRow): FeishuBitableTask {
+  const schedule = parseTaskSchedule(row)
   return {
     id: row.id,
     name: row.name,
@@ -165,6 +251,13 @@ function toTask(row: FeishuBitableTaskRow): FeishuBitableTask {
     mapping: parseJsonObject(row.mapping_json),
     options: parseJsonObject(row.options_json),
     lastRunAt: row.last_run_at,
+    schedule,
+    scheduleRuntime: {
+      nextRunAt: row.schedule_next_run_at || null,
+      lastRunAt: row.schedule_last_run_at || null,
+      lastError: row.schedule_last_error || '',
+    },
+    latestRunSummary: toLatestRunSummary(row),
     createdByUserId: row.created_by_user_id,
     updatedByUserId: row.updated_by_user_id,
     createdAt: row.created_at,
@@ -297,6 +390,28 @@ export function validateFeishuMappingConfig(raw: unknown): FeishuConfigValidatio
   }
 }
 
+function toTaskIssueStats(rows: FeishuSyncIssueStatsRow[]): FeishuTaskIssueStats {
+  const stats: FeishuTaskIssueStats = {
+    total: 0,
+    open: 0,
+    resolved: 0,
+    ignored: 0,
+  }
+
+  for (const row of rows) {
+    const count = Number(row.issue_count || 0)
+    stats.total += count
+    if (row.status === 'open')
+      stats.open += count
+    else if (row.status === 'resolved')
+      stats.resolved += count
+    else if (row.status === 'ignored')
+      stats.ignored += count
+  }
+
+  return stats
+}
+
 export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigInternal): FeishuIntegrationConfig {
   return {
     enabled: config.enabled,
@@ -371,6 +486,33 @@ export async function findAuthIdentityByProviderUserId(
   return result.rows[0] || null
 }
 
+export async function findAuthIdentityByProviderAndUserId(
+  db: Queryable,
+  input: {
+    provider: 'feishu'
+    userId: string
+  },
+): Promise<AuthIdentityRow | null> {
+  const result = await db.query<AuthIdentityRow>(
+    `SELECT
+      id,
+      provider,
+      provider_user_id,
+      user_id,
+      profile_json,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM auth_identities
+     WHERE provider = $1
+       AND user_id = $2
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [input.provider, input.userId],
+  )
+
+  return result.rows[0] || null
+}
+
 export async function upsertAuthIdentity(
   db: Queryable,
   input: {
@@ -405,6 +547,75 @@ export async function upsertAuthIdentity(
       JSON.stringify(parseJsonObject(input.profile)),
     ],
   )
+}
+
+export async function getFeishuAuthBindStatusByUserId(
+  db: Queryable,
+  userId: string,
+): Promise<FeishuAuthBindStatus> {
+  const identity = await findAuthIdentityByProviderAndUserId(db, {
+    provider: 'feishu',
+    userId,
+  })
+
+  if (!identity) {
+    return {
+      linked: false,
+    }
+  }
+
+  const profile = parseJsonObject(identity.profile_json)
+  return {
+    linked: true,
+    unionId: String(identity.provider_user_id || '').trim() || '',
+    name: toText(profile.name),
+    enName: toText(profile.enName),
+    email: toText(profile.email),
+    mobile: toText(profile.mobile),
+    updatedAt: identity.updated_at || '',
+  }
+}
+
+export async function unbindFeishuAuthByUserId(
+  db: Queryable,
+  userId: string,
+): Promise<FeishuAuthUnbindResult> {
+  const normalizedUserId = toText(userId)
+  if (!normalizedUserId) {
+    return {
+      removedCount: 0,
+      removedUnionIds: [],
+      status: {
+        linked: false,
+      },
+    }
+  }
+
+  const existingResult = await db.query<{ provider_user_id: string }>(
+    `SELECT provider_user_id
+     FROM auth_identities
+     WHERE provider = 'feishu'
+       AND user_id = $1
+     ORDER BY updated_at DESC`,
+    [normalizedUserId],
+  )
+  const unionIds = toStringArray(existingResult.rows.map(row => row.provider_user_id))
+
+  const removedResult = await db.query<{ id: string }>(
+    `DELETE FROM auth_identities
+     WHERE provider = 'feishu'
+       AND user_id = $1
+     RETURNING id`,
+    [normalizedUserId],
+  )
+
+  return {
+    removedCount: removedResult.rows.length,
+    removedUnionIds: unionIds,
+    status: {
+      linked: false,
+    },
+  }
 }
 
 export async function ensurePlatformRole(
@@ -490,6 +701,138 @@ export async function listFeishuContestAdminUsers(
   }))
 }
 
+export async function listFeishuContestAdminDirectory(
+  db: Queryable,
+): Promise<FeishuAdminOverviewContestAdmin[]> {
+  const result = await db.query<FeishuContestAdminDirectoryRow>(
+    `SELECT
+      u.id AS user_id,
+      u.username,
+      ai.provider_user_id AS union_id
+     FROM users u
+     JOIN platform_user_roles pr ON pr.user_id = u.id
+     LEFT JOIN auth_identities ai ON ai.user_id = u.id AND ai.provider = 'feishu'
+     WHERE pr.role = 'contest_admin'
+     ORDER BY u.username ASC`,
+  )
+
+  return result.rows.map(row => ({
+    userId: row.user_id,
+    username: row.username,
+    unionId: row.union_id || null,
+  }))
+}
+
+export async function searchFeishuAdminCandidates(
+  db: Queryable,
+  input: {
+    keyword?: string
+    limit?: number
+  } = {},
+): Promise<FeishuAdminCandidate[]> {
+  const keyword = toText(input.keyword).slice(0, 120)
+  const limit = Math.max(1, Math.min(100, Number(input.limit || 20)))
+  const result = await db.query<FeishuAdminCandidateRow>(
+    `SELECT
+      u.id AS user_id,
+      u.username,
+      ai.provider_user_id AS union_id,
+      EXISTS (
+        SELECT 1
+        FROM platform_user_roles pr_contest
+        WHERE pr_contest.user_id = u.id
+          AND pr_contest.role = 'contest_admin'
+      ) AS has_contest_admin,
+      u.is_platform_admin
+     FROM users u
+     LEFT JOIN auth_identities ai ON ai.user_id = u.id AND ai.provider = 'feishu'
+     WHERE (
+       $1::TEXT = ''
+       OR u.username ILIKE ('%' || $1 || '%')
+       OR COALESCE(ai.provider_user_id, '') ILIKE ('%' || $1 || '%')
+     )
+     ORDER BY has_contest_admin DESC, u.updated_at DESC
+     LIMIT $2`,
+    [keyword, limit],
+  )
+
+  return result.rows.map(row => ({
+    userId: row.user_id,
+    username: row.username,
+    unionId: row.union_id || null,
+    hasContestAdmin: Boolean(row.has_contest_admin),
+    isPlatformSuperAdmin: Boolean(row.is_platform_admin),
+  }))
+}
+
+export async function listUsersByIds(
+  db: Queryable,
+  userIds: string[],
+): Promise<Map<string, { userId: string, username: string }>> {
+  const normalized = toStringArray(userIds)
+  if (normalized.length === 0)
+    return new Map<string, { userId: string, username: string }>()
+
+  const result = await db.query<{ user_id: string, username: string }>(
+    `SELECT id AS user_id, username
+     FROM users
+     WHERE id = ANY($1::TEXT[])`,
+    [normalized],
+  )
+
+  return new Map(result.rows.map(row => [
+    row.user_id,
+    {
+      userId: row.user_id,
+      username: row.username,
+    },
+  ]))
+}
+
+export async function grantFeishuContestAdminRole(
+  db: Queryable,
+  input: {
+    targetUserId: string
+  },
+): Promise<FeishuAdminManualAddResult | null> {
+  const targetUserId = toText(input.targetUserId)
+  if (!targetUserId)
+    return null
+
+  const userResult = await db.query<{ user_id: string, username: string }>(
+    `SELECT id AS user_id, username
+     FROM users
+     WHERE id = $1
+     LIMIT 1`,
+    [targetUserId],
+  )
+  const user = userResult.rows[0]
+  if (!user)
+    return null
+
+  const insertResult = await db.query<{ id: string }>(
+    `INSERT INTO platform_user_roles (
+      id,
+      user_id,
+      role,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, 'contest_admin', NOW(), NOW()
+    )
+    ON CONFLICT (user_id, role)
+    DO NOTHING
+    RETURNING id`,
+    [randomUUID(), targetUserId],
+  )
+
+  return {
+    userId: user.user_id,
+    username: user.username,
+    granted: Boolean(insertResult.rows[0]?.id),
+  }
+}
+
 export async function listFeishuBitableTasks(
   db: Queryable,
   input: { includeInactive?: boolean } = {},
@@ -497,23 +840,52 @@ export async function listFeishuBitableTasks(
   const includeInactive = input.includeInactive === true
   const result = await db.query<FeishuBitableTaskRow>(
     `SELECT
-      id,
-      name,
-      target_type,
-      app_token,
-      table_id,
-      view_id,
-      is_active,
-      mapping_json,
-      options_json,
-      last_run_at::TEXT,
-      created_by_user_id,
-      updated_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM feishu_bitable_tasks
-     WHERE ($1::BOOLEAN = TRUE OR is_active = TRUE)
-     ORDER BY updated_at DESC`,
+      t.id,
+      t.name,
+      t.target_type,
+      t.app_token,
+      t.table_id,
+      t.view_id,
+      t.is_active,
+      t.mapping_json,
+      t.options_json,
+      t.last_run_at::TEXT,
+      t.schedule_enabled,
+      t.schedule_mode,
+      t.schedule_interval_minutes,
+      t.schedule_cron_expr,
+      t.schedule_timezone,
+      t.schedule_next_run_at::TEXT,
+      t.schedule_last_run_at::TEXT,
+      t.schedule_last_error,
+      lr.id AS latest_run_id,
+      lr.status AS latest_run_status,
+      lr.trigger_source AS latest_run_trigger_source,
+      lr.started_at::TEXT AS latest_run_started_at,
+      lr.finished_at::TEXT AS latest_run_finished_at,
+      lr.error_count AS latest_run_error_count,
+      lr.error_message AS latest_run_error_message,
+      t.created_by_user_id,
+      t.updated_by_user_id,
+      t.created_at::TEXT,
+      t.updated_at::TEXT
+     FROM feishu_bitable_tasks t
+     LEFT JOIN LATERAL (
+       SELECT
+         r.id,
+         r.status,
+         r.trigger_source,
+         r.started_at,
+         r.finished_at,
+         r.error_count,
+         r.error_message
+       FROM feishu_bitable_sync_runs r
+       WHERE r.task_id = t.id
+       ORDER BY r.started_at DESC
+       LIMIT 1
+     ) lr ON TRUE
+     WHERE ($1::BOOLEAN = TRUE OR t.is_active = TRUE)
+     ORDER BY t.updated_at DESC`,
     [includeInactive],
   )
   return result.rows.map(toTask)
@@ -525,22 +897,51 @@ export async function getFeishuBitableTaskById(
 ): Promise<FeishuBitableTask | null> {
   const result = await db.query<FeishuBitableTaskRow>(
     `SELECT
-      id,
-      name,
-      target_type,
-      app_token,
-      table_id,
-      view_id,
-      is_active,
-      mapping_json,
-      options_json,
-      last_run_at::TEXT,
-      created_by_user_id,
-      updated_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM feishu_bitable_tasks
-     WHERE id = $1
+      t.id,
+      t.name,
+      t.target_type,
+      t.app_token,
+      t.table_id,
+      t.view_id,
+      t.is_active,
+      t.mapping_json,
+      t.options_json,
+      t.last_run_at::TEXT,
+      t.schedule_enabled,
+      t.schedule_mode,
+      t.schedule_interval_minutes,
+      t.schedule_cron_expr,
+      t.schedule_timezone,
+      t.schedule_next_run_at::TEXT,
+      t.schedule_last_run_at::TEXT,
+      t.schedule_last_error,
+      lr.id AS latest_run_id,
+      lr.status AS latest_run_status,
+      lr.trigger_source AS latest_run_trigger_source,
+      lr.started_at::TEXT AS latest_run_started_at,
+      lr.finished_at::TEXT AS latest_run_finished_at,
+      lr.error_count AS latest_run_error_count,
+      lr.error_message AS latest_run_error_message,
+      t.created_by_user_id,
+      t.updated_by_user_id,
+      t.created_at::TEXT,
+      t.updated_at::TEXT
+     FROM feishu_bitable_tasks t
+     LEFT JOIN LATERAL (
+       SELECT
+         r.id,
+         r.status,
+         r.trigger_source,
+         r.started_at,
+         r.finished_at,
+         r.error_count,
+         r.error_message
+       FROM feishu_bitable_sync_runs r
+       WHERE r.task_id = t.id
+       ORDER BY r.started_at DESC
+       LIMIT 1
+     ) lr ON TRUE
+     WHERE t.id = $1
      LIMIT 1`,
     [taskId],
   )
@@ -560,8 +961,17 @@ export async function createFeishuBitableTask(
     isActive?: boolean
     mapping?: Record<string, unknown>
     options?: Record<string, unknown>
+    schedule?: Partial<FeishuTaskScheduleConfig>
   },
 ): Promise<FeishuBitableTask> {
+  const schedule = normalizeFeishuTaskScheduleConfig(input.schedule || {}, getDefaultFeishuTaskScheduleConfig())
+  const scheduleErrors = validateFeishuTaskScheduleConfig(schedule)
+  if (scheduleErrors.length)
+    throw new Error(`任务调度配置非法：${scheduleErrors.join('；')}`)
+
+  const scheduleNextRunAt = schedule.enabled
+    ? computeNextScheduledRunAtOrNull(schedule, { from: new Date() })
+    : null
   const taskId = randomUUID()
   const result = await db.query<FeishuBitableTaskRow>(
     `INSERT INTO feishu_bitable_tasks (
@@ -575,12 +985,22 @@ export async function createFeishuBitableTask(
       mapping_json,
       options_json,
       last_run_at,
+      schedule_enabled,
+      schedule_mode,
+      schedule_interval_minutes,
+      schedule_cron_expr,
+      schedule_timezone,
+      schedule_next_run_at,
+      schedule_last_run_at,
+      schedule_last_error,
+      schedule_locked_at,
+      schedule_lock_token,
       created_by_user_id,
       updated_by_user_id,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, NULL, $10, $10, NOW(), NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, NULL, $10, $11, $12, $13, $14, $15, NULL, '', NULL, NULL, $16, $16, NOW(), NOW()
     )
     RETURNING
       id,
@@ -593,6 +1013,21 @@ export async function createFeishuBitableTask(
       mapping_json,
       options_json,
       last_run_at::TEXT,
+      schedule_enabled,
+      schedule_mode,
+      schedule_interval_minutes,
+      schedule_cron_expr,
+      schedule_timezone,
+      schedule_next_run_at::TEXT,
+      schedule_last_run_at::TEXT,
+      schedule_last_error,
+      NULL::TEXT AS latest_run_id,
+      NULL::TEXT AS latest_run_status,
+      NULL::TEXT AS latest_run_trigger_source,
+      NULL::TEXT AS latest_run_started_at,
+      NULL::TEXT AS latest_run_finished_at,
+      NULL::INTEGER AS latest_run_error_count,
+      NULL::TEXT AS latest_run_error_message,
       created_by_user_id,
       updated_by_user_id,
       created_at::TEXT,
@@ -607,6 +1042,12 @@ export async function createFeishuBitableTask(
       input.isActive !== false,
       JSON.stringify(parseJsonObject(input.mapping)),
       JSON.stringify(parseJsonObject(input.options)),
+      schedule.enabled,
+      schedule.mode,
+      schedule.mode === 'interval' ? Math.max(1, Number(schedule.intervalMinutes || 0)) : null,
+      schedule.mode === 'cron' ? schedule.cronExpr : null,
+      schedule.timezone,
+      scheduleNextRunAt,
       input.actorUserId,
     ],
   )
@@ -627,9 +1068,14 @@ export async function patchFeishuBitableTask(
       isActive?: boolean
       mapping?: Record<string, unknown>
       options?: Record<string, unknown>
+      schedule?: Partial<FeishuTaskScheduleConfig>
     }
   },
 ): Promise<FeishuBitableTask | null> {
+  const existingTask = await getFeishuBitableTaskById(db, input.taskId)
+  if (!existingTask)
+    return null
+
   const values: unknown[] = [input.taskId]
   const sets: string[] = []
 
@@ -655,8 +1101,32 @@ export async function patchFeishuBitableTask(
   if (input.patch.options !== undefined)
     addSet('options_json', JSON.stringify(parseJsonObject(input.patch.options)))
 
+  if (input.patch.schedule !== undefined) {
+    const mergedSchedule = mergeFeishuTaskSchedulePatch({
+      current: existingTask.schedule,
+      patch: input.patch.schedule,
+    })
+    const scheduleErrors = validateFeishuTaskScheduleConfig(mergedSchedule)
+    if (scheduleErrors.length)
+      throw new Error(`任务调度配置非法：${scheduleErrors.join('；')}`)
+
+    const nextRunAt = mergedSchedule.enabled
+      ? computeNextScheduledRunAtOrNull(mergedSchedule, { from: new Date() })
+      : null
+
+    addSet('schedule_enabled', mergedSchedule.enabled)
+    addSet('schedule_mode', mergedSchedule.mode)
+    addSet('schedule_interval_minutes', mergedSchedule.mode === 'interval' ? mergedSchedule.intervalMinutes : null)
+    addSet('schedule_cron_expr', mergedSchedule.mode === 'cron' ? mergedSchedule.cronExpr : null)
+    addSet('schedule_timezone', mergedSchedule.timezone)
+    addSet('schedule_next_run_at', nextRunAt)
+    addSet('schedule_last_error', mergedSchedule.enabled ? existingTask.scheduleRuntime.lastError : '')
+    addSet('schedule_locked_at', null)
+    addSet('schedule_lock_token', null)
+  }
+
   if (sets.length === 0)
-    return getFeishuBitableTaskById(db, input.taskId)
+    return existingTask
 
   addSet('updated_by_user_id', input.actorUserId)
   sets.push('updated_at = NOW()')
@@ -747,6 +1217,7 @@ export async function completeFeishuBitableSyncRun(
   await db.query(
     `UPDATE feishu_bitable_tasks
      SET last_run_at = NOW(),
+         schedule_last_run_at = NOW(),
          updated_at = NOW()
      WHERE id = $1`,
     [input.taskId],
@@ -786,6 +1257,150 @@ export async function listFeishuBitableSyncRuns(
     [input.taskId || null, limit],
   )
   return result.rows.map(toRun)
+}
+
+export async function getFeishuBitableTaskDetail(
+  db: Queryable,
+  input: {
+    taskId: string
+    runLimit?: number
+    issueLimit?: number
+  },
+): Promise<FeishuBitableTaskDetail | null> {
+  const task = await getFeishuBitableTaskById(db, input.taskId)
+  if (!task)
+    return null
+
+  const runLimit = Math.max(1, Math.min(100, Number(input.runLimit || 20)))
+  const issueLimit = Math.max(1, Math.min(200, Number(input.issueLimit || 50)))
+
+  const [recentRuns, issues, issueStatsResult] = await Promise.all([
+    listFeishuBitableSyncRuns(db, {
+      taskId: input.taskId,
+      limit: runLimit,
+    }),
+    listFeishuSyncIssues(db, {
+      taskId: input.taskId,
+      limit: issueLimit,
+    }),
+    db.query<FeishuSyncIssueStatsRow>(
+      `SELECT status, COUNT(*)::INTEGER AS issue_count
+       FROM feishu_sync_issues
+       WHERE task_id = $1
+       GROUP BY status`,
+      [input.taskId],
+    ),
+  ])
+
+  return {
+    ...task,
+    recentRuns,
+    issues,
+    issueStats: toTaskIssueStats(issueStatsResult.rows),
+  }
+}
+
+export async function claimNextDueFeishuBitableTask(
+  db: Queryable,
+  input: {
+    now?: Date
+    lockTtlMs?: number
+  } = {},
+): Promise<ClaimedFeishuBitableTask | null> {
+  const now = input.now || new Date()
+  const staleAt = new Date(now.getTime() - Math.max(60_000, Number(input.lockTtlMs || 10 * 60 * 1000)))
+  const lockToken = randomUUID()
+  const claimed = await db.query<{ id: string }>(
+    `WITH candidate AS (
+      SELECT id
+      FROM feishu_bitable_tasks
+      WHERE is_active = TRUE
+        AND schedule_enabled = TRUE
+        AND schedule_next_run_at IS NOT NULL
+        AND schedule_next_run_at <= $1::TIMESTAMPTZ
+        AND (
+          schedule_lock_token IS NULL
+          OR schedule_locked_at IS NULL
+          OR schedule_locked_at < $2::TIMESTAMPTZ
+        )
+      ORDER BY schedule_next_run_at ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE feishu_bitable_tasks t
+    SET
+      schedule_lock_token = $3,
+      schedule_locked_at = NOW(),
+      updated_at = NOW()
+    FROM candidate
+    WHERE t.id = candidate.id
+    RETURNING t.id`,
+    [now.toISOString(), staleAt.toISOString(), lockToken],
+  )
+
+  const taskId = claimed.rows[0]?.id
+  if (!taskId)
+    return null
+
+  const task = await getFeishuBitableTaskById(db, taskId)
+  if (!task)
+    return null
+
+  return {
+    task,
+    lockToken,
+  }
+}
+
+export async function completeScheduledFeishuTaskExecution(
+  db: Queryable,
+  input: {
+    taskId: string
+    lockToken: string
+    nextRunAt: string | null
+    lastError: string
+    lastRunAt?: string
+  },
+): Promise<boolean> {
+  const result = await db.query<{ id: string }>(
+    `UPDATE feishu_bitable_tasks
+     SET
+       schedule_next_run_at = $3,
+       schedule_last_run_at = $4::TIMESTAMPTZ,
+       schedule_last_error = $5,
+       schedule_locked_at = NULL,
+       schedule_lock_token = NULL,
+       updated_at = NOW()
+     WHERE id = $1
+       AND schedule_lock_token = $2
+     RETURNING id`,
+    [
+      input.taskId,
+      input.lockToken,
+      input.nextRunAt,
+      input.lastRunAt || new Date().toISOString(),
+      String(input.lastError || '').slice(0, 1000),
+    ],
+  )
+  return Boolean(result.rows[0]?.id)
+}
+
+export async function releaseFeishuTaskScheduleLock(
+  db: Queryable,
+  input: {
+    taskId: string
+    lockToken: string
+  },
+): Promise<void> {
+  await db.query(
+    `UPDATE feishu_bitable_tasks
+     SET schedule_locked_at = NULL,
+         schedule_lock_token = NULL,
+         updated_at = NOW()
+     WHERE id = $1
+       AND schedule_lock_token = $2`,
+    [input.taskId, input.lockToken],
+  )
 }
 
 export async function getFeishuExternalRef(
