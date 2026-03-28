@@ -15,7 +15,8 @@ import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
+import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
+import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
 const ALLOWED_TASK_TYPES: AdminAgentTaskType[] = [
   'publish_assistant',
@@ -109,7 +110,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const prepared = await withTransaction(event, async (db) => {
-    const canUseWorkspace = await hasWorkspaceMembership(db, user, request.workspaceId)
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, user, request.workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 
@@ -139,7 +140,7 @@ export default defineEventHandler(async (event) => {
       title: buildSessionTitle(request),
     })
 
-    const quota = await consumeAiQuota(db, {
+    const quota = await teamConsumeAiQuota(db, {
       workspaceId: request.workspaceId,
       userId: user.id,
       route: '/api/admin/ai/run',
@@ -227,7 +228,7 @@ export default defineEventHandler(async (event) => {
   }
 
   await withTransaction(event, async (db) => {
-    const canUseWorkspace = await hasWorkspaceMembership(db, user, request.workspaceId)
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, user, request.workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 

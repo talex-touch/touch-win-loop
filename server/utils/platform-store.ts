@@ -20,8 +20,6 @@ import type {
   ProjectStatus,
   TeamProfile,
   TeamQuota,
-  Workspace,
-  WorkspaceInvitationSummary,
   WorkspaceMemberManagementSnapshot,
   WorkspaceMemberRole,
   WorkspaceMemberSummary,
@@ -29,10 +27,37 @@ import type {
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+import {
+  teamAssertProjectCreationAllowed as assertWorkspaceProjectCreationAllowedImpl,
+  teamCanManageProject as canManageProjectImpl,
+} from '~~/server/utils/project-access-store'
+import {
+  teamAcceptInvitation as acceptInvitationImpl,
+  teamCreateInvitation as createInvitationImpl,
+  teamRevokeWorkspaceInvitation as revokeWorkspaceInvitationImpl,
+} from '~~/server/utils/team-invitation-store'
+import {
+  teamEnsureWorkspaceMember as ensureWorkspaceMemberImpl,
+  teamGetWorkspaceAccess as getWorkspaceAccessImpl,
+  teamGetWorkspaceMemberManagementSnapshot as getWorkspaceMemberManagementSnapshotImpl,
+  teamHasWorkspaceMembership as hasWorkspaceMembershipImpl,
+  teamHasWorkspaceRole as hasWorkspaceRoleImpl,
+  teamHasWorkspaceRoles as hasWorkspaceRolesImpl,
+  teamPatchWorkspaceMemberRole as patchWorkspaceMemberRoleImpl,
+  teamRemoveWorkspaceMember as removeWorkspaceMemberImpl,
+} from '~~/server/utils/team-membership-store'
+import {
+  teamConsumeAiQuota as consumeAiQuotaImpl,
+  teamGetWorkspaceType as getWorkspaceTypeImpl,
+  teamPatchSeatLimit as patchWorkspaceSeatLimitImpl,
+  teamRefreshSeatUsage as refreshTeamSeatUsageImpl,
+} from '~~/server/utils/team-quota-store'
+import {
+  teamCreateWorkspace as createTeamWorkspaceImpl,
+  teamListUserWorkspaces as listUserWorkspacesImpl,
+} from '~~/server/utils/team-workspace-store'
 
 const FULL_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin']
-const MANAGER_PROJECT_ROLES: ProjectMemberRole[] = ['owner', 'manager']
-const ALL_WORKSPACE_MEMBER_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager', 'member']
 const BASIC_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['manager', 'member']
 const WORKSPACE_CREATE_PROJECT_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
 
@@ -50,47 +75,6 @@ interface UserRow {
   is_disabled: boolean
   created_at: string
   updated_at: string
-}
-
-interface WorkspaceRow {
-  id: string
-  type: WorkspaceType
-  name: string
-  owner_user_id: string
-  team_profile: TeamProfile | null
-  created_at: string
-  updated_at: string
-  roles?: WorkspaceMemberRole[]
-}
-
-interface TeamQuotaRow {
-  workspace_id: string
-  seat_limit: number
-  seat_used: number
-  ai_quota_total: number
-  ai_quota_used: number
-  reset_cycle: string
-  updated_at: string
-}
-
-interface WorkspaceMemberSummaryRow {
-  user_id: string
-  username: string
-  roles: WorkspaceMemberRole[] | null
-  joined_at: string
-  updated_at: string
-}
-
-interface WorkspaceInvitationSummaryRow {
-  id: string
-  workspace_id: string
-  role: WorkspaceMemberRole
-  invitee_username: string | null
-  expires_at: string
-  accepted_at: string | null
-  created_at: string
-  invited_by_user_id: string
-  invited_by_username: string
 }
 
 interface ProjectMemberSummaryRow {
@@ -395,45 +379,6 @@ function mapUser(row: UserRow): AuthUser {
   }
 }
 
-function mapWorkspace(row: WorkspaceRow): Workspace {
-  return {
-    id: row.id,
-    type: row.type,
-    name: row.name,
-    ownerUserId: row.owner_user_id,
-    teamProfile: row.team_profile,
-    roles: dedupeBy(row.roles || [], item => item),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
-}
-
-function mapTeamQuota(row: TeamQuotaRow): TeamQuota {
-  return {
-    teamId: row.workspace_id,
-    workspaceId: row.workspace_id,
-    seatLimit: Number(row.seat_limit),
-    seatUsed: Number(row.seat_used),
-    aiQuotaTotal: Number(row.ai_quota_total),
-    aiQuotaUsed: Number(row.ai_quota_used),
-    resetCycle: row.reset_cycle,
-    updatedAt: row.updated_at,
-  }
-}
-
-function mapWorkspaceMemberSummary(row: WorkspaceMemberSummaryRow): WorkspaceMemberSummary {
-  const roles = uniqueStringArray((row.roles || []).map(item => String(item || '').trim()))
-    .filter((item): item is WorkspaceMemberRole => ALL_WORKSPACE_MEMBER_ROLES.includes(item as WorkspaceMemberRole))
-
-  return {
-    userId: row.user_id,
-    username: row.username,
-    roles,
-    joinedAt: row.joined_at,
-    updatedAt: row.updated_at,
-  }
-}
-
 function mapProjectMemberSummary(row: ProjectMemberSummaryRow): ProjectMemberSummary {
   return {
     projectId: row.project_id,
@@ -455,26 +400,6 @@ function mapProjectSeatQuota(row: ProjectSeatQuotaRow): ProjectSeatQuota {
     seatLimit: Math.max(1, Number(row.seat_limit || 1)),
     seatUsed: Math.max(0, Number(row.seat_used || 0)),
     updatedAt: row.updated_at,
-  }
-}
-
-function mapWorkspaceInvitationSummary(row: WorkspaceInvitationSummaryRow): WorkspaceInvitationSummary {
-  const expiresAt = String(row.expires_at || '').trim()
-  const expiresMs = new Date(expiresAt).getTime()
-  const isExpired = Number.isFinite(expiresMs) && expiresMs <= Date.now()
-
-  return {
-    id: row.id,
-    teamId: row.workspace_id,
-    workspaceId: row.workspace_id,
-    role: row.role,
-    inviteeUsername: row.invitee_username,
-    expiresAt,
-    acceptedAt: row.accepted_at,
-    createdAt: row.created_at,
-    invitedByUserId: row.invited_by_user_id,
-    invitedByUsername: row.invited_by_username,
-    isExpired,
   }
 }
 
@@ -721,282 +646,50 @@ export async function findAuthBySessionTokenHash(
   return { user, session }
 }
 
-async function listTeamQuotasByWorkspaceIds(db: Queryable, workspaceIds: string[]): Promise<Map<string, TeamQuota>> {
-  if (workspaceIds.length === 0)
-    return new Map<string, TeamQuota>()
-
-  const result = await db.query<TeamQuotaRow>(
-    `SELECT workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at::TEXT
-     FROM team_quotas
-     WHERE workspace_id = ANY($1::TEXT[])`,
-    [workspaceIds],
-  )
-
-  return new Map(result.rows.map(row => [row.workspace_id, mapTeamQuota(row)]))
-}
-
 export async function listUserWorkspaces(db: Queryable, userId: string): Promise<WorkspaceWithQuota[]> {
-  const result = await db.query<WorkspaceRow>(
-    `SELECT
-      w.id,
-      w.type,
-      w.name,
-      w.owner_user_id,
-      w.team_profile,
-      w.created_at::TEXT,
-      w.updated_at::TEXT,
-      ARRAY_AGG(DISTINCT wm.role) AS roles
-     FROM workspaces w
-     JOIN workspace_members wm ON wm.workspace_id = w.id
-     WHERE wm.user_id = $1
-       AND wm.is_active = TRUE
-     GROUP BY w.id
-     ORDER BY w.created_at ASC`,
-    [userId],
-  )
-
-  const workspaces = result.rows.map(mapWorkspace)
-  const quotaMap = await listTeamQuotasByWorkspaceIds(db, workspaces.map(item => item.id))
-
-  return workspaces.map((workspace) => {
-    if (workspace.type !== 'team')
-      return { workspace, quota: null }
-
-    return {
-      workspace,
-      quota: quotaMap.get(workspace.id) || null,
-    }
-  })
+  return listUserWorkspacesImpl(db, userId)
 }
 
 export async function refreshTeamSeatUsage(db: Queryable, workspaceId: string): Promise<void> {
-  const countResult = await db.query<{ count: string }>(
-    `SELECT COUNT(DISTINCT wm.user_id)::TEXT AS count
-     FROM workspace_members wm
-     JOIN workspaces w ON w.id = wm.workspace_id
-     WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE
-       AND w.type = 'team'`,
-    [workspaceId],
-  )
-
-  const seatUsed = Number(countResult.rows[0]?.count || '0')
-
-  await db.query(
-    `UPDATE team_quotas
-     SET seat_used = $2, updated_at = NOW()
-     WHERE workspace_id = $1`,
-    [workspaceId, seatUsed],
-  )
+  return refreshTeamSeatUsageImpl(db, workspaceId)
 }
 
 export async function createTeamWorkspace(db: Queryable, input: CreateTeamWorkspaceInput): Promise<WorkspaceWithQuota> {
-  const workspaceId = randomUUID()
-  const now = new Date().toISOString()
-
-  await db.query(
-    `INSERT INTO workspaces (id, type, name, owner_user_id, team_profile, created_at, updated_at)
-     VALUES ($1, 'team', $2, $3, $4::JSONB, $5, $5)`,
-    [workspaceId, input.name, input.ownerUserId, input.teamProfile ? JSON.stringify(input.teamProfile) : null, now],
-  )
-
-  await db.query(
-    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_active, created_at, updated_at)
-     VALUES ($1, $2, $3, 'owner', TRUE, $4, $4)`,
-    [randomUUID(), workspaceId, input.ownerUserId, now],
-  )
-
-  await db.query(
-    `INSERT INTO team_subscriptions (id, workspace_id, payer_user_id, plan_code, status, created_at, updated_at)
-     VALUES ($1, $2, $3, 'team-basic', 'pending_payment', $4, $4)`,
-    [randomUUID(), workspaceId, input.ownerUserId, now],
-  )
-
-  await db.query(
-    `INSERT INTO team_quotas (workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at)
-     VALUES ($1, $2, 0, $3, 0, $4, $5)`,
-    [workspaceId, Math.max(1, Number(input.seatLimit ?? 20)), Math.max(1, Number(input.aiQuotaTotal ?? 1000)), input.resetCycle || 'monthly', now],
-  )
-
-  await refreshTeamSeatUsage(db, workspaceId)
-
-  const workspaceList = await listUserWorkspaces(db, input.ownerUserId)
-  const created = workspaceList.find(item => item.workspace.id === workspaceId)
-  if (!created)
-    throw new Error('failed to create workspace')
-  return created
+  return createTeamWorkspaceImpl(db, input)
 }
 
 export async function getWorkspaceAccess(db: Queryable, userId: string, workspaceId: string): Promise<WorkspaceAccess> {
-  const result = await db.query<{ role: WorkspaceMemberRole }>(
-    `SELECT role
-     FROM workspace_members
-     WHERE workspace_id = $1
-       AND user_id = $2
-       AND is_active = TRUE`,
-    [workspaceId, userId],
-  )
-
-  const roles = dedupeBy(result.rows.map(row => row.role), item => item)
-
-  return {
-    workspaceId,
-    roles,
-    isMember: roles.length > 0,
-  }
+  return getWorkspaceAccessImpl(db, userId, workspaceId)
 }
 
 export function hasWorkspaceRole(access: WorkspaceAccess, expected: WorkspaceMemberRole[]): boolean {
-  return access.roles.some(role => expected.includes(role))
+  return hasWorkspaceRoleImpl(access, expected)
 }
 
 export async function getWorkspaceMemberManagementSnapshot(
   db: Queryable,
   workspaceId: string,
 ): Promise<WorkspaceMemberManagementSnapshot> {
-  const membersResult = await db.query<WorkspaceMemberSummaryRow>(
-    `SELECT
-       wm.user_id,
-       u.username,
-       ARRAY_AGG(DISTINCT wm.role ORDER BY wm.role)::TEXT[] AS roles,
-       MIN(wm.created_at)::TEXT AS joined_at,
-       MAX(wm.updated_at)::TEXT AS updated_at
-     FROM workspace_members wm
-     JOIN users u ON u.id = wm.user_id
-     WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE
-     GROUP BY wm.user_id, u.username
-     ORDER BY MIN(wm.created_at) ASC, u.username ASC`,
-    [workspaceId],
-  )
-
-  const invitationsResult = await db.query<WorkspaceInvitationSummaryRow>(
-    `SELECT
-       i.id,
-       i.workspace_id,
-       i.role,
-       i.invitee_username,
-       i.expires_at::TEXT,
-       i.accepted_at::TEXT,
-       i.created_at::TEXT,
-       i.invited_by_user_id,
-       invited_by.username AS invited_by_username
-     FROM invitations i
-     JOIN users invited_by ON invited_by.id = i.invited_by_user_id
-     WHERE i.workspace_id = $1
-       AND i.accepted_at IS NULL
-     ORDER BY i.created_at DESC`,
-    [workspaceId],
-  )
-
-  return {
-    teamId: workspaceId,
-    workspaceId,
-    members: membersResult.rows.map(mapWorkspaceMemberSummary),
-    invitations: invitationsResult.rows.map(mapWorkspaceInvitationSummary),
-  }
+  return getWorkspaceMemberManagementSnapshotImpl(db, workspaceId)
 }
 
 export async function createInvitation(db: Queryable, input: CreateInvitationInput): Promise<Invitation> {
-  const id = randomUUID()
-  const now = new Date().toISOString()
-
-  await db.query(
-    `INSERT INTO invitations (
-      id,
-      workspace_id,
-      token_hash,
-      invited_by_user_id,
-      invitee_username,
-      role,
-      expires_at,
-      accepted_at,
-      created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8)`,
-    [
-      id,
-      input.workspaceId,
-      input.tokenHash,
-      input.invitedByUserId,
-      input.inviteeUsername || null,
-      input.role,
-      input.expiresAt,
-      now,
-    ],
-  )
-
-  return {
-    id,
-    teamId: input.workspaceId,
-    workspaceId: input.workspaceId,
-    role: input.role,
-    inviteeUsername: input.inviteeUsername || null,
-    expiresAt: input.expiresAt,
-    acceptedAt: null,
-    createdAt: now,
-  }
+  return createInvitationImpl(db, input)
 }
 
 export async function acceptInvitation(db: Queryable, tokenHash: string, user: AuthUser): Promise<Invitation | null> {
-  const result = await db.query<{
-    id: string
-    workspace_id: string
-    role: WorkspaceMemberRole
-    invitee_username: string | null
-    expires_at: string
-    accepted_at: string | null
-    created_at: string
-  }>(
-    `SELECT id, workspace_id, role, invitee_username, expires_at::TEXT, accepted_at::TEXT, created_at::TEXT
-     FROM invitations
-     WHERE token_hash = $1
-       AND accepted_at IS NULL
-       AND expires_at > NOW()
-     LIMIT 1`,
-    [tokenHash],
-  )
+  return acceptInvitationImpl(db, tokenHash, user)
+}
 
-  const invitation = result.rows[0]
-  if (!invitation)
-    return null
-
-  if (invitation.invitee_username && invitation.invitee_username !== user.username)
-    throw new Error('INVITATION_TARGET_MISMATCH')
-
-  const workspaceTypeResult = await db.query<{ type: WorkspaceType }>(
-    `SELECT type
-     FROM workspaces
-     WHERE id = $1
-     LIMIT 1
-     FOR UPDATE`,
-    [invitation.workspace_id],
-  )
-
-  const workspaceType = workspaceTypeResult.rows[0]?.type
-  if (!workspaceType)
-    throw new Error('WORKSPACE_NOT_FOUND')
-
-  const now = new Date().toISOString()
-
-  await ensureWorkspaceMember(db, invitation.workspace_id, user.id, invitation.role)
-
-  await db.query(
-    `UPDATE invitations
-     SET accepted_at = $2
-     WHERE id = $1`,
-    [invitation.id, now],
-  )
-
-  return {
-    id: invitation.id,
-    teamId: invitation.workspace_id,
-    workspaceId: invitation.workspace_id,
-    role: invitation.role,
-    inviteeUsername: invitation.invitee_username,
-    expiresAt: invitation.expires_at,
-    acceptedAt: now,
-    createdAt: invitation.created_at,
-  }
+export async function revokeWorkspaceInvitation(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    invitationId: string
+    actorUser: AuthUser
+  },
+): Promise<boolean> {
+  return revokeWorkspaceInvitationImpl(db, input)
 }
 
 async function resolveWorkspaceDefaultProjectSeatLimit(db: Queryable, workspaceId: string): Promise<number> {
@@ -1028,105 +721,13 @@ async function resolveWorkspaceDefaultProjectSeatLimit(db: Queryable, workspaceI
   return 5
 }
 
-async function countActiveWorkspaceSeatUsed(db: Queryable, workspaceId: string): Promise<number> {
-  const usageResult = await db.query<{ count: string }>(
-    `SELECT COUNT(DISTINCT wm.user_id)::TEXT AS count
-     FROM workspace_members wm
-     WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE`,
-    [workspaceId],
-  )
-
-  return Math.max(0, Number(usageResult.rows[0]?.count || '0'))
-}
-
-async function getOrCreateTeamQuotaRowForUpdate(db: Queryable, workspaceId: string): Promise<TeamQuotaRow> {
-  const loadQuota = async () => {
-    return db.query<TeamQuotaRow>(
-      `SELECT workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at::TEXT
-       FROM team_quotas
-       WHERE workspace_id = $1
-       FOR UPDATE`,
-      [workspaceId],
-    )
-  }
-
-  let quotaResult = await loadQuota()
-  if (quotaResult.rows.length > 0) {
-    const row = quotaResult.rows[0]
-    if (!row)
-      throw new Error('TEAM_QUOTA_NOT_FOUND')
-    return row
-  }
-
-  const seatUsed = await countActiveWorkspaceSeatUsed(db, workspaceId)
-  await db.query(
-    `INSERT INTO team_quotas (workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at)
-     VALUES ($1, 20, $2, 1000, 0, 'monthly', NOW())
-     ON CONFLICT (workspace_id) DO NOTHING`,
-    [workspaceId, seatUsed],
-  )
-
-  quotaResult = await loadQuota()
-  const created = quotaResult.rows[0]
-  if (!created)
-    throw new Error('TEAM_QUOTA_NOT_FOUND')
-  return created
-}
-
-async function assertWorkspaceSeatAvailable(
-  db: Queryable,
-  workspaceId: string,
-  additionalSeats: number,
-): Promise<void> {
-  const normalizedAdditional = Math.max(0, Math.trunc(Number(additionalSeats || 0)))
-  if (normalizedAdditional <= 0)
-    return
-
-  const workspaceType = await getWorkspaceType(db, workspaceId)
-  if (!workspaceType)
-    throw new Error('WORKSPACE_NOT_FOUND')
-  if (workspaceType === 'personal')
-    return
-
-  const quota = await getOrCreateTeamQuotaRowForUpdate(db, workspaceId)
-  const seatLimit = Math.max(1, Number(quota.seat_limit || 1))
-  const seatUsed = await countActiveWorkspaceSeatUsed(db, workspaceId)
-  if (seatUsed + normalizedAdditional > seatLimit)
-    throw new Error('TEAM_SEAT_LIMIT_REACHED')
-}
-
 export async function ensureWorkspaceMember(
   db: Queryable,
   workspaceId: string,
   userId: string,
   role: WorkspaceMemberRole = 'member',
 ): Promise<void> {
-  const existingActiveResult = await db.query<{ user_id: string }>(
-    `SELECT user_id
-     FROM workspace_members
-     WHERE workspace_id = $1
-       AND user_id = $2
-       AND is_active = TRUE
-     LIMIT 1`,
-    [workspaceId, userId],
-  )
-  const hasActiveMembership = Boolean(existingActiveResult.rows[0]?.user_id)
-  if (!hasActiveMembership)
-    await assertWorkspaceSeatAvailable(db, workspaceId, 1)
-
-  const now = new Date().toISOString()
-  await db.query(
-    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_active, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, TRUE, $5, $5)
-     ON CONFLICT (workspace_id, user_id, role)
-     DO UPDATE SET
-       is_active = TRUE,
-       updated_at = EXCLUDED.updated_at`,
-    [randomUUID(), workspaceId, userId, role, now],
-  )
-
-  await refreshTeamSeatUsage(db, workspaceId)
+  return ensureWorkspaceMemberImpl(db, workspaceId, userId, role)
 }
 
 export async function refreshProjectSeatUsage(db: Queryable, projectId: string): Promise<void> {
@@ -1266,48 +867,7 @@ export async function assertWorkspaceProjectCreationAllowed(
   db: Queryable,
   workspaceId: string,
 ): Promise<void> {
-  const workspaceResult = await db.query<{
-    type: WorkspaceType
-    included_projects: number | null
-    projects_unlimited: boolean | null
-    extra_project_slots: number | null
-  }>(
-    `SELECT
-      w.type,
-      bp.included_projects,
-      bp.projects_unlimited,
-      wb.extra_project_slots
-     FROM workspaces w
-     LEFT JOIN workspace_billing wb ON wb.workspace_id = w.id
-     LEFT JOIN billing_plans bp ON bp.id = wb.plan_id
-     WHERE w.id = $1
-     LIMIT 1`,
-    [workspaceId],
-  )
-
-  const workspace = workspaceResult.rows[0]
-  if (!workspace)
-    throw new Error('WORKSPACE_NOT_FOUND')
-
-  const projectCountResult = await db.query<{ count: string }>(
-    `SELECT COUNT(*)::TEXT AS count
-     FROM projects
-     WHERE workspace_id = $1`,
-    [workspaceId],
-  )
-
-  const projectCount = Math.max(0, Number(projectCountResult.rows[0]?.count || '0'))
-  const includedProjects = Number.isFinite(Number(workspace.included_projects))
-    ? Math.max(0, Number(workspace.included_projects || 0))
-    : (workspace.type === 'personal' ? 2 : 0)
-  const projectsUnlimited = workspace.projects_unlimited === true
-    ? true
-    : workspace.type !== 'personal'
-  const extraProjectSlots = Math.max(0, Number(workspace.extra_project_slots || 0))
-  const allowedProjects = includedProjects + extraProjectSlots
-
-  if (!projectsUnlimited && projectCount >= allowedProjects)
-    throw new Error('WORKSPACE_PROJECT_LIMIT_REACHED')
+  return assertWorkspaceProjectCreationAllowedImpl(db, workspaceId)
 }
 
 async function ensureProjectOwnerMember(db: Queryable, projectId: string, userId: string): Promise<void> {
@@ -2641,11 +2201,7 @@ export async function hasWorkspaceMembership(
   user: AuthUser,
   workspaceId: string,
 ): Promise<boolean> {
-  if (user.isPlatformAdmin)
-    return true
-
-  const access = await getWorkspaceAccess(db, user.id, workspaceId)
-  return access.isMember
+  return hasWorkspaceMembershipImpl(db, user, workspaceId)
 }
 
 export async function hasWorkspaceRoles(
@@ -2654,66 +2210,11 @@ export async function hasWorkspaceRoles(
   workspaceId: string,
   roles: WorkspaceMemberRole[],
 ): Promise<boolean> {
-  if (user.isPlatformAdmin)
-    return true
-
-  const access = await getWorkspaceAccess(db, user.id, workspaceId)
-  if (!access.isMember)
-    return false
-
-  return hasWorkspaceRole(access, roles)
+  return hasWorkspaceRolesImpl(db, user, workspaceId, roles)
 }
 
 export async function canManageProject(db: Queryable, user: AuthUser, projectId: string): Promise<boolean> {
-  if (user.isPlatformAdmin)
-    return true
-
-  const ownerAdminResult = await db.query<{ can_manage: boolean }>(
-    `SELECT EXISTS (
-      SELECT 1
-      FROM projects p
-      JOIN workspace_members wm ON wm.workspace_id = p.workspace_id
-      WHERE p.id = $1
-        AND wm.user_id = $2
-        AND wm.is_active = TRUE
-        AND wm.role = ANY($3::TEXT[])
-    ) AS can_manage`,
-    [projectId, user.id, FULL_WORKSPACE_ROLES],
-  )
-
-  if (ownerAdminResult.rows[0]?.can_manage)
-    return true
-
-  const scopedManagerResult = await db.query<{ can_manage: boolean }>(
-    `SELECT EXISTS (
-      SELECT 1
-      FROM projects p
-      JOIN workspace_members wm ON wm.workspace_id = p.workspace_id
-      JOIN project_members pm ON pm.project_id = p.id
-      WHERE p.id = $1
-        AND wm.user_id = $2
-        AND wm.is_active = TRUE
-        AND wm.role = 'manager'
-        AND pm.user_id = $2
-    ) AS can_manage`,
-    [projectId, user.id],
-  )
-
-  if (scopedManagerResult.rows[0]?.can_manage)
-    return true
-
-  const memberRoleResult = await db.query<{ can_manage: boolean }>(
-    `SELECT EXISTS (
-      SELECT 1
-      FROM project_members pm
-      WHERE pm.project_id = $1
-        AND pm.user_id = $2
-        AND pm.role = ANY($3::TEXT[])
-    ) AS can_manage`,
-    [projectId, user.id, MANAGER_PROJECT_ROLES],
-  )
-
-  return Boolean(memberRoleResult.rows[0]?.can_manage)
+  return canManageProjectImpl(db, user, projectId)
 }
 
 async function getWorkspaceRolesByUserId(
@@ -3080,33 +2581,7 @@ export async function patchWorkspaceSeatLimit(
     seatLimit: number
   },
 ): Promise<TeamQuota> {
-  const workspaceType = await getWorkspaceType(db, input.workspaceId)
-  if (!workspaceType)
-    throw new Error('WORKSPACE_NOT_FOUND')
-  if (workspaceType === 'personal')
-    throw new Error('PERSONAL_TEAM_SEAT_READ_ONLY')
-
-  const nextSeatLimit = Math.max(1, Math.trunc(Number(input.seatLimit || 1)))
-  await getOrCreateTeamQuotaRowForUpdate(db, input.workspaceId)
-
-  const seatUsed = await countActiveWorkspaceSeatUsed(db, input.workspaceId)
-  if (seatUsed > nextSeatLimit)
-    throw new Error('TEAM_SEAT_LIMIT_BELOW_USED')
-
-  const updated = await db.query<TeamQuotaRow>(
-    `UPDATE team_quotas
-     SET seat_limit = $2,
-         seat_used = $3,
-         updated_at = NOW()
-     WHERE workspace_id = $1
-     RETURNING workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at::TEXT`,
-    [input.workspaceId, nextSeatLimit, seatUsed],
-  )
-
-  const row = updated.rows[0]
-  if (!row)
-    throw new Error('TEAM_QUOTA_WRITE_FAILED')
-  return mapTeamQuota(row)
+  return patchWorkspaceSeatLimitImpl(db, input)
 }
 
 export async function patchWorkspaceMemberRole(
@@ -3118,57 +2593,18 @@ export async function patchWorkspaceMemberRole(
     role: 'admin' | 'manager' | 'member'
   },
 ): Promise<WorkspaceMemberSummary | null> {
-  const normalizedTargetUserId = String(input.targetUserId || '').trim()
-  if (!normalizedTargetUserId)
-    throw new Error('WORKSPACE_MEMBER_TARGET_REQUIRED')
+  return patchWorkspaceMemberRoleImpl(db, input)
+}
 
-  if (!input.actorUser.isPlatformAdmin) {
-    const actorAccess = await getWorkspaceAccess(db, input.actorUser.id, input.workspaceId)
-    const actorHighest = getHighestWorkspaceRole(actorAccess.roles)
-    if (!actorAccess.isMember || (actorHighest !== 'owner' && actorHighest !== 'admin'))
-      throw new Error('FORBIDDEN')
-  }
-
-  const targetRoles = await getWorkspaceRolesByUserId(db, input.workspaceId, normalizedTargetUserId)
-  if (targetRoles.length === 0)
-    throw new Error('WORKSPACE_MEMBER_NOT_FOUND')
-  if (targetRoles.includes('owner'))
-    throw new Error('WORKSPACE_OWNER_IMMUTABLE')
-
-  const now = new Date().toISOString()
-  await db.query(
-    `DELETE FROM workspace_members
-     WHERE workspace_id = $1
-       AND user_id = $2`,
-    [input.workspaceId, normalizedTargetUserId],
-  )
-
-  await db.query(
-    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_active, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, TRUE, $5, $5)`,
-    [randomUUID(), input.workspaceId, normalizedTargetUserId, input.role, now],
-  )
-
-  await refreshTeamSeatUsage(db, input.workspaceId)
-
-  const summaryResult = await db.query<WorkspaceMemberSummaryRow>(
-    `SELECT
-      wm.user_id,
-      u.username,
-      ARRAY_AGG(DISTINCT wm.role ORDER BY wm.role)::TEXT[] AS roles,
-      MIN(wm.created_at)::TEXT AS joined_at,
-      MAX(wm.updated_at)::TEXT AS updated_at
-     FROM workspace_members wm
-     JOIN users u ON u.id = wm.user_id
-     WHERE wm.workspace_id = $1
-       AND wm.user_id = $2
-       AND wm.is_active = TRUE
-     GROUP BY wm.user_id, u.username`,
-    [input.workspaceId, normalizedTargetUserId],
-  )
-
-  const row = summaryResult.rows[0]
-  return row ? mapWorkspaceMemberSummary(row) : null
+export async function removeWorkspaceMember(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    actorUser: AuthUser
+    targetUserId: string
+  },
+): Promise<boolean> {
+  return removeWorkspaceMemberImpl(db, input)
 }
 
 export async function patchProjectBindings(
@@ -3256,12 +2692,7 @@ export async function patchProjectBindings(
 }
 
 export async function getWorkspaceType(db: Queryable, workspaceId: string): Promise<WorkspaceType | null> {
-  const result = await db.query<{ type: WorkspaceType }>(
-    'SELECT type FROM workspaces WHERE id = $1 LIMIT 1',
-    [workspaceId],
-  )
-
-  return result.rows[0]?.type || null
+  return getWorkspaceTypeImpl(db, workspaceId)
 }
 
 export async function consumeAiQuota(
@@ -3273,61 +2704,5 @@ export async function consumeAiQuota(
     units: number
   },
 ): Promise<{ allowed: boolean, remaining: number | null }> {
-  const workspaceType = await getWorkspaceType(db, input.workspaceId)
-  if (!workspaceType)
-    return { allowed: false, remaining: null }
-
-  if (workspaceType === 'personal') {
-    return { allowed: true, remaining: null }
-  }
-
-  const quotaResult = await db.query<TeamQuotaRow>(
-    `SELECT workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at::TEXT
-     FROM team_quotas
-     WHERE workspace_id = $1
-     FOR UPDATE`,
-    [input.workspaceId],
-  )
-
-  if (quotaResult.rows.length === 0) {
-    await db.query(
-      `INSERT INTO team_quotas (workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at)
-       VALUES ($1, 20, 0, 1000, 0, 'monthly', NOW())`,
-      [input.workspaceId],
-    )
-
-    return consumeAiQuota(db, input)
-  }
-
-  const quotaRow = quotaResult.rows[0]
-  if (!quotaRow)
-    return { allowed: false, remaining: null }
-
-  const quota = mapTeamQuota(quotaRow)
-  const nextUsed = quota.aiQuotaUsed + input.units
-  if (nextUsed > quota.aiQuotaTotal) {
-    return {
-      allowed: false,
-      remaining: Math.max(0, quota.aiQuotaTotal - quota.aiQuotaUsed),
-    }
-  }
-
-  await db.query(
-    `UPDATE team_quotas
-     SET ai_quota_used = $2,
-         updated_at = NOW()
-     WHERE workspace_id = $1`,
-    [input.workspaceId, nextUsed],
-  )
-
-  await db.query(
-    `INSERT INTO ai_usage_ledger (id, workspace_id, user_id, route, units, created_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [randomUUID(), input.workspaceId, input.userId, input.route, input.units],
-  )
-
-  return {
-    allowed: true,
-    remaining: Math.max(0, quota.aiQuotaTotal - nextUsed),
-  }
+  return consumeAiQuotaImpl(db, input)
 }

@@ -9,7 +9,8 @@ import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
+import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
+import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 import { runWithRetry } from '~~/server/utils/retry'
 
 export default defineEventHandler(async (event) => {
@@ -49,11 +50,11 @@ export default defineEventHandler(async (event) => {
   let quotaResult: { allowed: boolean, remaining: number | null }
   try {
     quotaResult = await withTransaction(event, async (db) => {
-      const canUseWorkspace = await hasWorkspaceMembership(db, user, workspaceId)
+      const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
       if (!canUseWorkspace)
         throw new Error('FORBIDDEN')
 
-      return consumeAiQuota(db, {
+      return teamConsumeAiQuota(db, {
         workspaceId,
         userId: user.id,
         route: '/api/ai/contest-filter',

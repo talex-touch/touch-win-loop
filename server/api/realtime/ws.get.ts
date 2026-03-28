@@ -8,7 +8,7 @@ import {
   REFRESH_COOKIE_NAME,
 } from '~~/server/utils/auth'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { findAuthBySessionTokenHash, hasWorkspaceMembership } from '~~/server/utils/platform-store'
+import { findAuthBySessionTokenHash } from '~~/server/utils/platform-store'
 import { applyProjectCollabUpdate, getProjectCollabSnapshot } from '~~/server/utils/project-resource-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { createRealtimeEvent, publishRealtimeEvent } from '~~/server/utils/realtime-events'
@@ -25,6 +25,7 @@ import {
   updateRealtimePresence,
 } from '~~/server/utils/realtime-hub'
 import { hashToken } from '~~/server/utils/security'
+import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
 const HEARTBEAT_TIMEOUT_MS = 70_000
@@ -467,7 +468,7 @@ export default defineWebSocketHandler({
         }
 
         const allowed = await withClient(undefined, async (db) => {
-          return hasWorkspaceMembership(db, runtimeContext.user, workspaceId)
+          return teamHasWorkspaceMembership(db, runtimeContext.user, workspaceId)
         })
         if (!allowed) {
           sendError(peer, parsedMessage.requestId, 'FORBIDDEN', '当前用户无权订阅该空间。')

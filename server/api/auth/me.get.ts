@@ -4,7 +4,8 @@ import { requireAuth } from '~~/server/utils/auth'
 import { resolvePlatformAccess } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { ensureBootstrapPlatformSuperAdmin, listUserWorkspaces } from '~~/server/utils/platform-store'
+import { ensureBootstrapPlatformSuperAdmin } from '~~/server/utils/platform-store'
+import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -22,7 +23,7 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    const workspaces = await listUserWorkspaces(db, user.id)
+    const workspaces = await teamListUserWorkspaces(db, user.id)
     const access = await resolvePlatformAccess(db, effectiveUser)
 
     return {

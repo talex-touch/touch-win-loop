@@ -25,7 +25,7 @@ export type TeamBillingEstimateResponse = Omit<WorkspaceBillingEstimate, 'worksp
 export type TeamChatSessionResponse = Omit<AiChatSession, 'workspaceId'> & { teamId: string }
 export type TeamChatMessageResponse = Omit<AiChatMessage, 'workspaceId'> & { teamId: string }
 
-function normalizeTeamId(teamId: string, workspaceId: string): string {
+function normalizeTeamId(teamId: string, workspaceId?: string): string {
   return String(teamId || workspaceId || '').trim()
 }
 

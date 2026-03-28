@@ -18,9 +18,9 @@ import {
   ensureBootstrapPlatformSuperAdmin,
   findUserByUsername,
   getUserPasswordHashByUsername,
-  listUserWorkspaces,
-} from '~~/server/utils/platform-store'
+  } from '~~/server/utils/platform-store'
 import { createSessionToken, hashPassword, hashToken, verifyPassword } from '~~/server/utils/security'
+import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 
 interface LoginBody {
   username?: string
@@ -94,7 +94,7 @@ export default defineEventHandler(async (event) => {
         expiresAt: resolveSessionExpiresAt(),
       })
 
-      const workspaces = await listUserWorkspaces(db, user.id)
+      const workspaces = await teamListUserWorkspaces(db, user.id)
       const teams = workspaces.map(item => ({ team: item.workspace, quota: item.quota }))
       const teamCount = workspaces.filter(item => item.workspace.type === 'team').length
       const platformAccess = await resolvePlatformAccess(db, user)

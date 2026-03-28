@@ -8,9 +8,9 @@ import { withTransaction } from '~~/server/utils/db'
 import {
   createSession,
   ensureBootstrapPlatformSuperAdmin,
-  listUserWorkspaces,
-} from '~~/server/utils/platform-store'
+  } from '~~/server/utils/platform-store'
 import { createSessionToken, hashToken } from '~~/server/utils/security'
+import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 
 export async function loginWithFeishuProfile(
   event: H3Event,
@@ -43,7 +43,7 @@ export async function loginWithFeishuProfile(
       expiresAt: resolveSessionExpiresAt(),
     })
 
-    const workspaces = await listUserWorkspaces(db, user.id)
+    const workspaces = await teamListUserWorkspaces(db, user.id)
     const teams = workspaces.map(item => ({ team: item.workspace, quota: item.quota }))
     const teamCount = workspaces.filter(item => item.workspace.type === 'team').length
     const platformAccess = await resolvePlatformAccess(db, user)

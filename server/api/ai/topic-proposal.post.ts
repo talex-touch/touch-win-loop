@@ -21,7 +21,8 @@ import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-import { consumeAiQuota, hasWorkspaceMembership } from '~~/server/utils/platform-store'
+import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
+import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 import { runWithRetry } from '~~/server/utils/retry'
 
 function normalizeTopK(raw: unknown): number {
@@ -195,7 +196,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const activeSession = await withTransaction(event, async (db) => {
-    const canUseWorkspace = await hasWorkspaceMembership(db, user, workspaceId)
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 
@@ -264,11 +265,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const quotaResult = await withTransaction(event, async (db) => {
-    const canUseWorkspace = await hasWorkspaceMembership(db, user, workspaceId)
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 
-    return consumeAiQuota(db, {
+    return teamConsumeAiQuota(db, {
       workspaceId,
       userId: user.id,
       route: '/api/ai/topic-proposal',

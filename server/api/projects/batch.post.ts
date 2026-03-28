@@ -4,7 +4,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { batchCreateProjects, hasWorkspaceRoles } from '~~/server/utils/platform-store'
+import { batchCreateProjects } from '~~/server/utils/platform-store'
+import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
 
 interface BatchCreateBody {
   teamId?: string
@@ -64,7 +65,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const created = await withTransaction(event, async (db) => {
-      const canBatchCreate = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin', 'manager'])
+      const canBatchCreate = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin', 'manager'])
       if (!canBatchCreate)
         throw new Error('FORBIDDEN')
 

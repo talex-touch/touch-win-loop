@@ -9,6 +9,7 @@ const TEAM_SESSIONS_GET_FILE = resolve(process.cwd(), 'server/api/teams/[id]/cha
 const TEAM_SESSIONS_POST_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/index.post.ts')
 const TEAM_MESSAGES_GET_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/[sessionId]/messages/index.get.ts')
 const WORKSPACE_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const ADMIN_AGENT_PANEL_FILE = resolve(process.cwd(), 'app/components/admin/AdminAgentPanel.vue')
 
 it('ai_chat_sessions 表包含 project_id 与 mode 字段', async () => {
   const source = await readFile(DB_FILE, 'utf8')
@@ -74,5 +75,19 @@ it('项目页会话请求携带 projectId + mode 并在切模式时重载会话'
     source,
     /watch\(aiMode,[\s\S]*await loadChatSessions\(\)/,
     '项目页切换模式后未重载会话作用域',
+  )
+})
+
+it('管理端 Agent 面板改用 Team 会话接口并带 projectId + mode', async () => {
+  const source = await readFile(ADMIN_AGENT_PANEL_FILE, 'utf8')
+  assert.match(
+    source,
+    /endpoint\(`\/teams\/\$\{props\.workspaceId\}\/chat\/sessions`\),[\s\S]*projectId:[\s\S]*mode:/,
+    'AdminAgentPanel 会话列表未切换到 Team 接口或缺少 projectId/mode',
+  )
+  assert.match(
+    source,
+    /endpoint\(`\/teams\/\$\{props\.workspaceId\}\/chat\/sessions\/\$\{sessionId\}\/messages`\),[\s\S]*projectId:[\s\S]*mode:/,
+    'AdminAgentPanel 消息接口未切换到 Team 接口或缺少 projectId/mode',
   )
 })

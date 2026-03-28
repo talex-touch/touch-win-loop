@@ -4,7 +4,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { canManageProject, patchProjectBindings } from '~~/server/utils/platform-store'
+import { patchProjectBindings } from '~~/server/utils/platform-store'
+import { teamCanManageProject } from '~~/server/utils/project-access-store'
 
 interface PatchBindingsBody {
   collegeBindings?: ProjectCollegeBinding[]
@@ -33,7 +34,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const project = await withTransaction(event, async (db) => {
-      const manageable = await canManageProject(db, user, projectId)
+      const manageable = await teamCanManageProject(db, user, projectId)
       if (!manageable)
         throw new Error('FORBIDDEN')
 

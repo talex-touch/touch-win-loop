@@ -4,7 +4,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createProject, hasWorkspaceRoles } from '~~/server/utils/platform-store'
+import { createProject } from '~~/server/utils/platform-store'
+import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
 
 function ensureStringArray(value: unknown): string[] {
   if (!Array.isArray(value))
@@ -62,7 +63,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const project = await withTransaction(event, async (db) => {
-      const canCreate = await hasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin', 'manager'])
+      const canCreate = await teamHasWorkspaceRoles(db, user, workspaceId, ['owner', 'admin', 'manager'])
       if (!canCreate)
         throw new Error('FORBIDDEN')
 

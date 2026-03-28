@@ -3,7 +3,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { canManageProject, getVisibleProjectById } from '~~/server/utils/platform-store'
+import { getVisibleProjectById } from '~~/server/utils/platform-store'
+import { teamCanManageProject } from '~~/server/utils/project-access-store'
 import {
   getAiProjectChangeRequestById,
   markAiProjectChangeRequestRejected,
@@ -39,7 +40,7 @@ export default defineEventHandler(async (event) => {
     if (!project)
       throw new Error('PROJECT_NOT_FOUND')
 
-    const manageable = await canManageProject(db, user, projectId)
+    const manageable = await teamCanManageProject(db, user, projectId)
     if (!manageable)
       throw new Error('FORBIDDEN')
 
