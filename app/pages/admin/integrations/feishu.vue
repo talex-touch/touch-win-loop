@@ -4,10 +4,16 @@ import type {
   AuthMeResult,
   FeishuAdminManualAddResult,
   FeishuAdminOverview,
+  FeishuBitableAppMeta,
+  FeishuBitableSourceConfig,
   FeishuBitableSyncRun,
+  FeishuBitableTableMeta,
   FeishuBitableTask,
   FeishuBitableTaskDetail,
   FeishuBitableTaskTargetType,
+  FeishuBitableViewMeta,
+  FeishuBitableWritebackConfig,
+  FeishuFieldInspectionItem,
   FeishuIntegrationConfig,
   FeishuSyncIssue,
   FeishuTaskScheduleConfig,
@@ -49,6 +55,110 @@ const DEFAULT_OPTIONS_TEXT = `{
   "defaultResourceAccessLevel": "public"
 }`
 
+const DEFAULT_WRITEBACK_TEXT = `{
+  "enabled": true,
+  "fields": {
+    "status": "",
+    "syncedAt": "",
+    "errorMessage": "",
+    "reasonCode": "",
+    "entityId": "",
+    "runId": "",
+    "triggerSource": ""
+  },
+  "values": {
+    "success": "已同步",
+    "failed": "失败",
+    "skipped": "跳过"
+  }
+}`
+
+type TaskFormMode = 'create' | 'edit'
+
+interface SourceViewsPayload {
+  tables: FeishuBitableTableMeta[]
+  views: FeishuBitableViewMeta[]
+}
+
+interface MappingWizardBinding {
+  targetKey: string
+  sourceField: string
+  transform: string
+}
+
+interface MappingOption {
+  key: string
+  label: string
+}
+
+const MAPPING_OPTIONS: Record<FeishuBitableTaskTargetType, MappingOption[]> = {
+  contest: [
+    { key: 'externalId', label: 'externalId（主键）' },
+    { key: 'name', label: 'name（名称）' },
+    { key: 'officialUrl', label: 'officialUrl（官网）' },
+    { key: 'summary', label: 'summary（简介）' },
+    { key: 'level', label: 'level（级别）' },
+    { key: 'organizer', label: 'organizer（主办方）' },
+    { key: 'coOrganizer', label: 'coOrganizer（协办方）' },
+    { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
+    { key: 'teamRule', label: 'teamRule（组队规则）' },
+    { key: 'currentSeason', label: 'currentSeason（届次）' },
+    { key: 'disciplines', label: 'disciplines（学科）' },
+    { key: 'aliases', label: 'aliases（别名）' },
+    { key: 'keywords', label: 'keywords（关键词）' },
+    { key: 'recommendedFor', label: 'recommendedFor（推荐人群）' },
+  ],
+  track: [
+    { key: 'externalId', label: 'externalId（主键）' },
+    { key: 'contestExternalId', label: 'contestExternalId（赛事外部ID）' },
+    { key: 'name', label: 'name（赛道名）' },
+    { key: 'summary', label: 'summary（简介）' },
+    { key: 'suitableMajors', label: 'suitableMajors（适用专业）' },
+    { key: 'deliverableTypes', label: 'deliverableTypes（交付物类型）' },
+    { key: 'sortOrder', label: 'sortOrder（排序）' },
+  ],
+  resource: [
+    { key: 'externalId', label: 'externalId（主键）' },
+    { key: 'contestExternalId', label: 'contestExternalId（赛事外部ID）' },
+    { key: 'trackExternalId', label: 'trackExternalId（赛道外部ID）' },
+    { key: 'title', label: 'title（标题）' },
+    { key: 'name', label: 'name（别名标题）' },
+    { key: 'summary', label: 'summary（摘要）' },
+    { key: 'content', label: 'content（正文）' },
+    { key: 'category', label: 'category（分类）' },
+    { key: 'url', label: 'url（链接）' },
+    { key: 'sourceType', label: 'sourceType（来源类型）' },
+    { key: 'year', label: 'year（年份）' },
+  ],
+}
+
+const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
+  externalId: ['external_id', 'externalid', 'id', 'record_id', '业务id'],
+  contestExternalId: ['contest_external_id', 'contestid', '赛事外部id', '赛事id'],
+  trackExternalId: ['track_external_id', 'trackid', '赛道外部id', '赛道id'],
+  name: ['name', '名称', '名字'],
+  title: ['title', '标题'],
+  summary: ['summary', '简介', '描述'],
+  content: ['content', '正文', '内容', '详情'],
+  officialUrl: ['officialurl', 'official_url', '官网', '官网链接', 'url'],
+  organizer: ['organizer', '主办方', '主办单位'],
+  coOrganizer: ['coorganizer', 'co_organizer', '协办方', '承办方'],
+  participantRequirements: ['participantrequirements', '参赛对象', '参赛要求'],
+  teamRule: ['teamrule', '组队规则'],
+  currentSeason: ['currentseason', '届次', '赛季'],
+  disciplines: ['disciplines', '学科', '专业'],
+  aliases: ['aliases', '别名'],
+  keywords: ['keywords', '关键字', '关键词', '标签'],
+  recommendedFor: ['recommendedfor', '推荐人群'],
+  suitableMajors: ['suitablemajors', '适合专业', '适用专业'],
+  deliverableTypes: ['deliverabletypes', '交付物', '成果类型'],
+  sortOrder: ['sortorder', '排序', '序号'],
+  category: ['category', '分类'],
+  url: ['url', '链接'],
+  sourceType: ['sourcetype', '来源类型'],
+  year: ['year', '年份'],
+}
+
 const loadingPermissions = ref(true)
 const loadingConfig = ref(false)
 const loadingTasks = ref(false)
@@ -63,6 +173,7 @@ const manualAddingKey = ref('')
 const patchingTaskId = ref('')
 const previewTaskId = ref('')
 const runningTaskId = ref('')
+const inspectingTaskId = ref('')
 
 const createDialogVisible = ref(false)
 const configDialogVisible = ref(false)
@@ -78,6 +189,7 @@ const adminOverview = ref<FeishuAdminOverview | null>(null)
 const tasks = ref<FeishuBitableTask[]>([])
 const runs = ref<FeishuBitableSyncRun[]>([])
 const taskDetail = ref<FeishuBitableTaskDetail | null>(null)
+const inspectedFields = ref<FeishuFieldInspectionItem[]>([])
 const taskActionMessages = reactive<Record<string, string>>({})
 
 const taskColumns = [
@@ -153,24 +265,88 @@ const configForm = reactive({
 const createTaskForm = reactive({
   name: '',
   targetType: 'contest' as FeishuBitableTaskTargetType,
+  sourceInput: '',
+  sourceKeyword: '',
+  appName: '',
   appToken: '',
+  tableName: '',
   tableId: '',
+  viewName: '',
   viewId: '',
+  sourceUrl: '',
   isActive: true,
   mappingText: DEFAULT_MAPPING_TEXT,
   optionsText: DEFAULT_OPTIONS_TEXT,
+  writebackText: DEFAULT_WRITEBACK_TEXT,
 })
 
 const editTaskForm = reactive({
   id: '',
   name: '',
   targetType: 'contest' as FeishuBitableTaskTargetType,
+  sourceInput: '',
+  sourceKeyword: '',
+  appName: '',
   appToken: '',
+  tableName: '',
   tableId: '',
+  viewName: '',
   viewId: '',
+  sourceUrl: '',
   isActive: true,
   mappingText: '{}',
   optionsText: '{}',
+  writebackText: '{}',
+})
+
+const sourceSearchLoading = reactive<Record<TaskFormMode, boolean>>({
+  create: false,
+  edit: false,
+})
+
+const sourceResolveLoading = reactive<Record<TaskFormMode, boolean>>({
+  create: false,
+  edit: false,
+})
+
+const sourceViewsLoading = reactive<Record<TaskFormMode, boolean>>({
+  create: false,
+  edit: false,
+})
+
+const sourceApps = reactive<Record<TaskFormMode, FeishuBitableAppMeta[]>>({
+  create: [],
+  edit: [],
+})
+
+const sourceTables = reactive<Record<TaskFormMode, FeishuBitableTableMeta[]>>({
+  create: [],
+  edit: [],
+})
+
+const sourceViews = reactive<Record<TaskFormMode, FeishuBitableViewMeta[]>>({
+  create: [],
+  edit: [],
+})
+
+const sourceFieldInspectLoading = reactive<Record<TaskFormMode, boolean>>({
+  create: false,
+  edit: false,
+})
+
+const sourceFieldInspectInlineError = reactive<Record<TaskFormMode, string>>({
+  create: '',
+  edit: '',
+})
+
+const mappingWizardFields = reactive<Record<TaskFormMode, FeishuFieldInspectionItem[]>>({
+  create: [],
+  edit: [],
+})
+
+const mappingWizardBindings = reactive<Record<TaskFormMode, MappingWizardBinding[]>>({
+  create: [],
+  edit: [],
 })
 
 const scheduleForm = reactive({
@@ -274,6 +450,519 @@ function parseJsonText(text: string, label: string): Record<string, unknown> {
   }
 }
 
+function getTaskForm(mode: TaskFormMode) {
+  return mode === 'create' ? createTaskForm : editTaskForm
+}
+
+function fieldSamplePreview(sampleValues: string[]): string {
+  const values = Array.isArray(sampleValues)
+    ? sampleValues.map(item => String(item || '').trim()).filter(Boolean).slice(0, 3)
+    : []
+  return values.join(' | ') || '-'
+}
+
+function fieldOverviewEmptyText(mode: TaskFormMode): string {
+  const form = getTaskForm(mode)
+  const tableId = String(form.tableId || '').trim()
+  if (!tableId)
+    return '请先选择表（tableId）后查看字段概览。'
+  return '该视图暂无可巡检字段/无权限字段。'
+}
+
+function isMappingSourceFieldInvalid(mode: TaskFormMode, sourceField: string): boolean {
+  const form = getTaskForm(mode)
+  const tableId = String(form.tableId || '').trim()
+  if (!tableId)
+    return false
+  const value = String(sourceField || '').trim()
+  if (!value)
+    return false
+  return !mappingWizardFields[mode].some(item => item.fieldName === value)
+}
+
+function resetSourceLookupState(mode: TaskFormMode) {
+  sourceApps[mode] = []
+  sourceTables[mode] = []
+  sourceViews[mode] = []
+}
+
+function syncSourceNamesFromLookup(mode: TaskFormMode) {
+  const form = getTaskForm(mode)
+  const app = sourceApps[mode].find(item => item.appToken === form.appToken)
+  const table = sourceTables[mode].find(item => item.tableId === form.tableId)
+  const view = sourceViews[mode].find(item => item.viewId === form.viewId)
+  if (app)
+    form.appName = app.name
+  if (table)
+    form.tableName = table.name
+  if (view)
+    form.viewName = view.name
+}
+
+function buildTaskSourceConfig(form: typeof createTaskForm | typeof editTaskForm): FeishuBitableSourceConfig {
+  return {
+    appToken: String(form.appToken || '').trim(),
+    tableId: String(form.tableId || '').trim(),
+    viewId: String(form.viewId || '').trim(),
+    appName: String(form.appName || '').trim(),
+    tableName: String(form.tableName || '').trim(),
+    viewName: String(form.viewName || '').trim(),
+    sourceUrl: String(form.sourceUrl || '').trim(),
+  }
+}
+
+async function searchBitableSources(mode: TaskFormMode) {
+  if (!canManageBitable.value)
+    return
+
+  const form = getTaskForm(mode)
+  const keyword = String(form.sourceKeyword || '').trim()
+  sourceSearchLoading[mode] = true
+  try {
+    const response = await $fetch<ApiResponse<FeishuBitableAppMeta[]>>(endpoint('/admin/integrations/feishu/bitable/sources/search'), {
+      query: {
+        keyword,
+        limit: 30,
+      },
+    })
+    sourceApps[mode] = response.data || []
+    syncSourceNamesFromLookup(mode)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '检索飞书多维应用失败。'))
+  }
+  finally {
+    sourceSearchLoading[mode] = false
+  }
+}
+
+async function resolveBitableSourceInput(mode: TaskFormMode) {
+  if (!canManageBitable.value)
+    return
+
+  const form = getTaskForm(mode)
+  const sourceInput = String(form.sourceInput || '').trim()
+  if (!sourceInput) {
+    setError('请先粘贴飞书多维链接或 appToken/tableId 信息。')
+    return
+  }
+
+  sourceResolveLoading[mode] = true
+  try {
+    const response = await $fetch<ApiResponse<FeishuBitableSourceConfig>>(endpoint('/admin/integrations/feishu/bitable/sources/resolve'), {
+      method: 'POST',
+      body: {
+        input: sourceInput,
+      },
+    })
+    const source = response.data
+    form.appToken = source.appToken || ''
+    form.tableId = source.tableId || ''
+    form.viewId = source.viewId || ''
+    if (source.sourceUrl)
+      form.sourceUrl = source.sourceUrl
+    syncSourceNamesFromLookup(mode)
+    await inspectSourceFieldsForWizard(mode, { fromAuto: true })
+    setSuccess('已解析飞书来源信息。')
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '来源解析失败。'))
+  }
+  finally {
+    sourceResolveLoading[mode] = false
+  }
+}
+
+async function loadBitableTablesAndViews(mode: TaskFormMode) {
+  if (!canManageBitable.value)
+    return
+
+  const form = getTaskForm(mode)
+  const appToken = String(form.appToken || '').trim()
+  const tableId = String(form.tableId || '').trim()
+  if (!appToken || !tableId) {
+    setError('请先填写 appToken 与 tableId，再加载表和视图列表。')
+    return
+  }
+
+  sourceViewsLoading[mode] = true
+  try {
+    const response = await $fetch<ApiResponse<SourceViewsPayload>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`))
+    sourceTables[mode] = response.data.tables || []
+    sourceViews[mode] = response.data.views || []
+    syncSourceNamesFromLookup(mode)
+    setSuccess(`已加载 ${sourceTables[mode].length} 个表、${sourceViews[mode].length} 个视图。`)
+  }
+  catch (error: any) {
+    sourceTables[mode] = []
+    sourceViews[mode] = []
+    setError(String(error?.data?.message || '加载表/视图失败。'))
+  }
+  finally {
+    sourceViewsLoading[mode] = false
+  }
+}
+
+function onAppTokenChanged(mode: TaskFormMode) {
+  const form = getTaskForm(mode)
+  const selected = sourceApps[mode].find(item => item.appToken === form.appToken)
+  form.appName = selected?.name || ''
+  void inspectSourceFieldsForWizard(mode, { fromAuto: true })
+}
+
+function onTableIdChanged(mode: TaskFormMode) {
+  const form = getTaskForm(mode)
+  const selected = sourceTables[mode].find(item => item.tableId === form.tableId)
+  form.tableName = selected?.name || ''
+  void inspectSourceFieldsForWizard(mode, { fromAuto: true })
+}
+
+function onViewIdChanged(mode: TaskFormMode) {
+  const form = getTaskForm(mode)
+  const selected = sourceViews[mode].find(item => item.viewId === form.viewId)
+  form.viewName = selected?.name || ''
+  void inspectSourceFieldsForWizard(mode, { fromAuto: true })
+}
+
+function normalizeKey(text: string): string {
+  return String(text || '').trim().toLowerCase().replace(/[\s_\-]/g, '')
+}
+
+function getMappingOptionsByMode(mode: TaskFormMode): MappingOption[] {
+  const form = getTaskForm(mode)
+  return MAPPING_OPTIONS[form.targetType] || []
+}
+
+function addMappingWizardBinding(mode: TaskFormMode, preset?: Partial<MappingWizardBinding>) {
+  mappingWizardBindings[mode].push({
+    targetKey: String(preset?.targetKey || '').trim(),
+    sourceField: String(preset?.sourceField || '').trim(),
+    transform: String(preset?.transform || '').trim(),
+  })
+}
+
+function removeMappingWizardBinding(mode: TaskFormMode, index: number) {
+  if (index < 0 || index >= mappingWizardBindings[mode].length)
+    return
+  mappingWizardBindings[mode].splice(index, 1)
+}
+
+function pickMappingFromRaw(raw: Record<string, unknown>): {
+  schemaVersion: number
+  fieldMap: Record<string, string>
+  computedMap: Record<string, string>
+  externalIdField: string
+  contestExternalIdField: string
+  trackExternalIdField: string
+} {
+  const schemaVersion = Number(raw.schemaVersion || 0)
+  const fieldMap: Record<string, string> = {}
+  const computedMap: Record<string, string> = {}
+  let externalIdField = String(raw.externalIdField || '').trim()
+  let contestExternalIdField = String(raw.contestExternalIdField || '').trim()
+  let trackExternalIdField = String(raw.trackExternalIdField || '').trim()
+
+  if (schemaVersion === 2 && Array.isArray(raw.layers)) {
+    const match = (raw.match && typeof raw.match === 'object' && !Array.isArray(raw.match))
+      ? raw.match as Record<string, unknown>
+      : {}
+    externalIdField = String(match.externalIdField || externalIdField || '').trim()
+    contestExternalIdField = String(match.contestExternalIdField || contestExternalIdField || '').trim()
+    trackExternalIdField = String(match.trackExternalIdField || trackExternalIdField || '').trim()
+
+    for (const layerRaw of raw.layers) {
+      if (!layerRaw || typeof layerRaw !== 'object' || Array.isArray(layerRaw))
+        continue
+      const layer = layerRaw as Record<string, unknown>
+      if (layer.enabled === false)
+        continue
+      const scopeType = String(layer.scopeType || 'global').trim()
+      if (scopeType !== 'global')
+        continue
+      const layerFieldMap = (layer.fieldMap && typeof layer.fieldMap === 'object' && !Array.isArray(layer.fieldMap))
+        ? layer.fieldMap as Record<string, unknown>
+        : {}
+      for (const [key, value] of Object.entries(layerFieldMap)) {
+        const fieldName = String(value || '').trim()
+        if (!fieldName)
+          continue
+        fieldMap[key] = fieldName
+      }
+      const fieldBindings = Array.isArray(layer.fieldBindings) ? layer.fieldBindings : []
+      for (const item of fieldBindings) {
+        if (!item || typeof item !== 'object' || Array.isArray(item))
+          continue
+        const binding = item as Record<string, unknown>
+        const key = String(binding.key || '').trim()
+        const sourceField = String(binding.sourceField || '').trim()
+        const transform = String(binding.transform || '').trim()
+        if (key && sourceField)
+          fieldMap[key] = sourceField
+        if (key && transform)
+          computedMap[key] = transform
+      }
+    }
+  }
+  else {
+    const rawFieldMap = (raw.fieldMap && typeof raw.fieldMap === 'object' && !Array.isArray(raw.fieldMap))
+      ? raw.fieldMap as Record<string, unknown>
+      : {}
+    const rawComputedMap = (raw.computedMap && typeof raw.computedMap === 'object' && !Array.isArray(raw.computedMap))
+      ? raw.computedMap as Record<string, unknown>
+      : {}
+    for (const [key, value] of Object.entries(rawFieldMap)) {
+      const fieldName = String(value || '').trim()
+      if (!fieldName)
+        continue
+      fieldMap[key] = fieldName
+    }
+    for (const [key, value] of Object.entries(rawComputedMap)) {
+      const transform = String(value || '').trim()
+      if (!transform)
+        continue
+      computedMap[key] = transform
+    }
+  }
+
+  return {
+    schemaVersion,
+    fieldMap,
+    computedMap,
+    externalIdField,
+    contestExternalIdField,
+    trackExternalIdField,
+  }
+}
+
+function loadMappingWizardFromJson(mode: TaskFormMode) {
+  const form = getTaskForm(mode)
+  let mapping: Record<string, unknown>
+  try {
+    mapping = parseJsonText(form.mappingText, '字段映射')
+  }
+  catch (error) {
+    setError(error instanceof Error ? error.message : '字段映射 JSON 解析失败。')
+    return
+  }
+
+  const parsed = pickMappingFromRaw(mapping)
+  const nextBindings: MappingWizardBinding[] = []
+  for (const [key, fieldName] of Object.entries(parsed.fieldMap)) {
+    nextBindings.push({
+      targetKey: key,
+      sourceField: fieldName,
+      transform: parsed.computedMap[key] || '',
+    })
+  }
+  if (parsed.externalIdField) {
+    nextBindings.push({
+      targetKey: 'externalId',
+      sourceField: parsed.externalIdField,
+      transform: parsed.computedMap.externalId || '',
+    })
+  }
+  if (parsed.contestExternalIdField) {
+    nextBindings.push({
+      targetKey: 'contestExternalId',
+      sourceField: parsed.contestExternalIdField,
+      transform: parsed.computedMap.contestExternalId || '',
+    })
+  }
+  if (parsed.trackExternalIdField) {
+    nextBindings.push({
+      targetKey: 'trackExternalId',
+      sourceField: parsed.trackExternalIdField,
+      transform: parsed.computedMap.trackExternalId || '',
+    })
+  }
+
+  const dedup = new Map<string, MappingWizardBinding>()
+  for (const item of nextBindings) {
+    const key = String(item.targetKey || '').trim()
+    if (!key)
+      continue
+    dedup.set(key, item)
+  }
+  mappingWizardBindings[mode] = [...dedup.values()]
+  setSuccess('已根据 JSON 同步映射向导。')
+}
+
+function applyMappingWizardToJson(mode: TaskFormMode) {
+  const form = getTaskForm(mode)
+  let mapping: Record<string, unknown>
+  try {
+    mapping = parseJsonText(form.mappingText, '字段映射')
+  }
+  catch (error) {
+    setError(error instanceof Error ? error.message : '字段映射 JSON 解析失败。')
+    return
+  }
+
+  const fieldMap: Record<string, string> = {}
+  const computedMap: Record<string, string> = {}
+  let externalIdField = ''
+  let contestExternalIdField = ''
+  let trackExternalIdField = ''
+
+  for (const item of mappingWizardBindings[mode]) {
+    const key = String(item.targetKey || '').trim()
+    const sourceField = String(item.sourceField || '').trim()
+    const transform = String(item.transform || '').trim()
+    if (!key || !sourceField)
+      continue
+
+    if (key === 'externalId')
+      externalIdField = sourceField
+    else if (key === 'contestExternalId')
+      contestExternalIdField = sourceField
+    else if (key === 'trackExternalId')
+      trackExternalIdField = sourceField
+    else
+      fieldMap[key] = sourceField
+
+    if (transform)
+      computedMap[key] = transform
+  }
+
+  const schemaVersion = Number(mapping.schemaVersion || 0)
+  if (schemaVersion === 2 && Array.isArray(mapping.layers)) {
+    const source = {
+      ...mapping,
+    }
+    const layers = Array.isArray(source.layers) ? [...source.layers] : []
+    const restLayers = layers.filter((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item))
+        return true
+      return String((item as Record<string, unknown>).id || '') !== 'wizard_global'
+    })
+    const fieldBindings = Object.entries(computedMap).map(([key, transform]) => ({
+      key,
+      targetPath: key,
+      sourceField: fieldMap[key] || (key === 'externalId'
+        ? externalIdField
+        : key === 'contestExternalId'
+          ? contestExternalIdField
+          : key === 'trackExternalId'
+            ? trackExternalIdField
+            : ''),
+      transform,
+    }))
+    const hasWizardContent = Object.keys(fieldMap).length > 0
+      || fieldBindings.length > 0
+      || Boolean(externalIdField || contestExternalIdField || trackExternalIdField)
+    if (hasWizardContent) {
+      restLayers.push({
+        id: 'wizard_global',
+        scopeType: 'global',
+        scopeValue: '*',
+        priority: 0,
+        enabled: true,
+        fieldMap,
+        fieldBindings,
+        defaults: {},
+      })
+    }
+    source.match = {
+      ...(source.match && typeof source.match === 'object' && !Array.isArray(source.match) ? source.match : {}),
+      externalIdField,
+      contestExternalIdField,
+      trackExternalIdField,
+    }
+    source.layers = restLayers
+    form.mappingText = JSON.stringify(source, null, 2)
+  }
+  else {
+    const source = {
+      ...mapping,
+      externalIdField,
+      contestExternalIdField,
+      trackExternalIdField,
+      fieldMap,
+      computedMap,
+    }
+    form.mappingText = JSON.stringify(source, null, 2)
+  }
+
+  setSuccess('已将映射向导内容写回 JSON。')
+}
+
+function guessFieldNameByTarget(targetKey: string, fields: FeishuFieldInspectionItem[]): string {
+  const aliases = MAPPING_GUESS_ALIASES[targetKey] || [targetKey]
+  const normalizedAliases = aliases.map(alias => normalizeKey(alias))
+  for (const item of fields) {
+    const fieldName = String(item.fieldName || '').trim()
+    if (!fieldName)
+      continue
+    const normalizedField = normalizeKey(fieldName)
+    if (normalizedAliases.includes(normalizedField))
+      return fieldName
+    if (normalizedAliases.some(alias => normalizedField.includes(alias) || alias.includes(normalizedField)))
+      return fieldName
+  }
+  return ''
+}
+
+function autoFillMappingWizardBindings(mode: TaskFormMode) {
+  const existing = new Map(mappingWizardBindings[mode].map(item => [item.targetKey, item]))
+  const fields = mappingWizardFields[mode]
+  for (const option of getMappingOptionsByMode(mode)) {
+    if (existing.has(option.key))
+      continue
+    const guessedField = guessFieldNameByTarget(option.key, fields)
+    if (!guessedField)
+      continue
+    existing.set(option.key, {
+      targetKey: option.key,
+      sourceField: guessedField,
+      transform: '',
+    })
+  }
+  mappingWizardBindings[mode] = [...existing.values()]
+}
+
+async function inspectSourceFieldsForWizard(mode: TaskFormMode, options: { fromAuto?: boolean } = {}) {
+  const fromAuto = Boolean(options.fromAuto)
+  const form = getTaskForm(mode)
+  const appToken = String(form.appToken || '').trim()
+  const tableId = String(form.tableId || '').trim()
+  sourceFieldInspectInlineError[mode] = ''
+  if (!appToken || !tableId) {
+    mappingWizardFields[mode] = []
+    if (!fromAuto)
+      setError('请先填写 appToken 与 tableId，再执行字段巡检。')
+    return
+  }
+
+  const previousFields = [...mappingWizardFields[mode]]
+  sourceFieldInspectLoading[mode] = true
+  try {
+    const response = await $fetch<ApiResponse<FeishuFieldInspectionItem[]>>(endpoint('/admin/integrations/feishu/bitable/sources/inspect-fields'), {
+      method: 'POST',
+      body: {
+        appToken,
+        tableId,
+        viewId: String(form.viewId || '').trim(),
+        sampleRecords: 120,
+      },
+    })
+    mappingWizardFields[mode] = response.data || []
+    autoFillMappingWizardBindings(mode)
+    if (!fromAuto)
+      setSuccess(`已巡检 ${mappingWizardFields[mode].length} 个字段。`)
+  }
+  catch (error: any) {
+    const message = String(error?.data?.message || '来源字段巡检失败。')
+    sourceFieldInspectInlineError[mode] = message
+    if (!previousFields.length)
+      mappingWizardFields[mode] = []
+    if (!fromAuto)
+      setError(message)
+  }
+  finally {
+    sourceFieldInspectLoading[mode] = false
+  }
+}
+
 function targetTypeLabel(targetType: FeishuBitableTaskTargetType): string {
   if (targetType === 'contest')
     return '竞赛'
@@ -312,6 +1001,12 @@ function triggerSourceLabel(source: FeishuBitableSyncRun['triggerSource']): stri
   return source
 }
 
+function runModeLabel(run: FeishuBitableSyncRun): string {
+  if (run.mode === 'delta')
+    return `增量(${Number(run.deltaRecordCount || 0)})`
+  return '全量'
+}
+
 function issueStatusLabel(status: FeishuSyncIssue['status']): string {
   if (status === 'open')
     return '待处理'
@@ -344,6 +1039,14 @@ function scheduleSummary(task: FeishuBitableTask): string {
     return `间隔 ${task.schedule.intervalMinutes || '-'} 分钟`
 
   return `Cron ${task.schedule.cronExpr || '-'}`
+}
+
+function writebackSummary(task: FeishuBitableTask): string {
+  const writeback = task.writeback
+  if (!writeback || writeback.enabled === false)
+    return '未启用'
+  const fieldCount = Object.values(writeback.fields || {}).filter(value => String(value || '').trim().length > 0).length
+  return `已启用（配置字段 ${fieldCount}）`
 }
 
 function latestRunSummary(task: FeishuBitableTask): string {
@@ -520,10 +1223,34 @@ async function loadTaskDetail(taskId: string) {
   }
   catch (error: any) {
     taskDetail.value = null
+    inspectedFields.value = []
     setError(String(error?.data?.message || '任务详情加载失败。'))
   }
   finally {
     loadingTaskDetail.value = false
+  }
+}
+
+async function inspectTaskFields(taskId: string, sampleRecords = 120) {
+  if (!taskId)
+    return
+
+  inspectingTaskId.value = taskId
+  try {
+    const response = await $fetch<ApiResponse<FeishuFieldInspectionItem[]>>(endpoint(`/admin/integrations/feishu/bitable-tasks/${encodeURIComponent(taskId)}/inspect-fields`), {
+      method: 'POST',
+      body: {
+        sampleRecords,
+      },
+    })
+    inspectedFields.value = response.data || []
+  }
+  catch (error: any) {
+    inspectedFields.value = []
+    setError(String(error?.data?.message || '字段巡检失败。'))
+  }
+  finally {
+    inspectingTaskId.value = ''
   }
 }
 
@@ -538,6 +1265,7 @@ async function maybeRefreshOpenedTaskDetail(taskId: string) {
   if (!detailDrawerVisible.value || !taskDetail.value || taskDetail.value.id !== taskId)
     return
   await loadTaskDetail(taskId)
+  await inspectTaskFields(taskId)
 }
 
 async function initializePage() {
@@ -605,16 +1333,28 @@ async function saveConfig() {
 function resetCreateTaskForm() {
   createTaskForm.name = ''
   createTaskForm.targetType = 'contest'
+  createTaskForm.sourceInput = ''
+  createTaskForm.sourceKeyword = ''
+  createTaskForm.appName = ''
   createTaskForm.appToken = ''
+  createTaskForm.tableName = ''
   createTaskForm.tableId = ''
+  createTaskForm.viewName = ''
   createTaskForm.viewId = ''
+  createTaskForm.sourceUrl = ''
   createTaskForm.isActive = true
   createTaskForm.mappingText = DEFAULT_MAPPING_TEXT
   createTaskForm.optionsText = DEFAULT_OPTIONS_TEXT
+  createTaskForm.writebackText = DEFAULT_WRITEBACK_TEXT
+  resetSourceLookupState('create')
+  sourceFieldInspectInlineError.create = ''
+  mappingWizardFields.create = []
+  mappingWizardBindings.create = []
 }
 
 function openCreateTaskDialog() {
   resetCreateTaskForm()
+  loadMappingWizardFromJson('create')
   createDialogVisible.value = true
 }
 
@@ -642,9 +1382,11 @@ async function createTask() {
 
   let mapping: Record<string, unknown>
   let options: Record<string, unknown>
+  let writeback: FeishuBitableWritebackConfig
   try {
     mapping = parseJsonText(createTaskForm.mappingText, '字段映射')
     options = parseJsonText(createTaskForm.optionsText, '同步选项')
+    writeback = parseJsonText(createTaskForm.writebackText, '状态回填配置') as FeishuBitableWritebackConfig
   }
   catch (error) {
     setError(error instanceof Error ? error.message : '任务参数解析失败。')
@@ -661,6 +1403,8 @@ async function createTask() {
         appToken,
         tableId,
         viewId: createTaskForm.viewId.trim(),
+        source: buildTaskSourceConfig(createTaskForm),
+        writeback,
         isActive: createTaskForm.isActive,
         mapping,
         options,
@@ -682,12 +1426,42 @@ function openEditTaskDialog(task: FeishuBitableTask) {
   editTaskForm.id = task.id
   editTaskForm.name = task.name
   editTaskForm.targetType = task.targetType
+  editTaskForm.sourceInput = task.source?.sourceUrl || ''
+  editTaskForm.sourceKeyword = ''
+  editTaskForm.appName = task.source?.appName || ''
   editTaskForm.appToken = task.appToken
+  editTaskForm.tableName = task.source?.tableName || ''
   editTaskForm.tableId = task.tableId
+  editTaskForm.viewName = task.source?.viewName || ''
   editTaskForm.viewId = task.viewId
+  editTaskForm.sourceUrl = task.source?.sourceUrl || ''
   editTaskForm.isActive = task.isActive
   editTaskForm.mappingText = JSON.stringify(task.mapping || {}, null, 2)
   editTaskForm.optionsText = JSON.stringify(task.options || {}, null, 2)
+  editTaskForm.writebackText = JSON.stringify(task.writeback || {}, null, 2)
+  resetSourceLookupState('edit')
+  if (editTaskForm.appName && editTaskForm.appToken) {
+    sourceApps.edit = [{
+      appToken: editTaskForm.appToken,
+      name: editTaskForm.appName,
+    }]
+  }
+  if (editTaskForm.tableName && editTaskForm.tableId) {
+    sourceTables.edit = [{
+      tableId: editTaskForm.tableId,
+      name: editTaskForm.tableName,
+    }]
+  }
+  if (editTaskForm.viewName && editTaskForm.viewId) {
+    sourceViews.edit = [{
+      viewId: editTaskForm.viewId,
+      name: editTaskForm.viewName,
+    }]
+  }
+  sourceFieldInspectInlineError.edit = ''
+  mappingWizardFields.edit = []
+  loadMappingWizardFromJson('edit')
+  void inspectSourceFieldsForWizard('edit', { fromAuto: true })
   editDialogVisible.value = true
 }
 
@@ -698,9 +1472,11 @@ async function submitEditTask() {
   clearFeedback()
   let mapping: Record<string, unknown>
   let options: Record<string, unknown>
+  let writeback: FeishuBitableWritebackConfig
   try {
     mapping = parseJsonText(editTaskForm.mappingText, '字段映射')
     options = parseJsonText(editTaskForm.optionsText, '同步选项')
+    writeback = parseJsonText(editTaskForm.writebackText, '状态回填配置') as FeishuBitableWritebackConfig
   }
   catch (error) {
     setError(error instanceof Error ? error.message : '任务参数解析失败。')
@@ -717,6 +1493,8 @@ async function submitEditTask() {
         appToken: editTaskForm.appToken.trim(),
         tableId: editTaskForm.tableId.trim(),
         viewId: editTaskForm.viewId.trim(),
+        source: buildTaskSourceConfig(editTaskForm),
+        writeback,
         isActive: editTaskForm.isActive,
         mapping,
         options,
@@ -793,6 +1571,7 @@ async function submitScheduleDialog() {
 async function openTaskDetail(task: FeishuBitableTask) {
   detailDrawerVisible.value = true
   await loadTaskDetail(task.id)
+  await inspectTaskFields(task.id)
 }
 
 async function toggleTaskActive(task: FeishuBitableTask) {
@@ -830,12 +1609,14 @@ async function previewTask(task: FeishuBitableTask) {
       updatedCount: number
       skippedCount: number
       errorCount: number
+      writebackSuccessCount?: number
+      writebackErrorCount?: number
     }>>(endpoint(`/admin/integrations/feishu/bitable-tasks/${encodeURIComponent(task.id)}/preview`), {
       method: 'POST',
     })
 
     const payload = response.data
-    taskActionMessages[task.id] = `预检：抓取 ${payload.fetchedCount}，可新增 ${payload.createdCount}，可更新 ${payload.updatedCount}，跳过 ${payload.skippedCount}，错误 ${payload.errorCount}`
+    taskActionMessages[task.id] = `预检：抓取 ${payload.fetchedCount}，可新增 ${payload.createdCount}，可更新 ${payload.updatedCount}，跳过 ${payload.skippedCount}，错误 ${payload.errorCount}，回填成功 ${Number(payload.writebackSuccessCount || 0)}，回填失败 ${Number(payload.writebackErrorCount || 0)}`
     await maybeRefreshOpenedTaskDetail(task.id)
     setSuccess('任务预检完成。')
   }
@@ -858,12 +1639,14 @@ async function runTask(task: FeishuBitableTask) {
       updatedCount: number
       skippedCount: number
       errorCount: number
+      writebackSuccessCount?: number
+      writebackErrorCount?: number
     }>>(endpoint(`/admin/integrations/feishu/bitable-tasks/${encodeURIComponent(task.id)}/run`), {
       method: 'POST',
     })
 
     const payload = response.data
-    taskActionMessages[task.id] = `执行(${payload.status})：抓取 ${payload.fetchedCount}，新增 ${payload.createdCount}，更新 ${payload.updatedCount}，跳过 ${payload.skippedCount}，错误 ${payload.errorCount}`
+    taskActionMessages[task.id] = `执行(${payload.status})：抓取 ${payload.fetchedCount}，新增 ${payload.createdCount}，更新 ${payload.updatedCount}，跳过 ${payload.skippedCount}，错误 ${payload.errorCount}，回填成功 ${Number(payload.writebackSuccessCount || 0)}，回填失败 ${Number(payload.writebackErrorCount || 0)}`
 
     await Promise.all([
       loadTasks(),
@@ -1008,10 +1791,13 @@ onMounted(initializePage)
 
             <template #source="{ record }">
               <p class="text-[10px] text-slate-600 font-mono m-0">
-                {{ record.appToken }}
+                {{ record.source?.appName || record.appToken }}
               </p>
               <p class="text-[10px] text-slate-500 font-mono m-0 mt-1">
-                {{ record.tableId }} {{ record.viewId ? ` / ${record.viewId}` : '' }}
+                {{ record.source?.tableName || record.tableId }} {{ (record.source?.viewName || record.viewId) ? ` / ${record.source?.viewName || record.viewId}` : '' }}
+              </p>
+              <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                {{ record.appToken }} / {{ record.tableId }}{{ record.viewId ? ` / ${record.viewId}` : '' }}
               </p>
             </template>
 
@@ -1100,6 +1886,7 @@ onMounted(initializePage)
               </template>
 
               <template #stats="{ record }">
+                {{ runModeLabel(record) }} /
                 抓取 {{ record.fetchedCount }} /
                 新增 {{ record.createdCount }} /
                 更新 {{ record.updatedCount }} /
@@ -1301,13 +2088,13 @@ onMounted(initializePage)
       </div>
     </a-drawer>
 
-    <a-modal
+    <a-drawer
       v-model:visible="createDialogVisible"
       title="新建 Bitable 任务"
-      :footer="false"
       :mask-closable="!creatingTask"
       :closable="!creatingTask"
-      class="max-w-[920px]"
+      :esc-to-close="!creatingTask"
+      width="980px"
     >
       <div class="space-y-2">
         <div class="gap-2 grid md:grid-cols-2 xl:grid-cols-3">
@@ -1335,18 +2122,144 @@ onMounted(initializePage)
               <a-switch v-model="createTaskForm.isActive" />
             </div>
           </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            来源辅助检索（可选）
+            <div class="mt-1 flex gap-2">
+              <a-input v-model="createTaskForm.sourceKeyword" allow-clear size="small" placeholder="输入多维库名称或 appToken（仅辅助）" />
+              <a-button size="small" :loading="sourceSearchLoading.create" @click="searchBitableSources('create')">
+                搜索
+              </a-button>
+            </div>
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            多维库候选（可选）
+            <a-select
+              v-model="createTaskForm.appToken"
+              class="mt-1"
+              allow-search
+              allow-clear
+              size="small"
+              placeholder="可选：从检索结果选择 appToken"
+              @change="onAppTokenChanged('create')"
+            >
+              <a-option v-for="item in sourceApps.create" :key="item.appToken" :value="item.appToken">
+                {{ item.name }} ({{ item.appToken }})
+              </a-option>
+            </a-select>
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            粘贴来源链接 / 标识自动解析
+            <div class="mt-1 flex gap-2">
+              <a-input v-model="createTaskForm.sourceInput" allow-clear size="small" placeholder="支持 URL 或 appToken/tableId/viewId 文本" />
+              <a-button size="small" :loading="sourceResolveLoading.create" @click="resolveBitableSourceInput('create')">
+                解析
+              </a-button>
+            </div>
+          </label>
           <label class="text-[10px] text-slate-600 font-medium block">
             App Token
-            <a-input v-model="createTaskForm.appToken" class="mt-1" allow-clear size="small" />
+            <a-input v-model="createTaskForm.appToken" class="mt-1" allow-clear size="small" @blur="onAppTokenChanged('create')" />
           </label>
           <label class="text-[10px] text-slate-600 font-medium block">
             Table ID
-            <a-input v-model="createTaskForm.tableId" class="mt-1" allow-clear size="small" />
+            <a-input v-model="createTaskForm.tableId" class="mt-1" allow-clear size="small" @blur="onTableIdChanged('create')" />
           </label>
           <label class="text-[10px] text-slate-600 font-medium block">
             View ID
-            <a-input v-model="createTaskForm.viewId" class="mt-1" allow-clear size="small" />
+            <a-input v-model="createTaskForm.viewId" class="mt-1" allow-clear size="small" @blur="onViewIdChanged('create')" />
           </label>
+          <p class="m-0 text-[10px] text-slate-500 md:col-span-2 xl:col-span-3">
+            说明：这里的 `appToken/tableId/viewId` 是“飞书多维库/表/视图”标识，不是飞书开放平台配置里的 `appId/appSecret`。
+          </p>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            表/视图候选（需先填 appToken + tableId）
+            <div class="mt-1 flex gap-2">
+              <a-button size="small" :loading="sourceViewsLoading.create" @click="loadBitableTablesAndViews('create')">
+                加载表和视图
+              </a-button>
+              <a-select
+                v-model="createTaskForm.tableId"
+                class="flex-1"
+                allow-search
+                allow-clear
+                size="small"
+                placeholder="可选：从候选中选择 table"
+                @change="onTableIdChanged('create')"
+              >
+                <a-option v-for="item in sourceTables.create" :key="item.tableId" :value="item.tableId">
+                  {{ item.name }} ({{ item.tableId }})
+                </a-option>
+              </a-select>
+              <a-select
+                v-model="createTaskForm.viewId"
+                class="flex-1"
+                allow-search
+                allow-clear
+                size="small"
+                placeholder="可选：从候选中选择 view"
+                @change="onViewIdChanged('create')"
+              >
+                <a-option v-for="item in sourceViews.create" :key="item.viewId" :value="item.viewId">
+                  {{ item.name }} ({{ item.viewId }})
+                </a-option>
+              </a-select>
+            </div>
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block">
+            App 名称（可选）
+            <a-input v-model="createTaskForm.appName" class="mt-1" allow-clear size="small" />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block">
+            Table 名称（可选）
+            <a-input v-model="createTaskForm.tableName" class="mt-1" allow-clear size="small" />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block">
+            View 名称（可选）
+            <a-input v-model="createTaskForm.viewName" class="mt-1" allow-clear size="small" />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            来源 URL（可选）
+            <a-input v-model="createTaskForm.sourceUrl" class="mt-1" allow-clear size="small" />
+          </label>
+          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-slate-700">字段概览</span>
+              <span class="text-slate-500">字段总数：{{ mappingWizardFields.create.length }}</span>
+            </div>
+            <p v-if="sourceFieldInspectLoading.create" class="m-0 text-slate-500">
+              字段巡检中...
+            </p>
+            <p v-if="sourceFieldInspectInlineError.create" class="m-0 text-rose-600 break-all">
+              {{ sourceFieldInspectInlineError.create }}
+            </p>
+            <p
+              v-if="sourceFieldInspectInlineError.create && mappingWizardFields.create.length"
+              class="m-0 text-[10px] text-amber-600"
+            >
+              当前展示上次成功巡检结果，请修复后重试。
+            </p>
+            <p
+              v-if="!sourceFieldInspectLoading.create && !sourceFieldInspectInlineError.create && !mappingWizardFields.create.length"
+              class="m-0 text-slate-500"
+            >
+              {{ fieldOverviewEmptyText('create') }}
+            </p>
+            <div v-if="mappingWizardFields.create.length" class="max-h-[180px] overflow-auto space-y-1">
+              <div
+                v-for="field in mappingWizardFields.create"
+                :key="`create-field-${field.fieldName}`"
+                class="p-2 border border-slate-200 bg-white"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-1">
+                  <span class="text-slate-900 font-medium break-all">{{ field.fieldName }}</span>
+                  <span class="text-slate-500">样本命中 {{ field.sampleCount }}</span>
+                </div>
+                <p class="m-0 mt-1 text-slate-500 break-all">
+                  样本：{{ fieldSamplePreview(field.sampleValues) }}
+                </p>
+              </div>
+            </div>
+          </div>
           <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
             字段映射 JSON
             <a-textarea
@@ -1355,10 +2268,69 @@ onMounted(initializePage)
               :auto-size="{ minRows: 6, maxRows: 12 }"
             />
           </label>
+          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span>字段映射向导（可选）</span>
+              <div class="flex flex-wrap gap-2">
+                <a-button size="mini" :loading="sourceFieldInspectLoading.create" @click="inspectSourceFieldsForWizard('create')">
+                  巡检字段
+                </a-button>
+                <a-button size="mini" @click="loadMappingWizardFromJson('create')">
+                  从 JSON 读取
+                </a-button>
+                <a-button size="mini" type="primary" @click="applyMappingWizardToJson('create')">
+                  写回 JSON
+                </a-button>
+              </div>
+            </div>
+            <p class="m-0 text-slate-500">
+              解析或切换来源后会自动刷新候选，必要时可手动“巡检字段”重试。
+            </p>
+            <div class="space-y-2">
+              <div v-for="(item, index) in mappingWizardBindings.create" :key="`create-${index}`" class="p-2 border border-slate-200 bg-white space-y-2">
+                <div class="grid md:grid-cols-[180px,1fr,1fr,70px] gap-2 items-center">
+                  <a-select v-model="item.targetKey" allow-search size="small" placeholder="目标字段">
+                    <a-option v-for="option in getMappingOptionsByMode('create')" :key="option.key" :value="option.key">
+                      {{ option.label }}
+                    </a-option>
+                  </a-select>
+                  <a-select v-model="item.sourceField" allow-search allow-create size="small" placeholder="来源字段">
+                    <a-option v-for="field in mappingWizardFields.create" :key="field.fieldName" :value="field.fieldName">
+                      {{ field.fieldName }}
+                    </a-option>
+                  </a-select>
+                  <a-input v-model="item.transform" allow-clear size="small" placeholder="可选：jsonata transform" />
+                  <a-button size="mini" status="danger" @click="removeMappingWizardBinding('create', index)">
+                    删除
+                  </a-button>
+                </div>
+                <p
+                  v-if="item.sourceField"
+                  class="m-0 text-slate-500 break-all"
+                >
+                  样本：{{ fieldSamplePreview(mappingWizardFields.create.find(field => field.fieldName === item.sourceField)?.sampleValues || []) }}
+                </p>
+                <p v-if="isMappingSourceFieldInvalid('create', item.sourceField)" class="m-0 text-rose-600 break-all">
+                  当前来源字段不存在（已失效，请重新选择）。
+                </p>
+              </div>
+              <a-button size="mini" @click="addMappingWizardBinding('create')">
+                + 添加映射行
+              </a-button>
+            </div>
+          </div>
           <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
             同步选项 JSON
             <a-textarea
               v-model="createTaskForm.optionsText"
+              class="mt-1"
+              :auto-size="{ minRows: 6, maxRows: 12 }"
+            />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            状态回填 JSON
+            <a-textarea
+              v-model="createTaskForm.writebackText"
               class="mt-1"
               :auto-size="{ minRows: 6, maxRows: 12 }"
             />
@@ -1374,15 +2346,15 @@ onMounted(initializePage)
           </a-button>
         </div>
       </div>
-    </a-modal>
+    </a-drawer>
 
-    <a-modal
+    <a-drawer
       v-model:visible="editDialogVisible"
       title="编辑 Bitable 任务"
-      :footer="false"
       :mask-closable="!editingTask"
       :closable="!editingTask"
-      class="max-w-[920px]"
+      :esc-to-close="!editingTask"
+      width="980px"
     >
       <div class="space-y-2">
         <div class="gap-2 grid md:grid-cols-2 xl:grid-cols-3">
@@ -1410,18 +2382,144 @@ onMounted(initializePage)
               <a-switch v-model="editTaskForm.isActive" />
             </div>
           </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            来源辅助检索（可选）
+            <div class="mt-1 flex gap-2">
+              <a-input v-model="editTaskForm.sourceKeyword" allow-clear size="small" placeholder="输入多维库名称或 appToken（仅辅助）" />
+              <a-button size="small" :loading="sourceSearchLoading.edit" @click="searchBitableSources('edit')">
+                搜索
+              </a-button>
+            </div>
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            多维库候选（可选）
+            <a-select
+              v-model="editTaskForm.appToken"
+              class="mt-1"
+              allow-search
+              allow-clear
+              size="small"
+              placeholder="可选：从检索结果选择 appToken"
+              @change="onAppTokenChanged('edit')"
+            >
+              <a-option v-for="item in sourceApps.edit" :key="item.appToken" :value="item.appToken">
+                {{ item.name }} ({{ item.appToken }})
+              </a-option>
+            </a-select>
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            粘贴来源链接 / 标识自动解析
+            <div class="mt-1 flex gap-2">
+              <a-input v-model="editTaskForm.sourceInput" allow-clear size="small" placeholder="支持 URL 或 appToken/tableId/viewId 文本" />
+              <a-button size="small" :loading="sourceResolveLoading.edit" @click="resolveBitableSourceInput('edit')">
+                解析
+              </a-button>
+            </div>
+          </label>
           <label class="text-[10px] text-slate-600 font-medium block">
             App Token
-            <a-input v-model="editTaskForm.appToken" class="mt-1" allow-clear size="small" />
+            <a-input v-model="editTaskForm.appToken" class="mt-1" allow-clear size="small" @blur="onAppTokenChanged('edit')" />
           </label>
           <label class="text-[10px] text-slate-600 font-medium block">
             Table ID
-            <a-input v-model="editTaskForm.tableId" class="mt-1" allow-clear size="small" />
+            <a-input v-model="editTaskForm.tableId" class="mt-1" allow-clear size="small" @blur="onTableIdChanged('edit')" />
           </label>
           <label class="text-[10px] text-slate-600 font-medium block">
             View ID
-            <a-input v-model="editTaskForm.viewId" class="mt-1" allow-clear size="small" />
+            <a-input v-model="editTaskForm.viewId" class="mt-1" allow-clear size="small" @blur="onViewIdChanged('edit')" />
           </label>
+          <p class="m-0 text-[10px] text-slate-500 md:col-span-2 xl:col-span-3">
+            说明：这里的 `appToken/tableId/viewId` 是“飞书多维库/表/视图”标识，不是飞书开放平台配置里的 `appId/appSecret`。
+          </p>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            表/视图候选（需先填 appToken + tableId）
+            <div class="mt-1 flex gap-2">
+              <a-button size="small" :loading="sourceViewsLoading.edit" @click="loadBitableTablesAndViews('edit')">
+                加载表和视图
+              </a-button>
+              <a-select
+                v-model="editTaskForm.tableId"
+                class="flex-1"
+                allow-search
+                allow-clear
+                size="small"
+                placeholder="可选：从候选中选择 table"
+                @change="onTableIdChanged('edit')"
+              >
+                <a-option v-for="item in sourceTables.edit" :key="item.tableId" :value="item.tableId">
+                  {{ item.name }} ({{ item.tableId }})
+                </a-option>
+              </a-select>
+              <a-select
+                v-model="editTaskForm.viewId"
+                class="flex-1"
+                allow-search
+                allow-clear
+                size="small"
+                placeholder="可选：从候选中选择 view"
+                @change="onViewIdChanged('edit')"
+              >
+                <a-option v-for="item in sourceViews.edit" :key="item.viewId" :value="item.viewId">
+                  {{ item.name }} ({{ item.viewId }})
+                </a-option>
+              </a-select>
+            </div>
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block">
+            App 名称（可选）
+            <a-input v-model="editTaskForm.appName" class="mt-1" allow-clear size="small" />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block">
+            Table 名称（可选）
+            <a-input v-model="editTaskForm.tableName" class="mt-1" allow-clear size="small" />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block">
+            View 名称（可选）
+            <a-input v-model="editTaskForm.viewName" class="mt-1" allow-clear size="small" />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            来源 URL（可选）
+            <a-input v-model="editTaskForm.sourceUrl" class="mt-1" allow-clear size="small" />
+          </label>
+          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-slate-700">字段概览</span>
+              <span class="text-slate-500">字段总数：{{ mappingWizardFields.edit.length }}</span>
+            </div>
+            <p v-if="sourceFieldInspectLoading.edit" class="m-0 text-slate-500">
+              字段巡检中...
+            </p>
+            <p v-if="sourceFieldInspectInlineError.edit" class="m-0 text-rose-600 break-all">
+              {{ sourceFieldInspectInlineError.edit }}
+            </p>
+            <p
+              v-if="sourceFieldInspectInlineError.edit && mappingWizardFields.edit.length"
+              class="m-0 text-[10px] text-amber-600"
+            >
+              当前展示上次成功巡检结果，请修复后重试。
+            </p>
+            <p
+              v-if="!sourceFieldInspectLoading.edit && !sourceFieldInspectInlineError.edit && !mappingWizardFields.edit.length"
+              class="m-0 text-slate-500"
+            >
+              {{ fieldOverviewEmptyText('edit') }}
+            </p>
+            <div v-if="mappingWizardFields.edit.length" class="max-h-[180px] overflow-auto space-y-1">
+              <div
+                v-for="field in mappingWizardFields.edit"
+                :key="`edit-field-${field.fieldName}`"
+                class="p-2 border border-slate-200 bg-white"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-1">
+                  <span class="text-slate-900 font-medium break-all">{{ field.fieldName }}</span>
+                  <span class="text-slate-500">样本命中 {{ field.sampleCount }}</span>
+                </div>
+                <p class="m-0 mt-1 text-slate-500 break-all">
+                  样本：{{ fieldSamplePreview(field.sampleValues) }}
+                </p>
+              </div>
+            </div>
+          </div>
           <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
             字段映射 JSON
             <a-textarea
@@ -1430,10 +2528,69 @@ onMounted(initializePage)
               :auto-size="{ minRows: 6, maxRows: 12 }"
             />
           </label>
+          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span>字段映射向导（可选）</span>
+              <div class="flex flex-wrap gap-2">
+                <a-button size="mini" :loading="sourceFieldInspectLoading.edit" @click="inspectSourceFieldsForWizard('edit')">
+                  巡检字段
+                </a-button>
+                <a-button size="mini" @click="loadMappingWizardFromJson('edit')">
+                  从 JSON 读取
+                </a-button>
+                <a-button size="mini" type="primary" @click="applyMappingWizardToJson('edit')">
+                  写回 JSON
+                </a-button>
+              </div>
+            </div>
+            <p class="m-0 text-slate-500">
+              解析或切换来源后会自动刷新候选，对已配置任务可先“从 JSON 读取”再调整。
+            </p>
+            <div class="space-y-2">
+              <div v-for="(item, index) in mappingWizardBindings.edit" :key="`edit-${index}`" class="p-2 border border-slate-200 bg-white space-y-2">
+                <div class="grid md:grid-cols-[180px,1fr,1fr,70px] gap-2 items-center">
+                  <a-select v-model="item.targetKey" allow-search size="small" placeholder="目标字段">
+                    <a-option v-for="option in getMappingOptionsByMode('edit')" :key="option.key" :value="option.key">
+                      {{ option.label }}
+                    </a-option>
+                  </a-select>
+                  <a-select v-model="item.sourceField" allow-search allow-create size="small" placeholder="来源字段">
+                    <a-option v-for="field in mappingWizardFields.edit" :key="field.fieldName" :value="field.fieldName">
+                      {{ field.fieldName }}
+                    </a-option>
+                  </a-select>
+                  <a-input v-model="item.transform" allow-clear size="small" placeholder="可选：jsonata transform" />
+                  <a-button size="mini" status="danger" @click="removeMappingWizardBinding('edit', index)">
+                    删除
+                  </a-button>
+                </div>
+                <p
+                  v-if="item.sourceField"
+                  class="m-0 text-slate-500 break-all"
+                >
+                  样本：{{ fieldSamplePreview(mappingWizardFields.edit.find(field => field.fieldName === item.sourceField)?.sampleValues || []) }}
+                </p>
+                <p v-if="isMappingSourceFieldInvalid('edit', item.sourceField)" class="m-0 text-rose-600 break-all">
+                  当前来源字段不存在（已失效，请重新选择）。
+                </p>
+              </div>
+              <a-button size="mini" @click="addMappingWizardBinding('edit')">
+                + 添加映射行
+              </a-button>
+            </div>
+          </div>
           <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
             同步选项 JSON
             <a-textarea
               v-model="editTaskForm.optionsText"
+              class="mt-1"
+              :auto-size="{ minRows: 6, maxRows: 12 }"
+            />
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
+            状态回填 JSON
+            <a-textarea
+              v-model="editTaskForm.writebackText"
               class="mt-1"
               :auto-size="{ minRows: 6, maxRows: 12 }"
             />
@@ -1449,7 +2606,7 @@ onMounted(initializePage)
           </a-button>
         </div>
       </div>
-    </a-modal>
+    </a-drawer>
 
     <a-modal
       v-model:visible="scheduleDialogVisible"
@@ -1534,8 +2691,17 @@ onMounted(initializePage)
             <p class="text-slate-600 m-0">
               类型：{{ targetTypeLabel(taskDetail.targetType) }} / 状态：{{ taskDetail.isActive ? 'active' : 'inactive' }}
             </p>
+            <p class="text-slate-600 m-0">
+              回填配置：{{ writebackSummary(taskDetail) }}
+            </p>
             <p class="text-slate-600 font-mono m-0 break-all">
+              {{ taskDetail.source?.appName || taskDetail.appToken }} / {{ taskDetail.source?.tableName || taskDetail.tableId }}{{ (taskDetail.source?.viewName || taskDetail.viewId) ? ` / ${taskDetail.source?.viewName || taskDetail.viewId}` : '' }}
+            </p>
+            <p class="text-slate-400 font-mono m-0 break-all">
               {{ taskDetail.appToken }} / {{ taskDetail.tableId }}{{ taskDetail.viewId ? ` / ${taskDetail.viewId}` : '' }}
+            </p>
+            <p v-if="taskDetail.source?.sourceUrl" class="text-slate-500 font-mono m-0 break-all">
+              {{ taskDetail.source.sourceUrl }}
             </p>
           </section>
 
@@ -1577,6 +2743,35 @@ onMounted(initializePage)
           </section>
 
           <section class="space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-[11px] text-slate-900 font-semibold m-0">
+                字段巡检样本（{{ inspectedFields.length }}）
+              </h3>
+              <a-button size="mini" :loading="inspectingTaskId === taskDetail.id" @click="inspectTaskFields(taskDetail.id)">
+                重新巡检
+              </a-button>
+            </div>
+            <a-table
+              :columns="[
+                { title: '字段名', dataIndex: 'fieldName', width: 220 },
+                { title: '覆盖数', dataIndex: 'sampleCount', width: 90 },
+                { title: '样本值', dataIndex: 'sampleValues' },
+              ]"
+              :data="inspectedFields"
+              :pagination="false"
+              size="small"
+              row-key="fieldName"
+              :bordered="{ cell: true }"
+            >
+              <template #sampleValues="{ record }">
+                <span class="text-[10px] text-slate-600 break-all">
+                  {{ (record.sampleValues || []).join(' | ') || '-' }}
+                </span>
+              </template>
+            </a-table>
+          </section>
+
+          <section class="space-y-2">
             <h3 class="text-[11px] text-slate-900 font-semibold m-0">
               最近执行记录（{{ taskDetail.recentRuns.length }}）
             </h3>
@@ -1600,7 +2795,7 @@ onMounted(initializePage)
                 </span>
               </template>
               <template #stats="{ record }">
-                抓取 {{ record.fetchedCount }} / 新增 {{ record.createdCount }} / 更新 {{ record.updatedCount }} / 跳过 {{ record.skippedCount }} / 错误 {{ record.errorCount }}
+                {{ runModeLabel(record) }} / 抓取 {{ record.fetchedCount }} / 新增 {{ record.createdCount }} / 更新 {{ record.updatedCount }} / 跳过 {{ record.skippedCount }} / 错误 {{ record.errorCount }}
               </template>
               <template #errorMessage="{ record }">
                 <span class="text-[10px]" :class="record.errorMessage ? 'text-rose-600' : 'text-slate-400'">
