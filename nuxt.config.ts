@@ -1,8 +1,18 @@
 import { pwa } from './app/config/pwa'
 import { appDescription } from './app/constants'
-import { getEnvPriorityOrder, loadWinloopEnv, resolveEnvBoolean, resolveEnvNumber, resolveEnvValue } from './config/env'
+import {
+  getEnvPriorityOrder,
+  loadWinloopEnv,
+  resolveBuildCommitSha,
+  resolveBuildVersion,
+  resolveEnvBoolean,
+  resolveEnvNumber,
+  resolveEnvValue,
+} from './config/env'
 
 loadWinloopEnv()
+const resolvedBuildVersion = resolveBuildVersion()
+const resolvedBuildCommitSha = resolveBuildCommitSha()
 
 export default defineNuxtConfig({
   modules: [
@@ -47,8 +57,8 @@ export default defineNuxtConfig({
     },
     envPriority: getEnvPriorityOrder().join(' > '),
     build: {
-      version: resolveEnvValue('WINLOOP_BUILD_VERSION', ''),
-      commitSha: resolveEnvValue('WINLOOP_BUILD_COMMIT_SHA', ''),
+      version: resolvedBuildVersion,
+      commitSha: resolvedBuildCommitSha,
     },
     ai: {
       provider: resolveEnvValue('WINLOOP_AI_PROVIDER', 'openai-compatible'),

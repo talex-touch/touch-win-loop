@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { ApiResponse, AuthMeResult, PlatformPermission } from '~~/shared/types/domain'
+import type {
+  ApiResponse,
+  AuthMeResult,
+  FeishuIntegrationConfig,
+  PlatformPermission,
+} from '~~/shared/types/domain'
 
 definePageMeta({
   layout: 'admin',
@@ -7,9 +12,25 @@ definePageMeta({
 
 const authApiFetch = useAuthApiFetch()
 
+type BuildValueSource = 'env' | 'runtime' | 'fallback' | 'missing'
+
+interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
+  startupEffectiveVersion?: string
+  startupEffectiveCommitSha?: string
+  startupVersionSource?: BuildValueSource
+  startupCommitShaSource?: BuildValueSource
+}
+
 const loading = ref(true)
 const errorText = ref('')
+const buildInfoError = ref('')
 const permissions = ref<PlatformPermission[]>([])
+const buildInfo = ref<{
+  version: string
+  commitSha: string
+  versionSource: BuildValueSource
+  commitShaSource: BuildValueSource
+} | null>(null)
 
 const canManageContest = computed(() => {
   return permissions.value.some(item =>
@@ -23,6 +44,16 @@ const canManageIntegrations = computed(() => {
 })
 const canManageRuntimeSettings = computed(() => permissions.value.includes('contest.write'))
 
+function buildValueSourceLabel(source: BuildValueSource): string {
+  if (source === 'env')
+    return '环境变量'
+  if (source === 'runtime')
+    return '构建推导'
+  if (source === 'fallback')
+    return '集成配置兜底'
+  return '未命中'
+}
+
 const summaryRows = computed(() => {
   return [
     { label: '赛事内容管理', value: canManageContest.value ? '已授权' : '未授权', tone: canManageContest.value ? 'ok' : 'mute' },
@@ -32,12 +63,34 @@ const summaryRows = computed(() => {
   ]
 })
 
+async function loadBuildInfo() {
+  buildInfo.value = null
+  buildInfoError.value = ''
+  if (!canManageRoles.value)
+    return
+  try {
+    const response = await authApiFetch<ApiResponse<FeishuIntegrationConfigView>>('/admin/integrations/feishu/config')
+    buildInfo.value = {
+      version: String(response.data.startupEffectiveVersion || '').trim(),
+      commitSha: String(response.data.startupEffectiveCommitSha || '').trim(),
+      versionSource: response.data.startupVersionSource || 'missing',
+      commitShaSource: response.data.startupCommitShaSource || 'missing',
+    }
+  }
+  catch (error: any) {
+    buildInfoError.value = String(error?.data?.message || '构建标识加载失败。')
+  }
+}
+
 async function loadPermissions() {
   loading.value = true
   errorText.value = ''
+  buildInfo.value = null
+  buildInfoError.value = ''
   try {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     permissions.value = response.data.user.platformPermissions || []
+    await loadBuildInfo()
   }
   catch (error: any) {
     permissions.value = []
@@ -100,6 +153,27 @@ onMounted(loadPermissions)
               {{ item.value }}
             </p>
           </div>
+        </div>
+      </section>
+
+      <section class="border border-slate-200 bg-white overflow-hidden">
+        <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
+          Build Identity
+        </div>
+        <div class="p-3 space-y-1 text-[11px]">
+          <p class="m-0 text-slate-700">
+            当前生效版本：{{ buildInfo?.version || '-' }}；Commit：{{ buildInfo?.commitSha || '-' }}
+          </p>
+          <p class="m-0 text-[10px] text-slate-500">
+            版本来源：{{ buildValueSourceLabel(buildInfo?.versionSource || 'missing') }}；
+            Commit 来源：{{ buildValueSourceLabel(buildInfo?.commitShaSource || 'missing') }}
+          </p>
+          <p v-if="!canManageRoles" class="m-0 text-[10px] text-slate-400">
+            查看构建标识需要 `role.assign` 权限（读取飞书集成配置）。
+          </p>
+          <p v-if="buildInfoError" class="m-0 text-[10px] text-amber-700">
+            {{ buildInfoError }}
+          </p>
         </div>
       </section>
 

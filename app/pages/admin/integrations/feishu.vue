@@ -26,6 +26,14 @@ definePageMeta({
 })
 
 type SecretMode = 'keep' | 'replace' | 'clear'
+type BuildValueSource = 'env' | 'runtime' | 'fallback' | 'missing'
+
+interface FeishuIntegrationConfigView extends FeishuIntegrationConfig {
+  startupEffectiveVersion?: string
+  startupEffectiveCommitSha?: string
+  startupVersionSource?: BuildValueSource
+  startupCommitShaSource?: BuildValueSource
+}
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
@@ -184,7 +192,7 @@ const detailDrawerVisible = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const permissions = ref<PlatformPermission[]>([])
-const config = ref<FeishuIntegrationConfig | null>(null)
+const config = ref<FeishuIntegrationConfigView | null>(null)
 const adminOverview = ref<FeishuAdminOverview | null>(null)
 const tasks = ref<FeishuBitableTask[]>([])
 const runs = ref<FeishuBitableSyncRun[]>([])
@@ -1051,6 +1059,16 @@ function scheduleSummary(task: FeishuBitableTask): string {
   return `Cron ${task.schedule.cronExpr || '-'}`
 }
 
+function buildValueSourceLabel(source: BuildValueSource | undefined): string {
+  if (source === 'env')
+    return '环境变量'
+  if (source === 'runtime')
+    return '构建推导'
+  if (source === 'fallback')
+    return '集成配置兜底'
+  return '未命中'
+}
+
 function writebackSummary(task: FeishuBitableTask): string {
   const writeback = task.writeback
   if (!writeback || writeback.enabled === false)
@@ -1089,7 +1107,7 @@ async function loadConfig() {
 
   loadingConfig.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuIntegrationConfig>>(endpoint('/admin/integrations/feishu/config'))
+    const response = await $fetch<ApiResponse<FeishuIntegrationConfigView>>(endpoint('/admin/integrations/feishu/config'))
     config.value = response.data
     fillConfigForm(response.data)
   }
@@ -1755,6 +1773,14 @@ onMounted(initializePage)
               当前状态：{{ config?.enabled ? '已启用' : '未启用' }}，App ID：{{ config?.appId || '-' }}
             </p>
             <p class="m-0">
+              当前生效版本：{{ config?.startupEffectiveVersion || '-' }}；
+              Commit：{{ config?.startupEffectiveCommitSha || '-' }}
+            </p>
+            <p class="m-0 text-slate-500">
+              版本来源：{{ buildValueSourceLabel(config?.startupVersionSource) }}；
+              Commit 来源：{{ buildValueSourceLabel(config?.startupCommitShaSource) }}
+            </p>
+            <p class="m-0">
               App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
               Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
               Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
@@ -2006,7 +2032,7 @@ onMounted(initializePage)
               </label>
             </div>
             <p class="text-[10px] text-slate-500 m-0">
-              版本优先级：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）> 集成配置兜底值。
+              版本优先级：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）> 构建推导（git）> 集成配置兜底值。
             </p>
           </div>
 

@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
@@ -70,4 +71,59 @@ export function resolveEnvBoolean(name: string, fallback: boolean): boolean {
   if (['0', 'false', 'no', 'off'].includes(raw))
     return false
   return fallback
+}
+
+function firstNonEmpty(...values: string[]): string {
+  for (const value of values) {
+    const normalized = String(value || '').trim()
+    if (normalized)
+      return normalized
+  }
+  return ''
+}
+
+function resolveGitOutput(command: string): string {
+  try {
+    return String(execSync(command, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }) || '').trim()
+  }
+  catch {
+    return ''
+  }
+}
+
+export function resolveBuildCommitSha(): string {
+  const fromEnv = firstNonEmpty(
+    resolveEnvValue('WINLOOP_BUILD_COMMIT_SHA', ''),
+    resolveEnvValue('GITHUB_SHA', ''),
+    resolveEnvValue('CI_COMMIT_SHA', ''),
+    resolveEnvValue('GIT_COMMIT_SHA', ''),
+    resolveEnvValue('COMMIT_SHA', ''),
+  )
+  if (fromEnv)
+    return fromEnv
+
+  return resolveGitOutput('git rev-parse HEAD')
+}
+
+export function resolveBuildVersion(): string {
+  const fromEnv = firstNonEmpty(
+    resolveEnvValue('WINLOOP_BUILD_VERSION', ''),
+    resolveEnvValue('BUILD_VERSION', ''),
+  )
+  if (fromEnv)
+    return fromEnv
+
+  const described = resolveGitOutput('git describe --tags --always --dirty')
+  if (described)
+    return described
+
+  const commitSha = resolveBuildCommitSha()
+  if (commitSha)
+    return `local-${commitSha.slice(0, 7)}`
+
+  return ''
 }
