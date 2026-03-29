@@ -21,9 +21,9 @@ import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
-import { runWithRetry } from '~~/server/utils/retry'
 
 function toText(value: unknown): string {
   return String(value || '').trim()

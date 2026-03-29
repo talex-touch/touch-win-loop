@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { it } from 'vitest'
 
 const TARGET_FILE = resolve(process.cwd(), 'server/utils/platform-store.ts')
+const ACCESS_TARGET_FILE = resolve(process.cwd(), 'server/utils/project-access-store.ts')
 
 it('listVisibleProjects 非平台管理员查询必须包含 workspace 可见性门槛', async () => {
   const source = await readFile(TARGET_FILE, 'utf8')
@@ -40,10 +41,17 @@ it('listVisibleProjects 包含基础工作区角色分支（manager/member）', 
 })
 
 it('canManageProject owner/admin 全局可管理，manager 仅限分配项目', async () => {
-  const source = await readFile(TARGET_FILE, 'utf8')
+  const source = await readFile(ACCESS_TARGET_FILE, 'utf8')
+  const platformStoreSource = await readFile(TARGET_FILE, 'utf8')
+
+  assert.match(
+    platformStoreSource,
+    /export async function canManageProject[\s\S]*return canManageProjectImpl\(db, user, projectId\)/,
+    'platform-store 中 canManageProject 未委托到 project-access-store 实现',
+  )
   assert.match(
     source,
-    /export async function canManageProject[\s\S]*wm\.role = ANY\(\$3::TEXT\[\]\)[\s\S]*\[projectId, user\.id, FULL_WORKSPACE_ROLES\]/,
+    /export async function teamCanManageProject[\s\S]*wm\.role = ANY\(\$3::TEXT\[\]\)[\s\S]*\[projectId, user\.id, FULL_WORKSPACE_ROLES\]/,
     'canManageProject 缺少 owner\/admin 全局可管理分支',
   )
   assert.match(

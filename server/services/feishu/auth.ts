@@ -8,7 +8,7 @@ import { withTransaction } from '~~/server/utils/db'
 import {
   createSession,
   ensureBootstrapPlatformSuperAdmin,
-  } from '~~/server/utils/platform-store'
+} from '~~/server/utils/platform-store'
 import { createSessionToken, hashToken } from '~~/server/utils/security'
 import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 

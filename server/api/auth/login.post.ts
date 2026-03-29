@@ -18,7 +18,7 @@ import {
   ensureBootstrapPlatformSuperAdmin,
   findUserByUsername,
   getUserPasswordHashByUsername,
-  } from '~~/server/utils/platform-store'
+} from '~~/server/utils/platform-store'
 import { createSessionToken, hashPassword, hashToken, verifyPassword } from '~~/server/utils/security'
 import { teamListUserWorkspaces } from '~~/server/utils/team-workspace-store'
 

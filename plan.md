@@ -1,6 +1,7 @@
 # R1 同批上线方案：飞书迁移闭环 + DSL 规则标注系统
 
 ## Summary
+
 1. 同一发布批次交付两条主线：`飞书多层级可视化映射迁移` 与 `DSL 规则标注/执行/发布`。
 2. 发布策略采用“冻结窗口一次切换”：短时冻结同步写入，完成迁移、校验、切换、解冻；失败走快照回滚。
 3. 规则门禁采用：`severity=error` 阻断发布，`warning/info` 仅提示。
@@ -8,6 +9,7 @@
 5. 规则作用域采用：`global/activity/instance/region/stage/track/policy` 全量七层。
 
 ## Implementation Changes
+
 1. 数据模型新增与兼容策略。
 2. 新增 `activity_catalog`、`activity_instances`，并将现有 `contests` 映射为 `activity(type=competition)`，保持旧接口兼容。
 3. 新增 `source_documents` 统一接入飞书/网页/PDF/人工来源文本与元数据。
@@ -53,6 +55,7 @@
 37. 回滚：恢复快照、回切旧解析器与旧发布校验、重跑关键冒烟。
 
 ## Public APIs / Interfaces
+
 1. 类型更新。
 2. 新增 `FeishuMappingConfigV2`、`RuleDefinition`、`RuleBinding`、`RuleVersion`、`ObligationDefinition`、`ObligationBinding`、`RuleAnnotation`、`FeishuSyncIssue`、`EngineOutput`。
 3. 现有 `FeishuBitableTask.mapping` 从松散对象升级为显式版本化结构（仍通过 JSON 存储）。
@@ -70,6 +73,7 @@
 14. `GET /admin/contests/:id/publish-check` 响应扩展为规则引擎结果结构（保留兼容字段）。
 
 ## Test Plan
+
 1. DSL 单元测试：解析、校验、算子语义、空值/类型边界、trace 正确性。
 2. 作用域测试：七层绑定召回、优先级冲突、有效期生效与失效。
 3. 飞书迁移测试：v1->v2 自动转换正确率、三目标对象（contest/track/resource）行为一致性。
@@ -79,6 +83,7 @@
 7. 切换演练：冻结、切换、解冻、回滚四步在预发全流程通过。
 
 ## Assumptions & Defaults
+
 1. 首期与飞书迁移同批上线 DSL，不拆到后续版本。
 2. DSL 采用扩展算子集，不再降级到极简实现。
 3. 规则作用域首期即开放七层，不分批裁剪。

@@ -34,7 +34,7 @@ it('chat-store 支持按 project_id + mode 严格过滤会话', async () => {
   )
 })
 
-it('Team 会话 API 强制 projectId 与 mode 参数', async () => {
+it('team 会话 API 强制 projectId 与 mode 参数', async () => {
   const getSource = await readFile(TEAM_SESSIONS_GET_FILE, 'utf8')
   const postSource = await readFile(TEAM_SESSIONS_POST_FILE, 'utf8')
 
@@ -50,7 +50,7 @@ it('Team 会话 API 强制 projectId 与 mode 参数', async () => {
   )
 })
 
-it('Team 消息读取接口按 projectId + mode 做严格校验', async () => {
+it('team 消息读取接口按 projectId + mode 做严格校验', async () => {
   const source = await readFile(TEAM_MESSAGES_GET_FILE, 'utf8')
   assert.match(
     source,
