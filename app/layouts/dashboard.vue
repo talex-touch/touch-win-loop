@@ -107,7 +107,7 @@ onMounted(async () => {
 <template>
   <div
     v-if="isWorkspaceFullscreen"
-    class="dashboard-shell workspace-fullscreen text-slate-900 bg-white h-screen overflow-hidden fixed inset-0"
+    class="dashboard-shell workspace-fullscreen text-slate-900 bg-white h-screen inset-0 fixed overflow-hidden"
   >
     <slot />
   </div>

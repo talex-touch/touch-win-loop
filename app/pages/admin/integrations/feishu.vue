@@ -1957,7 +1957,7 @@ onMounted(initializePage)
           </label>
 
           <div class="p-2 border border-slate-200 bg-slate-50 space-y-2 md:col-span-2">
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex gap-2 items-center justify-between">
               <p class="text-[10px] text-slate-600 font-semibold m-0">
                 启动通知渠道（进程首次启动）
               </p>
@@ -2241,7 +2241,7 @@ onMounted(initializePage)
             View ID
             <a-input v-model="createTaskForm.viewId" class="mt-1" allow-clear size="small" @blur="onViewIdChanged('create')" />
           </label>
-          <p class="m-0 text-[10px] text-slate-500 md:col-span-2 xl:col-span-3">
+          <p class="text-[10px] text-slate-500 m-0 md:col-span-2 xl:col-span-3">
             说明：这里的 `appToken/tableId/viewId` 是“飞书多维库/表/视图”标识，不是飞书开放平台配置里的 `appId/appSecret`。
           </p>
           <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
@@ -2294,26 +2294,26 @@ onMounted(initializePage)
             来源 URL（可选）
             <a-input v-model="createTaskForm.sourceUrl" class="mt-1" allow-clear size="small" />
           </label>
-          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-[10px] text-slate-600 font-medium p-2 border border-slate-200 bg-slate-50 block space-y-2 md:col-span-2 xl:col-span-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
               <span class="text-slate-700">字段概览</span>
               <span class="text-slate-500">字段总数：{{ mappingWizardFields.create.length }}</span>
             </div>
-            <p v-if="sourceFieldInspectLoading.create" class="m-0 text-slate-500">
+            <p v-if="sourceFieldInspectLoading.create" class="text-slate-500 m-0">
               字段巡检中...
             </p>
-            <p v-if="sourceFieldInspectInlineError.create" class="m-0 text-rose-600 break-all">
+            <p v-if="sourceFieldInspectInlineError.create" class="text-rose-600 m-0 break-all">
               {{ sourceFieldInspectInlineError.create }}
             </p>
             <p
               v-if="sourceFieldInspectInlineError.create && mappingWizardFields.create.length"
-              class="m-0 text-[10px] text-amber-600"
+              class="text-[10px] text-amber-600 m-0"
             >
               当前展示上次成功巡检结果，请修复后重试。
             </p>
             <p
               v-if="!sourceFieldInspectLoading.create && !sourceFieldInspectInlineError.create && !mappingWizardFields.create.length"
-              class="m-0 text-slate-500"
+              class="text-slate-500 m-0"
             >
               {{ fieldOverviewEmptyText('create') }}
             </p>
@@ -2323,11 +2323,11 @@ onMounted(initializePage)
                 :key="`create-field-${field.fieldName}`"
                 class="p-2 border border-slate-200 bg-white"
               >
-                <div class="flex flex-wrap items-center justify-between gap-1">
+                <div class="flex flex-wrap gap-1 items-center justify-between">
                   <span class="text-slate-900 font-medium break-all">{{ field.fieldName }}</span>
                   <span class="text-slate-500">样本命中 {{ field.sampleCount }}</span>
                 </div>
-                <p class="m-0 mt-1 text-slate-500 break-all">
+                <p class="text-slate-500 m-0 mt-1 break-all">
                   样本：{{ fieldSamplePreview(field.sampleValues) }}
                 </p>
               </div>
@@ -2341,8 +2341,8 @@ onMounted(initializePage)
               :auto-size="{ minRows: 6, maxRows: 12 }"
             />
           </label>
-          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-[10px] text-slate-600 font-medium p-2 border border-slate-200 bg-slate-50 block space-y-2 md:col-span-2 xl:col-span-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
               <span>字段映射向导（可选）</span>
               <div class="flex flex-wrap gap-2">
                 <a-button size="mini" :loading="sourceFieldInspectLoading.create" @click="inspectSourceFieldsForWizard('create')">
@@ -2356,12 +2356,12 @@ onMounted(initializePage)
                 </a-button>
               </div>
             </div>
-            <p class="m-0 text-slate-500">
+            <p class="text-slate-500 m-0">
               解析或切换来源后会自动刷新候选，必要时可手动“巡检字段”重试。
             </p>
             <div class="space-y-2">
               <div v-for="(item, index) in mappingWizardBindings.create" :key="`create-${index}`" class="p-2 border border-slate-200 bg-white space-y-2">
-                <div class="grid md:grid-cols-[180px,1fr,1fr,70px] gap-2 items-center">
+                <div class="gap-2 grid items-center md:grid-cols-[180px,1fr,1fr,70px]">
                   <a-select v-model="item.targetKey" allow-search size="small" placeholder="目标字段">
                     <a-option v-for="option in getMappingOptionsByMode('create')" :key="option.key" :value="option.key">
                       {{ option.label }}
@@ -2379,11 +2379,11 @@ onMounted(initializePage)
                 </div>
                 <p
                   v-if="item.sourceField"
-                  class="m-0 text-slate-500 break-all"
+                  class="text-slate-500 m-0 break-all"
                 >
                   样本：{{ fieldSamplePreview(mappingWizardFields.create.find(field => field.fieldName === item.sourceField)?.sampleValues || []) }}
                 </p>
-                <p v-if="isMappingSourceFieldInvalid('create', item.sourceField)" class="m-0 text-rose-600 break-all">
+                <p v-if="isMappingSourceFieldInvalid('create', item.sourceField)" class="text-rose-600 m-0 break-all">
                   当前来源字段不存在（已失效，请重新选择）。
                 </p>
               </div>
@@ -2501,7 +2501,7 @@ onMounted(initializePage)
             View ID
             <a-input v-model="editTaskForm.viewId" class="mt-1" allow-clear size="small" @blur="onViewIdChanged('edit')" />
           </label>
-          <p class="m-0 text-[10px] text-slate-500 md:col-span-2 xl:col-span-3">
+          <p class="text-[10px] text-slate-500 m-0 md:col-span-2 xl:col-span-3">
             说明：这里的 `appToken/tableId/viewId` 是“飞书多维库/表/视图”标识，不是飞书开放平台配置里的 `appId/appSecret`。
           </p>
           <label class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3">
@@ -2554,26 +2554,26 @@ onMounted(initializePage)
             来源 URL（可选）
             <a-input v-model="editTaskForm.sourceUrl" class="mt-1" allow-clear size="small" />
           </label>
-          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-[10px] text-slate-600 font-medium p-2 border border-slate-200 bg-slate-50 block space-y-2 md:col-span-2 xl:col-span-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
               <span class="text-slate-700">字段概览</span>
               <span class="text-slate-500">字段总数：{{ mappingWizardFields.edit.length }}</span>
             </div>
-            <p v-if="sourceFieldInspectLoading.edit" class="m-0 text-slate-500">
+            <p v-if="sourceFieldInspectLoading.edit" class="text-slate-500 m-0">
               字段巡检中...
             </p>
-            <p v-if="sourceFieldInspectInlineError.edit" class="m-0 text-rose-600 break-all">
+            <p v-if="sourceFieldInspectInlineError.edit" class="text-rose-600 m-0 break-all">
               {{ sourceFieldInspectInlineError.edit }}
             </p>
             <p
               v-if="sourceFieldInspectInlineError.edit && mappingWizardFields.edit.length"
-              class="m-0 text-[10px] text-amber-600"
+              class="text-[10px] text-amber-600 m-0"
             >
               当前展示上次成功巡检结果，请修复后重试。
             </p>
             <p
               v-if="!sourceFieldInspectLoading.edit && !sourceFieldInspectInlineError.edit && !mappingWizardFields.edit.length"
-              class="m-0 text-slate-500"
+              class="text-slate-500 m-0"
             >
               {{ fieldOverviewEmptyText('edit') }}
             </p>
@@ -2583,11 +2583,11 @@ onMounted(initializePage)
                 :key="`edit-field-${field.fieldName}`"
                 class="p-2 border border-slate-200 bg-white"
               >
-                <div class="flex flex-wrap items-center justify-between gap-1">
+                <div class="flex flex-wrap gap-1 items-center justify-between">
                   <span class="text-slate-900 font-medium break-all">{{ field.fieldName }}</span>
                   <span class="text-slate-500">样本命中 {{ field.sampleCount }}</span>
                 </div>
-                <p class="m-0 mt-1 text-slate-500 break-all">
+                <p class="text-slate-500 m-0 mt-1 break-all">
                   样本：{{ fieldSamplePreview(field.sampleValues) }}
                 </p>
               </div>
@@ -2601,8 +2601,8 @@ onMounted(initializePage)
               :auto-size="{ minRows: 6, maxRows: 12 }"
             />
           </label>
-          <div class="text-[10px] text-slate-600 font-medium block md:col-span-2 xl:col-span-3 p-2 border border-slate-200 bg-slate-50 space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-[10px] text-slate-600 font-medium p-2 border border-slate-200 bg-slate-50 block space-y-2 md:col-span-2 xl:col-span-3">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
               <span>字段映射向导（可选）</span>
               <div class="flex flex-wrap gap-2">
                 <a-button size="mini" :loading="sourceFieldInspectLoading.edit" @click="inspectSourceFieldsForWizard('edit')">
@@ -2616,12 +2616,12 @@ onMounted(initializePage)
                 </a-button>
               </div>
             </div>
-            <p class="m-0 text-slate-500">
+            <p class="text-slate-500 m-0">
               解析或切换来源后会自动刷新候选，对已配置任务可先“从 JSON 读取”再调整。
             </p>
             <div class="space-y-2">
               <div v-for="(item, index) in mappingWizardBindings.edit" :key="`edit-${index}`" class="p-2 border border-slate-200 bg-white space-y-2">
-                <div class="grid md:grid-cols-[180px,1fr,1fr,70px] gap-2 items-center">
+                <div class="gap-2 grid items-center md:grid-cols-[180px,1fr,1fr,70px]">
                   <a-select v-model="item.targetKey" allow-search size="small" placeholder="目标字段">
                     <a-option v-for="option in getMappingOptionsByMode('edit')" :key="option.key" :value="option.key">
                       {{ option.label }}
@@ -2639,11 +2639,11 @@ onMounted(initializePage)
                 </div>
                 <p
                   v-if="item.sourceField"
-                  class="m-0 text-slate-500 break-all"
+                  class="text-slate-500 m-0 break-all"
                 >
                   样本：{{ fieldSamplePreview(mappingWizardFields.edit.find(field => field.fieldName === item.sourceField)?.sampleValues || []) }}
                 </p>
-                <p v-if="isMappingSourceFieldInvalid('edit', item.sourceField)" class="m-0 text-rose-600 break-all">
+                <p v-if="isMappingSourceFieldInvalid('edit', item.sourceField)" class="text-rose-600 m-0 break-all">
                   当前来源字段不存在（已失效，请重新选择）。
                 </p>
               </div>

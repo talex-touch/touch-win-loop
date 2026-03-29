@@ -227,9 +227,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="relative h-full min-h-0 w-full bg-white">
+  <div class="bg-white h-full min-h-0 w-full relative">
     <div ref="containerRef" class="h-full min-h-0 w-full" />
-    <div v-if="mountError" class="absolute inset-x-4 top-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+    <div v-if="mountError" class="text-[11px] text-rose-700 px-3 py-2 border border-rose-200 rounded bg-rose-50 inset-x-4 top-3 absolute">
       {{ mountError }}
     </div>
   </div>

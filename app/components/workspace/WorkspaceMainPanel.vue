@@ -2392,7 +2392,7 @@ watch(activeTabId, (next) => {
           <p class="text-[11px] text-slate-800 font-semibold m-0">
             当前席位
           </p>
-          <p class="m-0 mt-1 text-[12px] text-slate-700">
+          <p class="text-[12px] text-slate-700 m-0 mt-1">
             {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
           </p>
         </div>
@@ -2431,7 +2431,7 @@ watch(activeTabId, (next) => {
           {{ workspaceSeatLimitError }}
         </p>
 
-        <div class="flex justify-end gap-2">
+        <div class="flex gap-2 justify-end">
           <a-button size="small" @click="closeWorkspaceSeatModal">
             取消
           </a-button>
