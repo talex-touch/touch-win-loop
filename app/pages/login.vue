@@ -205,11 +205,12 @@ async function tryFeishuAutoLogin() {
   const alreadyTried = sessionStorage.getItem('wl_feishu_auto_login_tried')
   if (alreadyTried === '1')
     return
-  sessionStorage.setItem('wl_feishu_auto_login_tried', '1')
 
   const meta = await loadFeishuMeta()
   if (!meta?.enabled)
     return
+
+  sessionStorage.setItem('wl_feishu_auto_login_tried', '1')
 
   feishuLoading.value = true
   try {
@@ -220,7 +221,8 @@ async function tryFeishuAutoLogin() {
       await startFeishuOAuthRedirect()
   }
   catch {
-    // 自动尝试失败后回退到普通登录表单，不中断页面。
+    // SDK 自动登录失败时，回退到标准 OAuth 跳转，避免静默停留在表单页。
+    await startFeishuOAuthRedirect()
   }
   finally {
     feishuLoading.value = false
