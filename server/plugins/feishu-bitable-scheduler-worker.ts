@@ -1,6 +1,5 @@
 import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
 import { withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import {
   claimNextDueFeishuBitableTask,
   completeScheduledFeishuTaskExecution,
@@ -8,6 +7,7 @@ import {
   releaseFeishuTaskScheduleLock,
 } from '~~/server/utils/feishu-integration-store'
 import { computeNextScheduledRunAtOrNull } from '~~/server/utils/feishu-task-schedule'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 
 const WORKER_RUNTIME_STATE_KEY = Symbol.for('winloop.feishu-bitable-scheduler-worker.runtime.v1')
 
@@ -15,6 +15,7 @@ interface WorkerRuntimeState {
   booted: boolean
   ticking: boolean
   timer: NodeJS.Timeout | null
+  intervalMs: number
 }
 
 function getWorkerRuntimeState(): WorkerRuntimeState {
@@ -27,6 +28,7 @@ function getWorkerRuntimeState(): WorkerRuntimeState {
     booted: false,
     ticking: false,
     timer: null,
+    intervalMs: 0,
   }
   globalRef[WORKER_RUNTIME_STATE_KEY] = created
   return created
@@ -38,6 +40,25 @@ function toErrorMessage(error: unknown): string {
   if (error instanceof Error)
     return String(error.message || 'unknown error')
   return String(error)
+}
+
+function ensureTickTimer(intervalMs: number): void {
+  const runtimeState = getWorkerRuntimeState()
+  const nextInterval = Math.max(15_000, Math.min(24 * 60 * 60 * 1000, Math.round(Number(intervalMs) || 60_000)))
+
+  if (runtimeState.timer && runtimeState.intervalMs === nextInterval)
+    return
+
+  if (runtimeState.timer)
+    clearInterval(runtimeState.timer)
+
+  runtimeState.intervalMs = nextInterval
+  runtimeState.timer = setInterval(() => {
+    void runTick().catch((error) => {
+      console.error('[feishu-bitable-scheduler-worker] tick failed:', toErrorMessage(error))
+    })
+  }, nextInterval)
+  runtimeState.timer.unref?.()
 }
 
 async function executeClaimedTask(input: {
@@ -106,12 +127,14 @@ async function runTick(): Promise<void> {
   if (runtimeState.ticking)
     return
 
-  const runtime = readRuntimeSettings()
-  if (!runtime.feishuScheduler.enabled)
-    return
-
   runtimeState.ticking = true
   try {
+    const { runtime } = await readEffectivePlatformRuntimeSettings()
+    ensureTickTimer(runtime.feishuScheduler.intervalMs)
+
+    if (!runtime.feishuScheduler.enabled)
+      return
+
     for (let round = 0; round < runtime.feishuScheduler.batchSize; round += 1) {
       const claimed = await withTransaction(undefined, async (db) => {
         return claimNextDueFeishuBitableTask(db, {
@@ -152,20 +175,11 @@ export default defineNitroPlugin((nitroApp) => {
     return
 
   runtimeState.booted = true
-  const runtime = readRuntimeSettings()
-  if (!runtime.feishuScheduler.enabled)
-    return
+  ensureTickTimer(60_000)
 
   void runTick().catch((error) => {
     console.error('[feishu-bitable-scheduler-worker] bootstrap failed:', toErrorMessage(error))
   })
-
-  runtimeState.timer = setInterval(() => {
-    void runTick().catch((error) => {
-      console.error('[feishu-bitable-scheduler-worker] tick failed:', toErrorMessage(error))
-    })
-  }, runtime.feishuScheduler.intervalMs)
-  runtimeState.timer.unref?.()
 
   nitroApp.hooks.hookOnce('close', () => {
     if (runtimeState.timer)
@@ -173,5 +187,6 @@ export default defineNitroPlugin((nitroApp) => {
     runtimeState.timer = null
     runtimeState.booted = false
     runtimeState.ticking = false
+    runtimeState.intervalMs = 0
   })
 })

@@ -34,6 +34,7 @@ const navItems: AdminNavItem[] = [
   { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-integrations', to: '/admin/integrations', label: '集成中心', icon: 'i-heroicons-outline-puzzle-piece', section: 'system', requiredAny: ['role.assign', 'contest.write'] },
+  { key: 'admin-runtime-settings', to: '/admin/runtime-settings', label: '运行设置', icon: 'i-heroicons-outline-adjustments-horizontal', section: 'system', requiredAny: ['contest.write'] },
   { key: 'admin-resources', to: '/admin/resources', label: '资料管理', icon: 'i-heroicons-outline-folder-open', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-resource-preview-worker', to: '/admin/resource-preview-worker', label: '文档转换监控', icon: 'i-heroicons-outline-arrow-path', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-resource-recycle-worker', to: '/admin/resource-recycle-worker', label: '回收站清理', icon: 'i-heroicons-outline-trash', section: 'system', requiredAny: ['contest.read_internal'] },

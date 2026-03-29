@@ -1,6 +1,6 @@
 import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import {
   getProjectResourceRecycleWorkerState,
   pushProjectResourceRecycleWorkerRunRecord,
@@ -15,6 +15,7 @@ const WORKER_RUNTIME_STATE_KEY = Symbol.for('winloop.project-resource-recycle-wo
 interface WorkerRuntimeState {
   booted: boolean
   timer: NodeJS.Timeout | null
+  intervalMs: number
 }
 
 function getWorkerRuntimeState(): WorkerRuntimeState {
@@ -26,6 +27,7 @@ function getWorkerRuntimeState(): WorkerRuntimeState {
   const created: WorkerRuntimeState = {
     booted: false,
     timer: null,
+    intervalMs: 0,
   }
   globalRef[WORKER_RUNTIME_STATE_KEY] = created
   return created
@@ -46,12 +48,33 @@ function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
   console.error(prefix, toErrorMessage(error))
 }
 
+function ensureTickTimer(intervalMs: number): void {
+  const runtimeState = getWorkerRuntimeState()
+  const nextInterval = Math.max(60_000, Math.min(24 * 60 * 60 * 1000, Math.round(Number(intervalMs) || 1_800_000)))
+
+  if (runtimeState.timer && runtimeState.intervalMs === nextInterval)
+    return
+
+  if (runtimeState.timer)
+    clearInterval(runtimeState.timer)
+
+  runtimeState.intervalMs = nextInterval
+  runtimeState.timer = setInterval(() => {
+    void runTick().catch((error) => {
+      logWorkerError('tick', error)
+    })
+  }, nextInterval)
+  runtimeState.timer.unref?.()
+}
+
 async function runTick(): Promise<void> {
   const workerState = getProjectResourceRecycleWorkerState()
   if (workerState.ticking)
     return
 
-  const runtime = readRuntimeSettings()
+  const { runtime } = await readEffectivePlatformRuntimeSettings()
+  ensureTickTimer(runtime.resourceRecycle.intervalMs)
+
   workerState.enabled = runtime.resourceRecycle.enabled
   workerState.intervalMs = runtime.resourceRecycle.intervalMs
   workerState.retentionDays = runtime.resourceRecycle.retentionDays
@@ -155,29 +178,26 @@ export default defineNitroPlugin((nitroApp) => {
   runtimeState.booted = true
   const workerState = getProjectResourceRecycleWorkerState()
   workerState.started = true
-  const runtime = readRuntimeSettings()
-  workerState.enabled = runtime.resourceRecycle.enabled
-  workerState.intervalMs = runtime.resourceRecycle.intervalMs
-  workerState.retentionDays = runtime.resourceRecycle.retentionDays
-  workerState.batchSize = runtime.resourceRecycle.batchSize
+  ensureTickTimer(1_800_000)
 
-  if (!workerState.enabled)
-    return
+  void readEffectivePlatformRuntimeSettings().then(({ runtime }) => {
+    workerState.enabled = runtime.resourceRecycle.enabled
+    workerState.intervalMs = runtime.resourceRecycle.intervalMs
+    workerState.retentionDays = runtime.resourceRecycle.retentionDays
+    workerState.batchSize = runtime.resourceRecycle.batchSize
+    ensureTickTimer(runtime.resourceRecycle.intervalMs)
+  }).catch(() => {})
 
   void runTick().catch((error) => {
     logWorkerError('bootstrap', error)
   })
-
-  runtimeState.timer = setInterval(() => {
-    void runTick()
-  }, runtime.resourceRecycle.intervalMs)
-  runtimeState.timer.unref?.()
 
   nitroApp.hooks.hookOnce('close', () => {
     if (runtimeState.timer)
       clearInterval(runtimeState.timer)
     runtimeState.timer = null
     runtimeState.booted = false
+    runtimeState.intervalMs = 0
     workerState.started = false
     workerState.ticking = false
   })

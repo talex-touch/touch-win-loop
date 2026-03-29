@@ -21,6 +21,7 @@ const canManageRoles = computed(() => permissions.value.includes('role.assign'))
 const canManageIntegrations = computed(() => {
   return canManageRoles.value || permissions.value.includes('contest.write')
 })
+const canManageRuntimeSettings = computed(() => permissions.value.includes('contest.write'))
 
 const summaryRows = computed(() => {
   return [
@@ -157,6 +158,19 @@ onMounted(loadPermissions)
           </p>
           <p class="text-[11px] text-slate-500 mt-1">
             飞书登录、管理员组同步、Bitable 映射任务
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canManageRuntimeSettings"
+          to="/admin/runtime-settings"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            运行设置
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            调度参数、回收参数、自动 seed 开关（UI 覆盖 Env）
           </p>
         </NuxtLink>
 

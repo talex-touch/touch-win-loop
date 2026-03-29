@@ -19,6 +19,7 @@ import {
   readPlatformAiRuntimeOverrides,
   writePlatformAiRuntimeOverrides,
 } from '~~/server/utils/platform-ai-config-store'
+import { hasConfigMasterKey } from '~~/server/utils/secure-config'
 
 type SecretMode = 'keep' | 'replace' | 'clear'
 
@@ -27,6 +28,7 @@ interface ProvidersPatchBody {
     provider?: string
     baseURL?: string
     model?: string
+    embeddingModel?: string
     modelCatalogJson?: string
     modelPricingJson?: string
     providers?: unknown
@@ -94,11 +96,30 @@ export default defineEventHandler(async (event) => {
     }, 40390)
   }
 
+  const aiBody = body?.ai && typeof body.ai === 'object' ? body.ai as Record<string, unknown> : null
+  const docAiBody = body?.docAi && typeof body.docAi === 'object' ? body.docAi as Record<string, unknown> : null
+  const adminAiBody = body?.adminAi && typeof body.adminAi === 'object' ? body.adminAi as Record<string, unknown> : null
+  const masterKeyReady = hasConfigMasterKey(event)
+  const requireSecretReplace = (
+    toMode(aiBody?.apiKeyMode) === 'replace'
+    || toMode(docAiBody?.apiKeyMode) === 'replace'
+    || toMode(adminAiBody?.tavilyApiKeyMode) === 'replace'
+  )
+  if (requireSecretReplace && !masterKeyReady) {
+    setResponseStatus(event, 400)
+    return fail('缺少 WINLOOP_CONFIG_MASTER_KEY，无法替换密钥字段。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40066)
+  }
+
   const nextOverrides = await withTransaction(event, async (db) => {
     const existing = normalizePlatformAiRuntimeOverrides(await readPlatformAiRuntimeOverrides(db))
     const next = normalizePlatformAiRuntimeOverrides(existing)
 
-    const aiBody = body?.ai && typeof body.ai === 'object' ? body.ai as Record<string, unknown> : null
     if (aiBody) {
       const ai = ensureSection(next.ai)
       if (hasOwn(aiBody, 'provider'))
@@ -107,6 +128,8 @@ export default defineEventHandler(async (event) => {
         ai.baseURL = String(aiBody.baseURL || '').trim()
       if (hasOwn(aiBody, 'model'))
         ai.model = String(aiBody.model || '').trim()
+      if (hasOwn(aiBody, 'embeddingModel'))
+        ai.embeddingModel = String(aiBody.embeddingModel || '').trim()
       if (hasOwn(aiBody, 'modelCatalogJson'))
         ai.modelCatalogJson = String(aiBody.modelCatalogJson || '')
       if (hasOwn(aiBody, 'modelPricingJson'))
@@ -156,7 +179,6 @@ export default defineEventHandler(async (event) => {
       next.ai = ai
     }
 
-    const docAiBody = body?.docAi && typeof body.docAi === 'object' ? body.docAi as Record<string, unknown> : null
     if (docAiBody) {
       const docAi = ensureSection(next.docAi)
       if (hasOwn(docAiBody, 'provider'))
@@ -181,7 +203,6 @@ export default defineEventHandler(async (event) => {
       next.docAi = docAi
     }
 
-    const adminAiBody = body?.adminAi && typeof body.adminAi === 'object' ? body.adminAi as Record<string, unknown> : null
     if (adminAiBody) {
       const adminAi = ensureSection(next.adminAi)
       if (hasOwn(adminAiBody, 'enabled'))
@@ -229,6 +250,7 @@ export default defineEventHandler(async (event) => {
       provider: effectiveRuntime.ai.provider,
       baseURL: effectiveRuntime.ai.baseURL,
       model: effectiveRuntime.ai.model,
+      embeddingModel: effectiveRuntime.ai.embeddingModel,
       modelCatalogJson: effectiveRuntime.ai.modelCatalogJson,
       modelPricingJson: effectiveRuntime.ai.modelPricingJson,
       providersJson: effectiveRuntime.ai.providersJson,

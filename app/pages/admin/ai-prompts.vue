@@ -96,6 +96,7 @@ interface ProvidersPayload {
     provider: string
     baseURL: string
     model: string
+    embeddingModel: string
     modelCatalogJson: string
     modelPricingJson: string
     providersJson: string
@@ -391,6 +392,7 @@ const providerForm = reactive({
   aiProvider: '',
   aiBaseURL: '',
   aiModel: '',
+  aiEmbeddingModel: '',
   aiModelCatalogJson: '',
   aiModelPricingJson: '',
   aiTemperature: 0.2,
@@ -1172,6 +1174,7 @@ function applyProvidersToForm(payload: ProvidersPayload | null) {
   providerForm.aiProvider = payload.llm.provider || ''
   providerForm.aiBaseURL = payload.llm.baseURL || ''
   providerForm.aiModel = payload.llm.model || ''
+  providerForm.aiEmbeddingModel = payload.llm.embeddingModel || ''
   providerForm.aiModelCatalogJson = payload.llm.modelCatalogJson || ''
   providerForm.aiModelPricingJson = payload.llm.modelPricingJson || ''
   providerForm.aiTemperature = Number(payload.llm.temperature ?? 0.2)
@@ -1350,6 +1353,7 @@ async function saveProviderEditor() {
         provider: providerForm.aiProvider.trim(),
         baseURL: providerForm.aiBaseURL.trim(),
         model: providerForm.aiModel.trim(),
+        embeddingModel: providerForm.aiEmbeddingModel.trim(),
         apiKeyMode: apiKey ? 'replace' : 'keep',
         apiKey,
       },
@@ -1969,6 +1973,10 @@ onMounted(async () => {
                 <span class="text-[11px] text-slate-600">Model（可手输）</span>
                 <a-input v-if="providerEditorKey === 'llm'" v-model="providerForm.aiModel" size="small" placeholder="例如：gpt-4o-mini" />
                 <a-input v-else v-model="providerForm.docAiModel" size="small" placeholder="例如：gpt-4o-mini" />
+              </label>
+              <label v-if="providerEditorKey === 'llm'" class="block space-y-1">
+                <span class="text-[11px] text-slate-600">Embedding Model</span>
+                <a-input v-model="providerForm.aiEmbeddingModel" size="small" placeholder="例如：text-embedding-3-small" />
               </label>
               <label class="block space-y-1 md:col-span-2">
                 <span class="text-[11px] text-slate-600">Base URL</span>

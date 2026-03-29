@@ -32,6 +32,7 @@ export default defineEventHandler(async (event) => {
       provider: runtime.ai.provider,
       baseURL: runtime.ai.baseURL,
       model: runtime.ai.model,
+      embeddingModel: runtime.ai.embeddingModel,
       modelCatalogJson: runtime.ai.modelCatalogJson,
       modelPricingJson: runtime.ai.modelPricingJson,
       providersJson: runtime.ai.providersJson,

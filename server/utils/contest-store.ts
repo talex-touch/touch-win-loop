@@ -31,6 +31,7 @@ import type {
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
 import { listContests as listCatalogContests, listResources as listCatalogResources, listRubrics as listCatalogRubrics } from '~~/server/data/catalog'
+import { readPlatformRuntimeOverrides } from '~~/server/utils/platform-runtime-config-store'
 
 const CONTEST_LIBRARY_MIGRATION_KEY = 'contest_library_seeded_v2'
 
@@ -1859,7 +1860,16 @@ async function deleteMigrationFlag(db: Queryable, key: string): Promise<void> {
   )
 }
 
-function isContestAutoSeedEnabled(): boolean {
+async function isContestAutoSeedEnabled(db: Queryable): Promise<boolean> {
+  try {
+    const overrides = await readPlatformRuntimeOverrides(db)
+    if (overrides.contest && Object.prototype.hasOwnProperty.call(overrides.contest, 'autoSeed'))
+      return Boolean(overrides.contest.autoSeed)
+  }
+  catch {
+    // ignore override read error and fallback to env
+  }
+
   const raw = String(process.env.WINLOOP_CONTEST_AUTO_SEED || '').trim().toLowerCase()
   if (!raw)
     return false
@@ -1985,7 +1995,7 @@ export async function ensureContestLibrarySeeded(
 ): Promise<void> {
   const actorUserId = typeof input === 'string' ? input : input?.actorUserId
   const forceSeed = typeof input === 'object' ? input?.forceSeed === true : false
-  if (!forceSeed && !isContestAutoSeedEnabled()) {
+  if (!forceSeed && !(await isContestAutoSeedEnabled(db))) {
     await ensureDefaultBillingPlans(db)
     return
   }

@@ -2,7 +2,8 @@ import type { H3Event } from 'h3'
 import type { Queryable } from '~~/server/utils/db'
 import type { RuntimeSettings } from '~~/server/utils/env'
 import { withClient } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectivePlatformRuntimeSettings as readEffectiveBaseRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
+import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEncryptedConfigValue } from '~~/server/utils/secure-config'
 
 const PLATFORM_AI_RUNTIME_OVERRIDES_KEY = 'platform_ai_runtime_overrides.v1'
 
@@ -12,6 +13,7 @@ export interface PlatformAiRuntimeOverrides {
     baseURL?: string
     apiKey?: string
     model?: string
+    embeddingModel?: string
     modelCatalogJson?: string
     modelPricingJson?: string
     providersJson?: string
@@ -87,6 +89,8 @@ function normalizeAiSection(raw: unknown): PlatformAiRuntimeOverrides['ai'] {
     output.apiKey = String(source.apiKey || '')
   if (hasOwn(source, 'model'))
     output.model = toText(source.model)
+  if (hasOwn(source, 'embeddingModel'))
+    output.embeddingModel = toText(source.embeddingModel)
   if (hasOwn(source, 'modelCatalogJson'))
     output.modelCatalogJson = String(source.modelCatalogJson || '')
   if (hasOwn(source, 'modelPricingJson'))
@@ -203,7 +207,14 @@ export async function readPlatformAiRuntimeOverrides(db: Queryable): Promise<Pla
     return {}
 
   try {
-    return normalizePlatformAiRuntimeOverrides(JSON.parse(raw))
+    const normalized = normalizePlatformAiRuntimeOverrides(JSON.parse(raw))
+    if (normalized.ai && Object.prototype.hasOwnProperty.call(normalized.ai, 'apiKey'))
+      normalized.ai.apiKey = decryptConfigSecretSafe(normalized.ai.apiKey)
+    if (normalized.docAi && Object.prototype.hasOwnProperty.call(normalized.docAi, 'apiKey'))
+      normalized.docAi.apiKey = decryptConfigSecretSafe(normalized.docAi.apiKey)
+    if (normalized.adminAi && Object.prototype.hasOwnProperty.call(normalized.adminAi, 'tavilyApiKey'))
+      normalized.adminAi.tavilyApiKey = decryptConfigSecretSafe(normalized.adminAi.tavilyApiKey)
+    return normalized
   }
   catch {
     return {}
@@ -215,12 +226,28 @@ export async function writePlatformAiRuntimeOverrides(
   overrides: PlatformAiRuntimeOverrides,
 ): Promise<void> {
   const normalized = normalizePlatformAiRuntimeOverrides(overrides)
+  const persistable = normalizePlatformAiRuntimeOverrides(normalized)
+  const hasMasterKey = hasConfigMasterKey()
+
+  if (persistable.ai && Object.prototype.hasOwnProperty.call(persistable.ai, 'apiKey')) {
+    const value = String(persistable.ai.apiKey || '')
+    persistable.ai.apiKey = hasMasterKey && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
+  if (persistable.docAi && Object.prototype.hasOwnProperty.call(persistable.docAi, 'apiKey')) {
+    const value = String(persistable.docAi.apiKey || '')
+    persistable.docAi.apiKey = hasMasterKey && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
+  if (persistable.adminAi && Object.prototype.hasOwnProperty.call(persistable.adminAi, 'tavilyApiKey')) {
+    const value = String(persistable.adminAi.tavilyApiKey || '')
+    persistable.adminAi.tavilyApiKey = hasMasterKey && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
+
   await db.query(
     `INSERT INTO migrations_meta (key, value, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (key)
      DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
-    [PLATFORM_AI_RUNTIME_OVERRIDES_KEY, JSON.stringify(normalized)],
+    [PLATFORM_AI_RUNTIME_OVERRIDES_KEY, JSON.stringify(persistable)],
   )
 }
 
@@ -245,6 +272,8 @@ export function applyPlatformAiRuntimeOverrides(
       next.ai.apiKey = ai.apiKey
     if (ai.model !== undefined)
       next.ai.model = ai.model || next.ai.model
+    if (ai.embeddingModel !== undefined)
+      next.ai.embeddingModel = ai.embeddingModel || next.ai.embeddingModel
     if (ai.modelCatalogJson !== undefined)
       next.ai.modelCatalogJson = ai.modelCatalogJson
     if (ai.modelPricingJson !== undefined)
@@ -307,7 +336,7 @@ export function applyPlatformAiRuntimeOverrides(
 export async function readEffectiveRuntimeSettings(
   event?: H3Event,
 ): Promise<{ runtime: RuntimeSettings, overrides: PlatformAiRuntimeOverrides }> {
-  const baseRuntime = readRuntimeSettings(event)
+  const { runtime: baseRuntime } = await readEffectiveBaseRuntimeSettings(event)
   if (!event)
     return { runtime: baseRuntime, overrides: {} }
 
