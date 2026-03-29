@@ -46,6 +46,10 @@ export default defineNuxtConfig({
       envPrefix: 'WINLOOP_',
     },
     envPriority: getEnvPriorityOrder().join(' > '),
+    build: {
+      version: resolveEnvValue('WINLOOP_BUILD_VERSION', ''),
+      commitSha: resolveEnvValue('WINLOOP_BUILD_COMMIT_SHA', ''),
+    },
     ai: {
       provider: resolveEnvValue('WINLOOP_AI_PROVIDER', 'openai-compatible'),
       baseURL: resolveEnvValue('WINLOOP_AI_BASE_URL', ''),
@@ -118,6 +122,9 @@ export default defineNuxtConfig({
       intervalMs: resolveEnvNumber('WINLOOP_FEISHU_SCHEDULER_INTERVAL_MS', 60000),
       batchSize: resolveEnvNumber('WINLOOP_FEISHU_SCHEDULER_BATCH_SIZE', 20),
       lockTtlMs: resolveEnvNumber('WINLOOP_FEISHU_SCHEDULER_LOCK_TTL_MS', 600000),
+    },
+    secureConfig: {
+      masterKey: resolveEnvValue('WINLOOP_CONFIG_MASTER_KEY', ''),
     },
     public: {
       apiBaseUrl: resolveEnvValue('WINLOOP_API_BASE_URL', '/api'),

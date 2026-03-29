@@ -85,12 +85,16 @@ jobs:
             exit 0
           fi
 
+          short_sha="${GITHUB_SHA:0:7}"
+          build_version="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${short_sha}"
           webhook_base="${WEBHOOK_URL%/}"
           payload="$(cat <<JSON
           {
             "repository": "${GITHUB_REPOSITORY}",
             "branch": "${GITHUB_REF_NAME}",
             "sha": "${GITHUB_SHA}",
+            "build_version": "${build_version}",
+            "build_commit_sha": "${GITHUB_SHA}",
             "image": "${IMAGE_REPO}",
             "tag": "latest",
             "image_ref": "${IMAGE_REPO}@${IMAGE_DIGEST}",

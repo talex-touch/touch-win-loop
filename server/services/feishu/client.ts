@@ -140,6 +140,10 @@ interface BitableGetRecordData {
   }
 }
 
+interface FeishuImMessageData {
+  message_id?: string
+}
+
 function normalizeBaseUrl(raw: string): string {
   const value = String(raw || '').trim().replace(/\/+$/g, '')
   return value || DEFAULT_FEISHU_API_BASE_URL
@@ -308,6 +312,36 @@ export async function getFeishuTenantAccessToken(config: FeishuIntegrationConfig
   if (!token)
     throw new Error('FEISHU_TENANT_TOKEN_EMPTY')
   return token
+}
+
+export async function sendFeishuChatTextMessage(input: {
+  tenantAccessToken: string
+  chatId: string
+  text: string
+}): Promise<void> {
+  const chatId = String(input.chatId || '').trim()
+  const text = String(input.text || '').trim()
+  if (!chatId)
+    throw new Error('FEISHU_CHAT_ID_REQUIRED')
+  if (!text)
+    throw new Error('FEISHU_MESSAGE_EMPTY')
+
+  await requestFeishu<FeishuImMessageData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/im/v1/messages',
+    method: 'POST',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      receive_id_type: 'chat_id',
+    },
+    body: {
+      receive_id: chatId,
+      msg_type: 'text',
+      content: JSON.stringify({
+        text,
+      }),
+    },
+  })
 }
 
 async function exchangeOAuthCode(config: FeishuIntegrationConfigInternal, code: string): Promise<OAuthAccessTokenData> {

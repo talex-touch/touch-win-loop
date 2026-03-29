@@ -42,7 +42,10 @@ cp "/opt/1panel/scripts/winloop-deploy/deploy-winloop-1panel-webhook.env.example
 - `WINLOOP_IMAGE_TAG`
 - `WINLOOP_PG_URL`
 - `WINLOOP_REDIS_URL`
+- `WINLOOP_CONFIG_MASTER_KEY`（用于敏感配置加密落库）
 - `WINLOOP_HEALTHCHECK_URL`
+- `WINLOOP_BUILD_VERSION`（可选，CI 通常自动覆盖）
+- `WINLOOP_BUILD_COMMIT_SHA`（可选，CI 通常自动覆盖）
 
 编辑 `/opt/1panel/scripts/winloop-deploy/winloop-webhook.env`：
 
@@ -93,6 +96,7 @@ set +a
 
 - `POST ${ONEPANEL_WEBHOOK_URL}/hooks/winloop`
 - Header: `X-Deploy-Token`
+- Payload 附带 `build_version` 与 `build_commit_sha`，由 webhook 脚本注入容器运行时环境。
 
 ## 7）验收命令
 
@@ -107,3 +111,4 @@ curl "http://127.0.0.1:3510/api/health"
 
 - 本次只新增 `touch-win-loop` 接入，不迁移 `pilot`。
 - 生产故障时优先走“第 3 节”的 `ssh home` 兜底 SOP。
+- 业务运行参数支持管理端 UI 覆盖（`UI Override > Env`），基础设施参数仍固定由 Env 提供。

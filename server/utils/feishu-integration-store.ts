@@ -37,6 +37,7 @@ import {
   normalizeFeishuTaskScheduleConfig,
   validateFeishuTaskScheduleConfig,
 } from '~~/server/utils/feishu-task-schedule'
+import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEncryptedConfigValue } from '~~/server/utils/secure-config'
 
 const FEISHU_CONFIG_META_KEY = 'feishu_integration_config.v1'
 const DEFAULT_WEBSDK_SCRIPT_URL = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js'
@@ -181,6 +182,11 @@ export interface FeishuIntegrationConfigInternal {
   eventEncryptKey: string
   adminGroupIds: string[]
   webSdkScriptUrl: string
+  startupNotifyEnabled: boolean
+  startupNotifyChatId: string
+  startupNotifyRemark: string
+  startupFallbackVersion: string
+  startupFallbackCommitSha: string
   updatedAt: string
   updatedByUserId: string
 }
@@ -334,12 +340,17 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
   return {
     enabled: hasOwn(source, 'enabled') ? toBoolean(source.enabled, false) : false,
     appId: hasOwn(source, 'appId') ? toText(source.appId) : '',
-    appSecret: hasOwn(source, 'appSecret') ? String(source.appSecret || '') : '',
+    appSecret: hasOwn(source, 'appSecret') ? decryptConfigSecretSafe(source.appSecret) : '',
     oauthRedirectUri: hasOwn(source, 'oauthRedirectUri') ? toText(source.oauthRedirectUri) : '',
-    eventToken: hasOwn(source, 'eventToken') ? String(source.eventToken || '') : '',
-    eventEncryptKey: hasOwn(source, 'eventEncryptKey') ? String(source.eventEncryptKey || '') : '',
+    eventToken: hasOwn(source, 'eventToken') ? decryptConfigSecretSafe(source.eventToken) : '',
+    eventEncryptKey: hasOwn(source, 'eventEncryptKey') ? decryptConfigSecretSafe(source.eventEncryptKey) : '',
     adminGroupIds: hasOwn(source, 'adminGroupIds') ? toStringArray(source.adminGroupIds) : [],
     webSdkScriptUrl: hasOwn(source, 'webSdkScriptUrl') ? toText(source.webSdkScriptUrl) : DEFAULT_WEBSDK_SCRIPT_URL,
+    startupNotifyEnabled: hasOwn(source, 'startupNotifyEnabled') ? toBoolean(source.startupNotifyEnabled, false) : false,
+    startupNotifyChatId: hasOwn(source, 'startupNotifyChatId') ? toText(source.startupNotifyChatId) : '',
+    startupNotifyRemark: hasOwn(source, 'startupNotifyRemark') ? toText(source.startupNotifyRemark) : '',
+    startupFallbackVersion: hasOwn(source, 'startupFallbackVersion') ? toText(source.startupFallbackVersion) : '',
+    startupFallbackCommitSha: hasOwn(source, 'startupFallbackCommitSha') ? toText(source.startupFallbackCommitSha) : '',
     updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
     updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
   }
@@ -560,6 +571,11 @@ export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigI
     eventEncryptKeyConfigured: Boolean(config.eventEncryptKey),
     adminGroupIds: [...config.adminGroupIds],
     webSdkScriptUrl: config.webSdkScriptUrl || DEFAULT_WEBSDK_SCRIPT_URL,
+    startupNotifyEnabled: Boolean(config.startupNotifyEnabled),
+    startupNotifyChatId: toText(config.startupNotifyChatId),
+    startupNotifyRemark: toText(config.startupNotifyRemark),
+    startupFallbackVersion: toText(config.startupFallbackVersion),
+    startupFallbackCommitSha: toText(config.startupFallbackCommitSha),
     updatedAt: config.updatedAt,
     updatedByUserId: config.updatedByUserId,
   }
@@ -588,12 +604,25 @@ export async function writeFeishuIntegrationConfig(
   config: FeishuIntegrationConfigInternal,
 ): Promise<FeishuIntegrationConfigInternal> {
   const normalized = normalizeFeishuConfigInternal(config)
+  const hasMasterKey = hasConfigMasterKey()
+  const persistable = {
+    ...normalized,
+    appSecret: hasMasterKey && normalized.appSecret && !isEncryptedConfigValue(normalized.appSecret)
+      ? encryptConfigSecret(normalized.appSecret)
+      : normalized.appSecret,
+    eventToken: hasMasterKey && normalized.eventToken && !isEncryptedConfigValue(normalized.eventToken)
+      ? encryptConfigSecret(normalized.eventToken)
+      : normalized.eventToken,
+    eventEncryptKey: hasMasterKey && normalized.eventEncryptKey && !isEncryptedConfigValue(normalized.eventEncryptKey)
+      ? encryptConfigSecret(normalized.eventEncryptKey)
+      : normalized.eventEncryptKey,
+  }
   await db.query(
     `INSERT INTO migrations_meta (key, value, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (key)
      DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
-    [FEISHU_CONFIG_META_KEY, JSON.stringify(normalized)],
+    [FEISHU_CONFIG_META_KEY, JSON.stringify(persistable)],
   )
   return normalized
 }

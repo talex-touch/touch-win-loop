@@ -254,6 +254,11 @@ const configForm = reactive({
   appId: '',
   oauthRedirectUri: '',
   webSdkScriptUrl: '',
+  startupNotifyEnabled: false,
+  startupNotifyChatId: '',
+  startupNotifyRemark: '',
+  startupFallbackVersion: '',
+  startupFallbackCommitSha: '',
   appSecretMode: 'keep' as SecretMode,
   appSecret: '',
   eventTokenMode: 'keep' as SecretMode,
@@ -430,6 +435,11 @@ function fillConfigForm(payload: FeishuIntegrationConfig) {
   configForm.appId = payload.appId || ''
   configForm.oauthRedirectUri = payload.oauthRedirectUri || ''
   configForm.webSdkScriptUrl = payload.webSdkScriptUrl || ''
+  configForm.startupNotifyEnabled = Boolean(payload.startupNotifyEnabled)
+  configForm.startupNotifyChatId = payload.startupNotifyChatId || ''
+  configForm.startupNotifyRemark = payload.startupNotifyRemark || ''
+  configForm.startupFallbackVersion = payload.startupFallbackVersion || ''
+  configForm.startupFallbackCommitSha = payload.startupFallbackCommitSha || ''
   resetSecretInputs()
 }
 
@@ -1298,6 +1308,10 @@ async function saveConfig() {
     setError('已选择替换 Event Encrypt Key，请输入新值。')
     return
   }
+  if (configForm.startupNotifyEnabled && !String(configForm.startupNotifyChatId || '').trim()) {
+    setError('已启用启动通知，请填写群 chat_id。')
+    return
+  }
 
   savingConfig.value = true
   try {
@@ -1308,6 +1322,11 @@ async function saveConfig() {
         appId: configForm.appId.trim(),
         oauthRedirectUri: configForm.oauthRedirectUri.trim(),
         webSdkScriptUrl: configForm.webSdkScriptUrl.trim(),
+        startupNotifyEnabled: configForm.startupNotifyEnabled,
+        startupNotifyChatId: configForm.startupNotifyChatId.trim(),
+        startupNotifyRemark: configForm.startupNotifyRemark.trim(),
+        startupFallbackVersion: configForm.startupFallbackVersion.trim(),
+        startupFallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
         appSecretMode: configForm.appSecretMode,
         appSecret: configForm.appSecret,
         eventTokenMode: configForm.eventTokenMode,
@@ -1936,6 +1955,60 @@ onMounted(initializePage)
             Web SDK Script URL
             <a-input v-model="configForm.webSdkScriptUrl" class="mt-1" allow-clear size="small" placeholder="https://.../h5-js-sdk.js" />
           </label>
+
+          <div class="p-2 border border-slate-200 bg-slate-50 space-y-2 md:col-span-2">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[10px] text-slate-600 font-semibold m-0">
+                启动通知渠道（进程首次启动）
+              </p>
+              <a-switch v-model="configForm.startupNotifyEnabled" />
+            </div>
+            <label class="text-[10px] text-slate-600 font-medium block">
+              飞书群 chat_id
+              <a-input
+                v-model="configForm.startupNotifyChatId"
+                class="mt-1"
+                allow-clear
+                size="small"
+                placeholder="oc_xxx"
+              />
+            </label>
+            <label class="text-[10px] text-slate-600 font-medium block">
+              通知备注（可选）
+              <a-textarea
+                v-model="configForm.startupNotifyRemark"
+                class="mt-1"
+                :auto-size="{ minRows: 2, maxRows: 4 }"
+                allow-clear
+                placeholder="例如：已优化启动流程，准备回归验证。"
+              />
+            </label>
+            <div class="gap-2 grid md:grid-cols-2">
+              <label class="text-[10px] text-slate-600 font-medium block">
+                兜底 Version
+                <a-input
+                  v-model="configForm.startupFallbackVersion"
+                  class="mt-1"
+                  allow-clear
+                  size="small"
+                  placeholder="v2026.03.29-main"
+                />
+              </label>
+              <label class="text-[10px] text-slate-600 font-medium block">
+                兜底 Commit SHA
+                <a-input
+                  v-model="configForm.startupFallbackCommitSha"
+                  class="mt-1"
+                  allow-clear
+                  size="small"
+                  placeholder="fe77787"
+                />
+              </label>
+            </div>
+            <p class="text-[10px] text-slate-500 m-0">
+              版本优先级：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）> 集成配置兜底值。
+            </p>
+          </div>
 
           <div class="p-2 border border-slate-200 bg-slate-50 space-y-2 md:col-span-2">
             <p class="text-[10px] text-slate-600 font-semibold m-0">

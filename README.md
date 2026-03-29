@@ -46,6 +46,18 @@ pnpm dev
 
 本地私有配置建议写入 `.env.local`（已加入 `.gitignore`）。
 
+### 配置来源优先级（运行时）
+
+当前采用双层配置来源：
+
+```txt
+UI Override（DB） > Env
+```
+
+- 业务运行参数支持在管理端 UI 修改，并实时覆盖 Env。
+- 基础设施参数仍固定从 Env 读取（例如 PostgreSQL / Redis / Storage / 部署脚本与 Webhook）。
+- 构建标识建议由 CI 注入：`WINLOOP_BUILD_VERSION`、`WINLOOP_BUILD_COMMIT_SHA`（用于启动通知与版本追踪）。
+
 ### PostgreSQL / Redis URL 配置说明
 
 请在 `.env.local` 显式配置数据库与缓存连接 URL（含账号密码）：
@@ -54,9 +66,16 @@ pnpm dev
 WINLOOP_PG_URL=postgresql://user:password@127.0.0.1:5432/winloop
 WINLOOP_REDIS_URL=redis://:password@127.0.0.1:6379/0
 WINLOOP_CONTEST_AUTO_SEED=false
+WINLOOP_CONFIG_MASTER_KEY=your-strong-master-key
 ```
 
 若缺失或不完整，登录及依赖连接的接口会报连接配置错误。
+
+### 敏感配置加密存储
+
+- 新增密钥：`WINLOOP_CONFIG_MASTER_KEY`（建议生产必配）。
+- AI / 飞书等敏感字段写入数据库时会使用 AES-256-GCM 加密存储。
+- 读取路径兼容历史明文；当缺少 `WINLOOP_CONFIG_MASTER_KEY` 时，不允许通过管理端执行密钥“replace”操作。
 
 ### ONLYOFFICE 回源与临时访问地址
 
@@ -70,7 +89,7 @@ WINLOOP_CONTEST_AUTO_SEED=false
 
 ## 赛事 seed 策略（去 mock 默认）
 
-- 默认不自动注入 catalog 赛事数据（`WINLOOP_CONTEST_AUTO_SEED=false`）。
+- 默认不自动注入 catalog 赛事数据（`WINLOOP_CONTEST_AUTO_SEED=false`，也可在 `/admin/runtime-settings` 中覆盖）。
 - 若需要本地演示数据，请使用 CLI 手动执行（幂等）：
 
 ```bash
@@ -121,6 +140,7 @@ pnpm contest:seed:status
 
 - 登录双通道：账号密码 + 飞书 OAuth / Web SDK 自动登录（仅在 `/login` 页面自动尝试一次）。
 - 管理员组同步：飞书指定组成员自动授予 `contest_admin`，脱组自动撤销。
+- 启动通知渠道：支持“每个进程首次启动”向指定飞书群发送通知（版本与 commit 可追踪）。
 - Bitable 同步：支持 `contest / track / resource` 多任务映射、预检、执行、运行日志。
 - 多维主库化：支持来源检索/粘贴解析、`full + delta` 双执行模式、事件触发增量同步、定时兜底补偿。
 - 同步状态回填：按任务 `writeback` 配置回写“已同步/失败/跳过”等字段，不强依赖固定列名。
@@ -132,8 +152,10 @@ pnpm contest:seed:status
 2. 在应用后台配置 OAuth 回调地址：`https://<your-domain>/api/auth/feishu/callback`。
 3. 在应用后台配置事件订阅回调：`https://<your-domain>/api/integrations/feishu/events`。
 4. 在本项目“集成中心”保存飞书配置（支持 secret 字段 `keep/replace/clear`）。
-5. 配置管理员组 ID，执行一次“手动全量对账管理员组”。
-6. 按目标类型创建 Bitable 任务，先 `preview` 再 `run`。
+5. 如需启动通知，配置目标群 `chat_id`（飞书应用需具备发消息权限且机器人已入群）。
+6. 建议 CI/CD 注入 `WINLOOP_BUILD_VERSION`、`WINLOOP_BUILD_COMMIT_SHA`（缺失时可使用集成配置兜底）。
+7. 配置管理员组 ID，执行一次“手动全量对账管理员组”。
+8. 按目标类型创建 Bitable 任务，先 `preview` 再 `run`。
 
 ### Bitable 任务配置结构（摘要）
 

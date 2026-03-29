@@ -136,6 +136,10 @@ function resolveOnlyOfficeSourceBaseURL(runtime: ReturnType<typeof useRuntimeCon
 export interface RuntimeSettings {
   envPriority: string
   apiBaseUrl: string
+  build: {
+    version: string
+    commitSha: string
+  }
   ai: {
     provider: string
     baseURL: string
@@ -235,6 +239,10 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
   return {
     envPriority: String(runtime.envPriority ?? '.env.local > .env.prod > .env.dev > .env'),
     apiBaseUrl: normalizeApiBase(String(runtime.public?.apiBaseUrl ?? '/api')),
+    build: {
+      version: String(runtime.build?.version ?? ''),
+      commitSha: String(runtime.build?.commitSha ?? ''),
+    },
     ai: {
       provider: String(runtime.ai?.provider ?? 'openai-compatible'),
       baseURL: String(runtime.ai?.baseURL ?? ''),

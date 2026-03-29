@@ -1388,6 +1388,11 @@ export interface FeishuIntegrationConfig {
   eventEncryptKeyConfigured: boolean
   adminGroupIds: string[]
   webSdkScriptUrl: string
+  startupNotifyEnabled: boolean
+  startupNotifyChatId: string
+  startupNotifyRemark: string
+  startupFallbackVersion: string
+  startupFallbackCommitSha: string
   updatedAt: string
   updatedByUserId: string
 }

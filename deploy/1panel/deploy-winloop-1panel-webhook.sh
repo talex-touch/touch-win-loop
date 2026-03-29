@@ -43,6 +43,8 @@ Environment fallback:
   WINLOOP_WEBHOOK_DEFAULT_IMAGE_REF
   WINLOOP_WEBHOOK_ALLOWED_BRANCH
   WINLOOP_WEBHOOK_ALLOWED_REPOSITORY
+  WINLOOP_BUILD_VERSION
+  WINLOOP_BUILD_COMMIT_SHA
 USAGE
 }
 
@@ -273,6 +275,34 @@ if [[ -z "$payload_sha" ]]; then
   payload_sha="$(json_get "$PAYLOAD_JSON" "github.sha")"
 fi
 
+payload_build_version="$(json_get "$PAYLOAD_JSON" "build_version")"
+if [[ -z "$payload_build_version" ]]; then
+  payload_build_version="$(json_get "$PAYLOAD_JSON" "buildVersion")"
+fi
+if [[ -z "$payload_build_version" ]]; then
+  payload_build_version="$(json_get "$PAYLOAD_JSON" "version")"
+fi
+if [[ -z "$payload_build_version" ]]; then
+  payload_build_version="${WINLOOP_BUILD_VERSION:-}"
+fi
+
+payload_build_commit_sha="$(json_get "$PAYLOAD_JSON" "build_commit_sha")"
+if [[ -z "$payload_build_commit_sha" ]]; then
+  payload_build_commit_sha="$(json_get "$PAYLOAD_JSON" "buildCommitSha")"
+fi
+if [[ -z "$payload_build_commit_sha" ]]; then
+  payload_build_commit_sha="$(json_get "$PAYLOAD_JSON" "commit_sha")"
+fi
+if [[ -z "$payload_build_commit_sha" ]]; then
+  payload_build_commit_sha="$(json_get "$PAYLOAD_JSON" "commitSha")"
+fi
+if [[ -z "$payload_build_commit_sha" ]]; then
+  payload_build_commit_sha="${WINLOOP_BUILD_COMMIT_SHA:-}"
+fi
+if [[ -z "$payload_build_commit_sha" ]]; then
+  payload_build_commit_sha="$payload_sha"
+fi
+
 payload_tag="$(json_get "$PAYLOAD_JSON" "tag")"
 if [[ -z "$payload_tag" ]]; then
   payload_tag="$(json_get "$PAYLOAD_JSON" "image_tag")"
@@ -348,6 +378,15 @@ else
   export WINLOOP_IMAGE_TAG="$resolved_tag"
   unset WINLOOP_IMAGE_REF
   log "Resolved deploy image: ${resolved_image}:${resolved_tag}"
+fi
+
+if [[ -n "$payload_build_version" ]]; then
+  export WINLOOP_BUILD_VERSION="$payload_build_version"
+  log "Resolved build version: $payload_build_version"
+fi
+if [[ -n "$payload_build_commit_sha" ]]; then
+  export WINLOOP_BUILD_COMMIT_SHA="$payload_build_commit_sha"
+  log "Resolved build commit sha: $payload_build_commit_sha"
 fi
 
 exec "$DEPLOY_SCRIPT"
