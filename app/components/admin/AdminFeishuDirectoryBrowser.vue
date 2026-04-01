@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type {
+  FeishuDirectoryContactScopeSummary,
   FeishuDirectoryDepartment,
+  FeishuDirectoryDiagnosticCode,
+  FeishuDirectoryFetchStatus,
+  FeishuDirectoryStatus,
   FeishuDirectoryUserCandidate,
 } from '~~/shared/types/domain'
 
@@ -22,6 +26,14 @@ const props = withDefaults(defineProps<{
   cacheExpiresAt?: string
   totalMembers?: number
   permissionHint?: string
+  directoryStatus?: FeishuDirectoryStatus
+  memberListStatus?: FeishuDirectoryFetchStatus
+  departmentTreeStatus?: FeishuDirectoryFetchStatus
+  contactScopeStatus?: FeishuDirectoryFetchStatus
+  contactScopeSummary?: FeishuDirectoryContactScopeSummary | null
+  contactScopeErrorMessage?: string
+  diagnosticCode?: FeishuDirectoryDiagnosticCode
+  diagnosticMessage?: string
   manualAddingKey?: string
 }>(), {
   rootDepartmentId: '',
@@ -32,6 +44,14 @@ const props = withDefaults(defineProps<{
   cacheExpiresAt: '',
   totalMembers: 0,
   permissionHint: '',
+  directoryStatus: 'unavailable',
+  memberListStatus: 'failed',
+  departmentTreeStatus: 'failed',
+  contactScopeStatus: 'failed',
+  contactScopeSummary: null,
+  contactScopeErrorMessage: '',
+  diagnosticCode: 'directory_unavailable',
+  diagnosticMessage: '',
   manualAddingKey: '',
 })
 
@@ -65,6 +85,14 @@ const keywordText = computed(() => {
 })
 
 const searching = computed(() => Boolean(keywordText.value))
+
+const showPartialDiagnostic = computed(() => props.directoryStatus === 'partial')
+
+const showDepartmentTreeFallbackNotice = computed(() => {
+  return props.departmentTreeStatus === 'failed'
+    && effectiveTotalMembers.value > 0
+    && props.departments.length <= 1
+})
 
 const departmentMap = computed(() => {
   const map = new Map<string, FeishuDirectoryDepartment>()
@@ -233,6 +261,37 @@ const selectedDepartmentLabel = computed(() => {
   return departmentMap.value.get(selectedDepartmentId.value)?.name || '部门成员'
 })
 
+const partialDiagnosticSummary = computed(() => {
+  if (props.source === 'group_fallback')
+    return '当前展示的是管理员组兜底目录，不代表飞书企业全量组织架构。'
+  if (props.diagnosticCode === 'department_tree_permission_denied')
+    return `当前仅拿到 ${effectiveTotalMembers.value} 个成员，部门树因可见范围或权限限制未完整展开，结果不是企业全量目录。`
+  if (props.departmentTreeStatus === 'failed')
+    return `当前仅拿到 ${effectiveTotalMembers.value} 个成员，部门树未完整展开，结果不是企业全量目录。`
+  return '当前目录仅部分可见，请结合右侧成员列表继续操作。'
+})
+
+const scopeSummaryText = computed(() => {
+  const summary = props.contactScopeSummary
+  if (!summary)
+    return ''
+  return `通讯录授权范围：部门 ${summary.totalDepartments} 个，显式用户 ${summary.totalUsers} 个，用户组 ${summary.totalGroups} 个。`
+})
+
+const scopeSampleText = computed(() => {
+  const summary = props.contactScopeSummary
+  if (!summary)
+    return ''
+  const samples: string[] = []
+  if (summary.departmentIds.length)
+    samples.push(`部门ID：${summary.departmentIds.slice(0, 3).join(' / ')}`)
+  if (summary.userIds.length)
+    samples.push(`用户ID：${summary.userIds.slice(0, 3).join(' / ')}`)
+  if (summary.groupIds.length)
+    samples.push(`用户组ID：${summary.groupIds.slice(0, 3).join(' / ')}`)
+  return samples.join('；')
+})
+
 function ensureDefaultSelection() {
   const nextSelectedKey = selectedKeys.value[0]
   const availableKeys = new Set<string>([
@@ -350,6 +409,28 @@ function memberDepartmentNames(member: FeishuDirectoryUserCandidate): string[] {
       <p v-if="notice" class="text-[10px] text-amber-700 m-0">
         {{ notice }}
       </p>
+      <div v-if="showPartialDiagnostic" class="text-[10px] text-amber-800 p-2 border border-amber-200 bg-amber-50 space-y-1">
+        <p class="m-0">
+          诊断：{{ partialDiagnosticSummary }}
+        </p>
+        <p v-if="diagnosticMessage" class="m-0">
+          原因：{{ diagnosticMessage }}
+        </p>
+      </div>
+      <div
+        v-if="directoryStatus !== 'ok' && (contactScopeStatus === 'ok' || Boolean(contactScopeErrorMessage))"
+        class="text-[10px] text-slate-700 p-2 border border-slate-200 bg-slate-50 space-y-1"
+      >
+        <p v-if="contactScopeStatus === 'ok' && scopeSummaryText" class="m-0">
+          范围自检：{{ scopeSummaryText }}
+        </p>
+        <p v-if="contactScopeStatus === 'ok' && scopeSampleText" class="m-0 break-all">
+          {{ scopeSampleText }}
+        </p>
+        <p v-if="contactScopeStatus === 'failed' && contactScopeErrorMessage" class="m-0">
+          范围自检失败：{{ contactScopeErrorMessage }}
+        </p>
+      </div>
       <p v-if="permissionHint" class="text-[10px] text-rose-700 m-0 p-2 border border-rose-200 bg-rose-50">
         权限自检：{{ permissionHint }}
       </p>
@@ -364,6 +445,9 @@ function memberDepartmentNames(member: FeishuDirectoryUserCandidate): string[] {
           <p class="text-[10px] text-slate-500 m-0">
             {{ departments.length }} 个部门
           </p>
+        </div>
+        <div v-if="showDepartmentTreeFallbackNotice" class="text-[10px] text-amber-800 mb-2 p-2 border border-amber-200 bg-amber-50">
+          部门树当前不可用，左侧仅显示降级结构；请优先查看右侧成员列表或直接搜索成员。
         </div>
         <a-tree
           :data="departmentTreeData"

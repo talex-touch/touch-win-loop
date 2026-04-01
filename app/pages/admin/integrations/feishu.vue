@@ -85,6 +85,14 @@ const {
   cacheExpiresAt: feishuDirectoryCacheExpiresAt,
   totalMembers: feishuDirectoryTotalMembers,
   permissionHint: feishuDirectoryPermissionHint,
+  directoryStatus: feishuDirectoryStatus,
+  memberListStatus: feishuDirectoryMemberListStatus,
+  departmentTreeStatus: feishuDirectoryDepartmentTreeStatus,
+  contactScopeStatus: feishuDirectoryContactScopeStatus,
+  contactScopeSummary: feishuDirectoryContactScopeSummary,
+  contactScopeErrorMessage: feishuDirectoryContactScopeErrorMessage,
+  diagnosticCode: feishuDirectoryDiagnosticCode,
+  diagnosticMessage: feishuDirectoryDiagnosticMessage,
   load: loadFeishuDirectoryBrowser,
 } = useFeishuDirectoryBrowser({
   endpoint,
@@ -1117,6 +1125,14 @@ onMounted(initializePage)
             :cache-expires-at="feishuDirectoryCacheExpiresAt"
             :total-members="feishuDirectoryTotalMembers"
             :permission-hint="feishuDirectoryPermissionHint"
+            :directory-status="feishuDirectoryStatus"
+            :member-list-status="feishuDirectoryMemberListStatus"
+            :department-tree-status="feishuDirectoryDepartmentTreeStatus"
+            :contact-scope-status="feishuDirectoryContactScopeStatus"
+            :contact-scope-summary="feishuDirectoryContactScopeSummary"
+            :contact-scope-error-message="feishuDirectoryContactScopeErrorMessage"
+            :diagnostic-code="feishuDirectoryDiagnosticCode"
+            :diagnostic-message="feishuDirectoryDiagnosticMessage"
             :manual-adding-key="manualAddingKey"
             @refresh="forceRefresh => loadFeishuDirectoryBrowser(forceRefresh)"
             @add-user="manualAddContestAdmin"

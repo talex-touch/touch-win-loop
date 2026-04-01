@@ -23,14 +23,16 @@ const draftViewId = computed(() => readQueryValue('draftViewId'))
 
 async function handleItemChange(itemId: string) {
   const nextId = String(itemId || '').trim()
-  if (!nextId)
-    return
+  const nextQuery = {
+    ...route.query,
+  } as Record<string, string>
+  if (nextId)
+    nextQuery.item = nextId
+  else
+    delete nextQuery.item
   await navigateTo({
     path: route.path,
-    query: {
-      ...route.query,
-      item: nextId,
-    },
+    query: nextQuery,
   }, { replace: true })
 }
 </script>

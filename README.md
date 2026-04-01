@@ -141,9 +141,9 @@ pnpm contest:seed:status
 - 登录双通道：账号密码 + 飞书 OAuth / Web SDK 自动登录（仅在 `/login` 页面自动尝试一次）。
 - 管理员组同步：飞书指定组成员自动授予 `contest_admin`，脱组自动撤销。
 - 启动通知渠道：支持“每个进程首次启动”向指定飞书群发送通知（版本与 commit 可追踪）。
-- Bitable 同步：支持 `contest / track / resource` 多任务映射、预检、执行、运行日志。
+- Bitable 同步：支持“同步信息 + 多个同步项”的主库化配置，覆盖 `contest / track / resource` 三类实体。
 - 多维主库化：支持来源检索/粘贴解析、`full + delta` 双执行模式、事件触发增量同步、定时兜底补偿。
-- 同步状态回填：按任务 `writeback` 配置回写“已同步/失败/跳过”等字段，不强依赖固定列名。
+- 同步状态回填：按同步项 `writeback` 配置回写“已同步/失败/跳过”等字段，不强依赖固定列名。
 - 后处理队列：同步成功后自动入队 `embedding_upsert / search_index_refresh / entity_analysis`，并支持失败重试。
 
 ### 最小配置步骤
@@ -155,11 +155,13 @@ pnpm contest:seed:status
 5. 如需启动通知，配置目标群 `chat_id`（飞书应用需具备发消息权限且机器人已入群）。
 6. 建议 CI/CD 注入 `WINLOOP_BUILD_VERSION`、`WINLOOP_BUILD_COMMIT_SHA`（缺失时可使用集成配置兜底）。
 7. 配置管理员组 ID，执行一次“手动全量对账管理员组”。
-8. 按目标类型创建 Bitable 任务，先 `preview` 再 `run`。
+8. 新建“同步信息”，再新增对应的“同步项”，先 `preview` 再 `run`。
+9. 详细管理员教程见 [docs/feishu-bitable-sync-guide.md](./docs/feishu-bitable-sync-guide.md)。
 
-### Bitable 任务配置结构（摘要）
+### Bitable 同步配置结构（摘要）
 
-- `source`：多维来源元信息（`appToken/tableId/viewId` + 可选名称/URL）。
+- `sync`：主库级信息（`appToken` + 可选名称/URL）。
+- `source`：同步项对应的子表/视图来源信息（`tableId/viewId` + 可选名称）。
 - `mapping`：字段映射（兼容 v1，推荐 v2 layer 结构）。
 - `writeback`：回填配置（字段名映射 + success/failed/skipped 值）。
 
@@ -174,7 +176,7 @@ pnpm contest:seed:status
 ### 权限门禁
 
 - 飞书配置与管理员组对账：`role.assign`
-- Bitable 任务与执行：`contest.write`
+- Bitable 同步信息 / 同步项配置与执行：`contest.write`
 
 ### 扩展更多 Integration 的建议模型
 

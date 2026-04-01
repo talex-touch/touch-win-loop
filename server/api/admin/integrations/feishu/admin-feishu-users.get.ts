@@ -1,6 +1,9 @@
 import type {
+  FeishuDirectoryContactScopeSummary,
   FeishuDirectoryDepartment,
+  FeishuDirectoryDiagnosticCode,
   FeishuDirectorySearchResult,
+  FeishuDirectoryStatus,
   FeishuDirectoryUserCandidate,
 } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
@@ -62,6 +65,32 @@ function toUniqueArray(items: string[]): string[] {
   return [...new Set(items.map(item => toText(item)).filter(Boolean))]
 }
 
+function setDiagnostic(
+  payload: FeishuDirectorySearchResult,
+  input: {
+    directoryStatus: FeishuDirectoryStatus
+    memberListStatus: 'ok' | 'failed'
+    departmentTreeStatus: 'ok' | 'failed'
+    contactScopeStatus?: 'ok' | 'failed'
+    contactScopeSummary?: FeishuDirectoryContactScopeSummary | null
+    contactScopeErrorMessage?: string
+    diagnosticCode: FeishuDirectoryDiagnosticCode
+    diagnosticMessage: string
+  },
+) {
+  payload.directoryStatus = input.directoryStatus
+  payload.memberListStatus = input.memberListStatus
+  payload.departmentTreeStatus = input.departmentTreeStatus
+  payload.contactScopeStatus = input.contactScopeStatus || 'failed'
+  payload.contactScopeSummary = input.contactScopeSummary || undefined
+  payload.contactScopeErrorMessage = input.contactScopeErrorMessage || ''
+  payload.diagnosticCode = input.diagnosticCode
+  payload.diagnosticMessage = input.diagnosticMessage
+  payload.permissionHint = input.directoryStatus === 'unavailable' && isPermissionRelatedMessage(input.diagnosticMessage)
+    ? buildFeishuPermissionHint()
+    : ''
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -98,10 +127,26 @@ export default defineEventHandler(async (event) => {
     cacheExpiresAt: '',
     totalMembers: 0,
     permissionHint: '',
+    directoryStatus: 'unavailable',
+    memberListStatus: 'failed',
+    departmentTreeStatus: 'failed',
+    diagnosticCode: 'directory_unavailable',
+    diagnosticMessage: '',
+    contactScopeStatus: 'failed',
+    contactScopeSummary: undefined,
+    contactScopeErrorMessage: '',
   }
 
   if (!config.enabled) {
     payload.notice = '飞书集成未启用，无法搜索飞书成员。'
+    setDiagnostic(payload, {
+      directoryStatus: 'unavailable',
+      memberListStatus: 'failed',
+      departmentTreeStatus: 'failed',
+      contactScopeStatus: 'failed',
+      diagnosticCode: 'integration_disabled',
+      diagnosticMessage: payload.notice,
+    })
     return ok<FeishuDirectorySearchResult>(payload, {
       startedAt,
       provider: runtime.ai.provider,
@@ -112,6 +157,14 @@ export default defineEventHandler(async (event) => {
   }
   if (!config.appId || !config.appSecret) {
     payload.notice = '飞书 App 配置不完整（appId/appSecret 缺失）。'
+    setDiagnostic(payload, {
+      directoryStatus: 'unavailable',
+      memberListStatus: 'failed',
+      departmentTreeStatus: 'failed',
+      contactScopeStatus: 'failed',
+      diagnosticCode: 'app_config_incomplete',
+      diagnosticMessage: payload.notice,
+    })
     return ok<FeishuDirectorySearchResult>(payload, {
       startedAt,
       provider: runtime.ai.provider,
@@ -139,9 +192,16 @@ export default defineEventHandler(async (event) => {
       parentDepartmentId: toText(department.parentDepartmentId) || null,
     }))
     payload.rootDepartmentId = toText(directorySnapshot.rootDepartmentId)
-    payload.permissionHint = isPermissionRelatedMessage(directorySnapshot.notice)
-      ? buildFeishuPermissionHint()
-      : ''
+    setDiagnostic(payload, {
+      directoryStatus: directorySnapshot.directoryStatus,
+      memberListStatus: directorySnapshot.memberListStatus,
+      departmentTreeStatus: directorySnapshot.departmentTreeStatus,
+      contactScopeStatus: directorySnapshot.contactScopeStatus,
+      contactScopeSummary: directorySnapshot.contactScopeSummary,
+      contactScopeErrorMessage: directorySnapshot.contactScopeErrorMessage,
+      diagnosticCode: directorySnapshot.diagnosticCode,
+      diagnosticMessage: toText(directorySnapshot.diagnosticMessage),
+    })
 
     const unionIds = profiles.map(profile => profile.unionId)
     const unionToUserId = await withClient(event, async db => listFeishuUserIdsByUnionIds(db, unionIds))
@@ -183,9 +243,14 @@ export default defineEventHandler(async (event) => {
     const message = toErrorMessage(error)
     payload.items = []
     payload.notice = `搜索飞书成员失败：${message}`
-    payload.permissionHint = isPermissionRelatedMessage(message)
-      ? buildFeishuPermissionHint()
-      : ''
+    setDiagnostic(payload, {
+      directoryStatus: 'unavailable',
+      memberListStatus: 'failed',
+      departmentTreeStatus: 'failed',
+      contactScopeStatus: 'failed',
+      diagnosticCode: 'directory_unavailable',
+      diagnosticMessage: message,
+    })
   }
 
   return ok<FeishuDirectorySearchResult>(payload, {

@@ -1,5 +1,11 @@
 import type { FeishuIntegrationConfigInternal } from '~~/server/utils/feishu-integration-store'
 import type {
+  FeishuDirectoryContactScopeSummary,
+  FeishuDirectoryDiagnosticCode,
+  FeishuDirectoryFetchStatus,
+  FeishuDirectoryStatus,
+} from '~~/shared/types/domain'
+import type {
   FeishuOAuthLoginProfile,
   FeishuTenantDirectory,
   FeishuTenantDirectoryDepartment,
@@ -7,6 +13,7 @@ import type {
 import {
   getFeishuTenantAccessToken,
   getFeishuUserByUnionId,
+  listFeishuContactScope,
   listFeishuGroupMemberUnionIds,
   listFeishuTenantDirectory,
 } from './client'
@@ -24,6 +31,14 @@ interface FeishuDirectorySnapshotCached {
   userDepartmentIds: Record<string, string[]>
   source: DirectorySource
   notice: string
+  directoryStatus: FeishuDirectoryStatus
+  memberListStatus: FeishuDirectoryFetchStatus
+  departmentTreeStatus: FeishuDirectoryFetchStatus
+  contactScopeStatus: FeishuDirectoryFetchStatus
+  contactScopeSummary: FeishuDirectoryContactScopeSummary | null
+  contactScopeErrorMessage: string
+  diagnosticCode: FeishuDirectoryDiagnosticCode
+  diagnosticMessage: string
   fetchedAt: string
 }
 
@@ -124,8 +139,7 @@ function buildDirectoryCacheKey(config: FeishuIntegrationConfigInternal): string
 }
 
 function resolveTtlMs(value: FeishuDirectorySnapshotCached, defaultTtlMs: number): number {
-  const hasFailureNotice = toText(value.notice).includes('失败')
-  if (hasFailureNotice && value.users.length === 0)
+  if (value.directoryStatus === 'unavailable' && value.users.length === 0)
     return 15_000
   return defaultTtlMs
 }
@@ -179,6 +193,19 @@ async function loadDirectorySnapshotFromRemote(input: {
 }): Promise<FeishuDirectorySnapshotCached> {
   const tenantAccessToken = await getFeishuTenantAccessToken(input.config)
   const fetchedAt = new Date().toISOString()
+  let contactScopeStatus: FeishuDirectoryFetchStatus = 'failed'
+  let contactScopeSummary: FeishuDirectoryContactScopeSummary | null = null
+  let contactScopeErrorMessage = ''
+
+  try {
+    contactScopeSummary = await listFeishuContactScope({
+      tenantAccessToken,
+    })
+    contactScopeStatus = 'ok'
+  }
+  catch (error) {
+    contactScopeErrorMessage = toErrorMessage(error)
+  }
 
   try {
     const tenantDirectory = await listFeishuTenantDirectory({
@@ -194,6 +221,14 @@ async function loadDirectorySnapshotFromRemote(input: {
         userDepartmentIds: toUserDepartmentIdsRecord(tenantDirectory.userDepartmentIds),
         source: 'tenant',
         notice: toText(tenantDirectory.notice),
+        directoryStatus: tenantDirectory.directoryStatus,
+        memberListStatus: tenantDirectory.memberListStatus,
+        departmentTreeStatus: tenantDirectory.departmentTreeStatus,
+        contactScopeStatus,
+        contactScopeSummary,
+        contactScopeErrorMessage,
+        diagnosticCode: tenantDirectory.diagnosticCode,
+        diagnosticMessage: toText(tenantDirectory.diagnosticMessage),
         fetchedAt,
       }
     }
@@ -208,6 +243,14 @@ async function loadDirectorySnapshotFromRemote(input: {
         userDepartmentIds: {},
         source: 'tenant',
         notice: `飞书全员目录检索失败：${message}`,
+        directoryStatus: 'unavailable',
+        memberListStatus: 'failed',
+        departmentTreeStatus: 'failed',
+        contactScopeStatus,
+        contactScopeSummary,
+        contactScopeErrorMessage,
+        diagnosticCode: 'directory_unavailable',
+        diagnosticMessage: message,
         fetchedAt,
       }
     }
@@ -220,6 +263,14 @@ async function loadDirectorySnapshotFromRemote(input: {
       ...toFallbackDirectory(fallbackUsers),
       source: 'group_fallback',
       notice: `全员目录不可用，已降级为管理员组目录：${message}`,
+      directoryStatus: fallbackUsers.length > 0 ? 'partial' : 'unavailable',
+      memberListStatus: fallbackUsers.length > 0 ? 'ok' : 'failed',
+      departmentTreeStatus: 'failed',
+      contactScopeStatus,
+      contactScopeSummary,
+      contactScopeErrorMessage,
+      diagnosticCode: fallbackUsers.length > 0 ? 'partial_directory_visible' : 'directory_unavailable',
+      diagnosticMessage: message,
       fetchedAt,
     }
   }
@@ -233,6 +284,14 @@ async function loadDirectorySnapshotFromRemote(input: {
       ...toFallbackDirectory(fallbackUsers),
       source: 'group_fallback',
       notice: '全员目录为空，已降级为管理员组目录。',
+      directoryStatus: fallbackUsers.length > 0 ? 'partial' : 'unavailable',
+      memberListStatus: fallbackUsers.length > 0 ? 'ok' : 'failed',
+      departmentTreeStatus: 'failed',
+      contactScopeStatus,
+      contactScopeSummary,
+      contactScopeErrorMessage,
+      diagnosticCode: fallbackUsers.length > 0 ? 'partial_directory_visible' : 'directory_unavailable',
+      diagnosticMessage: '全员目录为空，已降级为管理员组目录。',
       fetchedAt,
     }
   }
@@ -244,6 +303,14 @@ async function loadDirectorySnapshotFromRemote(input: {
     userDepartmentIds: {},
     source: 'tenant',
     notice: '飞书目录为空，请检查应用权限或目录可见范围。',
+    directoryStatus: 'unavailable',
+    memberListStatus: 'failed',
+    departmentTreeStatus: 'failed',
+    contactScopeStatus,
+    contactScopeSummary,
+    contactScopeErrorMessage,
+    diagnosticCode: 'directory_unavailable',
+    diagnosticMessage: '飞书目录为空，请检查应用权限或目录可见范围。',
     fetchedAt,
   }
 }

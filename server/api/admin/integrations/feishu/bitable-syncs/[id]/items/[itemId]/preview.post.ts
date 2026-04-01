@@ -1,4 +1,7 @@
-import type { FeishuBitableSyncItemPreviewResult } from '~~/shared/types/domain'
+import type {
+  FeishuBitableSyncItemPreviewRequest,
+  FeishuBitableSyncItemPreviewResult,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { previewFeishuBitableSyncItem } from '~~/server/services/feishu/bitable-sync'
 import { fail, ok } from '~~/server/utils/api'
@@ -11,6 +14,7 @@ export default defineEventHandler(async (event) => {
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const syncItemId = String(getRouterParam(event, 'itemId') || '').trim()
+  const body = await readBody<FeishuBitableSyncItemPreviewRequest>(event).catch(() => ({} as FeishuBitableSyncItemPreviewRequest))
 
   const canWrite = await checkPlatformPermission(event, user, 'contest.write')
   if (!canWrite) {
@@ -38,6 +42,7 @@ export default defineEventHandler(async (event) => {
   const summary = await previewFeishuBitableSyncItem(event, {
     syncItemId,
     actorUserId: user.id,
+    draft: body,
   })
 
   return ok<FeishuBitableSyncItemPreviewResult>(summary, {

@@ -5,6 +5,7 @@ import type {
   ContestLevel,
   FeishuBitableSourceConfig,
   FeishuBitableSyncItemEntityType,
+  FeishuBitableSyncItemPreviewRequest,
   FeishuBitableSyncItemPreviewResult,
   FeishuBitableSyncRunTriggerSource,
   FeishuBitableTablePreview,
@@ -193,6 +194,10 @@ function parseJsonObject(raw: unknown): Record<string, unknown> {
   return raw as Record<string, unknown>
 }
 
+function hasOwn(source: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(source, key)
+}
+
 function toText(raw: unknown): string {
   if (typeof raw === 'string')
     return raw.trim()
@@ -217,6 +222,20 @@ function toStringArray(raw: unknown): string[] {
   if (single.includes('|'))
     return single.split('|').map(item => item.trim()).filter(Boolean)
   return [single]
+}
+
+function isEntityType(raw: unknown): raw is FeishuBitableSyncItemEntityType {
+  return raw === 'contest' || raw === 'track' || raw === 'resource'
+}
+
+function resolvePreviewOverrideString(
+  override: Record<string, unknown> | null | undefined,
+  key: keyof FeishuBitableSourceConfig,
+  fallback: string,
+): string {
+  if (!override || !hasOwn(override, key))
+    return fallback
+  return toText(override[key])
 }
 
 const jsonataExpressionCache = new Map<string, ReturnType<typeof jsonata>>()
@@ -1991,6 +2010,7 @@ async function previewFeishuBitableSyncItemById(
   input: {
     syncItemId: string
     actorUserId: string
+    draft?: FeishuBitableSyncItemPreviewRequest
   },
 ): Promise<FeishuBitableSyncItemPreviewResult> {
   const configAndTask = await withClient(event, async (db) => {
@@ -2004,20 +2024,35 @@ async function previewFeishuBitableSyncItemById(
   if (!configAndTask.task)
     throw new Error('FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND')
   const task = configAndTask.task
+  const sourceOverride = parseJsonObject(input.draft?.source)
+  const source: FeishuBitableSourceConfig = {
+    appToken: resolvePreviewOverrideString(sourceOverride, 'appToken', toText(task.source?.appToken) || toText(task.appToken)),
+    tableId: resolvePreviewOverrideString(sourceOverride, 'tableId', toText(task.source?.tableId) || toText(task.tableId)),
+    viewId: resolvePreviewOverrideString(sourceOverride, 'viewId', toText(task.source?.viewId) || toText(task.viewId)),
+    appName: resolvePreviewOverrideString(sourceOverride, 'appName', toText(task.source?.appName)),
+    tableName: resolvePreviewOverrideString(sourceOverride, 'tableName', toText(task.source?.tableName)),
+    viewName: resolvePreviewOverrideString(sourceOverride, 'viewName', toText(task.source?.viewName)),
+    sourceUrl: resolvePreviewOverrideString(sourceOverride, 'sourceUrl', toText(task.source?.sourceUrl)),
+  }
+  const entityType = isEntityType(input.draft?.entityType) ? input.draft.entityType : (task.entityType || 'contest')
+  const mappingRaw = input.draft && hasOwn(input.draft, 'mapping') ? input.draft.mapping : task.mapping
+  const optionsRaw = input.draft && hasOwn(input.draft, 'options') ? input.draft.options : task.options
+  const writebackRaw = input.draft && hasOwn(input.draft, 'writeback')
+    ? input.draft.writeback
+    : (task.writeback || parseJsonObject(task.options).writeback)
 
   const tenantAccessToken = await getFeishuTenantAccessToken(configAndTask.config)
   const records = await listFeishuBitableRecords({
     tenantAccessToken,
-    appToken: task.appToken,
-    tableId: task.tableId,
-    viewId: task.viewId,
+    appToken: source.appToken,
+    tableId: source.tableId,
+    viewId: source.viewId,
   })
 
   return withClient(event, async (db) => {
-    const entityType = task.entityType || 'contest'
-    const mapping = normalizeMapping(task.mapping, task.options, entityType)
-    const options = normalizeOptions(task.options, mapping.defaults)
-    const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback)
+    const mapping = normalizeMapping(mappingRaw, optionsRaw, entityType)
+    const options = normalizeOptions(optionsRaw, mapping.defaults)
+    const writeback = normalizeWritebackConfig(writebackRaw)
     return buildFeishuBitableSyncItemPreview(db, {
       actorUserId: input.actorUserId,
       syncItemId: task.id,
@@ -2035,11 +2070,13 @@ export async function previewFeishuBitableSyncItem(
   input: {
     syncItemId: string
     actorUserId: string
+    draft?: FeishuBitableSyncItemPreviewRequest
   },
 ): Promise<FeishuBitableSyncItemPreviewResult> {
   return previewFeishuBitableSyncItemById(event, {
     syncItemId: input.syncItemId,
     actorUserId: input.actorUserId,
+    draft: input.draft,
   })
 }
 

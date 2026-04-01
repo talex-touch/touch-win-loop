@@ -6,13 +6,19 @@ import type {
   FeishuBitableSyncItem,
   FeishuBitableSyncItemDetail,
   FeishuBitableSyncItemEntityType,
+  FeishuBitableSyncItemPreviewRequest,
   FeishuBitableSyncItemPreviewResult,
   FeishuBitableTableMeta,
   FeishuBitableViewMeta,
   FeishuFieldDiagnosticItem,
   FeishuFieldInspectionItem,
+  FeishuTaskLatestRunSummary,
   FeishuTaskScheduleMode,
 } from '~~/shared/types/domain'
+import {
+  buildDefaultSyncItemConfig,
+  isSyncItemConfigEmpty,
+} from '~~/shared/utils/feishu-bitable-sync-config'
 
 interface MappingOption {
   key: string
@@ -28,6 +34,28 @@ interface MappingWizardBinding {
 interface SelectOption<T extends string = string> {
   value: T
   label: string
+}
+
+interface SyncOptionFormState {
+  contestId: string
+  defaultVisibility: string
+  defaultStatus: string
+  defaultResourceCategory: string
+  defaultResourceAccessLevel: string
+}
+
+interface SyncWritebackFormState {
+  enabled: boolean
+  status: string
+  syncedAt: string
+  errorMessage: string
+  reasonCode: string
+  entityId: string
+  runId: string
+  triggerSource: string
+  success: string
+  failed: string
+  skipped: string
 }
 
 const props = withDefaults(defineProps<{
@@ -52,49 +80,6 @@ const emit = defineEmits<{
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-
-const DEFAULT_MAPPING_TEXT = `{
-  "externalIdField": "",
-  "contestExternalIdField": "",
-  "trackExternalIdField": "",
-  "fieldMap": {
-    "name": "",
-    "officialUrl": "",
-    "summary": "",
-    "title": "",
-    "content": "",
-    "category": "",
-    "url": "",
-    "sourceType": "",
-    "year": ""
-  }
-}`
-
-const DEFAULT_OPTIONS_TEXT = `{
-  "contestId": "",
-  "defaultVisibility": "internal",
-  "defaultStatus": "active",
-  "defaultResourceCategory": "basic_info",
-  "defaultResourceAccessLevel": "public"
-}`
-
-const DEFAULT_WRITEBACK_TEXT = `{
-  "enabled": true,
-  "fields": {
-    "status": "",
-    "syncedAt": "",
-    "errorMessage": "",
-    "reasonCode": "",
-    "entityId": "",
-    "runId": "",
-    "triggerSource": ""
-  },
-  "values": {
-    "success": "已同步",
-    "failed": "失败",
-    "skipped": "跳过"
-  }
-}`
 
 const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> = {
   contest: [
@@ -175,6 +160,39 @@ const SCHEDULE_MODE_OPTIONS: SelectOption<FeishuTaskScheduleMode>[] = [
   { value: 'cron', label: 'Cron 表达式' },
 ]
 
+const RESOURCE_VISIBILITY_OPTIONS = [
+  { value: 'internal', label: '内部' },
+  { value: 'public', label: '公开' },
+]
+
+const RESOURCE_STATUS_OPTIONS = [
+  { value: 'active', label: 'active' },
+  { value: 'draft', label: 'draft' },
+  { value: 'archived', label: 'archived' },
+]
+
+const RESOURCE_CATEGORY_OPTIONS = [
+  { value: 'basic_info', label: 'basic_info' },
+  { value: 'guide', label: 'guide' },
+  { value: 'news', label: 'news' },
+  { value: 'material', label: 'material' },
+]
+
+const RESOURCE_ACCESS_LEVEL_OPTIONS = [
+  { value: 'public', label: 'public' },
+  { value: 'private', label: 'private' },
+  { value: 'team', label: 'team' },
+]
+
+const QUICK_START_STEPS = [
+  '1. 新增同步项并选择同步到哪类实体。',
+  '2. 选择当前主库下的子表和视图。',
+  '3. 打开详细配置后查看字段概览，确认系统自动猜测的映射。',
+  '4. 补齐必填字段，尤其是 externalId 和关联实体 ID。',
+  '5. 配置飞书回填列，先预检，再决定是否启用调度。',
+  '6. 首次建议手动执行一次，确认飞书侧出现已同步状态。',
+]
+
 const savingItem = ref(false)
 const savingSync = ref(false)
 const runningItem = ref(false)
@@ -186,6 +204,8 @@ const loadingViews = ref(false)
 const loadingFieldInspection = ref(false)
 const creatingItem = ref(false)
 const addItemDrawerVisible = ref(false)
+const itemDrawerVisible = ref(false)
+const suppressVisualSync = ref(false)
 
 const feedbackError = ref('')
 const feedbackSuccess = ref('')
@@ -217,14 +237,36 @@ const itemForm = reactive({
   viewName: '',
   sourceUrl: '',
   isEnabled: false,
-  mappingText: DEFAULT_MAPPING_TEXT,
-  optionsText: DEFAULT_OPTIONS_TEXT,
-  writebackText: DEFAULT_WRITEBACK_TEXT,
+  mappingText: JSON.stringify(buildDefaultSyncItemConfig('contest').mapping, null, 2),
+  optionsText: JSON.stringify(buildDefaultSyncItemConfig('contest').options, null, 2),
+  writebackText: JSON.stringify(buildDefaultSyncItemConfig('contest').writeback, null, 2),
   scheduleEnabled: false,
   scheduleMode: 'interval' as FeishuTaskScheduleMode,
   scheduleIntervalMinutes: 60,
   scheduleCronExpr: '0 * * * *',
   scheduleTimezone: 'Asia/Shanghai',
+})
+
+const optionForm = reactive<SyncOptionFormState>({
+  contestId: '',
+  defaultVisibility: 'internal',
+  defaultStatus: 'active',
+  defaultResourceCategory: 'basic_info',
+  defaultResourceAccessLevel: 'public',
+})
+
+const writebackForm = reactive<SyncWritebackFormState>({
+  enabled: true,
+  status: '',
+  syncedAt: '',
+  errorMessage: '',
+  reasonCode: '',
+  entityId: '',
+  runId: '',
+  triggerSource: '',
+  success: '已同步',
+  failed: '失败',
+  skipped: '跳过',
 })
 
 const newItemForm = reactive({
@@ -239,6 +281,50 @@ const normalizedSelectedItemId = computed(() => toText(props.selectedItemId))
 const normalizedDraftTableId = computed(() => toText(props.draftTableId))
 const normalizedDraftViewId = computed(() => toText(props.draftViewId))
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
+const syncItems = computed(() => syncDetail.value?.items || [])
+const activeOptionFieldGroups = computed(() => optionFieldGroups(itemForm.entityType))
+
+function optionFieldGroups(entityType: FeishuBitableSyncItemEntityType) {
+  if (entityType === 'track') {
+    return [{
+      key: 'contestId',
+      label: '默认 contestId',
+      description: '当赛道没有从飞书列里映射 contestExternalId 时，可用这个值兜底绑定到固定竞赛。',
+    }]
+  }
+
+  if (entityType === 'resource') {
+    return [
+      {
+        key: 'contestId',
+        label: '默认 contestId',
+        description: '资源没有显式竞赛外部 ID 时，可用固定 contestId 兜底。',
+      },
+      {
+        key: 'defaultVisibility',
+        label: '默认可见性',
+        description: '资源未显式指定时，默认按这里写入可见性。',
+      },
+      {
+        key: 'defaultStatus',
+        label: '默认状态',
+        description: '资源未显式指定时，默认状态。',
+      },
+      {
+        key: 'defaultResourceCategory',
+        label: '默认资料分类',
+        description: '资源未显式给分类时，默认使用这个分类。',
+      },
+      {
+        key: 'defaultResourceAccessLevel',
+        label: '默认访问级别',
+        description: '资源未显式给访问级别时，默认使用这个值。',
+      },
+    ]
+  }
+
+  return []
+}
 
 function setError(message: string) {
   feedbackError.value = message
@@ -259,6 +345,10 @@ function toText(raw: unknown): string {
   return String(raw || '').trim()
 }
 
+function formatJson(raw: unknown): string {
+  return JSON.stringify(raw || {}, null, 2)
+}
+
 function parseJsonText(text: string, label: string): Record<string, unknown> {
   const source = String(text || '').trim()
   if (!source)
@@ -273,6 +363,16 @@ function parseJsonText(text: string, label: string): Record<string, unknown> {
     if (error instanceof Error && error.message.includes('必须为 JSON 对象'))
       throw error
     throw new Error(`${label} JSON 格式错误。`)
+  }
+}
+
+function withVisualSyncPaused(action: () => void) {
+  suppressVisualSync.value = true
+  try {
+    action()
+  }
+  finally {
+    suppressVisualSync.value = false
   }
 }
 
@@ -301,6 +401,16 @@ function runStatusLabel(status: string): string {
   return '运行中'
 }
 
+function runStatusColor(status?: string | null): string {
+  if (status === 'success')
+    return 'green'
+  if (status === 'partial_success')
+    return 'gold'
+  if (status === 'failed')
+    return 'red'
+  return 'gray'
+}
+
 function formatDateTime(value?: string | null): string {
   if (!value)
     return '-'
@@ -310,26 +420,129 @@ function formatDateTime(value?: string | null): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
+function latestRunSummaryText(summary?: FeishuTaskLatestRunSummary | null): string {
+  if (!summary)
+    return '暂无执行记录'
+  return `${formatDateTime(summary.startedAt)} / ${runStatusLabel(summary.status)} / 错误 ${summary.errorCount}`
+}
+
+function normalizeItemConfigText(entityType: FeishuBitableSyncItemEntityType, raw: {
+  mapping?: Record<string, unknown> | null
+  options?: Record<string, unknown> | null
+  writeback?: Record<string, unknown> | null
+}) {
+  const defaults = buildDefaultSyncItemConfig(entityType)
+  return {
+    mappingText: formatJson(isSyncItemConfigEmpty(raw.mapping) ? defaults.mapping : raw.mapping || {}),
+    optionsText: formatJson(isSyncItemConfigEmpty(raw.options) ? defaults.options : raw.options || {}),
+    writebackText: formatJson(isSyncItemConfigEmpty(raw.writeback) ? defaults.writeback : raw.writeback || {}),
+  }
+}
+
+function fillOptionForm(raw: Record<string, unknown>) {
+  const defaults = buildDefaultSyncItemConfig(itemForm.entityType).options as Record<string, unknown>
+  optionForm.contestId = toText(raw.contestId || defaults.contestId)
+  optionForm.defaultVisibility = toText(raw.defaultVisibility || defaults.defaultVisibility || 'internal') || 'internal'
+  optionForm.defaultStatus = toText(raw.defaultStatus || defaults.defaultStatus || 'active') || 'active'
+  optionForm.defaultResourceCategory = toText(raw.defaultResourceCategory || defaults.defaultResourceCategory || 'basic_info') || 'basic_info'
+  optionForm.defaultResourceAccessLevel = toText(raw.defaultResourceAccessLevel || defaults.defaultResourceAccessLevel || 'public') || 'public'
+}
+
+function fillWritebackForm(raw: Record<string, unknown>) {
+  const defaults = buildDefaultSyncItemConfig(itemForm.entityType).writeback
+  const rawFields = raw.fields && typeof raw.fields === 'object' && !Array.isArray(raw.fields)
+    ? raw.fields as Record<string, unknown>
+    : {}
+  const defaultFields = defaults.fields || {}
+  const rawValues = raw.values && typeof raw.values === 'object' && !Array.isArray(raw.values)
+    ? raw.values as Record<string, unknown>
+    : {}
+  const defaultValues = defaults.values || {}
+
+  writebackForm.enabled = raw.enabled === undefined ? defaults.enabled !== false : Boolean(raw.enabled)
+  writebackForm.status = toText(rawFields.status || defaultFields.status)
+  writebackForm.syncedAt = toText(rawFields.syncedAt || defaultFields.syncedAt)
+  writebackForm.errorMessage = toText(rawFields.errorMessage || defaultFields.errorMessage)
+  writebackForm.reasonCode = toText(rawFields.reasonCode || defaultFields.reasonCode)
+  writebackForm.entityId = toText(rawFields.entityId || defaultFields.entityId)
+  writebackForm.runId = toText(rawFields.runId || defaultFields.runId)
+  writebackForm.triggerSource = toText(rawFields.triggerSource || defaultFields.triggerSource)
+  writebackForm.success = toText(rawValues.success || defaultValues.success || '已同步') || '已同步'
+  writebackForm.failed = toText(rawValues.failed || defaultValues.failed || '失败') || '失败'
+  writebackForm.skipped = toText(rawValues.skipped || defaultValues.skipped || '跳过') || '跳过'
+}
+
+function buildOptionsPayload(entityType: FeishuBitableSyncItemEntityType): Record<string, unknown> {
+  if (entityType === 'track') {
+    return {
+      contestId: toText(optionForm.contestId),
+    }
+  }
+
+  if (entityType === 'resource') {
+    return {
+      contestId: toText(optionForm.contestId),
+      defaultVisibility: toText(optionForm.defaultVisibility) || 'internal',
+      defaultStatus: toText(optionForm.defaultStatus) || 'active',
+      defaultResourceCategory: toText(optionForm.defaultResourceCategory) || 'basic_info',
+      defaultResourceAccessLevel: toText(optionForm.defaultResourceAccessLevel) || 'public',
+    }
+  }
+
+  return {}
+}
+
+function buildWritebackPayload(): Record<string, unknown> {
+  return {
+    enabled: Boolean(writebackForm.enabled),
+    fields: {
+      status: toText(writebackForm.status),
+      syncedAt: toText(writebackForm.syncedAt),
+      errorMessage: toText(writebackForm.errorMessage),
+      reasonCode: toText(writebackForm.reasonCode),
+      entityId: toText(writebackForm.entityId),
+      runId: toText(writebackForm.runId),
+      triggerSource: toText(writebackForm.triggerSource),
+    },
+    values: {
+      success: toText(writebackForm.success) || '已同步',
+      failed: toText(writebackForm.failed) || '失败',
+      skipped: toText(writebackForm.skipped) || '跳过',
+    },
+  }
+}
+
 function fillItemForm(item: FeishuBitableSyncItemDetail) {
-  itemForm.id = item.id
-  itemForm.name = item.name
-  itemForm.entityType = item.entityType
-  itemForm.appToken = item.appToken
-  itemForm.appName = item.source?.appName || syncDetail.value?.source.appName || ''
-  itemForm.tableId = item.tableId
-  itemForm.tableName = item.source?.tableName || ''
-  itemForm.viewId = item.viewId || ''
-  itemForm.viewName = item.source?.viewName || ''
-  itemForm.sourceUrl = item.source?.sourceUrl || syncDetail.value?.source.sourceUrl || ''
-  itemForm.isEnabled = item.isEnabled
-  itemForm.mappingText = JSON.stringify(item.mapping || {}, null, 2)
-  itemForm.optionsText = JSON.stringify(item.options || {}, null, 2)
-  itemForm.writebackText = JSON.stringify(item.writeback || {}, null, 2)
-  itemForm.scheduleEnabled = item.schedule.enabled
-  itemForm.scheduleMode = item.schedule.mode
-  itemForm.scheduleIntervalMinutes = Number(item.schedule.intervalMinutes || 60)
-  itemForm.scheduleCronExpr = item.schedule.cronExpr || '0 * * * *'
-  itemForm.scheduleTimezone = item.schedule.timezone || 'Asia/Shanghai'
+  const normalized = normalizeItemConfigText(item.entityType, {
+    mapping: item.mapping as Record<string, unknown>,
+    options: item.options,
+    writeback: item.writeback as Record<string, unknown> | undefined,
+  })
+
+  withVisualSyncPaused(() => {
+    itemForm.id = item.id
+    itemForm.name = item.name
+    itemForm.entityType = item.entityType
+    itemForm.appToken = item.appToken
+    itemForm.appName = item.source?.appName || syncDetail.value?.source.appName || ''
+    itemForm.tableId = item.tableId
+    itemForm.tableName = item.source?.tableName || ''
+    itemForm.viewId = item.viewId || ''
+    itemForm.viewName = item.source?.viewName || ''
+    itemForm.sourceUrl = item.source?.sourceUrl || syncDetail.value?.source.sourceUrl || ''
+    itemForm.isEnabled = item.isEnabled
+    itemForm.mappingText = normalized.mappingText
+    itemForm.optionsText = normalized.optionsText
+    itemForm.writebackText = normalized.writebackText
+    itemForm.scheduleEnabled = item.schedule.enabled
+    itemForm.scheduleMode = item.schedule.mode
+    itemForm.scheduleIntervalMinutes = Number(item.schedule.intervalMinutes || 60)
+    itemForm.scheduleCronExpr = item.schedule.cronExpr || '0 * * * *'
+    itemForm.scheduleTimezone = item.schedule.timezone || 'Asia/Shanghai'
+    loadMappingWizardFromJson()
+    loadOptionsFormFromJson(false)
+    loadWritebackFormFromJson(false)
+  })
 }
 
 function resetCurrentItemState() {
@@ -347,6 +560,58 @@ function applyDraftToNewItemForm() {
     newItemForm.name = '子表同步项'
 }
 
+function loadOptionsFormFromJson(showNotice = true) {
+  const options = parseJsonText(itemForm.optionsText, '同步选项')
+  withVisualSyncPaused(() => {
+    fillOptionForm(options)
+  })
+  if (showNotice)
+    setSuccess('已从 JSON 回读同步选项。')
+}
+
+function syncOptionsFormToJson(showNotice = false) {
+  itemForm.optionsText = formatJson(buildOptionsPayload(itemForm.entityType))
+  if (showNotice)
+    setSuccess('已将同步选项同步到 JSON。')
+}
+
+function loadWritebackFormFromJson(showNotice = true) {
+  const writeback = parseJsonText(itemForm.writebackText, '回填配置')
+  withVisualSyncPaused(() => {
+    fillWritebackForm(writeback)
+  })
+  if (showNotice)
+    setSuccess('已从 JSON 回读回填配置。')
+}
+
+function syncWritebackFormToJson(showNotice = false) {
+  itemForm.writebackText = formatJson(buildWritebackPayload())
+  if (showNotice)
+    setSuccess('已将回填配置同步到 JSON。')
+}
+
+function applyRecommendedTemplateIfNeeded(entityType: FeishuBitableSyncItemEntityType) {
+  const defaults = buildDefaultSyncItemConfig(entityType)
+  const mapping = parseJsonText(itemForm.mappingText, '字段映射')
+  const options = parseJsonText(itemForm.optionsText, '同步选项')
+  const writeback = parseJsonText(itemForm.writebackText, '回填配置')
+
+  withVisualSyncPaused(() => {
+    if (isSyncItemConfigEmpty(mapping)) {
+      itemForm.mappingText = formatJson(defaults.mapping)
+      loadMappingWizardFromJson()
+    }
+    if (isSyncItemConfigEmpty(options)) {
+      itemForm.optionsText = formatJson(defaults.options)
+      fillOptionForm(defaults.options)
+    }
+    if (isSyncItemConfigEmpty(writeback)) {
+      itemForm.writebackText = formatJson(defaults.writeback)
+      fillWritebackForm(defaults.writeback as Record<string, unknown>)
+    }
+  })
+}
+
 async function loadSyncDetail() {
   if (!normalizedSyncId.value)
     return
@@ -362,29 +627,28 @@ async function loadSyncDetail() {
 
     const nextItemId = normalizedSelectedItemId.value && response.data.items.some(item => item.id === normalizedSelectedItemId.value)
       ? normalizedSelectedItemId.value
-      : activeItemId.value && response.data.items.some(item => item.id === activeItemId.value)
+      : itemDrawerVisible.value && activeItemId.value && response.data.items.some(item => item.id === activeItemId.value)
         ? activeItemId.value
-        : response.data.items[0]?.id || ''
+        : ''
 
     if (nextItemId) {
       activeItemId.value = nextItemId
+      itemDrawerVisible.value = true
       await loadItemDetail(nextItemId)
     }
     else {
-      activeItemId.value = ''
       resetCurrentItemState()
       applyDraftToNewItemForm()
       if (newItemForm.tableId)
         await loadNewItemViews()
       else
         newItemViews.value = []
-      if (newItemForm.tableId || newItemForm.viewId)
+      if (!syncItems.value.length && (newItemForm.tableId || newItemForm.viewId))
         addItemDrawerVisible.value = true
     }
   }
   catch (error: any) {
     syncDetail.value = null
-    activeItemId.value = ''
     resetCurrentItemState()
     setError(String(error?.data?.message || '同步信息加载失败。'))
   }
@@ -403,7 +667,6 @@ async function loadItemDetail(itemId: string) {
     fillItemForm(response.data)
     previewResult.value = null
     await loadViews()
-    loadMappingWizardFromJson()
     await inspectFields()
   }
   catch (error: any) {
@@ -415,13 +678,22 @@ async function loadItemDetail(itemId: string) {
   }
 }
 
-async function selectItem(itemId: string) {
+async function openItemDrawer(itemId: string, emitChange = true) {
   const nextId = String(itemId || '').trim()
   if (!nextId)
     return
   activeItemId.value = nextId
-  emit('itemChange', nextId)
+  itemDrawerVisible.value = true
+  if (emitChange)
+    emit('itemChange', nextId)
   await loadItemDetail(nextId)
+}
+
+function closeItemDrawer() {
+  itemDrawerVisible.value = false
+  previewResult.value = null
+  fieldInspectionError.value = ''
+  emit('itemChange', '')
 }
 
 async function loadTables() {
@@ -489,6 +761,19 @@ async function loadNewItemViews() {
 function syncSelectedNames() {
   itemForm.tableName = availableTables.value.find(item => item.tableId === itemForm.tableId)?.name || itemForm.tableName
   itemForm.viewName = availableViews.value.find(item => item.viewId === itemForm.viewId)?.name || itemForm.viewName
+}
+
+async function handleItemTableChange() {
+  itemForm.viewId = ''
+  itemForm.viewName = ''
+  syncSelectedNames()
+  await loadViews()
+  await inspectFields()
+}
+
+async function handleItemViewChange() {
+  syncSelectedNames()
+  await inspectFields()
 }
 
 function addMappingWizardBinding() {
@@ -607,7 +892,7 @@ function loadMappingWizardFromJson() {
   mappingWizardBindings.value = [...dedup.values()]
 }
 
-function applyMappingWizardToJson() {
+function writeMappingWizardToJson(showNotice = false) {
   const mapping = parseJsonText(itemForm.mappingText, '字段映射')
   const fieldMap: Record<string, string> = {}
   const computedMap: Record<string, string> = {}
@@ -680,7 +965,9 @@ function applyMappingWizardToJson() {
       computedMap,
     }, null, 2)
   }
-  setSuccess('已将映射向导写回 JSON。')
+
+  if (showNotice)
+    setSuccess('已将映射配置同步到 JSON。')
 }
 
 function guessFieldNameByTarget(targetKey: string): string {
@@ -758,6 +1045,9 @@ async function saveCurrentItem() {
   let options: Record<string, unknown>
   let writeback: Record<string, unknown>
   try {
+    writeMappingWizardToJson(false)
+    syncOptionsFormToJson(false)
+    syncWritebackFormToJson(false)
     mapping = parseJsonText(itemForm.mappingText, '字段映射')
     options = parseJsonText(itemForm.optionsText, '同步选项')
     writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
@@ -799,6 +1089,8 @@ async function saveCurrentItem() {
       },
     })
     await loadSyncDetail()
+    if (activeItemId.value)
+      await loadItemDetail(activeItemId.value)
     emit('updated')
     setSuccess('子表同步项已保存。')
   }
@@ -850,14 +1142,36 @@ async function previewCurrentItem() {
   previewingItem.value = true
   clearFeedback()
   try {
+    writeMappingWizardToJson(false)
+    syncOptionsFormToJson(false)
+    syncWritebackFormToJson(false)
+    const mapping = parseJsonText(itemForm.mappingText, '字段映射')
+    const options = parseJsonText(itemForm.optionsText, '同步选项')
+    const writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
+    const draft: FeishuBitableSyncItemPreviewRequest = {
+      source: {
+        appToken: itemForm.appToken.trim(),
+        appName: itemForm.appName.trim(),
+        tableId: itemForm.tableId.trim(),
+        tableName: itemForm.tableName.trim(),
+        viewId: itemForm.viewId.trim(),
+        viewName: itemForm.viewName.trim(),
+        sourceUrl: itemForm.sourceUrl.trim(),
+      },
+      entityType: itemForm.entityType,
+      mapping,
+      options,
+      writeback,
+    }
     const response = await $fetch<ApiResponse<FeishuBitableSyncItemPreviewResult>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/preview`), {
       method: 'POST',
+      body: draft,
     })
     previewResult.value = response.data
     setSuccess('预检完成。')
   }
   catch (error: any) {
-    setError(String(error?.data?.message || '预检失败。'))
+    setError(String(error?.data?.message || error?.message || '预检失败。'))
   }
   finally {
     previewingItem.value = false
@@ -874,6 +1188,8 @@ async function runCurrentItem() {
       method: 'POST',
     })
     await loadSyncDetail()
+    if (activeItemId.value)
+      await loadItemDetail(activeItemId.value)
     emit('updated')
     setSuccess('同步执行完成。')
   }
@@ -911,6 +1227,7 @@ async function createItem() {
   try {
     const tableName = availableTables.value.find(item => item.tableId === newItemForm.tableId)?.name || ''
     const viewName = newItemViews.value.find(item => item.viewId === newItemForm.viewId)?.name || ''
+    const defaults = buildDefaultSyncItemConfig(newItemForm.entityType)
     const response = await $fetch<ApiResponse<FeishuBitableSyncItem>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items`), {
       method: 'POST',
       body: {
@@ -928,16 +1245,16 @@ async function createItem() {
           sourceUrl: syncDetail.value?.source.sourceUrl || '',
         },
         isEnabled: false,
-        mapping: {},
-        options: {},
-        writeback: {},
+        mapping: defaults.mapping,
+        options: defaults.options,
+        writeback: defaults.writeback,
       },
     })
     addItemDrawerVisible.value = false
     await loadSyncDetail()
-    await selectItem(response.data.id)
+    await openItemDrawer(response.data.id)
     emit('updated')
-    setSuccess('子表同步项已创建，默认保持禁用。')
+    setSuccess('子表同步项已创建，已自动带入推荐模板，默认保持禁用。')
   }
   catch (error: any) {
     setError(String(error?.data?.message || '子表同步项创建失败。'))
@@ -957,19 +1274,49 @@ function diagnosticClass(level: FeishuFieldDiagnosticItem['level']): string {
   return level === 'error' ? 'text-rose-600' : 'text-amber-600'
 }
 
+watch(mappingWizardBindings, () => {
+  if (suppressVisualSync.value)
+    return
+  writeMappingWizardToJson(false)
+}, { deep: true })
+
+watch(optionForm, () => {
+  if (suppressVisualSync.value)
+    return
+  syncOptionsFormToJson(false)
+}, { deep: true })
+
+watch(writebackForm, () => {
+  if (suppressVisualSync.value)
+    return
+  syncWritebackFormToJson(false)
+}, { deep: true })
+
+watch(() => itemForm.entityType, (value, previousValue) => {
+  if (!value || value === previousValue || suppressVisualSync.value)
+    return
+  try {
+    applyRecommendedTemplateIfNeeded(value)
+  }
+  catch (error) {
+    setError(error instanceof Error ? error.message : '推荐模板更新失败。')
+  }
+})
+
 watch(() => props.syncId, () => {
-  activeItemId.value = normalizedSelectedItemId.value
   void loadSyncDetail()
 }, { immediate: true })
 
 watch(() => props.selectedItemId, (value) => {
   const nextId = String(value || '').trim()
-  if (!nextId || nextId === activeItemId.value)
+  if (!nextId) {
+    if (itemDrawerVisible.value)
+      itemDrawerVisible.value = false
     return
-  if (!syncDetail.value?.items.some(item => item.id === nextId))
+  }
+  if (!syncItems.value.some(item => item.id === nextId))
     return
-  activeItemId.value = nextId
-  void loadItemDetail(nextId)
+  void openItemDrawer(nextId, false)
 })
 </script>
 
@@ -1047,7 +1394,7 @@ watch(() => props.selectedItemId, (value) => {
             子表同步项
           </p>
           <p class="text-[11px] text-slate-900 font-medium m-0 mt-1">
-            {{ syncDetail?.items.length || 0 }} 个 / 已启用 {{ syncDetail?.enabledItemCount || 0 }} 个
+            {{ syncItems.length }} 个 / 已启用 {{ syncDetail?.enabledItemCount || 0 }} 个
           </p>
         </div>
         <div class="p-3 border border-slate-200 rounded bg-slate-50">
@@ -1065,55 +1412,141 @@ watch(() => props.selectedItemId, (value) => {
       </p>
     </section>
 
-    <div class="gap-4 grid xl:grid-cols-[280px,minmax(0,1fr)]">
-      <aside class="space-y-3">
-        <section class="p-3 border border-slate-200 rounded bg-white space-y-2">
-          <div class="flex items-center justify-between">
-            <h2 class="text-[12px] text-slate-900 font-semibold m-0">
-              子表同步项
-            </h2>
-            <span class="text-[10px] text-slate-500">{{ syncDetail?.items.length || 0 }} 个</span>
-          </div>
+    <section class="p-4 border border-slate-200 rounded bg-slate-50 space-y-3">
+      <div>
+        <h2 class="text-[13px] text-slate-900 font-semibold m-0">
+          如何配置一个同步项
+        </h2>
+        <p class="text-[11px] text-slate-500 m-0 mt-1">
+          先选同步项，再进详细配置。常用表单会自动带推荐模板，JSON 只放在高级模式里兜底。
+        </p>
+        <p class="text-[11px] text-slate-500 m-0 mt-1">
+          完整教程已整理到仓库文档 `docs/feishu-bitable-sync-guide.md`，适合第一次接手配置的管理员按步骤照着做。
+        </p>
+      </div>
+      <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
+        <div v-for="step in QUICK_START_STEPS" :key="step" class="text-[11px] text-slate-600 px-3 py-2 border border-slate-200 rounded bg-white">
+          {{ step }}
+        </div>
+      </div>
+    </section>
 
-          <a-spin :loading="loadingSync">
-            <div v-if="syncDetail?.items.length" class="space-y-2">
-              <button
-                v-for="item in syncDetail.items"
-                :key="item.id"
-                type="button"
-                class="px-3 py-2 text-left border rounded w-full transition"
-                :class="activeItemId === item.id ? 'border-sky-500 bg-sky-50' : 'border-slate-200 bg-white hover:border-slate-300'"
-                @click="selectItem(item.id)"
-              >
-                <div class="flex gap-2 items-center justify-between">
-                  <p class="text-[12px] text-slate-900 font-medium m-0 truncate">
+    <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-[13px] text-slate-900 font-semibold m-0">
+            子表同步项列表
+          </h2>
+          <p class="text-[11px] text-slate-500 m-0 mt-1">
+            先从这里选择要配置的同步项，再打开详细配置 Drawer。列表里优先展示实体类型、来源子表、启用状态和最近结果。
+          </p>
+        </div>
+        <a-tag color="arcoblue" size="small">
+          {{ syncItems.length }} 个同步项
+        </a-tag>
+      </div>
+
+      <a-spin :loading="loadingSync">
+        <div v-if="syncItems.length" class="space-y-3">
+          <button
+            v-for="item in syncItems"
+            :key="item.id"
+            type="button"
+            class="px-4 py-3 text-left border rounded w-full transition"
+            :class="activeItemId === item.id ? 'border-sky-500 bg-sky-50' : 'border-slate-200 bg-white hover:border-slate-300'"
+            @click="openItemDrawer(item.id)"
+          >
+            <div class="flex flex-wrap gap-3 items-start justify-between">
+              <div class="flex-1 min-w-0">
+                <div class="flex flex-wrap gap-2 items-center">
+                  <p class="text-[13px] text-slate-900 font-semibold m-0 truncate">
                     {{ item.name }}
                   </p>
-                  <a-tag :color="item.isEnabled ? 'green' : 'gray'" size="small">
-                    {{ item.isEnabled ? '启用' : '停用' }}
+                  <a-tag size="small" :color="item.isEnabled ? 'green' : 'gray'">
+                    {{ item.isEnabled ? '已启用' : '未启用' }}
+                  </a-tag>
+                  <a-tag size="small" color="arcoblue">
+                    {{ entityTypeLabel(item.entityType) }}
                   </a-tag>
                 </div>
-                <p class="text-[10px] text-slate-500 m-0 mt-1">
-                  {{ entityTypeLabel(item.entityType) }} / {{ item.source?.tableName || item.tableId }}
+                <p class="text-[11px] text-slate-500 m-0 mt-2 break-all">
+                  {{ item.source?.tableName || item.tableId || '-' }} / {{ item.source?.viewName || item.viewId || '全部视图' }}
                 </p>
-              </button>
+                <p class="text-[11px] text-slate-500 m-0 mt-1 break-all">
+                  tableId={{ item.tableId || '-' }} / viewId={{ item.viewId || '-' }}
+                </p>
+              </div>
+              <div class="text-[11px] text-slate-500 gap-2 grid justify-items-end">
+                <a-tag size="small" :color="runStatusColor(item.latestRunSummary?.status)">
+                  {{ item.latestRunSummary ? runStatusLabel(item.latestRunSummary.status) : '未执行' }}
+                </a-tag>
+                <span>最近：{{ latestRunSummaryText(item.latestRunSummary) }}</span>
+                <span v-if="(item.latestRunSummary?.errorCount || 0) > 0">最近错误数：{{ item.latestRunSummary?.errorCount || 0 }}</span>
+                <span v-if="item.scheduleRuntime?.lastError">上次调度错误：{{ item.scheduleRuntime.lastError }}</span>
+                <span v-else>调度错误：无</span>
+              </div>
             </div>
-            <a-empty v-else description="当前主库还没有子表同步项" />
-          </a-spin>
-        </section>
-      </aside>
+          </button>
+        </div>
+        <a-empty v-else description="当前主库还没有子表同步项" />
+      </a-spin>
+    </section>
 
-      <main class="space-y-4">
+    <a-drawer
+      v-model:visible="itemDrawerVisible"
+      :title="currentItem ? `配置同步项：${currentItem.name}` : '配置同步项'"
+      width="1120px"
+      :footer="false"
+      :mask-closable="!(savingItem || previewingItem || runningItem)"
+      :closable="!(savingItem || previewingItem || runningItem)"
+      @cancel="closeItemDrawer"
+    >
+      <div class="space-y-4">
+        <section class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+          <h2 class="text-[13px] text-slate-900 font-semibold m-0">
+            这三块配置分别是什么
+          </h2>
+          <div class="gap-3 grid md:grid-cols-3">
+            <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+              <p class="text-slate-900 font-medium m-0">
+                映射配置
+              </p>
+              <p class="m-0 mt-1">
+                决定飞书哪一列映射到平台哪个字段。`externalIdField` 是主键；`contestExternalIdField / trackExternalIdField` 只在需要关联实体时才要填。
+              </p>
+            </div>
+            <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+              <p class="text-slate-900 font-medium m-0">
+                同步选项
+              </p>
+              <p class="m-0 mt-1">
+                不是字段映射，而是同步时的默认行为和值。比如资源默认可见性、默认分类、固定 contestId 兜底等。
+              </p>
+            </div>
+            <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+              <p class="text-slate-900 font-medium m-0">
+                回填配置
+              </p>
+              <p class="m-0 mt-1">
+                决定同步完成后回写飞书哪些列，比如状态、同步时间、错误摘要、平台实体 ID 和 runId，不是回写平台字段。
+              </p>
+            </div>
+          </div>
+        </section>
+
         <a-spin :loading="loadingItem">
           <template v-if="currentItem">
             <section class="p-4 border border-slate-200 rounded bg-white space-y-4">
-              <div class="flex gap-3 items-center justify-between">
+              <div class="flex flex-wrap gap-3 items-start justify-between">
                 <div>
-                  <h2 class="text-[13px] text-slate-900 font-semibold m-0">
+                  <h2 class="text-[14px] text-slate-900 font-semibold m-0">
                     {{ currentItem.name }}
                   </h2>
                   <p class="text-[11px] text-slate-500 m-0 mt-1">
                     子表同步项 ID：{{ currentItem.id }}
+                  </p>
+                  <p class="text-[11px] text-emerald-700 m-0 mt-1">
+                    预检会直接使用当前 Drawer 里的草稿配置，你可以先改映射和回填，再决定要不要保存。
                   </p>
                 </div>
                 <div class="flex gap-2">
@@ -1148,9 +1581,22 @@ watch(() => props.selectedItemId, (value) => {
                     <a-switch v-model="itemForm.isEnabled" />
                   </div>
                 </div>
+              </div>
+            </section>
+
+            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+              <div>
+                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                  来源
+                </h3>
+                <p class="text-[11px] text-slate-500 m-0 mt-1">
+                  先选子表和视图；选择后会自动刷新字段概览并尝试匹配映射。
+                </p>
+              </div>
+              <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
                 <label class="text-[11px] text-slate-600 font-medium block">
                   子表
-                  <a-select v-model="itemForm.tableId" class="mt-1" size="small" allow-search allow-clear @change="() => { syncSelectedNames(); void loadViews() }">
+                  <a-select v-model="itemForm.tableId" class="mt-1" size="small" allow-search allow-clear @change="handleItemTableChange">
                     <a-option v-for="item in availableTables" :key="item.tableId" :value="item.tableId">
                       {{ item.name }} ({{ item.tableId }})
                     </a-option>
@@ -1158,7 +1604,7 @@ watch(() => props.selectedItemId, (value) => {
                 </label>
                 <label class="text-[11px] text-slate-600 font-medium block">
                   视图
-                  <a-select v-model="itemForm.viewId" class="mt-1" size="small" allow-search allow-clear @change="syncSelectedNames">
+                  <a-select v-model="itemForm.viewId" class="mt-1" size="small" allow-search allow-clear @change="handleItemViewChange">
                     <a-option v-for="item in availableViews" :key="item.viewId" :value="item.viewId">
                       {{ item.name }} ({{ item.viewId }})
                     </a-option>
@@ -1170,24 +1616,52 @@ watch(() => props.selectedItemId, (value) => {
                 </label>
               </div>
 
-              <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50 space-y-1">
-                <p class="m-0">
-                  主库：{{ syncDetail?.source.appName || '-' }} / {{ itemForm.appToken || '-' }}
-                </p>
-                <p class="m-0">
-                  当前子表：{{ itemForm.tableName || itemForm.tableId || '-' }} / {{ itemForm.viewName || itemForm.viewId || '-' }}
-                </p>
-                <p class="m-0">
-                  最近执行：{{ currentItem.latestRunSummary ? formatDateTime(currentItem.latestRunSummary.startedAt) : '-' }}
-                </p>
+              <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
+                <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                  <p class="text-slate-500 m-0">
+                    主库
+                  </p>
+                  <p class="m-0 mt-1 break-all">
+                    {{ syncDetail?.source.appName || '-' }} / {{ itemForm.appToken || '-' }}
+                  </p>
+                </div>
+                <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                  <p class="text-slate-500 m-0">
+                    当前子表
+                  </p>
+                  <p class="m-0 mt-1 break-all">
+                    {{ itemForm.tableName || itemForm.tableId || '-' }}
+                  </p>
+                </div>
+                <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                  <p class="text-slate-500 m-0">
+                    当前视图
+                  </p>
+                  <p class="m-0 mt-1 break-all">
+                    {{ itemForm.viewName || itemForm.viewId || '全部视图' }}
+                  </p>
+                </div>
+                <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                  <p class="text-slate-500 m-0">
+                    最近执行
+                  </p>
+                  <p class="m-0 mt-1 break-all">
+                    {{ currentItem.latestRunSummary ? formatDateTime(currentItem.latestRunSummary.startedAt) : '-' }}
+                  </p>
+                </div>
               </div>
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
               <div class="flex items-center justify-between">
-                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                  字段概览
-                </h3>
+                <div>
+                  <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                    字段概览
+                  </h3>
+                  <p class="text-[11px] text-slate-500 m-0 mt-1">
+                    系统会优先按字段名猜测映射关系；你只需要重点确认 externalId 和关联字段是否正确。
+                  </p>
+                </div>
                 <a-button size="mini" :loading="loadingFieldInspection" @click="inspectFields">
                   刷新字段
                 </a-button>
@@ -1211,15 +1685,20 @@ watch(() => props.selectedItemId, (value) => {
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
               <div class="flex items-center justify-between">
-                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                  映射配置
-                </h3>
+                <div>
+                  <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                    基础映射
+                  </h3>
+                  <p class="text-[11px] text-slate-500 m-0 mt-1">
+                    `externalId` 是平台主键来源。赛道需要 `contestExternalId`；资料需要按需补 `contestExternalId / trackExternalId`。
+                  </p>
+                </div>
                 <div class="flex gap-2">
                   <a-button size="mini" @click="loadMappingWizardFromJson">
-                    从 JSON 读取
+                    从 JSON 回读
                   </a-button>
-                  <a-button size="mini" @click="applyMappingWizardToJson">
-                    写回 JSON
+                  <a-button size="mini" @click="writeMappingWizardToJson(true)">
+                    同步到 JSON
                   </a-button>
                   <a-button size="mini" @click="addMappingWizardBinding">
                     添加映射
@@ -1251,31 +1730,146 @@ watch(() => props.selectedItemId, (value) => {
                 </div>
               </div>
               <a-empty v-else description="还没有可视化映射，点击上方按钮新增" />
-
-              <label class="text-[11px] text-slate-600 font-medium block">
-                映射 JSON
-                <a-textarea v-model="itemForm.mappingText" class="font-mono mt-1" :auto-size="{ minRows: 8, maxRows: 18 }" />
-              </label>
             </section>
 
-            <section class="gap-4 grid xl:grid-cols-2">
-              <div class="p-4 border border-slate-200 rounded bg-white space-y-3">
+            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+              <div>
                 <h3 class="text-[12px] text-slate-900 font-semibold m-0">
                   同步选项
                 </h3>
-                <a-textarea v-model="itemForm.optionsText" class="font-mono" :auto-size="{ minRows: 8, maxRows: 16 }" />
+                <p class="text-[11px] text-slate-500 m-0 mt-1">
+                  这里配置的是同步行为默认值，不是字段映射。如果当前实体类型没有额外默认项，可以直接跳过。
+                </p>
               </div>
-              <div class="p-4 border border-slate-200 rounded bg-white space-y-3">
+
+              <div v-if="activeOptionFieldGroups.length" class="gap-2 grid md:grid-cols-2 xl:grid-cols-3">
+                <div
+                  v-for="field in activeOptionFieldGroups"
+                  :key="field.key"
+                  class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50"
+                >
+                  <p class="text-slate-900 font-medium m-0">
+                    {{ field.label }}
+                  </p>
+                  <p class="m-0 mt-1">
+                    {{ field.description }}
+                  </p>
+                </div>
+              </div>
+
+              <template v-if="itemForm.entityType === 'contest'">
+                <a-alert type="info" :show-icon="true">
+                  竞赛类型当前没有额外同步选项，保持默认即可。
+                </a-alert>
+              </template>
+              <div v-else class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
+                <label v-if="itemForm.entityType === 'track' || itemForm.entityType === 'resource'" class="text-[11px] text-slate-600 font-medium block">
+                  默认 contestId
+                  <a-input v-model="optionForm.contestId" class="mt-1" size="small" allow-clear />
+                  <p class="text-[10px] text-slate-400 m-0 mt-1">
+                    飞书记录没有关联竞赛 ID 时，可用这个固定值兜底。
+                  </p>
+                </label>
+
+                <template v-if="itemForm.entityType === 'resource'">
+                  <label class="text-[11px] text-slate-600 font-medium block">
+                    默认可见性
+                    <a-select v-model="optionForm.defaultVisibility" class="mt-1" size="small">
+                      <a-option v-for="option in RESOURCE_VISIBILITY_OPTIONS" :key="option.value" :value="option.value">
+                        {{ option.label }}
+                      </a-option>
+                    </a-select>
+                  </label>
+                  <label class="text-[11px] text-slate-600 font-medium block">
+                    默认状态
+                    <a-select v-model="optionForm.defaultStatus" class="mt-1" size="small">
+                      <a-option v-for="option in RESOURCE_STATUS_OPTIONS" :key="option.value" :value="option.value">
+                        {{ option.label }}
+                      </a-option>
+                    </a-select>
+                  </label>
+                  <label class="text-[11px] text-slate-600 font-medium block">
+                    默认资料分类
+                    <a-select v-model="optionForm.defaultResourceCategory" class="mt-1" size="small">
+                      <a-option v-for="option in RESOURCE_CATEGORY_OPTIONS" :key="option.value" :value="option.value">
+                        {{ option.label }}
+                      </a-option>
+                    </a-select>
+                  </label>
+                  <label class="text-[11px] text-slate-600 font-medium block">
+                    默认访问级别
+                    <a-select v-model="optionForm.defaultResourceAccessLevel" class="mt-1" size="small">
+                      <a-option v-for="option in RESOURCE_ACCESS_LEVEL_OPTIONS" :key="option.value" :value="option.value">
+                        {{ option.label }}
+                      </a-option>
+                    </a-select>
+                  </label>
+                </template>
+              </div>
+            </section>
+
+            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+              <div>
                 <h3 class="text-[12px] text-slate-900 font-semibold m-0">
                   回填配置
                 </h3>
-                <a-textarea v-model="itemForm.writebackText" class="font-mono" :auto-size="{ minRows: 8, maxRows: 16 }" />
+                <p class="text-[11px] text-slate-500 m-0 mt-1">
+                  回填的是飞书列名，不是平台字段名。建议至少配置状态、同步时间、错误摘要、平台实体 ID 和 runId。
+                </p>
+              </div>
+              <div class="text-[11px] text-slate-600 font-medium block">
+                <div>启用回填</div>
+                <div class="mt-2">
+                  <a-switch v-model="writebackForm.enabled" />
+                </div>
+              </div>
+              <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  状态字段
+                  <a-input v-model="writebackForm.status" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  同步时间字段
+                  <a-input v-model="writebackForm.syncedAt" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  错误摘要字段
+                  <a-input v-model="writebackForm.errorMessage" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  原因码字段
+                  <a-input v-model="writebackForm.reasonCode" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  平台实体 ID 字段
+                  <a-input v-model="writebackForm.entityId" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  runId 字段
+                  <a-input v-model="writebackForm.runId" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  triggerSource 字段
+                  <a-input v-model="writebackForm.triggerSource" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  成功值
+                  <a-input v-model="writebackForm.success" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  失败值
+                  <a-input v-model="writebackForm.failed" class="mt-1" size="small" allow-clear />
+                </label>
+                <label class="text-[11px] text-slate-600 font-medium block">
+                  跳过值
+                  <a-input v-model="writebackForm.skipped" class="mt-1" size="small" allow-clear />
+                </label>
               </div>
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
               <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                调度配置
+                调度与运行
               </h3>
               <div class="gap-3 grid md:grid-cols-4">
                 <div class="text-[11px] text-slate-600 font-medium block">
@@ -1355,9 +1949,19 @@ watch(() => props.selectedItemId, (value) => {
               </div>
 
               <div class="p-4 border border-slate-200 rounded bg-white space-y-3">
-                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                  关联问题
-                </h3>
+                <div class="flex items-center justify-between">
+                  <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                    关联问题
+                  </h3>
+                  <div class="flex gap-2">
+                    <a-tag size="small" color="gold">
+                      待处理 {{ currentItem.issueStats.open }}
+                    </a-tag>
+                    <a-tag size="small">
+                      总计 {{ currentItem.issueStats.total }}
+                    </a-tag>
+                  </div>
+                </div>
                 <div v-if="currentItem.issues.length" class="space-y-2">
                   <div v-for="issue in currentItem.issues" :key="issue.id" class="px-3 py-2 border border-slate-200 rounded">
                     <p class="text-[11px] text-slate-900 m-0">
@@ -1371,12 +1975,75 @@ watch(() => props.selectedItemId, (value) => {
                 <a-empty v-else description="暂无问题单" />
               </div>
             </section>
+
+            <section class="p-4 border border-slate-200 rounded bg-white">
+              <a-collapse :default-active-key="[]" :bordered="false" expand-icon-position="right">
+                <a-collapse-item key="advanced" header="高级 JSON 模式（兜底）">
+                  <div class="pt-2 space-y-4">
+                    <p class="text-[11px] text-slate-500 m-0">
+                      大多数情况请优先使用上面的可视化表单。只有在需要精细编辑或调试时，再直接修改 JSON。手动改 JSON 后，请点“从 JSON 回读”。
+                    </p>
+
+                    <section class="space-y-2">
+                      <div class="flex items-center justify-between">
+                        <h4 class="text-[12px] text-slate-900 font-semibold m-0">
+                          映射 JSON
+                        </h4>
+                        <div class="flex gap-2">
+                          <a-button size="mini" @click="loadMappingWizardFromJson">
+                            从 JSON 回读
+                          </a-button>
+                          <a-button size="mini" @click="writeMappingWizardToJson(true)">
+                            同步到 JSON
+                          </a-button>
+                        </div>
+                      </div>
+                      <a-textarea v-model="itemForm.mappingText" class="font-mono" :auto-size="{ minRows: 8, maxRows: 18 }" />
+                    </section>
+
+                    <section class="space-y-2">
+                      <div class="flex items-center justify-between">
+                        <h4 class="text-[12px] text-slate-900 font-semibold m-0">
+                          同步选项 JSON
+                        </h4>
+                        <div class="flex gap-2">
+                          <a-button size="mini" @click="loadOptionsFormFromJson()">
+                            从 JSON 回读
+                          </a-button>
+                          <a-button size="mini" @click="syncOptionsFormToJson(true)">
+                            同步到 JSON
+                          </a-button>
+                        </div>
+                      </div>
+                      <a-textarea v-model="itemForm.optionsText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 14 }" />
+                    </section>
+
+                    <section class="space-y-2">
+                      <div class="flex items-center justify-between">
+                        <h4 class="text-[12px] text-slate-900 font-semibold m-0">
+                          回填配置 JSON
+                        </h4>
+                        <div class="flex gap-2">
+                          <a-button size="mini" @click="loadWritebackFormFromJson()">
+                            从 JSON 回读
+                          </a-button>
+                          <a-button size="mini" @click="syncWritebackFormToJson(true)">
+                            同步到 JSON
+                          </a-button>
+                        </div>
+                      </div>
+                      <a-textarea v-model="itemForm.writebackText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 16 }" />
+                    </section>
+                  </div>
+                </a-collapse-item>
+              </a-collapse>
+            </section>
           </template>
 
-          <a-empty v-else description="请先从左侧选择一个子表同步项" />
+          <a-empty v-else description="请先从同步项列表里选择一个条目" />
         </a-spin>
-      </main>
-    </div>
+      </div>
+    </a-drawer>
 
     <a-drawer
       v-model:visible="addItemDrawerVisible"
@@ -1384,9 +2051,20 @@ watch(() => props.selectedItemId, (value) => {
       :mask-closable="!creatingItem"
       :closable="!creatingItem"
       :footer="false"
-      width="520px"
+      width="560px"
     >
       <div class="space-y-3">
+        <a-alert type="info" :show-icon="true">
+          新建后会自动带入当前实体类型的推荐模板：映射骨架、同步选项和回填配置都会先帮你铺好。
+        </a-alert>
+        <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+          <p class="text-slate-900 font-medium m-0">
+            推荐模板说明
+          </p>
+          <p class="m-0 mt-1">
+            `contest` 默认关注 `externalId + 名称/官网/简介`；`track` 额外带 `contestExternalId`；`resource` 会再补 `trackExternalId` 和资料默认值。
+          </p>
+        </div>
         <label class="text-[11px] text-slate-600 font-medium block">
           同步项名称
           <a-input v-model="newItemForm.name" class="mt-1" size="small" allow-clear placeholder="可留空，默认用表名" />
@@ -1420,7 +2098,7 @@ watch(() => props.selectedItemId, (value) => {
             取消
           </a-button>
           <a-button size="small" type="primary" :loading="creatingItem" @click="createItem">
-            创建
+            创建并继续配置
           </a-button>
         </div>
       </div>

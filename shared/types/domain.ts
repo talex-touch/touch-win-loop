@@ -1410,6 +1410,14 @@ export interface FeishuBitableSyncItemPreviewResult {
   issueCounts: FeishuPreviewIssueCounts
 }
 
+export interface FeishuBitableSyncItemPreviewRequest {
+  source?: FeishuBitableSourceConfig
+  entityType?: FeishuBitableSyncItemEntityType
+  mapping?: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
+  options?: Record<string, unknown>
+  writeback?: FeishuBitableWritebackConfig | Record<string, unknown>
+}
+
 export interface FeishuConfigValidationResult {
   valid: boolean
   errors: string[]
@@ -1556,6 +1564,27 @@ export interface FeishuDirectoryDepartment {
   parentDepartmentId?: string | null
 }
 
+export type FeishuDirectoryStatus = 'ok' | 'partial' | 'unavailable'
+
+export type FeishuDirectoryFetchStatus = 'ok' | 'failed'
+
+export type FeishuDirectoryDiagnosticCode
+  = | 'none'
+    | 'partial_directory_visible'
+    | 'department_tree_permission_denied'
+    | 'directory_unavailable'
+    | 'integration_disabled'
+    | 'app_config_incomplete'
+
+export interface FeishuDirectoryContactScopeSummary {
+  departmentIds: string[]
+  userIds: string[]
+  groupIds: string[]
+  totalDepartments: number
+  totalUsers: number
+  totalGroups: number
+}
+
 export interface FeishuDirectorySearchResult {
   items: FeishuDirectoryUserCandidate[]
   departments?: FeishuDirectoryDepartment[]
@@ -1567,6 +1596,14 @@ export interface FeishuDirectorySearchResult {
   cacheExpiresAt?: string
   totalMembers?: number
   permissionHint?: string
+  directoryStatus?: FeishuDirectoryStatus
+  memberListStatus?: FeishuDirectoryFetchStatus
+  departmentTreeStatus?: FeishuDirectoryFetchStatus
+  contactScopeStatus?: FeishuDirectoryFetchStatus
+  contactScopeSummary?: FeishuDirectoryContactScopeSummary
+  contactScopeErrorMessage?: string
+  diagnosticCode?: FeishuDirectoryDiagnosticCode
+  diagnosticMessage?: string
 }
 
 export interface FeishuAdminManualAddResult {

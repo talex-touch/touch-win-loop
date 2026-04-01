@@ -1,4 +1,10 @@
 import type { FeishuIntegrationConfigInternal } from '~~/server/utils/feishu-integration-store'
+import type {
+  FeishuDirectoryContactScopeSummary,
+  FeishuDirectoryDiagnosticCode,
+  FeishuDirectoryFetchStatus,
+  FeishuDirectoryStatus,
+} from '~~/shared/types/domain'
 
 const DEFAULT_FEISHU_API_BASE_URL = 'https://open.feishu.cn'
 const DEFAULT_GROUP_MEMBER_PAGE_SIZE = 200
@@ -99,6 +105,14 @@ interface DepartmentUsersData {
   has_more?: boolean
   page_token?: string
   items?: DepartmentUserItem[]
+}
+
+interface ContactScopesData {
+  has_more?: boolean
+  page_token?: string
+  department_ids?: string[]
+  user_ids?: string[]
+  group_ids?: string[]
 }
 
 type DepartmentIdType = 'open_department_id' | 'department_id'
@@ -203,6 +217,25 @@ function shouldRetryWithAlternateDepartmentIdType(raw: unknown): boolean {
     || message.includes('dept authority')
     || message.includes('no dept authority')
     || message.includes('not found')
+}
+
+function isPermissionRelatedMessage(message: string): boolean {
+  const normalized = String(message || '').trim().toLowerCase()
+  if (!normalized)
+    return false
+  return normalized.includes('permission')
+    || normalized.includes('authority')
+    || normalized.includes('forbidden')
+    || normalized.includes('scope')
+    || normalized.includes('dept authority')
+    || normalized.includes('contact')
+    || normalized.includes('access denied')
+    || normalized.includes('insufficient')
+    || normalized.includes('not allowed')
+    || normalized.includes('no_access')
+    || normalized.includes('99991663')
+    || normalized.includes('权限')
+    || normalized.includes('无权限')
 }
 
 function hasOwn(source: object, key: string): boolean {
@@ -310,6 +343,11 @@ export interface FeishuTenantDirectory {
   rootDepartmentId: string
   userDepartmentIds: Record<string, string[]>
   notice?: string
+  directoryStatus: FeishuDirectoryStatus
+  memberListStatus: FeishuDirectoryFetchStatus
+  departmentTreeStatus: FeishuDirectoryFetchStatus
+  diagnosticCode: FeishuDirectoryDiagnosticCode
+  diagnosticMessage: string
 }
 
 export interface FeishuBitableRecord {
@@ -511,6 +549,61 @@ export async function getFeishuUserByUnionId(input: {
     avatarUrl: String(user.avatar?.avatar_origin || user.avatar?.avatar_240 || user.avatar?.avatar_72 || '').trim(),
     email: String(user.email || '').trim(),
     mobile: String(user.mobile || '').trim(),
+  }
+}
+
+export async function listFeishuContactScope(input: {
+  tenantAccessToken: string
+}): Promise<FeishuDirectoryContactScopeSummary> {
+  const departmentIds = new Set<string>()
+  const userIds = new Set<string>()
+  const groupIds = new Set<string>()
+  let pageToken = ''
+  let hasMore = true
+
+  while (hasMore) {
+    const data = await requestFeishu<ContactScopesData>({
+      baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+      path: '/open-apis/contact/v3/scopes',
+      method: 'GET',
+      bearerToken: input.tenantAccessToken,
+      query: {
+        department_id_type: 'department_id',
+        user_id_type: 'union_id',
+        page_size: DEFAULT_CONTACT_PAGE_SIZE,
+        page_token: pageToken || '',
+      },
+    })
+
+    for (const departmentId of (data.department_ids || [])) {
+      const normalizedDepartmentId = String(departmentId || '').trim()
+      if (normalizedDepartmentId)
+        departmentIds.add(normalizedDepartmentId)
+    }
+    for (const userId of (data.user_ids || [])) {
+      const normalizedUserId = String(userId || '').trim()
+      if (normalizedUserId)
+        userIds.add(normalizedUserId)
+    }
+    for (const groupId of (data.group_ids || [])) {
+      const normalizedGroupId = String(groupId || '').trim()
+      if (normalizedGroupId)
+        groupIds.add(normalizedGroupId)
+    }
+
+    hasMore = Boolean(data.has_more)
+    pageToken = String(data.page_token || '').trim()
+    if (hasMore && !pageToken)
+      hasMore = false
+  }
+
+  return {
+    departmentIds: [...departmentIds].sort(),
+    userIds: [...userIds].sort(),
+    groupIds: [...groupIds].sort(),
+    totalDepartments: departmentIds.size,
+    totalUsers: userIds.size,
+    totalGroups: groupIds.size,
   }
 }
 
@@ -968,6 +1061,8 @@ export async function listFeishuTenantDirectory(input: {
   let directUsersError: unknown = null
   let departmentDirectoryError: unknown = null
   let notice = ''
+  let memberListStatus: FeishuDirectoryFetchStatus = 'failed'
+  let departmentTreeStatus: FeishuDirectoryFetchStatus = 'failed'
 
   try {
     const directUsers = await listFeishuUsersDirectlyByPaging({
@@ -989,6 +1084,7 @@ export async function listFeishuTenantDirectory(input: {
     appendProfilesToMap(users, directory.users)
     departments = directory.departments
     userDepartmentIds = directory.userDepartmentIds
+    departmentTreeStatus = 'ok'
   }
   catch (error) {
     departmentDirectoryError = error
@@ -1003,12 +1099,39 @@ export async function listFeishuTenantDirectory(input: {
     throw directUsersError
   }
 
+  if (users.size > 0)
+    memberListStatus = 'ok'
+
+  const diagnosticMessage = String(
+    notice
+    || (departmentDirectoryError ? toErrorMessage(departmentDirectoryError) : '')
+    || (directUsersError ? toErrorMessage(directUsersError) : ''),
+  ).trim()
+  const directoryStatus: FeishuDirectoryStatus = memberListStatus === 'ok'
+    ? (departmentTreeStatus === 'ok' ? 'ok' : 'partial')
+    : 'unavailable'
+  const diagnosticCode: FeishuDirectoryDiagnosticCode = (() => {
+    if (directoryStatus === 'ok')
+      return 'none'
+    if (directoryStatus === 'partial') {
+      return isPermissionRelatedMessage(diagnosticMessage)
+        ? 'department_tree_permission_denied'
+        : 'partial_directory_visible'
+    }
+    return 'directory_unavailable'
+  })()
+
   return {
     users: [...users.values()],
     departments,
     rootDepartmentId,
     userDepartmentIds,
     notice,
+    directoryStatus,
+    memberListStatus,
+    departmentTreeStatus,
+    diagnosticCode,
+    diagnosticMessage,
   }
 }
 
