@@ -44,8 +44,12 @@ const creatingSync = ref(false)
 const manualAddingKey = ref('')
 
 const createSyncDrawerVisible = ref(false)
+const editSyncDrawerVisible = ref(false)
 const createSourceMode = ref<CreateSyncSourceMode>('url')
 const configDialogVisible = ref(false)
+const editingSyncId = ref('')
+const editingDraftTableId = ref('')
+const editingDraftViewId = ref('')
 
 const errorText = ref('')
 const successText = ref('')
@@ -493,6 +497,19 @@ function openCreateSyncDrawer() {
   createSyncDrawerVisible.value = true
 }
 
+function resetEditSyncDrawerState() {
+  editingSyncId.value = ''
+  editingDraftTableId.value = ''
+  editingDraftViewId.value = ''
+}
+
+function openEditSyncDrawer(syncId: string, options?: { draftTableId?: string, draftViewId?: string }) {
+  editingSyncId.value = String(syncId || '').trim()
+  editingDraftTableId.value = String(options?.draftTableId || '').trim()
+  editingDraftViewId.value = String(options?.draftViewId || '').trim()
+  editSyncDrawerVisible.value = Boolean(editingSyncId.value)
+}
+
 function openConfigDialog() {
   clearFeedback()
   configDialogVisible.value = true
@@ -528,16 +545,16 @@ async function createSync() {
       },
     })
     const createdSync = response.data
+    const draftTableId = createSyncForm.tableId.trim()
+    const draftViewId = createSyncForm.viewId.trim()
     createSyncDrawerVisible.value = false
     await loadSyncs()
-    setSuccess('多维同步信息已创建。请继续在全屏页面配置子表映射。')
-    await navigateTo({
-      path: `/admin/integrations/feishu/bitables/${createdSync.id}`,
-      query: {
-        ...(createSyncForm.tableId.trim() ? { draftTableId: createSyncForm.tableId.trim() } : {}),
-        ...(createSyncForm.viewId.trim() ? { draftViewId: createSyncForm.viewId.trim() } : {}),
-      },
+    await nextTick()
+    openEditSyncDrawer(createdSync.id, {
+      draftTableId,
+      draftViewId,
     })
+    setSuccess('多维同步信息已创建，请继续在编辑抽屉里配置子表同步项。')
   }
   catch (error: any) {
     setError(String(error?.data?.message || '多维同步信息创建失败。'))
@@ -550,6 +567,13 @@ async function createSync() {
 async function refreshSyncList() {
   await loadSyncs()
 }
+
+watch(editSyncDrawerVisible, (visible, oldVisible) => {
+  if (visible || !oldVisible)
+    return
+  resetEditSyncDrawerState()
+  void refreshSyncList()
+})
 
 async function manualAddContestAdmin(targetUserId: string) {
   if (!canManageConfig.value || !targetUserId)
@@ -720,7 +744,7 @@ onMounted(initializePage)
                 多维表格同步信息
               </h2>
               <p class="text-[10px] text-slate-500 m-0 mt-1">
-                一条记录代表一个飞书多维主库。创建后进入全屏页面，继续配置多个子表同步项与字段映射。
+                一条记录代表一个飞书多维主库。创建后直接在编辑抽屉里继续配置多个子表同步项与字段映射。
               </p>
             </div>
             <div class="flex gap-2">
@@ -795,8 +819,8 @@ onMounted(initializePage)
 
             <template #actions="{ record }">
               <div class="flex flex-wrap gap-1">
-                <a-button size="mini" type="primary" @click="navigateTo(`/admin/integrations/feishu/bitables/${record.id}`)">
-                  进入编辑页
+                <a-button size="mini" type="primary" @click="openEditSyncDrawer(record.id)">
+                  编辑同步信息
                 </a-button>
               </div>
             </template>
@@ -1123,7 +1147,7 @@ onMounted(initializePage)
       <div class="space-y-3">
         <div class="p-3 border border-slate-200 bg-slate-50">
           <p class="text-[11px] text-slate-700 m-0">
-            创建阶段只识别并保存主库来源。字段映射、回填、预检与启用都在创建成功后的全屏页面里继续配置。
+            创建阶段只识别并保存主库来源。字段映射、回填、预检与启用都在创建成功后的编辑抽屉里继续配置。
           </p>
         </div>
 
@@ -1175,7 +1199,7 @@ onMounted(initializePage)
                       allow-search
                       allow-clear
                       size="small"
-                      placeholder="可选：带一个 draft table 进入编辑页"
+                      placeholder="可选：预带一个子表草稿"
                       @change="onTableIdChanged"
                     >
                       <a-option v-for="item in sourceTables" :key="item.tableId" :value="item.tableId">
@@ -1188,7 +1212,7 @@ onMounted(initializePage)
                       allow-search
                       allow-clear
                       size="small"
-                      placeholder="可选：带一个 draft view 进入编辑页"
+                      placeholder="可选：预带一个视图草稿"
                       @change="onViewIdChanged"
                     >
                       <a-option v-for="item in sourceViews" :key="item.viewId" :value="item.viewId">
@@ -1229,7 +1253,7 @@ onMounted(initializePage)
                       allow-search
                       allow-clear
                       size="small"
-                      placeholder="可选：带一个 draft table 进入编辑页"
+                      placeholder="可选：预带一个子表草稿"
                       @change="onTableIdChanged"
                     >
                       <a-option v-for="item in sourceTables" :key="item.tableId" :value="item.tableId">
@@ -1242,7 +1266,7 @@ onMounted(initializePage)
                       allow-search
                       allow-clear
                       size="small"
-                      placeholder="可选：带一个 draft view 进入编辑页"
+                      placeholder="可选：预带一个视图草稿"
                       @change="onViewIdChanged"
                     >
                       <a-option v-for="item in sourceViews" :key="item.viewId" :value="item.viewId">
@@ -1281,7 +1305,7 @@ onMounted(initializePage)
 
         <div class="flex items-center justify-between">
           <p class="text-[10px] text-slate-500 m-0">
-            创建成功后会自动进入全屏多维配置页；如果这里已经带了 table/view，会作为待创建子表同步项草稿带过去。
+            创建成功后会自动打开编辑抽屉；如果这里已经带了 table/view，会作为待创建子表同步项草稿带过去。
           </p>
         </div>
 
@@ -1290,10 +1314,28 @@ onMounted(initializePage)
             取消
           </a-button>
           <a-button size="small" type="primary" :loading="creatingSync" @click="createSync">
-            创建并进入编辑页
+            创建并继续配置
           </a-button>
         </div>
       </div>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="editSyncDrawerVisible"
+      title="编辑多维同步信息"
+      width="92vw"
+      :footer="false"
+      unmount-on-close
+    >
+      <AdminFeishuBitableSyncEditor
+        v-if="editingSyncId"
+        :sync-id="editingSyncId"
+        :draft-table-id="editingDraftTableId"
+        :draft-view-id="editingDraftViewId"
+        :embedded="true"
+        :show-back-button="false"
+        @updated="refreshSyncList"
+      />
     </a-drawer>
   </div>
 </template>
