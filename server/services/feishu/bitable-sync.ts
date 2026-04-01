@@ -1965,7 +1965,7 @@ async function previewFeishuBitableSyncItemTableById(
   if (!configAndTask.config.enabled)
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
-    throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
+    throw new Error('FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND')
 
   const task = configAndTask.task
   return previewFeishuBitableSourceTable(event, task.source || {
@@ -2002,7 +2002,7 @@ async function previewFeishuBitableSyncItemById(
   if (!configAndTask.config.enabled)
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
-    throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
+    throw new Error('FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND')
   const task = configAndTask.task
 
   const tenantAccessToken = await getFeishuTenantAccessToken(configAndTask.config)
@@ -2065,9 +2065,9 @@ async function runFeishuBitableSyncItemById(
   if (!configAndTask.config.enabled)
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
-    throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
+    throw new Error('FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND')
   if (!configAndTask.task.isEnabled)
-    throw new Error('FEISHU_BITABLE_TASK_INACTIVE')
+    throw new Error('FEISHU_BITABLE_SYNC_ITEM_INACTIVE')
   const task = configAndTask.task
 
   const runId = await withClient(event, async (db) => {
@@ -2278,7 +2278,7 @@ async function inspectFeishuBitableSyncItemFieldsById(
   if (!configAndTask.config.enabled)
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
-    throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
+    throw new Error('FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND')
 
   const task = configAndTask.task
   const tenantAccessToken = await getFeishuTenantAccessToken(configAndTask.config)

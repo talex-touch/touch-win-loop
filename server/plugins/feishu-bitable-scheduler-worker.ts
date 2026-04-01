@@ -78,7 +78,7 @@ async function executeClaimedTask(input: {
   }
   catch (error) {
     lastError = toErrorMessage(error)
-    console.error('[feishu-bitable-scheduler-worker] task failed:', {
+    console.error('[feishu-bitable-scheduler-worker] sync item failed:', {
       syncItemId: input.syncItemId,
       error: lastError,
     })

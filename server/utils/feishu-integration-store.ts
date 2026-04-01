@@ -1505,7 +1505,7 @@ export async function createFeishuBitableSyncItem(
   const schedule = normalizeFeishuTaskScheduleConfig(input.schedule || {}, getDefaultFeishuTaskScheduleConfig())
   const scheduleErrors = validateFeishuTaskScheduleConfig(schedule)
   if (scheduleErrors.length)
-    throw new Error(`任务调度配置非法：${scheduleErrors.join('；')}`)
+    throw new Error(`子表同步项调度配置非法：${scheduleErrors.join('；')}`)
 
   const syncId = toText(input.syncId)
   const parentSync = syncId ? await getFeishuBitableSyncById(db, syncId) : null
@@ -1751,7 +1751,7 @@ export async function patchFeishuBitableSyncItem(
     })
     const scheduleErrors = validateFeishuTaskScheduleConfig(mergedSchedule)
     if (scheduleErrors.length)
-      throw new Error(`任务调度配置非法：${scheduleErrors.join('；')}`)
+      throw new Error(`子表同步项调度配置非法：${scheduleErrors.join('；')}`)
 
     const nextRunAt = mergedSchedule.enabled
       ? computeNextScheduledRunAtOrNull(mergedSchedule, { from: new Date() })
