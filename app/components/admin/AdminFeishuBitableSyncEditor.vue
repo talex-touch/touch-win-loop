@@ -228,7 +228,6 @@ const addItemDrawerVisible = ref(false)
 const itemDrawerVisible = ref(false)
 const suppressVisualSync = ref(false)
 const syncingNewItemSuggestion = ref(false)
-const newItemEntityTypeAuto = ref(true)
 const newItemNameAuto = ref(true)
 
 const feedbackError = ref('')
@@ -722,21 +721,6 @@ function withNewItemSuggestionSync(action: () => void) {
   }
 }
 
-function syncNewItemSuggestedEntityType() {
-  if (!newItemEntityTypeAuto.value)
-    return
-  const suggested = suggestSyncItemEntityType({
-    tableName: newItemTableName.value,
-    viewName: newItemViewName.value,
-    name: newItemForm.name,
-  })
-  if (!suggested || suggested === newItemForm.entityType)
-    return
-  withNewItemSuggestionSync(() => {
-    newItemForm.entityType = suggested
-  })
-}
-
 function syncNewItemSuggestedName() {
   if (!newItemNameAuto.value)
     return
@@ -751,7 +735,6 @@ function syncNewItemSuggestedName() {
 }
 
 function applyNewItemSuggestions() {
-  syncNewItemSuggestedEntityType()
   syncNewItemSuggestedName()
 }
 
@@ -988,8 +971,13 @@ function handleNewItemViewChange() {
 }
 
 function useAutoDetectedNewItemEntityType() {
-  newItemEntityTypeAuto.value = true
-  applyNewItemSuggestions()
+  if (!newItemSuggestedEntityType.value)
+    return
+  withNewItemSuggestionSync(() => {
+    newItemForm.entityType = newItemSuggestedEntityType.value || newItemForm.entityType
+  })
+  if (newItemNameAuto.value)
+    syncNewItemSuggestedName()
 }
 
 function useSuggestedNewItemName() {
@@ -1428,7 +1416,6 @@ async function openAddItemDrawer() {
   newItemForm.entityType = 'contest'
   newItemForm.tableId = ''
   newItemForm.viewId = ''
-  newItemEntityTypeAuto.value = true
   newItemNameAuto.value = true
   newItemViews.value = []
   applyDraftToNewItemForm()
@@ -1537,7 +1524,6 @@ watch(() => newItemForm.name, (value) => {
 watch(() => newItemForm.entityType, () => {
   if (syncingNewItemSuggestion.value)
     return
-  newItemEntityTypeAuto.value = false
   if (newItemNameAuto.value)
     syncNewItemSuggestedName()
 })
@@ -2438,10 +2424,10 @@ watch(() => props.selectedItemId, (value) => {
         <div class="gap-3 grid md:grid-cols-2">
           <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
             <p class="text-slate-900 font-medium m-0">
-              当前自动识别
+              当前识别建议
             </p>
             <p class="m-0 mt-1">
-              {{ newItemSuggestedEntityType ? `按当前子表名称更像「${entityTypeLabel(newItemSuggestedEntityType)}」同步项` : '当前子表名称还不足以自动识别类型，可手动选择。' }}
+              {{ newItemSuggestedEntityType ? `按当前子表名称，更推荐你建成「${entityTypeLabel(newItemSuggestedEntityType)}」同步项。` : '当前子表名称还不足以给出识别建议，可手动选择。' }}
             </p>
             <p class="text-slate-400 m-0 mt-1">
               重点映射：{{ newItemRequiredMappingLabels.join(' / ') }}
