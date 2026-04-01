@@ -109,13 +109,17 @@ jobs:
 
           request_max_time_sec=1800
           retry_delay_sec=30
-          max_busy_retries=20
+          max_busy_retries=60
+          max_timeout_retries=3
           busy_retry_count=0
+          timeout_retry_count=0
 
           echo "Trigger deploy webhook..."
 
           while true; do
             response_file="$(mktemp)"
+            http_code=""
+            set +e
             http_code="$(curl --silent --show-error \
               --output "${response_file}" \
               --write-out "%{http_code}" \
@@ -126,8 +130,34 @@ jobs:
               --header "X-Deploy-Token: ${WEBHOOK_TOKEN}" \
               --data "${payload}" \
               "${webhook_base}/hooks/winloop")"
+            curl_exit_code="$?"
+            set -e
             response_body="$(cat "${response_file}")"
             rm -f "${response_file}"
+
+            if [ "${curl_exit_code}" -ne 0 ]; then
+              case "${curl_exit_code}" in
+                28)
+                  timeout_retry_count="$((timeout_retry_count + 1))"
+                  if [ "${timeout_retry_count}" -gt "${max_timeout_retries}" ]; then
+                    echo "Deploy webhook timed out after ${max_timeout_retries} retries."
+                    exit 1
+                  fi
+                  echo "Deploy webhook request timed out (curl 28), wait ${retry_delay_sec}s and retry (${timeout_retry_count}/${max_timeout_retries})."
+                  sleep "${retry_delay_sec}"
+                  continue
+                  ;;
+                *)
+                  echo "Deploy webhook request failed with curl exit code ${curl_exit_code}."
+                  if [ -n "${response_body}" ]; then
+                    echo "${response_body}"
+                  fi
+                  exit "${curl_exit_code}"
+                  ;;
+              esac
+            fi
+
+            timeout_retry_count=0
 
             case "${http_code}" in
               200|201|202|204)
