@@ -193,7 +193,7 @@ async function loadDirectorySnapshotFromRemote(input: {
         rootDepartmentId: toText(tenantDirectory.rootDepartmentId),
         userDepartmentIds: toUserDepartmentIdsRecord(tenantDirectory.userDepartmentIds),
         source: 'tenant',
-        notice: '',
+        notice: toText(tenantDirectory.notice),
         fetchedAt,
       }
     }

@@ -50,11 +50,12 @@ it('listFeishuTenantDirectory 会继续遍历部门树并保留成员部门归�
       })
     }
 
-    if (url.includes('/open-apis/contact/v3/departments/0/children')) {
+    if (url.includes('/open-apis/contact/v3/departments?') && url.includes('parent_department_id=0')) {
       return ok({
         items: [
           {
             department_id: 'od_child_1',
+            parent_department_id: '0',
           },
         ],
         has_more: false,
@@ -129,14 +130,14 @@ it('listFeishuTenantDirectory 会在直连全员列表失败时继续回退到�
       })
     }
 
-    if (url.includes('/open-apis/contact/v3/departments/0/children') && url.includes('department_id_type=department_id')) {
+    if (url.includes('/open-apis/contact/v3/departments?') && url.includes('parent_department_id=0') && url.includes('department_id_type=department_id')) {
       return ok({
         items: [],
         has_more: false,
       })
     }
 
-    if (url.includes('/open-apis/contact/v3/users?department_id=0') || url.includes('/open-apis/contact/v3/departments/0/children')) {
+    if (url.includes('/open-apis/contact/v3/users?department_id=0') || url.includes('/open-apis/contact/v3/departments?parent_department_id=0')) {
       return {
         ok: false,
         status: 400,
@@ -177,7 +178,7 @@ it('listFeishuTenantDirectory 会在部门树失败时保留已拿到的成员�
       })
     }
 
-    if (url.includes('/open-apis/contact/v3/users?department_id=0') || url.includes('/open-apis/contact/v3/departments/0/children')) {
+    if (url.includes('/open-apis/contact/v3/users?department_id=0') || url.includes('/open-apis/contact/v3/departments?parent_department_id=0')) {
       return {
         ok: false,
         status: 400,
@@ -205,6 +206,85 @@ it('listFeishuTenantDirectory 会在部门树失败时保留已拿到的成员�
       parentDepartmentId: null,
     },
   ])
+  assert.match(directory.notice || '', /部门树加载失败/)
+})
+
+it('listFeishuTenantDirectory 会优先通过根部门列表接口枚举子部门', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input) => {
+    const url = String(input)
+
+    if (url.includes('/open-apis/contact/v3/users?') && !url.includes('department_id=')) {
+      return ok({
+        items: [
+          {
+            union_id: 'on_root_member',
+            user_id: 'ou_root_member',
+            name: '根直属成员',
+          },
+        ],
+        has_more: false,
+      })
+    }
+
+    if (url.includes('/open-apis/contact/v3/users?department_id=0')) {
+      return ok({
+        items: [
+          {
+            union_id: 'on_root_member',
+            user_id: 'ou_root_member',
+            name: '根直属成员',
+          },
+        ],
+        has_more: false,
+      })
+    }
+
+    if (url.includes('/open-apis/contact/v3/departments?') && url.includes('parent_department_id=0')) {
+      return ok({
+        items: [
+          {
+            department_id: 'od_ops',
+            parent_department_id: '0',
+            name: '运营部',
+          },
+        ],
+        has_more: false,
+      })
+    }
+
+    if (url.includes('/open-apis/contact/v3/users?department_id=od_ops')) {
+      return ok({
+        items: [
+          {
+            union_id: 'on_ops_member',
+            user_id: 'ou_ops_member',
+            name: '运营成员',
+          },
+        ],
+        has_more: false,
+      })
+    }
+
+    if (url.includes('/open-apis/contact/v3/departments/od_ops/children')) {
+      return ok({
+        items: [],
+        has_more: false,
+      })
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`)
+  }))
+
+  const directory = await listFeishuTenantDirectory({
+    tenantAccessToken: 'tenant_token',
+    maxUsers: 50,
+  })
+
+  assert.deepEqual(
+    directory.users.map(user => user.unionId).sort(),
+    ['on_ops_member', 'on_root_member'],
+  )
+  assert.ok(directory.departments.some(item => item.departmentId === 'od_ops' && item.parentDepartmentId === '0'))
 })
 
 it('飞书管理页已切换到目录浏览组件，并保留管理员组配置入口', async () => {

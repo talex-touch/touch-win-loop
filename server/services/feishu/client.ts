@@ -64,6 +64,8 @@ interface GroupMembersData {
 interface DepartmentItem {
   department_id?: string
   open_department_id?: string
+  parent_department_id?: string
+  open_parent_department_id?: string
   name?: string
   en_name?: string
   i18n_name?: {
@@ -307,6 +309,7 @@ export interface FeishuTenantDirectory {
   departments: FeishuTenantDirectoryDepartment[]
   rootDepartmentId: string
   userDepartmentIds: Record<string, string[]>
+  notice?: string
 }
 
 export interface FeishuBitableRecord {
@@ -546,6 +549,10 @@ function toDepartmentName(item: DepartmentItem): string {
   return String(item?.name || item?.i18n_name?.zh_cn || item?.en_name || item?.i18n_name?.en_us || '').trim()
 }
 
+function toParentDepartmentId(item: DepartmentItem): string | null {
+  return String(item?.parent_department_id || item?.open_parent_department_id || '').trim() || null
+}
+
 function toProfileFromDepartmentUser(item: DepartmentUserItem): FeishuOAuthLoginProfile | null {
   const unionId = String(item.union_id || '').trim()
   if (!unionId)
@@ -625,6 +632,27 @@ async function listDepartmentChildrenOnce(input: {
     bearerToken: input.tenantAccessToken,
     query: {
       department_id_type: input.departmentIdType,
+      page_size: DEFAULT_CONTACT_PAGE_SIZE,
+      page_token: input.pageToken || '',
+    },
+  })
+}
+
+async function listDepartmentsByParentOnce(input: {
+  tenantAccessToken: string
+  parentDepartmentId: string
+  departmentIdType: DepartmentIdType
+  pageToken?: string
+}): Promise<DepartmentChildrenData> {
+  return requestFeishu<DepartmentChildrenData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/contact/v3/departments',
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      parent_department_id: input.parentDepartmentId,
+      department_id_type: input.departmentIdType,
+      fetch_child: false,
       page_size: DEFAULT_CONTACT_PAGE_SIZE,
       page_token: input.pageToken || '',
     },
@@ -852,7 +880,7 @@ async function listFeishuTenantDirectoryByDepartments(input: {
           upsertDepartment(departments, {
             departmentId: childDepartmentId,
             name: toDepartmentName(item),
-            parentDepartmentId: departmentId,
+            parentDepartmentId: toParentDepartmentId(item) || departmentId,
           })
         }
         if (childDepartmentId && !visited.has(childDepartmentId))
@@ -886,6 +914,27 @@ async function listDepartmentChildrenWithFallback(input: {
     ? 'open_department_id'
     : 'department_id'
 
+  if (normalizedDepartmentId === '0') {
+    try {
+      return await listDepartmentsByParentOnce({
+        tenantAccessToken: input.tenantAccessToken,
+        parentDepartmentId: normalizedDepartmentId,
+        departmentIdType: preferredType,
+        pageToken: input.pageToken,
+      })
+    }
+    catch (error) {
+      if (!shouldRetryWithAlternateDepartmentIdType(error))
+        throw error
+      return listDepartmentsByParentOnce({
+        tenantAccessToken: input.tenantAccessToken,
+        parentDepartmentId: normalizedDepartmentId,
+        departmentIdType: alternateType,
+        pageToken: input.pageToken,
+      })
+    }
+  }
+
   try {
     return await listDepartmentChildrenOnce({
       ...input,
@@ -918,6 +967,7 @@ export async function listFeishuTenantDirectory(input: {
   let userDepartmentIds: Record<string, string[]> = {}
   let directUsersError: unknown = null
   let departmentDirectoryError: unknown = null
+  let notice = ''
 
   try {
     const directUsers = await listFeishuUsersDirectlyByPaging({
@@ -942,6 +992,7 @@ export async function listFeishuTenantDirectory(input: {
   }
   catch (error) {
     departmentDirectoryError = error
+    notice = `部门树加载失败：${toErrorMessage(error)}`
     if (!users.size)
       throw error
   }
@@ -957,6 +1008,7 @@ export async function listFeishuTenantDirectory(input: {
     departments,
     rootDepartmentId,
     userDepartmentIds,
+    notice,
   }
 }
 
