@@ -9,6 +9,18 @@ export interface FeishuDefaultSyncItemConfig {
   writeback: FeishuBitableWritebackConfig
 }
 
+const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]> = {
+  contest: ['竞赛', '赛事', 'contest', 'match'],
+  track: ['赛道', '方向', 'track'],
+  resource: ['资料', '资源', '素材', '文档', 'resource', 'material'],
+}
+
+const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
+  contest: ['externalId', 'name', 'officialUrl'],
+  track: ['externalId', 'contestExternalId', 'name'],
+  resource: ['externalId', 'contestExternalId', 'title', 'url'],
+}
+
 function buildDefaultWriteback(): FeishuBitableWritebackConfig {
   return {
     enabled: true,
@@ -50,7 +62,9 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
           recommendedFor: '',
         },
       },
-      options: {},
+      options: {
+        defaultVisibility: 'internal',
+      },
       writeback: buildDefaultWriteback(),
     }
   }
@@ -100,6 +114,60 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
     },
     writeback: buildDefaultWriteback(),
   }
+}
+
+function normalizeText(raw: unknown): string {
+  return String(raw || '').trim()
+}
+
+function normalizeSourceHintText(raw: unknown): string {
+  return normalizeText(raw).toLowerCase().replace(/\s+/g, '')
+}
+
+export function listRequiredSyncItemFieldKeys(entityType: FeishuBitableSyncItemEntityType): string[] {
+  return [...(REQUIRED_MAPPING_FIELD_KEYS[entityType] || [])]
+}
+
+export function suggestSyncItemEntityType(input: {
+  tableName?: string
+  viewName?: string
+  name?: string
+}): FeishuBitableSyncItemEntityType | null {
+  const sourceText = normalizeSourceHintText([
+    input.tableName,
+    input.viewName,
+    input.name,
+  ].filter(Boolean).join(' '))
+  if (!sourceText)
+    return null
+
+  for (const entityType of ['track', 'resource', 'contest'] as const) {
+    const hints = ENTITY_TYPE_SOURCE_HINTS[entityType]
+    if (hints.some(hint => sourceText.includes(normalizeSourceHintText(hint))))
+      return entityType
+  }
+
+  return null
+}
+
+export function buildSuggestedSyncItemName(
+  entityType: FeishuBitableSyncItemEntityType,
+  tableName?: string,
+  viewName?: string,
+): string {
+  const normalizedTableName = normalizeText(tableName)
+  const normalizedViewName = normalizeText(viewName)
+  const entityLabel = entityType === 'contest'
+    ? '竞赛同步'
+    : entityType === 'track'
+      ? '赛道同步'
+      : '资料同步'
+
+  if (normalizedTableName && normalizedViewName)
+    return `${normalizedTableName} / ${normalizedViewName} · ${entityLabel}`
+  if (normalizedTableName)
+    return `${normalizedTableName} · ${entityLabel}`
+  return entityLabel
 }
 
 export function isSyncItemConfigEmpty(raw: unknown): boolean {

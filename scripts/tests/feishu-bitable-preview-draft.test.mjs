@@ -12,6 +12,27 @@ it('同步项编辑器会把当前草稿配置作为预检请求体提交', asyn
   assert.match(componentSource, /body:\s*draft,/, '预检请求未把草稿配置发送到后端')
 })
 
+it('同步项编辑器会为每个目标字段渲染固定映射行并展示模拟同步结果', async () => {
+  const componentSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
+
+  assert.match(componentSource, /normalizeMappingWizardBindings/, '编辑器未把映射行归一化到固定字段列表')
+  assert.match(componentSource, /missingRequiredMappingLabels/, '编辑器未提示缺失的必填映射字段')
+  assert.match(componentSource, /normalizeCurrentEntityTemplate/, '编辑器缺少整理旧配置为当前实体模板的能力')
+  assert.match(componentSource, /v-for="binding in mappingWizardBindings"/, '编辑器未按固定字段行渲染映射表单')
+  assert.match(componentSource, /WRITEBACK_FIELD_CONFIGS/, '编辑器未抽出回填字段选择配置')
+  assert.match(componentSource, /v-model="writebackForm\[field\.key\]"/, '回填配置未改成字段选择下拉')
+  assert.match(componentSource, /模拟同步结果/, '编辑器缺少模拟同步结果区块')
+  assert.match(componentSource, /previewResult\.mappedSampleRows/, '编辑器未展示预检样例行')
+})
+
+it('新增同步项时会按子表名称自动识别类型并生成推荐名称', async () => {
+  const componentSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
+
+  assert.match(componentSource, /suggestSyncItemEntityType/, '新增同步项未接入实体类型自动识别')
+  assert.match(componentSource, /buildSuggestedSyncItemName/, '新增同步项未生成推荐名称')
+  assert.match(componentSource, /useAutoDetectedNewItemEntityType/, '新增同步项缺少按子表识别入口')
+})
+
 it('服务端预检会优先使用草稿配置覆盖已保存同步项', async () => {
   const apiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/preview.post.ts'), 'utf8')
   const serviceSource = await readFile(resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts'), 'utf8')

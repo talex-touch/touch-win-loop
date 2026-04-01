@@ -17,7 +17,10 @@ import type {
 } from '~~/shared/types/domain'
 import {
   buildDefaultSyncItemConfig,
+  buildSuggestedSyncItemName,
   isSyncItemConfigEmpty,
+  listRequiredSyncItemFieldKeys,
+  suggestSyncItemEntityType,
 } from '~~/shared/utils/feishu-bitable-sync-config'
 
 interface MappingOption {
@@ -57,6 +60,8 @@ interface SyncWritebackFormState {
   failed: string
   skipped: string
 }
+
+type SyncWritebackFieldKey = keyof Pick<SyncWritebackFormState, 'status' | 'syncedAt' | 'errorMessage' | 'reasonCode' | 'entityId' | 'runId' | 'triggerSource'>
 
 const props = withDefaults(defineProps<{
   syncId: string
@@ -123,30 +128,30 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
 }
 
 const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
-  externalId: ['external_id', 'externalid', 'id', 'record_id', '业务id'],
-  contestExternalId: ['contest_external_id', 'contestid', '赛事外部id', '赛事id'],
-  trackExternalId: ['track_external_id', 'trackid', '赛道外部id', '赛道id'],
-  name: ['name', '名称', '名字'],
-  title: ['title', '标题'],
-  summary: ['summary', '简介', '描述'],
-  content: ['content', '正文', '内容', '详情'],
-  officialUrl: ['officialurl', 'official_url', '官网', '官网链接', 'url'],
+  externalId: ['external_id', 'externalid', 'id', 'record_id', '业务id', '外部id', '外部编号', '唯一标识', '编号', '主键', '赛事编号', '竞赛编号', '赛道编号', '资料编号'],
+  contestExternalId: ['contest_external_id', 'contestid', '赛事外部id', '赛事id', '竞赛外部id', '竞赛id', '所属赛事id', '所属竞赛id'],
+  trackExternalId: ['track_external_id', 'trackid', '赛道外部id', '赛道id', '所属赛道id'],
+  name: ['name', '名称', '名字', '竞赛名称', '赛事名称', '赛道名称'],
+  title: ['title', '标题', '资料标题', '资源标题'],
+  summary: ['summary', '简介', '描述', '说明', '概述'],
+  content: ['content', '正文', '内容', '详情', '全文'],
+  officialUrl: ['officialurl', 'official_url', '官网', '官网链接', '赛事链接', '竞赛链接', '报名链接', 'url'],
   organizer: ['organizer', '主办方', '主办单位'],
   coOrganizer: ['coorganizer', 'co_organizer', '协办方', '承办方'],
-  participantRequirements: ['participantrequirements', '参赛对象', '参赛要求'],
-  teamRule: ['teamrule', '组队规则'],
-  currentSeason: ['currentseason', '届次', '赛季'],
-  disciplines: ['disciplines', '学科', '专业'],
-  aliases: ['aliases', '别名'],
+  participantRequirements: ['participantrequirements', '参赛对象', '参赛要求', '参赛资格'],
+  teamRule: ['teamrule', '组队规则', '组队要求'],
+  currentSeason: ['currentseason', '届次', '赛季', '年份'],
+  disciplines: ['disciplines', '学科', '专业', '所属学科'],
+  aliases: ['aliases', '别名', '简称'],
   keywords: ['keywords', '关键字', '关键词', '标签'],
-  recommendedFor: ['recommendedfor', '推荐人群'],
-  suitableMajors: ['suitablemajors', '适合专业', '适用专业'],
-  deliverableTypes: ['deliverabletypes', '交付物', '成果类型'],
-  sortOrder: ['sortorder', '排序', '序号'],
-  category: ['category', '分类'],
-  url: ['url', '链接'],
-  sourceType: ['sourcetype', '来源类型'],
-  year: ['year', '年份'],
+  recommendedFor: ['recommendedfor', '推荐人群', '适合人群', '适用人群'],
+  suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业'],
+  deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物'],
+  sortOrder: ['sortorder', '排序', '序号', 'sort', 'order'],
+  category: ['category', '分类', '资料分类'],
+  url: ['url', '链接', '资料链接', '资源链接', '下载链接'],
+  sourceType: ['sourcetype', '来源类型', '资源类型'],
+  year: ['year', '年份', '年度'],
 }
 
 const ENTITY_TYPE_OPTIONS: SelectOption<FeishuBitableSyncItemEntityType>[] = [
@@ -193,6 +198,22 @@ const QUICK_START_STEPS = [
   '6. 首次建议手动执行一次，确认飞书侧出现已同步状态。',
 ]
 
+const WRITEBACK_FIELD_CONFIGS: Array<{ key: SyncWritebackFieldKey, label: string }> = [
+  { key: 'status', label: '状态字段' },
+  { key: 'syncedAt', label: '同步时间字段' },
+  { key: 'errorMessage', label: '错误摘要字段' },
+  { key: 'reasonCode', label: '原因码字段' },
+  { key: 'entityId', label: '平台实体 ID 字段' },
+  { key: 'runId', label: 'runId 字段' },
+  { key: 'triggerSource', label: 'triggerSource 字段' },
+]
+
+const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
+  contest: ['externalId', 'name', 'officialUrl'],
+  track: ['externalId', 'contestExternalId', 'name'],
+  resource: ['externalId', 'contestExternalId', 'title', 'url'],
+}
+
 const savingItem = ref(false)
 const savingSync = ref(false)
 const runningItem = ref(false)
@@ -206,6 +227,9 @@ const creatingItem = ref(false)
 const addItemDrawerVisible = ref(false)
 const itemDrawerVisible = ref(false)
 const suppressVisualSync = ref(false)
+const syncingNewItemSuggestion = ref(false)
+const newItemEntityTypeAuto = ref(true)
+const newItemNameAuto = ref(true)
 
 const feedbackError = ref('')
 const feedbackSuccess = ref('')
@@ -283,8 +307,46 @@ const normalizedDraftViewId = computed(() => toText(props.draftViewId))
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
 const syncItems = computed(() => syncDetail.value?.items || [])
 const activeOptionFieldGroups = computed(() => optionFieldGroups(itemForm.entityType))
+const newItemTableName = computed(() => availableTables.value.find(item => item.tableId === newItemForm.tableId)?.name || '')
+const newItemViewName = computed(() => newItemViews.value.find(item => item.viewId === newItemForm.viewId)?.name || '')
+const missingRequiredMappingLabels = computed(() => {
+  const requiredKeys = new Set(REQUIRED_MAPPING_FIELD_KEYS[itemForm.entityType] || [])
+  return mappingWizardBindings.value
+    .filter(binding => requiredKeys.has(binding.targetKey) && !toText(binding.sourceField))
+    .map(binding => mappingOptionLabel(binding.targetKey))
+})
+const newItemRequiredMappingLabels = computed(() => listRequiredSyncItemFieldKeys(newItemForm.entityType).map(key => mappingOptionLabelByEntityType(newItemForm.entityType, key)))
+const newItemSuggestedEntityType = computed(() => suggestSyncItemEntityType({
+  tableName: newItemTableName.value,
+  viewName: newItemViewName.value,
+  name: newItemForm.name,
+}))
+const unexpectedConfiguredMappingLabels = computed(() => {
+  const parsed = pickMappingFromRaw(parseJsonTextLoose(itemForm.mappingText))
+  const supportedKeys = new Set(activeMappingOptions.value.map(item => item.key))
+  const configuredKeys = new Set<string>()
+  for (const key of Object.keys(parsed.fieldMap))
+    configuredKeys.add(key)
+  if (parsed.externalIdField)
+    configuredKeys.add('externalId')
+  if (parsed.contestExternalIdField)
+    configuredKeys.add('contestExternalId')
+  if (parsed.trackExternalIdField)
+    configuredKeys.add('trackExternalId')
+  return [...configuredKeys]
+    .filter(key => !supportedKeys.has(key))
+    .map(key => mappingOptionLabelByEntityType(itemForm.entityType, key))
+})
 
 function optionFieldGroups(entityType: FeishuBitableSyncItemEntityType) {
+  if (entityType === 'contest') {
+    return [{
+      key: 'defaultVisibility',
+      label: '默认可见性',
+      description: '竞赛同步到平台后默认是内部可见还是公开可见，未单独指定时走这里。',
+    }]
+  }
+
   if (entityType === 'track') {
     return [{
       key: 'contestId',
@@ -383,12 +445,44 @@ function fieldSamplePreview(sampleValues: string[]): string {
   return values.join(' | ') || '-'
 }
 
+function selectableFieldNames(currentValue?: string) {
+  const values = new Set<string>()
+  for (const field of fieldInspection.value) {
+    const fieldName = toText(field.fieldName)
+    if (fieldName)
+      values.add(fieldName)
+  }
+  const current = toText(currentValue)
+  if (current)
+    values.add(current)
+  return [...values]
+}
+
 function normalizeKey(text: string): string {
   return String(text || '').trim().toLowerCase().replace(/[\s_\-]/g, '')
 }
 
+function parseJsonTextLoose(raw: string): Record<string, unknown> {
+  try {
+    const normalized = String(raw || '').trim()
+    if (!normalized)
+      return {}
+    const parsed = JSON.parse(normalized)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+  }
+  catch {
+    return {}
+  }
+}
+
 function entityTypeLabel(entityType: FeishuBitableSyncItemEntityType): string {
   return ENTITY_TYPE_OPTIONS.find(item => item.value === entityType)?.label || entityType
+}
+
+function mappingOptionLabelByEntityType(entityType: FeishuBitableSyncItemEntityType, targetKey: string): string {
+  return MAPPING_OPTIONS[entityType]?.find(item => item.key === targetKey)?.label || targetKey
 }
 
 function runStatusLabel(status: string): string {
@@ -473,6 +567,12 @@ function fillWritebackForm(raw: Record<string, unknown>) {
 }
 
 function buildOptionsPayload(entityType: FeishuBitableSyncItemEntityType): Record<string, unknown> {
+  if (entityType === 'contest') {
+    return {
+      defaultVisibility: toText(optionForm.defaultVisibility) || 'internal',
+    }
+  }
+
   if (entityType === 'track') {
     return {
       contestId: toText(optionForm.contestId),
@@ -490,6 +590,65 @@ function buildOptionsPayload(entityType: FeishuBitableSyncItemEntityType): Recor
   }
 
   return {}
+}
+
+function buildEmptyMappingBinding(targetKey: string): MappingWizardBinding {
+  return {
+    targetKey,
+    sourceField: '',
+    transform: '',
+  }
+}
+
+function normalizeMappingWizardBindings(bindings: MappingWizardBinding[]) {
+  const map = new Map<string, MappingWizardBinding>()
+  for (const binding of bindings) {
+    const targetKey = toText(binding.targetKey)
+    if (!targetKey)
+      continue
+    map.set(targetKey, {
+      targetKey,
+      sourceField: toText(binding.sourceField),
+      transform: toText(binding.transform),
+    })
+  }
+  mappingWizardBindings.value = activeMappingOptions.value.map(option => map.get(option.key) || buildEmptyMappingBinding(option.key))
+}
+
+function mappingOptionLabel(targetKey: string): string {
+  return activeMappingOptions.value.find(item => item.key === targetKey)?.label || targetKey
+}
+
+function previewRowStatusLabel(status: string): string {
+  if (status === 'created')
+    return '将新增'
+  if (status === 'updated')
+    return '将更新'
+  if (status === 'skipped')
+    return '将跳过'
+  return '异常'
+}
+
+function previewRowStatusColor(status: string): string {
+  if (status === 'created')
+    return 'green'
+  if (status === 'updated')
+    return 'arcoblue'
+  if (status === 'skipped')
+    return 'gold'
+  return 'red'
+}
+
+function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string[] {
+  if (entityType === 'track')
+    return ['externalId', 'contestExternalId', 'name']
+  if (entityType === 'resource')
+    return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'url']
+  return ['externalId', 'name', 'officialUrl']
+}
+
+function isRequiredMappingField(entityType: FeishuBitableSyncItemEntityType, targetKey: string): boolean {
+  return (REQUIRED_MAPPING_FIELD_KEYS[entityType] || []).includes(targetKey)
 }
 
 function buildWritebackPayload(): Record<string, unknown> {
@@ -553,11 +712,53 @@ function resetCurrentItemState() {
   mappingWizardBindings.value = []
 }
 
+function withNewItemSuggestionSync(action: () => void) {
+  syncingNewItemSuggestion.value = true
+  try {
+    action()
+  }
+  finally {
+    syncingNewItemSuggestion.value = false
+  }
+}
+
+function syncNewItemSuggestedEntityType() {
+  if (!newItemEntityTypeAuto.value)
+    return
+  const suggested = suggestSyncItemEntityType({
+    tableName: newItemTableName.value,
+    viewName: newItemViewName.value,
+    name: newItemForm.name,
+  })
+  if (!suggested || suggested === newItemForm.entityType)
+    return
+  withNewItemSuggestionSync(() => {
+    newItemForm.entityType = suggested
+  })
+}
+
+function syncNewItemSuggestedName() {
+  if (!newItemNameAuto.value)
+    return
+  const suggestedName = buildSuggestedSyncItemName(
+    newItemForm.entityType,
+    newItemTableName.value,
+    newItemViewName.value,
+  )
+  withNewItemSuggestionSync(() => {
+    newItemForm.name = suggestedName
+  })
+}
+
+function applyNewItemSuggestions() {
+  syncNewItemSuggestedEntityType()
+  syncNewItemSuggestedName()
+}
+
 function applyDraftToNewItemForm() {
   newItemForm.tableId = normalizedDraftTableId.value
   newItemForm.viewId = normalizedDraftViewId.value
-  if (!newItemForm.name && newItemForm.tableId)
-    newItemForm.name = '子表同步项'
+  applyNewItemSuggestions()
 }
 
 function loadOptionsFormFromJson(showNotice = true) {
@@ -588,6 +789,23 @@ function syncWritebackFormToJson(showNotice = false) {
   itemForm.writebackText = formatJson(buildWritebackPayload())
   if (showNotice)
     setSuccess('已将回填配置同步到 JSON。')
+}
+
+function normalizeCurrentEntityTemplate() {
+  try {
+    normalizeMappingWizardBindings(mappingWizardBindings.value)
+    autoFillMappingWizardBindings()
+    writeMappingWizardToJson(false)
+    syncOptionsFormToJson(false)
+    syncWritebackFormToJson(false)
+    loadMappingWizardFromJson()
+    loadOptionsFormFromJson(false)
+    loadWritebackFormFromJson(false)
+    setSuccess('已按当前实体类型整理配置，并保留可识别的字段映射。')
+  }
+  catch (error) {
+    setError(error instanceof Error ? error.message : '整理当前实体模板失败。')
+  }
 }
 
 function applyRecommendedTemplateIfNeeded(entityType: FeishuBitableSyncItemEntityType) {
@@ -742,6 +960,7 @@ async function loadNewItemViews() {
   const tableId = toText(newItemForm.tableId)
   if (!appToken || !tableId) {
     newItemViews.value = []
+    applyNewItemSuggestions()
     return
   }
 
@@ -755,7 +974,27 @@ async function loadNewItemViews() {
   }
   finally {
     loadingViews.value = false
+    applyNewItemSuggestions()
   }
+}
+
+async function handleNewItemTableChange() {
+  newItemForm.viewId = ''
+  await loadNewItemViews()
+}
+
+function handleNewItemViewChange() {
+  applyNewItemSuggestions()
+}
+
+function useAutoDetectedNewItemEntityType() {
+  newItemEntityTypeAuto.value = true
+  applyNewItemSuggestions()
+}
+
+function useSuggestedNewItemName() {
+  newItemNameAuto.value = true
+  applyNewItemSuggestions()
 }
 
 function syncSelectedNames() {
@@ -774,20 +1013,6 @@ async function handleItemTableChange() {
 async function handleItemViewChange() {
   syncSelectedNames()
   await inspectFields()
-}
-
-function addMappingWizardBinding() {
-  mappingWizardBindings.value.push({
-    targetKey: '',
-    sourceField: '',
-    transform: '',
-  })
-}
-
-function removeMappingWizardBinding(index: number) {
-  if (index < 0 || index >= mappingWizardBindings.value.length)
-    return
-  mappingWizardBindings.value.splice(index, 1)
 }
 
 function pickMappingFromRaw(raw: Record<string, unknown>) {
@@ -889,7 +1114,7 @@ function loadMappingWizardFromJson() {
     if (item.targetKey)
       dedup.set(item.targetKey, item)
   }
-  mappingWizardBindings.value = [...dedup.values()]
+  normalizeMappingWizardBindings([...dedup.values()])
 }
 
 function writeMappingWizardToJson(showNotice = false) {
@@ -987,20 +1212,17 @@ function guessFieldNameByTarget(targetKey: string): string {
 }
 
 function autoFillMappingWizardBindings() {
-  const existing = new Map(mappingWizardBindings.value.map(item => [item.targetKey, item]))
-  for (const option of activeMappingOptions.value) {
-    if (existing.has(option.key))
-      continue
-    const guessedField = guessFieldNameByTarget(option.key)
+  normalizeMappingWizardBindings(mappingWizardBindings.value.map((binding) => {
+    if (binding.sourceField)
+      return binding
+    const guessedField = guessFieldNameByTarget(binding.targetKey)
     if (!guessedField)
-      continue
-    existing.set(option.key, {
-      targetKey: option.key,
+      return binding
+    return {
+      ...binding,
       sourceField: guessedField,
-      transform: '',
-    })
-  }
-  mappingWizardBindings.value = [...existing.values()]
+    }
+  }))
 }
 
 async function inspectFields() {
@@ -1206,10 +1428,14 @@ async function openAddItemDrawer() {
   newItemForm.entityType = 'contest'
   newItemForm.tableId = ''
   newItemForm.viewId = ''
+  newItemEntityTypeAuto.value = true
+  newItemNameAuto.value = true
   newItemViews.value = []
   applyDraftToNewItemForm()
   if (newItemForm.tableId)
     await loadNewItemViews()
+  else
+    applyNewItemSuggestions()
   addItemDrawerVisible.value = true
 }
 
@@ -1231,7 +1457,7 @@ async function createItem() {
     const response = await $fetch<ApiResponse<FeishuBitableSyncItem>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items`), {
       method: 'POST',
       body: {
-        name: newItemForm.name.trim() || tableName || '子表同步项',
+        name: newItemForm.name.trim() || buildSuggestedSyncItemName(newItemForm.entityType, tableName, viewName),
         entityType: newItemForm.entityType,
         tableId,
         viewId: toText(newItemForm.viewId),
@@ -1292,11 +1518,36 @@ watch(writebackForm, () => {
   syncWritebackFormToJson(false)
 }, { deep: true })
 
+watch(() => newItemForm.name, (value) => {
+  if (syncingNewItemSuggestion.value)
+    return
+  if (!toText(value)) {
+    newItemNameAuto.value = true
+    applyNewItemSuggestions()
+    return
+  }
+  const suggestedName = buildSuggestedSyncItemName(
+    newItemForm.entityType,
+    newItemTableName.value,
+    newItemViewName.value,
+  )
+  newItemNameAuto.value = toText(value) === toText(suggestedName)
+})
+
+watch(() => newItemForm.entityType, () => {
+  if (syncingNewItemSuggestion.value)
+    return
+  newItemEntityTypeAuto.value = false
+  if (newItemNameAuto.value)
+    syncNewItemSuggestedName()
+})
+
 watch(() => itemForm.entityType, (value, previousValue) => {
   if (!value || value === previousValue || suppressVisualSync.value)
     return
   try {
     applyRecommendedTemplateIfNeeded(value)
+    loadMappingWizardFromJson()
   }
   catch (error) {
     setError(error instanceof Error ? error.message : '推荐模板更新失败。')
@@ -1690,46 +1941,62 @@ watch(() => props.selectedItemId, (value) => {
                     基础映射
                   </h3>
                   <p class="text-[11px] text-slate-500 m-0 mt-1">
-                    `externalId` 是平台主键来源。赛道需要 `contestExternalId`；资料需要按需补 `contestExternalId / trackExternalId`。
+                    每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl`。
                   </p>
                 </div>
                 <div class="flex gap-2">
+                  <a-button size="mini" @click="normalizeCurrentEntityTemplate">
+                    整理为当前实体模板
+                  </a-button>
                   <a-button size="mini" @click="loadMappingWizardFromJson">
                     从 JSON 回读
                   </a-button>
                   <a-button size="mini" @click="writeMappingWizardToJson(true)">
                     同步到 JSON
                   </a-button>
-                  <a-button size="mini" @click="addMappingWizardBinding">
-                    添加映射
-                  </a-button>
                 </div>
               </div>
 
-              <div v-if="mappingWizardBindings.length" class="space-y-2">
-                <div v-for="(binding, index) in mappingWizardBindings" :key="`binding-${index}`" class="p-3 border border-slate-200 rounded space-y-2">
-                  <div class="gap-2 grid md:grid-cols-[180px,minmax(0,1fr),minmax(0,1fr),72px]">
-                    <a-select v-model="binding.targetKey" size="small" placeholder="目标字段">
-                      <a-option v-for="item in activeMappingOptions" :key="item.key" :value="item.key">
-                        {{ item.label }}
-                      </a-option>
-                    </a-select>
+              <div v-if="mappingWizardBindings.length" class="space-y-3">
+                <a-alert v-if="unexpectedConfiguredMappingLabels.length" type="info" :show-icon="true">
+                  检测到旧配置里还有当前实体不使用的字段：{{ unexpectedConfiguredMappingLabels.join(' / ') }}。点上面的“整理为当前实体模板”即可只保留当前实体相关配置。
+                </a-alert>
+                <a-alert v-if="missingRequiredMappingLabels.length" type="warning" :show-icon="true">
+                  还缺少重点映射：{{ missingRequiredMappingLabels.join(' / ') }}。如果不补齐，预检通常会出现“跳过”或“必要字段缺失”；赛道/资料也可以用同步选项里的固定 contestId 兜底关联。
+                </a-alert>
+                <div
+                  v-for="binding in mappingWizardBindings"
+                  :key="binding.targetKey"
+                  class="p-3 border rounded space-y-2"
+                  :class="[
+                    isRequiredMappingField(itemForm.entityType, binding.targetKey) && !binding.sourceField
+                      ? 'border-amber-300 bg-amber-50/50'
+                      : 'border-slate-200',
+                  ]"
+                >
+                  <div class="gap-2 grid md:grid-cols-[220px,minmax(0,1fr),minmax(0,1fr)]">
+                    <div class="text-[11px] text-slate-900 font-medium p-2 border border-slate-200 rounded bg-slate-50 flex gap-2 items-center justify-between">
+                      <span>{{ mappingOptionLabel(binding.targetKey) }}</span>
+                      <span
+                        v-if="isRequiredMappingField(itemForm.entityType, binding.targetKey)"
+                        class="text-[10px] text-amber-700 px-1.5 py-0.5 rounded bg-amber-100 inline-flex items-center"
+                      >
+                        重点
+                      </span>
+                    </div>
                     <a-select v-model="binding.sourceField" size="small" allow-search allow-clear placeholder="来源字段">
                       <a-option v-for="field in fieldInspection" :key="field.fieldName" :value="field.fieldName">
                         {{ field.fieldName }}
                       </a-option>
                     </a-select>
                     <a-input v-model="binding.transform" size="small" allow-clear placeholder="transform（可选）" />
-                    <a-button size="mini" status="danger" @click="removeMappingWizardBinding(index)">
-                      删除
-                    </a-button>
                   </div>
                   <p class="text-[10px] text-slate-500 m-0">
                     样本：{{ fieldSamplePreview(fieldInspection.find(field => field.fieldName === binding.sourceField)?.sampleValues || []) }}
                   </p>
                 </div>
               </div>
-              <a-empty v-else description="还没有可视化映射，点击上方按钮新增" />
+              <a-empty v-else description="当前实体类型还没有可配置的目标字段" />
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
@@ -1757,12 +2024,20 @@ watch(() => props.selectedItemId, (value) => {
                 </div>
               </div>
 
-              <template v-if="itemForm.entityType === 'contest'">
-                <a-alert type="info" :show-icon="true">
-                  竞赛类型当前没有额外同步选项，保持默认即可。
-                </a-alert>
-              </template>
-              <div v-else class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
+              <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
+                <template v-if="itemForm.entityType === 'contest'">
+                  <label class="text-[11px] text-slate-600 font-medium block">
+                    默认可见性
+                    <a-select v-model="optionForm.defaultVisibility" class="mt-1" size="small">
+                      <a-option v-for="option in RESOURCE_VISIBILITY_OPTIONS" :key="option.value" :value="option.value">
+                        {{ option.label }}
+                      </a-option>
+                    </a-select>
+                    <p class="text-[10px] text-slate-400 m-0 mt-1">
+                      竞赛同步到平台后默认按这里设置可见性。
+                    </p>
+                  </label>
+                </template>
                 <label v-if="itemForm.entityType === 'track' || itemForm.entityType === 'resource'" class="text-[11px] text-slate-600 font-medium block">
                   默认 contestId
                   <a-input v-model="optionForm.contestId" class="mt-1" size="small" allow-clear />
@@ -1814,7 +2089,7 @@ watch(() => props.selectedItemId, (value) => {
                   回填配置
                 </h3>
                 <p class="text-[11px] text-slate-500 m-0 mt-1">
-                  回填的是飞书列名，不是平台字段名。建议至少配置状态、同步时间、错误摘要、平台实体 ID 和 runId。
+                  回填的是飞书列名，不是平台字段名。这里直接从当前子表字段里选择，建议至少配置状态、同步时间、错误摘要、平台实体 ID 和 runId。
                 </p>
               </div>
               <div class="text-[11px] text-slate-600 font-medium block">
@@ -1824,33 +2099,28 @@ watch(() => props.selectedItemId, (value) => {
                 </div>
               </div>
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  状态字段
-                  <a-input v-model="writebackForm.status" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  同步时间字段
-                  <a-input v-model="writebackForm.syncedAt" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  错误摘要字段
-                  <a-input v-model="writebackForm.errorMessage" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  原因码字段
-                  <a-input v-model="writebackForm.reasonCode" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  平台实体 ID 字段
-                  <a-input v-model="writebackForm.entityId" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  runId 字段
-                  <a-input v-model="writebackForm.runId" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  triggerSource 字段
-                  <a-input v-model="writebackForm.triggerSource" class="mt-1" size="small" allow-clear />
+                <label
+                  v-for="field in WRITEBACK_FIELD_CONFIGS"
+                  :key="field.key"
+                  class="text-[11px] text-slate-600 font-medium block"
+                >
+                  {{ field.label }}
+                  <a-select
+                    v-model="writebackForm[field.key]"
+                    class="mt-1"
+                    size="small"
+                    allow-search
+                    allow-clear
+                    placeholder="选择飞书字段"
+                  >
+                    <a-option
+                      v-for="fieldName in selectableFieldNames(writebackForm[field.key])"
+                      :key="`${field.key}-${fieldName}`"
+                      :value="fieldName"
+                    >
+                      {{ fieldName }}
+                    </a-option>
+                  </a-select>
                 </label>
                 <label class="text-[11px] text-slate-600 font-medium block">
                   成功值
@@ -1865,6 +2135,9 @@ watch(() => props.selectedItemId, (value) => {
                   <a-input v-model="writebackForm.skipped" class="mt-1" size="small" allow-clear />
                 </label>
               </div>
+              <p v-if="!fieldInspection.length" class="text-[10px] text-slate-400 m-0">
+                还没有可选字段时，请先在上面的“来源”里选择子表/视图并刷新字段概览。
+              </p>
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
@@ -1925,6 +2198,103 @@ watch(() => props.selectedItemId, (value) => {
                   </p>
                   <div v-for="(item, index) in previewResult.fieldDiagnostics.slice(0, 8)" :key="`diag-${index}`" class="text-[10px]" :class="diagnosticClass(item.level)">
                     {{ item.message }}<span v-if="item.detail">：{{ item.detail }}</span>
+                  </div>
+                </div>
+                <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
+                  <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                    <p class="text-slate-500 m-0">
+                      可同步记录
+                    </p>
+                    <p class="text-[14px] text-slate-900 font-semibold m-0 mt-1">
+                      {{ previewResult.createdCount + previewResult.updatedCount }}
+                    </p>
+                  </div>
+                  <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                    <p class="text-slate-500 m-0">
+                      将跳过
+                    </p>
+                    <p class="text-[14px] text-slate-900 font-semibold m-0 mt-1">
+                      {{ previewResult.skippedCount }}
+                    </p>
+                  </div>
+                  <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                    <p class="text-slate-500 m-0">
+                      同步错误
+                    </p>
+                    <p class="text-[14px] text-slate-900 font-semibold m-0 mt-1">
+                      {{ previewResult.errorCount }}
+                    </p>
+                  </div>
+                  <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                    <p class="text-slate-500 m-0">
+                      重点核对字段
+                    </p>
+                    <p class="m-0 mt-1 break-words">
+                      {{ previewFocusFields(itemForm.entityType).map(item => mappingOptionLabel(item)).join(' / ') }}
+                    </p>
+                  </div>
+                </div>
+                <div v-if="previewResult.mappedSampleRows.length" class="space-y-2">
+                  <div>
+                    <p class="text-[11px] text-slate-900 font-medium m-0">
+                      模拟同步结果
+                    </p>
+                    <p class="text-[10px] text-slate-500 m-0 mt-1">
+                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl`，赛道库的 `contestExternalId / name` 是否都落对。
+                    </p>
+                  </div>
+                  <div class="border border-slate-200 rounded overflow-auto">
+                    <table class="text-[11px] text-left min-w-full border-collapse">
+                      <thead class="bg-slate-50">
+                        <tr>
+                          <th class="px-3 py-2 border-b border-slate-200 whitespace-nowrap">
+                            recordId
+                          </th>
+                          <th class="px-3 py-2 border-b border-slate-200 whitespace-nowrap">
+                            状态
+                          </th>
+                          <th class="px-3 py-2 border-b border-slate-200 whitespace-nowrap">
+                            原因
+                          </th>
+                          <th
+                            v-for="column in previewResult.mappedColumns"
+                            :key="`preview-column-${column}`"
+                            class="px-3 py-2 border-b border-slate-200 whitespace-nowrap"
+                          >
+                            {{ mappingOptionLabel(column) }}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="row in previewResult.mappedSampleRows"
+                          :key="`preview-row-${row.recordId}`"
+                          class="align-top"
+                        >
+                          <td class="text-slate-500 px-3 py-2 border-b border-slate-100 whitespace-nowrap">
+                            {{ row.recordId }}
+                          </td>
+                          <td class="px-3 py-2 border-b border-slate-100 whitespace-nowrap">
+                            <a-tag size="small" :color="previewRowStatusColor(row.status)">
+                              {{ previewRowStatusLabel(row.status) }}
+                            </a-tag>
+                          </td>
+                          <td class="text-slate-500 px-3 py-2 border-b border-slate-100 min-w-[160px]">
+                            <div>{{ row.reasonCode || '-' }}</div>
+                            <div v-if="row.message" class="text-[10px] mt-1">
+                              {{ row.message }}
+                            </div>
+                          </td>
+                          <td
+                            v-for="column in previewResult.mappedColumns"
+                            :key="`preview-row-${row.recordId}-${column}`"
+                            class="text-slate-700 px-3 py-2 border-b border-slate-100 min-w-[180px]"
+                          >
+                            {{ row.values[column] || '-' }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </template>
@@ -2065,21 +2435,55 @@ watch(() => props.selectedItemId, (value) => {
             `contest` 默认关注 `externalId + 名称/官网/简介`；`track` 额外带 `contestExternalId`；`resource` 会再补 `trackExternalId` 和资料默认值。
           </p>
         </div>
+        <div class="gap-3 grid md:grid-cols-2">
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-900 font-medium m-0">
+              当前自动识别
+            </p>
+            <p class="m-0 mt-1">
+              {{ newItemSuggestedEntityType ? `按当前子表名称更像「${entityTypeLabel(newItemSuggestedEntityType)}」同步项` : '当前子表名称还不足以自动识别类型，可手动选择。' }}
+            </p>
+            <p class="text-slate-400 m-0 mt-1">
+              重点映射：{{ newItemRequiredMappingLabels.join(' / ') }}
+            </p>
+          </div>
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-900 font-medium m-0">
+              创建后会发生什么
+            </p>
+            <p class="m-0 mt-1">
+              会自动打开详细配置 Drawer、按当前实体带入推荐模板、加载字段概览，并默认保持禁用，方便你先预检再启用。
+            </p>
+          </div>
+        </div>
         <label class="text-[11px] text-slate-600 font-medium block">
           同步项名称
-          <a-input v-model="newItemForm.name" class="mt-1" size="small" allow-clear placeholder="可留空，默认用表名" />
+          <div class="mt-1 flex gap-2">
+            <a-input v-model="newItemForm.name" class="flex-1" size="small" allow-clear placeholder="默认按子表/视图 + 实体类型自动生成" />
+            <a-button size="mini" @click="useSuggestedNewItemName">
+              用推荐名
+            </a-button>
+          </div>
         </label>
         <label class="text-[11px] text-slate-600 font-medium block">
           同步到
-          <a-select v-model="newItemForm.entityType" class="mt-1" size="small">
-            <a-option v-for="option in ENTITY_TYPE_OPTIONS" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </a-option>
-          </a-select>
+          <div class="mt-1 flex gap-2">
+            <a-select v-model="newItemForm.entityType" class="flex-1" size="small">
+              <a-option v-for="option in ENTITY_TYPE_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </a-option>
+            </a-select>
+            <a-button size="mini" @click="useAutoDetectedNewItemEntityType">
+              按子表识别
+            </a-button>
+          </div>
         </label>
+        <div class="text-[10px] text-slate-400 -mt-1">
+          当前模板会优先引导你确认：{{ newItemRequiredMappingLabels.join(' / ') }}
+        </div>
         <label class="text-[11px] text-slate-600 font-medium block">
           子表 tableId
-          <a-select v-model="newItemForm.tableId" class="mt-1" size="small" allow-search allow-clear @change="() => { newItemForm.viewId = ''; void loadNewItemViews() }">
+          <a-select v-model="newItemForm.tableId" class="mt-1" size="small" allow-search allow-clear @change="handleNewItemTableChange">
             <a-option v-for="item in availableTables" :key="item.tableId" :value="item.tableId">
               {{ item.name }} ({{ item.tableId }})
             </a-option>
@@ -2087,7 +2491,7 @@ watch(() => props.selectedItemId, (value) => {
         </label>
         <label class="text-[11px] text-slate-600 font-medium block">
           视图 viewId（可选）
-          <a-select v-model="newItemForm.viewId" class="mt-1" size="small" allow-search allow-clear>
+          <a-select v-model="newItemForm.viewId" class="mt-1" size="small" allow-search allow-clear @change="handleNewItemViewChange">
             <a-option v-for="item in newItemViews" :key="item.viewId" :value="item.viewId">
               {{ item.name }} ({{ item.viewId }})
             </a-option>
