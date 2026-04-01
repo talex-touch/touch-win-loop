@@ -1,8 +1,15 @@
 import type { FeishuBitableSourceConfig } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
+import {
+  getFeishuTenantAccessToken,
+  getFeishuWikiNodeInfo,
+} from '~~/server/services/feishu/client'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { extractFeishuWikiNodeToken, resolveFeishuBitableSourceInput } from '~~/server/utils/feishu-bitable-source'
+import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 interface ResolveBody {
@@ -11,38 +18,6 @@ interface ResolveBody {
 
 function toText(raw: unknown): string {
   return String(raw || '').trim()
-}
-
-function extractByRegex(text: string, pattern: RegExp): string {
-  const hit = text.match(pattern)
-  return toText(hit?.[1] || '')
-}
-
-function resolveSourceFromInput(raw: string): FeishuBitableSourceConfig {
-  const text = toText(raw)
-  if (!text)
-    return { appToken: '', tableId: '', viewId: '' }
-
-  let appToken = extractByRegex(text, /app[_-]?token\s*[:=]\s*(\w+)/i)
-  if (!appToken)
-    appToken = extractByRegex(text, /\/base\/(\w+)/i)
-  if (!appToken)
-    appToken = extractByRegex(text, /\/apps\/(\w+)/i)
-
-  let tableId = extractByRegex(text, /table[_-]?id\s*[:=]\s*(\w+)/i)
-  if (!tableId)
-    tableId = extractByRegex(text, /\b(tbl\w+)\b/i)
-
-  let viewId = extractByRegex(text, /view[_-]?id\s*[:=]\s*(\w+)/i)
-  if (!viewId)
-    viewId = extractByRegex(text, /\b(view\w+)\b/i)
-
-  return {
-    appToken: toText(appToken),
-    tableId: toText(tableId),
-    viewId: toText(viewId),
-    sourceUrl: text.includes('http://') || text.includes('https://') ? text : '',
-  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -63,10 +38,59 @@ export default defineEventHandler(async (event) => {
     }, 40432)
   }
 
-  const source = resolveSourceFromInput(toText(body.input))
+  const inputText = toText(body.input)
+  const source = resolveFeishuBitableSourceInput(inputText) as FeishuBitableSourceConfig
+  const wikiNodeToken = extractFeishuWikiNodeToken(inputText)
+
+  if (wikiNodeToken && !source.appToken) {
+    const config = await withClient(event, async db => readFeishuIntegrationConfig(db))
+    if (!config.enabled || !config.appId || !config.appSecret) {
+      setResponseStatus(event, 400)
+      return fail('当前识别到飞书 Wiki 链接，但系统尚未配置可用的飞书读权限，无法自动反查多维主库。请改为打开多维表格页面后粘贴地址，或手动填写。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40135)
+    }
+
+    try {
+      const tenantAccessToken = await getFeishuTenantAccessToken(config)
+      const wikiNode = await getFeishuWikiNodeInfo({
+        tenantAccessToken,
+        token: wikiNodeToken,
+      })
+
+      if (wikiNode?.objType && wikiNode.objType !== 'bitable') {
+        setResponseStatus(event, 400)
+        return fail(`当前 Wiki 链接指向的是 ${wikiNode.objType}，不是飞书多维表格。请打开实际多维表格页面后再粘贴地址。`, {
+          startedAt,
+          provider: runtime.ai.provider,
+          model: runtime.ai.model,
+          fallbackUsed: false,
+          attempts: 1,
+        }, 40134)
+      }
+
+      if (wikiNode?.objToken)
+        source.appToken = wikiNode.objToken
+    }
+    catch (error) {
+      setResponseStatus(event, 400)
+      return fail(error instanceof Error ? `Wiki 链接解析失败：${error.message}` : 'Wiki 链接解析失败。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50434)
+    }
+  }
+
   if (!source.appToken && !source.tableId) {
     setResponseStatus(event, 400)
-    return fail('未识别到 appToken/tableId，请粘贴飞书多维链接或标识。', {
+    return fail('未识别到 appToken/tableId。若你粘贴的是 Wiki 或飞书文档链接，请先打开实际多维表格页面后再粘贴，或改用手动填写。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

@@ -121,7 +121,7 @@ function buildSearchDoc(payload: Record<string, unknown>): {
 async function handleEmbeddingUpsert(
   task: {
     id: string
-    taskId: string | null
+    syncItemId: string | null
     runId: string | null
     scope: 'contest' | 'track' | 'resource'
     entityId: string
@@ -166,7 +166,7 @@ async function handleEmbeddingUpsert(
         embedding: embedding.embedding,
         sourceHash: task.sourceHash,
         metadata: {
-          taskId: task.taskId,
+          syncItemId: task.syncItemId,
           runId: task.runId,
           externalId: task.externalId,
           provider: embedding.provider,
@@ -192,7 +192,7 @@ async function handleEmbeddingUpsert(
 async function handleSearchIndexRefresh(
   task: {
     id: string
-    taskId: string | null
+    syncItemId: string | null
     runId: string | null
     scope: 'contest' | 'track' | 'resource'
     entityId: string
@@ -207,7 +207,7 @@ async function handleSearchIndexRefresh(
       scope: task.scope,
       entityId: task.entityId,
       externalId: task.externalId,
-      taskId: task.taskId,
+      syncItemId: task.syncItemId,
       runId: task.runId,
       sourceHash: task.sourceHash,
       title: doc.title,
@@ -232,7 +232,7 @@ async function handleSearchIndexRefresh(
 async function handleEntityAnalysis(
   task: {
     id: string
-    taskId: string | null
+    syncItemId: string | null
     runId: string | null
     scope: 'contest' | 'track' | 'resource'
     entityId: string
@@ -256,7 +256,7 @@ async function handleEntityAnalysis(
       scope: task.scope,
       entityId: task.entityId,
       externalId: task.externalId,
-      taskId: task.taskId,
+      syncItemId: task.syncItemId,
       runId: task.runId,
       sourceHash: task.sourceHash,
       provider: analysis.provider,

@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS workspace_members (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'manager', 'member')),
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(workspace_id, user_id, role)
@@ -231,7 +231,7 @@ CREATE TABLE IF NOT EXISTS contest_sync_sources (
   name TEXT NOT NULL,
   source_type TEXT NOT NULL CHECK (source_type IN ('csv_url')),
   source_url TEXT NOT NULL,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   last_run_at TIMESTAMPTZ,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
@@ -289,16 +289,40 @@ CREATE TABLE IF NOT EXISTS auth_identities (
   UNIQUE(provider, provider_user_id)
 );
 
-CREATE TABLE IF NOT EXISTS feishu_bitable_tasks (
+CREATE TABLE IF NOT EXISTS feishu_bitable_syncs (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  target_type TEXT NOT NULL CHECK (target_type IN ('contest', 'track', 'resource')),
+  source_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$
+BEGIN
+  IF to_regclass('public.feishu_bitable_tasks') IS NOT NULL
+    AND to_regclass('public.feishu_bitable_sync_items') IS NULL THEN
+    ALTER TABLE feishu_bitable_tasks RENAME TO feishu_bitable_sync_items;
+  END IF;
+
+  IF to_regclass('public.feishu_bitable_sync_runs') IS NOT NULL
+    AND to_regclass('public.feishu_bitable_sync_item_runs') IS NULL THEN
+    ALTER TABLE feishu_bitable_sync_runs RENAME TO feishu_bitable_sync_item_runs;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS feishu_bitable_sync_items (
+  id TEXT PRIMARY KEY,
+  sync_id TEXT REFERENCES feishu_bitable_syncs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'resource')),
   app_token TEXT NOT NULL,
   table_id TEXT NOT NULL,
   view_id TEXT NOT NULL DEFAULT '',
   source_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   writeback_json JSONB NOT NULL DEFAULT '{}'::JSONB,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   mapping_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   options_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   last_run_at TIMESTAMPTZ,
@@ -318,9 +342,9 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS feishu_bitable_sync_runs (
+CREATE TABLE IF NOT EXISTS feishu_bitable_sync_item_runs (
   id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES feishu_bitable_tasks(id) ON DELETE CASCADE,
+  sync_item_id TEXT NOT NULL REFERENCES feishu_bitable_sync_items(id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('running', 'success', 'partial_success', 'failed')),
   trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual', 'event', 'scheduled')),
   mode TEXT NOT NULL DEFAULT 'full' CHECK (mode IN ('full', 'delta')),
@@ -342,7 +366,7 @@ CREATE TABLE IF NOT EXISTS feishu_external_refs (
   provider TEXT NOT NULL CHECK (provider IN ('feishu_bitable')),
   scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
   external_id TEXT NOT NULL,
-  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
+  sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
   entity_id TEXT NOT NULL,
   metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -363,8 +387,8 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_event_dedup (
 
 CREATE TABLE IF NOT EXISTS feishu_post_sync_tasks (
   id TEXT PRIMARY KEY,
-  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
-  run_id TEXT REFERENCES feishu_bitable_sync_runs(id) ON DELETE SET NULL,
+  sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
+  run_id TEXT REFERENCES feishu_bitable_sync_item_runs(id) ON DELETE SET NULL,
   scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
@@ -432,8 +456,8 @@ CREATE TABLE IF NOT EXISTS feishu_search_index (
   scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
-  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
-  run_id TEXT REFERENCES feishu_bitable_sync_runs(id) ON DELETE SET NULL,
+  sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
+  run_id TEXT REFERENCES feishu_bitable_sync_item_runs(id) ON DELETE SET NULL,
   source_hash TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL DEFAULT '',
   summary TEXT NOT NULL DEFAULT '',
@@ -450,8 +474,8 @@ CREATE TABLE IF NOT EXISTS feishu_entity_analysis (
   scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
-  task_id TEXT REFERENCES feishu_bitable_tasks(id) ON DELETE SET NULL,
-  run_id TEXT REFERENCES feishu_bitable_sync_runs(id) ON DELETE SET NULL,
+  sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
+  run_id TEXT REFERENCES feishu_bitable_sync_item_runs(id) ON DELETE SET NULL,
   source_hash TEXT NOT NULL DEFAULT '',
   provider TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
@@ -623,8 +647,8 @@ CREATE TABLE IF NOT EXISTS rule_annotations (
 
 CREATE TABLE IF NOT EXISTS feishu_sync_issues (
   id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES feishu_bitable_tasks(id) ON DELETE CASCADE,
-  target_type TEXT NOT NULL CHECK (target_type IN ('contest', 'track', 'resource')),
+  sync_item_id TEXT NOT NULL REFERENCES feishu_bitable_sync_items(id) ON DELETE CASCADE,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'resource')),
   record_id TEXT NOT NULL,
   external_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'ignored')),
@@ -637,7 +661,7 @@ CREATE TABLE IF NOT EXISTS feishu_sync_issues (
   resolved_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(task_id, record_id, external_id)
+  UNIQUE(sync_item_id, record_id, external_id)
 );
 
 CREATE TABLE IF NOT EXISTS contests (
@@ -1064,7 +1088,7 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   project_seat_price_cents INTEGER NOT NULL DEFAULT 0,
   min_charged_project_seats INTEGER NOT NULL DEFAULT 0,
   charge_all_project_seats BOOLEAN NOT NULL DEFAULT FALSE,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1105,68 +1129,325 @@ ALTER TABLE project_resource_documents
 ALTER TABLE project_resource_document_tasks
   ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'queued';
 
-ALTER TABLE feishu_bitable_tasks
+DO $$
+BEGIN
+  IF to_regclass('public.feishu_bitable_sync_items') IS NOT NULL THEN
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_bitable_sync_items'
+        AND column_name = 'target_type'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_bitable_sync_items'
+        AND column_name = 'entity_type'
+    ) THEN
+      ALTER TABLE feishu_bitable_sync_items RENAME COLUMN target_type TO entity_type;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_bitable_sync_items'
+        AND column_name = 'is_active'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_bitable_sync_items'
+        AND column_name = 'is_enabled'
+    ) THEN
+      ALTER TABLE feishu_bitable_sync_items RENAME COLUMN is_active TO is_enabled;
+    END IF;
+  END IF;
+
+  IF to_regclass('public.feishu_bitable_sync_item_runs') IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_bitable_sync_item_runs'
+        AND column_name = 'task_id'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_bitable_sync_item_runs'
+        AND column_name = 'sync_item_id'
+    ) THEN
+    ALTER TABLE feishu_bitable_sync_item_runs RENAME COLUMN task_id TO sync_item_id;
+  END IF;
+
+  IF to_regclass('public.feishu_external_refs') IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_external_refs'
+        AND column_name = 'task_id'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_external_refs'
+        AND column_name = 'sync_item_id'
+    ) THEN
+    ALTER TABLE feishu_external_refs RENAME COLUMN task_id TO sync_item_id;
+  END IF;
+
+  IF to_regclass('public.feishu_post_sync_tasks') IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_post_sync_tasks'
+        AND column_name = 'task_id'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_post_sync_tasks'
+        AND column_name = 'sync_item_id'
+    ) THEN
+    ALTER TABLE feishu_post_sync_tasks RENAME COLUMN task_id TO sync_item_id;
+  END IF;
+
+  IF to_regclass('public.feishu_search_index') IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_search_index'
+        AND column_name = 'task_id'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_search_index'
+        AND column_name = 'sync_item_id'
+    ) THEN
+    ALTER TABLE feishu_search_index RENAME COLUMN task_id TO sync_item_id;
+  END IF;
+
+  IF to_regclass('public.feishu_entity_analysis') IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_entity_analysis'
+        AND column_name = 'task_id'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_entity_analysis'
+        AND column_name = 'sync_item_id'
+    ) THEN
+    ALTER TABLE feishu_entity_analysis RENAME COLUMN task_id TO sync_item_id;
+  END IF;
+
+  IF to_regclass('public.feishu_sync_issues') IS NOT NULL THEN
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_sync_issues'
+        AND column_name = 'task_id'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_sync_issues'
+        AND column_name = 'sync_item_id'
+    ) THEN
+      ALTER TABLE feishu_sync_issues RENAME COLUMN task_id TO sync_item_id;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_sync_issues'
+        AND column_name = 'target_type'
+    ) AND NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'feishu_sync_issues'
+        AND column_name = 'entity_type'
+    ) THEN
+      ALTER TABLE feishu_sync_issues RENAME COLUMN target_type TO entity_type;
+    END IF;
+  END IF;
+END $$;
+
+ALTER TABLE feishu_bitable_sync_items
+  ADD COLUMN IF NOT EXISTS sync_id TEXT REFERENCES feishu_bitable_syncs(id) ON DELETE CASCADE;
+
+INSERT INTO feishu_bitable_syncs (
+  id,
+  name,
+  source_json,
+  created_by_user_id,
+  updated_by_user_id,
+  created_at,
+  updated_at
+)
+SELECT
+  CONCAT('sync_', t.id),
+  COALESCE(NULLIF(t.name, ''), CONCAT('多维同步 ', ROW_NUMBER() OVER (ORDER BY t.created_at, t.id))),
+  jsonb_strip_nulls(jsonb_build_object(
+    'appToken', t.app_token,
+    'appName', COALESCE(t.source_json->>'appName', ''),
+    'sourceUrl', COALESCE(t.source_json->>'sourceUrl', '')
+  )),
+  t.created_by_user_id,
+  t.updated_by_user_id,
+  COALESCE(t.created_at, NOW()),
+  COALESCE(t.updated_at, NOW())
+FROM feishu_bitable_sync_items t
+WHERE t.sync_id IS NULL
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE feishu_bitable_sync_items
+SET sync_id = CONCAT('sync_', id)
+WHERE sync_id IS NULL;
+
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS source_json JSONB NOT NULL DEFAULT '{}'::JSONB;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS writeback_json JSONB NOT NULL DEFAULT '{}'::JSONB;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_mode TEXT NOT NULL DEFAULT 'interval';
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_interval_minutes INTEGER;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_cron_expr TEXT;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai';
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_next_run_at TIMESTAMPTZ;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_last_run_at TIMESTAMPTZ;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_last_error TEXT NOT NULL DEFAULT '';
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_locked_at TIMESTAMPTZ;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_lock_token TEXT;
 
-ALTER TABLE feishu_bitable_tasks
+ALTER TABLE feishu_bitable_sync_items
   DROP CONSTRAINT IF EXISTS feishu_bitable_tasks_schedule_mode_check;
 
-ALTER TABLE feishu_bitable_tasks
-  ADD CONSTRAINT feishu_bitable_tasks_schedule_mode_check
+ALTER TABLE feishu_bitable_sync_items
+  DROP CONSTRAINT IF EXISTS feishu_bitable_sync_items_schedule_mode_check;
+
+ALTER TABLE feishu_bitable_sync_items
+  ADD CONSTRAINT feishu_bitable_sync_items_schedule_mode_check
   CHECK (schedule_mode IN ('interval', 'cron'));
 
-ALTER TABLE feishu_bitable_sync_runs
+ALTER TABLE feishu_bitable_sync_item_runs
   ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'full';
 
-ALTER TABLE feishu_bitable_sync_runs
+ALTER TABLE feishu_bitable_sync_item_runs
   ADD COLUMN IF NOT EXISTS delta_record_count INTEGER NOT NULL DEFAULT 0;
 
-ALTER TABLE feishu_bitable_sync_runs
+ALTER TABLE feishu_bitable_sync_item_runs
   DROP CONSTRAINT IF EXISTS feishu_bitable_sync_runs_trigger_source_check;
 
-ALTER TABLE feishu_bitable_sync_runs
-  ADD CONSTRAINT feishu_bitable_sync_runs_trigger_source_check
+ALTER TABLE feishu_bitable_sync_item_runs
+  DROP CONSTRAINT IF EXISTS feishu_bitable_sync_item_runs_trigger_source_check;
+
+ALTER TABLE feishu_bitable_sync_item_runs
+  ADD CONSTRAINT feishu_bitable_sync_item_runs_trigger_source_check
   CHECK (trigger_source IN ('manual', 'event', 'scheduled'));
 
-ALTER TABLE feishu_bitable_sync_runs
+ALTER TABLE feishu_bitable_sync_item_runs
   DROP CONSTRAINT IF EXISTS feishu_bitable_sync_runs_mode_check;
 
-ALTER TABLE feishu_bitable_sync_runs
-  ADD CONSTRAINT feishu_bitable_sync_runs_mode_check
+ALTER TABLE feishu_bitable_sync_item_runs
+  DROP CONSTRAINT IF EXISTS feishu_bitable_sync_item_runs_mode_check;
+
+ALTER TABLE feishu_bitable_sync_item_runs
+  ADD CONSTRAINT feishu_bitable_sync_item_runs_mode_check
   CHECK (mode IN ('full', 'delta'));
+
+ALTER TABLE feishu_post_sync_tasks
+  ADD COLUMN IF NOT EXISTS sync_item_id TEXT;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'feishu_post_sync_tasks'
+      AND column_name = 'task_id'
+  ) THEN
+    UPDATE feishu_post_sync_tasks
+    SET sync_item_id = task_id
+    WHERE sync_item_id IS NULL
+      AND task_id IS NOT NULL;
+  END IF;
+END $$;
+
+ALTER TABLE feishu_sync_issues
+  ADD COLUMN IF NOT EXISTS sync_item_id TEXT;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'feishu_sync_issues'
+      AND column_name = 'task_id'
+  ) THEN
+    UPDATE feishu_sync_issues
+    SET sync_item_id = task_id
+    WHERE sync_item_id IS NULL
+      AND task_id IS NOT NULL;
+  END IF;
+END $$;
+
+ALTER TABLE feishu_sync_issues
+  ADD COLUMN IF NOT EXISTS entity_type TEXT;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'feishu_sync_issues'
+      AND column_name = 'target_type'
+  ) THEN
+    UPDATE feishu_sync_issues
+    SET entity_type = target_type
+    WHERE COALESCE(entity_type, '') = ''
+      AND COALESCE(target_type, '') <> '';
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_sync_issues_sync_item_record_external_unique
+  ON feishu_sync_issues(sync_item_id, record_id, external_id);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_user ON workspace_members(workspace_id, user_id);
@@ -1194,16 +1475,20 @@ CREATE INDEX IF NOT EXISTS idx_invitations_token_hash ON invitations(token_hash)
 CREATE INDEX IF NOT EXISTS idx_platform_user_roles_user ON platform_user_roles(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_user ON auth_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);
-CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_updated ON feishu_bitable_tasks(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_schedule_scan
-  ON feishu_bitable_tasks(is_active, schedule_enabled, schedule_next_run_at);
-CREATE INDEX IF NOT EXISTS idx_feishu_bitable_tasks_schedule_lock
-  ON feishu_bitable_tasks(schedule_locked_at);
-CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_runs_task_started ON feishu_bitable_sync_runs(task_id, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_runs_task_mode_started ON feishu_bitable_sync_runs(task_id, mode, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_syncs_updated ON feishu_bitable_syncs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_updated ON feishu_bitable_sync_items(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_sync_id ON feishu_bitable_sync_items(sync_id, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_sync_table_view_entity
+  ON feishu_bitable_sync_items(sync_id, table_id, view_id, entity_type);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_schedule_scan
+  ON feishu_bitable_sync_items(is_enabled, schedule_enabled, schedule_next_run_at);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_schedule_lock
+  ON feishu_bitable_sync_items(schedule_locked_at);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_item_runs_sync_item_started ON feishu_bitable_sync_item_runs(sync_item_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_item_runs_sync_item_mode_started ON feishu_bitable_sync_item_runs(sync_item_id, mode, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_external_refs_entity ON feishu_external_refs(scope, entity_id);
-CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_task_status ON feishu_sync_issues(task_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_record ON feishu_sync_issues(task_id, record_id, external_id);
+CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_sync_item_status ON feishu_sync_issues(sync_item_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_sync_issues_sync_item_record ON feishu_sync_issues(sync_item_id, record_id, external_id);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_event_dedup_created ON feishu_bitable_event_dedup(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_post_sync_tasks_status_next ON feishu_post_sync_tasks(status, next_run_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_feishu_post_sync_tasks_scope_entity ON feishu_post_sync_tasks(scope, entity_id, task_type, updated_at DESC);

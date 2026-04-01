@@ -1,5 +1,5 @@
 import type { H3Event } from 'h3'
-import type { FeishuBitableTaskTargetType } from '~~/shared/types/domain'
+import type { FeishuBitableSyncItemEntityType } from '~~/shared/types/domain'
 import { createHash } from 'node:crypto'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
@@ -193,7 +193,7 @@ const analysisSchema = z.object({
 })
 
 export async function analyzeFeishuEntity(input: {
-  scope: FeishuBitableTaskTargetType
+  scope: FeishuBitableSyncItemEntityType
   text: string
   event?: H3Event
 }): Promise<FeishuEntityAnalysisResult> {

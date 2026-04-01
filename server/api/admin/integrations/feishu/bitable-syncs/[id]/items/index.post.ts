@@ -1,7 +1,7 @@
 import type {
   FeishuBitableSourceConfig,
-  FeishuBitableTask,
-  FeishuBitableTaskTargetType,
+  FeishuBitableSyncItem,
+  FeishuBitableSyncItemEntityType,
   FeishuBitableWritebackConfig,
   FeishuTaskScheduleConfig,
 } from '~~/shared/types/domain'
@@ -10,83 +10,78 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createFeishuBitableTask } from '~~/server/utils/feishu-integration-store'
+import { createFeishuBitableSyncItem } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
-interface CreateTaskBody {
+interface CreateItemBody {
   name?: string
-  targetType?: FeishuBitableTaskTargetType
-  appToken?: string
+  entityType?: FeishuBitableSyncItemEntityType
   tableId?: string
   viewId?: string
   source?: FeishuBitableSourceConfig
   writeback?: FeishuBitableWritebackConfig
-  isActive?: boolean
+  isEnabled?: boolean
   mapping?: Record<string, unknown>
   options?: Record<string, unknown>
   schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
-const TARGET_TYPES: FeishuBitableTaskTargetType[] = ['contest', 'track', 'resource']
+const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'resource']
+
+function toText(raw: unknown): string {
+  return String(raw || '').trim()
+}
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const body = await readBody<CreateTaskBody>(event).catch(() => ({} as CreateTaskBody))
+  const syncId = String(getRouterParam(event, 'id') || '').trim()
+  const body = await readBody<CreateItemBody>(event).catch(() => ({} as CreateItemBody))
 
   const canWrite = await checkPlatformPermission(event, user, 'contest.write')
   if (!canWrite) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权新增飞书 Bitable 任务。', {
+    return fail('当前用户无权新增子表同步项。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40399)
+    }, 40456)
   }
 
-  const name = String(body.name || '').trim()
-  const targetType = TARGET_TYPES.includes(body.targetType as FeishuBitableTaskTargetType)
-    ? body.targetType as FeishuBitableTaskTargetType
+  const entityType = ENTITY_TYPES.includes(body.entityType as FeishuBitableSyncItemEntityType)
+    ? body.entityType as FeishuBitableSyncItemEntityType
     : null
-  const sourceAppToken = String(body.source?.appToken || '').trim()
-  const sourceTableId = String(body.source?.tableId || '').trim()
-  const sourceViewId = String(body.source?.viewId || '').trim()
-  const appToken = String(body.appToken || sourceAppToken || '').trim()
-  const tableId = String(body.tableId || sourceTableId || '').trim()
-  const viewId = String(body.viewId || sourceViewId || '').trim()
+  const tableId = toText(body.tableId || body.source?.tableId)
+  const viewId = toText(body.viewId || body.source?.viewId)
+  const name = toText(body.name || body.source?.tableName || body.source?.viewName || '同步项')
 
-  if (!name || !targetType || !appToken || !tableId) {
+  if (!syncId || !entityType || !tableId) {
     setResponseStatus(event, 400)
-    return fail('name、targetType、appToken、tableId 为必填项。', {
+    return fail('syncId、entityType、tableId 为必填项。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40100)
+    }, 40156)
   }
 
-  let task: FeishuBitableTask
+  let item: FeishuBitableSyncItem
   try {
-    task = await withTransaction(event, async (db) => {
-      return createFeishuBitableTask(db, {
+    item = await withTransaction(event, async (db) => {
+      return createFeishuBitableSyncItem(db, {
         actorUserId: user.id,
+        syncId,
         name,
-        targetType,
-        appToken,
+        entityType,
         tableId,
         viewId,
-        source: {
-          ...(body.source || {}),
-          appToken,
-          tableId,
-          viewId,
-        },
+        source: body.source,
         writeback: body.writeback,
-        isActive: body.isActive !== false,
+        isEnabled: body.isEnabled === true,
         mapping: body.mapping || {},
         options: body.options || {},
         schedule: body.schedule || {},
@@ -95,16 +90,16 @@ export default defineEventHandler(async (event) => {
   }
   catch (error) {
     setResponseStatus(event, 400)
-    return fail(error instanceof Error ? error.message : '任务创建失败。', {
+    return fail(error instanceof Error ? error.message : '子表同步项创建失败。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40107)
+    }, 40157)
   }
 
-  return ok<FeishuBitableTask>(task, {
+  return ok<FeishuBitableSyncItem>(item, {
     startedAt,
     provider: runtime.ai.provider,
     model: runtime.ai.model,

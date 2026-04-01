@@ -5,7 +5,7 @@ export type WorkflowTriggerSource = 'manual' | 'scheduled' | 'webhook'
 
 export interface WorkflowRunInput {
   event?: H3Event
-  taskId: string
+  syncItemId?: string
   actorUserId: string
   triggerSource: WorkflowTriggerSource
   mode?: FeishuSyncRunMode

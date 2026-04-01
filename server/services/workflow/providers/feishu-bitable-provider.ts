@@ -1,11 +1,12 @@
 import type { WorkflowProvider, WorkflowRunInput } from '~~/server/services/workflow/workflow-provider'
-import { runFeishuBitableTask } from '~~/server/services/feishu/bitable-sync'
+import { runFeishuBitableSyncItem } from '~~/server/services/feishu/bitable-sync'
 
 export const feishuBitableWorkflowProvider: WorkflowProvider = {
   providerName: 'feishu_bitable',
   async run(input: WorkflowRunInput) {
-    return runFeishuBitableTask(input.event, {
-      taskId: input.taskId,
+    const syncItemId = String(input.syncItemId || '').trim()
+    return runFeishuBitableSyncItem(input.event, {
+      syncItemId,
       actorUserId: input.actorUserId,
       triggerSource: input.triggerSource === 'webhook' ? 'event' : input.triggerSource,
       mode: input.mode,

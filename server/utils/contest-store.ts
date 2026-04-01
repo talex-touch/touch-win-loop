@@ -12,7 +12,7 @@ import type {
   ContestTimeline,
   ContestVisibility,
   DisciplineDictionaryItem,
-  FeishuBitableTaskTargetType,
+  FeishuBitableSyncItemEntityType,
   PlatformPermission,
   PlatformRole,
   PlatformRoleAssignment,
@@ -3060,7 +3060,7 @@ export async function createAdminContest(
 async function assertFeishuSourceOfTruthPatchAllowed(
   db: Queryable,
   input: {
-    scope: FeishuBitableTaskTargetType
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     bypass?: boolean
   },

@@ -64,6 +64,12 @@ interface GroupMembersData {
 interface DepartmentItem {
   department_id?: string
   open_department_id?: string
+  name?: string
+  en_name?: string
+  i18n_name?: {
+    zh_cn?: string
+    en_us?: string
+  }
 }
 
 interface DepartmentChildrenData {
@@ -137,6 +143,13 @@ interface BitableGetRecordData {
   record?: {
     record_id?: string
     fields?: Record<string, unknown>
+  }
+}
+
+interface FeishuWikiNodeData {
+  node?: {
+    obj_type?: string
+    obj_token?: string
   }
 }
 
@@ -271,6 +284,19 @@ export interface FeishuOAuthLoginProfile {
   mobile: string
 }
 
+export interface FeishuTenantDirectoryDepartment {
+  departmentId: string
+  name: string
+  parentDepartmentId: string | null
+}
+
+export interface FeishuTenantDirectory {
+  users: FeishuOAuthLoginProfile[]
+  departments: FeishuTenantDirectoryDepartment[]
+  rootDepartmentId: string
+  userDepartmentIds: Record<string, string[]>
+}
+
 export interface FeishuBitableRecord {
   recordId: string
   fields: Record<string, unknown>
@@ -312,6 +338,35 @@ export async function getFeishuTenantAccessToken(config: FeishuIntegrationConfig
   if (!token)
     throw new Error('FEISHU_TENANT_TOKEN_EMPTY')
   return token
+}
+
+export async function getFeishuWikiNodeInfo(input: {
+  tenantAccessToken: string
+  token: string
+}): Promise<{ objType: string, objToken: string } | null> {
+  const token = String(input.token || '').trim()
+  if (!token)
+    return null
+
+  const data = await requestFeishu<FeishuWikiNodeData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: '/open-apis/wiki/v2/spaces/get_node',
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      token,
+    },
+  })
+
+  const node = data.node || {}
+  const objType = String(node.obj_type || '').trim()
+  const objToken = String(node.obj_token || '').trim()
+  if (!objType && !objToken)
+    return null
+  return {
+    objType,
+    objToken,
+  }
 }
 
 export async function sendFeishuChatTextMessage(input: {
@@ -473,6 +528,10 @@ function toMemberUnionId(item: GroupMemberItem): string {
 
 function toDepartmentId(item: DepartmentItem): string {
   return String(item?.open_department_id || item?.department_id || '').trim()
+}
+
+function toDepartmentName(item: DepartmentItem): string {
+  return String(item?.name || item?.i18n_name?.zh_cn || item?.en_name || item?.i18n_name?.en_us || '').trim()
 }
 
 function toProfileFromDepartmentUser(item: DepartmentUserItem): FeishuOAuthLoginProfile | null {
@@ -650,6 +709,150 @@ async function listFeishuUsersDirectlyByPaging(input: {
   return [...users.values()]
 }
 
+function appendProfilesToMap(
+  target: Map<string, FeishuOAuthLoginProfile>,
+  profiles: FeishuOAuthLoginProfile[],
+): void {
+  for (const profile of profiles) {
+    if (!profile?.unionId || target.has(profile.unionId))
+      continue
+    target.set(profile.unionId, profile)
+  }
+}
+
+function appendUserDepartmentId(
+  target: Map<string, Set<string>>,
+  unionId: string,
+  departmentId: string,
+): void {
+  const normalizedUnionId = String(unionId || '').trim()
+  const normalizedDepartmentId = String(departmentId || '').trim()
+  if (!normalizedUnionId || !normalizedDepartmentId)
+    return
+
+  let bucket = target.get(normalizedUnionId)
+  if (!bucket) {
+    bucket = new Set<string>()
+    target.set(normalizedUnionId, bucket)
+  }
+  bucket.add(normalizedDepartmentId)
+}
+
+function upsertDepartment(
+  target: Map<string, FeishuTenantDirectoryDepartment>,
+  input: {
+    departmentId: string
+    name?: string
+    parentDepartmentId?: string | null
+  },
+): void {
+  const departmentId = String(input.departmentId || '').trim()
+  if (!departmentId)
+    return
+
+  const previous = target.get(departmentId)
+  target.set(departmentId, {
+    departmentId,
+    name: String(input.name || previous?.name || '').trim() || departmentId,
+    parentDepartmentId: input.parentDepartmentId === undefined
+      ? (previous?.parentDepartmentId ?? null)
+      : (String(input.parentDepartmentId || '').trim() || null),
+  })
+}
+
+function toUserDepartmentIdsRecord(source: Map<string, Set<string>>): Record<string, string[]> {
+  return Object.fromEntries(
+    [...source.entries()].map(([unionId, departmentIds]) => [unionId, [...departmentIds].sort()]),
+  )
+}
+
+async function listFeishuTenantDirectoryByDepartments(input: {
+  tenantAccessToken: string
+  maxUsers: number
+  rootDepartmentId: string
+}): Promise<{
+  users: FeishuOAuthLoginProfile[]
+  departments: FeishuTenantDirectoryDepartment[]
+  userDepartmentIds: Record<string, string[]>
+}> {
+  const queue: string[] = [input.rootDepartmentId]
+  const visited = new Set<string>()
+  const users = new Map<string, FeishuOAuthLoginProfile>()
+  const departments = new Map<string, FeishuTenantDirectoryDepartment>()
+  const userDepartmentIds = new Map<string, Set<string>>()
+
+  upsertDepartment(departments, {
+    departmentId: input.rootDepartmentId,
+    name: '飞书组织',
+    parentDepartmentId: null,
+  })
+
+  while (queue.length > 0 && users.size < input.maxUsers) {
+    const departmentId = String(queue.shift() || '').trim()
+    if (!departmentId || visited.has(departmentId))
+      continue
+    visited.add(departmentId)
+
+    let userPageToken = ''
+    let userHasMore = true
+    while (userHasMore && users.size < input.maxUsers) {
+      const data = await listDepartmentUsersWithFallback({
+        tenantAccessToken: input.tenantAccessToken,
+        departmentId,
+        pageToken: userPageToken,
+      })
+
+      for (const item of (data.items || [])) {
+        const profile = toProfileFromDepartmentUser(item)
+        if (!profile)
+          continue
+        if (!users.has(profile.unionId))
+          users.set(profile.unionId, profile)
+        appendUserDepartmentId(userDepartmentIds, profile.unionId, departmentId)
+      }
+
+      userHasMore = Boolean(data.has_more)
+      userPageToken = String(data.page_token || '').trim()
+      if (userHasMore && !userPageToken)
+        userHasMore = false
+    }
+
+    let childPageToken = ''
+    let childHasMore = true
+    while (childHasMore) {
+      const data = await listDepartmentChildrenWithFallback({
+        tenantAccessToken: input.tenantAccessToken,
+        departmentId,
+        pageToken: childPageToken,
+      })
+
+      for (const item of (data.items || [])) {
+        const childDepartmentId = toDepartmentId(item)
+        if (childDepartmentId) {
+          upsertDepartment(departments, {
+            departmentId: childDepartmentId,
+            name: toDepartmentName(item),
+            parentDepartmentId: departmentId,
+          })
+        }
+        if (childDepartmentId && !visited.has(childDepartmentId))
+          queue.push(childDepartmentId)
+      }
+
+      childHasMore = Boolean(data.has_more)
+      childPageToken = String(data.page_token || '').trim()
+      if (childHasMore && !childPageToken)
+        childHasMore = false
+    }
+  }
+
+  return {
+    users: [...users.values()],
+    departments: [...departments.values()],
+    userDepartmentIds: toUserDepartmentIdsRecord(userDepartmentIds),
+  }
+}
+
 async function listDepartmentChildrenWithFallback(input: {
   tenantAccessToken: string
   departmentId: string
@@ -671,83 +874,63 @@ async function listDepartmentChildrenWithFallback(input: {
   }
 }
 
-export async function listFeishuTenantUsers(input: {
+export async function listFeishuTenantDirectory(input: {
   tenantAccessToken: string
   maxUsers?: number
   rootDepartmentId?: string
-}): Promise<FeishuOAuthLoginProfile[]> {
+}): Promise<FeishuTenantDirectory> {
   const rootDepartmentId = String(input.rootDepartmentId || '0').trim() || '0'
   const maxUsers = Math.max(50, Math.min(20_000, Number(input.maxUsers || 3000)))
+  const users = new Map<string, FeishuOAuthLoginProfile>()
+  let departments: FeishuTenantDirectoryDepartment[] = [{
+    departmentId: rootDepartmentId,
+    name: '飞书组织',
+    parentDepartmentId: null,
+  }]
+  let userDepartmentIds: Record<string, string[]> = {}
 
   try {
     const directUsers = await listFeishuUsersDirectlyByPaging({
       tenantAccessToken: input.tenantAccessToken,
       maxUsers,
     })
-    if (directUsers.length > 0)
-      return directUsers
+    appendProfilesToMap(users, directUsers)
   }
   catch (error) {
     if (!isFieldValidationError(error))
       throw error
   }
 
-  const queue: string[] = [rootDepartmentId]
-  const visited = new Set<string>()
-  const users = new Map<string, FeishuOAuthLoginProfile>()
-
-  while (queue.length > 0 && users.size < maxUsers) {
-    const departmentId = String(queue.shift() || '').trim()
-    if (!departmentId || visited.has(departmentId))
-      continue
-    visited.add(departmentId)
-
-    let userPageToken = ''
-    let userHasMore = true
-    while (userHasMore && users.size < maxUsers) {
-      const data = await listDepartmentUsersWithFallback({
-        tenantAccessToken: input.tenantAccessToken,
-        departmentId,
-        pageToken: userPageToken,
-      })
-
-      for (const item of (data.items || [])) {
-        const profile = toProfileFromDepartmentUser(item)
-        if (!profile)
-          continue
-        if (!users.has(profile.unionId))
-          users.set(profile.unionId, profile)
-      }
-
-      userHasMore = Boolean(data.has_more)
-      userPageToken = String(data.page_token || '').trim()
-      if (userHasMore && !userPageToken)
-        userHasMore = false
-    }
-
-    let childPageToken = ''
-    let childHasMore = true
-    while (childHasMore) {
-      const data = await listDepartmentChildrenWithFallback({
-        tenantAccessToken: input.tenantAccessToken,
-        departmentId,
-        pageToken: childPageToken,
-      })
-
-      for (const item of (data.items || [])) {
-        const childDepartmentId = toDepartmentId(item)
-        if (childDepartmentId && !visited.has(childDepartmentId))
-          queue.push(childDepartmentId)
-      }
-
-      childHasMore = Boolean(data.has_more)
-      childPageToken = String(data.page_token || '').trim()
-      if (childHasMore && !childPageToken)
-        childHasMore = false
-    }
+  try {
+    const directory = await listFeishuTenantDirectoryByDepartments({
+      tenantAccessToken: input.tenantAccessToken,
+      maxUsers,
+      rootDepartmentId,
+    })
+    appendProfilesToMap(users, directory.users)
+    departments = directory.departments
+    userDepartmentIds = directory.userDepartmentIds
+  }
+  catch (error) {
+    if (!users.size || !isFieldValidationError(error))
+      throw error
   }
 
-  return [...users.values()]
+  return {
+    users: [...users.values()],
+    departments,
+    rootDepartmentId,
+    userDepartmentIds,
+  }
+}
+
+export async function listFeishuTenantUsers(input: {
+  tenantAccessToken: string
+  maxUsers?: number
+  rootDepartmentId?: string
+}): Promise<FeishuOAuthLoginProfile[]> {
+  const directory = await listFeishuTenantDirectory(input)
+  return directory.users
 }
 
 export async function listFeishuBitableRecords(input: {

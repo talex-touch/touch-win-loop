@@ -1084,7 +1084,7 @@ export interface PlatformRoleAssignment {
   updatedAt: string
 }
 
-export type FeishuBitableTaskTargetType = 'contest' | 'track' | 'resource'
+export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'resource'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
 export type FeishuSyncRunMode = 'full' | 'delta'
@@ -1308,8 +1308,8 @@ export interface FeishuMappingConfigV2 {
 
 export interface FeishuSyncIssue {
   id: string
-  taskId: string
-  targetType: FeishuBitableTaskTargetType
+  syncItemId: string
+  entityType: FeishuBitableSyncItemEntityType
   recordId: string
   externalId: string
   status: FeishuSyncIssueStatus
@@ -1328,6 +1328,86 @@ export interface FeishuFieldInspectionItem {
   fieldName: string
   sampleValues: string[]
   sampleCount: number
+}
+
+export interface FeishuBitableTablePreviewSource {
+  appToken: string
+  tableId: string
+  viewId?: string
+  appName?: string
+  tableName?: string
+  viewName?: string
+  sourceUrl?: string
+}
+
+export type FeishuBitableTablePreviewRow = Record<string, string>
+
+export interface FeishuFieldDiagnosticItem {
+  kind:
+    | 'mapping_empty'
+    | 'mapping_missing'
+    | 'source_field_missing'
+    | 'transform_error'
+    | 'contest_ref_not_found'
+    | 'track_ref_not_found'
+    | 'writeback_field_missing'
+  level: 'error' | 'warning'
+  message: string
+  fieldKey?: string
+  sourceField?: string
+  recordId?: string
+  externalId?: string
+  transform?: string
+  detail?: string
+}
+
+export interface FeishuMappedPreviewRow {
+  recordId: string
+  externalId: string
+  status: 'created' | 'updated' | 'skipped' | 'error'
+  reasonCode?: string
+  message?: string
+  values: Record<string, string>
+}
+
+export interface FeishuPreviewIssueCounts {
+  total: number
+  externalIdMissing: number
+  missingRequiredField: number
+  contestRefNotFound: number
+  trackRefNotFound: number
+  transformError: number
+  sourceFieldMissing: number
+  writebackFieldMissing: number
+  mappingEmpty: number
+  other: number
+}
+
+export interface FeishuBitableTablePreview {
+  source: FeishuBitableTablePreviewSource
+  columns: string[]
+  sampleRows: FeishuBitableTablePreviewRow[]
+  sampleCount: number
+  totalFetched: number
+  fieldInspection: FeishuFieldInspectionItem[]
+  iframeUrl: string
+  openUrl: string
+}
+
+export interface FeishuBitableSyncItemPreviewResult {
+  fetchedCount: number
+  createdCount: number
+  updatedCount: number
+  skippedCount: number
+  errorCount: number
+  writebackSuccessCount: number
+  writebackErrorCount: number
+  errors: Array<{ recordId: string, message: string }>
+  mappedColumns: string[]
+  mappedSampleRows: FeishuMappedPreviewRow[]
+  fieldDiagnostics: FeishuFieldDiagnosticItem[]
+  transformErrors: FeishuFieldDiagnosticItem[]
+  issueCounts: FeishuPreviewIssueCounts
 }
 
 export interface FeishuConfigValidationResult {
@@ -1467,10 +1547,19 @@ export interface FeishuDirectoryUserCandidate {
   userId?: string | null
   username?: string | null
   hasContestAdmin: boolean
+  departmentIds: string[]
+}
+
+export interface FeishuDirectoryDepartment {
+  departmentId: string
+  name: string
+  parentDepartmentId?: string | null
 }
 
 export interface FeishuDirectorySearchResult {
   items: FeishuDirectoryUserCandidate[]
+  departments?: FeishuDirectoryDepartment[]
+  rootDepartmentId?: string
   notice?: string
   source?: 'tenant' | 'group_fallback'
   fromCache?: boolean
@@ -1517,16 +1606,31 @@ export interface FeishuTaskIssueStats {
   ignored: number
 }
 
-export interface FeishuBitableTask {
+export interface FeishuBitableSync {
   id: string
   name: string
-  targetType: FeishuBitableTaskTargetType
+  source: FeishuBitableSourceConfig
+  itemCount: number
+  enabledItemCount: number
+  issueStats: FeishuTaskIssueStats
+  latestRunSummary: FeishuTaskLatestRunSummary | null
+  createdByUserId: string
+  updatedByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface FeishuBitableSyncItem {
+  id: string
+  syncId: string
+  name: string
+  entityType: FeishuBitableSyncItemEntityType
   appToken: string
   tableId: string
   viewId: string
   source?: FeishuBitableSourceConfig
   writeback?: FeishuBitableWritebackConfig
-  isActive: boolean
+  isEnabled: boolean
   mapping: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
   options: Record<string, unknown>
   lastRunAt: string | null
@@ -1539,16 +1643,20 @@ export interface FeishuBitableTask {
   updatedAt: string
 }
 
-export interface FeishuBitableTaskDetail extends FeishuBitableTask {
-  recentRuns: FeishuBitableSyncRun[]
+export interface FeishuBitableSyncDetail extends FeishuBitableSync {
+  items: FeishuBitableSyncItem[]
+}
+
+export interface FeishuBitableSyncItemDetail extends FeishuBitableSyncItem {
+  recentRuns: FeishuBitableSyncItemRun[]
   issues: FeishuSyncIssue[]
   issueStats: FeishuTaskIssueStats
 }
 
-export interface FeishuBitableSyncRun {
+export interface FeishuBitableSyncItemRun {
   id: string
-  taskId: string
-  taskName: string
+  syncItemId: string
+  syncItemName: string
   status: FeishuBitableSyncRunStatus
   triggerSource: FeishuBitableSyncRunTriggerSource
   mode?: FeishuSyncRunMode
@@ -1570,9 +1678,9 @@ export type FeishuPostSyncTaskStatus = 'queued' | 'processing' | 'succeeded' | '
 
 export interface FeishuPostSyncTask {
   id: string
-  taskId: string | null
+  syncItemId: string | null
   runId: string | null
-  scope: FeishuBitableTaskTargetType
+  scope: FeishuBitableSyncItemEntityType
   entityId: string
   externalId: string
   taskType: FeishuPostSyncTaskType

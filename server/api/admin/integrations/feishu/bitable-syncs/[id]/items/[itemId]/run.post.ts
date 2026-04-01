@@ -9,56 +9,53 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const taskId = String(getRouterParam(event, 'id') || '').trim()
+  const syncItemId = String(getRouterParam(event, 'itemId') || '').trim()
 
   const canWrite = await checkPlatformPermission(event, user, 'contest.write')
   if (!canWrite) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权执行飞书 Bitable 同步。', {
+    return fail('当前用户无权执行子表同步项。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40403)
+    }, 40462)
   }
 
-  if (!taskId) {
+  if (!syncItemId) {
     setResponseStatus(event, 400)
-    return fail('taskId 不能为空。', {
+    return fail('syncItemId 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40103)
+    }, 40163)
   }
 
-  try {
-    const summary = await runWorkflow({
-      providerName: 'feishu_bitable',
-      event,
-      taskId,
-      actorUserId: user.id,
-      triggerSource: 'manual',
-    })
+  const summary = await runWorkflow({
+    providerName: 'feishu_bitable',
+    syncItemId,
+    actorUserId: user.id,
+    triggerSource: 'manual',
+  }) as {
+    runId: string
+    status: 'success' | 'partial_success' | 'failed'
+    fetchedCount: number
+    createdCount: number
+    updatedCount: number
+    skippedCount: number
+    errorCount: number
+    writebackSuccessCount: number
+    writebackErrorCount: number
+  }
 
-    return ok(summary, {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    })
-  }
-  catch (error) {
-    setResponseStatus(event, 400)
-    return fail(error instanceof Error ? error.message : '同步执行失败。', {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 50099)
-  }
+  return ok(summary, {
+    startedAt,
+    provider: runtime.ai.provider,
+    model: runtime.ai.model,
+    fallbackUsed: false,
+    attempts: 1,
+  })
 })

@@ -1,10 +1,10 @@
 import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
 import { withTransaction } from '~~/server/utils/db'
 import {
-  claimNextDueFeishuBitableTask,
-  completeScheduledFeishuTaskExecution,
-  getFeishuBitableTaskById,
-  releaseFeishuTaskScheduleLock,
+  claimNextDueFeishuBitableSyncItem,
+  completeScheduledFeishuSyncItemExecution,
+  getFeishuBitableSyncItemById,
+  releaseFeishuSyncItemScheduleLock,
 } from '~~/server/utils/feishu-integration-store'
 import { computeNextScheduledRunAtOrNull } from '~~/server/utils/feishu-task-schedule'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
@@ -62,7 +62,7 @@ function ensureTickTimer(intervalMs: number): void {
 }
 
 async function executeClaimedTask(input: {
-  taskId: string
+  syncItemId: string
   actorUserId: string
   lockToken: string
 }): Promise<void> {
@@ -71,7 +71,7 @@ async function executeClaimedTask(input: {
   try {
     await runWorkflow({
       providerName: 'feishu_bitable',
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       actorUserId: input.actorUserId,
       triggerSource: 'scheduled',
     })
@@ -79,7 +79,7 @@ async function executeClaimedTask(input: {
   catch (error) {
     lastError = toErrorMessage(error)
     console.error('[feishu-bitable-scheduler-worker] task failed:', {
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       error: lastError,
     })
   }
@@ -87,12 +87,12 @@ async function executeClaimedTask(input: {
   let completed = false
   try {
     completed = await withTransaction(undefined, async (db) => {
-      const latestTask = await getFeishuBitableTaskById(db, input.taskId)
+      const latestTask = await getFeishuBitableSyncItemById(db, input.syncItemId)
       const nextRunAt = latestTask?.schedule.enabled
         ? computeNextScheduledRunAtOrNull(latestTask.schedule, { from: new Date() })
         : null
-      return completeScheduledFeishuTaskExecution(db, {
-        taskId: input.taskId,
+      return completeScheduledFeishuSyncItemExecution(db, {
+        syncItemId: input.syncItemId,
         lockToken: input.lockToken,
         nextRunAt,
         lastError,
@@ -102,20 +102,20 @@ async function executeClaimedTask(input: {
   }
   catch (error) {
     console.error('[feishu-bitable-scheduler-worker] complete failed:', {
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       error: toErrorMessage(error),
     })
   }
 
   if (!completed) {
     await withTransaction(undefined, async (db) => {
-      await releaseFeishuTaskScheduleLock(db, {
-        taskId: input.taskId,
+      await releaseFeishuSyncItemScheduleLock(db, {
+        syncItemId: input.syncItemId,
         lockToken: input.lockToken,
       })
     }).catch((error) => {
       console.error('[feishu-bitable-scheduler-worker] release lock failed:', {
-        taskId: input.taskId,
+        syncItemId: input.syncItemId,
         error: toErrorMessage(error),
       })
     })
@@ -137,7 +137,7 @@ async function runTick(): Promise<void> {
 
     for (let round = 0; round < runtime.feishuScheduler.batchSize; round += 1) {
       const claimed = await withTransaction(undefined, async (db) => {
-        return claimNextDueFeishuBitableTask(db, {
+        return claimNextDueFeishuBitableSyncItem(db, {
           now: new Date(),
           lockTtlMs: runtime.feishuScheduler.lockTtlMs,
         })
@@ -145,12 +145,12 @@ async function runTick(): Promise<void> {
       if (!claimed)
         break
 
-      const fallbackActorUserId = claimed.task.updatedByUserId
-        || claimed.task.createdByUserId
+      const fallbackActorUserId = claimed.item.updatedByUserId
+        || claimed.item.createdByUserId
       if (!fallbackActorUserId) {
         await withTransaction(undefined, async (db) => {
-          await releaseFeishuTaskScheduleLock(db, {
-            taskId: claimed.task.id,
+          await releaseFeishuSyncItemScheduleLock(db, {
+            syncItemId: claimed.item.id,
             lockToken: claimed.lockToken,
           })
         })
@@ -158,7 +158,7 @@ async function runTick(): Promise<void> {
       }
 
       await executeClaimedTask({
-        taskId: claimed.task.id,
+        syncItemId: claimed.item.id,
         actorUserId: fallbackActorUserId,
         lockToken: claimed.lockToken,
       })

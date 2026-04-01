@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
     }, 40407)
   }
 
-  const taskId = String(query.taskId || '').trim() || undefined
+  const syncItemId = String(query.syncItemId || '').trim() || undefined
   const statusRaw = String(query.status || '').trim()
   const status = ['open', 'resolved', 'ignored'].includes(statusRaw)
     ? statusRaw as FeishuSyncIssueStatus
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
 
   const issues = await withClient(event, async (db) => {
     return listFeishuSyncIssues(db, {
-      taskId,
+      syncItemId,
       status,
       limit,
     })

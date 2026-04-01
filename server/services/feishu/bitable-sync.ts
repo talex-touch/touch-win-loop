@@ -3,9 +3,15 @@ import type { FeishuBitableRecord } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type {
   ContestLevel,
+  FeishuBitableSourceConfig,
+  FeishuBitableSyncItemEntityType,
+  FeishuBitableSyncItemPreviewResult,
   FeishuBitableSyncRunTriggerSource,
-  FeishuBitableTaskTargetType,
+  FeishuBitableTablePreview,
+  FeishuFieldDiagnosticItem,
   FeishuFieldInspectionItem,
+  FeishuMappedPreviewRow,
+  FeishuPreviewIssueCounts,
   FeishuSyncRunMode,
   ResourceAvailability,
   ResourceCategory,
@@ -19,6 +25,8 @@ import {
   getFeishuTenantAccessToken,
   listFeishuBitableRecords,
   listFeishuBitableRecordsByIds,
+  listFeishuBitableTables,
+  listFeishuBitableViews,
 } from '~~/server/services/feishu/client'
 import {
   createAdminContest,
@@ -30,10 +38,10 @@ import {
 } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
-  completeFeishuBitableSyncRun,
-  createFeishuBitableSyncRun,
+  completeFeishuBitableSyncItemRun,
+  createFeishuBitableSyncItemRun,
   enqueueFeishuPostSyncTask,
-  getFeishuBitableTaskById,
+  getFeishuBitableSyncItemById,
   getFeishuExternalRef,
   readFeishuIntegrationConfig,
   upsertFeishuExternalRef,
@@ -59,7 +67,7 @@ interface NormalizedMapping {
   trackExternalIdField: string
   defaults: Record<string, unknown>
   schemaVersion: number
-  targetType: FeishuBitableTaskTargetType
+  entityType: FeishuBitableSyncItemEntityType
 }
 
 interface NormalizedOptions {
@@ -76,6 +84,17 @@ interface RecordValueResolver {
   getText: (key: string) => Promise<string>
   getStringArray: (key: string) => Promise<string[]>
   getSpecialText: (key: 'externalId' | 'contestExternalId' | 'trackExternalId') => Promise<string>
+}
+
+interface RecordResolverTransformError {
+  key: string
+  recordId: string
+  transform: string
+  message: string
+}
+
+interface CreateRecordResolverOptions {
+  onTransformError?: (error: RecordResolverTransformError) => void
 }
 
 interface ApplyRecordResult {
@@ -103,6 +122,70 @@ interface NormalizedWriteback {
     skipped: string
   }
 }
+
+const RAW_TABLE_PREVIEW_SAMPLE_LIMIT = 100
+const FIELD_INSPECTION_PREVIEW_LIMIT = 120
+const MAPPED_PREVIEW_SAMPLE_LIMIT = 20
+const FIELD_DIAGNOSTIC_LIMIT = 200
+const TRANSFORM_ERROR_LIMIT = 100
+
+const FEISHU_EMBED_ALLOWED_HOSTS = ['feishu.cn']
+
+const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> = {
+  contest: [
+    'externalId',
+    'name',
+    'officialUrl',
+    'summary',
+    'level',
+    'organizer',
+    'coOrganizer',
+    'participantRequirements',
+    'teamRule',
+    'currentSeason',
+    'disciplines',
+    'aliases',
+    'keywords',
+    'recommendedFor',
+  ],
+  track: [
+    'externalId',
+    'contestExternalId',
+    'name',
+    'summary',
+    'suitableMajors',
+    'deliverableTypes',
+    'sortOrder',
+  ],
+  resource: [
+    'externalId',
+    'contestExternalId',
+    'trackExternalId',
+    'title',
+    'name',
+    'summary',
+    'content',
+    'category',
+    'url',
+    'sourceType',
+    'year',
+  ],
+}
+
+const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> = {
+  contest: ['name', 'officialUrl'],
+  track: ['contestExternalId', 'name'],
+  resource: ['contestExternalId', 'title', 'url'],
+}
+
+const ARRAY_PREVIEW_FIELDS = new Set([
+  'disciplines',
+  'aliases',
+  'keywords',
+  'recommendedFor',
+  'suitableMajors',
+  'deliverableTypes',
+])
 
 function parseJsonObject(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
@@ -164,6 +247,109 @@ function normalizeSpecialText(raw: unknown): string {
     return toText(objectRaw.text ?? objectRaw.name ?? '')
   }
   return toText(raw)
+}
+
+function normalizePreviewCell(raw: unknown): string {
+  if (raw === undefined || raw === null)
+    return ''
+  if (typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean')
+    return String(raw).trim()
+  if (Array.isArray(raw)) {
+    return raw
+      .map(item => normalizePreviewCell(item))
+      .filter(Boolean)
+      .join(' | ')
+  }
+  if (typeof raw === 'object') {
+    const source = raw as Record<string, unknown>
+    const text = toText(source.text ?? source.name ?? source.url ?? '')
+    if (text)
+      return text
+    try {
+      return JSON.stringify(raw)
+    }
+    catch {
+      return ''
+    }
+  }
+  return ''
+}
+
+function collectRecordFieldNames(records: FeishuBitableRecord[], limit = records.length): string[] {
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (const record of records.slice(0, Math.max(0, limit))) {
+    for (const fieldName of Object.keys(record.fields || {})) {
+      const normalized = toText(fieldName)
+      if (!normalized || seen.has(normalized))
+        continue
+      seen.add(normalized)
+      names.push(normalized)
+    }
+  }
+  return names
+}
+
+function buildTablePreviewRows(
+  records: FeishuBitableRecord[],
+  columns: string[],
+  limit = RAW_TABLE_PREVIEW_SAMPLE_LIMIT,
+): Array<Record<string, string>> {
+  return records.slice(0, Math.max(0, limit)).map((record) => {
+    const row: Record<string, string> = {}
+    for (const column of columns)
+      row[column] = normalizePreviewCell(record.fields?.[column])
+    return row
+  })
+}
+
+function isAllowedFeishuEmbedHost(hostname: string): boolean {
+  const normalized = String(hostname || '').trim().toLowerCase()
+  if (!normalized)
+    return false
+  return FEISHU_EMBED_ALLOWED_HOSTS.some(host => normalized === host || normalized.endsWith(`.${host}`))
+}
+
+function normalizeFeishuEmbedUrl(raw: unknown): string {
+  const text = toText(raw)
+  if (!text)
+    return ''
+  try {
+    const url = new URL(text)
+    if (url.protocol !== 'https:')
+      return ''
+    if (!isAllowedFeishuEmbedHost(url.hostname))
+      return ''
+    return url.toString()
+  }
+  catch {
+    return ''
+  }
+}
+
+function buildFallbackFeishuOpenUrl(source: {
+  appToken: string
+  tableId: string
+  viewId?: string
+}): string {
+  const url = new URL(`https://feishu.cn/base/${encodeURIComponent(source.appToken)}`)
+  if (source.tableId)
+    url.searchParams.set('table', source.tableId)
+  if (source.viewId)
+    url.searchParams.set('view', source.viewId)
+  return url.toString()
+}
+
+function buildFeishuPreviewLinks(source: FeishuBitableSourceConfig): {
+  iframeUrl: string
+  openUrl: string
+} {
+  const safeSourceUrl = normalizeFeishuEmbedUrl(source.sourceUrl)
+  const openUrl = safeSourceUrl || buildFallbackFeishuOpenUrl(source)
+  return {
+    iframeUrl: normalizeFeishuEmbedUrl(openUrl),
+    openUrl,
+  }
 }
 
 function pickField(record: FeishuBitableRecord, fieldName: string): unknown {
@@ -272,7 +458,7 @@ function shouldApplyLayer(input: {
   scopeType: ScopeType
   scopeValue: string
   optionsRaw: Record<string, unknown>
-  targetType: FeishuBitableTaskTargetType
+  entityType: FeishuBitableSyncItemEntityType
 }): boolean {
   if (input.scopeType === 'global')
     return true
@@ -280,7 +466,7 @@ function shouldApplyLayer(input: {
   const expected = toText(input.scopeValue)
   if (!expected || expected === '*')
     return true
-  if (expected === input.targetType)
+  if (expected === input.entityType)
     return true
 
   const candidates = input.scopeType === 'activity'
@@ -326,7 +512,7 @@ function inferBindingKey(input: {
   return aliasMap[normalizedSuffix] || normalizedSuffix
 }
 
-function normalizeMapping(raw: unknown, optionsRaw: unknown, targetType: FeishuBitableTaskTargetType): NormalizedMapping {
+function normalizeMapping(raw: unknown, optionsRaw: unknown, entityType: FeishuBitableSyncItemEntityType): NormalizedMapping {
   const source = parseJsonObject(raw)
   const options = parseJsonObject(optionsRaw)
   const schemaVersion = Number(source.schemaVersion || 0)
@@ -346,7 +532,7 @@ function normalizeMapping(raw: unknown, optionsRaw: unknown, targetType: FeishuB
       trackExternalIdField: trackExternalIdFieldV1,
       defaults: defaultsV1,
       schemaVersion: 1,
-      targetType,
+      entityType,
     }
   }
 
@@ -363,7 +549,7 @@ function normalizeMapping(raw: unknown, optionsRaw: unknown, targetType: FeishuB
       scopeType: normalizeScopeType(layer.scopeType),
       scopeValue: toText(layer.scopeValue) || '*',
       optionsRaw: options,
-      targetType,
+      entityType,
     })) { continue }
 
     Object.assign(fieldMap, normalizeFieldMap(layer.fieldMap))
@@ -396,7 +582,7 @@ function normalizeMapping(raw: unknown, optionsRaw: unknown, targetType: FeishuB
     trackExternalIdField: toText(match.trackExternalIdField) || trackExternalIdFieldV1,
     defaults,
     schemaVersion: 2,
-    targetType,
+    entityType,
   }
 }
 
@@ -465,7 +651,7 @@ function normalizeWritebackValue(raw: unknown): unknown {
 }
 
 function buildPostSyncSourceHash(input: {
-  scope: FeishuBitableTaskTargetType
+  scope: FeishuBitableSyncItemEntityType
   externalId: string
   record: FeishuBitableRecord
 }): string {
@@ -478,8 +664,20 @@ function buildPostSyncSourceHash(input: {
   return createHash('sha256').update(payload).digest('hex')
 }
 
-function createRecordResolver(record: FeishuBitableRecord, mapping: NormalizedMapping): RecordValueResolver {
+function createRecordResolver(
+  record: FeishuBitableRecord,
+  mapping: NormalizedMapping,
+  options: CreateRecordResolverOptions = {},
+): RecordValueResolver {
   const valueCache = new Map<string, Promise<unknown>>()
+  const reportTransformError = (key: string, transform: string, error: unknown) => {
+    options.onTransformError?.({
+      key,
+      recordId: record.recordId,
+      transform,
+      message: error instanceof Error ? error.message : String(error || 'TRANSFORM_ERROR'),
+    })
+  }
 
   const evaluate = (key: string): Promise<unknown> => {
     const normalizedKey = toText(key)
@@ -494,17 +692,24 @@ function createRecordResolver(record: FeishuBitableRecord, mapping: NormalizedMa
 
       const computedExpr = toText(mapping.computedMap[normalizedKey])
       if (computedExpr) {
-        return evaluateJsonataExpression({
-          expression: computedExpr,
-          payload: {
-            recordId: record.recordId,
-            fields: record.fields,
-            record,
-            defaults: mapping.defaults,
-            targetType: mapping.targetType,
-            now: new Date().toISOString(),
-          },
-        })
+        try {
+          return await evaluateJsonataExpression({
+            expression: computedExpr,
+            payload: {
+              recordId: record.recordId,
+              fields: record.fields,
+              record,
+              defaults: mapping.defaults,
+              entityType: mapping.entityType,
+              targetType: mapping.entityType,
+              now: new Date().toISOString(),
+            },
+          })
+        }
+        catch (error) {
+          reportTransformError(normalizedKey, computedExpr, error)
+          throw error
+        }
       }
 
       const sourceField = toText(mapping.fieldMap[normalizedKey])
@@ -530,10 +735,14 @@ function createRecordResolver(record: FeishuBitableRecord, mapping: NormalizedMa
           fields: record.fields,
           record,
           defaults: mapping.defaults,
-          targetType: mapping.targetType,
+          entityType: mapping.entityType,
+          targetType: mapping.entityType,
           now: new Date().toISOString(),
         },
-      }).catch(() => '')
+      }).catch((error) => {
+        reportTransformError(key, computedExpr, error)
+        return ''
+      })
       const normalizedFromExpr = normalizeSpecialText(fromExpr)
       if (normalizedFromExpr)
         return normalizedFromExpr
@@ -638,11 +847,296 @@ function buildSummaryBase(records: FeishuBitableRecord[]): SyncSummary {
   }
 }
 
+function createEmptyPreviewIssueCounts(): FeishuPreviewIssueCounts {
+  return {
+    total: 0,
+    externalIdMissing: 0,
+    missingRequiredField: 0,
+    contestRefNotFound: 0,
+    trackRefNotFound: 0,
+    transformError: 0,
+    sourceFieldMissing: 0,
+    writebackFieldMissing: 0,
+    mappingEmpty: 0,
+    other: 0,
+  }
+}
+
+function finalizePreviewIssueCounts(counts: FeishuPreviewIssueCounts): FeishuPreviewIssueCounts {
+  counts.total = counts.externalIdMissing
+    + counts.missingRequiredField
+    + counts.contestRefNotFound
+    + counts.trackRefNotFound
+    + counts.transformError
+    + counts.sourceFieldMissing
+    + counts.writebackFieldMissing
+    + counts.mappingEmpty
+    + counts.other
+  return counts
+}
+
+function incrementIssueCountsByReasonCode(
+  counts: FeishuPreviewIssueCounts,
+  reasonCode: string,
+): void {
+  const normalized = toText(reasonCode)
+  if (!normalized)
+    return
+
+  if (normalized === 'EXTERNAL_ID_MISSING')
+    counts.externalIdMissing += 1
+  else if (normalized === 'MISSING_REQUIRED_FIELD')
+    counts.missingRequiredField += 1
+  else if (normalized === 'CONTEST_REF_NOT_FOUND')
+    counts.contestRefNotFound += 1
+  else if (normalized === 'TRACK_REF_NOT_FOUND')
+    counts.trackRefNotFound += 1
+  else
+    counts.other += 1
+}
+
+function incrementIssueCountsByDiagnostic(
+  counts: FeishuPreviewIssueCounts,
+  diagnostic: FeishuFieldDiagnosticItem,
+): void {
+  if (diagnostic.kind === 'mapping_empty' || diagnostic.kind === 'mapping_missing')
+    counts.mappingEmpty += 1
+  else if (diagnostic.kind === 'source_field_missing')
+    counts.sourceFieldMissing += 1
+  else if (diagnostic.kind === 'writeback_field_missing')
+    counts.writebackFieldMissing += 1
+}
+
+function pushPreviewDiagnostic(
+  target: FeishuFieldDiagnosticItem[],
+  seen: Set<string>,
+  item: FeishuFieldDiagnosticItem,
+  limit: number,
+): void {
+  if (target.length >= limit)
+    return
+
+  const key = [
+    item.kind,
+    item.level,
+    item.fieldKey || '',
+    item.sourceField || '',
+    item.recordId || '',
+    item.externalId || '',
+    item.transform || '',
+    item.detail || '',
+    item.message,
+  ].join('::')
+  if (seen.has(key))
+    return
+  seen.add(key)
+  target.push(item)
+}
+
+function buildTransformDiagnostic(error: RecordResolverTransformError): FeishuFieldDiagnosticItem {
+  return {
+    kind: 'transform_error',
+    level: 'error',
+    message: `字段 ${error.key} 的 transform 执行失败。`,
+    fieldKey: error.key,
+    recordId: error.recordId,
+    transform: error.transform,
+    detail: error.message,
+  }
+}
+
+function buildReasonDiagnostic(
+  result: ApplyRecordResult,
+  recordId: string,
+): FeishuFieldDiagnosticItem | null {
+  if (result.reasonCode === 'CONTEST_REF_NOT_FOUND') {
+    return {
+      kind: 'contest_ref_not_found',
+      level: 'error',
+      message: result.message || '无法根据 contestExternalId 关联到赛事。',
+      recordId,
+      externalId: result.externalId,
+    }
+  }
+
+  if (result.reasonCode === 'TRACK_REF_NOT_FOUND') {
+    return {
+      kind: 'track_ref_not_found',
+      level: 'error',
+      message: result.message || '无法根据 trackExternalId 关联到赛道。',
+      recordId,
+      externalId: result.externalId,
+    }
+  }
+
+  return null
+}
+
+function hasMappingValue(mapping: NormalizedMapping, key: string): boolean {
+  if (mapping.fieldMap[key])
+    return true
+  if (mapping.computedMap[key])
+    return true
+  return Object.prototype.hasOwnProperty.call(mapping.defaults, key)
+}
+
+function buildStaticPreviewDiagnostics(input: {
+  entityType: FeishuBitableSyncItemEntityType
+  mapping: NormalizedMapping
+  writeback: NormalizedWriteback
+  sourceFields: Set<string>
+}): FeishuFieldDiagnosticItem[] {
+  const diagnostics: FeishuFieldDiagnosticItem[] = []
+  const seen = new Set<string>()
+  const hasAnyMapping = Object.keys(input.mapping.fieldMap).length > 0
+    || Object.keys(input.mapping.computedMap).length > 0
+    || Object.keys(input.mapping.defaults).length > 0
+    || Boolean(input.mapping.externalIdField || input.mapping.contestExternalIdField || input.mapping.trackExternalIdField)
+
+  if (!hasAnyMapping) {
+    pushPreviewDiagnostic(diagnostics, seen, {
+      kind: 'mapping_empty',
+      level: 'warning',
+      message: '当前任务尚未配置有效字段映射，预检结果可能全部为空。',
+    }, FIELD_DIAGNOSTIC_LIMIT)
+  }
+
+  for (const key of REQUIRED_TARGET_FIELDS[input.entityType] || []) {
+    if (hasMappingValue(input.mapping, key))
+      continue
+    pushPreviewDiagnostic(diagnostics, seen, {
+      kind: 'mapping_empty',
+      level: 'warning',
+      fieldKey: key,
+      message: `目标字段 ${key} 尚未配置来源字段、transform 或默认值。`,
+    }, FIELD_DIAGNOSTIC_LIMIT)
+  }
+
+  const sourceBindings: Array<{ fieldKey: string, sourceField: string }> = []
+  for (const [fieldKey, sourceField] of Object.entries(input.mapping.fieldMap)) {
+    if (!sourceField)
+      continue
+    sourceBindings.push({ fieldKey, sourceField })
+  }
+  if (input.mapping.externalIdField)
+    sourceBindings.push({ fieldKey: 'externalId', sourceField: input.mapping.externalIdField })
+  if (input.mapping.contestExternalIdField)
+    sourceBindings.push({ fieldKey: 'contestExternalId', sourceField: input.mapping.contestExternalIdField })
+  if (input.mapping.trackExternalIdField)
+    sourceBindings.push({ fieldKey: 'trackExternalId', sourceField: input.mapping.trackExternalIdField })
+
+  for (const binding of sourceBindings) {
+    if (input.sourceFields.has(binding.sourceField))
+      continue
+    pushPreviewDiagnostic(diagnostics, seen, {
+      kind: 'source_field_missing',
+      level: 'error',
+      fieldKey: binding.fieldKey,
+      sourceField: binding.sourceField,
+      message: `映射字段 ${binding.fieldKey} 指向的来源列 ${binding.sourceField} 在当前视图中不存在。`,
+    }, FIELD_DIAGNOSTIC_LIMIT)
+  }
+
+  if (input.writeback.enabled) {
+    for (const [fieldKey, fieldName] of Object.entries(input.writeback.fields || {})) {
+      const normalizedFieldName = toText(fieldName)
+      if (!normalizedFieldName || input.sourceFields.has(normalizedFieldName))
+        continue
+      pushPreviewDiagnostic(diagnostics, seen, {
+        kind: 'writeback_field_missing',
+        level: 'warning',
+        fieldKey,
+        sourceField: normalizedFieldName,
+        message: `状态回填字段 ${normalizedFieldName} 在当前视图样本中未找到，回填可能失败。`,
+      }, FIELD_DIAGNOSTIC_LIMIT)
+    }
+  }
+
+  return diagnostics
+}
+
+async function resolveMappedPreviewValue(
+  resolver: RecordValueResolver,
+  key: string,
+): Promise<string> {
+  if (key === 'externalId' || key === 'contestExternalId' || key === 'trackExternalId')
+    return resolver.getSpecialText(key)
+  if (ARRAY_PREVIEW_FIELDS.has(key))
+    return (await resolver.getStringArray(key)).join(' | ')
+  const value = await resolver.getValue(key)
+  return normalizePreviewCell(value)
+}
+
+async function resolvePreviewSourceMeta(
+  tenantAccessToken: string,
+  source: FeishuBitableSourceConfig,
+): Promise<FeishuBitableSourceConfig> {
+  if (!source.appToken || !source.tableId)
+    return source
+
+  if (source.tableName && (!source.viewId || source.viewName))
+    return source
+
+  try {
+    const [tables, views] = await Promise.all([
+      listFeishuBitableTables({
+        tenantAccessToken,
+        appToken: source.appToken,
+      }),
+      source.viewId
+        ? listFeishuBitableViews({
+            tenantAccessToken,
+            appToken: source.appToken,
+            tableId: source.tableId,
+          })
+        : Promise.resolve([]),
+    ])
+
+    return {
+      ...source,
+      tableName: source.tableName || tables.find(item => item.tableId === source.tableId)?.name || '',
+      viewName: source.viewName || views.find(item => item.viewId === source.viewId)?.name || '',
+    }
+  }
+  catch {
+    return source
+  }
+}
+
+function buildTablePreviewPayload(input: {
+  source: FeishuBitableSourceConfig
+  records: FeishuBitableRecord[]
+}): FeishuBitableTablePreview {
+  const source = {
+    appToken: toText(input.source.appToken),
+    tableId: toText(input.source.tableId),
+    viewId: toText(input.source.viewId),
+    appName: toText(input.source.appName),
+    tableName: toText(input.source.tableName),
+    viewName: toText(input.source.viewName),
+    sourceUrl: toText(input.source.sourceUrl),
+  }
+  const columns = collectRecordFieldNames(input.records, RAW_TABLE_PREVIEW_SAMPLE_LIMIT)
+  const sampleRows = buildTablePreviewRows(input.records, columns, RAW_TABLE_PREVIEW_SAMPLE_LIMIT)
+  const { iframeUrl, openUrl } = buildFeishuPreviewLinks(source)
+
+  return {
+    source,
+    columns,
+    sampleRows,
+    sampleCount: sampleRows.length,
+    totalFetched: input.records.length,
+    fieldInspection: summarizeInspectionRecords(input.records, FIELD_INSPECTION_PREVIEW_LIMIT),
+    iframeUrl,
+    openUrl,
+  }
+}
+
 async function applyContestRecord(
   db: Queryable,
   input: {
     actorUserId: string
-    taskId: string
+    syncItemId: string
     record: FeishuBitableRecord
     externalId: string
     mapping: NormalizedMapping
@@ -695,7 +1189,7 @@ async function applyContestRecord(
         },
       })
       await upsertFeishuExternalRef(db, {
-        taskId: input.taskId,
+        syncItemId: input.syncItemId,
         scope: 'contest',
         externalId: input.externalId,
         entityId: existingRef.entityId,
@@ -726,7 +1220,7 @@ async function applyContestRecord(
       visibility: input.options.defaultVisibility,
     })
     await upsertFeishuExternalRef(db, {
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       scope: 'contest',
       externalId: input.externalId,
       entityId: created.id,
@@ -742,7 +1236,7 @@ async function applyTrackRecord(
   db: Queryable,
   input: {
     actorUserId: string
-    taskId: string
+    syncItemId: string
     record: FeishuBitableRecord
     externalId: string
     mapping: NormalizedMapping
@@ -801,7 +1295,7 @@ async function applyTrackRecord(
         },
       })
       await upsertFeishuExternalRef(db, {
-        taskId: input.taskId,
+        syncItemId: input.syncItemId,
         scope: 'track',
         externalId: input.externalId,
         entityId: existingRef.entityId,
@@ -827,7 +1321,7 @@ async function applyTrackRecord(
       sortOrder: Number(await input.resolver.getText('sortOrder') || 0),
     })
     await upsertFeishuExternalRef(db, {
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       scope: 'track',
       externalId: input.externalId,
       entityId: created.id,
@@ -846,7 +1340,7 @@ async function applyResourceRecord(
   db: Queryable,
   input: {
     actorUserId: string
-    taskId: string
+    syncItemId: string
     record: FeishuBitableRecord
     externalId: string
     mapping: NormalizedMapping
@@ -935,7 +1429,7 @@ async function applyResourceRecord(
         },
       })
       await upsertFeishuExternalRef(db, {
-        taskId: input.taskId,
+        syncItemId: input.syncItemId,
         scope: 'resource',
         externalId: input.externalId,
         entityId: existingRef.entityId,
@@ -971,7 +1465,7 @@ async function applyResourceRecord(
       accessLevel: input.options.defaultResourceAccessLevel,
     })
     await upsertFeishuExternalRef(db, {
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       scope: 'resource',
       externalId: input.externalId,
       entityId: created.id,
@@ -991,15 +1485,16 @@ async function applySingleRecord(
   db: Queryable,
   input: {
     actorUserId: string
-    taskId: string
-    taskTargetType: FeishuBitableTaskTargetType
+    syncItemId: string
+    entityType: FeishuBitableSyncItemEntityType
     record: FeishuBitableRecord
     mapping: NormalizedMapping
     options: NormalizedOptions
+    resolver?: RecordValueResolver
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
-  const resolver = createRecordResolver(input.record, input.mapping)
+  const resolver = input.resolver || createRecordResolver(input.record, input.mapping)
   const externalId = await resolveExternalId(input.record, resolver)
   if (!externalId) {
     return {
@@ -1011,10 +1506,10 @@ async function applySingleRecord(
     }
   }
 
-  if (input.taskTargetType === 'contest') {
+  if (input.entityType === 'contest') {
     return applyContestRecord(db, {
       actorUserId: input.actorUserId,
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       record: input.record,
       externalId,
       mapping: input.mapping,
@@ -1024,10 +1519,10 @@ async function applySingleRecord(
     })
   }
 
-  if (input.taskTargetType === 'track') {
+  if (input.entityType === 'track') {
     return applyTrackRecord(db, {
       actorUserId: input.actorUserId,
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       record: input.record,
       externalId,
       mapping: input.mapping,
@@ -1039,7 +1534,7 @@ async function applySingleRecord(
 
   return applyResourceRecord(db, {
     actorUserId: input.actorUserId,
-    taskId: input.taskId,
+    syncItemId: input.syncItemId,
     record: input.record,
     externalId,
     mapping: input.mapping,
@@ -1092,8 +1587,8 @@ async function executeRecords(
     actorUserId: string
     runId?: string
     triggerSource: FeishuBitableSyncRunTriggerSource
-    taskId: string
-    taskTargetType: FeishuBitableTaskTargetType
+    syncItemId: string
+    entityType: FeishuBitableSyncItemEntityType
     mapping: NormalizedMapping
     options: NormalizedOptions
     writeback: NormalizedWriteback
@@ -1111,8 +1606,8 @@ async function executeRecords(
     try {
       const result = await applySingleRecord(db, {
         actorUserId: input.actorUserId,
-        taskId: input.taskId,
-        taskTargetType: input.taskTargetType,
+        syncItemId: input.syncItemId,
+        entityType: input.entityType,
         record,
         mapping: input.mapping,
         options: input.options,
@@ -1128,19 +1623,19 @@ async function executeRecords(
 
       if (!input.dryRun && (result.status === 'created' || result.status === 'updated')) {
         const ref = await getFeishuExternalRef(db, {
-          scope: input.taskTargetType,
+          scope: input.entityType,
           externalId: result.externalId,
         })
         if (ref?.entityId && input.runId) {
           const sourceHash = buildPostSyncSourceHash({
-            scope: input.taskTargetType,
+            scope: input.entityType,
             externalId: result.externalId,
             record,
           })
           await enqueueFeishuPostSyncTask(db, {
-            taskId: input.taskId,
+            syncItemId: input.syncItemId,
             runId: input.runId,
-            scope: input.taskTargetType,
+            scope: input.entityType,
             entityId: ref.entityId,
             externalId: result.externalId,
             taskType: 'embedding_upsert',
@@ -1152,9 +1647,9 @@ async function executeRecords(
             },
           })
           await enqueueFeishuPostSyncTask(db, {
-            taskId: input.taskId,
+            syncItemId: input.syncItemId,
             runId: input.runId,
-            scope: input.taskTargetType,
+            scope: input.entityType,
             entityId: ref.entityId,
             externalId: result.externalId,
             taskType: 'search_index_refresh',
@@ -1165,9 +1660,9 @@ async function executeRecords(
             },
           })
           await enqueueFeishuPostSyncTask(db, {
-            taskId: input.taskId,
+            syncItemId: input.syncItemId,
             runId: input.runId,
-            scope: input.taskTargetType,
+            scope: input.entityType,
             entityId: ref.entityId,
             externalId: result.externalId,
             taskType: 'entity_analysis',
@@ -1184,8 +1679,8 @@ async function executeRecords(
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         await upsertFeishuSyncIssue(db, {
-          taskId: input.taskId,
-          targetType: input.taskTargetType,
+          syncItemId: input.syncItemId,
+          entityType: input.entityType,
           recordId: record.recordId,
           externalId: result.externalId || record.recordId,
           reasonCode: result.reasonCode,
@@ -1193,14 +1688,14 @@ async function executeRecords(
           payload: {
             ...(result.payload || {}),
             schemaVersion: input.mapping.schemaVersion,
-            mappingTargetType: input.mapping.targetType,
+            mappingEntityType: input.mapping.entityType,
           },
         })
       }
 
       if (!input.dryRun && input.writeback.enabled && input.runId) {
         const ref = await getFeishuExternalRef(db, {
-          scope: input.taskTargetType,
+          scope: input.entityType,
           externalId: result.externalId,
         })
         const writebackFields = buildWritebackFields({
@@ -1252,10 +1747,10 @@ async function executeRecords(
         summary.writebackErrorCount += chunk.length
         if (input.runId) {
           await enqueueFeishuPostSyncTask(db, {
-            taskId: input.taskId,
+            syncItemId: input.syncItemId,
             runId: input.runId,
-            scope: input.taskTargetType,
-            entityId: input.taskId,
+            scope: input.entityType,
+            entityId: input.syncItemId,
             externalId: '',
             taskType: 'writeback_retry',
             sourceHash: createHash('sha256').update(JSON.stringify(chunk)).digest('hex'),
@@ -1278,16 +1773,192 @@ async function executeRecords(
   return summary
 }
 
-export async function previewFeishuBitableTask(
+async function loadTablePreviewContext(
+  event: H3Event,
+  source: FeishuBitableSourceConfig,
+): Promise<{
+  source: FeishuBitableSourceConfig
+  records: FeishuBitableRecord[]
+}> {
+  const appToken = toText(source.appToken)
+  const tableId = toText(source.tableId)
+  if (!appToken || !tableId)
+    throw new Error('APP_TOKEN_AND_TABLE_ID_REQUIRED')
+
+  const config = await withClient(event, async (db) => {
+    return readFeishuIntegrationConfig(db)
+  })
+  if (!config.enabled)
+    throw new Error('FEISHU_INTEGRATION_DISABLED')
+
+  const tenantAccessToken = await getFeishuTenantAccessToken(config)
+  const resolvedSource = await resolvePreviewSourceMeta(tenantAccessToken, {
+    ...source,
+    appToken,
+    tableId,
+    viewId: toText(source.viewId),
+    appName: toText(source.appName),
+    tableName: toText(source.tableName),
+    viewName: toText(source.viewName),
+    sourceUrl: toText(source.sourceUrl),
+  })
+  const records = await listFeishuBitableRecords({
+    tenantAccessToken,
+    appToken,
+    tableId,
+    viewId: toText(source.viewId),
+  })
+
+  return {
+    source: resolvedSource,
+    records,
+  }
+}
+
+async function buildFeishuBitableSyncItemPreview(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    entityType: FeishuBitableSyncItemEntityType
+    mapping: NormalizedMapping
+    options: NormalizedOptions
+    writeback: NormalizedWriteback
+    records: FeishuBitableRecord[]
+  },
+): Promise<FeishuBitableSyncItemPreviewResult> {
+  const summary = buildSummaryBase(input.records)
+  const mappedColumns = [...TARGET_PREVIEW_FIELDS[input.entityType]]
+  const mappedSampleRows: FeishuMappedPreviewRow[] = []
+  const fieldDiagnostics: FeishuFieldDiagnosticItem[] = []
+  const transformErrors: FeishuFieldDiagnosticItem[] = []
+  const fieldDiagnosticSeen = new Set<string>()
+  const transformErrorSeen = new Set<string>()
+  const issueCounts = createEmptyPreviewIssueCounts()
+  const sourceFields = new Set(collectRecordFieldNames(input.records))
+
+  for (const diagnostic of buildStaticPreviewDiagnostics({
+    entityType: input.entityType,
+    mapping: input.mapping,
+    writeback: input.writeback,
+    sourceFields,
+  })) {
+    pushPreviewDiagnostic(fieldDiagnostics, fieldDiagnosticSeen, diagnostic, FIELD_DIAGNOSTIC_LIMIT)
+    incrementIssueCountsByDiagnostic(issueCounts, diagnostic)
+  }
+
+  for (const record of input.records) {
+    const values: Record<string, string> = {}
+    const shouldCollectSample = mappedSampleRows.length < MAPPED_PREVIEW_SAMPLE_LIMIT
+    let transformErrorCountForRecord = 0
+
+    const resolver = createRecordResolver(record, input.mapping, {
+      onTransformError: (error) => {
+        transformErrorCountForRecord += 1
+        issueCounts.transformError += 1
+        const diagnostic = buildTransformDiagnostic(error)
+        pushPreviewDiagnostic(transformErrors, transformErrorSeen, diagnostic, TRANSFORM_ERROR_LIMIT)
+        pushPreviewDiagnostic(fieldDiagnostics, fieldDiagnosticSeen, diagnostic, FIELD_DIAGNOSTIC_LIMIT)
+      },
+    })
+
+    if (shouldCollectSample) {
+      for (const column of mappedColumns) {
+        try {
+          values[column] = await resolveMappedPreviewValue(resolver, column)
+        }
+        catch {
+          values[column] = ''
+        }
+      }
+    }
+
+    try {
+      const result = await applySingleRecord(db, {
+        actorUserId: input.actorUserId,
+        syncItemId: input.syncItemId,
+        entityType: input.entityType,
+        record,
+        mapping: input.mapping,
+        options: input.options,
+        resolver,
+        dryRun: true,
+      })
+
+      if (result.status === 'created')
+        summary.createdCount += 1
+      else if (result.status === 'updated')
+        summary.updatedCount += 1
+      else
+        summary.skippedCount += 1
+
+      if (result.reasonCode) {
+        incrementIssueCountsByReasonCode(issueCounts, result.reasonCode)
+        const diagnostic = buildReasonDiagnostic(result, record.recordId)
+        if (diagnostic)
+          pushPreviewDiagnostic(fieldDiagnostics, fieldDiagnosticSeen, diagnostic, FIELD_DIAGNOSTIC_LIMIT)
+      }
+
+      if (shouldCollectSample) {
+        mappedSampleRows.push({
+          recordId: record.recordId,
+          externalId: result.externalId || values.externalId || record.recordId,
+          status: result.status,
+          reasonCode: result.reasonCode,
+          message: result.message,
+          values,
+        })
+      }
+    }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR')
+      summary.errorCount += 1
+      summary.errors.push({
+        recordId: record.recordId,
+        message,
+      })
+      if (!transformErrorCountForRecord)
+        issueCounts.other += 1
+
+      if (shouldCollectSample) {
+        mappedSampleRows.push({
+          recordId: record.recordId,
+          externalId: values.externalId || record.recordId,
+          status: 'error',
+          message,
+          values,
+        })
+      }
+    }
+  }
+
+  return {
+    ...summary,
+    mappedColumns,
+    mappedSampleRows,
+    fieldDiagnostics,
+    transformErrors,
+    issueCounts: finalizePreviewIssueCounts(issueCounts),
+  }
+}
+
+export async function previewFeishuBitableSourceTable(
+  event: H3Event,
+  input: FeishuBitableSourceConfig,
+): Promise<FeishuBitableTablePreview> {
+  const context = await loadTablePreviewContext(event, input)
+  return buildTablePreviewPayload(context)
+}
+
+async function previewFeishuBitableSyncItemTableById(
   event: H3Event,
   input: {
-    taskId: string
-    actorUserId: string
+    syncItemId: string
   },
-): Promise<SyncSummary> {
+): Promise<FeishuBitableTablePreview> {
   const configAndTask = await withClient(event, async (db) => {
     const config = await readFeishuIntegrationConfig(db)
-    const task = await getFeishuBitableTaskById(db, input.taskId)
+    const task = await getFeishuBitableSyncItemById(db, input.syncItemId)
     return { config, task }
   })
 
@@ -1295,8 +1966,43 @@ export async function previewFeishuBitableTask(
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
     throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
-  if (!configAndTask.task.isActive)
-    throw new Error('FEISHU_BITABLE_TASK_INACTIVE')
+
+  const task = configAndTask.task
+  return previewFeishuBitableSourceTable(event, task.source || {
+    appToken: task.appToken,
+    tableId: task.tableId,
+    viewId: task.viewId,
+  })
+}
+
+export async function previewFeishuBitableSyncItemTable(
+  event: H3Event,
+  input: {
+    syncItemId: string
+  },
+): Promise<FeishuBitableTablePreview> {
+  return previewFeishuBitableSyncItemTableById(event, {
+    syncItemId: input.syncItemId,
+  })
+}
+
+async function previewFeishuBitableSyncItemById(
+  event: H3Event,
+  input: {
+    syncItemId: string
+    actorUserId: string
+  },
+): Promise<FeishuBitableSyncItemPreviewResult> {
+  const configAndTask = await withClient(event, async (db) => {
+    const config = await readFeishuIntegrationConfig(db)
+    const task = await getFeishuBitableSyncItemById(db, input.syncItemId)
+    return { config, task }
+  })
+
+  if (!configAndTask.config.enabled)
+    throw new Error('FEISHU_INTEGRATION_DISABLED')
+  if (!configAndTask.task)
+    throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
   const task = configAndTask.task
 
   const tenantAccessToken = await getFeishuTenantAccessToken(configAndTask.config)
@@ -1308,29 +2014,39 @@ export async function previewFeishuBitableTask(
   })
 
   return withClient(event, async (db) => {
-    const mapping = normalizeMapping(task.mapping, task.options, task.targetType)
+    const entityType = task.entityType || 'contest'
+    const mapping = normalizeMapping(task.mapping, task.options, entityType)
     const options = normalizeOptions(task.options, mapping.defaults)
     const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback)
-    return executeRecords(db, {
+    return buildFeishuBitableSyncItemPreview(db, {
       actorUserId: input.actorUserId,
-      triggerSource: 'manual',
-      taskId: task.id,
-      taskTargetType: task.targetType,
+      syncItemId: task.id,
+      entityType,
       mapping,
       options,
       writeback,
-      appToken: task.appToken,
-      tableId: task.tableId,
       records,
-      dryRun: true,
     })
   })
 }
 
-export async function runFeishuBitableTask(
+export async function previewFeishuBitableSyncItem(
+  event: H3Event,
+  input: {
+    syncItemId: string
+    actorUserId: string
+  },
+): Promise<FeishuBitableSyncItemPreviewResult> {
+  return previewFeishuBitableSyncItemById(event, {
+    syncItemId: input.syncItemId,
+    actorUserId: input.actorUserId,
+  })
+}
+
+async function runFeishuBitableSyncItemById(
   event: H3Event | undefined,
   input: {
-    taskId: string
+    syncItemId: string
     actorUserId: string
     triggerSource?: FeishuBitableSyncRunTriggerSource
     mode?: FeishuSyncRunMode
@@ -1342,7 +2058,7 @@ export async function runFeishuBitableTask(
   const deltaRecordIds = [...new Set((input.recordIds || []).map(item => toText(item)).filter(Boolean))]
   const configAndTask = await withClient(event, async (db) => {
     const config = await readFeishuIntegrationConfig(db)
-    const task = await getFeishuBitableTaskById(db, input.taskId)
+    const task = await getFeishuBitableSyncItemById(db, input.syncItemId)
     return { config, task }
   })
 
@@ -1350,13 +2066,13 @@ export async function runFeishuBitableTask(
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
     throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
-  if (!configAndTask.task.isActive)
+  if (!configAndTask.task.isEnabled)
     throw new Error('FEISHU_BITABLE_TASK_INACTIVE')
   const task = configAndTask.task
 
   const runId = await withClient(event, async (db) => {
-    return createFeishuBitableSyncRun(db, {
-      taskId: task.id,
+    return createFeishuBitableSyncItemRun(db, {
+      syncItemId: task.id,
       triggerSource,
       mode,
       deltaRecordCount: deltaRecordIds.length,
@@ -1381,15 +2097,16 @@ export async function runFeishuBitableTask(
         })
 
     const summary = await withTransaction(event, async (db) => {
-      const mapping = normalizeMapping(task.mapping, task.options, task.targetType)
+      const entityType = task.entityType || 'contest'
+      const mapping = normalizeMapping(task.mapping, task.options, entityType)
       const options = normalizeOptions(task.options, mapping.defaults)
       const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback)
       return executeRecords(db, {
         actorUserId: input.actorUserId,
         runId,
         triggerSource,
-        taskId: task.id,
-        taskTargetType: task.targetType,
+        syncItemId: task.id,
+        entityType,
         mapping,
         options,
         writeback,
@@ -1406,9 +2123,9 @@ export async function runFeishuBitableTask(
       : 'success'
 
     await withClient(event, async (db) => {
-      await completeFeishuBitableSyncRun(db, {
+      await completeFeishuBitableSyncItemRun(db, {
         runId,
-        taskId: task.id,
+        syncItemId: task.id,
         status,
         fetchedCount: summary.fetchedCount,
         createdCount: summary.createdCount,
@@ -1428,9 +2145,9 @@ export async function runFeishuBitableTask(
   catch (error) {
     const message = error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR')
     await withClient(event, async (db) => {
-      await completeFeishuBitableSyncRun(db, {
+      await completeFeishuBitableSyncItemRun(db, {
         runId,
-        taskId: task.id,
+        syncItemId: task.id,
         status: 'failed',
         errorCount: 1,
         errorMessage: message,
@@ -1438,6 +2155,25 @@ export async function runFeishuBitableTask(
     })
     throw error
   }
+}
+
+export async function runFeishuBitableSyncItem(
+  event: H3Event | undefined,
+  input: {
+    syncItemId: string
+    actorUserId: string
+    triggerSource?: FeishuBitableSyncRunTriggerSource
+    mode?: FeishuSyncRunMode
+    recordIds?: string[]
+  },
+): Promise<SyncSummary & { runId: string, status: 'success' | 'partial_success' | 'failed' }> {
+  return runFeishuBitableSyncItemById(event, {
+    syncItemId: input.syncItemId,
+    actorUserId: input.actorUserId,
+    triggerSource: input.triggerSource,
+    mode: input.mode,
+    recordIds: input.recordIds,
+  })
 }
 
 function toInspectionValues(raw: unknown): string[] {
@@ -1526,16 +2262,16 @@ export async function inspectFeishuBitableSourceFields(
   return summarizeInspectionRecords(records, maxRecords)
 }
 
-export async function inspectFeishuBitableTaskFields(
+async function inspectFeishuBitableSyncItemFieldsById(
   event: H3Event,
   input: {
-    taskId: string
+    syncItemId: string
     sampleRecords?: number
   },
 ): Promise<FeishuFieldInspectionItem[]> {
   const configAndTask = await withClient(event, async (db) => {
     const config = await readFeishuIntegrationConfig(db)
-    const task = await getFeishuBitableTaskById(db, input.taskId)
+    const task = await getFeishuBitableSyncItemById(db, input.syncItemId)
     return { config, task }
   })
 
@@ -1543,8 +2279,6 @@ export async function inspectFeishuBitableTaskFields(
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
     throw new Error('FEISHU_BITABLE_TASK_NOT_FOUND')
-  if (!configAndTask.task.isActive)
-    throw new Error('FEISHU_BITABLE_TASK_INACTIVE')
 
   const task = configAndTask.task
   const tenantAccessToken = await getFeishuTenantAccessToken(configAndTask.config)
@@ -1557,4 +2291,17 @@ export async function inspectFeishuBitableTaskFields(
 
   const maxRecords = Math.max(1, Math.min(500, Number(input.sampleRecords || 120)))
   return summarizeInspectionRecords(records, maxRecords)
+}
+
+export async function inspectFeishuBitableSyncItemFields(
+  event: H3Event,
+  input: {
+    syncItemId: string
+    sampleRecords?: number
+  },
+): Promise<FeishuFieldInspectionItem[]> {
+  return inspectFeishuBitableSyncItemFieldsById(event, {
+    syncItemId: input.syncItemId,
+    sampleRecords: input.sampleRecords,
+  })
 }

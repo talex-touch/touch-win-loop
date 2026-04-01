@@ -7,12 +7,14 @@ import type {
   FeishuAuthBindStatus,
   FeishuAuthUnbindResult,
   FeishuBitableSourceConfig,
-  FeishuBitableSyncRun,
+  FeishuBitableSync,
+  FeishuBitableSyncDetail,
+  FeishuBitableSyncItem,
+  FeishuBitableSyncItemDetail,
+  FeishuBitableSyncItemEntityType,
+  FeishuBitableSyncItemRun,
   FeishuBitableSyncRunStatus,
   FeishuBitableSyncRunTriggerSource,
-  FeishuBitableTask,
-  FeishuBitableTaskDetail,
-  FeishuBitableTaskTargetType,
   FeishuBitableWritebackConfig,
   FeishuConfigValidationResult,
   FeishuIntegrationConfig,
@@ -52,16 +54,17 @@ interface AuthIdentityRow {
   updated_at: string
 }
 
-interface FeishuBitableTaskRow {
+interface FeishuBitableSyncItemRow {
   id: string
+  sync_id: string
   name: string
-  target_type: FeishuBitableTaskTargetType
+  entity_type: FeishuBitableSyncItemEntityType
   app_token: string
   table_id: string
   view_id: string
   source_json: Record<string, unknown>
   writeback_json: Record<string, unknown>
-  is_active: boolean
+  is_enabled: boolean
   mapping_json: Record<string, unknown>
   options_json: Record<string, unknown>
   last_run_at: string | null
@@ -86,9 +89,31 @@ interface FeishuBitableTaskRow {
   updated_at: string
 }
 
-interface FeishuBitableSyncRunRow {
+interface FeishuBitableSyncRow {
   id: string
-  task_id: string
+  name: string
+  source_json: Record<string, unknown>
+  item_count: number | string
+  enabled_item_count: number | string
+  latest_run_id: string | null
+  latest_run_status: FeishuBitableSyncRunStatus | null
+  latest_run_trigger_source: FeishuBitableSyncRunTriggerSource | null
+  latest_run_started_at: string | null
+  latest_run_finished_at: string | null
+  latest_run_error_count: number | string | null
+  latest_run_error_message: string | null
+  open_issue_count: number | string | null
+  resolved_issue_count: number | string | null
+  ignored_issue_count: number | string | null
+  created_by_user_id: string
+  updated_by_user_id: string
+  created_at: string
+  updated_at: string
+}
+
+interface FeishuBitableSyncItemRunRow {
+  id: string
+  sync_item_id: string
   task_name: string
   status: FeishuBitableSyncRunStatus
   trigger_source: FeishuBitableSyncRunTriggerSource
@@ -108,9 +133,9 @@ interface FeishuBitableSyncRunRow {
 
 interface FeishuPostSyncTaskRow {
   id: string
-  task_id: string | null
+  sync_item_id: string | null
   run_id: string | null
-  scope: FeishuBitableTaskTargetType
+  scope: FeishuBitableSyncItemEntityType
   entity_id: string
   external_id: string
   task_type: FeishuPostSyncTaskType
@@ -133,8 +158,8 @@ type FeishuVectorMode = 'vector' | 'json'
 
 interface FeishuSyncIssueRow {
   id: string
-  task_id: string
-  target_type: FeishuBitableTaskTargetType
+  sync_item_id: string
+  entity_type: FeishuBitableSyncItemEntityType
   record_id: string
   external_id: string
   status: FeishuSyncIssueStatus
@@ -168,8 +193,8 @@ interface FeishuAdminCandidateRow {
   is_platform_admin: boolean
 }
 
-export interface ClaimedFeishuBitableTask {
-  task: FeishuBitableTask
+export interface ClaimedFeishuBitableSyncItem {
+  item: FeishuBitableSyncItem
   lockToken: string
 }
 
@@ -305,7 +330,7 @@ function normalizeWritebackConfig(raw: unknown): FeishuBitableWritebackConfig {
   }
 }
 
-function parseTaskSchedule(row: Pick<FeishuBitableTaskRow, 'schedule_enabled' | 'schedule_mode' | 'schedule_interval_minutes' | 'schedule_cron_expr' | 'schedule_timezone'>): FeishuTaskScheduleConfig {
+function parseTaskSchedule(row: Pick<FeishuBitableSyncItemRow, 'schedule_enabled' | 'schedule_mode' | 'schedule_interval_minutes' | 'schedule_cron_expr' | 'schedule_timezone'>): FeishuTaskScheduleConfig {
   try {
     return normalizeFeishuTaskScheduleConfig({
       enabled: Boolean(row.schedule_enabled),
@@ -320,7 +345,7 @@ function parseTaskSchedule(row: Pick<FeishuBitableTaskRow, 'schedule_enabled' | 
   }
 }
 
-function toLatestRunSummary(row: FeishuBitableTaskRow): FeishuTaskLatestRunSummary | null {
+function toLatestRunSummary(row: FeishuBitableSyncItemRow): FeishuTaskLatestRunSummary | null {
   if (!row.latest_run_id || !row.latest_run_status || !row.latest_run_trigger_source || !row.latest_run_started_at)
     return null
 
@@ -332,6 +357,22 @@ function toLatestRunSummary(row: FeishuBitableTaskRow): FeishuTaskLatestRunSumma
     finishedAt: row.latest_run_finished_at || null,
     errorCount: Number(row.latest_run_error_count || 0),
     errorMessage: row.latest_run_error_message || '',
+  }
+}
+
+function toIssueStats(input: {
+  open?: number | string | null
+  resolved?: number | string | null
+  ignored?: number | string | null
+}): FeishuTaskIssueStats {
+  const open = Math.max(0, Number(input.open || 0))
+  const resolved = Math.max(0, Number(input.resolved || 0))
+  const ignored = Math.max(0, Number(input.ignored || 0))
+  return {
+    total: open + resolved + ignored,
+    open,
+    resolved,
+    ignored,
   }
 }
 
@@ -356,12 +397,48 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
   }
 }
 
-function toTask(row: FeishuBitableTaskRow): FeishuBitableTask {
-  const schedule = parseTaskSchedule(row)
+function toSync(row: FeishuBitableSyncRow): FeishuBitableSync {
+  const source = normalizeBitableSource(row.source_json, {
+    appToken: toText(parseJsonObject(row.source_json).appToken),
+    tableId: '',
+    viewId: '',
+  })
   return {
     id: row.id,
     name: row.name,
-    targetType: row.target_type,
+    source,
+    itemCount: Number(row.item_count || 0),
+    enabledItemCount: Number(row.enabled_item_count || 0),
+    issueStats: toIssueStats({
+      open: row.open_issue_count,
+      resolved: row.resolved_issue_count,
+      ignored: row.ignored_issue_count,
+    }),
+    latestRunSummary: row.latest_run_id
+      ? {
+          runId: row.latest_run_id,
+          status: row.latest_run_status || 'failed',
+          triggerSource: row.latest_run_trigger_source || 'manual',
+          startedAt: row.latest_run_started_at || row.updated_at,
+          finishedAt: row.latest_run_finished_at || null,
+          errorCount: Number(row.latest_run_error_count || 0),
+          errorMessage: row.latest_run_error_message || '',
+        }
+      : null,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function toSyncItem(row: FeishuBitableSyncItemRow): FeishuBitableSyncItem {
+  const schedule = parseTaskSchedule(row)
+  return {
+    id: row.id,
+    syncId: row.sync_id,
+    name: row.name,
+    entityType: row.entity_type,
     appToken: row.app_token,
     tableId: row.table_id,
     viewId: row.view_id || '',
@@ -371,7 +448,7 @@ function toTask(row: FeishuBitableTaskRow): FeishuBitableTask {
       viewId: row.view_id || '',
     }),
     writeback: normalizeWritebackConfig(row.writeback_json),
-    isActive: Boolean(row.is_active),
+    isEnabled: Boolean(row.is_enabled),
     mapping: parseJsonObject(row.mapping_json),
     options: parseJsonObject(row.options_json),
     lastRunAt: row.last_run_at,
@@ -389,11 +466,11 @@ function toTask(row: FeishuBitableTaskRow): FeishuBitableTask {
   }
 }
 
-function toRun(row: FeishuBitableSyncRunRow): FeishuBitableSyncRun {
+function toRun(row: FeishuBitableSyncItemRunRow): FeishuBitableSyncItemRun {
   return {
     id: row.id,
-    taskId: row.task_id,
-    taskName: row.task_name,
+    syncItemId: row.sync_item_id,
+    syncItemName: row.task_name,
     status: row.status,
     triggerSource: row.trigger_source,
     mode: row.mode || 'full',
@@ -414,7 +491,7 @@ function toRun(row: FeishuBitableSyncRunRow): FeishuBitableSyncRun {
 function toPostSyncTask(row: FeishuPostSyncTaskRow): FeishuPostSyncTask {
   return {
     id: row.id,
-    taskId: row.task_id || null,
+    syncItemId: row.sync_item_id || null,
     runId: row.run_id || null,
     scope: row.scope,
     entityId: row.entity_id,
@@ -437,8 +514,8 @@ function toPostSyncTask(row: FeishuPostSyncTaskRow): FeishuPostSyncTask {
 function toIssue(row: FeishuSyncIssueRow): FeishuSyncIssue {
   return {
     id: row.id,
-    taskId: row.task_id,
-    targetType: row.target_type,
+    syncItemId: row.sync_item_id,
+    entityType: row.entity_type,
     recordId: row.record_id,
     externalId: row.external_id,
     status: row.status,
@@ -1000,33 +1077,78 @@ export async function grantFeishuContestAdminRole(
   }
 }
 
-export async function listFeishuBitableTasks(
+async function ensureFeishuBitableSync(
   db: Queryable,
-  input: { includeInactive?: boolean } = {},
-): Promise<FeishuBitableTask[]> {
-  const includeInactive = input.includeInactive === true
-  const result = await db.query<FeishuBitableTaskRow>(
+  input: {
+    syncId: string
+    actorUserId: string
+    name: string
+    source: FeishuBitableSourceConfig
+  },
+): Promise<void> {
+  const syncId = toText(input.syncId)
+  if (!syncId)
+    throw new Error('SYNC_ID_REQUIRED')
+
+  await db.query(
+    `INSERT INTO feishu_bitable_syncs (
+      id,
+      name,
+      source_json,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3::JSONB, $4, $4, NOW(), NOW()
+    )
+    ON CONFLICT (id)
+    DO NOTHING`,
+    [
+      syncId,
+      toText(input.name) || '多维同步',
+      JSON.stringify(parseJsonObject(input.source)),
+      input.actorUserId,
+    ],
+  )
+}
+
+export async function suggestNextFeishuBitableSyncName(
+  db: Queryable,
+  prefix = '多维同步',
+): Promise<string> {
+  const normalizedPrefix = toText(prefix) || '多维同步'
+  const result = await db.query<{ name: string }>(
+    `SELECT name
+     FROM feishu_bitable_syncs
+     WHERE name LIKE $1`,
+    [`${normalizedPrefix} %`],
+  )
+
+  let maxIndex = 0
+  for (const row of result.rows) {
+    const name = toText(row.name)
+    const match = name.match(new RegExp(`^${normalizedPrefix}\\s+(\\d+)$`))
+    if (!match)
+      continue
+    const index = Number(match[1] || 0)
+    if (Number.isInteger(index) && index > maxIndex)
+      maxIndex = index
+  }
+
+  return `${normalizedPrefix} ${maxIndex + 1}`
+}
+
+export async function listFeishuBitableSyncs(
+  db: Queryable,
+): Promise<FeishuBitableSync[]> {
+  const result = await db.query<FeishuBitableSyncRow>(
     `SELECT
-      t.id,
-      t.name,
-      t.target_type,
-      t.app_token,
-      t.table_id,
-      t.view_id,
-      t.source_json,
-      t.writeback_json,
-      t.is_active,
-      t.mapping_json,
-      t.options_json,
-      t.last_run_at::TEXT,
-      t.schedule_enabled,
-      t.schedule_mode,
-      t.schedule_interval_minutes,
-      t.schedule_cron_expr,
-      t.schedule_timezone,
-      t.schedule_next_run_at::TEXT,
-      t.schedule_last_run_at::TEXT,
-      t.schedule_last_error,
+      s.id,
+      s.name,
+      s.source_json,
+      COUNT(i.id)::INTEGER AS item_count,
+      COUNT(i.id) FILTER (WHERE i.is_enabled = TRUE)::INTEGER AS enabled_item_count,
       lr.id AS latest_run_id,
       lr.status AS latest_run_status,
       lr.trigger_source AS latest_run_trigger_source,
@@ -1034,11 +1156,15 @@ export async function listFeishuBitableTasks(
       lr.finished_at::TEXT AS latest_run_finished_at,
       lr.error_count AS latest_run_error_count,
       lr.error_message AS latest_run_error_message,
-      t.created_by_user_id,
-      t.updated_by_user_id,
-      t.created_at::TEXT,
-      t.updated_at::TEXT
-     FROM feishu_bitable_tasks t
+      COALESCE(issue_stats.open_issue_count, 0)::INTEGER AS open_issue_count,
+      COALESCE(issue_stats.resolved_issue_count, 0)::INTEGER AS resolved_issue_count,
+      COALESCE(issue_stats.ignored_issue_count, 0)::INTEGER AS ignored_issue_count,
+      s.created_by_user_id,
+      s.updated_by_user_id,
+      s.created_at::TEXT,
+      s.updated_at::TEXT
+     FROM feishu_bitable_syncs s
+     LEFT JOIN feishu_bitable_sync_items i ON i.sync_id = s.id
      LEFT JOIN LATERAL (
        SELECT
          r.id,
@@ -1048,33 +1174,210 @@ export async function listFeishuBitableTasks(
          r.finished_at,
          r.error_count,
          r.error_message
-       FROM feishu_bitable_sync_runs r
-       WHERE r.task_id = t.id
+       FROM feishu_bitable_sync_item_runs r
+       JOIN feishu_bitable_sync_items i2 ON i2.id = r.sync_item_id
+       WHERE i2.sync_id = s.id
        ORDER BY r.started_at DESC
        LIMIT 1
      ) lr ON TRUE
-     WHERE ($1::BOOLEAN = TRUE OR t.is_active = TRUE)
-     ORDER BY t.updated_at DESC`,
-    [includeInactive],
+     LEFT JOIN LATERAL (
+       SELECT
+         COUNT(*) FILTER (WHERE iss.status = 'open') AS open_issue_count,
+         COUNT(*) FILTER (WHERE iss.status = 'resolved') AS resolved_issue_count,
+         COUNT(*) FILTER (WHERE iss.status = 'ignored') AS ignored_issue_count
+       FROM feishu_sync_issues iss
+       JOIN feishu_bitable_sync_items i3 ON i3.id = iss.sync_item_id
+       WHERE i3.sync_id = s.id
+     ) issue_stats ON TRUE
+     GROUP BY
+      s.id,
+      s.name,
+      s.source_json,
+      lr.id,
+      lr.status,
+      lr.trigger_source,
+      lr.started_at,
+      lr.finished_at,
+      lr.error_count,
+      lr.error_message,
+      issue_stats.open_issue_count,
+      issue_stats.resolved_issue_count,
+      issue_stats.ignored_issue_count,
+      s.created_by_user_id,
+      s.updated_by_user_id,
+      s.created_at,
+      s.updated_at
+     ORDER BY s.updated_at DESC`,
   )
-  return result.rows.map(toTask)
+  return result.rows.map(toSync)
 }
 
-export async function getFeishuBitableTaskById(
+export async function getFeishuBitableSyncById(
   db: Queryable,
-  taskId: string,
-): Promise<FeishuBitableTask | null> {
-  const result = await db.query<FeishuBitableTaskRow>(
+  syncId: string,
+): Promise<FeishuBitableSync | null> {
+  const result = await db.query<FeishuBitableSyncRow>(
+    `SELECT
+      s.id,
+      s.name,
+      s.source_json,
+      COUNT(i.id)::INTEGER AS item_count,
+      COUNT(i.id) FILTER (WHERE i.is_enabled = TRUE)::INTEGER AS enabled_item_count,
+      lr.id AS latest_run_id,
+      lr.status AS latest_run_status,
+      lr.trigger_source AS latest_run_trigger_source,
+      lr.started_at::TEXT AS latest_run_started_at,
+      lr.finished_at::TEXT AS latest_run_finished_at,
+      lr.error_count AS latest_run_error_count,
+      lr.error_message AS latest_run_error_message,
+      COALESCE(issue_stats.open_issue_count, 0)::INTEGER AS open_issue_count,
+      COALESCE(issue_stats.resolved_issue_count, 0)::INTEGER AS resolved_issue_count,
+      COALESCE(issue_stats.ignored_issue_count, 0)::INTEGER AS ignored_issue_count,
+      s.created_by_user_id,
+      s.updated_by_user_id,
+      s.created_at::TEXT,
+      s.updated_at::TEXT
+     FROM feishu_bitable_syncs s
+     LEFT JOIN feishu_bitable_sync_items i ON i.sync_id = s.id
+     LEFT JOIN LATERAL (
+       SELECT
+         r.id,
+         r.status,
+         r.trigger_source,
+         r.started_at,
+         r.finished_at,
+         r.error_count,
+         r.error_message
+       FROM feishu_bitable_sync_item_runs r
+       JOIN feishu_bitable_sync_items i2 ON i2.id = r.sync_item_id
+       WHERE i2.sync_id = s.id
+       ORDER BY r.started_at DESC
+       LIMIT 1
+     ) lr ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT
+         COUNT(*) FILTER (WHERE iss.status = 'open') AS open_issue_count,
+         COUNT(*) FILTER (WHERE iss.status = 'resolved') AS resolved_issue_count,
+         COUNT(*) FILTER (WHERE iss.status = 'ignored') AS ignored_issue_count
+       FROM feishu_sync_issues iss
+       JOIN feishu_bitable_sync_items i3 ON i3.id = iss.sync_item_id
+       WHERE i3.sync_id = s.id
+     ) issue_stats ON TRUE
+     WHERE s.id = $1
+     GROUP BY
+      s.id,
+      s.name,
+      s.source_json,
+      lr.id,
+      lr.status,
+      lr.trigger_source,
+      lr.started_at,
+      lr.finished_at,
+      lr.error_count,
+      lr.error_message,
+      issue_stats.open_issue_count,
+      issue_stats.resolved_issue_count,
+      issue_stats.ignored_issue_count,
+      s.created_by_user_id,
+      s.updated_by_user_id,
+      s.created_at,
+      s.updated_at
+     LIMIT 1`,
+    [syncId],
+  )
+  const row = result.rows[0]
+  return row ? toSync(row) : null
+}
+
+export async function createFeishuBitableSync(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    name: string
+    source: FeishuBitableSourceConfig
+  },
+): Promise<FeishuBitableSync> {
+  const syncId = randomUUID()
+  await ensureFeishuBitableSync(db, {
+    syncId,
+    actorUserId: input.actorUserId,
+    name: input.name,
+    source: input.source,
+  })
+  const sync = await getFeishuBitableSyncById(db, syncId)
+  if (!sync)
+    throw new Error('FEISHU_BITABLE_SYNC_CREATE_FAILED')
+  return sync
+}
+
+export async function patchFeishuBitableSync(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncId: string
+    patch: {
+      name?: string
+      source?: FeishuBitableSourceConfig
+    }
+  },
+): Promise<FeishuBitableSync | null> {
+  const existing = await getFeishuBitableSyncById(db, input.syncId)
+  if (!existing)
+    return null
+
+  const sets: string[] = []
+  const values: unknown[] = [input.syncId]
+  const addSet = (column: string, value: unknown) => {
+    values.push(value)
+    sets.push(`${column} = $${values.length}`)
+  }
+
+  if (input.patch.name !== undefined)
+    addSet('name', toText(input.patch.name))
+  if (input.patch.source !== undefined)
+    addSet('source_json', JSON.stringify(parseJsonObject(input.patch.source)))
+  if (!sets.length)
+    return existing
+
+  addSet('updated_by_user_id', input.actorUserId)
+  sets.push('updated_at = NOW()')
+  await db.query(
+    `UPDATE feishu_bitable_syncs
+     SET ${sets.join(', ')}
+     WHERE id = $1`,
+    values,
+  )
+
+  if (input.patch.source?.appToken) {
+    await db.query(
+      `UPDATE feishu_bitable_sync_items
+       SET app_token = $2,
+           updated_at = NOW()
+       WHERE sync_id = $1`,
+      [input.syncId, toText(input.patch.source.appToken)],
+    )
+  }
+
+  return getFeishuBitableSyncById(db, input.syncId)
+}
+
+export async function listFeishuBitableSyncItems(
+  db: Queryable,
+  input: { includeInactive?: boolean, syncId?: string } = {},
+): Promise<FeishuBitableSyncItem[]> {
+  const includeInactive = input.includeInactive === true
+  const result = await db.query<FeishuBitableSyncItemRow>(
     `SELECT
       t.id,
+      t.sync_id,
       t.name,
-      t.target_type,
+      t.entity_type,
       t.app_token,
       t.table_id,
       t.view_id,
       t.source_json,
       t.writeback_json,
-      t.is_active,
+      t.is_enabled,
       t.mapping_json,
       t.options_json,
       t.last_run_at::TEXT,
@@ -1097,7 +1400,7 @@ export async function getFeishuBitableTaskById(
       t.updated_by_user_id,
       t.created_at::TEXT,
       t.updated_at::TEXT
-     FROM feishu_bitable_tasks t
+     FROM feishu_bitable_sync_items t
      LEFT JOIN LATERAL (
        SELECT
          r.id,
@@ -1107,56 +1410,144 @@ export async function getFeishuBitableTaskById(
          r.finished_at,
          r.error_count,
          r.error_message
-       FROM feishu_bitable_sync_runs r
-       WHERE r.task_id = t.id
+       FROM feishu_bitable_sync_item_runs r
+       WHERE r.sync_item_id = t.id
+       ORDER BY r.started_at DESC
+       LIMIT 1
+     ) lr ON TRUE
+     WHERE ($1::BOOLEAN = TRUE OR t.is_enabled = TRUE)
+       AND ($2::TEXT = '' OR t.sync_id = $2)
+     ORDER BY t.updated_at DESC`,
+    [includeInactive, toText(input.syncId)],
+  )
+  return result.rows.map(toSyncItem)
+}
+
+export async function getFeishuBitableSyncItemById(
+  db: Queryable,
+  syncItemId: string,
+): Promise<FeishuBitableSyncItem | null> {
+  const result = await db.query<FeishuBitableSyncItemRow>(
+    `SELECT
+      t.id,
+      t.sync_id,
+      t.name,
+      t.entity_type,
+      t.app_token,
+      t.table_id,
+      t.view_id,
+      t.source_json,
+      t.writeback_json,
+      t.is_enabled,
+      t.mapping_json,
+      t.options_json,
+      t.last_run_at::TEXT,
+      t.schedule_enabled,
+      t.schedule_mode,
+      t.schedule_interval_minutes,
+      t.schedule_cron_expr,
+      t.schedule_timezone,
+      t.schedule_next_run_at::TEXT,
+      t.schedule_last_run_at::TEXT,
+      t.schedule_last_error,
+      lr.id AS latest_run_id,
+      lr.status AS latest_run_status,
+      lr.trigger_source AS latest_run_trigger_source,
+      lr.started_at::TEXT AS latest_run_started_at,
+      lr.finished_at::TEXT AS latest_run_finished_at,
+      lr.error_count AS latest_run_error_count,
+      lr.error_message AS latest_run_error_message,
+      t.created_by_user_id,
+      t.updated_by_user_id,
+      t.created_at::TEXT,
+      t.updated_at::TEXT
+     FROM feishu_bitable_sync_items t
+     LEFT JOIN LATERAL (
+       SELECT
+         r.id,
+         r.status,
+         r.trigger_source,
+         r.started_at,
+         r.finished_at,
+         r.error_count,
+         r.error_message
+       FROM feishu_bitable_sync_item_runs r
+       WHERE r.sync_item_id = t.id
        ORDER BY r.started_at DESC
        LIMIT 1
      ) lr ON TRUE
      WHERE t.id = $1
      LIMIT 1`,
-    [taskId],
+    [syncItemId],
   )
   const row = result.rows[0]
-  return row ? toTask(row) : null
+  return row ? toSyncItem(row) : null
 }
 
-export async function createFeishuBitableTask(
+export async function createFeishuBitableSyncItem(
   db: Queryable,
   input: {
     actorUserId: string
     name: string
-    targetType: FeishuBitableTaskTargetType
-    appToken: string
+    syncId?: string
+    entityType: FeishuBitableSyncItemEntityType
+    appToken?: string
     tableId: string
     viewId?: string
     source?: FeishuBitableSourceConfig
     writeback?: FeishuBitableWritebackConfig
-    isActive?: boolean
+    isEnabled?: boolean
     mapping?: Record<string, unknown>
     options?: Record<string, unknown>
     schedule?: Partial<FeishuTaskScheduleConfig>
   },
-): Promise<FeishuBitableTask> {
+): Promise<FeishuBitableSyncItem> {
   const schedule = normalizeFeishuTaskScheduleConfig(input.schedule || {}, getDefaultFeishuTaskScheduleConfig())
   const scheduleErrors = validateFeishuTaskScheduleConfig(schedule)
   if (scheduleErrors.length)
     throw new Error(`任务调度配置非法：${scheduleErrors.join('；')}`)
 
+  const syncId = toText(input.syncId)
+  const parentSync = syncId ? await getFeishuBitableSyncById(db, syncId) : null
+  if (syncId && !parentSync)
+    throw new Error('FEISHU_BITABLE_SYNC_NOT_FOUND')
+  const resolvedAppToken = toText(input.appToken) || toText(parentSync?.source.appToken)
+  if (!resolvedAppToken)
+    throw new Error('FEISHU_BITABLE_SYNC_APP_TOKEN_REQUIRED')
+
+  const ensuredSyncId = syncId || randomUUID()
+  const resolvedSource = {
+    ...(input.source || {}),
+    appToken: resolvedAppToken,
+    appName: input.source?.appName || parentSync?.source.appName || '',
+    sourceUrl: input.source?.sourceUrl || parentSync?.source.sourceUrl || '',
+    tableId: toText(input.source?.tableId) || toText(input.tableId),
+    viewId: toText(input.source?.viewId) || toText(input.viewId),
+  } satisfies FeishuBitableSourceConfig
+
+  await ensureFeishuBitableSync(db, {
+    syncId: ensuredSyncId,
+    actorUserId: input.actorUserId,
+    name: toText(input.name),
+    source: resolvedSource,
+  })
+
   const scheduleNextRunAt = schedule.enabled
     ? computeNextScheduledRunAtOrNull(schedule, { from: new Date() })
     : null
-  const taskId = randomUUID()
-  const result = await db.query<FeishuBitableTaskRow>(
-    `INSERT INTO feishu_bitable_tasks (
+  const syncItemId = randomUUID()
+  const result = await db.query<FeishuBitableSyncItemRow>(
+    `INSERT INTO feishu_bitable_sync_items (
       id,
+      sync_id,
       name,
-      target_type,
+      entity_type,
       app_token,
       table_id,
       view_id,
       source_json,
       writeback_json,
-      is_active,
+      is_enabled,
       mapping_json,
       options_json,
       last_run_at,
@@ -1175,18 +1566,19 @@ export async function createFeishuBitableTask(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9, $10::JSONB, $11::JSONB, NULL, $12, $13, $14, $15, $16, $17, NULL, '', NULL, NULL, $18, $18, NOW(), NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10, $11::JSONB, $12::JSONB, NULL, $13, $14, $15, $16, $17, $18, NULL, '', NULL, NULL, $19, $19, NOW(), NOW()
     )
     RETURNING
       id,
+      sync_id,
       name,
-      target_type,
+      entity_type,
       app_token,
       table_id,
       view_id,
       source_json,
       writeback_json,
-      is_active,
+      is_enabled,
       mapping_json,
       options_json,
       last_run_at::TEXT,
@@ -1210,19 +1602,16 @@ export async function createFeishuBitableTask(
       created_at::TEXT,
       updated_at::TEXT`,
     [
-      taskId,
+      syncItemId,
+      ensuredSyncId,
       toText(input.name),
-      input.targetType,
-      toText(input.appToken),
+      input.entityType,
+      resolvedAppToken,
       toText(input.tableId),
       toText(input.viewId),
-      JSON.stringify(parseJsonObject(input.source || {
-        appToken: toText(input.appToken),
-        tableId: toText(input.tableId),
-        viewId: toText(input.viewId),
-      })),
+      JSON.stringify(parseJsonObject(resolvedSource)),
       JSON.stringify(parseJsonObject(input.writeback)),
-      input.isActive !== false,
+      input.isEnabled !== false,
       JSON.stringify(parseJsonObject(input.mapping)),
       JSON.stringify(parseJsonObject(input.options)),
       schedule.enabled,
@@ -1234,34 +1623,65 @@ export async function createFeishuBitableTask(
       input.actorUserId,
     ],
   )
-  return toTask(result.rows[0]!)
+  return toSyncItem(result.rows[0]!)
 }
 
-export async function patchFeishuBitableTask(
+export async function suggestNextFeishuBitableSyncItemName(
+  db: Queryable,
+  prefix = '默认任务',
+): Promise<string> {
+  const normalizedPrefix = toText(prefix) || '默认任务'
+  const result = await db.query<{ name: string }>(
+    `SELECT name
+     FROM feishu_bitable_sync_items
+     WHERE name LIKE $1`,
+    [`${normalizedPrefix} %`],
+  )
+
+  let maxIndex = 0
+  for (const row of result.rows) {
+    const name = toText(row.name)
+    const match = name.match(new RegExp(`^${normalizedPrefix}\\s+(\\d+)$`))
+    if (!match)
+      continue
+    const index = Number(match[1] || 0)
+    if (Number.isInteger(index) && index > maxIndex)
+      maxIndex = index
+  }
+
+  return `${normalizedPrefix} ${maxIndex + 1}`
+}
+
+export async function patchFeishuBitableSyncItem(
   db: Queryable,
   input: {
     actorUserId: string
-    taskId: string
+    syncItemId: string
     patch: {
       name?: string
-      targetType?: FeishuBitableTaskTargetType
+      syncId?: string
+      entityType?: FeishuBitableSyncItemEntityType
       appToken?: string
       tableId?: string
       viewId?: string
       source?: FeishuBitableSourceConfig
       writeback?: FeishuBitableWritebackConfig
-      isActive?: boolean
+      isEnabled?: boolean
       mapping?: Record<string, unknown>
       options?: Record<string, unknown>
       schedule?: Partial<FeishuTaskScheduleConfig>
     }
   },
-): Promise<FeishuBitableTask | null> {
-  const existingTask = await getFeishuBitableTaskById(db, input.taskId)
+): Promise<FeishuBitableSyncItem | null> {
+  const existingTask = await getFeishuBitableSyncItemById(db, input.syncItemId)
   if (!existingTask)
     return null
+  const nextSyncId = input.patch.syncId !== undefined ? toText(input.patch.syncId) : existingTask.syncId
+  const parentSync = nextSyncId ? await getFeishuBitableSyncById(db, nextSyncId) : null
+  if (nextSyncId && !parentSync)
+    return null
 
-  const values: unknown[] = [input.taskId]
+  const values: unknown[] = [input.syncItemId]
   const sets: string[] = []
 
   const addSet = (column: string, value: unknown) => {
@@ -1271,20 +1691,33 @@ export async function patchFeishuBitableTask(
 
   if (input.patch.name !== undefined)
     addSet('name', toText(input.patch.name))
-  if (input.patch.targetType !== undefined)
-    addSet('target_type', input.patch.targetType)
+  if (input.patch.syncId !== undefined)
+    addSet('sync_id', toText(input.patch.syncId))
+  if (input.patch.entityType !== undefined)
+    addSet('entity_type', input.patch.entityType)
   if (input.patch.appToken !== undefined)
     addSet('app_token', toText(input.patch.appToken))
+  else if (nextSyncId && parentSync && parentSync.source.appToken !== existingTask.appToken)
+    addSet('app_token', toText(parentSync.source.appToken))
   if (input.patch.tableId !== undefined)
     addSet('table_id', toText(input.patch.tableId))
   if (input.patch.viewId !== undefined)
     addSet('view_id', toText(input.patch.viewId))
-  if (input.patch.source !== undefined)
-    addSet('source_json', JSON.stringify(parseJsonObject(input.patch.source)))
+  if (input.patch.source !== undefined) {
+    const resolvedSource = {
+      ...parseJsonObject(input.patch.source),
+      appToken: toText(input.patch.appToken) || toText(parentSync?.source.appToken) || existingTask.appToken,
+      appName: input.patch.source.appName || parentSync?.source.appName || existingTask.source?.appName || '',
+      sourceUrl: input.patch.source.sourceUrl || parentSync?.source.sourceUrl || existingTask.source?.sourceUrl || '',
+      tableId: toText(input.patch.source.tableId) || toText(input.patch.tableId) || existingTask.tableId,
+      viewId: toText(input.patch.source.viewId) || toText(input.patch.viewId) || existingTask.viewId || '',
+    } satisfies FeishuBitableSourceConfig
+    addSet('source_json', JSON.stringify(parseJsonObject(resolvedSource)))
+  }
   if (input.patch.writeback !== undefined)
     addSet('writeback_json', JSON.stringify(parseJsonObject(input.patch.writeback)))
-  if (input.patch.isActive !== undefined)
-    addSet('is_active', Boolean(input.patch.isActive))
+  if (input.patch.isEnabled !== undefined)
+    addSet('is_enabled', Boolean(input.patch.isEnabled))
   if (input.patch.mapping !== undefined)
     addSet('mapping_json', JSON.stringify(parseJsonObject(input.patch.mapping)))
   if (input.patch.options !== undefined)
@@ -1300,9 +1733,13 @@ export async function patchFeishuBitableTask(
         tableId: existingTask.tableId,
         viewId: existingTask.viewId || '',
       }),
-      appToken: input.patch.appToken !== undefined ? toText(input.patch.appToken) : (existingTask.source?.appToken || existingTask.appToken),
+      appToken: input.patch.appToken !== undefined
+        ? toText(input.patch.appToken)
+        : (toText(parentSync?.source.appToken) || existingTask.source?.appToken || existingTask.appToken),
       tableId: input.patch.tableId !== undefined ? toText(input.patch.tableId) : (existingTask.source?.tableId || existingTask.tableId),
       viewId: input.patch.viewId !== undefined ? toText(input.patch.viewId) : (existingTask.source?.viewId || existingTask.viewId || ''),
+      appName: parentSync?.source.appName || existingTask.source?.appName || '',
+      sourceUrl: parentSync?.source.sourceUrl || existingTask.source?.sourceUrl || '',
     }
     addSet('source_json', JSON.stringify(parseJsonObject(mergedSource)))
   }
@@ -1338,19 +1775,19 @@ export async function patchFeishuBitableTask(
   sets.push('updated_at = NOW()')
 
   await db.query(
-    `UPDATE feishu_bitable_tasks
+    `UPDATE feishu_bitable_sync_items
      SET ${sets.join(', ')}
      WHERE id = $1`,
     values,
   )
 
-  return getFeishuBitableTaskById(db, input.taskId)
+  return getFeishuBitableSyncItemById(db, input.syncItemId)
 }
 
-export async function createFeishuBitableSyncRun(
+export async function createFeishuBitableSyncItemRun(
   db: Queryable,
   input: {
-    taskId: string
+    syncItemId: string
     triggerSource: FeishuBitableSyncRunTriggerSource
     mode?: FeishuSyncRunMode
     deltaRecordCount?: number
@@ -1359,9 +1796,9 @@ export async function createFeishuBitableSyncRun(
 ): Promise<string> {
   const runId = randomUUID()
   await db.query(
-    `INSERT INTO feishu_bitable_sync_runs (
+    `INSERT INTO feishu_bitable_sync_item_runs (
       id,
-      task_id,
+      sync_item_id,
       status,
       trigger_source,
       mode,
@@ -1381,7 +1818,7 @@ export async function createFeishuBitableSyncRun(
     )`,
     [
       runId,
-      input.taskId,
+      input.syncItemId,
       input.triggerSource,
       input.mode || 'full',
       Math.max(0, Number(input.deltaRecordCount || 0)),
@@ -1391,11 +1828,11 @@ export async function createFeishuBitableSyncRun(
   return runId
 }
 
-export async function completeFeishuBitableSyncRun(
+export async function completeFeishuBitableSyncItemRun(
   db: Queryable,
   input: {
     runId: string
-    taskId: string
+    syncItemId: string
     status: FeishuBitableSyncRunStatus
     fetchedCount?: number
     createdCount?: number
@@ -1406,7 +1843,7 @@ export async function completeFeishuBitableSyncRun(
   },
 ): Promise<void> {
   await db.query(
-    `UPDATE feishu_bitable_sync_runs
+    `UPDATE feishu_bitable_sync_item_runs
      SET
        status = $3,
        finished_at = NOW(),
@@ -1417,10 +1854,10 @@ export async function completeFeishuBitableSyncRun(
        error_count = $8,
        error_message = $9
      WHERE id = $1
-       AND task_id = $2`,
+       AND sync_item_id = $2`,
     [
       input.runId,
-      input.taskId,
+      input.syncItemId,
       input.status,
       Math.max(0, Number(input.fetchedCount || 0)),
       Math.max(0, Number(input.createdCount || 0)),
@@ -1432,27 +1869,27 @@ export async function completeFeishuBitableSyncRun(
   )
 
   await db.query(
-    `UPDATE feishu_bitable_tasks
+    `UPDATE feishu_bitable_sync_items
      SET last_run_at = NOW(),
          schedule_last_run_at = NOW(),
          updated_at = NOW()
      WHERE id = $1`,
-    [input.taskId],
+    [input.syncItemId],
   )
 }
 
-export async function listFeishuBitableSyncRuns(
+export async function listFeishuBitableSyncItemRuns(
   db: Queryable,
   input: {
-    taskId?: string
+    syncItemId?: string
     limit?: number
   } = {},
-): Promise<FeishuBitableSyncRun[]> {
+): Promise<FeishuBitableSyncItemRun[]> {
   const limit = Math.max(1, Math.min(200, Number(input.limit || 50)))
-  const result = await db.query<FeishuBitableSyncRunRow>(
+  const result = await db.query<FeishuBitableSyncItemRunRow>(
     `SELECT
       r.id,
-      r.task_id,
+      r.sync_item_id,
       t.name AS task_name,
       r.status,
       r.trigger_source,
@@ -1468,72 +1905,95 @@ export async function listFeishuBitableSyncRuns(
       r.error_message,
       r.created_by_user_id,
       r.created_at::TEXT
-     FROM feishu_bitable_sync_runs r
-     JOIN feishu_bitable_tasks t ON t.id = r.task_id
-     WHERE ($1::TEXT IS NULL OR r.task_id = $1)
+     FROM feishu_bitable_sync_item_runs r
+     JOIN feishu_bitable_sync_items t ON t.id = r.sync_item_id
+     WHERE ($1::TEXT IS NULL OR r.sync_item_id = $1)
      ORDER BY r.started_at DESC
      LIMIT $2`,
-    [input.taskId || null, limit],
+    [input.syncItemId || null, limit],
   )
   return result.rows.map(toRun)
 }
 
-export async function getFeishuBitableTaskDetail(
+export async function getFeishuBitableSyncItemDetail(
   db: Queryable,
   input: {
-    taskId: string
+    syncId: string
+    syncItemId: string
     runLimit?: number
     issueLimit?: number
   },
-): Promise<FeishuBitableTaskDetail | null> {
-  const task = await getFeishuBitableTaskById(db, input.taskId)
-  if (!task)
+): Promise<FeishuBitableSyncItemDetail | null> {
+  const item = await getFeishuBitableSyncItemById(db, input.syncItemId)
+  if (!item || item.syncId !== input.syncId)
     return null
 
   const runLimit = Math.max(1, Math.min(100, Number(input.runLimit || 20)))
   const issueLimit = Math.max(1, Math.min(200, Number(input.issueLimit || 50)))
 
   const [recentRuns, issues, issueStatsResult] = await Promise.all([
-    listFeishuBitableSyncRuns(db, {
-      taskId: input.taskId,
+    listFeishuBitableSyncItemRuns(db, {
+      syncItemId: input.syncItemId,
       limit: runLimit,
     }),
     listFeishuSyncIssues(db, {
-      taskId: input.taskId,
+      syncItemId: input.syncItemId,
       limit: issueLimit,
     }),
     db.query<FeishuSyncIssueStatsRow>(
       `SELECT status, COUNT(*)::INTEGER AS issue_count
        FROM feishu_sync_issues
-       WHERE task_id = $1
+       WHERE sync_item_id = $1
        GROUP BY status`,
-      [input.taskId],
+      [input.syncItemId],
     ),
   ])
 
   return {
-    ...task,
+    ...item,
     recentRuns,
     issues,
     issueStats: toTaskIssueStats(issueStatsResult.rows),
   }
 }
 
-export async function claimNextDueFeishuBitableTask(
+export async function getFeishuBitableSyncDetail(
+  db: Queryable,
+  input: {
+    syncId: string
+    includeInactive?: boolean
+  },
+): Promise<FeishuBitableSyncDetail | null> {
+  const sync = await getFeishuBitableSyncById(db, input.syncId)
+  if (!sync)
+    return null
+
+  const items = await listFeishuBitableSyncItems(db, {
+    syncId: input.syncId,
+    includeInactive: input.includeInactive,
+  })
+
+  return {
+    ...sync,
+    items,
+  }
+}
+
+export async function claimNextDueFeishuBitableSyncItem(
   db: Queryable,
   input: {
     now?: Date
     lockTtlMs?: number
   } = {},
-): Promise<ClaimedFeishuBitableTask | null> {
+): Promise<ClaimedFeishuBitableSyncItem | null> {
   const now = input.now || new Date()
   const staleAt = new Date(now.getTime() - Math.max(60_000, Number(input.lockTtlMs || 10 * 60 * 1000)))
   const lockToken = randomUUID()
   const claimed = await db.query<{ id: string }>(
     `WITH candidate AS (
       SELECT id
-      FROM feishu_bitable_tasks
-      WHERE is_active = TRUE
+      FROM feishu_bitable_sync_items
+      WHERE is_enabled = TRUE
         AND schedule_enabled = TRUE
         AND schedule_next_run_at IS NOT NULL
         AND schedule_next_run_at <= $1::TIMESTAMPTZ
@@ -1546,7 +2006,7 @@ export async function claimNextDueFeishuBitableTask(
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    UPDATE feishu_bitable_tasks t
+    UPDATE feishu_bitable_sync_items t
     SET
       schedule_lock_token = $3,
       schedule_locked_at = NOW(),
@@ -1557,24 +2017,24 @@ export async function claimNextDueFeishuBitableTask(
     [now.toISOString(), staleAt.toISOString(), lockToken],
   )
 
-  const taskId = claimed.rows[0]?.id
-  if (!taskId)
+  const syncItemId = claimed.rows[0]?.id
+  if (!syncItemId)
     return null
 
-  const task = await getFeishuBitableTaskById(db, taskId)
-  if (!task)
+  const item = await getFeishuBitableSyncItemById(db, syncItemId)
+  if (!item)
     return null
 
   return {
-    task,
+    item,
     lockToken,
   }
 }
 
-export async function completeScheduledFeishuTaskExecution(
+async function completeScheduledFeishuSyncItemExecutionInternal(
   db: Queryable,
   input: {
-    taskId: string
+    syncItemId: string
     lockToken: string
     nextRunAt: string | null
     lastError: string
@@ -1582,7 +2042,7 @@ export async function completeScheduledFeishuTaskExecution(
   },
 ): Promise<boolean> {
   const result = await db.query<{ id: string }>(
-    `UPDATE feishu_bitable_tasks
+    `UPDATE feishu_bitable_sync_items
      SET
        schedule_next_run_at = $3,
        schedule_last_run_at = $4::TIMESTAMPTZ,
@@ -1592,9 +2052,9 @@ export async function completeScheduledFeishuTaskExecution(
        updated_at = NOW()
      WHERE id = $1
        AND schedule_lock_token = $2
-     RETURNING id`,
+    RETURNING id`,
     [
-      input.taskId,
+      input.syncItemId,
       input.lockToken,
       input.nextRunAt,
       input.lastRunAt || new Date().toISOString(),
@@ -1604,28 +2064,60 @@ export async function completeScheduledFeishuTaskExecution(
   return Boolean(result.rows[0]?.id)
 }
 
-export async function releaseFeishuTaskScheduleLock(
+export async function completeScheduledFeishuSyncItemExecution(
   db: Queryable,
   input: {
-    taskId: string
+    syncItemId: string
+    lockToken: string
+    nextRunAt: string | null
+    lastError: string
+    lastRunAt?: string
+  },
+): Promise<boolean> {
+  return completeScheduledFeishuSyncItemExecutionInternal(db, {
+    syncItemId: input.syncItemId,
+    lockToken: input.lockToken,
+    nextRunAt: input.nextRunAt,
+    lastError: input.lastError,
+    lastRunAt: input.lastRunAt,
+  })
+}
+
+async function releaseFeishuSyncItemScheduleLockInternal(
+  db: Queryable,
+  input: {
+    syncItemId: string
     lockToken: string
   },
 ): Promise<void> {
   await db.query(
-    `UPDATE feishu_bitable_tasks
+    `UPDATE feishu_bitable_sync_items
      SET schedule_locked_at = NULL,
          schedule_lock_token = NULL,
          updated_at = NOW()
      WHERE id = $1
        AND schedule_lock_token = $2`,
-    [input.taskId, input.lockToken],
+    [input.syncItemId, input.lockToken],
   )
+}
+
+export async function releaseFeishuSyncItemScheduleLock(
+  db: Queryable,
+  input: {
+    syncItemId: string
+    lockToken: string
+  },
+): Promise<void> {
+  await releaseFeishuSyncItemScheduleLockInternal(db, {
+    syncItemId: input.syncItemId,
+    lockToken: input.lockToken,
+  })
 }
 
 export async function getFeishuExternalRef(
   db: Queryable,
   input: {
-    scope: FeishuBitableTaskTargetType
+    scope: FeishuBitableSyncItemEntityType
     externalId: string
   },
 ): Promise<{ id: string, entityId: string, metadata: Record<string, unknown> } | null> {
@@ -1657,8 +2149,8 @@ export async function getFeishuExternalRef(
 export async function upsertFeishuExternalRef(
   db: Queryable,
   input: {
-    taskId: string
-    scope: FeishuBitableTaskTargetType
+    syncItemId: string
+    scope: FeishuBitableSyncItemEntityType
     externalId: string
     entityId: string
     metadata?: Record<string, unknown>
@@ -1670,7 +2162,7 @@ export async function upsertFeishuExternalRef(
       provider,
       scope,
       external_id,
-      task_id,
+      sync_item_id,
       entity_id,
       metadata,
       created_at,
@@ -1680,7 +2172,7 @@ export async function upsertFeishuExternalRef(
     )
     ON CONFLICT (provider, scope, external_id)
     DO UPDATE SET
-      task_id = EXCLUDED.task_id,
+      sync_item_id = EXCLUDED.sync_item_id,
       entity_id = EXCLUDED.entity_id,
       metadata = EXCLUDED.metadata,
       updated_at = EXCLUDED.updated_at`,
@@ -1688,7 +2180,7 @@ export async function upsertFeishuExternalRef(
       randomUUID(),
       input.scope,
       input.externalId,
-      input.taskId,
+      input.syncItemId,
       input.entityId,
       JSON.stringify(parseJsonObject(input.metadata)),
     ],
@@ -1712,8 +2204,8 @@ export function buildDefaultReconcileResult(input: {
 export async function upsertFeishuSyncIssue(
   db: Queryable,
   input: {
-    taskId: string
-    targetType: FeishuBitableTaskTargetType
+    syncItemId: string
+    entityType: FeishuBitableSyncItemEntityType
     recordId: string
     externalId: string
     reasonCode: string
@@ -1725,8 +2217,8 @@ export async function upsertFeishuSyncIssue(
   const result = await db.query<FeishuSyncIssueRow>(
     `INSERT INTO feishu_sync_issues (
       id,
-      task_id,
-      target_type,
+      sync_item_id,
+      entity_type,
       record_id,
       external_id,
       status,
@@ -1742,9 +2234,9 @@ export async function upsertFeishuSyncIssue(
     ) VALUES (
       $1, $2, $3, $4, $5, 'open', $6, $7, $8::JSONB, '', '{}'::JSONB, NULL, NULL, NOW(), NOW()
     )
-    ON CONFLICT (task_id, record_id, external_id)
+    ON CONFLICT (sync_item_id, record_id, external_id)
     DO UPDATE SET
-      target_type = EXCLUDED.target_type,
+      entity_type = EXCLUDED.entity_type,
       status = 'open',
       reason_code = EXCLUDED.reason_code,
       message = EXCLUDED.message,
@@ -1756,8 +2248,8 @@ export async function upsertFeishuSyncIssue(
       updated_at = NOW()
     RETURNING
       id,
-      task_id,
-      target_type,
+      sync_item_id,
+      entity_type,
       record_id,
       external_id,
       status,
@@ -1772,8 +2264,8 @@ export async function upsertFeishuSyncIssue(
       updated_at::TEXT`,
     [
       issueId,
-      input.taskId,
-      input.targetType,
+      input.syncItemId,
+      input.entityType,
       input.recordId,
       input.externalId,
       toText(input.reasonCode),
@@ -1788,16 +2280,17 @@ export async function upsertFeishuSyncIssue(
 export async function listFeishuSyncIssues(
   db: Queryable,
   input: {
-    taskId?: string
+    syncItemId?: string
     status?: FeishuSyncIssueStatus
     limit?: number
   } = {},
 ): Promise<FeishuSyncIssue[]> {
   const where: string[] = []
   const values: unknown[] = []
-  if (input.taskId) {
-    values.push(input.taskId)
-    where.push(`task_id = $${values.length}`)
+  const syncItemId = toText(input.syncItemId)
+  if (syncItemId) {
+    values.push(syncItemId)
+    where.push(`sync_item_id = $${values.length}`)
   }
   if (input.status) {
     values.push(input.status)
@@ -1809,8 +2302,8 @@ export async function listFeishuSyncIssues(
   const result = await db.query<FeishuSyncIssueRow>(
     `SELECT
       id,
-      task_id,
-      target_type,
+      sync_item_id,
+      entity_type,
       record_id,
       external_id,
       status,
@@ -1854,8 +2347,8 @@ export async function resolveFeishuSyncIssue(
      WHERE id = $2
      RETURNING
        id,
-       task_id,
-       target_type,
+       sync_item_id,
+       entity_type,
        record_id,
        external_id,
        status,
@@ -1880,31 +2373,32 @@ export async function resolveFeishuSyncIssue(
   return row ? toIssue(row) : null
 }
 
-export async function listActiveFeishuBitableTasksBySource(
+export async function listActiveFeishuBitableSyncItemsBySource(
   db: Queryable,
   input: {
     appToken: string
     tableId: string
     viewId?: string
   },
-): Promise<FeishuBitableTask[]> {
+): Promise<FeishuBitableSyncItem[]> {
   const appToken = toText(input.appToken)
   const tableId = toText(input.tableId)
   const viewId = toText(input.viewId)
   if (!appToken || !tableId)
     return []
 
-  const result = await db.query<FeishuBitableTaskRow>(
+  const result = await db.query<FeishuBitableSyncItemRow>(
     `SELECT
       t.id,
+      t.sync_id,
       t.name,
-      t.target_type,
+      t.entity_type,
       t.app_token,
       t.table_id,
       t.view_id,
       t.source_json,
       t.writeback_json,
-      t.is_active,
+      t.is_enabled,
       t.mapping_json,
       t.options_json,
       t.last_run_at::TEXT,
@@ -1927,8 +2421,8 @@ export async function listActiveFeishuBitableTasksBySource(
       t.updated_by_user_id,
       t.created_at::TEXT,
       t.updated_at::TEXT
-     FROM feishu_bitable_tasks t
-     WHERE t.is_active = TRUE
+     FROM feishu_bitable_sync_items t
+     WHERE t.is_enabled = TRUE
        AND t.app_token = $1
        AND t.table_id = $2
        AND ($3::TEXT = '' OR t.view_id = '' OR t.view_id = $3)
@@ -1936,7 +2430,7 @@ export async function listActiveFeishuBitableTasksBySource(
     [appToken, tableId, viewId],
   )
 
-  return result.rows.map(toTask)
+  return result.rows.map(toSyncItem)
 }
 
 export async function registerFeishuBitableEventDedup(
@@ -1985,9 +2479,9 @@ export async function registerFeishuBitableEventDedup(
 export async function enqueueFeishuPostSyncTask(
   db: Queryable,
   input: {
-    taskId?: string | null
+    syncItemId?: string | null
     runId?: string | null
-    scope: FeishuBitableTaskTargetType
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId?: string
     taskType: FeishuPostSyncTaskType
@@ -2003,7 +2497,7 @@ export async function enqueueFeishuPostSyncTask(
   const result = await db.query<FeishuPostSyncTaskRow>(
     `INSERT INTO feishu_post_sync_tasks (
       id,
-      task_id,
+      sync_item_id,
       run_id,
       scope,
       entity_id,
@@ -2032,7 +2526,7 @@ export async function enqueueFeishuPostSyncTask(
       updated_at = NOW()
     RETURNING
       id,
-      task_id,
+      sync_item_id,
       run_id,
       scope,
       entity_id,
@@ -2051,7 +2545,7 @@ export async function enqueueFeishuPostSyncTask(
       updated_at::TEXT`,
     [
       randomUUID(),
-      toText(input.taskId) || null,
+      toText(input.syncItemId) || null,
       toText(input.runId) || null,
       input.scope,
       toText(input.entityId),
@@ -2077,7 +2571,7 @@ export async function listFeishuPostSyncTasks(
   const result = await db.query<FeishuPostSyncTaskRow>(
     `SELECT
       id,
-      task_id,
+      sync_item_id,
       run_id,
       scope,
       entity_id,
@@ -2126,7 +2620,7 @@ export async function claimNextQueuedFeishuPostSyncTask(
     WHERE t.id = picked.id
     RETURNING
       t.id,
-      t.task_id,
+      t.sync_item_id,
       t.run_id,
       t.scope,
       t.entity_id,
@@ -2227,7 +2721,7 @@ export async function retryFeishuPostSyncTask(
      WHERE id = $1
      RETURNING
       id,
-      task_id,
+      sync_item_id,
       run_id,
       scope,
       entity_id,
@@ -2253,7 +2747,7 @@ export async function retryFeishuPostSyncTask(
 export async function upsertFeishuVectorChunk(
   db: Queryable,
   input: {
-    scope: FeishuBitableTaskTargetType
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     chunkIndex: number
     content: string
@@ -2340,10 +2834,10 @@ export async function upsertFeishuVectorChunk(
 export async function upsertFeishuSearchIndexDoc(
   db: Queryable,
   input: {
-    scope: FeishuBitableTaskTargetType
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId?: string
-    taskId?: string | null
+    syncItemId?: string | null
     runId?: string | null
     sourceHash: string
     title?: string
@@ -2359,7 +2853,7 @@ export async function upsertFeishuSearchIndexDoc(
       scope,
       entity_id,
       external_id,
-      task_id,
+      sync_item_id,
       run_id,
       source_hash,
       title,
@@ -2375,7 +2869,7 @@ export async function upsertFeishuSearchIndexDoc(
     ON CONFLICT (scope, entity_id, source_hash)
     DO UPDATE SET
       external_id = EXCLUDED.external_id,
-      task_id = EXCLUDED.task_id,
+      sync_item_id = EXCLUDED.sync_item_id,
       run_id = EXCLUDED.run_id,
       title = EXCLUDED.title,
       summary = EXCLUDED.summary,
@@ -2388,7 +2882,7 @@ export async function upsertFeishuSearchIndexDoc(
       input.scope,
       toText(input.entityId),
       toText(input.externalId),
-      toText(input.taskId) || null,
+      toText(input.syncItemId) || null,
       toText(input.runId) || null,
       toText(input.sourceHash) || randomUUID(),
       toText(input.title),
@@ -2403,10 +2897,10 @@ export async function upsertFeishuSearchIndexDoc(
 export async function upsertFeishuEntityAnalysis(
   db: Queryable,
   input: {
-    scope: FeishuBitableTaskTargetType
+    scope: FeishuBitableSyncItemEntityType
     entityId: string
     externalId?: string
-    taskId?: string | null
+    syncItemId?: string | null
     runId?: string | null
     sourceHash: string
     provider?: string
@@ -2420,7 +2914,7 @@ export async function upsertFeishuEntityAnalysis(
       scope,
       entity_id,
       external_id,
-      task_id,
+      sync_item_id,
       run_id,
       source_hash,
       provider,
@@ -2434,7 +2928,7 @@ export async function upsertFeishuEntityAnalysis(
     ON CONFLICT (scope, entity_id, source_hash)
     DO UPDATE SET
       external_id = EXCLUDED.external_id,
-      task_id = EXCLUDED.task_id,
+      sync_item_id = EXCLUDED.sync_item_id,
       run_id = EXCLUDED.run_id,
       provider = EXCLUDED.provider,
       model = EXCLUDED.model,
@@ -2445,7 +2939,7 @@ export async function upsertFeishuEntityAnalysis(
       input.scope,
       toText(input.entityId),
       toText(input.externalId),
-      toText(input.taskId) || null,
+      toText(input.syncItemId) || null,
       toText(input.runId) || null,
       toText(input.sourceHash) || randomUUID(),
       toText(input.provider),

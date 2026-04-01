@@ -1,13 +1,17 @@
 import type { FeishuIntegrationConfigInternal } from '~~/server/utils/feishu-integration-store'
-import type { FeishuOAuthLoginProfile } from './client'
+import type {
+  FeishuOAuthLoginProfile,
+  FeishuTenantDirectory,
+  FeishuTenantDirectoryDepartment,
+} from './client'
 import {
   getFeishuTenantAccessToken,
   getFeishuUserByUnionId,
   listFeishuGroupMemberUnionIds,
-  listFeishuTenantUsers,
+  listFeishuTenantDirectory,
 } from './client'
 
-const FEISHU_DIRECTORY_CACHE_KEY = Symbol.for('winloop.feishu.directory.cache.v1')
+const FEISHU_DIRECTORY_CACHE_KEY = Symbol.for('winloop.feishu.directory.cache.v2')
 const DEFAULT_DIRECTORY_CACHE_TTL_MS = 5 * 60 * 1000
 const DEFAULT_MAX_DIRECTORY_USERS = 3000
 
@@ -15,6 +19,9 @@ type DirectorySource = 'tenant' | 'group_fallback'
 
 interface FeishuDirectorySnapshotCached {
   users: FeishuOAuthLoginProfile[]
+  departments: FeishuTenantDirectoryDepartment[]
+  rootDepartmentId: string
+  userDepartmentIds: Record<string, string[]>
   source: DirectorySource
   notice: string
   fetchedAt: string
@@ -70,6 +77,32 @@ function toUniqueProfiles(items: FeishuOAuthLoginProfile[]): FeishuOAuthLoginPro
   return result
 }
 
+function toUniqueDepartments(items: FeishuTenantDirectoryDepartment[]): FeishuTenantDirectoryDepartment[] {
+  const seen = new Set<string>()
+  const result: FeishuTenantDirectoryDepartment[] = []
+  for (const item of items) {
+    const departmentId = toText(item.departmentId)
+    if (!departmentId || seen.has(departmentId))
+      continue
+    seen.add(departmentId)
+    result.push({
+      departmentId,
+      name: toText(item.name) || departmentId,
+      parentDepartmentId: toText(item.parentDepartmentId) || null,
+    })
+  }
+  return result
+}
+
+function toUserDepartmentIdsRecord(source: Record<string, string[]>): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(source || {}).map(([unionId, departmentIds]) => [
+      toText(unionId),
+      [...new Set((departmentIds || []).map(item => toText(item)).filter(Boolean))].sort(),
+    ]).filter(([unionId]) => Boolean(unionId)),
+  )
+}
+
 function getDirectoryCacheState(): FeishuDirectoryCacheState {
   const globalRef = globalThis as Record<symbol, unknown>
   const existing = globalRef[FEISHU_DIRECTORY_CACHE_KEY] as FeishuDirectoryCacheState | undefined
@@ -109,6 +142,15 @@ function toFallbackProfile(unionId: string): FeishuOAuthLoginProfile {
   }
 }
 
+function toFallbackDirectory(users: FeishuOAuthLoginProfile[]): Pick<FeishuTenantDirectory, 'users' | 'departments' | 'rootDepartmentId' | 'userDepartmentIds'> {
+  return {
+    users,
+    departments: [],
+    rootDepartmentId: '',
+    userDepartmentIds: {},
+  }
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -139,14 +181,17 @@ async function loadDirectorySnapshotFromRemote(input: {
   const fetchedAt = new Date().toISOString()
 
   try {
-    const tenantUsers = await listFeishuTenantUsers({
+    const tenantDirectory = await listFeishuTenantDirectory({
       tenantAccessToken,
       maxUsers: input.maxUsers,
     })
-    const normalizedTenantUsers = toUniqueProfiles(tenantUsers)
+    const normalizedTenantUsers = toUniqueProfiles(tenantDirectory.users)
     if (normalizedTenantUsers.length > 0) {
       return {
         users: normalizedTenantUsers,
+        departments: toUniqueDepartments(tenantDirectory.departments),
+        rootDepartmentId: toText(tenantDirectory.rootDepartmentId),
+        userDepartmentIds: toUserDepartmentIdsRecord(tenantDirectory.userDepartmentIds),
         source: 'tenant',
         notice: '',
         fetchedAt,
@@ -158,6 +203,9 @@ async function loadDirectorySnapshotFromRemote(input: {
     if (!input.config.adminGroupIds.length) {
       return {
         users: [],
+        departments: [],
+        rootDepartmentId: '',
+        userDepartmentIds: {},
         source: 'tenant',
         notice: `飞书全员目录检索失败：${message}`,
         fetchedAt,
@@ -169,7 +217,7 @@ async function loadDirectorySnapshotFromRemote(input: {
       tenantAccessToken,
     })
     return {
-      users: fallbackUsers,
+      ...toFallbackDirectory(fallbackUsers),
       source: 'group_fallback',
       notice: `全员目录不可用，已降级为管理员组目录：${message}`,
       fetchedAt,
@@ -182,7 +230,7 @@ async function loadDirectorySnapshotFromRemote(input: {
       tenantAccessToken,
     })
     return {
-      users: fallbackUsers,
+      ...toFallbackDirectory(fallbackUsers),
       source: 'group_fallback',
       notice: '全员目录为空，已降级为管理员组目录。',
       fetchedAt,
@@ -191,6 +239,9 @@ async function loadDirectorySnapshotFromRemote(input: {
 
   return {
     users: [],
+    departments: [],
+    rootDepartmentId: '',
+    userDepartmentIds: {},
     source: 'tenant',
     notice: '飞书目录为空，请检查应用权限或目录可见范围。',
     fetchedAt,

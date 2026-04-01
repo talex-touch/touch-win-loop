@@ -1,46 +1,58 @@
+import type { FeishuBitableSourceConfig, FeishuBitableTablePreview } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { previewFeishuBitableTask } from '~~/server/services/feishu/bitable-sync'
+import { previewFeishuBitableSourceTable } from '~~/server/services/feishu/bitable-sync'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
+function toText(raw: unknown): string {
+  return String(raw || '').trim()
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const taskId = String(getRouterParam(event, 'id') || '').trim()
+  const body = await readBody<FeishuBitableSourceConfig>(event).catch(() => ({} as FeishuBitableSourceConfig))
 
   const canWrite = await checkPlatformPermission(event, user, 'contest.write')
   if (!canWrite) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权预检飞书 Bitable 任务。', {
+    return fail('当前用户无权预览飞书多维表格。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40402)
+    }, 40438)
   }
 
-  if (!taskId) {
+  const appToken = toText(body.appToken)
+  const tableId = toText(body.tableId)
+  if (!appToken || !tableId) {
     setResponseStatus(event, 400)
-    return fail('taskId 不能为空。', {
+    return fail('appToken 与 tableId 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40102)
+    }, 40138)
   }
 
   try {
-    const summary = await previewFeishuBitableTask(event, {
-      taskId,
-      actorUserId: user.id,
+    const preview = await previewFeishuBitableSourceTable(event, {
+      appToken,
+      tableId,
+      viewId: toText(body.viewId),
+      appName: toText(body.appName),
+      tableName: toText(body.tableName),
+      viewName: toText(body.viewName),
+      sourceUrl: toText(body.sourceUrl),
     })
 
-    return ok(summary, {
+    return ok<FeishuBitableTablePreview>(preview, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -50,12 +62,12 @@ export default defineEventHandler(async (event) => {
   }
   catch (error) {
     setResponseStatus(event, 400)
-    return fail(error instanceof Error ? error.message : '预检失败。', {
+    return fail(error instanceof Error ? error.message : '表格预览失败。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 50098)
+    }, 50138)
   }
 })

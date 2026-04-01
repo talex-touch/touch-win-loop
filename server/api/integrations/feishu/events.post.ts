@@ -9,7 +9,7 @@ import {
 import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
 import { withClient } from '~~/server/utils/db'
 import {
-  listActiveFeishuBitableTasksBySource,
+  listActiveFeishuBitableSyncItemsBySource,
   readFeishuIntegrationConfig,
   registerFeishuBitableEventDedup,
 } from '~~/server/utils/feishu-integration-store'
@@ -193,26 +193,26 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    const tasks = await withClient(event, async (db) => {
-      return listActiveFeishuBitableTasksBySource(db, {
+    const items = await withClient(event, async (db) => {
+      return listActiveFeishuBitableSyncItemsBySource(db, {
         appToken: parsed.appToken,
         tableId: parsed.tableId,
       })
     })
-    for (const task of tasks) {
-      const actorUserId = task.updatedByUserId || task.createdByUserId
+    for (const item of items) {
+      const actorUserId = item.updatedByUserId || item.createdByUserId
       if (!actorUserId)
         continue
       await runWorkflow({
         providerName: 'feishu_bitable',
-        taskId: task.id,
+        syncItemId: item.id,
         actorUserId,
         triggerSource: 'webhook',
         mode: 'delta',
         recordIds: parsed.recordIds,
       }).catch((error) => {
         console.error('[feishu-events] delta sync failed:', {
-          taskId: task.id,
+          syncItemId: item.id,
           error: error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR'),
         })
       })
@@ -222,7 +222,7 @@ export default defineEventHandler(async (event) => {
       code: 0,
       msg: 'ok',
       mode: 'delta',
-      matchedTasks: tasks.length,
+      matchedTasks: items.length,
     }
   }
 
