@@ -815,68 +815,183 @@ onMounted(initializePage)
       width="980px"
     >
       <div class="space-y-3">
-        <div class="gap-2 grid md:grid-cols-2">
-          <label class="text-[10px] text-slate-600 font-medium block">
-            启用状态
-            <div class="mt-1">
-              <a-switch v-model="configForm.enabled" />
-            </div>
-          </label>
+        <section class="p-3 border border-slate-200 bg-white space-y-3">
+          <div class="space-y-1">
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              1. 基础信息配置
+            </h3>
+            <p class="text-[10px] text-slate-500 m-0">
+              维护飞书集成的启用状态、OAuth 回调地址和管理页前端依赖地址。
+            </p>
+          </div>
 
-          <label class="text-[10px] text-slate-600 font-medium block">
-            App ID
-            <a-input v-model="configForm.appId" class="mt-1" allow-clear size="small" placeholder="cli_xxx" />
-          </label>
-
-          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
-            OAuth Redirect URI
-            <a-input v-model="configForm.oauthRedirectUri" class="mt-1" allow-clear size="small" placeholder="https://domain/api/auth/feishu/callback" />
-          </label>
-
-          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
-            管理员组 ID（可选）
-            <a-textarea
-              v-model="configForm.adminGroupIdsText"
-              class="mt-1"
-              :auto-size="{ minRows: 2, maxRows: 4 }"
-              allow-clear
-              placeholder="每行一个 group_id，飞书全员目录不可用时会降级到管理员组目录。"
-            />
-          </label>
-
-          <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
-            Web SDK Script URL
-            <a-input v-model="configForm.webSdkScriptUrl" class="mt-1" allow-clear size="small" placeholder="https://.../h5-js-sdk.js" />
-          </label>
-
-          <div class="p-2 border border-slate-200 bg-slate-50 space-y-2 md:col-span-2">
-            <div class="flex gap-2 items-center justify-between">
-              <p class="text-[10px] text-slate-600 font-semibold m-0">
-                启动通知渠道（进程首次启动）
-              </p>
-              <a-switch v-model="configForm.startupNotifyEnabled" />
-            </div>
+          <div class="gap-3 grid md:grid-cols-2">
             <label class="text-[10px] text-slate-600 font-medium block">
-              飞书群 chat_id
-              <a-input
-                v-model="configForm.startupNotifyChatId"
-                class="mt-1"
+              启用状态
+              <div class="mt-1 px-3 border border-slate-200 rounded bg-slate-50 flex h-[32px] items-center">
+                <a-switch v-model="configForm.enabled" />
+              </div>
+            </label>
+
+            <label class="text-[10px] text-slate-600 font-medium block">
+              App ID
+              <a-input v-model="configForm.appId" class="mt-1" allow-clear size="small" placeholder="cli_xxx" />
+            </label>
+
+            <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
+              OAuth Redirect URI
+              <a-input v-model="configForm.oauthRedirectUri" class="mt-1" allow-clear size="small" placeholder="https://domain/api/auth/feishu/callback" />
+            </label>
+
+            <label class="text-[10px] text-slate-600 font-medium block md:col-span-2">
+              Web SDK Script URL
+              <a-input v-model="configForm.webSdkScriptUrl" class="mt-1" allow-clear size="small" placeholder="https://.../h5-js-sdk.js" />
+            </label>
+          </div>
+        </section>
+
+        <section class="p-3 border border-slate-200 bg-white space-y-3">
+          <div class="space-y-1">
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              2. 密钥信息配置
+            </h3>
+            <p class="text-[10px] text-slate-500 m-0">
+              统一维护开放平台密钥与事件回调凭证，支持保持、替换和清空三种模式。
+            </p>
+          </div>
+
+          <div class="gap-3 grid">
+            <div class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+              <p class="text-[10px] text-slate-700 font-semibold m-0">
+                App Secret
+              </p>
+              <a-radio-group v-model="configForm.appSecretMode" size="small" type="button">
+                <a-radio value="keep">
+                  保持
+                </a-radio>
+                <a-radio value="replace">
+                  替换
+                </a-radio>
+                <a-radio value="clear">
+                  清空
+                </a-radio>
+              </a-radio-group>
+              <a-input-password
+                v-if="configForm.appSecretMode === 'replace'"
+                v-model="configForm.appSecret"
                 allow-clear
                 size="small"
-                placeholder="oc_xxx"
+                placeholder="输入新的 App Secret"
               />
-            </label>
-            <label class="text-[10px] text-slate-600 font-medium block">
-              通知备注（可选）
-              <a-textarea
-                v-model="configForm.startupNotifyRemark"
-                class="mt-1"
-                :auto-size="{ minRows: 2, maxRows: 4 }"
+            </div>
+
+            <div class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+              <p class="text-[10px] text-slate-700 font-semibold m-0">
+                Event Token
+              </p>
+              <a-radio-group v-model="configForm.eventTokenMode" size="small" type="button">
+                <a-radio value="keep">
+                  保持
+                </a-radio>
+                <a-radio value="replace">
+                  替换
+                </a-radio>
+                <a-radio value="clear">
+                  清空
+                </a-radio>
+              </a-radio-group>
+              <a-input-password
+                v-if="configForm.eventTokenMode === 'replace'"
+                v-model="configForm.eventToken"
                 allow-clear
-                placeholder="例如：已优化启动流程，准备回归验证。"
+                size="small"
+                placeholder="输入新的 Event Token"
               />
-            </label>
-            <div class="gap-2 grid md:grid-cols-2">
+            </div>
+
+            <div class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+              <p class="text-[10px] text-slate-700 font-semibold m-0">
+                Event Encrypt Key
+              </p>
+              <a-radio-group v-model="configForm.eventEncryptKeyMode" size="small" type="button">
+                <a-radio value="keep">
+                  保持
+                </a-radio>
+                <a-radio value="replace">
+                  替换
+                </a-radio>
+                <a-radio value="clear">
+                  清空
+                </a-radio>
+              </a-radio-group>
+              <a-input-password
+                v-if="configForm.eventEncryptKeyMode === 'replace'"
+                v-model="configForm.eventEncryptKey"
+                allow-clear
+                size="small"
+                placeholder="输入新的 Event Encrypt Key"
+              />
+            </div>
+          </div>
+
+          <div class="text-[10px] text-slate-500 p-3 border border-slate-200 bg-slate-50 space-y-1">
+            <p class="m-0">
+              App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
+              Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
+              Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
+            </p>
+            <p v-if="config?.updatedAt" class="m-0">
+              最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
+            </p>
+          </div>
+        </section>
+
+        <section class="p-3 border border-slate-200 bg-white space-y-3">
+          <div class="space-y-1">
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              3. 通知配置
+            </h3>
+            <p class="text-[10px] text-slate-500 m-0">
+              配置进程首次启动时的飞书通知渠道，以及版本信息的兜底来源。
+            </p>
+          </div>
+
+          <div class="p-3 border border-slate-200 bg-slate-50 space-y-3">
+            <div class="flex gap-2 items-center justify-between">
+              <div>
+                <p class="text-[10px] text-slate-700 font-semibold m-0">
+                  启动通知渠道
+                </p>
+                <p class="text-[10px] text-slate-500 m-0 mt-1">
+                  仅在进程首次启动时发送，关闭后不会校验 chat_id。
+                </p>
+              </div>
+              <a-switch v-model="configForm.startupNotifyEnabled" />
+            </div>
+
+            <div class="gap-3 grid md:grid-cols-2">
+              <label class="text-[10px] text-slate-600 font-medium block">
+                飞书群 chat_id
+                <a-input
+                  v-model="configForm.startupNotifyChatId"
+                  class="mt-1"
+                  allow-clear
+                  size="small"
+                  placeholder="oc_xxx"
+                />
+              </label>
+
+              <label class="text-[10px] text-slate-600 font-medium block">
+                通知备注（可选）
+                <a-textarea
+                  v-model="configForm.startupNotifyRemark"
+                  class="mt-1"
+                  :auto-size="{ minRows: 2, maxRows: 4 }"
+                  allow-clear
+                  placeholder="例如：已优化启动流程，准备回归验证。"
+                />
+              </label>
+
               <label class="text-[10px] text-slate-600 font-medium block">
                 兜底 Version
                 <a-input
@@ -887,6 +1002,7 @@ onMounted(initializePage)
                   placeholder="v2026.03.29-main"
                 />
               </label>
+
               <label class="text-[10px] text-slate-600 font-medium block">
                 兜底 Commit SHA
                 <a-input
@@ -898,151 +1014,91 @@ onMounted(initializePage)
                 />
               </label>
             </div>
+
             <p class="text-[10px] text-slate-500 m-0">
               版本优先级：CI/CD 环境变量（WINLOOP_BUILD_VERSION / WINLOOP_BUILD_COMMIT_SHA）> 构建推导（git）> 集成配置兜底值。
             </p>
           </div>
+        </section>
 
-          <div class="p-2 border border-slate-200 bg-slate-50 space-y-2 md:col-span-2">
-            <p class="text-[10px] text-slate-600 font-semibold m-0">
-              App Secret
+        <section class="p-3 border border-slate-200 bg-white space-y-3">
+          <div class="space-y-1">
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              4. 管理页配置
+            </h3>
+            <p class="text-[10px] text-slate-500 m-0">
+              维护管理员组降级目录、平台管理员概览，以及飞书成员浏览与手动授权入口。
             </p>
-            <a-radio-group v-model="configForm.appSecretMode" size="small" type="button">
-              <a-radio value="keep">
-                保持
-              </a-radio>
-              <a-radio value="replace">
-                替换
-              </a-radio>
-              <a-radio value="clear">
-                清空
-              </a-radio>
-            </a-radio-group>
-            <a-input-password
-              v-if="configForm.appSecretMode === 'replace'"
-              v-model="configForm.appSecret"
+          </div>
+
+          <label class="text-[10px] text-slate-600 font-medium block">
+            管理员组 ID（可选）
+            <a-textarea
+              v-model="configForm.adminGroupIdsText"
+              class="mt-1"
+              :auto-size="{ minRows: 2, maxRows: 4 }"
               allow-clear
-              size="small"
-              placeholder="输入新的 App Secret"
+              placeholder="每行一个 group_id，飞书全员目录不可用时会降级到管理员组目录。"
             />
-          </div>
+          </label>
 
-          <div class="p-2 border border-slate-200 bg-slate-50 space-y-2 md:col-span-2">
-            <p class="text-[10px] text-slate-600 font-semibold m-0">
-              Event Token
-            </p>
-            <a-radio-group v-model="configForm.eventTokenMode" size="small" type="button">
-              <a-radio value="keep">
-                保持
-              </a-radio>
-              <a-radio value="replace">
-                替换
-              </a-radio>
-              <a-radio value="clear">
-                清空
-              </a-radio>
-            </a-radio-group>
-            <a-input-password
-              v-if="configForm.eventTokenMode === 'replace'"
-              v-model="configForm.eventToken"
-              allow-clear
-              size="small"
-              placeholder="输入新的 Event Token"
-            />
-          </div>
-
-          <div class="p-2 border border-slate-200 bg-slate-50 space-y-2 md:col-span-2">
-            <p class="text-[10px] text-slate-600 font-semibold m-0">
-              Event Encrypt Key
-            </p>
-            <a-radio-group v-model="configForm.eventEncryptKeyMode" size="small" type="button">
-              <a-radio value="keep">
-                保持
-              </a-radio>
-              <a-radio value="replace">
-                替换
-              </a-radio>
-              <a-radio value="clear">
-                清空
-              </a-radio>
-            </a-radio-group>
-            <a-input-password
-              v-if="configForm.eventEncryptKeyMode === 'replace'"
-              v-model="configForm.eventEncryptKey"
-              allow-clear
-              size="small"
-              placeholder="输入新的 Event Encrypt Key"
-            />
-          </div>
-        </div>
-
-        <div class="text-[10px] text-slate-500 p-2 border border-slate-200 bg-white space-y-1">
-          <p class="m-0">
-            App Secret：{{ config?.appSecretConfigured ? '已配置' : '未配置' }}；
-            Event Token：{{ config?.eventTokenConfigured ? '已配置' : '未配置' }}；
-            Event Encrypt Key：{{ config?.eventEncryptKeyConfigured ? '已配置' : '未配置' }}
-          </p>
-          <p v-if="config?.updatedAt" class="m-0">
-            最近更新：{{ config.updatedAt }}（{{ config.updatedByUserId || 'unknown' }}）
-          </p>
-        </div>
-
-        <div class="p-2 border border-slate-200 bg-white space-y-2">
-          <div class="flex gap-2 items-center justify-between">
-            <p class="text-[10px] text-slate-700 font-semibold m-0">
-              平台管理员概览
-            </p>
-            <a-button size="mini" :loading="adminOverviewLoading" @click="loadAdminOverview">
-              刷新概览
-            </a-button>
-          </div>
-          <p v-if="adminOverview?.notice" class="text-[10px] text-slate-600 m-0 p-2 border border-slate-200 bg-slate-50">
-            {{ adminOverview.notice }}
-          </p>
-          <section class="p-2 border border-slate-200 bg-slate-50 space-y-1">
-            <p class="text-[10px] text-slate-700 font-medium m-0">
-              当前 contest_admin（{{ adminOverview?.contestAdmins?.length || 0 }}）
-            </p>
-            <p v-if="adminOverviewLoading" class="text-[10px] text-slate-500 m-0">
-              加载中...
-            </p>
-            <p v-else-if="!adminOverview?.contestAdmins?.length" class="text-[10px] text-slate-500 m-0">
-              暂无 contest_admin
-            </p>
-            <div v-else class="max-h-[160px] overflow-auto space-y-1">
-              <div
-                v-for="item in adminOverview.contestAdmins"
-                :key="item.userId"
-                class="p-1 border border-slate-200 bg-white"
-              >
-                <p class="text-[10px] text-slate-800 m-0">
-                  {{ item.username }}
-                </p>
-                <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
-                  user: {{ item.userId }}{{ item.unionId ? ` / union: ${item.unionId}` : '' }}
-                </p>
-              </div>
+          <div class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+            <div class="flex gap-2 items-center justify-between">
+              <p class="text-[10px] text-slate-700 font-semibold m-0">
+                平台管理员概览
+              </p>
+              <a-button size="mini" :loading="adminOverviewLoading" @click="loadAdminOverview">
+                刷新概览
+              </a-button>
             </div>
-          </section>
-        </div>
+            <p v-if="adminOverview?.notice" class="text-[10px] text-slate-600 m-0 p-2 border border-slate-200 bg-white">
+              {{ adminOverview.notice }}
+            </p>
+            <section class="p-2 border border-slate-200 bg-white space-y-1">
+              <p class="text-[10px] text-slate-700 font-medium m-0">
+                当前 contest_admin（{{ adminOverview?.contestAdmins?.length || 0 }}）
+              </p>
+              <p v-if="adminOverviewLoading" class="text-[10px] text-slate-500 m-0">
+                加载中...
+              </p>
+              <p v-else-if="!adminOverview?.contestAdmins?.length" class="text-[10px] text-slate-500 m-0">
+                暂无 contest_admin
+              </p>
+              <div v-else class="max-h-[160px] overflow-auto space-y-1">
+                <div
+                  v-for="item in adminOverview.contestAdmins"
+                  :key="item.userId"
+                  class="p-1 border border-slate-200 bg-slate-50"
+                >
+                  <p class="text-[10px] text-slate-800 m-0">
+                    {{ item.username }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 font-mono m-0 break-all">
+                    user: {{ item.userId }}{{ item.unionId ? ` / union: ${item.unionId}` : '' }}
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
 
-        <AdminFeishuDirectoryBrowser
-          :loading="feishuDirectoryLoading"
-          :members="feishuDirectoryMembers"
-          :departments="feishuDirectoryDepartments"
-          :root-department-id="feishuDirectoryRootDepartmentId"
-          :notice="feishuDirectoryNotice"
-          :source="feishuDirectorySource"
-          :from-cache="feishuDirectoryFromCache"
-          :fetched-at="feishuDirectoryFetchedAt"
-          :cache-expires-at="feishuDirectoryCacheExpiresAt"
-          :total-members="feishuDirectoryTotalMembers"
-          :permission-hint="feishuDirectoryPermissionHint"
-          :manual-adding-key="manualAddingKey"
-          @refresh="forceRefresh => loadFeishuDirectoryBrowser(forceRefresh)"
-          @add-user="manualAddContestAdmin"
-          @add-union="manualAddContestAdminByUnionId"
-        />
+          <AdminFeishuDirectoryBrowser
+            :loading="feishuDirectoryLoading"
+            :members="feishuDirectoryMembers"
+            :departments="feishuDirectoryDepartments"
+            :root-department-id="feishuDirectoryRootDepartmentId"
+            :notice="feishuDirectoryNotice"
+            :source="feishuDirectorySource"
+            :from-cache="feishuDirectoryFromCache"
+            :fetched-at="feishuDirectoryFetchedAt"
+            :cache-expires-at="feishuDirectoryCacheExpiresAt"
+            :total-members="feishuDirectoryTotalMembers"
+            :permission-hint="feishuDirectoryPermissionHint"
+            :manual-adding-key="manualAddingKey"
+            @refresh="forceRefresh => loadFeishuDirectoryBrowser(forceRefresh)"
+            @add-user="manualAddContestAdmin"
+            @add-union="manualAddContestAdminByUnionId"
+          />
+        </section>
 
         <div class="flex gap-2 justify-end">
           <a-button size="small" :disabled="savingConfig" @click="configDialogVisible = false">

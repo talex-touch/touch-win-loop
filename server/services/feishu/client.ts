@@ -191,6 +191,18 @@ function isFieldValidationError(raw: unknown): boolean {
     || message.includes('参数')
 }
 
+function shouldRetryWithAlternateDepartmentIdType(raw: unknown): boolean {
+  const message = toErrorMessage(raw).toLowerCase()
+  if (!message)
+    return false
+  return isFieldValidationError(raw)
+    || message.includes('department not exist')
+    || message.includes('department is not exist')
+    || message.includes('dept authority')
+    || message.includes('no dept authority')
+    || message.includes('not found')
+}
+
 function hasOwn(source: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(source, key)
 }
@@ -645,18 +657,26 @@ async function listDepartmentUsersWithFallback(input: {
   departmentId: string
   pageToken?: string
 }): Promise<DepartmentUsersData> {
+  const normalizedDepartmentId = String(input.departmentId || '').trim()
+  const preferredType: DepartmentIdType = normalizedDepartmentId === '0'
+    ? 'department_id'
+    : 'open_department_id'
+  const alternateType: DepartmentIdType = preferredType === 'department_id'
+    ? 'open_department_id'
+    : 'department_id'
+
   try {
     return await listDepartmentUsersOnce({
       ...input,
-      departmentIdType: 'open_department_id',
+      departmentIdType: preferredType,
     })
   }
   catch (error) {
-    if (!isFieldValidationError(error))
+    if (!shouldRetryWithAlternateDepartmentIdType(error))
       throw error
     return listDepartmentUsersOnce({
       ...input,
-      departmentIdType: 'department_id',
+      departmentIdType: alternateType,
     })
   }
 }
@@ -858,18 +878,26 @@ async function listDepartmentChildrenWithFallback(input: {
   departmentId: string
   pageToken?: string
 }): Promise<DepartmentChildrenData> {
+  const normalizedDepartmentId = String(input.departmentId || '').trim()
+  const preferredType: DepartmentIdType = normalizedDepartmentId === '0'
+    ? 'department_id'
+    : 'open_department_id'
+  const alternateType: DepartmentIdType = preferredType === 'department_id'
+    ? 'open_department_id'
+    : 'department_id'
+
   try {
     return await listDepartmentChildrenOnce({
       ...input,
-      departmentIdType: 'open_department_id',
+      departmentIdType: preferredType,
     })
   }
   catch (error) {
-    if (!isFieldValidationError(error))
+    if (!shouldRetryWithAlternateDepartmentIdType(error))
       throw error
     return listDepartmentChildrenOnce({
       ...input,
-      departmentIdType: 'department_id',
+      departmentIdType: alternateType,
     })
   }
 }
@@ -888,6 +916,8 @@ export async function listFeishuTenantDirectory(input: {
     parentDepartmentId: null,
   }]
   let userDepartmentIds: Record<string, string[]> = {}
+  let directUsersError: unknown = null
+  let departmentDirectoryError: unknown = null
 
   try {
     const directUsers = await listFeishuUsersDirectlyByPaging({
@@ -897,8 +927,7 @@ export async function listFeishuTenantDirectory(input: {
     appendProfilesToMap(users, directUsers)
   }
   catch (error) {
-    if (!isFieldValidationError(error))
-      throw error
+    directUsersError = error
   }
 
   try {
@@ -912,8 +941,15 @@ export async function listFeishuTenantDirectory(input: {
     userDepartmentIds = directory.userDepartmentIds
   }
   catch (error) {
-    if (!users.size || !isFieldValidationError(error))
+    departmentDirectoryError = error
+    if (!users.size)
       throw error
+  }
+
+  if (!users.size && directUsersError) {
+    if (departmentDirectoryError)
+      throw departmentDirectoryError
+    throw directUsersError
   }
 
   return {
