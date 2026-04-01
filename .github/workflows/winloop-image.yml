@@ -107,16 +107,48 @@ jobs:
           JSON
           )"
 
-          echo "Trigger deploy webhook with retry..."
-          curl --fail --show-error --silent \
-            --retry 5 \
-            --retry-delay 3 \
-            --retry-max-time 90 \
-            --retry-all-errors \
-            --connect-timeout 10 \
-            --max-time 30 \
-            --request POST \
-            --header "Content-Type: application/json" \
-            --header "X-Deploy-Token: ${WEBHOOK_TOKEN}" \
-            --data "${payload}" \
-            "${webhook_base}/hooks/winloop"
+          request_max_time_sec=1800
+          retry_delay_sec=30
+          max_busy_retries=20
+          busy_retry_count=0
+
+          echo "Trigger deploy webhook..."
+
+          while true; do
+            response_file="$(mktemp)"
+            http_code="$(curl --silent --show-error \
+              --output "${response_file}" \
+              --write-out "%{http_code}" \
+              --connect-timeout 10 \
+              --max-time "${request_max_time_sec}" \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --header "X-Deploy-Token: ${WEBHOOK_TOKEN}" \
+              --data "${payload}" \
+              "${webhook_base}/hooks/winloop")"
+            response_body="$(cat "${response_file}")"
+            rm -f "${response_file}"
+
+            case "${http_code}" in
+              200|201|202|204)
+                echo "Deploy webhook completed with status ${http_code}."
+                break
+                ;;
+              409)
+                busy_retry_count="$((busy_retry_count + 1))"
+                if [ "${busy_retry_count}" -gt "${max_busy_retries}" ]; then
+                  echo "Deploy webhook kept returning 409 after ${max_busy_retries} retries."
+                  exit 1
+                fi
+                echo "Deploy webhook is busy (409), wait ${retry_delay_sec}s and retry (${busy_retry_count}/${max_busy_retries})."
+                sleep "${retry_delay_sec}"
+                ;;
+              *)
+                echo "Deploy webhook failed with status ${http_code}."
+                if [ -n "${response_body}" ]; then
+                  echo "${response_body}"
+                fi
+                exit 1
+                ;;
+            esac
+          done
