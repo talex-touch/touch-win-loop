@@ -178,10 +178,6 @@ async function mountTldrawCanvas(): Promise<void> {
           () => {
             scheduleEmitModelFromEditor()
           },
-          {
-            source: 'user',
-            scope: 'document',
-          },
         ) || null
 
         syncReadonlyState()

@@ -384,7 +384,7 @@ interface WorkspaceMemberRolePatchPayload {
 }
 
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
-type WorkspaceMainTabId = 'dashboard' | 'members' | 'flow' | 'settings' | 'preview'
+type WorkspaceMainTabId = 'dashboard' | 'members' | 'flow' | 'settings' | `resource:${string}`
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
@@ -451,6 +451,7 @@ const aiReasoning = ref('')
 const normalizedInfo = ref('')
 const statusLine = ref('')
 const previewResourceId = ref('')
+const closingPreviewResourceId = ref('')
 const previewStatusLoading = ref(false)
 const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
 const previewMode = ref<WorkspacePreviewMode>('binary')
@@ -3064,7 +3065,15 @@ async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPa
   }
 }
 
-async function openProjectCollabResource(resourceId: string, snapshot?: CollabSnapshotPayload | null): Promise<void> {
+interface OpenPreviewOptions {
+  openTab?: boolean
+}
+
+async function openProjectCollabResource(
+  resourceId: string,
+  snapshot?: CollabSnapshotPayload | null,
+  options: OpenPreviewOptions = {},
+): Promise<void> {
   const projectId = String(activeProjectId.value || '').trim()
   const targetResourceId = String(resourceId || '').trim()
   if (!projectId || !targetResourceId)
@@ -3080,7 +3089,9 @@ async function openProjectCollabResource(resourceId: string, snapshot?: CollabSn
   previewStatusLoading.value = false
   previewMode.value = targetSnapshot.kind
   previewResourceId.value = targetResourceId
-  openPreviewSignal.value += 1
+  closingPreviewResourceId.value = ''
+  if (options.openTab !== false)
+    openPreviewSignal.value += 1
   applyCollabSnapshot(targetSnapshot)
 
   collabSession.activateRoom()
@@ -3119,10 +3130,10 @@ function startPreviewStatusPolling(resourceId: string) {
   }, 2000)
 }
 
-async function openProjectResourcePreview(resourceId: string) {
+async function openProjectResourcePreview(resourceId: string, options: OpenPreviewOptions = {}) {
   const targetResource = resources.value.find(item => item.id === resourceId) || null
   if (isCollabResource(targetResource)) {
-    await openProjectCollabResource(resourceId)
+    await openProjectCollabResource(resourceId, undefined, options)
     return
   }
 
@@ -3133,7 +3144,9 @@ async function openProjectResourcePreview(resourceId: string) {
   disposeCollabDocBinding(true)
   previewMode.value = 'binary'
   previewResourceId.value = targetResourceId
-  openPreviewSignal.value += 1
+  closingPreviewResourceId.value = ''
+  if (options.openTab !== false)
+    openPreviewSignal.value += 1
   previewStatusPayload.value = null
 
   await fetchResourcePreviewStatus(targetResourceId)
@@ -3142,7 +3155,20 @@ async function openProjectResourcePreview(resourceId: string) {
     startPreviewStatusPolling(targetResourceId)
 }
 
-function closeProjectResourcePreview() {
+async function activateProjectResourceTab(resourceId: string): Promise<void> {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!targetResourceId)
+    return
+  await openProjectResourcePreview(targetResourceId, { openTab: false })
+}
+
+function closeProjectResourcePreview(resourceId = previewResourceId.value) {
+  const targetResourceId = String(resourceId || '').trim()
+  const activeResourceId = String(previewResourceId.value || '').trim()
+  if (!targetResourceId || targetResourceId !== activeResourceId)
+    return
+
+  closingPreviewResourceId.value = targetResourceId
   disposeCollabDocBinding(true)
   previewMode.value = 'binary'
   previewStatusPayload.value = null
@@ -4371,6 +4397,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         :open-flow-signal="openFlowSignal"
         :open-preview-signal="openPreviewSignal"
         :close-preview-signal="closePreviewSignal"
+        :preview-resource-id="previewResourceId"
+        :closing-preview-resource-id="closingPreviewResourceId"
         :preview-resource-title="previewResourceTitle"
         :preview-status="previewStatusPayload"
         :preview-status-loading="previewStatusLoading"
@@ -4420,7 +4448,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         @revoke-project-resource-share="revokeProjectResourceShare"
         @reconvert-preview="reconvertProjectResourcePreview"
         @download-preview-source="downloadPreviewSource"
-        @close-preview-tab="closeProjectResourcePreview"
+        @activate-preview-resource="activateProjectResourceTab"
+        @close-preview-resource="closeProjectResourcePreview"
         @update:collab-markdown-value="updateCollabMarkdownContent"
         @update:collab-draw-value="updateCollabDrawContent"
       />

@@ -231,11 +231,49 @@ function normalizeDuplicateTitle(title: string): string {
   return `${normalized}（副本）`
 }
 
-function resolveCollabResourceTitle(kind: Extract<ResourceKind, 'markdown' | 'draw'>, inputTitle?: string): string {
+function resolveCollabResourceTitlePrefix(kind: Extract<ResourceKind, 'markdown' | 'draw'>): string {
+  return kind === 'draw' ? '无边画布' : '协作文档'
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+async function resolveCollabResourceTitle(
+  db: Queryable,
+  projectId: string,
+  kind: Extract<ResourceKind, 'markdown' | 'draw'>,
+  inputTitle?: string,
+): Promise<string> {
   const normalized = normalizeString(inputTitle)
   if (normalized)
     return normalized
-  return kind === 'draw' ? '无边画布' : '协作文档'
+
+  const prefix = resolveCollabResourceTitlePrefix(kind)
+  const result = await db.query<{ title: string }>(
+    `SELECT title
+     FROM project_resources
+     WHERE project_id = $1
+       AND source = 'collab'
+       AND resource_kind = $2`,
+    [projectId, kind],
+  )
+
+  const pattern = new RegExp(`^${escapeRegExp(prefix)}(?:\\s+(\\d+))?$`)
+  let maxIndex = 0
+
+  for (const row of result.rows) {
+    const title = normalizeString(row.title)
+    const matched = title.match(pattern)
+    if (!matched)
+      continue
+
+    const currentIndex = Number(matched[1] || 1)
+    if (Number.isFinite(currentIndex))
+      maxIndex = Math.max(maxIndex, Math.max(1, Math.trunc(currentIndex)))
+  }
+
+  return `${prefix} ${maxIndex + 1}`
 }
 
 function toResource(row: ProjectResourceRow): Resource {
@@ -782,7 +820,7 @@ export async function createProjectCollabResource(
 
   const now = new Date().toISOString()
   const resourceId = randomUUID()
-  const title = resolveCollabResourceTitle(kind, input.title)
+  const title = await resolveCollabResourceTitle(db, input.projectId, kind, input.title)
   const sourceLink = buildServerApiEndpoint(`/projects/${input.projectId}/resources/${resourceId}/collab`)
   const mimeType = kind === 'markdown'
     ? 'text/markdown'

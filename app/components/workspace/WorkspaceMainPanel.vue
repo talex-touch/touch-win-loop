@@ -24,6 +24,7 @@ import type {
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
 import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
+import { renderMarkdownToHtml } from '~/utils/renderMarkdown'
 
 const props = withDefaults(defineProps<{
   selectedContest?: Contest | null
@@ -42,6 +43,8 @@ const props = withDefaults(defineProps<{
   openFlowSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
+  previewResourceId?: string
+  closingPreviewResourceId?: string
   previewResourceTitle?: string
   previewStatus?: WorkspacePreviewStatusPayload | null
   previewStatusLoading?: boolean
@@ -110,6 +113,8 @@ const props = withDefaults(defineProps<{
   openFlowSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
+  previewResourceId: '',
+  closingPreviewResourceId: '',
   previewResourceTitle: '',
   previewStatus: null,
   previewStatusLoading: false,
@@ -219,18 +224,25 @@ const emit = defineEmits<{
   'loadContests': []
   'reconvertPreview': []
   'downloadPreviewSource': []
-  'closePreviewTab': []
+  'activatePreviewResource': [resourceId: string]
+  'closePreviewResource': [resourceId: string]
   'update:collabMarkdownValue': [value: string]
   'update:collabDrawValue': [value: string]
 }>()
 
-type WorkspaceMainTabId = 'dashboard' | 'members' | 'flow' | 'settings' | 'preview'
+type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'settings'
+type WorkspaceResourceTabId = `resource:${string}`
+type WorkspaceMainTabId = WorkspaceFixedTabId | WorkspaceResourceTabId
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 interface WorkspaceMainTab {
   id: WorkspaceMainTabId
+  kind: 'fixed' | 'resource'
   title: string
   icon: string
+  closeable: boolean
+  resourceId?: string
+  previewMode?: WorkspacePreviewMode
 }
 
 interface LinkedContestEntry {
@@ -263,38 +275,44 @@ interface WorkspaceCollabPresenceMember {
   updatedAt?: string
 }
 
-const allTabs: WorkspaceMainTab[] = [
+const fixedTabs: WorkspaceMainTab[] = [
   {
     id: 'dashboard',
+    kind: 'fixed',
     title: '仪表盘',
     icon: 'space_dashboard',
+    closeable: true,
   },
   {
     id: 'members',
+    kind: 'fixed',
     title: '成员管理',
     icon: 'group',
+    closeable: true,
   },
   {
     id: 'flow',
+    kind: 'fixed',
     title: '申报流程梳理',
     icon: 'flowsheet',
+    closeable: true,
   },
   {
     id: 'settings',
+    kind: 'fixed',
     title: '项目设置',
     icon: 'settings',
-  },
-  {
-    id: 'preview',
-    title: '资料预览',
-    icon: 'visibility',
+    closeable: true,
   },
 ]
 
-const openTabs = ref<WorkspaceMainTab[]>(allTabs.filter(tab => tab.id === 'dashboard'))
+const openTabs = ref<WorkspaceMainTab[]>(fixedTabs.filter(tab => tab.id === 'dashboard'))
 const activeTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const draggingTabId = ref<WorkspaceMainTabId | ''>('')
 const dragOverTabId = ref<WorkspaceMainTabId | ''>('')
+const tabContextMenuVisible = ref(false)
+const tabContextMenuTabId = ref<WorkspaceMainTabId | ''>('')
+const tabContextMenuPosition = reactive({ x: 0, y: 0 })
 
 const hasActiveProject = computed(() => Boolean(props.activeProject?.id))
 
@@ -455,7 +473,82 @@ const dashboardGuide = computed(() => {
   ]
 })
 
+function createResourceTabId(resourceId: string): WorkspaceResourceTabId {
+  return `resource:${resourceId}` as WorkspaceResourceTabId
+}
+
+function resolvePreviewModeFromResource(resource: Resource | null | undefined): WorkspacePreviewMode {
+  const resourceKind = String(resource?.resourceKind || '').trim().toLowerCase()
+  if (resourceKind === 'markdown' || resourceKind === 'draw')
+    return resourceKind
+  return 'binary'
+}
+
+function normalizePreviewModeValue(value: unknown): WorkspacePreviewMode {
+  const mode = String(value || 'binary').trim().toLowerCase()
+  if (mode === 'markdown' || mode === 'draw')
+    return mode
+  return 'binary'
+}
+
+function resolveResourceTabTitle(mode: WorkspacePreviewMode, title: string): string {
+  const normalizedTitle = String(title || '').trim()
+  if (normalizedTitle)
+    return normalizedTitle
+  if (mode === 'markdown')
+    return '协作文档'
+  if (mode === 'draw')
+    return '无边画布'
+  return '资料预览'
+}
+
+function resolveResourceTabIcon(mode: WorkspacePreviewMode): string {
+  if (mode === 'markdown')
+    return 'edit_note'
+  if (mode === 'draw')
+    return 'draw'
+  return 'description'
+}
+
+function buildResourceTab(resourceId: string, title: string, mode: WorkspacePreviewMode): WorkspaceMainTab {
+  return {
+    id: createResourceTabId(resourceId),
+    kind: 'resource',
+    title: resolveResourceTabTitle(mode, title),
+    icon: resolveResourceTabIcon(mode),
+    closeable: true,
+    resourceId,
+    previewMode: mode,
+  }
+}
+
+function previewTabFromProps(): WorkspaceMainTab | null {
+  const resourceId = String(props.previewResourceId || '').trim()
+  if (!resourceId)
+    return null
+  return buildResourceTab(resourceId, props.previewResourceTitle, normalizePreviewModeValue(props.previewMode))
+}
+
+const activeTab = computed(() => {
+  return openTabs.value.find(tab => tab.id === activeTabId.value) || null
+})
+
+const activeResourceTab = computed(() => {
+  if (activeTab.value?.kind !== 'resource')
+    return null
+  return activeTab.value
+})
+
+const renderedCollabMarkdown = computed(() => renderMarkdownToHtml(props.collabMarkdownValue))
+
 const breadcrumbItems = computed(() => {
+  if (activeResourceTab.value) {
+    const title = activeResourceTab.value.title
+    if (props.selectedContest?.name)
+      return ['竞赛分析', props.selectedContest.name, title]
+    return ['竞赛分析', title]
+  }
+
   if (activeTabId.value === 'settings') {
     const base = ['竞赛分析']
     if (projectSettingsContestName.value)
@@ -487,17 +580,6 @@ const breadcrumbItems = computed(() => {
       ]
     }
     return ['竞赛分析', '仪表盘']
-  }
-
-  if (activeTabId.value === 'preview') {
-    if (props.selectedContest?.name) {
-      return [
-        '竞赛分析',
-        props.selectedContest.name,
-        props.previewResourceTitle || '资料预览',
-      ]
-    }
-    return ['竞赛分析', props.previewResourceTitle || '资料预览']
   }
 
   return ['WinLoop']
@@ -539,14 +621,14 @@ const linkedContestEntries = computed<LinkedContestEntry[]>(() => {
   return result
 })
 
-function findTab(tabId: WorkspaceMainTabId): WorkspaceMainTab | undefined {
-  return allTabs.find(tab => tab.id === tabId)
+function findFixedTab(tabId: WorkspaceFixedTabId): WorkspaceMainTab | undefined {
+  return fixedTabs.find(tab => tab.id === tabId)
 }
 
-function ensureTabOpen(tabId: WorkspaceMainTabId, activate = true) {
+function ensureFixedTabOpen(tabId: WorkspaceFixedTabId, activate = true) {
   const existed = openTabs.value.some(tab => tab.id === tabId)
   if (!existed) {
-    const target = findTab(tabId)
+    const target = findFixedTab(tabId)
     if (target)
       openTabs.value = [...openTabs.value, target]
   }
@@ -555,30 +637,283 @@ function ensureTabOpen(tabId: WorkspaceMainTabId, activate = true) {
     activeTabId.value = tabId
 }
 
-function activateTab(tabId: WorkspaceMainTabId) {
-  activeTabId.value = tabId
+function ensurePreviewTabOpen(activate = true): WorkspaceMainTab | null {
+  const previewTab = previewTabFromProps()
+  if (!previewTab)
+    return null
+
+  const existingIndex = openTabs.value.findIndex(tab => tab.id === previewTab.id)
+  if (existingIndex < 0) {
+    openTabs.value = [...openTabs.value, previewTab]
+  }
+  else {
+    const nextTabs = [...openTabs.value]
+    nextTabs.splice(existingIndex, 1, {
+      ...nextTabs[existingIndex],
+      ...previewTab,
+    })
+    openTabs.value = nextTabs
+  }
+
+  if (activate)
+    activeTabId.value = previewTab.id
+
+  return previewTab
 }
 
-function closeTabById(tabId: WorkspaceMainTabId, emitClosePreviewEvent = true) {
-  const closingIndex = openTabs.value.findIndex(tab => tab.id === tabId)
-  if (closingIndex < 0)
+function closeTabContextMenu(): void {
+  tabContextMenuVisible.value = false
+  tabContextMenuTabId.value = ''
+}
+
+function emitActivatePreviewResource(resourceId: string): void {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId)
+    return
+  emit('activatePreviewResource', normalizedResourceId)
+}
+
+function activateTab(tabId: WorkspaceMainTabId) {
+  closeTabContextMenu()
+  activeTabId.value = tabId
+  const target = openTabs.value.find(tab => tab.id === tabId)
+  if (target?.kind === 'resource' && target.resourceId)
+    emitActivatePreviewResource(target.resourceId)
+}
+
+function resolveFallbackTab(closingSet: Set<WorkspaceMainTabId>, closingTabId: WorkspaceMainTabId): WorkspaceMainTab | null {
+  const currentIndex = openTabs.value.findIndex(tab => tab.id === closingTabId)
+  if (currentIndex < 0)
+    return null
+
+  for (let index = currentIndex - 1; index >= 0; index -= 1) {
+    const candidate = openTabs.value[index]
+    if (candidate && !closingSet.has(candidate.id))
+      return candidate
+  }
+
+  for (let index = currentIndex + 1; index < openTabs.value.length; index += 1) {
+    const candidate = openTabs.value[index]
+    if (candidate && !closingSet.has(candidate.id))
+      return candidate
+  }
+
+  return null
+}
+
+function closeTabsByIds(
+  tabIds: WorkspaceMainTabId[],
+  options: { emitClosePreview?: boolean, emitActivate?: boolean } = {},
+) {
+  const existingTabIds = new Set(openTabs.value.map(tab => tab.id))
+  const closingIds = [...new Set(tabIds)].filter(tabId => existingTabIds.has(tabId))
+  if (closingIds.length === 0)
     return
 
-  if (tabId === 'preview' && emitClosePreviewEvent)
-    emit('closePreviewTab')
+  closeTabContextMenu()
 
-  openTabs.value = openTabs.value.filter(tab => tab.id !== tabId)
+  const closingSet = new Set<WorkspaceMainTabId>(closingIds)
+  const currentActiveTabId = activeTabId.value
+  const activeTabBeforeClose = currentActiveTabId
+    ? openTabs.value.find(tab => tab.id === currentActiveTabId) || null
+    : null
+  const activeTabWillClose = Boolean(currentActiveTabId && closingSet.has(currentActiveTabId))
+  const fallbackTab = activeTabWillClose && currentActiveTabId
+    ? resolveFallbackTab(closingSet, currentActiveTabId)
+    : null
+  const currentPreviewResourceId = String(props.previewResourceId || '').trim()
+  const currentPreviewTabId = currentPreviewResourceId
+    ? createResourceTabId(currentPreviewResourceId)
+    : null
+  const hiddenPreviewTabWillClose = Boolean(
+    currentPreviewTabId
+    && closingSet.has(currentPreviewTabId)
+    && activeTabBeforeClose?.id !== currentPreviewTabId,
+  )
 
-  if (activeTabId.value !== tabId)
+  openTabs.value = openTabs.value.filter(tab => !closingSet.has(tab.id))
+
+  if (hiddenPreviewTabWillClose && options.emitClosePreview !== false && currentPreviewResourceId)
+    emit('closePreviewResource', currentPreviewResourceId)
+
+  if (!activeTabWillClose)
     return
 
-  const fallbackIndex = Math.max(closingIndex - 1, 0)
-  const fallbackTab = openTabs.value[fallbackIndex] || openTabs.value[0] || null
   activeTabId.value = fallbackTab?.id || ''
+
+  if (fallbackTab?.kind === 'resource' && fallbackTab.resourceId) {
+    if (options.emitActivate !== false)
+      emitActivatePreviewResource(fallbackTab.resourceId)
+    return
+  }
+
+  if (activeTabBeforeClose?.kind === 'resource' && activeTabBeforeClose.resourceId && options.emitClosePreview !== false)
+    emit('closePreviewResource', activeTabBeforeClose.resourceId)
 }
 
 function closeTab(tabId: WorkspaceMainTabId) {
-  closeTabById(tabId, true)
+  closeTabsByIds([tabId], {
+    emitClosePreview: true,
+    emitActivate: true,
+  })
+}
+
+function closeResourceTabByResourceId(
+  resourceId: string,
+  options: { emitClosePreview?: boolean, emitActivate?: boolean } = {},
+): void {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId)
+    return
+  closeTabsByIds([createResourceTabId(normalizedResourceId)], options)
+}
+
+function updateOpenResourceTabMetadata(): void {
+  const previewTab = previewTabFromProps()
+  const resourceMap = new Map(
+    props.selectedResources.map(resource => [resource.id, resource] as const),
+  )
+
+  const nextTabs: WorkspaceMainTab[] = []
+  let changed = false
+
+  for (const tab of openTabs.value) {
+    if (tab.kind !== 'resource' || !tab.resourceId) {
+      nextTabs.push(tab)
+      continue
+    }
+
+    if (previewTab && tab.id === previewTab.id) {
+      if (
+        tab.title !== previewTab.title
+        || tab.icon !== previewTab.icon
+        || tab.previewMode !== previewTab.previewMode
+      ) {
+        nextTabs.push(previewTab)
+        changed = true
+      }
+      else {
+        nextTabs.push(tab)
+      }
+      continue
+    }
+
+    const resource = resourceMap.get(tab.resourceId)
+    if (!resource) {
+      if (activeTabId.value === tab.id) {
+        nextTabs.push(tab)
+      }
+      else {
+        changed = true
+      }
+      continue
+    }
+
+    const nextMode = resolvePreviewModeFromResource(resource)
+    const nextTitle = resolveResourceTabTitle(nextMode, resource.title)
+    const nextIcon = resolveResourceTabIcon(nextMode)
+    if (tab.title !== nextTitle || tab.icon !== nextIcon || tab.previewMode !== nextMode) {
+      nextTabs.push({
+        ...tab,
+        title: nextTitle,
+        icon: nextIcon,
+        previewMode: nextMode,
+      })
+      changed = true
+      continue
+    }
+
+    nextTabs.push(tab)
+  }
+
+  if (changed)
+    openTabs.value = nextTabs
+}
+
+function openTabContextMenu(tabId: WorkspaceMainTabId, event: MouseEvent): void {
+  event.preventDefault()
+  tabContextMenuTabId.value = tabId
+  tabContextMenuPosition.x = event.clientX
+  tabContextMenuPosition.y = event.clientY
+  tabContextMenuVisible.value = true
+}
+
+const tabContextMenuTab = computed(() => {
+  return openTabs.value.find(tab => tab.id === tabContextMenuTabId.value) || null
+})
+
+const tabContextMenuIndex = computed(() => {
+  if (!tabContextMenuTabId.value)
+    return -1
+  return openTabs.value.findIndex(tab => tab.id === tabContextMenuTabId.value)
+})
+
+const tabContextMenuLeftIds = computed<WorkspaceMainTabId[]>(() => {
+  const index = tabContextMenuIndex.value
+  if (index <= 0)
+    return []
+  return openTabs.value.slice(0, index).map(tab => tab.id)
+})
+
+const tabContextMenuRightIds = computed<WorkspaceMainTabId[]>(() => {
+  const index = tabContextMenuIndex.value
+  if (index < 0)
+    return []
+  return openTabs.value.slice(index + 1).map(tab => tab.id)
+})
+
+function closeTabsToLeft(): void {
+  if (tabContextMenuLeftIds.value.length === 0)
+    return
+  closeTabsByIds(tabContextMenuLeftIds.value, {
+    emitClosePreview: true,
+    emitActivate: true,
+  })
+}
+
+function closeTabsToRight(): void {
+  if (tabContextMenuRightIds.value.length === 0)
+    return
+  closeTabsByIds(tabContextMenuRightIds.value, {
+    emitClosePreview: true,
+    emitActivate: true,
+  })
+}
+
+function closeOtherTabs(): void {
+  const currentTab = tabContextMenuTab.value
+  if (!currentTab)
+    return
+  closeTabsByIds(
+    openTabs.value
+      .filter(tab => tab.id !== currentTab.id)
+      .map(tab => tab.id),
+    {
+      emitClosePreview: true,
+      emitActivate: true,
+    },
+  )
+}
+
+function closeAllTabs(): void {
+  closeTabsByIds(openTabs.value.map(tab => tab.id), {
+    emitClosePreview: true,
+    emitActivate: true,
+  })
+}
+
+function handleGlobalPointerDown(event: PointerEvent): void {
+  if (!tabContextMenuVisible.value)
+    return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.workspace-tab-context-menu'))
+    return
+  closeTabContextMenu()
+}
+
+function handleGlobalEscape(event: KeyboardEvent): void {
+  if (event.key === 'Escape')
+    closeTabContextMenu()
 }
 
 function moveTab(fromId: WorkspaceMainTabId, toId: WorkspaceMainTabId) {
@@ -885,10 +1220,11 @@ function previewErrorMessage(rawMessage: string): string {
 }
 
 const normalizedPreviewMode = computed<WorkspacePreviewMode>(() => {
-  const mode = String(props.previewMode || 'binary').trim().toLowerCase()
-  if (mode === 'markdown' || mode === 'draw')
-    return mode
-  return 'binary'
+  return normalizePreviewModeValue(props.previewMode)
+})
+
+const activePreviewMode = computed<WorkspacePreviewMode>(() => {
+  return activeResourceTab.value?.previewMode || normalizedPreviewMode.value
 })
 
 const collabConnectionText = computed(() => {
@@ -1140,31 +1476,59 @@ watch(() => props.workspaceInvitationLink, (next, previous) => {
 watch(() => props.openSettingsSignal, (next, previous) => {
   if (next === previous)
     return
-  ensureTabOpen('settings', true)
+  ensureFixedTabOpen('settings', true)
 })
 
 watch(() => props.openMemberManagementSignal, (next, previous) => {
   if (next === previous)
     return
-  ensureTabOpen('members', true)
+  ensureFixedTabOpen('members', true)
 })
 
 watch(() => props.openFlowSignal, (next, previous) => {
   if (next === previous)
     return
-  ensureTabOpen('flow', true)
+  ensureFixedTabOpen('flow', true)
 })
 
 watch(() => props.openPreviewSignal, (next, previous) => {
   if (next === previous)
     return
-  ensureTabOpen('preview', true)
+  ensurePreviewTabOpen(true)
 })
 
 watch(() => props.closePreviewSignal, (next, previous) => {
   if (next === previous)
     return
-  closeTabById('preview', false)
+  closeResourceTabByResourceId(props.closingPreviewResourceId, {
+    emitClosePreview: false,
+    emitActivate: true,
+  })
+})
+
+watch(
+  [
+    () => props.previewResourceId,
+    () => props.previewResourceTitle,
+    () => props.previewMode,
+  ],
+  () => {
+    updateOpenResourceTabMetadata()
+  },
+)
+
+watch(() => props.selectedResources, () => {
+  updateOpenResourceTabMetadata()
+}, { deep: true })
+
+onMounted(() => {
+  document.addEventListener('pointerdown', handleGlobalPointerDown)
+  document.addEventListener('keydown', handleGlobalEscape)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleGlobalPointerDown)
+  document.removeEventListener('keydown', handleGlobalEscape)
 })
 
 watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
@@ -1180,7 +1544,7 @@ watch(activeTabId, (next) => {
 
 <template>
   <section class="bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
-    <div class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center">
+    <div class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center relative">
       <template v-if="openTabs.length > 0">
         <div
           v-for="tab in openTabs"
@@ -1195,6 +1559,7 @@ watch(activeTabId, (next) => {
           @dragover="onTabDragOver(tab.id, $event)"
           @drop="onTabDrop(tab.id, $event)"
           @dragend="onTabDragEnd"
+          @contextmenu.prevent="openTabContextMenu(tab.id, $event)"
         >
           <button
             class="text-xs text-left flex flex-1 gap-2 h-full min-w-0 items-center"
@@ -1203,10 +1568,11 @@ watch(activeTabId, (next) => {
             @click="activateTab(tab.id)"
           >
             <span class="material-symbols-outlined text-sm" :class="tab.id === activeTabId ? 'text-blue-500' : 'text-slate-400'">{{ tab.icon }}</span>
-            <span class="truncate">{{ tab.id === 'preview' ? (previewResourceTitle || tab.title) : tab.title }}</span>
+            <span class="truncate">{{ tab.title }}</span>
           </button>
 
           <button
+            v-if="tab.closeable"
             class="text-slate-400 p-1 rounded hover:text-slate-600 hover:bg-slate-100"
             type="button"
             @click.stop="closeTab(tab.id)"
@@ -1221,9 +1587,59 @@ watch(activeTabId, (next) => {
         <button
           class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white hover:bg-slate-50"
           type="button"
-          @click="ensureTabOpen('dashboard', true)"
+          @click="ensureFixedTabOpen('dashboard', true)"
         >
           打开仪表盘
+        </button>
+      </div>
+
+      <div
+        v-if="tabContextMenuVisible"
+        class="workspace-tab-context-menu"
+        :style="{
+          left: `${tabContextMenuPosition.x}px`,
+          top: `${tabContextMenuPosition.y}px`,
+        }"
+      >
+        <button
+          v-if="tabContextMenuTab?.closeable"
+          class="workspace-tab-context-menu__item"
+          type="button"
+          @click="closeTab(tabContextMenuTab.id)"
+        >
+          关闭当前
+        </button>
+        <button
+          class="workspace-tab-context-menu__item"
+          type="button"
+          :disabled="tabContextMenuLeftIds.length === 0"
+          @click="closeTabsToLeft"
+        >
+          关闭左侧所有
+        </button>
+        <button
+          class="workspace-tab-context-menu__item"
+          type="button"
+          :disabled="tabContextMenuRightIds.length === 0"
+          @click="closeTabsToRight"
+        >
+          关闭右侧所有
+        </button>
+        <button
+          class="workspace-tab-context-menu__item"
+          type="button"
+          :disabled="openTabs.length <= 1"
+          @click="closeOtherTabs"
+        >
+          关闭其他
+        </button>
+        <button
+          class="workspace-tab-context-menu__item workspace-tab-context-menu__item--danger"
+          type="button"
+          :disabled="openTabs.length === 0"
+          @click="closeAllTabs"
+        >
+          关闭所有
         </button>
       </div>
     </div>
@@ -1239,7 +1655,7 @@ watch(activeTabId, (next) => {
 
     <div
       class="flex-1 h-0 min-h-0"
-      :class="activeTabId === 'preview' ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
+      :class="activeResourceTab ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
     >
       <div v-if="activeTabId === 'dashboard'" class="mx-auto max-w-5xl space-y-4">
         <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
@@ -2271,34 +2687,45 @@ watch(activeTabId, (next) => {
         </template>
       </div>
 
-      <div v-else-if="activeTabId === 'preview'" class="h-full min-h-0 w-full">
+      <div v-else-if="activeResourceTab" class="h-full min-h-0 w-full">
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
           <div class="bg-slate-50 flex-1 min-h-0">
-            <template v-if="normalizedPreviewMode === 'markdown'">
+            <template v-if="activePreviewMode === 'markdown'">
               <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
                 <div class="text-xs text-slate-600">
-                  协作文档
+                  {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
                 <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
                   {{ collabConnectionText }}
                 </div>
               </div>
-              <div class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
-                <textarea
-                  :value="collabMarkdownValue"
-                  class="text-sm text-slate-700 leading-6 px-4 py-3 outline-none border-0 bg-white h-full min-h-0 w-full resize-none"
-                  placeholder="在这里输入协作文档内容..."
-                  @input="onCollabMarkdownInput"
-                />
+              <div class="grid grid-cols-1 h-full xl:grid-cols-[minmax(0,1fr),minmax(0,1fr),220px]">
+                <div class="border-b border-slate-200 bg-white xl:border-b-0 xl:border-r">
+                  <div class="text-[11px] text-slate-500 px-4 py-2 border-b border-slate-100 bg-slate-50">
+                    Markdown 编辑区
+                  </div>
+                  <textarea
+                    :value="collabMarkdownValue"
+                    class="workspace-markdown-editor__textarea text-sm text-slate-700 leading-6 px-4 py-3 outline-none border-0 bg-white w-full resize-none"
+                    placeholder="在这里输入协作文档内容..."
+                    @input="onCollabMarkdownInput"
+                  />
+                </div>
+                <div class="workspace-markdown-preview border-b border-slate-200 bg-slate-50 xl:border-b-0 xl:border-r">
+                  <div class="text-[11px] text-slate-500 px-4 py-2 border-b border-slate-100 bg-white">
+                    Markdown 渲染预览
+                  </div>
+                  <div class="workspace-markdown-preview__body" v-html="renderedCollabMarkdown" />
+                </div>
                 <CollabPresencePanel :members="collabPresenceMembers" />
               </div>
             </template>
 
-            <template v-else-if="normalizedPreviewMode === 'draw'">
+            <template v-else-if="activePreviewMode === 'draw'">
               <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
                 <div class="text-xs text-slate-600">
-                  无边画布
+                  {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
                 <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
@@ -2308,9 +2735,10 @@ watch(activeTabId, (next) => {
               <div class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
                 <div class="flex flex-col h-full">
                   <WorkspaceTldrawCanvas
+                    :key="props.previewResourceId || activeResourceTab.id"
                     class="h-full min-h-0 w-full"
                     :model-value="collabDrawValue"
-                    :persistence-key="`workspace-collab-${previewResourceTitle || 'whiteboard'}`"
+                    :persistence-key="`workspace-collab-${props.previewResourceId || activeResourceTab.id}`"
                     :readonly="false"
                     @update:model-value="onCollabDrawModelUpdate"
                   />
@@ -2553,3 +2981,155 @@ watch(activeTabId, (next) => {
     </a-modal>
   </section>
 </template>
+
+<style scoped>
+.workspace-tab-context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 168px;
+  overflow: hidden;
+  border: 1px solid #d9e1ef;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+}
+
+.workspace-tab-context-menu__item {
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: #334155;
+  font-size: 12px;
+  text-align: left;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.workspace-tab-context-menu__item:hover:enabled {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.workspace-tab-context-menu__item:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.workspace-tab-context-menu__item--danger {
+  color: #dc2626;
+}
+
+.workspace-tab-context-menu__item--danger:hover:enabled {
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.workspace-markdown-preview {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-markdown-editor__textarea {
+  height: calc(100% - 37px);
+  min-height: 280px;
+}
+
+.workspace-markdown-preview__body {
+  height: calc(100% - 37px);
+  min-height: 280px;
+  overflow: auto;
+  padding: 16px;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.workspace-markdown-preview__body :deep(h1),
+.workspace-markdown-preview__body :deep(h2),
+.workspace-markdown-preview__body :deep(h3),
+.workspace-markdown-preview__body :deep(h4),
+.workspace-markdown-preview__body :deep(h5),
+.workspace-markdown-preview__body :deep(h6) {
+  margin: 0 0 12px;
+  color: #0f172a;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.workspace-markdown-preview__body :deep(h1) {
+  font-size: 28px;
+}
+
+.workspace-markdown-preview__body :deep(h2) {
+  font-size: 24px;
+}
+
+.workspace-markdown-preview__body :deep(h3) {
+  font-size: 20px;
+}
+
+.workspace-markdown-preview__body :deep(p),
+.workspace-markdown-preview__body :deep(ul),
+.workspace-markdown-preview__body :deep(ol),
+.workspace-markdown-preview__body :deep(blockquote),
+.workspace-markdown-preview__body :deep(pre) {
+  margin: 0 0 14px;
+}
+
+.workspace-markdown-preview__body :deep(ul),
+.workspace-markdown-preview__body :deep(ol) {
+  padding-left: 20px;
+}
+
+.workspace-markdown-preview__body :deep(li + li) {
+  margin-top: 6px;
+}
+
+.workspace-markdown-preview__body :deep(blockquote) {
+  padding: 10px 14px;
+  border-left: 4px solid #93c5fd;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.workspace-markdown-preview__body :deep(pre) {
+  overflow: auto;
+  padding: 14px;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.workspace-markdown-preview__body :deep(code) {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 12px;
+  font-family: 'SFMono-Regular', 'Consolas', monospace;
+}
+
+.workspace-markdown-preview__body :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.workspace-markdown-preview__body :deep(a) {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.workspace-markdown-preview__body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.workspace-markdown-preview__body :deep(hr) {
+  margin: 20px 0;
+  border: 0;
+  border-top: 1px solid #cbd5e1;
+}
+</style>
