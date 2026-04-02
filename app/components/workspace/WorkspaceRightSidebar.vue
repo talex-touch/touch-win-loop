@@ -85,6 +85,22 @@ const pendingChangeRequests = computed(() => {
   return props.changeRequests.filter(item => item.status === 'pending')
 })
 
+const aiRunning = computed(() => {
+  return props.chatLoading
+    || (props.aiMode === 'auto_optimize' && props.changeRequestsLoading)
+    || (props.aiMode === 'issue_discovery' && props.issueLoading)
+})
+
+const aiRunningMarqueeText = computed(() => {
+  if (props.aiMode === 'auto_optimize')
+    return 'AI 正在生成优化提案，请稍候同步审批卡片'
+  if (props.aiMode === 'issue_discovery')
+    return 'AI 正在扫描问题与证据链，请稍候查看寻疑结果'
+  if (props.aiMode === 'defense')
+    return 'AI 正在模拟评委追问，请稍候生成答辩轮次'
+  return 'AI 正在分析上下文、资料与问题，请稍候'
+})
+
 function isChangeActing(changeId: string): boolean {
   return props.changeActingIds.includes(changeId)
 }
@@ -374,6 +390,13 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
         </div>
 
         <div class="workspace-chat-composer mt-auto">
+          <div v-if="aiRunning" class="workspace-ai-marquee" aria-live="polite">
+            <div class="workspace-ai-marquee__track">
+              <span>{{ aiRunningMarqueeText }}</span>
+              <span>{{ aiRunningMarqueeText }}</span>
+            </div>
+          </div>
+
           <div class="relative">
             <textarea
               :value="chatInput"
@@ -435,6 +458,39 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, #ffffff 22px);
+}
+
+.workspace-ai-marquee {
+  margin-bottom: 10px;
+  overflow: hidden;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #eff6ff 0%, #eef2ff 100%);
+  color: #1d4ed8;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workspace-ai-marquee__track {
+  display: inline-flex;
+  min-width: 200%;
+  gap: 48px;
+  padding: 7px 0;
+  animation: workspace-ai-marquee 12s linear infinite;
+}
+
+.workspace-ai-marquee__track span {
+  padding-left: 18px;
+  font-weight: 600;
+}
+
+@keyframes workspace-ai-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
 }
 
 .workspace-mode-select {
