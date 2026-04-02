@@ -1,5 +1,17 @@
 <script setup lang="ts">
 import type { ApiResponse, AuthMeResult, Contest, Project, WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { TeamProjectCardItem } from '~/composables/team-ui'
+import {
+  buildContestNameMap,
+  buildTeamProjectCard,
+  normalizeQueryValue,
+  resolveDefaultTeamId,
+  resolveProjectTeamId,
+  resolveWorkspaceOptions,
+  shouldOpenCreateDialog,
+  teamDetailPath,
+  teamProjectPath,
+} from '~/composables/team-ui'
 import { readActiveWorkspacePreference, writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 definePageMeta({
@@ -14,62 +26,6 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
-
-function normalizeQueryValue(value: unknown): string {
-  if (Array.isArray(value))
-    return String(value[0] || '').trim()
-  return String(value || '').trim()
-}
-
-function teamDetailPath(teamId: string): string {
-  return `/team/${teamId}`
-}
-
-function teamProjectPath(teamId: string, projectId: string): string {
-  return `/team/${teamId}/project/${projectId}`
-}
-
-function resolveWorkspaceOptions(auth: AuthMeResult): WorkspaceWithQuota[] {
-  if (Array.isArray(auth.teams) && auth.teams.length > 0) {
-    return auth.teams.map(item => ({
-      workspace: item.team,
-      quota: item.quota,
-    }))
-  }
-  return auth.workspaces
-}
-
-function resolveDefaultTeamId(auth: AuthMeResult, preferredTeamId: string): string {
-  const options = resolveWorkspaceOptions(auth)
-  const preferred = String(preferredTeamId || '').trim()
-  if (preferred && options.some(item => item.workspace.id === preferred))
-    return preferred
-
-  const firstTeam = options.find(item => item.workspace.type === 'team')
-  if (firstTeam)
-    return firstTeam.workspace.id
-
-  const personal = options.find(item => item.workspace.type === 'personal' && item.workspace.ownerUserId === auth.user.id)
-  return personal?.workspace.id || options[0]?.workspace.id || ''
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()))
-    return value || '-'
-
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hour = String(date.getHours()).padStart(2, '0')
-  const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${year}-${month}-${day} ${hour}:${minute}`
-}
-
-function shouldOpenCreateDialog(value: unknown): boolean {
-  const text = normalizeQueryValue(value).toLowerCase()
-  return text === '1' || text === 'true' || text === 'yes'
-}
 
 const loading = ref(false)
 const errorText = ref('')
@@ -89,8 +45,6 @@ const createForm = reactive({
 })
 
 const teamOptions = computed<WorkspaceWithQuota[]>(() => {
-  if (!me.value)
-    return []
   return resolveWorkspaceOptions(me.value)
 })
 
@@ -101,47 +55,24 @@ const teamMetaMap = computed(() => {
   return map
 })
 
-const contestNameMap = computed(() => {
-  const map = new Map<string, string>()
-  for (const item of contests.value)
-    map.set(item.id, item.name)
-  return map
-})
+const contestNameMap = computed(() => buildContestNameMap(contests.value))
 
-const enrichedProjects = computed(() => {
+const projectCards = computed<TeamProjectCardItem[]>(() => {
   return projects.value
-    .filter(item => teamMetaMap.value.has(item.teamId))
-    .map((item) => {
-      const workspace = teamMetaMap.value.get(item.teamId)
-      const contestIds = Array.isArray(item.contestIds) && item.contestIds.length > 0
-        ? item.contestIds
-        : item.contestId
-          ? [item.contestId]
-          : []
-      const contestNames = contestIds.map(contestId => contestNameMap.value.get(contestId) || contestId)
-
-      return {
-        ...item,
-        teamName: workspace?.workspace.name || item.teamId,
-        teamType: workspace?.workspace.type || 'team',
-        contestNames,
-      }
-    })
+    .filter(item => teamMetaMap.value.has(resolveProjectTeamId(item)))
+    .map(item => buildTeamProjectCard(item, contestNameMap.value, teamMetaMap.value.get(resolveProjectTeamId(item))))
 })
 
-const summaryText = computed(() => `共 ${enrichedProjects.value.length} 个可见项目`)
+const summaryText = computed(() => `共 ${projectCards.value.length} 个可见项目`)
 
 function pickPreferredTeamId(): string {
-  if (!me.value)
-    return ''
-
   const routePreferredTeamId = normalizeQueryValue(route.query.teamId || route.query.workspaceId)
   const storedPreferredTeamId = readActiveWorkspacePreference()
   return resolveDefaultTeamId(me.value, routePreferredTeamId || storedPreferredTeamId)
 }
 
-function openTeamProject(project: Project) {
-  const teamId = String(project.teamId || project.workspaceId || '').trim()
+function openTeamProject(project: TeamProjectCardItem) {
+  const teamId = project.teamId
   const projectId = String(project.id || '').trim()
   if (!teamId || !projectId)
     return
@@ -288,206 +219,43 @@ watch(() => createForm.teamId, (value) => {
 
 <template>
   <div class="space-y-6">
-    <section class="p-6 border border-slate-200 rounded-2xl bg-white">
-      <div class="flex flex-wrap gap-3 items-center justify-between">
-        <div>
-          <h2 class="text-2xl text-slate-900 font-bold">
-            项目工作台
-          </h2>
-          <p class="text-sm text-slate-500 mt-1">
-            先查看项目列表，再进入对应 Team 项目工作区继续分析与协作。
-          </p>
-        </div>
+    <TeamProjectOverview
+      title="项目工作台"
+      description="先查看项目列表，再进入对应 Team 项目工作区继续分析与协作。"
+      :summary-text="summaryText"
+      :action-disabled="!teamOptions.length"
+      :notice-text="noticeText"
+      :loading="loading"
+      :error-text="errorText"
+      empty-title="暂无可见项目"
+      empty-description="点击下方按钮创建你的第一个项目。"
+      :projects="projectCards"
+      show-team-meta
+      loading-key-prefix="workspace-project-skeleton"
+      @action="openCreateDialog"
+      @retry="loadTeamList"
+      @open-project="openTeamProject"
+    />
 
-        <button
-          class="text-sm text-white font-semibold px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          :disabled="!teamOptions.length"
-          @click="openCreateDialog"
-        >
-          新建项目
-        </button>
-      </div>
-
-      <p class="text-xs text-slate-500 mt-4">
-        {{ summaryText }}
-      </p>
-    </section>
-
-    <section v-if="noticeText" class="text-sm text-amber-700 p-4 border border-amber-200 rounded-xl bg-amber-50">
-      {{ noticeText }}
-    </section>
-
-    <section v-if="loading" class="gap-4 grid grid-cols-1 xl:grid-cols-2">
-      <div
-        v-for="index in 6"
-        :key="`workspace-project-skeleton-${index}`"
-        class="p-5 border border-slate-200 rounded-xl bg-white animate-pulse"
-      >
-        <div class="rounded bg-slate-200 h-5 w-1/2" />
-        <div class="mt-3 rounded bg-slate-100 h-4 w-2/3" />
-        <div class="mt-2 rounded bg-slate-100 h-4 w-1/3" />
-      </div>
-    </section>
-
-    <section v-else-if="errorText" class="p-5 border border-rose-200 rounded-xl bg-rose-50">
-      <p class="text-sm text-rose-700">
-        {{ errorText }}
-      </p>
-      <button class="text-sm text-rose-700 font-semibold mt-3 px-3 py-1.5 border border-rose-300 rounded hover:bg-rose-100" @click="loadTeamList">
-        重新加载
-      </button>
-    </section>
-
-    <section v-else-if="enrichedProjects.length === 0" class="p-8 text-center border border-slate-300 rounded-2xl border-dashed bg-white">
-      <h3 class="text-lg text-slate-900 font-semibold">
-        暂无可见项目
-      </h3>
-      <p class="text-sm text-slate-500 mt-2">
-        点击下方按钮创建你的第一个项目。
-      </p>
-      <button
-        class="text-sm text-white font-semibold mt-4 px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-        :disabled="!teamOptions.length"
-        @click="openCreateDialog"
-      >
-        新建项目
-      </button>
-    </section>
-
-    <section v-else class="gap-4 grid grid-cols-1 xl:grid-cols-2">
-      <button
-        v-for="project in enrichedProjects"
-        :key="project.id"
-        class="p-5 text-left border border-slate-200 rounded-xl bg-white transition-all hover:border-blue-200 hover:shadow-sm"
-        type="button"
-        @click="openTeamProject(project)"
-      >
-        <div class="flex gap-2 items-center justify-between">
-          <h3 class="text-base text-slate-900 font-semibold pr-3 truncate">
-            {{ project.title }}
-          </h3>
-          <span class="text-[10px] text-slate-600 font-semibold px-2 py-1 rounded-full bg-slate-100 shrink-0">
-            {{ project.status }}
-          </span>
-        </div>
-
-        <p class="text-xs text-slate-600 mt-3 flex flex-wrap gap-2 items-center">
-          <span class="text-blue-700 font-semibold px-2 py-1 rounded bg-blue-50">
-            {{ project.teamName }}
-          </span>
-          <span class="text-slate-400">{{ project.teamType }}</span>
-          <span class="text-slate-400">source={{ project.source }}</span>
-          <span v-if="project.contestNames.length > 0" class="text-slate-400">
-            关联竞赛 {{ project.contestNames.length }} 个
-          </span>
-        </p>
-
-        <p class="text-xs text-slate-500 mt-3 truncate">
-          简介：{{ project.summary || project.problemStatement || '待补充' }}
-        </p>
-
-        <p v-if="project.contestNames.length > 0" class="text-xs text-slate-500 mt-2 truncate">
-          竞赛：{{ project.contestNames.join(' / ') }}
-        </p>
-
-        <p class="text-xs text-slate-500 mt-2">
-          最近更新：{{ formatDateTime(project.updatedAt) }}
-        </p>
-      </button>
-    </section>
-    <Teleport to="body">
-      <div
-        v-if="createDialogVisible"
-        class="p-4 bg-black/30 flex items-center inset-0 justify-center fixed z-50"
-        @click.self="closeCreateDialog"
-      >
-        <div class="p-5 border border-slate-200 rounded-2xl bg-white max-w-lg w-full shadow-xl">
-          <div class="flex items-center justify-between">
-            <h3 class="text-base text-slate-900 font-semibold">
-              新建项目
-            </h3>
-            <button
-              class="text-slate-500 rounded flex h-7 w-7 items-center justify-center hover:bg-slate-100"
-              :disabled="creatingProject"
-              @click="closeCreateDialog"
-            >
-              <span class="material-symbols-outlined text-[18px]">close</span>
-            </button>
-          </div>
-
-          <div class="mt-4 space-y-4">
-            <label class="block">
-              <span class="text-xs text-slate-600 font-medium">所属 Team</span>
-              <select
-                v-model="createForm.teamId"
-                class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
-              >
-                <option value="" disabled>
-                  请选择 Team
-                </option>
-                <option v-for="item in teamOptions" :key="item.workspace.id" :value="item.workspace.id">
-                  {{ item.workspace.name }}（{{ item.workspace.type }}）
-                </option>
-              </select>
-            </label>
-
-            <label class="block">
-              <span class="text-xs text-slate-600 font-medium">项目名称</span>
-              <input
-                v-model="createForm.title"
-                class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
-                placeholder="例如：AI 校园服务助手"
-                maxlength="120"
-                type="text"
-              >
-            </label>
-
-            <label class="block">
-              <span class="text-xs text-slate-600 font-medium">项目简介</span>
-              <textarea
-                v-model="createForm.summary"
-                class="text-sm mt-1 p-3 border border-slate-300 rounded-lg bg-white min-h-28 w-full resize-y focus:outline-none focus:border-blue-500"
-                placeholder="简要描述项目目标、核心价值与预期成果。"
-                maxlength="600"
-              />
-            </label>
-
-            <label class="block">
-              <span class="text-xs text-slate-600 font-medium">关联竞赛（可多选）</span>
-              <select
-                v-model="createForm.contestIds"
-                class="text-sm mt-1 p-2 border border-slate-300 rounded-lg bg-white min-h-28 w-full focus:outline-none focus:border-blue-500"
-                multiple
-              >
-                <option v-for="item in contests" :key="item.id" :value="item.id">
-                  {{ item.name }}
-                </option>
-              </select>
-            </label>
-
-            <p v-if="createErrorText" class="text-xs text-rose-600">
-              {{ createErrorText }}
-            </p>
-          </div>
-
-          <div class="mt-5 flex gap-2 items-center justify-end">
-            <button
-              class="text-sm text-slate-600 font-medium px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50"
-              :disabled="creatingProject"
-              @click="closeCreateDialog"
-            >
-              取消
-            </button>
-            <button
-              class="text-sm text-white font-medium px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-60 disabled:cursor-not-allowed"
-              :disabled="creatingProject"
-              @click="submitQuickCreate"
-            >
-              {{ creatingProject ? '创建中...' : '创建并进入工作台' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <TeamCreateProjectDialog
+      :visible="createDialogVisible"
+      dialog-title="新建项目"
+      show-team-select
+      :team-options="teamOptions"
+      :team-id="createForm.teamId"
+      :project-title="createForm.title"
+      :summary="createForm.summary"
+      :contest-ids="createForm.contestIds"
+      :contests="contests"
+      :error-text="createErrorText"
+      :submitting="creatingProject"
+      submit-text="创建并进入工作台"
+      @close="closeCreateDialog"
+      @submit="submitQuickCreate"
+      @update:team-id="createForm.teamId = $event"
+      @update:project-title="createForm.title = $event"
+      @update:summary="createForm.summary = $event"
+      @update:contest-ids="createForm.contestIds = $event"
+    />
   </div>
 </template>
