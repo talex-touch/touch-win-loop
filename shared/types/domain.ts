@@ -418,6 +418,7 @@ export interface Invitation {
   id: string
   teamId: string
   workspaceId?: string
+  projectId?: string | null
   role: WorkspaceMemberRole
   inviteeUsername: string | null
   expiresAt: string
@@ -440,6 +441,7 @@ export interface WorkspaceMemberSummary {
 export interface WorkspaceInvitationSummary extends Invitation {
   invitedByUserId: string
   invitedByUsername: string
+  projectTitle?: string | null
   isExpired: boolean
 }
 
@@ -474,6 +476,11 @@ export interface ProjectPayload {
   summary?: string
 }
 
+export interface ProjectSeatQuotaSummary {
+  seatLimit: number
+  seatUsed: number
+}
+
 export interface Project extends ProjectPayload {
   id: string
   teamId: string
@@ -485,6 +492,7 @@ export interface Project extends ProjectPayload {
   status: ProjectStatus
   collegeBindings: ProjectCollegeBinding[]
   advisorBindings: ProjectAdvisorBinding[]
+  projectSeatQuota?: ProjectSeatQuotaSummary | null
   createdAt: string
   updatedAt: string
 }

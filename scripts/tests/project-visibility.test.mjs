@@ -5,6 +5,7 @@ import { it } from 'vitest'
 
 const TARGET_FILE = resolve(process.cwd(), 'server/utils/platform-store.ts')
 const ACCESS_TARGET_FILE = resolve(process.cwd(), 'server/utils/project-access-store.ts')
+const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
 
 it('listVisibleProjects 非平台管理员查询必须包含 workspace 可见性门槛', async () => {
   const source = await readFile(TARGET_FILE, 'utf8')
@@ -77,5 +78,31 @@ it('createProject creator 与 owner 不同时自动补齐 creator 项目成员',
     source,
     /await ensureProjectOwnerMember\(db, projectId, input\.ownerUserId\)\s+if \(creatorIsDifferentOwner\)\s+await ensureProjectManagerMember\(db, projectId, input\.creatorUserId\)/,
     'createProject 缺少 creator 自动入组逻辑，可能导致创建者看不见自己创建的项目',
+  )
+})
+
+it('项目列表返回项目席位摘要，避免前端逐项目补请求', async () => {
+  const source = await readFile(TARGET_FILE, 'utf8')
+  const domainSource = await readFile(DOMAIN_TYPES_FILE, 'utf8')
+
+  assert.match(
+    source,
+    /const \[bindings, projectSeatQuotaMap\] = await Promise\.all\(\[\s+loadProjectBindingsByIds\(db, projectIds\),\s+listProjectSeatQuotaSummaryByProjectIds\(db, projectIds\),\s+\]\)/,
+    'loadProjectsFromRows 未批量加载项目席位摘要，可能导致前端 N+1 请求',
+  )
+  assert.match(
+    source,
+    /projectSeatQuotaMap\.get\(row\.id\) \|\| null/,
+    'mapProject 未写入 projectSeatQuota 摘要，工作台项目卡无法展示席位信息',
+  )
+  assert.match(
+    domainSource,
+    /export interface ProjectSeatQuotaSummary \{\s+seatLimit: number\s+seatUsed: number\s+\}/,
+    '共享类型缺少 ProjectSeatQuotaSummary 定义',
+  )
+  assert.match(
+    domainSource,
+    /projectSeatQuota\?: ProjectSeatQuotaSummary \| null/,
+    'Project 类型未暴露 projectSeatQuota 摘要字段',
   )
 })

@@ -13,6 +13,7 @@ import type {
   ProjectMemberSummary,
   ProjectPayload,
   ProjectSeatQuota,
+  ProjectSeatQuotaSummary,
   ProjectSettingsDraft,
   ProjectSettingsDraftPayload,
   ProjectSettingsSnapshot,
@@ -142,6 +143,7 @@ interface CreateTeamWorkspaceInput {
 
 interface CreateInvitationInput {
   workspaceId: string
+  projectId?: string | null
   invitedByUserId: string
   tokenHash: string
   inviteeUsername?: string | null
@@ -425,6 +427,7 @@ function mapProject(
   row: ProjectRow,
   collegeBindings: ProjectCollegeBinding[],
   advisorBindings: ProjectAdvisorBinding[],
+  projectSeatQuota?: ProjectSeatQuotaSummary | null,
 ): Project {
   const contestIds = normalizeProjectContestIds(row.contest_id, row.contest_ids)
   return {
@@ -449,8 +452,16 @@ function mapProject(
     status: row.status,
     collegeBindings,
     advisorBindings,
+    projectSeatQuota: projectSeatQuota || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function mapProjectSeatQuotaSummary(row: ProjectSeatQuotaRow): ProjectSeatQuotaSummary {
+  return {
+    seatLimit: Math.max(1, Number(row.seat_limit || 1)),
+    seatUsed: Math.max(0, Number(row.seat_used || 0)),
   }
 }
 
@@ -1845,13 +1856,40 @@ export async function batchCreateProjects(
 
 async function loadProjectsFromRows(db: Queryable, rows: ProjectRow[]): Promise<Project[]> {
   const projectIds = rows.map(row => row.id)
-  const { collegeMap, advisorMap } = await loadProjectBindingsByIds(db, projectIds)
+  const [bindings, projectSeatQuotaMap] = await Promise.all([
+    loadProjectBindingsByIds(db, projectIds),
+    listProjectSeatQuotaSummaryByProjectIds(db, projectIds),
+  ])
+  const { collegeMap, advisorMap } = bindings
 
   return rows.map(row => mapProject(
     row,
     collegeMap.get(row.id) || [],
     advisorMap.get(row.id) || [],
+    projectSeatQuotaMap.get(row.id) || null,
   ))
+}
+
+async function listProjectSeatQuotaSummaryByProjectIds(
+  db: Queryable,
+  projectIds: string[],
+): Promise<Map<string, ProjectSeatQuotaSummary>> {
+  if (projectIds.length === 0)
+    return new Map<string, ProjectSeatQuotaSummary>()
+
+  const result = await db.query<ProjectSeatQuotaRow>(
+    `SELECT
+      project_id,
+      workspace_id,
+      seat_limit,
+      seat_used,
+      updated_at::TEXT
+     FROM project_seat_quotas
+     WHERE project_id = ANY($1::TEXT[])`,
+    [projectIds],
+  )
+
+  return new Map(result.rows.map(row => [row.project_id, mapProjectSeatQuotaSummary(row)]))
 }
 
 export async function listVisibleProjects(
