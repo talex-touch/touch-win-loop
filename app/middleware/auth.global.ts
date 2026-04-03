@@ -16,9 +16,9 @@ const PROTECTED_PATH_PREFIXES = [
 ]
 
 const RETIRED_ROUTE_REDIRECT_MAP: Record<string, string> = {
-  '/topics': '/team',
-  '/reviews': '/team',
-  '/defense': '/team',
+  '/topics': '/workspace',
+  '/reviews': '/workspace',
+  '/defense': '/workspace',
 }
 
 function normalizePath(path: string): string {

@@ -11,9 +11,9 @@ const props = withDefaults(defineProps<{
   showQuota?: boolean
 }>(), {
   mode: 'link',
-  label: 'Team',
+  label: '工作空间',
   icon: 'workspaces',
-  to: '/team',
+  to: '/workspace',
   modelValue: '',
   workspaceOptions: () => [],
   showQuota: true,
@@ -33,8 +33,8 @@ function onSelectChange(event: Event) {
 
 function workspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type']) {
   if (type === 'personal')
-    return 'Personal Team'
-  return 'Business Team'
+    return '个人空间'
+  return '团队空间'
 }
 </script>
 
@@ -59,7 +59,7 @@ function workspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type']) {
       @change="onSelectChange"
     >
       <option v-if="!props.workspaceOptions?.length" value="" disabled>
-        暂无 Team
+        暂无工作空间
       </option>
       <option v-for="item in props.workspaceOptions" :key="item.workspace.id" :value="item.workspace.id">
         {{ item.workspace.name }}（{{ workspaceTypeLabel(item.workspace.type) }}）

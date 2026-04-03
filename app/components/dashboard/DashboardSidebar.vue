@@ -49,7 +49,7 @@ function isMenuItemActive(item: DashboardMenuItem): boolean {
 
 const routeTeamId = computed(() => {
   const normalizedPath = route.path.replace(/\/+$/, '')
-  const matched = normalizedPath.match(/^\/team\/([^/]+)(?:\/project\/[^/]+)?$/)
+  const matched = normalizedPath.match(/^\/(?:team|workspace)\/([^/]+)(?:\/project\/[^/]+)?$/)
   return matched?.[1] || ''
 })
 
@@ -296,7 +296,7 @@ async function onWorkspaceSwitch(workspaceId: string) {
   if (routeTeamId.value === targetId)
     return
 
-  await navigateTo(`/team/${targetId}`)
+  await navigateTo(`/workspace/${targetId}`)
 }
 </script>
 
@@ -355,9 +355,9 @@ async function onWorkspaceSwitch(workspaceId: string) {
       <WorkspaceSwitchEntry
         v-else
         mode="link"
-        label="Team"
+        label="工作空间"
         icon="workspaces"
-        to="/team"
+        to="/workspace"
       />
 
       <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">

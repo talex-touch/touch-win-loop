@@ -20,7 +20,7 @@ const badgeClassMap: Record<DashboardInsight['tone'], string> = {
         <span class="material-symbols-outlined text-blue-700">auto_awesome</span>
         AI 智能洞察
       </h3>
-      <NuxtLink to="/team" class="text-sm text-blue-700 font-medium hover:underline">
+      <NuxtLink to="/workspace" class="text-sm text-blue-700 font-medium hover:underline">
         查看全部
       </NuxtLink>
     </div>

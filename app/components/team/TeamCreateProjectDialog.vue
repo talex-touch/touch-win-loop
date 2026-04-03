@@ -68,14 +68,14 @@ function updateContestIds(event: Event) {
 
         <div class="mt-4 space-y-4">
           <label v-if="showTeamSelect" class="block">
-            <span class="text-xs text-slate-600 font-medium">所属 Team</span>
+            <span class="text-xs text-slate-600 font-medium">所属工作空间</span>
             <select
               :value="teamId"
               class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
               @change="emit('update:teamId', String(($event.target as HTMLSelectElement).value || '').trim())"
             >
               <option value="" disabled>
-                请选择 Team
+                请选择工作空间
               </option>
               <option v-for="item in teamOptions" :key="item.workspace.id" :value="item.workspace.id">
                 {{ item.workspace.name }}（{{ item.workspace.type }}）

@@ -11,6 +11,9 @@ export interface TeamProjectCardItem {
   teamName?: string
   teamType?: string
   source?: ProjectSource
+  projectSeatUsed?: number
+  projectSeatLimit?: number
+  projectSeatRemaining?: number
 }
 
 export function normalizeQueryValue(value: unknown): string {
@@ -30,12 +33,24 @@ export function shouldOpenCreateDialog(value: unknown): boolean {
   return text === '1' || text === 'true' || text === 'yes'
 }
 
+export function workspaceDashboardPath(): string {
+  return '/workspace'
+}
+
+export function workspaceDetailPath(workspaceId: string): string {
+  return `/workspace/${workspaceId}`
+}
+
+export function workspaceProjectPath(workspaceId: string, projectId: string): string {
+  return `/workspace/${workspaceId}/project/${projectId}`
+}
+
 export function teamDetailPath(teamId: string): string {
-  return `/team/${teamId}`
+  return workspaceDetailPath(teamId)
 }
 
 export function teamProjectPath(teamId: string, projectId: string): string {
-  return `/team/${teamId}/project/${projectId}`
+  return workspaceProjectPath(teamId, projectId)
 }
 
 export function resolveWorkspaceOptions(auth: Pick<AuthMeResult, 'teams' | 'workspaces'> | null): WorkspaceWithQuota[] {
@@ -86,6 +101,48 @@ export function formatDateTime(value: string): string {
   return `${year}-${month}-${day} ${hour}:${minute}`
 }
 
+export function formatWorkspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type'] | '' | undefined): string {
+  if (type === 'personal')
+    return '个人空间'
+  if (type === 'team')
+    return '团队空间'
+  return '工作空间'
+}
+
+export function formatPlanLabel(planCode: string | null | undefined, planTier: string | null | undefined): string {
+  const normalizedCode = String(planCode || '').trim()
+  if (normalizedCode)
+    return normalizedCode
+
+  if (planTier === 'personal_team')
+    return 'personal_team'
+  if (planTier === 'business_team')
+    return 'business_team'
+  return '未配置'
+}
+
+export function calculateRemainingProjectSlots(input: {
+  projectsUnlimited?: boolean | null
+  includedProjects?: number | null
+  extraProjectSlots?: number | null
+  projectCount?: number | null
+}): number | null {
+  if (input.projectsUnlimited)
+    return null
+  if (
+    input.includedProjects === undefined
+    && input.extraProjectSlots === undefined
+    && input.projectCount === undefined
+  ) {
+    return null
+  }
+
+  const includedProjects = Math.max(0, Number(input.includedProjects || 0))
+  const extraProjectSlots = Math.max(0, Number(input.extraProjectSlots || 0))
+  const projectCount = Math.max(0, Number(input.projectCount || 0))
+  return Math.max(0, includedProjects + extraProjectSlots - projectCount)
+}
+
 export function buildContestNameMap(contests: Contest[]): Map<string, string> {
   const map = new Map<string, string>()
   for (const item of contests)
@@ -108,6 +165,9 @@ export function buildTeamProjectCard(
   const contestNames = resolveProjectContestIds(project)
     .map(contestId => contestNameMap.get(contestId) || contestId)
 
+  const seatLimit = Math.max(0, Number(project.projectSeatQuota?.seatLimit || 0))
+  const seatUsed = Math.max(0, Number(project.projectSeatQuota?.seatUsed || 0))
+
   return {
     id: project.id,
     teamId,
@@ -119,5 +179,8 @@ export function buildTeamProjectCard(
     teamName: workspace?.workspace.name || teamId || undefined,
     teamType: workspace?.workspace.type || undefined,
     source: project.source,
+    projectSeatUsed: seatLimit > 0 ? seatUsed : undefined,
+    projectSeatLimit: seatLimit > 0 ? seatLimit : undefined,
+    projectSeatRemaining: seatLimit > 0 ? Math.max(0, seatLimit - seatUsed) : undefined,
   }
 }

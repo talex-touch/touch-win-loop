@@ -70,7 +70,7 @@ function switchProject(item: WorkspaceQuickSwitchProject) {
 
 function goWorkspaceList() {
   closeQuickSwitch()
-  navigateTo('/team')
+  navigateTo('/workspace')
 }
 
 function openFinalReview() {
@@ -127,7 +127,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="goWorkspaceList"
         >
-          竞赛分析工作台
+          项目工作台
         </button>
         <span class="text-sm text-slate-300/75 leading-none font-normal mx-0.5">/</span>
 

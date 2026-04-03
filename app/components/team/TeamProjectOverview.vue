@@ -2,12 +2,15 @@
 import type { TeamProjectCardItem } from '~/composables/team-ui'
 import { formatDateTime } from '~/composables/team-ui'
 
+type WorkspaceSummaryStatTone = 'neutral' | 'warning' | 'success'
+
 const props = withDefaults(defineProps<{
   title: string
   description: string
   summaryText: string
   actionLabel?: string
   actionDisabled?: boolean
+  actionHintText?: string
   noticeText?: string
   noticeTone?: 'success' | 'warning'
   loading?: boolean
@@ -17,9 +20,15 @@ const props = withDefaults(defineProps<{
   projects?: TeamProjectCardItem[]
   showTeamMeta?: boolean
   loadingKeyPrefix?: string
+  summaryStats?: Array<{
+    label: string
+    value: string
+    tone?: WorkspaceSummaryStatTone
+  }>
 }>(), {
   actionLabel: '新建项目',
   actionDisabled: false,
+  actionHintText: '',
   noticeText: '',
   noticeTone: 'warning',
   loading: false,
@@ -28,6 +37,7 @@ const props = withDefaults(defineProps<{
   projects: () => [],
   showTeamMeta: false,
   loadingKeyPrefix: 'team-project',
+  summaryStats: () => [],
 })
 
 const emit = defineEmits<{
@@ -44,6 +54,14 @@ const noticeClass = computed(() => {
 
 function openProject(project: TeamProjectCardItem) {
   emit('openProject', project)
+}
+
+function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
+  if (tone === 'warning')
+    return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (tone === 'success')
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 </script>
 
@@ -69,9 +87,31 @@ function openProject(project: TeamProjectCardItem) {
         </button>
       </div>
 
-      <p class="text-xs text-slate-500 mt-4">
-        {{ summaryText }}
-      </p>
+      <div class="mt-4 space-y-3">
+        <p class="text-xs text-slate-500">
+          {{ summaryText }}
+        </p>
+
+        <div v-if="summaryStats.length > 0" class="gap-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+          <article
+            v-for="item in summaryStats"
+            :key="item.label"
+            class="p-4 border rounded-xl"
+            :class="summaryStatClass(item.tone)"
+          >
+            <p class="text-[11px] font-medium opacity-80">
+              {{ item.label }}
+            </p>
+            <p class="text-sm mt-2 font-semibold leading-6">
+              {{ item.value }}
+            </p>
+          </article>
+        </div>
+
+        <p v-if="actionHintText" class="text-xs text-amber-600">
+          {{ actionHintText }}
+        </p>
+      </div>
     </section>
 
     <section
@@ -156,6 +196,13 @@ function openProject(project: TeamProjectCardItem) {
 
         <p v-if="project.contestNames.length > 0" class="text-xs text-slate-500 mt-2 truncate">
           竞赛：{{ project.contestNames.join(' / ') }}
+        </p>
+
+        <p
+          v-if="project.projectSeatLimit"
+          class="text-xs text-slate-500 mt-2"
+        >
+          项目席位：{{ project.projectSeatUsed }}/{{ project.projectSeatLimit }}，剩余 {{ project.projectSeatRemaining }}
         </p>
 
         <p class="text-xs text-slate-500 mt-2">

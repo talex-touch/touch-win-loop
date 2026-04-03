@@ -42,7 +42,7 @@ export function useDashboardWorkspace() {
     { id: 'overview', label: '首页概览', icon: 'dashboard', to: '/dashboard' },
     { id: 'contests', label: '赛事总库', icon: 'trophy', to: '/contests' },
     { id: 'resources', label: '资料中心', icon: 'folder_open', to: '/resources' },
-    { id: 'team', label: '项目工作台', icon: 'construction', to: '/team' },
+    { id: 'team', label: '项目工作台', icon: 'construction', to: '/workspace' },
   ]
 
   const hotTopics: DashboardTopic[] = [
@@ -52,7 +52,7 @@ export function useDashboardWorkspace() {
   ]
 
   const quickActions: DashboardQuickAction[] = [
-    { id: 'report', label: '撰写报告', icon: 'edit_square', to: '/team?create=1' },
+    { id: 'report', label: '撰写报告', icon: 'edit_square', to: '/workspace?create=1' },
     { id: 'upload', label: '材料上传', icon: 'cloud_upload', to: '/resources' },
     { id: 'rules', label: '规则查阅', icon: 'help', to: '/contests' },
   ]

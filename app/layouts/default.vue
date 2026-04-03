@@ -13,7 +13,7 @@ const hasAdminAccess = computed(() => {
 const links = computed(() => {
   const baseLinks = [
     { to: '/dashboard', label: '首页' },
-    { to: '/team', label: '工作台' },
+    { to: '/workspace', label: '工作台' },
     { to: '/contests', label: '竞赛库' },
     { to: '/resources', label: '资料中心' },
   ]

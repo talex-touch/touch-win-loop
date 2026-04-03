@@ -58,7 +58,7 @@ onMounted(loadProject)
       <div class="text-sm font-semibold">
         项目详情
       </div>
-      <button class="dense-btn" @click="navigateTo('/team')">
+      <button class="dense-btn" @click="navigateTo('/workspace')">
         返回工作台
       </button>
     </div>
