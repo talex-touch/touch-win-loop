@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { ApiResponse, AuthMeResult } from '~~/shared/types/domain'
-import { readActiveWorkspacePreference, writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 import {
   normalizeQueryValue,
   resolveWorkspaceOptions,
@@ -8,6 +7,7 @@ import {
   workspaceDetailPath,
   workspaceProjectPath,
 } from '~/composables/team-ui'
+import { readActiveWorkspacePreference, writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 useHead({
   title: '工作空间跳转中',

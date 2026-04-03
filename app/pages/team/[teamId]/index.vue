@@ -8,7 +8,6 @@ import type {
   WorkspaceMemberRole,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import { writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 import type { TeamProjectCardItem } from '~/composables/team-ui'
 import {
   buildContestNameMap,
@@ -25,6 +24,7 @@ import {
   workspaceDetailPath,
   workspaceProjectPath,
 } from '~/composables/team-ui'
+import { writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 definePageMeta({
   layout: 'dashboard',
