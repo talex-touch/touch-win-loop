@@ -1,201 +1,100 @@
-# Touch WinLoop (Nuxt + LangChain)
+# Touch WinLoop
 
-WinLoop AI（赛帮帮）V0 骨架项目，面向“选赛 -> 建项 -> 协作 -> 交付”的一站式竞赛工作台。
+WinLoop AI（赛帮帮）当前是一套面向竞赛团队的项目工作台，核心链路是：
 
-## 特性
+`选赛 -> 建项 -> 沉淀项目资源 -> 协作梳理 -> 提交与答辩准备`
 
-- `antfu/vitesse-nuxt3` 基线，前后端同仓开发。
-- 黑白极简、高信息密度三栏 AI 工作台（`/workspace`）。
-- 账号密码登录（未注册自动注册），首个用户自动成为平台管理员。
-- `Personal + Team` 双空间，项目按空间单归属。
-- 双通道建项目：
-  - AI 聊天生成项目草案。
-  - 表单填写直接创建项目。
-- Team 维度席位与 AI 配额扣减（不含支付）。
-- 项目支持多学院/多指导老师绑定，绑定导师自动授予项目管理权限。
-- LangChain 接入：
-  - `POST /api/ai/contest-filter`
-  - `POST /api/ai/project-chat`
-- 模型失败自动重试并兜底，保证演示稳定性。
-- PostgreSQL 持久化（不再依赖 `projects.json` 本地迁移链路）。
+当前仓库已经不再只是早期骨架，而是围绕 `Workspace / Project / Resource / Collab` 这套模型持续演进。
 
-## 快速启动
+## 当前产品模型
+
+### 1. Workspace
+
+- 个人或 Team 维度的项目空间。
+- 负责成员、邀请、席位、配额与权限边界。
+
+### 2. Project
+
+- 工作推进的主对象。
+- 挂载项目设置、竞赛绑定、资料池、协作资源、AI 改动提案与问题清单。
+
+### 3. Resource
+
+- 项目内唯一一等资料对象。
+- 所有文件、协作文档、画布都统一作为 `project resource` 存储与展示。
+
+当前资源形态：
+
+| resourceKind | collabPurpose | 用户侧名称 | 说明 |
+| --- | --- | --- | --- |
+| `binary` | - | 资料预览 | 上传文件或系统资料库引用 |
+| `markdown` | `notes` | 协作文档 | 面向结构化文字协作 |
+| `draw` | `workflow` | 流程画布 | 项目唯一主流程画布 |
+| `draw` | `freeform` | 自由画布 | 非主流程用途的自由画布 |
+
+### 4. Outline
+
+- `ProjectOutline` 是派生视图，不是独立编辑对象。
+- 由项目设置和资料内容自动聚合，用于导航、浏览和结构梳理。
+
+## 当前协作约定
+
+- 左侧“流程”入口始终打开项目唯一的 `workflow` 画布。
+- 左侧资源菜单只保留：
+  - `新建协作文档`
+  - `新建自由画布`
+  - `从系统资源库导入`
+  - `从本地设备中上传`
+- 固定 `flow` tab 的用户可见名称统一为 `流程画布`。
+- `流程画布` 与资源列表中的同一条 workflow 资源指向同一个底层对象。
+
+## 当前页面入口
+
+- `/team/:teamId/project/:projectId`：项目工作区主界面
+- `/workspace/:workspaceId/project/:projectId`：工作区项目页别名入口
+- `/admin/integrations/feishu`：飞书集成中心
+
+## 开发启动
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-打开 `http://localhost:3510/workspace`。
+默认开发地址：
 
-## 环境变量
+- `http://localhost:3510`
 
-加载优先级（按运行模式）：
+## 基础环境变量
 
-```txt
-开发环境（NODE_ENV=development）：.env.local > .env.dev > .env
-生产环境（NODE_ENV=production）：.env.local > .env.prod > .env
-其他环境：.env.local > .env.prod > .env.dev > .env
-```
-
-已提供：
-
-- `.env.example`
-- `.env.dev`
-- `.env.prod`
-
-本地私有配置建议写入 `.env.local`（已加入 `.gitignore`）。
-
-### 配置来源优先级（运行时）
-
-当前采用双层配置来源：
-
-```txt
-UI Override（DB） > Env
-```
-
-- 业务运行参数支持在管理端 UI 修改，并实时覆盖 Env。
-- 基础设施参数仍固定从 Env 读取（例如 PostgreSQL / Redis / Storage / 部署脚本与 Webhook）。
-- 构建标识建议由 CI 注入：`WINLOOP_BUILD_VERSION`、`WINLOOP_BUILD_COMMIT_SHA`（用于启动通知与版本追踪）。
-
-### PostgreSQL / Redis URL 配置说明
-
-请在 `.env.local` 显式配置数据库与缓存连接 URL（含账号密码）：
+至少需要显式配置以下运行时依赖：
 
 ```txt
 WINLOOP_PG_URL=postgresql://user:password@127.0.0.1:5432/winloop
 WINLOOP_REDIS_URL=redis://:password@127.0.0.1:6379/0
-WINLOOP_CONTEST_AUTO_SEED=false
 WINLOOP_CONFIG_MASTER_KEY=your-strong-master-key
+WINLOOP_CONTEST_AUTO_SEED=false
 ```
 
-若缺失或不完整，登录及依赖连接的接口会报连接配置错误。
+补充说明：
 
-### 敏感配置加密存储
+- PostgreSQL 是当前运行时强依赖。
+- Redis 主要用于运行时配置信息与预留能力。
+- AI / 飞书等敏感配置支持加密存储。
 
-- 新增密钥：`WINLOOP_CONFIG_MASTER_KEY`（建议生产必配）。
-- AI / 飞书等敏感字段写入数据库时会使用 AES-256-GCM 加密存储。
-- 读取路径兼容历史明文；当缺少 `WINLOOP_CONFIG_MASTER_KEY` 时，不允许通过管理端执行密钥“replace”操作。
+## 相关文档
 
-### ONLYOFFICE 回源与临时访问地址
+- [工作台信息架构](./docs/workspace-information-architecture.md)
+- [协作资源模型](./docs/collab-resource-model.md)
+- [当前重构计划](./plan.md)
+- [在线编辑选型 ADR（未来能力）](./docs/online-editor-selection.md)
+- [飞书多维同步教程](./docs/feishu-bitable-sync-guide.md)
 
-- `WINLOOP_PUBLIC_BASE_URL`：应用外网基地址（推荐），例如 `https://app.example.com`（不要带 `/api`）。
-- `WINLOOP_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS`：项目资源下载/预览临时地址有效期（秒），默认 `600`。
+## 关于在线 Office 编辑
 
-说明：
+当前产品现状是：
 
-- 项目资源接口返回的 `previewUrl` 与 `sourceDownloadUrl` 为临时签名地址，到期后需要重新请求接口获取新地址。
-- 若以上外网基地址未设置，将尝试根据 `WINLOOP_API_BASE_URL` 或请求头推断；仍无法推断时会回退到本地地址（并输出告警）。
+- `binary` 资源支持上传、转换、预览。
+- `markdown/draw` 资源支持实时协作。
 
-## 赛事 seed 策略（去 mock 默认）
-
-- 默认不自动注入 catalog 赛事数据（`WINLOOP_CONTEST_AUTO_SEED=false`，也可在 `/admin/runtime-settings` 中覆盖）。
-- 若需要本地演示数据，请使用 CLI 手动执行（幂等）：
-
-```bash
-pnpm contest:seed:catalog
-```
-
-- 若需要清理 catalog 数据并重置 seed 标记：
-
-```bash
-pnpm contest:clean:catalog
-```
-
-- 查看当前 catalog seed 状态：
-
-```bash
-pnpm contest:seed:status
-```
-
-## 关键接口
-
-- `GET /api/health`
-- `POST /api/auth/login`
-- `GET /api/auth/feishu/authorize`
-- `GET /api/auth/feishu/callback`
-- `POST /api/auth/feishu/websdk-login`
-- `POST /api/auth/logout`
-- `GET /api/auth/me`
-- `GET /api/workspaces`
-- `POST /api/workspaces`
-- `POST /api/workspaces/:id/invitations`
-- `POST /api/invitations/:token/accept`
-- `GET /api/contests`
-- `GET /api/contests/:id`
-- `GET /api/resources`
-- `POST /api/ai/contest-filter`
-- `POST /api/ai/project-chat`
-- `GET /api/projects`
-- `POST /api/projects`
-- `POST /api/projects/batch`
-- `GET /api/projects/:id`
-- `PATCH /api/projects/:id/bindings`
-
-## 飞书集成（集成中心）
-
-管理入口：`/admin/integrations`（需平台权限）
-
-### 功能范围
-
-- 登录双通道：账号密码 + 飞书 OAuth / Web SDK 自动登录（仅在 `/login` 页面自动尝试一次）。
-- 管理员组同步：飞书指定组成员自动授予 `contest_admin`，脱组自动撤销。
-- 启动通知渠道：支持“每个进程首次启动”向指定飞书群发送通知（版本与 commit 可追踪）。
-- Bitable 同步：支持“同步信息 + 多个同步项”的主库化配置，覆盖 `contest / track / resource` 三类实体。
-- 多维主库化：支持来源检索/粘贴解析、`full + delta` 双执行模式、事件触发增量同步、定时兜底补偿。
-- 同步状态回填：按同步项 `writeback` 配置回写“已同步/失败/跳过”等字段，不强依赖固定列名。
-- 后处理队列：同步成功后自动入队 `embedding_upsert / search_index_refresh / entity_analysis`，并支持失败重试。
-
-### 最小配置步骤
-
-1. 在飞书开放平台创建应用，获取 `app_id`、`app_secret`。
-2. 在应用后台配置 OAuth 回调地址：`https://<your-domain>/api/auth/feishu/callback`。
-3. 在应用后台配置事件订阅回调：`https://<your-domain>/api/integrations/feishu/events`。
-4. 在本项目“集成中心”保存飞书配置（支持 secret 字段 `keep/replace/clear`）。
-5. 如需启动通知，配置目标群 `chat_id`（飞书应用需具备发消息权限且机器人已入群）。
-6. 建议 CI/CD 注入 `WINLOOP_BUILD_VERSION`、`WINLOOP_BUILD_COMMIT_SHA`（缺失时可使用集成配置兜底）。
-7. 配置管理员组 ID，执行一次“手动全量对账管理员组”。
-8. 新建“同步信息”，再新增对应的“同步项”，先 `preview` 再 `run`。
-9. 详细管理员教程见 [docs/feishu-bitable-sync-guide.md](./docs/feishu-bitable-sync-guide.md)。
-
-### Bitable 同步配置结构（摘要）
-
-- `sync`：主库级信息（`appToken` + 可选名称/URL）。
-- `source`：同步项对应的子表/视图来源信息（`tableId/viewId` + 可选名称）。
-- `mapping`：字段映射（兼容 v1，推荐 v2 layer 结构）。
-- `writeback`：回填配置（字段名映射 + success/failed/skipped 值）。
-
-### 新增管理接口（摘要）
-
-- `GET /api/admin/integrations/feishu/bitable/sources/search`
-- `POST /api/admin/integrations/feishu/bitable/sources/resolve`
-- `GET /api/admin/integrations/feishu/bitable/sources/:appToken/tables/:tableId/views`
-- `GET /api/admin/integrations/feishu/post-sync-tasks`
-- `POST /api/admin/integrations/feishu/post-sync-tasks/:id/retry`
-
-### 权限门禁
-
-- 飞书配置与管理员组对账：`role.assign`
-- Bitable 同步信息 / 同步项配置与执行：`contest.write`
-
-### 扩展更多 Integration 的建议模型
-
-- 认证绑定统一落在 `auth_identities`（`provider + provider_user_id` 唯一）。
-- 第三方配置统一走“集成中心”管理页与配置接口。
-- 外部数据映射统一采用“任务 + 运行日志 + external refs”三层结构，保证幂等与可追踪。
-
-## 目录概览
-
-- `app/pages/workspace.vue`：主工作台（筛选 + 聊天建项 + 表单建项）。
-- `app/pages/login.vue`：登录/自动注册入口。
-- `server/services/ai/*`：LangChain 链路与兜底策略。
-- `server/data/catalog.ts`：竞赛、赛道、rubric、资料 mock 数据。
-- `server/utils/db.ts`：PostgreSQL 连接与 schema 初始化。
-- `server/utils/platform-store.ts`：账号、空间、项目、邀请、配额主数据访问层。
-- `shared/types/domain.ts`：前后端共享类型定义。
-
-## 基础设施说明
-
-- PostgreSQL 为当前运行时强依赖：服务启动后会自动初始化 schema。
-- Redis 目前主要用于配置展示与预留（`/api/health` 会返回连接信息），业务核心流程暂未直接读写 Redis。
-- 若未正确配置 `WINLOOP_PG_URL`，登录、工作区、项目与管理侧接口将不可用。
+ONLYOFFICE / Office 在线编辑属于后续能力规划，不属于当前已经落地的产品能力。相关背景和选型结论已整理为 ADR，而不是现状说明文档。
