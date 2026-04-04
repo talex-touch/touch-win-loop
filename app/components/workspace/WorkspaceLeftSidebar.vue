@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  CollabPurpose,
   Contest,
   ProjectIssue,
   ProjectIssueReport,
@@ -7,7 +8,9 @@ import type {
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
   Resource,
+  ResourceCategory,
 } from '~~/shared/types/domain'
+import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
@@ -44,7 +47,17 @@ interface ShareProjectResourcePayload {
   duration: ProjectResourceShareDurationPreset
 }
 
-type ResourceSectionId = 'projectResources' | 'systemLibrary' | 'outline'
+interface WorkspaceLinkedContestResourceCategoryGroup {
+  id: string
+  label: string
+  resources: Resource[]
+}
+
+interface WorkspaceLinkedContestResourceDisplayGroup extends WorkspaceLinkedContestResourceGroup {
+  categories: WorkspaceLinkedContestResourceCategoryGroup[]
+}
+
+type ResourceSectionId = 'projectResources' | 'linkedContestResources' | 'systemLibrary' | 'outline'
 
 const props = withDefaults(defineProps<{
   naturalQuery: string
@@ -58,6 +71,8 @@ const props = withDefaults(defineProps<{
   selectedResources?: Resource[]
   recycleResources?: Resource[]
   resourceLibrary?: Resource[]
+  linkedContestResourceGroups?: WorkspaceLinkedContestResourceGroup[]
+  linkedContestBindingCount?: number
   projectOutline?: ProjectOutlineNode[]
   issueReports?: ProjectIssueReport[]
   projectIssues?: ProjectIssue[]
@@ -82,6 +97,8 @@ const props = withDefaults(defineProps<{
   selectedResources: () => [],
   recycleResources: () => [],
   resourceLibrary: () => [],
+  linkedContestResourceGroups: () => [],
+  linkedContestBindingCount: 0,
   projectOutline: () => [],
   issueReports: () => [],
   projectIssues: () => [],
@@ -135,6 +152,40 @@ const levelLabels: Record<string, string> = {
   provincial: '省赛',
   school: '校赛',
   industry: '行业赛',
+}
+
+const resourceCategoryOrder: ResourceCategory[] = [
+  'basic_info',
+  'timeline',
+  'tracks',
+  'track_details',
+  'scoring',
+  'templates',
+  'submission_examples',
+  'past_questions',
+  'awarded_works',
+  'faq',
+  'judge_guidelines',
+  'policy_notice',
+  'compliance',
+  'ai_prompts',
+]
+
+const resourceCategoryLabels: Record<ResourceCategory, string> = {
+  basic_info: '基本信息',
+  timeline: '时间轴',
+  tracks: '赛道设置',
+  scoring: '评分标准',
+  past_questions: '往届真题',
+  awarded_works: '获奖作品',
+  templates: '论文/作品模板',
+  faq: 'FAQ',
+  judge_guidelines: '评委细则',
+  track_details: '赛道详解',
+  ai_prompts: 'AI 提示词',
+  submission_examples: '材料示例',
+  policy_notice: '政策通知',
+  compliance: '合规与版权',
 }
 
 const modules: WorkspaceLeftModule[] = [
@@ -208,8 +259,10 @@ const libraryModalKeyword = ref('')
 const libraryModalVisible = ref(false)
 const projectResourceUploadInputRef = ref<HTMLInputElement | null>(null)
 const sidebarPanelRef = ref<HTMLElement | null>(null)
+const linkedCategoryExpanded = reactive<Record<string, boolean>>({})
 const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   projectResources: true,
+  linkedContestResources: true,
   systemLibrary: true,
   outline: true,
 })
@@ -231,6 +284,86 @@ const visibleLibraryResources = computed(() => {
       const context = [item.title, item.summary, item.type, item.year].join(' ').toLowerCase()
       return context.includes(keyword)
     })
+})
+function resolveResourceCategoryLabel(category: string): string {
+  const normalized = String(category || '').trim() as ResourceCategory
+  return resourceCategoryLabels[normalized] || normalized || '未分类'
+}
+
+function sortResourcesByCategory(left: Resource, right: Resource): number {
+  const leftCategory = String(left.category || '').trim() as ResourceCategory
+  const rightCategory = String(right.category || '').trim() as ResourceCategory
+  const leftOrder = resourceCategoryOrder.indexOf(leftCategory)
+  const rightOrder = resourceCategoryOrder.indexOf(rightCategory)
+  const normalizedLeftOrder = leftOrder >= 0 ? leftOrder : resourceCategoryOrder.length
+  const normalizedRightOrder = rightOrder >= 0 ? rightOrder : resourceCategoryOrder.length
+  if (normalizedLeftOrder !== normalizedRightOrder)
+    return normalizedLeftOrder - normalizedRightOrder
+
+  const leftYear = Number(left.year || 0)
+  const rightYear = Number(right.year || 0)
+  if (leftYear !== rightYear)
+    return rightYear - leftYear
+
+  return resourceDisplayTitle(left).localeCompare(resourceDisplayTitle(right), 'zh-CN')
+}
+
+function buildLinkedContestResourceCategories(resources: Resource[]): WorkspaceLinkedContestResourceCategoryGroup[] {
+  const categoryMap = new Map<string, Resource[]>()
+
+  for (const resource of [...resources].sort(sortResourcesByCategory)) {
+    const category = String(resource.category || '').trim() || 'unknown'
+    const existing = categoryMap.get(category)
+    if (existing) {
+      existing.push(resource)
+      continue
+    }
+    categoryMap.set(category, [resource])
+  }
+
+  return [...categoryMap.entries()]
+    .sort(([leftId], [rightId]) => {
+      const leftOrder = resourceCategoryOrder.indexOf(leftId as ResourceCategory)
+      const rightOrder = resourceCategoryOrder.indexOf(rightId as ResourceCategory)
+      const normalizedLeftOrder = leftOrder >= 0 ? leftOrder : resourceCategoryOrder.length
+      const normalizedRightOrder = rightOrder >= 0 ? rightOrder : resourceCategoryOrder.length
+      if (normalizedLeftOrder !== normalizedRightOrder)
+        return normalizedLeftOrder - normalizedRightOrder
+      return leftId.localeCompare(rightId, 'zh-CN')
+    })
+    .map(([id, categoryResources]) => ({
+      id,
+      label: resolveResourceCategoryLabel(id),
+      resources: categoryResources,
+    }))
+}
+
+const linkedContestResourceGroups = computed<WorkspaceLinkedContestResourceDisplayGroup[]>(() => {
+  return props.linkedContestResourceGroups.map(group => ({
+    ...group,
+    resources: Array.isArray(group.resources) ? group.resources : [],
+    categories: buildLinkedContestResourceCategories(group.resources || []),
+  }))
+})
+const linkedContestResourceIdSet = computed(() => {
+  const ids = new Set<string>()
+  for (const group of linkedContestResourceGroups.value) {
+    for (const resource of group.resources) {
+      const resourceId = String(resource.id || '').trim()
+      if (resourceId)
+        ids.add(resourceId)
+    }
+  }
+  return ids
+})
+const visibleSystemLibraryResources = computed(() => {
+  if (linkedContestResourceIdSet.value.size === 0)
+    return props.resourceLibrary
+
+  return props.resourceLibrary.filter((item) => {
+    const resourceId = String(item.id || '').trim()
+    return resourceId ? !linkedContestResourceIdSet.value.has(resourceId) : true
+  })
 })
 
 const projectResourceSkeletonRows = [1, 2, 3, 4]
@@ -584,6 +717,19 @@ function selectOutline(itemId: string) {
   activeOutlineId.value = itemId
 }
 
+function linkedCategoryStateKey(contestId: string, categoryId: string): string {
+  return `${String(contestId || '').trim()}::${String(categoryId || '').trim()}`
+}
+
+function isLinkedCategoryExpanded(contestId: string, categoryId: string): boolean {
+  return linkedCategoryExpanded[linkedCategoryStateKey(contestId, categoryId)] !== false
+}
+
+function toggleLinkedCategory(contestId: string, categoryId: string) {
+  const stateKey = linkedCategoryStateKey(contestId, categoryId)
+  linkedCategoryExpanded[stateKey] = !isLinkedCategoryExpanded(contestId, categoryId)
+}
+
 function toggleSection(sectionId: ResourceSectionId) {
   sectionExpanded[sectionId] = !sectionExpanded[sectionId]
 }
@@ -695,9 +841,23 @@ function isCollabResource(resource: Resource): boolean {
   return source === 'collab' || kind === 'markdown' || kind === 'draw'
 }
 
+function resolveCollabPurpose(resource: Resource | null | undefined): CollabPurpose | '' {
+  const normalized = String(resource?.collabPurpose || '').trim().toLowerCase()
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+    return normalized
+  if (resource?.resourceKind === 'markdown')
+    return 'notes'
+  if (resource?.resourceKind === 'draw')
+    return 'freeform'
+  return ''
+}
+
 function resourceIcon(resource: Resource): string {
   const kind = String(resource.resourceKind || '').trim().toLowerCase()
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  const purpose = resolveCollabPurpose(resource)
+  if (kind === 'draw' && purpose === 'workflow')
+    return 'flowsheet'
   if (kind === 'draw')
     return 'draw'
   if (kind === 'markdown')
@@ -799,8 +959,14 @@ function canDuplicateResource(resource: Resource): boolean {
 
 function resourceSourceLabel(resource: Resource): string {
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  if (source === 'collab')
-    return '协作资源'
+  if (source === 'collab') {
+    const purpose = resolveCollabPurpose(resource)
+    if (purpose === 'workflow')
+      return '流程画布'
+    if (purpose === 'freeform')
+      return '自由画布'
+    return '协作文档'
+  }
   if (source === 'upload' || source === 'project_upload')
     return '项目上传'
   if (source === 'library')
@@ -1258,6 +1424,23 @@ watch(outlineItems, (nextItems) => {
   activeOutlineId.value = nextItems[0]?.id || ''
 }, { immediate: true })
 
+watch(linkedContestResourceGroups, (groups) => {
+  const activeKeys = new Set<string>()
+  for (const group of groups) {
+    for (const category of group.categories) {
+      const stateKey = linkedCategoryStateKey(group.contestId, category.id)
+      activeKeys.add(stateKey)
+      if (!(stateKey in linkedCategoryExpanded))
+        linkedCategoryExpanded[stateKey] = true
+    }
+  }
+
+  for (const stateKey of Object.keys(linkedCategoryExpanded)) {
+    if (!activeKeys.has(stateKey))
+      delete linkedCategoryExpanded[stateKey]
+  }
+}, { immediate: true, deep: true })
+
 watch(() => props.aiFiltering, (next) => {
   if (!next)
     return
@@ -1451,7 +1634,7 @@ onBeforeUnmount(() => {
                     :disabled="resourceMutating || !hasActiveProject"
                     @click.stop="openInfiniteCanvasFromMenu"
                   >
-                    新建无边画布
+                    新建自由画布
                   </button>
                   <div class="workspace-project-add-actions__divider" />
                   <button
@@ -1606,6 +1789,110 @@ onBeforeUnmount(() => {
             <button
               class="workspace-tree-block__title"
               type="button"
+              :aria-expanded="sectionExpanded.linkedContestResources"
+              @click="toggleSection('linkedContestResources')"
+            >
+              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.linkedContestResources }">
+                keyboard_arrow_down
+              </span>
+              <span>关联比赛资料</span>
+            </button>
+
+            <div v-show="sectionExpanded.linkedContestResources" class="workspace-tree-block__content">
+              <template v-if="resourceLibraryLoading">
+                <div
+                  v-for="row in resourceLibrarySkeletonRows"
+                  :key="`linked-library-skeleton-${row}`"
+                  class="workspace-library-skeleton-item"
+                  aria-hidden="true"
+                >
+                  <div class="workspace-library-skeleton-item__left">
+                    <span class="workspace-library-skeleton-item__icon workspace-skeleton" />
+                    <div class="workspace-library-skeleton-item__content">
+                      <div class="workspace-library-skeleton-item__title workspace-skeleton" />
+                      <div class="workspace-library-skeleton-item__meta workspace-skeleton" />
+                    </div>
+                  </div>
+                  <span class="workspace-library-skeleton-item__action workspace-skeleton" />
+                </div>
+              </template>
+              <template v-else-if="linkedContestResourceGroups.length > 0">
+                <div
+                  v-for="group in linkedContestResourceGroups"
+                  :key="group.contestId"
+                  class="workspace-linked-library-group"
+                >
+                  <div class="workspace-linked-library-group__header">
+                    <div class="workspace-linked-library-group__title">
+                      {{ group.contestName }}
+                    </div>
+                    <div class="workspace-linked-library-group__meta">
+                      {{ group.trackName || '未匹配赛道' }} · {{ group.resources.length }} 份待导入资料
+                    </div>
+                  </div>
+
+                  <div
+                    v-for="category in group.categories"
+                    :key="`${group.contestId}-${category.id}`"
+                    class="workspace-linked-library-category"
+                  >
+                    <button
+                      class="workspace-linked-library-category__toggle"
+                      type="button"
+                      :aria-expanded="isLinkedCategoryExpanded(group.contestId, category.id)"
+                      @click="toggleLinkedCategory(group.contestId, category.id)"
+                    >
+                      <span
+                        class="material-symbols-outlined"
+                        :class="{ 'workspace-tree-block__arrow--collapsed': !isLinkedCategoryExpanded(group.contestId, category.id) }"
+                      >
+                        keyboard_arrow_down
+                      </span>
+                      <span class="workspace-linked-library-category__title">{{ category.label }}</span>
+                      <span class="workspace-linked-library-category__count">{{ category.resources.length }}</span>
+                    </button>
+
+                    <div v-show="isLinkedCategoryExpanded(group.contestId, category.id)">
+                      <div
+                        v-for="item in category.resources"
+                        :key="item.id"
+                        class="workspace-library-item"
+                      >
+                        <div class="workspace-library-item__content">
+                          <div class="workspace-library-item__title">
+                            {{ resourceDisplayTitle(item) }}
+                          </div>
+                          <div class="workspace-library-item__meta">
+                            {{ item.type }} · {{ item.year }}
+                          </div>
+                        </div>
+                        <button
+                          class="workspace-library-item__add"
+                          type="button"
+                          :disabled="resourceMutating || !hasActiveProject"
+                          @click="addLibraryResource(item.id)"
+                        >
+                          添加
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p v-if="group.resources.length === 0" class="workspace-empty-text">
+                    当前比赛暂无待导入资料
+                  </p>
+                </div>
+              </template>
+              <p v-else class="workspace-empty-text">
+                {{ linkedContestBindingCount > 0 ? '当前关联比赛暂无可导入资料' : '请先在项目设置中关联比赛' }}
+              </p>
+            </div>
+          </section>
+
+          <section class="workspace-tree-block">
+            <button
+              class="workspace-tree-block__title"
+              type="button"
               :aria-expanded="sectionExpanded.systemLibrary"
               @click="toggleSection('systemLibrary')"
             >
@@ -1631,6 +1918,30 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                   <span class="workspace-library-skeleton-item__action workspace-skeleton" />
+                </div>
+              </template>
+              <template v-else-if="visibleSystemLibraryResources.length > 0">
+                <div
+                  v-for="item in visibleSystemLibraryResources"
+                  :key="item.id"
+                  class="workspace-library-item"
+                >
+                  <div class="workspace-library-item__content">
+                    <div class="workspace-library-item__title">
+                      {{ resourceDisplayTitle(item) }}
+                    </div>
+                    <div class="workspace-library-item__meta">
+                      {{ item.type }} · {{ item.year }}
+                    </div>
+                  </div>
+                  <button
+                    class="workspace-library-item__add"
+                    type="button"
+                    :disabled="resourceMutating || !hasActiveProject"
+                    @click="addLibraryResource(item.id)"
+                  >
+                    添加
+                  </button>
                 </div>
               </template>
               <p v-else class="workspace-empty-text">
@@ -2856,6 +3167,76 @@ onBeforeUnmount(() => {
 
 .workspace-empty-text--modal {
   margin: 0;
+}
+
+.workspace-linked-library-group {
+  padding: 6px 0 8px;
+}
+
+.workspace-linked-library-group + .workspace-linked-library-group {
+  border-top: 1px solid #eef2f8;
+}
+
+.workspace-linked-library-group__header {
+  padding: 4px 14px 8px;
+}
+
+.workspace-linked-library-group__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #405374;
+}
+
+.workspace-linked-library-group__meta {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #8b97ac;
+}
+
+.workspace-linked-library-category + .workspace-linked-library-category {
+  margin-top: 4px;
+}
+
+.workspace-linked-library-category__toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 14px 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-linked-library-category__toggle:hover {
+  color: #4b6287;
+}
+
+.workspace-linked-library-category__toggle .material-symbols-outlined {
+  font-size: 16px;
+  color: #7f8ea6;
+  transition: transform 0.2s ease;
+}
+
+.workspace-linked-library-category__title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5b6e8f;
+}
+
+.workspace-linked-library-category__count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: #6d7f9c;
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
 }
 
 .workspace-library-item {

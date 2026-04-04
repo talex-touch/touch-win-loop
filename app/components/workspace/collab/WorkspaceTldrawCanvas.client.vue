@@ -130,7 +130,7 @@ function applyIncomingModel(rawValue: string): void {
     parsed = JSON.parse(normalized)
   }
   catch {
-    mountError.value = '白板状态解析失败，已跳过本次同步。'
+    mountError.value = '画布状态解析失败，已跳过本次同步。'
     return
   }
 
@@ -145,7 +145,7 @@ function applyIncomingModel(rawValue: string): void {
     mountError.value = ''
   }
   catch {
-    mountError.value = '白板状态加载失败，请刷新后重试。'
+    mountError.value = '画布状态加载失败，请刷新后重试。'
   }
   finally {
     applyingRemote = false
@@ -196,7 +196,7 @@ async function mountTldrawCanvas(): Promise<void> {
     reactRoot.render(reactElement)
   }
   catch {
-    mountError.value = '白板引擎加载失败，请稍后重试。'
+    mountError.value = '画布引擎加载失败，请稍后重试。'
   }
 }
 

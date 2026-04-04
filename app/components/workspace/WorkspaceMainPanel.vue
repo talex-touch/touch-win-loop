@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import type {
+  CollabPurpose,
   Contest,
   Project,
+  ProjectInvitationSummary,
+  ProjectMemberRole,
+  ProjectMemberSummary,
   ProjectResourceShare,
   Resource,
   ResourcePreviewStatus,
   Track,
-  WorkspaceBillingEstimate,
-  WorkspaceInvitationSummary,
-  WorkspaceMemberRole,
-  WorkspaceMemberSummary,
   WorkspaceType,
 } from '~~/shared/types/domain'
 import type {
@@ -43,6 +43,8 @@ const props = withDefaults(defineProps<{
   openFlowSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
+  flowResourceId?: string
+  flowResourceTitle?: string
   previewResourceId?: string
   closingPreviewResourceId?: string
   previewResourceTitle?: string
@@ -66,9 +68,8 @@ const props = withDefaults(defineProps<{
   activeProject?: Project | null
   workspaceName?: string
   workspaceType?: WorkspaceType | ''
-  workspaceRoles?: WorkspaceMemberRole[]
-  workspaceMembers?: WorkspaceMemberSummary[]
-  workspaceInvitations?: WorkspaceInvitationSummary[]
+  workspaceMembers?: ProjectMemberSummary[]
+  workspaceInvitations?: ProjectInvitationSummary[]
   workspaceMemberManagementLoading?: boolean
   workspaceCanManageMembers?: boolean
   workspaceCanEditMembers?: boolean
@@ -81,8 +82,6 @@ const props = withDefaults(defineProps<{
   workspaceSupportsSeatAdd?: boolean
   workspaceInvitationSubmitting?: boolean
   workspaceInvitationLink?: string
-  workspaceBillingEstimate?: WorkspaceBillingEstimate | null
-  workspaceBillingEstimateLoading?: boolean
   workspaceSeatLimitSaveLoading?: boolean
   workspaceSeatLimitError?: string
   workspaceSeatLimitUpdatedSignal?: number
@@ -113,6 +112,8 @@ const props = withDefaults(defineProps<{
   openFlowSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
+  flowResourceId: '',
+  flowResourceTitle: '',
   previewResourceId: '',
   closingPreviewResourceId: '',
   previewResourceTitle: '',
@@ -146,7 +147,6 @@ const props = withDefaults(defineProps<{
   activeProject: null,
   workspaceName: '',
   workspaceType: '',
-  workspaceRoles: () => [],
   workspaceMembers: () => [],
   workspaceInvitations: () => [],
   workspaceMemberManagementLoading: false,
@@ -161,8 +161,6 @@ const props = withDefaults(defineProps<{
   workspaceSupportsSeatAdd: false,
   workspaceInvitationSubmitting: false,
   workspaceInvitationLink: '',
-  workspaceBillingEstimate: null,
-  workspaceBillingEstimateLoading: false,
   workspaceSeatLimitSaveLoading: false,
   workspaceSeatLimitError: '',
   workspaceSeatLimitUpdatedSignal: 0,
@@ -212,8 +210,8 @@ const emit = defineEmits<{
   'update:projectSettingsAdaptation': [value: WorkspaceProjectAdaptationForm]
   'saveProjectSettings': []
   'reloadWorkspaceMemberManagement': []
-  'createWorkspaceInvitation': [value: { inviteeUsername: string, role: WorkspaceMemberRole, expiresInDays: number }]
-  'patchWorkspaceMemberRole': [value: { userId: string, role: 'admin' | 'manager' | 'member' }]
+  'createWorkspaceInvitation': [value: { inviteeUsername: string, projectRole: ProjectMemberRole, expiresInDays: number }]
+  'patchWorkspaceMemberRole': [value: { userId: string, role: 'manager' | 'editor' | 'viewer' }]
   'removeWorkspaceMember': [userId: string]
   'revokeWorkspaceInvitation': [invitationId: string]
   'copyWorkspaceInvitationLink': []
@@ -286,14 +284,14 @@ const fixedTabs: WorkspaceMainTab[] = [
   {
     id: 'members',
     kind: 'fixed',
-    title: '成员管理',
+    title: '项目协作',
     icon: 'group',
     closeable: true,
   },
   {
     id: 'flow',
     kind: 'fixed',
-    title: '申报流程梳理',
+    title: '流程画布',
     icon: 'flowsheet',
     closeable: true,
   },
@@ -373,31 +371,31 @@ const projectSettingsAddContestModalTrackOptions = computed<Track[]>(() => {
   return projectSettingsAddContestCandidates.value.find(item => item.id === contestId)?.tracks || []
 })
 
-const WORKSPACE_ROLE_OPTIONS: WorkspaceMemberRole[] = ['member', 'manager', 'admin']
-type PatchableWorkspaceRole = 'admin' | 'manager' | 'member'
+const PROJECT_ROLE_OPTIONS: ProjectMemberRole[] = ['manager', 'editor', 'viewer']
+type PatchableWorkspaceRole = 'manager' | 'editor' | 'viewer'
 
 const workspaceMemberRoleDraftMap = reactive<Record<string, PatchableWorkspaceRole>>({})
 
-function toPatchableWorkspaceRole(role: WorkspaceMemberRole): PatchableWorkspaceRole {
-  if (role === 'admin' || role === 'manager')
+function toPatchableWorkspaceRole(role: ProjectMemberRole): PatchableWorkspaceRole {
+  if (role === 'manager' || role === 'editor')
     return role
-  return 'member'
+  return 'viewer'
 }
 
-function workspaceMemberPrimaryRole(member: WorkspaceMemberSummary): WorkspaceMemberRole {
-  if (member.roles.includes('owner'))
+function workspaceMemberPrimaryRole(member: ProjectMemberSummary): ProjectMemberRole {
+  if (member.role === 'owner')
     return 'owner'
-  if (member.roles.includes('admin'))
-    return 'admin'
-  if (member.roles.includes('manager'))
+  if (member.role === 'manager')
     return 'manager'
-  return 'member'
+  if (member.role === 'editor')
+    return 'editor'
+  return 'viewer'
 }
 
-function ensureWorkspaceMemberRoleDraft(member: WorkspaceMemberSummary): PatchableWorkspaceRole {
+function ensureWorkspaceMemberRoleDraft(member: ProjectMemberSummary): PatchableWorkspaceRole {
   const userId = String(member.userId || '').trim()
   if (!userId)
-    return 'member'
+    return 'viewer'
 
   const existing = workspaceMemberRoleDraftMap[userId]
   if (existing)
@@ -418,24 +416,32 @@ watch(() => props.workspaceMembers, (members) => {
   }
 }, { deep: true, immediate: true })
 
-const workspaceInviteRoleOptions = computed<WorkspaceMemberRole[]>(() => {
-  if (props.workspaceRoles.includes('owner') || props.workspaceRoles.includes('admin'))
-    return WORKSPACE_ROLE_OPTIONS
-  return ['member']
+const workspaceInviteRoleOptions = computed<ProjectMemberRole[]>(() => {
+  if (props.workspaceCanEditMembers)
+    return PROJECT_ROLE_OPTIONS
+  return ['viewer']
 })
 const workspaceInviteForm = reactive<{
   inviteeUsername: string
-  role: WorkspaceMemberRole
+  role: ProjectMemberRole
   expiresInDays: number
 }>({
   inviteeUsername: '',
-  role: 'member',
+  role: 'viewer',
   expiresInDays: 7,
 })
+const workspaceInviteModalVisible = ref(false)
 
 watchEffect(() => {
   if (!workspaceInviteRoleOptions.value.includes(workspaceInviteForm.role))
-    workspaceInviteForm.role = 'member'
+    workspaceInviteForm.role = 'viewer'
+})
+
+const workspaceInviteProjectLabel = computed(() => {
+  const projectTitle = String(props.activeProject?.title || '').trim()
+  if (projectTitle)
+    return `目标项目：${projectTitle}，项目权限按下方角色生效。`
+  return '接受邀请后会自动获得当前项目权限。'
 })
 
 const materialCoverage = computed(() => Math.min(props.selectedResources.length * 20, 100))
@@ -484,6 +490,17 @@ function resolvePreviewModeFromResource(resource: Resource | null | undefined): 
   return 'binary'
 }
 
+function resolveCollabPurposeFromResource(resource: Resource | null | undefined): CollabPurpose | '' {
+  const normalized = String(resource?.collabPurpose || '').trim().toLowerCase()
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+    return normalized
+  if (resource?.resourceKind === 'markdown')
+    return 'notes'
+  if (resource?.resourceKind === 'draw')
+    return 'freeform'
+  return ''
+}
+
 function normalizePreviewModeValue(value: unknown): WorkspacePreviewMode {
   const mode = String(value || 'binary').trim().toLowerCase()
   if (mode === 'markdown' || mode === 'draw')
@@ -491,31 +508,35 @@ function normalizePreviewModeValue(value: unknown): WorkspacePreviewMode {
   return 'binary'
 }
 
-function resolveResourceTabTitle(mode: WorkspacePreviewMode, title: string): string {
+function resolveResourceTabTitle(mode: WorkspacePreviewMode, title: string, purpose: CollabPurpose | '' = ''): string {
   const normalizedTitle = String(title || '').trim()
   if (normalizedTitle)
     return normalizedTitle
   if (mode === 'markdown')
     return '协作文档'
+  if (mode === 'draw' && purpose === 'workflow')
+    return '流程画布'
   if (mode === 'draw')
-    return '无边画布'
+    return '自由画布'
   return '资料预览'
 }
 
-function resolveResourceTabIcon(mode: WorkspacePreviewMode): string {
+function resolveResourceTabIcon(mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = ''): string {
   if (mode === 'markdown')
     return 'edit_note'
+  if (mode === 'draw' && purpose === 'workflow')
+    return 'flowsheet'
   if (mode === 'draw')
     return 'draw'
   return 'description'
 }
 
-function buildResourceTab(resourceId: string, title: string, mode: WorkspacePreviewMode): WorkspaceMainTab {
+function buildResourceTab(resourceId: string, title: string, mode: WorkspacePreviewMode, purpose: CollabPurpose | '' = ''): WorkspaceMainTab {
   return {
     id: createResourceTabId(resourceId),
     kind: 'resource',
-    title: resolveResourceTabTitle(mode, title),
-    icon: resolveResourceTabIcon(mode),
+    title: resolveResourceTabTitle(mode, title, purpose),
+    icon: resolveResourceTabIcon(mode, purpose),
     closeable: true,
     resourceId,
     previewMode: mode,
@@ -526,7 +547,13 @@ function previewTabFromProps(): WorkspaceMainTab | null {
   const resourceId = String(props.previewResourceId || '').trim()
   if (!resourceId)
     return null
-  return buildResourceTab(resourceId, props.previewResourceTitle, normalizePreviewModeValue(props.previewMode))
+  const previewResource = props.selectedResources.find(resource => resource.id === resourceId) || null
+  return buildResourceTab(
+    resourceId,
+    props.previewResourceTitle,
+    normalizePreviewModeValue(props.previewMode),
+    resolveCollabPurposeFromResource(previewResource),
+  )
 }
 
 const activeTab = computed(() => {
@@ -540,6 +567,8 @@ const activeResourceTab = computed(() => {
 })
 
 const renderedCollabMarkdown = computed(() => renderMarkdownToHtml(props.collabMarkdownValue))
+const hasFlowResource = computed(() => Boolean(String(props.flowResourceId || '').trim()))
+const flowPanelTitle = computed(() => String(props.flowResourceTitle || '').trim() || '流程画布')
 
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
@@ -558,17 +587,17 @@ const breadcrumbItems = computed(() => {
   }
 
   if (activeTabId.value === 'members')
-    return ['竞赛分析', '成员管理']
+    return ['竞赛分析', '项目协作']
 
   if (activeTabId.value === 'flow') {
     if (props.selectedContest?.name) {
       return [
         '竞赛分析',
         props.selectedContest.name,
-        '申报流程梳理',
+        '流程画布',
       ]
     }
-    return ['竞赛分析', '申报流程梳理']
+    return ['竞赛分析', '流程画布']
   }
 
   if (activeTabId.value === 'dashboard') {
@@ -810,8 +839,9 @@ function updateOpenResourceTabMetadata(): void {
     }
 
     const nextMode = resolvePreviewModeFromResource(resource)
-    const nextTitle = resolveResourceTabTitle(nextMode, resource.title)
-    const nextIcon = resolveResourceTabIcon(nextMode)
+    const nextPurpose = resolveCollabPurposeFromResource(resource)
+    const nextTitle = resolveResourceTabTitle(nextMode, resource.title, nextPurpose)
+    const nextIcon = resolveResourceTabIcon(nextMode, nextPurpose)
     if (tab.title !== nextTitle || tab.icon !== nextIcon || tab.previewMode !== nextMode) {
       nextTabs.push({
         ...tab,
@@ -1243,7 +1273,7 @@ const canEditWorkspaceMembers = computed(() => {
 })
 
 const workspaceInviteUnavailableMessage = computed(() => {
-  return '当前角色无邀请权限，仅可查看成员与邀请记录。'
+  return '当前角色无项目协作邀请权限，仅可查看成员与待处理邀请。'
 })
 
 const workspaceSeatModalVisible = ref(false)
@@ -1264,6 +1294,12 @@ const workspaceCanAddSeat = computed(() => {
   return props.workspaceSupportsSeatAdd && props.workspaceCanManageBillingSeats
 })
 
+const workspaceSeatSummaryText = computed(() => {
+  if (props.workspaceType === 'personal')
+    return '个人项目最多支持 15 个协作席位，接受邀请时会同时加入当前空间与项目。'
+  return '项目席位独立统计，同时继续受 Team 总席位与项目配额约束。'
+})
+
 const workspaceSeatDraftTooSmall = computed(() => {
   const draft = Number(workspaceSeatLimitDraft.value || 0)
   if (!Number.isFinite(draft))
@@ -1279,6 +1315,16 @@ const canSubmitWorkspaceSeatLimit = computed(() => {
     return false
   return !workspaceSeatDraftTooSmall.value
 })
+
+function openWorkspaceInviteModal(): void {
+  if (!props.workspaceCanManageMembers)
+    return
+  workspaceInviteModalVisible.value = true
+}
+
+function closeWorkspaceInviteModal(): void {
+  workspaceInviteModalVisible.value = false
+}
 
 function openWorkspaceSeatModal(): void {
   if (!workspaceCanAddSeat.value)
@@ -1311,40 +1357,27 @@ function onCollabDrawModelUpdate(value: string): void {
 
 function workspaceTypeLabel(value: WorkspaceType | ''): string {
   if (value === 'personal')
-    return 'Personal Team'
+    return '个人项目台'
   if (value === 'team')
-    return 'Business Team'
-  return '未识别空间'
+    return 'Team 项目台'
+  return '项目台'
 }
 
-function workspaceRoleLabel(role: WorkspaceMemberRole): string {
+function workspaceRoleLabel(role: ProjectMemberRole): string {
   if (role === 'owner')
     return '所有者'
-  if (role === 'admin')
-    return '管理员'
   if (role === 'manager')
     return '管理者'
-  return '成员'
+  if (role === 'editor')
+    return '编辑者'
+  return '查看者'
 }
 
-function workspaceRoleBadgeClass(role: WorkspaceMemberRole): string {
-  if (role === 'owner')
-    return 'border-amber-200 bg-amber-50 text-amber-700'
-  if (role === 'admin')
-    return 'border-blue-200 bg-blue-50 text-blue-700'
-  if (role === 'manager')
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  return 'border-slate-200 bg-slate-50 text-slate-600'
+function workspaceMemberRoleSummary(member: ProjectMemberSummary): string {
+  return workspaceRoleLabel(workspaceMemberPrimaryRole(member))
 }
 
-function workspaceMemberRoleSummary(member: WorkspaceMemberSummary): string {
-  const labels = member.roles.map(workspaceRoleLabel)
-  if (labels.length === 0)
-    return '未设置角色'
-  return labels.join(' / ')
-}
-
-function workspaceInvitationStatus(invitation: WorkspaceInvitationSummary): 'pending' | 'expired' | 'accepted' {
+function workspaceInvitationStatus(invitation: ProjectInvitationSummary): 'pending' | 'expired' | 'accepted' {
   if (String(invitation.acceptedAt || '').trim())
     return 'accepted'
   if (invitation.isExpired)
@@ -1352,7 +1385,7 @@ function workspaceInvitationStatus(invitation: WorkspaceInvitationSummary): 'pen
   return 'pending'
 }
 
-function workspaceInvitationStatusLabel(invitation: WorkspaceInvitationSummary): string {
+function workspaceInvitationStatusLabel(invitation: ProjectInvitationSummary): string {
   const status = workspaceInvitationStatus(invitation)
   if (status === 'accepted')
     return '已接受'
@@ -1361,13 +1394,21 @@ function workspaceInvitationStatusLabel(invitation: WorkspaceInvitationSummary):
   return '待接受'
 }
 
-function workspaceInvitationStatusBadgeClass(invitation: WorkspaceInvitationSummary): string {
+function workspaceInvitationStatusBadgeClass(invitation: ProjectInvitationSummary): string {
   const status = workspaceInvitationStatus(invitation)
   if (status === 'accepted')
     return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (status === 'expired')
     return 'border-rose-200 bg-rose-50 text-rose-600'
   return 'border-blue-200 bg-blue-50 text-blue-700'
+}
+
+function workspaceInvitationScopeLabel(invitation: ProjectInvitationSummary): string {
+  const projectTitle = String(invitation.projectTitle || '').trim()
+  const roleLabel = workspaceRoleLabel(invitation.projectRole || 'viewer')
+  if (projectTitle)
+    return `加入项目：${projectTitle} · 项目角色：${roleLabel}`
+  return `项目角色：${roleLabel}`
 }
 
 function revokeWorkspaceInvitation(invitationId: string): void {
@@ -1380,12 +1421,12 @@ function revokeWorkspaceInvitation(invitationId: string): void {
 function submitWorkspaceInvitation(): void {
   emit('createWorkspaceInvitation', {
     inviteeUsername: workspaceInviteForm.inviteeUsername.trim(),
-    role: workspaceInviteForm.role,
+    projectRole: workspaceInviteForm.role,
     expiresInDays: Math.max(1, Math.min(30, Number(workspaceInviteForm.expiresInDays || 7))),
   })
 }
 
-function submitWorkspaceMemberRole(member: WorkspaceMemberSummary): void {
+function submitWorkspaceMemberRole(member: ProjectMemberSummary): void {
   const userId = String(member.userId || '').trim()
   if (!userId || !canEditWorkspaceMembers.value)
     return
@@ -1400,11 +1441,20 @@ function submitWorkspaceMemberRole(member: WorkspaceMemberSummary): void {
   })
 }
 
-function removeWorkspaceMember(member: WorkspaceMemberSummary): void {
+function canRemoveWorkspaceMember(member: ProjectMemberSummary): boolean {
+  if (!props.workspaceCanManageMembers)
+    return false
+  const primaryRole = workspaceMemberPrimaryRole(member)
+  if (primaryRole === 'owner')
+    return false
+  if (props.workspaceCanEditMembers)
+    return true
+  return primaryRole === 'viewer'
+}
+
+function removeWorkspaceMember(member: ProjectMemberSummary): void {
   const userId = String(member.userId || '').trim()
-  if (!userId || !canEditWorkspaceMembers.value)
-    return
-  if (workspaceMemberPrimaryRole(member) === 'owner')
+  if (!userId || !canRemoveWorkspaceMember(member))
     return
   emit('removeWorkspaceMember', userId)
 }
@@ -1990,126 +2040,99 @@ watch(activeTabId, (next) => {
         </div>
       </div>
 
-      <div v-else-if="activeTabId === 'flow'" class="mx-auto max-w-5xl space-y-4">
-        <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
-          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex gap-3 items-center">
-            <span class="material-symbols-outlined text-xl text-blue-600">flowsheet</span>
-            <div>
-              <h2 class="text-sm font-bold">
-                申报流程梳理
-              </h2>
-              <div class="text-[11px] text-slate-500 mt-0.5">
-                按当前竞赛与资料状态，拆分可执行的申报步骤。
-              </div>
+      <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
+        <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
+          <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
+            <div class="text-xs text-slate-600">
+              {{ flowPanelTitle }}
+              <span class="text-slate-400 ml-2">rev {{ hasFlowResource ? Math.max(0, Number(collabRevision || 0)) : 0 }}</span>
+            </div>
+            <div
+              class="text-[11px]"
+              :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
+            >
+              {{ hasFlowResource ? collabConnectionText : '待初始化' }}
             </div>
           </div>
 
-          <ol class="divide-slate-200 divide-y">
-            <li class="p-4 flex gap-3 items-start">
-              <span class="text-[11px] text-blue-600 font-bold rounded-full bg-blue-50 flex h-5 w-5 items-center justify-center">1</span>
-              <div>
-                <div class="text-xs text-slate-800 font-semibold">
-                  赛题确认
-                </div>
-                <p class="text-[11px] text-slate-500 mt-1">
-                  锁定目标竞赛与赛道，形成统一申报边界。
-                </p>
-                <p class="text-[11px] mt-1" :class="selectedContest && selectedTrack ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ selectedContest && selectedTrack ? `已锁定：${selectedContest.name} / ${selectedTrack.name}` : '待处理：请先在左侧选择竞赛与赛道。' }}
-                </p>
-              </div>
-            </li>
-            <li class="p-4 flex gap-3 items-start">
-              <span class="text-[11px] text-blue-600 font-bold rounded-full bg-blue-50 flex h-5 w-5 items-center justify-center">2</span>
-              <div>
-                <div class="text-xs text-slate-800 font-semibold">
-                  材料归档
-                </div>
-                <p class="text-[11px] text-slate-500 mt-1">
-                  汇总可用规则、往届样例与公开数据，沉淀成资料池。
-                </p>
-                <p class="text-[11px] mt-1" :class="selectedResources.length > 0 ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ selectedResources.length > 0 ? `已归档 ${selectedResources.length} 份资料` : '待处理：当前资料池为空。' }}
-                </p>
-              </div>
-            </li>
-            <li class="p-4 flex gap-3 items-start">
-              <span class="text-[11px] text-blue-600 font-bold rounded-full bg-blue-50 flex h-5 w-5 items-center justify-center">3</span>
-              <div>
-                <div class="text-xs text-slate-800 font-semibold">
-                  指标映射
-                </div>
-                <p class="text-[11px] text-slate-500 mt-1">
-                  将竞赛评分要求映射到项目能力点，识别缺口并补齐。
-                </p>
-                <p class="text-[11px] mt-1" :class="mappingRows.length > 0 ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ mappingRows.length > 0 ? `已生成 ${mappingRows.length} 条映射指标` : '待处理：尚未生成映射指标。' }}
-                </p>
-              </div>
-            </li>
-            <li class="p-4 flex gap-3 items-start">
-              <span class="text-[11px] text-blue-600 font-bold rounded-full bg-blue-50 flex h-5 w-5 items-center justify-center">4</span>
-              <div>
-                <div class="text-xs text-slate-800 font-semibold">
-                  提交与答辩准备
-                </div>
-                <p class="text-[11px] text-slate-500 mt-1">
-                  进入仪表盘的“关联比赛提交区”完成提交，并在右侧 AI 辅助里继续答辩模拟。
-                </p>
-              </div>
-            </li>
-          </ol>
+          <div v-if="hasFlowResource" class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
+            <div class="flex flex-col h-full">
+              <WorkspaceTldrawCanvas
+                :key="props.flowResourceId || 'flow-canvas'"
+                class="h-full min-h-0 w-full"
+                :model-value="collabDrawValue"
+                :persistence-key="`workspace-flow-${props.flowResourceId || 'default'}`"
+                :readonly="false"
+                @update:model-value="onCollabDrawModelUpdate"
+              />
+              <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
+                {{ collabDrawError }}
+              </p>
+            </div>
+            <CollabPresencePanel :members="collabPresenceMembers" />
+          </div>
+
+          <div v-else class="px-6 bg-slate-50 flex flex-1 items-center justify-center">
+            <div class="px-6 py-8 text-center border border-slate-300 rounded-xl border-dashed bg-white max-w-md">
+              <span class="material-symbols-outlined text-3xl text-blue-600">flowsheet</span>
+              <h3 class="text-sm text-slate-800 font-semibold mt-3">
+                暂未初始化流程画布
+              </h3>
+              <p class="text-[12px] text-slate-500 leading-6 mt-2">
+                从左侧“流程”入口进入时，系统会自动为当前项目创建并打开唯一的主流程画布。
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
       <div v-else-if="activeTabId === 'members'" class="mx-auto max-w-5xl space-y-4">
-        <section class="p-4 border border-slate-200 rounded-lg bg-white">
+        <section class="p-4 border border-slate-200 rounded-lg bg-white" data-testid="project-collab-panel">
           <div class="mb-3 flex flex-wrap gap-3 items-start justify-between">
             <div class="flex gap-3 items-center">
               <span class="material-symbols-outlined text-xl text-blue-600">group</span>
               <div>
                 <h3 class="text-xs text-slate-700 font-semibold">
-                  空间成员管理
+                  项目协作管理
                 </h3>
                 <p class="text-[11px] text-slate-500 mt-0.5">
-                  {{ workspaceName || '当前空间' }} · {{ workspaceTypeLabel(workspaceType) }}
+                  所属 Team：{{ workspaceName || '当前 Team' }} · {{ workspaceTypeLabel(workspaceType) }}
                 </p>
               </div>
             </div>
 
-            <button
-              class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="button"
-              :disabled="workspaceMemberManagementLoading"
-              @click="emit('reloadWorkspaceMemberManagement')"
-            >
-              刷新
-            </button>
+            <div class="flex flex-wrap gap-2 items-center">
+              <button
+                data-testid="project-collab-open-invite-button"
+                class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                type="button"
+                :disabled="!workspaceCanManageMembers || workspaceInvitationSubmitting"
+                @click="openWorkspaceInviteModal"
+              >
+                {{ workspaceInvitationSubmitting ? '生成中...' : '生成邀请链接' }}
+              </button>
+              <button
+                class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                :disabled="workspaceMemberManagementLoading"
+                @click="emit('reloadWorkspaceMemberManagement')"
+              >
+                刷新
+              </button>
+            </div>
           </div>
 
-          <div class="mb-3 gap-3 grid grid-cols-1 lg:grid-cols-[1.2fr,1fr]">
+          <div class="mb-3">
             <article class="p-3 border border-slate-200 rounded bg-slate-50/60">
               <p class="text-[11px] text-slate-600 font-semibold">
-                席位概览
+                项目席位概览
               </p>
-
-              <template v-if="workspaceType === 'team'">
-                <p class="text-sm text-slate-800 font-bold mt-1">
-                  {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
-                </p>
-                <p class="text-[11px] text-slate-500 mt-1">
-                  Business Team 支持按成员席位扩容。
-                </p>
-              </template>
-
-              <template v-else>
-                <p class="text-sm text-slate-800 font-bold mt-1">
-                  当前成员占用 {{ normalizedWorkspaceSeatUsed }}
-                </p>
-                <p class="text-[11px] text-slate-500 mt-1">
-                  Personal Team 席位只读，暂不支持 add seat。
-                </p>
-              </template>
+              <p class="text-sm text-slate-800 font-bold mt-1">
+                {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
+              </p>
+              <p class="text-[11px] text-slate-500 mt-1">
+                {{ workspaceSeatSummaryText }}
+              </p>
 
               <div class="mt-2 flex flex-wrap gap-2 items-center">
                 <button
@@ -2118,61 +2141,40 @@ watch(activeTabId, (next) => {
                   type="button"
                   @click="openWorkspaceSeatModal"
                 >
-                  Add Seat
+                  调整项目席位
                 </button>
                 <span
                   v-else
-                  class="text-[11px] px-2.5 py-1 border rounded"
-                  :class="workspaceType === 'team' ? 'text-amber-700 border-amber-200 bg-amber-50' : 'text-slate-600 border-slate-200 bg-slate-100'"
+                  class="text-[11px] text-slate-600 px-2.5 py-1 border border-slate-200 rounded bg-slate-100"
                 >
-                  {{ workspaceType === 'team' ? '仅 owner/admin 可 add seat' : 'Personal Team 只读席位' }}
-                </span>
-              </div>
-
-              <p v-if="workspaceBillingEstimate" class="text-[11px] text-slate-500 mt-2">
-                当前估算费用：¥{{ Number(workspaceBillingEstimate.estimatedAmountYuan || 0).toFixed(2) }}
-              </p>
-            </article>
-
-            <article class="p-3 border border-slate-200 rounded bg-white">
-              <p class="text-[11px] text-slate-600 font-semibold mb-2">
-                当前账号角色
-              </p>
-              <div class="flex flex-wrap gap-2 items-center">
-                <span
-                  v-for="role in workspaceRoles"
-                  :key="`workspace-role-${role}`"
-                  class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
-                  :class="workspaceRoleBadgeClass(role)"
-                >
-                  {{ workspaceRoleLabel(role) }}
-                </span>
-                <span v-if="workspaceRoles.length === 0" class="text-[11px] text-slate-500">
-                  当前账号未识别到空间角色。
+                  仅具备项目管理权限的成员可调整席位
                 </span>
               </div>
             </article>
           </div>
 
           <div v-if="workspaceMemberManagementLoading" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
-            正在加载空间成员...
+            正在加载项目协作成员...
           </div>
 
           <template v-else>
             <div class="gap-3 grid grid-cols-1 xl:grid-cols-[1.2fr,1fr]">
               <section class="border border-slate-200 rounded bg-slate-50/40">
                 <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-white">
-                  成员列表（{{ workspaceMembers.length }}）
+                  项目成员（{{ workspaceMembers.length }}）
                 </div>
 
                 <div v-if="workspaceMembers.length === 0" class="text-[11px] text-slate-500 px-3 py-3">
-                  当前空间暂无成员记录。
+                  当前项目暂无成员记录。
                 </div>
 
-                <div v-else class="divide-slate-200 divide-y">
+                <div v-else class="divide-slate-200 divide-y" data-testid="project-member-list">
                   <article
                     v-for="member in workspaceMembers"
                     :key="member.userId"
+                    data-testid="project-member-item"
+                    :data-user-id="member.userId"
+                    :data-username="member.username"
                     class="px-3 py-2.5"
                   >
                     <div class="flex flex-wrap gap-2 items-center justify-between">
@@ -2180,11 +2182,14 @@ watch(activeTabId, (next) => {
                         {{ member.username }}
                       </p>
                       <p class="text-[11px] text-slate-500">
-                        加入于 {{ formatDateTime(member.joinedAt) }}
+                        加入于 {{ formatDateTime(member.createdAt) }}
                       </p>
                     </div>
-                    <p class="text-[11px] text-slate-600 mt-1">
+                    <p class="text-[11px] text-slate-600 mt-1" data-testid="project-member-role-summary">
                       {{ workspaceMemberRoleSummary(member) }}
+                    </p>
+                    <p v-if="member.addedByUsername" class="text-[11px] text-slate-500 mt-1">
+                      添加人：{{ member.addedByUsername }}
                     </p>
                     <div
                       v-if="canEditWorkspaceMembers && workspaceMemberPrimaryRole(member) !== 'owner'"
@@ -2192,10 +2197,11 @@ watch(activeTabId, (next) => {
                     >
                       <select
                         v-model="workspaceMemberRoleDraftMap[member.userId]"
+                        data-testid="project-member-role-select"
                         class="text-[11px] px-2 outline-none border border-slate-200 rounded bg-white h-7 focus:border-blue-500"
                       >
                         <option
-                          v-for="role in WORKSPACE_ROLE_OPTIONS"
+                          v-for="role in PROJECT_ROLE_OPTIONS"
                           :key="`member-role-option-${member.userId}-${role}`"
                           :value="role"
                         >
@@ -2203,130 +2209,49 @@ watch(activeTabId, (next) => {
                         </option>
                       </select>
                       <button
+                        data-testid="project-member-role-update-button"
                         class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                         type="button"
                         :disabled="workspaceMemberRoleUpdatingUserId === member.userId || workspaceMemberRemovingUserId === member.userId"
                         @click="submitWorkspaceMemberRole(member)"
                       >
-                        {{ workspaceMemberRoleUpdatingUserId === member.userId ? '更新中...' : '更新角色' }}
+                        {{ workspaceMemberRoleUpdatingUserId === member.userId ? '更新中...' : '更新项目角色' }}
                       </button>
+                    </div>
+                    <div
+                      v-if="canRemoveWorkspaceMember(member)"
+                      class="mt-2 flex flex-wrap gap-2 items-center"
+                    >
                       <button
+                        data-testid="project-member-remove-button"
                         class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
                         type="button"
                         :disabled="workspaceMemberRoleUpdatingUserId === member.userId || workspaceMemberRemovingUserId === member.userId"
                         @click="removeWorkspaceMember(member)"
                       >
-                        {{ workspaceMemberRemovingUserId === member.userId ? '移除中...' : '移除成员' }}
+                        {{ workspaceMemberRemovingUserId === member.userId ? '移除中...' : '移出项目' }}
                       </button>
                     </div>
                   </article>
                 </div>
               </section>
 
-              <section class="space-y-3">
+              <section>
                 <div class="border border-slate-200 rounded bg-white">
                   <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-slate-50">
-                    邀请成员
-                  </div>
-
-                  <div class="p-3 space-y-2">
-                    <template v-if="workspaceCanManageMembers">
-                      <label class="text-[11px] text-slate-600 block space-y-1">
-                        <span class="block">邀请用户名（可选）</span>
-                        <input
-                          v-model="workspaceInviteForm.inviteeUsername"
-                          class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                          placeholder="留空时生成通用邀请"
-                        >
-                      </label>
-
-                      <div class="gap-2 grid grid-cols-2">
-                        <label class="text-[11px] text-slate-600 block space-y-1">
-                          <span class="block">角色</span>
-                          <select
-                            v-model="workspaceInviteForm.role"
-                            class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                          >
-                            <option
-                              v-for="role in workspaceInviteRoleOptions"
-                              :key="`workspace-role-option-${role}`"
-                              :value="role"
-                            >
-                              {{ workspaceRoleLabel(role) }}
-                            </option>
-                          </select>
-                        </label>
-
-                        <label class="text-[11px] text-slate-600 block space-y-1">
-                          <span class="block">有效期</span>
-                          <select
-                            v-model.number="workspaceInviteForm.expiresInDays"
-                            class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                          >
-                            <option :value="1">
-                              1 天
-                            </option>
-                            <option :value="3">
-                              3 天
-                            </option>
-                            <option :value="7">
-                              7 天
-                            </option>
-                            <option :value="14">
-                              14 天
-                            </option>
-                            <option :value="30">
-                              30 天
-                            </option>
-                          </select>
-                        </label>
-                      </div>
-
-                      <button
-                        class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                        type="button"
-                        :disabled="!canSubmitWorkspaceInvitation"
-                        @click="submitWorkspaceInvitation"
-                      >
-                        {{ workspaceInvitationSubmitting ? '生成中...' : '生成邀请链接' }}
-                      </button>
-                    </template>
-
-                    <p v-else class="text-[11px] text-amber-700 px-2.5 py-2 border border-amber-200 rounded bg-amber-50">
-                      {{ workspaceInviteUnavailableMessage }}
-                    </p>
-
-                    <div v-if="workspaceInvitationLink" class="text-[11px] text-slate-600 px-2.5 py-2 border border-slate-200 rounded bg-slate-50">
-                      <p class="text-slate-700 font-semibold">
-                        最新邀请链接
-                      </p>
-                      <p class="mt-1 break-all">
-                        {{ workspaceInvitationLink }}
-                      </p>
-                      <button
-                        class="text-[11px] font-semibold mt-2 px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50"
-                        type="button"
-                        @click="emit('copyWorkspaceInvitationLink')"
-                      >
-                        复制邀请链接
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="border border-slate-200 rounded bg-white">
-                  <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-slate-50">
-                    邀请记录（{{ workspaceInvitations.length }}）
+                    待处理邀请（{{ workspaceInvitations.length }}）
                   </div>
 
                   <div v-if="workspaceInvitations.length === 0" class="text-[11px] text-slate-500 px-3 py-3">
-                    暂无邀请记录。
+                    暂无待处理邀请。
                   </div>
 
-                  <div v-else class="divide-slate-200 divide-y">
+                  <div v-else class="divide-slate-200 divide-y" data-testid="project-invitation-list">
                     <article
                       v-for="invitation in workspaceInvitations"
                       :key="invitation.id"
+                      data-testid="project-invitation-item"
+                      :data-invitation-id="invitation.id"
                       class="px-3 py-2.5"
                     >
                       <div class="flex flex-wrap gap-2 items-center justify-between">
@@ -2341,7 +2266,10 @@ watch(activeTabId, (next) => {
                         </span>
                       </div>
                       <p class="text-[11px] text-slate-600 mt-1">
-                        {{ workspaceRoleLabel(invitation.role) }} · 发起人 {{ invitation.invitedByUsername }}
+                        {{ workspaceRoleLabel(invitation.projectRole || 'viewer') }} · 发起人 {{ invitation.invitedByUsername }}
+                      </p>
+                      <p class="text-[11px] text-slate-500 mt-1">
+                        {{ workspaceInvitationScopeLabel(invitation) }}
                       </p>
                       <p class="text-[11px] text-slate-500 mt-1">
                         过期时间：{{ formatDateTime(invitation.expiresAt) }}
@@ -2403,7 +2331,7 @@ watch(activeTabId, (next) => {
             </div>
 
             <div v-else-if="!hasActiveProject" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
-              当前空间暂无可编辑项目，请先创建或切换到目标项目。
+              当前 Team 暂无可编辑项目，请先创建或切换到目标项目。
             </div>
 
             <div v-else class="space-y-3">
@@ -2759,7 +2687,7 @@ watch(activeTabId, (next) => {
                 <iframe
                   class="border-0 bg-white h-full w-full"
                   :src="previewPdfUrl"
-                  title="文档预览"
+                  title="资料预览"
                 />
               </template>
 
@@ -2810,31 +2738,142 @@ watch(activeTabId, (next) => {
     </div>
 
     <a-modal
+      v-model:visible="workspaceInviteModalVisible"
+      title="邀请协作者"
+      data-testid="project-invite-modal"
+      width="560px"
+      :footer="false"
+      :esc-to-close="true"
+      :mask-closable="true"
+    >
+      <div class="space-y-3">
+        <div class="text-[11px] text-slate-500 p-2 border border-slate-200 rounded bg-slate-50">
+          <p class="m-0">
+            接受邀请后会先加入当前空间，再加入当前项目。
+          </p>
+          <p class="m-0 mt-1">
+            {{ workspaceInviteProjectLabel }}
+          </p>
+        </div>
+
+        <template v-if="workspaceCanManageMembers">
+          <label class="text-[11px] text-slate-600 block space-y-1">
+            <span class="block">邀请用户名（可选）</span>
+            <input
+              v-model="workspaceInviteForm.inviteeUsername"
+              data-testid="project-invite-username-input"
+              class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+              placeholder="留空时生成通用邀请"
+            >
+          </label>
+
+          <div class="gap-2 grid grid-cols-2">
+            <label class="text-[11px] text-slate-600 block space-y-1">
+              <span class="block">项目角色</span>
+              <select
+                v-model="workspaceInviteForm.role"
+                data-testid="project-invite-role-select"
+                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+              >
+                <option
+                  v-for="role in workspaceInviteRoleOptions"
+                  :key="`workspace-role-option-${role}`"
+                  :value="role"
+                >
+                  {{ workspaceRoleLabel(role) }}
+                </option>
+              </select>
+            </label>
+
+            <label class="text-[11px] text-slate-600 block space-y-1">
+              <span class="block">有效期</span>
+              <select
+                v-model.number="workspaceInviteForm.expiresInDays"
+                data-testid="project-invite-expiry-select"
+                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+              >
+                <option :value="1">
+                  1 天
+                </option>
+                <option :value="3">
+                  3 天
+                </option>
+                <option :value="7">
+                  7 天
+                </option>
+                <option :value="14">
+                  14 天
+                </option>
+                <option :value="30">
+                  30 天
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <div v-if="workspaceInvitationLink" class="text-[11px] text-slate-600 px-2.5 py-2 border border-slate-200 rounded bg-slate-50">
+            <p class="text-slate-700 font-semibold">
+              最新邀请链接
+            </p>
+            <p class="mt-1 break-all" data-testid="project-invite-link">
+              {{ workspaceInvitationLink }}
+            </p>
+            <button
+              data-testid="project-invite-copy-link-button"
+              class="text-[11px] font-semibold mt-2 px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50"
+              type="button"
+              @click="emit('copyWorkspaceInvitationLink')"
+            >
+              复制邀请链接
+            </button>
+          </div>
+
+          <div class="flex gap-2 justify-end">
+            <a-button size="small" @click="closeWorkspaceInviteModal">
+              关闭
+            </a-button>
+            <a-button
+              size="small"
+              type="primary"
+              data-testid="project-invite-submit-button"
+              :loading="workspaceInvitationSubmitting"
+              :disabled="!canSubmitWorkspaceInvitation"
+              @click="submitWorkspaceInvitation"
+            >
+              生成邀请链接
+            </a-button>
+          </div>
+        </template>
+
+        <template v-else>
+          <p class="text-[11px] text-amber-700 px-2.5 py-2 border border-amber-200 rounded bg-amber-50">
+            {{ workspaceInviteUnavailableMessage }}
+          </p>
+          <div class="flex justify-end">
+            <a-button size="small" @click="closeWorkspaceInviteModal">
+              关闭
+            </a-button>
+          </div>
+        </template>
+      </div>
+    </a-modal>
+
+    <a-modal
       v-model:visible="workspaceSeatModalVisible"
-      title="Add Seat"
+      title="调整项目席位"
       width="560px"
       :footer="false"
     >
       <div class="text-[11px] space-y-3">
         <div class="p-2 border border-slate-200 rounded bg-slate-50">
           <p class="text-[11px] text-slate-800 font-semibold m-0">
-            当前席位
+            当前项目席位
           </p>
           <p class="text-[12px] text-slate-700 m-0 mt-1">
             {{ normalizedWorkspaceSeatUsed }} / {{ normalizedWorkspaceSeatLimit ?? '--' }}
           </p>
-        </div>
-
-        <div v-if="workspaceBillingEstimateLoading" class="text-slate-500 p-2 border border-slate-200 rounded bg-slate-50">
-          正在加载计费估算...
-        </div>
-
-        <div v-else-if="workspaceBillingEstimate" class="text-slate-600 p-2 border border-slate-200 rounded bg-white">
-          <p class="m-0">
-            计费方案：{{ workspaceBillingEstimate.planCode || '-' }} · {{ workspaceBillingEstimate.billingCycle }}
-          </p>
-          <p class="m-0 mt-1">
-            当前估算：¥{{ Number(workspaceBillingEstimate.estimatedAmountYuan || 0).toFixed(2) }}
+          <p class="text-[11px] text-slate-500 m-0 mt-1">
+            {{ workspaceSeatSummaryText }}
           </p>
         </div>
 
@@ -2847,12 +2886,12 @@ watch(activeTabId, (next) => {
             :precision="0"
             size="small"
             class="w-full"
-            placeholder="输入新的 seat limit"
+            placeholder="输入新的项目席位上限"
           />
         </label>
 
         <p v-if="workspaceSeatDraftTooSmall" class="text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
-          seatLimit 不能小于当前已使用席位（{{ normalizedWorkspaceSeatUsed }}）。
+          项目席位上限不能小于当前已使用席位（{{ normalizedWorkspaceSeatUsed }}）。
         </p>
 
         <p v-if="workspaceSeatLimitError" class="text-rose-600 p-2 border border-rose-200 rounded bg-rose-50">

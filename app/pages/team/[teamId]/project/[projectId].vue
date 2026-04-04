@@ -16,29 +16,30 @@ import type {
   ApproveChangeRequestPayload,
   AuthMeResult,
   ChatMessage,
+  CollabPurpose,
   Contest,
   Project,
   ProjectContestAdaptation,
+  ProjectInvitationSummary,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectMemberManagementSnapshot,
+  ProjectMemberRole,
+  ProjectMemberSummary,
   ProjectOutlineSnapshot,
   ProjectPayload,
   ProjectResourceShare,
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
+  ProjectSeatQuota,
   ProjectSettingsDraft,
   ProjectSettingsDraftPayload,
   ProjectSettingsDraftUi,
   ProjectSettingsSnapshot,
   Resource,
   ResourcePreviewStatus,
-  TeamQuota,
   WorkspaceAiMode,
-  WorkspaceBillingEstimate,
-  WorkspaceInvitationSummary,
-  WorkspaceMemberManagementSnapshot,
   WorkspaceMemberRole,
-  WorkspaceMemberSummary,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
@@ -46,6 +47,7 @@ import type {
   MappingTone,
   WorkspaceFormState,
   WorkspaceKeyword,
+  WorkspaceLinkedContestResourceGroup,
   WorkspaceMappingRow,
   WorkspaceProjectAdaptationForm,
   WorkspaceProjectCommonForm,
@@ -67,7 +69,7 @@ definePageMeta({
 })
 
 useHead({
-  title: '竞赛分析工作台',
+  title: '项目工作区',
   link: [
     {
       rel: 'stylesheet',
@@ -244,6 +246,11 @@ function normalizeQueryParam(value: unknown): string {
   return String(value).trim()
 }
 
+function isTruthyQueryFlag(value: unknown): boolean {
+  const normalized = normalizeQueryParam(value).toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes'
+}
+
 function teamDashboardPath(): string {
   return '/team'
 }
@@ -262,6 +269,23 @@ function workspaceDetailPath(workspaceId: string, projectId = ''): string {
   if (normalizedWorkspaceId && normalizedProjectId)
     return teamProjectPath(normalizedWorkspaceId, normalizedProjectId)
   return teamDetailPath(normalizedWorkspaceId)
+}
+
+async function ensureCanonicalWorkspaceProjectRoute(): Promise<boolean> {
+  if (!route.path.startsWith('/workspace/'))
+    return false
+
+  const params = route.params as Record<string, string | string[] | undefined>
+  const workspaceId = normalizeRouteParam(params.teamId || params.workspaceId)
+  const projectId = normalizeRouteParam(params.projectId)
+  if (!workspaceId || !projectId)
+    return false
+
+  await navigateTo({
+    path: workspaceDetailPath(workspaceId, projectId),
+    query: route.query,
+  }, { replace: true })
+  return true
 }
 
 function resolveApiErrorMessage(error: unknown, fallback: string): string {
@@ -372,15 +396,15 @@ interface ProjectResourceShareCreatePayload {
   duration: ProjectResourceShareDurationPreset
 }
 
-interface WorkspaceInvitationCreatePayload {
+interface ProjectInvitationCreatePayload {
   inviteeUsername: string
-  role: WorkspaceMemberRole
+  projectRole: ProjectMemberRole
   expiresInDays: number
 }
 
-interface WorkspaceMemberRolePatchPayload {
+interface ProjectMemberRolePatchPayload {
   userId: string
-  role: 'admin' | 'manager' | 'member'
+  role: 'manager' | 'editor' | 'viewer'
 }
 
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
@@ -427,8 +451,8 @@ const resources = ref<Resource[]>([])
 const recycleResources = ref<Resource[]>([])
 const resourceLibrary = ref<Resource[]>([])
 const projectResourceShares = ref<ProjectResourceShare[]>([])
-const workspaceMembers = ref<WorkspaceMemberSummary[]>([])
-const workspaceInvitations = ref<WorkspaceInvitationSummary[]>([])
+const workspaceMembers = ref<ProjectMemberSummary[]>([])
+const workspaceInvitations = ref<ProjectInvitationSummary[]>([])
 const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
 const projects = ref<Project[]>([])
 const allProjects = ref<Project[]>([])
@@ -450,7 +474,9 @@ const headerSearch = ref('')
 const aiReasoning = ref('')
 const normalizedInfo = ref('')
 const statusLine = ref('')
+const flowResourceId = ref('')
 const previewResourceId = ref('')
+const collabBindingResourceId = ref('')
 const closingPreviewResourceId = ref('')
 const previewStatusLoading = ref(false)
 const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
@@ -511,11 +537,10 @@ const issueCenterLoading = ref(false)
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
 const workspaceInvitationLink = ref('')
-const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
-const workspaceBillingEstimateLoading = ref(false)
 const workspaceSeatLimitSaveLoading = ref(false)
 const workspaceSeatLimitError = ref('')
 const workspaceSeatLimitUpdatedSignal = ref(0)
+const projectSeatQuota = ref<ProjectSeatQuota | null>(null)
 
 function getProjectSettingsDraftStorageKey(projectId: string): string {
   if (!import.meta.client)
@@ -675,6 +700,44 @@ const projectSettingsBindingMap = computed(() => {
     map.set(binding.contestId, binding)
   return map
 })
+const linkedContestResourceGroups = computed<WorkspaceLinkedContestResourceGroup[]>(() => {
+  const resourcesByContestId = new Map<string, Resource[]>()
+
+  for (const resource of resourceLibrary.value) {
+    const contestId = String(resource.contestId || '').trim()
+    if (!contestId)
+      continue
+
+    const existing = resourcesByContestId.get(contestId)
+    if (existing) {
+      existing.push(resource)
+      continue
+    }
+
+    resourcesByContestId.set(contestId, [resource])
+  }
+
+  return [...projectSettingsBindings.value]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .reduce<WorkspaceLinkedContestResourceGroup[]>((groups, binding) => {
+      const contestId = String(binding.contestId || '').trim()
+      if (!contestId || groups.some(item => item.contestId === contestId))
+        return groups
+
+      const contest = contestMap.value.get(contestId)
+      const track = contest?.tracks.find(item => item.id === binding.trackId) || contest?.tracks[0] || null
+
+      groups.push({
+        contestId,
+        contestName: contest?.name || '已关联比赛',
+        trackId: String(binding.trackId || '').trim(),
+        trackName: track?.name || '',
+        resources: resourcesByContestId.get(contestId) || [],
+      })
+
+      return groups
+    }, [])
+})
 const projectSettingsHasCurrentContest = computed(() => {
   const contestId = String(projectSettingsCurrentContestId.value || '').trim()
   return Boolean(contestId && projectSettingsBindingMap.value.has(contestId))
@@ -693,12 +756,23 @@ const visibleWorkspaceIdSet = computed(() => {
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
 })
+const currentProjectMember = computed(() => {
+  const userId = String(me.value?.user.id || '').trim()
+  if (!userId)
+    return null
+  return workspaceMembers.value.find(item => item.userId === userId) || null
+})
+const currentProjectMemberRole = computed<ProjectMemberRole | ''>(() => {
+  return currentProjectMember.value?.role || ''
+})
 const workspaceCanManageMembers = computed(() => {
   if (me.value?.user.isPlatformAdmin)
     return true
 
   const roles = currentWorkspace.value?.workspace.roles || []
-  return roles.some(role => WORKSPACE_MEMBER_MANAGE_ROLES.includes(role))
+  if (roles.some(role => WORKSPACE_MEMBER_MANAGE_ROLES.includes(role)))
+    return true
+  return currentProjectMemberRole.value === 'owner' || currentProjectMemberRole.value === 'manager'
 })
 const workspaceCanEditMembers = computed(() => {
   if (me.value?.user.isPlatformAdmin)
@@ -707,22 +781,19 @@ const workspaceCanEditMembers = computed(() => {
   return roles.includes('owner') || roles.includes('admin')
 })
 const workspaceCanManageBillingSeats = computed(() => {
-  if (me.value?.user.isPlatformAdmin)
-    return true
-  const roles = currentWorkspace.value?.workspace.roles || []
-  return roles.includes('owner') || roles.includes('admin')
+  return workspaceCanManageMembers.value
 })
 const workspaceSupportsSeatAdd = computed(() => {
-  return currentWorkspace.value?.workspace.type === 'team'
+  return Boolean(highlightedProjectId.value)
 })
 const workspaceSeatUsed = computed(() => {
-  if (!workspaceMemberManagementLoading.value && workspaceMembers.value.length > 0)
-    return workspaceMembers.value.length
-  const quotaSeatUsed = Number(currentWorkspace.value?.quota?.seatUsed || 0)
-  return Math.max(0, Math.trunc(quotaSeatUsed))
+  const quotaSeatUsed = Number(projectSeatQuota.value?.seatUsed || 0)
+  if (Number.isFinite(quotaSeatUsed) && quotaSeatUsed > 0)
+    return Math.max(0, Math.trunc(quotaSeatUsed))
+  return Math.max(0, workspaceMembers.value.length)
 })
 const workspaceSeatLimit = computed<number | null>(() => {
-  const raw = Number(currentWorkspace.value?.quota?.seatLimit)
+  const raw = Number(projectSeatQuota.value?.seatLimit)
   if (!Number.isFinite(raw) || raw <= 0)
     return null
   return Math.max(1, Math.trunc(raw))
@@ -774,7 +845,7 @@ const activeProjectId = computed(() => activeProject.value?.id || '')
 const collabSession = useCollabSession({
   workspaceRealtime,
   projectId: activeProjectId,
-  resourceId: previewResourceId,
+  resourceId: collabBindingResourceId,
   statusLine,
   fetchSnapshot: async resourceId => await fetchCollabSnapshot(resourceId),
 })
@@ -824,11 +895,26 @@ const previewResource = computed(() => {
     return null
   return resources.value.find(item => item.id === targetId) || null
 })
+const flowResource = computed(() => {
+  const targetId = String(flowResourceId.value || '').trim()
+  if (!targetId)
+    return null
+  return resources.value.find(item => item.id === targetId) || null
+})
 const previewResourceTitle = computed(() => {
-  const title = String(previewResource.value?.title || '').trim()
+  const currentPreviewResource = previewResource.value
+  const title = String(currentPreviewResource?.title || '').trim()
   if (title)
     return title
-  return '文档预览'
+  if (isCollabResource(currentPreviewResource))
+    return resolveCollabResourceLabel(currentPreviewResource)
+  return '资料预览'
+})
+const flowResourceTitle = computed(() => {
+  const title = String(flowResource.value?.title || '').trim()
+  if (title)
+    return title
+  return '流程画布'
 })
 function resolveResourceSourceDownloadUrl(resource: Resource | null | undefined): string {
   const rawUrl = String(resource?.sourceDownloadUrl || resource?.sourceLink || '').trim()
@@ -874,11 +960,13 @@ function resetWorkspaceMemberManagementState(): void {
   workspaceMemberRoleUpdatingUserId.value = ''
   workspaceMemberRemovingUserId.value = ''
   workspaceInvitationRevokingId.value = ''
+  projectSeatQuota.value = null
 }
 
-function applyWorkspaceMemberManagementSnapshot(snapshot: WorkspaceMemberManagementSnapshot): void {
+function applyWorkspaceMemberManagementSnapshot(snapshot: ProjectMemberManagementSnapshot): void {
   workspaceMembers.value = Array.isArray(snapshot.members) ? snapshot.members : []
   workspaceInvitations.value = Array.isArray(snapshot.invitations) ? snapshot.invitations : []
+  projectSeatQuota.value = snapshot.seatQuota || null
 }
 const previewSourceDownloadUrl = computed(() => {
   const fromStatus = String(previewStatusPayload.value?.sourceDownloadUrl || '').trim()
@@ -906,8 +994,37 @@ function isCollabResource(resource: Resource | null | undefined): resource is Re
   return String(resource.source || '').trim().toLowerCase() === 'collab'
 }
 
+function resolveCollabPurpose(resource: Resource | null | undefined): CollabPurpose | '' {
+  if (!isCollabResource(resource))
+    return ''
+
+  const normalized = String(resource.collabPurpose || '').trim().toLowerCase()
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+    return normalized
+  return resource.resourceKind === 'markdown' ? 'notes' : 'freeform'
+}
+
+function isWorkflowCanvasResource(resource: Resource | null | undefined): resource is Resource {
+  return isCollabResource(resource)
+    && resource.resourceKind === 'draw'
+    && resolveCollabPurpose(resource) === 'workflow'
+}
+
+function resolveCollabResourceLabel(resource: Resource | null | undefined): string {
+  if (!isCollabResource(resource))
+    return '协作内容'
+
+  const purpose = resolveCollabPurpose(resource)
+  if (purpose === 'workflow')
+    return '流程画布'
+  if (purpose === 'freeform')
+    return '自由画布'
+  return '协作文档'
+}
+
 function disposeCollabDocBinding(leaveRoom = true): void {
   collabSession.dispose(leaveRoom)
+  collabBindingResourceId.value = ''
 }
 
 function applyCollabSnapshot(snapshot: CollabSnapshotPayload): void {
@@ -2136,16 +2253,6 @@ watch([selectedContestId, selectedTrackId], () => {
   scheduleProjectOutlineGenerate('contest_track_switched')
 })
 
-async function refreshAuthContextSnapshot(): Promise<void> {
-  try {
-    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
-    me.value = response.data
-  }
-  catch {
-    // ignore soft refresh failures and keep current in-memory auth snapshot
-  }
-}
-
 async function loadAuthContext(): Promise<boolean> {
   try {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
@@ -2161,7 +2268,7 @@ async function loadAuthContext(): Promise<boolean> {
     if (!hasCurrent) {
       await navigateTo({
         path: teamDashboardPath(),
-        query: { deniedTeamId: targetWorkspaceId },
+        query: { deniedWorkspaceId: targetWorkspaceId },
       }, { replace: true })
       return false
     }
@@ -2600,97 +2707,64 @@ async function loadQuickSwitchProjects() {
 }
 
 async function loadWorkspaceMemberManagement() {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
     resetWorkspaceMemberManagementState()
     return
   }
 
   workspaceMemberManagementLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(endpoint(`/teams/${workspaceId}/members`))
-    if (activeWorkspaceId.value !== workspaceId)
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
+    if (activeProjectId.value !== projectId)
       return
     applyWorkspaceMemberManagementSnapshot(response.data)
   }
   catch {
-    if (activeWorkspaceId.value === workspaceId)
+    if (activeProjectId.value === projectId)
       resetWorkspaceMemberManagementState()
   }
   finally {
-    if (activeWorkspaceId.value === workspaceId || !activeWorkspaceId.value)
+    if (activeProjectId.value === projectId || !activeProjectId.value)
       workspaceMemberManagementLoading.value = false
-  }
-}
-
-async function loadWorkspaceBillingEstimate(silent = false) {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId) {
-    workspaceBillingEstimate.value = null
-    return
-  }
-
-  workspaceBillingEstimateLoading.value = true
-  try {
-    const response = await $fetch<ApiResponse<WorkspaceBillingEstimate>>(endpoint(`/teams/${workspaceId}/billing/estimate`))
-    if (activeWorkspaceId.value !== workspaceId)
-      return
-    workspaceBillingEstimate.value = response.data
-  }
-  catch (error) {
-    if (activeWorkspaceId.value !== workspaceId)
-      return
-    workspaceBillingEstimate.value = null
-    if (!silent)
-      workspaceSeatLimitError.value = resolveApiErrorMessage(error, '加载计费估算失败，请稍后重试。')
-  }
-  finally {
-    if (activeWorkspaceId.value === workspaceId || !activeWorkspaceId.value)
-      workspaceBillingEstimateLoading.value = false
   }
 }
 
 function openWorkspaceSeatModal() {
   workspaceSeatLimitError.value = ''
-  void loadWorkspaceBillingEstimate(true)
 }
 
 async function saveWorkspaceSeatLimit(seatLimit: number) {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId) {
-    workspaceSeatLimitError.value = '请先选择 Team。'
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    workspaceSeatLimitError.value = '请先选择项目。'
     return
   }
 
   if (!workspaceCanManageBillingSeats.value) {
-    workspaceSeatLimitError.value = '当前账号无 add seat 权限。'
+    workspaceSeatLimitError.value = '当前账号无项目席位管理权限。'
     return
   }
 
   workspaceSeatLimitSaveLoading.value = true
   workspaceSeatLimitError.value = ''
   try {
-    await $fetch<ApiResponse<Omit<TeamQuota, 'workspaceId'>>>(endpoint(`/teams/${workspaceId}/seats`), {
+    await $fetch<ApiResponse<ProjectSeatQuota>>(endpoint(`/projects/${projectId}/seats`), {
       method: 'PATCH',
       body: {
         seatLimit: Math.max(1, Math.trunc(Number(seatLimit || 1))),
       },
     })
 
-    if (activeWorkspaceId.value !== workspaceId)
+    if (activeProjectId.value !== projectId)
       return
 
-    await Promise.all([
-      refreshAuthContextSnapshot(),
-      loadWorkspaceMemberManagement(),
-      loadWorkspaceBillingEstimate(true),
-    ])
-
+    await loadWorkspaceMemberManagement()
     workspaceSeatLimitUpdatedSignal.value += 1
-    statusLine.value = 'Team 席位已更新。'
+    statusLine.value = '项目席位已更新。'
   }
   catch (error) {
-    workspaceSeatLimitError.value = resolveApiErrorMessage(error, '更新 Team 席位失败。')
+    workspaceSeatLimitError.value = resolveApiErrorMessage(error, '更新项目席位失败。')
     statusLine.value = workspaceSeatLimitError.value
   }
   finally {
@@ -2698,66 +2772,91 @@ async function saveWorkspaceSeatLimit(seatLimit: number) {
   }
 }
 
-async function createWorkspaceInvitation(payload: WorkspaceInvitationCreatePayload) {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId) {
-    statusLine.value = '请先选择一个空间。'
+async function createWorkspaceInvitation(payload: ProjectInvitationCreatePayload) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    statusLine.value = '请先选择一个项目。'
     return
   }
 
   if (!workspaceCanManageMembers.value) {
-    statusLine.value = '当前账号无邀请权限。'
+    statusLine.value = '当前账号无项目邀请权限。'
     return
   }
 
   workspaceInvitationSubmitting.value = true
   try {
-    const response = await $fetch<ApiResponse<{ token: string }>>(endpoint(`/teams/${workspaceId}/invitations`), {
+    const response = await $fetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
       method: 'POST',
       body: {
         inviteeUsername: String(payload.inviteeUsername || '').trim() || undefined,
-        role: payload.role,
+        projectRole: payload.projectRole,
         expiresInDays: Math.max(1, Math.min(30, Number(payload.expiresInDays || 7))),
       },
     })
 
     const token = String(response.data.token || '').trim()
     workspaceInvitationLink.value = resolveWorkspaceInvitationUrl(token)
-    statusLine.value = '邀请已生成，可复制邀请链接发送给成员。'
-    await loadWorkspaceMemberManagement()
+    applyWorkspaceMemberManagementSnapshot(response.data.snapshot)
+    statusLine.value = '项目邀请已生成，可复制邀请链接发送给协作者。'
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '创建邀请失败，请稍后重试。')
+    statusLine.value = resolveApiErrorMessage(error, '创建项目邀请失败，请稍后重试。')
   }
   finally {
     workspaceInvitationSubmitting.value = false
   }
 }
 
-async function patchWorkspaceMemberRole(payload: WorkspaceMemberRolePatchPayload) {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
+async function consumeJoinedProjectNotice() {
+  if (!isTruthyQueryFlag(route.query.joined))
+    return
+
+  statusLine.value = '已加入当前 Team 和项目，可立即开始协作。'
+
+  const nextQuery: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    if (key === 'joined')
+      continue
+
+    const normalized = normalizeQueryParam(value)
+    if (normalized)
+      nextQuery[key] = normalized
+  }
+
+  await navigateTo({
+    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
+    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
+  }, { replace: true })
+}
+
+async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) {
+  const projectId = String(activeProjectId.value || '').trim()
   const userId = String(payload.userId || '').trim()
-  if (!workspaceId || !userId)
+  if (!projectId || !userId)
     return
   if (!workspaceCanEditMembers.value) {
-    statusLine.value = '当前账号无成员角色管理权限。'
+    statusLine.value = '当前账号无高级项目角色管理权限。'
     return
   }
 
   workspaceMemberRoleUpdatingUserId.value = userId
   try {
-    const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(
-      endpoint(`/teams/${workspaceId}/members/${userId}/role`),
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(
+      endpoint(`/projects/${projectId}/members`),
       {
-        method: 'PATCH',
-        body: { role: payload.role },
+        method: 'POST',
+        body: {
+          userId,
+          role: payload.role,
+        },
       },
     )
     applyWorkspaceMemberManagementSnapshot(response.data)
-    statusLine.value = '成员角色已更新。'
+    statusLine.value = '项目成员角色已更新。'
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '更新成员角色失败，请稍后重试。')
+    statusLine.value = resolveApiErrorMessage(error, '更新项目成员角色失败，请稍后重试。')
   }
   finally {
     if (workspaceMemberRoleUpdatingUserId.value === userId)
@@ -2766,26 +2865,26 @@ async function patchWorkspaceMemberRole(payload: WorkspaceMemberRolePatchPayload
 }
 
 async function removeWorkspaceMember(userId: string) {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const projectId = String(activeProjectId.value || '').trim()
   const normalizedUserId = String(userId || '').trim()
-  if (!workspaceId || !normalizedUserId)
+  if (!projectId || !normalizedUserId)
     return
-  if (!workspaceCanEditMembers.value) {
-    statusLine.value = '当前账号无成员移除权限。'
+  if (!workspaceCanManageMembers.value) {
+    statusLine.value = '当前账号无项目成员移除权限。'
     return
   }
 
   workspaceMemberRemovingUserId.value = normalizedUserId
   try {
-    const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(
-      endpoint(`/teams/${workspaceId}/members/${normalizedUserId}`),
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(
+      endpoint(`/projects/${projectId}/members/${normalizedUserId}`),
       { method: 'DELETE' },
     )
     applyWorkspaceMemberManagementSnapshot(response.data)
-    statusLine.value = '成员已移除。'
+    statusLine.value = '项目成员已移除。'
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '移除成员失败，请稍后重试。')
+    statusLine.value = resolveApiErrorMessage(error, '移除项目成员失败，请稍后重试。')
   }
   finally {
     if (workspaceMemberRemovingUserId.value === normalizedUserId)
@@ -2794,26 +2893,26 @@ async function removeWorkspaceMember(userId: string) {
 }
 
 async function revokeWorkspaceInvitation(invitationId: string) {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const projectId = String(activeProjectId.value || '').trim()
   const normalizedInvitationId = String(invitationId || '').trim()
-  if (!workspaceId || !normalizedInvitationId)
+  if (!projectId || !normalizedInvitationId)
     return
   if (!workspaceCanManageMembers.value) {
-    statusLine.value = '当前账号无邀请撤销权限。'
+    statusLine.value = '当前账号无项目邀请撤销权限。'
     return
   }
 
   workspaceInvitationRevokingId.value = normalizedInvitationId
   try {
-    const response = await $fetch<ApiResponse<WorkspaceMemberManagementSnapshot & { revoked?: boolean }>>(
-      endpoint(`/teams/${workspaceId}/invitations/${normalizedInvitationId}/revoke`),
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot & { revoked?: boolean }>>(
+      endpoint(`/projects/${projectId}/invitations/${normalizedInvitationId}/revoke`),
       { method: 'POST' },
     )
     applyWorkspaceMemberManagementSnapshot(response.data)
-    statusLine.value = response.data.revoked ? '邀请已撤销。' : '该邀请已失效，无需重复撤销。'
+    statusLine.value = response.data.revoked ? '项目邀请已撤销。' : '该项目邀请已失效，无需重复撤销。'
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '撤销邀请失败，请稍后重试。')
+    statusLine.value = resolveApiErrorMessage(error, '撤销项目邀请失败，请稍后重试。')
   }
   finally {
     if (workspaceInvitationRevokingId.value === normalizedInvitationId)
@@ -2873,6 +2972,7 @@ async function createCollabResource(kind: 'markdown' | 'draw') {
     return
 
   resourceMutating.value = true
+  const resourceLabel = kind === 'draw' ? '自由画布' : '协作文档'
   try {
     const response = await $fetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
       method: 'POST',
@@ -2886,17 +2986,19 @@ async function createCollabResource(kind: 'markdown' | 'draw') {
     const createdResource = response.data?.resource
     const snapshot = response.data?.snapshot
     if (createdResource?.id) {
-      await openProjectCollabResource(createdResource.id, snapshot || null)
+      await openProjectCollabResource(createdResource.id, snapshot || null, {
+        surface: 'preview',
+      })
       statusLine.value = kind === 'draw'
-        ? '已创建无边画布，协作模式已打开。'
+        ? '已创建自由画布，协作模式已打开。'
         : '已创建协作文档，协作模式已打开。'
       return
     }
 
-    statusLine.value = '协作资源已创建。'
+    statusLine.value = `${resourceLabel}已创建。`
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '创建协作资源失败，请稍后重试。')
+    statusLine.value = resolveApiErrorMessage(error, `创建${resourceLabel}失败，请稍后重试。`)
   }
   finally {
     resourceMutating.value = false
@@ -3055,12 +3157,15 @@ async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPa
   if (!projectId || !targetResourceId)
     return null
 
+  const targetResource = resources.value.find(item => item.id === targetResourceId) || null
+  const resourceLabel = resolveCollabResourceLabel(targetResource)
+
   try {
     const response = await $fetch<ApiResponse<CollabSnapshotPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/collab`))
     return response.data
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '读取协作资源失败，请稍后重试。')
+    statusLine.value = resolveApiErrorMessage(error, `读取${resourceLabel}失败，请稍后重试。`)
     return null
   }
 }
@@ -3069,32 +3174,86 @@ interface OpenPreviewOptions {
   openTab?: boolean
 }
 
+interface OpenCollabOptions extends OpenPreviewOptions {
+  surface?: 'preview' | 'flow'
+}
+
+async function bindCollabResource(
+  resourceId: string,
+  snapshot?: CollabSnapshotPayload | null,
+): Promise<CollabSnapshotPayload | null> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetResourceId = String(resourceId || '').trim()
+  if (!projectId || !targetResourceId)
+    return null
+
+  const targetSnapshot = snapshot || await fetchCollabSnapshot(targetResourceId)
+  if (!targetSnapshot)
+    return null
+
+  disposeCollabDocBinding(true)
+  collabBindingResourceId.value = targetResourceId
+  applyCollabSnapshot(targetSnapshot)
+  collabSession.activateRoom()
+  return targetSnapshot
+}
+
 async function openProjectCollabResource(
   resourceId: string,
   snapshot?: CollabSnapshotPayload | null,
-  options: OpenPreviewOptions = {},
+  options: OpenCollabOptions = {},
 ): Promise<void> {
   const projectId = String(activeProjectId.value || '').trim()
   const targetResourceId = String(resourceId || '').trim()
   if (!projectId || !targetResourceId)
     return
 
-  const targetSnapshot = snapshot || await fetchCollabSnapshot(targetResourceId)
+  const targetSnapshot = await bindCollabResource(targetResourceId, snapshot)
   if (!targetSnapshot)
     return
 
-  disposeCollabDocBinding(true)
   clearPreviewStatusPolling()
   previewStatusPayload.value = null
   previewStatusLoading.value = false
+  if (options.surface === 'flow') {
+    flowResourceId.value = targetResourceId
+    if (options.openTab !== false)
+      openFlowSignal.value += 1
+    return
+  }
+
   previewMode.value = targetSnapshot.kind
   previewResourceId.value = targetResourceId
   closingPreviewResourceId.value = ''
   if (options.openTab !== false)
     openPreviewSignal.value += 1
-  applyCollabSnapshot(targetSnapshot)
+}
 
-  collabSession.activateRoom()
+async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<boolean> {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId)
+    return false
+
+  try {
+    const response = await $fetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
+      method: 'POST',
+      body: {
+        kind: 'draw',
+        purpose: 'workflow',
+      },
+    })
+
+    await refreshProjectResourceContext()
+    await openProjectCollabResource(response.data.resource.id, response.data.snapshot || null, {
+      openTab: options.openTab,
+      surface: 'flow',
+    })
+    return true
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '打开流程画布失败，请稍后重试。')
+    return false
+  }
 }
 
 async function fetchResourcePreviewStatus(resourceId: string, silent = false) {
@@ -3168,8 +3327,12 @@ function closeProjectResourcePreview(resourceId = previewResourceId.value) {
   if (!targetResourceId || targetResourceId !== activeResourceId)
     return
 
+  const preserveFlowBinding = targetResourceId === String(flowResourceId.value || '').trim()
+    && activeMainTabId.value === 'flow'
+
   closingPreviewResourceId.value = targetResourceId
-  disposeCollabDocBinding(true)
+  if (!preserveFlowBinding)
+    disposeCollabDocBinding(true)
   previewMode.value = 'binary'
   previewStatusPayload.value = null
   previewStatusLoading.value = false
@@ -4087,24 +4250,26 @@ async function switchProjectFromHeader(payload: { projectId: string, workspaceId
   await navigateTo(workspaceDetailPath(payload.workspaceId, payload.projectId))
 }
 
-function openFinalReviewFromHeader() {
-  openFlowSignal.value += 1
-  statusLine.value = '已打开申报流程梳理，可按流程推进终审。'
+async function openFinalReviewFromHeader() {
+  const opened = await ensureWorkflowCanvas()
+  if (opened)
+    statusLine.value = '已打开流程画布，可按流程继续推进终审。'
 }
 
 function openSettingsFromLeftSidebar() {
   openSettingsSignal.value += 1
-  statusLine.value = '已打开设置页，可配置项目底座并管理空间成员邀请。'
+  statusLine.value = '已打开设置页，可配置项目底座并管理项目协作邀请。'
 }
 
 function openMemberManagementFromLeftSidebar() {
   openMemberManagementSignal.value += 1
-  statusLine.value = '已打开成员管理，可查看席位并发起邀请。'
+  statusLine.value = '已打开项目协作，可查看成员、席位并发起邀请。'
 }
 
-function openFlowFromLeftSidebar() {
-  openFlowSignal.value += 1
-  statusLine.value = '已打开无边画布，可继续协作梳理项目流程。'
+async function openFlowFromLeftSidebar() {
+  const opened = await ensureWorkflowCanvas()
+  if (opened)
+    statusLine.value = '已打开流程画布，可继续协作梳理项目流程。'
 }
 
 function openDefenseFromLeftSidebar() {
@@ -4113,6 +4278,10 @@ function openDefenseFromLeftSidebar() {
 }
 
 onMounted(async () => {
+  const canonicalRedirected = await ensureCanonicalWorkspaceProjectRoute()
+  if (canonicalRedirected)
+    return
+
   const ok = await loadAuthContext()
   if (!ok)
     return
@@ -4140,6 +4309,7 @@ onMounted(async () => {
     if (target)
       statusLine.value = `已定位项目：${target.title}`
   }
+  await consumeJoinedProjectNotice()
 })
 
 onBeforeUnmount(() => {
@@ -4179,7 +4349,7 @@ watch(routeWorkspaceId, async (value, previous) => {
   if (!hasCurrent) {
     await navigateTo({
       path: teamDashboardPath(),
-      query: { deniedTeamId: value },
+      query: { deniedWorkspaceId: value },
     }, { replace: true })
     return
   }
@@ -4188,7 +4358,7 @@ watch(routeWorkspaceId, async (value, previous) => {
     activeWorkspaceId.value = value
   workspaceRealtime.subscribeWorkspace(value)
   workspaceInvitationLink.value = ''
-  workspaceBillingEstimate.value = null
+  projectSeatQuota.value = null
   workspaceSeatLimitError.value = ''
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
@@ -4218,11 +4388,14 @@ watch(activeProjectId, async (next, previous) => {
     workspaceRealtime.subscribeProject(next)
   await refreshProjectResourceContext()
   if (!next) {
+    disposeCollabDocBinding(true)
+    flowResourceId.value = ''
     projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
     aiChangeRequests.value = []
     projectIssueReports.value = []
     projectIssues.value = []
+    resetWorkspaceMemberManagementState()
     chatSessions.value = []
     activeChatSessionId.value = ''
     resetChatStateWithGreeting()
@@ -4231,12 +4404,60 @@ watch(activeProjectId, async (next, previous) => {
   syncFallbackResourceRefreshTimer()
   resetProjectSettingsState(activeProject.value)
   await Promise.all([
+    loadWorkspaceMemberManagement(),
     loadProjectOutline(),
     loadProjectSettings(selectedContestId.value),
     loadAiChangeRequests(),
     loadProjectIssues(),
     loadChatSessions(),
   ])
+})
+
+watch(resources, (nextResources) => {
+  const workflowResource = nextResources.find(item => isWorkflowCanvasResource(item)) || null
+  if (workflowResource && !flowResourceId.value)
+    flowResourceId.value = workflowResource.id
+
+  if (flowResourceId.value && !nextResources.some(item => item.id === flowResourceId.value)) {
+    const shouldDispose = collabBindingResourceId.value === flowResourceId.value && activeMainTabId.value === 'flow'
+    flowResourceId.value = ''
+    if (shouldDispose)
+      disposeCollabDocBinding(true)
+  }
+}, { deep: true })
+
+watch(activeMainTabId, async (next, previous) => {
+  if (next === previous)
+    return
+
+  if (next === 'flow') {
+    const targetResourceId = String(flowResourceId.value || '').trim()
+    if (!targetResourceId)
+      return
+    if (collabBindingResourceId.value === targetResourceId)
+      return
+    await openProjectCollabResource(targetResourceId, undefined, {
+      openTab: false,
+      surface: 'flow',
+    })
+    return
+  }
+
+  if (!next.startsWith('resource:'))
+    return
+
+  const targetResourceId = String(previewResourceId.value || '').trim()
+  if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
+    return
+
+  const targetResource = resources.value.find(item => item.id === targetResourceId) || null
+  if (!isCollabResource(targetResource))
+    return
+
+  await openProjectCollabResource(targetResourceId, undefined, {
+    openTab: false,
+    surface: 'preview',
+  })
 })
 
 watch([leftSidebarCollapsed, rightSidebarCollapsed], ([nextLeft, nextRight], [prevLeft, prevRight]) => {
@@ -4294,6 +4515,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           :selected-resources="selectedResources"
           :recycle-resources="recycleResources"
           :resource-library="resourceLibrary"
+          :linked-contest-resource-groups="linkedContestResourceGroups"
+          :linked-contest-binding-count="projectSettingsBindings.length"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
           :project-issues="projectIssues"
@@ -4372,7 +4595,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         :active-project="activeProject"
         :workspace-name="currentWorkspace?.workspace.name || ''"
         :workspace-type="currentWorkspace?.workspace.type || ''"
-        :workspace-roles="currentWorkspace?.workspace.roles || []"
         :workspace-members="workspaceMembers"
         :workspace-invitations="workspaceInvitations"
         :workspace-member-management-loading="workspaceMemberManagementLoading"
@@ -4387,8 +4609,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         :workspace-supports-seat-add="workspaceSupportsSeatAdd"
         :workspace-invitation-submitting="workspaceInvitationSubmitting"
         :workspace-invitation-link="workspaceInvitationLink"
-        :workspace-billing-estimate="workspaceBillingEstimate"
-        :workspace-billing-estimate-loading="workspaceBillingEstimateLoading"
         :workspace-seat-limit-save-loading="workspaceSeatLimitSaveLoading"
         :workspace-seat-limit-error="workspaceSeatLimitError"
         :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
@@ -4397,6 +4617,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         :open-flow-signal="openFlowSignal"
         :open-preview-signal="openPreviewSignal"
         :close-preview-signal="closePreviewSignal"
+        :flow-resource-id="flowResourceId"
+        :flow-resource-title="flowResourceTitle"
         :preview-resource-id="previewResourceId"
         :closing-preview-resource-id="closingPreviewResourceId"
         :preview-resource-title="previewResourceTitle"
