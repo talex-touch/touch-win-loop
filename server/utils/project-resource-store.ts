@@ -1,5 +1,6 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  CollabPurpose,
   Resource,
   ResourceAvailability,
   ResourceCategory,
@@ -150,6 +151,29 @@ function parseCollabKind(value: unknown): Extract<ResourceKind, 'markdown' | 'dr
   return null
 }
 
+function parseCollabPurpose(value: unknown): CollabPurpose | null {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+    return normalized
+  return null
+}
+
+function resolveDefaultCollabPurpose(kind: Extract<ResourceKind, 'markdown' | 'draw'>): CollabPurpose {
+  return kind === 'markdown' ? 'notes' : 'freeform'
+}
+
+function normalizeCollabPurpose(
+  kind: Extract<ResourceKind, 'markdown' | 'draw'>,
+  value?: unknown,
+): CollabPurpose | null {
+  const parsed = parseCollabPurpose(value)
+  if (!parsed)
+    return resolveDefaultCollabPurpose(kind)
+  if (kind === 'markdown')
+    return parsed === 'notes' ? parsed : null
+  return parsed === 'workflow' || parsed === 'freeform' ? parsed : null
+}
+
 function parseResourceKind(value: unknown): ResourceKind | null {
   const normalized = normalizeString(value).toLowerCase()
   if (normalized === 'binary' || normalized === 'markdown' || normalized === 'draw')
@@ -231,8 +255,15 @@ function normalizeDuplicateTitle(title: string): string {
   return `${normalized}（副本）`
 }
 
-function resolveCollabResourceTitlePrefix(kind: Extract<ResourceKind, 'markdown' | 'draw'>): string {
-  return kind === 'draw' ? '无边画布' : '协作文档'
+function resolveCollabResourceTitlePrefix(
+  kind: Extract<ResourceKind, 'markdown' | 'draw'>,
+  purpose: CollabPurpose,
+): string {
+  if (purpose === 'workflow')
+    return '流程画布'
+  if (purpose === 'freeform')
+    return '自由画布'
+  return kind === 'draw' ? '自由画布' : '协作文档'
 }
 
 function escapeRegExp(value: string): string {
@@ -243,13 +274,17 @@ async function resolveCollabResourceTitle(
   db: Queryable,
   projectId: string,
   kind: Extract<ResourceKind, 'markdown' | 'draw'>,
+  purpose: CollabPurpose,
   inputTitle?: string,
 ): Promise<string> {
   const normalized = normalizeString(inputTitle)
   if (normalized)
     return normalized
 
-  const prefix = resolveCollabResourceTitlePrefix(kind)
+  const prefix = resolveCollabResourceTitlePrefix(kind, purpose)
+  if (purpose === 'workflow')
+    return prefix
+
   const result = await db.query<{ title: string }>(
     `SELECT title
      FROM project_resources
@@ -283,6 +318,9 @@ function toResource(row: ProjectResourceRow): Resource {
   const persistedKind = parseResourceKind(row.resource_kind)
   const metadataKind = parseResourceKind(metadata.resourceKind)
   const collabKind = parseCollabKind(row.resource_kind) || parseCollabKind(metadata.resourceKind) || 'markdown'
+  const collabPurpose = sourceType === 'collab'
+    ? (parseCollabPurpose(metadata.collabPurpose) || resolveDefaultCollabPurpose(collabKind))
+    : undefined
   const resourceKind: ResourceKind = persistedKind
     || metadataKind
     || (sourceType === 'collab' ? collabKind : 'binary')
@@ -309,6 +347,7 @@ function toResource(row: ProjectResourceRow): Resource {
     id: row.id,
     projectId: row.project_id,
     resourceKind,
+    collabPurpose,
     documentId: documentId || undefined,
     contestId: originContestId,
     title: row.title,
@@ -799,6 +838,7 @@ export async function createProjectCollabResource(
     projectId: string
     actorUserId: string
     kind: Extract<ResourceKind, 'markdown' | 'draw'>
+    purpose?: CollabPurpose
     title?: string
   },
 ): Promise<{ resource: Resource, snapshot: ProjectCollabSnapshot }> {
@@ -817,10 +857,13 @@ export async function createProjectCollabResource(
   const kind = parseCollabKind(input.kind)
   if (!kind)
     throw new Error('INVALID_COLLAB_KIND')
+  const purpose = normalizeCollabPurpose(kind, input.purpose)
+  if (!purpose)
+    throw new Error('INVALID_COLLAB_PURPOSE')
 
   const now = new Date().toISOString()
   const resourceId = randomUUID()
-  const title = await resolveCollabResourceTitle(db, input.projectId, kind, input.title)
+  const title = await resolveCollabResourceTitle(db, input.projectId, kind, purpose, input.title)
   const sourceLink = buildServerApiEndpoint(`/projects/${input.projectId}/resources/${resourceId}/collab`)
   const mimeType = kind === 'markdown'
     ? 'text/markdown'
@@ -864,6 +907,7 @@ export async function createProjectCollabResource(
       sourceLink,
       JSON.stringify({
         resourceKind: kind,
+        collabPurpose: purpose,
         collab: true,
         createdAt: now,
       }),
@@ -941,6 +985,73 @@ export async function createProjectCollabResource(
       updatedAt: now,
     },
   }
+}
+
+export async function ensureProjectWorkflowCanvas(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    title?: string
+  },
+): Promise<{ resource: Resource, snapshot: ProjectCollabSnapshot }> {
+  const existingResult = await db.query<ProjectResourceRow>(
+    `SELECT
+      pr.id,
+      pr.project_id,
+      pr.source,
+      pr.resource_kind,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.mime_type,
+      pr.category,
+      pr.year,
+      pr.source_link,
+      pr.availability,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.status,
+      pr.created_by_user_id,
+      pr.updated_by_user_id,
+      pr.created_at::TEXT,
+      pr.updated_at::TEXT,
+      prc.revision AS collab_revision
+     FROM project_resources pr
+     JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+      AND prc.project_id = pr.project_id
+     WHERE pr.project_id = $1
+       AND pr.status = 'active'
+       AND pr.source = 'collab'
+       AND pr.resource_kind = 'draw'
+       AND COALESCE(pr.metadata->>'collabPurpose', '') = 'workflow'
+     ORDER BY pr.created_at ASC
+     LIMIT 1`,
+    [input.projectId],
+  )
+
+  const existing = existingResult.rows[0]
+  if (existing) {
+    const snapshot = await getProjectCollabSnapshot(db, {
+      projectId: input.projectId,
+      resourceId: existing.id,
+    })
+    if (!snapshot)
+      throw new Error('WORKFLOW_CANVAS_SNAPSHOT_NOT_FOUND')
+    return {
+      resource: toResource(existing),
+      snapshot,
+    }
+  }
+
+  return createProjectCollabResource(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+    kind: 'draw',
+    purpose: 'workflow',
+    title: input.title,
+  })
 }
 
 export async function getProjectCollabSnapshot(

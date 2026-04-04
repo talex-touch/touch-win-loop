@@ -1,16 +1,17 @@
-import type { ResourceKind } from '~~/shared/types/domain'
+import type { CollabPurpose, ResourceKind } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createProjectCollabResource } from '~~/server/utils/project-resource-store'
+import { createProjectCollabResource, ensureProjectWorkflowCanvas } from '~~/server/utils/project-resource-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
 interface CreateCollabResourceBody {
   kind?: ResourceKind
+  purpose?: CollabPurpose
   title?: string
 }
 
@@ -29,6 +30,13 @@ function normalizeCollabKind(rawKind: unknown): Extract<ResourceKind, 'markdown'
   return null
 }
 
+function normalizeCollabPurpose(rawPurpose: unknown): CollabPurpose | null {
+  const normalized = normalizeString(rawPurpose).toLowerCase()
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+    return normalized
+  return null
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -36,6 +44,7 @@ export default defineEventHandler(async (event) => {
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const body = (await readBody<CreateCollabResourceBody>(event).catch(() => ({} as CreateCollabResourceBody))) || {}
   const kind = normalizeCollabKind(body.kind)
+  const purpose = normalizeCollabPurpose(body.purpose)
   const title = normalizeString(body.title)
 
   if (!projectId) {
@@ -60,6 +69,32 @@ export default defineEventHandler(async (event) => {
     }, 40088)
   }
 
+  if (body.purpose !== undefined && !purpose) {
+    setResponseStatus(event, 400)
+    return fail('purpose 仅支持 workflow / freeform / notes。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40089)
+  }
+
+  if (
+    purpose
+    && ((purpose === 'notes' && kind !== 'markdown')
+      || ((purpose === 'workflow' || purpose === 'freeform') && kind !== 'draw'))
+  ) {
+    setResponseStatus(event, 400)
+    return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow 或 freeform。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40090)
+  }
+
   try {
     const created = await withTransaction(event, async (db) => {
       const projectResult = await db.query<ProjectWorkspaceRow>(
@@ -78,12 +113,19 @@ export default defineEventHandler(async (event) => {
       if (!access)
         throw new Error('FORBIDDEN')
 
-      const result = await createProjectCollabResource(db, {
-        projectId,
-        actorUserId: user.id,
-        kind,
-        title,
-      })
+      const result = purpose === 'workflow'
+        ? await ensureProjectWorkflowCanvas(db, {
+            projectId,
+            actorUserId: user.id,
+            title,
+          })
+        : await createProjectCollabResource(db, {
+            projectId,
+            actorUserId: user.id,
+            kind,
+            purpose: purpose || undefined,
+            title,
+          })
 
       return {
         ...result,
@@ -134,13 +176,24 @@ export default defineEventHandler(async (event) => {
 
     if (error instanceof Error && error.message === 'FORBIDDEN') {
       setResponseStatus(event, 403)
-      return fail('当前用户无权创建协作资源。', {
+      return fail('当前用户无权创建协作文档或画布。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
       }, 40387)
+    }
+
+    if (error instanceof Error && error.message === 'INVALID_COLLAB_PURPOSE') {
+      setResponseStatus(event, 400)
+      return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow 或 freeform。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40091)
     }
 
     throw error

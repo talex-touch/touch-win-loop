@@ -533,7 +533,7 @@ export default defineWebSocketHandler({
         })
 
         if (!context) {
-          sendError(peer, parsedMessage.requestId, 'COLLAB_NOT_FOUND', '协作资源不存在，或当前用户无权限。')
+          sendError(peer, parsedMessage.requestId, 'COLLAB_NOT_FOUND', '协作文档或画布不存在，或当前用户无权限。')
           return
         }
 
@@ -694,7 +694,7 @@ export default defineWebSocketHandler({
         return
       }
       if (error instanceof Error && error.message === 'RESOURCE_NOT_FOUND') {
-        sendError(peer, parsedMessage.requestId, 'RESOURCE_NOT_FOUND', '目标协作资源不存在。')
+        sendError(peer, parsedMessage.requestId, 'RESOURCE_NOT_FOUND', '目标协作文档或画布不存在。')
         return
       }
       if (error instanceof Error && error.message === 'INVALID_COLLAB_UPDATE') {

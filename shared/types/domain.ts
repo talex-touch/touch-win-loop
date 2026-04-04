@@ -21,6 +21,7 @@ export type DocumentParseStatus = 'queued' | 'processing' | 'succeeded' | 'faile
 export type DocumentTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
 export type DocumentBlockType = 'title' | 'paragraph' | 'table' | 'image' | 'header' | 'footer' | 'unknown' | 'ocr_candidate'
 export type ResourceKind = 'binary' | 'markdown' | 'draw'
+export type CollabPurpose = 'workflow' | 'freeform' | 'notes'
 export type ResourcePreviewStatus = 'queued' | 'converting' | 'finalizing' | 'succeeded' | 'failed'
 export type ProjectResourceShareVisibility = 'public' | 'workspace'
 export type ProjectResourceShareDurationPreset = '1h' | '1d' | '3d' | '7d' | '1mon'
@@ -153,6 +154,7 @@ export interface Resource {
   contestId: string
   projectId?: string
   resourceKind?: ResourceKind
+  collabPurpose?: CollabPurpose
   revision?: number
   documentId?: string
   title: string
@@ -419,6 +421,7 @@ export interface Invitation {
   teamId: string
   workspaceId?: string
   projectId?: string | null
+  projectRole?: ProjectMemberRole | null
   role: WorkspaceMemberRole
   inviteeUsername: string | null
   expiresAt: string
@@ -439,6 +442,13 @@ export interface WorkspaceMemberSummary {
 }
 
 export interface WorkspaceInvitationSummary extends Invitation {
+  invitedByUserId: string
+  invitedByUsername: string
+  projectTitle?: string | null
+  isExpired: boolean
+}
+
+export interface ProjectInvitationSummary extends Invitation {
   invitedByUserId: string
   invitedByUsername: string
   projectTitle?: string | null
@@ -513,6 +523,7 @@ export interface ProjectMemberManagementSnapshot {
   teamId: string
   workspaceId?: string
   members: ProjectMemberSummary[]
+  invitations: ProjectInvitationSummary[]
   seatQuota: ProjectSeatQuota | null
 }
 
@@ -1661,6 +1672,8 @@ export interface FeishuBitableSync {
   latestRunSummary: FeishuTaskLatestRunSummary | null
   createdByUserId: string
   updatedByUserId: string
+  archivedByUserId: string | null
+  archivedAt: string | null
   createdAt: string
   updatedAt: string
 }

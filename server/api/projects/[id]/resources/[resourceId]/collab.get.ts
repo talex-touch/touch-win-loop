@@ -74,7 +74,7 @@ export default defineEventHandler(async (event) => {
 
   if (result === 'FORBIDDEN') {
     setResponseStatus(event, 403)
-    return fail('当前用户无权访问该协作资源。', {
+    return fail('当前用户无权访问该协作文档或画布。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -85,7 +85,7 @@ export default defineEventHandler(async (event) => {
 
   if (result === 'COLLAB_NOT_FOUND') {
     setResponseStatus(event, 404)
-    return fail('协作资源不存在。', {
+    return fail('协作文档或画布不存在。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
