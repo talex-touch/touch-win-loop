@@ -228,6 +228,8 @@ const loadingFieldInspection = ref(false)
 const creatingItem = ref(false)
 const addItemDrawerVisible = ref(false)
 const itemDrawerVisible = ref(false)
+const mappingDrawerVisible = ref(false)
+const writebackDrawerVisible = ref(false)
 const suppressVisualSync = ref(false)
 const syncingNewItemSuggestion = ref(false)
 const newItemNameAuto = ref(true)
@@ -323,6 +325,12 @@ const newItemSuggestedEntityType = computed(() => suggestSyncItemEntityType({
   viewName: newItemViewName.value,
   name: newItemForm.name,
 }))
+const canRefreshFieldInspection = computed(() => Boolean(toText(itemForm.tableId)) && !loadingItem.value && !loadingViews.value)
+const configuredMappingCount = computed(() => mappingWizardBindings.value.filter(binding => Boolean(toText(binding.sourceField))).length)
+const mappingFocusFieldLabels = computed(() => previewFocusFields(itemForm.entityType).map(item => mappingOptionLabel(item)))
+const selectedWritebackFieldCount = computed(() => WRITEBACK_FIELD_CONFIGS.filter(field => Boolean(toText(writebackForm[field.key]))).length)
+const writebackSelectableFieldCount = computed(() => fieldInspection.value.filter(field => Boolean(toText(field.fieldName))).length)
+const writebackStatusLabel = computed(() => writebackForm.enabled ? '已启用回填' : '未启用回填')
 const unexpectedConfiguredMappingLabels = computed(() => {
   const parsed = pickMappingFromRaw(parseJsonTextLoose(itemForm.mappingText))
   const supportedKeys = new Set(activeMappingOptions.value.map(item => item.key))
@@ -706,7 +714,13 @@ function fillItemForm(item: FeishuBitableSyncItemDetail) {
   })
 }
 
+function closeNestedConfigDrawers() {
+  mappingDrawerVisible.value = false
+  writebackDrawerVisible.value = false
+}
+
 function resetCurrentItemState() {
+  closeNestedConfigDrawers()
   currentItem.value = null
   previewResult.value = null
   fieldInspection.value = []
@@ -897,6 +911,8 @@ async function openItemDrawer(itemId: string, emitChange = true) {
   const nextId = String(itemId || '').trim()
   if (!nextId)
     return
+  if (activeItemId.value && activeItemId.value !== nextId)
+    closeNestedConfigDrawers()
   activeItemId.value = nextId
   itemDrawerVisible.value = true
   if (emitChange)
@@ -905,6 +921,7 @@ async function openItemDrawer(itemId: string, emitChange = true) {
 }
 
 function closeItemDrawer() {
+  closeNestedConfigDrawers()
   itemDrawerVisible.value = false
   previewResult.value = null
   fieldInspectionError.value = ''
@@ -1585,6 +1602,7 @@ watch(() => props.syncId, () => {
 watch(() => props.selectedItemId, (value) => {
   const nextId = String(value || '').trim()
   if (!nextId) {
+    closeNestedConfigDrawers()
     if (itemDrawerVisible.value)
       itemDrawerVisible.value = false
     return
@@ -1779,7 +1797,7 @@ watch(() => props.selectedItemId, (value) => {
     <a-drawer
       v-model:visible="itemDrawerVisible"
       :title="currentItem ? `配置同步项：${currentItem.name}` : '配置同步项'"
-      width="1120px"
+      width="1320px"
       :footer="false"
       :mask-closable="!(savingItem || previewingItem || runningItem)"
       :closable="!(savingItem || previewingItem || runningItem)"
@@ -1869,13 +1887,23 @@ watch(() => props.selectedItemId, (value) => {
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
-              <div>
-                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                  来源
-                </h3>
-                <p class="text-[11px] text-slate-500 m-0 mt-1">
-                  先选子表和视图；选择后会自动刷新字段概览并尝试匹配映射。
-                </p>
+              <div class="flex flex-wrap gap-3 items-start justify-between">
+                <div>
+                  <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                    来源
+                  </h3>
+                  <p class="text-[11px] text-slate-500 m-0 mt-1">
+                    先选子表和视图；选择后会自动刷新字段概览并尝试匹配映射。
+                  </p>
+                </div>
+                <a-button
+                  size="mini"
+                  :loading="loadingFieldInspection"
+                  :disabled="!canRefreshFieldInspection"
+                  @click="inspectFields"
+                >
+                  刷新多维表格字段
+                </a-button>
               </div>
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
                 <label class="text-[11px] text-slate-600 font-medium block">
@@ -1937,99 +1965,76 @@ watch(() => props.selectedItemId, (value) => {
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
-              <div class="flex items-center justify-between">
-                <div>
-                  <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                    字段概览
-                  </h3>
-                  <p class="text-[11px] text-slate-500 m-0 mt-1">
-                    系统会优先按字段名猜测映射关系；你只需要重点确认 externalId 和关联字段是否正确。
-                  </p>
-                </div>
-                <a-button size="mini" :loading="loadingFieldInspection" @click="inspectFields">
-                  刷新字段
-                </a-button>
-              </div>
-              <p v-if="fieldInspectionError" class="text-[11px] text-rose-600 m-0">
-                {{ fieldInspectionError }}
-              </p>
-              <div v-else-if="fieldInspection.length" class="max-h-[220px] overflow-auto space-y-2">
-                <div v-for="field in fieldInspection" :key="field.fieldName" class="px-3 py-2 border border-slate-200 rounded">
-                  <div class="flex gap-2 items-center justify-between">
-                    <span class="text-[11px] text-slate-900 font-medium">{{ field.fieldName }}</span>
-                    <span class="text-[10px] text-slate-400">命中 {{ field.sampleCount }}</span>
-                  </div>
-                  <p class="text-[10px] text-slate-500 m-0 mt-1">
-                    {{ fieldSamplePreview(field.sampleValues) }}
-                  </p>
-                </div>
-              </div>
-              <a-empty v-else description="当前视图暂无可巡检字段" />
-            </section>
-
-            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
-              <div class="flex items-center justify-between">
-                <div>
-                  <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                    基础映射
-                  </h3>
-                  <p class="text-[11px] text-slate-500 m-0 mt-1">
-                    每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl`。
-                  </p>
-                </div>
-                <div class="flex gap-2">
-                  <a-button size="mini" @click="normalizeCurrentEntityTemplate">
-                    整理为当前实体模板
-                  </a-button>
-                  <a-button size="mini" @click="loadMappingWizardFromJson">
-                    从 JSON 回读
-                  </a-button>
-                  <a-button size="mini" @click="writeMappingWizardToJson(true)">
-                    同步到 JSON
-                  </a-button>
-                </div>
+              <div>
+                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                  详细配置入口
+                </h3>
+                <p class="text-[11px] text-slate-500 m-0 mt-1">
+                  基础映射和回填配置已拆到二级 Drawer。主页面只保留摘要，避免当前同步项的编辑信息过长难扫读。
+                </p>
               </div>
 
-              <div v-if="mappingWizardBindings.length" class="space-y-3">
-                <a-alert v-if="unexpectedConfiguredMappingLabels.length" type="info" :show-icon="true">
-                  检测到旧配置里还有当前实体不使用的字段：{{ unexpectedConfiguredMappingLabels.join(' / ') }}。点上面的“整理为当前实体模板”即可只保留当前实体相关配置。
-                </a-alert>
-                <a-alert v-if="missingRequiredMappingLabels.length" type="warning" :show-icon="true">
-                  还缺少重点映射：{{ missingRequiredMappingLabels.join(' / ') }}。如果不补齐，预检通常会出现“跳过”或“必要字段缺失”；赛道/资料也可以用同步选项里的固定 contestId 兜底关联。
-                </a-alert>
-                <div
-                  v-for="binding in mappingWizardBindings"
-                  :key="binding.targetKey"
-                  class="p-3 border rounded space-y-2"
-                  :class="[
-                    isRequiredMappingField(itemForm.entityType, binding.targetKey) && !binding.sourceField
-                      ? 'border-amber-300 bg-amber-50/50'
-                      : 'border-slate-200',
-                  ]"
-                >
-                  <div class="gap-2 grid md:grid-cols-[220px,minmax(0,1fr),minmax(0,1fr)]">
-                    <div class="text-[11px] text-slate-900 font-medium p-2 border border-slate-200 rounded bg-slate-50 flex gap-2 items-center justify-between">
-                      <span>{{ mappingOptionLabel(binding.targetKey) }}</span>
-                      <span
-                        v-if="isRequiredMappingField(itemForm.entityType, binding.targetKey)"
-                        class="text-[10px] text-amber-700 px-1.5 py-0.5 rounded bg-amber-100 inline-flex items-center"
-                      >
-                        重点
-                      </span>
+              <div class="gap-3 grid md:grid-cols-2">
+                <section class="p-4 border border-slate-200 rounded bg-slate-50 space-y-3">
+                  <div class="flex flex-wrap gap-3 items-start justify-between">
+                    <div>
+                      <h4 class="text-[12px] text-slate-900 font-semibold m-0">
+                        基础映射
+                      </h4>
+                      <p class="text-[11px] text-slate-500 m-0 mt-1">
+                        在二级 Drawer 里集中处理字段概览、来源列映射和映射 JSON。
+                      </p>
                     </div>
-                    <a-select v-model="binding.sourceField" size="small" allow-search allow-clear placeholder="来源字段">
-                      <a-option v-for="field in fieldInspection" :key="field.fieldName" :value="field.fieldName">
-                        {{ field.fieldName }}
-                      </a-option>
-                    </a-select>
-                    <a-input v-model="binding.transform" size="small" allow-clear placeholder="transform（可选）" />
+                    <a-button size="mini" type="primary" @click="mappingDrawerVisible = true">
+                      编辑基础映射
+                    </a-button>
                   </div>
-                  <p class="text-[10px] text-slate-500 m-0">
-                    样本：{{ fieldSamplePreview(fieldInspection.find(field => field.fieldName === binding.sourceField)?.sampleValues || []) }}
+                  <div class="flex flex-wrap gap-2">
+                    <a-tag size="small" color="arcoblue">
+                      已配置 {{ configuredMappingCount }} / {{ mappingWizardBindings.length || 0 }}
+                    </a-tag>
+                    <a-tag size="small" :color="missingRequiredMappingLabels.length ? 'gold' : 'green'">
+                      重点缺失 {{ missingRequiredMappingLabels.length }}
+                    </a-tag>
+                    <a-tag v-if="unexpectedConfiguredMappingLabels.length" size="small" color="purple">
+                      旧字段残留 {{ unexpectedConfiguredMappingLabels.length }}
+                    </a-tag>
+                  </div>
+                  <p class="text-[11px] text-slate-600 m-0">
+                    当前重点字段：{{ mappingFocusFieldLabels.join(' / ') || '-' }}
                   </p>
-                </div>
+                </section>
+
+                <section class="p-4 border border-slate-200 rounded bg-slate-50 space-y-3">
+                  <div class="flex flex-wrap gap-3 items-start justify-between">
+                    <div>
+                      <h4 class="text-[12px] text-slate-900 font-semibold m-0">
+                        回填配置
+                      </h4>
+                      <p class="text-[11px] text-slate-500 m-0 mt-1">
+                        在二级 Drawer 里选择飞书回填列、状态值，并维护回填 JSON。
+                      </p>
+                    </div>
+                    <a-button size="mini" type="primary" @click="writebackDrawerVisible = true">
+                      编辑回填配置
+                    </a-button>
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <a-tag size="small" :color="writebackForm.enabled ? 'green' : 'gray'">
+                      {{ writebackStatusLabel }}
+                    </a-tag>
+                    <a-tag size="small" color="arcoblue">
+                      已选字段 {{ selectedWritebackFieldCount }} / {{ WRITEBACK_FIELD_CONFIGS.length }}
+                    </a-tag>
+                    <a-tag size="small" :color="writebackSelectableFieldCount ? 'green' : 'gold'">
+                      {{ writebackSelectableFieldCount ? `可选字段 ${writebackSelectableFieldCount}` : '缺少可选字段' }}
+                    </a-tag>
+                  </div>
+                  <p class="text-[11px] text-slate-600 m-0">
+                    {{ writebackSelectableFieldCount ? '当前已加载飞书字段，可直接进入回填 Drawer 继续配置。' : '当前还没有可选飞书字段，请先在“来源”里选择子表/视图并刷新多维表格字段。' }}
+                  </p>
+                </section>
               </div>
-              <a-empty v-else description="当前实体类型还没有可配置的目标字段" />
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
@@ -2114,63 +2119,6 @@ watch(() => props.selectedItemId, (value) => {
                   </label>
                 </template>
               </div>
-            </section>
-
-            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
-              <div>
-                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                  回填配置
-                </h3>
-                <p class="text-[11px] text-slate-500 m-0 mt-1">
-                  回填的是飞书列名，不是平台字段名。这里直接从当前子表字段里选择，建议至少配置状态、同步时间、错误摘要、平台实体 ID 和 runId。
-                </p>
-              </div>
-              <div class="text-[11px] text-slate-600 font-medium block">
-                <div>启用回填</div>
-                <div class="mt-2">
-                  <a-switch v-model="writebackForm.enabled" />
-                </div>
-              </div>
-              <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
-                <label
-                  v-for="field in WRITEBACK_FIELD_CONFIGS"
-                  :key="field.key"
-                  class="text-[11px] text-slate-600 font-medium block"
-                >
-                  {{ field.label }}
-                  <a-select
-                    v-model="writebackForm[field.key]"
-                    class="mt-1"
-                    size="small"
-                    allow-search
-                    allow-clear
-                    placeholder="选择飞书字段"
-                  >
-                    <a-option
-                      v-for="fieldName in selectableFieldNames(writebackForm[field.key])"
-                      :key="`${field.key}-${fieldName}`"
-                      :value="fieldName"
-                    >
-                      {{ fieldName }}
-                    </a-option>
-                  </a-select>
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  成功值
-                  <a-input v-model="writebackForm.success" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  失败值
-                  <a-input v-model="writebackForm.failed" class="mt-1" size="small" allow-clear />
-                </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  跳过值
-                  <a-input v-model="writebackForm.skipped" class="mt-1" size="small" allow-clear />
-                </label>
-              </div>
-              <p v-if="!fieldInspection.length" class="text-[10px] text-slate-400 m-0">
-                还没有可选字段时，请先在上面的“来源”里选择子表/视图并刷新字段概览。
-              </p>
             </section>
 
             <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
@@ -2384,25 +2332,8 @@ watch(() => props.selectedItemId, (value) => {
                 <a-collapse-item key="advanced" header="高级 JSON 模式（兜底）">
                   <div class="pt-2 space-y-4">
                     <p class="text-[11px] text-slate-500 m-0">
-                      大多数情况请优先使用上面的可视化表单。只有在需要精细编辑或调试时，再直接修改 JSON。手动改 JSON 后，请点“从 JSON 回读”。
+                      主 Drawer 只保留同步选项 JSON；映射 JSON 和回填配置 JSON 已移到各自的二级 Drawer，避免表单和 JSON 分离。
                     </p>
-
-                    <section class="space-y-2">
-                      <div class="flex items-center justify-between">
-                        <h4 class="text-[12px] text-slate-900 font-semibold m-0">
-                          映射 JSON
-                        </h4>
-                        <div class="flex gap-2">
-                          <a-button size="mini" @click="loadMappingWizardFromJson">
-                            从 JSON 回读
-                          </a-button>
-                          <a-button size="mini" @click="writeMappingWizardToJson(true)">
-                            同步到 JSON
-                          </a-button>
-                        </div>
-                      </div>
-                      <a-textarea v-model="itemForm.mappingText" class="font-mono" :auto-size="{ minRows: 8, maxRows: 18 }" />
-                    </section>
 
                     <section class="space-y-2">
                       <div class="flex items-center justify-between">
@@ -2420,23 +2351,6 @@ watch(() => props.selectedItemId, (value) => {
                       </div>
                       <a-textarea v-model="itemForm.optionsText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 14 }" />
                     </section>
-
-                    <section class="space-y-2">
-                      <div class="flex items-center justify-between">
-                        <h4 class="text-[12px] text-slate-900 font-semibold m-0">
-                          回填配置 JSON
-                        </h4>
-                        <div class="flex gap-2">
-                          <a-button size="mini" @click="loadWritebackFormFromJson()">
-                            从 JSON 回读
-                          </a-button>
-                          <a-button size="mini" @click="syncWritebackFormToJson(true)">
-                            同步到 JSON
-                          </a-button>
-                        </div>
-                      </div>
-                      <a-textarea v-model="itemForm.writebackText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 16 }" />
-                    </section>
                   </div>
                 </a-collapse-item>
               </a-collapse>
@@ -2445,6 +2359,255 @@ watch(() => props.selectedItemId, (value) => {
 
           <a-empty v-else description="请先从同步项列表里选择一个条目" />
         </a-spin>
+      </div>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="mappingDrawerVisible"
+      :title="currentItem ? `基础映射：${currentItem.name}` : '基础映射'"
+      width="1040px"
+      :footer="false"
+      :mask-closable="!(savingItem || previewingItem || runningItem)"
+      :closable="!(savingItem || previewingItem || runningItem)"
+    >
+      <div class="space-y-4">
+        <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                字段概览
+              </h3>
+              <p class="text-[11px] text-slate-500 m-0 mt-1">
+                系统会优先按字段名猜测映射关系；你只需要重点确认 externalId 和关联字段是否正确。
+              </p>
+            </div>
+            <a-button size="mini" :loading="loadingFieldInspection" :disabled="!canRefreshFieldInspection" @click="inspectFields">
+              刷新字段概览
+            </a-button>
+          </div>
+          <p v-if="fieldInspectionError" class="text-[11px] text-rose-600 m-0">
+            {{ fieldInspectionError }}
+          </p>
+          <div v-else-if="fieldInspection.length" class="max-h-[220px] overflow-auto space-y-2">
+            <div v-for="field in fieldInspection" :key="field.fieldName" class="px-3 py-2 border border-slate-200 rounded">
+              <div class="flex gap-2 items-center justify-between">
+                <span class="text-[11px] text-slate-900 font-medium">{{ field.fieldName }}</span>
+                <span class="text-[10px] text-slate-400">命中 {{ field.sampleCount }}</span>
+              </div>
+              <p class="text-[10px] text-slate-500 m-0 mt-1">
+                {{ fieldSamplePreview(field.sampleValues) }}
+              </p>
+            </div>
+          </div>
+          <a-empty v-else description="当前视图暂无可巡检字段" />
+        </section>
+
+        <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                基础映射
+              </h3>
+              <p class="text-[11px] text-slate-500 m-0 mt-1">
+                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl`。
+              </p>
+            </div>
+            <div class="flex gap-2">
+              <a-button size="mini" @click="normalizeCurrentEntityTemplate">
+                整理为当前实体模板
+              </a-button>
+              <a-button size="mini" @click="loadMappingWizardFromJson">
+                从 JSON 回读
+              </a-button>
+              <a-button size="mini" @click="writeMappingWizardToJson(true)">
+                同步到 JSON
+              </a-button>
+            </div>
+          </div>
+
+          <div v-if="mappingWizardBindings.length" class="space-y-3">
+            <a-alert v-if="unexpectedConfiguredMappingLabels.length" type="info" :show-icon="true">
+              检测到旧配置里还有当前实体不使用的字段：{{ unexpectedConfiguredMappingLabels.join(' / ') }}。点上面的“整理为当前实体模板”即可只保留当前实体相关配置。
+            </a-alert>
+            <a-alert v-if="missingRequiredMappingLabels.length" type="warning" :show-icon="true">
+              还缺少重点映射：{{ missingRequiredMappingLabels.join(' / ') }}。如果不补齐，预检通常会出现“跳过”或“必要字段缺失”；赛道/资料也可以用同步选项里的固定 contestId 兜底关联。
+            </a-alert>
+            <div
+              v-for="binding in mappingWizardBindings"
+              :key="binding.targetKey"
+              class="p-3 border rounded space-y-2"
+              :class="[
+                isRequiredMappingField(itemForm.entityType, binding.targetKey) && !binding.sourceField
+                  ? 'border-amber-300 bg-amber-50/50'
+                  : 'border-slate-200',
+              ]"
+            >
+              <div class="gap-2 grid md:grid-cols-[220px,minmax(0,1fr),minmax(0,1fr)]">
+                <div class="text-[11px] text-slate-900 font-medium p-2 border border-slate-200 rounded bg-slate-50 flex gap-2 items-center justify-between">
+                  <span>{{ mappingOptionLabel(binding.targetKey) }}</span>
+                  <span
+                    v-if="isRequiredMappingField(itemForm.entityType, binding.targetKey)"
+                    class="text-[10px] text-amber-700 px-1.5 py-0.5 rounded bg-amber-100 inline-flex items-center"
+                  >
+                    重点
+                  </span>
+                </div>
+                <a-select v-model="binding.sourceField" size="small" allow-search allow-clear placeholder="来源字段">
+                  <a-option v-for="field in fieldInspection" :key="field.fieldName" :value="field.fieldName">
+                    {{ field.fieldName }}
+                  </a-option>
+                </a-select>
+                <a-input v-model="binding.transform" size="small" allow-clear placeholder="transform（可选）" />
+              </div>
+              <p class="text-[10px] text-slate-500 m-0">
+                样本：{{ fieldSamplePreview(fieldInspection.find(field => field.fieldName === binding.sourceField)?.sampleValues || []) }}
+              </p>
+            </div>
+          </div>
+          <a-empty v-else description="当前实体类型还没有可配置的目标字段" />
+        </section>
+
+        <section class="p-4 border border-slate-200 rounded bg-white">
+          <a-collapse :default-active-key="[]" :bordered="false" expand-icon-position="right">
+            <a-collapse-item key="mapping-json" header="高级 JSON 模式（映射兜底）">
+              <div class="pt-2 space-y-4">
+                <p class="text-[11px] text-slate-500 m-0">
+                  大多数情况请优先使用上面的可视化表单。只有在需要精细编辑或调试时，再直接修改 JSON。手动改 JSON 后，请点“从 JSON 回读”。
+                </p>
+                <section class="space-y-2">
+                  <div class="flex items-center justify-between">
+                    <h4 class="text-[12px] text-slate-900 font-semibold m-0">
+                      映射 JSON
+                    </h4>
+                    <div class="flex gap-2">
+                      <a-button size="mini" @click="loadMappingWizardFromJson">
+                        从 JSON 回读
+                      </a-button>
+                      <a-button size="mini" @click="writeMappingWizardToJson(true)">
+                        同步到 JSON
+                      </a-button>
+                    </div>
+                  </div>
+                  <a-textarea v-model="itemForm.mappingText" class="font-mono" :auto-size="{ minRows: 8, maxRows: 18 }" />
+                </section>
+              </div>
+            </a-collapse-item>
+          </a-collapse>
+        </section>
+
+        <div class="flex gap-2 justify-end">
+          <a-button size="small" :disabled="savingItem" @click="mappingDrawerVisible = false">
+            关闭
+          </a-button>
+          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+            保存配置
+          </a-button>
+        </div>
+      </div>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="writebackDrawerVisible"
+      :title="currentItem ? `回填配置：${currentItem.name}` : '回填配置'"
+      width="860px"
+      :footer="false"
+      :mask-closable="!(savingItem || previewingItem || runningItem)"
+      :closable="!(savingItem || previewingItem || runningItem)"
+    >
+      <div class="space-y-4">
+        <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+          <div>
+            <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+              回填配置
+            </h3>
+            <p class="text-[11px] text-slate-500 m-0 mt-1">
+              回填的是飞书列名，不是平台字段名。这里直接从当前子表字段里选择，建议至少配置状态、同步时间、错误摘要、平台实体 ID 和 runId。
+            </p>
+          </div>
+          <div class="text-[11px] text-slate-600 font-medium block">
+            <div>启用回填</div>
+            <div class="mt-2">
+              <a-switch v-model="writebackForm.enabled" />
+            </div>
+          </div>
+          <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
+            <label
+              v-for="field in WRITEBACK_FIELD_CONFIGS"
+              :key="field.key"
+              class="text-[11px] text-slate-600 font-medium block"
+            >
+              {{ field.label }}
+              <a-select
+                v-model="writebackForm[field.key]"
+                class="mt-1"
+                size="small"
+                allow-search
+                allow-clear
+                placeholder="选择飞书字段"
+              >
+                <a-option
+                  v-for="fieldName in selectableFieldNames(writebackForm[field.key])"
+                  :key="`${field.key}-${fieldName}`"
+                  :value="fieldName"
+                >
+                  {{ fieldName }}
+                </a-option>
+              </a-select>
+            </label>
+            <label class="text-[11px] text-slate-600 font-medium block">
+              成功值
+              <a-input v-model="writebackForm.success" class="mt-1" size="small" allow-clear />
+            </label>
+            <label class="text-[11px] text-slate-600 font-medium block">
+              失败值
+              <a-input v-model="writebackForm.failed" class="mt-1" size="small" allow-clear />
+            </label>
+            <label class="text-[11px] text-slate-600 font-medium block">
+              跳过值
+              <a-input v-model="writebackForm.skipped" class="mt-1" size="small" allow-clear />
+            </label>
+          </div>
+          <p v-if="!fieldInspection.length" class="text-[10px] text-slate-400 m-0">
+            还没有可选字段时，请先在主 Drawer 的“来源”里选择子表/视图并刷新多维表格字段。
+          </p>
+        </section>
+
+        <section class="p-4 border border-slate-200 rounded bg-white">
+          <a-collapse :default-active-key="[]" :bordered="false" expand-icon-position="right">
+            <a-collapse-item key="writeback-json" header="高级 JSON 模式（回填兜底）">
+              <div class="pt-2 space-y-4">
+                <p class="text-[11px] text-slate-500 m-0">
+                  大多数情况请优先使用上面的可视化表单。只有在需要精细编辑或调试时，再直接修改 JSON。手动改 JSON 后，请点“从 JSON 回读”。
+                </p>
+                <section class="space-y-2">
+                  <div class="flex items-center justify-between">
+                    <h4 class="text-[12px] text-slate-900 font-semibold m-0">
+                      回填配置 JSON
+                    </h4>
+                    <div class="flex gap-2">
+                      <a-button size="mini" @click="loadWritebackFormFromJson()">
+                        从 JSON 回读
+                      </a-button>
+                      <a-button size="mini" @click="syncWritebackFormToJson(true)">
+                        同步到 JSON
+                      </a-button>
+                    </div>
+                  </div>
+                  <a-textarea v-model="itemForm.writebackText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 16 }" />
+                </section>
+              </div>
+            </a-collapse-item>
+          </a-collapse>
+        </section>
+
+        <div class="flex gap-2 justify-end">
+          <a-button size="small" :disabled="savingItem" @click="writebackDrawerVisible = false">
+            关闭
+          </a-button>
+          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+            保存配置
+          </a-button>
+        </div>
       </div>
     </a-drawer>
 
