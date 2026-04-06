@@ -20,6 +20,7 @@ const syncId = computed(() => readRouteParam('syncId'))
 const selectedItemId = computed(() => readQueryValue('item'))
 const draftTableId = computed(() => readQueryValue('draftTableId'))
 const draftViewId = computed(() => readQueryValue('draftViewId'))
+const includeArchived = computed(() => readQueryValue('includeArchived') === 'true')
 
 async function handleItemChange(itemId: string) {
   const nextId = String(itemId || '').trim()
@@ -45,6 +46,7 @@ async function handleItemChange(itemId: string) {
       :selected-item-id="selectedItemId"
       :draft-table-id="draftTableId"
       :draft-view-id="draftViewId"
+      :include-archived="includeArchived"
       @item-change="handleItemChange"
     />
     <a-empty v-else description="同步信息不存在" />

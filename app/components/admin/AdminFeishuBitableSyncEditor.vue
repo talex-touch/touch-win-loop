@@ -68,12 +68,14 @@ const props = withDefaults(defineProps<{
   selectedItemId?: string | null
   draftTableId?: string | null
   draftViewId?: string | null
+  includeArchived?: boolean
   embedded?: boolean
   showBackButton?: boolean
 }>(), {
   selectedItemId: '',
   draftTableId: '',
   draftViewId: '',
+  includeArchived: false,
   embedded: false,
   showBackButton: true,
 })
@@ -303,6 +305,7 @@ const normalizedSyncId = computed(() => toText(props.syncId))
 const normalizedSelectedItemId = computed(() => toText(props.selectedItemId))
 const normalizedDraftTableId = computed(() => toText(props.draftTableId))
 const normalizedDraftViewId = computed(() => toText(props.draftViewId))
+const archivedReadonly = computed(() => Boolean(props.includeArchived || syncDetail.value?.archivedAt))
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
 const syncItems = computed(() => syncDetail.value?.items || [])
 const activeOptionFieldGroups = computed(() => optionFieldGroups(itemForm.entityType))
@@ -819,7 +822,12 @@ async function loadSyncDetail() {
   loadingSync.value = true
   clearFeedback()
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSyncDetail>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}?includeInactive=true`))
+    const query = new URLSearchParams({
+      includeInactive: 'true',
+    })
+    if (props.includeArchived)
+      query.set('includeArchived', 'true')
+    const response = await $fetch<ApiResponse<FeishuBitableSyncDetail>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}?${query.toString()}`))
     syncDetail.value = response.data
     syncForm.name = response.data.name || ''
     itemForm.appToken = response.data.source.appToken || ''
@@ -863,7 +871,13 @@ async function loadItemDetail(itemId: string) {
     return
   loadingItem.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSyncItemDetail>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}?runLimit=20&issueLimit=50`))
+    const query = new URLSearchParams({
+      runLimit: '20',
+      issueLimit: '50',
+    })
+    if (props.includeArchived)
+      query.set('includeArchived', 'true')
+    const response = await $fetch<ApiResponse<FeishuBitableSyncItemDetail>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}?${query.toString()}`))
     currentItem.value = response.data
     fillItemForm(response.data)
     previewResult.value = null
@@ -1247,6 +1261,10 @@ async function inspectFields() {
 }
 
 async function saveCurrentItem() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许修改子表同步项。')
+    return
+  }
   if (!normalizedSyncId.value || !currentItem.value)
     return
 
@@ -1313,6 +1331,10 @@ async function saveCurrentItem() {
 }
 
 async function saveSyncInfo() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许修改名称。')
+    return
+  }
   if (!normalizedSyncId.value)
     return
 
@@ -1347,6 +1369,10 @@ async function saveSyncInfo() {
 }
 
 async function previewCurrentItem() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许执行预检。')
+    return
+  }
   if (!normalizedSyncId.value || !currentItem.value)
     return
   previewingItem.value = true
@@ -1389,6 +1415,10 @@ async function previewCurrentItem() {
 }
 
 async function runCurrentItem() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许手动执行。')
+    return
+  }
   if (!normalizedSyncId.value || !currentItem.value)
     return
   runningItem.value = true
@@ -1412,6 +1442,10 @@ async function runCurrentItem() {
 }
 
 async function openAddItemDrawer() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许新增子表同步项。')
+    return
+  }
   newItemForm.name = ''
   newItemForm.entityType = 'contest'
   newItemForm.tableId = ''
@@ -1427,6 +1461,10 @@ async function openAddItemDrawer() {
 }
 
 async function createItem() {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许新增子表同步项。')
+    return
+  }
   if (!normalizedSyncId.value)
     return
   const tableId = toText(newItemForm.tableId)
@@ -1568,6 +1606,9 @@ watch(() => props.selectedItemId, (value) => {
           <a-tag color="arcoblue" size="small">
             多维主库
           </a-tag>
+          <a-tag v-if="syncDetail?.archivedAt" color="gray" size="small">
+            已归档
+          </a-tag>
         </div>
         <h1 class="text-[16px] text-slate-900 font-semibold m-0">
           {{ syncDetail?.name || '多维同步信息' }}
@@ -1580,7 +1621,7 @@ watch(() => props.selectedItemId, (value) => {
         <a-button size="small" :loading="loadingSync" @click="loadSyncDetail">
           刷新
         </a-button>
-        <a-button size="small" type="primary" @click="openAddItemDrawer">
+        <a-button size="small" type="primary" :disabled="archivedReadonly" @click="openAddItemDrawer">
           新增子表同步项
         </a-button>
       </div>
@@ -1592,20 +1633,26 @@ watch(() => props.selectedItemId, (value) => {
     <a-alert v-else-if="feedbackSuccess" type="success" :show-icon="true">
       {{ feedbackSuccess }}
     </a-alert>
+    <a-alert v-if="archivedReadonly" type="warning" :show-icon="true">
+      当前同步信息已归档，仅支持查看历史配置与运行结果；新增、预检、执行和保存操作已禁用。
+    </a-alert>
 
     <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
       <div class="flex flex-wrap gap-3 items-end justify-between">
         <div class="gap-3 grid items-end md:grid-cols-[minmax(220px,320px),auto]">
           <label class="text-[11px] text-slate-600 font-medium block">
             同步信息名称
-            <a-input v-model="syncForm.name" class="mt-1" size="small" allow-clear placeholder="输入主库同步信息名称" />
+            <a-input v-model="syncForm.name" class="mt-1" size="small" allow-clear :disabled="archivedReadonly" placeholder="输入主库同步信息名称" />
           </label>
-          <a-button size="small" type="primary" :loading="savingSync" @click="saveSyncInfo">
+          <a-button size="small" type="primary" :loading="savingSync" :disabled="archivedReadonly" @click="saveSyncInfo">
             保存名称
           </a-button>
         </div>
         <div class="text-[11px] text-slate-500">
           最近更新时间：{{ syncDetail ? formatDateTime(syncDetail.updatedAt) : '-' }}
+          <template v-if="syncDetail?.archivedAt">
+            / 归档时间：{{ formatDateTime(syncDetail.archivedAt) }}
+          </template>
         </div>
       </div>
 
@@ -1787,13 +1834,13 @@ watch(() => props.selectedItemId, (value) => {
                   </p>
                 </div>
                 <div class="flex gap-2">
-                  <a-button size="small" :loading="previewingItem" @click="previewCurrentItem">
+                  <a-button size="small" :loading="previewingItem" :disabled="archivedReadonly" @click="previewCurrentItem">
                     预检
                   </a-button>
-                  <a-button size="small" type="primary" :loading="runningItem" @click="runCurrentItem">
+                  <a-button size="small" type="primary" :loading="runningItem" :disabled="archivedReadonly" @click="runCurrentItem">
                     手动执行
                   </a-button>
-                  <a-button size="small" type="primary" :loading="savingItem" @click="saveCurrentItem">
+                  <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
                     保存配置
                   </a-button>
                 </div>
@@ -2487,7 +2534,7 @@ watch(() => props.selectedItemId, (value) => {
           <a-button size="small" :disabled="creatingItem" @click="addItemDrawerVisible = false">
             取消
           </a-button>
-          <a-button size="small" type="primary" :loading="creatingItem" @click="createItem">
+          <a-button size="small" type="primary" :loading="creatingItem" :disabled="archivedReadonly" @click="createItem">
             创建并继续配置
           </a-button>
         </div>

@@ -42,6 +42,8 @@ const savingConfig = ref(false)
 const adminOverviewLoading = ref(false)
 const creatingSync = ref(false)
 const manualAddingKey = ref('')
+const archivingSyncMutating = reactive<Record<string, boolean>>({})
+const restoringSyncMutating = reactive<Record<string, boolean>>({})
 
 const createSyncDrawerVisible = ref(false)
 const editSyncDrawerVisible = ref(false)
@@ -50,6 +52,8 @@ const configDialogVisible = ref(false)
 const editingSyncId = ref('')
 const editingDraftTableId = ref('')
 const editingDraftViewId = ref('')
+const editingSyncIncludeArchived = ref(false)
+const showArchivedSyncs = ref(false)
 
 const errorText = ref('')
 const successText = ref('')
@@ -65,7 +69,7 @@ const syncColumns = [
   { title: '最近执行', dataIndex: 'latestRun', slotName: 'latestRun', width: 220 },
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 170 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 180 },
+  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 260 },
 ]
 
 const canManageConfig = computed(() => permissions.value.includes('role.assign'))
@@ -353,7 +357,8 @@ async function loadSyncs() {
 
   loadingSyncs.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSync[]>>(endpoint('/admin/integrations/feishu/bitable-syncs'))
+    const query = showArchivedSyncs.value ? '?includeArchived=true' : ''
+    const response = await $fetch<ApiResponse<FeishuBitableSync[]>>(endpoint(`/admin/integrations/feishu/bitable-syncs${query}`))
     syncs.value = response.data || []
   }
   catch (error: any) {
@@ -509,12 +514,14 @@ function resetEditSyncDrawerState() {
   editingSyncId.value = ''
   editingDraftTableId.value = ''
   editingDraftViewId.value = ''
+  editingSyncIncludeArchived.value = false
 }
 
-function openEditSyncDrawer(syncId: string, options?: { draftTableId?: string, draftViewId?: string }) {
+function openEditSyncDrawer(syncId: string, options?: { draftTableId?: string, draftViewId?: string, includeArchived?: boolean }) {
   editingSyncId.value = String(syncId || '').trim()
   editingDraftTableId.value = String(options?.draftTableId || '').trim()
   editingDraftViewId.value = String(options?.draftViewId || '').trim()
+  editingSyncIncludeArchived.value = options?.includeArchived === true
   editSyncDrawerVisible.value = Boolean(editingSyncId.value)
 }
 
@@ -574,6 +581,61 @@ async function createSync() {
 
 async function refreshSyncList() {
   await loadSyncs()
+}
+
+async function archiveSync(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  archivingSyncMutating[syncId] = true
+  clearFeedback()
+  try {
+    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/archive`), {
+      method: 'POST',
+    })
+
+    if (editingSyncId.value === syncId)
+      editSyncDrawerVisible.value = false
+
+    await loadSyncs()
+    setSuccess(`同步信息“${sync.name || syncId}”已归档，已自动停用全部子表同步项与定时调度。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '同步信息归档失败。'))
+  }
+  finally {
+    archivingSyncMutating[syncId] = false
+  }
+}
+
+async function restoreSync(sync: FeishuBitableSync) {
+  if (!canManageBitable.value)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  restoringSyncMutating[syncId] = true
+  clearFeedback()
+  try {
+    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/restore`), {
+      method: 'POST',
+    })
+
+    await loadSyncs()
+    setSuccess(`同步信息“${sync.name || syncId}”已恢复。为避免误触发，子表同步项与定时调度仍保持停用，请按需手动重新启用。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || '同步信息恢复失败。'))
+  }
+  finally {
+    restoringSyncMutating[syncId] = false
+  }
 }
 
 watch(editSyncDrawerVisible, (visible, oldVisible) => {
@@ -755,7 +817,11 @@ onMounted(initializePage)
                 一条记录代表一个飞书多维主库。创建后直接在编辑抽屉里继续配置多个子表同步项与字段映射。
               </p>
             </div>
-            <div class="flex gap-2">
+            <div class="flex gap-3 items-center">
+              <label class="text-[10px] text-slate-500 flex gap-2 items-center">
+                <a-switch v-model="showArchivedSyncs" size="small" @change="refreshSyncList" />
+                <span>显示已归档</span>
+              </label>
               <a-button size="small" type="primary" @click="openCreateSyncDrawer">
                 新建同步信息
               </a-button>
@@ -775,11 +841,19 @@ onMounted(initializePage)
           >
             <template #name="{ record }">
               <div class="min-w-0">
-                <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
-                  {{ record.name }}
-                </p>
+                <div class="flex gap-2 min-w-0 items-center">
+                  <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
+                    {{ record.name }}
+                  </p>
+                  <a-tag v-if="record.archivedAt" color="gray" size="small">
+                    已归档
+                  </a-tag>
+                </div>
                 <p class="text-[10px] text-slate-500 font-mono m-0 mt-1 truncate">
                   {{ record.id }}
+                </p>
+                <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
+                  归档时间：{{ formatDateTime(record.archivedAt) }}
                 </p>
               </div>
             </template>
@@ -822,14 +896,55 @@ onMounted(initializePage)
             </template>
 
             <template #updatedAt="{ record }">
-              {{ formatDateTime(record.updatedAt) }}
+              <div>
+                <p class="text-[10px] text-slate-700 m-0">
+                  {{ formatDateTime(record.updatedAt) }}
+                </p>
+                <p v-if="record.archivedAt" class="text-[10px] text-slate-400 m-0 mt-1">
+                  已归档
+                </p>
+              </div>
             </template>
 
             <template #actions="{ record }">
               <div class="flex flex-wrap gap-1">
-                <a-button size="mini" type="primary" @click="openEditSyncDrawer(record.id)">
-                  编辑同步信息
+                <a-button
+                  size="mini"
+                  type="primary"
+                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
+                  @click="openEditSyncDrawer(record.id, { includeArchived: Boolean(record.archivedAt) })"
+                >
+                  {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
                 </a-button>
+                <a-popconfirm
+                  v-if="!record.archivedAt"
+                  content="确认归档该同步信息吗？归档后会自动停用全部子表同步项与定时调度，列表默认不再展示。"
+                  type="warning"
+                  @ok="archiveSync(record)"
+                >
+                  <a-button
+                    size="mini"
+                    status="danger"
+                    :loading="archivingSyncMutating[record.id]"
+                    :disabled="restoringSyncMutating[record.id]"
+                  >
+                    归档
+                  </a-button>
+                </a-popconfirm>
+                <a-popconfirm
+                  v-else
+                  content="确认恢复该同步信息吗？恢复后只会恢复主记录本身，子表同步项与定时调度仍保持停用，需要手动重新启用。"
+                  type="warning"
+                  @ok="restoreSync(record)"
+                >
+                  <a-button
+                    size="mini"
+                    :loading="restoringSyncMutating[record.id]"
+                    :disabled="archivingSyncMutating[record.id]"
+                  >
+                    恢复归档
+                  </a-button>
+                </a-popconfirm>
               </div>
             </template>
           </a-table>
@@ -1339,7 +1454,7 @@ onMounted(initializePage)
     <a-drawer
       v-model:visible="editSyncDrawerVisible"
       title="编辑多维同步信息"
-      width="92vw"
+      width="96vw"
       :footer="false"
       unmount-on-close
     >
@@ -1348,6 +1463,7 @@ onMounted(initializePage)
         :sync-id="editingSyncId"
         :draft-table-id="editingDraftTableId"
         :draft-view-id="editingDraftViewId"
+        :include-archived="editingSyncIncludeArchived"
         :embedded="true"
         :show-back-button="false"
         @updated="refreshSyncList"
