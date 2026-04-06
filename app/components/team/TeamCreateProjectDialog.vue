@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Contest, WorkspaceWithQuota } from '~~/shared/types/domain'
+import { formatWorkspaceTypeLabel } from '~/composables/team-ui'
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -21,7 +22,7 @@ const props = withDefaults(defineProps<{
   contests: () => [],
   errorText: '',
   submitting: false,
-  submitText: '创建并进入工作台',
+  submitText: '创建并进入项目工作区',
 })
 
 const emit = defineEmits<{
@@ -49,6 +50,7 @@ function updateContestIds(event: Event) {
   <Teleport to="body">
     <div
       v-if="visible"
+      data-testid="team-create-project-dialog"
       class="p-4 bg-black/30 flex items-center inset-0 justify-center fixed z-50"
       @click.self="emitClose"
     >
@@ -68,17 +70,17 @@ function updateContestIds(event: Event) {
 
         <div class="mt-4 space-y-4">
           <label v-if="showTeamSelect" class="block">
-            <span class="text-xs text-slate-600 font-medium">所属工作空间</span>
+            <span class="text-xs text-slate-600 font-medium">所属项目台</span>
             <select
               :value="teamId"
               class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
               @change="emit('update:teamId', String(($event.target as HTMLSelectElement).value || '').trim())"
             >
               <option value="" disabled>
-                请选择工作空间
+                请选择项目台
               </option>
               <option v-for="item in teamOptions" :key="item.workspace.id" :value="item.workspace.id">
-                {{ item.workspace.name }}（{{ item.workspace.type }}）
+                {{ item.workspace.name }}（{{ formatWorkspaceTypeLabel(item.workspace.type) }}）
               </option>
             </select>
           </label>
@@ -87,6 +89,7 @@ function updateContestIds(event: Event) {
             <span class="text-xs text-slate-600 font-medium">项目名称</span>
             <input
               :value="projectTitle"
+              data-testid="team-create-project-title-input"
               class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
               placeholder="例如：AI 校园服务助手"
               maxlength="120"
@@ -99,6 +102,7 @@ function updateContestIds(event: Event) {
             <span class="text-xs text-slate-600 font-medium">项目简介</span>
             <textarea
               :value="summary"
+              data-testid="team-create-project-summary-input"
               class="text-sm mt-1 p-3 border border-slate-300 rounded-lg bg-white min-h-28 w-full resize-y focus:outline-none focus:border-blue-500"
               maxlength="600"
               placeholder="简要描述项目目标、核心价值与预期成果。"
@@ -109,6 +113,7 @@ function updateContestIds(event: Event) {
           <label class="block">
             <span class="text-xs text-slate-600 font-medium">关联竞赛（可多选）</span>
             <select
+              data-testid="team-create-project-contest-select"
               class="text-sm mt-1 p-2 border border-slate-300 rounded-lg bg-white min-h-28 w-full focus:outline-none focus:border-blue-500"
               multiple
               @change="updateContestIds"
@@ -124,7 +129,7 @@ function updateContestIds(event: Event) {
             </select>
           </label>
 
-          <p v-if="errorText" class="text-xs text-rose-600">
+          <p v-if="errorText" class="text-xs text-rose-600" data-testid="team-create-project-error-text">
             {{ errorText }}
           </p>
         </div>
@@ -138,6 +143,7 @@ function updateContestIds(event: Event) {
             取消
           </button>
           <button
+            data-testid="team-create-project-submit-button"
             class="text-sm text-white font-medium px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-60 disabled:cursor-not-allowed"
             :disabled="submitting"
             @click="emit('submit')"

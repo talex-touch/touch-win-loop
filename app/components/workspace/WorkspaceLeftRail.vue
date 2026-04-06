@@ -74,11 +74,12 @@ const emit = defineEmits<{
       </button>
 
       <button
+        data-testid="workspace-left-rail-member-management-button"
         class="workspace-left-rail__members"
         :class="{ 'workspace-left-rail__members--active': memberManagementActive }"
-        title="成员管理"
-        aria-label="成员管理"
-        data-tooltip="成员管理"
+        title="项目协作"
+        aria-label="项目协作"
+        data-tooltip="项目协作"
         type="button"
         @click="emit('openMemberManagement')"
       >

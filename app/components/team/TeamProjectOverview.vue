@@ -67,7 +67,7 @@ function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
 
 <template>
   <div class="space-y-6">
-    <section class="p-6 border border-slate-200 rounded-2xl bg-white">
+    <section class="p-6 border border-slate-200 rounded-2xl bg-white" data-testid="team-dashboard-overview">
       <div class="flex flex-wrap gap-3 items-center justify-between">
         <div>
           <h2 class="text-2xl text-slate-900 font-bold">
@@ -79,6 +79,7 @@ function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
         </div>
 
         <button
+          data-testid="team-dashboard-create-project-button"
           class="text-sm text-white font-semibold px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           :disabled="actionDisabled"
           @click="emit('action')"
@@ -102,7 +103,7 @@ function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
             <p class="text-[11px] font-medium opacity-80">
               {{ item.label }}
             </p>
-            <p class="text-sm mt-2 font-semibold leading-6">
+            <p class="text-sm leading-6 font-semibold mt-2">
               {{ item.value }}
             </p>
           </article>
@@ -116,6 +117,7 @@ function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
 
     <section
       v-if="noticeText"
+      data-testid="team-dashboard-notice"
       class="text-sm p-4 border rounded-xl"
       :class="noticeClass"
     >
@@ -143,7 +145,7 @@ function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
       </button>
     </section>
 
-    <section v-else-if="projects.length === 0" class="p-8 text-center border border-slate-300 rounded-2xl border-dashed bg-white">
+    <section v-else-if="projects.length === 0" class="p-8 text-center border border-slate-300 rounded-2xl border-dashed bg-white" data-testid="team-dashboard-empty-state">
       <h3 class="text-lg text-slate-900 font-semibold">
         {{ emptyTitle }}
       </h3>
@@ -151,6 +153,7 @@ function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
         {{ emptyDescription }}
       </p>
       <button
+        data-testid="team-dashboard-empty-create-project-button"
         class="text-sm text-white font-semibold mt-4 px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
         :disabled="actionDisabled"
         @click="emit('action')"
@@ -163,6 +166,8 @@ function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
       <button
         v-for="project in projects"
         :key="project.id"
+        data-testid="team-project-card"
+        :data-project-id="project.id"
         class="p-5 text-left border border-slate-200 rounded-xl bg-white transition-all hover:border-blue-200 hover:shadow-sm"
         type="button"
         @click="openProject(project)"

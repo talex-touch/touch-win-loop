@@ -13,7 +13,7 @@ const hasAdminAccess = computed(() => {
 const links = computed(() => {
   const baseLinks = [
     { to: '/dashboard', label: '首页' },
-    { to: '/workspace', label: '工作台' },
+    { to: '/team', label: '项目台' },
     { to: '/contests', label: '竞赛库' },
     { to: '/resources', label: '资料中心' },
   ]
@@ -22,7 +22,7 @@ const links = computed(() => {
   return baseLinks
 })
 
-const hideGlobalHeader = computed(() => route.path.startsWith('/team') || route.path.startsWith('/workspace'))
+const hideGlobalHeader = computed(() => route.path.startsWith('/team'))
 
 const shellClass = computed(() => {
   if (hideGlobalHeader.value)

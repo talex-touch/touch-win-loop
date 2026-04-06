@@ -70,7 +70,7 @@ function switchProject(item: WorkspaceQuickSwitchProject) {
 
 function goWorkspaceList() {
   closeQuickSwitch()
-  navigateTo('/workspace')
+  navigateTo('/team')
 }
 
 function openFinalReview() {
@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
   <header class="px-4 border-b border-slate-200 bg-white flex shrink-0 gap-3 h-12 items-center z-10">
     <div class="flex flex-1 gap-2 min-w-0 items-center">
       <nav
-        aria-label="工作区面包屑"
+        aria-label="项目工作区面包屑"
         class="flex gap-1 min-w-0 items-center"
       >
         <span class="material-symbols-outlined text-xl text-blue-600">dataset</span>
@@ -127,7 +127,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="goWorkspaceList"
         >
-          项目工作台
+          项目台
         </button>
         <span class="text-sm text-slate-300/75 leading-none font-normal mx-0.5">/</span>
 
