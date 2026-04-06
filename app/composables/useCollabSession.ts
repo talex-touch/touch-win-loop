@@ -2,6 +2,10 @@ import type { Ref } from 'vue'
 import type { useWorkspaceRealtime } from '~/composables/useWorkspaceRealtime'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import * as Y from 'yjs'
+import {
+  ensureMarkdownCollabDocShape,
+  syncMarkdownMirrorFromRichText,
+} from '~~/shared/utils/collab-markdown-rich-text'
 
 export interface CollabSnapshotPayload {
   kind: 'markdown' | 'draw'
@@ -107,12 +111,16 @@ function toDrawModelJson(nodes: unknown[]): string {
 export function useCollabSession(input: UseCollabSessionInput) {
   const resourceKind = ref<'' | 'markdown' | 'draw'>('')
   const revision = ref(0)
-  const markdownValue = ref('')
   const drawValue = ref('{}')
   const drawError = ref('')
   const presenceMembers = ref<WorkspaceCollabPresenceMember[]>([])
   const applyingRemote = ref(false)
   const docRef = shallowRef<Y.Doc | null>(null)
+  const markdownDoc = computed(() => {
+    if (resourceKind.value !== 'markdown')
+      return null
+    return docRef.value
+  })
 
   const connected = computed(() => input.workspaceRealtime.connected.value)
   const statusText = computed(() => {
@@ -145,17 +153,13 @@ export function useCollabSession(input: UseCollabSessionInput) {
   let docDispose: (() => void) | null = null
   let snapshotPollTimer: ReturnType<typeof setInterval> | null = null
   let batchSendTimer: ReturnType<typeof setTimeout> | null = null
+  let markdownMirrorSyncTimer: ReturnType<typeof setTimeout> | null = null
   let pendingUpdates: Uint8Array[] = []
 
   function syncDraftFromDoc(): void {
     const doc = docRef.value
     if (!doc)
       return
-
-    if (resourceKind.value === 'markdown') {
-      markdownValue.value = doc.getText('content').toString()
-      return
-    }
 
     if (resourceKind.value === 'draw') {
       const nodes = resolveCollabNodesArray(doc).toArray()
@@ -168,6 +172,35 @@ export function useCollabSession(input: UseCollabSessionInput) {
       return
     clearTimeout(batchSendTimer)
     batchSendTimer = null
+  }
+
+  function clearMarkdownMirrorSyncTimer(): void {
+    if (!markdownMirrorSyncTimer)
+      return
+    clearTimeout(markdownMirrorSyncTimer)
+    markdownMirrorSyncTimer = null
+  }
+
+  function flushMarkdownMirrorSync(): void {
+    clearMarkdownMirrorSyncTimer()
+
+    if (resourceKind.value !== 'markdown')
+      return
+
+    const doc = docRef.value
+    if (!doc)
+      return
+
+    doc.transact(() => {
+      syncMarkdownMirrorFromRichText(doc)
+    }, 'markdown-mirror')
+  }
+
+  function queueMarkdownMirrorSync(): void {
+    clearMarkdownMirrorSyncTimer()
+    markdownMirrorSyncTimer = setTimeout(() => {
+      flushMarkdownMirrorSync()
+    }, 40)
   }
 
   function flushBatchedUpdates(): void {
@@ -223,15 +256,6 @@ export function useCollabSession(input: UseCollabSessionInput) {
       queueBatchedUpdate(update)
     }
 
-    const text = doc.getText('content')
-    const handleTextChange = () => {
-      if (resourceKind.value !== 'markdown')
-        return
-      if (applyingRemote.value)
-        return
-      markdownValue.value = text.toString()
-    }
-
     const nodes = resolveCollabNodesArray(doc)
     const handleNodesChange = () => {
       if (resourceKind.value !== 'draw')
@@ -241,14 +265,23 @@ export function useCollabSession(input: UseCollabSessionInput) {
       drawValue.value = toDrawModelJson(nodes.toArray())
     }
 
+    const richTextFragment = doc.getXmlFragment('prosemirror')
+    const handleRichTextChange = () => {
+      if (resourceKind.value !== 'markdown')
+        return
+      if (applyingRemote.value)
+        return
+      queueMarkdownMirrorSync()
+    }
+
     doc.on('update', handleDocUpdate)
-    text.observe(handleTextChange)
     nodes.observe(handleNodesChange)
+    richTextFragment.observeDeep(handleRichTextChange)
 
     docDispose = () => {
       doc.off('update', handleDocUpdate)
-      text.unobserve(handleTextChange)
       nodes.unobserve(handleNodesChange)
+      richTextFragment.unobserveDeep(handleRichTextChange)
       doc.destroy()
     }
   }
@@ -271,6 +304,11 @@ export function useCollabSession(input: UseCollabSessionInput) {
     revision.value = Math.max(0, Number(snapshot.revision || 0))
     drawError.value = ''
     bindDoc(doc)
+    if (snapshot.kind === 'markdown') {
+      doc.transact(() => {
+        ensureMarkdownCollabDocShape(doc)
+      }, 'markdown-bootstrap')
+    }
     syncDraftFromDoc()
   }
 
@@ -345,6 +383,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
 
     clearSnapshotPollTimer()
     clearBatchSendTimer()
+    clearMarkdownMirrorSyncTimer()
     pendingUpdates = []
 
     if (leaveRoom) {
@@ -357,30 +396,10 @@ export function useCollabSession(input: UseCollabSessionInput) {
     docRef.value = null
     resourceKind.value = ''
     revision.value = 0
-    markdownValue.value = ''
     drawValue.value = '{}'
     drawError.value = ''
     presenceMembers.value = []
     applyingRemote.value = false
-  }
-
-  function updateMarkdown(nextValue: string): void {
-    markdownValue.value = nextValue
-    if (resourceKind.value !== 'markdown')
-      return
-
-    const doc = docRef.value
-    if (!doc)
-      return
-
-    const text = doc.getText('content')
-    if (text.toString() === nextValue)
-      return
-
-    doc.transact(() => {
-      text.delete(0, text.length)
-      text.insert(0, nextValue)
-    }, 'local-input')
   }
 
   function updateDraw(nextValue: string): void {
@@ -482,6 +501,11 @@ export function useCollabSession(input: UseCollabSessionInput) {
       applyingRemote.value = true
       try {
         Y.applyUpdate(doc, update, 'remote')
+        if (resourceKind.value === 'markdown') {
+          doc.transact(() => {
+            ensureMarkdownCollabDocShape(doc)
+          }, 'markdown-normalize')
+        }
         revision.value = Math.max(revision.value, Math.max(0, Number(message.revision || 0)))
         syncDraftFromDoc()
       }
@@ -532,7 +556,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
   return {
     resourceKind,
     revision,
-    markdownValue,
+    markdownDoc,
     drawValue,
     drawError,
     presenceMembers,
@@ -542,7 +566,6 @@ export function useCollabSession(input: UseCollabSessionInput) {
     applySnapshot,
     activateRoom,
     dispose,
-    updateMarkdown,
     updateDraw,
     handleRealtimeEnvelope,
   }

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
 import { buildServerApiEndpoint, resolveServerApiUrl } from '~~/server/utils/api-url'
 import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
+import { ensureMarkdownCollabDocShape } from '~~/shared/utils/collab-markdown-rich-text'
 
 interface ProjectResourceRow {
   id: string
@@ -213,7 +214,7 @@ function toUint8Array(value: unknown): Uint8Array {
 
 function ensureCollabDocShape(kind: Extract<ResourceKind, 'markdown' | 'draw'>, doc: Y.Doc): void {
   if (kind === 'markdown') {
-    doc.getText('content')
+    ensureMarkdownCollabDocShape(doc)
     return
   }
 

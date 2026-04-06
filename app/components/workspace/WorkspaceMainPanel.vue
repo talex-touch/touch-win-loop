@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Doc as YDoc } from 'yjs'
 import type {
   CollabPurpose,
   Contest,
@@ -24,7 +25,9 @@ import type {
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
 import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
-import { renderMarkdownToHtml } from '~/utils/renderMarkdown'
+import RichTextEditor from '~/components/editor/RichTextEditor.vue'
+import CollabPresencePanel from '~/components/workspace/collab/CollabPresencePanel.vue'
+import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
 
 const props = withDefaults(defineProps<{
   selectedContest?: Contest | null
@@ -53,7 +56,7 @@ const props = withDefaults(defineProps<{
   previewMode?: WorkspacePreviewMode
   previewPdfUrl?: string
   previewSourceDownloadUrl?: string
-  collabMarkdownValue?: string
+  collabMarkdownDoc?: YDoc | null
   collabDrawValue?: string
   collabDrawError?: string
   collabRevision?: number
@@ -122,7 +125,7 @@ const props = withDefaults(defineProps<{
   previewMode: 'binary',
   previewPdfUrl: '',
   previewSourceDownloadUrl: '',
-  collabMarkdownValue: '',
+  collabMarkdownDoc: null,
   collabDrawValue: '{}',
   collabDrawError: '',
   collabRevision: 0,
@@ -224,7 +227,6 @@ const emit = defineEmits<{
   'downloadPreviewSource': []
   'activatePreviewResource': [resourceId: string]
   'closePreviewResource': [resourceId: string]
-  'update:collabMarkdownValue': [value: string]
   'update:collabDrawValue': [value: string]
 }>()
 
@@ -566,7 +568,6 @@ const activeResourceTab = computed(() => {
   return activeTab.value
 })
 
-const renderedCollabMarkdown = computed(() => renderMarkdownToHtml(props.collabMarkdownValue))
 const hasFlowResource = computed(() => Boolean(String(props.flowResourceId || '').trim()))
 const flowPanelTitle = computed(() => String(props.flowResourceTitle || '').trim() || '流程画布')
 
@@ -1349,11 +1350,6 @@ function submitWorkspaceSeatLimit(): void {
   if (!Number.isFinite(draft))
     return
   emit('saveWorkspaceSeatLimit', Math.max(1, Math.trunc(draft)))
-}
-
-function onCollabMarkdownInput(event: Event): void {
-  const target = event.target as HTMLTextAreaElement
-  emit('update:collabMarkdownValue', target.value)
 }
 
 function onCollabDrawModelUpdate(value: string): void {
@@ -2633,23 +2629,14 @@ watch(activeTabId, (next) => {
                   {{ collabConnectionText }}
                 </div>
               </div>
-              <div class="grid grid-cols-1 h-full xl:grid-cols-[minmax(0,1fr),minmax(0,1fr),220px]">
-                <div class="border-b border-slate-200 bg-white xl:border-b-0 xl:border-r">
-                  <div class="text-[11px] text-slate-500 px-4 py-2 border-b border-slate-100 bg-slate-50">
-                    Markdown 编辑区
-                  </div>
-                  <textarea
-                    :value="collabMarkdownValue"
-                    class="workspace-markdown-editor__textarea text-sm text-slate-700 leading-6 px-4 py-3 outline-none border-0 bg-white w-full resize-none"
-                    placeholder="在这里输入协作文档内容..."
-                    @input="onCollabMarkdownInput"
+              <div class="grid grid-cols-1 h-full xl:grid-cols-[minmax(0,1fr),220px]">
+                <div class="border-b border-slate-200 bg-white min-h-0 xl:border-b-0 xl:border-r">
+                  <RichTextEditor
+                    :doc="collabMarkdownDoc"
+                    :editable="true"
+                    placeholder="输入正文或标题，协作文档会实时同步"
+                    :heading-levels="[1, 2, 3]"
                   />
-                </div>
-                <div class="workspace-markdown-preview border-b border-slate-200 bg-slate-50 xl:border-b-0 xl:border-r">
-                  <div class="text-[11px] text-slate-500 px-4 py-2 border-b border-slate-100 bg-white">
-                    Markdown 渲染预览
-                  </div>
-                  <div class="workspace-markdown-preview__body" v-html="renderedCollabMarkdown" />
                 </div>
                 <CollabPresencePanel :members="collabPresenceMembers" />
               </div>
@@ -3073,112 +3060,5 @@ watch(activeTabId, (next) => {
 .workspace-tab-context-menu__item--danger:hover:enabled {
   background: #fff1f2;
   color: #b91c1c;
-}
-
-.workspace-markdown-preview {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.workspace-markdown-editor__textarea {
-  height: calc(100% - 37px);
-  min-height: 280px;
-}
-
-.workspace-markdown-preview__body {
-  height: calc(100% - 37px);
-  min-height: 280px;
-  overflow: auto;
-  padding: 16px;
-  color: #334155;
-  font-size: 14px;
-  line-height: 1.75;
-}
-
-.workspace-markdown-preview__body :deep(h1),
-.workspace-markdown-preview__body :deep(h2),
-.workspace-markdown-preview__body :deep(h3),
-.workspace-markdown-preview__body :deep(h4),
-.workspace-markdown-preview__body :deep(h5),
-.workspace-markdown-preview__body :deep(h6) {
-  margin: 0 0 12px;
-  color: #0f172a;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.workspace-markdown-preview__body :deep(h1) {
-  font-size: 28px;
-}
-
-.workspace-markdown-preview__body :deep(h2) {
-  font-size: 24px;
-}
-
-.workspace-markdown-preview__body :deep(h3) {
-  font-size: 20px;
-}
-
-.workspace-markdown-preview__body :deep(p),
-.workspace-markdown-preview__body :deep(ul),
-.workspace-markdown-preview__body :deep(ol),
-.workspace-markdown-preview__body :deep(blockquote),
-.workspace-markdown-preview__body :deep(pre) {
-  margin: 0 0 14px;
-}
-
-.workspace-markdown-preview__body :deep(ul),
-.workspace-markdown-preview__body :deep(ol) {
-  padding-left: 20px;
-}
-
-.workspace-markdown-preview__body :deep(li + li) {
-  margin-top: 6px;
-}
-
-.workspace-markdown-preview__body :deep(blockquote) {
-  padding: 10px 14px;
-  border-left: 4px solid #93c5fd;
-  border-radius: 8px;
-  background: #eff6ff;
-  color: #1e3a8a;
-}
-
-.workspace-markdown-preview__body :deep(pre) {
-  overflow: auto;
-  padding: 14px;
-  border-radius: 10px;
-  background: #0f172a;
-  color: #e2e8f0;
-}
-
-.workspace-markdown-preview__body :deep(code) {
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: #e2e8f0;
-  color: #0f172a;
-  font-size: 12px;
-  font-family: 'SFMono-Regular', 'Consolas', monospace;
-}
-
-.workspace-markdown-preview__body :deep(pre code) {
-  padding: 0;
-  background: transparent;
-  color: inherit;
-}
-
-.workspace-markdown-preview__body :deep(a) {
-  color: #2563eb;
-  text-decoration: none;
-}
-
-.workspace-markdown-preview__body :deep(a:hover) {
-  text-decoration: underline;
-}
-
-.workspace-markdown-preview__body :deep(hr) {
-  margin: 20px 0;
-  border: 0;
-  border-top: 1px solid #cbd5e1;
 }
 </style>
