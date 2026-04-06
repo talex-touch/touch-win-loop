@@ -850,7 +850,7 @@ const collabSession = useCollabSession({
   fetchSnapshot: async resourceId => await fetchCollabSnapshot(resourceId),
 })
 const collabRevision = collabSession.revision
-const collabMarkdownValue = collabSession.markdownValue
+const collabMarkdownDoc = collabSession.markdownDoc
 const collabDrawValue = collabSession.drawValue
 const collabDrawError = collabSession.drawError
 const collabPresenceMembers = collabSession.presenceMembers
@@ -3143,10 +3143,6 @@ function clearPreviewStatusPolling() {
   previewStatusPollTimer = null
 }
 
-function updateCollabMarkdownContent(value: string): void {
-  collabSession.updateMarkdown(String(value || ''))
-}
-
 function updateCollabDrawContent(value: string): void {
   collabSession.updateDraw(String(value || ''))
 }
@@ -4627,7 +4623,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-mode="previewMode"
         :preview-pdf-url="previewPdfUrl"
         :preview-source-download-url="previewSourceDownloadUrl"
-        :collab-markdown-value="collabMarkdownValue"
+        :collab-markdown-doc="collabMarkdownDoc"
         :collab-draw-value="collabDrawValue"
         :collab-draw-error="collabDrawError"
         :collab-revision="collabRevision"
@@ -4672,7 +4668,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         @download-preview-source="downloadPreviewSource"
         @activate-preview-resource="activateProjectResourceTab"
         @close-preview-resource="closeProjectResourcePreview"
-        @update:collab-markdown-value="updateCollabMarkdownContent"
         @update:collab-draw-value="updateCollabDrawContent"
       />
 

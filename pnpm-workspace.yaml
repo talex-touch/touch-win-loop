@@ -39,6 +39,7 @@ catalogs:
     vite: ^7.3.1
   dev:
     '@antfu/eslint-config': ^7.3.0
+    '@playwright/test': ^1.59.1
     '@types/node': ^25.2.2
     '@types/pg': ^8.15.6
     eslint: ^9.39.2
@@ -48,9 +49,24 @@ catalogs:
     vue-tsc: ^3.2.4
   frontend:
     '@arco-design/web-vue': ^2.57.0
+    '@floating-ui/dom': ^1.7.4
+    '@tiptap/core': ^3.22.2
+    '@tiptap/extension-collaboration': ^3.22.2
+    '@tiptap/extension-document': ^3.22.2
+    '@tiptap/extension-dropcursor': ^3.22.2
+    '@tiptap/extension-gapcursor': ^3.22.2
+    '@tiptap/extension-heading': ^3.22.2
+    '@tiptap/extension-paragraph': ^3.22.2
+    '@tiptap/extension-placeholder': ^3.22.2
+    '@tiptap/extension-text': ^3.22.2
+    '@tiptap/extensions': ^3.22.2
+    '@tiptap/pm': ^3.22.2
+    '@tiptap/vue-3': ^3.22.2
+    '@tiptap/y-tiptap': ^3.0.2
     '@vueuse/core': ^14.2.0
     pinia: ^3.0.4
     vue: ^3.5.27
+    y-protocols: ^1.0.6
   icons:
     '@iconify-json/carbon': ^1.2.18
     '@iconify-json/heroicons-outline': ^1.2.1
