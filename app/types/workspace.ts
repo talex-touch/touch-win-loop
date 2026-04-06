@@ -72,6 +72,14 @@ export interface WorkspaceProjectContestBindingForm {
   sortOrder: number
 }
 
+export interface WorkspaceLinkedContestResourceGroup {
+  contestId: string
+  contestName: string
+  trackId: string
+  trackName: string
+  resources: Resource[]
+}
+
 export interface WorkspaceProjectCommonForm {
   title: string
   summary: string

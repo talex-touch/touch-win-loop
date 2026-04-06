@@ -15,6 +15,7 @@
     "typecheck": "nuxt typecheck",
     "test:project-visibility": "vitest run ./scripts/tests/project-visibility.test.mjs",
     "ci:smoke": "node ./scripts/ci-smoke.mjs",
+    "ci:e2e-smoke": "node ./scripts/team-project-e2e-smoke.mjs",
     "contest:seed:catalog": "node ./scripts/contest-library.mjs seed",
     "contest:clean:catalog": "node ./scripts/contest-library.mjs clean",
     "contest:seed:status": "node ./scripts/contest-library.mjs status"
@@ -48,6 +49,7 @@
     "@nuxt/eslint": "catalog:build",
     "@nuxtjs/color-mode": "catalog:build",
     "@pinia/nuxt": "catalog:build",
+    "@playwright/test": "1.59.1",
     "@types/node": "catalog:dev",
     "@types/pg": "catalog:dev",
     "@types/react": "catalog:",
