@@ -33,24 +33,16 @@ export function shouldOpenCreateDialog(value: unknown): boolean {
   return text === '1' || text === 'true' || text === 'yes'
 }
 
-export function workspaceDashboardPath(): string {
-  return '/workspace'
-}
-
-export function workspaceDetailPath(workspaceId: string): string {
-  return `/workspace/${workspaceId}`
-}
-
-export function workspaceProjectPath(workspaceId: string, projectId: string): string {
-  return `/workspace/${workspaceId}/project/${projectId}`
+export function teamDashboardPath(): string {
+  return '/team'
 }
 
 export function teamDetailPath(teamId: string): string {
-  return workspaceDetailPath(teamId)
+  return `/team/${teamId}`
 }
 
-export function teamProjectPath(teamId: string, projectId: string): string {
-  return workspaceProjectPath(teamId, projectId)
+export function projectWorkspacePath(teamId: string, projectId: string): string {
+  return `/team/${teamId}/project/${projectId}`
 }
 
 export function resolveWorkspaceOptions(auth: Pick<AuthMeResult, 'teams' | 'workspaces'> | null): WorkspaceWithQuota[] {
@@ -103,10 +95,10 @@ export function formatDateTime(value: string): string {
 
 export function formatWorkspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type'] | '' | undefined): string {
   if (type === 'personal')
-    return '个人空间'
+    return '个人项目台'
   if (type === 'team')
-    return '团队空间'
-  return '工作空间'
+    return 'Team 项目台'
+  return '项目台'
 }
 
 export function formatPlanLabel(planCode: string | null | undefined, planTier: string | null | undefined): string {

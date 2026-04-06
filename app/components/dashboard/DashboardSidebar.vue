@@ -296,7 +296,7 @@ async function onWorkspaceSwitch(workspaceId: string) {
   if (routeTeamId.value === targetId)
     return
 
-  await navigateTo(`/workspace/${targetId}`)
+  await navigateTo(`/team/${targetId}`)
 }
 </script>
 
@@ -346,7 +346,7 @@ async function onWorkspaceSwitch(workspaceId: string) {
         v-if="props.workspaceOptions.length > 0"
         class="mt-4"
         mode="select"
-        label="工作空间切换"
+        label="项目台切换"
         :model-value="selectedWorkspaceId"
         :workspace-options="props.workspaceOptions"
         :show-quota="false"
@@ -355,9 +355,9 @@ async function onWorkspaceSwitch(workspaceId: string) {
       <WorkspaceSwitchEntry
         v-else
         mode="link"
-        label="工作空间"
+        label="项目台"
         icon="workspaces"
-        to="/workspace"
+        to="/team"
       />
 
       <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
