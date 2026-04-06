@@ -186,6 +186,13 @@ async function loginByFeishuCode(code: string): Promise<boolean> {
   return true
 }
 
+function logFeishuAutoLoginFallback(reason: string, error?: unknown) {
+  console.warn('[feishu-auto-login] fallback to standard oauth', {
+    reason,
+    error,
+  })
+}
+
 async function manualFeishuLogin() {
   errorText.value = ''
   const meta = await loadFeishuMeta()
@@ -217,10 +224,13 @@ async function tryFeishuAutoLogin() {
     await ensureFeishuSdkLoaded(meta.webSdkScriptUrl)
     const authCode = await requestAuthCodeBySdk(meta.appId)
     const success = await loginByFeishuCode(authCode)
-    if (!success)
+    if (!success) {
+      logFeishuAutoLoginFallback('empty_auth_code')
       await startFeishuOAuthRedirect()
+    }
   }
-  catch {
+  catch (error) {
+    logFeishuAutoLoginFallback('sdk_failed', error)
     // SDK 自动登录失败时，回退到标准 OAuth 跳转，避免静默停留在表单页。
     await startFeishuOAuthRedirect()
   }
@@ -245,7 +255,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="p-4 bg-slate-100 flex min-h-screen items-center justify-center">
+  <div class="p-4 bg-slate-100 flex min-h-screen items-center justify-center" data-testid="login-page">
     <div class="p-6 border border-slate-200 rounded-xl bg-white max-w-sm w-full space-y-4">
       <h1 class="text-xl text-slate-900 font-semibold">
         登录 WinLoop
@@ -283,6 +293,7 @@ onMounted(async () => {
           <input
             v-model="username"
             type="text"
+            data-testid="login-username-input"
             class="text-sm mt-1 px-3 py-2 border border-slate-300 rounded w-full"
             placeholder="请输入用户名"
             autocomplete="username"
@@ -294,6 +305,7 @@ onMounted(async () => {
           <input
             v-model="password"
             type="password"
+            data-testid="login-password-input"
             class="text-sm mt-1 px-3 py-2 border border-slate-300 rounded w-full"
             placeholder="请输入密码"
             autocomplete="current-password"
@@ -302,11 +314,12 @@ onMounted(async () => {
         </label>
       </div>
 
-      <div v-if="errorText" class="text-xs text-red-600">
+      <div v-if="errorText" class="text-xs text-red-600" data-testid="login-error-text">
         {{ errorText }}
       </div>
 
       <button
+        data-testid="login-submit-button"
         class="text-sm text-white py-2 rounded bg-slate-900 w-full disabled:opacity-60"
         :disabled="loading"
         @click="submitLogin"

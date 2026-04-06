@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ApiResponse, AuthMeResult, Invitation } from '~~/shared/types/domain'
-import { normalizeRouteParam, workspaceDashboardPath, workspaceDetailPath, workspaceProjectPath } from '~/composables/team-ui'
+import { normalizeRouteParam, projectWorkspacePath, teamDashboardPath, teamDetailPath } from '~/composables/team-ui'
 import { writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 definePageMeta({
@@ -8,7 +8,7 @@ definePageMeta({
 })
 
 useHead({
-  title: '加入工作空间 - WinLoop',
+  title: '加入项目协作 - WinLoop',
 })
 
 const route = useRoute()
@@ -20,7 +20,7 @@ const errorText = ref('')
 const hasAuthenticatedSession = ref(false)
 
 const fallbackActionLabel = computed(() => {
-  return hasAuthenticatedSession.value ? '返回工作空间' : '前往登录'
+  return hasAuthenticatedSession.value ? '返回 Team 项目台' : '前往登录'
 })
 
 async function detectAuthenticatedSession(): Promise<boolean> {
@@ -43,7 +43,7 @@ async function ensureLoggedIn(): Promise<boolean> {
   await navigateTo({
     path: '/login',
     query: {
-      redirect: route.fullPath || workspaceDashboardPath(),
+      redirect: route.fullPath || teamDashboardPath(),
     },
   }, { replace: true })
   return false
@@ -63,7 +63,7 @@ async function openJoinedDestination(invitation: Invitation) {
 
   writeActiveWorkspacePreference(workspaceId)
   await navigateTo({
-    path: projectId ? workspaceProjectPath(workspaceId, projectId) : workspaceDetailPath(workspaceId),
+    path: projectId ? projectWorkspacePath(workspaceId, projectId) : teamDetailPath(workspaceId),
     query: {
       joined: '1',
     },
@@ -72,15 +72,15 @@ async function openJoinedDestination(invitation: Invitation) {
 
 function resolveInvitationErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message === 'TEAM_ID_MISSING')
-    return '邀请已接受，但未解析到工作空间，请返回工作台后重试。'
+    return '邀请已接受，但未解析到 Team，请返回项目台后重试。'
 
   const message = String((error as { data?: { message?: string } })?.data?.message || '').trim()
-  return message || '加入工作空间失败，请确认邀请链接是否有效。'
+  return message || '加入项目协作失败，请确认邀请链接是否有效。'
 }
 
 async function openFallbackAction() {
   if (hasAuthenticatedSession.value) {
-    await navigateTo(workspaceDashboardPath())
+    await navigateTo(teamDashboardPath())
     return
   }
 
@@ -123,11 +123,11 @@ onMounted(() => {
   <main class="p-4 bg-slate-100 flex min-h-screen items-center justify-center">
     <section class="p-6 border border-slate-200 rounded-xl bg-white max-w-md w-full space-y-4">
       <h1 class="text-xl text-slate-900 font-semibold">
-        加入工作空间
+        加入项目协作
       </h1>
 
       <p v-if="loading" class="text-sm text-slate-500">
-        正在验证邀请并加入工作空间...
+        正在验证邀请并加入项目协作...
       </p>
 
       <template v-else>

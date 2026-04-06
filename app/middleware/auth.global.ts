@@ -10,15 +10,14 @@ const PUBLIC_PATH_PREFIXES = [
 const PROTECTED_PATH_PREFIXES = [
   '/dashboard',
   '/team',
-  '/workspace',
   '/projects',
   '/admin',
 ]
 
 const RETIRED_ROUTE_REDIRECT_MAP: Record<string, string> = {
-  '/topics': '/workspace',
-  '/reviews': '/workspace',
-  '/defense': '/workspace',
+  '/topics': '/team',
+  '/reviews': '/team',
+  '/defense': '/team',
 }
 
 function normalizePath(path: string): string {
