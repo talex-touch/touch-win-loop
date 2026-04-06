@@ -9,6 +9,7 @@ import { fail } from '~~/server/utils/api'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
+import { buildApiEndpoint, extractApiBasePathPrefix, isHttpUrl } from '~~/shared/utils/api-url'
 
 function sanitizeRedirectTarget(value: unknown): string {
   const redirect = String(value || '').trim()
@@ -47,6 +48,17 @@ function resolveRequestOrigin(event: H3Event): string {
   }
 }
 
+function resolveRuntimeOAuthRedirectUri(runtime: ReturnType<typeof readRuntimeSettings>): string {
+  const publicBaseUrl = String(runtime.onlyOffice.sourceBaseURL || '').trim()
+  if (!isHttpUrl(publicBaseUrl))
+    return ''
+
+  const apiBasePathPrefix = extractApiBasePathPrefix(runtime.apiBaseUrl) || '/'
+  const apiCallbackPath = buildApiEndpoint(apiBasePathPrefix, '/auth/feishu/callback')
+  const redirectUri = buildApiEndpoint(publicBaseUrl, apiCallbackPath)
+  return isHttpUrl(redirectUri) ? redirectUri : ''
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -75,6 +87,7 @@ export default defineEventHandler(async (event) => {
     authorizeUrl = buildFeishuAuthorizeUrl({
       config,
       state,
+      redirectUri: resolveRuntimeOAuthRedirectUri(runtime) || undefined,
       requestOrigin: resolveRequestOrigin(event),
     })
   }

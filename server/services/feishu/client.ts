@@ -311,10 +311,7 @@ async function requestFeishu<T>(input: {
   return rawPayload as T
 }
 
-function resolveOAuthRedirectUri(config: FeishuIntegrationConfigInternal, requestOrigin = ''): string {
-  const explicit = String(config.oauthRedirectUri || '').trim()
-  if (explicit)
-    return explicit
+function resolveOAuthRedirectUriByRequestOrigin(requestOrigin = ''): string {
   const origin = String(requestOrigin || '').trim().replace(/\/+$/g, '')
   if (!origin)
     return ''
@@ -361,7 +358,9 @@ export function buildFeishuAuthorizeUrl(input: {
   requestOrigin?: string
   redirectUri?: string
 }): string {
-  const redirectUri = String(input.redirectUri || '').trim() || resolveOAuthRedirectUri(input.config, input.requestOrigin || '')
+  const redirectUri = String(input.config.oauthRedirectUri || '').trim()
+    || String(input.redirectUri || '').trim()
+    || resolveOAuthRedirectUriByRequestOrigin(input.requestOrigin || '')
   if (!redirectUri)
     throw new Error('FEISHU_REDIRECT_URI_REQUIRED')
   if (!input.config.appId)
