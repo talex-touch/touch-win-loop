@@ -7,7 +7,7 @@ const WORKSPACE_DETAIL_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/in
 const OVERVIEW_COMPONENT_FILE = resolve(process.cwd(), 'app/components/team/TeamProjectOverview.vue')
 const TEAM_UI_FILE = resolve(process.cwd(), 'app/composables/team-ui.ts')
 
-it('工作空间详情页基于计费估算计算项目配额剩余值', async () => {
+it('team dashboard 基于计费估算计算项目配额剩余值', async () => {
   const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
 
   assert.match(
@@ -17,23 +17,23 @@ it('工作空间详情页基于计费估算计算项目配额剩余值', async (
   )
   assert.match(
     source,
-    /if \(workspaceBillingEstimate\.value && remainingProjectSlots\.value === 0\)\s+return '当前空间项目数量已达上限，请先扩容项目配额。'/,
-    '工作空间详情页未在前端兜底禁用已满配额的新建入口',
+    /if \(workspaceBillingEstimate\.value && remainingProjectSlots\.value === 0\)\s+return '当前项目台项目数量已达上限，请先扩容项目配额。'/,
+    'Team dashboard 未在前端兜底禁用已满配额的新建入口',
   )
   assert.match(
     source,
     /if \(!workspaceCanCreateProject\.value\)\s+return '当前为只读成员，不能新建项目。'/,
-    '工作空间详情页未限制 member 只读新建权限',
+    'Team dashboard 未限制 member 只读新建权限',
   )
 })
 
-it('工作空间摘要卡展示 plan、项目配额、空间席位与 AI 配额', async () => {
+it('team dashboard 摘要卡展示 plan、项目配额、Team 席位与 AI 配额', async () => {
   const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
   const componentSource = await readFile(OVERVIEW_COMPONENT_FILE, 'utf8')
 
   assert.match(source, /label: '当前 Plan'/, '工作空间摘要缺少当前 Plan 信息')
   assert.match(source, /label: '项目配额'/, '工作空间摘要缺少项目配额信息')
-  assert.match(source, /label: '空间席位'/, '工作空间摘要缺少空间席位信息')
+  assert.match(source, /label: 'Team 席位'/, '工作空间摘要缺少 Team 席位信息')
   assert.match(source, /label: 'AI 配额'/, '工作空间摘要缺少 AI 配额信息')
   assert.match(componentSource, /v-if="summaryStats.length > 0"/, '共享工作台概览组件未渲染摘要统计卡片')
 })
