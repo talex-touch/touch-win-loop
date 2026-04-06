@@ -1,11 +1,7 @@
 <script setup lang="ts">
-import WorkspaceProjectRouteView from '~/pages/team/[teamId]/project/[projectId].vue'
-
-definePageMeta({
-  layout: 'dashboard',
+throw createError({
+  statusCode: 404,
+  statusMessage: 'Not Found',
+  message: '旧的 /workspace/:workspaceId/project/:projectId 入口已下线，请改用 /team/:teamId/project/:projectId。',
 })
 </script>
-
-<template>
-  <WorkspaceProjectRouteView />
-</template>
