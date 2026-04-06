@@ -12,3 +12,5 @@ dist
 public/assets/fonts
 --port/
 tmp/document-storage/
+.golutra/
+output/
