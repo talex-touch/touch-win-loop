@@ -88,6 +88,17 @@ export default defineEventHandler(async (event) => {
       }, 40052)
     }
 
+    if (error instanceof Error && error.message === 'PROJECT_ADVISOR_LIMIT_EXCEEDED') {
+      setResponseStatus(event, 400)
+      return fail('每个项目最多只能绑定 3 位指导老师。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40053)
+    }
+
     throw error
   }
 })

@@ -69,6 +69,17 @@ export default defineEventHandler(async (event) => {
       }, 40955)
     }
 
+    if (error instanceof Error && error.message === 'PROJECT_SEAT_LIMIT_MAX_EXCEEDED') {
+      setResponseStatus(event, 409)
+      return fail('项目席位上限为 15。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40956)
+    }
+
     if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
       setResponseStatus(event, 404)
       return fail('项目不存在。', {

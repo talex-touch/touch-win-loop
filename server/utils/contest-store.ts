@@ -1892,10 +1892,10 @@ export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
       includedSeats: 5,
       extraSeatPriceCents: 0,
       includedAiQuota: 500,
-      includedProjects: 2,
-      projectsUnlimited: false,
+      includedProjects: 0,
+      projectsUnlimited: true,
       extraProjectSlotPriceCents: 0,
-      defaultProjectSeatLimit: 5,
+      defaultProjectSeatLimit: 15,
       projectSeatPriceCents: 0,
       minChargedProjectSeats: 0,
       chargeAllProjectSeats: false,
@@ -1913,7 +1913,7 @@ export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
       includedProjects: 0,
       projectsUnlimited: true,
       extraProjectSlotPriceCents: 0,
-      defaultProjectSeatLimit: 5,
+      defaultProjectSeatLimit: 15,
       projectSeatPriceCents: 1000,
       minChargedProjectSeats: 3,
       chargeAllProjectSeats: true,
@@ -4859,10 +4859,10 @@ export async function estimateWorkspaceBilling(
 
   const seatUsed = Math.max(0, Number(workspaceMemberStats.rows[0]?.seat_used || '0'))
   const planTier = plan?.planTier || (workspaceType === 'personal' ? 'personal_team' : 'business_team')
-  const includedProjects = Math.max(0, Number(plan?.includedProjects || (workspaceType === 'personal' ? 2 : 0)))
-  const projectsUnlimited = plan?.projectsUnlimited ?? (workspaceType !== 'personal')
+  const includedProjects = Math.max(0, Number(plan?.includedProjects || 0))
+  const projectsUnlimited = plan?.projectsUnlimited ?? true
   const extraProjectSlotPriceCents = Math.max(0, Number(plan?.extraProjectSlotPriceCents || 0))
-  const defaultProjectSeatLimit = Math.max(1, Number(plan?.defaultProjectSeatLimit || 5))
+  const defaultProjectSeatLimit = Math.max(1, Number(plan?.defaultProjectSeatLimit || 15))
   const projectSeatPriceCents = Math.max(0, Number(plan?.projectSeatPriceCents || 0))
   const minChargedProjectSeats = Math.max(0, Number(plan?.minChargedProjectSeats || 0))
   const chargeAllProjectSeats = Boolean(plan?.chargeAllProjectSeats)

@@ -260,6 +260,8 @@ CREATE TABLE IF NOT EXISTS contest_sync_runs (
 CREATE TABLE IF NOT EXISTS invitations (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+  project_role TEXT CHECK (project_role IS NULL OR project_role IN ('manager', 'editor', 'viewer')),
   token_hash TEXT NOT NULL UNIQUE,
   invited_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   invitee_username TEXT,
@@ -268,6 +270,12 @@ CREATE TABLE IF NOT EXISTS invitations (
   accepted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE invitations
+  ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
+
+ALTER TABLE invitations
+  ADD COLUMN IF NOT EXISTS project_role TEXT;
 
 CREATE TABLE IF NOT EXISTS platform_user_roles (
   id TEXT PRIMARY KEY,
@@ -1092,7 +1100,7 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   included_projects INTEGER NOT NULL DEFAULT 0,
   projects_unlimited BOOLEAN NOT NULL DEFAULT FALSE,
   extra_project_slot_price_cents INTEGER NOT NULL DEFAULT 0,
-  default_project_seat_limit INTEGER NOT NULL DEFAULT 5,
+  default_project_seat_limit INTEGER NOT NULL DEFAULT 15,
   project_seat_price_cents INTEGER NOT NULL DEFAULT 0,
   min_charged_project_seats INTEGER NOT NULL DEFAULT 0,
   charge_all_project_seats BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1480,6 +1488,8 @@ CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories
 CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_token_hash ON invitations(token_hash);
+CREATE INDEX IF NOT EXISTS idx_invitations_workspace_project_created ON invitations(workspace_id, project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_invitations_project_created ON invitations(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_platform_user_roles_user ON platform_user_roles(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_user ON auth_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);
@@ -1629,6 +1639,27 @@ SET role = CASE
   ELSE 'member'
 END;
 
+UPDATE workspace_members wm
+SET role = 'member'
+FROM workspaces w
+WHERE wm.workspace_id = w.id
+  AND w.type = 'personal'
+  AND wm.role IN ('admin', 'manager');
+
+WITH normalized AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY workspace_id, user_id, role
+      ORDER BY created_at ASC, id ASC
+    ) AS rn
+  FROM workspace_members
+)
+DELETE FROM workspace_members wm
+USING normalized n
+WHERE wm.id = n.id
+  AND n.rn > 1;
+
 DO $$
 BEGIN
   BEGIN
@@ -1670,12 +1701,30 @@ SET role = CASE
   ELSE 'member'
 END;
 
+UPDATE invitations i
+SET role = 'member'
+FROM workspaces w
+WHERE i.workspace_id = w.id
+  AND w.type = 'personal'
+  AND i.role IN ('admin', 'manager');
+
 DO $$
 BEGIN
   BEGIN
     ALTER TABLE invitations
       ADD CONSTRAINT invitations_role_check
       CHECK (role IN ('admin', 'manager', 'member'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
+
+DO $$
+BEGIN
+  BEGIN
+    ALTER TABLE invitations
+      ADD CONSTRAINT invitations_project_role_check
+      CHECK (project_role IS NULL OR project_role IN ('manager', 'editor', 'viewer'));
   EXCEPTION
     WHEN duplicate_object THEN NULL;
   END;
@@ -1694,7 +1743,7 @@ ALTER TABLE billing_plans
   ADD COLUMN IF NOT EXISTS extra_project_slot_price_cents INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE billing_plans
-  ADD COLUMN IF NOT EXISTS default_project_seat_limit INTEGER NOT NULL DEFAULT 5;
+  ADD COLUMN IF NOT EXISTS default_project_seat_limit INTEGER NOT NULL DEFAULT 15;
 
 ALTER TABLE billing_plans
   ADD COLUMN IF NOT EXISTS project_seat_price_cents INTEGER NOT NULL DEFAULT 0;
@@ -1714,6 +1763,16 @@ SET plan_tier = CASE
   ELSE 'business_team'
 END
 WHERE COALESCE(plan_tier, '') NOT IN ('personal_team', 'business_team');
+
+UPDATE billing_plans
+SET included_projects = 0,
+    projects_unlimited = TRUE,
+    default_project_seat_limit = 15
+WHERE plan_tier = 'personal_team';
+
+UPDATE billing_plans
+SET default_project_seat_limit = 15
+WHERE default_project_seat_limit < 15;
 
 DO $$
 DECLARE
@@ -1751,7 +1810,7 @@ INSERT INTO project_seat_quotas (
 SELECT
   p.id,
   p.workspace_id,
-  5,
+  15,
   COALESCE(member_count.used, 0),
   NOW()
 FROM projects p
@@ -1765,6 +1824,12 @@ DO UPDATE SET
   workspace_id = EXCLUDED.workspace_id,
   seat_used = EXCLUDED.seat_used,
   updated_at = EXCLUDED.updated_at;
+
+UPDATE project_seat_quotas psq
+SET seat_limit = 15,
+    updated_at = NOW()
+WHERE psq.seat_used <= 15
+  AND psq.seat_limit <> 15;
 
 ALTER TABLE contests
   ADD COLUMN IF NOT EXISTS faq_items JSONB NOT NULL DEFAULT '[]'::JSONB;

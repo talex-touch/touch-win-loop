@@ -8,6 +8,7 @@ import type {
   ProjectCollegeBinding,
   ProjectContestAdaptation,
   ProjectContestBinding,
+  ProjectInvitationSummary,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectMemberSummary,
@@ -69,6 +70,9 @@ const WORKSPACE_ROLE_PRIORITY: Record<WorkspaceMemberRole, number> = {
   member: 1,
 }
 
+const MAX_PROJECT_SEAT_LIMIT = 15
+const MAX_PROJECT_ADVISOR_COUNT = 3
+
 interface UserRow {
   id: string
   username: string
@@ -87,6 +91,21 @@ interface ProjectMemberSummaryRow {
   added_by_username: string
   created_at: string
   updated_at: string
+}
+
+interface ProjectInvitationSummaryRow {
+  id: string
+  workspace_id: string
+  project_id: string | null
+  project_role: ProjectMemberRole | null
+  project_title: string | null
+  role: WorkspaceMemberRole
+  invitee_username: string | null
+  expires_at: string
+  accepted_at: string | null
+  created_at: string
+  invited_by_user_id: string
+  invited_by_username: string
 }
 
 interface ProjectSeatQuotaRow {
@@ -144,6 +163,7 @@ interface CreateTeamWorkspaceInput {
 interface CreateInvitationInput {
   workspaceId: string
   projectId?: string | null
+  projectRole?: ProjectMemberRole | null
   invitedByUserId: string
   tokenHash: string
   inviteeUsername?: string | null
@@ -391,6 +411,29 @@ function mapProjectMemberSummary(row: ProjectMemberSummaryRow): ProjectMemberSum
     addedByUsername: row.added_by_username,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function mapProjectInvitationSummary(row: ProjectInvitationSummaryRow): ProjectInvitationSummary {
+  const expiresAt = String(row.expires_at || '').trim()
+  const expiresMs = new Date(expiresAt).getTime()
+  const isExpired = Number.isFinite(expiresMs) && expiresMs <= Date.now()
+
+  return {
+    id: row.id,
+    teamId: row.workspace_id,
+    workspaceId: row.workspace_id,
+    projectId: row.project_id,
+    projectRole: row.project_role,
+    role: row.role,
+    inviteeUsername: row.invitee_username,
+    expiresAt,
+    acceptedAt: row.accepted_at,
+    createdAt: row.created_at,
+    invitedByUserId: row.invited_by_user_id,
+    invitedByUsername: row.invited_by_username,
+    projectTitle: row.project_title,
+    isExpired,
   }
 }
 
@@ -721,15 +764,9 @@ async function resolveWorkspaceDefaultProjectSeatLimit(db: Queryable, workspaceI
 
   const row = result.rows[0]
   if (!row)
-    return 5
+    return MAX_PROJECT_SEAT_LIMIT
 
-  const seatLimit = Number(row.default_project_seat_limit || 0)
-  if (seatLimit > 0)
-    return Math.max(1, Math.trunc(seatLimit))
-
-  if (row.type === 'personal')
-    return 5
-  return 5
+  return MAX_PROJECT_SEAT_LIMIT
 }
 
 export async function ensureWorkspaceMember(
@@ -869,8 +906,9 @@ export async function assertProjectSeatAvailable(
     throw new Error('PROJECT_SEAT_QUOTA_NOT_FOUND')
 
   const seatLimit = Math.max(1, Number(quota.seat_limit || 1))
+  const effectiveSeatLimit = Math.min(MAX_PROJECT_SEAT_LIMIT, seatLimit)
   const seatUsed = Math.max(0, Number(quota.seat_used || 0))
-  if (seatUsed + normalizedAdditional > seatLimit)
+  if (seatUsed + normalizedAdditional > effectiveSeatLimit)
     throw new Error('PROJECT_SEAT_LIMIT_REACHED')
 }
 
@@ -998,6 +1036,8 @@ async function replaceAdvisorBindings(
   advisorUsernames?: string[] | undefined,
 ): Promise<void> {
   const resolvedIds = await resolveAdvisorUserIds(db, advisorUserIds, advisorUsernames)
+  if (resolvedIds.length > MAX_PROJECT_ADVISOR_COUNT)
+    throw new Error('PROJECT_ADVISOR_LIMIT_EXCEEDED')
 
   await db.query('DELETE FROM project_advisor_bindings WHERE project_id = $1', [projectId])
 
@@ -1991,8 +2031,99 @@ export async function getVisibleProjectById(
   user: AuthUser,
   projectId: string,
 ): Promise<Project | null> {
-  const projects = await listVisibleProjects(db, user)
-  return projects.find(project => project.id === projectId) || null
+  const normalizedProjectId = String(projectId || '').trim()
+  if (!normalizedProjectId)
+    return null
+
+  if (user.isPlatformAdmin) {
+    const result = await db.query<ProjectRow>(
+      `SELECT
+        id,
+        workspace_id,
+        owner_user_id,
+        creator_user_id,
+        payer_user_id,
+        title,
+        contest_id,
+        track_id,
+        contest_ids,
+        problem_statement,
+        innovation_points,
+        tech_route_steps,
+        scoring_mapping,
+        risks,
+        deliverables,
+        summary,
+        source,
+        status,
+        created_at::TEXT,
+        updated_at::TEXT
+       FROM projects
+       WHERE id = $1
+       LIMIT 1`,
+      [normalizedProjectId],
+    )
+
+    const projects = await loadProjectsFromRows(db, result.rows)
+    return projects[0] || null
+  }
+
+  const result = await db.query<ProjectRow>(
+    `SELECT
+      p.id,
+      p.workspace_id,
+      p.owner_user_id,
+      p.creator_user_id,
+      p.payer_user_id,
+      p.title,
+      p.contest_id,
+      p.track_id,
+      p.contest_ids,
+      p.problem_statement,
+      p.innovation_points,
+      p.tech_route_steps,
+      p.scoring_mapping,
+      p.risks,
+      p.deliverables,
+      p.summary,
+      p.source,
+      p.status,
+      p.created_at::TEXT,
+      p.updated_at::TEXT
+     FROM projects p
+     WHERE p.id = $2
+       AND EXISTS (
+         SELECT 1
+         FROM workspace_members wm_visible
+         WHERE wm_visible.workspace_id = p.workspace_id
+           AND wm_visible.user_id = $1
+           AND wm_visible.is_active = TRUE
+       )
+       AND (
+         EXISTS (
+           SELECT 1
+           FROM workspace_members wm
+           WHERE wm.workspace_id = p.workspace_id
+             AND wm.user_id = $1
+             AND wm.is_active = TRUE
+             AND wm.role = ANY($3::TEXT[])
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM workspace_members wm
+           JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = wm.user_id
+           WHERE wm.workspace_id = p.workspace_id
+             AND wm.user_id = $1
+             AND wm.is_active = TRUE
+             AND wm.role = ANY($4::TEXT[])
+         )
+       )
+     LIMIT 1`,
+    [user.id, normalizedProjectId, FULL_WORKSPACE_ROLES, BASIC_WORKSPACE_ROLES],
+  )
+
+  const projects = await loadProjectsFromRows(db, result.rows)
+  return projects[0] || null
 }
 
 export async function getProjectSettingsSnapshot(
@@ -2326,6 +2457,36 @@ async function listProjectMembersByProjectId(
   return result.rows.map(mapProjectMemberSummary)
 }
 
+async function listProjectInvitationsByProjectId(
+  db: Queryable,
+  projectId: string,
+): Promise<ProjectInvitationSummary[]> {
+  const result = await db.query<ProjectInvitationSummaryRow>(
+    `SELECT
+      i.id,
+      i.workspace_id,
+      i.project_id,
+      i.project_role,
+      p.title AS project_title,
+      i.role,
+      i.invitee_username,
+      i.expires_at::TEXT,
+      i.accepted_at::TEXT,
+      i.created_at::TEXT,
+      i.invited_by_user_id,
+      invited_by.username AS invited_by_username
+     FROM invitations i
+     JOIN users invited_by ON invited_by.id = i.invited_by_user_id
+     JOIN projects p ON p.id = i.project_id
+     WHERE i.project_id = $1
+       AND i.accepted_at IS NULL
+     ORDER BY i.created_at DESC`,
+    [projectId],
+  )
+
+  return result.rows.map(mapProjectInvitationSummary)
+}
+
 export async function getProjectMemberManagementSnapshot(
   db: Queryable,
   projectId: string,
@@ -2337,8 +2498,9 @@ export async function getProjectMemberManagementSnapshot(
   await ensureProjectSeatQuota(db, projectId, project.workspaceId)
   await refreshProjectSeatUsage(db, projectId)
 
-  const [members, seatQuota] = await Promise.all([
+  const [members, invitations, seatQuota] = await Promise.all([
     listProjectMembersByProjectId(db, projectId),
+    listProjectInvitationsByProjectId(db, projectId),
     getProjectSeatQuotaByProjectId(db, projectId),
   ])
 
@@ -2347,6 +2509,7 @@ export async function getProjectMemberManagementSnapshot(
     teamId: project.workspaceId,
     workspaceId: project.workspaceId,
     members,
+    invitations,
     seatQuota,
   }
 }
@@ -2392,6 +2555,19 @@ function normalizeProjectMemberRole(input: ProjectMemberRole | undefined): Proje
   if (input === 'manager' || input === 'editor' || input === 'viewer')
     return input
   return 'viewer'
+}
+
+function normalizeProjectInvitationRole(input: ProjectMemberRole | null | undefined): ProjectMemberRole {
+  if (input === 'manager' || input === 'editor' || input === 'viewer')
+    return input
+  return 'viewer'
+}
+
+function canAssignElevatedProjectRole(actorUser: AuthUser, actorWorkspaceRoles: WorkspaceMemberRole[]): boolean {
+  const actorHighestRole = actorUser.isPlatformAdmin ? 'owner' : getHighestWorkspaceRole(actorWorkspaceRoles)
+  return actorUser.isPlatformAdmin
+    || actorHighestRole === 'owner'
+    || actorHighestRole === 'admin'
 }
 
 export async function upsertProjectMember(
@@ -2491,6 +2667,46 @@ export async function upsertProjectMember(
   return snapshot
 }
 
+export async function createProjectInvitation(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUser: AuthUser
+    tokenHash: string
+    inviteeUsername?: string | null
+    projectRole?: ProjectMemberRole | null
+    expiresAt: string
+  },
+): Promise<Invitation> {
+  const project = await resolveProjectWorkspaceRow(db, input.projectId)
+  if (!project)
+    throw new Error('PROJECT_NOT_FOUND')
+
+  const manageable = await canManageProject(db, input.actorUser, input.projectId)
+  if (!manageable)
+    throw new Error('FORBIDDEN')
+
+  const actorWorkspaceRoles = input.actorUser.isPlatformAdmin
+    ? ['owner'] as WorkspaceMemberRole[]
+    : await getWorkspaceRolesByUserId(db, project.workspaceId, input.actorUser.id)
+  const nextProjectRole = normalizeProjectInvitationRole(input.projectRole)
+  if (!canAssignElevatedProjectRole(input.actorUser, actorWorkspaceRoles) && nextProjectRole !== 'viewer')
+    throw new Error('MANAGER_CAN_ONLY_INVITE_VIEWER')
+
+  await assertProjectSeatAvailable(db, input.projectId, project.workspaceId, 1)
+
+  return createInvitationImpl(db, {
+    workspaceId: project.workspaceId,
+    projectId: input.projectId,
+    projectRole: nextProjectRole,
+    invitedByUserId: input.actorUser.id,
+    tokenHash: input.tokenHash,
+    inviteeUsername: String(input.inviteeUsername || '').trim() || null,
+    role: 'member',
+    expiresAt: input.expiresAt,
+  })
+}
+
 export async function removeProjectMember(
   db: Queryable,
   input: {
@@ -2551,6 +2767,65 @@ export async function removeProjectMember(
   return snapshot
 }
 
+export async function revokeProjectInvitation(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUser: AuthUser
+    invitationId: string
+  },
+): Promise<boolean> {
+  const project = await resolveProjectWorkspaceRow(db, input.projectId)
+  if (!project)
+    throw new Error('PROJECT_NOT_FOUND')
+
+  const manageable = await canManageProject(db, input.actorUser, input.projectId)
+  if (!manageable)
+    throw new Error('FORBIDDEN')
+
+  const invitationId = String(input.invitationId || '').trim()
+  if (!invitationId)
+    throw new Error('INVITATION_ID_REQUIRED')
+
+  const actorWorkspaceRoles = input.actorUser.isPlatformAdmin
+    ? ['owner'] as WorkspaceMemberRole[]
+    : await getWorkspaceRolesByUserId(db, project.workspaceId, input.actorUser.id)
+  const canAssignElevated = canAssignElevatedProjectRole(input.actorUser, actorWorkspaceRoles)
+
+  const result = await db.query<{ accepted_at: string | null, expires_at: string, project_role: ProjectMemberRole | null }>(
+    `SELECT accepted_at::TEXT, expires_at::TEXT, project_role
+     FROM invitations
+     WHERE id = $1
+       AND project_id = $2
+     LIMIT 1
+     FOR UPDATE`,
+    [invitationId, input.projectId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    throw new Error('INVITATION_NOT_FOUND')
+
+  if (!canAssignElevated && normalizeProjectInvitationRole(row.project_role) !== 'viewer')
+    throw new Error('MANAGER_CAN_ONLY_REVOKE_VIEWER')
+
+  if (row.accepted_at)
+    return false
+
+  const expiresAtMs = new Date(String(row.expires_at || '')).getTime()
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now())
+    return false
+
+  await db.query(
+    `UPDATE invitations
+     SET expires_at = NOW()
+     WHERE id = $1`,
+    [invitationId],
+  )
+
+  return true
+}
+
 export async function patchProjectSeatLimit(
   db: Queryable,
   input: {
@@ -2568,6 +2843,8 @@ export async function patchProjectSeatLimit(
     throw new Error('FORBIDDEN')
 
   const nextSeatLimit = Math.max(1, Math.trunc(Number(input.seatLimit || 1)))
+  if (nextSeatLimit > MAX_PROJECT_SEAT_LIMIT)
+    throw new Error('PROJECT_SEAT_LIMIT_MAX_EXCEEDED')
   await ensureProjectSeatQuota(db, input.projectId, project.workspaceId)
   await refreshProjectSeatUsage(db, input.projectId)
 
