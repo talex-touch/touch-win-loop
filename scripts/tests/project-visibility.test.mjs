@@ -27,6 +27,13 @@ it('listVisibleProjects 在可见性门槛后仍保留项目角色分支', async
   )
 })
 
+it('getVisibleProjectById 改为单项目直接查询，而不是全量列表过滤', async () => {
+  const source = await readFile(TARGET_FILE, 'utf8')
+
+  assert.doesNotMatch(source, /const projects = await listVisibleProjects\(db, user\)\s+return projects\.find\(project => project\.id === projectId\)/, 'getVisibleProjectById 仍通过全量项目列表过滤单项目')
+  assert.match(source, /WHERE p\.id = \$2[\s\S]*AND EXISTS \(/, 'getVisibleProjectById 未改为单项目直接查询')
+})
+
 it('listVisibleProjects 包含基础工作区角色分支（manager/member）', async () => {
   const source = await readFile(TARGET_FILE, 'utf8')
   assert.match(
@@ -60,6 +67,18 @@ it('canManageProject owner/admin 全局可管理，manager 仅限分配项目', 
     /JOIN project_members pm ON pm\.project_id = p\.id[\s\S]*wm\.role = 'manager'[\s\S]*pm\.user_id = \$2/,
     'canManageProject 缺少 manager 仅限已分配项目的分支',
   )
+  assert.match(
+    source,
+    /JOIN workspace_members wm ON wm\.workspace_id = p\.workspace_id[\s\S]*wm\.user_id = \$2[\s\S]*wm\.is_active = TRUE[\s\S]*pm\.user_id = \$2[\s\S]*pm\.role = ANY\(\$3::TEXT\[\]\)/,
+    'canManageProject 对 project owner\/manager 分支缺少 active workspace member 约束，移出 Team 后仍可能残留管理权限',
+  )
+})
+
+it('project 创建权限不再对 personal 默认追加 2 个项目上限', async () => {
+  const source = await readFile(ACCESS_TARGET_FILE, 'utf8')
+
+  assert.doesNotMatch(source, /workspace\.type === 'personal' \? 2 : 0/, 'personal 仍保留 2 个项目的默认上限')
+  assert.match(source, /const projectsUnlimited = workspace\.projects_unlimited === null\s+\? true\s+\: workspace\.projects_unlimited === true/, '未在缺省配置下统一 personal\/business 的项目创建能力')
 })
 
 it('createProject creator 与 owner 不同时自动补齐 creator 项目成员', async () => {
@@ -78,6 +97,21 @@ it('createProject creator 与 owner 不同时自动补齐 creator 项目成员',
     source,
     /await ensureProjectOwnerMember\(db, projectId, input\.ownerUserId\)\s+if \(creatorIsDifferentOwner\)\s+await ensureProjectManagerMember\(db, projectId, input\.creatorUserId\)/,
     'createProject 缺少 creator 自动入组逻辑，可能导致创建者看不见自己创建的项目',
+  )
+})
+
+it('移除 Team 成员时会同步清理该空间下的 project_members 残留', async () => {
+  const membershipSource = await readFile(resolve(process.cwd(), 'server/utils/team-membership-store.ts'), 'utf8')
+
+  assert.match(
+    membershipSource,
+    /DELETE FROM project_members pm[\s\S]*USING projects p[\s\S]*p\.workspace_id = \$1[\s\S]*pm\.user_id = \$2[\s\S]*RETURNING pm\.project_id/,
+    'teamRemoveWorkspaceMember 未同步删除该空间下的项目成员残留',
+  )
+  assert.match(
+    membershipSource,
+    /UPDATE project_seat_quotas psq[\s\S]*SET seat_used = usage\.seat_used[\s\S]*WHERE psq\.project_id = \$1/,
+    'teamRemoveWorkspaceMember 删除项目成员后未刷新项目 seat usage',
   )
 })
 
