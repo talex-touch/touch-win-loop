@@ -87,6 +87,7 @@ WINLOOP_CONTEST_AUTO_SEED=false
 - [工作台信息架构](./docs/workspace-information-architecture.md)
 - [协作资源模型](./docs/collab-resource-model.md)
 - [当前重构计划](./plan.md)
+- [Jenkins 部署说明](./deploy/jenkins/README.zh-CN.md)
 - [在线编辑选型 ADR（未来能力）](./docs/online-editor-selection.md)
 - [飞书多维同步教程](./docs/feishu-bitable-sync-guide.md)
 

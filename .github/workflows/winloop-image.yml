@@ -3,6 +3,7 @@ name: WinLoop Image Publish
 on:
   push:
     branches:
+      - dev
       - main
   workflow_dispatch:
 
@@ -50,7 +51,8 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=sha,prefix=sha-,format=short
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=dev-latest,enable=${{ github.ref_name == 'dev' }}
 
       - name: Build and push image
         id: build
@@ -65,120 +67,195 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Output image digest
+        env:
+          IMAGE_REPO: ${{ steps.image.outputs.name }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
+          short_sha="${GITHUB_SHA:0:7}"
+          build_version="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${short_sha}"
+          image_ref="${IMAGE_REPO}@${IMAGE_DIGEST}"
+
           echo "Image: ${{ steps.image.outputs.name }}"
           echo "Tags:"
           echo "${{ steps.meta.outputs.tags }}"
           echo "Digest: ${{ steps.build.outputs.digest }}"
+          echo "Build Version: ${build_version}"
+          echo "Image Ref: ${image_ref}"
 
-      - name: Trigger deploy-webhook
+      - name: Resolve build metadata
+        id: build_meta
         env:
-          WEBHOOK_URL: ${{ secrets.ONEPANEL_WEBHOOK_URL }}
-          WEBHOOK_TOKEN: ${{ secrets.ONEPANEL_WEBHOOK_TOKEN_WINLOOP }}
           IMAGE_REPO: ${{ steps.image.outputs.name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          if [ -z "${WEBHOOK_URL}" ] || [ -z "${WEBHOOK_TOKEN}" ]; then
-            echo "ONEPANEL_WEBHOOK_URL or ONEPANEL_WEBHOOK_TOKEN_WINLOOP is empty, skip webhook trigger."
-            exit 0
-          fi
-
           short_sha="${GITHUB_SHA:0:7}"
           build_version="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${short_sha}"
-          webhook_base="${WEBHOOK_URL%/}"
-          payload="$(cat <<JSON
-          {
-            "repository": "${GITHUB_REPOSITORY}",
-            "branch": "${GITHUB_REF_NAME}",
-            "sha": "${GITHUB_SHA}",
-            "build_version": "${build_version}",
-            "build_commit_sha": "${GITHUB_SHA}",
-            "image": "${IMAGE_REPO}",
-            "tag": "latest",
-            "image_ref": "${IMAGE_REPO}@${IMAGE_DIGEST}",
-            "digest": "${IMAGE_DIGEST}",
-            "workflow": "winloop-image"
+          image_ref="${IMAGE_REPO}@${IMAGE_DIGEST}"
+          echo "build_version=${build_version}" >> "${GITHUB_OUTPUT}"
+          echo "image_ref=${image_ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Trigger Jenkins deployment
+        env:
+          JENKINS_BASE_URL: ${{ secrets.JENKINS_BASE_URL }}
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+          JENKINS_JOB_STAGING: ${{ secrets.JENKINS_JOB_STAGING }}
+          JENKINS_JOB_PRODUCTION: ${{ secrets.JENKINS_JOB_PRODUCTION }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          BUILD_VERSION: ${{ steps.build_meta.outputs.build_version }}
+          IMAGE_REF: ${{ steps.build_meta.outputs.image_ref }}
+          TRIGGERED_BY: github-actions
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          def require(name: str) -> str:
+            value = os.environ.get(name, '').strip()
+            if not value:
+              raise SystemExit(f'Missing required environment variable: {name}')
+            return value
+
+          base_url = require('JENKINS_BASE_URL').rstrip('/')
+          username = require('JENKINS_USER')
+          token = require('JENKINS_API_TOKEN')
+          repository = require('GITHUB_REPOSITORY')
+          branch = require('GITHUB_REF_NAME')
+          commit_sha = require('GITHUB_SHA')
+          build_version = require('BUILD_VERSION')
+          image_ref = require('IMAGE_REF')
+          triggered_by = require('TRIGGERED_BY')
+          workflow_run_url = require('WORKFLOW_RUN_URL')
+
+          if branch == 'dev':
+            job_name = require('JENKINS_JOB_STAGING')
+          elif branch == 'main':
+            job_name = require('JENKINS_JOB_PRODUCTION')
+          else:
+            print(f'Skip Jenkins deployment for unsupported branch: {branch}')
+            raise SystemExit(0)
+
+          auth_token = base64.b64encode(f'{username}:{token}'.encode('utf-8')).decode('ascii')
+          default_headers = {
+            'Authorization': f'Basic {auth_token}',
+            'Accept': 'application/json',
           }
-          JSON
-          )"
 
-          request_max_time_sec=1800
-          retry_delay_sec=30
-          max_busy_retries=60
-          max_timeout_retries=3
-          busy_retry_count=0
-          timeout_retry_count=0
+          def job_path(name: str) -> str:
+            parts = [part for part in name.strip('/').split('/') if part]
+            return ''.join(f"/job/{urllib.parse.quote(part, safe='')}" for part in parts)
 
-          echo "Trigger deploy webhook..."
+          def api_url(url: str, suffix: str = 'api/json') -> str:
+            if not url.endswith('/'):
+              url = f'{url}/'
+            return urllib.parse.urljoin(url, suffix)
 
-          while true; do
-            response_file="$(mktemp)"
-            http_code=""
-            set +e
-            http_code="$(curl --silent --show-error \
-              --output "${response_file}" \
-              --write-out "%{http_code}" \
-              --connect-timeout 10 \
-              --max-time "${request_max_time_sec}" \
-              --request POST \
-              --header "Content-Type: application/json" \
-              --header "X-Deploy-Token: ${WEBHOOK_TOKEN}" \
-              --data "${payload}" \
-              "${webhook_base}/hooks/winloop")"
-            curl_exit_code="$?"
-            set -e
-            response_body="$(cat "${response_file}")"
-            rm -f "${response_file}"
+          def request_json(url: str, headers=None):
+            request_headers = dict(default_headers)
+            if headers:
+              request_headers.update(headers)
+            request = urllib.request.Request(url, headers=request_headers)
+            with urllib.request.urlopen(request, timeout=30) as response:
+              return json.load(response)
 
-            if [ "${curl_exit_code}" -ne 0 ]; then
-              case "${curl_exit_code}" in
-                28)
-                  timeout_retry_count="$((timeout_retry_count + 1))"
-                  if [ "${timeout_retry_count}" -gt "${max_timeout_retries}" ]; then
-                    echo "Deploy webhook timed out after ${max_timeout_retries} retries."
-                    exit 1
-                  fi
-                  echo "Deploy webhook request timed out (curl 28), wait ${retry_delay_sec}s and retry (${timeout_retry_count}/${max_timeout_retries})."
-                  sleep "${retry_delay_sec}"
-                  continue
-                  ;;
-                *)
-                  echo "Deploy webhook request failed with curl exit code ${curl_exit_code}."
-                  if [ -n "${response_body}" ]; then
-                    echo "${response_body}"
-                  fi
-                  exit "${curl_exit_code}"
-                  ;;
-              esac
-            fi
+          crumb_headers = {}
+          crumb_url = f'{base_url}/crumbIssuer/api/json'
+          try:
+            crumb_payload = request_json(crumb_url)
+          except urllib.error.HTTPError as exc:
+            if exc.code not in (401, 403, 404):
+              raise
+            crumb_payload = {}
+          except urllib.error.URLError:
+            crumb_payload = {}
 
-            timeout_retry_count=0
+          crumb_field = str(crumb_payload.get('crumbRequestField') or '').strip()
+          crumb_value = str(crumb_payload.get('crumb') or '').strip()
+          if crumb_field and crumb_value:
+            crumb_headers[crumb_field] = crumb_value
+            print(f'Fetched Jenkins crumb via {crumb_field}.')
+          else:
+            print('Jenkins crumb issuer is unavailable or not required, continue without crumb header.')
 
-            case "${http_code}" in
-              200|201|202|204)
-                echo "Deploy webhook completed with status ${http_code}."
-                break
-                ;;
-              409)
-                busy_retry_count="$((busy_retry_count + 1))"
-                if [ "${busy_retry_count}" -gt "${max_busy_retries}" ]; then
-                  echo "Deploy webhook kept returning 409 after ${max_busy_retries} retries."
-                  exit 1
-                fi
-                echo "Deploy webhook is busy (409), wait ${retry_delay_sec}s and retry (${busy_retry_count}/${max_busy_retries})."
-                sleep "${retry_delay_sec}"
-                ;;
-              *)
-                echo "Deploy webhook failed with status ${http_code}."
-                if [ -n "${response_body}" ]; then
-                  echo "${response_body}"
-                fi
-                exit 1
-                ;;
-            esac
-          done
+          params = urllib.parse.urlencode({
+            'GITHUB_REPOSITORY': repository,
+            'GITHUB_BRANCH': branch,
+            'BUILD_COMMIT_SHA': commit_sha,
+            'BUILD_VERSION': build_version,
+            'IMAGE_REF': image_ref,
+            'TRIGGERED_BY': triggered_by,
+            'WORKFLOW_RUN_URL': workflow_run_url,
+          }).encode('utf-8')
+          trigger_headers = dict(default_headers)
+          trigger_headers.update(crumb_headers)
+          trigger_headers['Content-Type'] = 'application/x-www-form-urlencoded'
+          trigger_url = f'{base_url}{job_path(job_name)}/buildWithParameters'
+          trigger_request = urllib.request.Request(trigger_url, data=params, headers=trigger_headers, method='POST')
+
+          with urllib.request.urlopen(trigger_request, timeout=30) as response:
+            location = str(response.headers.get('Location') or '').strip()
+            status = response.getcode()
+          if status not in (200, 201, 202):
+            raise SystemExit(f'Unexpected Jenkins trigger status: {status}')
+          if not location:
+            raise SystemExit('Jenkins trigger did not return a queue location header')
+
+          if location.startswith('/'):
+            location = f'{base_url}{location}'
+          print(f'Queued Jenkins build at: {location}')
+
+          queue_deadline = time.time() + 15 * 60
+          build_url = ''
+          while time.time() < queue_deadline:
+            queue_payload = request_json(api_url(location))
+            if queue_payload.get('cancelled'):
+              why = str(queue_payload.get('why') or 'cancelled')
+              raise SystemExit(f'Jenkins queue item was cancelled: {why}')
+            executable = queue_payload.get('executable') or {}
+            build_url = str(executable.get('url') or '').strip()
+            if build_url:
+              break
+            why = str(queue_payload.get('why') or '').strip()
+            if why:
+              print(f'Waiting Jenkins queue: {why}')
+            time.sleep(5)
+
+          if not build_url:
+            raise SystemExit('Timed out waiting for Jenkins queue item to start')
+          print(f'Jenkins build started: {build_url}')
+
+          build_deadline = time.time() + 90 * 60
+          result = ''
+          while time.time() < build_deadline:
+            build_payload = request_json(api_url(build_url))
+            if build_payload.get('building'):
+              print('Jenkins build is still running...')
+              time.sleep(10)
+              continue
+            result = str(build_payload.get('result') or '').strip()
+            break
+
+          if not result:
+            raise SystemExit('Timed out waiting for Jenkins build result')
+
+          print(f'Jenkins build result: {result}')
+          if result != 'SUCCESS':
+            raise SystemExit(f'Jenkins deployment failed with result: {result}')
+          PY

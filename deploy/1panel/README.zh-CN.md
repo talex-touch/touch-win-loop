@@ -1,5 +1,7 @@
 # touch-win-loop 部署手册（1Panel + GHCR + deploy-webhook）
 
+> 说明：当前仓库的主发布链路已经切换到 [`../jenkins/README.zh-CN.md`](../jenkins/README.zh-CN.md)。本目录保留为过渡/回退资产，不再作为默认方案继续扩展。
+
 本目录用于 `touch-win-loop` 在 1Panel 的标准部署，默认策略：
 
 1. `push main` 后由 GitHub Actions 推送 GHCR 镜像。
