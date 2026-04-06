@@ -1295,9 +1295,7 @@ const workspaceCanAddSeat = computed(() => {
 })
 
 const workspaceSeatSummaryText = computed(() => {
-  if (props.workspaceType === 'personal')
-    return '个人项目最多支持 15 个协作席位，接受邀请时会同时加入当前空间与项目。'
-  return '项目席位独立统计，同时继续受 Team 总席位与项目配额约束。'
+  return '每个项目最多支持 15 个协作席位，接受邀请时会同时加入当前空间与项目。'
 })
 
 const workspaceSeatDraftTooSmall = computed(() => {
@@ -1307,13 +1305,20 @@ const workspaceSeatDraftTooSmall = computed(() => {
   return Math.max(1, Math.trunc(draft)) < normalizedWorkspaceSeatUsed.value
 })
 
+const workspaceSeatDraftTooLarge = computed(() => {
+  const draft = Number(workspaceSeatLimitDraft.value || 0)
+  if (!Number.isFinite(draft))
+    return true
+  return Math.max(1, Math.trunc(draft)) > 15
+})
+
 const canSubmitWorkspaceSeatLimit = computed(() => {
   if (!workspaceCanAddSeat.value || props.workspaceSeatLimitSaveLoading)
     return false
   const draft = Number(workspaceSeatLimitDraft.value || 0)
   if (!Number.isFinite(draft) || draft <= 0)
     return false
-  return !workspaceSeatDraftTooSmall.value
+  return !workspaceSeatDraftTooSmall.value && !workspaceSeatDraftTooLarge.value
 })
 
 function openWorkspaceInviteModal(): void {
@@ -2882,6 +2887,7 @@ watch(activeTabId, (next) => {
           <a-input-number
             v-model="workspaceSeatLimitDraft"
             :min="1"
+            :max="15"
             :step="1"
             :precision="0"
             size="small"
@@ -2892,6 +2898,10 @@ watch(activeTabId, (next) => {
 
         <p v-if="workspaceSeatDraftTooSmall" class="text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
           项目席位上限不能小于当前已使用席位（{{ normalizedWorkspaceSeatUsed }}）。
+        </p>
+
+        <p v-if="workspaceSeatDraftTooLarge" class="text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
+          每个项目最多支持 15 个协作席位。
         </p>
 
         <p v-if="workspaceSeatLimitError" class="text-rose-600 p-2 border border-rose-200 rounded bg-rose-50">
