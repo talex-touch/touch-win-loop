@@ -85,6 +85,17 @@ export default defineEventHandler(async (event) => {
       }, 40492)
     }
 
+    if (error instanceof Error && error.message === 'WORKSPACE_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('Team 不存在。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40493)
+    }
+
     if (error instanceof Error && error.message === 'WORKSPACE_OWNER_IMMUTABLE') {
       setResponseStatus(event, 409)
       return fail('owner 角色不可由他人变更。', {
@@ -94,6 +105,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40992)
+    }
+
+    if (error instanceof Error && error.message === 'PERSONAL_WORKSPACE_SECONDARY_ROLE_FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return fail('个人项目台不支持 admin 或 manager 空间角色。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40393)
     }
 
     throw error

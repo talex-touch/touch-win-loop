@@ -39,12 +39,12 @@ export async function teamAssertProjectCreationAllowed(
   )
 
   const projectCount = Math.max(0, Number(projectCountResult.rows[0]?.count || '0'))
-  const includedProjects = Number.isFinite(Number(workspace.included_projects))
-    ? Math.max(0, Number(workspace.included_projects || 0))
-    : (workspace.type === 'personal' ? 2 : 0)
-  const projectsUnlimited = workspace.projects_unlimited === true
+  const includedProjects = workspace.included_projects === null
+    ? 0
+    : Math.max(0, Number(workspace.included_projects || 0))
+  const projectsUnlimited = workspace.projects_unlimited === null
     ? true
-    : workspace.type !== 'personal'
+    : workspace.projects_unlimited === true
   const extraProjectSlots = Math.max(0, Number(workspace.extra_project_slots || 0))
   const allowedProjects = includedProjects + extraProjectSlots
 
@@ -93,8 +93,12 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
   const memberRoleResult = await db.query<{ can_manage: boolean }>(
     `SELECT EXISTS (
       SELECT 1
-      FROM project_members pm
-      WHERE pm.project_id = $1
+      FROM projects p
+      JOIN workspace_members wm ON wm.workspace_id = p.workspace_id
+      JOIN project_members pm ON pm.project_id = p.id
+      WHERE p.id = $1
+        AND wm.user_id = $2
+        AND wm.is_active = TRUE
         AND pm.user_id = $2
         AND pm.role = ANY($3::TEXT[])
     ) AS can_manage`,

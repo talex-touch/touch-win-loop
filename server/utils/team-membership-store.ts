@@ -1,13 +1,14 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
   AuthUser,
+  ProjectMemberRole,
   WorkspaceInvitationSummary,
   WorkspaceMemberManagementSnapshot,
   WorkspaceMemberRole,
   WorkspaceMemberSummary,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
-import { teamAssertWorkspaceSeatAvailable, teamRefreshSeatUsage } from '~~/server/utils/team-quota-store'
+import { teamAssertWorkspaceSeatAvailable, teamGetWorkspaceType, teamRefreshSeatUsage } from '~~/server/utils/team-quota-store'
 
 const ALL_WORKSPACE_MEMBER_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager', 'member']
 const WORKSPACE_ROLE_PRIORITY: Record<WorkspaceMemberRole, number> = {
@@ -28,6 +29,9 @@ interface WorkspaceMemberSummaryRow {
 interface WorkspaceInvitationSummaryRow {
   id: string
   workspace_id: string
+  project_id: string | null
+  project_role: ProjectMemberRole | null
+  project_title: string | null
   role: WorkspaceMemberRole
   invitee_username: string | null
   expires_at: string
@@ -100,6 +104,8 @@ function mapWorkspaceInvitationSummary(row: WorkspaceInvitationSummaryRow): Work
     id: row.id,
     teamId: row.workspace_id,
     workspaceId: row.workspace_id,
+    projectId: row.project_id,
+    projectRole: row.project_role,
     role: row.role,
     inviteeUsername: row.invitee_username,
     expiresAt,
@@ -107,6 +113,7 @@ function mapWorkspaceInvitationSummary(row: WorkspaceInvitationSummaryRow): Work
     createdAt: row.created_at,
     invitedByUserId: row.invited_by_user_id,
     invitedByUsername: row.invited_by_username,
+    projectTitle: row.project_title,
     isExpired,
   }
 }
@@ -127,6 +134,15 @@ function getHighestWorkspaceRole(roles: WorkspaceMemberRole[]): WorkspaceMemberR
   }
 
   return highest
+}
+
+function normalizeWorkspaceRoleForType(
+  workspaceType: 'personal' | 'team' | null,
+  role: WorkspaceMemberRole,
+): WorkspaceMemberRole {
+  if (workspaceType === 'personal' && role !== 'owner')
+    return 'member'
+  return role
 }
 
 async function getWorkspaceRolesByUserId(
@@ -193,6 +209,9 @@ export async function teamGetWorkspaceMemberManagementSnapshot(
     `SELECT
        i.id,
        i.workspace_id,
+       i.project_id,
+       i.project_role,
+       p.title AS project_title,
        i.role,
        i.invitee_username,
        i.expires_at::TEXT,
@@ -202,6 +221,7 @@ export async function teamGetWorkspaceMemberManagementSnapshot(
        invited_by.username AS invited_by_username
      FROM invitations i
      JOIN users invited_by ON invited_by.id = i.invited_by_user_id
+     LEFT JOIN projects p ON p.id = i.project_id
      WHERE i.workspace_id = $1
        AND i.accepted_at IS NULL
      ORDER BY i.created_at DESC`,
@@ -250,6 +270,11 @@ export async function teamEnsureWorkspaceMember(
   userId: string,
   role: WorkspaceMemberRole = 'member',
 ): Promise<void> {
+  const workspaceType = await teamGetWorkspaceType(db, workspaceId)
+  if (!workspaceType)
+    throw new Error('WORKSPACE_NOT_FOUND')
+
+  const normalizedRole = normalizeWorkspaceRoleForType(workspaceType, role)
   const existingActiveResult = await db.query<{ user_id: string }>(
     `SELECT user_id
      FROM workspace_members
@@ -271,7 +296,7 @@ export async function teamEnsureWorkspaceMember(
      DO UPDATE SET
        is_active = TRUE,
        updated_at = EXCLUDED.updated_at`,
-    [randomUUID(), workspaceId, userId, role, now],
+    [randomUUID(), workspaceId, userId, normalizedRole, now],
   )
 
   await teamRefreshSeatUsage(db, workspaceId)
@@ -302,6 +327,12 @@ export async function teamPatchWorkspaceMemberRole(
     throw new Error('WORKSPACE_MEMBER_NOT_FOUND')
   if (targetRoles.includes('owner'))
     throw new Error('WORKSPACE_OWNER_IMMUTABLE')
+
+  const workspaceType = await teamGetWorkspaceType(db, input.workspaceId)
+  if (!workspaceType)
+    throw new Error('WORKSPACE_NOT_FOUND')
+  if (workspaceType === 'personal' && input.role !== 'member')
+    throw new Error('PERSONAL_WORKSPACE_SECONDARY_ROLE_FORBIDDEN')
 
   const now = new Date().toISOString()
   await db.query(
@@ -364,12 +395,52 @@ export async function teamRemoveWorkspaceMember(
   if (targetRoles.includes('owner'))
     throw new Error('WORKSPACE_OWNER_IMMUTABLE')
 
+  const ownedProjectResult = await db.query<{ id: string }>(
+    `SELECT id
+     FROM projects
+     WHERE workspace_id = $1
+       AND owner_user_id = $2
+     LIMIT 1`,
+    [input.workspaceId, normalizedTargetUserId],
+  )
+  if (ownedProjectResult.rows[0]?.id)
+    throw new Error('WORKSPACE_MEMBER_OWNS_PROJECTS')
+
   await db.query(
     `DELETE FROM workspace_members
      WHERE workspace_id = $1
        AND user_id = $2`,
     [input.workspaceId, normalizedTargetUserId],
   )
+
+  const removedProjectMemberResult = await db.query<{ project_id: string }>(
+    `DELETE FROM project_members pm
+     USING projects p
+     WHERE pm.project_id = p.id
+       AND p.workspace_id = $1
+       AND pm.user_id = $2
+     RETURNING pm.project_id`,
+    [input.workspaceId, normalizedTargetUserId],
+  )
+
+  const affectedProjectIds = Array.from(new Set(
+    removedProjectMemberResult.rows.map(row => String(row.project_id || '').trim()).filter(Boolean),
+  ))
+  for (const projectId of affectedProjectIds) {
+    await db.query(
+      `UPDATE project_seat_quotas psq
+       SET seat_used = usage.seat_used,
+           updated_at = NOW()
+       FROM (
+         SELECT COUNT(DISTINCT pm.user_id)::INTEGER AS seat_used
+         FROM project_members pm
+         WHERE pm.project_id = $1
+       ) usage
+       WHERE psq.project_id = $1`,
+      [projectId],
+    )
+  }
+
   await teamRefreshSeatUsage(db, input.workspaceId)
   return true
 }

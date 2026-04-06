@@ -77,6 +77,17 @@ export default defineEventHandler(async (event) => {
       }, 40993)
     }
 
+    if (error instanceof Error && error.message === 'WORKSPACE_MEMBER_OWNS_PROJECTS') {
+      setResponseStatus(event, 409)
+      return fail('该成员仍是某些项目的 owner，请先转移项目 owner 后再移除。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40994)
+    }
+
     throw error
   }
 })
