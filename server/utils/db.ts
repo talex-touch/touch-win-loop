@@ -295,9 +295,17 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_syncs (
   source_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  archived_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  archived_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS archived_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 
 DO $$
 BEGIN
@@ -1476,6 +1484,7 @@ CREATE INDEX IF NOT EXISTS idx_platform_user_roles_user ON platform_user_roles(u
 CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_user ON auth_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_syncs_updated ON feishu_bitable_syncs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feishu_bitable_syncs_archived_updated ON feishu_bitable_syncs(archived_at, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_updated ON feishu_bitable_sync_items(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_sync_id ON feishu_bitable_sync_items(sync_id, updated_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_bitable_sync_items_sync_table_view_entity

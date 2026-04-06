@@ -90,8 +90,19 @@ export default defineEventHandler(async (event) => {
     }, 40160)
   })
 
-  if (!item || 'code' in item)
+  if (!item || 'code' in item) {
+    if (!item) {
+      setResponseStatus(event, 404)
+      return fail('子表同步项不存在。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40460)
+    }
     return item
+  }
 
   return ok<FeishuBitableSyncItem>(item, {
     startedAt,

@@ -62,8 +62,19 @@ export default defineEventHandler(async (event) => {
     }, 40155)
   })
 
-  if (!sync || 'code' in sync)
+  if (!sync || 'code' in sync) {
+    if (!sync) {
+      setResponseStatus(event, 404)
+      return fail('同步信息不存在。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40456)
+    }
     return sync
+  }
 
   return ok<FeishuBitableSync>(sync, {
     startedAt,

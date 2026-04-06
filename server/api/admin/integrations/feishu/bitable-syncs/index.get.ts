@@ -11,6 +11,7 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
+  const includeArchived = String(getQuery(event).includeArchived || '') === 'true'
 
   const canRead = await checkPlatformPermission(event, user, 'contest.write')
   if (!canRead) {
@@ -25,7 +26,9 @@ export default defineEventHandler(async (event) => {
   }
 
   const syncs = await withClient(event, async (db) => {
-    return listFeishuBitableSyncs(db)
+    return listFeishuBitableSyncs(db, {
+      includeArchived,
+    })
   })
 
   return ok<FeishuBitableSync[]>(syncs, {

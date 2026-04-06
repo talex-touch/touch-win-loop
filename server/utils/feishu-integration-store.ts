@@ -107,6 +107,8 @@ interface FeishuBitableSyncRow {
   ignored_issue_count: number | string | null
   created_by_user_id: string
   updated_by_user_id: string
+  archived_by_user_id: string | null
+  archived_at: string | null
   created_at: string
   updated_at: string
 }
@@ -427,6 +429,8 @@ function toSync(row: FeishuBitableSyncRow): FeishuBitableSync {
       : null,
     createdByUserId: row.created_by_user_id,
     updatedByUserId: row.updated_by_user_id,
+    archivedByUserId: row.archived_by_user_id || null,
+    archivedAt: row.archived_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -1141,7 +1145,9 @@ export async function suggestNextFeishuBitableSyncName(
 
 export async function listFeishuBitableSyncs(
   db: Queryable,
+  input: { includeArchived?: boolean } = {},
 ): Promise<FeishuBitableSync[]> {
+  const includeArchived = input.includeArchived === true
   const result = await db.query<FeishuBitableSyncRow>(
     `SELECT
       s.id,
@@ -1161,6 +1167,8 @@ export async function listFeishuBitableSyncs(
       COALESCE(issue_stats.ignored_issue_count, 0)::INTEGER AS ignored_issue_count,
       s.created_by_user_id,
       s.updated_by_user_id,
+      s.archived_by_user_id,
+      s.archived_at::TEXT,
       s.created_at::TEXT,
       s.updated_at::TEXT
      FROM feishu_bitable_syncs s
@@ -1189,6 +1197,7 @@ export async function listFeishuBitableSyncs(
        JOIN feishu_bitable_sync_items i3 ON i3.id = iss.sync_item_id
        WHERE i3.sync_id = s.id
      ) issue_stats ON TRUE
+     WHERE ($1::BOOLEAN = TRUE OR s.archived_at IS NULL)
      GROUP BY
       s.id,
       s.name,
@@ -1205,9 +1214,12 @@ export async function listFeishuBitableSyncs(
       issue_stats.ignored_issue_count,
       s.created_by_user_id,
       s.updated_by_user_id,
+      s.archived_by_user_id,
+      s.archived_at,
       s.created_at,
       s.updated_at
      ORDER BY s.updated_at DESC`,
+    [includeArchived],
   )
   return result.rows.map(toSync)
 }
@@ -1215,7 +1227,9 @@ export async function listFeishuBitableSyncs(
 export async function getFeishuBitableSyncById(
   db: Queryable,
   syncId: string,
+  input: { includeArchived?: boolean } = {},
 ): Promise<FeishuBitableSync | null> {
+  const includeArchived = input.includeArchived === true
   const result = await db.query<FeishuBitableSyncRow>(
     `SELECT
       s.id,
@@ -1235,6 +1249,8 @@ export async function getFeishuBitableSyncById(
       COALESCE(issue_stats.ignored_issue_count, 0)::INTEGER AS ignored_issue_count,
       s.created_by_user_id,
       s.updated_by_user_id,
+      s.archived_by_user_id,
+      s.archived_at::TEXT,
       s.created_at::TEXT,
       s.updated_at::TEXT
      FROM feishu_bitable_syncs s
@@ -1264,6 +1280,7 @@ export async function getFeishuBitableSyncById(
        WHERE i3.sync_id = s.id
      ) issue_stats ON TRUE
      WHERE s.id = $1
+       AND ($2::BOOLEAN = TRUE OR s.archived_at IS NULL)
      GROUP BY
       s.id,
       s.name,
@@ -1280,10 +1297,12 @@ export async function getFeishuBitableSyncById(
       issue_stats.ignored_issue_count,
       s.created_by_user_id,
       s.updated_by_user_id,
+      s.archived_by_user_id,
+      s.archived_at,
       s.created_at,
       s.updated_at
      LIMIT 1`,
-    [syncId],
+    [syncId, includeArchived],
   )
   const row = result.rows[0]
   return row ? toSync(row) : null
@@ -1361,11 +1380,86 @@ export async function patchFeishuBitableSync(
   return getFeishuBitableSyncById(db, input.syncId)
 }
 
+export async function archiveFeishuBitableSync(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncId: string
+  },
+): Promise<FeishuBitableSync | null> {
+  const existing = await getFeishuBitableSyncById(db, input.syncId)
+  if (!existing)
+    return null
+
+  const archivedResult = await db.query<{ id: string }>(
+    `UPDATE feishu_bitable_syncs
+     SET
+       archived_by_user_id = $2,
+       archived_at = NOW(),
+       updated_by_user_id = $2,
+       updated_at = NOW()
+     WHERE id = $1
+       AND archived_at IS NULL
+    RETURNING id`,
+    [input.syncId, input.actorUserId],
+  )
+
+  if (!archivedResult.rows[0]?.id)
+    return null
+
+  await db.query(
+    `UPDATE feishu_bitable_sync_items
+     SET
+       is_enabled = FALSE,
+       schedule_enabled = FALSE,
+       schedule_next_run_at = NULL,
+       schedule_locked_at = NULL,
+       schedule_lock_token = NULL,
+       updated_by_user_id = $2,
+       updated_at = NOW()
+     WHERE sync_id = $1`,
+    [input.syncId, input.actorUserId],
+  )
+
+  return getFeishuBitableSyncById(db, input.syncId, { includeArchived: true })
+}
+
+export async function restoreFeishuBitableSync(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncId: string
+  },
+): Promise<FeishuBitableSync | null> {
+  const existing = await getFeishuBitableSyncById(db, input.syncId, { includeArchived: true })
+  if (!existing || !existing.archivedAt)
+    return null
+
+  const restoredResult = await db.query<{ id: string }>(
+    `UPDATE feishu_bitable_syncs
+     SET
+       archived_by_user_id = NULL,
+       archived_at = NULL,
+       updated_by_user_id = $2,
+       updated_at = NOW()
+     WHERE id = $1
+       AND archived_at IS NOT NULL
+    RETURNING id`,
+    [input.syncId, input.actorUserId],
+  )
+
+  if (!restoredResult.rows[0]?.id)
+    return null
+
+  return getFeishuBitableSyncById(db, input.syncId, { includeArchived: true })
+}
+
 export async function listFeishuBitableSyncItems(
   db: Queryable,
-  input: { includeInactive?: boolean, syncId?: string } = {},
+  input: { includeInactive?: boolean, includeArchived?: boolean, syncId?: string } = {},
 ): Promise<FeishuBitableSyncItem[]> {
   const includeInactive = input.includeInactive === true
+  const includeArchived = input.includeArchived === true
   const result = await db.query<FeishuBitableSyncItemRow>(
     `SELECT
       t.id,
@@ -1401,6 +1495,7 @@ export async function listFeishuBitableSyncItems(
       t.created_at::TEXT,
       t.updated_at::TEXT
      FROM feishu_bitable_sync_items t
+     LEFT JOIN feishu_bitable_syncs s ON s.id = t.sync_id
      LEFT JOIN LATERAL (
        SELECT
          r.id,
@@ -1417,8 +1512,9 @@ export async function listFeishuBitableSyncItems(
      ) lr ON TRUE
      WHERE ($1::BOOLEAN = TRUE OR t.is_enabled = TRUE)
        AND ($2::TEXT = '' OR t.sync_id = $2)
+       AND ($3::BOOLEAN = TRUE OR t.sync_id IS NULL OR s.archived_at IS NULL)
      ORDER BY t.updated_at DESC`,
-    [includeInactive, toText(input.syncId)],
+    [includeInactive, toText(input.syncId), includeArchived],
   )
   return result.rows.map(toSyncItem)
 }
@@ -1426,7 +1522,9 @@ export async function listFeishuBitableSyncItems(
 export async function getFeishuBitableSyncItemById(
   db: Queryable,
   syncItemId: string,
+  input: { includeArchived?: boolean } = {},
 ): Promise<FeishuBitableSyncItem | null> {
+  const includeArchived = input.includeArchived === true
   const result = await db.query<FeishuBitableSyncItemRow>(
     `SELECT
       t.id,
@@ -1462,6 +1560,7 @@ export async function getFeishuBitableSyncItemById(
       t.created_at::TEXT,
       t.updated_at::TEXT
      FROM feishu_bitable_sync_items t
+     LEFT JOIN feishu_bitable_syncs s ON s.id = t.sync_id
      LEFT JOIN LATERAL (
        SELECT
          r.id,
@@ -1477,8 +1576,9 @@ export async function getFeishuBitableSyncItemById(
        LIMIT 1
      ) lr ON TRUE
      WHERE t.id = $1
+       AND ($2::BOOLEAN = TRUE OR t.sync_id IS NULL OR s.archived_at IS NULL)
      LIMIT 1`,
-    [syncItemId],
+    [syncItemId, includeArchived],
   )
   const row = result.rows[0]
   return row ? toSyncItem(row) : null
@@ -1920,11 +2020,14 @@ export async function getFeishuBitableSyncItemDetail(
   input: {
     syncId: string
     syncItemId: string
+    includeArchived?: boolean
     runLimit?: number
     issueLimit?: number
   },
 ): Promise<FeishuBitableSyncItemDetail | null> {
-  const item = await getFeishuBitableSyncItemById(db, input.syncItemId)
+  const item = await getFeishuBitableSyncItemById(db, input.syncItemId, {
+    includeArchived: input.includeArchived,
+  })
   if (!item || item.syncId !== input.syncId)
     return null
 
@@ -1961,15 +2064,19 @@ export async function getFeishuBitableSyncDetail(
   db: Queryable,
   input: {
     syncId: string
+    includeArchived?: boolean
     includeInactive?: boolean
   },
 ): Promise<FeishuBitableSyncDetail | null> {
-  const sync = await getFeishuBitableSyncById(db, input.syncId)
+  const sync = await getFeishuBitableSyncById(db, input.syncId, {
+    includeArchived: input.includeArchived,
+  })
   if (!sync)
     return null
 
   const items = await listFeishuBitableSyncItems(db, {
     syncId: input.syncId,
+    includeArchived: input.includeArchived,
     includeInactive: input.includeInactive,
   })
 
@@ -1991,18 +2098,20 @@ export async function claimNextDueFeishuBitableSyncItem(
   const lockToken = randomUUID()
   const claimed = await db.query<{ id: string }>(
     `WITH candidate AS (
-      SELECT id
-      FROM feishu_bitable_sync_items
-      WHERE is_enabled = TRUE
-        AND schedule_enabled = TRUE
-        AND schedule_next_run_at IS NOT NULL
-        AND schedule_next_run_at <= $1::TIMESTAMPTZ
+      SELECT t.id
+      FROM feishu_bitable_sync_items t
+      LEFT JOIN feishu_bitable_syncs s ON s.id = t.sync_id
+      WHERE t.is_enabled = TRUE
+        AND t.schedule_enabled = TRUE
+        AND t.schedule_next_run_at IS NOT NULL
+        AND t.schedule_next_run_at <= $1::TIMESTAMPTZ
+        AND (t.sync_id IS NULL OR s.archived_at IS NULL)
         AND (
-          schedule_lock_token IS NULL
-          OR schedule_locked_at IS NULL
-          OR schedule_locked_at < $2::TIMESTAMPTZ
+          t.schedule_lock_token IS NULL
+          OR t.schedule_locked_at IS NULL
+          OR t.schedule_locked_at < $2::TIMESTAMPTZ
         )
-      ORDER BY schedule_next_run_at ASC
+      ORDER BY t.schedule_next_run_at ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
@@ -2422,7 +2531,9 @@ export async function listActiveFeishuBitableSyncItemsBySource(
       t.created_at::TEXT,
       t.updated_at::TEXT
      FROM feishu_bitable_sync_items t
+     LEFT JOIN feishu_bitable_syncs s ON s.id = t.sync_id
      WHERE t.is_enabled = TRUE
+       AND (t.sync_id IS NULL OR s.archived_at IS NULL)
        AND t.app_token = $1
        AND t.table_id = $2
        AND ($3::TEXT = '' OR t.view_id = '' OR t.view_id = $3)

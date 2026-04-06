@@ -15,6 +15,7 @@ export default defineEventHandler(async (event) => {
   const syncItemId = String(getRouterParam(event, 'itemId') || '').trim()
   const runLimit = Math.max(1, Math.min(100, Number(getQuery(event).runLimit || 20)))
   const issueLimit = Math.max(1, Math.min(200, Number(getQuery(event).issueLimit || 50)))
+  const includeArchived = String(getQuery(event).includeArchived || '') === 'true'
 
   const canRead = await checkPlatformPermission(event, user, 'contest.write')
   if (!canRead) {
@@ -43,6 +44,7 @@ export default defineEventHandler(async (event) => {
     return getFeishuBitableSyncItemDetail(db, {
       syncId,
       syncItemId,
+      includeArchived,
       runLimit,
       issueLimit,
     })
