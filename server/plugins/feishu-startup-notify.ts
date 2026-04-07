@@ -1,7 +1,8 @@
+import { getFeishuTenantAccessToken } from '~~/server/services/feishu/client'
 import {
-  getFeishuTenantAccessToken,
-  sendFeishuChatTextMessage,
-} from '~~/server/services/feishu/client'
+  resolveFeishuStartupBuildInfo,
+  sendFeishuStartupNotifyMessage,
+} from '~~/server/services/feishu/startup-notify'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
@@ -39,46 +40,6 @@ function toErrorMessage(error: unknown): string {
   return String(error)
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)))
-}
-
-function buildStartupMessage(input: {
-  version: string
-  commitSha: string
-  remark: string
-  timestamp: string
-}): string {
-  const lines = [
-    'WinLoop 启动通知',
-    `时间：${input.timestamp}`,
-    `版本：${input.version}`,
-    `Commit：${input.commitSha}`,
-  ]
-  if (input.remark)
-    lines.push(`备注：${input.remark}`)
-  return lines.join('\n')
-}
-
-async function sendWithRetry(input: {
-  tenantAccessToken: string
-  chatId: string
-  text: string
-}): Promise<void> {
-  const maxAttempts = 3
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      await sendFeishuChatTextMessage(input)
-      return
-    }
-    catch (error) {
-      if (attempt >= maxAttempts)
-        throw error
-      await sleep(300 * (2 ** (attempt - 1)))
-    }
-  }
-}
-
 async function runStartupNotify(): Promise<void> {
   const runtimeState = getStartupNotifyRuntimeState()
   if (runtimeState.notifying)
@@ -97,8 +58,12 @@ async function runStartupNotify(): Promise<void> {
       return
     }
 
-    const version = toText(runtime.build.version) || toText(config.startupFallbackVersion)
-    const commitSha = toText(runtime.build.commitSha) || toText(config.startupFallbackCommitSha)
+    const { version, commitSha } = resolveFeishuStartupBuildInfo({
+      runtimeVersion: runtime.build.version,
+      runtimeCommitSha: runtime.build.commitSha,
+      fallbackVersion: config.startupFallbackVersion,
+      fallbackCommitSha: config.startupFallbackCommitSha,
+    })
     if (!version || !commitSha) {
       console.warn('[feishu-startup-notify] version or commit sha is empty, skip.', {
         hasVersion: Boolean(version),
@@ -108,17 +73,13 @@ async function runStartupNotify(): Promise<void> {
     }
 
     const tenantAccessToken = await getFeishuTenantAccessToken(config)
-    const text = buildStartupMessage({
+    await sendFeishuStartupNotifyMessage({
+      tenantAccessToken,
+      chatId,
       version,
       commitSha,
       remark: toText(config.startupNotifyRemark),
       timestamp: new Date().toISOString(),
-    })
-
-    await sendWithRetry({
-      tenantAccessToken,
-      chatId,
-      text,
     })
   }
   catch (error) {

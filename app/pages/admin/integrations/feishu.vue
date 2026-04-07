@@ -44,6 +44,8 @@ const savingConfig = ref(false)
 const adminOverviewLoading = ref(false)
 const creatingSync = ref(false)
 const startupNotifyChatOptionsLoading = ref(false)
+const testingStartupNotify = ref(false)
+const startupNotifyChatPickerVisible = ref(false)
 const manualAddingKey = ref('')
 const syncToggleMutating = reactive<Record<string, boolean>>({})
 const archivingSyncMutating = reactive<Record<string, boolean>>({})
@@ -61,11 +63,14 @@ const showArchivedSyncs = ref(false)
 
 const errorText = ref('')
 const successText = ref('')
+const startupNotifyTestErrorText = ref('')
+const startupNotifyTestSuccessText = ref('')
 const permissions = ref<PlatformPermission[]>([])
 const config = ref<FeishuIntegrationConfigView | null>(null)
 const adminOverview = ref<FeishuAdminOverview | null>(null)
 const syncs = ref<FeishuBitableSync[]>([])
 const startupNotifyChatOptions = ref<FeishuChatCandidate[]>([])
+const startupNotifyChatSearchKeyword = ref('')
 let startupNotifyChatSearchSequence = 0
 
 const syncColumns = [
@@ -163,6 +168,11 @@ function setSuccess(message: string) {
 function clearFeedback() {
   errorText.value = ''
   successText.value = ''
+}
+
+function clearStartupNotifyTestFeedback() {
+  startupNotifyTestErrorText.value = ''
+  startupNotifyTestSuccessText.value = ''
 }
 
 function formatDateTime(value?: string | null): string {
@@ -584,6 +594,44 @@ async function saveConfig() {
   }
 }
 
+async function testStartupNotify() {
+  if (!canManageConfig.value)
+    return
+
+  clearStartupNotifyTestFeedback()
+  const chatId = String(configForm.startupNotifyChatId || '').trim()
+  if (!chatId) {
+    startupNotifyTestErrorText.value = '请先填写群 chat_id，再执行测试。'
+    return
+  }
+
+  testingStartupNotify.value = true
+  try {
+    const response = await $fetch<ApiResponse<{
+      chatId: string
+      version: string
+      commitSha: string
+      testedAt: string
+    }>>(endpoint('/admin/integrations/feishu/startup-notify/test'), {
+      method: 'POST',
+      body: {
+        chatId,
+        remark: configForm.startupNotifyRemark.trim(),
+        fallbackVersion: configForm.startupFallbackVersion.trim(),
+        fallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
+      },
+    })
+
+    startupNotifyTestSuccessText.value = `测试消息已发送到 ${response.data.chatId}（版本 ${response.data.version} / Commit ${response.data.commitSha}）。`
+  }
+  catch (error: any) {
+    startupNotifyTestErrorText.value = String(error?.data?.message || '启动通知测试失败。')
+  }
+  finally {
+    testingStartupNotify.value = false
+  }
+}
+
 async function loadStartupNotifyChatOptions(keyword = '') {
   if (!canManageConfig.value) {
     startupNotifyChatOptions.value = []
@@ -619,14 +667,29 @@ async function loadStartupNotifyChatOptions(keyword = '') {
   }
 }
 
-function handleStartupNotifyChatSearch(keyword: string) {
-  void loadStartupNotifyChatOptions(keyword)
+function openStartupNotifyChatPicker() {
+  startupNotifyChatPickerVisible.value = true
+  if (startupNotifyChatOptions.value.length > 0)
+    return
+  void loadStartupNotifyChatOptions(startupNotifyChatSearchKeyword.value)
 }
 
-function handleStartupNotifyChatPopupVisibleChange(visible: boolean) {
-  if (!visible || startupNotifyChatOptions.value.length > 0)
-    return
+function searchStartupNotifyChats() {
+  void loadStartupNotifyChatOptions(startupNotifyChatSearchKeyword.value)
+}
+
+function resetStartupNotifyChatSearch() {
+  startupNotifyChatSearchKeyword.value = ''
   void loadStartupNotifyChatOptions()
+}
+
+function selectStartupNotifyChat(item: FeishuChatCandidate) {
+  const chatId = String(item.chatId || '').trim()
+  if (!chatId)
+    return
+  configForm.startupNotifyChatId = chatId
+  startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions([item, ...startupNotifyChatOptions.value], chatId)
+  startupNotifyChatPickerVisible.value = false
 }
 
 function openCreateSyncDrawer() {
@@ -652,6 +715,7 @@ function openEditSyncDrawer(syncId: string, options?: { draftTableId?: string, d
 
 function openConfigDialog() {
   clearFeedback()
+  clearStartupNotifyTestFeedback()
   configDialogVisible.value = true
   void Promise.allSettled([
     loadAdminOverview(),
@@ -1293,37 +1357,31 @@ onMounted(initializePage)
             <div class="gap-3 grid md:grid-cols-2">
               <label class="text-[10px] text-slate-600 font-medium block">
                 飞书群 chat_id
-                <a-select
-                  v-model="configForm.startupNotifyChatId"
-                  class="mt-1"
-                  allow-clear
-                  allow-search
-                  :filter-option="false"
-                  :loading="startupNotifyChatOptionsLoading"
-                  :search-delay="250"
-                  size="small"
-                  placeholder="搜索群名并直接选择"
-                  @search="handleStartupNotifyChatSearch"
-                  @popup-visible-change="handleStartupNotifyChatPopupVisibleChange"
-                >
-                  <a-option
-                    v-for="item in startupNotifyChatSelectOptions"
-                    :key="item.chatId"
-                    :value="item.chatId"
-                    :label="formatStartupNotifyChatLabel(item)"
+                <a-input-group class="mt-1">
+                  <a-input
+                    v-model="configForm.startupNotifyChatId"
+                    allow-clear
+                    size="small"
+                    placeholder="oc_xxx"
+                  />
+                  <a-button
+                    size="small"
+                    :loading="startupNotifyChatOptionsLoading && startupNotifyChatPickerVisible"
+                    @click="openStartupNotifyChatPicker"
                   >
-                    <div class="py-0.5 min-w-0">
-                      <p class="text-[10px] text-slate-900 font-medium m-0 truncate">
-                        {{ formatStartupNotifyChatLabel(item) }}
-                      </p>
-                      <p class="text-[10px] text-slate-400 font-mono m-0 mt-0.5 truncate">
-                        {{ item.chatId }}
-                      </p>
-                    </div>
-                  </a-option>
-                </a-select>
+                    选择群
+                  </a-button>
+                  <a-button
+                    size="small"
+                    type="primary"
+                    :loading="testingStartupNotify"
+                    @click="testStartupNotify"
+                  >
+                    测试
+                  </a-button>
+                </a-input-group>
                 <p class="text-[10px] text-slate-400 m-0 mt-1">
-                  支持按群名搜索，选中后自动写入 chat_id。
+                  支持手动输入 chat_id，也可以点击“选择群”从列表回填。
                 </p>
                 <p v-if="configForm.startupNotifyChatId" class="text-[10px] text-slate-400 font-mono m-0 mt-1">
                   当前 chat_id：{{ configForm.startupNotifyChatId }}
@@ -1333,6 +1391,12 @@ onMounted(initializePage)
                   class="text-[10px] text-slate-500 m-0 mt-1 truncate"
                 >
                   当前群名：{{ formatStartupNotifyChatLabel(selectedStartupNotifyChat) }}
+                </p>
+                <p v-if="startupNotifyTestSuccessText" class="text-[10px] text-emerald-700 m-0 mt-2 break-all">
+                  {{ startupNotifyTestSuccessText }}
+                </p>
+                <p v-if="startupNotifyTestErrorText" class="text-[10px] text-rose-600 m-0 mt-2 break-all">
+                  {{ startupNotifyTestErrorText }}
                 </p>
               </label>
 
@@ -1694,5 +1758,83 @@ onMounted(initializePage)
         @updated="refreshSyncList"
       />
     </a-drawer>
+
+    <a-modal
+      v-model:visible="startupNotifyChatPickerVisible"
+      title="选择飞书群"
+      :footer="false"
+      width="720px"
+    >
+      <div class="space-y-3">
+        <div class="flex gap-2 items-center">
+          <a-input
+            v-model="startupNotifyChatSearchKeyword"
+            class="flex-1"
+            allow-clear
+            size="small"
+            placeholder="输入群名关键词搜索"
+            @press-enter="searchStartupNotifyChats"
+          />
+          <a-button size="small" type="primary" :loading="startupNotifyChatOptionsLoading" @click="searchStartupNotifyChats">
+            搜索
+          </a-button>
+          <a-button size="small" @click="resetStartupNotifyChatSearch">
+            重置
+          </a-button>
+        </div>
+
+        <div class="text-[10px] text-slate-500 p-3 border border-slate-200 bg-slate-50 space-y-1">
+          <p class="m-0">
+            搜索不到时，可以直接在外层输入框手动填写 chat_id。
+          </p>
+          <p v-if="configForm.startupNotifyChatId" class="font-mono m-0">
+            当前填写：{{ configForm.startupNotifyChatId }}
+          </p>
+        </div>
+
+        <div v-if="startupNotifyChatOptionsLoading" class="p-3 border border-slate-200 bg-white">
+          <a-skeleton :animation="true">
+            <a-skeleton-line :rows="4" />
+          </a-skeleton>
+        </div>
+
+        <div v-else-if="startupNotifyChatSelectOptions.length === 0" class="text-[10px] text-slate-500 p-4 text-center border border-slate-300 border-dashed bg-slate-50">
+          暂未检索到群。你可以换个关键词重试，或直接手动填写 chat_id。
+        </div>
+
+        <div v-else class="pr-1 max-h-[420px] overflow-y-auto space-y-2">
+          <div
+            v-for="item in startupNotifyChatSelectOptions"
+            :key="item.chatId"
+            class="p-3 border border-slate-200 rounded bg-white flex gap-3 items-start justify-between"
+          >
+            <div class="flex-1 min-w-0">
+              <div class="flex flex-wrap gap-2 items-center">
+                <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
+                  {{ formatStartupNotifyChatLabel(item) }}
+                </p>
+                <a-tag v-if="item.chatId === configForm.startupNotifyChatId" size="small" color="arcoblue">
+                  当前已选
+                </a-tag>
+              </div>
+              <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                {{ item.chatId }}
+              </p>
+              <p v-if="item.description" class="text-[10px] text-slate-500 m-0 mt-1 break-all">
+                {{ item.description }}
+              </p>
+            </div>
+            <a-button
+              size="mini"
+              type="primary"
+              :disabled="item.chatId === configForm.startupNotifyChatId"
+              @click="selectStartupNotifyChat(item)"
+            >
+              选择
+            </a-button>
+          </div>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
