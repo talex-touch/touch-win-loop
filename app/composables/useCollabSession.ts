@@ -5,7 +5,7 @@ import * as Y from 'yjs'
 import {
   ensureMarkdownCollabDocShape,
   syncMarkdownMirrorFromRichText,
-} from '~~/shared/utils/collab-markdown-rich-text'
+} from '../../shared/utils/collab-markdown-rich-text'
 
 export interface CollabSnapshotPayload {
   kind: 'markdown' | 'draw'
@@ -48,35 +48,68 @@ interface ApplySnapshotInput {
   updatedAt?: string
 }
 
+interface BufferLikeResult extends Uint8Array {
+  toString: (encoding?: string) => string
+}
+
+interface BufferLike {
+  from: (input: Uint8Array | string, encoding?: string) => BufferLikeResult
+}
+
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+function resolveBufferLike(): BufferLike | null {
+  const candidate = Reflect.get(globalThis as object, 'Buffer') as Partial<BufferLike> | undefined
+  if (typeof candidate?.from !== 'function')
+    return null
+  return {
+    from: candidate.from.bind(candidate) as BufferLike['from'],
+  }
+}
+
 function encodeBytesToBase64(bytes: Uint8Array): string {
-  if (!bytes.length || !import.meta.client)
+  if (!bytes.length)
     return ''
 
-  let binary = ''
-  for (const value of bytes)
-    binary += String.fromCharCode(value)
-  return window.btoa(binary)
+  if (typeof globalThis.btoa === 'function') {
+    let binary = ''
+    for (const value of bytes)
+      binary += String.fromCharCode(value)
+    return globalThis.btoa(binary)
+  }
+
+  const bufferLike = resolveBufferLike()
+  if (bufferLike)
+    return bufferLike.from(bytes).toString('base64')
+
+  return ''
 }
 
 function decodeBase64ToBytes(rawBase64: string): Uint8Array {
   const normalized = normalizeString(rawBase64)
-  if (!normalized || !import.meta.client)
+  if (!normalized)
     return new Uint8Array()
 
   try {
-    const binary = window.atob(normalized)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i += 1)
-      bytes[i] = binary.charCodeAt(i)
-    return bytes
+    if (typeof globalThis.atob === 'function') {
+      const binary = globalThis.atob(normalized)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1)
+        bytes[i] = binary.charCodeAt(i)
+      return bytes
+    }
+
+    const bufferLike = resolveBufferLike()
+    if (bufferLike)
+      return new Uint8Array(bufferLike.from(normalized, 'base64'))
   }
   catch {
     return new Uint8Array()
   }
+
+  return new Uint8Array()
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -154,7 +187,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
   let snapshotPollTimer: ReturnType<typeof setInterval> | null = null
   let batchSendTimer: ReturnType<typeof setTimeout> | null = null
   let markdownMirrorSyncTimer: ReturnType<typeof setTimeout> | null = null
-  let pendingUpdates: Uint8Array[] = []
+  let hasPendingLocalChanges = false
 
   function syncDraftFromDoc(): void {
     const doc = docRef.value
@@ -209,34 +242,32 @@ export function useCollabSession(input: UseCollabSessionInput) {
     const projectId = normalizeString(input.projectId.value)
     const resourceId = normalizeString(input.resourceId.value)
     if (!projectId || !resourceId) {
-      pendingUpdates = []
+      hasPendingLocalChanges = false
       return
     }
 
-    if (pendingUpdates.length === 0)
+    if (!hasPendingLocalChanges)
       return
 
-    const merged = pendingUpdates.length === 1
-      ? pendingUpdates[0] || new Uint8Array()
-      : Y.mergeUpdates(pendingUpdates)
-    pendingUpdates = []
+    const doc = docRef.value
+    hasPendingLocalChanges = false
+    if (!doc)
+      return
 
-    if (!merged.length)
+    const currentStateUpdate = Y.encodeStateAsUpdate(doc)
+    if (!currentStateUpdate.length)
       return
 
     input.workspaceRealtime.sendCollabUpdate({
       projectId,
       resourceId,
       revision: revision.value,
-      updateBase64: encodeBytesToBase64(merged),
+      updateBase64: encodeBytesToBase64(currentStateUpdate),
     })
   }
 
-  function queueBatchedUpdate(update: Uint8Array): void {
-    if (!update.length)
-      return
-
-    pendingUpdates.push(update)
+  function queueBatchedUpdate(): void {
+    hasPendingLocalChanges = true
     if (batchSendTimer)
       return
 
@@ -250,10 +281,16 @@ export function useCollabSession(input: UseCollabSessionInput) {
     if (docDispose)
       docDispose()
 
-    const handleDocUpdate = (update: Uint8Array, origin: unknown) => {
-      if (origin === 'remote' || origin === 'bootstrap')
+    const handleDocUpdate = (_update: Uint8Array, origin: unknown) => {
+      if (
+        origin === 'remote'
+        || origin === 'bootstrap'
+        || origin === 'markdown-bootstrap'
+        || origin === 'markdown-normalize'
+      ) {
         return
-      queueBatchedUpdate(update)
+      }
+      queueBatchedUpdate()
     }
 
     const nodes = resolveCollabNodesArray(doc)
@@ -312,6 +349,31 @@ export function useCollabSession(input: UseCollabSessionInput) {
     syncDraftFromDoc()
   }
 
+  function mergeSnapshotIntoCurrentDoc(snapshot: ApplySnapshotInput): boolean {
+    const doc = docRef.value
+    if (!doc || resourceKind.value !== snapshot.kind)
+      return false
+
+    const update = decodeBase64ToBytes(normalizeString(snapshot.updateBase64))
+    applyingRemote.value = true
+    try {
+      if (update.length > 0)
+        Y.applyUpdate(doc, update, 'remote')
+      if (snapshot.kind === 'markdown') {
+        doc.transact(() => {
+          ensureMarkdownCollabDocShape(doc)
+        }, 'markdown-normalize')
+      }
+      revision.value = Math.max(revision.value, Math.max(0, Number(snapshot.revision || 0)))
+      syncDraftFromDoc()
+    }
+    finally {
+      applyingRemote.value = false
+    }
+
+    return true
+  }
+
   async function syncSnapshotIfStale(): Promise<void> {
     if (connected.value)
       return
@@ -330,19 +392,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
     if (Number(snapshot.revision || 0) <= revision.value)
       return
 
-    const update = decodeBase64ToBytes(snapshot.updateBase64)
-    if (!update.length)
-      return
-
-    applyingRemote.value = true
-    try {
-      Y.applyUpdate(doc, update, 'remote')
-      revision.value = Math.max(revision.value, Math.max(0, Number(snapshot.revision || 0)))
-      syncDraftFromDoc()
-    }
-    finally {
-      applyingRemote.value = false
-    }
+    mergeSnapshotIntoCurrentDoc(snapshot)
   }
 
   function clearSnapshotPollTimer(): void {
@@ -376,6 +426,9 @@ export function useCollabSession(input: UseCollabSessionInput) {
   }
 
   function dispose(leaveRoom = true): void {
+    flushMarkdownMirrorSync()
+    flushBatchedUpdates()
+
     if (docDispose) {
       docDispose()
       docDispose = null
@@ -384,7 +437,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
     clearSnapshotPollTimer()
     clearBatchSendTimer()
     clearMarkdownMirrorSyncTimer()
-    pendingUpdates = []
+    hasPendingLocalChanges = false
 
     if (leaveRoom) {
       const projectId = normalizeString(input.projectId.value)
@@ -468,12 +521,19 @@ export function useCollabSession(input: UseCollabSessionInput) {
       if (kind !== 'markdown' && kind !== 'draw')
         return true
 
-      applySnapshot({
+      const snapshot = {
         kind,
         revision: Math.max(0, Number(message.revision || payload.revision || 0)),
         updateBase64: normalizeString(payload.updateBase64),
         updatedAt: normalizeString(payload.updatedAt),
-      })
+      } satisfies ApplySnapshotInput
+
+      if (docRef.value) {
+        revision.value = Math.max(revision.value, snapshot.revision)
+        return true
+      }
+
+      applySnapshot(snapshot)
       return true
     }
 
@@ -490,28 +550,20 @@ export function useCollabSession(input: UseCollabSessionInput) {
       if (!updateBase64)
         return true
 
-      const doc = docRef.value
-      if (!doc)
+      const payloadKind = normalizeString(payload.kind).toLowerCase()
+      const kind = payloadKind === 'markdown' || payloadKind === 'draw'
+        ? payloadKind
+        : resourceKind.value
+
+      if (!kind)
         return true
 
-      const update = decodeBase64ToBytes(updateBase64)
-      if (!update.length)
-        return true
-
-      applyingRemote.value = true
-      try {
-        Y.applyUpdate(doc, update, 'remote')
-        if (resourceKind.value === 'markdown') {
-          doc.transact(() => {
-            ensureMarkdownCollabDocShape(doc)
-          }, 'markdown-normalize')
-        }
-        revision.value = Math.max(revision.value, Math.max(0, Number(message.revision || 0)))
-        syncDraftFromDoc()
-      }
-      finally {
-        applyingRemote.value = false
-      }
+      mergeSnapshotIntoCurrentDoc({
+        kind,
+        revision: Math.max(0, Number(message.revision || payload.revision || 0)),
+        updateBase64,
+        updatedAt: normalizeString(payload.updatedAt),
+      })
       return true
     }
 

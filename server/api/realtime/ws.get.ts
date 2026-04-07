@@ -627,7 +627,7 @@ export default defineWebSocketHandler({
         await publishRealtimeEvent(realtimeEvent, {
           excludePeerId: runtimeContext.peerId,
           collab: {
-            updateBase64: Buffer.from(result.snapshot.update).toString('base64'),
+            updateBase64: Buffer.from(update).toString('base64'),
             kind: result.snapshot.kind,
           },
         })
