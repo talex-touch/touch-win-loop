@@ -118,6 +118,34 @@ export function resolveApiUrlByApiBase(apiBase: string, rawUrl: string): string 
   return normalized
 }
 
+export function resolveUserFacingUrlByAppBase(appBase: string, rawUrl: string, currentOrigin = ''): string {
+  const normalized = normalizeString(rawUrl)
+  if (!normalized)
+    return ''
+
+  if (isHttpUrl(normalized))
+    return normalized
+  if (normalized.startsWith('data:') || normalized.startsWith('blob:') || normalized.startsWith('mailto:') || normalized.startsWith('tel:'))
+    return normalized
+
+  const normalizedOrigin = trimTrailingSlash(normalizeString(currentOrigin))
+  const normalizedAppBase = normalizeString(appBase)
+  const normalizedPath = ensureLeadingSlash(normalized)
+
+  if (normalizedAppBase) {
+    const resolved = buildApiEndpoint(normalizedAppBase, normalizedPath)
+    if (isHttpUrl(resolved))
+      return resolved
+    if (normalizedOrigin)
+      return `${normalizedOrigin}${resolved}`
+    return resolved
+  }
+
+  if (normalizedOrigin)
+    return `${normalizedOrigin}${normalizedPath}`
+  return normalizedPath
+}
+
 export function appendQueryParam(rawUrl: string, key: string, value: string): string {
   const url = normalizeString(rawUrl)
   const normalizedKey = normalizeString(key)
