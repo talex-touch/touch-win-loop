@@ -81,6 +81,7 @@ WINLOOP_CONTEST_AUTO_SEED=false
 - PostgreSQL 是当前运行时强依赖。
 - Redis 主要用于运行时配置信息与预留能力。
 - AI / 飞书等敏感配置支持加密存储。
+- 资源回收 worker 参数改为后台 UI 管理，不再从 Env 读取。
 
 ## 相关文档
 
