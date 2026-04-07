@@ -39,5 +39,8 @@ git checkout --detach '${params.BUILD_COMMIT_SHA}'
     sshTarget: 'root@center.tagzxia.com',
     remoteWorkspaceRoot: '/tmp/touch-win-loop-jenkins',
     remoteDeployBaseDir: '/opt/deploy/touch-win-loop',
+    // Optional: Feishu group robot deploy notifications
+    // feishuWebhookCredentialsId: 'jenkins-feishu-webhook',
+    // feishuWebhookSecretCredentialsId: 'jenkins-feishu-webhook-secret',
   ])
 }
