@@ -63,6 +63,7 @@ interface SyncWritebackFormState {
 }
 
 type SyncWritebackFieldKey = keyof Pick<SyncWritebackFormState, 'status' | 'syncedAt' | 'errorMessage' | 'reasonCode' | 'entityId' | 'runId' | 'triggerSource'>
+type SaveCurrentItemContext = 'main' | 'mapping'
 
 const props = withDefaults(defineProps<{
   syncId: string
@@ -96,15 +97,8 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'officialUrl', label: 'officialUrl（官网）' },
     { key: 'summary', label: 'summary（简介）' },
     { key: 'level', label: 'level（级别）' },
-    { key: 'organizer', label: 'organizer（主办方）' },
-    { key: 'coOrganizer', label: 'coOrganizer（协办方）' },
-    { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
-    { key: 'teamRule', label: 'teamRule（组队规则）' },
-    { key: 'currentSeason', label: 'currentSeason（届次）' },
     { key: 'disciplines', label: 'disciplines（学科）' },
-    { key: 'aliases', label: 'aliases（别名）' },
     { key: 'keywords', label: 'keywords（关键词）' },
-    { key: 'recommendedFor', label: 'recommendedFor（推荐人群）' },
   ],
   track: [
     { key: 'externalId', label: 'externalId（主键）' },
@@ -139,15 +133,8 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   summary: ['summary', '简介', '描述', '说明', '概述'],
   content: ['content', '正文', '内容', '详情', '全文'],
   officialUrl: ['officialurl', 'official_url', '官网', '官网链接', '赛事链接', '竞赛链接', '报名链接', 'url'],
-  organizer: ['organizer', '主办方', '主办单位'],
-  coOrganizer: ['coorganizer', 'co_organizer', '协办方', '承办方'],
-  participantRequirements: ['participantrequirements', '参赛对象', '参赛要求', '参赛资格'],
-  teamRule: ['teamrule', '组队规则', '组队要求'],
-  currentSeason: ['currentseason', '届次', '赛季', '年份'],
   disciplines: ['disciplines', '学科', '专业', '所属学科'],
-  aliases: ['aliases', '别名', '简称'],
   keywords: ['keywords', '关键字', '关键词', '标签'],
-  recommendedFor: ['recommendedfor', '推荐人群', '适合人群', '适用人群'],
   suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业'],
   deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物'],
   sortOrder: ['sortorder', '排序', '序号', 'sort', 'order'],
@@ -203,7 +190,7 @@ const QUICK_START_STEPS = [
   '2. 选择当前主库下的子表和视图。',
   '3. 打开详细配置后查看字段概览，确认系统自动猜测的映射。',
   '4. 补齐必填字段，尤其是 externalId 和关联实体 ID。',
-  '5. 配置飞书回填列，先预检，再决定是否启用调度。',
+  '5. 配置飞书回填列，先预检，再决定是否在主同步信息里启用调度。',
   '6. 首次建议手动执行一次，确认飞书侧出现已同步状态。',
 ]
 
@@ -244,6 +231,7 @@ const newItemNameAuto = ref(true)
 
 const feedbackError = ref('')
 const feedbackSuccess = ref('')
+const mappingSaveSuccess = ref('')
 
 const syncDetail = ref<FeishuBitableSyncDetail | null>(null)
 const currentItem = ref<FeishuBitableSyncItemDetail | null>(null)
@@ -260,6 +248,11 @@ const syncForm = reactive({
   name: '',
   enabled: true,
   environment: '' as '' | FeishuBitableSyncEnvironment,
+  scheduleEnabled: false,
+  scheduleMode: 'interval' as FeishuTaskScheduleMode,
+  scheduleIntervalMinutes: 60,
+  scheduleCronExpr: '0 * * * *',
+  scheduleTimezone: 'Asia/Shanghai',
 })
 
 const itemForm = reactive({
@@ -277,11 +270,6 @@ const itemForm = reactive({
   mappingText: JSON.stringify(buildDefaultSyncItemConfig('contest').mapping, null, 2),
   optionsText: JSON.stringify(buildDefaultSyncItemConfig('contest').options, null, 2),
   writebackText: JSON.stringify(buildDefaultSyncItemConfig('contest').writeback, null, 2),
-  scheduleEnabled: false,
-  scheduleMode: 'interval' as FeishuTaskScheduleMode,
-  scheduleIntervalMinutes: 60,
-  scheduleCronExpr: '0 * * * *',
-  scheduleTimezone: 'Asia/Shanghai',
 })
 
 const optionForm = reactive<SyncOptionFormState>({
@@ -318,7 +306,7 @@ const normalizedSelectedItemId = computed(() => toText(props.selectedItemId))
 const normalizedDraftTableId = computed(() => toText(props.draftTableId))
 const normalizedDraftViewId = computed(() => toText(props.draftViewId))
 const archivedReadonly = computed(() => Boolean(props.includeArchived || syncDetail.value?.archivedAt))
-const syncExecutionDisabled = computed(() => Boolean(syncDetail.value) && !Boolean(syncDetail.value?.enabled))
+const syncExecutionDisabled = computed(() => Boolean(syncDetail.value) && !syncDetail.value?.enabled)
 const currentItemRunDisabled = computed(() => archivedReadonly.value || syncExecutionDisabled.value || !currentItem.value?.isEnabled)
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
 const syncItems = computed(() => syncDetail.value?.items || [])
@@ -363,14 +351,6 @@ const unexpectedConfiguredMappingLabels = computed(() => {
 })
 
 function optionFieldGroups(entityType: FeishuBitableSyncItemEntityType) {
-  if (entityType === 'contest') {
-    return [{
-      key: 'defaultVisibility',
-      label: '默认可见性',
-      description: '竞赛同步到平台后默认是内部可见还是公开可见，未单独指定时走这里。',
-    }]
-  }
-
   if (entityType === 'track') {
     return [{
       key: 'contestId',
@@ -425,6 +405,7 @@ function setSuccess(message: string) {
 function clearFeedback() {
   feedbackError.value = ''
   feedbackSuccess.value = ''
+  mappingSaveSuccess.value = ''
 }
 
 function toText(raw: unknown): string {
@@ -591,11 +572,8 @@ function fillWritebackForm(raw: Record<string, unknown>) {
 }
 
 function buildOptionsPayload(entityType: FeishuBitableSyncItemEntityType): Record<string, unknown> {
-  if (entityType === 'contest') {
-    return {
-      defaultVisibility: toText(optionForm.defaultVisibility) || 'internal',
-    }
-  }
+  if (entityType === 'contest')
+    return {}
 
   if (entityType === 'track') {
     return {
@@ -701,6 +679,7 @@ function fillItemForm(item: FeishuBitableSyncItemDetail) {
     options: item.options,
     writeback: item.writeback as Record<string, unknown> | undefined,
   })
+  mappingSaveSuccess.value = ''
 
   withVisualSyncPaused(() => {
     itemForm.id = item.id
@@ -717,11 +696,6 @@ function fillItemForm(item: FeishuBitableSyncItemDetail) {
     itemForm.mappingText = normalized.mappingText
     itemForm.optionsText = normalized.optionsText
     itemForm.writebackText = normalized.writebackText
-    itemForm.scheduleEnabled = item.schedule.enabled
-    itemForm.scheduleMode = item.schedule.mode
-    itemForm.scheduleIntervalMinutes = Number(item.schedule.intervalMinutes || 60)
-    itemForm.scheduleCronExpr = item.schedule.cronExpr || '0 * * * *'
-    itemForm.scheduleTimezone = item.schedule.timezone || 'Asia/Shanghai'
     loadMappingWizardFromJson()
     loadOptionsFormFromJson(false)
     loadWritebackFormFromJson(false)
@@ -862,6 +836,11 @@ async function loadSyncDetail() {
     syncForm.environment = response.data.source.environment === 'production' || response.data.source.environment === 'test'
       ? response.data.source.environment
       : ''
+    syncForm.scheduleEnabled = Boolean(response.data.schedule?.enabled)
+    syncForm.scheduleMode = response.data.schedule?.mode === 'cron' ? 'cron' : 'interval'
+    syncForm.scheduleIntervalMinutes = Number(response.data.schedule?.intervalMinutes || 60)
+    syncForm.scheduleCronExpr = response.data.schedule?.cronExpr || '0 * * * *'
+    syncForm.scheduleTimezone = response.data.schedule?.timezone || 'Asia/Shanghai'
     itemForm.appToken = response.data.source.appToken || ''
     itemForm.appName = response.data.source.appName || ''
     await loadTables()
@@ -1154,8 +1133,13 @@ function loadMappingWizardFromJson() {
   normalizeMappingWizardBindings([...dedup.values()])
 }
 
+function buildSupportedMappingTargetKeys(entityType: FeishuBitableSyncItemEntityType) {
+  return new Set((MAPPING_OPTIONS[entityType] || []).map(item => item.key))
+}
+
 function writeMappingWizardToJson(showNotice = false) {
   const mapping = parseJsonText(itemForm.mappingText, '字段映射')
+  const supportedKeys = buildSupportedMappingTargetKeys(itemForm.entityType)
   const fieldMap: Record<string, string> = {}
   const computedMap: Record<string, string> = {}
   let externalIdField = ''
@@ -1208,24 +1192,44 @@ function writeMappingWizardToJson(showNotice = false) {
         defaults: {},
       })
     }
-    source.match = {
+    const nextMatch = {
       ...(source.match && typeof source.match === 'object' && !Array.isArray(source.match) ? source.match : {}),
-      externalIdField,
-      contestExternalIdField,
-      trackExternalIdField,
-    }
+    } as Record<string, unknown>
+    if (supportedKeys.has('externalId'))
+      nextMatch.externalIdField = externalIdField
+    else
+      delete nextMatch.externalIdField
+    if (supportedKeys.has('contestExternalId'))
+      nextMatch.contestExternalIdField = contestExternalIdField
+    else
+      delete nextMatch.contestExternalIdField
+    if (supportedKeys.has('trackExternalId'))
+      nextMatch.trackExternalIdField = trackExternalIdField
+    else
+      delete nextMatch.trackExternalIdField
+    source.match = nextMatch
     source.layers = restLayers
     itemForm.mappingText = JSON.stringify(source, null, 2)
   }
   else {
-    itemForm.mappingText = JSON.stringify({
+    const nextMapping = {
       ...mapping,
-      externalIdField,
-      contestExternalIdField,
-      trackExternalIdField,
       fieldMap,
       computedMap,
-    }, null, 2)
+    } as Record<string, unknown>
+    if (supportedKeys.has('externalId'))
+      nextMapping.externalIdField = externalIdField
+    else
+      delete nextMapping.externalIdField
+    if (supportedKeys.has('contestExternalId'))
+      nextMapping.contestExternalIdField = contestExternalIdField
+    else
+      delete nextMapping.contestExternalIdField
+    if (supportedKeys.has('trackExternalId'))
+      nextMapping.trackExternalIdField = trackExternalIdField
+    else
+      delete nextMapping.trackExternalIdField
+    itemForm.mappingText = JSON.stringify(nextMapping, null, 2)
   }
 
   if (showNotice)
@@ -1295,7 +1299,28 @@ async function inspectFields() {
   }
 }
 
-async function saveCurrentItem() {
+function applySavedItemLocally(savedItem: FeishuBitableSyncItem) {
+  if (syncDetail.value) {
+    syncDetail.value = {
+      ...syncDetail.value,
+      items: syncDetail.value.items.map(item => item.id === savedItem.id
+        ? { ...item, ...savedItem }
+        : item),
+    }
+  }
+
+  if (!currentItem.value || currentItem.value.id !== savedItem.id)
+    return
+
+  const nextCurrentItem = {
+    ...currentItem.value,
+    ...savedItem,
+  }
+  currentItem.value = nextCurrentItem
+  fillItemForm(nextCurrentItem)
+}
+
+async function saveCurrentItem(saveContext: SaveCurrentItemContext = 'main') {
   if (archivedReadonly.value) {
     setError('当前同步信息已归档，只允许查看，不允许修改子表同步项。')
     return
@@ -1322,7 +1347,7 @@ async function saveCurrentItem() {
 
   savingItem.value = true
   try {
-    await $fetch(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}`), {
+    const response = await $fetch<ApiResponse<FeishuBitableSyncItem>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}`), {
       method: 'PATCH',
       body: {
         name: itemForm.name.trim(),
@@ -1351,10 +1376,15 @@ async function saveCurrentItem() {
         },
       },
     })
-    await loadSyncDetail()
-    if (activeItemId.value)
-      await loadItemDetail(activeItemId.value)
+    applySavedItemLocally(response.data)
+    previewResult.value = null
     emit('updated')
+    if (saveContext === 'mapping') {
+      mappingDrawerVisible.value = false
+      mappingSaveSuccess.value = '基础映射已保存。'
+      setSuccess('基础映射已保存。')
+      return
+    }
     setSuccess('子表同步项已保存。')
   }
   catch (error: any) {
@@ -1976,7 +2006,7 @@ watch(() => props.selectedItemId, (value) => {
                   <a-button size="small" type="primary" :loading="runningItem" :disabled="currentItemRunDisabled" @click="runCurrentItem">
                     手动执行
                   </a-button>
-                  <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+                  <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('main')">
                     保存配置
                   </a-button>
                 </div>
@@ -2120,6 +2150,9 @@ watch(() => props.selectedItemId, (value) => {
                   </div>
                   <p class="text-[11px] text-slate-600 m-0">
                     当前重点字段：{{ mappingFocusFieldLabels.join(' / ') || '-' }}
+                  </p>
+                  <p v-if="mappingSaveSuccess" class="text-[11px] text-emerald-700 m-0">
+                    {{ mappingSaveSuccess }}
                   </p>
                 </section>
 
@@ -2617,7 +2650,7 @@ watch(() => props.selectedItemId, (value) => {
           <a-button size="small" :disabled="savingItem" @click="mappingDrawerVisible = false">
             关闭
           </a-button>
-          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('mapping')">
             保存配置
           </a-button>
         </div>
@@ -2722,7 +2755,7 @@ watch(() => props.selectedItemId, (value) => {
           <a-button size="small" :disabled="savingItem" @click="writebackDrawerVisible = false">
             关闭
           </a-button>
-          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('main')">
             保存配置
           </a-button>
         </div>
