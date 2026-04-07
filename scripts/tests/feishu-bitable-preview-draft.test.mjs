@@ -33,6 +33,16 @@ it('新增同步项时会提供类型识别建议并生成推荐名称', async (
   assert.match(componentSource, /useAutoDetectedNewItemEntityType/, '新增同步项缺少按子表识别入口')
 })
 
+it('新增同步项的实体类型选择器不会被 label 包裹导致点击异常', async () => {
+  const componentSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
+
+  assert.match(
+    componentSource,
+    /<div class="text-\[11px\] text-slate-600 font-medium block">\s*<div>同步到<\/div>\s*<div class="mt-1 flex gap-2">[\s\S]*?<a-select v-model="newItemForm\.entityType"[\s\S]*?<a-button size="mini" @click="useAutoDetectedNewItemEntityType">/,
+    '新增同步项的实体类型选择器未改为普通容器包裹',
+  )
+})
+
 it('服务端预检会优先使用草稿配置覆盖已保存同步项', async () => {
   const apiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/preview.post.ts'), 'utf8')
   const serviceSource = await readFile(resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts'), 'utf8')

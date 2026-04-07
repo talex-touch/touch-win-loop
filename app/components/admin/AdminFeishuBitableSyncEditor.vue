@@ -2652,17 +2652,17 @@ watch(() => props.selectedItemId, (value) => {
             </p>
           </div>
         </div>
-        <label class="text-[11px] text-slate-600 font-medium block">
-          同步项名称
+        <div class="text-[11px] text-slate-600 font-medium block">
+          <div>同步项名称</div>
           <div class="mt-1 flex gap-2">
             <a-input v-model="newItemForm.name" class="flex-1" size="small" allow-clear placeholder="默认按子表/视图 + 实体类型自动生成" />
             <a-button size="mini" @click="useSuggestedNewItemName">
               用推荐名
             </a-button>
           </div>
-        </label>
-        <label class="text-[11px] text-slate-600 font-medium block">
-          同步到
+        </div>
+        <div class="text-[11px] text-slate-600 font-medium block">
+          <div>同步到</div>
           <div class="mt-1 flex gap-2">
             <a-select v-model="newItemForm.entityType" class="flex-1" size="small">
               <a-option v-for="option in ENTITY_TYPE_OPTIONS" :key="option.value" :value="option.value">
@@ -2673,7 +2673,7 @@ watch(() => props.selectedItemId, (value) => {
               按子表识别
             </a-button>
           </div>
-        </label>
+        </div>
         <div class="text-[10px] text-slate-400 -mt-1">
           当前模板会优先引导你确认：{{ newItemRequiredMappingLabels.join(' / ') }}
         </div>
