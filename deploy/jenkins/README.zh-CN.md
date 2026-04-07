@@ -81,6 +81,7 @@ chmod +x "deploy/jenkins/init-target-layout.sh"
 ```dotenv
 COMPOSE_PROJECT_NAME=touch-win-loop-staging
 SERVICE_NAME=winloop
+DOCKER_EXTERNAL_NETWORK=1panel-network
 RUNTIME_ENV_FILE=.env.runtime
 HEALTHCHECK_URL=http://127.0.0.1:3511/api/health
 HEALTHCHECK_ATTEMPTS=20
@@ -91,6 +92,11 @@ APP_BIND_IP=127.0.0.1
 APP_HOST_PORT=3511
 STORAGE_HOST_DIR=./storage
 ```
+
+其中：
+
+- `DOCKER_EXTERNAL_NETWORK` 用于指定应用容器加入的外部 Docker 网络，默认建议填 `1panel-network`
+- 如果 PostgreSQL / Redis / PgBouncer 通过容器名互联，应用必须与这些基础容器处于同一个外部网络
 
 production 只需要改成独立的：
 
