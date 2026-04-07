@@ -4,7 +4,10 @@ import type {
   AuthMeResult,
   PlatformPermission,
   PlatformRole,
+  WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import { resolveWorkspaceOptions } from '~/composables/team-ui'
+import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 interface AdminNavItem {
   key: string
@@ -24,8 +27,8 @@ const permissions = ref<PlatformPermission[]>([])
 const isPlatformAdmin = ref(false)
 const loadingProfile = ref(true)
 const profileDialogVisible = ref(false)
-const loggingOut = ref(false)
-const actionError = ref('')
+const workspaceOptions = ref<WorkspaceWithQuota[]>([])
+const activeWorkspaceId = ref('')
 
 const navItems: AdminNavItem[] = [
   { key: 'admin-home', to: '/admin', label: '管理首页', icon: 'i-heroicons-outline-home', section: 'core' },
@@ -90,6 +93,10 @@ const showAdminBadge = computed(() => {
   return isPlatformAdmin.value || platformRoles.value.length > 0 || permissions.value.length > 0
 })
 
+const userSubtitle = computed(() => {
+  return showAdminBadge.value ? '平台管理员' : '系统访问账号'
+})
+
 const userInitial = computed(() => {
   const normalized = userName.value.trim()
   if (!normalized)
@@ -138,6 +145,7 @@ function resolveContestModuleLabel(segment: string): string {
     'overview': '基础信息',
     'faq': 'FAQ',
     'tracks': '赛道',
+    'track-timelines': '赛道时间线',
     'timelines': '时间节点',
     'rubrics': '评委细则',
     'judge-guidelines': '赛道详解',
@@ -336,46 +344,32 @@ async function closeRouteTab(tabId: string) {
 }
 
 function openProfileDialog() {
-  actionError.value = ''
   profileDialogVisible.value = true
-}
-
-function closeProfileDialog() {
-  if (loggingOut.value)
-    return
-  profileDialogVisible.value = false
-}
-
-async function logout() {
-  loggingOut.value = true
-  actionError.value = ''
-  try {
-    await authApiFetch('/auth/logout', { method: 'POST' })
-    profileDialogVisible.value = false
-    await navigateTo('/login')
-  }
-  catch (error: any) {
-    actionError.value = String(error?.data?.message || '退出失败，请稍后重试。')
-  }
-  finally {
-    loggingOut.value = false
-  }
 }
 
 async function loadProfile() {
   loadingProfile.value = true
   try {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
+    const nextWorkspaceOptions = resolveWorkspaceOptions(response.data)
+    const preferredWorkspaceId = readActiveWorkspacePreference()
+
     userName.value = response.data.user.username || '平台管理员'
     platformRoles.value = response.data.user.platformRoles || []
     permissions.value = response.data.user.platformPermissions || []
     isPlatformAdmin.value = Boolean(response.data.user.isPlatformAdmin)
+    workspaceOptions.value = nextWorkspaceOptions
+    activeWorkspaceId.value = preferredWorkspaceId && nextWorkspaceOptions.some(item => item.workspace.id === preferredWorkspaceId)
+      ? preferredWorkspaceId
+      : (nextWorkspaceOptions[0]?.workspace.id || '')
   }
   catch {
     userName.value = '未登录用户'
     platformRoles.value = []
     permissions.value = []
     isPlatformAdmin.value = false
+    workspaceOptions.value = []
+    activeWorkspaceId.value = ''
   }
   finally {
     loadingProfile.value = false
@@ -527,45 +521,14 @@ if (import.meta.client) {
       </a-layout>
     </a-layout>
 
-    <a-modal
+    <UserSettingsDialog
       v-model:visible="profileDialogVisible"
-      :mask-closable="!loggingOut"
-      :closable="!loggingOut"
-      :footer="false"
-      title="个人信息"
-      class="admin-profile-modal"
-    >
-      <div class="admin-profile-card">
-        <template v-if="loadingProfile">
-          <span class="admin-user-skeleton-line admin-user-skeleton-line-main" />
-          <span class="admin-user-skeleton-line admin-user-skeleton-line-sub mt-1" />
-        </template>
-        <template v-else>
-          <p class="admin-user-name">
-            {{ userName }}
-          </p>
-          <p v-if="showAdminBadge" class="admin-admin-badge mt-1">
-            管理页
-          </p>
-        </template>
-      </div>
-
-      <p v-if="actionError" class="admin-error-text">
-        {{ actionError }}
-      </p>
-
-      <div class="admin-profile-actions">
-        <a-button size="small" @click="closeProfileDialog">
-          关闭
-        </a-button>
-        <a-button status="danger" size="small" :loading="loggingOut" @click="logout">
-          <template #icon>
-            <span class="admin-inline-icon i-heroicons-outline-arrow-right-on-rectangle" />
-          </template>
-          退出登录
-        </a-button>
-      </div>
-    </a-modal>
+      :user-name="userName"
+      :user-subtitle="userSubtitle"
+      :show-admin-badge="showAdminBadge"
+      :workspace-options="workspaceOptions"
+      :active-workspace-id="activeWorkspaceId"
+    />
   </div>
 </template>
 
@@ -892,25 +855,6 @@ if (import.meta.client) {
   padding: 12px;
 }
 
-.admin-profile-card {
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  padding: 10px;
-}
-
-.admin-profile-actions {
-  margin-top: 14px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.admin-error-text {
-  margin: 10px 0 0;
-  color: #dc2626;
-  font-size: 11px;
-}
-
 :deep(*) {
   border-radius: 0 !important;
 }
@@ -959,14 +903,5 @@ if (import.meta.client) {
 
 :deep(.arco-btn-size-mini) {
   font-size: 11px;
-}
-
-:deep(.arco-modal-header .arco-modal-title) {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-:deep(.arco-modal-body) {
-  padding-top: 10px;
 }
 </style>

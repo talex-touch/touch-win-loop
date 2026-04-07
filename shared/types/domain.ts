@@ -90,6 +90,13 @@ export interface Track {
   contestId: string
   name: string
   summary: string
+  coverImageUrl?: string
+  location?: string
+  organizer?: string
+  undertaker?: string
+  participantRequirements?: string
+  teamRule?: string
+  awardRatio?: string
   deliverableTypes: string[]
   suitableMajors: string[]
   sortOrder?: number
@@ -100,6 +107,18 @@ export interface Track {
 export interface ContestTimeline {
   id: string
   contestId: string
+  year: number
+  nodeType: TimelineNodeType
+  startAt: string | null
+  endAt: string | null
+  note: string
+  sourceLink: string
+}
+
+export interface TrackTimeline {
+  id: string
+  contestId: string
+  trackId: string
   year: number
   nodeType: TimelineNodeType
   startAt: string | null
@@ -397,6 +416,18 @@ export interface AuthSession {
   createdAt: string
 }
 
+export type AuthSessionHistoryStatus = 'current' | 'active' | 'expired' | 'revoked'
+
+export interface AuthSessionHistoryItem {
+  id: string
+  userId: string
+  createdAt: string
+  expiresAt: string
+  revokedAt?: string | null
+  status: AuthSessionHistoryStatus
+  isCurrent: boolean
+}
+
 export interface AuthLoginResult {
   user: AuthUser
   session: AuthSession
@@ -414,6 +445,27 @@ export interface AuthMeResult {
   onboarding: {
     needCreateTeam: boolean
   }
+}
+
+export interface CasdoorAuthMeta {
+  enabled: boolean
+}
+
+export interface CasdoorIntegrationConfig {
+  enabled: boolean
+  issuer: string
+  clientId: string
+  clientSecretConfigured: boolean
+  scope: string
+  redirectUri: string
+  updatedAt: string
+  updatedByUserId: string
+}
+
+export interface AuthLoginMeta {
+  registrationEnabled: boolean
+  feishu: FeishuIntegrationConfig
+  casdoor: CasdoorAuthMeta
 }
 
 export interface Invitation {
@@ -462,6 +514,34 @@ export interface WorkspaceMemberManagementSnapshot {
   invitations: WorkspaceInvitationSummary[]
 }
 
+export interface WorkspaceAiUsageMemberSummary {
+  userId: string
+  username: string
+  units: number
+  calls: number
+  lastUsedAt: string | null
+}
+
+export interface WorkspaceAiUsageHistoryItem {
+  id: string
+  userId: string
+  username: string
+  route: string
+  units: number
+  createdAt: string
+}
+
+export interface WorkspaceAiUsageHistory {
+  workspaceId: string
+  page: number
+  pageSize: number
+  total: number
+  totalCalls: number
+  totalUnits: number
+  memberSummaries: WorkspaceAiUsageMemberSummary[]
+  items: WorkspaceAiUsageHistoryItem[]
+}
+
 export interface ProjectCollegeBinding {
   collegeCode: string
   collegeName: string
@@ -486,6 +566,33 @@ export interface ProjectPayload {
   summary?: string
 }
 
+export type ProjectDisplayIcon
+  = | 'rocket_launch'
+    | 'shield'
+    | 'lightbulb'
+    | 'architecture'
+    | 'hub'
+    | 'science'
+    | 'public'
+    | 'school'
+
+export type ProjectDisplayPresetAccentColor
+  = | 'blue'
+    | 'cyan'
+    | 'violet'
+    | 'emerald'
+    | 'amber'
+    | 'rose'
+    | 'slate'
+    | 'teal'
+
+export type ProjectDisplayAccentColor = ProjectDisplayPresetAccentColor | `#${string}`
+
+export interface ProjectDisplayConfig {
+  icon: ProjectDisplayIcon
+  accentColor: ProjectDisplayAccentColor
+}
+
 export interface ProjectSeatQuotaSummary {
   seatLimit: number
   seatUsed: number
@@ -502,6 +609,7 @@ export interface Project extends ProjectPayload {
   status: ProjectStatus
   collegeBindings: ProjectCollegeBinding[]
   advisorBindings: ProjectAdvisorBinding[]
+  display?: ProjectDisplayConfig | null
   projectSeatQuota?: ProjectSeatQuotaSummary | null
   createdAt: string
   updatedAt: string
@@ -583,6 +691,8 @@ export interface ProjectOutlineSnapshot {
 export interface ProjectSettingsDraftCommon {
   title: string
   summary: string
+  icon: string
+  accentColor: string
   problemStatement: string
   innovationPointsText: string
   techRouteStepsText: string
@@ -958,7 +1068,7 @@ export type AdminAgentTaskType
     | 'import_sync_analysis'
     | 'general'
 
-export type AdminDraftModule = 'overview' | 'tracks' | 'timelines' | 'rubrics' | 'resources'
+export type AdminDraftModule = 'overview' | 'tracks' | 'timelines' | 'track_timelines' | 'rubrics' | 'resources'
 
 export interface AdminAgentRunRequest {
   workspaceId: string
@@ -1103,7 +1213,7 @@ export interface PlatformRoleAssignment {
   updatedAt: string
 }
 
-export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'resource'
+export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
 export type FeishuSyncRunMode = 'full' | 'delta'
@@ -1535,6 +1645,15 @@ export interface FeishuAuthAuditItem {
   action: 'auth.feishu.bind.self' | 'auth.feishu.unbind.self'
   createdAt: string
   payload: Record<string, unknown>
+}
+
+export interface CasdoorAuthBindStatus {
+  linked: boolean
+  subject?: string
+  name?: string
+  preferredUsername?: string
+  email?: string
+  updatedAt?: string
 }
 
 export interface FeishuAdminGroupReconcileResult {

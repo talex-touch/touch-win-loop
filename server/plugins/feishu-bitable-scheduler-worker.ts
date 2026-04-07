@@ -9,6 +9,7 @@ import {
 } from '~~/server/utils/feishu-integration-store'
 import { computeNextScheduledRunAtOrNull } from '~~/server/utils/feishu-task-schedule'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const WORKER_RUNTIME_STATE_KEY = Symbol.for('winloop.feishu-bitable-scheduler-worker.runtime.v1')
 
@@ -57,6 +58,9 @@ function ensureTickTimer(intervalMs: number): void {
   runtimeState.timer = setInterval(() => {
     void runTick().catch((error) => {
       console.error('[feishu-bitable-scheduler-worker] tick failed:', toErrorMessage(error))
+      captureServerException(error, {
+        module: 'feishu-bitable-scheduler-worker',
+      })
     })
   }, nextInterval)
   runtimeState.timer.unref?.()
@@ -97,6 +101,9 @@ async function executeClaimedSync(input: {
             syncItemId: item.id,
             error: message,
           })
+          captureServerException(error, {
+            module: 'feishu-bitable-scheduler-worker',
+          })
         }
       }
       lastError = errors.slice(0, 3).join('；')
@@ -107,6 +114,9 @@ async function executeClaimedSync(input: {
     console.error('[feishu-bitable-scheduler-worker] sync failed:', {
       syncId: input.syncId,
       error: lastError,
+    })
+    captureServerException(error, {
+      module: 'feishu-bitable-scheduler-worker',
     })
   }
 
@@ -131,6 +141,9 @@ async function executeClaimedSync(input: {
       syncId: input.syncId,
       error: toErrorMessage(error),
     })
+    captureServerException(error, {
+      module: 'feishu-bitable-scheduler-worker',
+    })
   }
 
   if (!completed) {
@@ -143,6 +156,9 @@ async function executeClaimedSync(input: {
       console.error('[feishu-bitable-scheduler-worker] release lock failed:', {
         syncId: input.syncId,
         error: toErrorMessage(error),
+      })
+      captureServerException(error, {
+        module: 'feishu-bitable-scheduler-worker',
       })
     })
   }
@@ -205,6 +221,9 @@ export default defineNitroPlugin((nitroApp) => {
 
   void runTick().catch((error) => {
     console.error('[feishu-bitable-scheduler-worker] bootstrap failed:', toErrorMessage(error))
+    captureServerException(error, {
+      module: 'feishu-bitable-scheduler-worker',
+    })
   })
 
   nitroApp.hooks.hookOnce('close', () => {

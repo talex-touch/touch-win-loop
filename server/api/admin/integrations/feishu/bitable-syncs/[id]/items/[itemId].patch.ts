@@ -26,7 +26,7 @@ interface PatchItemBody {
   schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
-const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'resource']
+const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'track_timeline', 'resource']
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()

@@ -107,9 +107,30 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'contestExternalId', label: 'contestExternalId（赛事外部 ID）' },
     { key: 'name', label: 'name（赛道名）' },
     { key: 'summary', label: 'summary（简介）' },
+    { key: 'coverImageUrl', label: 'coverImageUrl（封面）' },
+    { key: 'location', label: 'location（具体位置）' },
+    { key: 'organizer', label: 'organizer（主办方）' },
+    { key: 'undertaker', label: 'undertaker（承办方）' },
+    { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
+    { key: 'teamRule', label: 'teamRule（组队规则）' },
+    { key: 'awardRatio', label: 'awardRatio（获奖比例）' },
     { key: 'suitableMajors', label: 'suitableMajors（适用专业）' },
     { key: 'deliverableTypes', label: 'deliverableTypes（交付物类型）' },
     { key: 'sortOrder', label: 'sortOrder（排序）' },
+    { key: 'evidenceRequirements', label: 'evidenceRequirements（必备项）' },
+    { key: 'scoringPoints', label: 'scoringPoints（加分项）' },
+    { key: 'deductionItems', label: 'deductionItems（扣分项）' },
+  ],
+  track_timeline: [
+    { key: 'externalId', label: 'externalId（主键）' },
+    { key: 'contestExternalId', label: 'contestExternalId（赛事外部 ID）' },
+    { key: 'trackExternalId', label: 'trackExternalId（赛道外部 ID）' },
+    { key: 'year', label: 'year（年份）' },
+    { key: 'nodeType', label: 'nodeType（节点类型）' },
+    { key: 'startAt', label: 'startAt（开始时间）' },
+    { key: 'endAt', label: 'endAt（结束时间）' },
+    { key: 'note', label: 'note（备注）' },
+    { key: 'sourceLink', label: 'sourceLink（来源链接）' },
   ],
   resource: [
     { key: 'externalId', label: 'externalId（主键）' },
@@ -139,9 +160,24 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   keywords: ['keywords', '关键字', '关键词', '标签'],
   registrationWindow: ['registrationwindow', 'registration_window', '报名时间', '报名窗口'],
   submissionDeadline: ['submissiondeadline', 'submission_deadline', '截止时间', '提交截止时间', '提交时间'],
+  coverImageUrl: ['coverimageurl', 'cover_image_url', '封面', '封面图', '封面图片', '图片链接'],
+  location: ['location', '位置', '具体位置', '地点', '赛道位置'],
+  organizer: ['organizer', '主办方', '主办单位', '主办'],
+  undertaker: ['undertaker', '承办方', '承办单位', '承办'],
+  participantRequirements: ['participantrequirements', 'participant_requirements', '参赛对象', '适用对象', '参赛要求'],
+  teamRule: ['teamrule', 'team_rule', '组队规则', '组队要求'],
+  awardRatio: ['awardratio', 'award_ratio', '获奖比例'],
   suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业'],
   deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物'],
   sortOrder: ['sortorder', '排序', '序号', 'sort', 'order'],
+  evidenceRequirements: ['evidencerequirements', 'evidence_requirements', '必备项', '必备材料', '必须项'],
+  scoringPoints: ['scoringpoints', 'scoring_points', '加分项', '亮点', '加分点'],
+  deductionItems: ['deductionitems', 'deduction_items', '扣分项', '风险项', '减分项'],
+  nodeType: ['nodetype', 'node_type', '节点类型', '阶段类型'],
+  startAt: ['startat', 'start_at', '开始时间', '开始日期'],
+  endAt: ['endat', 'end_at', '结束时间', '结束日期', '截止时间'],
+  note: ['note', '备注', '说明'],
+  sourceLink: ['sourcelink', 'source_link', '来源链接', '来源地址'],
   category: ['category', '分类', '资料分类'],
   url: ['url', '链接', '资料链接', '资源链接', '下载链接'],
   sourceType: ['sourcetype', '来源类型', '资源类型'],
@@ -151,6 +187,7 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
 const ENTITY_TYPE_OPTIONS: SelectOption<FeishuBitableSyncItemEntityType>[] = [
   { value: 'contest', label: '竞赛' },
   { value: 'track', label: '赛道' },
+  { value: 'track_timeline', label: '赛道时间线' },
   { value: 'resource', label: '资料' },
 ]
 
@@ -211,6 +248,7 @@ const WRITEBACK_FIELD_CONFIGS: Array<{ key: SyncWritebackFieldKey, label: string
 const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['externalId', 'name', 'officialUrl'],
   track: ['externalId', 'contestExternalId', 'name'],
+  track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['externalId', 'contestExternalId', 'title', 'url'],
 }
 
@@ -648,6 +686,8 @@ function previewRowStatusColor(status: string): string {
 function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string[] {
   if (entityType === 'track')
     return ['externalId', 'contestExternalId', 'name']
+  if (entityType === 'track_timeline')
+    return ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType', 'year']
   if (entityType === 'resource')
     return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'url']
   return ['externalId', 'name', 'officialUrl', 'registrationWindow', 'submissionDeadline']

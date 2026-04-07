@@ -18,6 +18,7 @@ import type {
   ResourceCategory,
   ResourceStatus,
   ScopeType,
+  TimelineNodeType,
 } from '~~/shared/types/domain'
 import { createHash } from 'node:crypto'
 import jsonata from 'jsonata'
@@ -32,10 +33,14 @@ import {
 import {
   createAdminContest,
   createAdminResource,
+  createAdminRubric,
   createAdminTrack,
+  createAdminTrackTimeline,
   patchAdminContest,
+  patchAdminRubric,
   patchAdminResource,
   patchAdminTrack,
+  patchAdminTrackTimeline,
   syncContestDerivedTimelineNodes,
 } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
@@ -151,9 +156,30 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'contestExternalId',
     'name',
     'summary',
+    'coverImageUrl',
+    'location',
+    'organizer',
+    'undertaker',
+    'participantRequirements',
+    'teamRule',
+    'awardRatio',
     'suitableMajors',
     'deliverableTypes',
     'sortOrder',
+    'evidenceRequirements',
+    'scoringPoints',
+    'deductionItems',
+  ],
+  track_timeline: [
+    'externalId',
+    'contestExternalId',
+    'trackExternalId',
+    'year',
+    'nodeType',
+    'startAt',
+    'endAt',
+    'note',
+    'sourceLink',
   ],
   resource: [
     'externalId',
@@ -173,6 +199,7 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
 const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['name', 'officialUrl'],
   track: ['contestExternalId', 'name'],
+  track_timeline: ['contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['contestExternalId', 'title', 'url'],
 }
 
@@ -181,6 +208,9 @@ const ARRAY_PREVIEW_FIELDS = new Set([
   'keywords',
   'suitableMajors',
   'deliverableTypes',
+  'evidenceRequirements',
+  'scoringPoints',
+  'deductionItems',
 ])
 
 function parseJsonObject(raw: unknown): Record<string, unknown> {
@@ -205,7 +235,7 @@ function toStringArray(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     const result: string[] = []
     for (const item of raw) {
-      const normalized = toText(typeof item === 'object' && item ? ((item as any).text ?? (item as any).name ?? item) : item)
+      const normalized = toText(typeof item === 'object' && item ? ((item as any).text ?? (item as any).name ?? (item as any).url ?? item) : item)
       if (normalized)
         result.push(normalized)
     }
@@ -220,7 +250,7 @@ function toStringArray(raw: unknown): string[] {
 }
 
 function isEntityType(raw: unknown): raw is FeishuBitableSyncItemEntityType {
-  return raw === 'contest' || raw === 'track' || raw === 'resource'
+  return raw === 'contest' || raw === 'track' || raw === 'track_timeline' || raw === 'resource'
 }
 
 function resolvePreviewOverrideString(
@@ -258,7 +288,7 @@ function normalizeSpecialText(raw: unknown): string {
   }
   if (raw && typeof raw === 'object') {
     const objectRaw = raw as Record<string, unknown>
-    return toText(objectRaw.text ?? objectRaw.name ?? '')
+    return toText(objectRaw.text ?? objectRaw.name ?? objectRaw.url ?? '')
   }
   return toText(raw)
 }
@@ -437,6 +467,50 @@ function mapResourceCategory(raw: string, fallback: ResourceCategory): ResourceC
   if (value.includes('合规'))
     return 'compliance'
   return fallback
+}
+
+function mapTimelineNodeType(raw: string): TimelineNodeType | null {
+  const value = String(raw || '').trim().toLowerCase()
+  if (!value)
+    return null
+  if (value === 'registration' || value.includes('报名'))
+    return 'registration'
+  if (value === 'submission' || value.includes('提交') || value.includes('截止'))
+    return 'submission'
+  if (value === 'preliminary' || value.includes('初赛') || value.includes('初审') || value.includes('预赛'))
+    return 'preliminary'
+  if (value === 'final' || value.includes('决赛') || value.includes('终审') || value.includes('答辩'))
+    return 'final'
+  if (value === 'other' || value.includes('其他'))
+    return 'other'
+  return null
+}
+
+function normalizeTimelineDateText(raw: string): string | null {
+  const text = toText(raw)
+  if (!text)
+    return null
+  const timestamp = new Date(text).getTime()
+  if (Number.isNaN(timestamp))
+    return null
+  return new Date(timestamp).toISOString()
+}
+
+function inferTimelineYear(input: {
+  yearText: string
+  startAt: string | null
+  endAt: string | null
+}): number {
+  const explicitYear = Number(input.yearText || 0)
+  if (Number.isInteger(explicitYear) && explicitYear >= 2000 && explicitYear <= 2100)
+    return explicitYear
+
+  const fromDate = [input.startAt, input.endAt]
+    .filter(Boolean)
+    .map(value => new Date(String(value)).getFullYear())
+    .find(value => Number.isInteger(value) && value >= 2000 && value <= 2100)
+
+  return fromDate || new Date().getFullYear()
 }
 
 function normalizeFieldMap(raw: unknown): Record<string, string> {
@@ -1263,6 +1337,68 @@ async function applyContestRecord(
   }
 }
 
+async function syncTrackRubric(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    contestId: string
+    trackId: string
+    rubricId?: string | null
+    mapping: NormalizedMapping
+    resolver: RecordValueResolver
+    dryRun: boolean
+  },
+): Promise<string | null> {
+  const rubricKeys = ['evidenceRequirements', 'scoringPoints', 'deductionItems']
+  const hasAnyRubricConfig = rubricKeys.some(key => hasMappingValue(input.mapping, key))
+  if (!hasAnyRubricConfig)
+    return input.rubricId || null
+
+  const evidenceRequirements = hasMappingValue(input.mapping, 'evidenceRequirements')
+    ? await input.resolver.getStringArray('evidenceRequirements')
+    : undefined
+  const scoringPoints = hasMappingValue(input.mapping, 'scoringPoints')
+    ? await input.resolver.getStringArray('scoringPoints')
+    : undefined
+  const deductionItems = hasMappingValue(input.mapping, 'deductionItems')
+    ? await input.resolver.getStringArray('deductionItems')
+    : undefined
+
+  if (input.dryRun)
+    return input.rubricId || null
+
+  if (input.rubricId) {
+    const rubric = await patchAdminRubric(db, {
+      actorUserId: input.actorUserId,
+      contestId: input.contestId,
+      rubricId: input.rubricId,
+      patch: {
+        scoringPoints,
+        deductionItems,
+        evidenceRequirements,
+      },
+    })
+    return rubric?.id || input.rubricId
+  }
+
+  const rubric = await createAdminRubric(db, {
+    actorUserId: input.actorUserId,
+    contestId: input.contestId,
+    trackId: input.trackId,
+    dimensions: [{
+      key: 'overall',
+      name: '综合评估',
+      weight: 100,
+      description: '赛道同步自动创建的默认维度。',
+    }],
+    scoringPoints,
+    deductionItems,
+    evidenceRequirements,
+    status: 'draft',
+  })
+  return rubric.id
+}
+
 async function applyTrackRecord(
   db: Queryable,
   input: {
@@ -1312,7 +1448,7 @@ async function applyTrackRecord(
 
   if (existingRef) {
     if (!input.dryRun) {
-      await patchAdminTrack(db, {
+      const updatedTrack = await patchAdminTrack(db, {
         actorUserId: input.actorUserId,
         contestId: contestLink.contestId,
         trackId: existingRef.entityId,
@@ -1320,10 +1456,26 @@ async function applyTrackRecord(
         patch: {
           name,
           summary: await input.resolver.getText('summary'),
+          coverImageUrl: await input.resolver.getText('coverImageUrl'),
+          location: await input.resolver.getText('location'),
+          organizer: await input.resolver.getText('organizer'),
+          undertaker: await input.resolver.getText('undertaker'),
+          participantRequirements: await input.resolver.getText('participantRequirements'),
+          teamRule: await input.resolver.getText('teamRule'),
+          awardRatio: await input.resolver.getText('awardRatio'),
           suitableMajors: await input.resolver.getStringArray('suitableMajors'),
           deliverableTypes: await input.resolver.getStringArray('deliverableTypes'),
           sortOrder: Number(await input.resolver.getText('sortOrder') || 0),
         },
+      })
+      await syncTrackRubric(db, {
+        actorUserId: input.actorUserId,
+        contestId: contestLink.contestId,
+        trackId: existingRef.entityId,
+        rubricId: updatedTrack?.rubricId || null,
+        mapping: input.mapping,
+        resolver: input.resolver,
+        dryRun: input.dryRun,
       })
       await upsertFeishuExternalRef(db, {
         syncItemId: input.syncItemId,
@@ -1347,9 +1499,25 @@ async function applyTrackRecord(
       contestId: contestLink.contestId,
       name,
       summary: await input.resolver.getText('summary'),
+      coverImageUrl: await input.resolver.getText('coverImageUrl'),
+      location: await input.resolver.getText('location'),
+      organizer: await input.resolver.getText('organizer'),
+      undertaker: await input.resolver.getText('undertaker'),
+      participantRequirements: await input.resolver.getText('participantRequirements'),
+      teamRule: await input.resolver.getText('teamRule'),
+      awardRatio: await input.resolver.getText('awardRatio'),
       suitableMajors: await input.resolver.getStringArray('suitableMajors'),
       deliverableTypes: await input.resolver.getStringArray('deliverableTypes'),
       sortOrder: Number(await input.resolver.getText('sortOrder') || 0),
+    })
+    await syncTrackRubric(db, {
+      actorUserId: input.actorUserId,
+      contestId: contestLink.contestId,
+      trackId: created.id,
+      rubricId: created.rubricId || null,
+      mapping: input.mapping,
+      resolver: input.resolver,
+      dryRun: input.dryRun,
     })
     await upsertFeishuExternalRef(db, {
       syncItemId: input.syncItemId,
@@ -1361,6 +1529,139 @@ async function applyTrackRecord(
       },
     })
   }
+  return {
+    status: 'created',
+    externalId: input.externalId,
+  }
+}
+
+async function applyTrackTimelineRecord(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    record: FeishuBitableRecord
+    externalId: string
+    mapping: NormalizedMapping
+    options: NormalizedOptions
+    resolver: RecordValueResolver
+    dryRun: boolean
+  },
+): Promise<ApplyRecordResult> {
+  const contestLink = await resolveContestIdByExternal(db, {
+    options: input.options,
+    resolver: input.resolver,
+  })
+  if (!contestLink.contestId) {
+    return {
+      status: 'skipped',
+      externalId: input.externalId,
+      reasonCode: 'CONTEST_REF_NOT_FOUND',
+      message: '赛道时间线记录未找到关联赛事（contestExternalId 未映射或未完成绑定）。',
+      payload: {
+        contestExternalId: contestLink.contestExternalId,
+      },
+    }
+  }
+
+  const trackLink = await resolveTrackIdByExternal(db, {
+    resolver: input.resolver,
+  })
+  if (!trackLink.trackId) {
+    return {
+      status: 'skipped',
+      externalId: input.externalId,
+      reasonCode: 'TRACK_REF_NOT_FOUND',
+      message: '赛道时间线记录未找到关联赛道（trackExternalId 未映射或未完成绑定）。',
+      payload: {
+        trackExternalId: trackLink.trackExternalId,
+      },
+    }
+  }
+
+  const nodeType = mapTimelineNodeType(await input.resolver.getText('nodeType'))
+  if (!nodeType) {
+    return {
+      status: 'skipped',
+      externalId: input.externalId,
+      reasonCode: 'MISSING_REQUIRED_FIELD',
+      message: '赛道时间线记录缺少必要字段 nodeType。',
+      payload: {
+        hasNodeType: false,
+      },
+    }
+  }
+
+  const startAt = normalizeTimelineDateText(await input.resolver.getText('startAt'))
+  const endAt = normalizeTimelineDateText(await input.resolver.getText('endAt'))
+  const year = inferTimelineYear({
+    yearText: await input.resolver.getText('year'),
+    startAt,
+    endAt,
+  })
+
+  const existingRef = await getFeishuExternalRef(db, {
+    scope: 'track_timeline',
+    externalId: input.externalId,
+  })
+
+  if (existingRef) {
+    if (!input.dryRun) {
+      await patchAdminTrackTimeline(db, {
+        actorUserId: input.actorUserId,
+        contestId: contestLink.contestId,
+        trackTimelineId: existingRef.entityId,
+        patch: {
+          trackId: trackLink.trackId,
+          year,
+          nodeType,
+          startAt,
+          endAt,
+          note: await input.resolver.getText('note'),
+          sourceLink: await input.resolver.getText('sourceLink'),
+        },
+      })
+      await upsertFeishuExternalRef(db, {
+        syncItemId: input.syncItemId,
+        scope: 'track_timeline',
+        externalId: input.externalId,
+        entityId: existingRef.entityId,
+        metadata: {
+          contestId: contestLink.contestId,
+          trackId: trackLink.trackId,
+        },
+      })
+    }
+    return {
+      status: 'updated',
+      externalId: input.externalId,
+    }
+  }
+
+  if (!input.dryRun) {
+    const created = await createAdminTrackTimeline(db, {
+      actorUserId: input.actorUserId,
+      contestId: contestLink.contestId,
+      trackId: trackLink.trackId,
+      year,
+      nodeType,
+      startAt,
+      endAt,
+      note: await input.resolver.getText('note'),
+      sourceLink: await input.resolver.getText('sourceLink'),
+    })
+    await upsertFeishuExternalRef(db, {
+      syncItemId: input.syncItemId,
+      scope: 'track_timeline',
+      externalId: input.externalId,
+      entityId: created.id,
+      metadata: {
+        contestId: contestLink.contestId,
+        trackId: trackLink.trackId,
+      },
+    })
+  }
+
   return {
     status: 'created',
     externalId: input.externalId,
@@ -1552,6 +1853,19 @@ async function applySingleRecord(
 
   if (input.entityType === 'track') {
     return applyTrackRecord(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      record: input.record,
+      externalId,
+      mapping: input.mapping,
+      options: input.options,
+      resolver,
+      dryRun: input.dryRun,
+    })
+  }
+
+  if (input.entityType === 'track_timeline') {
+    return applyTrackTimelineRecord(db, {
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
       record: input.record,

@@ -26,6 +26,7 @@ import type {
   RubricScoringMode,
   TimelineNodeType,
   Track,
+  TrackTimeline,
   WorkspaceBillingEstimate,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
@@ -1538,6 +1539,13 @@ interface TrackRow {
   contest_id: string
   name: string
   summary: string
+  cover_image_url: string
+  location: string
+  organizer: string
+  undertaker: string
+  participant_requirements: string
+  team_rule: string
+  award_ratio: string
   suitable_majors: string[]
   deliverable_types: string[]
   rubric_id: string | null
@@ -1548,6 +1556,18 @@ interface TrackRow {
 interface TimelineRow {
   id: string
   contest_id: string
+  year: number
+  node_type: TimelineNodeType
+  start_at: string | null
+  end_at: string | null
+  note: string
+  source_link: string
+}
+
+interface TrackTimelineRow {
+  id: string
+  contest_id: string
+  track_id: string
   year: number
   node_type: TimelineNodeType
   start_at: string | null
@@ -1707,12 +1727,31 @@ function dedupeBy<T>(items: T[], keyOf: (item: T) => string): T[] {
   return result
 }
 
+async function assertTrackExistsForContest(db: Queryable, contestId: string, trackId: string): Promise<void> {
+  const result = await db.query<{ id: string }>(
+    `SELECT id
+     FROM contest_tracks
+     WHERE id = $1 AND contest_id = $2
+     LIMIT 1`,
+    [trackId, contestId],
+  )
+  if (!result.rows[0])
+    throw new Error('TRACK_NOT_FOUND')
+}
+
 function mapTrack(row: TrackRow): Track {
   return {
     id: row.id,
     contestId: row.contest_id,
     name: row.name,
     summary: row.summary,
+    coverImageUrl: row.cover_image_url,
+    location: row.location,
+    organizer: row.organizer,
+    undertaker: row.undertaker,
+    participantRequirements: row.participant_requirements,
+    teamRule: row.team_rule,
+    awardRatio: row.award_ratio,
     suitableMajors: normalizeStringArray(row.suitable_majors),
     deliverableTypes: normalizeStringArray(row.deliverable_types),
     rubricId: row.rubric_id || null,
@@ -1725,6 +1764,20 @@ function mapTimeline(row: TimelineRow): ContestTimeline {
   return {
     id: row.id,
     contestId: row.contest_id,
+    year: Number(row.year || 0),
+    nodeType: row.node_type,
+    startAt: row.start_at,
+    endAt: row.end_at,
+    note: row.note,
+    sourceLink: row.source_link,
+  }
+}
+
+function mapTrackTimeline(row: TrackTimelineRow): TrackTimeline {
+  return {
+    id: row.id,
+    contestId: row.contest_id,
+    trackId: row.track_id,
     year: Number(row.year || 0),
     nodeType: row.node_type,
     startAt: row.start_at,
@@ -2073,9 +2126,9 @@ export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
       name: 'Personal Team',
       planTier: 'personal_team',
       basePriceCents: 0,
-      includedSeats: 5,
+      includedSeats: 15,
       extraSeatPriceCents: 0,
-      includedAiQuota: 500,
+      includedAiQuota: 100,
       includedProjects: 0,
       projectsUnlimited: true,
       extraProjectSlotPriceCents: 0,
@@ -2471,7 +2524,23 @@ async function loadTracks(db: Queryable, contestIds: string[], includeInternal: 
     return []
 
   const result = await db.query<TrackRow>(
-    `SELECT id, contest_id, name, summary, suitable_majors, deliverable_types, rubric_id, sort_order, status
+    `SELECT
+      id,
+      contest_id,
+      name,
+      summary,
+      cover_image_url,
+      location,
+      organizer,
+      undertaker,
+      participant_requirements,
+      team_rule,
+      award_ratio,
+      suitable_majors,
+      deliverable_types,
+      rubric_id,
+      sort_order,
+      status
      FROM contest_tracks
      WHERE contest_id = ANY($1::TEXT[])
        AND ($2::BOOLEAN = TRUE OR status = 'published')
@@ -2489,6 +2558,30 @@ async function loadTimelines(db: Queryable, contestIds: string[]): Promise<Timel
   const result = await db.query<TimelineRow>(
     `SELECT id, contest_id, year, node_type, start_at::TEXT, end_at::TEXT, note, source_link
      FROM contest_timelines
+     WHERE contest_id = ANY($1::TEXT[])
+     ORDER BY year DESC, created_at ASC`,
+    [contestIds],
+  )
+
+  return result.rows
+}
+
+async function loadTrackTimelines(db: Queryable, contestIds: string[]): Promise<TrackTimelineRow[]> {
+  if (contestIds.length === 0)
+    return []
+
+  const result = await db.query<TrackTimelineRow>(
+    `SELECT
+      id,
+      contest_id,
+      track_id,
+      year,
+      node_type,
+      start_at::TEXT,
+      end_at::TEXT,
+      note,
+      source_link
+     FROM contest_track_timelines
      WHERE contest_id = ANY($1::TEXT[])
      ORDER BY year DESC, created_at ASC`,
     [contestIds],
@@ -3594,6 +3687,13 @@ export async function createAdminTrack(
     contestId: string
     name: string
     summary?: string
+    coverImageUrl?: string
+    location?: string
+    organizer?: string
+    undertaker?: string
+    participantRequirements?: string
+    teamRule?: string
+    awardRatio?: string
     suitableMajors?: string[]
     deliverableTypes?: string[]
     rubricId?: string | null
@@ -3610,6 +3710,13 @@ export async function createAdminTrack(
       contest_id,
       name,
       summary,
+      cover_image_url,
+      location,
+      organizer,
+      undertaker,
+      participant_requirements,
+      team_rule,
+      award_ratio,
       suitable_majors,
       deliverable_types,
       rubric_id,
@@ -3618,13 +3725,20 @@ export async function createAdminTrack(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5::TEXT[], $6::TEXT[], $7, $8, $9, $10, $10
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::TEXT[], $13::TEXT[], $14, $15, $16, $17, $17
     )`,
     [
       trackId,
       input.contestId,
       normalizeString(input.name),
       normalizeString(input.summary),
+      normalizeString(input.coverImageUrl),
+      normalizeString(input.location),
+      normalizeString(input.organizer),
+      normalizeString(input.undertaker),
+      normalizeString(input.participantRequirements),
+      normalizeString(input.teamRule),
+      normalizeString(input.awardRatio),
       normalizeStringArray(input.suitableMajors),
       normalizeStringArray(input.deliverableTypes),
       normalizeString(input.rubricId) || null,
@@ -3645,7 +3759,23 @@ export async function createAdminTrack(
   })
 
   const result = await db.query<TrackRow>(
-    `SELECT id, contest_id, name, summary, suitable_majors, deliverable_types, rubric_id, sort_order, status
+    `SELECT
+      id,
+      contest_id,
+      name,
+      summary,
+      cover_image_url,
+      location,
+      organizer,
+      undertaker,
+      participant_requirements,
+      team_rule,
+      award_ratio,
+      suitable_majors,
+      deliverable_types,
+      rubric_id,
+      sort_order,
+      status
      FROM contest_tracks
      WHERE id = $1
      LIMIT 1`,
@@ -3665,6 +3795,13 @@ export async function patchAdminTrack(
     patch: {
       name?: string
       summary?: string
+      coverImageUrl?: string
+      location?: string
+      organizer?: string
+      undertaker?: string
+      participantRequirements?: string
+      teamRule?: string
+      awardRatio?: string
       suitableMajors?: string[]
       deliverableTypes?: string[]
       rubricId?: string | null
@@ -3685,6 +3822,20 @@ export async function patchAdminTrack(
     addSet('name', normalizeString(input.patch.name))
   if (input.patch.summary !== undefined)
     addSet('summary', normalizeString(input.patch.summary))
+  if (input.patch.coverImageUrl !== undefined)
+    addSet('cover_image_url', normalizeString(input.patch.coverImageUrl))
+  if (input.patch.location !== undefined)
+    addSet('location', normalizeString(input.patch.location))
+  if (input.patch.organizer !== undefined)
+    addSet('organizer', normalizeString(input.patch.organizer))
+  if (input.patch.undertaker !== undefined)
+    addSet('undertaker', normalizeString(input.patch.undertaker))
+  if (input.patch.participantRequirements !== undefined)
+    addSet('participant_requirements', normalizeString(input.patch.participantRequirements))
+  if (input.patch.teamRule !== undefined)
+    addSet('team_rule', normalizeString(input.patch.teamRule))
+  if (input.patch.awardRatio !== undefined)
+    addSet('award_ratio', normalizeString(input.patch.awardRatio))
   if (input.patch.suitableMajors !== undefined)
     addSet('suitable_majors', normalizeStringArray(input.patch.suitableMajors))
   if (input.patch.deliverableTypes !== undefined)
@@ -3725,7 +3876,23 @@ export async function patchAdminTrack(
   })
 
   const result = await db.query<TrackRow>(
-    `SELECT id, contest_id, name, summary, suitable_majors, deliverable_types, rubric_id, sort_order, status
+    `SELECT
+      id,
+      contest_id,
+      name,
+      summary,
+      cover_image_url,
+      location,
+      organizer,
+      undertaker,
+      participant_requirements,
+      team_rule,
+      award_ratio,
+      suitable_majors,
+      deliverable_types,
+      rubric_id,
+      sort_order,
+      status
      FROM contest_tracks
      WHERE id = $1 AND contest_id = $2
      LIMIT 1`,
@@ -3873,6 +4040,174 @@ export async function patchAdminTimeline(
 
   const row = result.rows[0]
   return row ? mapTimeline(row) : null
+}
+
+export async function listAdminTrackTimelines(db: Queryable, contestId: string): Promise<TrackTimeline[]> {
+  const rows = await loadTrackTimelines(db, [contestId])
+  return rows.map(mapTrackTimeline)
+}
+
+export async function createAdminTrackTimeline(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    contestId: string
+    trackId: string
+    year: number
+    nodeType: TimelineNodeType
+    startAt?: string | null
+    endAt?: string | null
+    note?: string
+    sourceLink?: string
+  },
+): Promise<TrackTimeline> {
+  await assertTrackExistsForContest(db, input.contestId, input.trackId)
+  const timelineId = randomUUID()
+  const now = new Date().toISOString()
+
+  await db.query(
+    `INSERT INTO contest_track_timelines (
+      id,
+      contest_id,
+      track_id,
+      year,
+      node_type,
+      start_at,
+      end_at,
+      note,
+      source_link,
+      created_at,
+      updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
+    [
+      timelineId,
+      input.contestId,
+      input.trackId,
+      Number(input.year || new Date().getFullYear()),
+      input.nodeType,
+      input.startAt || null,
+      input.endAt || null,
+      normalizeString(input.note),
+      normalizeString(input.sourceLink),
+      now,
+    ],
+  )
+
+  await appendAuditLog(db, {
+    actorUserId: input.actorUserId,
+    action: 'track_timeline.create',
+    contestId: input.contestId,
+    payload: {
+      timelineId,
+      trackId: input.trackId,
+      nodeType: input.nodeType,
+    },
+  })
+
+  const result = await db.query<TrackTimelineRow>(
+    `SELECT
+      id,
+      contest_id,
+      track_id,
+      year,
+      node_type,
+      start_at::TEXT,
+      end_at::TEXT,
+      note,
+      source_link
+     FROM contest_track_timelines
+     WHERE id = $1
+     LIMIT 1`,
+    [timelineId],
+  )
+
+  return mapTrackTimeline(result.rows[0]!)
+}
+
+export async function patchAdminTrackTimeline(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    contestId: string
+    trackTimelineId: string
+    patch: {
+      trackId?: string
+      year?: number
+      nodeType?: TimelineNodeType
+      startAt?: string | null
+      endAt?: string | null
+      note?: string
+      sourceLink?: string
+    }
+  },
+): Promise<TrackTimeline | null> {
+  if (input.patch.trackId !== undefined)
+    await assertTrackExistsForContest(db, input.contestId, input.patch.trackId)
+
+  const values: unknown[] = [input.trackTimelineId, input.contestId]
+  const sets: string[] = []
+
+  const addSet = (column: string, value: unknown) => {
+    values.push(value)
+    sets.push(`${column} = $${values.length}`)
+  }
+
+  if (input.patch.trackId !== undefined)
+    addSet('track_id', input.patch.trackId)
+  if (input.patch.year !== undefined)
+    addSet('year', Number(input.patch.year || new Date().getFullYear()))
+  if (input.patch.nodeType !== undefined)
+    addSet('node_type', input.patch.nodeType)
+  if (input.patch.startAt !== undefined)
+    addSet('start_at', input.patch.startAt || null)
+  if (input.patch.endAt !== undefined)
+    addSet('end_at', input.patch.endAt || null)
+  if (input.patch.note !== undefined)
+    addSet('note', normalizeString(input.patch.note))
+  if (input.patch.sourceLink !== undefined)
+    addSet('source_link', normalizeString(input.patch.sourceLink))
+
+  if (sets.length === 0)
+    return null
+
+  sets.push('updated_at = NOW()')
+
+  await db.query(
+    `UPDATE contest_track_timelines
+     SET ${sets.join(', ')}
+     WHERE id = $1 AND contest_id = $2`,
+    values,
+  )
+
+  await appendAuditLog(db, {
+    actorUserId: input.actorUserId,
+    action: 'track_timeline.patch',
+    contestId: input.contestId,
+    payload: {
+      trackTimelineId: input.trackTimelineId,
+      ...input.patch,
+    },
+  })
+
+  const result = await db.query<TrackTimelineRow>(
+    `SELECT
+      id,
+      contest_id,
+      track_id,
+      year,
+      node_type,
+      start_at::TEXT,
+      end_at::TEXT,
+      note,
+      source_link
+     FROM contest_track_timelines
+     WHERE id = $1 AND contest_id = $2
+     LIMIT 1`,
+    [input.trackTimelineId, input.contestId],
+  )
+
+  const row = result.rows[0]
+  return row ? mapTrackTimeline(row) : null
 }
 
 function validateRubricDimensions(dimensions: RubricDimension[], scoringMode: RubricScoringMode = 'weighted'): void {

@@ -96,6 +96,7 @@ const modulePathMap: Record<AdminDraftModule, string> = {
   overview: '/overview/edit',
   tracks: '/tracks',
   timelines: '/timelines',
+  track_timelines: '/track-timelines',
   rubrics: '/rubrics',
   resources: '/resources',
 }
