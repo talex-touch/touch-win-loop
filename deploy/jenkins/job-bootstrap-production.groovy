@@ -34,7 +34,7 @@ git checkout --detach '${params.BUILD_COMMIT_SHA}'
     deployEnvironment: 'production',
     expectedBranch: 'main',
     expectedRepository: 'talex-touch/touch-win-loop',
-    ghcrCredentialsId: 'ghcr-readonly',
+    ghcrCredentialsId: '40a0292f-ea02-4882-8d0e-659efe25861b',
     sshCredentialsId: 'touch-center-ssh',
     sshTarget: 'root@center.tagzxia.com',
     remoteWorkspaceRoot: '/tmp/touch-win-loop-jenkins',

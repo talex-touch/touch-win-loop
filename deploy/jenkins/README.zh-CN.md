@@ -155,7 +155,7 @@ production 只需要改成独立的：
 bootstrap 脚本中的凭据 ID 需要替换为你在 Jenkins 中真实创建的值：
 
 - `github-readonly`
-- `ghcr-readonly`
+- `40a0292f-ea02-4882-8d0e-659efe25861b`
 - `touch-center-ssh`
 
 同时需要根据你的环境修改：
