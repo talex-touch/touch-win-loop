@@ -5,10 +5,11 @@ import type {
   FeishuAdminManualAddResult,
   FeishuAdminOverview,
   FeishuBitableSourceConfig,
-  FeishuBitableSyncEnvironment,
   FeishuBitableSync,
+  FeishuBitableSyncEnvironment,
   FeishuBitableTableMeta,
   FeishuBitableViewMeta,
+  FeishuChatCandidate,
   FeishuIntegrationConfig,
   PlatformPermission,
 } from '~~/shared/types/domain'
@@ -42,6 +43,7 @@ const loadingSyncs = ref(false)
 const savingConfig = ref(false)
 const adminOverviewLoading = ref(false)
 const creatingSync = ref(false)
+const startupNotifyChatOptionsLoading = ref(false)
 const manualAddingKey = ref('')
 const syncToggleMutating = reactive<Record<string, boolean>>({})
 const archivingSyncMutating = reactive<Record<string, boolean>>({})
@@ -63,6 +65,8 @@ const permissions = ref<PlatformPermission[]>([])
 const config = ref<FeishuIntegrationConfigView | null>(null)
 const adminOverview = ref<FeishuAdminOverview | null>(null)
 const syncs = ref<FeishuBitableSync[]>([])
+const startupNotifyChatOptions = ref<FeishuChatCandidate[]>([])
+let startupNotifyChatSearchSequence = 0
 
 const syncColumns = [
   { title: '同步信息', dataIndex: 'name', slotName: 'name', width: 220 },
@@ -224,6 +228,56 @@ function parseMultilineList(text: string): string[] {
   return result
 }
 
+function normalizeStartupNotifyChatOptions(items: FeishuChatCandidate[], selectedChatId = ''): FeishuChatCandidate[] {
+  const seen = new Set<string>()
+  const result: FeishuChatCandidate[] = []
+
+  const append = (item: FeishuChatCandidate | null | undefined) => {
+    const chatId = String(item?.chatId || '').trim()
+    if (!chatId || seen.has(chatId))
+      return
+    seen.add(chatId)
+    result.push({
+      chatId,
+      name: String(item?.name || '').trim() || chatId,
+      description: String(item?.description || '').trim(),
+      avatarUrl: String(item?.avatarUrl || '').trim(),
+    })
+  }
+
+  const normalizedSelectedChatId = String(selectedChatId || '').trim()
+  if (normalizedSelectedChatId) {
+    append({
+      chatId: normalizedSelectedChatId,
+      name: normalizedSelectedChatId,
+      description: '',
+      avatarUrl: '',
+    })
+  }
+
+  for (const item of items)
+    append(item)
+
+  return result
+}
+
+function formatStartupNotifyChatLabel(item?: FeishuChatCandidate | null): string {
+  const chatId = String(item?.chatId || '').trim()
+  const name = String(item?.name || '').trim()
+  return name || chatId
+}
+
+const startupNotifyChatSelectOptions = computed(() => {
+  return normalizeStartupNotifyChatOptions(startupNotifyChatOptions.value, configForm.startupNotifyChatId)
+})
+
+const selectedStartupNotifyChat = computed(() => {
+  const selectedChatId = String(configForm.startupNotifyChatId || '').trim()
+  if (!selectedChatId)
+    return null
+  return startupNotifyChatSelectOptions.value.find(item => item.chatId === selectedChatId) || null
+})
+
 function fillConfigForm(payload: FeishuIntegrationConfig) {
   configForm.enabled = Boolean(payload.enabled)
   configForm.appId = payload.appId || ''
@@ -235,6 +289,7 @@ function fillConfigForm(payload: FeishuIntegrationConfig) {
   configForm.startupNotifyRemark = payload.startupNotifyRemark || ''
   configForm.startupFallbackVersion = payload.startupFallbackVersion || ''
   configForm.startupFallbackCommitSha = payload.startupFallbackCommitSha || ''
+  startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(startupNotifyChatOptions.value, payload.startupNotifyChatId || '')
   resetSecretInputs()
 }
 
@@ -529,6 +584,51 @@ async function saveConfig() {
   }
 }
 
+async function loadStartupNotifyChatOptions(keyword = '') {
+  if (!canManageConfig.value) {
+    startupNotifyChatOptions.value = []
+    return
+  }
+
+  const normalizedKeyword = String(keyword || '').trim()
+  const selectedChatId = String(configForm.startupNotifyChatId || '').trim()
+  const query = new URLSearchParams()
+  if (normalizedKeyword)
+    query.set('keyword', normalizedKeyword)
+  if (selectedChatId)
+    query.set('chatId', selectedChatId)
+  query.set('limit', normalizedKeyword ? '20' : '10')
+
+  const currentSequence = ++startupNotifyChatSearchSequence
+  startupNotifyChatOptionsLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<FeishuChatCandidate[]>>(endpoint(`/admin/integrations/feishu/startup-groups/search?${query.toString()}`))
+    if (currentSequence !== startupNotifyChatSearchSequence)
+      return
+    startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(response.data || [], selectedChatId)
+  }
+  catch (error: any) {
+    if (currentSequence !== startupNotifyChatSearchSequence)
+      return
+    startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions([], selectedChatId)
+    setError(String(error?.data?.message || '飞书群列表加载失败。'))
+  }
+  finally {
+    if (currentSequence === startupNotifyChatSearchSequence)
+      startupNotifyChatOptionsLoading.value = false
+  }
+}
+
+function handleStartupNotifyChatSearch(keyword: string) {
+  void loadStartupNotifyChatOptions(keyword)
+}
+
+function handleStartupNotifyChatPopupVisibleChange(visible: boolean) {
+  if (!visible || startupNotifyChatOptions.value.length > 0)
+    return
+  void loadStartupNotifyChatOptions()
+}
+
 function openCreateSyncDrawer() {
   resetCreateSyncForm()
   createSourceMode.value = 'url'
@@ -556,6 +656,7 @@ function openConfigDialog() {
   void Promise.allSettled([
     loadAdminOverview(),
     loadFeishuDirectoryBrowser(),
+    loadStartupNotifyChatOptions(),
   ])
 }
 
@@ -1192,13 +1293,47 @@ onMounted(initializePage)
             <div class="gap-3 grid md:grid-cols-2">
               <label class="text-[10px] text-slate-600 font-medium block">
                 飞书群 chat_id
-                <a-input
+                <a-select
                   v-model="configForm.startupNotifyChatId"
                   class="mt-1"
                   allow-clear
+                  allow-search
+                  :filter-option="false"
+                  :loading="startupNotifyChatOptionsLoading"
+                  :search-delay="250"
                   size="small"
-                  placeholder="oc_xxx"
-                />
+                  placeholder="搜索群名并直接选择"
+                  @search="handleStartupNotifyChatSearch"
+                  @popup-visible-change="handleStartupNotifyChatPopupVisibleChange"
+                >
+                  <a-option
+                    v-for="item in startupNotifyChatSelectOptions"
+                    :key="item.chatId"
+                    :value="item.chatId"
+                    :label="formatStartupNotifyChatLabel(item)"
+                  >
+                    <div class="py-0.5 min-w-0">
+                      <p class="text-[10px] text-slate-900 font-medium m-0 truncate">
+                        {{ formatStartupNotifyChatLabel(item) }}
+                      </p>
+                      <p class="text-[10px] text-slate-400 font-mono m-0 mt-0.5 truncate">
+                        {{ item.chatId }}
+                      </p>
+                    </div>
+                  </a-option>
+                </a-select>
+                <p class="text-[10px] text-slate-400 m-0 mt-1">
+                  支持按群名搜索，选中后自动写入 chat_id。
+                </p>
+                <p v-if="configForm.startupNotifyChatId" class="text-[10px] text-slate-400 font-mono m-0 mt-1">
+                  当前 chat_id：{{ configForm.startupNotifyChatId }}
+                </p>
+                <p
+                  v-if="selectedStartupNotifyChat && formatStartupNotifyChatLabel(selectedStartupNotifyChat) !== selectedStartupNotifyChat.chatId"
+                  class="text-[10px] text-slate-500 m-0 mt-1 truncate"
+                >
+                  当前群名：{{ formatStartupNotifyChatLabel(selectedStartupNotifyChat) }}
+                </p>
               </label>
 
               <label class="text-[10px] text-slate-600 font-medium block">
