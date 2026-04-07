@@ -34,6 +34,18 @@ jobs:
           owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           echo "name=ghcr.io/${owner}/touch-win-loop" >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve build metadata
+        id: build_meta
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA:0:7}"
+          build_version="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${short_sha}"
+          echo "build_version=${build_version}" >> "${GITHUB_OUTPUT}"
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -56,48 +68,50 @@ jobs:
 
       - name: Build and push image
         id: build
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
+          build-args: |
+            WINLOOP_BUILD_VERSION=${{ steps.build_meta.outputs.build_version }}
+            WINLOOP_BUILD_COMMIT_SHA=${{ github.sha }}
+            WINLOOP_SENTRY_ORG=${{ secrets.WINLOOP_SENTRY_ORG }}
+            WINLOOP_SENTRY_PROJECT=${{ secrets.WINLOOP_SENTRY_PROJECT }}
+            WINLOOP_SENTRY_RELEASE=${{ steps.build_meta.outputs.build_version }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          secrets: |
+            id=sentry_auth_token,env=SENTRY_AUTH_TOKEN
 
       - name: Output image digest
         env:
+          BUILD_VERSION: ${{ steps.build_meta.outputs.build_version }}
           IMAGE_REPO: ${{ steps.image.outputs.name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_SHA: ${{ github.sha }}
         run: |
-          short_sha="${GITHUB_SHA:0:7}"
-          build_version="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${short_sha}"
           image_ref="${IMAGE_REPO}@${IMAGE_DIGEST}"
 
           echo "Image: ${{ steps.image.outputs.name }}"
           echo "Tags:"
           echo "${{ steps.meta.outputs.tags }}"
           echo "Digest: ${{ steps.build.outputs.digest }}"
-          echo "Build Version: ${build_version}"
+          echo "Build Version: ${BUILD_VERSION}"
           echo "Image Ref: ${image_ref}"
 
-      - name: Resolve build metadata
-        id: build_meta
+      - name: Resolve image ref
+        id: image_ref_meta
         env:
           IMAGE_REPO: ${{ steps.image.outputs.name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          short_sha="${GITHUB_SHA:0:7}"
-          build_version="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${short_sha}"
           image_ref="${IMAGE_REPO}@${IMAGE_DIGEST}"
-          echo "build_version=${build_version}" >> "${GITHUB_OUTPUT}"
           echo "image_ref=${image_ref}" >> "${GITHUB_OUTPUT}"
 
       - name: Trigger Jenkins deployment
@@ -111,7 +125,7 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_SHA: ${{ github.sha }}
           BUILD_VERSION: ${{ steps.build_meta.outputs.build_version }}
-          IMAGE_REF: ${{ steps.build_meta.outputs.image_ref }}
+          IMAGE_REF: ${{ steps.image_ref_meta.outputs.image_ref }}
           TRIGGERED_BY: github-actions
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |

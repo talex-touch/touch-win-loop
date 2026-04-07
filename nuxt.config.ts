@@ -1,3 +1,4 @@
+import process from 'node:process'
 import { pwa } from './app/config/pwa'
 import { appDescription } from './app/constants'
 import {
@@ -9,10 +10,29 @@ import {
   resolveEnvNumber,
   resolveEnvValue,
 } from './config/env'
+import {
+  resolveSentryBuildOrganization,
+  resolveSentryBuildProject,
+  resolveSentryDsn,
+  resolveSentryEnvironment,
+  resolveSentryRelease,
+  resolveSentrySourceMapsUploadState,
+  resolveSentryTracesSampleRate,
+} from './config/sentry'
 
 loadWinloopEnv()
 const resolvedBuildVersion = resolveBuildVersion()
 const resolvedBuildCommitSha = resolveBuildCommitSha()
+const resolvedSentryRelease = resolveSentryRelease(resolvedBuildVersion)
+const resolvedSentrySourceMaps = resolveSentrySourceMapsUploadState()
+const shouldWarnSentrySourceMaps = process.env.NODE_ENV === 'production'
+  && process.argv.some(arg => /\b(?:build|generate)\b/.test(arg))
+
+if (shouldWarnSentrySourceMaps && !resolvedSentrySourceMaps.enabled) {
+  console.warn(
+    `[sentry] Source map upload disabled because required build-time env is missing: ${resolvedSentrySourceMaps.missing.join(', ')}.`,
+  )
+}
 
 export default defineNuxtConfig({
   modules: [
@@ -22,6 +42,7 @@ export default defineNuxtConfig({
     '@nuxtjs/color-mode',
     '@vite-pwa/nuxt',
     '@nuxt/eslint',
+    '@sentry/nuxt/module',
   ],
 
   devtools: {
@@ -87,6 +108,9 @@ export default defineNuxtConfig({
       timeoutMs: 15000,
       maxRetries: 2,
     },
+    auth: {
+      registrationEnabled: resolveEnvBoolean('WINLOOP_AUTH_REGISTRATION_ENABLED', true),
+    },
     onlyOffice: {
       endpoint: resolveEnvValue('WINLOOP_ONLYOFFICE_ENDPOINT', ''),
       jwtSecret: resolveEnvValue('WINLOOP_ONLYOFFICE_JWT_SECRET', ''),
@@ -139,6 +163,12 @@ export default defineNuxtConfig({
     public: {
       apiBaseUrl: resolveEnvValue('WINLOOP_API_BASE_URL', '/api'),
       appBaseUrl: resolveEnvValue('WINLOOP_PUBLIC_BASE_URL', ''),
+      sentry: {
+        dsn: resolveSentryDsn(),
+        environment: resolveSentryEnvironment(),
+        release: resolvedSentryRelease,
+        tracesSampleRate: resolveSentryTracesSampleRate(),
+      },
     },
   },
 
@@ -149,6 +179,10 @@ export default defineNuxtConfig({
     '/reviews/**': { redirect: { to: '/workspace', statusCode: 301 } },
     '/defense': { redirect: { to: '/workspace', statusCode: 301 } },
     '/defense/**': { redirect: { to: '/workspace', statusCode: 301 } },
+  },
+
+  sourcemap: {
+    client: 'hidden',
   },
 
   devServer: {
@@ -194,4 +228,22 @@ export default defineNuxtConfig({
   },
 
   pwa,
+
+  sentry: {
+    authToken: resolveEnvValue('SENTRY_AUTH_TOKEN', ''),
+    errorHandler(error) {
+      console.warn(`[sentry] Source map upload skipped: ${error.message}`)
+    },
+    org: resolveSentryBuildOrganization(),
+    project: resolveSentryBuildProject(),
+    release: resolvedSentryRelease
+      ? {
+          name: resolvedSentryRelease,
+        }
+      : undefined,
+    sourcemaps: {
+      disable: !resolvedSentrySourceMaps.enabled,
+    },
+    telemetry: false,
+  },
 })

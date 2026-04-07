@@ -5,6 +5,7 @@ import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 
 export const BUILT_ENTRY = '.output/server/index.mjs'
+export const BUILT_SENTRY_PRELOAD = './.output/server/sentry.server.config.mjs'
 export const DEFAULT_SMOKE_HOST = '127.0.0.1'
 export const DEFAULT_SMOKE_PORT = 4010
 export const DEFAULT_STARTUP_TIMEOUT_MS = 30000
@@ -35,14 +36,15 @@ export function resolveSmokeServerOptions(env = process.env) {
 export async function ensureBuildArtifactExists(entry = BUILT_ENTRY) {
   try {
     await access(entry, constants.R_OK)
+    await access(BUILT_SENTRY_PRELOAD, constants.R_OK)
   }
   catch {
-    throw new Error(`未找到构建产物 ${entry}，请先执行 pnpm build`)
+    throw new Error(`未找到构建产物 ${entry} 或 ${BUILT_SENTRY_PRELOAD}，请先执行 pnpm build`)
   }
 }
 
 export function startBuiltServer(options = resolveSmokeServerOptions()) {
-  return spawn('node', [options.builtEntry], {
+  return spawn('node', ['--import', BUILT_SENTRY_PRELOAD, options.builtEntry], {
     stdio: 'inherit',
     env: {
       ...process.env,

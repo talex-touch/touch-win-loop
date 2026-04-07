@@ -1,17 +1,14 @@
 import type { H3Event } from 'h3'
-import type { AuthLoginResult, FeishuIntegrationConfig } from '~~/shared/types/domain'
-import { loginWithFeishuProfile } from '~~/server/services/feishu/auth'
-import { getFeishuOAuthProfile } from '~~/server/services/feishu/client'
+import type { AuthLoginResult } from '~~/shared/types/domain'
+import { loginWithCasdoorProfile } from '~~/server/services/casdoor/auth'
+import { exchangeCasdoorOAuthCode } from '~~/server/services/casdoor/client'
 import { getAuthFromEvent, setSessionCookie } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
-import {
-  readFeishuIntegrationConfig,
-  toPublicFeishuIntegrationConfig,
-} from '~~/server/utils/feishu-integration-store'
+import { readCasdoorIntegrationConfig } from '~~/server/utils/feishu-integration-store'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 
-function parseFeishuErrorDetail(raw: string): string {
+function parseErrorDetail(raw: string): string {
   const source = String(raw || '').trim()
   if (!source)
     return ''
@@ -32,7 +29,7 @@ function maskHint(raw: string): string {
   return `${source[0]}***${source[source.length - 1]}`
 }
 
-export function resolveFeishuLoginErrorInfo(error: unknown): {
+export function resolveCasdoorLoginErrorInfo(error: unknown): {
   code: string
   message: string
   boundUserHint?: string
@@ -40,70 +37,63 @@ export function resolveFeishuLoginErrorInfo(error: unknown): {
   const raw = error instanceof Error ? error.message : String(error || '')
   const [codeRaw, detailRaw = ''] = String(raw || '').split(':', 2)
   const code = String(codeRaw || '').trim()
-  const detail = parseFeishuErrorDetail(detailRaw)
+  const detail = parseErrorDetail(detailRaw)
 
-  if (code === 'FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER') {
+  if (code === 'CASDOOR_IDENTITY_ALREADY_BOUND_OTHER_USER') {
     const boundUserHint = maskHint(detail)
     return {
       code,
       message: boundUserHint
-        ? `该飞书账号已绑定平台账号（${boundUserHint}），请使用该账号登录或联系管理员解绑。`
-        : '该飞书账号已绑定其他平台账号，请使用原账号登录或联系管理员解绑。',
+        ? `该 Casdoor 账号已绑定平台账号（${boundUserHint}），请使用该账号登录或联系管理员处理。`
+        : '该 Casdoor 账号已绑定其他平台账号，请使用原账号登录或联系管理员处理。',
       boundUserHint,
     }
   }
-  if (code === 'FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY')
-    return { code, message: '当前账号已绑定其他飞书账号，如需更换请先解绑再重新绑定。' }
-  if (code === 'FEISHU_PREFERRED_USER_NOT_FOUND')
-    return { code, message: '当前登录会话无效，请重新登录后再绑定飞书账号。' }
+  if (code === 'CASDOOR_USER_ALREADY_BOUND_OTHER_IDENTITY')
+    return { code, message: '当前平台账号已绑定其他 Casdoor 身份，如需更换请联系管理员处理。' }
+  if (code === 'CASDOOR_PREFERRED_USER_NOT_FOUND')
+    return { code, message: '当前登录会话无效，请重新登录后再绑定 Casdoor 账号。' }
   if (code === 'USER_DISABLED')
     return { code, message: '当前账号已被禁用，请联系平台管理员。' }
   if (code === 'AUTH_REGISTRATION_DISABLED')
     return { code, message: '平台暂未开放注册，请联系管理员开通账号或开启注册。' }
-  if (code === 'FEISHU_INTEGRATION_DISABLED')
-    return { code, message: '飞书登录尚未启用。' }
-  if (code === 'FEISHU_APP_CONFIG_INCOMPLETE')
-    return { code, message: '飞书应用配置不完整，请联系管理员。' }
+  if (code === 'CASDOOR_INTEGRATION_DISABLED')
+    return { code, message: 'Casdoor 登录尚未启用。' }
+  if (code === 'CASDOOR_APP_CONFIG_INCOMPLETE')
+    return { code, message: 'Casdoor 集成配置不完整，请前往集成中心补全。' }
+  if (code === 'CASDOOR_REDIRECT_URI_REQUIRED')
+    return { code, message: 'Casdoor 回调地址未配置，请前往集成中心补全。' }
+
   return {
     code,
-    message: raw || '飞书登录失败。',
+    message: raw || 'Casdoor 登录失败。',
   }
 }
 
-export function resolveFeishuLoginErrorMessage(error: unknown): string {
-  return resolveFeishuLoginErrorInfo(error).message
-}
-
-export async function readFeishuAuthMeta(event: H3Event): Promise<FeishuIntegrationConfig> {
-  const config = await withClient(event, async (db) => {
-    return readFeishuIntegrationConfig(db)
-  })
-  return toPublicFeishuIntegrationConfig(config)
-}
-
-export async function loginByFeishuOAuthCode(
+export async function loginByCasdoorOAuthCode(
   event: H3Event,
   code: string,
+  redirectUri?: string,
 ): Promise<AuthLoginResult> {
   const { runtime } = await readEffectivePlatformRuntimeSettings(event)
   const auth = await getAuthFromEvent(event).catch(() => null)
   const preferredUserId = String(auth?.user?.id || '').trim()
-
   const config = await withClient(event, async (db) => {
-    return readFeishuIntegrationConfig(db)
+    return readCasdoorIntegrationConfig(db)
   })
 
   if (!config.enabled)
-    throw new Error('FEISHU_INTEGRATION_DISABLED')
-  if (!config.appId || !config.appSecret)
-    throw new Error('FEISHU_APP_CONFIG_INCOMPLETE')
+    throw new Error('CASDOOR_INTEGRATION_DISABLED')
+  if (!config.issuer || !config.clientId || !config.clientSecret)
+    throw new Error('CASDOOR_APP_CONFIG_INCOMPLETE')
 
-  const profile = await getFeishuOAuthProfile({
+  const profile = await exchangeCasdoorOAuthCode({
     config,
     code,
+    redirectUri,
   })
 
-  const loginResult = await loginWithFeishuProfile(event, profile, {
+  const loginResult = await loginWithCasdoorProfile(event, profile, {
     preferredUserId: preferredUserId || undefined,
     allowRegistration: runtime.auth.registrationEnabled,
   })
@@ -113,13 +103,12 @@ export async function loginByFeishuOAuthCode(
     await withClient(event, async (db) => {
       await recordContestAuditLog(db, {
         actorUserId: preferredUserId,
-        action: 'auth.feishu.bind.self',
+        action: 'auth.casdoor.bind.self',
         payload: {
-          unionId: profile.unionId,
+          sub: profile.sub,
           name: profile.name,
-          enName: profile.enName,
+          preferredUsername: profile.preferredUsername,
           email: profile.email,
-          mobile: profile.mobile,
         },
       })
     }).catch(() => {})

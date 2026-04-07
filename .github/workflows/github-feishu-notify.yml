@@ -1,0 +1,197 @@
+name: GitHub Feishu Notify
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  notify-feishu:
+    name: Notify Feishu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check webhook configuration
+        id: config
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_GITHUB_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${FEISHU_WEBHOOK_URL}" ]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "Skip Feishu notification because FEISHU_GITHUB_WEBHOOK_URL is not configured."
+          fi
+
+      - name: Send Feishu notification
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_GITHUB_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_SECRET: ${{ secrets.FEISHU_GITHUB_WEBHOOK_SECRET }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import base64
+          import hashlib
+          import hmac
+          import json
+          import os
+          import time
+          import urllib.request
+
+
+          def to_text(value) -> str:
+              return str(value or "").strip()
+
+
+          def shorten(value: str, limit: int = 180) -> str:
+              text = to_text(value)
+              if len(text) <= limit:
+                  return text
+              return f"{text[: max(0, limit - 3)]}..."
+
+
+          def read_event_payload() -> dict:
+              path = to_text(os.environ.get("GITHUB_EVENT_PATH"))
+              with open(path, "r", encoding="utf-8") as handle:
+                  return json.load(handle)
+
+
+          def build_issue_message(payload: dict) -> str:
+              issue = payload.get("issue") or {}
+              action = to_text(os.environ.get("GITHUB_EVENT_ACTION"))
+              number = issue.get("number") or payload.get("number") or "-"
+              title = to_text(issue.get("title")) or "-"
+              url = to_text(issue.get("html_url"))
+              labels = ", ".join(
+                  to_text(item.get("name"))
+                  for item in (issue.get("labels") or [])
+                  if to_text(item.get("name"))
+              ) or "-"
+              body_preview = shorten(issue.get("body") or "", 220) or "-"
+              actor = to_text(os.environ.get("GITHUB_ACTOR")) or "-"
+              repository = to_text(os.environ.get("GITHUB_REPOSITORY")) or "-"
+              action_label = "新建" if action == "opened" else "重新打开"
+              run_url = f"{to_text(os.environ.get('GITHUB_SERVER_URL'))}/{repository}/actions/runs/{to_text(os.environ.get('GITHUB_RUN_ID'))}"
+              return "\n".join([
+                  "GitHub Issue 通知",
+                  f"动作：{action_label}",
+                  f"仓库：{repository}",
+                  f"Issue：#{number} {title}",
+                  f"发起人：{actor}",
+                  f"标签：{labels}",
+                  f"摘要：{body_preview}",
+                  f"链接：{url}",
+                  f"Workflow：{run_url}",
+              ])
+
+
+          def build_pr_message(payload: dict) -> str:
+              pr = payload.get("pull_request") or {}
+              action = to_text(os.environ.get("GITHUB_EVENT_ACTION"))
+              number = pr.get("number") or payload.get("number") or "-"
+              title = to_text(pr.get("title")) or "-"
+              url = to_text(pr.get("html_url"))
+              actor = to_text(os.environ.get("GITHUB_ACTOR")) or "-"
+              repository = to_text(os.environ.get("GITHUB_REPOSITORY")) or "-"
+              base_ref = to_text(((pr.get("base") or {}).get("ref"))) or "-"
+              head_ref = to_text(((pr.get("head") or {}).get("ref"))) or "-"
+              is_draft = bool(pr.get("draft"))
+              labels = ", ".join(
+                  to_text(item.get("name"))
+                  for item in (pr.get("labels") or [])
+                  if to_text(item.get("name"))
+              ) or "-"
+              body_preview = shorten(pr.get("body") or "", 220) or "-"
+              action_label_map = {
+                  "opened": "新建",
+                  "reopened": "重新打开",
+                  "ready_for_review": "转为可评审",
+              }
+              action_label = action_label_map.get(action, action or "触发")
+              draft_label = "是" if is_draft else "否"
+              run_url = f"{to_text(os.environ.get('GITHUB_SERVER_URL'))}/{repository}/actions/runs/{to_text(os.environ.get('GITHUB_RUN_ID'))}"
+              return "\n".join([
+                  "GitHub PR 通知",
+                  f"动作：{action_label}",
+                  f"仓库：{repository}",
+                  f"PR：#{number} {title}",
+                  f"发起人：{actor}",
+                  f"分支：{head_ref} -> {base_ref}",
+                  f"Draft：{draft_label}",
+                  f"标签：{labels}",
+                  f"摘要：{body_preview}",
+                  f"链接：{url}",
+                  f"Workflow：{run_url}",
+              ])
+
+
+          def build_message() -> str:
+              payload = read_event_payload()
+              event_name = to_text(os.environ.get("GITHUB_EVENT_NAME"))
+              if event_name == "issues":
+                  return build_issue_message(payload)
+              if event_name == "pull_request_target":
+                  return build_pr_message(payload)
+              raise SystemExit(f"Unsupported event: {event_name}")
+
+
+          def build_signature(secret: str) -> tuple[str, str]:
+              timestamp = str(int(time.time()))
+              string_to_sign = f"{timestamp}\n{secret}"
+              signature = base64.b64encode(
+                  hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
+              ).decode("utf-8")
+              return timestamp, signature
+
+
+          webhook_url = to_text(os.environ.get("FEISHU_WEBHOOK_URL"))
+          webhook_secret = to_text(os.environ.get("FEISHU_WEBHOOK_SECRET"))
+          if not webhook_url:
+              raise SystemExit("Missing FEISHU_GITHUB_WEBHOOK_URL")
+
+          payload = {
+              "msg_type": "text",
+              "content": {
+                  "text": build_message(),
+              },
+          }
+          if webhook_secret:
+              timestamp, sign = build_signature(webhook_secret)
+              payload["timestamp"] = timestamp
+              payload["sign"] = sign
+
+          request = urllib.request.Request(
+              webhook_url,
+              data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+              headers={"Content-Type": "application/json; charset=utf-8"},
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=15) as response:
+              body = response.read().decode("utf-8", errors="replace")
+
+          result = json.loads(body) if body else {}
+          code = result.get("code", 0)
+          if code not in (0, "0", None):
+              raise SystemExit(f"Feishu webhook returned code={code}, msg={result.get('msg', '')}")
+
+          print("Feishu notification sent successfully.")
+          PY

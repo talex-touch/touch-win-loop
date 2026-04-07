@@ -2,6 +2,7 @@
 import type {
   ApiResponse,
   AuthMeResult,
+  CasdoorIntegrationConfig,
   FeishuIntegrationConfig,
   PlatformPermission,
 } from '~~/shared/types/domain'
@@ -27,8 +28,10 @@ const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
 const loadingPermissions = ref(true)
+const loadingCasdoorStatus = ref(false)
 const loadingFeishuStatus = ref(false)
 const permissions = ref<PlatformPermission[]>([])
+const casdoorEnabled = ref<boolean | null>(null)
 const feishuEnabled = ref<boolean | null>(null)
 
 const errorText = ref('')
@@ -37,17 +40,40 @@ const infoText = ref('')
 const canManageConfig = computed(() => permissions.value.includes('role.assign'))
 const canManageBitable = computed(() => permissions.value.includes('contest.write'))
 const canAccessPage = computed(() => canManageConfig.value || canManageBitable.value)
-const loadingAny = computed(() => loadingPermissions.value || loadingFeishuStatus.value)
+const loadingAny = computed(() => loadingPermissions.value || loadingFeishuStatus.value || loadingCasdoorStatus.value)
 const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
 const isDirectoryRoute = computed(() => normalizedPath.value === '/admin/integrations')
+
+function isCasdoorConfigReady(config: CasdoorIntegrationConfig): boolean {
+  return Boolean(
+    config.enabled
+    && config.issuer.trim()
+    && config.clientId.trim()
+    && config.clientSecretConfigured
+    && config.redirectUri.trim(),
+  )
+}
 
 const integrationCards = computed<IntegrationCard[]>(() => {
   const feishuStatus = feishuEnabled.value === null
     ? (canManageConfig.value ? '状态未知' : '可进入')
     : (feishuEnabled.value ? '已启用' : '未启用')
   const feishuTone = feishuEnabled.value ? 'text-emerald-600' : 'text-slate-500'
+  const casdoorStatus = casdoorEnabled.value === null
+    ? (canManageConfig.value ? '状态未知' : '可进入')
+    : (casdoorEnabled.value ? '已就绪' : '未完成')
+  const casdoorTone = casdoorEnabled.value ? 'text-emerald-600' : 'text-slate-500'
 
   return [
+    {
+      key: 'casdoor',
+      name: 'Casdoor',
+      summary: '统一登录、账号绑定、单点登录参数托管',
+      status: casdoorStatus,
+      tone: casdoorTone,
+      clickAction: 'navigate',
+      path: '/admin/integrations/casdoor',
+    },
     {
       key: 'feishu',
       name: '飞书',
@@ -123,12 +149,34 @@ async function loadFeishuStatus() {
   }
 }
 
+async function loadCasdoorStatus() {
+  if (!canManageConfig.value) {
+    casdoorEnabled.value = null
+    return
+  }
+
+  loadingCasdoorStatus.value = true
+  try {
+    const response = await $fetch<ApiResponse<CasdoorIntegrationConfig>>(endpoint('/admin/integrations/casdoor/config'))
+    casdoorEnabled.value = isCasdoorConfigReady(response.data)
+  }
+  catch {
+    casdoorEnabled.value = null
+  }
+  finally {
+    loadingCasdoorStatus.value = false
+  }
+}
+
 async function initializePage() {
   clearFeedback()
   await loadPermissions()
   if (!canAccessPage.value)
     return
-  await loadFeishuStatus()
+  await Promise.all([
+    loadCasdoorStatus(),
+    loadFeishuStatus(),
+  ])
 }
 
 async function openCard(card: IntegrationCard) {

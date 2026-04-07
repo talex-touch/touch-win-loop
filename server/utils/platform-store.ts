@@ -8,6 +8,7 @@ import type {
   ProjectCollegeBinding,
   ProjectContestAdaptation,
   ProjectContestBinding,
+  ProjectDisplayConfig,
   ProjectInvitationSummary,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
@@ -58,6 +59,7 @@ import {
   teamCreateWorkspace as createTeamWorkspaceImpl,
   teamListUserWorkspaces as listUserWorkspacesImpl,
 } from '~~/server/utils/team-workspace-store'
+import { normalizeProjectDisplayConfig } from '~~/shared/constants/project-display'
 
 const FULL_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin']
 const BASIC_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['manager', 'member']
@@ -133,6 +135,7 @@ interface ProjectRow {
   risks: string[]
   deliverables: string[]
   summary: string | null
+  metadata: Record<string, unknown> | null
   source: ProjectSource
   status: ProjectStatus
   created_at: string
@@ -182,6 +185,12 @@ interface CreateProjectInput extends ProjectPayload {
   advisorUserIds?: string[]
 }
 
+function normalizeProjectDisplayPatch(value: Partial<ProjectDisplayConfig> | null | undefined): ProjectDisplayConfig | null {
+  if (!value)
+    return null
+  return normalizeProjectDisplayConfig(value)
+}
+
 interface ProjectBindingPatch {
   collegeBindings?: ProjectCollegeBinding[]
   advisorUserIds?: string[]
@@ -192,6 +201,8 @@ interface ProjectBindingPatch {
 export interface ProjectSettingsCommonPatch {
   title?: string
   summary?: string
+  icon?: string
+  accentColor?: string
   problemStatement?: string
   innovationPoints?: string[]
   techRouteSteps?: string[]
@@ -331,6 +342,8 @@ function createEmptyProjectSettingsDraftPayload(): ProjectSettingsDraftPayload {
     common: {
       title: '',
       summary: '',
+      icon: '',
+      accentColor: '',
       problemStatement: '',
       innovationPointsText: '',
       techRouteStepsText: '',
@@ -473,6 +486,7 @@ function mapProject(
   projectSeatQuota?: ProjectSeatQuotaSummary | null,
 ): Project {
   const contestIds = normalizeProjectContestIds(row.contest_id, row.contest_ids)
+  const display = normalizeProjectDisplayConfig((row.metadata as Record<string, unknown> | null | undefined)?.display)
   return {
     id: row.id,
     teamId: row.workspace_id,
@@ -491,6 +505,7 @@ function mapProject(
     risks: normalizeStringArray(row.risks),
     deliverables: normalizeStringArray(row.deliverables),
     summary: row.summary || '',
+    display,
     source: row.source,
     status: row.status,
     collegeBindings,
@@ -1128,6 +1143,7 @@ async function loadProjectRowById(db: Queryable, projectId: string): Promise<Pro
       risks,
       deliverables,
       summary,
+      metadata,
       source,
       status,
       created_at::TEXT,
@@ -1614,6 +1630,10 @@ async function patchProjectCommonFields(
   projectId: string,
   patch: ProjectSettingsCommonPatch,
 ): Promise<void> {
+  const currentRow = await loadProjectRowById(db, projectId)
+  if (!currentRow)
+    return
+
   const values: unknown[] = [projectId]
   const sets: string[] = []
 
@@ -1638,6 +1658,22 @@ async function patchProjectCommonFields(
     addSet('risks', normalizeStringArray(patch.risks))
   if (patch.deliverables !== undefined)
     addSet('deliverables', normalizeStringArray(patch.deliverables))
+
+  if (patch.icon !== undefined || patch.accentColor !== undefined) {
+    const currentMetadata = currentRow.metadata && typeof currentRow.metadata === 'object' && !Array.isArray(currentRow.metadata)
+      ? { ...currentRow.metadata }
+      : {}
+    const currentDisplay = normalizeProjectDisplayConfig((currentMetadata as Record<string, unknown>).display)
+    const nextDisplay = normalizeProjectDisplayPatch({
+      icon: patch.icon !== undefined ? patch.icon as ProjectDisplayConfig['icon'] : currentDisplay?.icon,
+      accentColor: patch.accentColor !== undefined ? patch.accentColor as ProjectDisplayConfig['accentColor'] : currentDisplay?.accentColor,
+    })
+
+    addSet('metadata', JSON.stringify({
+      ...currentMetadata,
+      display: nextDisplay,
+    }))
+  }
 
   if (sets.length === 0)
     return
@@ -1806,6 +1842,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       risks,
       deliverables,
       summary,
+      metadata,
       source,
       status,
       created_at::TEXT,
@@ -1956,6 +1993,7 @@ export async function listVisibleProjects(
         risks,
         deliverables,
         summary,
+        metadata,
         source,
         status,
         created_at::TEXT,
@@ -1987,6 +2025,7 @@ export async function listVisibleProjects(
       p.risks,
       p.deliverables,
       p.summary,
+      p.metadata,
       p.source,
       p.status,
       p.created_at::TEXT,
@@ -2054,6 +2093,7 @@ export async function getVisibleProjectById(
         risks,
         deliverables,
         summary,
+        metadata,
         source,
         status,
         created_at::TEXT,
@@ -2086,6 +2126,7 @@ export async function getVisibleProjectById(
       p.risks,
       p.deliverables,
       p.summary,
+      p.metadata,
       p.source,
       p.status,
       p.created_at::TEXT,
@@ -2983,6 +3024,7 @@ export async function patchProjectBindings(
       risks,
       deliverables,
       summary,
+      metadata,
       source,
       status,
       created_at::TEXT,

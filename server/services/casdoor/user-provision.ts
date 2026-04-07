@@ -1,4 +1,4 @@
-import type { FeishuOAuthLoginProfile } from '~~/server/services/feishu/client'
+import type { CasdoorOAuthLoginProfile } from '~~/server/services/casdoor/client'
 import type { Queryable } from '~~/server/utils/db'
 import type { AuthUser } from '~~/shared/types/domain'
 import {
@@ -14,20 +14,21 @@ import {
 } from '~~/server/utils/platform-store'
 import { createSessionToken, hashPassword } from '~~/server/utils/security'
 
-function normalizeUsernameSeed(profile: FeishuOAuthLoginProfile): string {
-  const preferred = String(profile.enName || profile.name || '').trim()
+function normalizeUsernameSeed(profile: CasdoorOAuthLoginProfile): string {
+  const emailPrefix = String(profile.email || '').trim().split('@')[0] || ''
+  const preferred = String(profile.preferredUsername || emailPrefix || profile.name || '').trim()
   const normalized = preferred
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 20)
   if (normalized)
-    return `fs_${normalized}`
+    return `cd_${normalized}`
 
-  const unionTail = String(profile.unionId || '').replace(/[^a-z0-9]/gi, '').slice(-8).toLowerCase()
-  if (unionTail)
-    return `fs_${unionTail}`
-  return 'fs_user'
+  const subTail = String(profile.sub || '').replace(/[^a-z0-9]/gi, '').slice(-8).toLowerCase()
+  if (subTail)
+    return `cd_${subTail}`
+  return 'cd_user'
 }
 
 function buildErrorWithDetail(code: string, detail: string): Error {
@@ -37,7 +38,7 @@ function buildErrorWithDetail(code: string, detail: string): Error {
 }
 
 async function allocateUniqueUsername(db: Queryable, seed: string): Promise<string> {
-  const base = String(seed || 'fs_user').trim().slice(0, 30) || 'fs_user'
+  const base = String(seed || 'cd_user').trim().slice(0, 30) || 'cd_user'
   const safeBase = base.replace(/\s+/g, '_')
 
   for (let index = 0; index < 1000; index += 1) {
@@ -48,12 +49,12 @@ async function allocateUniqueUsername(db: Queryable, seed: string): Promise<stri
       return candidate
   }
 
-  return `fs_${createSessionToken().slice(0, 12)}`.toLowerCase()
+  return `cd_${createSessionToken().slice(0, 12)}`.toLowerCase()
 }
 
-export async function ensureLocalUserByFeishuProfile(
+export async function ensureLocalUserByCasdoorProfile(
   db: Queryable,
-  profile: FeishuOAuthLoginProfile,
+  profile: CasdoorOAuthLoginProfile,
   input: {
     preferredUserId?: string | null
     allowRegistration?: boolean
@@ -61,29 +62,28 @@ export async function ensureLocalUserByFeishuProfile(
 ): Promise<{ user: AuthUser, created: boolean }> {
   const preferredUserId = String(input.preferredUserId || '').trim()
   const allowRegistration = input.allowRegistration !== false
+
   const identity = await findAuthIdentityByProviderUserId(db, {
-    provider: 'feishu',
-    providerUserId: profile.unionId,
+    provider: 'casdoor',
+    providerUserId: profile.sub,
   })
 
   if (identity) {
     const existing = await findUserById(db, identity.user_id)
     if (existing) {
       if (preferredUserId && existing.id !== preferredUserId)
-        throw buildErrorWithDetail('FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER', existing.username)
+        throw buildErrorWithDetail('CASDOOR_IDENTITY_ALREADY_BOUND_OTHER_USER', existing.username)
 
       await upsertAuthIdentity(db, {
-        provider: 'feishu',
-        providerUserId: profile.unionId,
+        provider: 'casdoor',
+        providerUserId: profile.sub,
         userId: existing.id,
         profile: {
-          unionId: profile.unionId,
-          openId: profile.openId,
+          sub: profile.sub,
           name: profile.name,
-          enName: profile.enName,
-          avatarUrl: profile.avatarUrl,
+          preferredUsername: profile.preferredUsername,
           email: profile.email,
-          mobile: profile.mobile,
+          avatarUrl: profile.avatarUrl,
         },
       })
       return {
@@ -96,27 +96,25 @@ export async function ensureLocalUserByFeishuProfile(
   if (preferredUserId) {
     const preferredUser = await findUserById(db, preferredUserId)
     if (!preferredUser)
-      throw new Error('FEISHU_PREFERRED_USER_NOT_FOUND')
+      throw new Error('CASDOOR_PREFERRED_USER_NOT_FOUND')
 
-    const existingFeishuIdentity = await findAuthIdentityByProviderAndUserId(db, {
-      provider: 'feishu',
+    const existingCasdoorIdentity = await findAuthIdentityByProviderAndUserId(db, {
+      provider: 'casdoor',
       userId: preferredUser.id,
     })
-    if (existingFeishuIdentity && existingFeishuIdentity.provider_user_id !== profile.unionId)
-      throw buildErrorWithDetail('FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY', existingFeishuIdentity.provider_user_id)
+    if (existingCasdoorIdentity && existingCasdoorIdentity.provider_user_id !== profile.sub)
+      throw buildErrorWithDetail('CASDOOR_USER_ALREADY_BOUND_OTHER_IDENTITY', existingCasdoorIdentity.provider_user_id)
 
     await upsertAuthIdentity(db, {
-      provider: 'feishu',
-      providerUserId: profile.unionId,
+      provider: 'casdoor',
+      providerUserId: profile.sub,
       userId: preferredUser.id,
       profile: {
-        unionId: profile.unionId,
-        openId: profile.openId,
+        sub: profile.sub,
         name: profile.name,
-        enName: profile.enName,
-        avatarUrl: profile.avatarUrl,
+        preferredUsername: profile.preferredUsername,
         email: profile.email,
-        mobile: profile.mobile,
+        avatarUrl: profile.avatarUrl,
       },
     })
 
@@ -138,17 +136,15 @@ export async function ensureLocalUserByFeishuProfile(
   })
 
   await upsertAuthIdentity(db, {
-    provider: 'feishu',
-    providerUserId: profile.unionId,
+    provider: 'casdoor',
+    providerUserId: profile.sub,
     userId: createdUser.id,
     profile: {
-      unionId: profile.unionId,
-      openId: profile.openId,
+      sub: profile.sub,
       name: profile.name,
-      enName: profile.enName,
-      avatarUrl: profile.avatarUrl,
+      preferredUsername: profile.preferredUsername,
       email: profile.email,
-      mobile: profile.mobile,
+      avatarUrl: profile.avatarUrl,
     },
   })
 
