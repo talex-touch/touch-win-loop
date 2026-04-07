@@ -5,6 +5,7 @@ import type {
   FeishuAdminManualAddResult,
   FeishuAdminOverview,
   FeishuBitableSourceConfig,
+  FeishuBitableSyncEnvironment,
   FeishuBitableSync,
   FeishuBitableTableMeta,
   FeishuBitableViewMeta,
@@ -42,6 +43,7 @@ const savingConfig = ref(false)
 const adminOverviewLoading = ref(false)
 const creatingSync = ref(false)
 const manualAddingKey = ref('')
+const syncToggleMutating = reactive<Record<string, boolean>>({})
 const archivingSyncMutating = reactive<Record<string, boolean>>({})
 const restoringSyncMutating = reactive<Record<string, boolean>>({})
 
@@ -69,7 +71,7 @@ const syncColumns = [
   { title: '最近执行', dataIndex: 'latestRun', slotName: 'latestRun', width: 220 },
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 170 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 260 },
+  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 340 },
 ]
 
 const canManageConfig = computed(() => permissions.value.includes('role.assign'))
@@ -125,6 +127,7 @@ const configForm = reactive({
 
 const createSyncForm = reactive({
   name: '',
+  environment: 'test' as FeishuBitableSyncEnvironment,
   sourceInput: '',
   appName: '',
   appToken: '',
@@ -134,6 +137,11 @@ const createSyncForm = reactive({
   viewId: '',
   sourceUrl: '',
 })
+
+const SYNC_ENVIRONMENT_OPTIONS: Array<{ value: FeishuBitableSyncEnvironment, label: string, tagColor: string, namePrefix: string }> = [
+  { value: 'test', label: '测试环境', tagColor: 'gold', namePrefix: '[测试]' },
+  { value: 'production', label: '正式环境', tagColor: 'green', namePrefix: '[正式]' },
+]
 
 const sourceResolveLoading = ref(false)
 const sourceViewsLoading = ref(false)
@@ -233,7 +241,7 @@ function fillConfigForm(payload: FeishuIntegrationConfig) {
 function buildDefaultSyncName(): string {
   let maxIndex = 0
   for (const sync of syncs.value) {
-    const match = String(sync.name || '').trim().match(/^多维同步\s+(\d+)$/)
+    const match = String(sync.name || '').trim().match(/^(?:\[(?:测试|正式)\]\s*)?多维同步\s+(\d+)$/)
     if (!match)
       continue
     const index = Number(match[1] || 0)
@@ -241,6 +249,21 @@ function buildDefaultSyncName(): string {
       maxIndex = index
   }
   return `多维同步 ${maxIndex + 1}`
+}
+
+function syncEnvironmentLabel(environment?: FeishuBitableSyncEnvironment | null): string {
+  return SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === environment)?.label || '未标记'
+}
+
+function syncEnvironmentTagColor(environment?: FeishuBitableSyncEnvironment | null): string {
+  return SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === environment)?.tagColor || 'gray'
+}
+
+function buildSuggestedCreateSyncName(): string {
+  const environment = createSyncForm.environment
+  const prefix = SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === environment)?.namePrefix || ''
+  const baseName = createSyncForm.appName.trim() || buildDefaultSyncName()
+  return prefix ? `${prefix} ${baseName}` : baseName
 }
 
 function buildCreateSourceConfig(): FeishuBitableSourceConfig {
@@ -252,11 +275,13 @@ function buildCreateSourceConfig(): FeishuBitableSourceConfig {
     tableName: String(createSyncForm.tableName || '').trim(),
     viewName: String(createSyncForm.viewName || '').trim(),
     sourceUrl: String(createSyncForm.sourceUrl || '').trim(),
+    environment: createSyncForm.environment,
   }
 }
 
 function resetCreateSyncForm() {
-  createSyncForm.name = buildDefaultSyncName()
+  createSyncForm.name = ''
+  createSyncForm.environment = 'test'
   createSyncForm.sourceInput = ''
   createSyncForm.appName = ''
   createSyncForm.appToken = ''
@@ -541,7 +566,7 @@ async function createSync() {
   clearFeedback()
   const resolvedSource = buildCreateSourceConfig()
   const appToken = resolvedSource.appToken.trim()
-  const name = createSyncForm.name.trim() || createSyncForm.appName.trim() || buildDefaultSyncName()
+  const name = createSyncForm.name.trim() || buildSuggestedCreateSyncName()
   if (!appToken) {
     setError('新增同步信息时，主库 appToken 为必填。')
     return
@@ -581,6 +606,34 @@ async function createSync() {
 
 async function refreshSyncList() {
   await loadSyncs()
+}
+
+async function toggleSyncEnabled(sync: FeishuBitableSync, enabled: boolean) {
+  if (!canManageBitable.value || sync.archivedAt)
+    return
+
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  syncToggleMutating[syncId] = true
+  clearFeedback()
+  try {
+    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}`), {
+      method: 'PATCH',
+      body: {
+        enabled,
+      },
+    })
+    await loadSyncs()
+    setSuccess(`同步信息“${sync.name || syncId}”已${enabled ? '启用' : '禁用'}。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || `同步信息${enabled ? '启用' : '禁用'}失败。`))
+  }
+  finally {
+    syncToggleMutating[syncId] = false
+  }
 }
 
 async function archiveSync(sync: FeishuBitableSync) {
@@ -845,6 +898,12 @@ onMounted(initializePage)
                   <p class="text-[11px] text-slate-900 font-semibold m-0 truncate">
                     {{ record.name }}
                   </p>
+                  <a-tag v-if="record.source?.environment" :color="syncEnvironmentTagColor(record.source.environment)" size="small">
+                    {{ syncEnvironmentLabel(record.source.environment) }}
+                  </a-tag>
+                  <a-tag v-if="!record.enabled && !record.archivedAt" color="gold" size="small">
+                    已禁用
+                  </a-tag>
                   <a-tag v-if="record.archivedAt" color="gray" size="small">
                     已归档
                   </a-tag>
@@ -862,6 +921,9 @@ onMounted(initializePage)
               <p class="text-[10px] text-slate-600 font-mono m-0">
                 {{ record.source?.appName || record.source?.appToken }}
               </p>
+              <p class="text-[10px] text-slate-500 m-0 mt-1">
+                环境：{{ syncEnvironmentLabel(record.source?.environment) }}
+              </p>
               <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
                 {{ record.source?.appToken || '-' }}
               </p>
@@ -873,7 +935,7 @@ onMounted(initializePage)
                   {{ record.itemCount }} 个子表项
                 </a-tag>
                 <p class="text-[10px] text-slate-500 m-0">
-                  已启用 {{ record.enabledItemCount }}
+                  {{ record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用' }}
                 </p>
               </div>
             </template>
@@ -911,10 +973,21 @@ onMounted(initializePage)
                 <a-button
                   size="mini"
                   type="primary"
-                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
+                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
                   @click="openEditSyncDrawer(record.id, { includeArchived: Boolean(record.archivedAt) })"
                 >
                   {{ record.archivedAt ? '查看同步信息' : '编辑同步信息' }}
+                </a-button>
+                <a-button
+                  v-if="!record.archivedAt"
+                  size="mini"
+                  :type="record.enabled ? 'outline' : 'primary'"
+                  :status="record.enabled ? 'warning' : 'success'"
+                  :loading="syncToggleMutating[record.id]"
+                  :disabled="archivingSyncMutating[record.id] || restoringSyncMutating[record.id]"
+                  @click="toggleSyncEnabled(record, !record.enabled)"
+                >
+                  {{ record.enabled ? '禁用' : '启用' }}
                 </a-button>
                 <a-popconfirm
                   v-if="!record.archivedAt"
@@ -926,7 +999,7 @@ onMounted(initializePage)
                     size="mini"
                     status="danger"
                     :loading="archivingSyncMutating[record.id]"
-                    :disabled="restoringSyncMutating[record.id]"
+                    :disabled="restoringSyncMutating[record.id] || syncToggleMutating[record.id]"
                   >
                     归档
                   </a-button>
@@ -940,7 +1013,7 @@ onMounted(initializePage)
                   <a-button
                     size="mini"
                     :loading="restoringSyncMutating[record.id]"
-                    :disabled="archivingSyncMutating[record.id]"
+                    :disabled="archivingSyncMutating[record.id] || syncToggleMutating[record.id]"
                   >
                     恢复归档
                   </a-button>
@@ -1282,10 +1355,24 @@ onMounted(initializePage)
           </p>
         </div>
 
-        <div class="gap-3 grid md:grid-cols-1">
+        <div class="gap-3 grid md:grid-cols-2">
           <label class="text-[10px] text-slate-600 font-medium block">
             同步信息名称
             <a-input v-model="createSyncForm.name" class="mt-1" allow-clear size="small" placeholder="留空时优先使用主库名称，否则自动生成多维同步 N" />
+            <p class="text-[10px] text-slate-500 m-0 mt-1">
+              推荐命名：{{ buildSuggestedCreateSyncName() }}
+            </p>
+          </label>
+          <label class="text-[10px] text-slate-600 font-medium block">
+            运行环境标签
+            <a-select v-model="createSyncForm.environment" class="mt-1" size="small">
+              <a-option v-for="item in SYNC_ENVIRONMENT_OPTIONS" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </a-option>
+            </a-select>
+            <p class="text-[10px] text-slate-500 m-0 mt-1">
+              会用于列表标签、高亮提示，以及默认命名建议，避免测试库和正式库混淆。
+            </p>
           </label>
         </div>
 
@@ -1422,6 +1509,9 @@ onMounted(initializePage)
           </p>
           <p class="text-[10px] text-slate-500 m-0 break-all">
             appToken={{ createSyncForm.appToken || '-' }}
+          </p>
+          <p class="text-[10px] text-slate-500 m-0">
+            environment={{ syncEnvironmentLabel(createSyncForm.environment) }}
           </p>
           <p class="text-[10px] text-slate-500 m-0 break-all">
             draftTableId={{ createSyncForm.tableId || '-' }} / draftViewId={{ createSyncForm.viewId || '-' }}

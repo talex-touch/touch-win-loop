@@ -3,6 +3,7 @@ import type {
   ApiResponse,
   FeishuBitableSync,
   FeishuBitableSyncDetail,
+  FeishuBitableSyncEnvironment,
   FeishuBitableSyncItem,
   FeishuBitableSyncItemDetail,
   FeishuBitableSyncItemEntityType,
@@ -167,6 +168,12 @@ const SCHEDULE_MODE_OPTIONS: SelectOption<FeishuTaskScheduleMode>[] = [
   { value: 'cron', label: 'Cron 表达式' },
 ]
 
+const SYNC_ENVIRONMENT_OPTIONS: Array<SelectOption<string> & { tagColor: string }> = [
+  { value: '', label: '未标记', tagColor: 'gray' },
+  { value: 'test', label: '测试环境', tagColor: 'gold' },
+  { value: 'production', label: '正式环境', tagColor: 'green' },
+]
+
 const RESOURCE_VISIBILITY_OPTIONS = [
   { value: 'internal', label: '内部' },
   { value: 'public', label: '公开' },
@@ -226,6 +233,7 @@ const loadingTables = ref(false)
 const loadingViews = ref(false)
 const loadingFieldInspection = ref(false)
 const creatingItem = ref(false)
+const itemToggleMutating = reactive<Record<string, boolean>>({})
 const addItemDrawerVisible = ref(false)
 const itemDrawerVisible = ref(false)
 const mappingDrawerVisible = ref(false)
@@ -250,6 +258,8 @@ const activeItemId = ref('')
 
 const syncForm = reactive({
   name: '',
+  enabled: true,
+  environment: '' as '' | FeishuBitableSyncEnvironment,
 })
 
 const itemForm = reactive({
@@ -308,6 +318,8 @@ const normalizedSelectedItemId = computed(() => toText(props.selectedItemId))
 const normalizedDraftTableId = computed(() => toText(props.draftTableId))
 const normalizedDraftViewId = computed(() => toText(props.draftViewId))
 const archivedReadonly = computed(() => Boolean(props.includeArchived || syncDetail.value?.archivedAt))
+const syncExecutionDisabled = computed(() => Boolean(syncDetail.value) && !Boolean(syncDetail.value?.enabled))
+const currentItemRunDisabled = computed(() => archivedReadonly.value || syncExecutionDisabled.value || !currentItem.value?.isEnabled)
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
 const syncItems = computed(() => syncDetail.value?.items || [])
 const activeOptionFieldGroups = computed(() => optionFieldGroups(itemForm.entityType))
@@ -331,6 +343,8 @@ const mappingFocusFieldLabels = computed(() => previewFocusFields(itemForm.entit
 const selectedWritebackFieldCount = computed(() => WRITEBACK_FIELD_CONFIGS.filter(field => Boolean(toText(writebackForm[field.key]))).length)
 const writebackSelectableFieldCount = computed(() => fieldInspection.value.filter(field => Boolean(toText(field.fieldName))).length)
 const writebackStatusLabel = computed(() => writebackForm.enabled ? '已启用回填' : '未启用回填')
+const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
+const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
 const unexpectedConfiguredMappingLabels = computed(() => {
   const parsed = pickMappingFromRaw(parseJsonTextLoose(itemForm.mappingText))
   const supportedKeys = new Set(activeMappingOptions.value.map(item => item.key))
@@ -844,6 +858,10 @@ async function loadSyncDetail() {
     const response = await $fetch<ApiResponse<FeishuBitableSyncDetail>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}?${query.toString()}`))
     syncDetail.value = response.data
     syncForm.name = response.data.name || ''
+    syncForm.enabled = Boolean(response.data.enabled)
+    syncForm.environment = response.data.source.environment === 'production' || response.data.source.environment === 'test'
+      ? response.data.source.environment
+      : ''
     itemForm.appToken = response.data.source.appToken || ''
     itemForm.appName = response.data.source.appName || ''
     await loadTables()
@@ -1347,9 +1365,38 @@ async function saveCurrentItem() {
   }
 }
 
+async function toggleItemEnabled(item: FeishuBitableSyncItem, enabled: boolean) {
+  if (archivedReadonly.value) {
+    setError('当前同步信息已归档，只允许查看，不允许修改子表同步项。')
+    return
+  }
+  if (!normalizedSyncId.value || !item.id)
+    return
+
+  itemToggleMutating[item.id] = true
+  clearFeedback()
+  try {
+    await $fetch(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(item.id)}`), {
+      method: 'PATCH',
+      body: {
+        isEnabled: enabled,
+      },
+    })
+    await loadSyncDetail()
+    emit('updated')
+    setSuccess(`子表同步项已${enabled ? '启用' : '禁用'}。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || `子表同步项${enabled ? '启用' : '禁用'}失败。`))
+  }
+  finally {
+    itemToggleMutating[item.id] = false
+  }
+}
+
 async function saveSyncInfo() {
   if (archivedReadonly.value) {
-    setError('当前同步信息已归档，只允许查看，不允许修改名称。')
+    setError('当前同步信息已归档，只允许查看，不允许修改同步信息。')
     return
   }
   if (!normalizedSyncId.value)
@@ -1368,12 +1415,30 @@ async function saveSyncInfo() {
       method: 'PATCH',
       body: {
         name,
+        enabled: syncForm.enabled,
+        source: syncDetail.value
+          ? {
+              ...syncDetail.value.source,
+              environment: syncForm.environment === 'production' || syncForm.environment === 'test'
+                ? syncForm.environment
+                : undefined,
+            }
+          : undefined,
       },
     })
-    const nextName = String(response.data?.name || name).trim()
-    if (syncDetail.value)
-      syncDetail.value = { ...syncDetail.value, name: nextName }
+    const nextSync = response.data
+    const nextName = String(nextSync?.name || name).trim()
+    if (syncDetail.value && nextSync) {
+      syncDetail.value = {
+        ...syncDetail.value,
+        ...nextSync,
+      }
+    }
     syncForm.name = nextName
+    syncForm.enabled = Boolean(nextSync?.enabled)
+    syncForm.environment = nextSync?.source.environment === 'production' || nextSync?.source.environment === 'test'
+      ? nextSync.source.environment
+      : ''
     emit('updated')
     setSuccess('同步信息已更新。')
   }
@@ -1624,6 +1689,12 @@ watch(() => props.selectedItemId, (value) => {
           <a-tag color="arcoblue" size="small">
             多维主库
           </a-tag>
+          <a-tag :color="syncEnvironmentTagColor" size="small">
+            {{ syncEnvironmentLabel }}
+          </a-tag>
+          <a-tag v-if="syncDetail && !syncDetail.enabled" color="gold" size="small">
+            已禁用
+          </a-tag>
           <a-tag v-if="syncDetail?.archivedAt" color="gray" size="small">
             已归档
           </a-tag>
@@ -1654,16 +1725,31 @@ watch(() => props.selectedItemId, (value) => {
     <a-alert v-if="archivedReadonly" type="warning" :show-icon="true">
       当前同步信息已归档，仅支持查看历史配置与运行结果；新增、预检、执行和保存操作已禁用。
     </a-alert>
+    <a-alert v-else-if="syncExecutionDisabled" type="warning" :show-icon="true">
+      当前主同步信息已禁用。你仍然可以编辑配置并执行预检，但事件同步、定时调度和手动执行都会被阻断，适合用于测试库和正式库之间切换。
+    </a-alert>
 
     <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
       <div class="flex flex-wrap gap-3 items-end justify-between">
-        <div class="gap-3 grid items-end md:grid-cols-[minmax(220px,320px),auto]">
+        <div class="gap-3 grid items-end md:grid-cols-[minmax(220px,320px),160px,140px,auto]">
           <label class="text-[11px] text-slate-600 font-medium block">
             同步信息名称
             <a-input v-model="syncForm.name" class="mt-1" size="small" allow-clear :disabled="archivedReadonly" placeholder="输入主库同步信息名称" />
           </label>
+          <label class="text-[11px] text-slate-600 font-medium block">
+            运行环境
+            <a-select v-model="syncForm.environment" class="mt-1" size="small" :disabled="archivedReadonly">
+              <a-option v-for="item in SYNC_ENVIRONMENT_OPTIONS" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </a-option>
+            </a-select>
+          </label>
+          <label class="text-[11px] text-slate-600 font-medium flex gap-2 items-center">
+            <span>启用主同步</span>
+            <a-switch v-model="syncForm.enabled" :disabled="archivedReadonly" />
+          </label>
           <a-button size="small" type="primary" :loading="savingSync" :disabled="archivedReadonly" @click="saveSyncInfo">
-            保存名称
+            保存同步信息
           </a-button>
         </div>
         <div class="text-[11px] text-slate-500">
@@ -1674,13 +1760,29 @@ watch(() => props.selectedItemId, (value) => {
         </div>
       </div>
 
-      <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
+      <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-6">
         <div class="p-3 border border-slate-200 rounded bg-slate-50">
           <p class="text-[10px] text-slate-500 m-0">
             主库名称
           </p>
           <p class="text-[11px] text-slate-900 font-medium m-0 mt-1 break-all">
             {{ syncDetail?.source.appName || '-' }}
+          </p>
+        </div>
+        <div class="p-3 border border-slate-200 rounded bg-slate-50">
+          <p class="text-[10px] text-slate-500 m-0">
+            主同步状态
+          </p>
+          <p class="text-[11px] text-slate-900 font-medium m-0 mt-1">
+            {{ syncDetail?.enabled ? '已启用' : '已禁用' }}
+          </p>
+        </div>
+        <div class="p-3 border border-slate-200 rounded bg-slate-50">
+          <p class="text-[10px] text-slate-500 m-0">
+            运行环境
+          </p>
+          <p class="text-[11px] text-slate-900 font-medium m-0 mt-1">
+            {{ syncEnvironmentLabel }}
           </p>
         </div>
         <div class="p-3 border border-slate-200 rounded bg-slate-50">
@@ -1767,6 +1869,9 @@ watch(() => props.selectedItemId, (value) => {
                   <a-tag size="small" :color="item.isEnabled ? 'green' : 'gray'">
                     {{ item.isEnabled ? '已启用' : '未启用' }}
                   </a-tag>
+                  <a-tag v-if="syncDetail && !syncDetail.enabled" size="small" color="gold">
+                    主同步已禁用
+                  </a-tag>
                   <a-tag size="small" color="arcoblue">
                     {{ entityTypeLabel(item.entityType) }}
                   </a-tag>
@@ -1778,14 +1883,27 @@ watch(() => props.selectedItemId, (value) => {
                   tableId={{ item.tableId || '-' }} / viewId={{ item.viewId || '-' }}
                 </p>
               </div>
-              <div class="text-[11px] text-slate-500 gap-2 grid justify-items-end">
-                <a-tag size="small" :color="runStatusColor(item.latestRunSummary?.status)">
-                  {{ item.latestRunSummary ? runStatusLabel(item.latestRunSummary.status) : '未执行' }}
-                </a-tag>
-                <span>最近：{{ latestRunSummaryText(item.latestRunSummary) }}</span>
-                <span v-if="(item.latestRunSummary?.errorCount || 0) > 0">最近错误数：{{ item.latestRunSummary?.errorCount || 0 }}</span>
-                <span v-if="item.scheduleRuntime?.lastError">上次调度错误：{{ item.scheduleRuntime.lastError }}</span>
-                <span v-else>调度错误：无</span>
+              <div class="gap-2 grid justify-items-end">
+                <label class="text-[11px] text-slate-500 flex gap-2 items-center" @click.stop>
+                  <span>启用</span>
+                  <a-switch
+                    :model-value="item.isEnabled"
+                    size="small"
+                    :loading="itemToggleMutating[item.id]"
+                    :disabled="archivedReadonly"
+                    @click.stop
+                    @change="(value) => toggleItemEnabled(item, Boolean(value))"
+                  />
+                </label>
+                <div class="text-[11px] text-slate-500 gap-2 grid justify-items-end">
+                  <a-tag size="small" :color="runStatusColor(item.latestRunSummary?.status)">
+                    {{ item.latestRunSummary ? runStatusLabel(item.latestRunSummary.status) : '未执行' }}
+                  </a-tag>
+                  <span>最近：{{ latestRunSummaryText(item.latestRunSummary) }}</span>
+                  <span v-if="(item.latestRunSummary?.errorCount || 0) > 0">最近错误数：{{ item.latestRunSummary?.errorCount || 0 }}</span>
+                  <span v-if="item.scheduleRuntime?.lastError">上次调度错误：{{ item.scheduleRuntime.lastError }}</span>
+                  <span v-else>调度错误：无</span>
+                </div>
               </div>
             </div>
           </button>
@@ -1855,7 +1973,7 @@ watch(() => props.selectedItemId, (value) => {
                   <a-button size="small" :loading="previewingItem" :disabled="archivedReadonly" @click="previewCurrentItem">
                     预检
                   </a-button>
-                  <a-button size="small" type="primary" :loading="runningItem" :disabled="archivedReadonly" @click="runCurrentItem">
+                  <a-button size="small" type="primary" :loading="runningItem" :disabled="currentItemRunDisabled" @click="runCurrentItem">
                     手动执行
                   </a-button>
                   <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
