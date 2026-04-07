@@ -1212,6 +1212,43 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'billing_plans'
+      AND column_name = 'is_active'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'billing_plans'
+      AND column_name = 'is_enabled'
+  ) THEN
+    ALTER TABLE billing_plans
+      RENAME COLUMN is_active TO is_enabled;
+  END IF;
+END $$;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'billing_plans'
+      AND column_name = 'is_active'
+  ) THEN
+    UPDATE billing_plans
+    SET is_enabled = is_active;
+
+    ALTER TABLE billing_plans
+      DROP COLUMN is_active;
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS workspace_billing (
   workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   plan_id TEXT REFERENCES billing_plans(id) ON DELETE SET NULL,
