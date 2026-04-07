@@ -2176,7 +2176,7 @@ export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
         project_seat_price_cents,
         min_charged_project_seats,
         charge_all_project_seats,
-        is_active,
+        is_enabled,
         created_at,
         updated_at
       ) VALUES (
@@ -2201,7 +2201,7 @@ export async function ensureDefaultBillingPlans(db: Queryable): Promise<void> {
         project_seat_price_cents = EXCLUDED.project_seat_price_cents,
         min_charged_project_seats = EXCLUDED.min_charged_project_seats,
         charge_all_project_seats = EXCLUDED.charge_all_project_seats,
-        is_active = EXCLUDED.is_active,
+        is_enabled = EXCLUDED.is_enabled,
         updated_at = EXCLUDED.updated_at`,
       [
         plan.id,
@@ -4912,12 +4912,12 @@ export async function listBillingPlans(db: Queryable, includeInactive = true): P
       project_seat_price_cents,
       min_charged_project_seats,
       charge_all_project_seats,
-      is_active,
+      is_enabled AS is_active,
       created_at::TEXT,
       updated_at::TEXT
      FROM billing_plans
-     WHERE ($1::BOOLEAN = TRUE OR is_active = TRUE)
-     ORDER BY is_active DESC, created_at ASC`,
+     WHERE ($1::BOOLEAN = TRUE OR is_enabled = TRUE)
+     ORDER BY is_enabled DESC, created_at ASC`,
     [includeInactive],
   )
 
@@ -4964,7 +4964,7 @@ export async function createBillingPlan(
       project_seat_price_cents,
       min_charged_project_seats,
       charge_all_project_seats,
-      is_active,
+      is_enabled,
       created_at,
       updated_at
     ) VALUES (
@@ -5012,7 +5012,7 @@ export async function createBillingPlan(
       project_seat_price_cents,
       min_charged_project_seats,
       charge_all_project_seats,
-      is_active,
+      is_enabled AS is_active,
       created_at::TEXT,
       updated_at::TEXT
      FROM billing_plans
@@ -5084,7 +5084,7 @@ export async function patchBillingPlan(
   if (input.patch.chargeAllProjectSeats !== undefined)
     addSet('charge_all_project_seats', input.patch.chargeAllProjectSeats)
   if (input.patch.isActive !== undefined)
-    addSet('is_active', input.patch.isActive)
+    addSet('is_enabled', input.patch.isActive)
 
   if (sets.length === 0)
     return null
@@ -5115,7 +5115,7 @@ export async function patchBillingPlan(
       project_seat_price_cents,
       min_charged_project_seats,
       charge_all_project_seats,
-      is_active,
+      is_enabled AS is_active,
       created_at::TEXT,
       updated_at::TEXT
      FROM billing_plans
@@ -5179,7 +5179,7 @@ async function resolveWorkspacePlan(
         project_seat_price_cents,
         min_charged_project_seats,
         charge_all_project_seats,
-        is_active,
+        is_enabled AS is_active,
         created_at::TEXT,
         updated_at::TEXT
        FROM billing_plans
@@ -5211,11 +5211,11 @@ async function resolveWorkspacePlan(
       project_seat_price_cents,
       min_charged_project_seats,
       charge_all_project_seats,
-      is_active,
+      is_enabled AS is_active,
       created_at::TEXT,
       updated_at::TEXT
      FROM billing_plans
-     WHERE is_active = TRUE
+     WHERE is_enabled = TRUE
        AND plan_tier = $1
      ORDER BY created_at ASC
      LIMIT 1`,
@@ -5241,11 +5241,11 @@ async function resolveWorkspacePlan(
           project_seat_price_cents,
           min_charged_project_seats,
           charge_all_project_seats,
-          is_active,
+          is_enabled AS is_active,
           created_at::TEXT,
           updated_at::TEXT
          FROM billing_plans
-         WHERE is_active = TRUE
+         WHERE is_enabled = TRUE
          ORDER BY created_at ASC
          LIMIT 1`,
       )
