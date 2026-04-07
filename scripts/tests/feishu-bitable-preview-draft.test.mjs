@@ -3,6 +3,18 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 
+function sliceBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker)
+  if (start < 0)
+    return ''
+
+  const end = source.indexOf(endMarker, start + startMarker.length)
+  if (end < 0)
+    return source.slice(start)
+
+  return source.slice(start, end)
+}
+
 it('同步项编辑器会把当前草稿配置作为预检请求体提交', async () => {
   const componentSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
 
@@ -29,10 +41,10 @@ it('竞赛库映射会收敛到实际需要的字段并同步收窄默认模板�
   const componentSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
   const configSource = await readFile(resolve(process.cwd(), 'shared/utils/feishu-bitable-sync-config.ts'), 'utf8')
   const serviceSource = await readFile(resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts'), 'utf8')
-  const contestMappingBlock = componentSource.match(/contest:\s*\[[\s\S]*?\n\s*\],\n\s*track:/)?.[0] || ''
-  const mappingAliasBlock = componentSource.match(/const MAPPING_GUESS_ALIASES: Record<string, string\[]> = \{[\s\S]*?\n\}/)?.[0] || ''
-  const previewFocusBlock = componentSource.match(/function previewFocusFields\(entityType: FeishuBitableSyncItemEntityType\): string\[] \{[\s\S]*?\n\}/)?.[0] || ''
-  const contestDefaultConfigBlock = configSource.match(/if \(entityType === 'contest'\) \{[\s\S]*?\n\s*\}\n\n\s*if \(entityType === 'track'\)/)?.[0] || ''
+  const contestMappingBlock = sliceBetween(componentSource, 'contest: [', '\n  track: [')
+  const mappingAliasBlock = sliceBetween(componentSource, 'const MAPPING_GUESS_ALIASES: Record<string, string[]> = {', '\n\nconst ENTITY_TYPE_OPTIONS:')
+  const previewFocusBlock = sliceBetween(componentSource, 'function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string[] {', '\n\nfunction isRequiredMappingField(')
+  const contestDefaultConfigBlock = sliceBetween(configSource, 'if (entityType === \'contest\') {', '\n\n  if (entityType === \'track\') {')
 
   assert.ok(contestMappingBlock, '未找到竞赛映射字段定义')
   assert.ok(mappingAliasBlock, '未找到映射字段猜测定义')
