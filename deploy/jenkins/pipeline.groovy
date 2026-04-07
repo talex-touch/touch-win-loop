@@ -14,11 +14,21 @@ String sanitizePathComponent(String raw) {
   return String.valueOf(raw).replaceAll(/[^A-Za-z0-9_.-]+/, '-')
 }
 
+String normalizeCredentialsId(String raw, Map aliases = [:]) {
+  String value = String.valueOf(raw).trim()
+  return String.valueOf(aliases.getOrDefault(value, value)).trim()
+}
+
 void runPipeline(script, Map config = [:]) {
   String deployEnvironment = String.valueOf(config.deployEnvironment ?: '').trim()
   String expectedBranch = String.valueOf(config.expectedBranch ?: '').trim()
   String expectedRepository = String.valueOf(config.expectedRepository ?: 'talex-touch/touch-win-loop').trim()
-  String ghcrCredentialsId = String.valueOf(config.ghcrCredentialsId ?: '40a0292f-ea02-4882-8d0e-659efe25861b').trim()
+  String ghcrCredentialsId = normalizeCredentialsId(
+    config.ghcrCredentialsId ?: '40a0292f-ea02-4882-8d0e-659efe25861b',
+    [
+      'ghcr-readonly': '40a0292f-ea02-4882-8d0e-659efe25861b',
+    ],
+  )
   String sshCredentialsId = String.valueOf(config.sshCredentialsId ?: '').trim()
   String sshTarget = String.valueOf(config.sshTarget ?: '').trim()
   String remoteWorkspaceRoot = String.valueOf(config.remoteWorkspaceRoot ?: '/tmp/touch-win-loop-jenkins').trim()
