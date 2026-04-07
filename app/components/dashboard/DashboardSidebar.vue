@@ -159,9 +159,10 @@ function onWorkspaceCreated(workspace: WorkspaceWithQuota) {
           </p>
         </div>
         <button
+          type="button"
           class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
           title="个人设置"
-          @click="openProfileDialog"
+          @click.stop="openProfileDialog"
         >
           <span class="material-symbols-outlined text-[20px]">settings</span>
         </button>

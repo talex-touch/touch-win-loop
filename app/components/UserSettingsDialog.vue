@@ -9,6 +9,7 @@ import type {
   FeishuAuthUnbindResult,
   FeishuIntegrationConfig,
   InvitationWithToken,
+  WorkspaceAiUsageHistory,
   WorkspaceBillingEstimate,
   WorkspaceMemberManagementSnapshot,
   WorkspaceMemberRole,
@@ -18,6 +19,7 @@ import type {
 import { formatDateTime, formatWorkspaceTypeLabel } from '~/composables/team-ui'
 
 type UserSettingsTabId = 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
+type EditableWorkspaceRole = 'admin' | 'manager' | 'member'
 
 const props = withDefaults(defineProps<{
   visible?: boolean
@@ -64,11 +66,21 @@ const casdoorBindRedirecting = ref(false)
 const casdoorBindError = ref('')
 const casdoorBindStatus = ref<CasdoorAuthBindStatus | null>(null)
 const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
+const aiUsage = ref<WorkspaceAiUsageHistory | null>(null)
+const aiUsageLoading = ref(false)
+const aiUsageError = ref('')
+const aiUsagePage = ref(1)
 const workspaceMembers = ref<WorkspaceMemberSummary[]>([])
 const workspaceInvitations = ref<WorkspaceMemberManagementSnapshot['invitations']>([])
 const workspaceMemberLoading = ref(false)
 const workspaceMemberError = ref('')
+const workspaceMemberActionError = ref('')
+const workspaceMemberActionSuccess = ref('')
+const workspaceMemberRoleDrafts = ref<Record<string, EditableWorkspaceRole>>({})
+const workspaceMemberRoleSubmittingUserId = ref('')
+const workspaceInvitationDialogVisible = ref(false)
 const workspaceInvitationSubmitting = ref(false)
+const workspaceInvitationRevokingId = ref('')
 const workspaceInvitationError = ref('')
 const workspaceInvitationSuccess = ref('')
 const workspaceInvitationLink = ref('')
@@ -84,6 +96,8 @@ let workspaceCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 let workspaceInvitationCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 let workspaceBillingEstimateSeq = 0
 let workspaceMemberSnapshotSeq = 0
+let workspaceAiUsageSeq = 0
+let suppressTabRefresh = false
 
 const defaultTabMeta: { id: UserSettingsTabId, label: string, icon: string, description: string } = {
   id: 'overview',
@@ -124,7 +138,7 @@ const currentWorkspace = computed(() => {
 })
 
 const currentWorkspaceQuota = computed(() => currentWorkspace.value?.quota || null)
-const hasWorkspaceUsageMetrics = computed(() => Boolean(currentWorkspaceQuota.value || workspaceBillingEstimate.value))
+const hasWorkspaceUsageMetrics = computed(() => Boolean(currentWorkspaceQuota.value || workspaceBillingEstimate.value || aiUsage.value))
 const isPersonalWorkspace = computed(() => currentWorkspace.value?.workspace.type === 'personal')
 const currentWorkspaceId = computed(() => String(currentWorkspace.value?.workspace.id || '').trim())
 
@@ -145,11 +159,46 @@ function formatWorkspaceRoleLabel(role: WorkspaceMemberRole | ''): string {
   return '未分配'
 }
 
+function normalizeEditableRole(role: WorkspaceMemberRole | ''): EditableWorkspaceRole {
+  if (role === 'admin')
+    return 'admin'
+  if (role === 'manager')
+    return 'manager'
+  return 'member'
+}
+
 function resolveInitial(value: string | null | undefined): string {
   const normalized = String(value || '').trim()
   if (!normalized)
     return 'U'
   return normalized.slice(0, 1).toUpperCase()
+}
+
+function formatResetCycleLabel(cycle: string | null | undefined): string {
+  if (cycle === 'quarterly')
+    return '每季度'
+  if (cycle === 'yearly')
+    return '每年'
+  return '每月'
+}
+
+function formatAiRouteLabel(routeValue: string | null | undefined): string {
+  const normalized = String(routeValue || '').trim()
+  const routeLabelMap: Record<string, string> = {
+    '/api/ai/project-chat': '项目对话',
+    '/api/ai/workspace/stream': '工作空间助手',
+    '/api/ai/topic-proposal': '选题生成',
+    '/api/ai/contest-filter': '赛事筛选',
+    '/api/ai/defense/stream': '答辩助手',
+    '/api/admin/ai/stream': '后台 AI 流式助手',
+    '/api/admin/ai/run': '后台 AI 任务',
+  }
+
+  if (routeLabelMap[normalized])
+    return routeLabelMap[normalized]
+
+  const segments = normalized.split('/').filter(Boolean)
+  return segments[segments.length - 1] || '未知来源'
 }
 
 const workspacePrimaryRole = computed<WorkspaceMemberRole | ''>(() => resolvePrimaryRole(currentWorkspace.value?.workspace.roles))
@@ -161,74 +210,72 @@ const workspaceProjectSeatLimit = computed(() => {
   return 15
 })
 
-const seatRemaining = computed(() => {
+const seatCapacity = computed(() => {
   const quota = currentWorkspaceQuota.value
   if (quota)
-    return Math.max(0, Math.max(quota.seatLimit, quota.seatUsed) - quota.seatUsed)
+    return Math.max(quota.seatLimit, quota.seatUsed)
 
   const estimate = workspaceBillingEstimate.value
-  if (!estimate)
-    return null
-  return Math.max(0, Math.max(estimate.includedSeats, estimate.seatUsed) - estimate.seatUsed)
+  if (estimate)
+    return Math.max(estimate.includedSeats, estimate.seatUsed)
+
+  return 0
 })
 
-const aiRemaining = computed(() => {
-  const quota = currentWorkspaceQuota.value
-  if (quota)
-    return Math.max(0, Math.max(quota.aiQuotaTotal, quota.aiQuotaUsed) - quota.aiQuotaUsed)
-
-  const estimate = workspaceBillingEstimate.value
-  if (!estimate)
-    return null
-  return Math.max(0, Math.max(estimate.aiQuotaTotal, estimate.includedAiQuota) - 0)
+const seatRemaining = computed(() => {
+  const seatUsed = currentWorkspaceQuota.value?.seatUsed ?? workspaceBillingEstimate.value?.seatUsed ?? 0
+  return Math.max(0, seatCapacity.value - seatUsed)
 })
 
 const seatSummaryText = computed(() => {
-  const quota = currentWorkspaceQuota.value
-  if (quota)
-    return `${quota.seatUsed}/${Math.max(quota.seatLimit, quota.seatUsed)}`
-
-  const estimate = workspaceBillingEstimate.value
-  if (estimate)
-    return `${estimate.seatUsed}/${Math.max(estimate.includedSeats, estimate.seatUsed)}`
-
-  return '未配置'
+  const seatUsed = currentWorkspaceQuota.value?.seatUsed ?? workspaceBillingEstimate.value?.seatUsed ?? 0
+  return seatCapacity.value ? `${seatUsed}/${seatCapacity.value}` : '未配置'
 })
 
 const seatDetailText = computed(() => {
-  const quota = currentWorkspaceQuota.value
-  if (quota)
-    return `剩余 ${seatRemaining.value ?? 0} 个协作席位；单项目最多 ${workspaceProjectSeatLimit.value} 人`
-
-  const estimate = workspaceBillingEstimate.value
-  if (estimate)
-    return `剩余 ${seatRemaining.value ?? 0} 个协作席位；单项目最多 ${estimate.defaultProjectSeatLimit} 人`
-
-  return '当前 Team 项目台暂未配置席位配额。'
+  if (!seatCapacity.value)
+    return '当前工作空间暂未配置成员席位信息。'
+  if (isPersonalWorkspace.value)
+    return `这里指当前工作空间可容纳的协作成员席位；个人空间最多邀请 ${seatCapacity.value} 人协作，每个项目最多 ${workspaceProjectSeatLimit.value} 人。`
+  return `这里指当前工作空间可容纳的协作成员席位；剩余 ${seatRemaining.value} 个成员席位，每个项目最多 ${workspaceProjectSeatLimit.value} 人。`
 })
 
-const aiQuotaSummaryText = computed(() => {
-  const quota = currentWorkspaceQuota.value
-  if (quota)
-    return `${quota.aiQuotaUsed}/${Math.max(quota.aiQuotaTotal, quota.aiQuotaUsed)} credits`
-
-  const estimate = workspaceBillingEstimate.value
-  if (estimate)
-    return `${estimate.aiQuotaTotal} credits`
-
-  return '未配置'
+const aiQuotaUsedCount = computed(() => {
+  if (currentWorkspaceQuota.value)
+    return Math.max(0, currentWorkspaceQuota.value.aiQuotaUsed)
+  if (aiUsage.value)
+    return Math.max(0, aiUsage.value.totalUnits)
+  return 0
 })
 
-const aiQuotaDetailText = computed(() => {
-  const quota = currentWorkspaceQuota.value
-  if (quota)
-    return `剩余 ${aiRemaining.value ?? 0} credits`
+const aiQuotaTotalCount = computed(() => {
+  if (currentWorkspaceQuota.value)
+    return Math.max(currentWorkspaceQuota.value.aiQuotaTotal, aiQuotaUsedCount.value)
+  if (workspaceBillingEstimate.value)
+    return Math.max(workspaceBillingEstimate.value.aiQuotaTotal, workspaceBillingEstimate.value.includedAiQuota, aiQuotaUsedCount.value)
+  return 0
+})
 
-  const estimate = workspaceBillingEstimate.value
-  if (estimate)
-    return `默认可用 ${estimate.includedAiQuota} credits`
+const aiQuotaRemainingCount = computed(() => {
+  if (!aiQuotaTotalCount.value)
+    return 0
+  return Math.max(0, aiQuotaTotalCount.value - aiQuotaUsedCount.value)
+})
 
-  return '当前 Team 项目台暂未配置 AI 配额。'
+const aiQuotaHeadlineText = computed(() => {
+  if (!aiQuotaTotalCount.value)
+    return '未配置'
+  return `${aiQuotaTotalCount.value} credits`
+})
+
+const aiQuotaUsageText = computed(() => {
+  if (!aiQuotaTotalCount.value)
+    return '暂无可用配额数据'
+  return `${aiQuotaUsedCount.value}/${aiQuotaTotalCount.value} credits`
+})
+
+const quotaResetCycleText = computed(() => {
+  return formatResetCycleLabel(currentWorkspaceQuota.value?.resetCycle || workspaceBillingEstimate.value?.billingCycle)
 })
 
 const quotaUpdatedAtText = computed(() => {
@@ -247,22 +294,26 @@ const userInitial = computed(() => {
   return resolveInitial(props.userName)
 })
 
-const memberSummaryText = computed(() => {
-  const totalMembers = workspaceMembers.value.length
-  if (!totalMembers)
-    return '当前工作空间暂无成员记录。'
-  return `当前共 ${totalMembers} 位成员${isPersonalWorkspace.value ? '，个人空间最多邀请 15 人协作' : ''}。`
-})
-
 const pendingWorkspaceInvitations = computed(() => {
   return workspaceInvitations.value.filter(item => !item.acceptedAt && !item.isExpired)
 })
 
 const workspaceInvitationPendingCount = computed(() => pendingWorkspaceInvitations.value.length)
-
-const workspaceMembersPreview = computed(() => workspaceMembers.value.slice(0, 6))
-const workspaceMemberOverflowCount = computed(() => Math.max(0, workspaceMembers.value.length - workspaceMembersPreview.value.length))
-const authSessionsPreview = computed(() => authSessions.value.slice(0, 10))
+const memberSummaryText = computed(() => {
+  const totalMembers = workspaceMembers.value.length
+  if (!totalMembers)
+    return '当前工作空间暂无成员记录。'
+  if (isPersonalWorkspace.value)
+    return `当前共 ${totalMembers} 位成员，个人空间最多邀请 15 人协作。`
+  return `当前共 ${totalMembers} 位成员，待处理邀请 ${workspaceInvitationPendingCount.value} 条。`
+})
+const aiUsageMemberSummaries = computed(() => aiUsage.value?.memberSummaries || [])
+const aiUsageHistoryItems = computed(() => aiUsage.value?.items || [])
+const aiUsageTotalPages = computed(() => {
+  if (!aiUsage.value?.pageSize)
+    return 1
+  return Math.max(1, Math.ceil((aiUsage.value.total || 0) / aiUsage.value.pageSize))
+})
 
 const inviteRoleOptions = computed<Array<{ value: WorkspaceMemberRole, label: string }>>(() => {
   if (!currentWorkspace.value)
@@ -292,6 +343,18 @@ const inviteRoleOptions = computed<Array<{ value: WorkspaceMemberRole, label: st
 })
 
 const canInviteWorkspaceMembers = computed(() => inviteRoleOptions.value.length > 0)
+const editableRoleOptions = computed<Array<{ value: EditableWorkspaceRole, label: string }>>(() => {
+  if (isPersonalWorkspace.value)
+    return []
+  return [
+    { value: 'admin', label: '管理员' },
+    { value: 'manager', label: '协作管理员' },
+    { value: 'member', label: '成员' },
+  ]
+})
+const canManageWorkspaceRoles = computed(() => {
+  return props.showAdminBadge || workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin'
+})
 
 const workspaceInvitationRoleHint = computed(() => {
   if (isPersonalWorkspace.value)
@@ -303,11 +366,42 @@ const workspaceInvitationRoleHint = computed(() => {
   return '可生成工作空间邀请链接并发送给协作者。'
 })
 
-const loginHistorySummaryText = computed(() => {
-  if (!authSessions.value.length)
-    return '当前账号暂无可见登录历史。'
-  return `最近记录 ${authSessions.value.length} 次登录会话，当前仅展示登录时间与会话状态。`
-})
+function resolveMemberUsagePercent(member: WorkspaceAiUsageHistory['memberSummaries'][number]): string {
+  const totalUnits = Math.max(0, aiUsage.value?.totalUnits || 0)
+  if (!totalUnits)
+    return '0%'
+  return `${Math.round((member.units / totalUnits) * 100)}%`
+}
+
+function resolveMemberUsageBarStyle(member: WorkspaceAiUsageHistory['memberSummaries'][number]): { width: string } {
+  const totalUnits = Math.max(0, aiUsage.value?.totalUnits || 0)
+  if (!totalUnits || member.units <= 0)
+    return { width: '0%' }
+  const ratio = Math.max(8, Math.round((member.units / totalUnits) * 100))
+  return { width: `${Math.min(100, ratio)}%` }
+}
+
+function resolveMemberRoleDraft(member: WorkspaceMemberSummary): EditableWorkspaceRole {
+  return workspaceMemberRoleDrafts.value[member.userId] || normalizeEditableRole(resolveMemberPrimaryRole(member))
+}
+
+function isRoleEditorVisible(member: WorkspaceMemberSummary): boolean {
+  if (!canManageWorkspaceRoles.value)
+    return false
+  return editableRoleOptions.value.length > 0 && resolveMemberPrimaryRole(member) !== 'owner'
+}
+
+function canSubmitRoleChange(member: WorkspaceMemberSummary): boolean {
+  if (!isRoleEditorVisible(member))
+    return false
+  if (workspaceMemberRoleSubmittingUserId.value === member.userId)
+    return false
+  return resolveMemberRoleDraft(member) !== normalizeEditableRole(resolveMemberPrimaryRole(member))
+}
+
+function resolveInvitationStatusLabel(invitation: WorkspaceMemberManagementSnapshot['invitations'][number]): string {
+  return invitation.isExpired ? '已过期' : '待接受'
+}
 
 function formatSessionStatusLabel(status: AuthSessionHistoryItem['status']): string {
   if (status === 'current')
@@ -336,6 +430,11 @@ watch(inviteRoleOptions, (options) => {
 }, { immediate: true })
 
 function selectTab(tabId: UserSettingsTabId) {
+  if (activeTab.value === tabId) {
+    if (props.visible)
+      void refreshActiveTabData(tabId, { resetAiPage: tabId === 'ai' })
+    return
+  }
   activeTab.value = tabId
 }
 
@@ -343,31 +442,6 @@ function closeDialog() {
   if (loggingOut.value)
     return
   visibleModel.value = false
-}
-
-function resetDialogState() {
-  activeTab.value = 'overview'
-  actionError.value = ''
-  clearWorkspaceCopyFeedback()
-  clearWorkspaceInvitationCopyFeedback()
-  workspaceBillingEstimate.value = null
-  workspaceMembers.value = []
-  workspaceInvitations.value = []
-  workspaceMemberError.value = ''
-  workspaceInvitationError.value = ''
-  workspaceInvitationSuccess.value = ''
-  workspaceInvitationLink.value = ''
-  workspaceInviteeUsername.value = ''
-  workspaceInviteExpiresInDays.value = 7
-  authSessions.value = []
-  authSessionsError.value = ''
-  feishuBindError.value = readFeishuBindErrorFromRoute()
-  feishuBindSuccess.value = ''
-  casdoorBindError.value = readCasdoorBindErrorFromRoute()
-  feishuUnbindConfirmVisible.value = false
-  feishuUnbindConfirmText.value = ''
-  clearFeishuBindQueryParamsFromUrl()
-  clearCasdoorBindQueryParamsFromUrl()
 }
 
 function clearWorkspaceCopyFeedback() {
@@ -471,6 +545,64 @@ function resolveMemberRoleLabel(member: WorkspaceMemberSummary | null | undefine
   return formatWorkspaceRoleLabel(resolveMemberPrimaryRole(member))
 }
 
+function clearWorkspaceMemberActionFeedback() {
+  workspaceMemberActionError.value = ''
+  workspaceMemberActionSuccess.value = ''
+}
+
+function syncWorkspaceMemberRoleDrafts(members: WorkspaceMemberSummary[]) {
+  const nextDrafts: Record<string, EditableWorkspaceRole> = {}
+  for (const member of members)
+    nextDrafts[member.userId] = normalizeEditableRole(resolveMemberPrimaryRole(member))
+  workspaceMemberRoleDrafts.value = nextDrafts
+}
+
+function applyWorkspaceMemberSnapshot(snapshot: { members?: WorkspaceMemberSummary[], invitations?: WorkspaceMemberManagementSnapshot['invitations'] } | null | undefined) {
+  const members = Array.isArray(snapshot?.members) ? snapshot.members : []
+  const invitations = Array.isArray(snapshot?.invitations) ? snapshot.invitations : []
+  workspaceMembers.value = members
+  workspaceInvitations.value = invitations
+  syncWorkspaceMemberRoleDrafts(members)
+}
+
+function resetWorkspaceScopedState() {
+  workspaceBillingEstimate.value = null
+  aiUsage.value = null
+  aiUsageError.value = ''
+  aiUsageLoading.value = false
+  aiUsagePage.value = 1
+  applyWorkspaceMemberSnapshot(null)
+  workspaceMemberLoading.value = false
+  workspaceMemberError.value = ''
+  clearWorkspaceMemberActionFeedback()
+  workspaceMemberRoleSubmittingUserId.value = ''
+  workspaceInvitationDialogVisible.value = false
+  workspaceInvitationSubmitting.value = false
+  workspaceInvitationRevokingId.value = ''
+  workspaceInvitationError.value = ''
+  workspaceInvitationSuccess.value = ''
+  workspaceInvitationLink.value = ''
+  workspaceInviteeUsername.value = ''
+  workspaceInviteExpiresInDays.value = 7
+  clearWorkspaceInvitationCopyFeedback()
+}
+
+function resetDialogState() {
+  activeTab.value = 'overview'
+  actionError.value = ''
+  clearWorkspaceCopyFeedback()
+  resetWorkspaceScopedState()
+  authSessions.value = []
+  authSessionsError.value = ''
+  feishuBindError.value = readFeishuBindErrorFromRoute()
+  feishuBindSuccess.value = ''
+  casdoorBindError.value = readCasdoorBindErrorFromRoute()
+  feishuUnbindConfirmVisible.value = false
+  feishuUnbindConfirmText.value = ''
+  clearFeishuBindQueryParamsFromUrl()
+  clearCasdoorBindQueryParamsFromUrl()
+}
+
 async function copyWorkspaceInvitationLink() {
   const invitationLink = String(workspaceInvitationLink.value || '').trim()
   if (!invitationLink) {
@@ -529,12 +661,42 @@ async function loadWorkspaceBillingEstimate(workspaceId: string) {
   }
 }
 
+async function loadWorkspaceAiUsage(workspaceId: string, page = 1) {
+  const normalizedWorkspaceId = String(workspaceId || '').trim()
+  if (!normalizedWorkspaceId) {
+    aiUsageLoading.value = false
+    aiUsage.value = null
+    aiUsageError.value = ''
+    return
+  }
+
+  aiUsageLoading.value = true
+  aiUsageError.value = ''
+  const requestSeq = ++workspaceAiUsageSeq
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceAiUsageHistory>>(`/teams/${normalizedWorkspaceId}/ai/usage?page=${page}&pageSize=10`)
+    if (requestSeq !== workspaceAiUsageSeq || currentWorkspaceId.value !== normalizedWorkspaceId)
+      return
+    aiUsage.value = response.data
+    aiUsagePage.value = response.data.page || page
+  }
+  catch (error: any) {
+    if (requestSeq !== workspaceAiUsageSeq || currentWorkspaceId.value !== normalizedWorkspaceId)
+      return
+    aiUsage.value = null
+    aiUsageError.value = String(error?.data?.message || 'AI 消耗记录加载失败。')
+  }
+  finally {
+    if (requestSeq === workspaceAiUsageSeq)
+      aiUsageLoading.value = false
+  }
+}
+
 async function loadWorkspaceMemberManagement(workspaceId: string) {
   const normalizedWorkspaceId = String(workspaceId || '').trim()
   if (!normalizedWorkspaceId) {
     workspaceMemberLoading.value = false
-    workspaceMembers.value = []
-    workspaceInvitations.value = []
+    applyWorkspaceMemberSnapshot(null)
     workspaceMemberError.value = ''
     return
   }
@@ -546,20 +708,45 @@ async function loadWorkspaceMemberManagement(workspaceId: string) {
     const response = await authApiFetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(`/teams/${normalizedWorkspaceId}/members`)
     if (requestSeq !== workspaceMemberSnapshotSeq || currentWorkspaceId.value !== normalizedWorkspaceId)
       return
-    workspaceMembers.value = Array.isArray(response.data.members) ? response.data.members : []
-    workspaceInvitations.value = Array.isArray(response.data.invitations) ? response.data.invitations : []
+    applyWorkspaceMemberSnapshot(response.data)
   }
   catch (error: any) {
     if (requestSeq !== workspaceMemberSnapshotSeq || currentWorkspaceId.value !== normalizedWorkspaceId)
       return
-    workspaceMembers.value = []
-    workspaceInvitations.value = []
+    applyWorkspaceMemberSnapshot(null)
     workspaceMemberError.value = String(error?.data?.message || '工作空间成员信息加载失败。')
   }
   finally {
     if (requestSeq === workspaceMemberSnapshotSeq)
       workspaceMemberLoading.value = false
   }
+}
+
+function openWorkspaceInvitationDialog() {
+  clearWorkspaceMemberActionFeedback()
+  if (!currentWorkspaceId.value) {
+    workspaceMemberActionError.value = '当前没有可邀请的工作空间。'
+    return
+  }
+
+  if (!canInviteWorkspaceMembers.value) {
+    workspaceMemberActionError.value = '当前账号无工作空间邀请权限。'
+    return
+  }
+
+  workspaceInvitationDialogVisible.value = true
+  workspaceInvitationError.value = ''
+  workspaceInvitationSuccess.value = ''
+  workspaceInvitationLink.value = ''
+  workspaceInviteeUsername.value = ''
+  workspaceInviteExpiresInDays.value = 7
+  clearWorkspaceInvitationCopyFeedback()
+}
+
+function closeWorkspaceInvitationDialog() {
+  if (workspaceInvitationSubmitting.value)
+    return
+  workspaceInvitationDialogVisible.value = false
 }
 
 async function createWorkspaceInvitation() {
@@ -604,6 +791,55 @@ async function createWorkspaceInvitation() {
   }
 }
 
+async function revokeWorkspaceInvitation(invitationId: string) {
+  const normalizedWorkspaceId = String(currentWorkspaceId.value || '').trim()
+  const normalizedInvitationId = String(invitationId || '').trim()
+  if (!normalizedWorkspaceId || !normalizedInvitationId)
+    return
+
+  workspaceInvitationRevokingId.value = normalizedInvitationId
+  clearWorkspaceMemberActionFeedback()
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(`/teams/${normalizedWorkspaceId}/invitations/${normalizedInvitationId}/revoke`, {
+      method: 'POST',
+    })
+    applyWorkspaceMemberSnapshot(response.data)
+    workspaceMemberActionSuccess.value = '邀请已撤销。'
+  }
+  catch (error: any) {
+    workspaceMemberActionError.value = String(error?.data?.message || '撤销邀请失败，请稍后重试。')
+  }
+  finally {
+    workspaceInvitationRevokingId.value = ''
+  }
+}
+
+async function updateWorkspaceMemberRole(member: WorkspaceMemberSummary) {
+  const normalizedWorkspaceId = String(currentWorkspaceId.value || '').trim()
+  const nextRole = resolveMemberRoleDraft(member)
+  if (!normalizedWorkspaceId || !canSubmitRoleChange(member))
+    return
+
+  workspaceMemberRoleSubmittingUserId.value = member.userId
+  clearWorkspaceMemberActionFeedback()
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceMemberManagementSnapshot>>(`/teams/${normalizedWorkspaceId}/members/${member.userId}/role`, {
+      method: 'PATCH',
+      body: {
+        role: nextRole,
+      },
+    })
+    applyWorkspaceMemberSnapshot(response.data)
+    workspaceMemberActionSuccess.value = `已将 ${member.username} 调整为${formatWorkspaceRoleLabel(nextRole)}。`
+  }
+  catch (error: any) {
+    workspaceMemberActionError.value = String(error?.data?.message || '更新成员权限失败，请稍后重试。')
+  }
+  finally {
+    workspaceMemberRoleSubmittingUserId.value = ''
+  }
+}
+
 async function loadAuthSessions() {
   authSessionsLoading.value = true
   authSessionsError.value = ''
@@ -618,6 +854,72 @@ async function loadAuthSessions() {
   finally {
     authSessionsLoading.value = false
   }
+}
+
+async function changeAiUsagePage(nextPage: number) {
+  const targetPage = Math.max(1, Math.min(aiUsageTotalPages.value, nextPage))
+  if (targetPage === aiUsagePage.value)
+    return
+  aiUsagePage.value = targetPage
+  await loadWorkspaceAiUsage(currentWorkspaceId.value, targetPage)
+}
+
+async function handleAiQuotaAction() {
+  actionError.value = ''
+  if (route.path.startsWith('/admin') && props.showAdminBadge) {
+    visibleModel.value = false
+    await navigateTo('/admin/billing')
+    return
+  }
+  actionError.value = '当前版本请联系管理员调整 AI 配额。'
+}
+
+async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAiPage?: boolean } = {}) {
+  const workspaceId = currentWorkspaceId.value
+  if (tabId === 'overview') {
+    await Promise.allSettled([
+      loadWorkspaceBillingEstimate(workspaceId),
+    ])
+    return
+  }
+
+  if (tabId === 'ai') {
+    const nextPage = options.resetAiPage ? 1 : aiUsagePage.value
+    if (options.resetAiPage)
+      aiUsagePage.value = 1
+    await Promise.allSettled([
+      loadWorkspaceBillingEstimate(workspaceId),
+      loadWorkspaceAiUsage(workspaceId, nextPage),
+    ])
+    return
+  }
+
+  if (tabId === 'members') {
+    await Promise.allSettled([
+      loadWorkspaceMemberManagement(workspaceId),
+    ])
+    return
+  }
+
+  if (tabId === 'bindings') {
+    await Promise.allSettled([
+      loadAuthMeta(),
+      loadFeishuBindStatus(),
+      loadCasdoorBindStatus(),
+    ])
+    return
+  }
+
+  if (tabId === 'loginHistory') {
+    await Promise.allSettled([
+      loadAuthSessions(),
+    ])
+    return
+  }
+
+  await Promise.allSettled([
+    loadFeishuAudits(),
+  ])
 }
 
 async function loadFeishuBindStatus() {
@@ -741,18 +1043,6 @@ async function loadFeishuAudits() {
   }
 }
 
-async function refreshDialogData() {
-  await Promise.allSettled([
-    loadAuthMeta(),
-    loadFeishuBindStatus(),
-    loadCasdoorBindStatus(),
-    loadFeishuAudits(),
-    loadAuthSessions(),
-    loadWorkspaceBillingEstimate(currentWorkspaceId.value),
-    loadWorkspaceMemberManagement(currentWorkspaceId.value),
-  ])
-}
-
 async function startFeishuBind() {
   if (!import.meta.client || feishuBindRedirecting.value)
     return
@@ -868,10 +1158,23 @@ async function logout() {
 watch(
   () => props.visible,
   (visible) => {
-    if (!visible)
+    if (!visible) {
+      workspaceInvitationDialogVisible.value = false
       return
+    }
+
+    suppressTabRefresh = true
     resetDialogState()
-    void refreshDialogData()
+    suppressTabRefresh = false
+
+    void Promise.allSettled([
+      loadAuthMeta(),
+      loadFeishuBindStatus(),
+      loadCasdoorBindStatus(),
+      loadFeishuAudits(),
+      loadAuthSessions(),
+    ])
+    void refreshActiveTabData(activeTab.value, { resetAiPage: true })
   },
 )
 
@@ -885,18 +1188,19 @@ watch(
   },
 )
 
-watch(currentWorkspaceId, (workspaceId) => {
-  if (!props.visible)
+watch(activeTab, (tabId, previousTabId) => {
+  if (!props.visible || suppressTabRefresh || tabId === previousTabId)
     return
-  workspaceInvitationSubmitting.value = false
-  workspaceInvitationError.value = ''
-  workspaceInvitationSuccess.value = ''
-  workspaceInvitationLink.value = ''
-  clearWorkspaceInvitationCopyFeedback()
-  void Promise.allSettled([
-    loadWorkspaceBillingEstimate(workspaceId),
-    loadWorkspaceMemberManagement(workspaceId),
-  ])
+  if (tabId !== 'members')
+    workspaceInvitationDialogVisible.value = false
+  void refreshActiveTabData(tabId, { resetAiPage: tabId === 'ai' })
+})
+
+watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
+  if (!props.visible || workspaceId === previousWorkspaceId)
+    return
+  resetWorkspaceScopedState()
+  void refreshActiveTabData(activeTab.value, { resetAiPage: activeTab.value === 'ai' })
 })
 
 onBeforeUnmount(() => {
@@ -912,9 +1216,9 @@ onBeforeUnmount(() => {
       class="p-4 bg-slate-950/40 flex items-center inset-0 justify-center fixed z-50"
       @click.self="closeDialog"
     >
-      <div class="border border-slate-200 rounded-[28px] bg-white flex flex-col h-full max-h-[88vh] max-w-[1100px] w-full shadow-2xl overflow-hidden lg:h-[720px] lg:max-h-[720px]">
+      <div class="border border-slate-200 rounded-[28px] bg-white flex flex-col h-full max-h-[88vh] max-w-[1160px] w-full shadow-2xl overflow-hidden lg:h-[720px] lg:max-h-[720px]">
         <div class="flex flex-1 flex-col min-h-0 lg:flex-row">
-          <aside class="border-b border-slate-200 bg-slate-50 flex shrink-0 flex-col lg:border-b-0 lg:border-r lg:w-[244px]">
+          <aside class="border-b border-slate-200 bg-slate-50 flex shrink-0 flex-col lg:border-b-0 lg:border-r lg:w-[192px]">
             <div class="px-4 pb-2 pt-4 flex items-center lg:px-5 lg:pb-3 lg:pt-5">
               <button
                 class="text-slate-500 rounded-full flex h-10 w-10 transition items-center justify-center hover:text-slate-800 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1024,6 +1328,18 @@ onBeforeUnmount(() => {
                         <p class="text-sm text-slate-500">
                           工作空间 UUID 可用于排查、授权配置和成员协作确认。
                         </p>
+                        <div class="flex flex-wrap gap-2">
+                          <button class="user-settings-btn user-settings-btn--compact" @click="selectTab('members')">
+                            查看成员
+                          </button>
+                          <button
+                            class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
+                            :disabled="!canInviteWorkspaceMembers"
+                            @click="openWorkspaceInvitationDialog"
+                          >
+                            发起邀请
+                          </button>
+                        </div>
                         <p v-if="workspaceCopyFeedback" class="text-xs text-slate-500">
                           {{ workspaceCopyFeedback }}
                         </p>
@@ -1034,10 +1350,10 @@ onBeforeUnmount(() => {
                   <div class="user-settings-row">
                     <div class="user-settings-row__heading">
                       <p class="user-settings-row__title">
-                        协作席位
+                        工作空间成员席位
                       </p>
                       <p class="user-settings-row__desc">
-                        当前工作空间协作席位使用情况。
+                        这里的成员席位表示当前工作空间可容纳的协作成员数量。
                       </p>
                     </div>
                     <div class="user-settings-row__content">
@@ -1084,255 +1400,352 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div v-else-if="activeTab === 'ai'" class="user-settings-panel">
+              <div v-else-if="activeTab === 'ai'" class="user-settings-panel user-settings-panel--stack">
                 <template v-if="currentWorkspace">
-                  <div class="user-settings-row">
-                    <div class="user-settings-row__heading">
-                      <p class="user-settings-row__title">
-                        AI 配额
-                      </p>
-                      <p class="user-settings-row__desc">
-                        当前工作空间 AI credits 配额与默认额度说明。
-                      </p>
-                    </div>
-                    <div class="user-settings-row__content">
-                      <p :class="hasWorkspaceUsageMetrics ? 'user-settings-stat' : 'user-settings-value-text'">
-                        {{ aiQuotaSummaryText }}
-                      </p>
-                      <p class="text-sm text-slate-500">
-                        {{ aiQuotaDetailText }}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div class="user-settings-row">
-                    <div class="user-settings-row__heading">
-                      <p class="user-settings-row__title">
-                        工作空间
-                      </p>
-                      <p class="user-settings-row__desc">
-                        当前正在查看的 AI 配额归属空间。
-                      </p>
-                    </div>
-                    <div class="user-settings-row__content">
-                      <div class="user-settings-inline-value">
-                        <span class="text-base text-slate-900 font-semibold">{{ currentWorkspace.workspace.name }}</span>
-                        <span class="user-settings-chip">
-                          {{ formatWorkspaceTypeLabel(currentWorkspace.workspace.type) }}
-                        </span>
+                  <section class="user-settings-card">
+                    <div class="flex gap-4 items-start justify-between">
+                      <div class="min-w-0">
+                        <p class="text-sm text-slate-500 font-medium">
+                          AI 配额
+                        </p>
+                        <div class="mt-2 flex gap-2 items-end">
+                          <p class="user-settings-ai-headline">
+                            {{ aiQuotaHeadlineText.replace(' credits', '') }}
+                          </p>
+                          <span class="user-settings-ai-unit">credits</span>
+                        </div>
+                        <p class="text-sm text-slate-500 mt-2">
+                          已用 {{ aiQuotaUsageText }}，剩余 {{ aiQuotaRemainingCount }} credits
+                        </p>
                       </div>
-                      <p class="text-sm text-slate-500">
-                        配额更新时间：{{ quotaUpdatedAtText }}
-                      </p>
+                      <button class="user-settings-plus-btn" title="调整 AI 配额" @click="handleAiQuotaAction">
+                        +
+                      </button>
                     </div>
-                  </div>
+
+                    <div class="user-settings-metric-grid">
+                      <div class="user-settings-mini-card">
+                        <p class="user-settings-mini-card__label">
+                          已用配额
+                        </p>
+                        <p class="user-settings-mini-card__value">
+                          {{ aiQuotaUsedCount }} credits
+                        </p>
+                      </div>
+                      <div class="user-settings-mini-card">
+                        <p class="user-settings-mini-card__label">
+                          剩余配额
+                        </p>
+                        <p class="user-settings-mini-card__value">
+                          {{ aiQuotaRemainingCount }} credits
+                        </p>
+                      </div>
+                      <div class="user-settings-mini-card">
+                        <p class="user-settings-mini-card__label">
+                          下次重置周期
+                        </p>
+                        <p class="user-settings-mini-card__value">
+                          {{ quotaResetCycleText }}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="user-settings-card">
+                    <div class="user-settings-section-header">
+                      <div>
+                        <p class="text-base text-slate-900 font-semibold">
+                          配额同步记录
+                        </p>
+                        <p class="text-sm text-slate-500 mt-1">
+                          当前展示最近一次配额同步时间。
+                        </p>
+                      </div>
+                    </div>
+                    <div class="user-settings-record-item">
+                      <div class="min-w-0">
+                        <p class="text-sm text-slate-900 font-medium">
+                          最近一次同步
+                        </p>
+                        <p class="text-sm text-slate-500 mt-1">
+                          {{ quotaUpdatedAtText }}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="user-settings-card">
+                    <div class="user-settings-section-header">
+                      <div>
+                        <p class="text-base text-slate-900 font-semibold">
+                          成员消耗占比
+                        </p>
+                        <p class="text-sm text-slate-500 mt-1">
+                          按当前工作空间累计消耗统计。
+                        </p>
+                      </div>
+                    </div>
+
+                    <p v-if="aiUsageError" class="user-settings-feedback user-settings-feedback--danger">
+                      {{ aiUsageError }}
+                    </p>
+
+                    <div v-else-if="aiUsageMemberSummaries.length > 0" class="user-settings-usage-list">
+                      <div
+                        v-for="member in aiUsageMemberSummaries"
+                        :key="member.userId"
+                        class="user-settings-usage-item"
+                      >
+                        <div class="flex gap-3 items-start justify-between">
+                          <div class="min-w-0">
+                            <div class="flex gap-3 items-center">
+                              <div class="user-settings-member-avatar">
+                                {{ resolveInitial(member.username) }}
+                              </div>
+                              <div class="min-w-0">
+                                <p class="text-sm text-slate-900 font-medium truncate">
+                                  {{ member.username }}
+                                </p>
+                                <p class="text-xs text-slate-500 mt-1">
+                                  {{ member.calls }} 次调用 · 最近消耗：{{ member.lastUsedAt ? formatDateTime(member.lastUsedAt) : '暂无记录' }}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="text-right">
+                            <p class="text-sm text-slate-900 font-semibold">
+                              {{ member.units }} credits
+                            </p>
+                            <p class="text-xs text-slate-500 mt-1">
+                              {{ resolveMemberUsagePercent(member) }}
+                            </p>
+                          </div>
+                        </div>
+                        <div class="user-settings-progress-track">
+                          <span class="user-settings-progress-fill" :style="resolveMemberUsageBarStyle(member)" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-else class="user-settings-empty">
+                      {{ aiUsageLoading ? 'AI 消耗统计加载中...' : '当前工作空间暂无 AI 消耗记录。' }}
+                    </div>
+                  </section>
+
+                  <section class="user-settings-card">
+                    <div class="user-settings-section-header">
+                      <div>
+                        <p class="text-base text-slate-900 font-semibold">
+                          消耗历史
+                        </p>
+                        <p class="text-sm text-slate-500 mt-1">
+                          当前共 {{ aiUsage?.total || 0 }} 条记录，累计 {{ aiUsage?.totalUnits || 0 }} credits。
+                        </p>
+                      </div>
+                    </div>
+
+                    <p v-if="aiUsageError" class="user-settings-feedback user-settings-feedback--danger">
+                      {{ aiUsageError }}
+                    </p>
+
+                    <div v-else-if="aiUsageHistoryItems.length > 0" class="user-settings-record-list">
+                      <div
+                        v-for="item in aiUsageHistoryItems"
+                        :key="item.id"
+                        class="user-settings-record-item"
+                      >
+                        <div class="flex-1 min-w-0">
+                          <div class="flex flex-wrap gap-2 items-center">
+                            <p class="text-sm text-slate-900 font-semibold">
+                              {{ formatAiRouteLabel(item.route) }}
+                            </p>
+                            <span class="user-settings-chip">
+                              {{ item.units }} credits
+                            </span>
+                          </div>
+                          <p class="text-xs text-slate-500 mt-2">
+                            {{ item.username }} · {{ formatDateTime(item.createdAt) }}
+                          </p>
+                          <p class="text-xs text-slate-400 font-mono mt-1 break-all">
+                            {{ item.route }}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-else class="user-settings-empty">
+                      {{ aiUsageLoading ? 'AI 消耗历史加载中...' : '当前工作空间暂无 AI 消耗历史。' }}
+                    </div>
+
+                    <div v-if="aiUsageHistoryItems.length > 0" class="user-settings-pagination">
+                      <button
+                        class="user-settings-btn user-settings-btn--compact"
+                        :disabled="aiUsageLoading || aiUsagePage <= 1"
+                        @click="changeAiUsagePage(aiUsagePage - 1)"
+                      >
+                        上一页
+                      </button>
+                      <span class="text-xs text-slate-500">
+                        第 {{ aiUsagePage }} / {{ aiUsageTotalPages }} 页
+                      </span>
+                      <button
+                        class="user-settings-btn user-settings-btn--compact"
+                        :disabled="aiUsageLoading || aiUsagePage >= aiUsageTotalPages"
+                        @click="changeAiUsagePage(aiUsagePage + 1)"
+                      >
+                        下一页
+                      </button>
+                    </div>
+                  </section>
                 </template>
 
-                <div v-else class="user-settings-row">
-                  <div class="user-settings-row__heading">
-                    <p class="user-settings-row__title">
-                      AI 配额
-                    </p>
-                    <p class="user-settings-row__desc">
-                      当前账号暂无可见工作空间信息。
-                    </p>
-                  </div>
-                  <div class="user-settings-row__content user-settings-row__content--start">
-                    <div class="text-sm text-slate-500 px-4 py-4 border border-slate-200 rounded-2xl border-dashed bg-slate-50 w-full">
-                      当前账号暂无可见工作空间信息。
-                    </div>
-                  </div>
+                <div v-else class="user-settings-empty">
+                  当前账号暂无可见工作空间信息。
                 </div>
               </div>
 
-              <div v-else-if="activeTab === 'members'" class="user-settings-panel">
+              <div v-else-if="activeTab === 'members'" class="user-settings-panel user-settings-panel--stack">
                 <template v-if="currentWorkspace">
-                  <div class="user-settings-row">
-                    <div class="user-settings-row__heading">
-                      <p class="user-settings-row__title">
-                        工作空间成员
-                      </p>
-                      <p class="user-settings-row__desc">
-                        查看当前成员与待处理邀请。
-                      </p>
+                  <section class="user-settings-card">
+                    <div class="user-settings-section-header">
+                      <div>
+                        <p class="text-base text-slate-900 font-semibold">
+                          工作空间成员
+                        </p>
+                        <p class="text-sm text-slate-500 mt-1">
+                          {{ memberSummaryText }}
+                        </p>
+                      </div>
+                      <button
+                        class="user-settings-btn user-settings-btn--primary"
+                        :disabled="!canInviteWorkspaceMembers"
+                        @click="openWorkspaceInvitationDialog"
+                      >
+                        发起邀请
+                      </button>
                     </div>
-                    <div class="user-settings-row__content user-settings-row__content--start">
-                      <div class="user-settings-member-toolbar">
-                        <div class="min-w-0">
-                          <p class="text-base text-slate-900 font-medium">
-                            {{ memberSummaryText }}
+
+                    <p v-if="workspaceMemberError" class="user-settings-feedback user-settings-feedback--danger">
+                      {{ workspaceMemberError }}
+                    </p>
+                    <p v-if="workspaceMemberActionError" class="user-settings-feedback user-settings-feedback--danger">
+                      {{ workspaceMemberActionError }}
+                    </p>
+                    <p v-if="workspaceMemberActionSuccess" class="user-settings-feedback user-settings-feedback--success">
+                      {{ workspaceMemberActionSuccess }}
+                    </p>
+
+                    <div v-if="workspaceMembers.length > 0" class="user-settings-member-list">
+                      <div
+                        v-for="member in workspaceMembers"
+                        :key="member.userId"
+                        class="user-settings-member-item"
+                      >
+                        <div class="user-settings-member-avatar">
+                          {{ resolveInitial(member.username) }}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <p class="text-sm text-slate-900 font-medium truncate">
+                            {{ member.username }}
                           </p>
-                          <p class="text-sm text-slate-500 mt-1">
-                            待处理邀请 {{ workspaceInvitationPendingCount }} 条
+                          <p class="text-xs text-slate-500 mt-1">
+                            加入时间 {{ formatDateTime(member.joinedAt) }}
+                          </p>
+                          <p class="text-xs text-slate-500 mt-1">
+                            当前权限 {{ resolveMemberRoleLabel(member) }} · 最近更新 {{ formatDateTime(member.updatedAt) }}
                           </p>
                         </div>
-                        <button class="user-settings-btn user-settings-btn--compact" :disabled="workspaceMemberLoading" @click="loadWorkspaceMemberManagement(currentWorkspaceId)">
-                          {{ workspaceMemberLoading ? '刷新中...' : '刷新成员' }}
-                        </button>
-                      </div>
-
-                      <p v-if="workspaceMemberError" class="user-settings-feedback user-settings-feedback--danger w-full">
-                        {{ workspaceMemberError }}
-                      </p>
-
-                      <div v-else-if="workspaceMembersPreview.length > 0" class="user-settings-member-list">
-                        <div
-                          v-for="member in workspaceMembersPreview"
-                          :key="member.userId"
-                          class="user-settings-member-item"
-                        >
-                          <div class="user-settings-member-avatar">
-                            {{ resolveInitial(member.username) }}
-                          </div>
-                          <div class="flex-1 min-w-0">
-                            <p class="text-sm text-slate-900 font-medium truncate">
-                              {{ member.username }}
-                            </p>
-                            <p class="text-xs text-slate-500">
-                              {{ formatDateTime(member.joinedAt) }}
-                            </p>
-                          </div>
-                          <span class="user-settings-chip">
-                            {{ resolveMemberRoleLabel(member) }}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div v-else class="text-sm text-slate-500 px-4 py-4 border border-slate-200 rounded-2xl border-dashed bg-slate-50 w-full">
-                        {{ workspaceMemberLoading ? '成员信息加载中...' : '当前工作空间暂无成员记录。' }}
-                      </div>
-
-                      <p v-if="workspaceMemberOverflowCount > 0" class="text-xs text-slate-500">
-                        还有 {{ workspaceMemberOverflowCount }} 位成员未在此处展开显示。
-                      </p>
-                    </div>
-                  </div>
-
-                  <div class="user-settings-row">
-                    <div class="user-settings-row__heading">
-                      <p class="user-settings-row__title">
-                        邀请协作者
-                      </p>
-                      <p class="user-settings-row__desc">
-                        生成工作空间邀请链接并分配空间角色。
-                      </p>
-                    </div>
-                    <div class="user-settings-row__content user-settings-row__content--start">
-                      <div class="user-settings-invite-panel">
-                        <div class="user-settings-invite-panel__header">
-                          <div>
-                            <p class="text-sm text-slate-900 font-semibold">
-                              邀请协作者
-                            </p>
-                            <p class="text-xs text-slate-500 mt-1">
-                              {{ workspaceInvitationRoleHint }}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div class="user-settings-invite-form">
-                          <label class="user-settings-field">
-                            <span class="user-settings-field__label">指定用户名</span>
-                            <input
-                              v-model="workspaceInviteeUsername"
-                              type="text"
-                              class="user-settings-input"
-                              placeholder="可选，不填则任意可加入"
-                              :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
-                            >
-                          </label>
-                          <label class="user-settings-field">
-                            <span class="user-settings-field__label">空间角色</span>
+                        <div class="user-settings-member-actions">
+                          <template v-if="isRoleEditorVisible(member)">
                             <select
-                              v-model="workspaceInviteRole"
-                              class="user-settings-select"
-                              :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
+                              v-model="workspaceMemberRoleDrafts[member.userId]"
+                              class="user-settings-select user-settings-select--compact"
+                              :disabled="workspaceMemberRoleSubmittingUserId === member.userId"
                             >
                               <option
-                                v-for="option in inviteRoleOptions"
+                                v-for="option in editableRoleOptions"
                                 :key="option.value"
                                 :value="option.value"
                               >
                                 {{ option.label }}
                               </option>
                             </select>
-                          </label>
-                          <label class="user-settings-field">
-                            <span class="user-settings-field__label">有效期</span>
-                            <select
-                              v-model="workspaceInviteExpiresInDays"
-                              class="user-settings-select"
-                              :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
-                            >
-                              <option :value="3">
-                                3 天
-                              </option>
-                              <option :value="7">
-                                7 天
-                              </option>
-                              <option :value="14">
-                                14 天
-                              </option>
-                              <option :value="30">
-                                30 天
-                              </option>
-                            </select>
-                          </label>
-                          <div class="user-settings-invite-form__actions">
                             <button
-                              class="user-settings-btn user-settings-btn--primary w-full sm:w-auto"
-                              :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
-                              @click="createWorkspaceInvitation"
+                              class="user-settings-btn user-settings-btn--compact"
+                              :disabled="!canSubmitRoleChange(member)"
+                              @click="updateWorkspaceMemberRole(member)"
                             >
-                              {{ workspaceInvitationSubmitting ? '生成中...' : '生成邀请链接' }}
+                              {{ workspaceMemberRoleSubmittingUserId === member.userId ? '保存中...' : '保存' }}
                             </button>
-                          </div>
-                        </div>
-
-                        <p v-if="workspaceInvitationError" class="user-settings-feedback user-settings-feedback--danger w-full">
-                          {{ workspaceInvitationError }}
-                        </p>
-                        <p v-if="workspaceInvitationSuccess" class="user-settings-feedback user-settings-feedback--success w-full">
-                          {{ workspaceInvitationSuccess }}
-                        </p>
-
-                        <div v-if="workspaceInvitationLink" class="user-settings-link-card">
-                          <div class="flex gap-3 items-start justify-between">
-                            <div class="min-w-0">
-                              <p class="text-sm text-slate-900 font-medium">
-                                最新邀请链接
-                              </p>
-                              <p class="text-xs text-slate-500 mt-1 break-all">
-                                {{ workspaceInvitationLink }}
-                              </p>
-                            </div>
-                            <button class="user-settings-icon-btn shrink-0" title="复制邀请链接" @click="copyWorkspaceInvitationLink">
-                              <span class="material-symbols-outlined text-[16px]">content_copy</span>
-                            </button>
-                          </div>
-                          <p v-if="workspaceInvitationCopyFeedback" class="text-xs text-slate-500 mt-2">
-                            {{ workspaceInvitationCopyFeedback }}
-                          </p>
+                          </template>
+                          <span v-else class="user-settings-chip">
+                            {{ resolveMemberRoleLabel(member) }}
+                          </span>
                         </div>
                       </div>
                     </div>
-                  </div>
+
+                    <div v-else class="user-settings-empty">
+                      {{ workspaceMemberLoading ? '成员信息加载中...' : '当前工作空间暂无成员记录。' }}
+                    </div>
+                  </section>
+
+                  <section class="user-settings-card">
+                    <div class="user-settings-section-header">
+                      <div>
+                        <p class="text-base text-slate-900 font-semibold">
+                          邀请记录
+                        </p>
+                        <p class="text-sm text-slate-500 mt-1">
+                          展示当前工作空间待接受或已过期的邀请，以及邀请人信息。
+                        </p>
+                      </div>
+                    </div>
+
+                    <div v-if="workspaceInvitations.length > 0" class="user-settings-record-list">
+                      <div
+                        v-for="invitation in workspaceInvitations"
+                        :key="invitation.id"
+                        class="user-settings-record-item"
+                      >
+                        <div class="flex-1 min-w-0">
+                          <div class="flex flex-wrap gap-2 items-center">
+                            <p class="text-sm text-slate-900 font-semibold">
+                              {{ invitation.inviteeUsername || '任意账号可加入' }}
+                            </p>
+                            <span class="user-settings-chip">
+                              {{ formatWorkspaceRoleLabel(invitation.role) }}
+                            </span>
+                            <span class="user-settings-chip user-settings-chip--muted">
+                              {{ resolveInvitationStatusLabel(invitation) }}
+                            </span>
+                          </div>
+                          <p class="text-xs text-slate-500 mt-2">
+                            邀请人 {{ invitation.invitedByUsername }} · 创建于 {{ formatDateTime(invitation.createdAt) }}
+                          </p>
+                          <p class="text-xs text-slate-500 mt-1">
+                            过期时间 {{ formatDateTime(invitation.expiresAt) }}
+                          </p>
+                        </div>
+                        <button
+                          v-if="canInviteWorkspaceMembers && !invitation.isExpired"
+                          class="user-settings-btn user-settings-btn--compact user-settings-btn--danger"
+                          :disabled="workspaceInvitationRevokingId === invitation.id"
+                          @click="revokeWorkspaceInvitation(invitation.id)"
+                        >
+                          {{ workspaceInvitationRevokingId === invitation.id ? '撤销中...' : '撤销邀请' }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div v-else class="user-settings-empty">
+                      当前工作空间暂无邀请记录。
+                    </div>
+                  </section>
                 </template>
 
-                <div v-else class="user-settings-row">
-                  <div class="user-settings-row__heading">
-                    <p class="user-settings-row__title">
-                      工作空间成员
-                    </p>
-                    <p class="user-settings-row__desc">
-                      当前账号暂无可见工作空间信息。
-                    </p>
-                  </div>
-                  <div class="user-settings-row__content user-settings-row__content--start">
-                    <div class="text-sm text-slate-500 px-4 py-4 border border-slate-200 rounded-2xl border-dashed bg-slate-50 w-full">
-                      当前账号暂无可见工作空间信息。
-                    </div>
-                  </div>
+                <div v-else class="user-settings-empty">
+                  当前账号暂无可见工作空间信息。
                 </div>
               </div>
 
@@ -1456,61 +1869,42 @@ onBeforeUnmount(() => {
                 </section>
               </div>
 
-              <div v-else-if="activeTab === 'loginHistory'" class="user-settings-panel">
-                <div class="user-settings-row">
-                  <div class="user-settings-row__heading">
-                    <p class="user-settings-row__title">
-                      个人登录历史
-                    </p>
-                    <p class="user-settings-row__desc">
-                      当前仅展示登录时间、会话有效期与会话状态。
-                    </p>
-                  </div>
-                  <div class="user-settings-row__content user-settings-row__content--start">
-                    <div class="user-settings-member-toolbar">
-                      <div class="min-w-0">
-                        <p class="text-base text-slate-900 font-medium">
-                          {{ loginHistorySummaryText }}
+              <div v-else-if="activeTab === 'loginHistory'" class="user-settings-panel user-settings-panel--stack">
+                <p class="sr-only">
+                  个人登录历史
+                </p>
+
+                <p v-if="authSessionsError" class="user-settings-feedback user-settings-feedback--danger">
+                  {{ authSessionsError }}
+                </p>
+
+                <div v-else-if="authSessions.length > 0" class="user-settings-session-list">
+                  <div
+                    v-for="session in authSessions"
+                    :key="session.id"
+                    class="user-settings-session-item"
+                  >
+                    <div class="min-w-0">
+                      <div class="flex flex-wrap gap-2 items-center">
+                        <p class="text-sm text-slate-900 font-semibold">
+                          {{ formatDateTime(session.createdAt) }}
                         </p>
+                        <span :class="resolveSessionStatusClass(session.status)">
+                          {{ formatSessionStatusLabel(session.status) }}
+                        </span>
                       </div>
-                      <button class="user-settings-btn user-settings-btn--compact" :disabled="authSessionsLoading" @click="loadAuthSessions">
-                        {{ authSessionsLoading ? '刷新中...' : '刷新历史' }}
-                      </button>
-                    </div>
-
-                    <p v-if="authSessionsError" class="user-settings-feedback user-settings-feedback--danger w-full">
-                      {{ authSessionsError }}
-                    </p>
-
-                    <div v-else-if="authSessionsPreview.length > 0" class="user-settings-session-list">
-                      <div
-                        v-for="session in authSessionsPreview"
-                        :key="session.id"
-                        class="user-settings-session-item"
-                      >
-                        <div class="min-w-0">
-                          <div class="flex flex-wrap gap-2 items-center">
-                            <p class="text-sm text-slate-900 font-semibold">
-                              {{ formatDateTime(session.createdAt) }}
-                            </p>
-                            <span :class="resolveSessionStatusClass(session.status)">
-                              {{ formatSessionStatusLabel(session.status) }}
-                            </span>
-                          </div>
-                          <p class="text-xs text-slate-500 mt-2">
-                            有效至 {{ formatDateTime(session.expiresAt) }}
-                          </p>
-                          <p class="text-xs text-slate-400 font-mono mt-2 break-all">
-                            session: {{ session.id }}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div v-else class="text-sm text-slate-500 px-4 py-4 border border-slate-200 rounded-2xl border-dashed bg-slate-50 w-full">
-                      {{ authSessionsLoading ? '登录历史加载中...' : '当前账号暂无可见登录历史。' }}
+                      <p class="text-xs text-slate-500 mt-2">
+                        有效至 {{ formatDateTime(session.expiresAt) }}
+                      </p>
+                      <p class="text-xs text-slate-400 font-mono mt-2 break-all">
+                        session: {{ session.id }}
+                      </p>
                     </div>
                   </div>
+                </div>
+
+                <div v-else class="user-settings-empty">
+                  {{ authSessionsLoading ? '登录历史加载中...' : '当前账号暂无可见登录历史。' }}
                 </div>
               </div>
 
@@ -1563,6 +1957,125 @@ onBeforeUnmount(() => {
           </section>
         </div>
       </div>
+
+      <div
+        v-if="workspaceInvitationDialogVisible"
+        class="p-4 bg-slate-950/35 flex items-center inset-0 justify-center fixed z-[60]"
+        @click.self="closeWorkspaceInvitationDialog"
+      >
+        <div class="p-5 border border-slate-200 rounded-[24px] bg-white max-w-[560px] w-full shadow-2xl sm:p-6">
+          <div class="flex gap-4 items-start justify-between">
+            <div>
+              <p class="text-xl text-slate-900 font-semibold">
+                发起邀请
+              </p>
+              <p class="text-sm text-slate-500 mt-2">
+                {{ workspaceInvitationRoleHint }}
+              </p>
+            </div>
+            <button
+              class="text-slate-500 rounded-full flex h-9 w-9 transition items-center justify-center hover:text-slate-800 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="workspaceInvitationSubmitting"
+              @click="closeWorkspaceInvitationDialog"
+            >
+              <span class="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+
+          <div class="mt-5 gap-4 grid">
+            <label class="user-settings-field">
+              <span class="user-settings-field__label">指定用户名</span>
+              <input
+                v-model="workspaceInviteeUsername"
+                type="text"
+                class="user-settings-input"
+                placeholder="可选，不填则任意账号可加入"
+                :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
+              >
+            </label>
+
+            <div class="gap-4 grid sm:grid-cols-2">
+              <label class="user-settings-field">
+                <span class="user-settings-field__label">空间角色</span>
+                <select
+                  v-model="workspaceInviteRole"
+                  class="user-settings-select"
+                  :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
+                >
+                  <option
+                    v-for="option in inviteRoleOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="user-settings-field">
+                <span class="user-settings-field__label">有效期</span>
+                <select
+                  v-model="workspaceInviteExpiresInDays"
+                  class="user-settings-select"
+                  :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
+                >
+                  <option :value="3">
+                    3 天
+                  </option>
+                  <option :value="7">
+                    7 天
+                  </option>
+                  <option :value="14">
+                    14 天
+                  </option>
+                  <option :value="30">
+                    30 天
+                  </option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <p v-if="workspaceInvitationError" class="user-settings-feedback user-settings-feedback--danger mt-4">
+            {{ workspaceInvitationError }}
+          </p>
+          <p v-if="workspaceInvitationSuccess" class="user-settings-feedback user-settings-feedback--success mt-4">
+            {{ workspaceInvitationSuccess }}
+          </p>
+
+          <div v-if="workspaceInvitationLink" class="user-settings-link-card mt-4">
+            <div class="flex gap-3 items-start justify-between">
+              <div class="min-w-0">
+                <p class="text-sm text-slate-900 font-medium">
+                  最新邀请链接
+                </p>
+                <p class="text-xs text-slate-500 mt-1 break-all">
+                  {{ workspaceInvitationLink }}
+                </p>
+              </div>
+              <button class="user-settings-icon-btn shrink-0" title="复制邀请链接" @click="copyWorkspaceInvitationLink">
+                <span class="material-symbols-outlined text-[16px]">content_copy</span>
+              </button>
+            </div>
+            <p v-if="workspaceInvitationCopyFeedback" class="text-xs text-slate-500 mt-2">
+              {{ workspaceInvitationCopyFeedback }}
+            </p>
+          </div>
+
+          <div class="mt-5 flex flex-wrap gap-2 justify-end">
+            <button class="user-settings-btn" :disabled="workspaceInvitationSubmitting" @click="closeWorkspaceInvitationDialog">
+              关闭
+            </button>
+            <button
+              class="user-settings-btn user-settings-btn--primary"
+              :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
+              @click="createWorkspaceInvitation"
+            >
+              {{ workspaceInvitationSubmitting ? '生成中...' : '生成邀请链接' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -1570,6 +2083,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .user-settings-panel {
   border-top: 1px solid #e2e8f0;
+}
+
+.user-settings-panel--stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-top: none;
 }
 
 .user-settings-row {
@@ -1628,7 +2148,7 @@ onBeforeUnmount(() => {
 .user-settings-profile-card {
   display: flex;
   width: 100%;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
@@ -1714,7 +2234,94 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
-.user-settings-member-toolbar {
+.user-settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  padding: 18px 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  background: #fff;
+}
+
+.user-settings-ai-headline {
+  color: #0f172a;
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.user-settings-ai-unit {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding-bottom: 4px;
+}
+
+.user-settings-plus-btn {
+  display: inline-flex;
+  height: 34px;
+  width: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.user-settings-plus-btn:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.user-settings-plus-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.user-settings-metric-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.user-settings-mini-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.user-settings-mini-card__label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.user-settings-mini-card__value {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.user-settings-section-header {
   display: flex;
   width: 100%;
   align-items: flex-start;
@@ -1723,20 +2330,29 @@ onBeforeUnmount(() => {
 }
 
 .user-settings-member-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .user-settings-member-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid #e2e8f0;
   border-radius: 16px;
   background: #fff;
+}
+
+.user-settings-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .user-settings-member-avatar {
@@ -1753,34 +2369,63 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.user-settings-invite-panel {
+.user-settings-record-list {
   display: flex;
   width: 100%;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px;
+  gap: 12px;
+}
+
+.user-settings-record-item {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
   border: 1px solid #e2e8f0;
-  border-radius: 18px;
+  border-radius: 16px;
   background: #fff;
 }
 
-.user-settings-invite-panel__header {
+.user-settings-usage-list {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.user-settings-invite-form {
-  display: grid;
   width: 100%;
+  flex-direction: column;
   gap: 12px;
-  grid-template-columns: minmax(0, 1.3fr) minmax(128px, 0.8fr) minmax(112px, 0.8fr) auto;
-  align-items: end;
 }
 
-.user-settings-invite-form__actions {
+.user-settings-usage-item {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.user-settings-progress-track {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.user-settings-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb 0%, #60a5fa 100%);
+}
+
+.user-settings-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 10px;
 }
 
 .user-settings-field {
@@ -1825,6 +2470,14 @@ onBeforeUnmount(() => {
   color: #94a3b8;
 }
 
+.user-settings-select--compact {
+  min-width: 132px;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+
 .user-settings-link-card {
   width: 100%;
   padding: 14px 16px;
@@ -1845,6 +2498,17 @@ onBeforeUnmount(() => {
   border: 1px solid #e2e8f0;
   border-radius: 16px;
   background: #fff;
+}
+
+.user-settings-empty {
+  width: 100%;
+  padding: 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .user-settings-feedback {
@@ -1870,25 +2534,29 @@ onBeforeUnmount(() => {
   min-width: max-content;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 7px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: 12px;
   background: transparent;
-  padding: 11px 12px;
+  padding: 9px 10px;
   color: #475569;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
-  transition: all 0.15s ease;
+  line-height: 1.4;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .user-settings-tab:hover {
-  background: #f8fafc;
+  background: #fff;
   color: #0f172a;
 }
 
 .user-settings-tab.is-active {
-  border-color: transparent;
-  background: #eef4ff;
+  border-color: #dbeafe;
+  background: #eff6ff;
   color: #1d4ed8;
 }
 
@@ -1970,6 +2638,10 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1023px) {
+  .user-settings-panel--stack {
+    gap: 14px;
+  }
+
   .user-settings-row {
     flex-direction: column;
     gap: 14px;
@@ -1989,8 +2661,11 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
+  .user-settings-card,
   .user-settings-profile-card,
-  .user-settings-member-toolbar {
+  .user-settings-section-header,
+  .user-settings-record-item,
+  .user-settings-member-item {
     flex-direction: column;
   }
 
@@ -1998,20 +2673,37 @@ onBeforeUnmount(() => {
     align-self: flex-start;
   }
 
+  .user-settings-member-actions,
+  .user-settings-pagination {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
   .user-settings-code-row {
     align-items: flex-start;
   }
 
-  .user-settings-member-list {
+  .user-settings-metric-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .user-settings-invite-form {
-    grid-template-columns: minmax(0, 1fr);
+  .user-settings-tab {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 639px) {
+  .user-settings-card {
+    padding: 16px;
+    border-radius: 18px;
   }
 
-  .user-settings-invite-form__actions {
-    justify-content: stretch;
+  .user-settings-ai-headline {
+    font-size: 30px;
+  }
+
+  .user-settings-mini-card__value {
+    font-size: 15px;
   }
 }
 </style>

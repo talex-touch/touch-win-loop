@@ -475,7 +475,7 @@ if (import.meta.client) {
                   管理页
                 </p>
               </div>
-              <a-button type="text" size="mini" class="admin-setting-btn" @click="openProfileDialog">
+              <a-button type="text" size="mini" class="admin-setting-btn" @click.stop="openProfileDialog">
                 <template #icon>
                   <span class="admin-inline-icon i-heroicons-outline-cog-6-tooth" />
                 </template>
