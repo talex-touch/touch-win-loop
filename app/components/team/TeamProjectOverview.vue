@@ -76,72 +76,65 @@ function statusBadgeClass(status: string): string {
       :key="project.id"
       data-testid="team-project-card"
       :data-project-id="project.id"
-      class="group relative overflow-hidden rounded-2xl border bg-white transition-all hover:-translate-y-0.5 hover:shadow-md"
+      class="border rounded-2xl bg-white relative overflow-hidden"
       :style="{
         borderColor: project.accentBorder,
         background: `linear-gradient(135deg, ${project.accentSoft} 0%, #ffffff 70%, ${project.accentSoft} 100%)`,
       }"
     >
       <div
-        class="absolute right-[-12px] top-[-30px] h-24 w-24 rounded-full transition-transform duration-300 group-hover:scale-105"
+        class="rounded-full h-20 w-20 right-[-10px] top-[-26px] absolute"
         :style="{
           background: `radial-gradient(circle, ${project.accentBorder} 0%, transparent 72%)`,
-          opacity: 0.42,
+          opacity: 0.34,
         }"
       />
-      <div class="relative p-5">
-        <button class="block w-full text-left" type="button" @click="openProject(project)">
+      <div class="p-4 relative">
+        <button class="text-left w-full block" type="button" @click="openProject(project)">
           <div class="flex gap-3 items-start justify-between">
-            <div class="flex min-w-0 items-start gap-3">
+            <div class="flex gap-3 min-w-0 items-start">
               <div
                 data-testid="team-project-icon-badge"
-                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border shadow-sm"
+                class="rounded-2xl flex shrink-0 h-10 w-10 items-center justify-center"
                 :style="{
                   color: project.accentText,
                   backgroundColor: project.accentSoft,
-                  borderColor: project.accentBorder,
                 }"
               >
-                <span class="material-symbols-outlined text-[22px]">{{ project.displayIcon }}</span>
+                <span class="material-symbols-outlined text-[20px]">{{ project.displayIcon }}</span>
               </div>
 
               <div class="min-w-0">
-                <div class="flex flex-wrap items-center gap-2">
-                  <h3 class="truncate text-base text-slate-900 font-semibold">
+                <div class="flex flex-wrap gap-2 items-center">
+                  <h3 class="text-[15px] text-slate-900 font-semibold truncate">
                     {{ project.title }}
                   </h3>
-                  <span
-                    class="shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold"
-                    :class="statusBadgeClass(project.status)"
-                  >
-                    {{ project.status }}
-                  </span>
                 </div>
 
-                <p class="mt-1 line-clamp-2 text-xs text-slate-600">
+                <p class="text-xs text-slate-600 mt-1 line-clamp-2">
                   {{ project.summary || '待补充项目摘要' }}
                 </p>
               </div>
             </div>
 
-            <div
-              class="shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold"
+            <span
+              class="text-[10px] font-semibold px-2 py-1 border rounded-full shrink-0"
+              :class="statusBadgeClass(project.status)"
               :style="{
-                color: project.accentText,
-                backgroundColor: project.accentSoft,
+                marginTop: '1px',
               }"
             >
-              {{ project.displayMonogram }}
-            </div>
+              {{ project.status }}
+            </span>
           </div>
 
           <div
             v-if="showTeamMeta || project.contestNames.length > 0"
-            class="mt-4 flex flex-wrap items-center gap-2"
+            class="mt-3 flex flex-wrap gap-2 items-center"
           >
             <span
               v-if="project.teamName && showTeamMeta"
-              class="rounded-full px-2 py-1 text-[10px] font-semibold"
+              class="text-[10px] font-semibold px-2 py-1 rounded-full"
               :style="{
                 color: project.accentText,
                 backgroundColor: project.accentSoft,
@@ -151,26 +144,26 @@ function statusBadgeClass(status: string): string {
             </span>
             <span
               v-if="project.teamType && showTeamMeta"
-              class="rounded-full bg-white/80 px-2 py-1 text-[10px] text-slate-500 font-medium"
+              class="text-[10px] text-slate-500 font-medium px-2 py-1 rounded-full bg-white/80"
             >
               {{ project.teamType }}
             </span>
             <span
               v-if="project.source && showTeamMeta"
-              class="rounded-full bg-white/80 px-2 py-1 text-[10px] text-slate-500 font-medium"
+              class="text-[10px] text-slate-500 font-medium px-2 py-1 rounded-full bg-white/80"
             >
               {{ project.source }}
             </span>
             <span
               v-for="contestName in project.contestNames.slice(0, 2)"
               :key="`${project.id}-${contestName}`"
-              class="rounded-full bg-white/85 px-2 py-1 text-[10px] text-slate-600 font-medium"
+              class="text-[10px] text-slate-600 font-medium px-2 py-1 rounded-full bg-white/85"
             >
               {{ contestName }}
             </span>
             <span
               v-if="project.contestNames.length > 2"
-              class="rounded-full bg-white/80 px-2 py-1 text-[10px] text-slate-500 font-medium"
+              class="text-[10px] text-slate-500 font-medium px-2 py-1 rounded-full bg-white/80"
             >
               +{{ project.contestNames.length - 2 }} 个竞赛
             </span>
@@ -178,10 +171,10 @@ function statusBadgeClass(status: string): string {
 
           <div
             v-if="project.projectSeatLimit"
-            class="mt-4 rounded-xl border bg-white/70 p-3"
+            class="mt-3 p-3 border rounded-xl bg-white/72"
             :style="{ borderColor: project.accentBorder }"
           >
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex gap-2 items-center justify-between">
               <p class="text-[11px] text-slate-600 font-medium">
                 项目席位
               </p>
@@ -189,16 +182,16 @@ function statusBadgeClass(status: string): string {
                 {{ project.projectSeatUsed }}/{{ project.projectSeatLimit }}
               </p>
             </div>
-            <div data-testid="team-project-seat-bar" class="mt-2 h-2 overflow-hidden rounded-full bg-slate-200/70">
+            <div data-testid="team-project-seat-bar" class="mt-2 rounded-full bg-slate-200/70 h-2 overflow-hidden">
               <div
-                class="h-full rounded-full transition-all duration-300"
+                class="rounded-full h-full transition-all duration-300"
                 :style="{
                   width: `${project.seatProgressPercent || 0}%`,
                   backgroundColor: project.accentSolid,
                 }"
               />
             </div>
-            <div class="mt-2 flex items-center justify-between gap-2">
+            <div class="mt-2 flex gap-2 items-center justify-between">
               <p class="text-[11px] text-slate-500">
                 剩余 {{ project.projectSeatRemaining }} 个席位
               </p>
@@ -207,21 +200,12 @@ function statusBadgeClass(status: string): string {
               </p>
             </div>
           </div>
-
-          <div class="mt-4 flex items-center justify-between gap-2">
-            <p class="text-[11px] text-slate-500">
-              最近更新：{{ formatDateTime(project.updatedAt) }}
-            </p>
-            <p
-              v-if="project.contestNames.length > 0"
-              class="max-w-full truncate text-[11px] text-slate-500"
-            >
-              {{ project.contestNames.join(' / ') }}
-            </p>
-          </div>
         </button>
 
-        <div class="mt-3 flex items-center justify-end">
+        <div class="mt-3 flex gap-2 items-center justify-between">
+          <p class="text-[11px] text-slate-500 truncate">
+            最近更新：{{ formatDateTime(project.updatedAt) }}
+          </p>
           <a-trigger
             trigger="click"
             position="bl"
@@ -230,7 +214,7 @@ function statusBadgeClass(status: string): string {
           >
             <button
               data-testid="team-project-action-trigger"
-              class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700"
+              class="text-slate-400 rounded-full flex h-8 w-8 items-center justify-center"
               type="button"
               @click.stop
             >
@@ -238,9 +222,9 @@ function statusBadgeClass(status: string): string {
             </button>
 
             <template #content>
-              <div class="w-44 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_40px_rgba(15,23,42,0.14)]">
+              <div class="p-2 border border-slate-200 rounded-2xl bg-white w-44">
                 <button
-                  class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[12px] text-slate-700 transition-colors hover:bg-slate-50"
+                  class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
                   type="button"
                   @click.stop="triggerProjectAction(project, 'details')"
                 >
@@ -248,7 +232,7 @@ function statusBadgeClass(status: string): string {
                   <span>详细信息</span>
                 </button>
                 <button
-                  class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[12px] text-slate-700 transition-colors hover:bg-slate-50"
+                  class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
                   type="button"
                   @click.stop="triggerProjectAction(project, 'settings')"
                 >
@@ -256,7 +240,7 @@ function statusBadgeClass(status: string): string {
                   <span>项目设置</span>
                 </button>
                 <button
-                  class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[12px] text-slate-700 transition-colors hover:bg-slate-50"
+                  class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
                   type="button"
                   @click.stop="triggerProjectAction(project, 'members')"
                 >
@@ -264,7 +248,7 @@ function statusBadgeClass(status: string): string {
                   <span>成员管理</span>
                 </button>
                 <button
-                  class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[12px] text-rose-600 transition-colors hover:bg-rose-50"
+                  class="text-[12px] text-rose-600 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-rose-50"
                   type="button"
                   @click.stop="triggerProjectAction(project, 'archive')"
                 >

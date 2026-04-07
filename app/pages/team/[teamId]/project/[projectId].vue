@@ -2928,6 +2928,32 @@ async function consumeJoinedProjectNotice() {
   }, { replace: true })
 }
 
+async function consumeProjectPanelQuery() {
+  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
+  if (panel !== 'members' && panel !== 'settings')
+    return
+
+  if (panel === 'members')
+    openMemberManagementSignal.value += 1
+  else
+    openSettingsSignal.value += 1
+
+  const nextQuery: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    if (key === 'panel')
+      continue
+
+    const normalized = normalizeQueryParam(value)
+    if (normalized)
+      nextQuery[key] = normalized
+  }
+
+  await navigateTo({
+    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
+    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
+  }, { replace: true })
+}
+
 async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) {
   const projectId = String(activeProjectId.value || '').trim()
   const userId = String(payload.userId || '').trim()
@@ -4405,6 +4431,7 @@ onMounted(async () => {
       statusLine.value = `已定位项目：${target.title}`
   }
   await consumeJoinedProjectNotice()
+  await consumeProjectPanelQuery()
 })
 
 onBeforeUnmount(() => {
