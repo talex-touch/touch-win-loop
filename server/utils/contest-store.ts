@@ -5359,7 +5359,7 @@ export async function estimateWorkspaceBilling(
     `SELECT COUNT(DISTINCT wm.user_id)::TEXT AS seat_used
      FROM workspace_members wm
      WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE`,
+       AND wm.is_enabled = TRUE`,
     [input.workspaceId],
   )
 

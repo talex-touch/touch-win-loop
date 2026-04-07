@@ -46,7 +46,7 @@ async function countActiveWorkspaceSeatUsed(db: Queryable, workspaceId: string):
     `SELECT COUNT(DISTINCT wm.user_id)::TEXT AS count
      FROM workspace_members wm
      WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE`,
+       AND wm.is_enabled = TRUE`,
     [workspaceId],
   )
 
@@ -115,7 +115,7 @@ export async function teamRefreshSeatUsage(db: Queryable, workspaceId: string): 
      FROM workspace_members wm
      JOIN workspaces w ON w.id = wm.workspace_id
      WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE
+       AND wm.is_enabled = TRUE
        AND w.type = 'team'`,
     [workspaceId],
   )

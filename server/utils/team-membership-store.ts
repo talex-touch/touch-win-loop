@@ -155,7 +155,7 @@ async function getWorkspaceRolesByUserId(
      FROM workspace_members
      WHERE workspace_id = $1
        AND user_id = $2
-       AND is_active = TRUE`,
+       AND is_enabled = TRUE`,
     [workspaceId, userId],
   )
 
@@ -168,7 +168,7 @@ export async function teamGetWorkspaceAccess(db: Queryable, userId: string, work
      FROM workspace_members
      WHERE workspace_id = $1
        AND user_id = $2
-       AND is_active = TRUE`,
+       AND is_enabled = TRUE`,
     [workspaceId, userId],
   )
 
@@ -199,7 +199,7 @@ export async function teamGetWorkspaceMemberManagementSnapshot(
      FROM workspace_members wm
      JOIN users u ON u.id = wm.user_id
      WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE
+       AND wm.is_enabled = TRUE
      GROUP BY wm.user_id, u.username
      ORDER BY MIN(wm.created_at) ASC, u.username ASC`,
     [workspaceId],
@@ -280,7 +280,7 @@ export async function teamEnsureWorkspaceMember(
      FROM workspace_members
      WHERE workspace_id = $1
        AND user_id = $2
-       AND is_active = TRUE
+       AND is_enabled = TRUE
      LIMIT 1`,
     [workspaceId, userId],
   )
@@ -290,11 +290,11 @@ export async function teamEnsureWorkspaceMember(
 
   const now = new Date().toISOString()
   await db.query(
-    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_active, created_at, updated_at)
+    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_enabled, created_at, updated_at)
      VALUES ($1, $2, $3, $4, TRUE, $5, $5)
      ON CONFLICT (workspace_id, user_id, role)
      DO UPDATE SET
-       is_active = TRUE,
+       is_enabled = TRUE,
        updated_at = EXCLUDED.updated_at`,
     [randomUUID(), workspaceId, userId, normalizedRole, now],
   )
@@ -343,7 +343,7 @@ export async function teamPatchWorkspaceMemberRole(
   )
 
   await db.query(
-    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_active, created_at, updated_at)
+    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_enabled, created_at, updated_at)
      VALUES ($1, $2, $3, $4, TRUE, $5, $5)`,
     [randomUUID(), input.workspaceId, normalizedTargetUserId, input.role, now],
   )
@@ -361,7 +361,7 @@ export async function teamPatchWorkspaceMemberRole(
      JOIN users u ON u.id = wm.user_id
      WHERE wm.workspace_id = $1
        AND wm.user_id = $2
-       AND wm.is_active = TRUE
+       AND wm.is_enabled = TRUE
      GROUP BY wm.user_id, u.username`,
     [input.workspaceId, normalizedTargetUserId],
   )

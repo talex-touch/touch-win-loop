@@ -70,6 +70,43 @@ CREATE TABLE IF NOT EXISTS workspace_members (
   UNIQUE(workspace_id, user_id, role)
 );
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspace_members'
+      AND column_name = 'is_active'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspace_members'
+      AND column_name = 'is_enabled'
+  ) THEN
+    ALTER TABLE workspace_members
+      RENAME COLUMN is_active TO is_enabled;
+  END IF;
+END $$;
+
+ALTER TABLE workspace_members
+  ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspace_members'
+      AND column_name = 'is_active'
+  ) THEN
+    UPDATE workspace_members
+    SET is_enabled = is_active;
+
+    ALTER TABLE workspace_members
+      DROP COLUMN is_active;
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

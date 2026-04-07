@@ -102,7 +102,7 @@ export async function teamListUserWorkspaces(db: Queryable, userId: string): Pro
      FROM workspaces w
      JOIN workspace_members wm ON wm.workspace_id = w.id
      WHERE wm.user_id = $1
-       AND wm.is_active = TRUE
+       AND wm.is_enabled = TRUE
      GROUP BY w.id
      ORDER BY w.created_at ASC`,
     [userId],
@@ -133,7 +133,7 @@ export async function teamCreateWorkspace(db: Queryable, input: CreateTeamWorksp
   )
 
   await db.query(
-    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_active, created_at, updated_at)
+    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_enabled, created_at, updated_at)
      VALUES ($1, $2, $3, 'owner', TRUE, $4, $4)`,
     [randomUUID(), workspaceId, input.ownerUserId, now],
   )

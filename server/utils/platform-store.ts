@@ -610,7 +610,7 @@ export async function createUserWithPersonalWorkspace(db: Queryable, input: Crea
   )
 
   await db.query(
-    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_active, created_at, updated_at)
+    `INSERT INTO workspace_members (id, workspace_id, user_id, role, is_enabled, created_at, updated_at)
      VALUES ($1, $2, $3, 'owner', TRUE, $4, $4)`,
     [randomUUID(), workspaceId, userId, now],
   )
@@ -2037,7 +2037,7 @@ export async function listVisibleProjects(
          FROM workspace_members wm_visible
          WHERE wm_visible.workspace_id = p.workspace_id
            AND wm_visible.user_id = $1
-           AND wm_visible.is_active = TRUE
+           AND wm_visible.is_enabled = TRUE
        )
        AND (
          EXISTS (
@@ -2045,7 +2045,7 @@ export async function listVisibleProjects(
            FROM workspace_members wm
            WHERE wm.workspace_id = p.workspace_id
              AND wm.user_id = $1
-             AND wm.is_active = TRUE
+             AND wm.is_enabled = TRUE
              AND wm.role = ANY($3::TEXT[])
          )
          OR EXISTS (
@@ -2054,7 +2054,7 @@ export async function listVisibleProjects(
            JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = wm.user_id
            WHERE wm.workspace_id = p.workspace_id
              AND wm.user_id = $1
-             AND wm.is_active = TRUE
+             AND wm.is_enabled = TRUE
              AND wm.role = ANY($4::TEXT[])
          )
        )
@@ -2138,7 +2138,7 @@ export async function getVisibleProjectById(
          FROM workspace_members wm_visible
          WHERE wm_visible.workspace_id = p.workspace_id
            AND wm_visible.user_id = $1
-           AND wm_visible.is_active = TRUE
+           AND wm_visible.is_enabled = TRUE
        )
        AND (
          EXISTS (
@@ -2146,7 +2146,7 @@ export async function getVisibleProjectById(
            FROM workspace_members wm
            WHERE wm.workspace_id = p.workspace_id
              AND wm.user_id = $1
-             AND wm.is_active = TRUE
+             AND wm.is_enabled = TRUE
              AND wm.role = ANY($3::TEXT[])
          )
          OR EXISTS (
@@ -2155,7 +2155,7 @@ export async function getVisibleProjectById(
            JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = wm.user_id
            WHERE wm.workspace_id = p.workspace_id
              AND wm.user_id = $1
-             AND wm.is_active = TRUE
+             AND wm.is_enabled = TRUE
              AND wm.role = ANY($4::TEXT[])
          )
        )
@@ -2437,7 +2437,7 @@ async function getWorkspaceRolesByUserId(
      FROM workspace_members
      WHERE workspace_id = $1
        AND user_id = $2
-       AND is_active = TRUE`,
+       AND is_enabled = TRUE`,
     [workspaceId, userId],
   )
 
@@ -2648,7 +2648,7 @@ export async function upsertProjectMember(
      FROM workspace_members
      WHERE workspace_id = $1
        AND user_id = $2
-       AND is_active = TRUE
+       AND is_enabled = TRUE
      LIMIT 1`,
     [project.workspaceId, targetUserId],
   )
