@@ -99,6 +99,8 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'level', label: 'level（级别）' },
     { key: 'disciplines', label: 'disciplines（学科）' },
     { key: 'keywords', label: 'keywords（关键词）' },
+    { key: 'registrationWindow', label: 'registrationWindow（报名时间）' },
+    { key: 'submissionDeadline', label: 'submissionDeadline（截止时间）' },
   ],
   track: [
     { key: 'externalId', label: 'externalId（主键）' },
@@ -135,6 +137,8 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   officialUrl: ['officialurl', 'official_url', '官网', '官网链接', '赛事链接', '竞赛链接', '报名链接', 'url'],
   disciplines: ['disciplines', '学科', '专业', '所属学科'],
   keywords: ['keywords', '关键字', '关键词', '标签'],
+  registrationWindow: ['registrationwindow', 'registration_window', '报名时间', '报名窗口'],
+  submissionDeadline: ['submissiondeadline', 'submission_deadline', '截止时间', '提交截止时间', '提交时间'],
   suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业'],
   deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物'],
   sortOrder: ['sortorder', '排序', '序号', 'sort', 'order'],
@@ -646,7 +650,7 @@ function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string
     return ['externalId', 'contestExternalId', 'name']
   if (entityType === 'resource')
     return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'url']
-  return ['externalId', 'name', 'officialUrl']
+  return ['externalId', 'name', 'officialUrl', 'registrationWindow', 'submissionDeadline']
 }
 
 function isRequiredMappingField(entityType: FeishuBitableSyncItemEntityType, targetKey: string): boolean {
@@ -2188,7 +2192,7 @@ watch(() => props.selectedItemId, (value) => {
               </div>
             </section>
 
-            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+            <section v-if="activeOptionFieldGroups.length" class="p-4 border border-slate-200 rounded bg-white space-y-3">
               <div>
                 <h3 class="text-[12px] text-slate-900 font-semibold m-0">
                   同步选项
@@ -2214,19 +2218,6 @@ watch(() => props.selectedItemId, (value) => {
               </div>
 
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
-                <template v-if="itemForm.entityType === 'contest'">
-                  <label class="text-[11px] text-slate-600 font-medium block">
-                    默认可见性
-                    <a-select v-model="optionForm.defaultVisibility" class="mt-1" size="small">
-                      <a-option v-for="option in RESOURCE_VISIBILITY_OPTIONS" :key="option.value" :value="option.value">
-                        {{ option.label }}
-                      </a-option>
-                    </a-select>
-                    <p class="text-[10px] text-slate-400 m-0 mt-1">
-                      竞赛同步到平台后默认按这里设置可见性。
-                    </p>
-                  </label>
-                </template>
                 <label v-if="itemForm.entityType === 'track' || itemForm.entityType === 'resource'" class="text-[11px] text-slate-600 font-medium block">
                   默认 contestId
                   <a-input v-model="optionForm.contestId" class="mt-1" size="small" allow-clear />
@@ -2372,7 +2363,7 @@ watch(() => props.selectedItemId, (value) => {
                       模拟同步结果
                     </p>
                     <p class="text-[10px] text-slate-500 m-0 mt-1">
-                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl`，赛道库的 `contestExternalId / name` 是否都落对。
+                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl / registrationWindow / submissionDeadline`，赛道库的 `contestExternalId / name` 是否都落对。
                     </p>
                   </div>
                   <div class="border border-slate-200 rounded overflow-auto">
@@ -2560,7 +2551,7 @@ watch(() => props.selectedItemId, (value) => {
                 基础映射
               </h3>
               <p class="text-[11px] text-slate-500 m-0 mt-1">
-                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl`。
+                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl / registrationWindow / submissionDeadline`。
               </p>
             </div>
             <div class="flex gap-2">

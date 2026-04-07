@@ -453,6 +453,14 @@ interface ImportRegistrationWindowResult {
   warnings: string[]
 }
 
+interface ContestSyncSubmissionDeadlineResult {
+  raw: string
+  endAt: string | null
+  inferredYear: number
+  inferredYearSource: 'submission_deadline' | 'current_season' | 'fallback_current_year'
+  warnings: string[]
+}
+
 function parseImportRegistrationWindow(
   registrationText: string,
   currentSeason: string,
@@ -536,6 +544,182 @@ function parseImportRegistrationWindow(
     inferredYearSource,
     warnings,
   }
+}
+
+function parseContestSyncSubmissionDeadline(
+  submissionText: string,
+  currentSeason: string,
+): ContestSyncSubmissionDeadlineResult {
+  const raw = normalizeString(submissionText)
+  const seasonYear = parseYearFromSeason(currentSeason)
+  const nowYear = new Date().getFullYear()
+  const explicitYear = extractExplicitYearFromDateToken(raw)
+  const warnings: string[] = []
+
+  let inferredYearSource: ContestSyncSubmissionDeadlineResult['inferredYearSource'] = 'fallback_current_year'
+  let inferredYear = nowYear
+  if (explicitYear && explicitYear >= 1900) {
+    inferredYear = explicitYear
+    inferredYearSource = 'submission_deadline'
+  }
+  else if (seasonYear && seasonYear >= 1900) {
+    inferredYear = seasonYear
+    inferredYearSource = 'current_season'
+  }
+
+  if (!raw) {
+    return {
+      raw,
+      endAt: null,
+      inferredYear,
+      inferredYearSource,
+      warnings,
+    }
+  }
+
+  const endAt = parseDateTokenToIso(raw, 'end', inferredYear)
+  if (!endAt)
+    warnings.push('截止时间日期解析失败，已跳过时间轴写入。')
+
+  return {
+    raw,
+    endAt,
+    inferredYear,
+    inferredYearSource,
+    warnings,
+  }
+}
+
+async function loadContestCurrentSeason(db: Queryable, contestId: string): Promise<string> {
+  const result = await db.query<{ current_season: string | null }>(
+    `SELECT current_season
+     FROM contests
+     WHERE id = $1
+     LIMIT 1`,
+    [contestId],
+  )
+
+  return normalizeString(result.rows[0]?.current_season)
+}
+
+async function upsertContestTimelineNode(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    contestId: string
+    timelineRows: TimelineRow[]
+    year: number
+    nodeType: 'registration' | 'submission'
+    startAt?: string | null
+    endAt?: string | null
+    note?: string
+    sourceLink?: string
+  },
+): Promise<void> {
+  const existing = input.timelineRows.find(row => row.year === input.year && row.node_type === input.nodeType)
+
+  if (existing) {
+    const patch: {
+      startAt?: string | null
+      endAt?: string | null
+      note?: string
+      sourceLink?: string
+    } = {}
+    if (input.startAt)
+      patch.startAt = input.startAt
+    if (input.endAt)
+      patch.endAt = input.endAt
+    if (input.note && !normalizeString(existing.note))
+      patch.note = input.note
+    if (input.sourceLink)
+      patch.sourceLink = input.sourceLink
+
+    if (Object.keys(patch).length === 0)
+      return
+
+    await patchAdminTimeline(db, {
+      actorUserId: input.actorUserId,
+      contestId: input.contestId,
+      timelineId: existing.id,
+      patch,
+    })
+    return
+  }
+
+  const created = await createAdminTimeline(db, {
+    actorUserId: input.actorUserId,
+    contestId: input.contestId,
+    year: input.year,
+    nodeType: input.nodeType,
+    startAt: input.startAt,
+    endAt: input.endAt,
+    note: input.note,
+    sourceLink: input.sourceLink,
+  })
+
+  input.timelineRows.push({
+    id: created.id,
+    contest_id: input.contestId,
+    year: created.year,
+    node_type: created.nodeType,
+    start_at: created.startAt,
+    end_at: created.endAt,
+    note: created.note,
+    source_link: created.sourceLink,
+  })
+}
+
+export async function syncContestDerivedTimelineNodes(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    contestId: string
+    officialUrl?: string
+    registrationWindow?: string
+    submissionDeadline?: string
+  },
+): Promise<void> {
+  const currentSeason = await loadContestCurrentSeason(db, input.contestId)
+  const registration = parseImportRegistrationWindow(input.registrationWindow || '', currentSeason)
+  const submission = parseContestSyncSubmissionDeadline(input.submissionDeadline || '', currentSeason)
+  const sourceLink = normalizeString(input.officialUrl)
+  const timelineRows = await loadTimelines(db, [input.contestId])
+
+  if (registration.startAt || registration.endAt) {
+    await upsertContestTimelineNode(db, {
+      actorUserId: input.actorUserId,
+      contestId: input.contestId,
+      timelineRows,
+      year: Number(registration.inferredYear || new Date().getFullYear()),
+      nodeType: 'registration',
+      startAt: registration.startAt,
+      endAt: registration.endAt,
+      note: registration.raw ? `飞书同步报名时间：${registration.raw}` : '',
+      sourceLink,
+    })
+  }
+
+  const submissionEndAt = submission.endAt || (!submission.raw && registration.endAt ? registration.endAt : null)
+  const submissionYear = submission.endAt
+    ? Number(submission.inferredYear || new Date().getFullYear())
+    : !submission.raw && registration.endAt
+        ? Number(registration.inferredYear || new Date().getFullYear())
+        : null
+
+  if (!submissionEndAt || !submissionYear)
+    return
+
+  await upsertContestTimelineNode(db, {
+    actorUserId: input.actorUserId,
+    contestId: input.contestId,
+    timelineRows,
+    year: submissionYear,
+    nodeType: 'submission',
+    startAt: null,
+    endAt: submissionEndAt,
+    note: submission.raw ? `飞书同步截止时间：${submission.raw}` : '由飞书同步报名时间推断提交截止时间。',
+    sourceLink,
+  })
 }
 
 function buildContestDedupKey(name: string, organizer: string, officialUrl: string): string | null {

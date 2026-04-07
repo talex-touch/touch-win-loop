@@ -53,11 +53,11 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
           level: '',
           disciplines: '',
           keywords: '',
+          registrationWindow: '',
+          submissionDeadline: '',
         },
       },
-      options: {
-        defaultVisibility: 'internal',
-      },
+      options: {},
       writeback: buildDefaultWriteback(),
     }
   }
