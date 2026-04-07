@@ -57,10 +57,8 @@ jobs:
           import time
           import urllib.request
 
-
           def to_text(value) -> str:
               return str(value or "").strip()
-
 
           def shorten(value: str, limit: int = 180) -> str:
               text = to_text(value)
@@ -68,12 +66,10 @@ jobs:
                   return text
               return f"{text[: max(0, limit - 3)]}..."
 
-
           def read_event_payload() -> dict:
               path = to_text(os.environ.get("GITHUB_EVENT_PATH"))
               with open(path, "r", encoding="utf-8") as handle:
                   return json.load(handle)
-
 
           def build_issue_message(payload: dict) -> str:
               issue = payload.get("issue") or {}
@@ -102,7 +98,6 @@ jobs:
                   f"链接：{url}",
                   f"Workflow：{run_url}",
               ])
-
 
           def build_pr_message(payload: dict) -> str:
               pr = payload.get("pull_request") or {}
@@ -143,7 +138,6 @@ jobs:
                   f"Workflow：{run_url}",
               ])
 
-
           def build_message() -> str:
               payload = read_event_payload()
               event_name = to_text(os.environ.get("GITHUB_EVENT_NAME"))
@@ -153,7 +147,6 @@ jobs:
                   return build_pr_message(payload)
               raise SystemExit(f"Unsupported event: {event_name}")
 
-
           def build_signature(secret: str) -> tuple[str, str]:
               timestamp = str(int(time.time()))
               string_to_sign = f"{timestamp}\n{secret}"
@@ -161,7 +154,6 @@ jobs:
                   hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
               ).decode("utf-8")
               return timestamp, signature
-
 
           webhook_url = to_text(os.environ.get("FEISHU_WEBHOOK_URL"))
           webhook_secret = to_text(os.environ.get("FEISHU_WEBHOOK_SECRET"))

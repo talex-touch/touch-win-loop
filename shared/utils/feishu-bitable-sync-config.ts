@@ -188,7 +188,7 @@ export function buildSuggestedSyncItemName(
       ? '赛道同步'
       : entityType === 'track_timeline'
         ? '赛道时间线同步'
-      : '资料同步'
+        : '资料同步'
 
   if (normalizedTableName && normalizedViewName)
     return `${normalizedTableName} / ${normalizedViewName} · ${entityLabel}`
