@@ -5,9 +5,11 @@ import { formatDateTime } from '~/composables/team-ui'
 withDefaults(defineProps<{
   projects?: TeamProjectCardItem[]
   showTeamMeta?: boolean
+  canManageActions?: boolean
 }>(), {
   projects: () => [],
   showTeamMeta: false,
+  canManageActions: false,
 })
 
 const emit = defineEmits<{
@@ -232,29 +234,37 @@ function statusBadgeClass(status: string): string {
                   <span>详细信息</span>
                 </button>
                 <button
-                  class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                  class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                  :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
                   type="button"
+                  :disabled="!canManageActions"
                   @click.stop="triggerProjectAction(project, 'settings')"
                 >
                   <span class="material-symbols-outlined text-[16px]">settings</span>
                   <span>项目设置</span>
                 </button>
                 <button
-                  class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                  class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                  :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
                   type="button"
+                  :disabled="!canManageActions"
                   @click.stop="triggerProjectAction(project, 'members')"
                 >
                   <span class="material-symbols-outlined text-[16px]">group</span>
                   <span>成员管理</span>
                 </button>
-                <button
-                  class="text-[12px] text-rose-600 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-rose-50"
-                  type="button"
-                  @click.stop="triggerProjectAction(project, 'archive')"
-                >
-                  <span class="material-symbols-outlined text-[16px]">archive</span>
-                  <span>归档</span>
-                </button>
+                <div class="mt-1 pt-1 border-t border-slate-100">
+                  <button
+                    class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                    :class="canManageActions ? 'text-rose-600 transition-colors hover:bg-rose-50' : 'text-slate-300 cursor-not-allowed'"
+                    type="button"
+                    :disabled="!canManageActions"
+                    @click.stop="triggerProjectAction(project, 'archive')"
+                  >
+                    <span class="material-symbols-outlined text-[16px]">archive</span>
+                    <span>归档</span>
+                  </button>
+                </div>
               </div>
             </template>
           </a-trigger>

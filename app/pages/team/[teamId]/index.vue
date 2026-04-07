@@ -4,6 +4,9 @@ import type {
   AuthMeResult,
   Contest,
   Project,
+  ProjectInvitationSummary,
+  ProjectMemberManagementSnapshot,
+  ProjectMemberRole,
   WorkspaceBillingEstimate,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
@@ -33,9 +36,11 @@ useHead({
 })
 
 const WORKSPACE_CREATE_PROJECT_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
+const PROJECT_INVITE_ROLE_OPTIONS: ProjectMemberRole[] = ['manager', 'editor', 'viewer']
+const PROJECT_MEMBER_EDIT_ROLES: Array<'manager' | 'editor' | 'viewer'> = ['manager', 'editor', 'viewer']
 
 const runtime = useRuntimeConfig()
-const { endpoint } = useApiEndpoint(runtime)
+const { endpoint, resolveAppUrl } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 
@@ -80,6 +85,13 @@ const workspaceCanCreateProject = computed(() => {
     return true
   return activeWorkspaceRoles.value.some(role => WORKSPACE_CREATE_PROJECT_ROLES.includes(role))
 })
+const canManageProjectActions = computed(() => workspaceCanCreateProject.value)
+const canManageProjectMembers = computed(() => canManageProjectActions.value)
+const canEditProjectMembers = computed(() => {
+  if (me.value?.user.isPlatformAdmin)
+    return true
+  return activeWorkspaceRoles.value.includes('owner') || activeWorkspaceRoles.value.includes('admin')
+})
 
 const contestNameMap = computed(() => buildContestNameMap(contests.value))
 
@@ -118,6 +130,382 @@ const activeNoticeTone = computed<'success' | 'warning'>(() => {
     return 'success'
   return 'warning'
 })
+const projectDetailDialogVisible = ref(false)
+const projectProfileDialogVisible = ref(false)
+const projectMembersDialogVisible = ref(false)
+const actionProjectId = ref('')
+const projectMembersLoading = ref(false)
+const projectMembersErrorText = ref('')
+const projectMembersSnapshot = ref<ProjectMemberManagementSnapshot | null>(null)
+const projectMemberRoleUpdatingUserId = ref('')
+const projectMemberRemovingUserId = ref('')
+const projectMemberActionText = ref('')
+const projectMemberActionError = ref(false)
+const projectInvitationSubmitting = ref(false)
+const projectInvitationLink = ref('')
+const projectInvitationFeedbackText = ref('')
+const projectMemberRoleDraftMap = reactive<Record<string, 'manager' | 'editor' | 'viewer'>>({})
+const projectInvitationForm = reactive<{
+  inviteeUsername: string
+  role: ProjectMemberRole
+  expiresInDays: number
+}>({
+  inviteeUsername: '',
+  role: 'viewer',
+  expiresInDays: 7,
+})
+
+const actionProject = computed(() => {
+  if (!actionProjectId.value)
+    return null
+  return projects.value.find(item => item.id === actionProjectId.value) || null
+})
+const actionProjectCard = computed(() => {
+  if (!actionProjectId.value)
+    return null
+  return projectCards.value.find(item => item.id === actionProjectId.value) || null
+})
+const projectDetailRows = computed(() => {
+  const project = actionProject.value
+  const card = actionProjectCard.value
+  if (!project || !card)
+    return []
+
+  const advisors = project.advisorBindings.map(item => item.username).filter(Boolean)
+  const colleges = project.collegeBindings.map(item => item.collegeName).filter(Boolean)
+
+  return [
+    { label: '项目 ID', value: project.id },
+    { label: 'Team ID', value: String(project.teamId || project.workspaceId || '-').trim() || '-' },
+    { label: '状态', value: projectStatusLabel(project.status) },
+    { label: '来源', value: projectSourceLabel(project.source) },
+    { label: '关联竞赛', value: card.contestNames.length > 0 ? card.contestNames.join(' / ') : '未绑定竞赛' },
+    { label: '项目席位', value: card.projectSeatLimit ? `${card.projectSeatUsed}/${card.projectSeatLimit}` : '未配置' },
+    { label: '项目图标', value: project.display?.icon || card.displayIcon },
+    { label: '主题颜色', value: project.display?.accentColor || '自动生成' },
+    { label: '指导老师', value: advisors.length > 0 ? advisors.join(' / ') : '未配置' },
+    { label: '学院绑定', value: colleges.length > 0 ? colleges.join(' / ') : '未配置' },
+    { label: '创建时间', value: project.createdAt || '-' },
+    { label: '最近更新', value: project.updatedAt || '-' },
+  ]
+})
+const projectIntroText = computed(() => {
+  const project = actionProject.value
+  if (!project)
+    return '暂无项目介绍。'
+  return String(project.summary || project.problemStatement || '').trim() || '暂无项目介绍。'
+})
+const projectMemberList = computed(() => projectMembersSnapshot.value?.members || [])
+const projectInvitationList = computed(() => projectMembersSnapshot.value?.invitations || [])
+const projectMemberSeatSummary = computed(() => {
+  const seatQuota = projectMembersSnapshot.value?.seatQuota
+  if (seatQuota)
+    return `${seatQuota.seatUsed}/${seatQuota.seatLimit}`
+
+  const card = actionProjectCard.value
+  if (card?.projectSeatLimit)
+    return `${card.projectSeatUsed}/${card.projectSeatLimit}`
+
+  return '未配置'
+})
+const projectInviteRoleOptions = computed<ProjectMemberRole[]>(() => {
+  if (canEditProjectMembers.value)
+    return PROJECT_INVITE_ROLE_OPTIONS
+  if (canManageProjectMembers.value)
+    return ['viewer']
+  return ['viewer']
+})
+const canSubmitProjectInvitation = computed(() => {
+  return Boolean(actionProjectId.value) && canManageProjectMembers.value && !projectInvitationSubmitting.value
+})
+
+function projectStatusLabel(status: Project['status']): string {
+  if (status === 'in_progress')
+    return '进行中'
+  if (status === 'completed')
+    return '已完成'
+  return '草稿'
+}
+
+function projectSourceLabel(source: Project['source']): string {
+  if (source === 'chat')
+    return 'AI 对话创建'
+  return '表单创建'
+}
+
+function projectMemberRoleLabel(role: ProjectMemberRole): string {
+  if (role === 'owner')
+    return '所有者'
+  if (role === 'manager')
+    return '管理者'
+  if (role === 'editor')
+    return '编辑者'
+  return '查看者'
+}
+
+function projectInvitationStatusLabel(invitation: ProjectInvitationSummary): string {
+  if (String(invitation.acceptedAt || '').trim())
+    return '已接受'
+  if (invitation.isExpired)
+    return '已过期'
+  return '待接受'
+}
+
+function projectInvitationStatusClass(invitation: ProjectInvitationSummary): string {
+  if (String(invitation.acceptedAt || '').trim())
+    return 'text-emerald-700 border-emerald-200 bg-emerald-50'
+  if (invitation.isExpired)
+    return 'text-rose-600 border-rose-200 bg-rose-50'
+  return 'text-blue-700 border-blue-200 bg-blue-50'
+}
+
+function ensureProjectMemberRoleDraft(member: { userId: string, role: ProjectMemberRole }): 'manager' | 'editor' | 'viewer' {
+  const userId = String(member.userId || '').trim()
+  const fallback = member.role === 'manager' || member.role === 'editor' ? member.role : 'viewer'
+  if (!userId)
+    return fallback
+
+  const current = projectMemberRoleDraftMap[userId]
+  if (current === 'manager' || current === 'editor' || current === 'viewer')
+    return current
+
+  projectMemberRoleDraftMap[userId] = fallback
+  return fallback
+}
+
+function canEditProjectMember(member: { role: ProjectMemberRole }): boolean {
+  return canEditProjectMembers.value && member.role !== 'owner'
+}
+
+function canRemoveProjectMember(member: { role: ProjectMemberRole }): boolean {
+  if (!canManageProjectMembers.value)
+    return false
+  if (member.role === 'owner')
+    return false
+  if (canEditProjectMembers.value)
+    return true
+  return member.role === 'viewer'
+}
+
+watchEffect(() => {
+  if (!projectInviteRoleOptions.value.includes(projectInvitationForm.role))
+    projectInvitationForm.role = 'viewer'
+})
+
+watch(projectMemberList, (members) => {
+  const activeUserIdSet = new Set((members || []).map(item => String(item.userId || '').trim()).filter(Boolean))
+  for (const member of members || []) {
+    if (member.role === 'owner')
+      continue
+    ensureProjectMemberRoleDraft(member)
+  }
+  for (const userId of Object.keys(projectMemberRoleDraftMap)) {
+    if (!activeUserIdSet.has(userId))
+      delete projectMemberRoleDraftMap[userId]
+  }
+}, { deep: true, immediate: true })
+
+function resolveProjectInvitationUrl(token: string): string {
+  const normalizedToken = String(token || '').trim()
+  if (!normalizedToken)
+    return ''
+  return resolveAppUrl(`/invite/${encodeURIComponent(normalizedToken)}`)
+}
+
+function syncActionProjectState() {
+  if (projectDetailDialogVisible.value || projectProfileDialogVisible.value || projectMembersDialogVisible.value)
+    return
+
+  actionProjectId.value = ''
+  projectMembersLoading.value = false
+  projectMembersErrorText.value = ''
+  projectMembersSnapshot.value = null
+  projectMemberRoleUpdatingUserId.value = ''
+  projectMemberRemovingUserId.value = ''
+  projectMemberActionText.value = ''
+  projectMemberActionError.value = false
+  projectInvitationSubmitting.value = false
+  projectInvitationLink.value = ''
+  projectInvitationFeedbackText.value = ''
+  projectInvitationForm.inviteeUsername = ''
+  projectInvitationForm.role = 'viewer'
+  projectInvitationForm.expiresInDays = 7
+}
+
+function openProjectDetailDialog(projectId: string) {
+  actionProjectId.value = projectId
+  projectProfileDialogVisible.value = false
+  projectMembersDialogVisible.value = false
+  projectDetailDialogVisible.value = true
+}
+
+function closeProjectDetailDialog() {
+  projectDetailDialogVisible.value = false
+  syncActionProjectState()
+}
+
+function openProjectProfileDialog(projectId: string) {
+  actionProjectId.value = projectId
+  projectDetailDialogVisible.value = false
+  projectMembersDialogVisible.value = false
+  projectProfileDialogVisible.value = true
+}
+
+function closeProjectProfileDialog() {
+  projectProfileDialogVisible.value = false
+  syncActionProjectState()
+}
+
+async function openProjectMembersDialog(projectId: string) {
+  actionProjectId.value = projectId
+  projectDetailDialogVisible.value = false
+  projectProfileDialogVisible.value = false
+  projectMembersDialogVisible.value = true
+  projectMembersLoading.value = true
+  projectMembersErrorText.value = ''
+  projectMembersSnapshot.value = null
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
+    if (actionProjectId.value !== projectId || !projectMembersDialogVisible.value)
+      return
+
+    projectMembersSnapshot.value = response.data
+  }
+  catch (error: any) {
+    if (actionProjectId.value !== projectId)
+      return
+
+    projectMembersErrorText.value = String(error?.data?.message || '成员信息加载失败，请稍后重试。')
+  }
+  finally {
+    if (actionProjectId.value === projectId)
+      projectMembersLoading.value = false
+  }
+}
+
+function closeProjectMembersDialog() {
+  projectMembersDialogVisible.value = false
+  syncActionProjectState()
+}
+
+async function createProjectInvitation() {
+  const projectId = String(actionProjectId.value || '').trim()
+  if (!projectId || !canManageProjectMembers.value)
+    return
+
+  projectInvitationSubmitting.value = true
+  projectInvitationFeedbackText.value = ''
+
+  try {
+    const response = await $fetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
+      method: 'POST',
+      body: {
+        inviteeUsername: String(projectInvitationForm.inviteeUsername || '').trim() || undefined,
+        projectRole: projectInvitationForm.role,
+        expiresInDays: Math.max(1, Math.min(30, Number(projectInvitationForm.expiresInDays || 7))),
+      },
+    })
+
+    projectInvitationLink.value = resolveProjectInvitationUrl(response.data.token)
+    projectMembersSnapshot.value = response.data.snapshot
+    projectInvitationFeedbackText.value = '邀请链接已生成，可直接复制发送给协作者。'
+    projectInvitationForm.inviteeUsername = ''
+  }
+  catch (error: any) {
+    projectInvitationFeedbackText.value = String(error?.data?.message || '创建邀请链接失败，请稍后重试。')
+  }
+  finally {
+    projectInvitationSubmitting.value = false
+  }
+}
+
+async function submitProjectMemberRole(member: { userId: string, role: ProjectMemberRole }) {
+  const projectId = String(actionProjectId.value || '').trim()
+  const userId = String(member.userId || '').trim()
+  if (!projectId || !userId || !canEditProjectMember(member))
+    return
+
+  const nextRole = ensureProjectMemberRoleDraft(member)
+  if (nextRole === member.role) {
+    projectMemberActionText.value = '项目角色未发生变化。'
+    projectMemberActionError.value = false
+    return
+  }
+
+  projectMemberRoleUpdatingUserId.value = userId
+  projectMemberActionText.value = ''
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`), {
+      method: 'POST',
+      body: {
+        userId,
+        role: nextRole,
+      },
+    })
+
+    projectMembersSnapshot.value = response.data
+    projectMemberActionText.value = '成员项目角色已更新。'
+    projectMemberActionError.value = false
+  }
+  catch (error: any) {
+    projectMemberActionText.value = String(error?.data?.message || '更新成员项目角色失败，请稍后重试。')
+    projectMemberActionError.value = true
+  }
+  finally {
+    if (projectMemberRoleUpdatingUserId.value === userId)
+      projectMemberRoleUpdatingUserId.value = ''
+  }
+}
+
+async function removeProjectMember(userId: string) {
+  const projectId = String(actionProjectId.value || '').trim()
+  const normalizedUserId = String(userId || '').trim()
+  const member = projectMemberList.value.find(item => item.userId === normalizedUserId)
+  if (!projectId || !normalizedUserId || !member || !canRemoveProjectMember(member))
+    return
+
+  projectMemberRemovingUserId.value = normalizedUserId
+  projectMemberActionText.value = ''
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members/${normalizedUserId}`), {
+      method: 'DELETE',
+    })
+
+    projectMembersSnapshot.value = response.data
+    projectMemberActionText.value = '项目成员已移除。'
+    projectMemberActionError.value = false
+  }
+  catch (error: any) {
+    projectMemberActionText.value = String(error?.data?.message || '移除项目成员失败，请稍后重试。')
+    projectMemberActionError.value = true
+  }
+  finally {
+    if (projectMemberRemovingUserId.value === normalizedUserId)
+      projectMemberRemovingUserId.value = ''
+  }
+}
+
+async function copyProjectInvitationLink() {
+  const link = String(projectInvitationLink.value || '').trim()
+  if (!link)
+    return
+
+  if (!import.meta.client || !navigator.clipboard?.writeText) {
+    projectInvitationFeedbackText.value = '当前环境不支持自动复制，请手动复制邀请链接。'
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(link)
+    projectInvitationFeedbackText.value = '邀请链接已复制。'
+  }
+  catch {
+    projectInvitationFeedbackText.value = '复制失败，请手动复制邀请链接。'
+  }
+}
 
 function openCreateDialog() {
   if (createDisabledReason.value) {
@@ -136,19 +524,16 @@ function closeCreateDialog() {
 }
 
 function openProject(project: TeamProjectCardItem) {
-  void openProjectWithPanel(project)
+  void openProjectWorkspace(project)
 }
 
-async function openProjectWithPanel(project: TeamProjectCardItem, panel: '' | 'members' | 'settings' = '') {
+async function openProjectWorkspace(project: TeamProjectCardItem) {
   const workspaceId = activeWorkspaceId.value
   const projectId = String(project.id || '').trim()
   if (!workspaceId || !projectId)
     return
   writeActiveWorkspacePreference(workspaceId)
-  await navigateTo({
-    path: projectWorkspacePath(workspaceId, projectId),
-    query: panel ? { panel } : undefined,
-  })
+  await navigateTo(projectWorkspacePath(workspaceId, projectId))
 }
 
 function handleProjectAction(payload: {
@@ -156,15 +541,17 @@ function handleProjectAction(payload: {
   project: TeamProjectCardItem
 }) {
   if (payload.action === 'details') {
-    void openProjectWithPanel(payload.project)
+    openProjectDetailDialog(payload.project.id)
     return
   }
+  if (!canManageProjectActions.value)
+    return
   if (payload.action === 'settings') {
-    void openProjectWithPanel(payload.project, 'settings')
+    openProjectProfileDialog(payload.project.id)
     return
   }
   if (payload.action === 'members') {
-    void openProjectWithPanel(payload.project, 'members')
+    void openProjectMembersDialog(payload.project.id)
     return
   }
 
@@ -355,6 +742,7 @@ onMounted(async () => {
     >
       <TeamProjectOverview
         :projects="projectCards"
+        :can-manage-actions="canManageProjectActions"
         @open-project="openProject"
         @project-action="handleProjectAction"
       />
@@ -376,5 +764,403 @@ onMounted(async () => {
       @update:summary="createForm.summary = $event"
       @update:contest-ids="createForm.contestIds = $event"
     />
+
+    <a-modal
+      v-model:visible="projectDetailDialogVisible"
+      title="详细信息"
+      data-testid="team-project-detail-modal"
+      width="620px"
+      :footer="false"
+      :esc-to-close="true"
+      :mask-closable="true"
+      @cancel="closeProjectDetailDialog"
+    >
+      <div class="space-y-4">
+        <div class="flex gap-3 items-start">
+          <div
+            class="rounded-2xl flex shrink-0 h-11 w-11 items-center justify-center"
+            :style="{
+              color: actionProjectCard?.accentText || '#334155',
+              backgroundColor: actionProjectCard?.accentSoft || '#f1f5f9',
+            }"
+          >
+            <span class="material-symbols-outlined text-[20px]">{{ actionProjectCard?.displayIcon || 'folder' }}</span>
+          </div>
+          <div class="min-w-0">
+            <div class="text-sm text-slate-900 font-semibold truncate">
+              {{ actionProject?.title || '项目信息' }}
+            </div>
+            <div class="text-xs text-slate-500 mt-1">
+              {{ actionProject?.summary || actionProject?.problemStatement || '当前项目暂无补充说明。' }}
+            </div>
+          </div>
+        </div>
+
+        <a-descriptions :column="1" bordered size="small">
+          <a-descriptions-item v-for="item in projectDetailRows" :key="item.label" :label="item.label">
+            <span class="text-xs text-slate-700 break-all">{{ item.value }}</span>
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <div class="flex justify-end">
+          <a-button size="small" @click="closeProjectDetailDialog">
+            关闭
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
+
+    <a-modal
+      v-model:visible="projectProfileDialogVisible"
+      title="项目介绍"
+      data-testid="team-project-settings-modal"
+      width="560px"
+      :footer="false"
+      :esc-to-close="true"
+      :mask-closable="true"
+      @cancel="closeProjectProfileDialog"
+    >
+      <div class="space-y-4">
+        <div class="p-4 border border-slate-200 rounded-2xl bg-slate-50/80">
+          <div class="text-sm text-slate-900 font-semibold">
+            {{ actionProject?.title || '项目介绍' }}
+          </div>
+          <p class="text-xs text-slate-600 leading-6 mb-0 mt-2 whitespace-pre-wrap">
+            {{ projectIntroText }}
+          </p>
+        </div>
+
+        <div
+          v-if="actionProjectCard && actionProjectCard.contestNames.length > 0"
+          class="flex flex-wrap gap-2"
+        >
+          <span
+            v-for="contestName in actionProjectCard.contestNames"
+            :key="`${actionProjectCard.id}-${contestName}`"
+            class="text-[10px] text-slate-600 font-medium px-2 py-1 rounded-full bg-slate-100"
+          >
+            {{ contestName }}
+          </span>
+        </div>
+
+        <div class="flex justify-end">
+          <a-button size="small" @click="closeProjectProfileDialog">
+            关闭
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
+
+    <a-modal
+      v-model:visible="projectMembersDialogVisible"
+      title="成员管理"
+      data-testid="team-project-members-modal"
+      width="680px"
+      :footer="false"
+      :esc-to-close="true"
+      :mask-closable="true"
+      @cancel="closeProjectMembersDialog"
+    >
+      <div class="space-y-4">
+        <div class="gap-2 grid grid-cols-3">
+          <div class="p-3 border border-slate-200 rounded-2xl bg-slate-50">
+            <div class="text-[11px] text-slate-500">
+              当前成员
+            </div>
+            <div class="text-sm text-slate-900 font-semibold mt-1">
+              {{ projectMemberList.length }} 人
+            </div>
+          </div>
+          <div class="p-3 border border-slate-200 rounded-2xl bg-slate-50">
+            <div class="text-[11px] text-slate-500">
+              邀请记录
+            </div>
+            <div class="text-sm text-slate-900 font-semibold mt-1">
+              {{ projectInvitationList.length }} 条
+            </div>
+          </div>
+          <div class="p-3 border border-slate-200 rounded-2xl bg-slate-50">
+            <div class="text-[11px] text-slate-500">
+              项目席位
+            </div>
+            <div class="text-sm text-slate-900 font-semibold mt-1">
+              {{ projectMemberSeatSummary }}
+            </div>
+          </div>
+        </div>
+
+        <section class="space-y-3">
+          <div class="flex gap-2 items-center justify-between">
+            <div class="text-xs text-slate-500 font-medium">
+              创建邀请链接
+            </div>
+            <span class="text-[11px] text-slate-400">
+              接受邀请后将直接加入当前项目
+            </span>
+          </div>
+
+          <div class="p-3 border border-slate-200 rounded-2xl bg-slate-50/80 space-y-3">
+            <label class="text-[11px] text-slate-600 block space-y-1">
+              <span class="block">邀请用户名（可选）</span>
+              <input
+                v-model="projectInvitationForm.inviteeUsername"
+                data-testid="team-project-invite-username-input"
+                class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                placeholder="留空时生成通用邀请链接"
+              >
+            </label>
+
+            <div class="gap-2 grid grid-cols-2">
+              <label class="text-[11px] text-slate-600 block space-y-1">
+                <span class="block">项目角色</span>
+                <select
+                  v-model="projectInvitationForm.role"
+                  data-testid="team-project-invite-role-select"
+                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                >
+                  <option
+                    v-for="role in projectInviteRoleOptions"
+                    :key="`team-project-role-option-${role}`"
+                    :value="role"
+                  >
+                    {{ projectMemberRoleLabel(role) }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="text-[11px] text-slate-600 block space-y-1">
+                <span class="block">有效期</span>
+                <select
+                  v-model.number="projectInvitationForm.expiresInDays"
+                  data-testid="team-project-invite-expiry-select"
+                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                >
+                  <option :value="1">
+                    1 天
+                  </option>
+                  <option :value="3">
+                    3 天
+                  </option>
+                  <option :value="7">
+                    7 天
+                  </option>
+                  <option :value="14">
+                    14 天
+                  </option>
+                  <option :value="30">
+                    30 天
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <div
+              v-if="projectInvitationLink"
+              class="p-3 border border-slate-200 rounded-2xl bg-white"
+            >
+              <div class="text-[11px] text-slate-500">
+                最新邀请链接
+              </div>
+              <div
+                data-testid="team-project-invite-link"
+                class="text-[11px] text-slate-700 mt-2 break-all"
+              >
+                {{ projectInvitationLink }}
+              </div>
+              <div class="mt-3 flex justify-end">
+                <a-button
+                  size="small"
+                  data-testid="team-project-invite-copy-link-button"
+                  @click="copyProjectInvitationLink"
+                >
+                  复制邀请链接
+                </a-button>
+              </div>
+            </div>
+
+            <div
+              v-if="projectInvitationFeedbackText"
+              class="text-[11px] px-3 py-2 rounded-xl"
+              :class="projectInvitationLink ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'"
+            >
+              {{ projectInvitationFeedbackText }}
+            </div>
+
+            <div class="flex justify-end">
+              <a-button
+                size="small"
+                type="primary"
+                data-testid="team-project-invite-submit-button"
+                :loading="projectInvitationSubmitting"
+                :disabled="!canSubmitProjectInvitation"
+                @click="createProjectInvitation"
+              >
+                生成邀请链接
+              </a-button>
+            </div>
+          </div>
+        </section>
+
+        <div
+          v-if="projectMembersLoading"
+          class="text-xs text-slate-500 p-4 border border-slate-200 rounded-2xl bg-slate-50"
+        >
+          正在加载成员信息...
+        </div>
+
+        <div
+          v-else-if="projectMembersErrorText"
+          class="text-xs text-rose-600 p-4 border border-rose-200 rounded-2xl bg-rose-50"
+        >
+          {{ projectMembersErrorText }}
+        </div>
+
+        <template v-else>
+          <section class="space-y-2">
+            <div class="flex gap-2 items-center justify-between">
+              <div class="text-xs text-slate-500 font-medium">
+                当前成员
+              </div>
+              <span
+                v-if="canEditProjectMembers"
+                class="text-[11px] text-slate-400"
+              >
+                可直接调整成员项目角色
+              </span>
+            </div>
+            <div
+              v-if="projectMemberActionText"
+              class="text-[11px] px-3 py-2 rounded-xl"
+              :class="projectMemberActionError ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-700'"
+            >
+              {{ projectMemberActionText }}
+            </div>
+            <div
+              v-if="projectMemberList.length === 0"
+              class="text-xs text-slate-500 p-4 border border-slate-200 rounded-2xl bg-slate-50"
+            >
+              当前项目还没有成员记录。
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="member in projectMemberList"
+                :key="member.userId"
+                class="p-3 border border-slate-200 rounded-2xl bg-white"
+              >
+                <div class="flex gap-3 items-start justify-between">
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm text-slate-900 font-semibold">
+                      {{ member.username }}
+                    </div>
+                    <div class="text-[11px] text-slate-500 mt-2">
+                      添加人：{{ member.addedByUsername }} · 更新时间：{{ member.updatedAt }}
+                    </div>
+                  </div>
+
+                  <div
+                    v-if="canEditProjectMember(member)"
+                    class="flex shrink-0 gap-2 items-center"
+                  >
+                    <select
+                      v-model="projectMemberRoleDraftMap[member.userId]"
+                      data-testid="team-project-member-role-select"
+                      class="text-[11px] px-2 outline-none border border-slate-200 rounded bg-white h-7 focus:border-blue-500"
+                    >
+                      <option
+                        v-for="role in PROJECT_MEMBER_EDIT_ROLES"
+                        :key="`team-project-member-role-${member.userId}-${role}`"
+                        :value="role"
+                      >
+                        {{ projectMemberRoleLabel(role) }}
+                      </option>
+                    </select>
+                    <button
+                      data-testid="team-project-member-role-update-button"
+                      class="text-[11px] text-slate-700 font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      type="button"
+                      :disabled="projectMemberRoleUpdatingUserId === member.userId || projectMemberRemovingUserId === member.userId"
+                      @click="submitProjectMemberRole(member)"
+                    >
+                      {{ projectMemberRoleUpdatingUserId === member.userId ? '更新中...' : '更新权限' }}
+                    </button>
+                    <button
+                      v-if="canRemoveProjectMember(member)"
+                      data-testid="team-project-member-remove-button"
+                      class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      type="button"
+                      :disabled="projectMemberRoleUpdatingUserId === member.userId || projectMemberRemovingUserId === member.userId"
+                      @click="removeProjectMember(member.userId)"
+                    >
+                      {{ projectMemberRemovingUserId === member.userId ? '移除中...' : '移出项目' }}
+                    </button>
+                  </div>
+
+                  <span
+                    v-else
+                    class="text-[10px] text-slate-700 font-semibold px-2 py-1 rounded-full bg-slate-100 shrink-0"
+                  >
+                    {{ projectMemberRoleLabel(member.role) }}
+                  </span>
+                </div>
+                <div
+                  v-if="!canEditProjectMember(member) && canRemoveProjectMember(member)"
+                  class="mt-3 flex justify-end"
+                >
+                  <button
+                    data-testid="team-project-member-remove-button"
+                    class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="projectMemberRoleUpdatingUserId === member.userId || projectMemberRemovingUserId === member.userId"
+                    @click="removeProjectMember(member.userId)"
+                  >
+                    {{ projectMemberRemovingUserId === member.userId ? '移除中...' : '移出项目' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="space-y-2">
+            <div class="text-xs text-slate-500 font-medium">
+              邀请记录
+            </div>
+            <div
+              v-if="projectInvitationList.length === 0"
+              class="text-xs text-slate-500 p-4 border border-slate-200 rounded-2xl bg-slate-50"
+            >
+              当前没有未处理的邀请记录。
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="invitation in projectInvitationList"
+                :key="invitation.id"
+                class="p-3 border border-slate-200 rounded-2xl bg-white"
+              >
+                <div class="flex gap-2 items-center justify-between">
+                  <div class="text-sm text-slate-900 font-semibold">
+                    {{ invitation.inviteeUsername || '通用邀请链接' }}
+                  </div>
+                  <span
+                    class="text-[10px] font-semibold px-2 py-1 border rounded-full"
+                    :class="projectInvitationStatusClass(invitation)"
+                  >
+                    {{ projectInvitationStatusLabel(invitation) }}
+                  </span>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-2">
+                  发起人：{{ invitation.invitedByUsername }} · 过期时间：{{ invitation.expiresAt }}
+                </div>
+              </div>
+            </div>
+          </section>
+        </template>
+
+        <div class="flex justify-end">
+          <a-button size="small" @click="closeProjectMembersDialog">
+            关闭
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
