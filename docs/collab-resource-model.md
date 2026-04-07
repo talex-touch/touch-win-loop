@@ -13,11 +13,11 @@
 
 规则如下：
 
-| resourceKind | collabPurpose | 用户侧名称 | 默认入口 |
-| --- | --- | --- | --- |
-| `markdown` | `notes` | 协作文档 | 左侧资源菜单 |
-| `draw` | `freeform` | 自由画布 | 左侧资源菜单 |
-| `draw` | `workflow` | 流程画布 | 左侧“流程”入口 |
+| resourceKind | collabPurpose | 用户侧名称 | 默认入口       |
+| ------------ | ------------- | ---------- | -------------- |
+| `markdown`   | `notes`       | 协作文档   | 左侧资源菜单   |
+| `draw`       | `freeform`    | 自由画布   | 左侧资源菜单   |
+| `draw`       | `workflow`    | 流程画布   | 左侧“流程”入口 |
 
 ## 2. 默认规则
 

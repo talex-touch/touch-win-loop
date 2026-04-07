@@ -155,7 +155,7 @@ production 只需要改成独立的：
 bootstrap 脚本中的凭据 ID 需要替换为你在 Jenkins 中真实创建的值：
 
 - `github-readonly`
-- `ghcr-readonly`
+- `40a0292f-ea02-4882-8d0e-659efe25861b`
 - `touch-center-ssh`
 
 同时需要根据你的环境修改：
@@ -163,6 +163,33 @@ bootstrap 脚本中的凭据 ID 需要替换为你在 Jenkins 中真实创建的
 - `sshTarget`
 - `remoteWorkspaceRoot`
 - `remoteDeployBaseDir`
+
+如需接入飞书群机器人部署通知，可额外增加：
+
+- `feishuWebhookCredentialsId`
+- `feishuWebhookSecretCredentialsId`（如果机器人启用了签名校验再配）
+
+推荐在 Jenkins 中新增两个 `Secret text` 凭据：
+
+- `jenkins-feishu-webhook`
+- `jenkins-feishu-webhook-secret`
+
+然后在 job bootstrap 的 `runPipeline` 配置里打开：
+
+```groovy
+feishuWebhookCredentialsId: 'jenkins-feishu-webhook',
+feishuWebhookSecretCredentialsId: 'jenkins-feishu-webhook-secret',
+```
+
+如果飞书机器人没有开启签名校验，只保留第一行即可。
+
+通知内容会包含：
+
+- 部署结果（成功 / 失败）
+- 环境、分支、版本、Commit、镜像摘要
+- GitHub Actions 运行链接
+- Jenkins 构建链接
+- 失败阶段、失败信息、是否触发回滚
 
 ## 5）GitHub Secrets
 

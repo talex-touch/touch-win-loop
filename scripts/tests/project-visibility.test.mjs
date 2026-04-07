@@ -78,7 +78,7 @@ it('project 创建权限不再对 personal 默认追加 2 个项目上限', asyn
   const source = await readFile(ACCESS_TARGET_FILE, 'utf8')
 
   assert.doesNotMatch(source, /workspace\.type === 'personal' \? 2 : 0/, 'personal 仍保留 2 个项目的默认上限')
-  assert.match(source, /const projectsUnlimited = workspace\.projects_unlimited === null\s+\? true\s+\: workspace\.projects_unlimited === true/, '未在缺省配置下统一 personal\/business 的项目创建能力')
+  assert.match(source, /const projectsUnlimited = workspace\.projects_unlimited === null\s+\? true\s+: workspace\.projects_unlimited === true/, '未在缺省配置下统一 personal\/business 的项目创建能力')
 })
 
 it('createProject creator 与 owner 不同时自动补齐 creator 项目成员', async () => {

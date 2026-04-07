@@ -18,7 +18,9 @@ services:
     volumes:
       - ${STORAGE_HOST_DIR:-./storage}:/app/tmp/document-storage
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/health | grep -q '\"code\":0'"]
+      test:
+        - CMD-SHELL
+        - wget -q -O - http://127.0.0.1:3000/api/health | grep -q '"code":0'
       interval: 30s
       timeout: 10s
       retries: 3
