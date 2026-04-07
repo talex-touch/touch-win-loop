@@ -102,6 +102,8 @@ function createEmptyProjectCommonForm(): WorkspaceProjectCommonForm {
   return {
     title: '',
     summary: '',
+    icon: '',
+    accentColor: '',
     problemStatement: '',
     innovationPointsText: '',
     techRouteStepsText: '',
@@ -118,6 +120,8 @@ function createProjectCommonFormFromProject(project: Project | null): WorkspaceP
   return {
     title: project.title || '',
     summary: project.summary || '',
+    icon: project.display?.icon || '',
+    accentColor: project.display?.accentColor || '',
     problemStatement: project.problemStatement || '',
     innovationPointsText: arrayToLines(project.innovationPoints),
     techRouteStepsText: arrayToLines(project.techRouteSteps),
@@ -131,6 +135,8 @@ function cloneProjectCommonForm(value: WorkspaceProjectCommonForm): WorkspacePro
   return {
     title: value.title,
     summary: value.summary,
+    icon: value.icon,
+    accentColor: value.accentColor,
     problemStatement: value.problemStatement,
     innovationPointsText: value.innovationPointsText,
     techRouteStepsText: value.techRouteStepsText,
@@ -1416,6 +1422,8 @@ function buildProjectSettingsCommonPatch() {
   return {
     title: projectSettingsCommon.title.trim(),
     summary: projectSettingsCommon.summary.trim(),
+    icon: projectSettingsCommon.icon.trim(),
+    accentColor: projectSettingsCommon.accentColor.trim(),
     problemStatement: projectSettingsCommon.problemStatement.trim(),
     innovationPoints: linesToArray(projectSettingsCommon.innovationPointsText),
     techRouteSteps: linesToArray(projectSettingsCommon.techRouteStepsText),
@@ -1663,6 +1671,8 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
     common: {
       title: String(commonSource.title || ''),
       summary: String(commonSource.summary || ''),
+      icon: String(commonSource.icon || ''),
+      accentColor: String(commonSource.accentColor || ''),
       problemStatement: String(commonSource.problemStatement || ''),
       innovationPointsText: String(commonSource.innovationPointsText || ''),
       techRouteStepsText: String(commonSource.techRouteStepsText || ''),

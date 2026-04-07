@@ -25,6 +25,7 @@ import {
   updateRealtimePresence,
 } from '~~/server/utils/realtime-hub'
 import { hashToken } from '~~/server/utils/security'
+import { captureServerException } from '~~/server/utils/sentry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
@@ -135,6 +136,11 @@ function logRealtimeDebug(
 
   if (level === 'error') {
     console.error('[realtime-ws]', message, detail)
+    const detailMessage = normalizeString(detail.message)
+    captureServerException(new Error(detailMessage ? `${message}: ${detailMessage}` : message), {
+      module: 'realtime-ws',
+      traceId: normalizeString(detail.requestId),
+    })
     return
   }
 

@@ -3,9 +3,15 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 
+const DASHBOARD_PAGE_FILE = resolve(process.cwd(), 'app/pages/dashboard.vue')
+const DASHBOARD_LAYOUT_FILE = resolve(process.cwd(), 'app/layouts/dashboard.vue')
 const WORKSPACE_DETAIL_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/index.vue')
-const OVERVIEW_COMPONENT_FILE = resolve(process.cwd(), 'app/components/team/TeamProjectOverview.vue')
+const TEAM_OVERVIEW_COMPONENT_FILE = resolve(process.cwd(), 'app/components/team/TeamProjectOverview.vue')
 const TEAM_UI_FILE = resolve(process.cwd(), 'app/composables/team-ui.ts')
+const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const WORKSPACE_MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
+const PROJECT_SETTINGS_PATCH_FILE = resolve(process.cwd(), 'server/api/projects/[id]/settings.patch.ts')
+const PROJECT_SETTINGS_DRAFT_PATCH_FILE = resolve(process.cwd(), 'server/api/projects/[id]/settings-draft.patch.ts')
 
 it('team dashboard 基于计费估算计算项目配额剩余值', async () => {
   const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
@@ -27,22 +33,65 @@ it('team dashboard 基于计费估算计算项目配额剩余值', async () => {
   )
 })
 
-it('team dashboard 摘要卡展示 plan、项目配额、Team 席位与 AI 配额', async () => {
+it('team dashboard 只保留轻量 summary 文案，不再展示 summary 小块', async () => {
   const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
-  const componentSource = await readFile(OVERVIEW_COMPONENT_FILE, 'utf8')
 
-  assert.match(source, /label: '当前 Plan'/, '工作空间摘要缺少当前 Plan 信息')
-  assert.match(source, /label: '项目配额'/, '工作空间摘要缺少项目配额信息')
-  assert.match(source, /label: 'Team 席位'/, '工作空间摘要缺少 Team 席位信息')
-  assert.match(source, /label: 'AI 配额'/, '工作空间摘要缺少 AI 配额信息')
-  assert.match(componentSource, /v-if="summaryStats.length > 0"/, '共享工作台概览组件未渲染摘要统计卡片')
+  assert.match(source, /:summary-text="visibleProjectSummaryText"/, 'Team dashboard 未保留轻量 summary 文案')
+  assert.match(source, /当前 Team 的项目与配额概览。/, 'Team dashboard 头部文案缺失')
+  assert.doesNotMatch(source, /:summary-stats=/, 'Team dashboard 仍在挂载旧的大摘要卡')
+  assert.doesNotMatch(source, /#summary/, 'Team dashboard 仍在渲染自定义 summary slot')
 })
 
-it('项目卡展示项目席位 used\/limit\/remaining', async () => {
-  const source = await readFile(OVERVIEW_COMPONENT_FILE, 'utf8')
+it('项目卡展示图标徽标、席位进度条与稳定 display fallback', async () => {
+  const source = await readFile(TEAM_OVERVIEW_COMPONENT_FILE, 'utf8')
   const teamUiSource = await readFile(TEAM_UI_FILE, 'utf8')
 
-  assert.match(source, /项目席位：\{\{ project\.projectSeatUsed \}\}\/\{\{ project\.projectSeatLimit \}\}，剩余 \{\{ project\.projectSeatRemaining \}\}/, '项目卡未展示项目席位摘要')
-  assert.match(teamUiSource, /projectSeatUsed\?: number/, 'TeamProjectCardItem 缺少项目席位 used 字段')
-  assert.match(teamUiSource, /projectSeatRemaining\?: number/, 'TeamProjectCardItem 缺少项目席位 remaining 字段')
+  assert.match(source, /data-testid="team-project-icon-badge"/, '项目卡缺少图标徽标')
+  assert.match(source, /data-testid="team-project-seat-bar"/, '项目卡缺少席位进度条')
+  assert.match(source, /剩余 \{\{ project\.projectSeatRemaining \}\} 个席位/, '项目卡未展示项目席位剩余值')
+  assert.match(source, /data-testid="team-project-empty-state"/, '项目列表未提供紧凑空态')
+  assert.match(teamUiSource, /seatProgressPercent\?: number/, 'TeamProjectCardItem 缺少席位进度百分比字段')
+  assert.match(teamUiSource, /resolveProjectDisplayConfig\(project\.display, `\$\{project\.id\}:\$\{project\.title\}`\)/, 'Team UI 未使用稳定 display fallback')
+  assert.match(teamUiSource, /displayIcon: display\.icon/, 'Team UI 未下发项目展示图标')
+})
+
+it('平台首页与 Team 项目台共用同一概览骨架，但保留各自业务区块', async () => {
+  const dashboardSource = await readFile(DASHBOARD_PAGE_FILE, 'utf8')
+  const teamSource = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
+
+  assert.match(dashboardSource, /<DashboardOverviewShell/, '平台首页未挂载共享概览骨架')
+  assert.match(teamSource, /<DashboardOverviewShell/, 'Team 项目台未挂载共享概览骨架')
+  assert.match(dashboardSource, /平台能力中心/, '平台首页缺少平台能力中心区块')
+  assert.match(teamSource, /:summary-text="visibleProjectSummaryText"/, 'Team 项目台缺少 Team 专属 summary 文案')
+  assert.doesNotMatch(teamSource, /平台能力中心/, 'Team 项目台意外混入平台能力中心文案')
+})
+
+it('team 项目台走 dashboard shell，只有项目工作区保持全屏', async () => {
+  const layoutSource = await readFile(DASHBOARD_LAYOUT_FILE, 'utf8')
+
+  assert.match(layoutSource, /return \/\^\\\/team\\\/\[\^\/\]\+\\\/project\\\/\[\^\/\]\+\$\/\.test\(normalizedPath\)/, 'dashboard layout 仍将 Team 项目台误判为全屏工作区')
+  assert.doesNotMatch(layoutSource, /return \/\^\\\/team\\\/\[\^\/\]\+\(\?:\\\/project\\\/\[\^\/\]\+\)\?\$\/\.test\(normalizedPath\)/, 'dashboard layout 仍把 /team/:teamId 走成全屏')
+  assert.match(layoutSource, /watch\(\(\) => route\.fullPath, async \(\) => \{[\s\S]*shellScrollRef\.value\.scrollTop = 0[\s\S]*\}\)/, 'dashboard layout 未在路由切换后重置 Team 页滚动位置')
+})
+
+it('项目设置支持 icon 与 accentColor 的保存和草稿缓存链路', async () => {
+  const workspaceSource = await readFile(PROJECT_WORKSPACE_FILE, 'utf8')
+  const panelSource = await readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8')
+  const settingsPatchSource = await readFile(PROJECT_SETTINGS_PATCH_FILE, 'utf8')
+  const draftPatchSource = await readFile(PROJECT_SETTINGS_DRAFT_PATCH_FILE, 'utf8')
+
+  assert.match(workspaceSource, /icon: project\.display\?\.icon \|\| ''/, '项目设置初始化未读取项目图标配置')
+  assert.match(workspaceSource, /accentColor: project\.display\?\.accentColor \|\| ''/, '项目设置初始化未读取项目强调色配置')
+  assert.match(workspaceSource, /icon: projectSettingsCommon\.icon\.trim\(\)/, '项目设置保存未提交图标字段')
+  assert.match(workspaceSource, /accentColor: projectSettingsCommon\.accentColor\.trim\(\)/, '项目设置保存未提交强调色字段')
+  assert.match(panelSource, /项目标识/, '项目设置面板缺少项目标识配置区')
+  assert.match(panelSource, /恢复默认生成/, '项目设置面板缺少恢复默认生成入口')
+  assert.match(panelSource, /selectProjectSettingsDisplayIcon/, '项目设置面板缺少图标选择逻辑')
+  assert.match(panelSource, /selectProjectSettingsDisplayAccent/, '项目设置面板缺少颜色选择逻辑')
+  assert.match(panelSource, /type="color"/, '项目设置面板缺少自定义颜色取色器')
+  assert.match(panelSource, /projectSettingsUsingCustomAccent \? projectSettingsCustomAccentValue : '未启用自定义色'/, '项目设置面板缺少自定义颜色状态展示')
+  assert.match(settingsPatchSource, /icon\?: string/, 'settings patch API 缺少 icon 字段')
+  assert.match(settingsPatchSource, /accentColor\?: string/, 'settings patch API 缺少 accentColor 字段')
+  assert.match(draftPatchSource, /icon: normalizePlainText\(source\.icon\)/, '草稿 patch API 未处理 icon 字段')
+  assert.match(draftPatchSource, /accentColor: normalizePlainText\(source\.accentColor\)/, '草稿 patch API 未处理 accentColor 字段')
 })

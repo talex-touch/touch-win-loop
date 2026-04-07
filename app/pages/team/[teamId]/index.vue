@@ -13,8 +13,6 @@ import {
   buildContestNameMap,
   buildTeamProjectCard,
   calculateRemainingProjectSlots,
-  formatPlanLabel,
-  formatWorkspaceTypeLabel,
   normalizeQueryValue,
   normalizeRouteParam,
   projectWorkspacePath,
@@ -95,12 +93,6 @@ const projectCards = computed<TeamProjectCardItem[]>(() => {
     .map(item => buildTeamProjectCard(item, contestNameMap.value, activeWorkspace.value || undefined))
 })
 
-const visibleProjectSummaryText = computed(() => `当前项目台可见项目 ${projectCards.value.length} 个`)
-const currentPlanLabel = computed(() => {
-  const workspaceType = activeWorkspace.value?.workspace.type
-  const fallbackPlanTier = workspaceType === 'personal' ? 'personal_team' : 'business_team'
-  return formatPlanLabel(workspaceBillingEstimate.value?.planCode, workspaceBillingEstimate.value?.planTier || fallbackPlanTier)
-})
 const remainingProjectSlots = computed(() => {
   return calculateRemainingProjectSlots({
     projectsUnlimited: workspaceBillingEstimate.value?.projectsUnlimited,
@@ -126,54 +118,6 @@ const activeNoticeTone = computed<'success' | 'warning'>(() => {
     return 'success'
   return 'warning'
 })
-const summaryStats = computed<Array<{
-  label: string
-  value: string
-  tone?: 'neutral' | 'warning' | 'success'
-}>>(() => {
-  const workspace = activeWorkspace.value?.workspace
-  const estimate = workspaceBillingEstimate.value
-  const quota = activeWorkspace.value?.quota
-  const seatRemaining = quota ? Math.max(0, quota.seatLimit - quota.seatUsed) : null
-  const aiRemaining = quota ? Math.max(0, quota.aiQuotaTotal - quota.aiQuotaUsed) : null
-
-  return [
-    {
-      label: '项目台类型',
-      value: formatWorkspaceTypeLabel(workspace?.type),
-    },
-    {
-      label: '当前 Plan',
-      value: currentPlanLabel.value,
-    },
-    {
-      label: '项目配额',
-      value: estimate
-        ? estimate.projectsUnlimited
-          ? `不限，当前 ${estimate.projectCount} 个项目`
-          : `剩余 ${remainingProjectSlots.value} 个（已用 ${estimate.projectCount}/${estimate.includedProjects + estimate.extraProjectSlots}）`
-        : '加载中...',
-      tone: remainingProjectSlots.value === 0 ? 'warning' : 'neutral',
-    },
-    {
-      label: 'Team 席位',
-      value: quota
-        ? `${quota.seatUsed}/${quota.seatLimit}，剩余 ${seatRemaining}`
-        : workspace?.type === 'personal'
-          ? '个人项目台默认独立管理'
-          : '未配置',
-    },
-    {
-      label: 'AI 配额',
-      value: quota
-        ? `${quota.aiQuotaUsed}/${quota.aiQuotaTotal}，剩余 ${aiRemaining}`
-        : workspace?.type === 'personal'
-          ? '个人项目台不参与 Team AI 配额'
-          : '未配置',
-      tone: quota && aiRemaining === 0 ? 'warning' : 'neutral',
-    },
-  ]
-})
 
 function openCreateDialog() {
   if (createDisabledReason.value) {
@@ -192,12 +136,39 @@ function closeCreateDialog() {
 }
 
 function openProject(project: TeamProjectCardItem) {
+  void openProjectWithPanel(project)
+}
+
+async function openProjectWithPanel(project: TeamProjectCardItem, panel: '' | 'members' | 'settings' = '') {
   const workspaceId = activeWorkspaceId.value
   const projectId = String(project.id || '').trim()
   if (!workspaceId || !projectId)
     return
   writeActiveWorkspacePreference(workspaceId)
-  navigateTo(projectWorkspacePath(workspaceId, projectId))
+  await navigateTo({
+    path: projectWorkspacePath(workspaceId, projectId),
+    query: panel ? { panel } : undefined,
+  })
+}
+
+function handleProjectAction(payload: {
+  action: 'archive' | 'details' | 'members' | 'settings'
+  project: TeamProjectCardItem
+}) {
+  if (payload.action === 'details') {
+    void openProjectWithPanel(payload.project)
+    return
+  }
+  if (payload.action === 'settings') {
+    void openProjectWithPanel(payload.project, 'settings')
+    return
+  }
+  if (payload.action === 'members') {
+    void openProjectWithPanel(payload.project, 'members')
+    return
+  }
+
+  noticeText.value = `项目“${payload.project.title}”的归档功能即将支持。`
 }
 
 async function submitQuickCreate() {
@@ -365,25 +336,29 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-6">
-    <TeamProjectOverview
+    <DashboardOverviewShell
       :title="activeWorkspace?.workspace.name || 'Team 项目台'"
-      description="当前 Team 项目台总览：先看配额与项目列表，再进入具体项目工作区继续分析与协作。"
-      :summary-text="visibleProjectSummaryText"
-      :summary-stats="summaryStats"
-      :action-disabled="Boolean(createDisabledReason)"
-      :action-hint-text="createDisabledReason"
+      description="当前 Team 的项目与配额概览。"
       :notice-text="activeNoticeText"
       :notice-tone="activeNoticeTone"
       :loading="loading"
       :error-text="errorText"
-      empty-title="当前项目台暂无你可见的项目"
-      :empty-description="workspaceCanCreateProject ? '点击下方按钮创建当前 Team 的第一个项目。' : '如需加入项目，请联系 Team 管理者分配。'"
-      :projects="projectCards"
+      primary-action-label="新建项目"
+      :primary-action-disabled="Boolean(createDisabledReason)"
+      primary-action-test-id="team-dashboard-create-project-button"
+      empty-action-test-id="team-dashboard-empty-create-project-button"
+      overview-section-test-id="team-dashboard-overview"
+      notice-test-id="team-dashboard-notice"
       loading-key-prefix="workspace-project-skeleton"
-      @action="openCreateDialog"
+      @primary-action="openCreateDialog"
       @retry="loadWorkspaceDashboard"
-      @open-project="openProject"
-    />
+    >
+      <TeamProjectOverview
+        :projects="projectCards"
+        @open-project="openProject"
+        @project-action="handleProjectAction"
+      />
+    </DashboardOverviewShell>
 
     <TeamCreateProjectDialog
       :visible="createDialogVisible"

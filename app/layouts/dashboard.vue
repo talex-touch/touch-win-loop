@@ -13,6 +13,7 @@ const {
 } = useDashboardWorkspace()
 const route = useRoute()
 const authApiFetch = useAuthApiFetch()
+const shellScrollRef = ref<HTMLDivElement | null>(null)
 
 const searchQuery = ref('')
 const platformPermissions = ref<PlatformPermission[]>([])
@@ -53,7 +54,7 @@ const showAdminBadge = computed(() => {
 
 const isWorkspaceFullscreen = computed(() => {
   const normalizedPath = route.path.replace(/\/+$/, '') || '/'
-  return /^\/team\/[^/]+(?:\/project\/[^/]+)?$/.test(normalizedPath)
+  return /^\/team\/[^/]+\/project\/[^/]+$/.test(normalizedPath)
 })
 
 useHead({
@@ -102,6 +103,20 @@ onMounted(async () => {
     workspaceOptions.value = []
   }
 })
+
+function onWorkspaceCreated(workspace: WorkspaceWithQuota) {
+  const nextOptions = workspaceOptions.value.filter(item => item.workspace.id !== workspace.workspace.id)
+  workspaceOptions.value = [workspace, ...nextOptions]
+}
+
+watch(() => route.fullPath, async () => {
+  if (isWorkspaceFullscreen.value)
+    return
+
+  await nextTick()
+  if (shellScrollRef.value)
+    shellScrollRef.value.scrollTop = 0
+})
 </script>
 
 <template>
@@ -112,7 +127,7 @@ onMounted(async () => {
     <slot />
   </div>
 
-  <div v-else class="dashboard-shell text-slate-900 bg-[#f6f6f8] flex h-screen overflow-hidden">
+  <div v-else class="dashboard-shell text-slate-900 bg-[#f6f6f8] flex h-screen min-h-0 overflow-hidden">
     <DashboardSidebar
       :menu-items="menuItems"
       :topics="hotTopics"
@@ -120,12 +135,13 @@ onMounted(async () => {
       :analyst-tier="analystTier"
       :show-admin-badge="showAdminBadge"
       :workspace-options="workspaceOptions"
+      @workspace-created="onWorkspaceCreated"
     />
 
-    <main class="flex flex-1 flex-col min-w-0 overflow-hidden">
+    <main class="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
       <DashboardTopbar v-model="searchQuery" />
 
-      <div class="dashboard-scrollbar p-4 flex-1 overflow-y-auto md:p-8">
+      <div ref="shellScrollRef" class="dashboard-scrollbar p-4 flex-1 min-h-0 overflow-y-auto md:p-8">
         <slot />
       </div>
     </main>

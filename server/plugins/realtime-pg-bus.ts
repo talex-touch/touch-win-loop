@@ -14,6 +14,7 @@ import {
   hasSeenRealtimeEvent,
   rememberRealtimeEvent,
 } from '~~/server/utils/realtime-hub'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const REALTIME_PG_BUS_STATE_KEY = Symbol.for('winloop.realtime.pg-bus.runtime.v1')
 
@@ -257,6 +258,9 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
         console.error('[realtime-pg-bus] listener disconnected:', normalizeErrorMessage(error), {
           reason,
         })
+        captureServerException(error, {
+          module: 'realtime-pg-bus',
+        })
       }
       else {
         console.warn('[realtime-pg-bus] listener disconnected', {
@@ -288,6 +292,9 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
   }
   catch (error) {
     console.error('[realtime-pg-bus] bootstrap failed:', normalizeErrorMessage(error))
+    captureServerException(error, {
+      module: 'realtime-pg-bus',
+    })
     scheduleReconnect(state, 'bootstrap_failed')
   }
   finally {

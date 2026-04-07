@@ -1,4 +1,9 @@
 import type { AuthMeResult, Contest, Project, ProjectSource, WorkspaceWithQuota } from '~~/shared/types/domain'
+import {
+  buildProjectMonogram,
+  getProjectDisplayAccent,
+  resolveProjectDisplayConfig,
+} from '~~/shared/constants/project-display'
 
 export interface TeamProjectCardItem {
   id: string
@@ -14,6 +19,13 @@ export interface TeamProjectCardItem {
   projectSeatUsed?: number
   projectSeatLimit?: number
   projectSeatRemaining?: number
+  seatProgressPercent?: number
+  displayIcon: string
+  displayMonogram: string
+  accentSolid: string
+  accentSoft: string
+  accentBorder: string
+  accentText: string
 }
 
 export function normalizeQueryValue(value: unknown): string {
@@ -159,6 +171,8 @@ export function buildTeamProjectCard(
 
   const seatLimit = Math.max(0, Number(project.projectSeatQuota?.seatLimit || 0))
   const seatUsed = Math.max(0, Number(project.projectSeatQuota?.seatUsed || 0))
+  const display = resolveProjectDisplayConfig(project.display, `${project.id}:${project.title}`)
+  const accent = getProjectDisplayAccent(display.accentColor)
 
   return {
     id: project.id,
@@ -174,5 +188,12 @@ export function buildTeamProjectCard(
     projectSeatUsed: seatLimit > 0 ? seatUsed : undefined,
     projectSeatLimit: seatLimit > 0 ? seatLimit : undefined,
     projectSeatRemaining: seatLimit > 0 ? Math.max(0, seatLimit - seatUsed) : undefined,
+    seatProgressPercent: seatLimit > 0 ? Math.max(0, Math.min(100, Math.round((seatUsed / seatLimit) * 100))) : undefined,
+    displayIcon: display.icon,
+    displayMonogram: buildProjectMonogram(project.title),
+    accentSolid: accent.solid,
+    accentSoft: accent.soft,
+    accentBorder: accent.border,
+    accentText: accent.text,
   }
 }
