@@ -7,6 +7,7 @@ import type {
   FeishuAuthBindStatus,
   FeishuAuthUnbindResult,
   FeishuBitableSourceConfig,
+  FeishuBitableSyncEnvironment,
   FeishuBitableSync,
   FeishuBitableSyncDetail,
   FeishuBitableSyncItem,
@@ -92,6 +93,7 @@ interface FeishuBitableSyncItemRow {
 interface FeishuBitableSyncRow {
   id: string
   name: string
+  is_enabled: boolean
   source_json: Record<string, unknown>
   item_count: number | string
   enabled_item_count: number | string
@@ -239,6 +241,13 @@ function toText(raw: unknown): string {
   return String(raw || '').trim()
 }
 
+function toSyncEnvironment(raw: unknown): FeishuBitableSyncEnvironment | undefined {
+  const value = toText(raw)
+  if (value === 'test' || value === 'production')
+    return value
+  return undefined
+}
+
 function toStringArray(raw: unknown): string[] {
   if (!Array.isArray(raw))
     return []
@@ -306,6 +315,7 @@ function normalizeBitableSource(raw: unknown, fallback: {
     tableName: toText(source.tableName),
     viewName: toText(source.viewName),
     sourceUrl: toText(source.sourceUrl),
+    environment: toSyncEnvironment(source.environment),
   }
 }
 
@@ -408,6 +418,7 @@ function toSync(row: FeishuBitableSyncRow): FeishuBitableSync {
   return {
     id: row.id,
     name: row.name,
+    enabled: Boolean(row.is_enabled),
     source,
     itemCount: Number(row.item_count || 0),
     enabledItemCount: Number(row.enabled_item_count || 0),
@@ -1152,6 +1163,7 @@ export async function listFeishuBitableSyncs(
     `SELECT
       s.id,
       s.name,
+      s.is_enabled,
       s.source_json,
       COUNT(i.id)::INTEGER AS item_count,
       COUNT(i.id) FILTER (WHERE i.is_enabled = TRUE)::INTEGER AS enabled_item_count,
@@ -1201,6 +1213,7 @@ export async function listFeishuBitableSyncs(
      GROUP BY
       s.id,
       s.name,
+      s.is_enabled,
       s.source_json,
       lr.id,
       lr.status,
@@ -1234,6 +1247,7 @@ export async function getFeishuBitableSyncById(
     `SELECT
       s.id,
       s.name,
+      s.is_enabled,
       s.source_json,
       COUNT(i.id)::INTEGER AS item_count,
       COUNT(i.id) FILTER (WHERE i.is_enabled = TRUE)::INTEGER AS enabled_item_count,
@@ -1284,6 +1298,7 @@ export async function getFeishuBitableSyncById(
      GROUP BY
       s.id,
       s.name,
+      s.is_enabled,
       s.source_json,
       lr.id,
       lr.status,
@@ -1336,6 +1351,7 @@ export async function patchFeishuBitableSync(
     syncId: string
     patch: {
       name?: string
+      enabled?: boolean
       source?: FeishuBitableSourceConfig
     }
   },
@@ -1353,6 +1369,8 @@ export async function patchFeishuBitableSync(
 
   if (input.patch.name !== undefined)
     addSet('name', toText(input.patch.name))
+  if (input.patch.enabled !== undefined)
+    addSet('is_enabled', Boolean(input.patch.enabled))
   if (input.patch.source !== undefined)
     addSet('source_json', JSON.stringify(parseJsonObject(input.patch.source)))
   if (!sets.length)
@@ -1510,7 +1528,7 @@ export async function listFeishuBitableSyncItems(
        ORDER BY r.started_at DESC
        LIMIT 1
      ) lr ON TRUE
-     WHERE ($1::BOOLEAN = TRUE OR t.is_enabled = TRUE)
+     WHERE ($1::BOOLEAN = TRUE OR (t.is_enabled = TRUE AND COALESCE(s.is_enabled, TRUE) = TRUE))
        AND ($2::TEXT = '' OR t.sync_id = $2)
        AND ($3::BOOLEAN = TRUE OR t.sync_id IS NULL OR s.archived_at IS NULL)
      ORDER BY t.updated_at DESC`,
@@ -2102,6 +2120,7 @@ export async function claimNextDueFeishuBitableSyncItem(
       FROM feishu_bitable_sync_items t
       LEFT JOIN feishu_bitable_syncs s ON s.id = t.sync_id
       WHERE t.is_enabled = TRUE
+        AND COALESCE(s.is_enabled, TRUE) = TRUE
         AND t.schedule_enabled = TRUE
         AND t.schedule_next_run_at IS NOT NULL
         AND t.schedule_next_run_at <= $1::TIMESTAMPTZ
@@ -2533,6 +2552,7 @@ export async function listActiveFeishuBitableSyncItemsBySource(
      FROM feishu_bitable_sync_items t
      LEFT JOIN feishu_bitable_syncs s ON s.id = t.sync_id
      WHERE t.is_enabled = TRUE
+       AND COALESCE(s.is_enabled, TRUE) = TRUE
        AND (t.sync_id IS NULL OR s.archived_at IS NULL)
        AND t.app_token = $1
        AND t.table_id = $2

@@ -42,6 +42,7 @@ import {
   completeFeishuBitableSyncItemRun,
   createFeishuBitableSyncItemRun,
   enqueueFeishuPostSyncTask,
+  getFeishuBitableSyncById,
   getFeishuBitableSyncItemById,
   getFeishuExternalRef,
   readFeishuIntegrationConfig,
@@ -2096,13 +2097,18 @@ async function runFeishuBitableSyncItemById(
   const configAndTask = await withClient(event, async (db) => {
     const config = await readFeishuIntegrationConfig(db)
     const task = await getFeishuBitableSyncItemById(db, input.syncItemId)
-    return { config, task }
+    const sync = task?.syncId ? await getFeishuBitableSyncById(db, task.syncId) : null
+    return { config, task, sync }
   })
 
   if (!configAndTask.config.enabled)
     throw new Error('FEISHU_INTEGRATION_DISABLED')
   if (!configAndTask.task)
     throw new Error('FEISHU_BITABLE_SYNC_ITEM_NOT_FOUND')
+  if (configAndTask.task.syncId && !configAndTask.sync)
+    throw new Error('FEISHU_BITABLE_SYNC_NOT_FOUND')
+  if (configAndTask.sync && !configAndTask.sync.enabled)
+    throw new Error('FEISHU_BITABLE_SYNC_DISABLED')
   if (!configAndTask.task.isEnabled)
     throw new Error('FEISHU_BITABLE_SYNC_ITEM_INACTIVE')
   const task = configAndTask.task

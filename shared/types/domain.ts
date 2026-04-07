@@ -1443,6 +1443,8 @@ export interface FeishuConfigValidationResult {
   warnings: string[]
 }
 
+export type FeishuBitableSyncEnvironment = 'test' | 'production'
+
 export interface FeishuBitableSourceConfig {
   appToken: string
   tableId: string
@@ -1451,6 +1453,7 @@ export interface FeishuBitableSourceConfig {
   tableName?: string
   viewName?: string
   sourceUrl?: string
+  environment?: FeishuBitableSyncEnvironment
 }
 
 export interface FeishuBitableWritebackConfig {
@@ -1665,6 +1668,7 @@ export interface FeishuTaskIssueStats {
 export interface FeishuBitableSync {
   id: string
   name: string
+  enabled: boolean
   source: FeishuBitableSourceConfig
   itemCount: number
   enabledItemCount: number

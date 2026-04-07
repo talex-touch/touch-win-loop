@@ -300,6 +300,7 @@ CREATE TABLE IF NOT EXISTS auth_identities (
 CREATE TABLE IF NOT EXISTS feishu_bitable_syncs (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   source_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
@@ -308,6 +309,9 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_syncs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 ALTER TABLE feishu_bitable_syncs
   ADD COLUMN IF NOT EXISTS archived_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;

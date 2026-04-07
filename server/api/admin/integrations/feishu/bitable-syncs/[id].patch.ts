@@ -9,6 +9,7 @@ import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 interface PatchSyncBody {
   name?: string
+  enabled?: boolean
   source?: FeishuBitableSourceConfig
 }
 
@@ -48,6 +49,7 @@ export default defineEventHandler(async (event) => {
       syncId,
       patch: {
         name: body.name,
+        enabled: body.enabled,
         source: body.source,
       },
     })
