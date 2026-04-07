@@ -52,7 +52,7 @@ onMounted(loadProject)
 
 <template>
   <main class="p-6 flex min-h-[40vh] items-center justify-center">
-    <section class="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 text-center space-y-3">
+    <section class="p-6 text-center border border-slate-200 rounded-xl bg-white max-w-lg w-full space-y-3">
       <p class="text-sm text-slate-500">
         {{ loading ? '正在进入项目工作区...' : '项目工作区暂不可用。' }}
       </p>
@@ -61,7 +61,7 @@ onMounted(loadProject)
       </p>
       <button
         v-if="!loading"
-        class="inline-flex items-center justify-center rounded border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+        class="text-sm text-slate-700 font-semibold px-3 py-1.5 border border-slate-300 rounded inline-flex transition-colors items-center justify-center hover:bg-slate-50"
         type="button"
         @click="navigateTo(dashboardPath)"
       >

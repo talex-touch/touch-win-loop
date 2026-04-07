@@ -51,19 +51,19 @@
 
 ### 资源形态
 
-| resourceKind | 说明 |
-| --- | --- |
-| `binary` | 上传文件或系统资料库引用 |
-| `markdown` | 结构化协作文档 |
-| `draw` | 画布类协作资源 |
+| resourceKind | 说明                     |
+| ------------ | ------------------------ |
+| `binary`     | 上传文件或系统资料库引用 |
+| `markdown`   | 结构化协作文档           |
+| `draw`       | 画布类协作资源           |
 
 ### 协作用途
 
-| collabPurpose | 适用形态 | 用户侧名称 |
-| --- | --- | --- |
-| `workflow` | `draw` | 流程画布 |
-| `freeform` | `draw` | 自由画布 |
-| `notes` | `markdown` | 协作文档 |
+| collabPurpose | 适用形态   | 用户侧名称 |
+| ------------- | ---------- | ---------- |
+| `workflow`    | `draw`     | 流程画布   |
+| `freeform`    | `draw`     | 自由画布   |
+| `notes`       | `markdown` | 协作文档   |
 
 ## 4. flow tab 的定位
 

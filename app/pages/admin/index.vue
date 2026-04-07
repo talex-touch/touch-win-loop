@@ -160,18 +160,18 @@ onMounted(loadPermissions)
         <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
           Build Identity
         </div>
-        <div class="p-3 space-y-1 text-[11px]">
-          <p class="m-0 text-slate-700">
+        <div class="text-[11px] p-3 space-y-1">
+          <p class="text-slate-700 m-0">
             当前生效版本：{{ buildInfo?.version || '-' }}；Commit：{{ buildInfo?.commitSha || '-' }}
           </p>
-          <p class="m-0 text-[10px] text-slate-500">
+          <p class="text-[10px] text-slate-500 m-0">
             版本来源：{{ buildValueSourceLabel(buildInfo?.versionSource || 'missing') }}；
             Commit 来源：{{ buildValueSourceLabel(buildInfo?.commitShaSource || 'missing') }}
           </p>
-          <p v-if="!canManageRoles" class="m-0 text-[10px] text-slate-400">
+          <p v-if="!canManageRoles" class="text-[10px] text-slate-400 m-0">
             查看构建标识需要 `role.assign` 权限（读取飞书集成配置）。
           </p>
-          <p v-if="buildInfoError" class="m-0 text-[10px] text-amber-700">
+          <p v-if="buildInfoError" class="text-[10px] text-amber-700 m-0">
             {{ buildInfoError }}
           </p>
         </div>

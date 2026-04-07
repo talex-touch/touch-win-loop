@@ -5,7 +5,7 @@ import * as Y from 'yjs'
 import {
   ensureMarkdownCollabDocShape,
   syncMarkdownMirrorFromRichText,
-} from '../../shared/utils/collab-markdown-rich-text'
+} from '~~/shared/utils/collab-markdown-rich-text'
 
 export interface CollabSnapshotPayload {
   kind: 'markdown' | 'draw'
