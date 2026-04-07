@@ -8,10 +8,12 @@
 
 - `deploy-winloop.sh`：Jenkins 与人工兜底共用的统一部署入口
 - `pipeline.groovy`：Jenkins Job checkout 完代码后的主流水线逻辑
-- `job-bootstrap.groovy`：Jenkins Job 中可直接粘贴的精简 bootstrap 示例
+- `job-bootstrap.groovy`：staging Jenkins Job 中可直接粘贴的精简 bootstrap 示例
+- `job-bootstrap-production.groovy`：production Jenkins Job 中可直接粘贴的精简 bootstrap 示例
 - `compose.yaml`：repo versioned Compose 模板
 - `deploy.env.example`：环境级部署参数模板
 - `.env.runtime.example`：运行时参数模板
+- `init-target-layout.sh`：在目标机上初始化 staging / production 目录骨架
 
 ## 0）Jenkins 运行在 Docker 容器里的前提
 
@@ -68,12 +70,8 @@ Jenkins 容器只需要具备以下能力：
 建议初始化命令：
 
 ```bash
-mkdir -p "/opt/deploy/touch-win-loop/staging/storage"
-mkdir -p "/opt/deploy/touch-win-loop/production/storage"
-cp "deploy/jenkins/deploy.env.example" "/opt/deploy/touch-win-loop/staging/deploy.env"
-cp "deploy/jenkins/deploy.env.example" "/opt/deploy/touch-win-loop/production/deploy.env"
-cp "deploy/jenkins/.env.runtime.example" "/opt/deploy/touch-win-loop/staging/.env.runtime"
-cp "deploy/jenkins/.env.runtime.example" "/opt/deploy/touch-win-loop/production/.env.runtime"
+chmod +x "deploy/jenkins/init-target-layout.sh"
+./deploy/jenkins/init-target-layout.sh "/opt/deploy/touch-win-loop"
 ```
 
 ## 2）deploy.env 约定
@@ -109,7 +107,10 @@ production 只需要改成独立的：
 - `WINLOOP_REDIS_URL`
 - `WINLOOP_CONFIG_MASTER_KEY`
 - `WINLOOP_PUBLIC_BASE_URL`
-- AI / 飞书 / ONLYOFFICE 等运行时变量
+- `WINLOOP_API_BASE_URL`
+- `WINLOOP_ONLYOFFICE_ENDPOINT` / `WINLOOP_ONLYOFFICE_JWT_SECRET`（如果启用再配）
+
+资源回收 worker 参数已改为后台 UI 管理，不再通过 `.env.runtime` 配置。
 
 必须保证 staging 与 production：
 
@@ -141,7 +142,9 @@ production 只需要改成独立的：
    - `IMAGE_REF`
    - `TRIGGERED_BY`
    - `WORKFLOW_RUN_URL`
-4. Pipeline script 使用 `deploy/jenkins/job-bootstrap.groovy` 作为模板
+4. Pipeline script 使用以下模板：
+   - staging：`deploy/jenkins/job-bootstrap.groovy`
+   - production：`deploy/jenkins/job-bootstrap-production.groovy`
 5. staging job 保持：
    - `deployEnvironment: 'staging'`
    - `expectedBranch: 'dev'`
@@ -153,7 +156,7 @@ bootstrap 脚本中的凭据 ID 需要替换为你在 Jenkins 中真实创建的
 
 - `github-readonly`
 - `ghcr-readonly`
-- `touch-win-loop-center-ssh`
+- `touch-center-ssh`
 
 同时需要根据你的环境修改：
 
