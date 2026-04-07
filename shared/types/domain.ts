@@ -1677,6 +1677,8 @@ export interface FeishuBitableSync {
   name: string
   enabled: boolean
   source: FeishuBitableSourceConfig
+  schedule: FeishuTaskScheduleConfig
+  scheduleRuntime: FeishuTaskScheduleRuntime
   itemCount: number
   enabledItemCount: number
   issueStats: FeishuTaskIssueStats

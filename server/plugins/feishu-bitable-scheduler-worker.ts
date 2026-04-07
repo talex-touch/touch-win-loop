@@ -1,10 +1,11 @@
 import { runWorkflow } from '~~/server/services/workflow/workflow-orchestrator'
 import { withTransaction } from '~~/server/utils/db'
 import {
-  claimNextDueFeishuBitableSyncItem,
-  completeScheduledFeishuSyncItemExecution,
-  getFeishuBitableSyncItemById,
-  releaseFeishuSyncItemScheduleLock,
+  claimNextDueFeishuBitableSync,
+  completeScheduledFeishuSyncExecution,
+  getFeishuBitableSyncById,
+  listFeishuBitableSyncItems,
+  releaseFeishuSyncScheduleLock,
 } from '~~/server/utils/feishu-integration-store'
 import { computeNextScheduledRunAtOrNull } from '~~/server/utils/feishu-task-schedule'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
@@ -61,25 +62,50 @@ function ensureTickTimer(intervalMs: number): void {
   runtimeState.timer.unref?.()
 }
 
-async function executeClaimedTask(input: {
-  syncItemId: string
+async function executeClaimedSync(input: {
+  syncId: string
   actorUserId: string
   lockToken: string
 }): Promise<void> {
   let lastError = ''
 
   try {
-    await runWorkflow({
-      providerName: 'feishu_bitable',
-      syncItemId: input.syncItemId,
-      actorUserId: input.actorUserId,
-      triggerSource: 'scheduled',
+    const items = await withTransaction(undefined, async (db) => {
+      return listFeishuBitableSyncItems(db, {
+        syncId: input.syncId,
+      })
     })
+    if (!items.length) {
+      lastError = '当前无已启用的子表同步项。'
+    }
+    else {
+      const errors: string[] = []
+      for (const item of items) {
+        try {
+          await runWorkflow({
+            providerName: 'feishu_bitable',
+            syncItemId: item.id,
+            actorUserId: input.actorUserId,
+            triggerSource: 'scheduled',
+          })
+        }
+        catch (error) {
+          const message = toErrorMessage(error)
+          errors.push(`${item.name || item.id}: ${message}`)
+          console.error('[feishu-bitable-scheduler-worker] sync item failed:', {
+            syncId: input.syncId,
+            syncItemId: item.id,
+            error: message,
+          })
+        }
+      }
+      lastError = errors.slice(0, 3).join('；')
+    }
   }
   catch (error) {
     lastError = toErrorMessage(error)
-    console.error('[feishu-bitable-scheduler-worker] sync item failed:', {
-      syncItemId: input.syncItemId,
+    console.error('[feishu-bitable-scheduler-worker] sync failed:', {
+      syncId: input.syncId,
       error: lastError,
     })
   }
@@ -87,12 +113,12 @@ async function executeClaimedTask(input: {
   let completed = false
   try {
     completed = await withTransaction(undefined, async (db) => {
-      const latestTask = await getFeishuBitableSyncItemById(db, input.syncItemId)
-      const nextRunAt = latestTask?.schedule.enabled
-        ? computeNextScheduledRunAtOrNull(latestTask.schedule, { from: new Date() })
+      const latestSync = await getFeishuBitableSyncById(db, input.syncId)
+      const nextRunAt = latestSync?.schedule.enabled
+        ? computeNextScheduledRunAtOrNull(latestSync.schedule, { from: new Date() })
         : null
-      return completeScheduledFeishuSyncItemExecution(db, {
-        syncItemId: input.syncItemId,
+      return completeScheduledFeishuSyncExecution(db, {
+        syncId: input.syncId,
         lockToken: input.lockToken,
         nextRunAt,
         lastError,
@@ -102,20 +128,20 @@ async function executeClaimedTask(input: {
   }
   catch (error) {
     console.error('[feishu-bitable-scheduler-worker] complete failed:', {
-      syncItemId: input.syncItemId,
+      syncId: input.syncId,
       error: toErrorMessage(error),
     })
   }
 
   if (!completed) {
     await withTransaction(undefined, async (db) => {
-      await releaseFeishuSyncItemScheduleLock(db, {
-        syncItemId: input.syncItemId,
+      await releaseFeishuSyncScheduleLock(db, {
+        syncId: input.syncId,
         lockToken: input.lockToken,
       })
     }).catch((error) => {
       console.error('[feishu-bitable-scheduler-worker] release lock failed:', {
-        syncItemId: input.syncItemId,
+        syncId: input.syncId,
         error: toErrorMessage(error),
       })
     })
@@ -137,7 +163,7 @@ async function runTick(): Promise<void> {
 
     for (let round = 0; round < runtime.feishuScheduler.batchSize; round += 1) {
       const claimed = await withTransaction(undefined, async (db) => {
-        return claimNextDueFeishuBitableSyncItem(db, {
+        return claimNextDueFeishuBitableSync(db, {
           now: new Date(),
           lockTtlMs: runtime.feishuScheduler.lockTtlMs,
         })
@@ -145,20 +171,20 @@ async function runTick(): Promise<void> {
       if (!claimed)
         break
 
-      const fallbackActorUserId = claimed.item.updatedByUserId
-        || claimed.item.createdByUserId
+      const fallbackActorUserId = claimed.sync.updatedByUserId
+        || claimed.sync.createdByUserId
       if (!fallbackActorUserId) {
         await withTransaction(undefined, async (db) => {
-          await releaseFeishuSyncItemScheduleLock(db, {
-            syncItemId: claimed.item.id,
+          await releaseFeishuSyncScheduleLock(db, {
+            syncId: claimed.sync.id,
             lockToken: claimed.lockToken,
           })
         })
         continue
       }
 
-      await executeClaimedTask({
-        syncItemId: claimed.item.id,
+      await executeClaimedSync({
+        syncId: claimed.sync.id,
         actorUserId: fallbackActorUserId,
         lockToken: claimed.lockToken,
       })

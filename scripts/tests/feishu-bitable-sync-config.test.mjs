@@ -18,7 +18,7 @@ describe('feishu-bitable-sync-config', () => {
     const resource = buildDefaultSyncItemConfig('resource')
 
     assert.equal(contest.mapping.externalIdField, '')
-    assert.equal(contest.options.defaultVisibility, 'internal')
+    assert.deepEqual(contest.options, {})
     assert.equal(track.mapping.contestExternalIdField, '')
     assert.equal(track.options.contestId, '')
     assert.equal(resource.mapping.trackExternalIdField, '')

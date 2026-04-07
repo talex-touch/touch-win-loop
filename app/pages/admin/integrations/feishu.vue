@@ -78,6 +78,7 @@ const syncColumns = [
   { title: '主库来源', dataIndex: 'source', slotName: 'source', width: 340 },
   { title: '子表同步项', dataIndex: 'itemCount', slotName: 'itemCount', width: 140 },
   { title: '最近执行', dataIndex: 'latestRun', slotName: 'latestRun', width: 220 },
+  { title: '主调度', dataIndex: 'schedule', slotName: 'schedule', width: 220 },
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 170 },
   { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 340 },
@@ -214,6 +215,26 @@ function syncLatestRunSummary(sync: FeishuBitableSync): string {
   if (!sync.latestRunSummary)
     return '暂无执行记录'
   return `${formatDateTime(sync.latestRunSummary.startedAt)} / ${runStatusLabel(sync.latestRunSummary.status)} / ${triggerSourceLabel(sync.latestRunSummary.triggerSource)}`
+}
+
+function syncScheduleStatusLabel(sync: FeishuBitableSync): string {
+  if (!sync.schedule.enabled)
+    return '未启用'
+  return sync.enabled ? '已启用' : '主同步已禁用'
+}
+
+function syncScheduleStatusColor(sync: FeishuBitableSync): string {
+  if (!sync.schedule.enabled)
+    return 'gray'
+  return sync.enabled ? 'green' : 'gold'
+}
+
+function scheduleModeLabel(mode?: string | null): string {
+  if (mode === 'cron')
+    return 'Cron'
+  if (mode === 'interval')
+    return '固定间隔'
+  return '未知'
 }
 
 function resetSecretInputs() {
@@ -1112,6 +1133,23 @@ onMounted(initializePage)
                 </p>
                 <p class="text-[10px] text-slate-400 m-0 mt-1">
                   更新时间：{{ formatDateTime(record.updatedAt) }}
+                </p>
+              </div>
+            </template>
+
+            <template #schedule="{ record }">
+              <div class="space-y-1">
+                <a-tag :color="syncScheduleStatusColor(record)" size="small">
+                  {{ syncScheduleStatusLabel(record) }}
+                </a-tag>
+                <p class="text-[10px] text-slate-500 m-0">
+                  模式：{{ scheduleModeLabel(record.schedule?.mode) }}
+                </p>
+                <p class="text-[10px] text-slate-500 m-0">
+                  下次：{{ formatDateTime(record.scheduleRuntime?.nextRunAt) }}
+                </p>
+                <p v-if="record.scheduleRuntime?.lastError" class="text-[10px] text-rose-500 m-0 break-all">
+                  错误：{{ record.scheduleRuntime.lastError }}
                 </p>
               </div>
             </template>

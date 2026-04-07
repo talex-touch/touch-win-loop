@@ -1371,13 +1371,6 @@ async function saveCurrentItem(saveContext: SaveCurrentItemContext = 'main') {
         mapping,
         options,
         writeback,
-        schedule: {
-          enabled: itemForm.scheduleEnabled,
-          mode: itemForm.scheduleMode,
-          intervalMinutes: itemForm.scheduleMode === 'interval' ? Number(itemForm.scheduleIntervalMinutes || 60) : null,
-          cronExpr: itemForm.scheduleMode === 'cron' ? itemForm.scheduleCronExpr.trim() : null,
-          timezone: itemForm.scheduleTimezone.trim(),
-        },
       },
     })
     applySavedItemLocally(response.data)
@@ -1458,6 +1451,13 @@ async function saveSyncInfo() {
                 : undefined,
             }
           : undefined,
+        schedule: {
+          enabled: syncForm.scheduleEnabled,
+          mode: syncForm.scheduleMode,
+          intervalMinutes: syncForm.scheduleMode === 'interval' ? Number(syncForm.scheduleIntervalMinutes || 60) : null,
+          cronExpr: syncForm.scheduleMode === 'cron' ? syncForm.scheduleCronExpr.trim() : null,
+          timezone: syncForm.scheduleTimezone.trim(),
+        },
       },
     })
     const nextSync = response.data
@@ -1473,6 +1473,11 @@ async function saveSyncInfo() {
     syncForm.environment = nextSync?.source.environment === 'production' || nextSync?.source.environment === 'test'
       ? nextSync.source.environment
       : ''
+    syncForm.scheduleEnabled = Boolean(nextSync?.schedule?.enabled)
+    syncForm.scheduleMode = nextSync?.schedule?.mode === 'cron' ? 'cron' : 'interval'
+    syncForm.scheduleIntervalMinutes = Number(nextSync?.schedule?.intervalMinutes || 60)
+    syncForm.scheduleCronExpr = nextSync?.schedule?.cronExpr || '0 * * * *'
+    syncForm.scheduleTimezone = nextSync?.schedule?.timezone || 'Asia/Shanghai'
     emit('updated')
     setSuccess('同步信息已更新。')
   }
@@ -1845,6 +1850,71 @@ watch(() => props.selectedItemId, (value) => {
         </div>
       </div>
 
+      <section class="p-4 border border-slate-200 rounded bg-slate-50 space-y-3">
+        <div>
+          <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+            主同步调度
+          </h3>
+          <p class="text-[11px] text-slate-500 m-0 mt-1">
+            调度统一配置在多维同步信息层级；命中调度后会顺序执行当前主同步下所有已启用的子表同步项。
+          </p>
+        </div>
+        <div class="gap-3 grid md:grid-cols-5">
+          <div class="text-[11px] text-slate-600 font-medium block">
+            <div>启用定时</div>
+            <div class="mt-2">
+              <a-switch v-model="syncForm.scheduleEnabled" :disabled="archivedReadonly" />
+            </div>
+          </div>
+          <label class="text-[11px] text-slate-600 font-medium block">
+            调度模式
+            <a-select v-model="syncForm.scheduleMode" class="mt-1" size="small" :disabled="archivedReadonly">
+              <a-option v-for="option in SCHEDULE_MODE_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </a-option>
+            </a-select>
+          </label>
+          <label v-if="syncForm.scheduleMode === 'interval'" class="text-[11px] text-slate-600 font-medium block">
+            间隔分钟
+            <a-input-number v-model="syncForm.scheduleIntervalMinutes" class="mt-1 w-full" size="small" :min="1" :step="5" :disabled="archivedReadonly" />
+          </label>
+          <label v-else class="text-[11px] text-slate-600 font-medium block md:col-span-2">
+            Cron
+            <a-input v-model="syncForm.scheduleCronExpr" class="mt-1" size="small" :disabled="archivedReadonly" />
+          </label>
+          <label class="text-[11px] text-slate-600 font-medium block">
+            时区
+            <a-input v-model="syncForm.scheduleTimezone" class="mt-1" size="small" :disabled="archivedReadonly" />
+          </label>
+        </div>
+        <div class="gap-3 grid md:grid-cols-3">
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-500 m-0">
+              下次执行
+            </p>
+            <p class="text-slate-900 font-medium m-0 mt-1">
+              {{ syncDetail?.scheduleRuntime?.nextRunAt ? formatDateTime(syncDetail.scheduleRuntime.nextRunAt) : '-' }}
+            </p>
+          </div>
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-500 m-0">
+              上次调度
+            </p>
+            <p class="text-slate-900 font-medium m-0 mt-1">
+              {{ syncDetail?.scheduleRuntime?.lastRunAt ? formatDateTime(syncDetail.scheduleRuntime.lastRunAt) : '-' }}
+            </p>
+          </div>
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-500 m-0">
+              调度错误
+            </p>
+            <p class="text-slate-900 font-medium m-0 mt-1 break-all">
+              {{ syncDetail?.scheduleRuntime?.lastError || '无' }}
+            </p>
+          </div>
+        </div>
+      </section>
+
       <p v-if="syncDetail?.source.sourceUrl" class="text-[11px] text-slate-500 m-0 break-all">
         来源 URL：{{ syncDetail.source.sourceUrl }}
       </p>
@@ -1935,8 +2005,6 @@ watch(() => props.selectedItemId, (value) => {
                   </a-tag>
                   <span>最近：{{ latestRunSummaryText(item.latestRunSummary) }}</span>
                   <span v-if="(item.latestRunSummary?.errorCount || 0) > 0">最近错误数：{{ item.latestRunSummary?.errorCount || 0 }}</span>
-                  <span v-if="item.scheduleRuntime?.lastError">上次调度错误：{{ item.scheduleRuntime.lastError }}</span>
-                  <span v-else>调度错误：无</span>
                 </div>
               </div>
             </div>
@@ -2074,10 +2142,14 @@ watch(() => props.selectedItemId, (value) => {
                     </a-option>
                   </a-select>
                 </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  时区
-                  <a-input v-model="itemForm.scheduleTimezone" class="mt-1" size="small" />
-                </label>
+                <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                  <p class="text-slate-500 m-0">
+                    调度时区
+                  </p>
+                  <p class="m-0 mt-1">
+                    {{ syncForm.scheduleTimezone || 'Asia/Shanghai' }}
+                  </p>
+                </div>
               </div>
 
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
@@ -2260,36 +2332,6 @@ watch(() => props.selectedItemId, (value) => {
                     </a-select>
                   </label>
                 </template>
-              </div>
-            </section>
-
-            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
-              <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                调度与运行
-              </h3>
-              <div class="gap-3 grid md:grid-cols-4">
-                <div class="text-[11px] text-slate-600 font-medium block">
-                  <div>启用定时</div>
-                  <div class="mt-2">
-                    <a-switch v-model="itemForm.scheduleEnabled" />
-                  </div>
-                </div>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  调度模式
-                  <a-select v-model="itemForm.scheduleMode" class="mt-1" size="small">
-                    <a-option v-for="option in SCHEDULE_MODE_OPTIONS" :key="option.value" :value="option.value">
-                      {{ option.label }}
-                    </a-option>
-                  </a-select>
-                </label>
-                <label v-if="itemForm.scheduleMode === 'interval'" class="text-[11px] text-slate-600 font-medium block">
-                  间隔分钟
-                  <a-input-number v-model="itemForm.scheduleIntervalMinutes" class="mt-1 w-full" size="small" :min="1" :step="5" />
-                </label>
-                <label v-else class="text-[11px] text-slate-600 font-medium block md:col-span-2">
-                  Cron
-                  <a-input v-model="itemForm.scheduleCronExpr" class="mt-1" size="small" />
-                </label>
               </div>
             </section>
 
