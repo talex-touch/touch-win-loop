@@ -3,15 +3,24 @@ import type {
   ApiResponse,
   AuthMeResult,
   Contest,
+  PlatformPermission,
   Project,
   ProjectInvitationSummary,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
+  ProjectSettingsSnapshot,
   WorkspaceBillingEstimate,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { TeamProjectCardItem } from '~/composables/team-ui'
+import type { WorkspaceProjectCommonForm } from '~/types/workspace'
+import {
+  buildProjectSettingsCommonPatch,
+  cloneProjectCommonForm,
+  createEmptyProjectCommonForm,
+  createProjectCommonFormFromProject,
+} from '~/composables/project-settings'
 import {
   buildContestNameMap,
   buildTeamProjectCard,
@@ -43,6 +52,17 @@ const runtime = useRuntimeConfig()
 const { endpoint, resolveAppUrl } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
+const {
+  feedFilter,
+  quickActions: baseQuickActions,
+  visibleInsights,
+  visibleCompetitions,
+  skillMetrics,
+  scheduleItems,
+  overviewLoading,
+  overviewError,
+  loadOverview,
+} = useDashboardWorkspace()
 
 const routeWorkspaceId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
@@ -57,6 +77,10 @@ const me = ref<AuthMeResult | null>(null)
 const projects = ref<Project[]>([])
 const contests = ref<Contest[]>([])
 const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
+const platformPermissions = ref<PlatformPermission[]>([])
+const platformContests = ref<Contest[]>([])
+const platformLoading = ref(false)
+const platformError = ref('')
 
 const createDialogVisible = ref(false)
 const creatingProject = ref(false)
@@ -80,6 +104,14 @@ const activeWorkspace = computed(() => {
 
 const activeWorkspaceId = computed(() => String(activeWorkspace.value?.workspace.id || '').trim())
 const activeWorkspaceRoles = computed(() => activeWorkspace.value?.workspace.roles || [])
+const canManageContest = computed(() => {
+  return platformPermissions.value.some(item =>
+    ['contest.read_internal', 'contest.write', 'contest.publish', 'contest.archive'].includes(item),
+  )
+})
+const canManagePricing = computed(() => platformPermissions.value.includes('pricing.write'))
+const canManageRoles = computed(() => platformPermissions.value.includes('role.assign'))
+const hasPlatformPortal = computed(() => canManageContest.value || canManagePricing.value || canManageRoles.value)
 const workspaceCanCreateProject = computed(() => {
   if (me.value?.user.isPlatformAdmin)
     return true
@@ -130,6 +162,87 @@ const activeNoticeTone = computed<'success' | 'warning'>(() => {
     return 'success'
   return 'warning'
 })
+const portalCards = computed(() => {
+  const cards: Array<{ id: string, title: string, desc: string, to: string, icon: string }> = [
+    {
+      id: 'contest-library',
+      title: '竞赛总库',
+      desc: '搜索筛选竞赛，查看详情、赛道与评分规则。',
+      to: '/contests',
+      icon: 'trophy',
+    },
+    {
+      id: 'resource-center',
+      title: '资料中心',
+      desc: '按分类/年份/可访问性检索权威资料。',
+      to: '/resources',
+      icon: 'folder_open',
+    },
+  ]
+
+  if (canManageContest.value) {
+    cards.push({
+      id: 'contest-admin',
+      title: '赛事录入台',
+      desc: '录入赛事、赛道、时间轴、Rubric 与资料并发布。',
+      to: '/admin/contests',
+      icon: 'edit_square',
+    })
+  }
+  if (canManagePricing.value) {
+    cards.push({
+      id: 'pricing-admin',
+      title: '套餐席位计费',
+      desc: '维护套餐规则，按席位估算工作区费用。',
+      to: '/admin/billing',
+      icon: 'attach_money',
+    })
+  }
+  if (canManageRoles.value) {
+    cards.push({
+      id: 'role-admin',
+      title: '平台角色分配',
+      desc: '给用户分配 contest_admin / pricing_admin 等角色。',
+      to: '/admin/roles',
+      icon: 'manage_accounts',
+    })
+  }
+
+  return cards
+})
+const teamQuickActions = computed(() => {
+  const createTarget = activeWorkspaceId.value
+    ? `${teamDetailPath(activeWorkspaceId.value)}?create=1`
+    : '/team?create=1'
+
+  const items = baseQuickActions.map((item) => {
+    if (item.id !== 'report')
+      return item
+    return {
+      ...item,
+      to: createTarget,
+    }
+  })
+
+  if (canManageContest.value) {
+    items.push({
+      id: 'admin-contests',
+      label: '赛事录入',
+      icon: 'edit_note',
+      to: '/admin/contests',
+    })
+  }
+  if (canManagePricing.value) {
+    items.push({
+      id: 'admin-billing',
+      label: '席位计费',
+      icon: 'payments',
+      to: '/admin/billing',
+    })
+  }
+
+  return items
+})
 const projectDetailDialogVisible = ref(false)
 const projectProfileDialogVisible = ref(false)
 const projectMembersDialogVisible = ref(false)
@@ -141,6 +254,10 @@ const projectMemberRoleUpdatingUserId = ref('')
 const projectMemberRemovingUserId = ref('')
 const projectMemberActionText = ref('')
 const projectMemberActionError = ref(false)
+const projectProfileForm = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
+const projectProfileSaving = ref(false)
+const projectProfileErrorText = ref('')
+const projectProfileSuccessText = ref('')
 const projectInvitationSubmitting = ref(false)
 const projectInvitationLink = ref('')
 const projectInvitationFeedbackText = ref('')
@@ -189,12 +306,6 @@ const projectDetailRows = computed(() => {
     { label: '最近更新', value: project.updatedAt || '-' },
   ]
 })
-const projectIntroText = computed(() => {
-  const project = actionProject.value
-  if (!project)
-    return '暂无项目介绍。'
-  return String(project.summary || project.problemStatement || '').trim() || '暂无项目介绍。'
-})
 const projectMemberList = computed(() => projectMembersSnapshot.value?.members || [])
 const projectInvitationList = computed(() => projectMembersSnapshot.value?.invitations || [])
 const projectMemberSeatSummary = computed(() => {
@@ -229,7 +340,7 @@ function projectStatusLabel(status: Project['status']): string {
 
 function projectSourceLabel(source: Project['source']): string {
   if (source === 'chat')
-    return 'AI 对话创建'
+    return 'Loopy 对话创建'
   return '表单创建'
 }
 
@@ -312,11 +423,35 @@ function resolveProjectInvitationUrl(token: string): string {
   return resolveAppUrl(`/invite/${encodeURIComponent(normalizedToken)}`)
 }
 
+function syncProjectProfileForm(project: Project | null) {
+  Object.assign(projectProfileForm, createProjectCommonFormFromProject(project))
+}
+
+function updateProjectProfileForm(next: WorkspaceProjectCommonForm) {
+  Object.assign(projectProfileForm, cloneProjectCommonForm(next))
+  projectProfileErrorText.value = ''
+  projectProfileSuccessText.value = ''
+}
+
+function mergeProjectIntoList(project: Project) {
+  const index = projects.value.findIndex(item => item.id === project.id)
+  if (index === -1) {
+    projects.value = [...projects.value, project]
+    return
+  }
+
+  projects.value = projects.value.map(item => item.id === project.id ? project : item)
+}
+
 function syncActionProjectState() {
   if (projectDetailDialogVisible.value || projectProfileDialogVisible.value || projectMembersDialogVisible.value)
     return
 
   actionProjectId.value = ''
+  syncProjectProfileForm(null)
+  projectProfileSaving.value = false
+  projectProfileErrorText.value = ''
+  projectProfileSuccessText.value = ''
   projectMembersLoading.value = false
   projectMembersErrorText.value = ''
   projectMembersSnapshot.value = null
@@ -348,12 +483,49 @@ function openProjectProfileDialog(projectId: string) {
   actionProjectId.value = projectId
   projectDetailDialogVisible.value = false
   projectMembersDialogVisible.value = false
+  syncProjectProfileForm(projects.value.find(item => item.id === projectId) || null)
+  projectProfileSaving.value = false
+  projectProfileErrorText.value = ''
+  projectProfileSuccessText.value = ''
   projectProfileDialogVisible.value = true
 }
 
 function closeProjectProfileDialog() {
   projectProfileDialogVisible.value = false
   syncActionProjectState()
+}
+
+async function saveProjectProfileSettings() {
+  const projectId = String(actionProjectId.value || '').trim()
+  if (!projectId || !canManageProjectActions.value || projectProfileSaving.value)
+    return
+
+  projectProfileSaving.value = true
+  projectProfileErrorText.value = ''
+  projectProfileSuccessText.value = ''
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(endpoint(`/projects/${projectId}/settings`), {
+      method: 'PATCH',
+      body: {
+        common: buildProjectSettingsCommonPatch(projectProfileForm),
+      },
+    })
+
+    mergeProjectIntoList(response.data.project)
+    if (actionProjectId.value === projectId && projectProfileDialogVisible.value) {
+      syncProjectProfileForm(response.data.project)
+      projectProfileSuccessText.value = '项目设置已保存。'
+    }
+  }
+  catch (error: any) {
+    if (actionProjectId.value === projectId && projectProfileDialogVisible.value)
+      projectProfileErrorText.value = String(error?.data?.message || '保存项目设置失败，请稍后重试。')
+  }
+  finally {
+    if (actionProjectId.value === projectId && projectProfileDialogVisible.value)
+      projectProfileSaving.value = false
+  }
 }
 
 async function openProjectMembersDialog(projectId: string) {
@@ -621,6 +793,38 @@ async function loadWorkspaceBillingEstimate(workspaceId: string) {
   }
 }
 
+async function loadPlatformPanel(auth: AuthMeResult) {
+  platformLoading.value = true
+  platformError.value = ''
+
+  try {
+    platformPermissions.value = auth.user.platformPermissions || []
+
+    if (canManageContest.value) {
+      const adminContestsResponse = await $fetch<ApiResponse<Contest[]>>(endpoint('/admin/contests'))
+      platformContests.value = adminContestsResponse.data.slice(0, 5)
+      return
+    }
+
+    const contestsResponse = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
+      query: {
+        page: 1,
+        pageSize: 5,
+        sort: 'deadline',
+      },
+    })
+    platformContests.value = contestsResponse.data
+  }
+  catch (error: any) {
+    platformContests.value = []
+    platformPermissions.value = auth.user.platformPermissions || []
+    platformError.value = String(error?.data?.message || '平台能力区加载失败，请稍后重试。')
+  }
+  finally {
+    platformLoading.value = false
+  }
+}
+
 async function loadWorkspaceDashboard() {
   const workspaceId = routeWorkspaceId.value
   if (!workspaceId) {
@@ -659,7 +863,11 @@ async function loadWorkspaceDashboard() {
     projects.value = projectsResponse.data
     contests.value = contestsResponse.data
 
-    await loadWorkspaceBillingEstimate(workspaceId)
+    await Promise.all([
+      loadWorkspaceBillingEstimate(workspaceId),
+      loadOverview(),
+      loadPlatformPanel(meResponse.data),
+    ])
 
     const legacyProjectId = normalizeQueryValue(route.query.projectId)
     if (legacyProjectId) {
@@ -680,6 +888,8 @@ async function loadWorkspaceDashboard() {
     projects.value = []
     contests.value = []
     workspaceBillingEstimate.value = null
+    platformPermissions.value = []
+    platformContests.value = []
   }
   finally {
     loading.value = false
@@ -748,6 +958,50 @@ onMounted(async () => {
       />
     </DashboardOverviewShell>
 
+    <section class="gap-8 grid grid-cols-12" data-testid="team-dashboard-integrated-panels">
+      <div class="col-span-12 space-y-8 lg:col-span-8">
+        <DashboardPlatformPanel
+          :portal-cards="portalCards"
+          :platform-contests="platformContests"
+          :platform-permissions="platformPermissions"
+          :platform-loading="platformLoading"
+          :platform-error="platformError"
+          :has-platform-portal="hasPlatformPortal"
+        />
+
+        <div v-if="overviewError" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-2xl bg-rose-50">
+          {{ overviewError }}
+        </div>
+
+        <div v-else-if="overviewLoading" class="gap-4 grid grid-cols-1 md:grid-cols-2">
+          <div
+            v-for="index in 4"
+            :key="`team-dashboard-overview-skeleton-${index}`"
+            class="border border-slate-200 rounded-2xl bg-white h-48 animate-pulse"
+          />
+        </div>
+
+        <template v-else>
+          <DashboardInsights
+            :insights="visibleInsights"
+            :more-to="activeWorkspaceId ? teamDetailPath(activeWorkspaceId) : '/team'"
+          />
+          <DashboardCompetitionFeed
+            v-model:active-filter="feedFilter"
+            :competitions="visibleCompetitions"
+          />
+        </template>
+      </div>
+
+      <div class="col-span-12 lg:col-span-4">
+        <DashboardRightRail
+          :quick-actions="teamQuickActions"
+          :skill-metrics="skillMetrics"
+          :schedule-items="scheduleItems"
+        />
+      </div>
+    </section>
+
     <TeamCreateProjectDialog
       :visible="createDialogVisible"
       dialog-title="在当前 Team 创建项目"
@@ -812,23 +1066,21 @@ onMounted(async () => {
 
     <a-modal
       v-model:visible="projectProfileDialogVisible"
-      title="项目介绍"
+      title="项目设置"
       data-testid="team-project-settings-modal"
-      width="560px"
+      width="720px"
       :footer="false"
       :esc-to-close="true"
       :mask-closable="true"
       @cancel="closeProjectProfileDialog"
     >
       <div class="space-y-4">
-        <div class="p-4 border border-slate-200 rounded-2xl bg-slate-50/80">
-          <div class="text-sm text-slate-900 font-semibold">
-            {{ actionProject?.title || '项目介绍' }}
-          </div>
-          <p class="text-xs text-slate-600 leading-6 mb-0 mt-2 whitespace-pre-wrap">
-            {{ projectIntroText }}
-          </p>
-        </div>
+        <ProjectBasicSettingsEditor
+          :model-value="projectProfileForm"
+          :project="actionProject"
+          :disabled="projectProfileSaving || !canManageProjectActions"
+          @update:model-value="updateProjectProfileForm"
+        />
 
         <div
           v-if="actionProjectCard && actionProjectCard.contestNames.length > 0"
@@ -843,9 +1095,27 @@ onMounted(async () => {
           </span>
         </div>
 
-        <div class="flex justify-end">
+        <div
+          v-if="projectProfileErrorText || projectProfileSuccessText"
+          class="text-xs px-3 py-2 border rounded-lg"
+          :class="projectProfileErrorText ? 'text-rose-600 border-rose-200 bg-rose-50' : 'text-emerald-700 border-emerald-200 bg-emerald-50'"
+        >
+          {{ projectProfileErrorText || projectProfileSuccessText }}
+        </div>
+
+        <div class="flex gap-2 justify-end">
           <a-button size="small" @click="closeProjectProfileDialog">
-            关闭
+            取消
+          </a-button>
+          <a-button
+            size="small"
+            type="primary"
+            data-testid="team-project-settings-save-button"
+            :loading="projectProfileSaving"
+            :disabled="!canManageProjectActions"
+            @click="saveProjectProfileSettings"
+          >
+            保存
           </a-button>
         </div>
       </div>
