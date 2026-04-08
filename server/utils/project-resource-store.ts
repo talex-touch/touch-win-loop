@@ -515,6 +515,54 @@ export async function listProjectRecycleResources(
   return result.rows.map(toResource)
 }
 
+export async function getProjectResourceById(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<Resource | null> {
+  const result = await db.query<ProjectResourceRow>(
+    `SELECT
+        pr.id,
+        pr.project_id,
+        pr.source,
+        pr.resource_kind,
+        pr.linked_contest_resource_id,
+        pr.title,
+        pr.mime_type,
+        pr.category,
+        pr.year,
+        pr.source_link,
+        pr.availability,
+        pr.summary,
+        pr.content,
+        pr.metadata,
+        pr.status,
+        pr.created_by_user_id,
+        pr.updated_by_user_id,
+        pr.created_at::TEXT,
+        pr.updated_at::TEXT,
+        prd.id AS document_id,
+        prd.preview_status,
+        prd.preview_progress_percent,
+        prd.preview_eta_seconds,
+        prd.preview_error,
+        prc.revision AS collab_revision
+       FROM project_resources pr
+       LEFT JOIN project_resource_documents prd
+         ON prd.project_resource_id = pr.id
+       LEFT JOIN project_resource_collab_docs prc
+         ON prc.resource_id = pr.id
+      WHERE pr.project_id = $1
+        AND pr.id = $2
+      LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  return result.rows[0] ? toResource(result.rows[0]!) : null
+}
+
 export async function listProjectLibraryResources(
   db: Queryable,
   projectId: string,

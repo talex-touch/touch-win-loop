@@ -25,35 +25,51 @@ export function buildProjectResourceSignedUrls(input: {
 }): ProjectResourceSignedUrls {
   const projectId = normalizeString(input.projectId)
   const resourceId = normalizeString(input.resourceId)
-  const sourceToken = createProjectResourceAccessToken({
-    projectId,
-    resourceId,
-    kind: 'source',
-    ttlSeconds: input.ttlSeconds,
-  })
-  const previewToken = createProjectResourceAccessToken({
-    projectId,
-    resourceId,
-    kind: 'preview',
-    ttlSeconds: input.ttlSeconds,
-  })
+  const unsignedSourceDownloadUrl = buildServerApiEndpoint(`/projects/${projectId}/resources/${resourceId}/source`)
+  const unsignedPreviewUrl = buildServerApiEndpoint(`/projects/${projectId}/resources/${resourceId}/preview`)
 
-  const sourceDownloadUrl = appendQueryParam(
-    buildServerApiEndpoint(`/projects/${projectId}/resources/${resourceId}/source`),
-    'token',
-    sourceToken.token,
-  )
-  const previewUrl = appendQueryParam(
-    buildServerApiEndpoint(`/projects/${projectId}/resources/${resourceId}/preview`),
-    'token',
-    previewToken.token,
-  )
+  try {
+    const sourceToken = createProjectResourceAccessToken({
+      projectId,
+      resourceId,
+      kind: 'source',
+      ttlSeconds: input.ttlSeconds,
+    })
+    const previewToken = createProjectResourceAccessToken({
+      projectId,
+      resourceId,
+      kind: 'preview',
+      ttlSeconds: input.ttlSeconds,
+    })
 
-  return {
-    previewUrl,
-    previewUrlExpiresAt: previewToken.expiresAt,
-    sourceDownloadUrl,
-    sourceDownloadUrlExpiresAt: sourceToken.expiresAt,
+    const sourceDownloadUrl = appendQueryParam(
+      unsignedSourceDownloadUrl,
+      'token',
+      sourceToken.token,
+    )
+    const previewUrl = appendQueryParam(
+      unsignedPreviewUrl,
+      'token',
+      previewToken.token,
+    )
+
+    return {
+      previewUrl,
+      previewUrlExpiresAt: previewToken.expiresAt,
+      sourceDownloadUrl,
+      sourceDownloadUrlExpiresAt: sourceToken.expiresAt,
+    }
+  }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== 'ONLYOFFICE_JWT_SECRET_NOT_CONFIGURED')
+      throw error
+
+    return {
+      previewUrl: unsignedPreviewUrl,
+      previewUrlExpiresAt: '',
+      sourceDownloadUrl: unsignedSourceDownloadUrl,
+      sourceDownloadUrlExpiresAt: '',
+    }
   }
 }
 
