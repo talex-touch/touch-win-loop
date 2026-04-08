@@ -268,37 +268,6 @@ CREATE TABLE IF NOT EXISTS user_ai_memories (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS contest_sync_sources (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK (source_type IN ('csv_url')),
-  source_url TEXT NOT NULL,
-  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  last_run_at TIMESTAMPTZ,
-  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS contest_sync_runs (
-  id TEXT PRIMARY KEY,
-  source_id TEXT NOT NULL REFERENCES contest_sync_sources(id) ON DELETE CASCADE,
-  status TEXT NOT NULL CHECK (status IN ('running', 'success', 'partial_success', 'failed')),
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  finished_at TIMESTAMPTZ,
-  preview_total INTEGER NOT NULL DEFAULT 0,
-  preview_valid INTEGER NOT NULL DEFAULT 0,
-  preview_invalid INTEGER NOT NULL DEFAULT 0,
-  created_count INTEGER NOT NULL DEFAULT 0,
-  updated_count INTEGER NOT NULL DEFAULT 0,
-  skipped_count INTEGER NOT NULL DEFAULT 0,
-  error_count INTEGER NOT NULL DEFAULT 0,
-  error_message TEXT NOT NULL DEFAULT '',
-  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 CREATE TABLE IF NOT EXISTS invitations (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1135,6 +1104,65 @@ CREATE TABLE IF NOT EXISTS project_resource_document_tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_resource_upload_sessions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  file_name TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  file_size BIGINT NOT NULL DEFAULT 0,
+  last_modified BIGINT NOT NULL DEFAULT 0,
+  category TEXT NOT NULL CHECK (category IN (
+    'basic_info',
+    'timeline',
+    'tracks',
+    'scoring',
+    'past_questions',
+    'awarded_works',
+    'templates',
+    'faq',
+    'judge_guidelines',
+    'track_details',
+    'ai_prompts',
+    'submission_examples',
+    'policy_notice',
+    'compliance'
+  )),
+  access_level TEXT NOT NULL DEFAULT 'public' CHECK (access_level IN ('public', 'login_required', 'unavailable')),
+  title TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  chunk_size INTEGER NOT NULL DEFAULT 0,
+  chunk_count INTEGER NOT NULL DEFAULT 1,
+  uploaded_bytes BIGINT NOT NULL DEFAULT 0,
+  uploaded_chunk_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'uploading', 'paused', 'finalizing', 'completed', 'failed', 'canceled')),
+  error_code TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  final_object_key TEXT NOT NULL DEFAULT '',
+  final_storage_provider TEXT NOT NULL DEFAULT '',
+  resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_upload_chunks (
+  session_id TEXT NOT NULL REFERENCES project_resource_upload_sessions(id) ON DELETE CASCADE,
+  chunk_index INTEGER NOT NULL DEFAULT 0,
+  chunk_size INTEGER NOT NULL DEFAULT 0,
+  object_key TEXT NOT NULL DEFAULT '',
+  checksum_sha256 TEXT NOT NULL DEFAULT '',
+  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_resource_upload_sessions_project_updated
+  ON project_resource_upload_sessions(project_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_project_resource_upload_sessions_project_status
+  ON project_resource_upload_sessions(project_id, status, expires_at);
+
 CREATE TABLE IF NOT EXISTS project_outline_snapshots (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   context_json JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -1709,8 +1737,6 @@ CREATE INDEX IF NOT EXISTS idx_project_issue_reports_project_created ON project_
 CREATE INDEX IF NOT EXISTS idx_project_issues_project_status ON project_issues(project_id, status, severity, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_issues_report ON project_issues(report_id);
 CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_token_hash ON invitations(token_hash);
 CREATE INDEX IF NOT EXISTS idx_invitations_workspace_project_created ON invitations(workspace_id, project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_project_created ON invitations(project_id, created_at DESC);
@@ -2089,9 +2115,6 @@ ALTER TABLE contest_tracks
 
 ALTER TABLE contest_rubrics
   ADD COLUMN IF NOT EXISTS scoring_mode TEXT NOT NULL DEFAULT 'weighted';
-
-ALTER TABLE contest_sync_runs
-  ADD COLUMN IF NOT EXISTS updated_count INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE contest_resources
   ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '';
