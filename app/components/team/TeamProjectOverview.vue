@@ -242,7 +242,7 @@ function visibleMemberPreview(project: TeamProjectCardItem) {
                     </div>
                   </div>
                   <div v-else class="text-[11px] text-slate-400 mt-3">
-                    暂无已占用席位成员
+                    暂无席位成员
                   </div>
                 </div>
               </template>

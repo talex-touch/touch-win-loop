@@ -224,8 +224,8 @@ export function formatProjectSeatSummary(
   const normalizedSeatUsed = Math.max(0, Number(seatUsed || 0))
   const normalizedSeatLimit = Math.max(0, Number(seatLimit || 0))
   if (normalizedSeatLimit > 0)
-    return `已占用 ${normalizedSeatUsed}/${normalizedSeatLimit} 席位`
-  return `已占用 ${Math.max(0, fallbackCount)} 个席位`
+    return `${normalizedSeatUsed}/${normalizedSeatLimit} 席位`
+  return `${Math.max(0, fallbackCount)} 个席位`
 }
 
 export function formatWorkspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type'] | '' | undefined): string {
