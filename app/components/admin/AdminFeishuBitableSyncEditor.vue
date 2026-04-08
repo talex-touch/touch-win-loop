@@ -63,6 +63,7 @@ interface SyncWritebackFormState {
 }
 
 type SyncWritebackFieldKey = keyof Pick<SyncWritebackFormState, 'status' | 'syncedAt' | 'errorMessage' | 'reasonCode' | 'entityId' | 'runId' | 'triggerSource'>
+type SaveCurrentItemContext = 'main' | 'mapping'
 
 const props = withDefaults(defineProps<{
   syncId: string
@@ -96,15 +97,10 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'officialUrl', label: 'officialUrl（官网）' },
     { key: 'summary', label: 'summary（简介）' },
     { key: 'level', label: 'level（级别）' },
-    { key: 'organizer', label: 'organizer（主办方）' },
-    { key: 'coOrganizer', label: 'coOrganizer（协办方）' },
-    { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
-    { key: 'teamRule', label: 'teamRule（组队规则）' },
-    { key: 'currentSeason', label: 'currentSeason（届次）' },
     { key: 'disciplines', label: 'disciplines（学科）' },
-    { key: 'aliases', label: 'aliases（别名）' },
     { key: 'keywords', label: 'keywords（关键词）' },
-    { key: 'recommendedFor', label: 'recommendedFor（推荐人群）' },
+    { key: 'registrationWindow', label: 'registrationWindow（报名时间）' },
+    { key: 'submissionDeadline', label: 'submissionDeadline（截止时间）' },
   ],
   track: [
     { key: 'externalId', label: 'externalId（主键）' },
@@ -139,15 +135,10 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   summary: ['summary', '简介', '描述', '说明', '概述'],
   content: ['content', '正文', '内容', '详情', '全文'],
   officialUrl: ['officialurl', 'official_url', '官网', '官网链接', '赛事链接', '竞赛链接', '报名链接', 'url'],
-  organizer: ['organizer', '主办方', '主办单位'],
-  coOrganizer: ['coorganizer', 'co_organizer', '协办方', '承办方'],
-  participantRequirements: ['participantrequirements', '参赛对象', '参赛要求', '参赛资格'],
-  teamRule: ['teamrule', '组队规则', '组队要求'],
-  currentSeason: ['currentseason', '届次', '赛季', '年份'],
   disciplines: ['disciplines', '学科', '专业', '所属学科'],
-  aliases: ['aliases', '别名', '简称'],
   keywords: ['keywords', '关键字', '关键词', '标签'],
-  recommendedFor: ['recommendedfor', '推荐人群', '适合人群', '适用人群'],
+  registrationWindow: ['registrationwindow', 'registration_window', '报名时间', '报名窗口'],
+  submissionDeadline: ['submissiondeadline', 'submission_deadline', '截止时间', '提交截止时间', '提交时间'],
   suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业'],
   deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物'],
   sortOrder: ['sortorder', '排序', '序号', 'sort', 'order'],
@@ -203,7 +194,7 @@ const QUICK_START_STEPS = [
   '2. 选择当前主库下的子表和视图。',
   '3. 打开详细配置后查看字段概览，确认系统自动猜测的映射。',
   '4. 补齐必填字段，尤其是 externalId 和关联实体 ID。',
-  '5. 配置飞书回填列，先预检，再决定是否启用调度。',
+  '5. 配置飞书回填列，先预检，再决定是否在主同步信息里启用调度。',
   '6. 首次建议手动执行一次，确认飞书侧出现已同步状态。',
 ]
 
@@ -244,6 +235,7 @@ const newItemNameAuto = ref(true)
 
 const feedbackError = ref('')
 const feedbackSuccess = ref('')
+const mappingSaveSuccess = ref('')
 
 const syncDetail = ref<FeishuBitableSyncDetail | null>(null)
 const currentItem = ref<FeishuBitableSyncItemDetail | null>(null)
@@ -260,6 +252,11 @@ const syncForm = reactive({
   name: '',
   enabled: true,
   environment: '' as '' | FeishuBitableSyncEnvironment,
+  scheduleEnabled: false,
+  scheduleMode: 'interval' as FeishuTaskScheduleMode,
+  scheduleIntervalMinutes: 60,
+  scheduleCronExpr: '0 * * * *',
+  scheduleTimezone: 'Asia/Shanghai',
 })
 
 const itemForm = reactive({
@@ -277,11 +274,6 @@ const itemForm = reactive({
   mappingText: JSON.stringify(buildDefaultSyncItemConfig('contest').mapping, null, 2),
   optionsText: JSON.stringify(buildDefaultSyncItemConfig('contest').options, null, 2),
   writebackText: JSON.stringify(buildDefaultSyncItemConfig('contest').writeback, null, 2),
-  scheduleEnabled: false,
-  scheduleMode: 'interval' as FeishuTaskScheduleMode,
-  scheduleIntervalMinutes: 60,
-  scheduleCronExpr: '0 * * * *',
-  scheduleTimezone: 'Asia/Shanghai',
 })
 
 const optionForm = reactive<SyncOptionFormState>({
@@ -318,7 +310,7 @@ const normalizedSelectedItemId = computed(() => toText(props.selectedItemId))
 const normalizedDraftTableId = computed(() => toText(props.draftTableId))
 const normalizedDraftViewId = computed(() => toText(props.draftViewId))
 const archivedReadonly = computed(() => Boolean(props.includeArchived || syncDetail.value?.archivedAt))
-const syncExecutionDisabled = computed(() => Boolean(syncDetail.value) && !Boolean(syncDetail.value?.enabled))
+const syncExecutionDisabled = computed(() => Boolean(syncDetail.value) && !syncDetail.value?.enabled)
 const currentItemRunDisabled = computed(() => archivedReadonly.value || syncExecutionDisabled.value || !currentItem.value?.isEnabled)
 const activeMappingOptions = computed(() => MAPPING_OPTIONS[itemForm.entityType] || [])
 const syncItems = computed(() => syncDetail.value?.items || [])
@@ -363,14 +355,6 @@ const unexpectedConfiguredMappingLabels = computed(() => {
 })
 
 function optionFieldGroups(entityType: FeishuBitableSyncItemEntityType) {
-  if (entityType === 'contest') {
-    return [{
-      key: 'defaultVisibility',
-      label: '默认可见性',
-      description: '竞赛同步到平台后默认是内部可见还是公开可见，未单独指定时走这里。',
-    }]
-  }
-
   if (entityType === 'track') {
     return [{
       key: 'contestId',
@@ -425,6 +409,7 @@ function setSuccess(message: string) {
 function clearFeedback() {
   feedbackError.value = ''
   feedbackSuccess.value = ''
+  mappingSaveSuccess.value = ''
 }
 
 function toText(raw: unknown): string {
@@ -591,11 +576,8 @@ function fillWritebackForm(raw: Record<string, unknown>) {
 }
 
 function buildOptionsPayload(entityType: FeishuBitableSyncItemEntityType): Record<string, unknown> {
-  if (entityType === 'contest') {
-    return {
-      defaultVisibility: toText(optionForm.defaultVisibility) || 'internal',
-    }
-  }
+  if (entityType === 'contest')
+    return {}
 
   if (entityType === 'track') {
     return {
@@ -668,7 +650,7 @@ function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string
     return ['externalId', 'contestExternalId', 'name']
   if (entityType === 'resource')
     return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'url']
-  return ['externalId', 'name', 'officialUrl']
+  return ['externalId', 'name', 'officialUrl', 'registrationWindow', 'submissionDeadline']
 }
 
 function isRequiredMappingField(entityType: FeishuBitableSyncItemEntityType, targetKey: string): boolean {
@@ -701,6 +683,7 @@ function fillItemForm(item: FeishuBitableSyncItemDetail) {
     options: item.options,
     writeback: item.writeback as Record<string, unknown> | undefined,
   })
+  mappingSaveSuccess.value = ''
 
   withVisualSyncPaused(() => {
     itemForm.id = item.id
@@ -717,11 +700,6 @@ function fillItemForm(item: FeishuBitableSyncItemDetail) {
     itemForm.mappingText = normalized.mappingText
     itemForm.optionsText = normalized.optionsText
     itemForm.writebackText = normalized.writebackText
-    itemForm.scheduleEnabled = item.schedule.enabled
-    itemForm.scheduleMode = item.schedule.mode
-    itemForm.scheduleIntervalMinutes = Number(item.schedule.intervalMinutes || 60)
-    itemForm.scheduleCronExpr = item.schedule.cronExpr || '0 * * * *'
-    itemForm.scheduleTimezone = item.schedule.timezone || 'Asia/Shanghai'
     loadMappingWizardFromJson()
     loadOptionsFormFromJson(false)
     loadWritebackFormFromJson(false)
@@ -862,6 +840,11 @@ async function loadSyncDetail() {
     syncForm.environment = response.data.source.environment === 'production' || response.data.source.environment === 'test'
       ? response.data.source.environment
       : ''
+    syncForm.scheduleEnabled = Boolean(response.data.schedule?.enabled)
+    syncForm.scheduleMode = response.data.schedule?.mode === 'cron' ? 'cron' : 'interval'
+    syncForm.scheduleIntervalMinutes = Number(response.data.schedule?.intervalMinutes || 60)
+    syncForm.scheduleCronExpr = response.data.schedule?.cronExpr || '0 * * * *'
+    syncForm.scheduleTimezone = response.data.schedule?.timezone || 'Asia/Shanghai'
     itemForm.appToken = response.data.source.appToken || ''
     itemForm.appName = response.data.source.appName || ''
     await loadTables()
@@ -1154,8 +1137,13 @@ function loadMappingWizardFromJson() {
   normalizeMappingWizardBindings([...dedup.values()])
 }
 
+function buildSupportedMappingTargetKeys(entityType: FeishuBitableSyncItemEntityType) {
+  return new Set((MAPPING_OPTIONS[entityType] || []).map(item => item.key))
+}
+
 function writeMappingWizardToJson(showNotice = false) {
   const mapping = parseJsonText(itemForm.mappingText, '字段映射')
+  const supportedKeys = buildSupportedMappingTargetKeys(itemForm.entityType)
   const fieldMap: Record<string, string> = {}
   const computedMap: Record<string, string> = {}
   let externalIdField = ''
@@ -1208,24 +1196,44 @@ function writeMappingWizardToJson(showNotice = false) {
         defaults: {},
       })
     }
-    source.match = {
+    const nextMatch = {
       ...(source.match && typeof source.match === 'object' && !Array.isArray(source.match) ? source.match : {}),
-      externalIdField,
-      contestExternalIdField,
-      trackExternalIdField,
-    }
+    } as Record<string, unknown>
+    if (supportedKeys.has('externalId'))
+      nextMatch.externalIdField = externalIdField
+    else
+      delete nextMatch.externalIdField
+    if (supportedKeys.has('contestExternalId'))
+      nextMatch.contestExternalIdField = contestExternalIdField
+    else
+      delete nextMatch.contestExternalIdField
+    if (supportedKeys.has('trackExternalId'))
+      nextMatch.trackExternalIdField = trackExternalIdField
+    else
+      delete nextMatch.trackExternalIdField
+    source.match = nextMatch
     source.layers = restLayers
     itemForm.mappingText = JSON.stringify(source, null, 2)
   }
   else {
-    itemForm.mappingText = JSON.stringify({
+    const nextMapping = {
       ...mapping,
-      externalIdField,
-      contestExternalIdField,
-      trackExternalIdField,
       fieldMap,
       computedMap,
-    }, null, 2)
+    } as Record<string, unknown>
+    if (supportedKeys.has('externalId'))
+      nextMapping.externalIdField = externalIdField
+    else
+      delete nextMapping.externalIdField
+    if (supportedKeys.has('contestExternalId'))
+      nextMapping.contestExternalIdField = contestExternalIdField
+    else
+      delete nextMapping.contestExternalIdField
+    if (supportedKeys.has('trackExternalId'))
+      nextMapping.trackExternalIdField = trackExternalIdField
+    else
+      delete nextMapping.trackExternalIdField
+    itemForm.mappingText = JSON.stringify(nextMapping, null, 2)
   }
 
   if (showNotice)
@@ -1295,7 +1303,28 @@ async function inspectFields() {
   }
 }
 
-async function saveCurrentItem() {
+function applySavedItemLocally(savedItem: FeishuBitableSyncItem) {
+  if (syncDetail.value) {
+    syncDetail.value = {
+      ...syncDetail.value,
+      items: syncDetail.value.items.map(item => item.id === savedItem.id
+        ? { ...item, ...savedItem }
+        : item),
+    }
+  }
+
+  if (!currentItem.value || currentItem.value.id !== savedItem.id)
+    return
+
+  const nextCurrentItem = {
+    ...currentItem.value,
+    ...savedItem,
+  }
+  currentItem.value = nextCurrentItem
+  fillItemForm(nextCurrentItem)
+}
+
+async function saveCurrentItem(saveContext: SaveCurrentItemContext = 'main') {
   if (archivedReadonly.value) {
     setError('当前同步信息已归档，只允许查看，不允许修改子表同步项。')
     return
@@ -1322,7 +1351,7 @@ async function saveCurrentItem() {
 
   savingItem.value = true
   try {
-    await $fetch(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}`), {
+    const response = await $fetch<ApiResponse<FeishuBitableSyncItem>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}`), {
       method: 'PATCH',
       body: {
         name: itemForm.name.trim(),
@@ -1342,19 +1371,17 @@ async function saveCurrentItem() {
         mapping,
         options,
         writeback,
-        schedule: {
-          enabled: itemForm.scheduleEnabled,
-          mode: itemForm.scheduleMode,
-          intervalMinutes: itemForm.scheduleMode === 'interval' ? Number(itemForm.scheduleIntervalMinutes || 60) : null,
-          cronExpr: itemForm.scheduleMode === 'cron' ? itemForm.scheduleCronExpr.trim() : null,
-          timezone: itemForm.scheduleTimezone.trim(),
-        },
       },
     })
-    await loadSyncDetail()
-    if (activeItemId.value)
-      await loadItemDetail(activeItemId.value)
+    applySavedItemLocally(response.data)
+    previewResult.value = null
     emit('updated')
+    if (saveContext === 'mapping') {
+      mappingDrawerVisible.value = false
+      mappingSaveSuccess.value = '基础映射已保存。'
+      setSuccess('基础映射已保存。')
+      return
+    }
     setSuccess('子表同步项已保存。')
   }
   catch (error: any) {
@@ -1424,6 +1451,13 @@ async function saveSyncInfo() {
                 : undefined,
             }
           : undefined,
+        schedule: {
+          enabled: syncForm.scheduleEnabled,
+          mode: syncForm.scheduleMode,
+          intervalMinutes: syncForm.scheduleMode === 'interval' ? Number(syncForm.scheduleIntervalMinutes || 60) : null,
+          cronExpr: syncForm.scheduleMode === 'cron' ? syncForm.scheduleCronExpr.trim() : null,
+          timezone: syncForm.scheduleTimezone.trim(),
+        },
       },
     })
     const nextSync = response.data
@@ -1439,6 +1473,11 @@ async function saveSyncInfo() {
     syncForm.environment = nextSync?.source.environment === 'production' || nextSync?.source.environment === 'test'
       ? nextSync.source.environment
       : ''
+    syncForm.scheduleEnabled = Boolean(nextSync?.schedule?.enabled)
+    syncForm.scheduleMode = nextSync?.schedule?.mode === 'cron' ? 'cron' : 'interval'
+    syncForm.scheduleIntervalMinutes = Number(nextSync?.schedule?.intervalMinutes || 60)
+    syncForm.scheduleCronExpr = nextSync?.schedule?.cronExpr || '0 * * * *'
+    syncForm.scheduleTimezone = nextSync?.schedule?.timezone || 'Asia/Shanghai'
     emit('updated')
     setSuccess('同步信息已更新。')
   }
@@ -1811,6 +1850,71 @@ watch(() => props.selectedItemId, (value) => {
         </div>
       </div>
 
+      <section class="p-4 border border-slate-200 rounded bg-slate-50 space-y-3">
+        <div>
+          <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+            主同步调度
+          </h3>
+          <p class="text-[11px] text-slate-500 m-0 mt-1">
+            调度统一配置在多维同步信息层级；命中调度后会顺序执行当前主同步下所有已启用的子表同步项。
+          </p>
+        </div>
+        <div class="gap-3 grid md:grid-cols-5">
+          <div class="text-[11px] text-slate-600 font-medium block">
+            <div>启用定时</div>
+            <div class="mt-2">
+              <a-switch v-model="syncForm.scheduleEnabled" :disabled="archivedReadonly" />
+            </div>
+          </div>
+          <label class="text-[11px] text-slate-600 font-medium block">
+            调度模式
+            <a-select v-model="syncForm.scheduleMode" class="mt-1" size="small" :disabled="archivedReadonly">
+              <a-option v-for="option in SCHEDULE_MODE_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </a-option>
+            </a-select>
+          </label>
+          <label v-if="syncForm.scheduleMode === 'interval'" class="text-[11px] text-slate-600 font-medium block">
+            间隔分钟
+            <a-input-number v-model="syncForm.scheduleIntervalMinutes" class="mt-1 w-full" size="small" :min="1" :step="5" :disabled="archivedReadonly" />
+          </label>
+          <label v-else class="text-[11px] text-slate-600 font-medium block md:col-span-2">
+            Cron
+            <a-input v-model="syncForm.scheduleCronExpr" class="mt-1" size="small" :disabled="archivedReadonly" />
+          </label>
+          <label class="text-[11px] text-slate-600 font-medium block">
+            时区
+            <a-input v-model="syncForm.scheduleTimezone" class="mt-1" size="small" :disabled="archivedReadonly" />
+          </label>
+        </div>
+        <div class="gap-3 grid md:grid-cols-3">
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-500 m-0">
+              下次执行
+            </p>
+            <p class="text-slate-900 font-medium m-0 mt-1">
+              {{ syncDetail?.scheduleRuntime?.nextRunAt ? formatDateTime(syncDetail.scheduleRuntime.nextRunAt) : '-' }}
+            </p>
+          </div>
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-500 m-0">
+              上次调度
+            </p>
+            <p class="text-slate-900 font-medium m-0 mt-1">
+              {{ syncDetail?.scheduleRuntime?.lastRunAt ? formatDateTime(syncDetail.scheduleRuntime.lastRunAt) : '-' }}
+            </p>
+          </div>
+          <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
+            <p class="text-slate-500 m-0">
+              调度错误
+            </p>
+            <p class="text-slate-900 font-medium m-0 mt-1 break-all">
+              {{ syncDetail?.scheduleRuntime?.lastError || '无' }}
+            </p>
+          </div>
+        </div>
+      </section>
+
       <p v-if="syncDetail?.source.sourceUrl" class="text-[11px] text-slate-500 m-0 break-all">
         来源 URL：{{ syncDetail.source.sourceUrl }}
       </p>
@@ -1901,8 +2005,6 @@ watch(() => props.selectedItemId, (value) => {
                   </a-tag>
                   <span>最近：{{ latestRunSummaryText(item.latestRunSummary) }}</span>
                   <span v-if="(item.latestRunSummary?.errorCount || 0) > 0">最近错误数：{{ item.latestRunSummary?.errorCount || 0 }}</span>
-                  <span v-if="item.scheduleRuntime?.lastError">上次调度错误：{{ item.scheduleRuntime.lastError }}</span>
-                  <span v-else>调度错误：无</span>
                 </div>
               </div>
             </div>
@@ -1976,7 +2078,7 @@ watch(() => props.selectedItemId, (value) => {
                   <a-button size="small" type="primary" :loading="runningItem" :disabled="currentItemRunDisabled" @click="runCurrentItem">
                     手动执行
                   </a-button>
-                  <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+                  <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('main')">
                     保存配置
                   </a-button>
                 </div>
@@ -2040,10 +2142,14 @@ watch(() => props.selectedItemId, (value) => {
                     </a-option>
                   </a-select>
                 </label>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  时区
-                  <a-input v-model="itemForm.scheduleTimezone" class="mt-1" size="small" />
-                </label>
+                <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-slate-50">
+                  <p class="text-slate-500 m-0">
+                    调度时区
+                  </p>
+                  <p class="m-0 mt-1">
+                    {{ syncForm.scheduleTimezone || 'Asia/Shanghai' }}
+                  </p>
+                </div>
               </div>
 
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-4">
@@ -2121,6 +2227,9 @@ watch(() => props.selectedItemId, (value) => {
                   <p class="text-[11px] text-slate-600 m-0">
                     当前重点字段：{{ mappingFocusFieldLabels.join(' / ') || '-' }}
                   </p>
+                  <p v-if="mappingSaveSuccess" class="text-[11px] text-emerald-700 m-0">
+                    {{ mappingSaveSuccess }}
+                  </p>
                 </section>
 
                 <section class="p-4 border border-slate-200 rounded bg-slate-50 space-y-3">
@@ -2155,7 +2264,7 @@ watch(() => props.selectedItemId, (value) => {
               </div>
             </section>
 
-            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
+            <section v-if="activeOptionFieldGroups.length" class="p-4 border border-slate-200 rounded bg-white space-y-3">
               <div>
                 <h3 class="text-[12px] text-slate-900 font-semibold m-0">
                   同步选项
@@ -2181,19 +2290,6 @@ watch(() => props.selectedItemId, (value) => {
               </div>
 
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
-                <template v-if="itemForm.entityType === 'contest'">
-                  <label class="text-[11px] text-slate-600 font-medium block">
-                    默认可见性
-                    <a-select v-model="optionForm.defaultVisibility" class="mt-1" size="small">
-                      <a-option v-for="option in RESOURCE_VISIBILITY_OPTIONS" :key="option.value" :value="option.value">
-                        {{ option.label }}
-                      </a-option>
-                    </a-select>
-                    <p class="text-[10px] text-slate-400 m-0 mt-1">
-                      竞赛同步到平台后默认按这里设置可见性。
-                    </p>
-                  </label>
-                </template>
                 <label v-if="itemForm.entityType === 'track' || itemForm.entityType === 'resource'" class="text-[11px] text-slate-600 font-medium block">
                   默认 contestId
                   <a-input v-model="optionForm.contestId" class="mt-1" size="small" allow-clear />
@@ -2236,36 +2332,6 @@ watch(() => props.selectedItemId, (value) => {
                     </a-select>
                   </label>
                 </template>
-              </div>
-            </section>
-
-            <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
-              <h3 class="text-[12px] text-slate-900 font-semibold m-0">
-                调度与运行
-              </h3>
-              <div class="gap-3 grid md:grid-cols-4">
-                <div class="text-[11px] text-slate-600 font-medium block">
-                  <div>启用定时</div>
-                  <div class="mt-2">
-                    <a-switch v-model="itemForm.scheduleEnabled" />
-                  </div>
-                </div>
-                <label class="text-[11px] text-slate-600 font-medium block">
-                  调度模式
-                  <a-select v-model="itemForm.scheduleMode" class="mt-1" size="small">
-                    <a-option v-for="option in SCHEDULE_MODE_OPTIONS" :key="option.value" :value="option.value">
-                      {{ option.label }}
-                    </a-option>
-                  </a-select>
-                </label>
-                <label v-if="itemForm.scheduleMode === 'interval'" class="text-[11px] text-slate-600 font-medium block">
-                  间隔分钟
-                  <a-input-number v-model="itemForm.scheduleIntervalMinutes" class="mt-1 w-full" size="small" :min="1" :step="5" />
-                </label>
-                <label v-else class="text-[11px] text-slate-600 font-medium block md:col-span-2">
-                  Cron
-                  <a-input v-model="itemForm.scheduleCronExpr" class="mt-1" size="small" />
-                </label>
               </div>
             </section>
 
@@ -2339,7 +2405,7 @@ watch(() => props.selectedItemId, (value) => {
                       模拟同步结果
                     </p>
                     <p class="text-[10px] text-slate-500 m-0 mt-1">
-                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl`，赛道库的 `contestExternalId / name` 是否都落对。
+                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl / registrationWindow / submissionDeadline`，赛道库的 `contestExternalId / name` 是否都落对。
                     </p>
                   </div>
                   <div class="border border-slate-200 rounded overflow-auto">
@@ -2527,7 +2593,7 @@ watch(() => props.selectedItemId, (value) => {
                 基础映射
               </h3>
               <p class="text-[11px] text-slate-500 m-0 mt-1">
-                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl`。
+                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl / registrationWindow / submissionDeadline`。
               </p>
             </div>
             <div class="flex gap-2">
@@ -2617,7 +2683,7 @@ watch(() => props.selectedItemId, (value) => {
           <a-button size="small" :disabled="savingItem" @click="mappingDrawerVisible = false">
             关闭
           </a-button>
-          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('mapping')">
             保存配置
           </a-button>
         </div>
@@ -2722,7 +2788,7 @@ watch(() => props.selectedItemId, (value) => {
           <a-button size="small" :disabled="savingItem" @click="writebackDrawerVisible = false">
             关闭
           </a-button>
-          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem">
+          <a-button size="small" type="primary" :loading="savingItem" :disabled="archivedReadonly" @click="saveCurrentItem('main')">
             保存配置
           </a-button>
         </div>

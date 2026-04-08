@@ -32,6 +32,8 @@ interface RuntimeSettingsPayload {
   }
 }
 
+type RuntimeConfigSection = keyof RuntimeSettingsPayload['configSource']
+
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
@@ -81,6 +83,16 @@ function applyPayload(nextPayload: RuntimeSettingsPayload): void {
   form.resourceRecycle.batchSize = Number(nextPayload.resourceRecycle.batchSize || 200)
 
   form.contest.autoSeed = Boolean(nextPayload.contest.autoSeed)
+}
+
+function displayConfigSource(section: RuntimeConfigSection, value?: RuntimeSettingsPayload['configSource'][RuntimeConfigSection]): string {
+  if (value === 'override')
+    return 'override'
+
+  if (section === 'contestAutoSeed')
+    return 'env'
+
+  return 'default'
 }
 
 async function loadSettings(showLoading = false) {
@@ -153,7 +165,7 @@ onMounted(async () => {
             运行设置
           </h1>
           <p class="text-[11px] text-slate-500 mb-0 mt-1">
-            UI 覆盖优先，Env 兜底。当前页仅管理业务运行参数，不包含 PG/Redis/Storage/1Panel/Webhook 基础设施变量。
+            worker 参数默认使用内置值，UI 保存后立即覆盖生效。当前页不管理 PG/Redis/Storage/域名端口等基础设施变量。
           </p>
         </div>
         <div class="flex gap-2 items-center">
@@ -188,7 +200,7 @@ onMounted(async () => {
             飞书调度（feishuScheduler）
           </h2>
           <a-tag size="small" :color="payload?.configSource?.feishuScheduler === 'override' ? 'green' : 'gray'">
-            {{ payload?.configSource?.feishuScheduler || 'env' }}
+            {{ displayConfigSource('feishuScheduler', payload?.configSource?.feishuScheduler) }}
           </a-tag>
         </div>
         <div class="gap-2 grid md:grid-cols-4">
@@ -217,7 +229,7 @@ onMounted(async () => {
             资源回收（resourceRecycle）
           </h2>
           <a-tag size="small" :color="payload?.configSource?.resourceRecycle === 'override' ? 'green' : 'gray'">
-            {{ payload?.configSource?.resourceRecycle || 'env' }}
+            {{ displayConfigSource('resourceRecycle', payload?.configSource?.resourceRecycle) }}
           </a-tag>
         </div>
         <div class="gap-2 grid md:grid-cols-4">
@@ -246,7 +258,7 @@ onMounted(async () => {
             赛事参数（contest）
           </h2>
           <a-tag size="small" :color="payload?.configSource?.contestAutoSeed === 'override' ? 'green' : 'gray'">
-            {{ payload?.configSource?.contestAutoSeed || 'env' }}
+            {{ displayConfigSource('contestAutoSeed', payload?.configSource?.contestAutoSeed) }}
           </a-tag>
         </div>
         <label class="inline-flex gap-2 items-center">

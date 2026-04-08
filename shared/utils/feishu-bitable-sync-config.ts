@@ -51,20 +51,13 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
           officialUrl: '',
           summary: '',
           level: '',
-          organizer: '',
-          coOrganizer: '',
-          participantRequirements: '',
-          teamRule: '',
-          currentSeason: '',
           disciplines: '',
-          aliases: '',
           keywords: '',
-          recommendedFor: '',
+          registrationWindow: '',
+          submissionDeadline: '',
         },
       },
-      options: {
-        defaultVisibility: 'internal',
-      },
+      options: {},
       writeback: buildDefaultWriteback(),
     }
   }

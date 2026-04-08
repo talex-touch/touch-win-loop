@@ -302,6 +302,16 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_syncs (
   name TEXT NOT NULL,
   is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   source_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  schedule_mode TEXT NOT NULL DEFAULT 'interval' CHECK (schedule_mode IN ('interval', 'cron')),
+  schedule_interval_minutes INTEGER,
+  schedule_cron_expr TEXT,
+  schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+  schedule_next_run_at TIMESTAMPTZ,
+  schedule_last_run_at TIMESTAMPTZ,
+  schedule_last_error TEXT NOT NULL DEFAULT '',
+  schedule_locked_at TIMESTAMPTZ,
+  schedule_lock_token TEXT,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   archived_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -312,6 +322,36 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_syncs (
 
 ALTER TABLE feishu_bitable_syncs
   ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_mode TEXT NOT NULL DEFAULT 'interval';
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_interval_minutes INTEGER;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_cron_expr TEXT;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai';
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_next_run_at TIMESTAMPTZ;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_last_run_at TIMESTAMPTZ;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_last_error TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_locked_at TIMESTAMPTZ;
+
+ALTER TABLE feishu_bitable_syncs
+  ADD COLUMN IF NOT EXISTS schedule_lock_token TEXT;
 
 ALTER TABLE feishu_bitable_syncs
   ADD COLUMN IF NOT EXISTS archived_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;

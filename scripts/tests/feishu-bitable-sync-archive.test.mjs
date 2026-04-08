@@ -10,6 +10,7 @@ it('同步信息归档会写入归档字段并停用全部子表同步项', asyn
   assert.match(dbSource, /CREATE TABLE IF NOT EXISTS feishu_bitable_syncs[\s\S]*archived_by_user_id TEXT[\s\S]*archived_at TIMESTAMPTZ/, '同步信息表未持久化归档字段')
   assert.match(storeSource, /export async function archiveFeishuBitableSync/, '存储层缺少同步信息归档函数')
   assert.match(storeSource, /UPDATE feishu_bitable_syncs[\s\S]*archived_at = NOW\(\)/, '归档逻辑未写入 archived_at')
+  assert.match(storeSource, /UPDATE feishu_bitable_syncs[\s\S]*schedule_enabled = FALSE,[\s\S]*schedule_next_run_at = NULL/, '归档逻辑未停用主同步调度')
   assert.match(storeSource, /UPDATE feishu_bitable_sync_items[\s\S]*is_enabled = FALSE,[\s\S]*schedule_enabled = FALSE/, '归档逻辑未同时停用子表同步项与调度')
   assert.match(storeSource, /export async function restoreFeishuBitableSync/, '存储层缺少同步信息恢复函数')
   assert.match(storeSource, /UPDATE feishu_bitable_syncs[\s\S]*archived_by_user_id = NULL,[\s\S]*archived_at = NULL/, '恢复逻辑未清理归档字段')

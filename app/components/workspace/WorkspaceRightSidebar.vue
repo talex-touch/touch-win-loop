@@ -167,11 +167,11 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
 
 <template>
   <aside
-    class="border-l border-slate-200 bg-white flex shrink-0 flex-col min-h-0 w-full overflow-hidden xl:w-88"
+    class="border-l border-slate-200 bg-white flex shrink-0 flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
     tabindex="0"
     @keydown.capture="handleModeCycleHotkey"
   >
-    <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70 space-y-2">
+    <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70 shrink-0 space-y-2">
       <div class="flex items-center justify-between">
         <div class="text-xs text-slate-800 font-semibold">
           对话会话（{{ chatSessions.length }}）
@@ -183,13 +183,13 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
           新建
         </button>
       </div>
-      <div v-if="chatSessionsLoading" class="text-[11px] text-slate-500">
+      <div v-if="chatSessionsLoading" class="text-[11px] text-slate-500 leading-5">
         会话加载中...
       </div>
-      <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400">
+      <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400 leading-5">
         暂无会话，点击“新建”开始。
       </div>
-      <div v-else class="pr-1 max-h-28 overflow-y-auto space-y-1">
+      <div v-else class="pr-1 max-h-32 overflow-y-auto space-y-1">
         <button
           v-for="session in chatSessions"
           :key="session.id"
@@ -207,233 +207,238 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
       </div>
     </div>
 
-    <div class="no-scrollbar p-4 flex-1 h-0 min-h-0 overflow-y-auto">
-      <div class="flex flex-col min-h-full">
-        <div class="pb-36 space-y-4">
-          <div
-            v-for="(message, index) in chatMessages"
-            :key="`${message.role}-${index}`"
-            class="flex gap-2 items-start"
-            :class="message.role === 'user' ? 'justify-end' : ''"
-          >
+    <div class="flex flex-1 flex-col h-0 min-h-0 overflow-hidden">
+      <div class="no-scrollbar p-4 flex-1 h-0 min-h-0 overflow-y-auto">
+        <div class="workspace-chat-scroll-content">
+          <div class="workspace-chat-messages">
             <div
-              v-if="message.role === 'assistant'"
-              class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
+              v-for="(message, index) in chatMessages"
+              :key="`${message.role}-${index}`"
+              class="flex gap-2 items-start"
+              :class="message.role === 'user' ? 'justify-end' : ''"
             >
-              <span class="material-symbols-outlined text-sm">smart_toy</span>
-            </div>
-            <div
-              v-else-if="message.role === 'system'"
-              class="text-slate-700 border border-slate-300 rounded bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center"
-            >
-              <span class="text-[9px] font-semibold">SYS</span>
-            </div>
-            <div
-              class="text-[11px] leading-relaxed p-3 rounded-lg max-w-[86%] whitespace-pre-wrap"
-              :class="message.role === 'user'
-                ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none'
-                : message.role === 'system'
-                  ? 'bg-slate-50 border border-slate-200 text-slate-600 rounded-tl-sm'
-                  : 'bg-slate-100 text-slate-700 rounded-tl-none'"
-            >
-              <div v-if="message.role === 'system'" class="text-[10px] text-slate-500 tracking-wide font-semibold mb-1">
-                SYSTEM
+              <div
+                v-if="message.role === 'assistant'"
+                class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
+              >
+                <span class="material-symbols-outlined text-sm">smart_toy</span>
               </div>
-              {{ message.content }}
+
+              <div
+                v-else-if="message.role === 'system'"
+                class="text-slate-700 border border-slate-300 rounded bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center"
+              >
+                <span class="text-[9px] font-semibold">SYS</span>
+              </div>
+
+              <div
+                class="text-[11px] leading-relaxed p-3 rounded-lg max-w-[86%] whitespace-pre-wrap"
+                :class="message.role === 'user'
+                  ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none'
+                  : message.role === 'system'
+                    ? 'bg-slate-50 border border-slate-200 text-slate-600 rounded-tl-sm'
+                    : 'bg-slate-100 text-slate-700 rounded-tl-none'"
+              >
+                <div v-if="message.role === 'system'" class="text-[10px] text-slate-500 tracking-wide font-semibold mb-1">
+                  SYSTEM
+                </div>
+                {{ message.content }}
+              </div>
+
+              <div
+                v-if="message.role === 'user'"
+                class="rounded bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
+              >
+                <img
+                  alt="avatar"
+                  class="h-full w-full object-cover"
+                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuCpeK3ZzVd7LtrOg5h6iFhJ5azRbuUFRmmaMGNaVkipoRx2KeXJvGzjOem-njmZ1X2K7E5eZq7iEGey_U1YoWT2pMOklyV-WBBdEXaeAsz-Gr76uirUlHq69Ry0Fs7j56my_Rkzmsqgd-IwpFzP7GnGQQLMOQ5ow_q8rIICxDOttJQY_PinNCZcLPjEAJaTIm6TZKjFhUquEDOc_dJHU_4nZZUHpVc9q77XvmnEtM5aBVMhBO4J0oNIfiA6rLO49eLZ9IVEQs_CTyPt"
+                >
+              </div>
+            </div>
+          </div>
+
+          <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">
+            当前为只读对话模式，不会触发任何项目写入动作。
+          </div>
+
+          <div v-if="aiMode === 'auto_optimize'" class="space-y-2">
+            <div class="flex items-center justify-between">
+              <div class="text-xs text-slate-700 font-semibold">
+                待审批变更（{{ pendingChangeRequests.length }}）
+              </div>
+              <span v-if="changeRequestsLoading" class="text-[10px] text-slate-500">刷新中...</span>
+            </div>
+            <div v-if="pendingChangeRequests.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+              暂无待审批提案，发送优化请求后会自动生成。
             </div>
             <div
-              v-if="message.role === 'user'"
-              class="rounded bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
+              v-for="change in pendingChangeRequests"
+              :key="change.id"
+              class="p-3 border border-slate-200 rounded bg-slate-50"
             >
-              <img
-                alt="avatar"
-                class="h-full w-full object-cover"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuCpeK3ZzVd7LtrOg5h6iFhJ5azRbuUFRmmaMGNaVkipoRx2KeXJvGzjOem-njmZ1X2K7E5eZq7iEGey_U1YoWT2pMOklyV-WBBdEXaeAsz-Gr76uirUlHq69Ry0Fs7j56my_Rkzmsqgd-IwpFzP7GnGQQLMOQ5ow_q8rIICxDOttJQY_PinNCZcLPjEAJaTIm6TZKjFhUquEDOc_dJHU_4nZZUHpVc9q77XvmnEtM5aBVMhBO4J0oNIfiA6rLO49eLZ9IVEQs_CTyPt"
-              >
-            </div>
-          </div>
-        </div>
-
-        <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 p-3 border border-emerald-200 rounded bg-emerald-50">
-          当前为只读对话模式，不会触发任何项目写入动作。
-        </div>
-
-        <div v-if="aiMode === 'auto_optimize'" class="space-y-2">
-          <div class="flex items-center justify-between">
-            <div class="text-xs text-slate-700 font-semibold">
-              待审批变更（{{ pendingChangeRequests.length }}）
-            </div>
-            <span v-if="changeRequestsLoading" class="text-[10px] text-slate-500">刷新中...</span>
-          </div>
-          <div v-if="pendingChangeRequests.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-            暂无待审批提案，发送优化请求后会自动生成。
-          </div>
-          <div
-            v-for="change in pendingChangeRequests"
-            :key="change.id"
-            class="p-3 border border-slate-200 rounded bg-slate-50"
-          >
-            <div class="flex gap-2 items-start justify-between">
-              <div class="text-xs text-slate-800 leading-5 font-semibold">
-                {{ change.title }}
+              <div class="flex gap-2 items-start justify-between">
+                <div class="text-xs text-slate-800 leading-5 font-semibold">
+                  {{ change.title }}
+                </div>
+                <span
+                  v-if="change.destructive"
+                  class="text-[10px] text-rose-600 px-1.5 py-0.5 border border-rose-200 rounded bg-rose-50"
+                >
+                  破坏性
+                </span>
               </div>
-              <span
-                v-if="change.destructive"
-                class="text-[10px] text-rose-600 px-1.5 py-0.5 border border-rose-200 rounded bg-rose-50"
-              >
-                破坏性
-              </span>
-            </div>
-            <div class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
-              {{ change.summary }}
-            </div>
-            <div class="text-[10px] text-slate-500 mt-1">
-              类型：{{ change.changeType }}
-            </div>
-            <div class="mt-2 flex gap-2 items-center">
-              <button
-                class="text-[11px] text-emerald-700 px-2 py-1 border border-emerald-300 rounded bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
-                :disabled="isChangeActing(change.id)"
-                @click="emit('approveChange', change)"
-              >
-                {{ isChangeActing(change.id)
-                  ? '处理中...'
-                  : (requiresSecondConfirm(change) ? '再次确认通过' : '通过') }}
-              </button>
-              <button
-                class="text-[11px] text-slate-700 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-60"
-                :disabled="isChangeActing(change.id)"
-                @click="emit('rejectChange', change)"
-              >
-                拒绝
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="aiMode === 'issue_discovery'" class="space-y-2">
-          <div class="flex items-center justify-between">
-            <div class="text-xs text-slate-700 font-semibold">
-              寻疑结果
-            </div>
-            <span v-if="issueLoading" class="text-[10px] text-slate-500">刷新中...</span>
-          </div>
-
-          <div v-if="issueReport" class="p-3 border border-amber-200 rounded bg-amber-50">
-            <div class="text-xs text-amber-800 font-semibold">
-              {{ issueReport.title }}
-            </div>
-            <div class="text-[11px] text-amber-700 mt-1 whitespace-pre-wrap">
-              {{ issueReport.summary }}
-            </div>
-          </div>
-
-          <div
-            v-for="issue in projectIssues.slice(0, 8)"
-            :key="issue.id"
-            class="p-3 border border-slate-200 rounded bg-white"
-          >
-            <div class="flex gap-2 items-center justify-between">
-              <div class="text-[11px] text-slate-800 leading-5 font-semibold">
-                {{ issue.title }}
+              <div class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
+                {{ change.summary }}
               </div>
-              <span :class="severityClass(issue.severity)">
-                {{ severityLabel(issue.severity) }}
-              </span>
-            </div>
-            <div class="text-[11px] text-slate-600 mt-1">
-              证据：{{ issue.evidence || '暂无' }}
-            </div>
-            <div class="text-[11px] text-emerald-700 mt-1">
-              建议：{{ issue.recommendation || '暂无' }}
+              <div class="text-[10px] text-slate-500 mt-1">
+                类型：{{ change.changeType }}
+              </div>
+              <div class="mt-2 flex gap-2 items-center">
+                <button
+                  class="text-[11px] text-emerald-700 px-2 py-1 border border-emerald-300 rounded bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
+                  :disabled="isChangeActing(change.id)"
+                  @click="emit('approveChange', change)"
+                >
+                  {{ isChangeActing(change.id)
+                    ? '处理中...'
+                    : (requiresSecondConfirm(change) ? '再次确认通过' : '通过') }}
+                </button>
+                <button
+                  class="text-[11px] text-slate-700 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-60"
+                  :disabled="isChangeActing(change.id)"
+                  @click="emit('rejectChange', change)"
+                >
+                  拒绝
+                </button>
+              </div>
             </div>
           </div>
 
-          <div v-if="projectIssues.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-            暂无 issue 条目，执行一次“寻疑发现”后会自动落地。
+          <div v-if="aiMode === 'issue_discovery'" class="space-y-2">
+            <div class="flex items-center justify-between">
+              <div class="text-xs text-slate-700 font-semibold">
+                寻疑结果
+              </div>
+              <span v-if="issueLoading" class="text-[10px] text-slate-500">刷新中...</span>
+            </div>
+
+            <div v-if="issueReport" class="p-3 border border-amber-200 rounded bg-amber-50">
+              <div class="text-xs text-amber-800 font-semibold">
+                {{ issueReport.title }}
+              </div>
+              <div class="text-[11px] text-amber-700 mt-1 whitespace-pre-wrap">
+                {{ issueReport.summary }}
+              </div>
+            </div>
+
+            <div
+              v-for="issue in projectIssues.slice(0, 8)"
+              :key="issue.id"
+              class="p-3 border border-slate-200 rounded bg-white"
+            >
+              <div class="flex gap-2 items-center justify-between">
+                <div class="text-[11px] text-slate-800 leading-5 font-semibold">
+                  {{ issue.title }}
+                </div>
+                <span :class="severityClass(issue.severity)">
+                  {{ severityLabel(issue.severity) }}
+                </span>
+              </div>
+              <div class="text-[11px] text-slate-600 mt-1">
+                证据：{{ issue.evidence || '暂无' }}
+              </div>
+              <div class="text-[11px] text-emerald-700 mt-1">
+                建议：{{ issue.recommendation || '暂无' }}
+              </div>
+            </div>
+
+            <div v-if="projectIssues.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+              暂无 issue 条目，执行一次“寻疑发现”后会自动落地。
+            </div>
+          </div>
+
+          <div v-if="aiMode === 'defense'" class="space-y-2">
+            <div v-if="defenseScorecard" class="p-3 border border-slate-200 rounded bg-slate-50">
+              <div class="text-xs text-slate-700 font-semibold">
+                答辩评分
+              </div>
+              <p class="text-[11px] text-slate-600 mt-1">
+                技术 {{ defenseScorecard.technical }} / 业务 {{ defenseScorecard.business }} / 表达 {{ defenseScorecard.expression }} / 总分 {{ defenseScorecard.total }}
+              </p>
+              <p class="text-[11px] text-slate-500 mt-1">
+                {{ defenseScorecard.summary }}
+              </p>
+              <p v-if="defenseScorecard.materialGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
+                材料缺口：{{ defenseScorecard.materialGaps.join('；') }}
+              </p>
+              <p v-if="defenseScorecard.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-1">
+                改进动作：{{ defenseScorecard.actionItems.join('；') }}
+              </p>
+            </div>
+            <div
+              v-for="(round, index) in defenseRounds"
+              :key="`${round.judge}-${index}`"
+              class="p-3 border border-slate-200 rounded bg-white"
+            >
+              <p class="text-xs text-slate-700 font-semibold">
+                {{ round.judge }} 评委（{{ round.score }}）
+              </p>
+              <p class="text-[11px] text-slate-700 mt-1">
+                问题：{{ round.question }}
+              </p>
+              <p class="text-[11px] text-slate-500 mt-1">
+                追问：{{ round.followUp }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="workspace-chat-composer">
+        <div v-if="aiRunning" class="workspace-ai-marquee" aria-live="polite">
+          <div class="workspace-ai-marquee__track">
+            <span>{{ aiRunningMarqueeText }}</span>
+            <span>{{ aiRunningMarqueeText }}</span>
           </div>
         </div>
 
-        <div v-if="aiMode === 'defense'" class="space-y-2">
-          <div v-if="defenseScorecard" class="p-3 border border-slate-200 rounded bg-slate-50">
-            <div class="text-xs text-slate-700 font-semibold">
-              答辩评分
-            </div>
-            <p class="text-[11px] text-slate-600 mt-1">
-              技术 {{ defenseScorecard.technical }} / 业务 {{ defenseScorecard.business }} / 表达 {{ defenseScorecard.expression }} / 总分 {{ defenseScorecard.total }}
-            </p>
-            <p class="text-[11px] text-slate-500 mt-1">
-              {{ defenseScorecard.summary }}
-            </p>
-            <p v-if="defenseScorecard.materialGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
-              材料缺口：{{ defenseScorecard.materialGaps.join('；') }}
-            </p>
-            <p v-if="defenseScorecard.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-1">
-              改进动作：{{ defenseScorecard.actionItems.join('；') }}
-            </p>
-          </div>
-          <div
-            v-for="(round, index) in defenseRounds"
-            :key="`${round.judge}-${index}`"
-            class="p-3 border border-slate-200 rounded bg-white"
+        <div class="relative">
+          <textarea
+            :value="chatInput"
+            class="text-xs p-2.5 pr-10 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+            :placeholder="inputPlaceholder"
+            @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
+          />
+          <button
+            class="text-white p-1.5 rounded-md bg-blue-600 bottom-2 right-2 absolute hover:bg-blue-500 disabled:opacity-60"
+            :disabled="chatLoading"
+            @click="emit('sendChat')"
           >
-            <p class="text-xs text-slate-700 font-semibold">
-              {{ round.judge }} 评委（{{ round.score }}）
-            </p>
-            <p class="text-[11px] text-slate-700 mt-1">
-              问题：{{ round.question }}
-            </p>
-            <p class="text-[11px] text-slate-500 mt-1">
-              追问：{{ round.followUp }}
-            </p>
-          </div>
+            <span class="material-symbols-outlined text-sm">{{ chatLoading ? 'hourglass_top' : 'send' }}</span>
+          </button>
         </div>
 
-        <div class="workspace-chat-composer mt-auto">
-          <div v-if="aiRunning" class="workspace-ai-marquee" aria-live="polite">
-            <div class="workspace-ai-marquee__track">
-              <span>{{ aiRunningMarqueeText }}</span>
-              <span>{{ aiRunningMarqueeText }}</span>
-            </div>
+        <div class="workspace-chat-composer__meta">
+          <div class="workspace-chat-composer__meta-text">
+            已关联资料：{{ selectedResources.length }} · Shift+Tab 切换模式
           </div>
-
-          <div class="relative">
-            <textarea
-              :value="chatInput"
-              class="text-xs p-2.5 pr-10 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-              :placeholder="inputPlaceholder"
-              @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
-            />
-            <button
-              class="text-white p-1.5 rounded-md bg-blue-600 bottom-2 right-2 absolute hover:bg-blue-500 disabled:opacity-60"
-              :disabled="chatLoading"
-              @click="emit('sendChat')"
+          <select
+            class="workspace-mode-select shrink-0"
+            :value="modeSelectValue()"
+            @change="handleModeSelectChange"
+          >
+            <option v-if="aiMode === 'defense'" value="" disabled>
+              答辩模拟（左侧入口）
+            </option>
+            <option
+              v-for="mode in PRIMARY_MODES"
+              :key="mode.value"
+              :value="mode.value"
             >
-              <span class="material-symbols-outlined text-sm">{{ chatLoading ? 'hourglass_top' : 'send' }}</span>
-            </button>
-          </div>
-
-          <div class="mt-2 flex gap-2 items-center justify-between">
-            <div class="text-[10px] text-slate-400">
-              已关联资料：{{ selectedResources.length }} · Shift+Tab 切换模式
-            </div>
-            <select
-              class="workspace-mode-select"
-              :value="modeSelectValue()"
-              @change="handleModeSelectChange"
-            >
-              <option v-if="aiMode === 'defense'" value="" disabled>
-                答辩模拟（左侧入口）
-              </option>
-              <option
-                v-for="mode in PRIMARY_MODES"
-                :key="mode.value"
-                :value="mode.value"
-              >
-                {{ mode.label }}
-              </option>
-            </select>
-          </div>
+              {{ mode.label }}
+            </option>
+          </select>
         </div>
       </div>
     </div>
@@ -450,14 +455,43 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
   scrollbar-width: none;
 }
 
+.workspace-chat-scroll-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.workspace-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .workspace-chat-composer {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
-  margin-top: 16px;
-  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
   border-top: 1px solid #e2e8f0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, #ffffff 22px);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, #ffffff 18px);
+}
+
+.workspace-chat-composer__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.workspace-chat-composer__meta-text {
+  min-width: 0;
+  flex: 1 1 140px;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .workspace-ai-marquee {

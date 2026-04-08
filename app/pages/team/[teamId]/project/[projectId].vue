@@ -82,7 +82,7 @@ useHead({
   ],
 })
 
-const { endpoint, resolveApiUrl } = useApiEndpoint()
+const { endpoint, resolveApiUrl, resolveAppUrl } = useApiEndpoint()
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
@@ -413,6 +413,7 @@ type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
+const RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
 
 function parseTimestamp(value: string): number {
@@ -467,7 +468,9 @@ const openFlowSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
 const leftSidebarCollapsed = ref(false)
-const rightSidebarCollapsed = ref(false)
+const rightSidebarUserCollapsed = ref(false)
+const rightSidebarAutoCollapsed = ref(false)
+const rightSidebarAutoRestorePending = ref(false)
 const sidebarLayoutHydrating = ref(false)
 const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const headerSearch = ref('')
@@ -502,6 +505,8 @@ let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let unsubscribeRealtimeMessages: (() => void) | null = null
+let rightSidebarBreakpointMediaQuery: MediaQueryList | null = null
+let unsubscribeRightSidebarBreakpoint: (() => void) | null = null
 
 const listLoading = ref(false)
 const aiFiltering = ref(false)
@@ -541,6 +546,7 @@ const workspaceSeatLimitSaveLoading = ref(false)
 const workspaceSeatLimitError = ref('')
 const workspaceSeatLimitUpdatedSignal = ref(0)
 const projectSeatQuota = ref<ProjectSeatQuota | null>(null)
+const rightSidebarCollapsed = computed(() => rightSidebarUserCollapsed.value || rightSidebarAutoCollapsed.value)
 
 function getProjectSettingsDraftStorageKey(projectId: string): string {
   if (!import.meta.client)
@@ -559,6 +565,101 @@ function getProjectSettingsDraftDeviceStorageKey(): string {
   if (!userId)
     return ''
   return `${PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX}.${userId}`
+}
+
+function withSidebarLayoutHydrating<T>(callback: () => T): T {
+  sidebarLayoutHydrating.value = true
+  try {
+    return callback()
+  }
+  finally {
+    sidebarLayoutHydrating.value = false
+  }
+}
+
+function applyRightSidebarAutoCollapse(nextCollapsed: boolean, nextRestorePending = rightSidebarAutoRestorePending.value): void {
+  const normalizedCollapsed = Boolean(nextCollapsed)
+  const normalizedRestorePending = Boolean(nextRestorePending)
+  if (
+    rightSidebarAutoCollapsed.value === normalizedCollapsed
+    && rightSidebarAutoRestorePending.value === normalizedRestorePending
+  ) {
+    return
+  }
+
+  withSidebarLayoutHydrating(() => {
+    rightSidebarAutoCollapsed.value = normalizedCollapsed
+    rightSidebarAutoRestorePending.value = normalizedRestorePending
+  })
+}
+
+function handleRightSidebarBreakpointChange(isWide: boolean): void {
+  if (isWide) {
+    if (rightSidebarAutoCollapsed.value || rightSidebarAutoRestorePending.value)
+      applyRightSidebarAutoCollapse(false, false)
+    return
+  }
+
+  if (rightSidebarCollapsed.value)
+    return
+
+  applyRightSidebarAutoCollapse(true, true)
+}
+
+function initializeRightSidebarBreakpointTracking(): void {
+  if (!import.meta.client)
+    return
+
+  if (unsubscribeRightSidebarBreakpoint) {
+    unsubscribeRightSidebarBreakpoint()
+    unsubscribeRightSidebarBreakpoint = null
+  }
+
+  rightSidebarBreakpointMediaQuery = window.matchMedia(RIGHT_SIDEBAR_BREAKPOINT_QUERY)
+  handleRightSidebarBreakpointChange(rightSidebarBreakpointMediaQuery.matches)
+
+  const handleChange = (event: MediaQueryListEvent) => {
+    handleRightSidebarBreakpointChange(event.matches)
+  }
+
+  if (typeof rightSidebarBreakpointMediaQuery.addEventListener === 'function') {
+    rightSidebarBreakpointMediaQuery.addEventListener('change', handleChange)
+    unsubscribeRightSidebarBreakpoint = () => {
+      rightSidebarBreakpointMediaQuery?.removeEventListener('change', handleChange)
+      rightSidebarBreakpointMediaQuery = null
+    }
+    return
+  }
+
+  rightSidebarBreakpointMediaQuery.addListener(handleChange)
+  unsubscribeRightSidebarBreakpoint = () => {
+    rightSidebarBreakpointMediaQuery?.removeListener(handleChange)
+    rightSidebarBreakpointMediaQuery = null
+  }
+}
+
+function setRightSidebarUserCollapsed(nextCollapsed: boolean, options: { suppressPersist?: boolean } = {}): void {
+  const normalizedCollapsed = Boolean(nextCollapsed)
+  const apply = () => {
+    rightSidebarUserCollapsed.value = normalizedCollapsed
+    rightSidebarAutoCollapsed.value = false
+    rightSidebarAutoRestorePending.value = false
+  }
+
+  if (options.suppressPersist) {
+    withSidebarLayoutHydrating(apply)
+    return
+  }
+
+  apply()
+}
+
+function collapseRightSidebar(): void {
+  setRightSidebarUserCollapsed(true)
+}
+
+function expandRightSidebar(): void {
+  setRightSidebarUserCollapsed(false)
 }
 
 function generateProjectSettingsDraftDeviceId(): string {
@@ -929,13 +1030,7 @@ function resolveProjectResourceShareUrl(rawUrl: string): string {
     return ''
 
   const resolved = resolveApiUrl(normalized)
-  if (!import.meta.client)
-    return resolved
-  if (/^https?:\/\//i.test(resolved))
-    return resolved
-  if (resolved.startsWith('/'))
-    return `${window.location.origin}${resolved}`
-  return resolved
+  return resolveAppUrl(resolved)
 }
 
 function resolveWorkspaceInvitationUrl(token: string): string {
@@ -944,14 +1039,7 @@ function resolveWorkspaceInvitationUrl(token: string): string {
     return ''
 
   const path = `/invite/${encodeURIComponent(normalizedToken)}`
-  const resolved = resolveApiUrl(path)
-  if (!import.meta.client)
-    return resolved
-  if (/^https?:\/\//i.test(resolved))
-    return resolved
-  if (resolved.startsWith('/'))
-    return `${window.location.origin}${resolved}`
-  return resolved
+  return resolveAppUrl(path)
 }
 
 function resetWorkspaceMemberManagementState(): void {
@@ -1592,17 +1680,17 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
 function applySidebarLayoutState(value: ProjectSettingsDraftUi | null | undefined): void {
   const nextLeftCollapsed = Boolean(value?.leftSidebarCollapsed)
   const nextRightCollapsed = Boolean(value?.rightSidebarCollapsed)
-  if (leftSidebarCollapsed.value === nextLeftCollapsed && rightSidebarCollapsed.value === nextRightCollapsed)
+  if (
+    leftSidebarCollapsed.value === nextLeftCollapsed
+    && rightSidebarUserCollapsed.value === nextRightCollapsed
+  ) {
     return
+  }
 
-  sidebarLayoutHydrating.value = true
-  try {
+  withSidebarLayoutHydrating(() => {
     leftSidebarCollapsed.value = nextLeftCollapsed
-    rightSidebarCollapsed.value = nextRightCollapsed
-  }
-  finally {
-    sidebarLayoutHydrating.value = false
-  }
+    rightSidebarUserCollapsed.value = nextRightCollapsed
+  })
 }
 
 function serializeProjectSettingsDraftCachePayload(payload: WorkspaceProjectSettingsDraftCache): string {
@@ -1677,7 +1765,7 @@ function buildProjectSettingsDraftCachePayload(): WorkspaceProjectSettingsDraftC
     adaptationDrafts: nextAdaptationDrafts,
     ui: {
       leftSidebarCollapsed: leftSidebarCollapsed.value,
-      rightSidebarCollapsed: rightSidebarCollapsed.value,
+      rightSidebarCollapsed: rightSidebarUserCollapsed.value,
     },
   }
 }
@@ -4282,6 +4370,7 @@ onMounted(async () => {
   if (!ok)
     return
 
+  initializeRightSidebarBreakpointTracking()
   workspaceRealtime.connect()
   if (unsubscribeRealtimeMessages)
     unsubscribeRealtimeMessages()
@@ -4314,6 +4403,10 @@ onBeforeUnmount(() => {
   clearPreviewStatusPolling()
   clearRealtimeProjectRefreshTimer()
   clearFallbackResourceRefreshTimer()
+  if (unsubscribeRightSidebarBreakpoint) {
+    unsubscribeRightSidebarBreakpoint()
+    unsubscribeRightSidebarBreakpoint = null
+  }
   if (unsubscribeRealtimeMessages) {
     unsubscribeRealtimeMessages()
     unsubscribeRealtimeMessages = null
@@ -4678,7 +4771,7 @@ watch(() => workspaceRealtime.connected.value, () => {
             type="button"
             title="收起右侧栏"
             aria-label="收起右侧栏"
-            @click="rightSidebarCollapsed = true"
+            @click="collapseRightSidebar"
           >
             <span class="material-symbols-outlined">chevron_right</span>
           </button>
@@ -4717,7 +4810,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           type="button"
           title="展开右侧栏"
           aria-label="展开右侧栏"
-          @click="rightSidebarCollapsed = false"
+          @click="expandRightSidebar"
         >
           <span class="material-symbols-outlined">chevron_left</span>
         </button>

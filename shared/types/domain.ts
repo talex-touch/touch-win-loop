@@ -1489,6 +1489,13 @@ export interface FeishuBitableViewMeta {
   name: string
 }
 
+export interface FeishuChatCandidate {
+  chatId: string
+  name: string
+  description: string
+  avatarUrl: string
+}
+
 export interface FeishuIntegrationConfig {
   enabled: boolean
   appId: string
@@ -1670,6 +1677,8 @@ export interface FeishuBitableSync {
   name: string
   enabled: boolean
   source: FeishuBitableSourceConfig
+  schedule: FeishuTaskScheduleConfig
+  scheduleRuntime: FeishuTaskScheduleRuntime
   itemCount: number
   enabledItemCount: number
   issueStats: FeishuTaskIssueStats

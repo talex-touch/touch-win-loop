@@ -1,4 +1,4 @@
-import type { FeishuBitableSourceConfig, FeishuBitableSync } from '~~/shared/types/domain'
+import type { FeishuBitableSourceConfig, FeishuBitableSync, FeishuTaskScheduleConfig } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -11,6 +11,7 @@ interface PatchSyncBody {
   name?: string
   enabled?: boolean
   source?: FeishuBitableSourceConfig
+  schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
 export default defineEventHandler(async (event) => {
@@ -51,6 +52,7 @@ export default defineEventHandler(async (event) => {
         name: body.name,
         enabled: body.enabled,
         source: body.source,
+        schedule: body.schedule,
       },
     })
   }).catch((error) => {

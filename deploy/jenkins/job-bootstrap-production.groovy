@@ -3,7 +3,7 @@ properties([
   buildDiscarder(logRotator(numToKeepStr: '30')),
   parameters([
     string(name: 'GITHUB_REPOSITORY', defaultValue: 'talex-touch/touch-win-loop', trim: true),
-    string(name: 'GITHUB_BRANCH', defaultValue: 'dev', trim: true),
+    string(name: 'GITHUB_BRANCH', defaultValue: 'main', trim: true),
     string(name: 'BUILD_COMMIT_SHA', defaultValue: '', trim: true),
     string(name: 'BUILD_VERSION', defaultValue: '', trim: true),
     string(name: 'IMAGE_REF', defaultValue: '', trim: true),
@@ -31,8 +31,8 @@ git checkout --detach '${params.BUILD_COMMIT_SHA}'
 
   def pipelineScript = load 'deploy/jenkins/pipeline.groovy'
   pipelineScript.runPipeline(this, [
-    deployEnvironment: 'staging',
-    expectedBranch: 'dev',
+    deployEnvironment: 'production',
+    expectedBranch: 'main',
     expectedRepository: 'talex-touch/touch-win-loop',
     ghcrCredentialsId: '40a0292f-ea02-4882-8d0e-659efe25861b',
     sshCredentialsId: 'touch-center-ssh',

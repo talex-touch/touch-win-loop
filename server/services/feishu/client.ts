@@ -1,5 +1,6 @@
 import type { FeishuIntegrationConfigInternal } from '~~/server/utils/feishu-integration-store'
 import type {
+  FeishuChatCandidate,
   FeishuDirectoryContactScopeSummary,
   FeishuDirectoryDiagnosticCode,
   FeishuDirectoryFetchStatus,
@@ -171,6 +172,24 @@ interface FeishuWikiNodeData {
 
 interface FeishuImMessageData {
   message_id?: string
+}
+
+interface FeishuImChatItem {
+  chat_id?: string
+  name?: string
+  description?: string
+  avatar?: string
+}
+
+interface FeishuImChatsData {
+  has_more?: boolean
+  page_token?: string
+  items?: FeishuImChatItem[]
+  chats?: FeishuImChatItem[]
+}
+
+interface FeishuImChatData extends FeishuImChatItem {
+  chat?: FeishuImChatItem
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -449,6 +468,76 @@ export async function sendFeishuChatTextMessage(input: {
       }),
     },
   })
+}
+
+function toFeishuChatCandidate(item: FeishuImChatItem | null | undefined, fallbackChatId = ''): FeishuChatCandidate | null {
+  const chatId = String(item?.chat_id || fallbackChatId || '').trim()
+  if (!chatId)
+    return null
+
+  return {
+    chatId,
+    name: String(item?.name || '').trim() || chatId,
+    description: String(item?.description || '').trim(),
+    avatarUrl: String(item?.avatar || '').trim(),
+  }
+}
+
+function mergeFeishuChatCandidates(items: Array<FeishuChatCandidate | null | undefined>): FeishuChatCandidate[] {
+  const seen = new Set<string>()
+  const result: FeishuChatCandidate[] = []
+  for (const item of items) {
+    const chatId = String(item?.chatId || '').trim()
+    if (!chatId || seen.has(chatId))
+      continue
+    seen.add(chatId)
+    result.push(item as FeishuChatCandidate)
+  }
+  return result
+}
+
+export async function searchFeishuChats(input: {
+  tenantAccessToken: string
+  keyword?: string
+  limit: number
+}): Promise<FeishuChatCandidate[]> {
+  const keyword = String(input.keyword || '').trim()
+  const limit = Math.max(1, Math.min(100, Number(input.limit || 20)))
+  const data = await requestFeishu<FeishuImChatsData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: keyword ? '/open-apis/im/v1/chats/search' : '/open-apis/im/v1/chats',
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      page_size: limit,
+      query: keyword || undefined,
+      user_id_type: 'open_id',
+    },
+  })
+
+  const items = Array.isArray(data.items) ? data.items : data.chats || []
+  return mergeFeishuChatCandidates(items.map(item => toFeishuChatCandidate(item)))
+}
+
+export async function getFeishuChatById(input: {
+  tenantAccessToken: string
+  chatId: string
+}): Promise<FeishuChatCandidate | null> {
+  const chatId = String(input.chatId || '').trim()
+  if (!chatId)
+    return null
+
+  const data = await requestFeishu<FeishuImChatData>({
+    baseUrl: DEFAULT_FEISHU_API_BASE_URL,
+    path: `/open-apis/im/v1/chats/${encodeURIComponent(chatId)}`,
+    method: 'GET',
+    bearerToken: input.tenantAccessToken,
+    query: {
+      user_id_type: 'open_id',
+    },
+  })
+
+  return toFeishuChatCandidate(data.chat || data, chatId)
 }
 
 async function exchangeOAuthCode(config: FeishuIntegrationConfigInternal, code: string): Promise<OAuthAccessTokenData> {

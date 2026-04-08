@@ -36,6 +36,7 @@ import {
   patchAdminContest,
   patchAdminResource,
   patchAdminTrack,
+  syncContestDerivedTimelineNodes,
 } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
@@ -140,15 +141,10 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'officialUrl',
     'summary',
     'level',
-    'organizer',
-    'coOrganizer',
-    'participantRequirements',
-    'teamRule',
-    'currentSeason',
     'disciplines',
-    'aliases',
     'keywords',
-    'recommendedFor',
+    'registrationWindow',
+    'submissionDeadline',
   ],
   track: [
     'externalId',
@@ -182,9 +178,7 @@ const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> 
 
 const ARRAY_PREVIEW_FIELDS = new Set([
   'disciplines',
-  'aliases',
   'keywords',
-  'recommendedFor',
   'suitableMajors',
   'deliverableTypes',
 ])
@@ -1165,8 +1159,25 @@ async function applyContestRecord(
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
-  const name = await input.resolver.getText('name')
-  const officialUrl = await input.resolver.getText('officialUrl')
+  const [
+    name,
+    officialUrl,
+    summary,
+    levelText,
+    disciplines,
+    keywords,
+    registrationWindow,
+    submissionDeadline,
+  ] = await Promise.all([
+    input.resolver.getText('name'),
+    input.resolver.getText('officialUrl'),
+    input.resolver.getText('summary'),
+    input.resolver.getText('level'),
+    input.resolver.getStringArray('disciplines'),
+    input.resolver.getStringArray('keywords'),
+    input.resolver.getText('registrationWindow'),
+    input.resolver.getText('submissionDeadline'),
+  ])
   if (!name || !officialUrl) {
     return {
       status: 'skipped',
@@ -1193,20 +1204,20 @@ async function applyContestRecord(
         bypassSourceOfTruthGuard: true,
         patch: {
           name,
-          level: mapContestLevel(await input.resolver.getText('level')),
-          organizer: await input.resolver.getText('organizer'),
-          coOrganizer: await input.resolver.getText('coOrganizer'),
+          level: mapContestLevel(levelText),
           officialUrl,
-          summary: await input.resolver.getText('summary'),
-          participantRequirements: await input.resolver.getText('participantRequirements'),
-          teamRule: await input.resolver.getText('teamRule'),
-          currentSeason: await input.resolver.getText('currentSeason'),
-          disciplines: await input.resolver.getStringArray('disciplines'),
-          aliases: await input.resolver.getStringArray('aliases'),
-          keywords: await input.resolver.getStringArray('keywords'),
-          recommendedFor: await input.resolver.getStringArray('recommendedFor'),
+          summary,
+          disciplines,
+          keywords,
           visibility: input.options.defaultVisibility,
         },
+      })
+      await syncContestDerivedTimelineNodes(db, {
+        actorUserId: input.actorUserId,
+        contestId: existingRef.entityId,
+        officialUrl,
+        registrationWindow,
+        submissionDeadline,
       })
       await upsertFeishuExternalRef(db, {
         syncItemId: input.syncItemId,
@@ -1225,19 +1236,19 @@ async function applyContestRecord(
     const created = await createAdminContest(db, {
       actorUserId: input.actorUserId,
       name,
-      level: mapContestLevel(await input.resolver.getText('level')),
-      organizer: await input.resolver.getText('organizer'),
-      coOrganizer: await input.resolver.getText('coOrganizer'),
+      level: mapContestLevel(levelText),
       officialUrl,
-      summary: await input.resolver.getText('summary'),
-      participantRequirements: await input.resolver.getText('participantRequirements'),
-      teamRule: await input.resolver.getText('teamRule'),
-      currentSeason: await input.resolver.getText('currentSeason'),
-      disciplines: await input.resolver.getStringArray('disciplines'),
-      aliases: await input.resolver.getStringArray('aliases'),
-      keywords: await input.resolver.getStringArray('keywords'),
-      recommendedFor: await input.resolver.getStringArray('recommendedFor'),
+      summary,
+      disciplines,
+      keywords,
       visibility: input.options.defaultVisibility,
+    })
+    await syncContestDerivedTimelineNodes(db, {
+      actorUserId: input.actorUserId,
+      contestId: created.id,
+      officialUrl,
+      registrationWindow,
+      submissionDeadline,
     })
     await upsertFeishuExternalRef(db, {
       syncItemId: input.syncItemId,

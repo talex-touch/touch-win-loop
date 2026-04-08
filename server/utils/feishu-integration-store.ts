@@ -7,9 +7,9 @@ import type {
   FeishuAuthBindStatus,
   FeishuAuthUnbindResult,
   FeishuBitableSourceConfig,
-  FeishuBitableSyncEnvironment,
   FeishuBitableSync,
   FeishuBitableSyncDetail,
+  FeishuBitableSyncEnvironment,
   FeishuBitableSyncItem,
   FeishuBitableSyncItemDetail,
   FeishuBitableSyncItemEntityType,
@@ -95,6 +95,14 @@ interface FeishuBitableSyncRow {
   name: string
   is_enabled: boolean
   source_json: Record<string, unknown>
+  schedule_enabled: boolean
+  schedule_mode: 'interval' | 'cron'
+  schedule_interval_minutes: number | string | null
+  schedule_cron_expr: string | null
+  schedule_timezone: string
+  schedule_next_run_at: string | null
+  schedule_last_run_at: string | null
+  schedule_last_error: string | null
   item_count: number | string
   enabled_item_count: number | string
   latest_run_id: string | null
@@ -199,6 +207,11 @@ interface FeishuAdminCandidateRow {
 
 export interface ClaimedFeishuBitableSyncItem {
   item: FeishuBitableSyncItem
+  lockToken: string
+}
+
+export interface ClaimedFeishuBitableSync {
+  sync: FeishuBitableSync
   lockToken: string
 }
 
@@ -342,7 +355,13 @@ function normalizeWritebackConfig(raw: unknown): FeishuBitableWritebackConfig {
   }
 }
 
-function parseTaskSchedule(row: Pick<FeishuBitableSyncItemRow, 'schedule_enabled' | 'schedule_mode' | 'schedule_interval_minutes' | 'schedule_cron_expr' | 'schedule_timezone'>): FeishuTaskScheduleConfig {
+function parseTaskSchedule(row: {
+  schedule_enabled: boolean
+  schedule_mode: 'interval' | 'cron'
+  schedule_interval_minutes: number | string | null
+  schedule_cron_expr: string | null
+  schedule_timezone: string
+}): FeishuTaskScheduleConfig {
   try {
     return normalizeFeishuTaskScheduleConfig({
       enabled: Boolean(row.schedule_enabled),
@@ -415,11 +434,18 @@ function toSync(row: FeishuBitableSyncRow): FeishuBitableSync {
     tableId: '',
     viewId: '',
   })
+  const schedule = parseTaskSchedule(row)
   return {
     id: row.id,
     name: row.name,
     enabled: Boolean(row.is_enabled),
     source,
+    schedule,
+    scheduleRuntime: {
+      nextRunAt: row.schedule_next_run_at || null,
+      lastRunAt: row.schedule_last_run_at || null,
+      lastError: row.schedule_last_error || '',
+    },
     itemCount: Number(row.item_count || 0),
     enabledItemCount: Number(row.enabled_item_count || 0),
     issueStats: toIssueStats({
@@ -1165,6 +1191,14 @@ export async function listFeishuBitableSyncs(
       s.name,
       s.is_enabled,
       s.source_json,
+      s.schedule_enabled,
+      s.schedule_mode,
+      s.schedule_interval_minutes,
+      s.schedule_cron_expr,
+      s.schedule_timezone,
+      s.schedule_next_run_at::TEXT,
+      s.schedule_last_run_at::TEXT,
+      s.schedule_last_error,
       COUNT(i.id)::INTEGER AS item_count,
       COUNT(i.id) FILTER (WHERE i.is_enabled = TRUE)::INTEGER AS enabled_item_count,
       lr.id AS latest_run_id,
@@ -1215,6 +1249,14 @@ export async function listFeishuBitableSyncs(
       s.name,
       s.is_enabled,
       s.source_json,
+      s.schedule_enabled,
+      s.schedule_mode,
+      s.schedule_interval_minutes,
+      s.schedule_cron_expr,
+      s.schedule_timezone,
+      s.schedule_next_run_at,
+      s.schedule_last_run_at,
+      s.schedule_last_error,
       lr.id,
       lr.status,
       lr.trigger_source,
@@ -1249,6 +1291,14 @@ export async function getFeishuBitableSyncById(
       s.name,
       s.is_enabled,
       s.source_json,
+      s.schedule_enabled,
+      s.schedule_mode,
+      s.schedule_interval_minutes,
+      s.schedule_cron_expr,
+      s.schedule_timezone,
+      s.schedule_next_run_at::TEXT,
+      s.schedule_last_run_at::TEXT,
+      s.schedule_last_error,
       COUNT(i.id)::INTEGER AS item_count,
       COUNT(i.id) FILTER (WHERE i.is_enabled = TRUE)::INTEGER AS enabled_item_count,
       lr.id AS latest_run_id,
@@ -1300,6 +1350,14 @@ export async function getFeishuBitableSyncById(
       s.name,
       s.is_enabled,
       s.source_json,
+      s.schedule_enabled,
+      s.schedule_mode,
+      s.schedule_interval_minutes,
+      s.schedule_cron_expr,
+      s.schedule_timezone,
+      s.schedule_next_run_at,
+      s.schedule_last_run_at,
+      s.schedule_last_error,
       lr.id,
       lr.status,
       lr.trigger_source,
@@ -1353,6 +1411,7 @@ export async function patchFeishuBitableSync(
       name?: string
       enabled?: boolean
       source?: FeishuBitableSourceConfig
+      schedule?: Partial<FeishuTaskScheduleConfig>
     }
   },
 ): Promise<FeishuBitableSync | null> {
@@ -1373,6 +1432,29 @@ export async function patchFeishuBitableSync(
     addSet('is_enabled', Boolean(input.patch.enabled))
   if (input.patch.source !== undefined)
     addSet('source_json', JSON.stringify(parseJsonObject(input.patch.source)))
+  if (input.patch.schedule !== undefined) {
+    const mergedSchedule = mergeFeishuTaskSchedulePatch({
+      current: existing.schedule,
+      patch: input.patch.schedule,
+    })
+    const scheduleErrors = validateFeishuTaskScheduleConfig(mergedSchedule)
+    if (scheduleErrors.length)
+      throw new Error(`主同步信息调度配置非法：${scheduleErrors.join('；')}`)
+
+    const nextRunAt = mergedSchedule.enabled
+      ? computeNextScheduledRunAtOrNull(mergedSchedule, { from: new Date() })
+      : null
+
+    addSet('schedule_enabled', mergedSchedule.enabled)
+    addSet('schedule_mode', mergedSchedule.mode)
+    addSet('schedule_interval_minutes', mergedSchedule.mode === 'interval' ? mergedSchedule.intervalMinutes : null)
+    addSet('schedule_cron_expr', mergedSchedule.mode === 'cron' ? mergedSchedule.cronExpr : null)
+    addSet('schedule_timezone', mergedSchedule.timezone)
+    addSet('schedule_next_run_at', nextRunAt)
+    addSet('schedule_last_error', mergedSchedule.enabled ? existing.scheduleRuntime.lastError : '')
+    addSet('schedule_locked_at', null)
+    addSet('schedule_lock_token', null)
+  }
   if (!sets.length)
     return existing
 
@@ -1424,6 +1506,19 @@ export async function archiveFeishuBitableSync(
 
   if (!archivedResult.rows[0]?.id)
     return null
+
+  await db.query(
+    `UPDATE feishu_bitable_syncs
+     SET
+       schedule_enabled = FALSE,
+       schedule_next_run_at = NULL,
+       schedule_locked_at = NULL,
+       schedule_lock_token = NULL,
+       updated_by_user_id = $2,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [input.syncId, input.actorUserId],
+  )
 
   await db.query(
     `UPDATE feishu_bitable_sync_items
@@ -2102,6 +2197,139 @@ export async function getFeishuBitableSyncDetail(
     ...sync,
     items,
   }
+}
+
+export async function claimNextDueFeishuBitableSync(
+  db: Queryable,
+  input: {
+    now?: Date
+    lockTtlMs?: number
+  } = {},
+): Promise<ClaimedFeishuBitableSync | null> {
+  const now = input.now || new Date()
+  const staleAt = new Date(now.getTime() - Math.max(60_000, Number(input.lockTtlMs || 10 * 60 * 1000)))
+  const lockToken = randomUUID()
+  const claimed = await db.query<{ id: string }>(
+    `WITH candidate AS (
+      SELECT s.id
+      FROM feishu_bitable_syncs s
+      WHERE s.is_enabled = TRUE
+        AND s.archived_at IS NULL
+        AND s.schedule_enabled = TRUE
+        AND s.schedule_next_run_at IS NOT NULL
+        AND s.schedule_next_run_at <= $1::TIMESTAMPTZ
+        AND EXISTS (
+          SELECT 1
+          FROM feishu_bitable_sync_items i
+          WHERE i.sync_id = s.id
+            AND i.is_enabled = TRUE
+        )
+        AND (
+          s.schedule_lock_token IS NULL
+          OR s.schedule_locked_at IS NULL
+          OR s.schedule_locked_at < $2::TIMESTAMPTZ
+        )
+      ORDER BY s.schedule_next_run_at ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE feishu_bitable_syncs s
+    SET
+      schedule_lock_token = $3,
+      schedule_locked_at = NOW(),
+      updated_at = NOW()
+    FROM candidate
+    WHERE s.id = candidate.id
+    RETURNING s.id`,
+    [now.toISOString(), staleAt.toISOString(), lockToken],
+  )
+
+  const syncId = claimed.rows[0]?.id
+  if (!syncId)
+    return null
+
+  const sync = await getFeishuBitableSyncById(db, syncId)
+  if (!sync)
+    return null
+
+  return {
+    sync,
+    lockToken,
+  }
+}
+
+async function completeScheduledFeishuSyncExecutionInternal(
+  db: Queryable,
+  input: {
+    syncId: string
+    lockToken: string
+    nextRunAt: string | null
+    lastError: string
+    lastRunAt?: string
+  },
+): Promise<boolean> {
+  const result = await db.query<{ id: string }>(
+    `UPDATE feishu_bitable_syncs
+     SET
+       schedule_next_run_at = $3,
+       schedule_last_run_at = $4::TIMESTAMPTZ,
+       schedule_last_error = $5,
+       schedule_locked_at = NULL,
+       schedule_lock_token = NULL,
+       updated_at = NOW()
+     WHERE id = $1
+       AND schedule_lock_token = $2
+    RETURNING id`,
+    [
+      input.syncId,
+      input.lockToken,
+      input.nextRunAt,
+      input.lastRunAt || new Date().toISOString(),
+      String(input.lastError || '').slice(0, 1000),
+    ],
+  )
+  return Boolean(result.rows[0]?.id)
+}
+
+export async function completeScheduledFeishuSyncExecution(
+  db: Queryable,
+  input: {
+    syncId: string
+    lockToken: string
+    nextRunAt: string | null
+    lastError: string
+    lastRunAt?: string
+  },
+): Promise<boolean> {
+  return completeScheduledFeishuSyncExecutionInternal(db, input)
+}
+
+async function releaseFeishuSyncScheduleLockInternal(
+  db: Queryable,
+  input: {
+    syncId: string
+    lockToken: string
+  },
+): Promise<void> {
+  await db.query(
+    `UPDATE feishu_bitable_syncs
+     SET schedule_locked_at = NULL,
+         schedule_lock_token = NULL,
+         updated_at = NOW()
+     WHERE id = $1
+       AND schedule_lock_token = $2`,
+    [input.syncId, input.lockToken],
+  )
+}
+
+export async function releaseFeishuSyncScheduleLock(
+  db: Queryable,
+  input: {
+    syncId: string
+    lockToken: string
+  },
+): Promise<void> {
+  await releaseFeishuSyncScheduleLockInternal(db, input)
 }
 
 export async function claimNextDueFeishuBitableSyncItem(
