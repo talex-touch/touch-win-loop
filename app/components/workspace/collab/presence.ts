@@ -1,5 +1,5 @@
 import type { ProjectMemberRole } from '~~/shared/types/domain'
-import { resolveAvatarFallbackValue } from '../../../../shared/utils/user-avatar-fallback'
+import { resolveAvatarFallbackValue } from '~~/shared/utils/user-avatar-fallback'
 
 export type WorkspaceCollabPresenceActivityState = 'active' | 'background'
 

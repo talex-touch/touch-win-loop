@@ -6,13 +6,13 @@ import type {
   ProjectMemberRole,
   ProjectSource,
   WorkspaceWithQuota,
-} from '../../shared/types/domain'
+} from '~~/shared/types/domain'
 import {
   buildProjectMonogram,
   getProjectDisplayAccent,
   resolveProjectDisplayConfig,
-} from '../../shared/constants/project-display'
-import { resolveAvatarFallbackValue } from '../../shared/utils/user-avatar-fallback'
+} from '~~/shared/constants/project-display'
+import { resolveAvatarFallbackValue } from '~~/shared/utils/user-avatar-fallback'
 
 export interface TeamProjectCardMemberItem extends ProjectMemberPreviewSummary {
   avatarFallback: string
