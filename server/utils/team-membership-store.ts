@@ -442,5 +442,11 @@ export async function teamRemoveWorkspaceMember(
   }
 
   await teamRefreshSeatUsage(db, input.workspaceId)
+  const { emitWorkspaceMemberRemovedNotifications } = await import('~~/server/utils/notification-store')
+  await emitWorkspaceMemberRemovedNotifications(db, {
+    actorUser: input.actorUser,
+    workspaceId: input.workspaceId,
+    targetUserId: normalizedTargetUserId,
+  })
   return true
 }

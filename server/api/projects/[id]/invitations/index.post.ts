@@ -45,6 +45,16 @@ export default defineEventHandler(async (event) => {
         projectRole: body.projectRole,
         expiresAt,
       })
+      const { emitInvitationCreatedNotifications } = await import('~~/server/utils/notification-store')
+      await emitInvitationCreatedNotifications(db, {
+        actorUser: user,
+        workspaceId: String(invitation.workspaceId || invitation.teamId || '').trim(),
+        projectId,
+        inviteeUsername: String(body.inviteeUsername || '').trim() || null,
+        projectRole: invitation.projectRole || 'viewer',
+        expiresAt,
+        token,
+      })
       const snapshot = await getProjectMemberManagementSnapshot(db, projectId)
       if (!snapshot)
         throw new Error('PROJECT_NOT_FOUND')

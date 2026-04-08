@@ -142,6 +142,7 @@ async function ensureInvitationProjectMember(
     },
     targetUserId,
     role: normalizeInvitationProjectRole(invitation.project_role) || 'viewer',
+    source: 'invitation',
   })
 
   return projectId
