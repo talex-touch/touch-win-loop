@@ -44,8 +44,6 @@ export type ResourceCategory
 
 export type TimelineNodeType = 'registration' | 'submission' | 'preliminary' | 'final' | 'other'
 export type RubricScoringMode = 'weighted' | 'checklist'
-export type ContestSyncSourceType = 'csv_url'
-export type ContestSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 
 export interface ContestFaqItem {
   question: string
@@ -202,6 +200,58 @@ export interface Resource {
   updatedBy?: string
   createdAt?: string
   updatedAt?: string
+}
+
+export type ProjectResourceUploadSessionStatus
+  = | 'queued'
+    | 'uploading'
+    | 'paused'
+    | 'finalizing'
+    | 'completed'
+    | 'failed'
+    | 'canceled'
+
+export interface ProjectResourceUploadSession {
+  id: string
+  projectId: string
+  actorUserId?: string | null
+  fileName: string
+  mimeType: string
+  fileSize: number
+  lastModified: number
+  category: ResourceCategory
+  accessLevel: ResourceAvailability
+  title: string
+  summary: string
+  chunkSize: number
+  chunkCount: number
+  uploadedBytes: number
+  uploadedChunkCount: number
+  status: ProjectResourceUploadSessionStatus
+  errorCode?: string
+  errorMessage?: string
+  finalObjectKey?: string
+  finalStorageProvider?: string
+  resourceId?: string
+  previewStatus?: ResourcePreviewStatus
+  createdAt: string
+  updatedAt: string
+  expiresAt: string
+  completedAt?: string | null
+}
+
+export interface ProjectResourceUploadSessionListResult {
+  items: ProjectResourceUploadSession[]
+}
+
+export interface ProjectResourceUploadChunkAck {
+  sessionId: string
+  chunkIndex: number
+  uploadedBytes: number
+  uploadedChunkCount: number
+  chunkCount: number
+  progressPercent: number
+  status: ProjectResourceUploadSessionStatus
 }
 
 export interface ProjectResourceShare {
@@ -1118,7 +1168,6 @@ export interface AiWorkspaceResult {
 
 export type AdminAgentTaskType
   = 'publish_assistant'
-    | 'import_sync_analysis'
     | 'general'
 
 export type AdminDraftModule = 'overview' | 'tracks' | 'timelines' | 'track_timelines' | 'rubrics' | 'resources'
@@ -1132,16 +1181,13 @@ export interface AdminAgentRunRequest {
   context?: {
     trackId?: string
     major?: string
-    csvText?: string
-    sourceId?: string
-    sourceUrl?: string
     targetModule?: AdminDraftModule
   }
 }
 
 export interface AdminAgentArtifact {
   id: string
-  type: 'draft' | 'publish_fix' | 'import_sync'
+  type: 'draft' | 'publish_fix'
   title: string
   summary: string
   module?: AdminDraftModule
@@ -1161,38 +1207,6 @@ export type AdminAgentStreamEventType = 'progress' | 'tool' | 'delta' | 'artifac
 export interface AdminAgentStreamEvent {
   event: AdminAgentStreamEventType
   data: Record<string, unknown>
-}
-
-export interface ContestSyncSource {
-  id: string
-  name: string
-  sourceType: ContestSyncSourceType
-  sourceUrl: string
-  isActive: boolean
-  lastRunAt: string | null
-  createdByUserId: string
-  updatedByUserId: string
-  createdAt: string
-  updatedAt: string
-}
-
-export interface ContestSyncRun {
-  id: string
-  sourceId: string
-  sourceName: string
-  status: ContestSyncRunStatus
-  startedAt: string
-  finishedAt: string | null
-  previewTotal: number
-  previewValid: number
-  previewInvalid: number
-  createdCount: number
-  updatedCount: number
-  skippedCount: number
-  errorCount: number
-  errorMessage: string
-  createdByUserId: string
-  createdAt: string
 }
 
 export interface BillingPlan {

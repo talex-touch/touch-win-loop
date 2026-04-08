@@ -14,7 +14,6 @@ export type PlatformAiChannelKey
     | 'workspace_issue_discovery'
     | 'admin_general'
     | 'admin_publish_assistant'
-    | 'admin_import_sync_analysis'
 
 export interface PlatformAiProviderModelConfig {
   model: string
@@ -96,7 +95,6 @@ const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   { key: 'workspace_issue_discovery', label: '工作台-寻疑发现', description: '工作台问题扫描' },
   { key: 'admin_general', label: '管理助手-通用', description: '后台管理通用任务' },
   { key: 'admin_publish_assistant', label: '管理助手-发布助手', description: '赛事发布预检与修复建议' },
-  { key: 'admin_import_sync_analysis', label: '管理助手-导入同步', description: '导入与同步分析' },
 ]
 
 function toText(value: unknown): string {
