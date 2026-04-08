@@ -121,7 +121,7 @@ it('项目列表返回项目席位摘要，避免前端逐项目补请求', asyn
 
   assert.match(
     source,
-    /const \[bindings, projectSeatQuotaMap\] = await Promise\.all\(\[\s+loadProjectBindingsByIds\(db, projectIds\),\s+listProjectSeatQuotaSummaryByProjectIds\(db, projectIds\),\s+\]\)/,
+    /const \[bindings, projectSeatQuotaMap, projectMemberPreviewMap\] = await Promise\.all\(\[\s+loadProjectBindingsByIds\(db, projectIds\),\s+listProjectSeatQuotaSummaryByProjectIds\(db, projectIds\),\s+listProjectMemberPreviewByProjectIds\(db, projectIds\),\s+\]\)/,
     'loadProjectsFromRows 未批量加载项目席位摘要，可能导致前端 N+1 请求',
   )
   assert.match(
@@ -138,5 +138,20 @@ it('项目列表返回项目席位摘要，避免前端逐项目补请求', asyn
     domainSource,
     /projectSeatQuota\?: ProjectSeatQuotaSummary \| null/,
     'Project 类型未暴露 projectSeatQuota 摘要字段',
+  )
+  assert.match(
+    source,
+    /projectMemberPreviewMap\.get\(row\.id\) \|\| \[\]/,
+    'mapProject 未写入成员预览摘要，项目卡无法展示头像叠层',
+  )
+  assert.match(
+    domainSource,
+    /export interface ProjectMemberPreviewSummary \{\s+projectId: string\s+userId: string\s+username: string\s+role: ProjectMemberRole\s+avatarUrl\?: string \| null\s+\}/,
+    '共享类型缺少 ProjectMemberPreviewSummary 定义',
+  )
+  assert.match(
+    domainSource,
+    /memberPreview\?: ProjectMemberPreviewSummary\[\]/,
+    'Project 类型未暴露 memberPreview 摘要字段',
   )
 })
