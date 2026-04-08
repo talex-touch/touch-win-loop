@@ -24,12 +24,12 @@ function buildSessionTitle(contestName: string, trackName: string): string {
   const left = contestName.trim()
   const right = trackName.trim()
   if (left && right)
-    return `${left} · ${right}`
+    return `Loopy 对话 · ${left} · ${right}`
   if (left)
-    return left
+    return `Loopy 对话 · ${left}`
   if (right)
-    return right
-  return 'AI 对话'
+    return `Loopy 对话 · ${right}`
+  return 'Loopy 对话'
 }
 
 function normalizeTemperature(raw: unknown, fallback: number): number {

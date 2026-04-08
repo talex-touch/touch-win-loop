@@ -73,10 +73,10 @@ function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName
   const right = trackName.trim()
 
   const modeLabel = mode === 'auto_optimize'
-    ? '自动优化'
+    ? 'Loopy 自动优化'
     : mode === 'issue_discovery'
-      ? '寻疑发现'
-      : '对话询问'
+      ? 'Loopy 寻疑发现'
+      : 'Loopy 对话'
 
   if (left && right)
     return `${modeLabel} · ${left} · ${right}`

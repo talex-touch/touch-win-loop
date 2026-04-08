@@ -2,6 +2,7 @@
 import type {
   ApiResponse,
   AuthMeResult,
+  AuthUser,
   PlatformPermission,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
@@ -18,6 +19,7 @@ const shellScrollRef = ref<HTMLDivElement | null>(null)
 const searchQuery = ref('')
 const platformPermissions = ref<PlatformPermission[]>([])
 const analystName = ref(analystProfile.name)
+const analystAvatar = ref('')
 const isPlatformAdmin = ref(false)
 const workspaceOptions = ref<WorkspaceWithQuota[]>([])
 
@@ -57,6 +59,23 @@ const isWorkspaceFullscreen = computed(() => {
   return /^\/team\/[^/]+\/project\/[^/]+$/.test(normalizedPath)
 })
 
+const showLoopyFloating = computed(() => {
+  const normalizedPath = route.path.replace(/\/+$/, '') || '/'
+  if (normalizedPath === '/dashboard')
+    return false
+  if (/^\/team\/[^/]+\/project\/[^/]+$/.test(normalizedPath))
+    return false
+  if (/^\/team\/[^/]+$/.test(normalizedPath))
+    return true
+  if (normalizedPath === '/contests' || normalizedPath.startsWith('/contests/'))
+    return true
+  if (normalizedPath === '/resources' || normalizedPath.startsWith('/resources/'))
+    return true
+  if (normalizedPath === '/admin' || normalizedPath.startsWith('/admin/'))
+    return true
+  return false
+})
+
 useHead({
   link: [
     {
@@ -88,6 +107,7 @@ onMounted(async () => {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     platformPermissions.value = response.data.user.platformPermissions || []
     analystName.value = response.data.user.username || analystProfile.name
+    analystAvatar.value = response.data.user.avatarUrl || ''
     isPlatformAdmin.value = Boolean(response.data.user.isPlatformAdmin)
     if (Array.isArray(response.data.teams) && response.data.teams.length > 0) {
       workspaceOptions.value = response.data.teams.map(item => ({ workspace: item.team, quota: item.quota }))
@@ -99,6 +119,7 @@ onMounted(async () => {
   catch {
     platformPermissions.value = []
     analystName.value = analystProfile.name
+    analystAvatar.value = ''
     isPlatformAdmin.value = false
     workspaceOptions.value = []
   }
@@ -107,6 +128,26 @@ onMounted(async () => {
 function onWorkspaceCreated(workspace: WorkspaceWithQuota) {
   const nextOptions = workspaceOptions.value.filter(item => item.workspace.id !== workspace.workspace.id)
   workspaceOptions.value = [workspace, ...nextOptions]
+}
+
+function onWorkspaceUpdated(payload: { workspaceId: string, name: string }) {
+  workspaceOptions.value = workspaceOptions.value.map((item) => {
+    if (item.workspace.id !== payload.workspaceId)
+      return item
+
+    return {
+      ...item,
+      workspace: {
+        ...item.workspace,
+        name: payload.name,
+      },
+    }
+  })
+}
+
+function onUserUpdated(user: AuthUser) {
+  analystName.value = user.username || analystProfile.name
+  analystAvatar.value = user.avatarUrl || ''
 }
 
 watch(() => route.fullPath, async () => {
@@ -120,31 +161,42 @@ watch(() => route.fullPath, async () => {
 </script>
 
 <template>
-  <div
-    v-if="isWorkspaceFullscreen"
-    class="dashboard-shell workspace-fullscreen text-slate-900 bg-white h-screen inset-0 fixed overflow-hidden"
-  >
-    <slot />
-  </div>
+  <div class="contents">
+    <div
+      v-if="isWorkspaceFullscreen"
+      class="dashboard-shell workspace-fullscreen text-slate-900 bg-white h-screen inset-0 fixed overflow-hidden"
+    >
+      <slot />
+    </div>
 
-  <div v-else class="dashboard-shell text-slate-900 bg-[#f6f6f8] flex h-screen min-h-0 overflow-hidden">
-    <DashboardSidebar
-      :menu-items="menuItems"
-      :topics="hotTopics"
-      :analyst-name="analystName"
-      :analyst-tier="analystTier"
-      :show-admin-badge="showAdminBadge"
+    <div v-else class="dashboard-shell text-slate-900 bg-[#f6f6f8] flex h-screen min-h-0 overflow-hidden">
+      <DashboardSidebar
+        :menu-items="menuItems"
+        :topics="hotTopics"
+        :analyst-name="analystName"
+        :analyst-tier="analystTier"
+        :analyst-avatar="analystAvatar"
+        :show-admin-badge="showAdminBadge"
+        :is-platform-admin-user="isPlatformAdmin"
+        :workspace-options="workspaceOptions"
+        @workspace-created="onWorkspaceCreated"
+        @workspace-updated="onWorkspaceUpdated"
+        @user-updated="onUserUpdated"
+      />
+
+      <main class="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
+        <DashboardTopbar v-model="searchQuery" />
+
+        <div ref="shellScrollRef" class="dashboard-scrollbar p-4 flex-1 min-h-0 overflow-y-auto md:p-8">
+          <slot />
+        </div>
+      </main>
+    </div>
+
+    <LoopyFloatingEntry
+      v-show="showLoopyFloating"
       :workspace-options="workspaceOptions"
-      @workspace-created="onWorkspaceCreated"
     />
-
-    <main class="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
-      <DashboardTopbar v-model="searchQuery" />
-
-      <div ref="shellScrollRef" class="dashboard-scrollbar p-4 flex-1 min-h-0 overflow-y-auto md:p-8">
-        <slot />
-      </div>
-    </main>
   </div>
 </template>
 

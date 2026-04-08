@@ -8,6 +8,7 @@ const CHAT_STORE_FILE = resolve(process.cwd(), 'server/utils/chat-store.ts')
 const TEAM_SESSIONS_GET_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/index.get.ts')
 const TEAM_SESSIONS_POST_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/index.post.ts')
 const TEAM_MESSAGES_GET_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/[sessionId]/messages/index.get.ts')
+const TEAM_MESSAGES_POST_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/[sessionId]/messages/index.post.ts')
 const WORKSPACE_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const ADMIN_AGENT_PANEL_FILE = resolve(process.cwd(), 'app/components/admin/AdminAgentPanel.vue')
 
@@ -20,7 +21,7 @@ it('ai_chat_sessions 表包含 project_id 与 mode 字段', async () => {
   )
 })
 
-it('chat-store 支持按 project_id + mode 严格过滤会话', async () => {
+it('chat-store 支持按 project_id + mode 严格过滤会话，并为 workspace 级 dialog_ask 放开空 projectId', async () => {
   const source = await readFile(CHAT_STORE_FILE, 'utf8')
   assert.match(
     source,
@@ -29,38 +30,65 @@ it('chat-store 支持按 project_id + mode 严格过滤会话', async () => {
   )
   assert.match(
     source,
+    /if \(normalizedMode === 'dialog_ask'\)\s+return true/,
+    'strictScope 未允许 dialog_ask 在空 projectId 下继续使用',
+  )
+  assert.match(
+    source,
+    /const hasProjectFilter = input\.projectId !== undefined/,
+    'chat-store 未保留空 projectId 的严格过滤能力',
+  )
+  assert.match(
+    source,
     /where\.push\(`s\.project_id = \$\$\{values\.length\}`\)[\s\S]*where\.push\(`s\.mode = \$\$\{values\.length\}`\)/,
     'chat-store 查询缺少 project_id + mode 条件',
   )
 })
 
-it('team 会话 API 强制 projectId 与 mode 参数', async () => {
+it('team 会话 API 允许 dialog_ask 省略 projectId，其它模式仍强制 projectId', async () => {
   const getSource = await readFile(TEAM_SESSIONS_GET_FILE, 'utf8')
   const postSource = await readFile(TEAM_SESSIONS_POST_FILE, 'utf8')
 
   assert.match(
     getSource,
-    /if \(!workspaceId \|\| !projectId \|\| !mode\)/,
-    'Team 会话列表接口未强制 projectId/mode',
+    /if \(!workspaceId \|\| !mode \|\| \(mode !== 'dialog_ask' && !projectId\)\)/,
+    'Team 会话列表接口未放行 workspace 级 dialog_ask 或未保留其它模式的 projectId 校验',
   )
   assert.match(
     postSource,
-    /if \(!workspaceId \|\| !projectId \|\| !mode\)/,
-    'Team 创建会话接口未强制 projectId/mode',
+    /if \(!workspaceId \|\| !mode \|\| \(mode !== 'dialog_ask' && !projectId\)\)/,
+    'Team 创建会话接口未放行 workspace 级 dialog_ask 或未保留其它模式的 projectId 校验',
   )
 })
 
-it('team 消息读取接口按 projectId + mode 做严格校验', async () => {
-  const source = await readFile(TEAM_MESSAGES_GET_FILE, 'utf8')
+it('team 消息接口对 dialog_ask 放行空 projectId，并继续使用 strictScope 做作用域校验', async () => {
+  const getSource = await readFile(TEAM_MESSAGES_GET_FILE, 'utf8')
+  const postSource = await readFile(TEAM_MESSAGES_POST_FILE, 'utf8')
+
   assert.match(
-    source,
+    getSource,
+    /if \(!workspaceId \|\| !sessionId \|\| !mode \|\| \(mode !== 'dialog_ask' && !projectId\)\)/,
+    'Team 消息读取接口未放行 workspace 级 dialog_ask 或未保留其它模式的 projectId 校验',
+  )
+  assert.match(
+    postSource,
+    /if \(!workspaceId \|\| !sessionId \|\| !mode \|\| !content \|\| \(mode !== 'dialog_ask' && !projectId\)\)/,
+    'Team 消息写入接口未放行 workspace 级 dialog_ask 或未保留其它模式的 projectId 校验',
+  )
+  assert.match(
+    getSource,
     /getAiChatSessionById\([\s\S]*projectId,[\s\S]*mode,[\s\S]*strictScope: true/,
     'Team 消息读取接口未使用 strictScope 进行作用域校验',
   )
   assert.match(
-    source,
+    getSource,
     /listAiChatMessagesBySession\([\s\S]*projectId,[\s\S]*mode,[\s\S]*strictScope: true/,
     'Team 消息读取接口未按 projectId/mode 过滤消息',
+  )
+  assert.match(
+    postSource,
+    /getAiChatSessionById\([\s\S]*projectId,[\s\S]*mode,[\s\S]*strictScope: true/,
+    'Team 消息写入接口未按 strictScope 校验会话作用域',
   )
 })
 

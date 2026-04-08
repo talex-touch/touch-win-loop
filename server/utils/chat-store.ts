@@ -69,6 +69,21 @@ function normalizeChatSessionMode(value: unknown): WorkspaceAiMode {
   return 'dialog_ask'
 }
 
+function isStrictScopeSatisfied(
+  strictScope: boolean,
+  hasModeFilter: boolean,
+  normalizedMode: WorkspaceAiMode,
+  normalizedProjectId: string,
+): boolean {
+  if (!strictScope)
+    return true
+  if (!hasModeFilter)
+    return false
+  if (normalizedMode === 'dialog_ask')
+    return true
+  return Boolean(normalizedProjectId)
+}
+
 function mapChatSession(row: AiChatSessionRow): AiChatSession {
   return {
     id: row.id,
@@ -152,7 +167,7 @@ export async function createAiChatSession(
       normalizeProjectId(input.projectId),
       normalizeChatSessionMode(input.mode),
       input.createdByUserId,
-      String(input.title || '').trim() || 'AI 对话',
+      String(input.title || '').trim() || 'Loopy 对话',
       String(input.contestId || '').trim(),
       String(input.trackId || '').trim(),
       String(input.major || '').trim(),
@@ -178,7 +193,7 @@ export async function listAiChatSessionsByWorkspace(
   const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
   const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
 
-  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
     return []
 
   const limit = Math.max(1, Math.min(100, Number(input.limit || 20)))
@@ -245,7 +260,7 @@ export async function getAiChatSessionById(
   const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
   const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
 
-  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
     return null
 
   const where: string[] = ['s.workspace_id = $1', 's.id = $2']
@@ -310,7 +325,7 @@ export async function listAiChatMessagesBySession(
   const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
   const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
 
-  if (strictScope && (!normalizedProjectId || !hasModeFilter))
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
     return []
 
   const limit = Math.max(1, Math.min(500, Number(input.limit || 200)))
