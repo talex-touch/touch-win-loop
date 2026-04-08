@@ -19,7 +19,7 @@ it('dashboard layout 仅在指定业务页显示 Loopy 悬浮入口，并用 v-s
   assert.match(source, /<LoopyFloatingEntry[\s\S]*v-show="showLoopyFloating"/, 'dashboard layout 未挂载 Loopy 悬浮入口或未使用 v-show')
 })
 
-it('Loopy 悬浮面板保留只读问答形态，并统一走工作空间级消息记录', async () => {
+it('loopy 悬浮面板保留只读问答形态，并统一走工作空间级消息记录', async () => {
   const source = await readFile(LOOPY_FLOATING_FILE, 'utf8')
 
   assert.match(source, /data-testid="loopy-floating-trigger"/, 'Loopy 悬浮面板缺少悬浮触发器')

@@ -24,14 +24,14 @@ watch(() => props.workspaceId, (value) => {
     <button
       type="button"
       aria-label="打开通知中心"
-      class="border border-slate-200 rounded-xl bg-white shadow-sm flex items-center justify-center relative transition-colors hover:bg-slate-50"
+      class="border border-slate-200 rounded-xl bg-white flex shadow-sm transition-colors items-center justify-center relative hover:bg-slate-50"
       :class="props.compact ? 'h-8 w-8' : 'h-10 w-10'"
       @click="center.openDrawer"
     >
       <span class="material-symbols-outlined text-slate-600" :class="props.compact ? 'text-xl' : 'text-[22px]'">notifications</span>
       <span
         v-if="unreadCount > 0"
-        class="text-[10px] text-white rounded-full bg-rose-500 min-w-[16px] h-4 px-1 top-1 right-1 absolute flex items-center justify-center"
+        class="text-[10px] text-white px-1 rounded-full bg-rose-500 flex h-4 min-w-[16px] items-center right-1 top-1 justify-center absolute"
       >
         {{ unreadCount > 99 ? '99+' : unreadCount }}
       </span>

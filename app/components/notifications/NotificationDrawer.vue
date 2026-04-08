@@ -77,12 +77,12 @@ watch(() => props.workspaceId, (value) => {
       </div>
     </template>
 
-    <div class="h-full flex flex-col">
+    <div class="flex flex-col h-full">
       <div v-if="loading && items.length === 0" class="py-12 flex items-center justify-center">
         <a-spin />
       </div>
 
-      <div v-else-if="errorText && items.length === 0" class="text-[12px] text-rose-600 p-3 border border-rose-200 bg-rose-50 rounded">
+      <div v-else-if="errorText && items.length === 0" class="text-[12px] text-rose-600 p-3 border border-rose-200 rounded bg-rose-50">
         {{ errorText }}
       </div>
 
@@ -90,12 +90,12 @@ watch(() => props.workspaceId, (value) => {
         <a-empty description="当前没有可展示的通知" />
       </div>
 
-      <div v-else class="space-y-2 overflow-y-auto">
+      <div v-else class="overflow-y-auto space-y-2">
         <button
           v-for="item in items"
           :key="item.id"
           type="button"
-          class="text-left p-3 border rounded-lg w-full transition-colors"
+          class="p-3 text-left border rounded-lg w-full transition-colors"
           :class="normalizeString(item.readAt)
             ? 'border-slate-200 bg-white hover:bg-slate-50'
             : 'border-blue-200 bg-blue-50/70 hover:bg-blue-50'"
@@ -107,17 +107,17 @@ watch(() => props.workspaceId, (value) => {
                 <span class="text-[10px] text-slate-500 px-1.5 py-0.5 border border-slate-200 rounded bg-white">
                   {{ categoryLabel(item) }}
                 </span>
-                <span v-if="!normalizeString(item.readAt)" class="border border-white rounded-full bg-rose-500 h-2 w-2 shrink-0" />
+                <span v-if="!normalizeString(item.readAt)" class="border border-white rounded-full bg-rose-500 shrink-0 h-2 w-2" />
               </div>
               <p class="text-[13px] text-slate-900 font-semibold m-0 mt-2">
                 {{ item.title }}
               </p>
-              <p class="text-[12px] text-slate-600 m-0 mt-1 leading-5 whitespace-pre-wrap">
+              <p class="text-[12px] text-slate-600 leading-5 m-0 mt-1 whitespace-pre-wrap">
                 {{ item.body }}
               </p>
               <p
                 v-if="normalizeString(item.payload?.fullBody) && normalizeString(item.payload?.fullBody) !== item.body"
-                class="text-[11px] text-slate-500 m-0 mt-1 leading-5 line-clamp-3"
+                class="text-[11px] text-slate-500 leading-5 m-0 mt-1 line-clamp-3"
               >
                 {{ item.payload?.fullBody }}
               </p>
@@ -132,7 +132,7 @@ watch(() => props.workspaceId, (value) => {
         </button>
       </div>
 
-      <div class="pt-3 mt-3 border-t border-slate-100">
+      <div class="mt-3 pt-3 border-t border-slate-100">
         <a-button
           long
           type="outline"

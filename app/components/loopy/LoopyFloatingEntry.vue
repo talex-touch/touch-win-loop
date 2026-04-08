@@ -33,7 +33,7 @@ const preferredWorkspaceId = computed(() => {
 })
 
 const selectedWorkspace = computed(() => {
-  return props.workspaceOptions.find(item => item.workspace.id === loopySelectedWorkspaceId.value) || null
+  return props.workspaceOptions.find(item => item.workspace.id === preferredWorkspaceId.value) || null
 })
 
 const loopyState = useLoopyDialog({
@@ -113,7 +113,7 @@ function togglePanel() {
           </div>
 
           <button
-            class="text-slate-400 rounded-lg flex h-8 w-8 items-center justify-center transition-colors hover:bg-slate-100 hover:text-slate-700"
+            class="text-slate-400 rounded-lg flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-700 hover:bg-slate-100"
             type="button"
             aria-label="关闭 Loopy"
             @click="panelVisible = false"
@@ -423,7 +423,9 @@ function togglePanel() {
 
 .loopy-panel-enter-active,
 .loopy-panel-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .loopy-panel-enter-from,

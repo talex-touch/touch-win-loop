@@ -17,6 +17,7 @@ const loading = ref(true)
 const errorText = ref('')
 const workspaceOptions = ref<WorkspaceWithQuota[]>([])
 const messageScrollRef = ref<HTMLDivElement | null>(null)
+const hasAvailableWorkspace = computed(() => workspaceOptions.value.length > 0)
 
 const suggestionPrompts = [
   '帮我梳理当前工作空间里最值得优先关注的事项。',
@@ -27,7 +28,7 @@ const suggestionPrompts = [
 
 const loopyState = useLoopyDialog({
   getGreeting: () => {
-    if (!loopySelectedWorkspaceId.value)
+    if (!hasAvailableWorkspace.value)
       return '我是 Loopy。当前没有可用工作区，暂时无法开始对话。'
     return '我是 Loopy。当前工作空间已配备 AI 能力，你可以随时问我项目、赛事、资料和协作问题。'
   },
@@ -115,20 +116,20 @@ onMounted(() => {
 
 <template>
   <section
-    class="mx-auto flex h-full min-h-0 max-w-7xl overflow-y-auto lg:overflow-hidden"
+    class="mx-auto flex h-full max-w-7xl min-h-0 overflow-y-auto lg:overflow-hidden"
     data-testid="dashboard-loopy-home"
   >
-    <div class="grid h-full min-h-0 w-full gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+    <div class="gap-6 grid h-full min-h-0 w-full lg:grid-cols-[300px_minmax(0,1fr)]">
       <aside
         data-testid="dashboard-loopy-sidebar"
-        class="flex min-h-0 flex-col overflow-hidden border border-slate-200 rounded-3xl bg-white lg:h-full"
+        class="border border-slate-200 rounded-3xl bg-white flex flex-col min-h-0 overflow-hidden lg:h-full"
       >
-        <div class="flex shrink-0 items-center justify-between border-b border-slate-100 p-5">
+        <div class="p-5 border-b border-slate-100 flex shrink-0 items-center justify-between">
           <div>
-            <p class="text-[11px] text-blue-700 font-semibold tracking-[0.18em] uppercase">
+            <p class="text-[11px] text-blue-700 tracking-[0.18em] font-semibold uppercase">
               Loopy
             </p>
-            <h1 class="mt-2 text-lg text-slate-950 font-semibold">
+            <h1 class="text-lg text-slate-950 font-semibold mt-2">
               消息记录
             </h1>
           </div>
@@ -144,13 +145,13 @@ onMounted(() => {
 
         <div
           data-testid="dashboard-loopy-session-list"
-          class="flex-1 min-h-0 overflow-y-auto p-4"
+          class="p-4 flex-1 min-h-0 overflow-y-auto"
         >
           <div v-if="loading" class="space-y-2">
             <div
               v-for="index in 6"
               :key="`dashboard-loopy-session-skeleton-${index}`"
-              class="h-14 rounded-2xl bg-slate-100 animate-pulse"
+              class="rounded-2xl bg-slate-100 h-14 animate-pulse"
             />
           </div>
 
@@ -166,33 +167,33 @@ onMounted(() => {
               <span class="line-clamp-2">{{ session.title }}</span>
             </button>
 
-            <p v-if="loopySessions.length === 0" class="px-2 py-3 text-xs text-slate-400 leading-5">
+            <p v-if="loopySessions.length === 0" class="text-xs text-slate-400 leading-5 px-2 py-3">
               还没有历史会话，发起第一轮提问即可。
             </p>
           </div>
         </div>
       </aside>
 
-      <section class="flex min-h-0 flex-col overflow-hidden border border-slate-200 rounded-3xl bg-white lg:h-full">
-        <header class="shrink-0 border-b border-slate-100 p-6">
-          <p class="text-[11px] text-blue-700 font-semibold tracking-[0.18em] uppercase">
+      <section class="border border-slate-200 rounded-3xl bg-white flex flex-col min-h-0 overflow-hidden lg:h-full">
+        <header class="p-6 border-b border-slate-100 shrink-0">
+          <p class="text-[11px] text-blue-700 tracking-[0.18em] font-semibold uppercase">
             Loopy
           </p>
-          <h2 class="mt-3 text-2xl text-slate-950 font-semibold">
+          <h2 class="text-2xl text-slate-950 font-semibold mt-3">
             {{ chatPanelTitle }}
           </h2>
-          <p class="mt-2 text-sm text-slate-500 leading-6">
+          <p class="text-sm text-slate-500 leading-6 mt-2">
             {{ chatPanelSubtitle }}
           </p>
         </header>
 
-        <div v-if="loading" class="flex-1 p-6 space-y-3">
+        <div v-if="loading" class="p-6 flex-1 space-y-3">
           <div class="rounded-2xl bg-slate-100 h-16 animate-pulse" />
-          <div class="rounded-2xl bg-slate-100 h-16 animate-pulse w-10/12" />
-          <div class="rounded-2xl bg-slate-100 h-16 animate-pulse w-8/12" />
+          <div class="rounded-2xl bg-slate-100 h-16 w-10/12 animate-pulse" />
+          <div class="rounded-2xl bg-slate-100 h-16 w-8/12 animate-pulse" />
         </div>
 
-        <div v-else class="flex flex-1 min-h-0 flex-col overflow-hidden">
+        <div v-else class="flex flex-1 flex-col min-h-0 overflow-hidden">
           <p v-if="loopyStatusText" class="text-xs text-blue-700 px-6 py-3 border-b border-blue-50 bg-blue-50/70">
             {{ loopyStatusText }}
           </p>
@@ -203,7 +204,7 @@ onMounted(() => {
           <div
             ref="messageScrollRef"
             data-testid="dashboard-loopy-messages"
-            class="flex-1 min-h-0 overflow-y-auto px-6 py-6"
+            class="px-6 py-6 flex-1 min-h-0 overflow-y-auto"
           >
             <div class="space-y-4">
               <div
@@ -221,10 +222,10 @@ onMounted(() => {
               </div>
 
               <section v-if="loopyShowSuggestions && loopySelectedWorkspaceId" class="space-y-3">
-                <div class="text-[11px] text-slate-400 font-semibold tracking-[0.18em] uppercase">
+                <div class="text-[11px] text-slate-400 tracking-[0.18em] font-semibold uppercase">
                   推荐起手问题
                 </div>
-                <div class="grid gap-3 xl:grid-cols-2">
+                <div class="gap-3 grid xl:grid-cols-2">
                   <button
                     v-for="question in suggestionPrompts"
                     :key="question"
@@ -240,7 +241,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <footer class="shrink-0 border-t border-slate-100 p-6">
+          <footer class="p-6 border-t border-slate-100 shrink-0">
             <div class="relative">
               <textarea
                 :value="loopyChatInput"

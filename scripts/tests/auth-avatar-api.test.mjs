@@ -3,16 +3,16 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 import {
+  USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES,
+  USER_AVATAR_UPLOAD_TYPES_LABEL,
+} from '../../shared/constants/user-avatar-upload.ts'
+import {
   buildManualAuthAvatarPath,
   buildUserAvatarObjectKey,
   isManualAuthAvatarUrl,
   isManualAuthAvatarUrlForUser,
   resolveManualAuthAvatarExtension,
 } from '../../shared/utils/user-avatar.ts'
-import {
-  USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES,
-  USER_AVATAR_UPLOAD_TYPES_LABEL,
-} from '../../shared/constants/user-avatar-upload.ts'
 
 const AVATAR_POST_FILE = resolve(process.cwd(), 'server/api/auth/avatar.post.ts')
 const AVATAR_DELETE_FILE = resolve(process.cwd(), 'server/api/auth/avatar.delete.ts')

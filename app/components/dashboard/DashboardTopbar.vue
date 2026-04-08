@@ -20,7 +20,7 @@ function onInput(event: Event) {
 
 <template>
   <header class="px-4 pr-20 border-b border-blue-100 bg-white shrink-0 h-16 relative overflow-visible md:px-8 md:pr-24">
-    <div class="flex gap-4 max-w-xl min-w-0 h-full items-center">
+    <div class="flex gap-4 h-full max-w-xl min-w-0 items-center">
       <NuxtLink to="/dashboard" class="text-white rounded-lg bg-blue-700 flex shrink-0 h-10 w-10 items-center justify-center lg:hidden">
         <span class="material-symbols-outlined text-lg">dashboard</span>
       </NuxtLink>
@@ -36,7 +36,7 @@ function onInput(event: Event) {
       </div>
     </div>
 
-    <div class="top-1/2 right-4 absolute z-20 -translate-y-1/2 md:right-8">
+    <div class="right-4 top-1/2 absolute z-20 -translate-y-1/2 md:right-8">
       <NotificationBellButton :workspace-id="workspaceId" />
     </div>
   </header>

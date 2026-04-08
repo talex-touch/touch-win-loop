@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
-import { buildManualAuthAvatarPath } from '../../shared/utils/user-avatar.ts'
 import { syncProvisionedUserAvatar } from '../../server/services/auth/user-avatar-sync.ts'
+import { buildManualAuthAvatarPath } from '../../shared/utils/user-avatar.ts'
 
 const FEISHU_PROVISION_FILE = resolve(process.cwd(), 'server/services/feishu/user-provision.ts')
 const CASDOOR_PROVISION_FILE = resolve(process.cwd(), 'server/services/casdoor/user-provision.ts')

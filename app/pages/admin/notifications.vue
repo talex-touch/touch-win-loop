@@ -105,10 +105,10 @@ onMounted(loadContext)
         Publish Notification
       </div>
 
-      <form class="p-3 grid gap-3 md:grid-cols-2" @submit.prevent="submitForm">
+      <form class="p-3 gap-3 grid md:grid-cols-2" @submit.prevent="submitForm">
         <label class="block">
-          <span class="text-[11px] text-slate-600 block mb-1">受众范围</span>
-          <select v-model="form.scope" class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white">
+          <span class="text-[11px] text-slate-600 mb-1 block">受众范围</span>
+          <select v-model="form.scope" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full">
             <option value="global">
               全局
             </option>
@@ -119,8 +119,8 @@ onMounted(loadContext)
         </label>
 
         <label v-if="form.scope === 'workspace'" class="block">
-          <span class="text-[11px] text-slate-600 block mb-1">目标 workspace</span>
-          <select v-model="form.workspaceId" class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white">
+          <span class="text-[11px] text-slate-600 mb-1 block">目标 workspace</span>
+          <select v-model="form.workspaceId" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full">
             <option value="">
               请选择
             </option>
@@ -131,39 +131,39 @@ onMounted(loadContext)
         </label>
 
         <label class="block md:col-span-2">
-          <span class="text-[11px] text-slate-600 block mb-1">标题</span>
-          <input v-model="form.title" class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white" maxlength="80">
+          <span class="text-[11px] text-slate-600 mb-1 block">标题</span>
+          <input v-model="form.title" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full" maxlength="80">
         </label>
 
         <label class="block md:col-span-2">
-          <span class="text-[11px] text-slate-600 block mb-1">摘要</span>
-          <input v-model="form.summary" class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white" maxlength="160">
+          <span class="text-[11px] text-slate-600 mb-1 block">摘要</span>
+          <input v-model="form.summary" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full" maxlength="160">
         </label>
 
         <label class="block md:col-span-2">
-          <span class="text-[11px] text-slate-600 block mb-1">正文</span>
+          <span class="text-[11px] text-slate-600 mb-1 block">正文</span>
           <textarea
             v-model="form.body"
-            class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white min-h-[140px]"
-          ></textarea>
+            class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white min-h-[140px] w-full"
+          />
         </label>
 
         <label class="block">
-          <span class="text-[11px] text-slate-600 block mb-1">生效时间</span>
-          <input v-model="form.effectiveAt" type="datetime-local" class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white">
+          <span class="text-[11px] text-slate-600 mb-1 block">生效时间</span>
+          <input v-model="form.effectiveAt" type="datetime-local" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full">
         </label>
 
         <label class="block">
-          <span class="text-[11px] text-slate-600 block mb-1">失效时间</span>
-          <input v-model="form.expiresAt" type="datetime-local" class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white">
+          <span class="text-[11px] text-slate-600 mb-1 block">失效时间</span>
+          <input v-model="form.expiresAt" type="datetime-local" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full">
         </label>
 
         <label class="block md:col-span-2">
-          <span class="text-[11px] text-slate-600 block mb-1">跳转链接（可选）</span>
-          <input v-model="form.actionUrl" class="w-full text-[12px] px-2 py-2 border border-slate-200 rounded bg-white" placeholder="/admin/contests">
+          <span class="text-[11px] text-slate-600 mb-1 block">跳转链接（可选）</span>
+          <input v-model="form.actionUrl" class="text-[12px] px-2 py-2 border border-slate-200 rounded bg-white w-full" placeholder="/admin/contests">
         </label>
 
-        <div class="md:col-span-2 flex gap-2 items-center">
+        <div class="flex gap-2 items-center md:col-span-2">
           <button
             type="submit"
             class="text-[12px] text-white font-semibold px-3 py-2 rounded bg-slate-900 disabled:opacity-60"
