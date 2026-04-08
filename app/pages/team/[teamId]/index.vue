@@ -4,6 +4,7 @@ import type {
   AuthMeResult,
   Contest,
   Project,
+  ProjectTopicBoardCreateSeed,
   WorkspaceBillingEstimate,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
@@ -58,10 +59,23 @@ const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
 const createDialogVisible = ref(false)
 const creatingProject = ref(false)
 const createErrorText = ref('')
+const TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX = 'workspace.topicBoardSeed.'
+
+function createEmptyTopicBoardSeed(): ProjectTopicBoardCreateSeed {
+  return {
+    keywords: [],
+    teamSkillTags: [],
+    candidateCount: 3,
+    source: 'project_create',
+    autoGenerate: true,
+  }
+}
+
 const createForm = reactive({
   title: '',
   summary: '',
   contestIds: [] as string[],
+  topicBoardSeed: createEmptyTopicBoardSeed(),
 })
 
 const workspaceOptions = computed<WorkspaceWithQuota[]>(() => {
@@ -234,9 +248,20 @@ async function submitQuickCreate() {
     const created = response.data
     const createdWorkspaceId = String(created.teamId || created.workspaceId || '').trim() || workspaceId
 
+    if (process.client && createForm.topicBoardSeed.autoGenerate !== false) {
+      window.sessionStorage.setItem(
+        `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${created.id}`,
+        JSON.stringify({
+          ...createForm.topicBoardSeed,
+          contestId: createForm.contestIds[0] || '',
+        } satisfies ProjectTopicBoardCreateSeed),
+      )
+    }
+
     createForm.title = ''
     createForm.summary = ''
     createForm.contestIds = []
+    createForm.topicBoardSeed = createEmptyTopicBoardSeed()
     createDialogVisible.value = false
     writeActiveWorkspacePreference(createdWorkspaceId)
 
@@ -391,6 +416,7 @@ onMounted(async () => {
       :project-title="createForm.title"
       :summary="createForm.summary"
       :contest-ids="createForm.contestIds"
+      :topic-board-seed="createForm.topicBoardSeed"
       :contests="contests"
       :error-text="createErrorText"
       :submitting="creatingProject"
@@ -400,6 +426,7 @@ onMounted(async () => {
       @update:project-title="createForm.title = $event"
       @update:summary="createForm.summary = $event"
       @update:contest-ids="createForm.contestIds = $event"
+      @update:topic-board-seed="createForm.topicBoardSeed = $event"
     />
   </div>
 </template>

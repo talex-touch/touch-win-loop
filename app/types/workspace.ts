@@ -38,6 +38,15 @@ export interface WorkspaceFormState {
   summary: string
 }
 
+export interface WorkspaceTopicBoardDraft {
+  discipline: string
+  topicType: string
+  expectedDifficulty: string
+  keywordsText: string
+  teamSkillTagsText: string
+  candidateCount: number
+}
+
 export interface WorkspaceStatusToneMeta {
   label: string
   badgeClass: string

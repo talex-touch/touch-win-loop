@@ -8,9 +8,11 @@ import type {
   ProjectMemberRole,
   ProjectMemberSummary,
   ProjectResourceShare,
+  ProjectTopicBoard,
   Resource,
   ResourcePreviewStatus,
   Track,
+  TopicProposalDecisionStatus,
   WorkspaceType,
 } from '~~/shared/types/domain'
 import type {
@@ -68,6 +70,9 @@ const props = withDefaults(defineProps<{
   trendBars?: number[]
   formState?: WorkspaceFormState
   formSubmitting?: boolean
+  topicBoard?: ProjectTopicBoard | null
+  topicBoardLoading?: boolean
+  topicBoardActioningCandidateId?: string
   activeProject?: Project | null
   workspaceName?: string
   workspaceType?: WorkspaceType | ''
@@ -147,6 +152,9 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   formSubmitting: false,
+  topicBoard: null,
+  topicBoardLoading: false,
+  topicBoardActioningCandidateId: '',
   activeProject: null,
   workspaceName: '',
   workspaceType: '',
@@ -208,6 +216,11 @@ const emit = defineEmits<{
   'update:topK': [value: number]
   'update:formState': [value: WorkspaceFormState]
   'submitProjectForContest': [value: { contestId: string, trackId: string }]
+  'generateTopicBoard': []
+  'updateTopicBoardCandidateStatus': [value: { candidateId: string, decisionStatus: TopicProposalDecisionStatus }]
+  'selectTopicBoardCandidate': [candidateId: string]
+  'sendTopicBoardCandidateToChat': [candidateId: string]
+  'applyTopicBoardCandidateToForm': [candidateId: string]
   'update:projectSettingsCommon': [value: WorkspaceProjectCommonForm]
   'update:projectSettingsBindings': [value: WorkspaceProjectContestBindingForm[]]
   'update:projectSettingsAdaptation': [value: WorkspaceProjectAdaptationForm]
@@ -650,6 +663,57 @@ const linkedContestEntries = computed<LinkedContestEntry[]>(() => {
 
   return result
 })
+
+const activeTopicBoardCandidate = computed(() => {
+  const board = props.topicBoard
+  if (!board || board.candidates.length === 0)
+    return null
+
+  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
+  return board.candidates.find(item => item.candidateId === selectedCandidateId)
+    || board.candidates[0]
+    || null
+})
+
+const topicBoardDecisionSummary = computed(() => {
+  const board = props.topicBoard
+  if (!board)
+    return {
+      shortlisted: 0,
+      rejected: 0,
+      selected: '',
+    }
+
+  return {
+    shortlisted: board.candidates.filter(item => item.decisionStatus === 'shortlisted').length,
+    rejected: board.candidates.filter(item => item.decisionStatus === 'rejected').length,
+    selected: activeTopicBoardCandidate.value?.payload.title || '',
+  }
+})
+
+function topicBoardDecisionLabel(status: TopicProposalDecisionStatus): string {
+  if (status === 'selected')
+    return '主推'
+  if (status === 'shortlisted')
+    return '短名单'
+  if (status === 'rejected')
+    return '淘汰'
+  return '待评估'
+}
+
+function topicBoardDecisionClass(status: TopicProposalDecisionStatus): string {
+  if (status === 'selected')
+    return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  if (status === 'shortlisted')
+    return 'bg-blue-50 text-blue-700 border-blue-200'
+  if (status === 'rejected')
+    return 'bg-rose-50 text-rose-700 border-rose-200'
+  return 'bg-slate-50 text-slate-600 border-slate-200'
+}
+
+function isTopicBoardCandidateActing(candidateId: string): boolean {
+  return String(props.topicBoardActioningCandidateId || '').trim() === String(candidateId || '').trim()
+}
 
 function findFixedTab(tabId: WorkspaceFixedTabId): WorkspaceMainTab | undefined {
   return fixedTabs.find(tab => tab.id === tabId)
@@ -1744,6 +1808,191 @@ watch(activeTabId, (next) => {
               </div>
             </li>
           </ol>
+        </div>
+
+        <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div class="flex gap-3 items-center">
+              <span class="material-symbols-outlined text-xl text-violet-600">psychology</span>
+              <div>
+                <h2 class="text-sm font-bold">
+                  AI 智能选题板
+                </h2>
+                <div class="text-[11px] text-slate-500 mt-0.5">
+                  先生成 3-5 个候选题，再做对比、主推决策与草案回填。
+                </div>
+              </div>
+            </div>
+            <button
+              class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="topicBoardLoading"
+              type="button"
+              @click="emit('generateTopicBoard')"
+            >
+              {{ topicBoardLoading ? '生成中...' : (topicBoard ? '更新选题板' : '生成选题板') }}
+            </button>
+          </div>
+
+          <div v-if="topicBoardLoading" class="p-4 text-xs text-slate-500">
+            正在基于当前竞赛、资料与团队标签生成候选题，请稍候...
+          </div>
+
+          <div v-else-if="topicBoard && topicBoard.candidates.length > 0" class="p-4 space-y-4">
+            <div class="gap-3 grid grid-cols-1 xl:grid-cols-[1.2fr,0.8fr]">
+              <section class="p-3 border border-slate-200 rounded bg-slate-50">
+                <p class="text-[11px] text-slate-600 font-semibold">
+                  看板摘要
+                </p>
+                <p class="text-sm text-slate-800 font-semibold mt-1">
+                  {{ topicBoard.boardSummary || '已生成候选题，可继续评估。' }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-2">
+                  团队技能画像：{{ topicBoard.teamSkillProfile.length > 0 ? topicBoard.teamSkillProfile.join('、') : '尚未录入' }}
+                </p>
+              </section>
+
+              <section class="p-3 border border-slate-200 rounded bg-slate-50">
+                <p class="text-[11px] text-slate-600 font-semibold">
+                  决策条
+                </p>
+                <p class="text-sm text-slate-800 font-semibold mt-1">
+                  主推题：{{ topicBoardDecisionSummary.selected || '待选择' }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-2">
+                  短名单 {{ topicBoardDecisionSummary.shortlisted }} 个 · 淘汰 {{ topicBoardDecisionSummary.rejected }} 个
+                </p>
+              </section>
+            </div>
+
+            <div class="gap-3 grid grid-cols-1 xl:grid-cols-2">
+              <article
+                v-for="candidate in topicBoard.candidates"
+                :key="candidate.candidateId"
+                class="border rounded-lg bg-white p-4"
+                :class="candidate.decisionStatus === 'selected' ? 'border-emerald-200 shadow-sm' : 'border-slate-200'"
+              >
+                <div class="flex flex-wrap gap-2 items-start justify-between">
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm text-slate-900 font-semibold">
+                      {{ candidate.payload.title }}
+                    </p>
+                    <p class="text-[11px] text-slate-500 mt-1">
+                      总分 {{ candidate.payload.totalScore }} · 推荐赛道 {{ candidate.payload.recommendedTrackName || '沿用当前赛道' }}
+                    </p>
+                  </div>
+                  <span
+                    class="text-[10px] font-semibold px-2 py-0.5 rounded-full border"
+                    :class="topicBoardDecisionClass(candidate.decisionStatus)"
+                  >
+                    {{ topicBoardDecisionLabel(candidate.decisionStatus) }}
+                  </span>
+                </div>
+
+                <div class="mt-3 space-y-2 text-[11px] text-slate-600">
+                  <p>创新点：{{ candidate.payload.innovationPoints.slice(0, 2).join('；') || '待补充' }}</p>
+                  <p>预估工作量：{{ candidate.payload.estimatedWorkload }}</p>
+                  <p>能力匹配：{{ candidate.payload.teamMatchScore }} / 100</p>
+                  <p>风险提示：{{ candidate.payload.risks.slice(0, 2).join('；') || '待补充' }}</p>
+                  <p>相似往届作品：{{ candidate.payload.similarAwards.slice(0, 2).map(item => item.title).join('；') || '未命中高相似作品' }}</p>
+                  <p>证据摘要：{{ candidate.payload.evidenceRefs.slice(0, 2).map(item => item.title).join('；') || '当前以内部资料生成，待继续补证' }}</p>
+                </div>
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-blue-200 bg-blue-50 text-blue-700 disabled:opacity-40"
+                    :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
+                    type="button"
+                    @click="emit('updateTopicBoardCandidateStatus', { candidateId: candidate.candidateId, decisionStatus: 'shortlisted' })"
+                  >
+                    短名单
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-rose-200 bg-rose-50 text-rose-700 disabled:opacity-40"
+                    :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
+                    type="button"
+                    @click="emit('updateTopicBoardCandidateStatus', { candidateId: candidate.candidateId, decisionStatus: 'rejected' })"
+                  >
+                    淘汰
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 disabled:opacity-40"
+                    :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
+                    type="button"
+                    @click="emit('selectTopicBoardCandidate', candidate.candidateId)"
+                  >
+                    设为主推
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700"
+                    type="button"
+                    @click="emit('sendTopicBoardCandidateToChat', candidate.candidateId)"
+                  >
+                    发送到右侧 AI
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700"
+                    type="button"
+                    @click="emit('applyTopicBoardCandidateToForm', candidate.candidateId)"
+                  >
+                    写入项目草案
+                  </button>
+                </div>
+              </article>
+            </div>
+
+            <section class="border border-slate-200 rounded bg-slate-50/60 overflow-hidden">
+              <div class="px-3 py-2 border-b border-slate-200 bg-white text-[11px] text-slate-600 font-semibold">
+                对比决策矩阵
+              </div>
+              <div class="overflow-x-auto">
+                <table class="min-w-180 w-full text-[11px] text-left border-collapse">
+                  <thead>
+                    <tr class="bg-slate-50 text-slate-500">
+                      <th class="px-3 py-2 border-b border-slate-200">候选题</th>
+                      <th class="px-3 py-2 border-b border-slate-200">竞赛适配</th>
+                      <th class="px-3 py-2 border-b border-slate-200">新颖度</th>
+                      <th class="px-3 py-2 border-b border-slate-200">证据完备</th>
+                      <th class="px-3 py-2 border-b border-slate-200">趋势热度</th>
+                      <th class="px-3 py-2 border-b border-slate-200">团队匹配</th>
+                      <th class="px-3 py-2 border-b border-slate-200">工作量</th>
+                      <th class="px-3 py-2 border-b border-slate-200">总分</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-200">
+                    <tr
+                      v-for="row in topicBoard.compareMatrix"
+                      :key="row.candidateId"
+                      class="bg-white"
+                    >
+                      <td class="px-3 py-2">
+                        <p class="font-semibold text-slate-800">{{ row.title }}</p>
+                        <p class="text-[10px] text-slate-500 mt-1">#{{ row.rank }} · {{ topicBoardDecisionLabel(row.decisionStatus) }}</p>
+                      </td>
+                      <td class="px-3 py-2">{{ row.contestFit }}</td>
+                      <td class="px-3 py-2">{{ row.noveltySimilarity }}</td>
+                      <td class="px-3 py-2">{{ row.evidenceReadiness }}</td>
+                      <td class="px-3 py-2">{{ row.trendHeat }}</td>
+                      <td class="px-3 py-2">{{ row.teamMatch }}</td>
+                      <td class="px-3 py-2">{{ row.workloadFeasibility }}</td>
+                      <td class="px-3 py-2 font-semibold text-slate-800">{{ row.totalScore }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <div v-else class="p-4 text-xs text-slate-500 space-y-3">
+            <p>当前项目还没有选题板。建议在左侧补齐领域、题目类型、关键词和团队技能后生成首版候选题。</p>
+            <button
+              class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="topicBoardLoading"
+              type="button"
+              @click="emit('generateTopicBoard')"
+            >
+              立即生成
+            </button>
+          </div>
         </div>
 
         <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
