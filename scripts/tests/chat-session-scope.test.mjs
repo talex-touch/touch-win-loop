@@ -11,6 +11,7 @@ const TEAM_MESSAGES_GET_FILE = resolve(process.cwd(), 'server/api/teams/[id]/cha
 const TEAM_MESSAGES_POST_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/[sessionId]/messages/index.post.ts')
 const WORKSPACE_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const ADMIN_AGENT_PANEL_FILE = resolve(process.cwd(), 'app/components/admin/AdminAgentPanel.vue')
+const WORKSPACE_STREAM_FILE = resolve(process.cwd(), 'server/api/ai/workspace/stream.post.ts')
 
 it('ai_chat_sessions 表包含 project_id 与 mode 字段', async () => {
   const source = await readFile(DB_FILE, 'utf8')
@@ -103,6 +104,26 @@ it('项目页会话请求携带 projectId + mode 并在切模式时重载会话'
     source,
     /watch\(aiMode,[\s\S]*await loadChatSessions\(\)/,
     '项目页切换模式后未重载会话作用域',
+  )
+})
+
+it('workspace dialog_ask 会话标题使用首条用户消息摘要，后续消息不覆盖', async () => {
+  const source = await readFile(WORKSPACE_STREAM_FILE, 'utf8')
+
+  assert.match(
+    source,
+    /function buildDialogSessionTitleFromMessage\(message: string\): string \{/,
+    'workspace 流接口缺少基于首条用户消息生成标题的逻辑',
+  )
+  assert.match(
+    source,
+    /if \(input\.mode === 'dialog_ask'\) \{[\s\S]*if \(input\.initialMessageCount > 0\)\s+return undefined[\s\S]*return buildDialogSessionTitleFromMessage\(input\.latestUserMessage\)/,
+    'workspace dialog_ask 标题未限制为仅首条用户消息生效',
+  )
+  assert.match(
+    source,
+    /title: resolveInitialSessionTitle\(scopeMode, contestName, trackName\)/,
+    'workspace 流接口未给空 dialog_ask 会话使用新标题占位',
   )
 })
 

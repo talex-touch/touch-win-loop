@@ -225,12 +225,12 @@ test.describe('Team -> Project E2E smoke', () => {
         await teamInviteeUi.page.goto('/dashboard')
         await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-session-list')).toBeVisible()
         await teamInviteeUi.page.locator('[data-testid="dashboard-loopy-sidebar"] button').click()
-        await expect(teamInviteeUi.page.locator('[data-testid="dashboard-loopy-session-list"] button').first()).toContainText('Loopy 对话')
+        await expect(teamInviteeUi.page.locator('[data-testid="dashboard-loopy-session-list"] button').first()).toContainText('新对话')
 
         await teamInviteeUi.page.goto(`/team/${teamId}`)
         await teamInviteeUi.page.getByTestId('loopy-floating-trigger').click()
         await expect(teamInviteeUi.page.getByTestId('loopy-floating-panel')).toBeVisible()
-        await expect(teamInviteeUi.page.locator('[data-testid="loopy-floating-panel"] select')).toContainText('Loopy 对话')
+        await expect(teamInviteeUi.page.locator('[data-testid="loopy-floating-panel"] select')).toContainText('新对话')
       })
 
       const teamProjectInvite = await apiPost(teamOwnerSession.api, `/api/projects/${teamProjectId}/invitations`, {
@@ -280,6 +280,24 @@ test.describe('Team -> Project E2E smoke', () => {
 
         await teamInviteeUi.page.goto(`/team/${teamId}`)
         await expect(projectCard(teamInviteeUi.page, teamProjectId)).toHaveCount(0)
+      })
+
+      await test.step('Team 创建弹窗支持仅创建且停留在当前 Team 页', async () => {
+        const stayCreateTitle = `Team Stay ${seed}`
+        await teamOwnerUi.page.goto(`/team/${teamId}`)
+
+        const createButton = teamOwnerUi.page.getByTestId('team-dashboard-create-project-button')
+        await expect(createButton).toBeEnabled()
+        await createButton.click()
+
+        await expect(teamOwnerUi.page.getByTestId('team-create-project-dialog')).toBeVisible()
+        await teamOwnerUi.page.getByTestId('team-create-project-title-input').fill(stayCreateTitle)
+        await teamOwnerUi.page.getByTestId('team-create-project-summary-input').fill('用于验证仅创建后停留在当前 Team 页。')
+        await teamOwnerUi.page.getByTestId('team-create-project-stay-submit-button').click()
+
+        await expect(teamOwnerUi.page).toHaveURL(routePattern(`/team/${teamId}`))
+        await expect(teamOwnerUi.page.getByTestId('team-create-project-dialog')).toBeHidden()
+        await expect(teamOwnerUi.page.getByText(stayCreateTitle)).toBeVisible()
       })
 
       const personalOwnerSession = await createApiSession(personalOwner)

@@ -194,6 +194,7 @@ interface CreateProjectInput extends ProjectPayload {
   payerUserId?: string | null
   source: ProjectSource
   status?: ProjectStatus
+  display?: ProjectDisplayConfig | null
   collegeBindings?: ProjectCollegeBinding[]
   advisorUserIds?: string[]
 }
@@ -1863,6 +1864,8 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
   const contestIds = normalizeProjectContestIds(input.contestId, input.contestIds)
   const primaryContestId = contestIds[0] || input.contestId
   const creatorIsDifferentOwner = input.creatorUserId !== input.ownerUserId
+  const display = normalizeProjectDisplayPatch(input.display)
+  const metadata = display ? { display } : null
 
   await assertWorkspaceProjectCreationAllowed(db, input.workspaceId)
 
@@ -1890,6 +1893,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       risks,
       deliverables,
       summary,
+      metadata,
       source,
       status,
       created_at,
@@ -1898,7 +1902,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9::TEXT[], $10, $11::TEXT[],
       $12::TEXT[], $13::TEXT[], $14::TEXT[], $15::TEXT[],
-      $16, $17, $18, $19, $19
+      $16, $17::JSONB, $18, $19, $20, $20
     )
     RETURNING
       id,
@@ -1939,6 +1943,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       normalizeStringArray(input.risks),
       normalizeStringArray(input.deliverables),
       input.summary || null,
+      metadata ? JSON.stringify(metadata) : null,
       input.source,
       input.status || 'draft',
       now,
