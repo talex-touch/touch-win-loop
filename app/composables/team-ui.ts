@@ -6,12 +6,12 @@ import type {
   ProjectMemberRole,
   ProjectSource,
   WorkspaceWithQuota,
-} from '../../shared/types/domain'
+} from '~~/shared/types/domain'
 import {
   buildProjectMonogram,
   getProjectDisplayAccent,
   resolveProjectDisplayConfig,
-} from '../../shared/constants/project-display'
+} from '~~/shared/constants/project-display'
 
 export interface TeamProjectCardMemberItem extends ProjectMemberPreviewSummary {
   avatarFallback: string
@@ -189,15 +189,17 @@ export function resolveUserAvatarFallback(username: string): string {
   const chineseChars = Array.from(normalized).filter(char => /[\u4E00-\u9FFF]/.test(char))
   if (chineseChars.length >= 2)
     return chineseChars.slice(0, 2).join('')
-  if (chineseChars.length === 1)
-    return chineseChars[0]
+  const firstChineseChar = chineseChars[0]
+  if (chineseChars.length === 1 && firstChineseChar)
+    return firstChineseChar
 
   const segments = normalized
     .split(/[\s_.-]+/)
     .map(item => item.trim())
     .filter(Boolean)
+  const [firstSegment = '', secondSegment = ''] = segments
   if (segments.length >= 2)
-    return `${segments[0][0] || ''}${segments[1][0] || ''}`.toUpperCase()
+    return `${firstSegment.charAt(0)}${secondSegment.charAt(0)}`.toUpperCase()
 
   const ascii = normalized.replace(/[^a-z0-9]/gi, '')
   if (ascii.length >= 2)
@@ -211,9 +213,12 @@ export function resolveUserAvatarFallback(username: string): string {
 export function formatProjectContestSummary(contestNames: string[]): string {
   if (contestNames.length === 0)
     return '暂未绑定比赛'
+  const firstContestName = contestNames[0]
+  if (!firstContestName)
+    return '暂未绑定比赛'
   if (contestNames.length === 1)
-    return contestNames[0]
-  return `${contestNames[0]} +${contestNames.length - 1} 个比赛`
+    return firstContestName
+  return `${firstContestName} +${contestNames.length - 1} 个比赛`
 }
 
 export function formatProjectSeatSummary(
