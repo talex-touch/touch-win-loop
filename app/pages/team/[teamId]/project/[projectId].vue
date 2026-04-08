@@ -908,15 +908,20 @@ const activeProject = computed(() => {
 })
 
 const activeProjectId = computed(() => activeProject.value?.id || '')
+const currentCollabUserId = computed(() => String(me.value?.user.id || '').trim())
+const currentCollabUsername = computed(() => String(me.value?.user.username || '').trim())
 const collabSession = useCollabSession({
   workspaceRealtime,
   projectId: activeProjectId,
   resourceId: collabBindingResourceId,
+  currentUserId: currentCollabUserId,
+  currentUsername: currentCollabUsername,
   statusLine,
   fetchSnapshot: async resourceId => await fetchCollabSnapshot(resourceId),
 })
 const collabRevision = collabSession.revision
 const collabMarkdownDoc = collabSession.markdownDoc
+const collabMarkdownAwareness = collabSession.markdownAwareness
 const collabDrawValue = collabSession.drawValue
 const collabDrawError = collabSession.drawError
 const collabPresenceMembers = collabSession.presenceMembers
@@ -1157,6 +1162,7 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
       return
     if (projectId && projectId !== activeProjectId.value)
       return
+    refreshProjectUploadActivities()
     scheduleRealtimeProjectRefresh()
     return
   }
@@ -1285,21 +1291,46 @@ const projectUploadStorageUsedBytes = computed(() => {
 
 const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value)
 
+const collabSelectionStatus = ref({
+  line: 1,
+  column: 1,
+  selectionLength: 0,
+})
+
+const isMarkdownWorkspaceTabActive = computed(() => {
+  return activeMainTabId.value.startsWith('resource:') && previewMode.value === 'markdown'
+})
+
 const statusCursor = computed(() => {
+  if (isMarkdownWorkspaceTabActive.value) {
+    return {
+      line: collabSelectionStatus.value.line,
+      column: collabSelectionStatus.value.column,
+      selectionLength: collabSelectionStatus.value.selectionLength,
+    }
+  }
+
   const line = clamp(12 + chatMessages.value.length + (formState.problemStatement ? 3 : 0), 12, 96)
   const column = clamp((chatInput.value.length % 80) + 8, 8, 120)
   return {
     line,
     column,
+    selectionLength: 0,
   }
 })
 
 const rebindUploadInputRef = ref<HTMLInputElement | null>(null)
 const pendingRebindSessionId = ref('')
+const currentUploadActorUserId = computed(() => String(me.value?.user.id || '').trim())
+const currentUploadActorUsername = computed(() => String(me.value?.user.username || '').trim())
+const currentUploadActorAvatarUrl = computed(() => String(me.value?.user.avatarUrl || '').trim() || null)
 
 const projectUploadManager = useProjectUploadManager({
   projectId: activeProjectId,
   endpoint,
+  currentUserId: currentUploadActorUserId,
+  currentUsername: currentUploadActorUsername,
+  currentUserAvatarUrl: currentUploadActorAvatarUrl,
   realtimeConnected: workspaceRealtime.connected,
   getUsedBytes: () => projectUploadStorageUsedBytes.value,
   validateFiles: validateUploadFiles,
@@ -1314,7 +1345,13 @@ const projectUploadManager = useProjectUploadManager({
 
 const projectUploadTasks = projectUploadManager.tasks
 const projectUploadSummary = projectUploadManager.summary
+const projectUploadActivityItems = projectUploadManager.activityItems
+const projectUploadHistoryLoaded = projectUploadManager.projectSessionHistoryLoaded
 const uploadDrawerOpen = projectUploadManager.drawerOpen
+
+function refreshProjectUploadActivities() {
+  void projectUploadManager.refreshProjectSessions()
+}
 
 function mergeProjectIntoCollections(project: Project) {
   const merge = (list: Project[]): Project[] => {
@@ -3202,7 +3239,6 @@ async function uploadResourcesToProject(files: File[]) {
 
   try {
     await projectUploadManager.enqueueFiles(files)
-    projectUploadManager.setDrawerOpen(true)
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
@@ -3210,7 +3246,7 @@ async function uploadResourcesToProject(files: File[]) {
 }
 
 function openUploadDrawer() {
-  projectUploadManager.setDrawerOpen(!uploadDrawerOpen.value)
+  projectUploadManager.toggleDrawer()
 }
 
 async function pauseUploadTask(sessionId: string) {
@@ -3253,7 +3289,7 @@ async function handleRebindUploadInputChange(event: Event) {
 
   try {
     await projectUploadManager.rebindTaskFile(sessionId, file)
-    projectUploadManager.setDrawerOpen(true)
+    projectUploadManager.openDrawer('auto')
     statusLine.value = `已重新绑定文件：${file.name}。`
   }
   catch (error) {
@@ -3282,6 +3318,18 @@ function clearPreviewStatusPolling() {
 
 function updateCollabDrawContent(value: string): void {
   collabSession.updateDraw(String(value || ''))
+}
+
+function updateCollabCursor(value: { cursorX?: number, cursorY?: number }): void {
+  collabSession.updatePresenceCursor(value.cursorX, value.cursorY)
+}
+
+function updateCollabSelectionStatus(value: { line: number, column: number, selectionLength: number }): void {
+  collabSelectionStatus.value = {
+    line: Math.max(1, Math.trunc(Number(value.line) || 1)),
+    column: Math.max(1, Math.trunc(Number(value.column) || 1)),
+    selectionLength: Math.max(0, Math.trunc(Number(value.selectionLength) || 0)),
+  }
 }
 
 async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPayload | null> {
@@ -4773,7 +4821,10 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-mode="previewMode"
         :preview-pdf-url="previewPdfUrl"
         :preview-source-download-url="previewSourceDownloadUrl"
+        :current-user-id="me?.user.id || ''"
+        :current-user-name="me?.user.username || ''"
         :collab-markdown-doc="collabMarkdownDoc"
+        :collab-markdown-awareness="collabMarkdownAwareness"
         :collab-draw-value="collabDrawValue"
         :collab-draw-error="collabDrawError"
         :collab-revision="collabRevision"
@@ -4819,6 +4870,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         @activate-preview-resource="activateProjectResourceTab"
         @close-preview-resource="closeProjectResourcePreview"
         @update:collab-draw-value="updateCollabDrawContent"
+        @update-collab-cursor="updateCollabCursor"
+        @update-collab-selection-status="updateCollabSelectionStatus"
       />
 
       <div v-if="!rightSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--right">
@@ -4884,9 +4937,13 @@ watch(() => workspaceRealtime.connected.value, () => {
       :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
       :line="statusCursor.line"
       :column="statusCursor.column"
+      :selection-length="statusCursor.selectionLength"
+      :has-active-project="Boolean(activeProjectId)"
       :upload-summary="projectUploadSummary"
       :upload-drawer-open="uploadDrawerOpen"
       :upload-tasks="projectUploadTasks"
+      :upload-activity-items="projectUploadActivityItems"
+      :upload-history-loaded="projectUploadHistoryLoaded"
       @toggle-upload-drawer="openUploadDrawer"
       @pause-upload-task="pauseUploadTask"
       @resume-upload-task="resumeUploadTask"

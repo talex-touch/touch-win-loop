@@ -5,13 +5,21 @@ import type {
   ProjectResourceUploadSession,
   ProjectResourceUploadSessionListResult,
 } from '~~/shared/types/domain'
-import type { ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
+import type {
+  ProjectUploadActivityItem,
+  ProjectUploadDrawerState,
+  ProjectUploadSummary,
+  ProjectUploadTask,
+} from '~/types/project-upload'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { PROJECT_RESOURCE_UPLOAD_CHUNK_SIZE_BYTES } from '~~/shared/constants/project-resource-upload'
 
 interface UseProjectUploadManagerInput {
   projectId: Ref<string>
   endpoint: (path: string) => string
+  currentUserId?: Ref<string>
+  currentUsername?: Ref<string>
+  currentUserAvatarUrl?: Ref<string | null | undefined>
   realtimeConnected?: Ref<boolean>
   getUsedBytes?: () => number
   validateFiles?: (files: File[], usedBytes: number) => string | null
@@ -20,6 +28,7 @@ interface UseProjectUploadManagerInput {
 }
 
 type AbortReason = 'pause' | 'cancel' | 'switch'
+type DrawerOpenSource = ProjectUploadDrawerState['source']
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -110,12 +119,52 @@ async function digestBlobSha256(blob: Blob): Promise<string> {
     .join('')
 }
 
+function isActiveTaskStatus(status: ProjectUploadTask['status']): boolean {
+  return status === 'queued'
+    || status === 'uploading'
+    || status === 'paused'
+    || status === 'failed'
+    || status === 'finalizing'
+}
+
+function isProjectSessionPollingActive(session: ProjectResourceUploadSession): boolean {
+  return session.status === 'queued'
+    || session.status === 'uploading'
+    || session.status === 'finalizing'
+}
+
 function sortTasks(items: ProjectUploadTask[]): ProjectUploadTask[] {
   return [...items].sort((left, right) => {
-    const leftActive = left.status === 'queued' || left.status === 'uploading' || left.status === 'paused' || left.status === 'failed' || left.status === 'finalizing'
-    const rightActive = right.status === 'queued' || right.status === 'uploading' || right.status === 'paused' || right.status === 'failed' || right.status === 'finalizing'
+    const leftActive = isActiveTaskStatus(left.status)
+    const rightActive = isActiveTaskStatus(right.status)
     if (leftActive !== rightActive)
       return leftActive ? -1 : 1
+    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+  })
+}
+
+function sortProjectSessions(items: ProjectResourceUploadSession[]): ProjectResourceUploadSession[] {
+  return [...items].sort((left, right) => {
+    const leftActive = isActiveTaskStatus(left.status)
+    const rightActive = isActiveTaskStatus(right.status)
+    if (leftActive !== rightActive)
+      return leftActive ? -1 : 1
+    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+  })
+}
+
+function sortActivityItems(items: ProjectUploadActivityItem[]): ProjectUploadActivityItem[] {
+  return [...items].sort((left, right) => {
+    const leftPriority = left.isOwnedByCurrentUser ? 0 : 1
+    const rightPriority = right.isOwnedByCurrentUser ? 0 : 1
+    if (leftPriority !== rightPriority)
+      return leftPriority - rightPriority
+
+    const leftActive = isActiveTaskStatus(left.status)
+    const rightActive = isActiveTaskStatus(right.status)
+    if (leftActive !== rightActive)
+      return leftActive ? -1 : 1
+
     return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
   })
 }
@@ -128,16 +177,231 @@ function getCommittedProgressPercent(task: Pick<ProjectUploadTask, 'fileSize' | 
 
 export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
   const tasks = ref<ProjectUploadTask[]>([])
-  const drawerOpen = ref(false)
+  const projectSessions = ref<ProjectResourceUploadSession[]>([])
+  const projectSessionHistoryLoaded = ref(false)
+  const drawerState = ref<ProjectUploadDrawerState>({
+    open: false,
+    source: 'manual',
+  })
   const restoring = ref(false)
   const runningRequests = new Map<string, XMLHttpRequest>()
   const abortReasons = new Map<string, AbortReason>()
   const processingSessions = new Set<string>()
   let lastProjectId = ''
+  let projectSessionPollTimer: ReturnType<typeof setTimeout> | null = null
+  let autoCollapseTimer: ReturnType<typeof setTimeout> | null = null
 
   function getProjectId(): string {
     return normalizeString(input.projectId.value)
   }
+
+  function getCurrentUserId(): string {
+    return normalizeString(input.currentUserId?.value)
+  }
+
+  function getCurrentUsername(): string {
+    return normalizeString(input.currentUsername?.value)
+  }
+
+  function getCurrentUserAvatarUrl(): string | null {
+    return normalizeString(input.currentUserAvatarUrl?.value) || null
+  }
+
+  function isOwnedSession(session: ProjectResourceUploadSession): boolean {
+    const currentUserId = getCurrentUserId()
+    if (!currentUserId)
+      return false
+    return normalizeString(session.actorUserId) === currentUserId
+  }
+
+  function getLocalTasksForProject(projectId = getProjectId()): ProjectUploadTask[] {
+    return tasks.value.filter(task => task.projectId === projectId && task.status !== 'canceled')
+  }
+
+  function clearProjectSessionPollTimer(): void {
+    if (!projectSessionPollTimer)
+      return
+    clearTimeout(projectSessionPollTimer)
+    projectSessionPollTimer = null
+  }
+
+  function clearAutoCollapseTimer(): void {
+    if (!autoCollapseTimer)
+      return
+    clearTimeout(autoCollapseTimer)
+    autoCollapseTimer = null
+  }
+
+  function shouldAutoCollapseDrawer(): boolean {
+    const localTasks = getLocalTasksForProject()
+    if (!drawerState.value.open || drawerState.value.source !== 'auto' || localTasks.length === 0)
+      return false
+
+    return localTasks.every(task => task.status === 'completed')
+  }
+
+  function syncAutoCollapseState(): void {
+    if (!shouldAutoCollapseDrawer()) {
+      clearAutoCollapseTimer()
+      return
+    }
+
+    if (autoCollapseTimer)
+      return
+
+    autoCollapseTimer = setTimeout(() => {
+      autoCollapseTimer = null
+      if (!shouldAutoCollapseDrawer())
+        return
+      drawerState.value = {
+        open: false,
+        source: 'manual',
+      }
+      scheduleProjectSessionPoll()
+    }, 1500)
+  }
+
+  const hasProjectActiveSessions = computed(() => {
+    return projectSessions.value.some(session => isProjectSessionPollingActive(session))
+  })
+
+  function scheduleProjectSessionPoll(): void {
+    clearProjectSessionPollTimer()
+    if (!import.meta.client)
+      return
+
+    const projectId = getProjectId()
+    if (!projectId)
+      return
+
+    const delay = drawerState.value.open || hasProjectActiveSessions.value ? 3000 : 15000
+    projectSessionPollTimer = setTimeout(() => {
+      projectSessionPollTimer = null
+      void refreshProjectSessions()
+    }, delay)
+  }
+
+  function applyProjectSessions(sessions: ProjectResourceUploadSession[]): void {
+    projectSessions.value = sortProjectSessions(
+      sessions.filter(session => session.projectId === getProjectId()),
+    )
+  }
+
+  function upsertProjectSessions(nextSessions: ProjectResourceUploadSession[]): void {
+    const merged = new Map<string, ProjectResourceUploadSession>()
+    projectSessions.value.forEach((session) => {
+      merged.set(session.id, session)
+    })
+    nextSessions.forEach((session) => {
+      if (session.projectId === getProjectId())
+        merged.set(session.id, session)
+    })
+    applyProjectSessions([...merged.values()])
+  }
+
+  function createActivityItemFromSession(session: ProjectResourceUploadSession): ProjectUploadActivityItem {
+    const uploadedBytes = Math.max(0, toSafeInteger(session.uploadedBytes))
+    const fileSize = Math.max(0, toSafeInteger(session.fileSize))
+    const isOwnedByCurrentUser = isOwnedSession(session)
+    return {
+      sessionId: session.id,
+      projectId: session.projectId,
+      fileName: session.fileName,
+      fileSize,
+      mimeType: session.mimeType,
+      status: session.status,
+      progressPercent: fileSize > 0
+        ? toSafePercent((uploadedBytes / fileSize) * 100)
+        : 0,
+      uploadedBytes,
+      uploadedChunkCount: Math.max(0, toSafeInteger(session.uploadedChunkCount)),
+      chunkCount: Math.max(1, toSafeInteger(session.chunkCount, 1)),
+      errorMessage: normalizeString(session.errorMessage),
+      actorUserId: session.actorUserId || null,
+      actorUsername: normalizeString(session.actorUsername) || (isOwnedByCurrentUser ? getCurrentUsername() : '') || undefined,
+      actorAvatarUrl: normalizeString(session.actorAvatarUrl) || (isOwnedByCurrentUser ? getCurrentUserAvatarUrl() : null),
+      isOwnedByCurrentUser,
+      isActionable: false,
+      needsFileRebind: false,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      completedAt: session.completedAt || null,
+    }
+  }
+
+  function createActivityItemFromTask(task: ProjectUploadTask): ProjectUploadActivityItem {
+    return {
+      sessionId: task.sessionId,
+      projectId: task.projectId,
+      localTaskId: task.localTaskId,
+      fileName: task.fileName,
+      fileSize: task.fileSize,
+      mimeType: task.mimeType,
+      status: task.status,
+      progressPercent: task.progressPercent,
+      uploadedBytes: task.uploadedBytes,
+      uploadedChunkCount: task.uploadedChunkCount,
+      chunkCount: task.chunkCount,
+      errorMessage: task.errorMessage,
+      actorUserId: getCurrentUserId() || null,
+      actorUsername: getCurrentUsername() || undefined,
+      actorAvatarUrl: getCurrentUserAvatarUrl(),
+      isOwnedByCurrentUser: true,
+      isActionable: true,
+      needsFileRebind: task.needsFileRebind,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      completedAt: null,
+    }
+  }
+
+  function overlayLocalTaskOnActivityItem(
+    base: ProjectUploadActivityItem | undefined,
+    task: ProjectUploadTask,
+  ): ProjectUploadActivityItem {
+    const fallback = createActivityItemFromTask(task)
+    return {
+      ...(base || fallback),
+      localTaskId: task.localTaskId,
+      fileName: task.fileName,
+      fileSize: task.fileSize,
+      mimeType: task.mimeType,
+      status: task.status,
+      progressPercent: task.progressPercent,
+      uploadedBytes: task.uploadedBytes,
+      uploadedChunkCount: task.uploadedChunkCount,
+      chunkCount: task.chunkCount,
+      errorMessage: task.errorMessage,
+      actorUserId: base?.actorUserId || fallback.actorUserId,
+      actorUsername: base?.actorUsername || fallback.actorUsername,
+      actorAvatarUrl: base?.actorAvatarUrl || fallback.actorAvatarUrl,
+      isOwnedByCurrentUser: true,
+      isActionable: true,
+      needsFileRebind: task.needsFileRebind,
+      updatedAt: task.updatedAt,
+      completedAt: task.status === 'completed' ? task.updatedAt : base?.completedAt || null,
+    }
+  }
+
+  const activityItems = computed<ProjectUploadActivityItem[]>(() => {
+    const projectId = getProjectId()
+    if (!projectId)
+      return []
+
+    const merged = new Map<string, ProjectUploadActivityItem>()
+    projectSessions.value
+      .filter(session => session.projectId === projectId)
+      .forEach((session) => {
+        merged.set(session.id, createActivityItemFromSession(session))
+      })
+
+    getLocalTasksForProject(projectId).forEach((task) => {
+      const existing = merged.get(task.sessionId)
+      merged.set(task.sessionId, overlayLocalTaskOnActivityItem(existing, task))
+    })
+
+    return sortActivityItems([...merged.values()])
+  })
 
   function persistTasks(): void {
     if (!import.meta.client)
@@ -205,12 +469,10 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       return
     const current = tasks.value[index]!
     const next = updater(current)
-    if (!next) {
+    if (!next)
       tasks.value.splice(index, 1)
-    }
-    else {
+    else
       tasks.value.splice(index, 1, next)
-    }
     tasks.value = sortTasks(tasks.value)
   }
 
@@ -246,11 +508,39 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     return Array.isArray(response.data?.items) ? response.data.items : []
   }
 
+  async function refreshProjectSessions(): Promise<ProjectResourceUploadSession[]> {
+    const projectId = getProjectId()
+    if (!projectId) {
+      projectSessions.value = []
+      projectSessionHistoryLoaded.value = false
+      clearProjectSessionPollTimer()
+      return []
+    }
+
+    try {
+      const sessions = await requestSessionList()
+      applyProjectSessions(sessions)
+      projectSessionHistoryLoaded.value = true
+      return sessions
+    }
+    catch {
+      projectSessionHistoryLoaded.value = false
+      return []
+    }
+    finally {
+      scheduleProjectSessionPoll()
+    }
+  }
+
   async function restoreSessions(): Promise<void> {
     const projectId = getProjectId()
     abortAllRunningRequests('switch')
     processingSessions.clear()
     tasks.value = []
+    projectSessions.value = []
+    projectSessionHistoryLoaded.value = false
+    clearAutoCollapseTimer()
+    clearProjectSessionPollTimer()
     if (!projectId || !import.meta.client)
       return
 
@@ -258,18 +548,20 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     try {
       const persistedTasks = loadPersistedTasks(projectId)
       const persistedMap = new Map(persistedTasks.map(task => [task.sessionId, task]))
-      const sessions = await requestSessionList().catch(() => [])
+      const sessions = await refreshProjectSessions()
       const merged: ProjectUploadTask[] = []
 
-      sessions.forEach((session) => {
-        const existing = persistedMap.get(session.id)
-        const nextTask = createTaskFromSession(session, projectId, existing?.sourceFile)
-        nextTask.localTaskId = existing?.localTaskId || nextTask.localTaskId
-        nextTask.sourceFile = existing?.sourceFile
-        nextTask.needsFileRebind = !nextTask.sourceFile && session.status !== 'completed' && session.status !== 'canceled'
-        merged.push(nextTask)
-        persistedMap.delete(session.id)
-      })
+      sessions
+        .filter(session => isOwnedSession(session) || persistedMap.has(session.id))
+        .forEach((session) => {
+          const existing = persistedMap.get(session.id)
+          const nextTask = createTaskFromSession(session, projectId, existing?.sourceFile)
+          nextTask.localTaskId = existing?.localTaskId || nextTask.localTaskId
+          nextTask.sourceFile = existing?.sourceFile
+          nextTask.needsFileRebind = !nextTask.sourceFile && session.status !== 'completed' && session.status !== 'canceled'
+          merged.push(nextTask)
+          persistedMap.delete(session.id)
+        })
 
       persistedMap.forEach((task) => {
         if (task.status === 'completed' || task.status === 'failed' || task.status === 'paused')
@@ -278,6 +570,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
 
       tasks.value = sortTasks(merged)
       persistTasks()
+      syncAutoCollapseState()
       void pumpQueue()
     }
     finally {
@@ -303,6 +596,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       },
     })
     const sessions = Array.isArray(response.data?.items) ? response.data.items : []
+    upsertProjectSessions(sessions)
     return sessions.map((session, index) => createTaskFromSession(session, projectId, files[index]))
   }
 
@@ -337,6 +631,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     const target = tasks.value.find(task => task.sessionId === sessionId)
     if (!target)
       return
+    void refreshProjectSessions()
     if (target.status === 'paused' || target.status === 'failed') {
       await resumeTask(sessionId).catch(() => undefined)
       return
@@ -378,6 +673,12 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     })
     persistTasks()
     input.onStatusLine?.(`已加入上传队列：${createdTasks.length} 个文件。`)
+    drawerState.value = {
+      open: true,
+      source: 'auto',
+    }
+    syncAutoCollapseState()
+    void refreshProjectSessions()
     void pumpQueue()
   }
 
@@ -472,6 +773,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     if (!session)
       throw new Error('UPLOAD_COMPLETE_EMPTY')
 
+    upsertProjectSessions([session])
     syncTaskFromSession(session)
     patchTask(sessionId, task => ({
       ...task,
@@ -484,6 +786,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       updatedAt: new Date().toISOString(),
     }))
 
+    void refreshProjectSessions()
     if (input.realtimeConnected && !input.realtimeConnected.value)
       await input.onRequireRefresh?.()
   }
@@ -509,6 +812,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
             errorMessage: '需要重新选择原文件后继续上传。',
             updatedAt: new Date().toISOString(),
           }))
+          void refreshProjectSessions()
           return
         }
         if (task.uploadedChunkCount >= task.chunkCount) {
@@ -541,6 +845,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
             updatedAt: new Date().toISOString(),
           }))
           persistTasks()
+          void refreshProjectSessions()
           return
         }
       }
@@ -548,6 +853,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     finally {
       processingSessions.delete(sessionId)
       persistTasks()
+      syncAutoCollapseState()
       queueMicrotask(() => {
         void pumpQueue()
       })
@@ -584,6 +890,8 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       method: 'POST',
     }).catch(() => undefined)
     persistTasks()
+    syncAutoCollapseState()
+    void refreshProjectSessions()
   }
 
   async function resumeTask(sessionId: string): Promise<void> {
@@ -593,7 +901,11 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       return
     if (task.needsFileRebind && !task.sourceFile) {
       input.onStatusLine?.('请重新选择原文件后继续上传。')
-      drawerOpen.value = true
+      drawerState.value = {
+        open: true,
+        source: 'manual',
+      }
+      scheduleProjectSessionPoll()
       return
     }
     await $fetch(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/resume`), {
@@ -606,6 +918,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       updatedAt: new Date().toISOString(),
     }))
     persistTasks()
+    void refreshProjectSessions()
     void pumpQueue()
   }
 
@@ -621,26 +934,28 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     }).catch(() => undefined)
     patchTask(sessionId, () => null)
     persistTasks()
+    syncAutoCollapseState()
+    void refreshProjectSessions()
   }
 
   function clearCompletedTasks(): void {
     tasks.value = tasks.value.filter(task => task.status !== 'completed')
     persistTasks()
+    syncAutoCollapseState()
   }
 
   const summary = computed<ProjectUploadSummary>(() => {
-    const visibleTasks = tasks.value.filter(task => task.projectId === getProjectId() && task.status !== 'canceled')
+    const visibleTasks = getLocalTasksForProject()
     const totalBytes = visibleTasks.reduce((sum, task) => sum + task.fileSize, 0)
     const uploadedBytes = visibleTasks.reduce((sum, task) => {
       let estimated = task.uploadedBytes
-      if (task.status === 'uploading') {
+      if (task.status === 'uploading')
         estimated = Math.max(task.uploadedBytes, Math.round((task.progressPercent / 100) * task.fileSize))
-      }
-      else if (task.status === 'finalizing' || task.status === 'completed') {
+      else if (task.status === 'finalizing' || task.status === 'completed')
         estimated = Math.max(task.uploadedBytes, task.fileSize)
-      }
       return sum + Math.min(task.fileSize, estimated)
     }, 0)
+
     return {
       totalCount: visibleTasks.length,
       activeCount: visibleTasks.filter(task => task.status === 'queued' || task.status === 'uploading' || task.status === 'finalizing').length,
@@ -655,7 +970,17 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
 
   watch(tasks, () => {
     persistTasks()
+    syncAutoCollapseState()
   }, { deep: true })
+
+  watch(() => drawerState.value, () => {
+    syncAutoCollapseState()
+    scheduleProjectSessionPoll()
+  }, { deep: true })
+
+  watch(hasProjectActiveSessions, () => {
+    scheduleProjectSessionPoll()
+  })
 
   watch(() => getProjectId(), async (nextProjectId) => {
     if (nextProjectId === lastProjectId)
@@ -666,14 +991,21 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
 
   onBeforeUnmount(() => {
     abortAllRunningRequests('switch')
+    clearAutoCollapseTimer()
+    clearProjectSessionPollTimer()
   })
 
   return {
-    tasks: computed(() => sortTasks(tasks.value.filter(task => task.projectId === getProjectId() && task.status !== 'canceled'))),
+    tasks: computed(() => sortTasks(getLocalTasksForProject())),
     summary,
-    drawerOpen,
+    projectSessions: computed(() => projectSessions.value),
+    projectSessionHistoryLoaded,
+    activityItems,
+    drawerState: computed(() => drawerState.value),
+    drawerOpen: computed(() => drawerState.value.open),
     restoring,
     enqueueFiles,
+    refreshProjectSessions,
     restoreSessions,
     pauseTask,
     resumeTask,
@@ -681,8 +1013,37 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     cancelTask,
     clearCompletedTasks,
     rebindTaskFile,
-    setDrawerOpen: (value: boolean) => {
-      drawerOpen.value = Boolean(value)
+    openDrawer: (source: DrawerOpenSource = 'manual') => {
+      drawerState.value = {
+        open: true,
+        source,
+      }
+      scheduleProjectSessionPoll()
+    },
+    closeDrawer: () => {
+      drawerState.value = {
+        open: false,
+        source: 'manual',
+      }
+      clearAutoCollapseTimer()
+      scheduleProjectSessionPoll()
+    },
+    toggleDrawer: () => {
+      drawerState.value = {
+        open: !drawerState.value.open,
+        source: 'manual',
+      }
+      clearAutoCollapseTimer()
+      scheduleProjectSessionPoll()
+    },
+    setDrawerOpen: (value: boolean, source: DrawerOpenSource = 'manual') => {
+      drawerState.value = {
+        open: value,
+        source: value ? source : 'manual',
+      }
+      if (!value)
+        clearAutoCollapseTimer()
+      scheduleProjectSessionPoll()
     },
   }
 }

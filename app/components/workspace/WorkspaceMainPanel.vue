@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Awareness } from 'y-protocols/awareness'
 import type { Doc as YDoc } from 'yjs'
 import type {
   CollabPurpose,
@@ -26,7 +27,17 @@ import type {
 } from '~/types/workspace'
 import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
 import RichTextEditor from '~/components/editor/RichTextEditor.vue'
-import CollabPresencePanel from '~/components/workspace/collab/CollabPresencePanel.vue'
+import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
+import CollabPresenceDock from '~/components/workspace/collab/CollabPresenceDock.vue'
+import {
+  type WorkspaceCollabAwarenessSelectionState,
+  type WorkspaceCollabCursorUser,
+  normalizeWorkspaceCollabPresenceActivityState,
+  resolveWorkspaceCollabPresenceColor,
+  type WorkspaceCollabPresenceMember,
+  type WorkspaceCollabSelectionSummary,
+  type WorkspaceCollabPresenceUser,
+} from '~/components/workspace/collab/presence'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
 
 const props = withDefaults(defineProps<{
@@ -56,7 +67,10 @@ const props = withDefaults(defineProps<{
   previewMode?: WorkspacePreviewMode
   previewPdfUrl?: string
   previewSourceDownloadUrl?: string
+  currentUserId?: string
+  currentUserName?: string
   collabMarkdownDoc?: YDoc | null
+  collabMarkdownAwareness?: Awareness | null
   collabDrawValue?: string
   collabDrawError?: string
   collabRevision?: number
@@ -125,7 +139,10 @@ const props = withDefaults(defineProps<{
   previewMode: 'binary',
   previewPdfUrl: '',
   previewSourceDownloadUrl: '',
+  currentUserId: '',
+  currentUserName: '',
   collabMarkdownDoc: null,
+  collabMarkdownAwareness: null,
   collabDrawValue: '{}',
   collabDrawError: '',
   collabRevision: 0,
@@ -230,6 +247,8 @@ const emit = defineEmits<{
   'activatePreviewResource': [resourceId: string]
   'closePreviewResource': [resourceId: string]
   'update:collabDrawValue': [value: string]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
+  'updateCollabSelectionStatus': [value: { line: number, column: number, selectionLength: number, selection: WorkspaceCollabSelectionSummary | null }]
 }>()
 
 type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'settings'
@@ -266,15 +285,6 @@ interface WorkspacePreviewStatusPayload {
   previewUrlExpiresAt: string
   sourceDownloadUrl: string
   sourceDownloadUrlExpiresAt: string
-}
-
-interface WorkspaceCollabPresenceMember {
-  peerId: string
-  userId: string
-  username: string
-  cursorX?: number
-  cursorY?: number
-  updatedAt?: string
 }
 
 const fixedTabs: WorkspaceMainTab[] = [
@@ -1260,11 +1270,197 @@ const activePreviewMode = computed<WorkspacePreviewMode>(() => {
   return activeResourceTab.value?.previewMode || normalizedPreviewMode.value
 })
 
+const isMarkdownPreviewActive = computed(() => {
+  return Boolean(activeResourceTab.value && activePreviewMode.value === 'markdown')
+})
+
 const collabConnectionText = computed(() => {
   const customText = String(props.collabStatusText || '').trim()
   if (customText)
     return customText
   return props.collabConnected ? '实时连接中' : '离线编辑（待重连）'
+})
+
+const workspaceMemberMap = computed(() => {
+  const map = new Map<string, ProjectMemberSummary>()
+  for (const member of props.workspaceMembers) {
+    const userId = String(member.userId || '').trim()
+    if (!userId)
+      continue
+    map.set(userId, member)
+  }
+  return map
+})
+
+const markdownLocalSelectionStatus = ref<{
+  line: number
+  column: number
+  selectionLength: number
+  selection: WorkspaceCollabSelectionSummary | null
+}>({
+  line: 1,
+  column: 1,
+  selectionLength: 0,
+  selection: null,
+})
+
+const markdownRemoteSelectionStates = ref<WorkspaceCollabAwarenessSelectionState[]>([])
+
+const collabCurrentUser = computed(() => {
+  const userId = String(props.currentUserId || '').trim()
+  const userName = String(props.currentUserName || '').trim()
+  if (!userId || !userName)
+    return null
+
+  return {
+    id: userId,
+    name: userName,
+    color: resolveWorkspaceCollabPresenceColor(userId),
+  }
+})
+
+const markdownRemoteSelectionMap = computed(() => {
+  const map = new Map<number, WorkspaceCollabSelectionSummary | null>()
+  for (const item of markdownRemoteSelectionStates.value) {
+    if (!Number.isInteger(Number(item.awarenessClientId)))
+      continue
+    map.set(Math.trunc(Number(item.awarenessClientId)), item.selection)
+  }
+  return map
+})
+
+const collabPresenceUsers = computed<WorkspaceCollabPresenceUser[]>(() => {
+  const merged = new Map<string, WorkspaceCollabPresenceUser & {
+    selectionActivityRank: number
+    selectionUpdatedAtMs: number
+  }>()
+  const currentUserId = String(props.currentUserId || '').trim()
+  for (const member of props.collabPresenceMembers) {
+    const userId = String(member.userId || '').trim()
+    const username = String(member.username || '').trim()
+    if (!userId || !username)
+      continue
+
+    const activityState = normalizeWorkspaceCollabPresenceActivityState(member.activityState)
+    const existing = merged.get(userId)
+    const projectMember = workspaceMemberMap.value.get(userId)
+    const updatedAt = String(member.updatedAt || '').trim()
+
+    if (!existing) {
+      merged.set(userId, {
+        userId,
+        username,
+        avatarUrl: projectMember?.avatarUrl || null,
+        role: projectMember?.role || '',
+        colorToken: resolveWorkspaceCollabPresenceColor(userId),
+        activityState,
+        updatedAt,
+        peerCount: 1,
+        isCurrentUser: userId === currentUserId,
+        selection: isMarkdownPreviewActive.value && userId === currentUserId ? markdownLocalSelectionStatus.value.selection : null,
+        selectionActivityRank: isMarkdownPreviewActive.value && userId === currentUserId && markdownLocalSelectionStatus.value.selection ? 1 : -1,
+        selectionUpdatedAtMs: Number.isFinite(Date.parse(updatedAt || '')) ? Date.parse(updatedAt || '') : -1,
+      })
+      if (isMarkdownPreviewActive.value && userId !== currentUserId && Number.isInteger(Number(member.awarenessClientId))) {
+        const remoteSelection = markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId)))
+        if (remoteSelection) {
+          const created = merged.get(userId)
+          if (created) {
+            created.selection = remoteSelection
+            created.selectionActivityRank = activityState === 'active' ? 1 : 0
+            created.selectionUpdatedAtMs = Number.isFinite(Date.parse(updatedAt || '')) ? Date.parse(updatedAt || '') : -1
+          }
+        }
+      }
+      continue
+    }
+
+    existing.peerCount += 1
+    existing.activityState = existing.activityState === 'active' || activityState === 'active'
+      ? 'active'
+      : 'background'
+    if (!existing.avatarUrl && projectMember?.avatarUrl)
+      existing.avatarUrl = projectMember.avatarUrl
+    if (!existing.role && projectMember?.role)
+      existing.role = projectMember.role
+
+    const nextUpdatedAtMs = Date.parse(updatedAt || '')
+    const currentUpdatedAtMs = Date.parse(existing.updatedAt || '')
+    if (Number.isFinite(nextUpdatedAtMs) && (!Number.isFinite(currentUpdatedAtMs) || nextUpdatedAtMs > currentUpdatedAtMs))
+      existing.updatedAt = updatedAt
+
+    const candidateSelection = !isMarkdownPreviewActive.value
+      ? null
+      : userId === currentUserId
+      ? markdownLocalSelectionStatus.value.selection
+      : (Number.isInteger(Number(member.awarenessClientId))
+          ? markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId))) || null
+          : null)
+    const candidateRank = activityState === 'active' ? 1 : 0
+    if (
+      candidateSelection
+      && (
+        existing.selectionActivityRank < candidateRank
+        || (existing.selectionActivityRank === candidateRank && (!Number.isFinite(existing.selectionUpdatedAtMs) || nextUpdatedAtMs > existing.selectionUpdatedAtMs))
+      )
+    ) {
+      existing.selection = candidateSelection
+      existing.selectionActivityRank = candidateRank
+      existing.selectionUpdatedAtMs = Number.isFinite(nextUpdatedAtMs) ? nextUpdatedAtMs : existing.selectionUpdatedAtMs
+    }
+  }
+
+  return [...merged.values()].sort((left, right) => {
+    if (left.activityState !== right.activityState)
+      return left.activityState === 'active' ? -1 : 1
+
+    const rightUpdatedAt = Date.parse(String(right.updatedAt || ''))
+    const leftUpdatedAt = Date.parse(String(left.updatedAt || ''))
+    if (Number.isFinite(rightUpdatedAt) && Number.isFinite(leftUpdatedAt) && rightUpdatedAt !== leftUpdatedAt)
+      return rightUpdatedAt - leftUpdatedAt
+
+    return left.username.localeCompare(right.username, 'zh-CN')
+  })
+})
+
+const collabPresenceCursors = computed<WorkspaceCollabCursorUser[]>(() => {
+  const merged = new Map<string, WorkspaceCollabCursorUser & { updatedAtMs: number }>()
+  const currentUserId = String(props.currentUserId || '').trim()
+
+  for (const member of props.collabPresenceMembers) {
+    const userId = String(member.userId || '').trim()
+    if (!userId || userId === currentUserId)
+      continue
+    if (normalizeWorkspaceCollabPresenceActivityState(member.activityState) !== 'active')
+      continue
+
+    const cursorX = Number(member.cursorX)
+    const cursorY = Number(member.cursorY)
+    if (!Number.isFinite(cursorX) || !Number.isFinite(cursorY))
+      continue
+
+    const user = collabPresenceUsers.value.find(item => item.userId === userId)
+    if (!user)
+      continue
+
+    const updatedAtMs = Date.parse(String(member.updatedAt || ''))
+    const existing = merged.get(userId)
+    if (existing && Number.isFinite(existing.updatedAtMs) && Number.isFinite(updatedAtMs) && existing.updatedAtMs >= updatedAtMs)
+      continue
+
+    merged.set(userId, {
+      userId,
+      username: user.username,
+      colorToken: user.colorToken,
+      cursorX,
+      cursorY,
+      updatedAtMs,
+    })
+  }
+
+  return [...merged.values()]
+    .map(({ updatedAtMs: _updatedAtMs, ...cursor }) => cursor)
+    .sort((left, right) => left.username.localeCompare(right.username, 'zh-CN'))
 })
 
 const canSubmitWorkspaceInvitation = computed(() => {
@@ -1356,6 +1552,50 @@ function submitWorkspaceSeatLimit(): void {
 
 function onCollabDrawModelUpdate(value: string): void {
   emit('update:collabDrawValue', value)
+}
+
+function onCollabCursorUpdate(value: { cursorX?: number, cursorY?: number }): void {
+  emit('updateCollabCursor', value)
+}
+
+function onMarkdownSelectionChange(value: {
+  line: number
+  column: number
+  selectionLength: number
+  anchorLine: number
+  anchorColumn: number
+  headLine: number
+  headColumn: number
+  isCollapsed: boolean
+  selectedTextPreview: string
+}): void {
+  const selection: WorkspaceCollabSelectionSummary = {
+    anchorLine: value.anchorLine,
+    anchorColumn: value.anchorColumn,
+    headLine: value.headLine,
+    headColumn: value.headColumn,
+    isCollapsed: value.isCollapsed,
+    selectionLength: value.selectionLength,
+    selectedTextPreview: value.selectedTextPreview,
+  }
+
+  markdownLocalSelectionStatus.value = {
+    line: Math.max(1, Math.trunc(Number(value.line) || 1)),
+    column: Math.max(1, Math.trunc(Number(value.column) || 1)),
+    selectionLength: Math.max(0, Math.trunc(Number(value.selectionLength) || 0)),
+    selection,
+  }
+
+  emit('updateCollabSelectionStatus', {
+    line: markdownLocalSelectionStatus.value.line,
+    column: markdownLocalSelectionStatus.value.column,
+    selectionLength: markdownLocalSelectionStatus.value.selectionLength,
+    selection,
+  })
+}
+
+function onMarkdownRemotePresenceChange(value: WorkspaceCollabAwarenessSelectionState[]): void {
+  markdownRemoteSelectionStates.value = Array.isArray(value) ? value : []
 }
 
 function workspaceTypeLabel(value: WorkspaceType | ''): string {
@@ -2045,34 +2285,38 @@ watch(activeTabId, (next) => {
 
       <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
-          <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
+          <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4">
             <div class="text-xs text-slate-600">
               {{ flowPanelTitle }}
               <span class="text-slate-400 ml-2">rev {{ hasFlowResource ? Math.max(0, Number(collabRevision || 0)) : 0 }}</span>
             </div>
-            <div
-              class="text-[11px]"
-              :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
-            >
-              {{ hasFlowResource ? collabConnectionText : '待初始化' }}
+            <div class="flex flex-wrap items-center justify-end gap-3">
+              <div
+                class="text-[11px]"
+                :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
+              >
+                {{ hasFlowResource ? collabConnectionText : '待初始化' }}
+              </div>
+              <CollabPresenceAvatarStack :users="collabPresenceUsers" />
             </div>
           </div>
 
-          <div v-if="hasFlowResource" class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
+          <div v-if="hasFlowResource" class="h-full">
             <div class="flex flex-col h-full">
               <WorkspaceTldrawCanvas
                 :key="props.flowResourceId || 'flow-canvas'"
                 class="h-full min-h-0 w-full"
                 :model-value="collabDrawValue"
+                :remote-cursors="collabPresenceCursors"
                 :persistence-key="`workspace-flow-${props.flowResourceId || 'default'}`"
                 :readonly="false"
                 @update:model-value="onCollabDrawModelUpdate"
+                @update-collab-cursor="onCollabCursorUpdate"
               />
               <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
                 {{ collabDrawError }}
               </p>
             </div>
-            <CollabPresencePanel :members="collabPresenceMembers" />
           </div>
 
           <div v-else class="px-6 bg-slate-50 flex flex-1 items-center justify-center">
@@ -2609,53 +2853,63 @@ watch(activeTabId, (next) => {
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
           <div class="bg-slate-50 flex-1 min-h-0">
             <template v-if="activePreviewMode === 'markdown'">
-              <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
+              <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4">
                 <div class="text-xs text-slate-600">
                   {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
-                <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ collabConnectionText }}
+                <div class="flex flex-wrap items-center justify-end gap-3">
+                  <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
+                    {{ collabConnectionText }}
+                  </div>
+                  <CollabPresenceAvatarStack :users="collabPresenceUsers" />
                 </div>
               </div>
-              <div class="grid grid-cols-1 h-full xl:grid-cols-[minmax(0,1fr),220px]">
-                <div class="border-b border-slate-200 bg-white min-h-0 xl:border-b-0 xl:border-r">
-                  <RichTextEditor
-                    :doc="collabMarkdownDoc"
-                    :editable="true"
-                    placeholder="输入正文或标题，协作文档会实时同步"
-                    :heading-levels="[1, 2, 3]"
-                  />
-                </div>
-                <CollabPresencePanel :members="collabPresenceMembers" />
+              <div class="flex h-full min-h-0 flex-col bg-white">
+                <RichTextEditor
+                  :doc="collabMarkdownDoc"
+                  :awareness="collabMarkdownAwareness"
+                  :current-user="collabCurrentUser"
+                  :editable="true"
+                  class="min-h-0 w-full"
+                  placeholder="输入正文或标题，协作文档会实时同步"
+                  :heading-levels="[1, 2, 3]"
+                  @selection-change="onMarkdownSelectionChange"
+                  @remote-presence-change="onMarkdownRemotePresenceChange"
+                />
+                <CollabPresenceDock :users="collabPresenceUsers" />
               </div>
             </template>
 
             <template v-else-if="activePreviewMode === 'draw'">
-              <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
+              <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4">
                 <div class="text-xs text-slate-600">
                   {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
-                <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ collabConnectionText }}
+                <div class="flex flex-wrap items-center justify-end gap-3">
+                  <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
+                    {{ collabConnectionText }}
+                  </div>
+                  <CollabPresenceAvatarStack :users="collabPresenceUsers" />
                 </div>
               </div>
-              <div class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
+              <div class="h-full">
                 <div class="flex flex-col h-full">
                   <WorkspaceTldrawCanvas
                     :key="props.previewResourceId || activeResourceTab.id"
                     class="h-full min-h-0 w-full"
                     :model-value="collabDrawValue"
+                    :remote-cursors="collabPresenceCursors"
                     :persistence-key="`workspace-collab-${props.previewResourceId || activeResourceTab.id}`"
                     :readonly="false"
                     @update:model-value="onCollabDrawModelUpdate"
+                    @update-collab-cursor="onCollabCursorUpdate"
                   />
                   <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
                     {{ collabDrawError }}
                   </p>
                 </div>
-                <CollabPresencePanel :members="collabPresenceMembers" />
               </div>
             </template>
 

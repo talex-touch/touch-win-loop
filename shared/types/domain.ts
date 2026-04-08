@@ -215,6 +215,8 @@ export interface ProjectResourceUploadSession {
   id: string
   projectId: string
   actorUserId?: string | null
+  actorUsername?: string
+  actorAvatarUrl?: string | null
   fileName: string
   mimeType: string
   fileSize: number

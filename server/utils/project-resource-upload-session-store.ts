@@ -12,6 +12,8 @@ interface ProjectResourceUploadSessionRow {
   id: string
   project_id: string
   actor_user_id: string | null
+  actor_username?: string | null
+  actor_avatar_url?: string | null
   file_name: string
   mime_type: string
   file_size: number | string
@@ -104,6 +106,8 @@ function mapSession(row: ProjectResourceUploadSessionRow): ProjectResourceUpload
     id: row.id,
     projectId: row.project_id,
     actorUserId: row.actor_user_id,
+    actorUsername: normalizeString(row.actor_username) || undefined,
+    actorAvatarUrl: normalizeString(row.actor_avatar_url) || null,
     fileName: row.file_name,
     mimeType: row.mime_type,
     fileSize: toSafeInteger(row.file_size),
@@ -149,6 +153,8 @@ export async function listProjectResourceUploadSessions(
     `SELECT s.id,
             s.project_id,
             s.actor_user_id,
+            u.username AS actor_username,
+            u.avatar_url AS actor_avatar_url,
             s.file_name,
             s.mime_type,
             s.file_size,
@@ -173,12 +179,15 @@ export async function listProjectResourceUploadSessions(
             s.completed_at::TEXT,
             d.preview_status
        FROM project_resource_upload_sessions s
+       LEFT JOIN users u
+         ON u.id = s.actor_user_id
        LEFT JOIN project_resource_documents d
          ON d.project_resource_id = s.resource_id
       WHERE s.project_id = $1
+        AND s.status <> 'canceled'
         AND (
-          s.status <> 'canceled'
-          OR s.updated_at >= NOW() - INTERVAL '24 hours'
+          s.status IN ('queued', 'uploading', 'paused', 'finalizing', 'failed')
+          OR s.updated_at >= NOW() - INTERVAL '7 days'
         )
       ORDER BY
         CASE
@@ -327,6 +336,8 @@ export async function getProjectResourceUploadSessionById(
     `SELECT s.id,
             s.project_id,
             s.actor_user_id,
+            u.username AS actor_username,
+            u.avatar_url AS actor_avatar_url,
             s.file_name,
             s.mime_type,
             s.file_size,
@@ -351,6 +362,8 @@ export async function getProjectResourceUploadSessionById(
             s.completed_at::TEXT,
             d.preview_status
        FROM project_resource_upload_sessions s
+       LEFT JOIN users u
+         ON u.id = s.actor_user_id
        LEFT JOIN project_resource_documents d
          ON d.project_resource_id = s.resource_id
       WHERE s.project_id = $1

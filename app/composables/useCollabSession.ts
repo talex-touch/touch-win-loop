@@ -2,10 +2,17 @@ import type { Ref } from 'vue'
 import type { useWorkspaceRealtime } from '~/composables/useWorkspaceRealtime'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import * as Y from 'yjs'
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
+import {
+  normalizeWorkspaceCollabPresenceActivityState,
+  resolveWorkspaceCollabPresenceColor,
+  type WorkspaceCollabPresenceActivityState,
+  type WorkspaceCollabPresenceMember,
+} from '../components/workspace/collab/presence'
 import {
   ensureMarkdownCollabDocShape,
   syncMarkdownMirrorFromRichText,
-} from '~~/shared/utils/collab-markdown-rich-text'
+} from '../../shared/utils/collab-markdown-rich-text'
 
 export interface CollabSnapshotPayload {
   kind: 'markdown' | 'draw'
@@ -24,19 +31,12 @@ export interface WorkspaceRealtimeEnvelope {
   payload?: Record<string, unknown>
 }
 
-export interface WorkspaceCollabPresenceMember {
-  peerId: string
-  userId: string
-  username: string
-  cursorX?: number
-  cursorY?: number
-  updatedAt?: string
-}
-
 interface UseCollabSessionInput {
   workspaceRealtime: ReturnType<typeof useWorkspaceRealtime>
   projectId: Ref<string>
   resourceId: Ref<string>
+  currentUserId: Ref<string>
+  currentUsername: Ref<string>
   statusLine: Ref<string>
   fetchSnapshot: (resourceId: string) => Promise<CollabSnapshotPayload | null>
 }
@@ -149,10 +149,16 @@ export function useCollabSession(input: UseCollabSessionInput) {
   const presenceMembers = ref<WorkspaceCollabPresenceMember[]>([])
   const applyingRemote = ref(false)
   const docRef = shallowRef<Y.Doc | null>(null)
+  const awarenessRef = shallowRef<Awareness | null>(null)
   const markdownDoc = computed(() => {
     if (resourceKind.value !== 'markdown')
       return null
     return docRef.value
+  })
+  const markdownAwareness = computed(() => {
+    if (resourceKind.value !== 'markdown')
+      return null
+    return awarenessRef.value
   })
 
   const connected = computed(() => input.workspaceRealtime.connected.value)
@@ -187,7 +193,208 @@ export function useCollabSession(input: UseCollabSessionInput) {
   let snapshotPollTimer: ReturnType<typeof setInterval> | null = null
   let batchSendTimer: ReturnType<typeof setTimeout> | null = null
   let markdownMirrorSyncTimer: ReturnType<typeof setTimeout> | null = null
+  let presenceCursorTimer: ReturnType<typeof setTimeout> | null = null
   let hasPendingLocalChanges = false
+  let removeVisibilityListener: (() => void) | null = null
+  let pendingPresenceCursor: { cursorX?: number, cursorY?: number } | null = null
+  let awarenessDispose: (() => void) | null = null
+  const remoteAwarenessClientIds = new Set<number>()
+
+  function resolvePresenceActivityState(): WorkspaceCollabPresenceActivityState {
+    if (!import.meta.client || typeof document === 'undefined')
+      return 'active'
+    return document.visibilityState === 'hidden' ? 'background' : 'active'
+  }
+
+  function syncPresenceActivityState(activityState = resolvePresenceActivityState()): void {
+    const projectId = normalizeString(input.projectId.value)
+    const resourceId = normalizeString(input.resourceId.value)
+    if (!projectId || !resourceId)
+      return
+
+    input.workspaceRealtime.updatePresence({
+      projectId,
+      resourceId,
+      activityState,
+    })
+  }
+
+  function bindVisibilityListener(): void {
+    if (!import.meta.client || typeof document === 'undefined' || removeVisibilityListener)
+      return
+
+    const handleVisibilityChange = () => {
+      syncPresenceActivityState(resolvePresenceActivityState())
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    removeVisibilityListener = () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      removeVisibilityListener = null
+    }
+  }
+
+  function unbindVisibilityListener(): void {
+    removeVisibilityListener?.()
+  }
+
+  function syncLocalAwarenessUser(): void {
+    const awareness = awarenessRef.value
+    if (!awareness)
+      return
+
+    const userId = normalizeString(input.currentUserId.value)
+    const username = normalizeString(input.currentUsername.value)
+    if (!userId || !username) {
+      awareness.setLocalStateField('user', null)
+      return
+    }
+
+    awareness.setLocalStateField('user', {
+      id: userId,
+      userId,
+      name: username,
+      color: resolveWorkspaceCollabPresenceColor(userId),
+    })
+  }
+
+  function clearAwarenessBinding(): void {
+    awarenessDispose?.()
+    awarenessDispose = null
+
+    const awareness = awarenessRef.value
+    if (awareness) {
+      try {
+        awareness.setLocalState(null)
+      }
+      catch {
+        // ignore awareness disposal errors
+      }
+      awareness.destroy()
+    }
+
+    awarenessRef.value = null
+    remoteAwarenessClientIds.clear()
+  }
+
+  function syncRemoteAwarenessFromPresenceMembers(members: WorkspaceCollabPresenceMember[]): void {
+    const awareness = awarenessRef.value
+    if (!awareness)
+      return
+
+    const nextRemoteClientIds = new Set<number>()
+    for (const member of members) {
+      const awarenessClientId = Number(member.awarenessClientId)
+      if (!Number.isInteger(awarenessClientId) || awarenessClientId === awareness.clientID)
+        continue
+
+      const awarenessUpdateBase64 = normalizeString(member.awarenessUpdateBase64)
+      if (!awarenessUpdateBase64)
+        continue
+
+      const awarenessUpdate = decodeBase64ToBytes(awarenessUpdateBase64)
+      if (awarenessUpdate.length === 0)
+        continue
+
+      nextRemoteClientIds.add(awarenessClientId)
+      try {
+        applyAwarenessUpdate(awareness, awarenessUpdate, 'remote-snapshot')
+      }
+      catch {
+        // ignore malformed awareness updates
+      }
+    }
+
+    const staleClientIds = [...remoteAwarenessClientIds].filter(clientId => !nextRemoteClientIds.has(clientId))
+    if (staleClientIds.length > 0)
+      removeAwarenessStates(awareness, staleClientIds, 'remote-snapshot')
+
+    remoteAwarenessClientIds.clear()
+    for (const clientId of nextRemoteClientIds)
+      remoteAwarenessClientIds.add(clientId)
+  }
+
+  function bindMarkdownAwareness(doc: Y.Doc): void {
+    clearAwarenessBinding()
+
+    const awareness = new Awareness(doc)
+    const handleAwarenessUpdate = ({ added, updated, removed }: { added: number[], updated: number[], removed: number[] }, origin: unknown) => {
+      if (origin === 'remote-snapshot' || origin === 'markdown-awareness-bootstrap')
+        return
+
+      const changedClientIds = [...added, ...updated, ...removed].filter(clientId => clientId === awareness.clientID)
+      if (changedClientIds.length === 0)
+        return
+
+      const awarenessUpdate = encodeAwarenessUpdate(awareness, changedClientIds)
+      if (awarenessUpdate.length === 0)
+        return
+
+      const projectId = normalizeString(input.projectId.value)
+      const resourceId = normalizeString(input.resourceId.value)
+      if (!projectId || !resourceId)
+        return
+
+      input.workspaceRealtime.updatePresence({
+        projectId,
+        resourceId,
+        activityState: resolvePresenceActivityState(),
+        awarenessClientId: awareness.clientID,
+        awarenessUpdateBase64: encodeBytesToBase64(awarenessUpdate),
+      })
+    }
+
+    awareness.on('update', handleAwarenessUpdate)
+    awarenessDispose = () => {
+      awareness.off('update', handleAwarenessUpdate)
+    }
+    awarenessRef.value = awareness
+    remoteAwarenessClientIds.clear()
+    syncLocalAwarenessUser()
+    syncRemoteAwarenessFromPresenceMembers(presenceMembers.value)
+  }
+
+  function clearPresenceCursorTimer(): void {
+    if (!presenceCursorTimer)
+      return
+    clearTimeout(presenceCursorTimer)
+    presenceCursorTimer = null
+  }
+
+  function flushPresenceCursor(): void {
+    clearPresenceCursorTimer()
+
+    const pendingCursor = pendingPresenceCursor
+    pendingPresenceCursor = null
+    if (!pendingCursor)
+      return
+
+    const projectId = normalizeString(input.projectId.value)
+    const resourceId = normalizeString(input.resourceId.value)
+    if (!projectId || !resourceId)
+      return
+
+    input.workspaceRealtime.updatePresence({
+      projectId,
+      resourceId,
+      cursorX: pendingCursor.cursorX,
+      cursorY: pendingCursor.cursorY,
+      activityState: resolvePresenceActivityState(),
+    })
+  }
+
+  function updatePresenceCursor(cursorX?: number, cursorY?: number): void {
+    pendingPresenceCursor = {
+      cursorX: Number.isFinite(Number(cursorX)) ? Number(cursorX) : undefined,
+      cursorY: Number.isFinite(Number(cursorY)) ? Number(cursorY) : undefined,
+    }
+    if (presenceCursorTimer)
+      return
+
+    presenceCursorTimer = setTimeout(() => {
+      flushPresenceCursor()
+    }, 50)
+  }
 
   function syncDraftFromDoc(): void {
     const doc = docRef.value
@@ -281,6 +488,11 @@ export function useCollabSession(input: UseCollabSessionInput) {
     if (docDispose)
       docDispose()
 
+    if (resourceKind.value === 'markdown')
+      bindMarkdownAwareness(doc)
+    else
+      clearAwarenessBinding()
+
     const handleDocUpdate = (_update: Uint8Array, origin: unknown) => {
       if (
         origin === 'remote'
@@ -319,6 +531,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
       doc.off('update', handleDocUpdate)
       nodes.unobserve(handleNodesChange)
       richTextFragment.unobserveDeep(handleRichTextChange)
+      clearAwarenessBinding()
       doc.destroy()
     }
   }
@@ -420,8 +633,10 @@ export function useCollabSession(input: UseCollabSessionInput) {
     if (!projectId || !resourceId)
       return
 
+    bindVisibilityListener()
     input.workspaceRealtime.subscribeProject(projectId)
     input.workspaceRealtime.joinCollab(projectId, resourceId)
+    syncPresenceActivityState()
     syncFallbackSnapshotPoller()
   }
 
@@ -437,7 +652,10 @@ export function useCollabSession(input: UseCollabSessionInput) {
     clearSnapshotPollTimer()
     clearBatchSendTimer()
     clearMarkdownMirrorSyncTimer()
+    clearPresenceCursorTimer()
+    unbindVisibilityListener()
     hasPendingLocalChanges = false
+    pendingPresenceCursor = null
 
     if (leaveRoom) {
       const projectId = normalizeString(input.projectId.value)
@@ -582,9 +800,14 @@ export function useCollabSession(input: UseCollabSessionInput) {
           username: normalizeString(record.username),
           cursorX: Number.isFinite(Number(record.cursorX)) ? Number(record.cursorX) : undefined,
           cursorY: Number.isFinite(Number(record.cursorY)) ? Number(record.cursorY) : undefined,
+          awarenessClientId: Number.isInteger(Number(record.awarenessClientId)) ? Math.trunc(Number(record.awarenessClientId)) : undefined,
+          awarenessUpdateBase64: normalizeString(record.awarenessUpdateBase64),
+          activityState: normalizeWorkspaceCollabPresenceActivityState(record.activityState),
           updatedAt: normalizeString(record.updatedAt),
         }
       })
+      if (resourceKind.value === 'markdown')
+        syncRemoteAwarenessFromPresenceMembers(presenceMembers.value)
       return true
     }
 
@@ -593,6 +816,8 @@ export function useCollabSession(input: UseCollabSessionInput) {
 
   watch(() => connected.value, () => {
     syncFallbackSnapshotPoller()
+    if (roomKey.value && connected.value)
+      syncPresenceActivityState()
   })
 
   watch(() => roomKey.value, () => {
@@ -600,6 +825,13 @@ export function useCollabSession(input: UseCollabSessionInput) {
       presenceMembers.value = []
     syncFallbackSnapshotPoller()
   })
+
+  watch([
+    () => input.currentUserId.value,
+    () => input.currentUsername.value,
+  ], () => {
+    syncLocalAwarenessUser()
+  }, { immediate: true })
 
   onBeforeUnmount(() => {
     dispose(true)
@@ -609,6 +841,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
     resourceKind,
     revision,
     markdownDoc,
+    markdownAwareness,
     drawValue,
     drawError,
     presenceMembers,
@@ -619,6 +852,7 @@ export function useCollabSession(input: UseCollabSessionInput) {
     activateRoom,
     dispose,
     updateDraw,
+    updatePresenceCursor,
     handleRealtimeEnvelope,
   }
 }

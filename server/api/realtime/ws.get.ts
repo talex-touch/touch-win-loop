@@ -676,12 +676,20 @@ export default defineWebSocketHandler({
 
         const cursorX = Number(parsedMessage.payload?.cursorX)
         const cursorY = Number(parsedMessage.payload?.cursorY)
+        const awarenessClientId = Number(parsedMessage.payload?.awarenessClientId)
+        const awarenessUpdateBase64 = normalizeString(parsedMessage.payload?.awarenessUpdateBase64)
+        const activityState = normalizeString(parsedMessage.payload?.activityState) === 'background'
+          ? 'background'
+          : 'active'
         const roomKey = buildCollabRoomKey(projectId, resourceId)
         updateRealtimePresence(
           runtimeContext.peerId,
           roomKey,
           Number.isFinite(cursorX) ? cursorX : undefined,
           Number.isFinite(cursorY) ? cursorY : undefined,
+          activityState,
+          Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+          awarenessUpdateBase64 || undefined,
         )
         publishCollabPresenceSnapshotSilently(roomKey)
         sendAck(peer, parsedMessage.requestId, {

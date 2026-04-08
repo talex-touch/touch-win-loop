@@ -52,12 +52,16 @@ function parseRealtimePresenceMembers(rawMembers: unknown): RealtimePresenceMemb
       continue
     const cursorX = Number(member.cursorX)
     const cursorY = Number(member.cursorY)
+    const awarenessClientId = Number(member.awarenessClientId)
     members.push({
       peerId,
       userId: normalizeString(member.userId),
       username: normalizeString(member.username),
       cursorX: Number.isFinite(cursorX) ? cursorX : undefined,
       cursorY: Number.isFinite(cursorY) ? cursorY : undefined,
+      awarenessClientId: Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+      awarenessUpdateBase64: normalizeString(member.awarenessUpdateBase64) || undefined,
+      activityState: normalizeString(member.activityState) === 'background' ? 'background' : 'active',
       updatedAt: normalizeString(member.updatedAt) || new Date().toISOString(),
     })
   }
