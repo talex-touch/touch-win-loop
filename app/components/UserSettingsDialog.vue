@@ -24,8 +24,7 @@ import {
   USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES,
   USER_AVATAR_UPLOAD_TYPES_LABEL,
 } from '~~/shared/constants/user-avatar-upload'
-import { isManualAuthAvatarUrl } from '~~/shared/utils/user-avatar'
-import { formatDateTime, formatWorkspaceTypeLabel } from '~/composables/team-ui'
+import { formatDateTime } from '~/composables/team-ui'
 
 type UserSettingsTabId = 'profile' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
 type UserSettingsNavGroupId = 'profile' | 'workspace'
@@ -67,7 +66,7 @@ const loggingOut = ref(false)
 const actionError = ref('')
 const avatarFileInputRef = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
-const avatarRemoving = ref(false)
+const profileEditorDialogVisible = ref(false)
 const avatarActionError = ref('')
 const avatarActionSuccess = ref('')
 const feishuBindLoading = ref(false)
@@ -186,7 +185,6 @@ const isPersonalWorkspace = computed(() => currentWorkspace.value?.workspace.typ
 const currentWorkspaceId = computed(() => String(currentWorkspace.value?.workspace.id || '').trim())
 const currentUserAvatarUrl = computed(() => String(props.userAvatarUrl || '').trim())
 const hasUserAvatar = computed(() => Boolean(currentUserAvatarUrl.value))
-const isManualUserAvatar = computed(() => isManualAuthAvatarUrl(currentUserAvatarUrl.value))
 
 function resolvePrimaryRole(roles: WorkspaceMemberRole[] | null | undefined): WorkspaceMemberRole | '' {
   const normalizedRoles = Array.isArray(roles) ? roles : []
@@ -248,7 +246,6 @@ function formatAiRouteLabel(routeValue: string | null | undefined): string {
 }
 
 const workspacePrimaryRole = computed<WorkspaceMemberRole | ''>(() => resolvePrimaryRole(currentWorkspace.value?.workspace.roles))
-const workspaceRoleLabel = computed(() => formatWorkspaceRoleLabel(workspacePrimaryRole.value))
 
 const workspaceProjectSeatLimit = computed(() => {
   if (workspaceBillingEstimate.value?.defaultProjectSeatLimit)
@@ -345,12 +342,9 @@ const workspacePlanTierLabel = computed(() => {
 })
 
 const workspaceTypeDetailText = computed(() => {
-  const workspaceTypeLabel = currentWorkspace.value
-    ? formatWorkspaceTypeLabel(currentWorkspace.value.workspace.type)
-    : '项目台'
   if (workspaceBillingEstimate.value?.planCode)
-    return `${workspaceTypeLabel} · 套餐 ${workspaceBillingEstimate.value.planCode}`
-  return workspaceTypeLabel
+    return `套餐 ${workspaceBillingEstimate.value.planCode}`
+  return '套餐未配置'
 })
 
 const workspaceTypeActionLabel = computed(() => {
@@ -365,16 +359,6 @@ const workspaceTypeActionHint = computed(() => {
 
 const userInitial = computed(() => {
   return resolveInitial(props.userName)
-})
-
-const feishuBindingSummaryText = computed(() => {
-  return feishuBindStatus.value?.linked ? '已绑定飞书账号' : '未绑定飞书账号'
-})
-
-const casdoorBindingSummaryText = computed(() => {
-  if (!casdoorEnabled.value)
-    return 'Casdoor 未启用'
-  return casdoorBindStatus.value?.linked ? '已绑定 Casdoor 账号' : '未绑定 Casdoor 账号'
 })
 
 const canRenameCurrentWorkspace = computed(() => {
@@ -570,12 +554,19 @@ function cancelWorkspaceNameEdit() {
   syncWorkspaceNameDraft()
 }
 
-function openBindingsTab() {
-  selectTab('bindings')
+function openProfileEditorDialog() {
+  clearAvatarActionFeedback()
+  profileEditorDialogVisible.value = true
+}
+
+function closeProfileEditorDialog() {
+  if (avatarUploading.value)
+    return
+  profileEditorDialogVisible.value = false
 }
 
 function triggerAvatarUpload() {
-  if (avatarUploading.value || avatarRemoving.value)
+  if (avatarUploading.value)
     return
   avatarFileInputRef.value?.click()
 }
@@ -623,27 +614,6 @@ async function handleAvatarFileChange(event: Event) {
   }
 }
 
-async function resetUserAvatar() {
-  if (avatarRemoving.value || !isManualUserAvatar.value)
-    return
-
-  clearAvatarActionFeedback()
-  avatarRemoving.value = true
-  try {
-    const response = await authApiFetch<ApiResponse<AuthUser>>('/auth/avatar', {
-      method: 'DELETE',
-    })
-    emit('userUpdated', response.data)
-    avatarActionSuccess.value = '头像已重置为默认状态。'
-  }
-  catch (error: any) {
-    avatarActionError.value = String(error?.data?.message || '头像重置失败，请稍后重试。')
-  }
-  finally {
-    avatarRemoving.value = false
-  }
-}
-
 async function saveWorkspaceName() {
   const normalizedWorkspaceId = String(currentWorkspaceId.value || '').trim()
   if (!normalizedWorkspaceId || !canSubmitWorkspaceName.value)
@@ -678,6 +648,7 @@ async function saveWorkspaceName() {
 function closeDialog() {
   if (loggingOut.value)
     return
+  profileEditorDialogVisible.value = false
   visibleModel.value = false
 }
 
@@ -832,7 +803,7 @@ function resetDialogState() {
   activeTab.value = 'profile'
   actionError.value = ''
   avatarUploading.value = false
-  avatarRemoving.value = false
+  profileEditorDialogVisible.value = false
   clearAvatarActionFeedback()
   clearWorkspaceCopyFeedback()
   resetWorkspaceScopedState()
@@ -1420,6 +1391,7 @@ watch(
   () => props.visible,
   (visible) => {
     if (!visible) {
+      profileEditorDialogVisible.value = false
       workspaceInvitationDialogVisible.value = false
       return
     }
@@ -1559,88 +1531,13 @@ onBeforeUnmount(() => {
                         <p v-if="props.userSubtitle" class="text-sm text-slate-500 mt-1">
                           {{ props.userSubtitle }}
                         </p>
-                        <div class="mt-3 flex flex-wrap gap-2">
-                          <span class="user-settings-chip user-settings-chip--strong">
-                            {{ workspaceRoleLabel }}
-                          </span>
-                          <span v-if="currentWorkspace" class="user-settings-chip">
-                            {{ formatWorkspaceTypeLabel(currentWorkspace.workspace.type) }}
-                          </span>
-                        </div>
-                        <p class="text-sm text-slate-500 leading-6 mt-3">
-                          {{ isManualUserAvatar ? '当前头像来源：手动上传。' : (hasUserAvatar ? '当前头像来源：第三方同步。' : '当前使用默认字母头像。') }}
-                        </p>
                       </div>
                     </div>
-
-                    <div class="user-settings-avatar-actions">
-                      <button
-                        class="user-settings-btn user-settings-btn--primary"
-                        :disabled="avatarUploading || avatarRemoving"
-                        @click="triggerAvatarUpload"
-                      >
-                        {{ avatarUploading ? '上传中...' : '修改头像' }}
-                      </button>
-                      <button
-                        class="user-settings-btn"
-                        :disabled="avatarUploading || avatarRemoving || !isManualUserAvatar"
-                        @click="resetUserAvatar"
-                      >
-                        {{ avatarRemoving ? '重置中...' : '重置头像' }}
-                      </button>
-                    </div>
                   </div>
-
-                  <p class="text-xs text-slate-500">
-                    支持 {{ USER_AVATAR_UPLOAD_TYPES_LABEL }}，单文件上限 {{ formatFileSize(USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES) }}。
-                  </p>
-                  <p v-if="avatarActionError" class="user-settings-feedback user-settings-feedback--danger">
-                    {{ avatarActionError }}
-                  </p>
-                  <p v-if="avatarActionSuccess" class="user-settings-feedback user-settings-feedback--success">
-                    {{ avatarActionSuccess }}
-                  </p>
-                </section>
-
-                <section class="user-settings-card">
-                  <div class="user-settings-section-header">
-                    <div>
-                      <p class="text-base text-slate-900 font-semibold">
-                        账号绑定摘要
-                      </p>
-                      <p class="text-sm text-slate-500 mt-1">
-                        这里汇总第三方登录绑定状态，实际绑定与解绑操作仍在独立页签完成。
-                      </p>
-                    </div>
-                    <button class="user-settings-btn user-settings-btn--compact" @click="openBindingsTab">
-                      管理绑定
+                  <div class="user-settings-profile-card__footer">
+                    <button class="user-settings-btn user-settings-btn--primary" @click="openProfileEditorDialog">
+                      编辑资料
                     </button>
-                  </div>
-
-                  <div class="user-settings-metric-grid user-settings-metric-grid--profile">
-                    <div class="user-settings-mini-card">
-                      <p class="user-settings-mini-card__label">
-                        飞书
-                      </p>
-                      <p class="user-settings-mini-card__value">
-                        {{ feishuBindingSummaryText }}
-                      </p>
-                      <p v-if="feishuBindStatus?.linked && feishuBindStatus.unionId" class="text-xs text-slate-500 break-all">
-                        unionId：{{ feishuBindStatus.unionId }}
-                      </p>
-                    </div>
-
-                    <div class="user-settings-mini-card">
-                      <p class="user-settings-mini-card__label">
-                        Casdoor
-                      </p>
-                      <p class="user-settings-mini-card__value">
-                        {{ casdoorBindingSummaryText }}
-                      </p>
-                      <p v-if="casdoorBindStatus?.linked && casdoorBindStatus.subject" class="text-xs text-slate-500 break-all">
-                        sub：{{ casdoorBindStatus.subject }}
-                      </p>
-                    </div>
                   </div>
                 </section>
               </div>
@@ -2399,6 +2296,80 @@ onBeforeUnmount(() => {
       </div>
 
       <div
+        v-if="profileEditorDialogVisible"
+        class="p-4 bg-slate-950/35 flex items-center inset-0 justify-center fixed z-[60]"
+        @click.self="closeProfileEditorDialog"
+      >
+        <div class="p-5 border border-slate-200 rounded-[24px] bg-white max-w-[520px] w-full shadow-2xl sm:p-6">
+          <div class="flex gap-4 items-start justify-between">
+            <div>
+              <p class="text-xl text-slate-900 font-semibold">
+                编辑资料
+              </p>
+              <p class="text-sm text-slate-500 mt-2">
+                当前仅支持修改头像，用户名暂不支持编辑。
+              </p>
+            </div>
+            <button
+              class="text-slate-500 rounded-full flex h-9 w-9 transition items-center justify-center hover:text-slate-800 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="avatarUploading"
+              @click="closeProfileEditorDialog"
+            >
+              <span class="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+
+          <div class="user-settings-profile-editor">
+            <div class="user-settings-profile-editor__preview">
+              <div class="user-settings-avatar user-settings-avatar--editor">
+                <img
+                  v-if="hasUserAvatar"
+                  :src="currentUserAvatarUrl"
+                  alt="头像预览"
+                  class="user-settings-avatar__image"
+                >
+                <span v-else>{{ userInitial }}</span>
+              </div>
+              <div class="min-w-0">
+                <p class="text-base text-slate-900 font-semibold">
+                  {{ props.userName }}
+                </p>
+                <p v-if="props.userSubtitle" class="text-sm text-slate-500 mt-1">
+                  {{ props.userSubtitle }}
+                </p>
+              </div>
+            </div>
+
+            <div class="user-settings-profile-editor__hint">
+              <p class="text-sm text-slate-600">
+                支持 {{ USER_AVATAR_UPLOAD_TYPES_LABEL }}，单文件上限 {{ formatFileSize(USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES) }}。
+              </p>
+              <p class="text-sm text-slate-500">
+                上传后立即生效，并同步刷新当前设置面板与外层用户卡片。
+              </p>
+            </div>
+
+            <div class="user-settings-profile-editor__actions">
+              <button
+                class="user-settings-btn user-settings-btn--primary"
+                :disabled="avatarUploading"
+                @click="triggerAvatarUpload"
+              >
+                {{ avatarUploading ? '上传中...' : '选择头像' }}
+              </button>
+            </div>
+
+            <p v-if="avatarActionError" class="user-settings-feedback user-settings-feedback--danger">
+              {{ avatarActionError }}
+            </p>
+            <p v-if="avatarActionSuccess" class="user-settings-feedback user-settings-feedback--success">
+              {{ avatarActionSuccess }}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div
         v-if="workspaceInvitationDialogVisible"
         class="p-4 bg-slate-950/35 flex items-center inset-0 justify-center fixed z-[60]"
         @click.self="closeWorkspaceInvitationDialog"
@@ -2643,6 +2614,11 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.user-settings-profile-card__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .user-settings-avatar {
   position: relative;
   display: flex;
@@ -2666,13 +2642,39 @@ onBeforeUnmount(() => {
   font-size: 26px;
 }
 
+.user-settings-avatar--editor {
+  height: 88px;
+  width: 88px;
+  border-radius: 28px;
+  font-size: 30px;
+}
+
 .user-settings-avatar__image {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.user-settings-avatar-actions {
+.user-settings-profile-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.user-settings-profile-editor__preview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.user-settings-profile-editor__hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.user-settings-profile-editor__actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -3244,7 +3246,7 @@ onBeforeUnmount(() => {
   }
 
   .user-settings-profile-card__main,
-  .user-settings-avatar-actions {
+  .user-settings-profile-card__footer {
     width: 100%;
   }
 
