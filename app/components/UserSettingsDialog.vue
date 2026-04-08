@@ -444,12 +444,12 @@ const canManageWorkspaceRoles = computed(() => {
 
 const workspaceInvitationRoleHint = computed(() => {
   if (isPersonalWorkspace.value)
-    return '个人工作空间仅支持邀请成员角色。'
+    return '个人工作空间仅支持邀请成员角色；留空用户名时为通用邀请，可多人加入。'
   if (workspacePrimaryRole.value === 'manager')
-    return '协作管理员仅可邀请成员。'
+    return '协作管理员仅可邀请成员；留空用户名时为通用邀请，可多人加入。'
   if (!canInviteWorkspaceMembers.value)
     return '当前账号无工作空间邀请权限。'
-  return '可生成工作空间邀请链接并发送给协作者。'
+  return '可生成工作空间邀请链接并发送给协作者；留空用户名时为通用邀请，可多人加入，填写后仅指定账号可加入。'
 })
 
 function resolveMemberUsagePercent(member: WorkspaceAiUsageHistory['memberSummaries'][number]): string {

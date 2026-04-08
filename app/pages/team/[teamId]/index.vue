@@ -1145,7 +1145,7 @@ onMounted(async () => {
               创建邀请链接
             </div>
             <span class="text-[11px] text-slate-400">
-              接受邀请后将直接加入当前项目
+              留空用户名 = 通用链接可多人加入；填写后仅指定账号可加入
             </span>
           </div>
 
@@ -1156,7 +1156,7 @@ onMounted(async () => {
                 v-model="projectInvitationForm.inviteeUsername"
                 data-testid="team-project-invite-username-input"
                 class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                placeholder="留空时生成通用邀请链接"
+                placeholder="留空则生成可多人加入的通用邀请链接"
               >
             </label>
 
