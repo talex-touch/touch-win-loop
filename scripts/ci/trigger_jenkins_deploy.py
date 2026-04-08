@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import os
-import sys
 import time
 import urllib.error
 import urllib.parse
@@ -54,73 +51,6 @@ def request_json(url: str, headers: dict[str, str]) -> dict:
   request = urllib.request.Request(url, headers=headers)
   with urllib.request.urlopen(request, timeout=30) as response:
     return json.load(response)
-
-
-def build_feishu_signature(secret: str, timestamp: str) -> str:
-  string_to_sign = f'{timestamp}\n{secret}'
-  digest = hmac.new(string_to_sign.encode('utf-8'), digestmod=hashlib.sha256).digest()
-  return base64.b64encode(digest).decode('utf-8')
-
-
-def build_deploy_started_message(*,
-  environment: str,
-  repository: str,
-  branch: str,
-  commit_sha: str,
-  build_version: str,
-  image_ref: str,
-  workflow_run_url: str,
-  jenkins_build_url: str,
-  actor: str,
-  triggered_by: str,
-) -> str:
-  return '\n'.join([
-    'WinLoop 部署开始',
-    f'环境：{environment}',
-    f'仓库：{repository}',
-    f'分支：{branch}',
-    f'Commit：{commit_sha}',
-    f'构建版本：{build_version}',
-    f'镜像：{image_ref}',
-    f'触发人：{actor or "-"}',
-    f'触发来源：{triggered_by or "-"}',
-    f'GitHub Actions：{workflow_run_url}',
-    f'Jenkins：{jenkins_build_url}',
-  ])
-
-
-def send_feishu_webhook(*, webhook_url: str, webhook_secret: str, text: str) -> None:
-  webhook_url = to_text(webhook_url)
-  if not webhook_url:
-    return
-
-  payload: dict[str, object] = {
-    'msg_type': 'text',
-    'content': {
-      'text': text,
-    },
-  }
-
-  secret = to_text(webhook_secret)
-  if secret:
-    timestamp = str(int(time.time()))
-    payload['timestamp'] = timestamp
-    payload['sign'] = build_feishu_signature(secret, timestamp)
-
-  request = urllib.request.Request(
-    webhook_url,
-    data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
-    headers={'Content-Type': 'application/json; charset=utf-8'},
-    method='POST',
-  )
-
-  with urllib.request.urlopen(request, timeout=15) as response:
-    body = response.read().decode('utf-8', errors='replace')
-
-  result = json.loads(body) if body else {}
-  code = result.get('code', 0)
-  if code not in (0, '0', None):
-    raise RuntimeError(f'Feishu webhook returned code={code}, msg={result.get("msg", "")}')
 
 
 def fetch_crumb_headers(base_url: str, default_headers: dict[str, str]) -> dict[str, str]:
@@ -232,9 +162,6 @@ def main() -> int:
   image_ref = require_env('IMAGE_REF')
   triggered_by = require_env('TRIGGERED_BY')
   workflow_run_url = require_env('WORKFLOW_RUN_URL')
-  actor = to_text(os.environ.get('GITHUB_ACTOR'))
-  webhook_url = to_text(os.environ.get('FEISHU_WEBHOOK_URL'))
-  webhook_secret = to_text(os.environ.get('FEISHU_WEBHOOK_SECRET'))
 
   deploy_target = resolve_deploy_target(
     branch=branch,
@@ -269,30 +196,6 @@ def main() -> int:
 
   build_url = wait_for_build_start(queue_url=queue_url, headers=default_headers)
   print(f'Jenkins build started: {build_url}')
-
-  if webhook_url:
-    try:
-      send_feishu_webhook(
-        webhook_url=webhook_url,
-        webhook_secret=webhook_secret,
-        text=build_deploy_started_message(
-          environment=deploy_target.environment,
-          repository=repository,
-          branch=branch,
-          commit_sha=commit_sha,
-          build_version=build_version,
-          image_ref=image_ref,
-          workflow_run_url=workflow_run_url,
-          jenkins_build_url=build_url,
-          actor=actor,
-          triggered_by=triggered_by,
-        ),
-      )
-      print('Feishu deployment-start notification sent successfully.')
-    except Exception as error: # noqa: BLE001
-      print(f'[warn] Failed to send Feishu deployment-start notification: {error}', file=sys.stderr)
-  else:
-    print('Skip Feishu deployment-start notification because FEISHU_WEBHOOK_URL is not configured.')
 
   result = wait_for_build_result(build_url=build_url, headers=default_headers)
   print(f'Jenkins build result: {result}')

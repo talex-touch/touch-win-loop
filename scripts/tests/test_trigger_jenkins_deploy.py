@@ -36,31 +36,15 @@ class TriggerJenkinsDeployTests(unittest.TestCase):
     self.assertEqual(MODULE.job_path('folder/staging'), '/job/folder/job/staging')
     self.assertEqual(MODULE.job_path('/root/prod/'), '/job/root/job/prod')
 
-  def test_build_deploy_started_message_contains_required_fields(self) -> None:
-    message = MODULE.build_deploy_started_message(
-      environment='staging',
-      repository='talex-touch/touch-win-loop',
-      branch='dev',
-      commit_sha='abc1234',
-      build_version='dev-99-abc1234',
-      image_ref='ghcr.io/talex-touch/touch-win-loop@sha256:deadbeef',
-      workflow_run_url='https://github.com/example/actions/runs/1',
-      jenkins_build_url='https://jenkins.example/job/staging/15/',
-      actor='TalexDreamSoul',
-      triggered_by='github-actions',
+  def test_api_url_appends_default_json_suffix(self) -> None:
+    self.assertEqual(
+      MODULE.api_url('https://jenkins.example/queue/item/29'),
+      'https://jenkins.example/queue/item/29/api/json',
     )
-
-    self.assertIn('WinLoop 部署开始', message)
-    self.assertIn('环境：staging', message)
-    self.assertIn('仓库：talex-touch/touch-win-loop', message)
-    self.assertIn('分支：dev', message)
-    self.assertIn('Commit：abc1234', message)
-    self.assertIn('构建版本：dev-99-abc1234', message)
-    self.assertIn('镜像：ghcr.io/talex-touch/touch-win-loop@sha256:deadbeef', message)
-    self.assertIn('触发人：TalexDreamSoul', message)
-    self.assertIn('触发来源：github-actions', message)
-    self.assertIn('GitHub Actions：https://github.com/example/actions/runs/1', message)
-    self.assertIn('Jenkins：https://jenkins.example/job/staging/15/', message)
+    self.assertEqual(
+      MODULE.api_url('https://jenkins.example/job/staging/13/'),
+      'https://jenkins.example/job/staging/13/api/json',
+    )
 
   def test_wait_for_build_start_returns_build_url_when_queue_enters_execution(self) -> None:
     with mock.patch.object(MODULE, 'request_json', side_effect=[

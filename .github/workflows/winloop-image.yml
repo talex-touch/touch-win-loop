@@ -201,8 +201,6 @@ jobs:
           JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
           JENKINS_JOB_STAGING: ${{ secrets.JENKINS_JOB_STAGING }}
           JENKINS_JOB_PRODUCTION: ${{ secrets.JENKINS_JOB_PRODUCTION }}
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_GITHUB_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_SECRET: ${{ secrets.FEISHU_GITHUB_WEBHOOK_SECRET }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_SHA: ${{ github.sha }}
