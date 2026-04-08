@@ -1,7 +1,11 @@
 name: WinLoop Image Publish
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
     branches:
       - dev
       - main
@@ -11,20 +15,55 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  group: winloop-image-${{ github.ref }}
+  group: winloop-image-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   publish-ghcr:
     name: Build and Push WinLoop Image
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       contents: read
       packages: write
     steps:
+      - name: Resolve source context
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CURRENT_BRANCH: ${{ github.ref_name }}
+          CURRENT_RUN_NUMBER: ${{ github.run_number }}
+          CURRENT_SHA: ${{ github.sha }}
+          WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
+          WORKFLOW_RUN_NUMBER: ${{ github.event.workflow_run.run_number || '' }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha || '' }}
+        run: |
+          set -euo pipefail
+
+          branch="${CURRENT_BRANCH}"
+          sha="${CURRENT_SHA}"
+          run_number="${CURRENT_RUN_NUMBER}"
+
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            branch="${WORKFLOW_RUN_BRANCH}"
+            sha="${WORKFLOW_RUN_SHA}"
+            run_number="${WORKFLOW_RUN_NUMBER}"
+          fi
+
+          if [ -z "${branch}" ] || [ -z "${sha}" ] || [ -z "${run_number}" ]; then
+            echo "Failed to resolve source context." >&2
+            exit 1
+          fi
+
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+          echo "run_number=${run_number}" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.source.outputs.sha }}
 
       - name: Resolve image name
         id: image
@@ -37,8 +76,9 @@ jobs:
       - name: Resolve build metadata
         id: build_meta
         env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ steps.source.outputs.branch }}
+          GITHUB_RUN_NUMBER: ${{ steps.source.outputs.run_number }}
+          GITHUB_SHA: ${{ steps.source.outputs.sha }}
         run: |
           set -euo pipefail
 
@@ -63,8 +103,8 @@ jobs:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
-            type=raw,value=dev-latest,enable=${{ github.ref_name == 'dev' }}
+            type=raw,value=latest,enable=${{ steps.source.outputs.branch == 'main' }}
+            type=raw,value=dev-latest,enable=${{ steps.source.outputs.branch == 'dev' }}
 
       - name: Build and push image
         id: build
@@ -76,7 +116,7 @@ jobs:
           file: Dockerfile
           build-args: |
             WINLOOP_BUILD_VERSION=${{ steps.build_meta.outputs.build_version }}
-            WINLOOP_BUILD_COMMIT_SHA=${{ github.sha }}
+            WINLOOP_BUILD_COMMIT_SHA=${{ steps.source.outputs.sha }}
             WINLOOP_SENTRY_ORG=${{ secrets.WINLOOP_SENTRY_ORG }}
             WINLOOP_SENTRY_PROJECT=${{ secrets.WINLOOP_SENTRY_PROJECT }}
             WINLOOP_SENTRY_RELEASE=${{ steps.build_meta.outputs.build_version }}
@@ -122,8 +162,8 @@ jobs:
           JENKINS_JOB_STAGING: ${{ secrets.JENKINS_JOB_STAGING }}
           JENKINS_JOB_PRODUCTION: ${{ secrets.JENKINS_JOB_PRODUCTION }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ steps.source.outputs.branch }}
+          GITHUB_SHA: ${{ steps.source.outputs.sha }}
           BUILD_VERSION: ${{ steps.build_meta.outputs.build_version }}
           IMAGE_REF: ${{ steps.image_ref_meta.outputs.image_ref }}
           TRIGGERED_BY: github-actions
