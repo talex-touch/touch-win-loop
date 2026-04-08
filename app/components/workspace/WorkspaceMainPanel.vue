@@ -2735,6 +2735,9 @@ watch(activeTabId, (next) => {
           <p class="m-0 mt-1">
             {{ workspaceInviteProjectLabel }}
           </p>
+          <p class="m-0 mt-1">
+            留空用户名 = 通用链接可多人加入；填写后仅指定账号可加入。
+          </p>
         </div>
 
         <template v-if="workspaceCanManageMembers">
@@ -2744,7 +2747,7 @@ watch(activeTabId, (next) => {
               v-model="workspaceInviteForm.inviteeUsername"
               data-testid="project-invite-username-input"
               class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              placeholder="留空时生成通用邀请"
+              placeholder="留空则生成可多人加入的通用邀请"
             >
           </label>
 

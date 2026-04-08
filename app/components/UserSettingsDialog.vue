@@ -2400,7 +2400,7 @@ onBeforeUnmount(() => {
                 v-model="workspaceInviteeUsername"
                 type="text"
                 class="user-settings-input"
-                placeholder="可选，不填则任意账号可加入"
+                placeholder="可选，留空则生成可多人加入的通用邀请"
                 :disabled="workspaceInvitationSubmitting || !canInviteWorkspaceMembers"
               >
             </label>
