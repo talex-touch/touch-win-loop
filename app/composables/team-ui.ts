@@ -1,9 +1,22 @@
-import type { AuthMeResult, Contest, Project, ProjectSource, WorkspaceWithQuota } from '~~/shared/types/domain'
+import type {
+  AuthMeResult,
+  Contest,
+  Project,
+  ProjectMemberPreviewSummary,
+  ProjectMemberRole,
+  ProjectSource,
+  WorkspaceWithQuota,
+} from '../../shared/types/domain'
 import {
   buildProjectMonogram,
   getProjectDisplayAccent,
   resolveProjectDisplayConfig,
-} from '~~/shared/constants/project-display'
+} from '../../shared/constants/project-display'
+
+export interface TeamProjectCardMemberItem extends ProjectMemberPreviewSummary {
+  avatarFallback: string
+  roleLabel: string
+}
 
 export interface TeamProjectCardItem {
   id: string
@@ -13,6 +26,10 @@ export interface TeamProjectCardItem {
   summary: string
   updatedAt: string
   contestNames: string[]
+  contestSummary: string
+  memberPreview: TeamProjectCardMemberItem[]
+  memberCount: number
+  seatSummaryText: string
   teamName?: string
   teamType?: string
   source?: ProjectSource
@@ -105,6 +122,112 @@ export function formatDateTime(value: string): string {
   return `${year}-${month}-${day} ${hour}:${minute}`
 }
 
+export function formatPreciseDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return value || '-'
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  const second = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+}
+
+export function formatRelativeUpdatedAt(value: string, nowInput: number | Date = Date.now()): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return value || '-'
+
+  const now = nowInput instanceof Date ? nowInput.getTime() : nowInput
+  const diffSeconds = Math.max(0, Math.floor((now - date.getTime()) / 1000))
+  if (diffSeconds < 60)
+    return `${diffSeconds} 秒前更新`
+
+  const diffMinutes = Math.floor(diffSeconds / 60)
+  if (diffMinutes < 60)
+    return `${diffMinutes} 分钟前更新`
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24)
+    return `${diffHours} 小时前更新`
+
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7)
+    return `${diffDays} 天前更新`
+
+  if (diffDays < 30)
+    return `${Math.max(1, Math.floor(diffDays / 7))} 周前更新`
+
+  if (diffDays < 60)
+    return '1 个月前更新'
+
+  const nowDate = new Date(now)
+  if (date.getFullYear() === nowDate.getFullYear())
+    return `${date.getMonth() + 1} 月 ${date.getDate()} 日更新`
+
+  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月更新`
+}
+
+export function formatProjectMemberRoleLabel(role: ProjectMemberRole): string {
+  if (role === 'owner')
+    return '所有者'
+  if (role === 'manager')
+    return '管理者'
+  if (role === 'editor')
+    return '编辑者'
+  return '查看者'
+}
+
+export function resolveUserAvatarFallback(username: string): string {
+  const normalized = String(username || '').trim()
+  if (!normalized)
+    return '??'
+
+  const chineseChars = Array.from(normalized).filter(char => /[\u4E00-\u9FFF]/.test(char))
+  if (chineseChars.length >= 2)
+    return chineseChars.slice(0, 2).join('')
+  if (chineseChars.length === 1)
+    return chineseChars[0]
+
+  const segments = normalized
+    .split(/[\s_.-]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+  if (segments.length >= 2)
+    return `${segments[0][0] || ''}${segments[1][0] || ''}`.toUpperCase()
+
+  const ascii = normalized.replace(/[^a-z0-9]/gi, '')
+  if (ascii.length >= 2)
+    return ascii.slice(0, 2).toUpperCase()
+  if (ascii.length === 1)
+    return ascii.toUpperCase()
+
+  return Array.from(normalized).slice(0, 2).join('').toUpperCase()
+}
+
+export function formatProjectContestSummary(contestNames: string[]): string {
+  if (contestNames.length === 0)
+    return '暂未绑定比赛'
+  if (contestNames.length === 1)
+    return contestNames[0]
+  return `${contestNames[0]} +${contestNames.length - 1} 个比赛`
+}
+
+export function formatProjectSeatSummary(
+  seatUsed?: number,
+  seatLimit?: number,
+  fallbackCount = 0,
+): string {
+  const normalizedSeatUsed = Math.max(0, Number(seatUsed || 0))
+  const normalizedSeatLimit = Math.max(0, Number(seatLimit || 0))
+  if (normalizedSeatLimit > 0)
+    return `已占用 ${normalizedSeatUsed}/${normalizedSeatLimit} 席位`
+  return `已占用 ${Math.max(0, fallbackCount)} 个席位`
+}
+
 export function formatWorkspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type'] | '' | undefined): string {
   if (type === 'personal')
     return '个人项目台'
@@ -173,6 +296,13 @@ export function buildTeamProjectCard(
   const seatUsed = Math.max(0, Number(project.projectSeatQuota?.seatUsed || 0))
   const display = resolveProjectDisplayConfig(project.display, `${project.id}:${project.title}`)
   const accent = getProjectDisplayAccent(display.accentColor)
+  const memberPreview = Array.isArray(project.memberPreview)
+    ? project.memberPreview.map(member => ({
+        ...member,
+        avatarFallback: resolveUserAvatarFallback(member.username),
+        roleLabel: formatProjectMemberRoleLabel(member.role),
+      }))
+    : []
 
   return {
     id: project.id,
@@ -182,6 +312,10 @@ export function buildTeamProjectCard(
     summary: project.summary || project.problemStatement || '待补充',
     updatedAt: project.updatedAt,
     contestNames,
+    contestSummary: formatProjectContestSummary(contestNames),
+    memberPreview,
+    memberCount: memberPreview.length,
+    seatSummaryText: formatProjectSeatSummary(seatUsed, seatLimit, memberPreview.length),
     teamName: workspace?.workspace.name || teamId || undefined,
     teamType: workspace?.workspace.type || undefined,
     source: project.source,

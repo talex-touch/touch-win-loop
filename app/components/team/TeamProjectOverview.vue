@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { TeamProjectCardItem } from '~/composables/team-ui'
-import { formatDateTime } from '~/composables/team-ui'
+import {
+  formatPreciseDateTime,
+  formatRelativeUpdatedAt,
+} from '~/composables/team-ui'
 
 withDefaults(defineProps<{
   projects?: TeamProjectCardItem[]
@@ -48,6 +51,10 @@ function statusBadgeClass(status: string): string {
   if (status === 'archived')
     return 'text-slate-500 border-slate-200 bg-slate-100'
   return 'text-amber-700 border-amber-200 bg-amber-50'
+}
+
+function visibleMemberPreview(project: TeamProjectCardItem) {
+  return project.memberPreview.slice(0, 4)
 }
 </script>
 
@@ -112,10 +119,6 @@ function statusBadgeClass(status: string): string {
                     {{ project.title }}
                   </h3>
                 </div>
-
-                <p class="text-xs text-slate-600 mt-1 line-clamp-2">
-                  {{ project.summary || '待补充项目摘要' }}
-                </p>
               </div>
             </div>
 
@@ -130,8 +133,12 @@ function statusBadgeClass(status: string): string {
             </span>
           </div>
 
+          <p class="text-xs text-slate-600 mt-3 line-clamp-2">
+            {{ project.summary || '待补充项目摘要' }}
+          </p>
+
           <div
-            v-if="showTeamMeta || project.contestNames.length > 0"
+            v-if="showTeamMeta"
             class="mt-3 flex flex-wrap gap-2 items-center"
           >
             <span
@@ -156,118 +163,211 @@ function statusBadgeClass(status: string): string {
             >
               {{ project.source }}
             </span>
-            <span
-              v-for="contestName in project.contestNames.slice(0, 2)"
-              :key="`${project.id}-${contestName}`"
-              class="text-[10px] text-slate-600 font-medium px-2 py-1 rounded-full bg-white/85"
-            >
-              {{ contestName }}
-            </span>
-            <span
-              v-if="project.contestNames.length > 2"
-              class="text-[10px] text-slate-500 font-medium px-2 py-1 rounded-full bg-white/80"
-            >
-              +{{ project.contestNames.length - 2 }} 个竞赛
-            </span>
-          </div>
-
-          <div
-            v-if="project.projectSeatLimit"
-            class="mt-3 p-3 border rounded-xl bg-white/72"
-            :style="{ borderColor: project.accentBorder }"
-          >
-            <div class="flex gap-2 items-center justify-between">
-              <p class="text-[11px] text-slate-600 font-medium">
-                项目席位
-              </p>
-              <p class="text-[11px] text-slate-700 font-semibold">
-                {{ project.projectSeatUsed }}/{{ project.projectSeatLimit }}
-              </p>
-            </div>
-            <div data-testid="team-project-seat-bar" class="mt-2 rounded-full bg-slate-200/70 h-2 overflow-hidden">
-              <div
-                class="rounded-full h-full transition-all duration-300"
-                :style="{
-                  width: `${project.seatProgressPercent || 0}%`,
-                  backgroundColor: project.accentSolid,
-                }"
-              />
-            </div>
-            <div class="mt-2 flex gap-2 items-center justify-between">
-              <p class="text-[11px] text-slate-500">
-                剩余 {{ project.projectSeatRemaining }} 个席位
-              </p>
-              <p class="text-[11px] text-slate-500">
-                占用 {{ project.seatProgressPercent || 0 }}%
-              </p>
-            </div>
           </div>
         </button>
 
-        <div class="mt-3 flex gap-2 items-center justify-between">
-          <p class="text-[11px] text-slate-500 truncate">
-            最近更新：{{ formatDateTime(project.updatedAt) }}
-          </p>
-          <a-trigger
-            trigger="click"
-            position="bl"
-            :popup-visible="isActionMenuVisible(project.id)"
-            @popup-visible-change="setActionMenuVisible(project.id, $event)"
-          >
-            <button
-              data-testid="team-project-action-trigger"
-              class="text-slate-400 rounded-full flex h-8 w-8 items-center justify-center"
-              type="button"
-              @click.stop
-            >
-              <span class="material-symbols-outlined text-[18px]">more_horiz</span>
-            </button>
+        <div class="mt-4 pt-3 border-t border-white/80 flex gap-3 items-center justify-between">
+          <div class="flex flex-1 flex-wrap gap-2 min-w-0 items-center">
+            <a-trigger trigger="hover" position="bl">
+              <button
+                data-testid="team-project-member-summary-trigger"
+                class="text-[11px] text-slate-600 px-2.5 py-1.5 rounded-full bg-white/80 flex gap-2 min-w-0 transition-colors items-center hover:bg-white"
+                type="button"
+              >
+                <span data-testid="team-project-member-avatar-stack" class="flex items-center">
+                  <template v-for="(member, index) in visibleMemberPreview(project)" :key="`${project.id}-${member.userId}`">
+                    <span
+                      class="text-[10px] text-slate-700 font-semibold border border-white rounded-full bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
+                      :class="index === 0 ? '' : '-ml-2'"
+                      :style="{
+                        backgroundColor: member.avatarUrl ? '#e2e8f0' : project.accentSoft,
+                        color: member.avatarUrl ? '#475569' : project.accentText,
+                      }"
+                    >
+                      <img
+                        v-if="member.avatarUrl"
+                        :src="member.avatarUrl"
+                        :alt="member.username"
+                        class="h-full w-full object-cover"
+                      >
+                      <span v-else>{{ member.avatarFallback }}</span>
+                    </span>
+                  </template>
+                  <span
+                    v-if="project.memberCount > 4"
+                    class="text-[10px] text-white font-semibold px-1 border border-white rounded-full bg-slate-900 flex shrink-0 h-6 min-w-6 items-center justify-center -ml-2"
+                  >
+                    +{{ project.memberCount - 4 }}
+                  </span>
+                </span>
+                <span class="truncate">{{ project.seatSummaryText }}</span>
+              </button>
 
-            <template #content>
-              <div class="p-2 border border-slate-200 rounded-2xl bg-white w-44">
-                <button
-                  class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
-                  type="button"
-                  @click.stop="triggerProjectAction(project, 'details')"
+              <template #content>
+                <div
+                  data-testid="team-project-member-summary-popover"
+                  class="p-3 border border-slate-200 rounded-2xl bg-white w-72 shadow-sm"
                 >
-                  <span class="material-symbols-outlined text-[16px]">open_in_new</span>
-                  <span>详细信息</span>
-                </button>
-                <button
-                  class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
-                  :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
-                  type="button"
-                  :disabled="!canManageActions"
-                  @click.stop="triggerProjectAction(project, 'settings')"
+                  <div class="text-xs text-slate-900 font-semibold">
+                    项目席位
+                  </div>
+                  <div class="text-[11px] text-slate-500 mt-1">
+                    {{ project.seatSummaryText }}
+                  </div>
+                  <div v-if="project.memberPreview.length > 0" class="mt-3 space-y-2">
+                    <div
+                      v-for="member in project.memberPreview"
+                      :key="`${project.id}-member-${member.userId}`"
+                      class="flex gap-2 items-center justify-between"
+                    >
+                      <div class="flex gap-2 min-w-0 items-center">
+                        <span
+                          class="text-[10px] text-slate-700 font-semibold rounded-full bg-slate-200 flex shrink-0 h-7 w-7 items-center justify-center overflow-hidden"
+                          :style="{
+                            backgroundColor: member.avatarUrl ? '#e2e8f0' : project.accentSoft,
+                            color: member.avatarUrl ? '#475569' : project.accentText,
+                          }"
+                        >
+                          <img
+                            v-if="member.avatarUrl"
+                            :src="member.avatarUrl"
+                            :alt="member.username"
+                            class="h-full w-full object-cover"
+                          >
+                          <span v-else>{{ member.avatarFallback }}</span>
+                        </span>
+                        <span class="text-[12px] text-slate-700 truncate">{{ member.username }}</span>
+                      </div>
+                      <span class="text-[11px] text-slate-500 shrink-0">{{ member.roleLabel }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="text-[11px] text-slate-400 mt-3">
+                    暂无已占用席位成员
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+
+            <a-trigger trigger="hover" position="bottom">
+              <button
+                data-testid="team-project-contest-summary-trigger"
+                class="text-[11px] text-slate-600 px-2.5 py-1.5 rounded-full bg-white/80 flex gap-1 max-w-full min-w-0 transition-colors items-center hover:bg-white"
+                type="button"
+              >
+                <span class="truncate">{{ project.contestSummary }}</span>
+              </button>
+
+              <template #content>
+                <div
+                  data-testid="team-project-contest-summary-popover"
+                  class="p-3 border border-slate-200 rounded-2xl bg-white w-72 shadow-sm"
                 >
-                  <span class="material-symbols-outlined text-[16px]">settings</span>
-                  <span>项目设置</span>
-                </button>
-                <button
-                  class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
-                  :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
-                  type="button"
-                  :disabled="!canManageActions"
-                  @click.stop="triggerProjectAction(project, 'members')"
+                  <div class="text-xs text-slate-900 font-semibold">
+                    绑定比赛
+                  </div>
+                  <div v-if="project.contestNames.length > 0" class="mt-3 space-y-2">
+                    <div
+                      v-for="contestName in project.contestNames"
+                      :key="`${project.id}-contest-${contestName}`"
+                      class="text-[12px] text-slate-700 px-3 py-2 rounded-xl bg-slate-50"
+                    >
+                      {{ contestName }}
+                    </div>
+                  </div>
+                  <div v-else class="text-[11px] text-slate-400 mt-3">
+                    暂未绑定比赛
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+          </div>
+
+          <div class="flex shrink-0 gap-1 items-center">
+            <a-trigger trigger="hover" position="bottom">
+              <button
+                data-testid="team-project-updated-at-trigger"
+                class="text-[11px] text-slate-400 px-2 py-1.5 transition-colors hover:text-slate-500"
+                type="button"
+              >
+                {{ formatRelativeUpdatedAt(project.updatedAt) }}
+              </button>
+
+              <template #content>
+                <div
+                  data-testid="team-project-updated-at-popover"
+                  class="p-3 border border-slate-200 rounded-2xl bg-white shadow-sm"
                 >
-                  <span class="material-symbols-outlined text-[16px]">group</span>
-                  <span>成员管理</span>
-                </button>
-                <div class="mt-1 pt-1 border-t border-slate-100">
+                  <div class="text-xs text-slate-900 font-semibold">
+                    最后更新时间
+                  </div>
+                  <div class="text-[11px] text-slate-500 mt-1">
+                    {{ formatPreciseDateTime(project.updatedAt) }}
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+
+            <a-trigger
+              trigger="click"
+              position="bl"
+              :popup-visible="isActionMenuVisible(project.id)"
+              @popup-visible-change="setActionMenuVisible(project.id, $event)"
+            >
+              <button
+                data-testid="team-project-action-trigger"
+                class="text-slate-400 rounded-full flex shrink-0 h-8 w-8 items-center justify-center"
+                type="button"
+                @click.stop
+              >
+                <span class="material-symbols-outlined text-[18px]">more_horiz</span>
+              </button>
+
+              <template #content>
+                <div class="p-2 border border-slate-200 rounded-2xl bg-white w-44">
+                  <button
+                    class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                    type="button"
+                    @click.stop="triggerProjectAction(project, 'details')"
+                  >
+                    <span class="material-symbols-outlined text-[16px]">open_in_new</span>
+                    <span>详细信息</span>
+                  </button>
                   <button
                     class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
-                    :class="canManageActions ? 'text-rose-600 transition-colors hover:bg-rose-50' : 'text-slate-300 cursor-not-allowed'"
+                    :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
                     type="button"
                     :disabled="!canManageActions"
-                    @click.stop="triggerProjectAction(project, 'archive')"
+                    @click.stop="triggerProjectAction(project, 'settings')"
                   >
-                    <span class="material-symbols-outlined text-[16px]">archive</span>
-                    <span>归档</span>
+                    <span class="material-symbols-outlined text-[16px]">settings</span>
+                    <span>项目设置</span>
                   </button>
+                  <button
+                    class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                    :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
+                    type="button"
+                    :disabled="!canManageActions"
+                    @click.stop="triggerProjectAction(project, 'members')"
+                  >
+                    <span class="material-symbols-outlined text-[16px]">group</span>
+                    <span>成员管理</span>
+                  </button>
+                  <div class="mt-1 pt-1 border-t border-slate-100">
+                    <button
+                      class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                      :class="canManageActions ? 'text-rose-600 transition-colors hover:bg-rose-50' : 'text-slate-300 cursor-not-allowed'"
+                      type="button"
+                      :disabled="!canManageActions"
+                      @click.stop="triggerProjectAction(project, 'archive')"
+                    >
+                      <span class="material-symbols-outlined text-[16px]">archive</span>
+                      <span>归档</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </template>
-          </a-trigger>
+              </template>
+            </a-trigger>
+          </div>
         </div>
       </div>
     </article>
