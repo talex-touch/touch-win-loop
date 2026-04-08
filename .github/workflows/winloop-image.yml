@@ -1,11 +1,7 @@
 name: WinLoop Image Publish
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
+  push:
     branches:
       - dev
       - main
@@ -15,57 +11,94 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  group: winloop-image-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  group: winloop-image-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   publish-ghcr:
     name: Build and Push WinLoop Image
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     permissions:
+      actions: read
       contents: read
       packages: write
     steps:
-      - name: Resolve source context
-        id: source
+      - name: Wait for matching CI run
+        id: ci_gate
+        if: github.event_name == 'push'
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+            const timeoutMs = 30 * 60 * 1000;
+            const pollMs = 10 * 1000;
+            const deadline = Date.now() + timeoutMs;
+            const sha = context.sha;
+            const branch = context.ref.replace('refs/heads/', '');
+
+            while (Date.now() < deadline) {
+              const { data } = await github.request('GET /repos/{owner}/{repo}/actions/runs', {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                event: 'push',
+                head_sha: sha,
+                per_page: 100,
+              });
+
+              const runs = [...(data.workflow_runs || [])]
+                .filter(run => run.name === 'CI' && run.head_branch === branch)
+                .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
+              const run = runs[0];
+
+              if (!run) {
+                core.info(`Waiting for CI run on ${branch}@${sha} to appear...`);
+                await sleep(pollMs);
+                continue;
+              }
+
+              core.setOutput('ci_run_url', run.html_url || '');
+              core.setOutput('ci_conclusion', run.conclusion || '');
+
+              if (run.status !== 'completed') {
+                core.info(`Waiting for CI run ${run.html_url || run.id} to complete. Current status: ${run.status}.`);
+                await sleep(pollMs);
+                continue;
+              }
+
+              if (run.conclusion === 'success') {
+                core.setOutput('should_publish', 'true');
+                return;
+              }
+
+              core.warning(`Skip image publish because CI concluded as ${run.conclusion || 'unknown'}.`);
+              core.setOutput('should_publish', 'false');
+              return;
+            }
+
+            core.setFailed(`Timed out waiting for CI run on ${branch}@${sha}.`);
+
+      - name: Skip publish because CI did not pass
+        if: github.event_name == 'push' && steps.ci_gate.outputs.should_publish != 'true'
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          CURRENT_BRANCH: ${{ github.ref_name }}
-          CURRENT_RUN_NUMBER: ${{ github.run_number }}
-          CURRENT_SHA: ${{ github.sha }}
-          WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
-          WORKFLOW_RUN_NUMBER: ${{ github.event.workflow_run.run_number || '' }}
-          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha || '' }}
+          CI_CONCLUSION: ${{ steps.ci_gate.outputs.ci_conclusion }}
+          CI_RUN_URL: ${{ steps.ci_gate.outputs.ci_run_url }}
         run: |
           set -euo pipefail
 
-          branch="${CURRENT_BRANCH}"
-          sha="${CURRENT_SHA}"
-          run_number="${CURRENT_RUN_NUMBER}"
-
-          if [ "${EVENT_NAME}" = "workflow_run" ]; then
-            branch="${WORKFLOW_RUN_BRANCH}"
-            sha="${WORKFLOW_RUN_SHA}"
-            run_number="${WORKFLOW_RUN_NUMBER}"
+          echo "Skip image publish because CI did not pass."
+          echo "Conclusion: ${CI_CONCLUSION:-unknown}"
+          if [ -n "${CI_RUN_URL:-}" ]; then
+            echo "CI Run: ${CI_RUN_URL}"
           fi
-
-          if [ -z "${branch}" ] || [ -z "${sha}" ] || [ -z "${run_number}" ]; then
-            echo "Failed to resolve source context." >&2
-            exit 1
-          fi
-
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
-          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
-          echo "run_number=${run_number}" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout code
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.source.outputs.sha }}
 
       - name: Resolve image name
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         id: image
         env:
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
@@ -74,11 +107,11 @@ jobs:
           echo "name=ghcr.io/${owner}/touch-win-loop" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve build metadata
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         id: build_meta
         env:
-          GITHUB_REF_NAME: ${{ steps.source.outputs.branch }}
-          GITHUB_RUN_NUMBER: ${{ steps.source.outputs.run_number }}
-          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
@@ -87,9 +120,11 @@ jobs:
           echo "build_version=${build_version}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Docker Buildx
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Login to GHCR
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -97,16 +132,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract image metadata
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
             type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable=${{ steps.source.outputs.branch == 'main' }}
-            type=raw,value=dev-latest,enable=${{ steps.source.outputs.branch == 'dev' }}
+            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=dev-latest,enable=${{ github.ref_name == 'dev' }}
 
       - name: Build and push image
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         id: build
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -116,7 +153,7 @@ jobs:
           file: Dockerfile
           build-args: |
             WINLOOP_BUILD_VERSION=${{ steps.build_meta.outputs.build_version }}
-            WINLOOP_BUILD_COMMIT_SHA=${{ steps.source.outputs.sha }}
+            WINLOOP_BUILD_COMMIT_SHA=${{ github.sha }}
             WINLOOP_SENTRY_ORG=${{ secrets.WINLOOP_SENTRY_ORG }}
             WINLOOP_SENTRY_PROJECT=${{ secrets.WINLOOP_SENTRY_PROJECT }}
             WINLOOP_SENTRY_RELEASE=${{ steps.build_meta.outputs.build_version }}
@@ -129,6 +166,7 @@ jobs:
             id=sentry_auth_token,env=SENTRY_AUTH_TOKEN
 
       - name: Output image digest
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         env:
           BUILD_VERSION: ${{ steps.build_meta.outputs.build_version }}
           IMAGE_REPO: ${{ steps.image.outputs.name }}
@@ -144,6 +182,7 @@ jobs:
           echo "Image Ref: ${image_ref}"
 
       - name: Resolve image ref
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         id: image_ref_meta
         env:
           IMAGE_REPO: ${{ steps.image.outputs.name }}
@@ -155,161 +194,24 @@ jobs:
           echo "image_ref=${image_ref}" >> "${GITHUB_OUTPUT}"
 
       - name: Trigger Jenkins deployment
+        if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         env:
           JENKINS_BASE_URL: ${{ secrets.JENKINS_BASE_URL }}
           JENKINS_USER: ${{ secrets.JENKINS_USER }}
           JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
           JENKINS_JOB_STAGING: ${{ secrets.JENKINS_JOB_STAGING }}
           JENKINS_JOB_PRODUCTION: ${{ secrets.JENKINS_JOB_PRODUCTION }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_GITHUB_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_SECRET: ${{ secrets.FEISHU_GITHUB_WEBHOOK_SECRET }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ steps.source.outputs.branch }}
-          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_ACTOR: ${{ github.actor }}
           BUILD_VERSION: ${{ steps.build_meta.outputs.build_version }}
           IMAGE_REF: ${{ steps.image_ref_meta.outputs.image_ref }}
-          TRIGGERED_BY: github-actions
+          TRIGGERED_BY: ${{ github.event_name }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
 
-          python3 <<'PY'
-          import base64
-          import json
-          import os
-          import sys
-          import time
-          import urllib.error
-          import urllib.parse
-          import urllib.request
-
-          def require(name: str) -> str:
-            value = os.environ.get(name, '').strip()
-            if not value:
-              raise SystemExit(f'Missing required environment variable: {name}')
-            return value
-
-          base_url = require('JENKINS_BASE_URL').rstrip('/')
-          username = require('JENKINS_USER')
-          token = require('JENKINS_API_TOKEN')
-          repository = require('GITHUB_REPOSITORY')
-          branch = require('GITHUB_REF_NAME')
-          commit_sha = require('GITHUB_SHA')
-          build_version = require('BUILD_VERSION')
-          image_ref = require('IMAGE_REF')
-          triggered_by = require('TRIGGERED_BY')
-          workflow_run_url = require('WORKFLOW_RUN_URL')
-
-          if branch == 'dev':
-            job_name = require('JENKINS_JOB_STAGING')
-          elif branch == 'main':
-            job_name = require('JENKINS_JOB_PRODUCTION')
-          else:
-            print(f'Skip Jenkins deployment for unsupported branch: {branch}')
-            raise SystemExit(0)
-
-          auth_token = base64.b64encode(f'{username}:{token}'.encode('utf-8')).decode('ascii')
-          default_headers = {
-            'Authorization': f'Basic {auth_token}',
-            'Accept': 'application/json',
-          }
-
-          def job_path(name: str) -> str:
-            parts = [part for part in name.strip('/').split('/') if part]
-            return ''.join(f"/job/{urllib.parse.quote(part, safe='')}" for part in parts)
-
-          def api_url(url: str, suffix: str = 'api/json') -> str:
-            if not url.endswith('/'):
-              url = f'{url}/'
-            return urllib.parse.urljoin(url, suffix)
-
-          def request_json(url: str, headers=None):
-            request_headers = dict(default_headers)
-            if headers:
-              request_headers.update(headers)
-            request = urllib.request.Request(url, headers=request_headers)
-            with urllib.request.urlopen(request, timeout=30) as response:
-              return json.load(response)
-
-          crumb_headers = {}
-          crumb_url = f'{base_url}/crumbIssuer/api/json'
-          try:
-            crumb_payload = request_json(crumb_url)
-          except urllib.error.HTTPError as exc:
-            if exc.code not in (401, 403, 404):
-              raise
-            crumb_payload = {}
-          except urllib.error.URLError:
-            crumb_payload = {}
-
-          crumb_field = str(crumb_payload.get('crumbRequestField') or '').strip()
-          crumb_value = str(crumb_payload.get('crumb') or '').strip()
-          if crumb_field and crumb_value:
-            crumb_headers[crumb_field] = crumb_value
-            print(f'Fetched Jenkins crumb via {crumb_field}.')
-          else:
-            print('Jenkins crumb issuer is unavailable or not required, continue without crumb header.')
-
-          params = urllib.parse.urlencode({
-            'GITHUB_REPOSITORY': repository,
-            'GITHUB_BRANCH': branch,
-            'BUILD_COMMIT_SHA': commit_sha,
-            'BUILD_VERSION': build_version,
-            'IMAGE_REF': image_ref,
-            'TRIGGERED_BY': triggered_by,
-            'WORKFLOW_RUN_URL': workflow_run_url,
-          }).encode('utf-8')
-          trigger_headers = dict(default_headers)
-          trigger_headers.update(crumb_headers)
-          trigger_headers['Content-Type'] = 'application/x-www-form-urlencoded'
-          trigger_url = f'{base_url}{job_path(job_name)}/buildWithParameters'
-          trigger_request = urllib.request.Request(trigger_url, data=params, headers=trigger_headers, method='POST')
-
-          with urllib.request.urlopen(trigger_request, timeout=30) as response:
-            location = str(response.headers.get('Location') or '').strip()
-            status = response.getcode()
-          if status not in (200, 201, 202):
-            raise SystemExit(f'Unexpected Jenkins trigger status: {status}')
-          if not location:
-            raise SystemExit('Jenkins trigger did not return a queue location header')
-
-          if location.startswith('/'):
-            location = f'{base_url}{location}'
-          print(f'Queued Jenkins build at: {location}')
-
-          queue_deadline = time.time() + 15 * 60
-          build_url = ''
-          while time.time() < queue_deadline:
-            queue_payload = request_json(api_url(location))
-            if queue_payload.get('cancelled'):
-              why = str(queue_payload.get('why') or 'cancelled')
-              raise SystemExit(f'Jenkins queue item was cancelled: {why}')
-            executable = queue_payload.get('executable') or {}
-            build_url = str(executable.get('url') or '').strip()
-            if build_url:
-              break
-            why = str(queue_payload.get('why') or '').strip()
-            if why:
-              print(f'Waiting Jenkins queue: {why}')
-            time.sleep(5)
-
-          if not build_url:
-            raise SystemExit('Timed out waiting for Jenkins queue item to start')
-          print(f'Jenkins build started: {build_url}')
-
-          build_deadline = time.time() + 90 * 60
-          result = ''
-          while time.time() < build_deadline:
-            build_payload = request_json(api_url(build_url))
-            if build_payload.get('building'):
-              print('Jenkins build is still running...')
-              time.sleep(10)
-              continue
-            result = str(build_payload.get('result') or '').strip()
-            break
-
-          if not result:
-            raise SystemExit('Timed out waiting for Jenkins build result')
-
-          print(f'Jenkins build result: {result}')
-          if result != 'SUCCESS':
-            raise SystemExit(f'Jenkins deployment failed with result: {result}')
-          PY
+          python3 "scripts/ci/trigger_jenkins_deploy.py"
