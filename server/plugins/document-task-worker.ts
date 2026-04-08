@@ -13,6 +13,7 @@ import {
   updateResourceDocumentFileAsset,
 } from '~~/server/utils/document-store'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
 const WORKER_STATE_KEY = Symbol.for('winloop.document-worker.state')
 
@@ -131,6 +132,11 @@ async function processSingleTask(): Promise<boolean> {
           pageCount: parsed.pageCount,
           conversion: conversionPayload,
         },
+      })
+      await enqueueResourceGovernanceTask(db, {
+        contestId: context.resource.contestId,
+        resourceId: context.resource.id,
+        taskType: 'profile_analyze',
       })
     })
   }
