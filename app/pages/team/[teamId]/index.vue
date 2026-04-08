@@ -15,6 +15,7 @@ import type {
 } from '~~/shared/types/domain'
 import type { TeamProjectCardItem } from '~/composables/team-ui'
 import type { WorkspaceProjectCommonForm } from '~/types/workspace'
+import { Message } from '@arco-design/web-vue'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
@@ -256,8 +257,6 @@ const projectMemberActionText = ref('')
 const projectMemberActionError = ref(false)
 const projectProfileForm = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
 const projectProfileSaving = ref(false)
-const projectProfileErrorText = ref('')
-const projectProfileSuccessText = ref('')
 const projectInvitationSubmitting = ref(false)
 const projectInvitationLink = ref('')
 const projectInvitationFeedbackText = ref('')
@@ -429,8 +428,6 @@ function syncProjectProfileForm(project: Project | null) {
 
 function updateProjectProfileForm(next: WorkspaceProjectCommonForm) {
   Object.assign(projectProfileForm, cloneProjectCommonForm(next))
-  projectProfileErrorText.value = ''
-  projectProfileSuccessText.value = ''
 }
 
 function mergeProjectIntoList(project: Project) {
@@ -450,8 +447,6 @@ function syncActionProjectState() {
   actionProjectId.value = ''
   syncProjectProfileForm(null)
   projectProfileSaving.value = false
-  projectProfileErrorText.value = ''
-  projectProfileSuccessText.value = ''
   projectMembersLoading.value = false
   projectMembersErrorText.value = ''
   projectMembersSnapshot.value = null
@@ -485,8 +480,6 @@ function openProjectProfileDialog(projectId: string) {
   projectMembersDialogVisible.value = false
   syncProjectProfileForm(projects.value.find(item => item.id === projectId) || null)
   projectProfileSaving.value = false
-  projectProfileErrorText.value = ''
-  projectProfileSuccessText.value = ''
   projectProfileDialogVisible.value = true
 }
 
@@ -501,8 +494,6 @@ async function saveProjectProfileSettings() {
     return
 
   projectProfileSaving.value = true
-  projectProfileErrorText.value = ''
-  projectProfileSuccessText.value = ''
 
   try {
     const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(endpoint(`/projects/${projectId}/settings`), {
@@ -513,18 +504,15 @@ async function saveProjectProfileSettings() {
     })
 
     mergeProjectIntoList(response.data.project)
-    if (actionProjectId.value === projectId && projectProfileDialogVisible.value) {
+    if (actionProjectId.value === projectId && projectProfileDialogVisible.value)
       syncProjectProfileForm(response.data.project)
-      projectProfileSuccessText.value = '项目设置已保存。'
-    }
+    Message.success('项目设置已保存。')
   }
   catch (error: any) {
-    if (actionProjectId.value === projectId && projectProfileDialogVisible.value)
-      projectProfileErrorText.value = String(error?.data?.message || '保存项目设置失败，请稍后重试。')
+    Message.error(String(error?.data?.message || '保存项目设置失败，请稍后重试。'))
   }
   finally {
-    if (actionProjectId.value === projectId && projectProfileDialogVisible.value)
-      projectProfileSaving.value = false
+    projectProfileSaving.value = false
   }
 }
 
@@ -1093,14 +1081,6 @@ onMounted(async () => {
           >
             {{ contestName }}
           </span>
-        </div>
-
-        <div
-          v-if="projectProfileErrorText || projectProfileSuccessText"
-          class="text-xs px-3 py-2 border rounded-lg"
-          :class="projectProfileErrorText ? 'text-rose-600 border-rose-200 bg-rose-50' : 'text-emerald-700 border-emerald-200 bg-emerald-50'"
-        >
-          {{ projectProfileErrorText || projectProfileSuccessText }}
         </div>
 
         <div class="flex gap-2 justify-end">

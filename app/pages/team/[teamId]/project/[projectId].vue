@@ -55,6 +55,7 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+import { Message } from '@arco-design/web-vue'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -2092,6 +2093,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     return true
   }
   catch (error) {
+    Message.error(resolveApiErrorMessage(error, '保存失败'))
     projectSettingsSaveState.value = 'error'
     statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
     return false
@@ -2132,6 +2134,7 @@ async function flushProjectAdaptationSave(
     return true
   }
   catch (error) {
+    Message.error(resolveApiErrorMessage(error, '保存失败'))
     projectSettingsSaveState.value = 'error'
     statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
     return false
@@ -2163,18 +2166,21 @@ async function saveProjectSettingsManually() {
   if (clearResult === 'conflict') {
     projectSettingsSaveState.value = 'conflict'
     statusLine.value = '项目已保存，但检测到其他设备有更新草稿，云端缓存未清除。'
+    Message.warning('项目已保存，但检测到其他设备有更新草稿，云端缓存未清除。')
     return
   }
 
   if (clearResult === 'error') {
     projectSettingsSaveState.value = 'error'
     statusLine.value = '项目已保存，但清理云端草稿失败（可重试）。'
+    Message.error('项目已保存，但清理云端草稿失败（可重试）。')
     return
   }
 
   await generateProjectOutline('settings_saved', true)
   projectSettingsSaveState.value = 'saved_manual'
   statusLine.value = '手动保存成功，结构大纲已刷新。'
+  Message.success('项目设置已保存。')
 }
 
 function onProjectSettingsCommonChange(next: WorkspaceProjectCommonForm) {

@@ -16,11 +16,9 @@ const props = withDefaults(defineProps<{
   modelValue: WorkspaceProjectCommonForm
   project?: Project | null
   disabled?: boolean
-  showResetButton?: boolean
 }>(), {
   project: null,
   disabled: false,
-  showResetButton: true,
 })
 
 const emit = defineEmits<{
@@ -87,14 +85,6 @@ function updateProjectSettingsCommonField(field: keyof WorkspaceProjectCommonFor
   })
 }
 
-function resetProjectSettingsDisplayFields() {
-  emitProjectSettingsCommon({
-    ...props.modelValue,
-    icon: '',
-    accentColor: '',
-  })
-}
-
 function selectProjectSettingsDisplayIcon(icon: string) {
   emitProjectSettingsCommon({
     ...props.modelValue,
@@ -121,40 +111,52 @@ function selectProjectSettingsCustomAccent(event: Event) {
 </script>
 
 <template>
-  <section class="space-y-3" data-testid="project-basic-settings-editor">
-    <section class="p-3 border border-slate-200 rounded-xl bg-slate-50/70">
-      <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+  <section class="space-y-4" data-testid="project-basic-settings-editor">
+    <label class="text-xs text-slate-600 block space-y-1">
+      <span class="block">项目标题</span>
+      <input
+        :value="modelValue.title"
+        class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+        data-testid="project-basic-settings-title-input"
+        :disabled="disabled"
+        placeholder="输入项目标题"
+        @input="updateProjectSettingsCommonField('title', ($event.target as HTMLInputElement).value)"
+      >
+    </label>
+
+    <label class="text-xs text-slate-600 block space-y-1">
+      <span class="block">项目介绍（摘要）</span>
+      <textarea
+        :value="modelValue.summary"
+        class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[88px] w-full focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+        data-testid="project-basic-settings-summary-input"
+        :disabled="disabled"
+        placeholder="输入项目介绍"
+        @input="updateProjectSettingsCommonField('summary', ($event.target as HTMLTextAreaElement).value)"
+      />
+    </label>
+
+    <section class="p-4 border border-slate-200 rounded-xl bg-slate-50/70">
+      <div class="space-y-4">
         <div>
           <div class="flex gap-2 items-center">
-            <h3 class="text-xs text-slate-800 font-semibold">
+            <h3 class="text-sm text-slate-800 font-semibold">
               项目标识
             </h3>
             <span
               class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
-              :class="projectSettingsDisplayHasOverride ? 'text-blue-700 border-blue-200 bg-blue-50' : 'text-slate-500 border-slate-200 bg-white'"
+              :class="projectSettingsDisplayHasOverride ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'"
             >
               {{ projectSettingsDisplayHasOverride ? '已自定义' : '默认生成' }}
             </span>
           </div>
-          <p class="text-[11px] text-slate-500 mt-1">
-            为项目卡设置图标与强调色；若不配置，则按项目稳定生成默认样式。
+          <p class="text-[11px] text-slate-500 leading-5 mt-1">
+            项目卡会即时预览当前图标与配色。图标后续可扩展图标库 / emoji，颜色也会继续补充更多预设。
           </p>
         </div>
 
-        <button
-          v-if="showResetButton"
-          class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-          type="button"
-          :disabled="disabled"
-          @click="resetProjectSettingsDisplayFields"
-        >
-          恢复默认生成
-        </button>
-      </div>
-
-      <div class="mt-3 gap-3 grid lg:grid-cols-[minmax(0,280px),1fr]">
         <article
-          class="p-3 border rounded-2xl bg-white relative overflow-hidden"
+          class="p-4 border rounded-2xl bg-white relative overflow-hidden"
           :style="{
             borderColor: projectSettingsDisplayPreview.accent.border,
             background: `linear-gradient(135deg, ${projectSettingsDisplayPreview.accent.soft} 0%, #ffffff 68%, ${projectSettingsDisplayPreview.accent.soft} 100%)`,
@@ -200,95 +202,79 @@ function selectProjectSettingsCustomAccent(event: Event) {
           </div>
         </article>
 
-        <div class="space-y-3">
+        <div class="space-y-2">
           <div>
-            <p class="text-[11px] text-slate-600 font-medium mb-2">
+            <p class="text-xs text-slate-700 font-medium">
               图标
             </p>
-            <div class="gap-2 grid grid-cols-2 sm:grid-cols-4">
-              <button
-                v-for="option in projectDisplayIconOptions"
-                :key="`project-icon-${option.value}`"
-                class="px-3 py-2.5 border rounded-xl bg-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                :class="projectSettingsDisplayPreview.icon === option.value ? 'border-slate-900 shadow-sm' : 'border-slate-200 hover:border-slate-300'"
-                :disabled="disabled"
-                type="button"
-                @click="selectProjectSettingsDisplayIcon(option.value)"
-              >
-                <span class="flex gap-2 items-center">
-                  <span class="material-symbols-outlined text-[18px] text-slate-700">{{ option.value }}</span>
-                  <span class="text-[11px] text-slate-600 font-medium">{{ option.label }}</span>
-                </span>
-              </button>
-            </div>
+            <p class="text-[11px] text-slate-500 mt-1">
+              当前先提供常用系统图标，后续可扩展图标库 / emoji。
+            </p>
           </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="option in projectDisplayIconOptions"
+              :key="`project-icon-${option.value}`"
+              class="px-3 py-2.5 text-left border rounded-xl bg-white flex-1 basis-[148px] min-w-[148px] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              :class="projectSettingsDisplayPreview.icon === option.value ? 'border-slate-900 shadow-sm' : 'border-slate-200 hover:border-slate-300'"
+              :disabled="disabled"
+              type="button"
+              @click="selectProjectSettingsDisplayIcon(option.value)"
+            >
+              <span class="flex gap-2 items-center">
+                <span class="material-symbols-outlined text-[18px] text-slate-700">{{ option.value }}</span>
+                <span class="text-[11px] text-slate-600 font-medium">{{ option.label }}</span>
+              </span>
+            </button>
+          </div>
+        </div>
 
+        <div class="space-y-2">
           <div>
-            <p class="text-[11px] text-slate-600 font-medium mb-2">
+            <p class="text-xs text-slate-700 font-medium">
               强调色
             </p>
-            <div class="gap-2 grid grid-cols-2 sm:grid-cols-4">
-              <button
-                v-for="option in projectDisplayAccentOptions"
-                :key="`project-accent-${option.value}`"
-                class="px-3 py-2 border rounded-xl bg-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                :class="projectSettingsDisplayPreview.accent.value === option.value ? 'border-slate-900 shadow-sm' : 'border-slate-200 hover:border-slate-300'"
-                :disabled="disabled"
-                type="button"
-                @click="selectProjectSettingsDisplayAccent(option.value)"
-              >
-                <span class="flex gap-2 items-center">
-                  <span
-                    class="border rounded-full shrink-0 h-3 w-3"
-                    :style="{ backgroundColor: option.solid, borderColor: option.border }"
-                  />
-                  <span class="text-[11px] text-slate-600 font-medium">{{ option.label }}</span>
-                </span>
-              </button>
-            </div>
-
-            <div class="mt-3 px-3 py-2 border border-slate-200 rounded-xl bg-white flex flex-wrap gap-3 items-center">
-              <label class="flex gap-2 items-center">
-                <span class="text-[11px] text-slate-600 font-medium">自定义颜色</span>
-                <input
-                  class="border border-slate-200 rounded bg-transparent h-8 w-10 cursor-pointer disabled:cursor-not-allowed"
-                  :disabled="disabled"
-                  :value="projectSettingsCustomAccentValue"
-                  type="color"
-                  @input="selectProjectSettingsCustomAccent"
-                >
-              </label>
-              <span class="text-[11px] text-slate-500">
-                {{ projectSettingsUsingCustomAccent ? projectSettingsCustomAccentValue : '未启用自定义色' }}
+            <p class="text-[11px] text-slate-500 mt-1">
+              预设色板与自定义颜色都支持，后续可继续扩展更多颜色。
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="option in projectDisplayAccentOptions"
+              :key="`project-accent-${option.value}`"
+              class="px-3 py-2 text-left border rounded-xl bg-white flex-1 basis-[148px] min-w-[148px] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              :class="projectSettingsDisplayPreview.accent.value === option.value ? 'border-slate-900 shadow-sm' : 'border-slate-200 hover:border-slate-300'"
+              :disabled="disabled"
+              type="button"
+              @click="selectProjectSettingsDisplayAccent(option.value)"
+            >
+              <span class="flex gap-2 items-center">
+                <span
+                  class="border rounded-full shrink-0 h-3 w-3"
+                  :style="{ backgroundColor: option.solid, borderColor: option.border }"
+                />
+                <span class="text-[11px] text-slate-600 font-medium">{{ option.label }}</span>
               </span>
-            </div>
+            </button>
+          </div>
+
+          <div class="px-3 py-3 border border-slate-200 rounded-xl bg-white flex flex-wrap gap-3 items-center">
+            <label class="flex gap-2 items-center">
+              <span class="text-[11px] text-slate-600 font-medium">自定义颜色</span>
+              <input
+                class="border border-slate-200 rounded bg-transparent h-8 w-10 cursor-pointer disabled:cursor-not-allowed"
+                :disabled="disabled"
+                :value="projectSettingsCustomAccentValue"
+                type="color"
+                @input="selectProjectSettingsCustomAccent"
+              >
+            </label>
+            <span class="text-[11px] text-slate-500">
+              {{ projectSettingsUsingCustomAccent ? projectSettingsCustomAccentValue : '未启用自定义色' }}
+            </span>
           </div>
         </div>
       </div>
     </section>
-
-    <label class="text-xs text-slate-600 block space-y-1">
-      <span class="block">项目标题</span>
-      <input
-        :value="modelValue.title"
-        class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-        data-testid="project-basic-settings-title-input"
-        :disabled="disabled"
-        placeholder="输入项目标题"
-        @input="updateProjectSettingsCommonField('title', ($event.target as HTMLInputElement).value)"
-      >
-    </label>
-
-    <label class="text-xs text-slate-600 block space-y-1">
-      <span class="block">项目介绍（摘要）</span>
-      <textarea
-        :value="modelValue.summary"
-        class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-        data-testid="project-basic-settings-summary-input"
-        :disabled="disabled"
-        placeholder="输入项目介绍"
-        @input="updateProjectSettingsCommonField('summary', ($event.target as HTMLTextAreaElement).value)"
-      />
-    </label>
   </section>
 </template>

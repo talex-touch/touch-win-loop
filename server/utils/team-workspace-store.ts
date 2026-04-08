@@ -1,6 +1,7 @@
 import type { Queryable } from '~~/server/utils/db'
-import type { TeamProfile, TeamQuota, Workspace, WorkspaceMemberRole, WorkspaceType, WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { AuthUser, TeamProfile, TeamQuota, Workspace, WorkspaceMemberRole, WorkspaceType, WorkspaceWithQuota } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+import { teamGetWorkspaceAccess } from '~~/server/utils/team-membership-store'
 import { teamRefreshSeatUsage } from '~~/server/utils/team-quota-store'
 
 interface WorkspaceRow {
@@ -74,6 +75,16 @@ function mapTeamQuota(row: TeamQuotaRow): TeamQuota {
   }
 }
 
+function mapWorkspaceWithQuota(workspace: Workspace, quotaMap: Map<string, TeamQuota>): WorkspaceWithQuota {
+  if (workspace.type !== 'team')
+    return { workspace, quota: null }
+
+  return {
+    workspace,
+    quota: quotaMap.get(workspace.id) || null,
+  }
+}
+
 async function listTeamQuotasByWorkspaceIds(db: Queryable, workspaceIds: string[]): Promise<Map<string, TeamQuota>> {
   if (workspaceIds.length === 0)
     return new Map<string, TeamQuota>()
@@ -111,15 +122,47 @@ export async function teamListUserWorkspaces(db: Queryable, userId: string): Pro
   const workspaces = result.rows.map(mapWorkspace)
   const quotaMap = await listTeamQuotasByWorkspaceIds(db, workspaces.map(item => item.id))
 
-  return workspaces.map((workspace) => {
-    if (workspace.type !== 'team')
-      return { workspace, quota: null }
+  return workspaces.map(workspace => mapWorkspaceWithQuota(workspace, quotaMap))
+}
 
-    return {
-      workspace,
-      quota: quotaMap.get(workspace.id) || null,
-    }
-  })
+export async function teamGetWorkspaceWithQuotaById(
+  db: Queryable,
+  workspaceId: string,
+  userId = '',
+): Promise<WorkspaceWithQuota | null> {
+  const normalizedWorkspaceId = String(workspaceId || '').trim()
+  if (!normalizedWorkspaceId)
+    return null
+
+  const normalizedUserId = String(userId || '').trim()
+  const result = await db.query<WorkspaceRow>(
+    `SELECT
+      w.id,
+      w.type,
+      w.name,
+      w.owner_user_id,
+      w.team_profile,
+      w.created_at::TEXT,
+      w.updated_at::TEXT,
+      COALESCE(ARRAY_REMOVE(ARRAY_AGG(DISTINCT wm.role), NULL), ARRAY[]::TEXT[]) AS roles
+     FROM workspaces w
+     LEFT JOIN workspace_members wm
+       ON wm.workspace_id = w.id
+      AND wm.is_enabled = TRUE
+      AND wm.user_id = $2
+     WHERE w.id = $1
+     GROUP BY w.id
+     LIMIT 1`,
+    [normalizedWorkspaceId, normalizedUserId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  const workspace = mapWorkspace(row)
+  const quotaMap = await listTeamQuotasByWorkspaceIds(db, [workspace.id])
+  return mapWorkspaceWithQuota(workspace, quotaMap)
 }
 
 export async function teamCreateWorkspace(db: Queryable, input: CreateTeamWorkspaceInput): Promise<WorkspaceWithQuota> {
@@ -157,4 +200,59 @@ export async function teamCreateWorkspace(db: Queryable, input: CreateTeamWorksp
   if (!created)
     throw new Error('failed to create workspace')
   return created
+}
+
+export function canRenameWorkspaceWithRoles(
+  workspaceType: WorkspaceType | null,
+  roles: WorkspaceMemberRole[],
+  isPlatformAdmin = false,
+): boolean {
+  if (isPlatformAdmin)
+    return true
+  if (workspaceType === 'personal')
+    return roles.includes('owner')
+  if (workspaceType === 'team')
+    return roles.includes('owner') || roles.includes('admin')
+  return false
+}
+
+export async function teamRenameWorkspace(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    actorUser: AuthUser
+    name: string
+  },
+): Promise<WorkspaceWithQuota> {
+  const normalizedWorkspaceId = String(input.workspaceId || '').trim()
+  const normalizedName = String(input.name || '').trim()
+  if (!normalizedWorkspaceId)
+    throw new Error('WORKSPACE_NOT_FOUND')
+  if (!normalizedName)
+    throw new Error('WORKSPACE_NAME_REQUIRED')
+
+  const currentWorkspace = await teamGetWorkspaceWithQuotaById(db, normalizedWorkspaceId, input.actorUser.id)
+  if (!currentWorkspace)
+    throw new Error('WORKSPACE_NOT_FOUND')
+
+  const actorAccess = input.actorUser.isPlatformAdmin
+    ? { roles: [] as WorkspaceMemberRole[] }
+    : await teamGetWorkspaceAccess(db, input.actorUser.id, normalizedWorkspaceId)
+
+  if (!canRenameWorkspaceWithRoles(currentWorkspace.workspace.type, actorAccess.roles, input.actorUser.isPlatformAdmin))
+    throw new Error('FORBIDDEN')
+
+  const now = new Date().toISOString()
+  await db.query(
+    `UPDATE workspaces
+     SET name = $2,
+         updated_at = $3
+     WHERE id = $1`,
+    [normalizedWorkspaceId, normalizedName, now],
+  )
+
+  const updatedWorkspace = await teamGetWorkspaceWithQuotaById(db, normalizedWorkspaceId, input.actorUser.id)
+  if (!updatedWorkspace)
+    throw new Error('WORKSPACE_NOT_FOUND')
+  return updatedWorkspace
 }

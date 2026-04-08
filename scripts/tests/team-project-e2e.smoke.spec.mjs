@@ -201,14 +201,36 @@ test.describe('Team -> Project E2E smoke', () => {
       const teamInviteeUi = await loginViaUi(browser, teamInvitee, '/team')
       contexts.push(teamInviteeUi.context)
 
+      await test.step('登录后 /dashboard 显示纯 Loopy 首页，且不展示悬浮入口', async () => {
+        await teamInviteeUi.page.goto('/dashboard')
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-home')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-session-list')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-messages')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-trigger')).toBeHidden()
+      })
+
       await test.step('接受 Team 邀请后进入 dashboard，未分配项目不可见', async () => {
         await teamInviteeUi.page.goto(`/invite/${teamInvite.token}`)
         await expect(teamInviteeUi.page).toHaveURL(routePattern(`/team/${teamId}`))
         await expect(teamInviteeUi.page.getByTestId('team-dashboard-notice')).toContainText('已加入当前 Team')
+        await expect(teamInviteeUi.page.getByTestId('team-dashboard-integrated-panels')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-trigger')).toBeVisible()
         await expect(projectCard(teamInviteeUi.page, teamProjectId)).toHaveCount(0)
 
         await teamInviteeUi.page.goto(`/projects/${teamProjectId}`)
         await expect(teamInviteeUi.page.getByText('项目不存在或加载失败。')).toBeVisible()
+      })
+
+      await test.step('dashboard 与悬浮 Loopy 共享同一批 workspace 级会话', async () => {
+        await teamInviteeUi.page.goto('/dashboard')
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-session-list')).toBeVisible()
+        await teamInviteeUi.page.locator('[data-testid="dashboard-loopy-sidebar"] button').click()
+        await expect(teamInviteeUi.page.locator('[data-testid="dashboard-loopy-session-list"] button').first()).toContainText('Loopy 对话')
+
+        await teamInviteeUi.page.goto(`/team/${teamId}`)
+        await teamInviteeUi.page.getByTestId('loopy-floating-trigger').click()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-panel')).toBeVisible()
+        await expect(teamInviteeUi.page.locator('[data-testid="loopy-floating-panel"] select')).toContainText('Loopy 对话')
       })
 
       const teamProjectInvite = await apiPost(teamOwnerSession.api, `/api/projects/${teamProjectId}/invitations`, {
@@ -220,6 +242,7 @@ test.describe('Team -> Project E2E smoke', () => {
         await teamInviteeUi.page.goto(`/invite/${teamProjectInvite.token}`)
         await expect(teamInviteeUi.page).toHaveURL(routePattern(`/team/${teamId}/project/${teamProjectId}`))
         await expect(teamInviteeUi.page.getByTestId('workspace-left-rail-member-management-button')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-trigger')).toBeHidden()
 
         await teamInviteeUi.page.goto(`/projects/${teamProjectId}`)
         await expect(teamInviteeUi.page).toHaveURL(routePattern(`/team/${teamId}/project/${teamProjectId}`))

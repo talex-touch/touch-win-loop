@@ -509,17 +509,17 @@ export interface ProjectInvitationSummary extends Invitation {
 }
 
 export type UserNotificationCategory = 'platform' | 'contest' | 'collab'
-export type UserNotificationType =
-  | 'platform.announcement'
-  | 'contest.deadline_reminder'
-  | 'workspace.invitation.created'
-  | 'workspace.invitation.accepted'
-  | 'workspace.member.removed'
-  | 'project.invitation.created'
-  | 'project.invitation.accepted'
-  | 'project.member.added'
-  | 'project.member.removed'
-  | 'project.member.role_changed'
+export type UserNotificationType
+  = | 'platform.announcement'
+    | 'contest.deadline_reminder'
+    | 'workspace.invitation.created'
+    | 'workspace.invitation.accepted'
+    | 'workspace.member.removed'
+    | 'project.invitation.created'
+    | 'project.invitation.accepted'
+    | 'project.member.added'
+    | 'project.member.removed'
+    | 'project.member.role_changed'
 
 export interface UserNotification {
   id: string
@@ -617,10 +617,14 @@ export type ProjectDisplayIcon
 
 export type ProjectDisplayPresetAccentColor
   = | 'blue'
+    | 'indigo'
+    | 'pink'
     | 'cyan'
     | 'violet'
     | 'emerald'
+    | 'lime'
     | 'amber'
+    | 'orange'
     | 'rose'
     | 'slate'
     | 'teal'

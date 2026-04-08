@@ -25,10 +25,14 @@ export const PROJECT_DISPLAY_ACCENT_OPTIONS: Array<{
   text: string
 }> = [
   { value: 'blue', label: '深蓝', solid: '#5b82f6', soft: '#f5f9ff', border: '#dce8ff', text: '#365fd6' },
+  { value: 'indigo', label: '靛蓝', solid: '#6366f1', soft: '#f5f7ff', border: '#dfe3ff', text: '#4f46e5' },
   { value: 'cyan', label: '青蓝', solid: '#2ca6bf', soft: '#f2fcff', border: '#d4f2f8', text: '#1f7f93' },
   { value: 'violet', label: '紫罗兰', solid: '#9170ea', soft: '#f8f4ff', border: '#e6dcff', text: '#6f4ec7' },
   { value: 'emerald', label: '翠绿', solid: '#34a981', soft: '#f2fcf7', border: '#d7f3e7', text: '#1d8661' },
+  { value: 'lime', label: '青柠', solid: '#84cc16', soft: '#f8fde8', border: '#e7f5c8', text: '#5d8c0a' },
   { value: 'amber', label: '琥珀', solid: '#d59a3f', soft: '#fffbf2', border: '#f7e7c4', text: '#a56d17' },
+  { value: 'orange', label: '橙色', solid: '#f58b3a', soft: '#fff7f1', border: '#ffe2cc', text: '#d46b08' },
+  { value: 'pink', label: '粉色', solid: '#ec4899', soft: '#fff2f8', border: '#ffd7ea', text: '#be185d' },
   { value: 'rose', label: '玫瑰', solid: '#e06a8a', soft: '#fff5f8', border: '#f8dae2', text: '#bf4768' },
   { value: 'slate', label: '石墨', solid: '#7a879a', soft: '#f8fafc', border: '#e3e8ef', text: '#556274' },
   { value: 'teal', label: '湖绿', solid: '#2d9d93', soft: '#f1fcfa', border: '#d2f1ed', text: '#1f776f' },
