@@ -33,6 +33,8 @@ type EditableWorkspaceRole = 'admin' | 'manager' | 'member'
 const props = withDefaults(defineProps<{
   visible?: boolean
   userName?: string
+  userId?: string
+  userEmail?: string
   userAvatarUrl?: string
   userSubtitle?: string
   showAdminBadge?: boolean
@@ -42,6 +44,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   visible: false,
   userName: '未登录用户',
+  userId: '',
+  userEmail: '',
   userAvatarUrl: '',
   userSubtitle: '',
   showAdminBadge: false,
@@ -63,6 +67,7 @@ const { endpoint, resolveAppUrl } = useApiEndpoint(runtime)
 
 const activeTab = ref<UserSettingsTabId>('profile')
 const loggingOut = ref(false)
+const logoutConfirmVisible = ref(false)
 const actionError = ref('')
 const avatarFileInputRef = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
@@ -137,7 +142,7 @@ const defaultTabMeta: UserSettingsTabMeta = {
   groupId: 'profile',
   label: '个人信息',
   icon: 'person',
-  description: '查看头像、当前账号与绑定摘要。',
+  description: '查看头像、账号基础资料与编辑入口。',
 }
 
 const tabItems: UserSettingsTabMeta[] = [
@@ -183,6 +188,8 @@ const currentWorkspace = computed(() => {
 const currentWorkspaceQuota = computed(() => currentWorkspace.value?.quota || null)
 const isPersonalWorkspace = computed(() => currentWorkspace.value?.workspace.type === 'personal')
 const currentWorkspaceId = computed(() => String(currentWorkspace.value?.workspace.id || '').trim())
+const currentUserId = computed(() => String(props.userId || '').trim())
+const currentUserEmail = computed(() => String(props.userEmail || '').trim())
 const currentUserAvatarUrl = computed(() => String(props.userAvatarUrl || '').trim())
 const hasUserAvatar = computed(() => Boolean(currentUserAvatarUrl.value))
 
@@ -355,6 +362,27 @@ const workspaceTypeActionHint = computed(() => {
   if (workspacePlanTierLabel.value === 'Business')
     return '当前工作空间已接入 Business 套餐，可在计费页继续调整。'
   return '当前为 Personal 套餐，可升级到 Business 获取更高协作与配额能力。'
+})
+
+const userIdentityItems = computed(() => {
+  const items: Array<{ key: string, value: string, mono?: boolean }> = []
+
+  if (currentUserId.value) {
+    items.push({
+      key: 'id',
+      value: currentUserId.value,
+      mono: true,
+    })
+  }
+
+  if (currentUserEmail.value) {
+    items.push({
+      key: 'email',
+      value: currentUserEmail.value,
+    })
+  }
+
+  return items
 })
 
 const userInitial = computed(() => {
@@ -565,6 +593,18 @@ function closeProfileEditorDialog() {
   profileEditorDialogVisible.value = false
 }
 
+function openLogoutConfirm() {
+  if (loggingOut.value)
+    return
+  logoutConfirmVisible.value = true
+}
+
+function closeLogoutConfirm() {
+  if (loggingOut.value)
+    return
+  logoutConfirmVisible.value = false
+}
+
 function triggerAvatarUpload() {
   if (avatarUploading.value)
     return
@@ -648,6 +688,7 @@ async function saveWorkspaceName() {
 function closeDialog() {
   if (loggingOut.value)
     return
+  logoutConfirmVisible.value = false
   profileEditorDialogVisible.value = false
   visibleModel.value = false
 }
@@ -803,6 +844,7 @@ function resetDialogState() {
   activeTab.value = 'profile'
   actionError.value = ''
   avatarUploading.value = false
+  logoutConfirmVisible.value = false
   profileEditorDialogVisible.value = false
   clearAvatarActionFeedback()
   clearWorkspaceCopyFeedback()
@@ -1369,10 +1411,11 @@ function cancelFeishuUnbindConfirm() {
   feishuUnbindConfirmText.value = ''
 }
 
-async function logout() {
+async function confirmLogout() {
   loggingOut.value = true
   actionError.value = ''
   try {
+    logoutConfirmVisible.value = false
     await authApiFetch('/auth/logout', {
       method: 'POST',
     })
@@ -1391,6 +1434,7 @@ watch(
   () => props.visible,
   (visible) => {
     if (!visible) {
+      logoutConfirmVisible.value = false
       profileEditorDialogVisible.value = false
       workspaceInvitationDialogVisible.value = false
       return
@@ -1453,10 +1497,10 @@ onBeforeUnmount(() => {
       class="p-4 bg-slate-950/40 flex items-center inset-0 justify-center fixed z-50"
       @click.self="closeDialog"
     >
-      <div class="border border-slate-200 rounded-[28px] bg-white flex flex-col h-full max-h-[88vh] max-w-[1160px] w-full shadow-2xl overflow-hidden lg:h-[720px] lg:max-h-[720px]">
+      <div class="border border-slate-200 rounded-[24px] bg-white flex flex-col h-full max-h-[84vh] max-w-[860px] w-full shadow-2xl overflow-hidden lg:h-[560px] lg:max-h-[560px]">
         <div class="flex flex-1 flex-col min-h-0 lg:flex-row">
-          <aside class="border-b border-slate-200 bg-slate-50 flex shrink-0 flex-col lg:border-b-0 lg:border-r lg:w-[192px]">
-            <div class="px-4 pb-2 pt-4 flex items-center lg:px-5 lg:pb-3 lg:pt-5">
+          <aside class="border-b border-slate-200 bg-slate-50 flex shrink-0 flex-col lg:border-b-0 lg:border-r lg:w-[176px]">
+            <div class="px-3 pb-1.5 pt-3 flex items-center lg:px-4 lg:pb-2 lg:pt-4">
               <button
                 class="text-slate-500 rounded-full flex h-10 w-10 transition items-center justify-center hover:text-slate-800 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
                 :disabled="loggingOut"
@@ -1493,7 +1537,7 @@ onBeforeUnmount(() => {
           </aside>
 
           <section class="bg-white flex flex-1 flex-col min-h-0">
-            <div class="px-5 py-5 flex-1 min-h-0 overflow-y-auto sm:px-6">
+            <div class="px-4 py-4 flex-1 min-h-0 overflow-y-auto sm:px-5">
               <div v-if="activeTab === 'profile'" class="user-settings-panel user-settings-panel--stack">
                 <input
                   ref="avatarFileInputRef"
@@ -1503,41 +1547,52 @@ onBeforeUnmount(() => {
                   @change="handleAvatarFileChange"
                 >
 
-                <section class="user-settings-card">
-                  <div class="user-settings-profile-card user-settings-profile-card--profile">
-                    <div class="user-settings-profile-card__main">
-                      <div class="user-settings-avatar user-settings-avatar--large">
-                        <img
-                          v-if="hasUserAvatar"
-                          :src="currentUserAvatarUrl"
-                          alt="当前头像"
-                          class="user-settings-avatar__image"
-                        >
-                        <span v-else>{{ userInitial }}</span>
-                      </div>
+                <section class="user-settings-profile-section">
+                  <p class="user-settings-row__title">
+                    基础资料
+                  </p>
 
-                      <div class="flex-1 min-w-0">
-                        <div class="flex flex-wrap gap-2 items-center">
+                  <div class="user-settings-profile-content">
+                    <div class="user-settings-profile-card user-settings-profile-card--profile">
+                      <div class="user-settings-profile-card__main">
+                        <div class="user-settings-avatar user-settings-avatar--large">
+                          <img
+                            v-if="hasUserAvatar"
+                            :src="currentUserAvatarUrl"
+                            alt="当前头像"
+                            class="user-settings-avatar__image"
+                          >
+                          <span v-else>{{ userInitial }}</span>
+                        </div>
+                        <div class="user-settings-profile-meta">
                           <p class="text-lg text-slate-900 font-semibold">
                             {{ props.userName }}
                           </p>
-                          <span
-                            v-if="props.showAdminBadge"
-                            class="text-[11px] text-rose-700 font-semibold px-2 py-0.5 border border-rose-200 rounded-full bg-rose-50 inline-flex"
-                          >
-                            管理页
-                          </span>
+                          <div v-if="userIdentityItems.length" class="user-settings-identity-list">
+                            <p
+                              v-for="item in userIdentityItems"
+                              :key="item.key"
+                              class="user-settings-identity-item"
+                            >
+                              <span
+                                class="user-settings-identity-item__value"
+                                :class="{ 'user-settings-identity-item__value--mono': item.mono }"
+                              >
+                                {{ item.value }}
+                              </span>
+                            </p>
+                          </div>
                         </div>
-                        <p v-if="props.userSubtitle" class="text-sm text-slate-500 mt-1">
-                          {{ props.userSubtitle }}
-                        </p>
+                      </div>
+                      <div class="user-settings-profile-card__footer">
+                        <button class="user-settings-btn user-settings-btn--danger" :disabled="loggingOut" @click="openLogoutConfirm">
+                          退出登录
+                        </button>
+                        <button class="user-settings-btn user-settings-btn--primary" @click="openProfileEditorDialog">
+                          编辑资料
+                        </button>
                       </div>
                     </div>
-                  </div>
-                  <div class="user-settings-profile-card__footer">
-                    <button class="user-settings-btn user-settings-btn--primary" @click="openProfileEditorDialog">
-                      编辑资料
-                    </button>
                   </div>
                 </section>
               </div>
@@ -1623,7 +1678,7 @@ onBeforeUnmount(() => {
                           </button>
                         </div>
                         <p class="text-sm text-slate-500">
-                          {{ canRenameCurrentWorkspace ? '当前工作空间名称可直接修改。' : '当前工作空间名称仅所有者或管理员可修改。' }}
+                          {{ canRenameCurrentWorkspace ? '当前工作空间名称可直接修改。' : '当前工作空间名称仅具备管理权限的成员可修改。' }}
                         </p>
                         <p v-if="workspaceNameError" class="user-settings-feedback user-settings-feedback--danger">
                           {{ workspaceNameError }}
@@ -1641,7 +1696,7 @@ onBeforeUnmount(() => {
                         工作空间类型
                       </p>
                       <p class="user-settings-row__desc">
-                        Personal / Business 套餐类型与当前项目台形态。
+                        Personal / Business 套餐类型。
                       </p>
                     </div>
                     <div class="user-settings-row__content user-settings-row__content--overview">
@@ -2282,15 +2337,6 @@ onBeforeUnmount(() => {
                 {{ actionError }}
               </p>
             </div>
-
-            <div class="px-5 py-4 border-t border-slate-200 flex flex-wrap gap-2 items-center justify-end sm:px-6">
-              <button class="user-settings-btn" :disabled="loggingOut" @click="closeDialog">
-                关闭
-              </button>
-              <button class="user-settings-btn user-settings-btn--danger" :disabled="loggingOut" @click="logout">
-                {{ loggingOut ? '退出中...' : '退出登录' }}
-              </button>
-            </div>
           </section>
         </div>
       </div>
@@ -2300,7 +2346,7 @@ onBeforeUnmount(() => {
         class="p-4 bg-slate-950/35 flex items-center inset-0 justify-center fixed z-[60]"
         @click.self="closeProfileEditorDialog"
       >
-        <div class="p-5 border border-slate-200 rounded-[24px] bg-white max-w-[520px] w-full shadow-2xl sm:p-6">
+        <div class="p-5 border border-slate-200 rounded-[24px] bg-white max-w-[460px] w-full shadow-2xl sm:p-6">
           <div class="flex gap-4 items-start justify-between">
             <div>
               <p class="text-xl text-slate-900 font-semibold">
@@ -2334,9 +2380,20 @@ onBeforeUnmount(() => {
                 <p class="text-base text-slate-900 font-semibold">
                   {{ props.userName }}
                 </p>
-                <p v-if="props.userSubtitle" class="text-sm text-slate-500 mt-1">
-                  {{ props.userSubtitle }}
-                </p>
+                <div class="user-settings-identity-list mt-2">
+                  <p
+                    v-for="item in userIdentityItems"
+                    :key="`editor-${item.key}`"
+                    class="user-settings-identity-item"
+                  >
+                    <span
+                      class="user-settings-identity-item__value"
+                      :class="{ 'user-settings-identity-item__value--mono': item.mono }"
+                    >
+                      {{ item.value }}
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -2365,6 +2422,41 @@ onBeforeUnmount(() => {
             <p v-if="avatarActionSuccess" class="user-settings-feedback user-settings-feedback--success">
               {{ avatarActionSuccess }}
             </p>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="logoutConfirmVisible"
+        class="p-4 bg-slate-950/35 flex items-center inset-0 justify-center fixed z-[60]"
+        @click.self="closeLogoutConfirm"
+      >
+        <div class="p-5 border border-slate-200 rounded-[24px] bg-white max-w-[400px] w-full shadow-2xl sm:p-6">
+          <div class="flex gap-4 items-start justify-between">
+            <div>
+              <p class="text-xl text-slate-900 font-semibold">
+                确认退出登录
+              </p>
+              <p class="text-sm text-slate-500 mt-2">
+                退出后将返回登录页，当前会话会立即失效。
+              </p>
+            </div>
+            <button
+              class="text-slate-500 rounded-full flex h-9 w-9 transition items-center justify-center hover:text-slate-800 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="loggingOut"
+              @click="closeLogoutConfirm"
+            >
+              <span class="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+
+          <div class="mt-6 flex flex-wrap gap-2 items-center justify-end">
+            <button class="user-settings-btn" :disabled="loggingOut" @click="closeLogoutConfirm">
+              取消
+            </button>
+            <button class="user-settings-btn user-settings-btn--danger" :disabled="loggingOut" @click="confirmLogout">
+              {{ loggingOut ? '退出中...' : '确认退出' }}
+            </button>
           </div>
         </div>
       </div>
@@ -2538,8 +2630,8 @@ onBeforeUnmount(() => {
 
 .user-settings-row {
   display: flex;
-  justify-content: space-between;
-  gap: 24px;
+  flex-direction: column;
+  gap: 14px;
   padding: 22px 0;
   border-bottom: 1px solid #e2e8f0;
 }
@@ -2549,8 +2641,8 @@ onBeforeUnmount(() => {
 }
 
 .user-settings-row__heading {
-  flex: 0 0 188px;
-  min-width: 168px;
+  flex: none;
+  min-width: 0;
 }
 
 .user-settings-row__title {
@@ -2560,10 +2652,7 @@ onBeforeUnmount(() => {
 }
 
 .user-settings-row__desc {
-  margin-top: 8px;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.6;
+  display: none;
 }
 
 .user-settings-row__content {
@@ -2571,9 +2660,13 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 10px;
-  text-align: right;
+  text-align: left;
+}
+
+.user-settings-row__content > div {
+  width: 100%;
 }
 
 .user-settings-row__content--start {
@@ -2582,7 +2675,12 @@ onBeforeUnmount(() => {
 }
 
 .user-settings-row__content--overview {
-  align-items: flex-end;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.user-settings-row__content--profile {
+  align-items: stretch;
   text-align: left;
 }
 
@@ -2590,7 +2688,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -2603,7 +2701,19 @@ onBeforeUnmount(() => {
 }
 
 .user-settings-profile-card--profile {
-  align-items: flex-start;
+  align-items: center;
+}
+
+.user-settings-profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.user-settings-profile-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .user-settings-profile-card__main {
@@ -2614,8 +2724,20 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.user-settings-profile-meta {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .user-settings-profile-card__footer {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
   justify-content: flex-end;
 }
 
@@ -2668,6 +2790,31 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.user-settings-identity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.user-settings-identity-item {
+  display: flex;
+  min-width: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.user-settings-identity-item__value {
+  min-width: 0;
+  color: #475569;
+  word-break: break-all;
+}
+
+.user-settings-identity-item__value--mono {
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
 .user-settings-profile-editor__hint {
   display: flex;
   flex-direction: column;
@@ -2714,10 +2861,10 @@ onBeforeUnmount(() => {
 .user-settings-overview-row {
   display: flex;
   width: 100%;
-  max-width: 760px;
+  max-width: none;
   flex-direction: column;
   gap: 8px;
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .user-settings-overview-row__main {
@@ -2863,6 +3010,10 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.user-settings-section-header > div > p + p {
+  display: none;
 }
 
 .user-settings-member-list {

@@ -42,7 +42,7 @@ const loopyState = useLoopyDialog({
       return '我是 Loopy。当前没有可用工作空间，暂时无法开始对话。'
     return `我是 Loopy。当前工作空间「${selectedWorkspace.value.workspace.name}」已配备 AI 能力，你可以随时问我项目、赛事、资料和协作问题。`
   },
-  getSessionTitle: () => 'Loopy 对话',
+  getSessionTitle: () => '新对话',
 })
 
 const {

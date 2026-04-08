@@ -7,6 +7,8 @@ const props = withDefaults(defineProps<{
   menuItems?: DashboardMenuItem[]
   topics?: DashboardTopic[]
   analystName?: string
+  analystUserId?: string
+  analystUserEmail?: string
   analystTier?: string
   analystAvatar?: string
   showAdminBadge?: boolean
@@ -16,6 +18,8 @@ const props = withDefaults(defineProps<{
   menuItems: () => [],
   topics: () => [],
   analystName: '分析师 张明',
+  analystUserId: '',
+  analystUserEmail: '',
   analystTier: '高级会员',
   analystAvatar: '',
   showAdminBadge: false,
@@ -205,6 +209,8 @@ function onUserUpdated(user: AuthUser) {
   <UserSettingsDialog
     v-model:visible="profileDialogVisible"
     :user-name="props.analystName"
+    :user-id="props.analystUserId"
+    :user-email="props.analystUserEmail"
     :user-subtitle="props.analystTier"
     :user-avatar-url="displayAvatarUrl"
     :show-admin-badge="props.showAdminBadge"

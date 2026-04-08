@@ -85,10 +85,10 @@ const platformError = ref('')
 
 const createDialogVisible = ref(false)
 const creatingProject = ref(false)
+const createSubmittingMode = ref<'stay' | 'enter' | ''>('')
 const createErrorText = ref('')
-const createForm = reactive({
-  title: '',
-  summary: '',
+const createForm = reactive<WorkspaceProjectCommonForm & { contestIds: string[] }>({
+  ...createEmptyProjectCommonForm(),
   contestIds: [] as string[],
 })
 
@@ -104,6 +104,19 @@ const activeWorkspace = computed(() => {
 })
 
 const activeWorkspaceId = computed(() => String(activeWorkspace.value?.workspace.id || '').trim())
+const activeWorkspaceName = computed(() => {
+  return String(activeWorkspace.value?.workspace.name || '').trim() || '当前项目台'
+})
+const createDialogTitle = computed(() => {
+  return activeWorkspace.value?.workspace.type === 'team'
+    ? `在「${activeWorkspaceName.value}」团队创建项目`
+    : `在「${activeWorkspaceName.value}」项目台创建项目`
+})
+const createDialogHelperText = computed(() => {
+  return activeWorkspace.value?.workspace.type === 'team'
+    ? `新项目会创建到「${activeWorkspaceName.value}」团队下，创建后可继续补充竞赛绑定、图标与详细资料。`
+    : `新项目会创建到「${activeWorkspaceName.value}」项目台下，创建后可继续补充竞赛绑定、图标与详细资料。`
+})
 const activeWorkspaceRoles = computed(() => activeWorkspace.value?.workspace.roles || [])
 const canManageContest = computed(() => {
   return platformPermissions.value.some(item =>
@@ -680,6 +693,7 @@ function openCreateDialog() {
 function closeCreateDialog() {
   if (creatingProject.value)
     return
+  createErrorText.value = ''
   createDialogVisible.value = false
 }
 
@@ -718,11 +732,24 @@ function handleProjectAction(payload: {
   noticeText.value = `项目“${payload.project.title}”的归档功能即将支持。`
 }
 
-async function submitQuickCreate() {
+function updateCreateForm(next: WorkspaceProjectCommonForm) {
+  Object.assign(createForm, cloneProjectCommonForm(next))
+}
+
+function resetCreateForm() {
+  Object.assign(createForm, {
+    ...createEmptyProjectCommonForm(),
+    contestIds: [],
+  })
+}
+
+async function submitQuickCreate(mode: 'stay' | 'enter') {
   const workspaceId = activeWorkspaceId.value
   const title = createForm.title.trim()
   const summary = createForm.summary.trim()
   const contestIds = createForm.contestIds
+  const icon = createForm.icon.trim()
+  const accentColor = createForm.accentColor.trim()
 
   if (!workspaceId || !title) {
     createErrorText.value = '请填写项目名称。'
@@ -735,6 +762,7 @@ async function submitQuickCreate() {
   }
 
   creatingProject.value = true
+  createSubmittingMode.value = mode
   createErrorText.value = ''
 
   try {
@@ -746,16 +774,24 @@ async function submitQuickCreate() {
         title,
         summary,
         contestIds,
+        icon: icon || undefined,
+        accentColor: accentColor || undefined,
       },
     })
 
     const created = response.data
     const createdWorkspaceId = String(created.teamId || created.workspaceId || '').trim() || workspaceId
 
-    createForm.title = ''
-    createForm.summary = ''
-    createForm.contestIds = []
+    mergeProjectIntoList(created)
+    resetCreateForm()
     createDialogVisible.value = false
+
+    if (mode === 'stay') {
+      Message.success('项目已创建。')
+      return
+    }
+
+    Message.success('项目已创建，正在进入项目工作区。')
     writeActiveWorkspacePreference(createdWorkspaceId)
 
     await navigateTo(projectWorkspacePath(createdWorkspaceId, created.id))
@@ -765,6 +801,7 @@ async function submitQuickCreate() {
   }
   finally {
     creatingProject.value = false
+    createSubmittingMode.value = ''
   }
 }
 
@@ -992,18 +1029,17 @@ onMounted(async () => {
 
     <TeamCreateProjectDialog
       :visible="createDialogVisible"
-      dialog-title="在当前 Team 创建项目"
-      :project-title="createForm.title"
-      :summary="createForm.summary"
+      :dialog-title="createDialogTitle"
+      :helper-text="createDialogHelperText"
+      :model-value="createForm"
       :contest-ids="createForm.contestIds"
       :contests="contests"
       :error-text="createErrorText"
       :submitting="creatingProject"
-      submit-text="创建并进入项目工作区"
+      :submitting-mode="createSubmittingMode"
       @close="closeCreateDialog"
       @submit="submitQuickCreate"
-      @update:project-title="createForm.title = $event"
-      @update:summary="createForm.summary = $event"
+      @update:model-value="updateCreateForm"
       @update:contest-ids="createForm.contestIds = $event"
     />
 

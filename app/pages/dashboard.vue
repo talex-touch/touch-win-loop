@@ -8,7 +8,7 @@ definePageMeta({
 })
 
 useHead({
-  title: 'Loopy',
+  title: '对话',
 })
 
 const authApiFetch = useAuthApiFetch()
@@ -26,13 +26,74 @@ const suggestionPrompts = [
   '从工作空间视角看，哪些问题最需要先补齐？',
 ]
 
+function formatSessionTitle(title: string | null | undefined): string {
+  const normalizedTitle = String(title || '').trim()
+  if (!normalizedTitle)
+    return '新对话'
+
+  const trimmedTitle = normalizedTitle.replace(/^Loopy[\s\-_:：·]*/i, '').trim()
+  if (!trimmedTitle || trimmedTitle === '对话')
+    return '新对话'
+  return trimmedTitle
+}
+
+function buildDialogTitlePreview(content: string | null | undefined): string {
+  const compact = String(content || '').replace(/\s+/g, ' ').trim()
+  if (!compact)
+    return ''
+  if (compact.length <= 16)
+    return compact
+  return `${compact.slice(0, 16)}…`
+}
+
+function formatSessionTime(value: string | null | undefined): string {
+  if (!value)
+    return '刚刚'
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return '刚刚'
+
+  const diff = Date.now() - date.getTime()
+  if (diff < 60 * 1000)
+    return '刚刚'
+  if (diff < 60 * 60 * 1000)
+    return `${Math.max(1, Math.floor(diff / (60 * 1000)))} 分钟前`
+  if (diff < 24 * 60 * 60 * 1000)
+    return `${Math.max(1, Math.floor(diff / (60 * 60 * 1000)))} 小时前`
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+  }).format(date)
+}
+
+function formatSessionMeta(session: { messageCount: number, lastMessageAt: string | null, updatedAt: string }): string {
+  const parts: string[] = []
+  parts.push(`${session.messageCount} 条`)
+  parts.push(formatSessionTime(session.lastMessageAt || session.updatedAt))
+  return parts.join(' · ')
+}
+
+function formatMessageContent(message: { role: string, content: string }): string {
+  const normalizedContent = String(message.content || '')
+  if (message.role !== 'assistant')
+    return normalizedContent
+
+  if (normalizedContent === '我是 Loopy。当前没有可用工作区，暂时无法开始对话。')
+    return '当前没有可用工作区，暂时无法开始对话。'
+  if (normalizedContent === '我是 Loopy。当前工作空间已配备 AI 能力，你可以随时问我项目、赛事、资料和协作问题。')
+    return '当前工作空间已接入 AI 能力，你可以随时询问项目、赛事、资料和协作问题。'
+  return normalizedContent
+}
+
 const loopyState = useLoopyDialog({
   getGreeting: () => {
     if (!hasAvailableWorkspace.value)
-      return '我是 Loopy。当前没有可用工作区，暂时无法开始对话。'
-    return '我是 Loopy。当前工作空间已配备 AI 能力，你可以随时问我项目、赛事、资料和协作问题。'
+      return '当前没有可用工作区，暂时无法开始对话。'
+    return '当前工作空间已接入 AI 能力，你可以随时询问项目、赛事、资料和协作问题。'
   },
-  getSessionTitle: () => 'Loopy 对话',
+  getSessionTitle: () => '新对话',
 })
 
 const {
@@ -57,16 +118,28 @@ const activeSession = computed(() => {
   return loopySessions.value.find(item => item.id === loopyActiveSessionId.value) || null
 })
 
+const firstUserMessageTitle = computed(() => {
+  const firstUserMessage = loopyMessages.value.find(item => item.role === 'user')
+  return buildDialogTitlePreview(firstUserMessage?.content)
+})
+
+function resolveVisibleSessionTitle(session: { id: string, title: string } | null | undefined): string {
+  const normalizedTitle = formatSessionTitle(session?.title)
+  if (normalizedTitle !== '新对话')
+    return normalizedTitle
+  if (session?.id && session.id === loopyActiveSessionId.value && firstUserMessageTitle.value)
+    return firstUserMessageTitle.value
+  return normalizedTitle
+}
+
 const chatPanelTitle = computed(() => {
-  return activeSession.value?.title || 'Loopy'
+  return resolveVisibleSessionTitle(activeSession.value) || '新对话'
 })
 
 const chatPanelSubtitle = computed(() => {
   if (!loopySelectedWorkspaceId.value)
     return '当前没有可用工作区，暂时无法开始对话。'
-  if (loopyMessages.value.some(item => item.role === 'user'))
-    return 'Loopy 会持续记录当前工作空间的对话历史。'
-  return '当前工作空间已配备 Loopy，可随时提问各种问题。'
+  return ''
 })
 
 async function loadAuthContext() {
@@ -88,7 +161,7 @@ async function loadAuthContext() {
   }
   catch (error: any) {
     workspaceOptions.value = []
-    errorText.value = String(error?.data?.message || 'Loopy 初始化失败，请稍后重试。')
+    errorText.value = String(error?.data?.message || '对话初始化失败，请稍后重试。')
     await syncLoopyWorkspace('')
   }
   finally {
@@ -116,24 +189,18 @@ onMounted(() => {
 
 <template>
   <section
-    class="mx-auto flex h-full max-w-7xl min-h-0 overflow-y-auto lg:overflow-hidden"
+    class="flex h-full min-h-0 w-full min-w-0 overflow-hidden"
     data-testid="dashboard-loopy-home"
   >
-    <div class="gap-6 grid h-full min-h-0 w-full lg:grid-cols-[300px_minmax(0,1fr)]">
+    <div class="grid h-full min-h-0 w-full overflow-hidden border border-slate-200 rounded-lg bg-white lg:grid-cols-[280px_minmax(0,1fr)]">
       <aside
         data-testid="dashboard-loopy-sidebar"
-        class="border border-slate-200 rounded-3xl bg-white flex flex-col min-h-0 overflow-hidden lg:h-full"
+        class="border-r border-slate-200 bg-slate-50/55 flex flex-col min-h-0 overflow-hidden lg:h-full"
       >
-        <div class="p-5 border-b border-slate-100 flex shrink-0 items-center justify-between">
-          <div>
-            <p class="text-[11px] text-blue-700 tracking-[0.18em] font-semibold uppercase">
-              Loopy
-            </p>
-            <h1 class="text-lg text-slate-950 font-semibold mt-2">
-              消息记录
-            </h1>
-          </div>
-
+        <div class="px-2.5 py-2.5 border-b border-slate-200/80 flex shrink-0 items-center justify-between gap-2.5">
+          <p class="text-[11px] text-slate-400 tabular-nums font-medium">
+            {{ loopySessions.length }} 条会话
+          </p>
           <button
             class="loopy-page-ghost-btn"
             type="button"
@@ -145,17 +212,17 @@ onMounted(() => {
 
         <div
           data-testid="dashboard-loopy-session-list"
-          class="p-4 flex-1 min-h-0 overflow-y-auto"
+          class="p-2.5 flex-1 min-h-0 overflow-y-auto"
         >
           <div v-if="loading" class="space-y-2">
             <div
               v-for="index in 6"
               :key="`dashboard-loopy-session-skeleton-${index}`"
-              class="rounded-2xl bg-slate-100 h-14 animate-pulse"
+              class="rounded-md bg-slate-100 h-14 animate-pulse"
             />
           </div>
 
-          <div v-else class="space-y-2">
+          <div v-else class="space-y-2.5">
             <button
               v-for="session in loopySessions"
               :key="session.id"
@@ -164,7 +231,8 @@ onMounted(() => {
               type="button"
               @click="switchLoopySession(session.id)"
             >
-              <span class="line-clamp-2">{{ session.title }}</span>
+              <span class="loopy-page-session__title line-clamp-1">{{ resolveVisibleSessionTitle(session) }}</span>
+              <span class="loopy-page-session__meta line-clamp-1">{{ formatSessionMeta(session) }}</span>
             </button>
 
             <p v-if="loopySessions.length === 0" class="text-xs text-slate-400 leading-5 px-2 py-3">
@@ -174,39 +242,36 @@ onMounted(() => {
         </div>
       </aside>
 
-      <section class="border border-slate-200 rounded-3xl bg-white flex flex-col min-h-0 overflow-hidden lg:h-full">
-        <header class="p-6 border-b border-slate-100 shrink-0">
-          <p class="text-[11px] text-blue-700 tracking-[0.18em] font-semibold uppercase">
-            Loopy
-          </p>
-          <h2 class="text-2xl text-slate-950 font-semibold mt-3">
+      <section class="bg-white flex flex-col min-h-0 overflow-hidden lg:h-full">
+        <header class="px-3 py-2.5 border-b border-slate-100 shrink-0 flex items-center justify-between gap-3">
+          <h2 class="text-sm text-slate-950 font-semibold truncate">
             {{ chatPanelTitle }}
           </h2>
-          <p class="text-sm text-slate-500 leading-6 mt-2">
+          <p v-if="chatPanelSubtitle" class="text-xs text-slate-400 leading-5 shrink-0 truncate">
             {{ chatPanelSubtitle }}
           </p>
         </header>
 
-        <div v-if="loading" class="p-6 flex-1 space-y-3">
-          <div class="rounded-2xl bg-slate-100 h-16 animate-pulse" />
-          <div class="rounded-2xl bg-slate-100 h-16 w-10/12 animate-pulse" />
-          <div class="rounded-2xl bg-slate-100 h-16 w-8/12 animate-pulse" />
+        <div v-if="loading" class="p-3 flex-1 space-y-3">
+          <div class="rounded-md bg-slate-100 h-16 animate-pulse" />
+          <div class="rounded-md bg-slate-100 h-16 w-10/12 animate-pulse" />
+          <div class="rounded-md bg-slate-100 h-16 w-8/12 animate-pulse" />
         </div>
 
         <div v-else class="flex flex-1 flex-col min-h-0 overflow-hidden">
-          <p v-if="loopyStatusText" class="text-xs text-blue-700 px-6 py-3 border-b border-blue-50 bg-blue-50/70">
+          <p v-if="loopyStatusText" class="text-xs text-blue-700 px-3 py-2 border-b border-blue-100 bg-blue-50/70">
             {{ loopyStatusText }}
           </p>
-          <p v-if="errorText || loopyErrorText" class="text-xs text-rose-600 px-6 py-3 border-b border-rose-100 bg-rose-50/80">
+          <p v-if="errorText || loopyErrorText" class="text-xs text-rose-600 px-3 py-2 border-b border-rose-100 bg-rose-50/80">
             {{ errorText || loopyErrorText }}
           </p>
 
           <div
             ref="messageScrollRef"
             data-testid="dashboard-loopy-messages"
-            class="px-6 py-6 flex-1 min-h-0 overflow-y-auto"
+            class="px-3 py-3 flex-1 min-h-0 overflow-y-auto"
           >
-            <div class="space-y-4">
+            <div class="space-y-3">
               <div
                 v-for="(message, index) in loopyMessages"
                 :key="`${message.role}-${index}`"
@@ -217,15 +282,15 @@ onMounted(() => {
                   class="loopy-page-bubble"
                   :class="message.role === 'user' ? 'loopy-page-bubble--user' : 'loopy-page-bubble--assistant'"
                 >
-                  {{ message.content }}
+                  {{ formatMessageContent(message) }}
                 </article>
               </div>
 
-              <section v-if="loopyShowSuggestions && loopySelectedWorkspaceId" class="space-y-3">
-                <div class="text-[11px] text-slate-400 tracking-[0.18em] font-semibold uppercase">
+              <section v-if="loopyShowSuggestions && loopySelectedWorkspaceId" class="space-y-2.5">
+                <div class="text-[11px] text-slate-400 tracking-[0.12em] font-medium uppercase">
                   推荐起手问题
                 </div>
-                <div class="gap-3 grid xl:grid-cols-2">
+                <div class="gap-2 grid xl:grid-cols-2">
                   <button
                     v-for="question in suggestionPrompts"
                     :key="question"
@@ -241,13 +306,13 @@ onMounted(() => {
             </div>
           </div>
 
-          <footer class="p-6 border-t border-slate-100 shrink-0">
+          <footer class="p-3 border-t border-slate-100 shrink-0">
             <div class="relative">
               <textarea
                 :value="loopyChatInput"
                 data-testid="dashboard-loopy-composer"
                 class="loopy-page-textarea"
-                :placeholder="loopySelectedWorkspaceId ? '直接问 Loopy，开始一轮新的 AI 对话' : '当前没有可用工作区，暂时无法发起对话'"
+                :placeholder="loopySelectedWorkspaceId ? '直接输入内容，开始一轮新的对话' : '当前没有可用工作区，暂时无法发起对话'"
                 :disabled="!loopySelectedWorkspaceId"
                 @input="loopyChatInput = ($event.target as HTMLTextAreaElement).value"
               />
@@ -272,7 +337,7 @@ onMounted(() => {
   height: 28px;
   padding: 0 10px;
   border: 1px solid #dbe2f1;
-  border-radius: 999px;
+  border-radius: 6px;
   background: #fff;
   color: #334155;
   font-size: 11px;
@@ -281,66 +346,79 @@ onMounted(() => {
 
 .loopy-page-session {
   width: 100%;
-  padding: 10px 12px;
+  padding: 10px 11px;
   border: 1px solid #e2e8f0;
-  border-radius: 14px;
+  border-radius: 8px;
   background: #fff;
   color: #334155;
-  font-size: 12px;
-  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   text-align: left;
 }
 
 .loopy-page-session--active {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  box-shadow: inset 2px 0 0 #2563eb;
+}
+
+.loopy-page-session__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.loopy-page-session__meta {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #94a3b8;
 }
 
 .loopy-page-bubble {
-  max-width: min(720px, 86%);
-  padding: 14px 16px;
-  border-radius: 22px;
-  font-size: 14px;
-  line-height: 1.75;
+  max-width: min(840px, 92%);
+  padding: 11px 13px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
   white-space: pre-wrap;
 }
 
 .loopy-page-bubble--assistant {
   background: #f8fafc;
   color: #334155;
-  border-top-left-radius: 8px;
+  border: 1px solid #e2e8f0;
 }
 
 .loopy-page-bubble--user {
   background: #eff6ff;
   color: #1e3a8a;
   border: 1px solid #bfdbfe;
-  border-top-right-radius: 8px;
 }
 
 .loopy-page-suggestion {
-  padding: 16px 18px;
+  padding: 12px 13px;
   border: 1px solid #dbeafe;
-  border-radius: 20px;
-  background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+  border-radius: 8px;
+  background: #fff;
   color: #1e3a8a;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 12px;
+  line-height: 1.65;
   text-align: left;
 }
 
 .loopy-page-textarea {
   width: 100%;
-  min-height: 128px;
+  min-height: 104px;
   resize: none;
   border: 1px solid #dbe2f1;
-  border-radius: 20px;
+  border-radius: 8px;
   background: #f8fafc;
   color: #0f172a;
-  font-size: 14px;
-  line-height: 1.75;
-  padding: 16px 60px 16px 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 14px 56px 14px 16px;
   outline: none;
 }
 
@@ -351,15 +429,15 @@ onMounted(() => {
 
 .loopy-page-send {
   position: absolute;
-  right: 18px;
-  bottom: 18px;
+  right: 16px;
+  bottom: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   border: none;
-  border-radius: 999px;
+  border-radius: 8px;
   background: #2563eb;
   color: #fff;
 }

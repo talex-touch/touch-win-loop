@@ -19,6 +19,8 @@ const shellScrollRef = ref<HTMLDivElement | null>(null)
 const searchQuery = ref('')
 const platformPermissions = ref<PlatformPermission[]>([])
 const analystName = ref(analystProfile.name)
+const analystUserId = ref('')
+const analystUserEmail = ref('')
 const analystAvatar = ref('')
 const isPlatformAdmin = ref(false)
 const workspaceOptions = ref<WorkspaceWithQuota[]>([])
@@ -52,6 +54,11 @@ const menuItems = computed(() => {
 
 const showAdminBadge = computed(() => {
   return canEnterAdmin.value && route.path.startsWith('/admin')
+})
+
+const isDashboardHome = computed(() => {
+  const normalizedPath = route.path.replace(/\/+$/, '') || '/'
+  return normalizedPath === '/dashboard'
 })
 
 const isWorkspaceFullscreen = computed(() => {
@@ -105,7 +112,10 @@ useHead(() => ({
 onMounted(async () => {
   try {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
+    const userEmail = String((response.data.user as AuthUser & { email?: string | null }).email || '').trim()
     platformPermissions.value = response.data.user.platformPermissions || []
+    analystUserId.value = response.data.user.id || ''
+    analystUserEmail.value = userEmail
     analystName.value = response.data.user.username || analystProfile.name
     analystAvatar.value = response.data.user.avatarUrl || ''
     isPlatformAdmin.value = Boolean(response.data.user.isPlatformAdmin)
@@ -118,6 +128,8 @@ onMounted(async () => {
   }
   catch {
     platformPermissions.value = []
+    analystUserId.value = ''
+    analystUserEmail.value = ''
     analystName.value = analystProfile.name
     analystAvatar.value = ''
     isPlatformAdmin.value = false
@@ -146,6 +158,7 @@ function onWorkspaceUpdated(payload: { workspaceId: string, name: string }) {
 }
 
 function onUserUpdated(user: AuthUser) {
+  analystUserId.value = user.id || ''
   analystName.value = user.username || analystProfile.name
   analystAvatar.value = user.avatarUrl || ''
 }
@@ -174,6 +187,8 @@ watch(() => route.fullPath, async () => {
         :menu-items="menuItems"
         :topics="hotTopics"
         :analyst-name="analystName"
+        :analyst-user-id="analystUserId"
+        :analyst-user-email="analystUserEmail"
         :analyst-tier="analystTier"
         :analyst-avatar="analystAvatar"
         :show-admin-badge="showAdminBadge"
@@ -187,7 +202,11 @@ watch(() => route.fullPath, async () => {
       <main class="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
         <DashboardTopbar v-model="searchQuery" />
 
-        <div ref="shellScrollRef" class="dashboard-scrollbar p-4 flex-1 min-h-0 overflow-y-auto md:p-8">
+        <div
+          ref="shellScrollRef"
+          class="dashboard-scrollbar flex-1 min-h-0 overflow-y-auto"
+          :class="isDashboardHome ? 'p-0' : 'p-4 md:p-8'"
+        >
           <slot />
         </div>
       </main>

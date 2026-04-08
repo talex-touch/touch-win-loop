@@ -23,6 +23,8 @@ const route = useRoute()
 const authApiFetch = useAuthApiFetch()
 
 const userName = ref('平台管理员')
+const userId = ref('')
+const userEmail = ref('')
 const userAvatarUrl = ref('')
 const platformRoles = ref<PlatformRole[]>([])
 const permissions = ref<PlatformPermission[]>([])
@@ -351,6 +353,7 @@ function openProfileDialog() {
 }
 
 function onUserUpdated(user: AuthUser) {
+  userId.value = user.id || ''
   userName.value = user.username || '平台管理员'
   userAvatarUrl.value = user.avatarUrl || ''
 }
@@ -376,7 +379,10 @@ async function loadProfile() {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
     const nextWorkspaceOptions = resolveWorkspaceOptions(response.data)
     const preferredWorkspaceId = readActiveWorkspacePreference()
+    const currentUserEmail = String((response.data.user as AuthUser & { email?: string | null }).email || '').trim()
 
+    userId.value = response.data.user.id || ''
+    userEmail.value = currentUserEmail
     userName.value = response.data.user.username || '平台管理员'
     userAvatarUrl.value = response.data.user.avatarUrl || ''
     platformRoles.value = response.data.user.platformRoles || []
@@ -388,6 +394,8 @@ async function loadProfile() {
       : (nextWorkspaceOptions[0]?.workspace.id || '')
   }
   catch {
+    userId.value = ''
+    userEmail.value = ''
     userName.value = '未登录用户'
     userAvatarUrl.value = ''
     platformRoles.value = []
@@ -552,6 +560,8 @@ if (import.meta.client) {
     <UserSettingsDialog
       v-model:visible="profileDialogVisible"
       :user-name="userName"
+      :user-id="userId"
+      :user-email="userEmail"
       :user-avatar-url="userAvatarUrl"
       :user-subtitle="userSubtitle"
       :show-admin-badge="showAdminBadge"

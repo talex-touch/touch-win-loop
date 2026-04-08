@@ -152,7 +152,7 @@ export function useLoopyDialog(input: {
       return response.data.id
     }
     catch (error: any) {
-      errorText.value = String(error?.data?.message || '新建 Loopy 会话失败，请稍后重试。')
+      errorText.value = String(error?.data?.message || '新建会话失败，请稍后重试。')
       return null
     }
   }
@@ -196,7 +196,7 @@ export function useLoopyDialog(input: {
     catch (error: any) {
       sessions.value = []
       activeSessionId.value = ''
-      errorText.value = String(error?.data?.message || 'Loopy 会话加载失败，请稍后重试。')
+      errorText.value = String(error?.data?.message || '会话加载失败，请稍后重试。')
       resetConversation()
     }
     finally {
@@ -233,7 +233,7 @@ export function useLoopyDialog(input: {
       return
 
     activeSessionId.value = createdId
-    statusText.value = '已创建新的 Loopy 会话。'
+    statusText.value = '已创建新会话。'
     await loadSessions(createdId)
   }
 
@@ -335,7 +335,7 @@ export function useLoopyDialog(input: {
           const data = toJsonPayload(payload?.data)
 
           if (eventType === 'progress') {
-            statusText.value = normalizeText(data.message) || 'Loopy 正在整理工作空间上下文...'
+            statusText.value = normalizeText(data.message) || '正在整理当前工作空间上下文...'
             if (data.sessionId)
               activeSessionId.value = normalizeText(data.sessionId)
             continue
@@ -344,8 +344,8 @@ export function useLoopyDialog(input: {
           if (eventType === 'tool') {
             const toolName = normalizeText(data.name)
             statusText.value = toolName
-              ? `Loopy 正在调用工具：${toolName}`
-              : 'Loopy 正在调用工具...'
+              ? `正在调用工具：${toolName}`
+              : '正在调用工具...'
             continue
           }
 
@@ -360,18 +360,18 @@ export function useLoopyDialog(input: {
             assistantBuffer = normalizeText(result.assistantReply) || assistantBuffer
             if (result.sessionId)
               activeSessionId.value = normalizeText(result.sessionId)
-            statusText.value = 'Loopy 已完成回答。'
+            statusText.value = '已完成回答。'
             renderAssistantMessage()
             continue
           }
 
           if (eventType === 'error')
-            throw new Error(normalizeText(data.message) || 'Loopy 当前暂不可用，请稍后重试。')
+            throw new Error(normalizeText(data.message) || '当前暂不可用，请稍后重试。')
         }
       }
     }
     catch (error) {
-      const message = error instanceof Error ? error.message : 'Loopy 当前暂不可用，请稍后重试。'
+      const message = error instanceof Error ? error.message : '当前暂不可用，请稍后重试。'
       errorText.value = message
       messages.value = [
         ...pendingMessages,

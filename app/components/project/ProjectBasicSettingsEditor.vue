@@ -16,9 +16,13 @@ const props = withDefaults(defineProps<{
   modelValue: WorkspaceProjectCommonForm
   project?: Project | null
   disabled?: boolean
+  titleInputTestId?: string
+  summaryInputTestId?: string
 }>(), {
   project: null,
   disabled: false,
+  titleInputTestId: 'project-basic-settings-title-input',
+  summaryInputTestId: 'project-basic-settings-summary-input',
 })
 
 const emit = defineEmits<{
@@ -117,7 +121,7 @@ function selectProjectSettingsCustomAccent(event: Event) {
       <input
         :value="modelValue.title"
         class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-        data-testid="project-basic-settings-title-input"
+        :data-testid="titleInputTestId"
         :disabled="disabled"
         placeholder="输入项目标题"
         @input="updateProjectSettingsCommonField('title', ($event.target as HTMLInputElement).value)"
@@ -129,7 +133,7 @@ function selectProjectSettingsCustomAccent(event: Event) {
       <textarea
         :value="modelValue.summary"
         class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[88px] w-full focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
-        data-testid="project-basic-settings-summary-input"
+        :data-testid="summaryInputTestId"
         :disabled="disabled"
         placeholder="输入项目介绍"
         @input="updateProjectSettingsCommonField('summary', ($event.target as HTMLTextAreaElement).value)"
