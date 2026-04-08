@@ -61,6 +61,7 @@ import {
   teamListUserWorkspaces as listUserWorkspacesImpl,
 } from '~~/server/utils/team-workspace-store'
 import { normalizeProjectDisplayConfig } from '~~/shared/constants/project-display'
+import { isManualAuthAvatarUrl } from '~~/shared/utils/user-avatar'
 
 const FULL_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin']
 const BASIC_WORKSPACE_ROLES: WorkspaceMemberRole[] = ['manager', 'member']
@@ -648,6 +649,29 @@ export async function createUserWithPersonalWorkspace(db: Queryable, input: Crea
   return user
 }
 
+export async function setUserAvatarUrl(
+  db: Queryable,
+  userId: string,
+  avatarUrl: string | null | undefined,
+): Promise<AuthUser | null> {
+  const normalizedAvatarUrl = String(avatarUrl || '').trim() || null
+  const now = new Date().toISOString()
+  const result = await db.query<UserRow>(
+    `UPDATE users
+     SET avatar_url = $2,
+         updated_at = $3
+     WHERE id = $1
+       AND COALESCE(avatar_url, '') IS DISTINCT FROM COALESCE($2, '')
+     RETURNING id, username, avatar_url, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT`,
+    [userId, normalizedAvatarUrl, now],
+  )
+
+  const row = result.rows[0]
+  if (row)
+    return mapUser(row)
+  return findUserById(db, userId)
+}
+
 export async function syncUserAvatarUrl(
   db: Queryable,
   userId: string,
@@ -657,21 +681,13 @@ export async function syncUserAvatarUrl(
   if (!normalizedAvatarUrl)
     return findUserById(db, userId)
 
-  const now = new Date().toISOString()
-  const result = await db.query<UserRow>(
-    `UPDATE users
-     SET avatar_url = $2,
-         updated_at = $3
-     WHERE id = $1
-       AND COALESCE(avatar_url, '') <> $2
-     RETURNING id, username, avatar_url, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT`,
-    [userId, normalizedAvatarUrl, now],
-  )
+  const currentUser = await findUserById(db, userId)
+  if (!currentUser)
+    return null
+  if (isManualAuthAvatarUrl(currentUser.avatarUrl))
+    return currentUser
 
-  const row = result.rows[0]
-  if (row)
-    return mapUser(row)
-  return findUserById(db, userId)
+  return setUserAvatarUrl(db, userId, normalizedAvatarUrl)
 }
 
 export async function createSession(db: Queryable, input: CreateSessionInput): Promise<AuthSession> {

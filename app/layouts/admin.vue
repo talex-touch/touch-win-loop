@@ -2,6 +2,7 @@
 import type {
   ApiResponse,
   AuthMeResult,
+  AuthUser,
   PlatformPermission,
   PlatformRole,
   WorkspaceWithQuota,
@@ -22,6 +23,7 @@ const route = useRoute()
 const authApiFetch = useAuthApiFetch()
 
 const userName = ref('平台管理员')
+const userAvatarUrl = ref('')
 const platformRoles = ref<PlatformRole[]>([])
 const permissions = ref<PlatformPermission[]>([])
 const isPlatformAdmin = ref(false)
@@ -37,6 +39,7 @@ const navItems: AdminNavItem[] = [
   { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-integrations', to: '/admin/integrations', label: '集成中心', icon: 'i-heroicons-outline-puzzle-piece', section: 'system', requiredAny: ['role.assign', 'contest.write'] },
+  { key: 'admin-notifications', to: '/admin/notifications', label: '通知管理', icon: 'i-heroicons-outline-bell', section: 'system', requiredAny: ['contest.write'] },
   { key: 'admin-runtime-settings', to: '/admin/runtime-settings', label: '运行设置', icon: 'i-heroicons-outline-adjustments-horizontal', section: 'system', requiredAny: ['contest.write'] },
   { key: 'admin-resources', to: '/admin/resources', label: '资料管理', icon: 'i-heroicons-outline-folder-open', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-resource-preview-worker', to: '/admin/resource-preview-worker', label: '文档转换监控', icon: 'i-heroicons-outline-arrow-path', section: 'system', requiredAny: ['contest.read_internal'] },
@@ -347,6 +350,26 @@ function openProfileDialog() {
   profileDialogVisible.value = true
 }
 
+function onUserUpdated(user: AuthUser) {
+  userName.value = user.username || '平台管理员'
+  userAvatarUrl.value = user.avatarUrl || ''
+}
+
+function onWorkspaceUpdated(payload: { workspaceId: string, name: string }) {
+  workspaceOptions.value = workspaceOptions.value.map((item) => {
+    if (item.workspace.id !== payload.workspaceId)
+      return item
+
+    return {
+      ...item,
+      workspace: {
+        ...item.workspace,
+        name: payload.name,
+      },
+    }
+  })
+}
+
 async function loadProfile() {
   loadingProfile.value = true
   try {
@@ -355,6 +378,7 @@ async function loadProfile() {
     const preferredWorkspaceId = readActiveWorkspacePreference()
 
     userName.value = response.data.user.username || '平台管理员'
+    userAvatarUrl.value = response.data.user.avatarUrl || ''
     platformRoles.value = response.data.user.platformRoles || []
     permissions.value = response.data.user.platformPermissions || []
     isPlatformAdmin.value = Boolean(response.data.user.isPlatformAdmin)
@@ -365,6 +389,7 @@ async function loadProfile() {
   }
   catch {
     userName.value = '未登录用户'
+    userAvatarUrl.value = ''
     platformRoles.value = []
     permissions.value = []
     isPlatformAdmin.value = false
@@ -465,7 +490,10 @@ if (import.meta.client) {
             </template>
             <template v-else>
               <a-avatar :size="28" class="admin-avatar">
-                {{ userInitial }}
+                <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="用户头像" class="admin-avatar-image">
+                <template v-else>
+                  {{ userInitial }}
+                </template>
               </a-avatar>
               <div class="admin-user-meta">
                 <p class="admin-user-name">
@@ -524,10 +552,14 @@ if (import.meta.client) {
     <UserSettingsDialog
       v-model:visible="profileDialogVisible"
       :user-name="userName"
+      :user-avatar-url="userAvatarUrl"
       :user-subtitle="userSubtitle"
       :show-admin-badge="showAdminBadge"
+      :is-platform-admin-user="isPlatformAdmin"
       :workspace-options="workspaceOptions"
       :active-workspace-id="activeWorkspaceId"
+      @user-updated="onUserUpdated"
+      @workspace-updated="onWorkspaceUpdated"
     />
   </div>
 </template>
@@ -700,6 +732,13 @@ if (import.meta.client) {
   color: #475569;
   font-size: 11px;
   font-weight: 700;
+  overflow: hidden;
+}
+
+.admin-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .admin-user-meta {

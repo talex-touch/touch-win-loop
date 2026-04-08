@@ -55,19 +55,26 @@ it('共享个人设置弹框提供 Casdoor 绑定状态与绑定入口', async (
   assert.match(source, /\/auth\/casdoor\/bind-status/, '共享个人设置弹框未读取 Casdoor 绑定状态')
 })
 
-it('共享个人设置弹框展示工作空间详情并接入成员邀请能力', async () => {
+it('共享个人设置弹框按个人信息与工作空间分组，并展示头像上传与空间改名入口', async () => {
   const source = await readFile(USER_SETTINGS_DIALOG_FILE, 'utf8')
 
+  assert.match(source, /label: '个人信息'/, '共享个人设置弹框缺少个人信息分组或 tab')
+  assert.match(source, /label: '工作空间'/, '共享个人设置弹框缺少工作空间分组')
+  assert.match(source, /label: '工作空间概览'/, '共享个人设置弹框未将概览改为工作空间概览')
   assert.match(source, /AI 配额/, '共享个人设置弹框缺少 AI 配额 tab 或区块')
   assert.match(source, /工作空间详情/, '共享个人设置弹框缺少工作空间详情区块')
   assert.match(source, /工作空间成员/, '共享个人设置弹框缺少工作空间成员区块')
-  assert.match(source, /个人登录历史/, '共享个人设置弹框缺少个人登录历史区块')
+  assert.match(source, /账号绑定摘要/, '共享个人设置弹框缺少个人信息绑定摘要区块')
+  assert.match(source, /修改头像/, '共享个人设置弹框缺少头像上传入口')
+  assert.match(source, /saveWorkspaceName/, '共享个人设置弹框未接入工作空间名称保存动作')
   assert.match(source, /copyWorkspaceId/, '共享个人设置弹框未接入工作空间 UUID 复制能力')
   assert.match(source, /workspaceInvitationDialogVisible/, '共享个人设置弹框未接入二级邀请弹框状态')
   assert.match(source, /\/teams\/\$\{normalizedWorkspaceId\}\/ai\/usage\?page=\$\{page\}&pageSize=10/, '共享个人设置弹框未读取工作空间 AI 配额消耗接口')
   assert.match(source, /\/teams\/\$\{normalizedWorkspaceId\}\/members/, '共享个人设置弹框未读取工作空间成员接口')
   assert.match(source, /\/teams\/\$\{normalizedWorkspaceId\}\/members\/\$\{member\.userId\}\/role/, '共享个人设置弹框未接入工作空间成员权限调整接口')
   assert.match(source, /\/teams\/\$\{normalizedWorkspaceId\}\/invitations/, '共享个人设置弹框未接入工作空间邀请接口')
+  assert.match(source, /\/auth\/avatar/, '共享个人设置弹框未接入头像上传或重置接口')
+  assert.match(source, /`\/teams\/\$\{normalizedWorkspaceId\}`/, '共享个人设置弹框未接入工作空间改名接口')
   assert.match(source, /\/auth\/sessions\?limit=10/, '共享个人设置弹框未读取个人登录历史接口')
 })
 

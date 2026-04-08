@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { AuthUser, WorkspaceWithQuota } from '~~/shared/types/domain'
 import type { DashboardMenuItem, DashboardTopic } from '~/types/dashboard'
 import { readActiveWorkspacePreference, writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
@@ -10,24 +10,40 @@ const props = withDefaults(defineProps<{
   analystTier?: string
   analystAvatar?: string
   showAdminBadge?: boolean
+  isPlatformAdminUser?: boolean
   workspaceOptions?: WorkspaceWithQuota[]
 }>(), {
   menuItems: () => [],
   topics: () => [],
   analystName: '分析师 张明',
   analystTier: '高级会员',
-  analystAvatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAgO3szaJLN0mB5xXQFUAcenjGXOhK0fc6jH78_wVb6AgKHW2rx7If2DG7Zro9-woZuymuskn7rGkTJWIN-l2SRqi6dvqXNZqAE8LUhcHv4Z7uY-ptVO0eKI9sZzfUw9Jp1lzLiYTdYykbvVyXdkKLj9TeWaK9DipDXCk0g0Tgtir3CsIXTaFlEbB7EtggaKgtgnWMXjiAiW1uwj-4mVXyLJqdaJfAvFHWfRaX1dosZdLgVxspcp2tPArmit3IFKKQ4HpECByj_ZGI1',
+  analystAvatar: '',
   showAdminBadge: false,
+  isPlatformAdminUser: false,
   workspaceOptions: () => [],
 })
 
 const emit = defineEmits<{
   workspaceCreated: [value: WorkspaceWithQuota]
+  workspaceUpdated: [value: { workspaceId: string, name: string }]
+  userUpdated: [value: AuthUser]
 }>()
 
 const route = useRoute()
 const profileDialogVisible = ref(false)
 const selectedWorkspaceId = ref('')
+const displayAvatarUrl = ref('')
+
+const analystInitial = computed(() => {
+  const normalizedName = String(props.analystName || '').trim()
+  if (!normalizedName)
+    return 'U'
+  return normalizedName.slice(0, 1).toUpperCase()
+})
+
+watch(() => props.analystAvatar, (value) => {
+  displayAvatarUrl.value = String(value || '').trim()
+}, { immediate: true })
 
 function isMenuItemActive(item: DashboardMenuItem): boolean {
   if (item.to === '/dashboard')
@@ -85,6 +101,15 @@ async function onWorkspaceSwitch(workspaceId: string) {
 function onWorkspaceCreated(workspace: WorkspaceWithQuota) {
   emit('workspaceCreated', workspace)
 }
+
+function onWorkspaceUpdated(payload: { workspaceId: string, name: string }) {
+  emit('workspaceUpdated', payload)
+}
+
+function onUserUpdated(user: AuthUser) {
+  displayAvatarUrl.value = String(user.avatarUrl || '').trim()
+  emit('userUpdated', user)
+}
 </script>
 
 <template>
@@ -140,10 +165,17 @@ function onWorkspaceCreated(workspace: WorkspaceWithQuota) {
 
       <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
         <img
-          :src="props.analystAvatar"
+          v-if="displayAvatarUrl"
+          :src="displayAvatarUrl"
           class="border border-slate-200 rounded-full h-10 w-10 object-cover"
           alt="用户头像"
         >
+        <div
+          v-else
+          class="text-sm text-white font-semibold border border-slate-200 rounded-full bg-slate-900 flex shrink-0 h-10 w-10 items-center justify-center"
+        >
+          {{ analystInitial }}
+        </div>
         <div class="min-w-0">
           <p class="text-sm text-slate-900 font-semibold truncate">
             {{ props.analystName }}
@@ -174,8 +206,12 @@ function onWorkspaceCreated(workspace: WorkspaceWithQuota) {
     v-model:visible="profileDialogVisible"
     :user-name="props.analystName"
     :user-subtitle="props.analystTier"
+    :user-avatar-url="displayAvatarUrl"
     :show-admin-badge="props.showAdminBadge"
+    :is-platform-admin-user="props.isPlatformAdminUser"
     :workspace-options="props.workspaceOptions"
     :active-workspace-id="selectedWorkspaceId"
+    @user-updated="onUserUpdated"
+    @workspace-updated="onWorkspaceUpdated"
   />
 </template>

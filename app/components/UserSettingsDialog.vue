@@ -3,6 +3,7 @@ import type {
   ApiResponse,
   AuthLoginMeta,
   AuthSessionHistoryItem,
+  AuthUser,
   CasdoorAuthBindStatus,
   FeishuAuthAuditItem,
   FeishuAuthBindStatus,
@@ -16,29 +17,44 @@ import type {
   WorkspaceMemberSummary,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import { formatFileSize } from '~~/shared/constants/project-resource-upload'
+import {
+  isUserAvatarUploadFileSupported,
+  USER_AVATAR_UPLOAD_ACCEPT_ATTR,
+  USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES,
+  USER_AVATAR_UPLOAD_TYPES_LABEL,
+} from '~~/shared/constants/user-avatar-upload'
+import { isManualAuthAvatarUrl } from '~~/shared/utils/user-avatar'
 import { formatDateTime, formatWorkspaceTypeLabel } from '~/composables/team-ui'
 
-type UserSettingsTabId = 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
+type UserSettingsTabId = 'profile' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
+type UserSettingsNavGroupId = 'profile' | 'workspace'
 type EditableWorkspaceRole = 'admin' | 'manager' | 'member'
 
 const props = withDefaults(defineProps<{
   visible?: boolean
   userName?: string
+  userAvatarUrl?: string
   userSubtitle?: string
   showAdminBadge?: boolean
+  isPlatformAdminUser?: boolean
   workspaceOptions?: WorkspaceWithQuota[]
   activeWorkspaceId?: string
 }>(), {
   visible: false,
   userName: '未登录用户',
+  userAvatarUrl: '',
   userSubtitle: '',
   showAdminBadge: false,
+  isPlatformAdminUser: false,
   workspaceOptions: () => [],
   activeWorkspaceId: '',
 })
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
+  'userUpdated': [value: AuthUser]
+  'workspaceUpdated': [value: { workspaceId: string, name: string }]
 }>()
 
 const route = useRoute()
@@ -46,9 +62,14 @@ const authApiFetch = useAuthApiFetch()
 const runtime = useRuntimeConfig()
 const { endpoint, resolveAppUrl } = useApiEndpoint(runtime)
 
-const activeTab = ref<UserSettingsTabId>('overview')
+const activeTab = ref<UserSettingsTabId>('profile')
 const loggingOut = ref(false)
 const actionError = ref('')
+const avatarFileInputRef = ref<HTMLInputElement | null>(null)
+const avatarUploading = ref(false)
+const avatarRemoving = ref(false)
+const avatarActionError = ref('')
+const avatarActionSuccess = ref('')
 const feishuBindLoading = ref(false)
 const feishuBindRedirecting = ref(false)
 const feishuUnbinding = ref(false)
@@ -90,6 +111,11 @@ const workspaceInviteExpiresInDays = ref(7)
 const authSessions = ref<AuthSessionHistoryItem[]>([])
 const authSessionsLoading = ref(false)
 const authSessionsError = ref('')
+const workspaceNameEditing = ref(false)
+const workspaceNameDraft = ref('')
+const workspaceNameSaving = ref(false)
+const workspaceNameError = ref('')
+const workspaceNameSuccess = ref('')
 const workspaceCopyFeedback = ref('')
 const workspaceInvitationCopyFeedback = ref('')
 let workspaceCopyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
@@ -99,20 +125,35 @@ let workspaceMemberSnapshotSeq = 0
 let workspaceAiUsageSeq = 0
 let suppressTabRefresh = false
 
-const defaultTabMeta: { id: UserSettingsTabId, label: string, icon: string, description: string } = {
-  id: 'overview',
-  label: '概览',
-  icon: 'dashboard',
-  description: '查看当前账号与项目台的核心信息。',
+interface UserSettingsTabMeta {
+  id: UserSettingsTabId
+  groupId: UserSettingsNavGroupId
+  label: string
+  icon: string
+  description: string
 }
 
-const tabItems: Array<{ id: UserSettingsTabId, label: string, icon: string, description: string }> = [
+const defaultTabMeta: UserSettingsTabMeta = {
+  id: 'profile',
+  groupId: 'profile',
+  label: '个人信息',
+  icon: 'person',
+  description: '查看头像、当前账号与绑定摘要。',
+}
+
+const tabItems: UserSettingsTabMeta[] = [
   defaultTabMeta,
-  { id: 'ai', label: 'AI 配额', icon: 'neurology', description: '查看当前工作空间的 AI credits 配额。' },
-  { id: 'members', label: '工作空间成员', icon: 'group', description: '查看成员、待处理邀请并生成邀请链接。' },
-  { id: 'bindings', label: '账号绑定', icon: 'link', description: '管理飞书和 Casdoor 身份绑定。' },
-  { id: 'loginHistory', label: '登录历史', icon: 'schedule', description: '查看个人账号近期登录与会话状态。' },
-  { id: 'audits', label: '操作记录', icon: 'history', description: '查看最近的绑定与解绑操作。' },
+  { id: 'bindings', groupId: 'profile', label: '账号绑定', icon: 'link', description: '管理飞书和 Casdoor 身份绑定。' },
+  { id: 'loginHistory', groupId: 'profile', label: '登录历史', icon: 'schedule', description: '查看个人账号近期登录与会话状态。' },
+  { id: 'audits', groupId: 'profile', label: '操作记录', icon: 'history', description: '查看最近的绑定与解绑操作。' },
+  { id: 'overview', groupId: 'workspace', label: '工作空间概览', icon: 'dashboard', description: '查看当前工作空间的核心信息。' },
+  { id: 'ai', groupId: 'workspace', label: 'AI 配额', icon: 'neurology', description: '查看当前工作空间的 AI credits 配额。' },
+  { id: 'members', groupId: 'workspace', label: '工作空间成员', icon: 'group', description: '查看成员、待处理邀请并生成邀请链接。' },
+]
+
+const tabGroupItems: Array<{ id: UserSettingsNavGroupId, label: string }> = [
+  { id: 'profile', label: '个人信息' },
+  { id: 'workspace', label: '工作空间' },
 ]
 
 const rolePriority: WorkspaceMemberRole[] = ['owner', 'admin', 'manager', 'member']
@@ -124,6 +165,13 @@ const visibleModel = computed({
 
 const activeTabMeta = computed(() => {
   return tabItems.find(item => item.id === activeTab.value) || defaultTabMeta
+})
+
+const tabGroups = computed(() => {
+  return tabGroupItems.map(group => ({
+    ...group,
+    tabs: tabItems.filter(item => item.groupId === group.id),
+  }))
 })
 
 const currentWorkspace = computed(() => {
@@ -141,6 +189,9 @@ const currentWorkspaceQuota = computed(() => currentWorkspace.value?.quota || nu
 const hasWorkspaceUsageMetrics = computed(() => Boolean(currentWorkspaceQuota.value || workspaceBillingEstimate.value || aiUsage.value))
 const isPersonalWorkspace = computed(() => currentWorkspace.value?.workspace.type === 'personal')
 const currentWorkspaceId = computed(() => String(currentWorkspace.value?.workspace.id || '').trim())
+const currentUserAvatarUrl = computed(() => String(props.userAvatarUrl || '').trim())
+const hasUserAvatar = computed(() => Boolean(currentUserAvatarUrl.value))
+const isManualUserAvatar = computed(() => isManualAuthAvatarUrl(currentUserAvatarUrl.value))
 
 function resolvePrimaryRole(roles: WorkspaceMemberRole[] | null | undefined): WorkspaceMemberRole | '' {
   const normalizedRoles = Array.isArray(roles) ? roles : []
@@ -294,6 +345,35 @@ const userInitial = computed(() => {
   return resolveInitial(props.userName)
 })
 
+const feishuBindingSummaryText = computed(() => {
+  return feishuBindStatus.value?.linked ? '已绑定飞书账号' : '未绑定飞书账号'
+})
+
+const casdoorBindingSummaryText = computed(() => {
+  if (!casdoorEnabled.value)
+    return 'Casdoor 未启用'
+  return casdoorBindStatus.value?.linked ? '已绑定 Casdoor 账号' : '未绑定 Casdoor 账号'
+})
+
+const canRenameCurrentWorkspace = computed(() => {
+  if (!currentWorkspace.value)
+    return false
+  if (props.isPlatformAdminUser)
+    return true
+  if (currentWorkspace.value.workspace.type === 'personal')
+    return workspacePrimaryRole.value === 'owner'
+  return workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin'
+})
+
+const canSubmitWorkspaceName = computed(() => {
+  if (!currentWorkspace.value || !canRenameCurrentWorkspace.value || workspaceNameSaving.value)
+    return false
+  const normalizedDraft = String(workspaceNameDraft.value || '').trim()
+  if (!normalizedDraft)
+    return false
+  return normalizedDraft !== String(currentWorkspace.value.workspace.name || '').trim()
+})
+
 const pendingWorkspaceInvitations = computed(() => {
   return workspaceInvitations.value.filter(item => !item.acceptedAt && !item.isExpired)
 })
@@ -353,7 +433,7 @@ const editableRoleOptions = computed<Array<{ value: EditableWorkspaceRole, label
   ]
 })
 const canManageWorkspaceRoles = computed(() => {
-  return props.showAdminBadge || workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin'
+  return props.isPlatformAdminUser || workspacePrimaryRole.value === 'owner' || workspacePrimaryRole.value === 'admin'
 })
 
 const workspaceInvitationRoleHint = computed(() => {
@@ -436,6 +516,141 @@ function selectTab(tabId: UserSettingsTabId) {
     return
   }
   activeTab.value = tabId
+}
+
+function clearAvatarActionFeedback() {
+  avatarActionError.value = ''
+  avatarActionSuccess.value = ''
+}
+
+function clearWorkspaceNameFeedback() {
+  workspaceNameError.value = ''
+  workspaceNameSuccess.value = ''
+}
+
+function syncWorkspaceNameDraft() {
+  workspaceNameDraft.value = String(currentWorkspace.value?.workspace.name || '').trim()
+}
+
+function openWorkspaceNameEditor() {
+  if (!canRenameCurrentWorkspace.value)
+    return
+  clearWorkspaceNameFeedback()
+  syncWorkspaceNameDraft()
+  workspaceNameEditing.value = true
+}
+
+function cancelWorkspaceNameEdit() {
+  if (workspaceNameSaving.value)
+    return
+  workspaceNameEditing.value = false
+  clearWorkspaceNameFeedback()
+  syncWorkspaceNameDraft()
+}
+
+function openBindingsTab() {
+  selectTab('bindings')
+}
+
+function triggerAvatarUpload() {
+  if (avatarUploading.value || avatarRemoving.value)
+    return
+  avatarFileInputRef.value?.click()
+}
+
+async function handleAvatarFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file)
+    return
+
+  clearAvatarActionFeedback()
+  const normalizedFileName = String(file.name || '').trim()
+  if (!isUserAvatarUploadFileSupported(normalizedFileName)) {
+    avatarActionError.value = `头像格式不支持，支持格式：${USER_AVATAR_UPLOAD_TYPES_LABEL}。`
+    if (input)
+      input.value = ''
+    return
+  }
+
+  if (file.size > USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES) {
+    avatarActionError.value = `头像文件过大，单文件上限 ${formatFileSize(USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES)}。`
+    if (input)
+      input.value = ''
+    return
+  }
+
+  avatarUploading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', file, normalizedFileName)
+    const response = await authApiFetch<ApiResponse<AuthUser>>('/auth/avatar', {
+      method: 'POST',
+      body: formData,
+    })
+    emit('userUpdated', response.data)
+    avatarActionSuccess.value = '头像已更新。'
+  }
+  catch (error: any) {
+    avatarActionError.value = String(error?.data?.message || '头像上传失败，请稍后重试。')
+  }
+  finally {
+    avatarUploading.value = false
+    if (input)
+      input.value = ''
+  }
+}
+
+async function resetUserAvatar() {
+  if (avatarRemoving.value || !isManualUserAvatar.value)
+    return
+
+  clearAvatarActionFeedback()
+  avatarRemoving.value = true
+  try {
+    const response = await authApiFetch<ApiResponse<AuthUser>>('/auth/avatar', {
+      method: 'DELETE',
+    })
+    emit('userUpdated', response.data)
+    avatarActionSuccess.value = '头像已重置为默认状态。'
+  }
+  catch (error: any) {
+    avatarActionError.value = String(error?.data?.message || '头像重置失败，请稍后重试。')
+  }
+  finally {
+    avatarRemoving.value = false
+  }
+}
+
+async function saveWorkspaceName() {
+  const normalizedWorkspaceId = String(currentWorkspaceId.value || '').trim()
+  if (!normalizedWorkspaceId || !canSubmitWorkspaceName.value)
+    return
+
+  workspaceNameSaving.value = true
+  clearWorkspaceNameFeedback()
+  try {
+    const response = await authApiFetch<ApiResponse<{ team: WorkspaceWithQuota['workspace'] }>>(`/teams/${normalizedWorkspaceId}`, {
+      method: 'PATCH',
+      body: {
+        name: String(workspaceNameDraft.value || '').trim(),
+      },
+    })
+    const nextName = String(response.data?.team?.name || workspaceNameDraft.value || '').trim()
+    workspaceNameDraft.value = nextName
+    workspaceNameEditing.value = false
+    workspaceNameSuccess.value = '工作空间名称已更新。'
+    emit('workspaceUpdated', {
+      workspaceId: normalizedWorkspaceId,
+      name: nextName,
+    })
+  }
+  catch (error: any) {
+    workspaceNameError.value = String(error?.data?.message || '工作空间名称保存失败，请稍后重试。')
+  }
+  finally {
+    workspaceNameSaving.value = false
+  }
 }
 
 function closeDialog() {
@@ -584,12 +799,19 @@ function resetWorkspaceScopedState() {
   workspaceInvitationLink.value = ''
   workspaceInviteeUsername.value = ''
   workspaceInviteExpiresInDays.value = 7
+  workspaceNameEditing.value = false
+  workspaceNameSaving.value = false
+  clearWorkspaceNameFeedback()
+  syncWorkspaceNameDraft()
   clearWorkspaceInvitationCopyFeedback()
 }
 
 function resetDialogState() {
-  activeTab.value = 'overview'
+  activeTab.value = 'profile'
   actionError.value = ''
+  avatarUploading.value = false
+  avatarRemoving.value = false
+  clearAvatarActionFeedback()
   clearWorkspaceCopyFeedback()
   resetWorkspaceScopedState()
   authSessions.value = []
@@ -876,6 +1098,15 @@ async function handleAiQuotaAction() {
 
 async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAiPage?: boolean } = {}) {
   const workspaceId = currentWorkspaceId.value
+  if (tabId === 'profile') {
+    await Promise.allSettled([
+      loadAuthMeta(),
+      loadFeishuBindStatus(),
+      loadCasdoorBindStatus(),
+    ])
+    return
+  }
+
   if (tabId === 'overview') {
     await Promise.allSettled([
       loadWorkspaceBillingEstimate(workspaceId),
@@ -1203,6 +1434,10 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
   void refreshActiveTabData(activeTab.value, { resetAiPage: activeTab.value === 'ai' })
 })
 
+watch(currentWorkspace, () => {
+  syncWorkspaceNameDraft()
+}, { immediate: true })
+
 onBeforeUnmount(() => {
   clearWorkspaceCopyFeedback()
   clearWorkspaceInvitationCopyFeedback()
@@ -1229,18 +1464,29 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="px-4 pb-4 flex gap-2 overflow-x-auto lg:px-5 lg:pb-5 lg:flex-1 lg:flex-col lg:overflow-y-auto">
-              <button
-                v-for="tab in tabItems"
-                :key="tab.id"
-                type="button"
-                class="user-settings-tab"
-                :class="{ 'is-active': activeTab === tab.id }"
-                @click="selectTab(tab.id)"
+            <div class="user-settings-nav">
+              <section
+                v-for="group in tabGroups"
+                :key="group.id"
+                class="user-settings-nav-group"
               >
-                <span class="material-symbols-outlined text-[18px]">{{ tab.icon }}</span>
-                <span>{{ tab.label }}</span>
-              </button>
+                <p class="user-settings-nav-group__label">
+                  {{ group.label }}
+                </p>
+                <div class="user-settings-nav-group__tabs">
+                  <button
+                    v-for="tab in group.tabs"
+                    :key="tab.id"
+                    type="button"
+                    class="user-settings-tab"
+                    :class="{ 'is-active': activeTab === tab.id }"
+                    @click="selectTab(tab.id)"
+                  >
+                    <span class="material-symbols-outlined text-[18px]">{{ tab.icon }}</span>
+                    <span>{{ tab.label }}</span>
+                  </button>
+                </div>
+              </section>
             </div>
           </aside>
 
@@ -1255,21 +1501,31 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="px-5 py-5 flex-1 min-h-0 overflow-y-auto sm:px-6">
-              <div v-if="activeTab === 'overview'" class="user-settings-panel">
-                <div class="user-settings-row">
-                  <div class="user-settings-row__heading">
-                    <p class="user-settings-row__title">
-                      账号信息
-                    </p>
-                    <p class="user-settings-row__desc">
-                      当前登录账号、身份标签与工作空间角色。
-                    </p>
-                  </div>
-                  <div class="user-settings-row__content user-settings-row__content--start">
-                    <div class="user-settings-profile-card">
+              <div v-if="activeTab === 'profile'" class="user-settings-panel user-settings-panel--stack">
+                <input
+                  ref="avatarFileInputRef"
+                  type="file"
+                  class="sr-only"
+                  :accept="USER_AVATAR_UPLOAD_ACCEPT_ATTR"
+                  @change="handleAvatarFileChange"
+                >
+
+                <section class="user-settings-card">
+                  <div class="user-settings-profile-card user-settings-profile-card--profile">
+                    <div class="user-settings-profile-card__main">
+                      <div class="user-settings-avatar user-settings-avatar--large">
+                        <img
+                          v-if="hasUserAvatar"
+                          :src="currentUserAvatarUrl"
+                          alt="当前头像"
+                          class="user-settings-avatar__image"
+                        >
+                        <span v-else>{{ userInitial }}</span>
+                      </div>
+
                       <div class="flex-1 min-w-0">
                         <div class="flex flex-wrap gap-2 items-center">
-                          <p class="text-base text-slate-900 font-semibold">
+                          <p class="text-lg text-slate-900 font-semibold">
                             {{ props.userName }}
                           </p>
                           <span
@@ -1286,21 +1542,89 @@ onBeforeUnmount(() => {
                           <span class="user-settings-chip user-settings-chip--strong">
                             {{ workspaceRoleLabel }}
                           </span>
-                          <span
-                            v-if="currentWorkspace"
-                            class="user-settings-chip"
-                          >
+                          <span v-if="currentWorkspace" class="user-settings-chip">
                             {{ formatWorkspaceTypeLabel(currentWorkspace.workspace.type) }}
                           </span>
                         </div>
-                      </div>
-                      <div class="user-settings-avatar">
-                        {{ userInitial }}
+                        <p class="text-sm text-slate-500 leading-6 mt-3">
+                          {{ isManualUserAvatar ? '当前头像来源：手动上传。' : (hasUserAvatar ? '当前头像来源：第三方同步。' : '当前使用默认字母头像。') }}
+                        </p>
                       </div>
                     </div>
-                  </div>
-                </div>
 
+                    <div class="user-settings-avatar-actions">
+                      <button
+                        class="user-settings-btn user-settings-btn--primary"
+                        :disabled="avatarUploading || avatarRemoving"
+                        @click="triggerAvatarUpload"
+                      >
+                        {{ avatarUploading ? '上传中...' : '修改头像' }}
+                      </button>
+                      <button
+                        class="user-settings-btn"
+                        :disabled="avatarUploading || avatarRemoving || !isManualUserAvatar"
+                        @click="resetUserAvatar"
+                      >
+                        {{ avatarRemoving ? '重置中...' : '重置头像' }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <p class="text-xs text-slate-500">
+                    支持 {{ USER_AVATAR_UPLOAD_TYPES_LABEL }}，单文件上限 {{ formatFileSize(USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES) }}。
+                  </p>
+                  <p v-if="avatarActionError" class="user-settings-feedback user-settings-feedback--danger">
+                    {{ avatarActionError }}
+                  </p>
+                  <p v-if="avatarActionSuccess" class="user-settings-feedback user-settings-feedback--success">
+                    {{ avatarActionSuccess }}
+                  </p>
+                </section>
+
+                <section class="user-settings-card">
+                  <div class="user-settings-section-header">
+                    <div>
+                      <p class="text-base text-slate-900 font-semibold">
+                        账号绑定摘要
+                      </p>
+                      <p class="text-sm text-slate-500 mt-1">
+                        这里汇总第三方登录绑定状态，实际绑定与解绑操作仍在独立页签完成。
+                      </p>
+                    </div>
+                    <button class="user-settings-btn user-settings-btn--compact" @click="openBindingsTab">
+                      管理绑定
+                    </button>
+                  </div>
+
+                  <div class="user-settings-metric-grid user-settings-metric-grid--profile">
+                    <div class="user-settings-mini-card">
+                      <p class="user-settings-mini-card__label">
+                        飞书
+                      </p>
+                      <p class="user-settings-mini-card__value">
+                        {{ feishuBindingSummaryText }}
+                      </p>
+                      <p v-if="feishuBindStatus?.linked && feishuBindStatus.unionId" class="text-xs text-slate-500 break-all">
+                        unionId：{{ feishuBindStatus.unionId }}
+                      </p>
+                    </div>
+
+                    <div class="user-settings-mini-card">
+                      <p class="user-settings-mini-card__label">
+                        Casdoor
+                      </p>
+                      <p class="user-settings-mini-card__value">
+                        {{ casdoorBindingSummaryText }}
+                      </p>
+                      <p v-if="casdoorBindStatus?.linked && casdoorBindStatus.subject" class="text-xs text-slate-500 break-all">
+                        sub：{{ casdoorBindStatus.subject }}
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div v-else-if="activeTab === 'overview'" class="user-settings-panel">
                 <template v-if="currentWorkspace">
                   <div class="user-settings-row">
                     <div class="user-settings-row__heading">
@@ -1313,12 +1637,51 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="user-settings-row__content user-settings-row__content--start">
                       <div class="user-settings-detail-card">
-                        <div class="flex flex-wrap gap-2 items-center">
+                        <div v-if="workspaceNameEditing" class="user-settings-inline-editor">
+                          <input
+                            v-model="workspaceNameDraft"
+                            type="text"
+                            class="user-settings-input"
+                            maxlength="80"
+                            placeholder="请输入工作空间名称"
+                            :disabled="workspaceNameSaving"
+                          >
+                          <div class="flex flex-wrap gap-2">
+                            <button class="user-settings-btn user-settings-btn--compact" :disabled="workspaceNameSaving" @click="cancelWorkspaceNameEdit">
+                              取消
+                            </button>
+                            <button
+                              class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
+                              :disabled="!canSubmitWorkspaceName"
+                              @click="saveWorkspaceName"
+                            >
+                              {{ workspaceNameSaving ? '保存中...' : '保存名称' }}
+                            </button>
+                          </div>
+                        </div>
+                        <div v-else class="flex flex-wrap gap-2 items-center">
                           <span class="text-base text-slate-900 font-semibold">{{ currentWorkspace.workspace.name }}</span>
                           <span class="text-[11px] text-slate-600 font-medium px-2.5 py-1 border border-slate-200 rounded-full bg-slate-50 inline-flex">
                             {{ formatWorkspaceTypeLabel(currentWorkspace.workspace.type) }}
                           </span>
+                          <button
+                            v-if="canRenameCurrentWorkspace"
+                            class="user-settings-icon-btn"
+                            title="编辑工作空间名称"
+                            @click="openWorkspaceNameEditor"
+                          >
+                            <span class="material-symbols-outlined text-[16px]">edit</span>
+                          </button>
                         </div>
+                        <p class="text-sm text-slate-500">
+                          {{ canRenameCurrentWorkspace ? '当前工作空间名称可在这里直接修改。' : '当前工作空间名称仅所有者或管理员可修改。' }}
+                        </p>
+                        <p v-if="workspaceNameError" class="user-settings-feedback user-settings-feedback--danger">
+                          {{ workspaceNameError }}
+                        </p>
+                        <p v-if="workspaceNameSuccess" class="user-settings-feedback user-settings-feedback--success">
+                          {{ workspaceNameSuccess }}
+                        </p>
                         <div class="user-settings-code-row">
                           <code class="text-xs text-slate-500 font-mono break-all">{{ currentWorkspace.workspace.id }}</code>
                           <button class="user-settings-icon-btn" title="复制工作空间 UUID" @click="copyWorkspaceId">
@@ -1386,15 +1749,15 @@ onBeforeUnmount(() => {
                 <div v-else class="user-settings-row">
                   <div class="user-settings-row__heading">
                     <p class="user-settings-row__title">
-                      当前项目台
+                      当前工作空间
                     </p>
                     <p class="user-settings-row__desc">
-                      当前账号暂无可见项目台信息。
+                      当前账号暂无可见工作空间信息。
                     </p>
                   </div>
                   <div class="user-settings-row__content user-settings-row__content--start">
                     <div class="text-sm text-slate-500 px-4 py-4 border border-slate-200 rounded-2xl border-dashed bg-slate-50 w-full">
-                      当前账号暂无可见项目台信息。
+                      当前账号暂无可见工作空间信息。
                     </div>
                   </div>
                 </div>
@@ -2081,6 +2444,37 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.user-settings-nav {
+  padding: 0 16px 16px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.user-settings-nav-group {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-settings-nav-group__label {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.user-settings-nav-group__tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
 .user-settings-panel {
   border-top: 1px solid #e2e8f0;
 }
@@ -2153,10 +2547,24 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.user-settings-profile-card--profile {
+  align-items: flex-start;
+}
+
+.user-settings-profile-card__main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 16px;
+}
+
 .user-settings-avatar {
+  position: relative;
   display: flex;
   height: 56px;
   width: 56px;
+  overflow: hidden;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -2165,6 +2573,26 @@ onBeforeUnmount(() => {
   color: #fff;
   font-size: 20px;
   font-weight: 600;
+}
+
+.user-settings-avatar--large {
+  height: 72px;
+  width: 72px;
+  border-radius: 22px;
+  font-size: 26px;
+}
+
+.user-settings-avatar__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.user-settings-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .user-settings-chip {
@@ -2295,6 +2723,10 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.user-settings-metric-grid--profile {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .user-settings-mini-card {
@@ -2433,6 +2865,13 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex-direction: column;
   gap: 6px;
+}
+
+.user-settings-inline-editor {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .user-settings-field__label {
@@ -2638,6 +3077,16 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1023px) {
+  .user-settings-nav {
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 16px 16px;
+  }
+
+  .user-settings-nav-group {
+    flex: none;
+  }
+
   .user-settings-panel--stack {
     gap: 14px;
   }
@@ -2673,6 +3122,11 @@ onBeforeUnmount(() => {
     align-self: flex-start;
   }
 
+  .user-settings-profile-card__main,
+  .user-settings-avatar-actions {
+    width: 100%;
+  }
+
   .user-settings-member-actions,
   .user-settings-pagination {
     justify-content: flex-start;
@@ -2687,6 +3141,7 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .user-settings-nav-group__tabs,
   .user-settings-tab {
     white-space: nowrap;
   }
