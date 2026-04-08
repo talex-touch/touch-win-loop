@@ -182,7 +182,6 @@ const currentWorkspace = computed(() => {
 })
 
 const currentWorkspaceQuota = computed(() => currentWorkspace.value?.quota || null)
-const hasWorkspaceUsageMetrics = computed(() => Boolean(currentWorkspaceQuota.value || workspaceBillingEstimate.value || aiUsage.value))
 const isPersonalWorkspace = computed(() => currentWorkspace.value?.workspace.type === 'personal')
 const currentWorkspaceId = computed(() => String(currentWorkspace.value?.workspace.id || '').trim())
 const currentUserAvatarUrl = computed(() => String(props.userAvatarUrl || '').trim())
@@ -335,6 +334,33 @@ const quotaUpdatedAtText = computed(() => {
     return formatDateTime(estimate.updatedAt)
 
   return '暂无配额同步记录'
+})
+
+const workspacePlanTierLabel = computed(() => {
+  if (workspaceBillingEstimate.value?.planTier === 'business_team')
+    return 'Business'
+  if (workspaceBillingEstimate.value?.planTier === 'personal_team')
+    return 'Personal'
+  return isPersonalWorkspace.value ? 'Personal' : 'Business'
+})
+
+const workspaceTypeDetailText = computed(() => {
+  const workspaceTypeLabel = currentWorkspace.value
+    ? formatWorkspaceTypeLabel(currentWorkspace.value.workspace.type)
+    : '项目台'
+  if (workspaceBillingEstimate.value?.planCode)
+    return `${workspaceTypeLabel} · 套餐 ${workspaceBillingEstimate.value.planCode}`
+  return workspaceTypeLabel
+})
+
+const workspaceTypeActionLabel = computed(() => {
+  return workspacePlanTierLabel.value === 'Business' ? '查看套餐' : '升级到 Business'
+})
+
+const workspaceTypeActionHint = computed(() => {
+  if (workspacePlanTierLabel.value === 'Business')
+    return '当前工作空间已接入 Business 套餐，可在计费页继续调整。'
+  return '当前为 Personal 套餐，可升级到 Business 获取更高协作与配额能力。'
 })
 
 const userInitial = computed(() => {
@@ -1082,14 +1108,22 @@ async function changeAiUsagePage(nextPage: number) {
   await loadWorkspaceAiUsage(currentWorkspaceId.value, targetPage)
 }
 
-async function handleAiQuotaAction() {
+async function openWorkspaceBillingConsole(errorMessage: string) {
   actionError.value = ''
-  if (route.path.startsWith('/admin') && props.showAdminBadge) {
+  if (props.isPlatformAdminUser || (route.path.startsWith('/admin') && props.showAdminBadge)) {
     visibleModel.value = false
     await navigateTo('/admin/billing')
     return
   }
-  actionError.value = '当前版本请联系管理员调整 AI 配额。'
+  actionError.value = errorMessage
+}
+
+async function handleAiQuotaAction() {
+  await openWorkspaceBillingConsole('当前版本请联系管理员调整 AI 配额。')
+}
+
+async function handleWorkspaceTypeAction() {
+  await openWorkspaceBillingConsole('当前版本请联系管理员升级工作空间类型。')
 }
 
 async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAiPage?: boolean } = {}) {
@@ -1616,78 +1650,18 @@ onBeforeUnmount(() => {
                   <div class="user-settings-row">
                     <div class="user-settings-row__heading">
                       <p class="user-settings-row__title">
-                        工作空间详情
+                        工作空间 ID
                       </p>
                       <p class="user-settings-row__desc">
-                        当前用于展示配额、成员与邀请信息的工作空间。
+                        用于排查、授权配置和成员协作确认。
                       </p>
                     </div>
-                    <div class="user-settings-row__content user-settings-row__content--start">
-                      <div class="user-settings-detail-card">
-                        <div v-if="workspaceNameEditing" class="user-settings-inline-editor">
-                          <input
-                            v-model="workspaceNameDraft"
-                            type="text"
-                            class="user-settings-input"
-                            maxlength="80"
-                            placeholder="请输入工作空间名称"
-                            :disabled="workspaceNameSaving"
-                          >
-                          <div class="flex flex-wrap gap-2">
-                            <button class="user-settings-btn user-settings-btn--compact" :disabled="workspaceNameSaving" @click="cancelWorkspaceNameEdit">
-                              取消
-                            </button>
-                            <button
-                              class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
-                              :disabled="!canSubmitWorkspaceName"
-                              @click="saveWorkspaceName"
-                            >
-                              {{ workspaceNameSaving ? '保存中...' : '保存名称' }}
-                            </button>
-                          </div>
-                        </div>
-                        <div v-else class="flex flex-wrap gap-2 items-center">
-                          <span class="text-base text-slate-900 font-semibold">{{ currentWorkspace.workspace.name }}</span>
-                          <span class="text-[11px] text-slate-600 font-medium px-2.5 py-1 border border-slate-200 rounded-full bg-slate-50 inline-flex">
-                            {{ formatWorkspaceTypeLabel(currentWorkspace.workspace.type) }}
-                          </span>
-                          <button
-                            v-if="canRenameCurrentWorkspace"
-                            class="user-settings-icon-btn"
-                            title="编辑工作空间名称"
-                            @click="openWorkspaceNameEditor"
-                          >
-                            <span class="material-symbols-outlined text-[16px]">edit</span>
-                          </button>
-                        </div>
-                        <p class="text-sm text-slate-500">
-                          {{ canRenameCurrentWorkspace ? '当前工作空间名称可在这里直接修改。' : '当前工作空间名称仅所有者或管理员可修改。' }}
-                        </p>
-                        <p v-if="workspaceNameError" class="user-settings-feedback user-settings-feedback--danger">
-                          {{ workspaceNameError }}
-                        </p>
-                        <p v-if="workspaceNameSuccess" class="user-settings-feedback user-settings-feedback--success">
-                          {{ workspaceNameSuccess }}
-                        </p>
-                        <div class="user-settings-code-row">
-                          <code class="text-xs text-slate-500 font-mono break-all">{{ currentWorkspace.workspace.id }}</code>
+                    <div class="user-settings-row__content user-settings-row__content--overview">
+                      <div class="user-settings-overview-row">
+                        <div class="user-settings-overview-row__main">
+                          <code class="user-settings-overview-code">{{ currentWorkspace.workspace.id }}</code>
                           <button class="user-settings-icon-btn" title="复制工作空间 UUID" @click="copyWorkspaceId">
                             <span class="material-symbols-outlined text-[16px]">content_copy</span>
-                          </button>
-                        </div>
-                        <p class="text-sm text-slate-500">
-                          工作空间 UUID 可用于排查、授权配置和成员协作确认。
-                        </p>
-                        <div class="flex flex-wrap gap-2">
-                          <button class="user-settings-btn user-settings-btn--compact" @click="selectTab('members')">
-                            查看成员
-                          </button>
-                          <button
-                            class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
-                            :disabled="!canInviteWorkspaceMembers"
-                            @click="openWorkspaceInvitationDialog"
-                          >
-                            发起邀请
                           </button>
                         </div>
                         <p v-if="workspaceCopyFeedback" class="text-xs text-slate-500">
@@ -1700,19 +1674,133 @@ onBeforeUnmount(() => {
                   <div class="user-settings-row">
                     <div class="user-settings-row__heading">
                       <p class="user-settings-row__title">
-                        工作空间成员席位
+                        工作空间名称
                       </p>
                       <p class="user-settings-row__desc">
-                        这里的成员席位表示当前工作空间可容纳的协作成员数量。
+                        当前工作空间展示名称。
                       </p>
                     </div>
-                    <div class="user-settings-row__content">
-                      <p :class="hasWorkspaceUsageMetrics ? 'user-settings-stat' : 'user-settings-value-text'">
-                        {{ seatSummaryText }}
+                    <div class="user-settings-row__content user-settings-row__content--overview">
+                      <div v-if="workspaceNameEditing" class="user-settings-overview-row">
+                        <div class="user-settings-inline-editor">
+                          <input
+                            v-model="workspaceNameDraft"
+                            type="text"
+                            class="user-settings-input"
+                            maxlength="80"
+                            placeholder="请输入工作空间名称"
+                            :disabled="workspaceNameSaving"
+                          >
+                          <div class="user-settings-overview-actions">
+                            <button class="user-settings-btn user-settings-btn--compact" :disabled="workspaceNameSaving" @click="cancelWorkspaceNameEdit">
+                              取消
+                            </button>
+                            <button
+                              class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
+                              :disabled="!canSubmitWorkspaceName"
+                              @click="saveWorkspaceName"
+                            >
+                              {{ workspaceNameSaving ? '保存中...' : '保存名称' }}
+                            </button>
+                          </div>
+                        </div>
+                        <p v-if="workspaceNameError" class="user-settings-feedback user-settings-feedback--danger">
+                          {{ workspaceNameError }}
+                        </p>
+                        <p v-if="workspaceNameSuccess" class="user-settings-feedback user-settings-feedback--success">
+                          {{ workspaceNameSuccess }}
+                        </p>
+                      </div>
+                      <div v-else class="user-settings-overview-row">
+                        <div class="user-settings-overview-row__main">
+                          <div class="user-settings-overview-value-group">
+                            <span class="user-settings-overview-value">{{ currentWorkspace.workspace.name }}</span>
+                          </div>
+                          <button
+                            v-if="canRenameCurrentWorkspace"
+                            class="user-settings-btn user-settings-btn--compact"
+                            title="编辑工作空间名称"
+                            @click="openWorkspaceNameEditor"
+                          >
+                            修改
+                          </button>
+                        </div>
+                        <p class="text-sm text-slate-500">
+                          {{ canRenameCurrentWorkspace ? '当前工作空间名称可直接修改。' : '当前工作空间名称仅所有者或管理员可修改。' }}
+                        </p>
+                        <p v-if="workspaceNameError" class="user-settings-feedback user-settings-feedback--danger">
+                          {{ workspaceNameError }}
+                        </p>
+                        <p v-if="workspaceNameSuccess" class="user-settings-feedback user-settings-feedback--success">
+                          {{ workspaceNameSuccess }}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="user-settings-row">
+                    <div class="user-settings-row__heading">
+                      <p class="user-settings-row__title">
+                        工作空间类型
                       </p>
-                      <p class="text-sm text-slate-500">
-                        {{ seatDetailText }}
+                      <p class="user-settings-row__desc">
+                        Personal / Business 套餐类型与当前项目台形态。
                       </p>
+                    </div>
+                    <div class="user-settings-row__content user-settings-row__content--overview">
+                      <div class="user-settings-overview-row">
+                        <div class="user-settings-overview-row__main">
+                          <div class="user-settings-overview-value-group">
+                            <span class="user-settings-overview-value">{{ workspacePlanTierLabel }}</span>
+                            <span class="user-settings-chip">{{ workspaceTypeDetailText }}</span>
+                          </div>
+                          <button
+                            class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
+                            @click="handleWorkspaceTypeAction"
+                          >
+                            {{ workspaceTypeActionLabel }}
+                          </button>
+                        </div>
+                        <p class="text-sm text-slate-500">
+                          {{ workspaceTypeActionHint }}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="user-settings-row">
+                    <div class="user-settings-row__heading">
+                      <p class="user-settings-row__title">
+                        工作空间席位管理
+                      </p>
+                      <p class="user-settings-row__desc">
+                        当前工作空间成员席位与协作入口。
+                      </p>
+                    </div>
+                    <div class="user-settings-row__content user-settings-row__content--overview">
+                      <div class="user-settings-overview-row">
+                        <div class="user-settings-overview-row__main">
+                          <div class="user-settings-overview-value-group">
+                            <span class="user-settings-overview-value">{{ seatSummaryText }}</span>
+                            <span class="text-sm text-slate-500">{{ quotaResetCycleText }}</span>
+                          </div>
+                          <div class="user-settings-overview-actions">
+                            <button class="user-settings-btn user-settings-btn--compact" @click="selectTab('members')">
+                              查看成员
+                            </button>
+                            <button
+                              class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
+                              :disabled="!canInviteWorkspaceMembers"
+                              @click="openWorkspaceInvitationDialog"
+                            >
+                              发起邀请
+                            </button>
+                          </div>
+                        </div>
+                        <p class="text-sm text-slate-500">
+                          {{ seatDetailText }}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
@@ -1725,10 +1813,12 @@ onBeforeUnmount(() => {
                         最近一次配额同步时间。
                       </p>
                     </div>
-                    <div class="user-settings-row__content">
-                      <p class="text-base text-slate-900 font-medium">
-                        {{ quotaUpdatedAtText }}
-                      </p>
+                    <div class="user-settings-row__content user-settings-row__content--overview">
+                      <div class="user-settings-overview-row">
+                        <div class="user-settings-overview-row__main">
+                          <span class="user-settings-overview-value user-settings-overview-value--secondary">{{ quotaUpdatedAtText }}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -1743,7 +1833,7 @@ onBeforeUnmount(() => {
                     </p>
                   </div>
                   <div class="user-settings-row__content user-settings-row__content--start">
-                    <div class="text-sm text-slate-500 px-4 py-4 border border-slate-200 rounded-2xl border-dashed bg-slate-50 w-full">
+                    <div class="text-sm text-slate-500">
                       当前账号暂无可见工作空间信息。
                     </div>
                   </div>
@@ -2520,6 +2610,11 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
+.user-settings-row__content--overview {
+  align-items: flex-end;
+  text-align: left;
+}
+
 .user-settings-inline-value {
   display: flex;
   flex-wrap: wrap;
@@ -2614,41 +2709,59 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
-.user-settings-detail-card {
+.user-settings-overview-row {
   display: flex;
   width: 100%;
+  max-width: 760px;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px 18px;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  background: #fbfdff;
+  gap: 8px;
+  margin-left: auto;
 }
 
-.user-settings-code-row {
+.user-settings-overview-row__main {
   display: flex;
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #fff;
+  gap: 24px;
 }
 
-.user-settings-stat {
-  color: #0f172a;
-  font-size: 30px;
-  font-weight: 600;
-  line-height: 1.1;
+.user-settings-overview-value-group {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
-.user-settings-value-text {
+.user-settings-overview-value {
   color: #0f172a;
   font-size: 16px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.5;
+}
+
+.user-settings-overview-value--secondary {
+  color: #64748b;
+  font-weight: 400;
+}
+
+.user-settings-overview-code {
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.user-settings-overview-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .user-settings-card {
@@ -3141,10 +3254,6 @@ onBeforeUnmount(() => {
     margin-left: 0;
   }
 
-  .user-settings-code-row {
-    align-items: flex-start;
-  }
-
   .user-settings-metric-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3164,6 +3273,11 @@ onBeforeUnmount(() => {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
     padding-bottom: 2px;
+  }
+
+  .user-settings-overview-row__main {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
