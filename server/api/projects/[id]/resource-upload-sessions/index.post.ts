@@ -4,18 +4,8 @@ import type {
   ResourceCategory,
 } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import {
-  PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
-  PROJECT_RESOURCE_UPLOAD_CHUNK_SIZE_BYTES,
-  PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
-  PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
-  PROJECT_RESOURCE_UPLOAD_SESSION_EXPIRES_IN_HOURS,
-  PROJECT_RESOURCE_UPLOAD_TYPES_LABEL,
-  formatFileSize,
-  isProjectResourceUploadFileSupported,
-} from '~~/shared/constants/project-resource-upload'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { resolveProjectResourceUploadAccessContext } from '~~/server/services/project-resource-upload'
+import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
@@ -24,6 +14,16 @@ import {
   createProjectResourceUploadSessions,
   expireProjectResourceUploadSessions,
 } from '~~/server/utils/project-resource-upload-session-store'
+import {
+  formatFileSize,
+  isProjectResourceUploadFileSupported,
+  PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
+  PROJECT_RESOURCE_UPLOAD_CHUNK_SIZE_BYTES,
+  PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
+  PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
+  PROJECT_RESOURCE_UPLOAD_SESSION_EXPIRES_IN_HOURS,
+  PROJECT_RESOURCE_UPLOAD_TYPES_LABEL,
+} from '~~/shared/constants/project-resource-upload'
 
 const RESOURCE_CATEGORIES: ResourceCategory[] = [
   'basic_info',

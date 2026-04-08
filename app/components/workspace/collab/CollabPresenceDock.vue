@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import type { WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
 import {
   resolveWorkspaceCollabPresenceInitial,
-  type WorkspaceCollabPresenceUser,
+
 } from '~/components/workspace/collab/presence'
 
 const props = withDefaults(defineProps<{
@@ -59,26 +60,26 @@ function selectionPreviewText(user: WorkspaceCollabPresenceUser): string {
 
 <template>
   <section class="border-t border-slate-200 bg-white/95 backdrop-blur-md" data-testid="collab-presence-dock">
-    <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+    <div class="px-4 py-3 flex flex-wrap gap-2 items-center justify-between">
       <div>
-        <p class="text-xs font-semibold text-slate-800">
+        <p class="text-xs text-slate-800 font-semibold">
           在线成员（{{ presenceCount }}）
         </p>
-        <p class="mt-0.5 text-[11px] text-slate-500">
+        <p class="text-[11px] text-slate-500 mt-0.5">
           当前光标位置、选区范围与文本摘要会随编辑实时同步。
         </p>
       </div>
     </div>
 
-    <div v-if="users.length > 0" class="divide-y divide-slate-100">
+    <div v-if="users.length > 0" class="divide-slate-100 divide-y">
       <article
         v-for="user in users"
         :key="user.userId"
-        class="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-start lg:justify-between"
+        class="px-4 py-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"
       >
-        <div class="flex min-w-0 flex-1 items-start gap-3">
+        <div class="flex flex-1 gap-3 min-w-0 items-start">
           <div
-            class="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 bg-white"
+            class="border-2 rounded-full bg-white flex shrink-0 h-10 w-10 items-center justify-center relative overflow-hidden"
             :style="{ borderColor: user.colorToken }"
           >
             <img
@@ -89,54 +90,54 @@ function selectionPreviewText(user: WorkspaceCollabPresenceUser): string {
             >
             <span
               v-else
-              class="flex h-full w-full items-center justify-center text-xs font-semibold"
+              class="text-xs font-semibold flex h-full w-full items-center justify-center"
               :style="{ backgroundColor: `${user.colorToken}1A`, color: user.colorToken }"
             >
               {{ resolveWorkspaceCollabPresenceInitial(user.username) }}
             </span>
             <span
-              class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full"
+              class="rounded-full h-2.5 w-2.5 absolute -bottom-0.5 -right-0.5"
               :style="{ backgroundColor: user.activityState === 'background' ? '#94a3b8' : user.colorToken }"
             />
           </div>
 
-          <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-2">
-              <p class="max-w-full truncate text-sm font-semibold text-slate-900">
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap gap-2 items-center">
+              <p class="text-sm text-slate-900 font-semibold max-w-full truncate">
                 {{ user.username }}
               </p>
               <span
                 v-if="user.isCurrentUser"
-                class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500"
+                class="text-[10px] text-slate-500 font-medium px-2 py-0.5 rounded-full bg-slate-100"
               >
                 我
               </span>
-              <span class="rounded-full px-2 py-0.5 text-[10px] font-medium" :class="user.activityState === 'background' ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-600'">
+              <span class="text-[10px] font-medium px-2 py-0.5 rounded-full" :class="user.activityState === 'background' ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-600'">
                 {{ activityStateLabel(user) }}
               </span>
-              <span v-if="user.peerCount > 1" class="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600">
+              <span v-if="user.peerCount > 1" class="text-[10px] text-blue-600 font-medium px-2 py-0.5 rounded-full bg-blue-50">
                 {{ user.peerCount }} 个会话
               </span>
             </div>
-            <p class="mt-1 text-[11px] text-slate-500">
+            <p class="text-[11px] text-slate-500 mt-1">
               {{ roleLabel(user.role) }}
             </p>
-            <p class="mt-2 text-xs font-medium text-slate-700">
+            <p class="text-xs text-slate-700 font-medium mt-2">
               {{ selectionRangeText(user) }}
             </p>
-            <p class="mt-1 text-[11px] text-slate-500">
+            <p class="text-[11px] text-slate-500 mt-1">
               {{ selectionPreviewText(user) }}
             </p>
           </div>
         </div>
 
-        <div class="shrink-0 text-[11px] text-slate-400">
+        <div class="text-[11px] text-slate-400 shrink-0">
           最后活跃 {{ formatDateTime(user.updatedAt) }}
         </div>
       </article>
     </div>
 
-    <div v-else class="px-4 py-4 text-[11px] text-slate-400">
+    <div v-else class="text-[11px] text-slate-400 px-4 py-4">
       暂无在线成员
     </div>
   </section>

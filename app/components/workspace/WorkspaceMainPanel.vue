@@ -14,6 +14,7 @@ import type {
   Track,
   WorkspaceType,
 } from '~~/shared/types/domain'
+import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -30,13 +31,9 @@ import RichTextEditor from '~/components/editor/RichTextEditor.vue'
 import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
 import CollabPresenceDock from '~/components/workspace/collab/CollabPresenceDock.vue'
 import {
-  type WorkspaceCollabAwarenessSelectionState,
-  type WorkspaceCollabCursorUser,
   normalizeWorkspaceCollabPresenceActivityState,
   resolveWorkspaceCollabPresenceColor,
-  type WorkspaceCollabPresenceMember,
-  type WorkspaceCollabSelectionSummary,
-  type WorkspaceCollabPresenceUser,
+
 } from '~/components/workspace/collab/presence'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
 
@@ -1392,10 +1389,10 @@ const collabPresenceUsers = computed<WorkspaceCollabPresenceUser[]>(() => {
     const candidateSelection = !isMarkdownPreviewActive.value
       ? null
       : userId === currentUserId
-      ? markdownLocalSelectionStatus.value.selection
-      : (Number.isInteger(Number(member.awarenessClientId))
-          ? markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId))) || null
-          : null)
+        ? markdownLocalSelectionStatus.value.selection
+        : (Number.isInteger(Number(member.awarenessClientId))
+            ? markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId))) || null
+            : null)
     const candidateRank = activityState === 'active' ? 1 : 0
     if (
       candidateSelection
@@ -2285,12 +2282,12 @@ watch(activeTabId, (next) => {
 
       <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
-          <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4">
+          <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
             <div class="text-xs text-slate-600">
               {{ flowPanelTitle }}
               <span class="text-slate-400 ml-2">rev {{ hasFlowResource ? Math.max(0, Number(collabRevision || 0)) : 0 }}</span>
             </div>
-            <div class="flex flex-wrap items-center justify-end gap-3">
+            <div class="flex flex-wrap gap-3 items-center justify-end">
               <div
                 class="text-[11px]"
                 :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
@@ -2853,19 +2850,19 @@ watch(activeTabId, (next) => {
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
           <div class="bg-slate-50 flex-1 min-h-0">
             <template v-if="activePreviewMode === 'markdown'">
-              <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4">
+              <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
                 <div class="text-xs text-slate-600">
                   {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
-                <div class="flex flex-wrap items-center justify-end gap-3">
+                <div class="flex flex-wrap gap-3 items-center justify-end">
                   <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
                     {{ collabConnectionText }}
                   </div>
                   <CollabPresenceAvatarStack :users="collabPresenceUsers" />
                 </div>
               </div>
-              <div class="flex h-full min-h-0 flex-col bg-white">
+              <div class="bg-white flex flex-col h-full min-h-0">
                 <RichTextEditor
                   :doc="collabMarkdownDoc"
                   :awareness="collabMarkdownAwareness"
@@ -2882,12 +2879,12 @@ watch(activeTabId, (next) => {
             </template>
 
             <template v-else-if="activePreviewMode === 'draw'">
-              <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-white p-4">
+              <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
                 <div class="text-xs text-slate-600">
                   {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
-                <div class="flex flex-wrap items-center justify-end gap-3">
+                <div class="flex flex-wrap gap-3 items-center justify-end">
                   <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
                     {{ collabConnectionText }}
                   </div>

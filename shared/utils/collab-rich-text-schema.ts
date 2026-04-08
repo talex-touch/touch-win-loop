@@ -1,11 +1,11 @@
 import type { Extensions } from '@tiptap/core'
 import { getSchema } from '@tiptap/core'
+import { Table } from '@tiptap/extension-table'
 import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import TableRow from '@tiptap/extension-table-row'
 import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
-import { Table } from '@tiptap/extension-table'
 import StarterKit from '@tiptap/starter-kit'
 
 export const COLLAB_MARKDOWN_HEADING_LEVELS = [1, 2, 3] as const

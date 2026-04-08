@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import type { JSONContent } from '@tiptap/core'
 import type { Awareness } from 'y-protocols/awareness'
 import type {
   WorkspaceCollabAwarenessSelectionState,
   WorkspaceCollabSelectionSummary,
 } from '~/components/workspace/collab/presence'
+import { Extension } from '@tiptap/core'
 import Collaboration from '@tiptap/extension-collaboration'
 import Dropcursor from '@tiptap/extension-dropcursor'
 import Gapcursor from '@tiptap/extension-gapcursor'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Extension } from '@tiptap/core'
-import { yCursorPlugin, ySyncPluginKey, relativePositionToAbsolutePosition } from '@tiptap/y-tiptap'
 import { Editor, EditorContent } from '@tiptap/vue-3'
-import { createCollabMarkdownBaseExtensions } from '~~/shared/utils/collab-rich-text-schema'
+import { relativePositionToAbsolutePosition, yCursorPlugin, ySyncPluginKey } from '@tiptap/y-tiptap'
 import * as Y from 'yjs'
+import { createCollabMarkdownBaseExtensions } from '~~/shared/utils/collab-rich-text-schema'
 
 type ToolbarAction
   = 'paragraph'
@@ -66,11 +65,14 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'selection-change': [value: RichTextEditorSelectionChangePayload]
-  'remote-presence-change': [value: WorkspaceCollabAwarenessSelectionState[]]
+  selectionChange: [value: RichTextEditorSelectionChangePayload]
+  remotePresenceChange: [value: WorkspaceCollabAwarenessSelectionState[]]
 }>()
 
 const editor = shallowRef<Editor | null>(null)
+const linkDraft = ref('https://')
+const linkInputVisible = ref(false)
+const linkInputRef = ref<HTMLInputElement | null>(null)
 
 const normalizedHeadingLevels = computed<Array<1 | 2 | 3>>(() => {
   const dedupe = new Set<1 | 2 | 3>()
@@ -197,15 +199,50 @@ function defaultSelectionChangePayload(): RichTextEditorSelectionChangePayload {
   }
 }
 
+function closeLinkEditor(nextValue = 'https://'): void {
+  linkDraft.value = nextValue
+  linkInputVisible.value = false
+}
+
+function openLinkEditor(): void {
+  const instance = editor.value
+  if (!instance || !props.editable)
+    return
+
+  const activeHref = normalizeString(instance.getAttributes('link').href)
+  linkDraft.value = activeHref || 'https://'
+  linkInputVisible.value = true
+
+  nextTick(() => {
+    linkInputRef.value?.focus()
+    linkInputRef.value?.select()
+  })
+}
+
+function submitLinkDraft(): void {
+  const instance = editor.value
+  if (!instance || !props.editable)
+    return
+
+  const normalizedHref = normalizeString(linkDraft.value)
+  if (!normalizedHref) {
+    closeLinkEditor()
+    return
+  }
+
+  instance.chain().focus().extendMarkRange('link').setLink({ href: normalizedHref }).run()
+  closeLinkEditor()
+}
+
 function emitSelectionChange(): void {
   const instance = editor.value
   if (!instance) {
-    emit('selection-change', defaultSelectionChangePayload())
+    emit('selectionChange', defaultSelectionChangePayload())
     return
   }
 
   const summary = buildSelectionSummary(instance.state.doc, instance.state.selection.anchor, instance.state.selection.head)
-  emit('selection-change', {
+  emit('selectionChange', {
     line: summary.headLine,
     column: summary.headColumn,
     ...summary,
@@ -217,14 +254,14 @@ function emitRemotePresenceChange(): void {
   const awareness = props.awareness
   const doc = props.doc
   if (!instance || !awareness || !doc) {
-    emit('remote-presence-change', [])
+    emit('remotePresenceChange', [])
     return
   }
 
   const syncState = ySyncPluginKey.getState(instance.state)
   const mapping = syncState?.binding?.mapping
   if (!mapping) {
-    emit('remote-presence-change', [])
+    emit('remotePresenceChange', [])
     return
   }
 
@@ -286,7 +323,7 @@ function emitRemotePresenceChange(): void {
     }
   })
 
-  emit('remote-presence-change', remoteStates)
+  emit('remotePresenceChange', remoteStates)
 }
 
 function syncDerivedState(): void {
@@ -295,6 +332,7 @@ function syncDerivedState(): void {
 }
 
 function destroyEditor(): void {
+  closeLinkEditor()
   removeAwarenessListener?.()
   removeAwarenessListener = null
   if (!editor.value)
@@ -447,15 +485,11 @@ function applyToolbarItem(item: ToolbarItem): void {
   if (item.action === 'link') {
     if (instance.isActive('link')) {
       chain.unsetLink().run()
+      closeLinkEditor()
       return
     }
 
-    const href = import.meta.client ? window.prompt('请输入链接地址', 'https://') : ''
-    const normalizedHref = normalizeString(href)
-    if (!normalizedHref)
-      return
-
-    chain.extendMarkRange('link').setLink({ href: normalizedHref }).run()
+    openLinkEditor()
     return
   }
 
@@ -507,8 +541,8 @@ function isToolbarItemActive(item: ToolbarItem): boolean {
 watch([() => props.doc, () => props.awareness], ([nextDoc, nextAwareness]) => {
   if (!nextDoc) {
     destroyEditor()
-    emit('remote-presence-change', [])
-    emit('selection-change', defaultSelectionChangePayload())
+    emit('remotePresenceChange', [])
+    emit('selectionChange', defaultSelectionChangePayload())
     return
   }
 
@@ -555,6 +589,35 @@ onBeforeUnmount(() => {
       >
         {{ item.label }}
       </button>
+
+      <form
+        v-if="linkInputVisible"
+        class="rich-text-editor__link-form"
+        @submit.prevent="submitLinkDraft"
+      >
+        <input
+          ref="linkInputRef"
+          v-model="linkDraft"
+          class="rich-text-editor__link-input"
+          type="url"
+          inputmode="url"
+          placeholder="https://"
+          @keydown.esc.prevent="closeLinkEditor()"
+        >
+        <button
+          class="rich-text-editor__link-action rich-text-editor__link-action--primary"
+          type="submit"
+        >
+          应用
+        </button>
+        <button
+          class="rich-text-editor__link-action"
+          type="button"
+          @click="closeLinkEditor()"
+        >
+          取消
+        </button>
+      </form>
     </div>
 
     <div class="rich-text-editor__surface">
@@ -618,6 +681,50 @@ onBeforeUnmount(() => {
   background: #edf4ff;
   color: #1d4ed8;
   box-shadow: inset 0 0 0 1px rgba(47, 106, 242, 0.08);
+}
+
+.rich-text-editor__link-form {
+  display: flex;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.rich-text-editor__link-input {
+  min-width: 0;
+  flex: 1 1 220px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0f172a;
+  font-size: 12px;
+  outline: none;
+}
+
+.rich-text-editor__link-input:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.2);
+}
+
+.rich-text-editor__link-action {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rich-text-editor__link-action--primary {
+  border-color: #cfe0ff;
+  background: #edf4ff;
+  color: #1d4ed8;
 }
 
 .rich-text-editor__toolbar-button:disabled {

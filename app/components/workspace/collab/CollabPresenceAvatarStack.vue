@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { type CSSProperties } from 'vue'
+import type { CSSProperties } from 'vue'
+import type { WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
 import {
   resolveWorkspaceCollabPresenceInitial,
-  type WorkspaceCollabPresenceUser,
+
 } from '~/components/workspace/collab/presence'
 
 const props = withDefaults(defineProps<{
@@ -99,13 +100,15 @@ function syncPopoverPosition(userId: string, target?: EventTarget | null): void 
   )
   const allowedMaxLeft = Math.min(maxLeft, safeMaxLeft)
 
-  if (preferredLeft >= viewportPadding)
+  if (preferredLeft >= viewportPadding) {
     popoverPosition.left = Math.min(preferredLeft, allowedMaxLeft)
-  else
+  }
+  else {
     popoverPosition.left = Math.min(
       Math.max(viewportPadding, fallbackLeft),
       allowedMaxLeft,
     )
+  }
 
   let nextTop = rect.bottom + 8
   if (nextTop + popoverHeight > window.innerHeight - viewportPadding)
@@ -206,14 +209,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="users.length > 0" class="relative flex items-center justify-end" data-testid="collab-presence-avatar-stack">
+  <div v-if="users.length > 0" class="flex items-center justify-end relative" data-testid="collab-presence-avatar-stack">
     <div class="flex items-center justify-end">
       <button
         v-for="(user, index) in visibleUsers"
         :key="user.userId"
-        type="button"
         :ref="(element) => setTriggerRef(user.userId, element as Element | null)"
-        class="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 bg-white shadow-sm"
+        type="button"
+        class="border-2 rounded-full bg-white flex shrink-0 h-7 w-7 shadow-sm items-center justify-center relative"
         :style="avatarButtonStyle(user, index)"
         :title="user.username"
         :aria-label="`查看 ${user.username} 的在线状态`"
@@ -223,7 +226,7 @@ onBeforeUnmount(() => {
         @focus="openPopover(user.userId, $event.currentTarget)"
         @blur="scheduleClosePopover"
       >
-        <span class="flex h-full w-full items-center justify-center overflow-hidden rounded-full">
+        <span class="rounded-full flex h-full w-full items-center justify-center overflow-hidden">
           <img
             v-if="user.avatarUrl"
             :src="user.avatarUrl"
@@ -232,21 +235,21 @@ onBeforeUnmount(() => {
           >
           <span
             v-else
-            class="flex h-full w-full items-center justify-center text-[11px] font-semibold"
+            class="text-[11px] font-semibold flex h-full w-full items-center justify-center"
             :style="avatarFallbackStyle(user)"
           >
             {{ resolveWorkspaceCollabPresenceInitial(user.username) }}
           </span>
         </span>
         <span
-          class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full"
+          class="rounded-full h-2.5 w-2.5 absolute -bottom-0.5 -right-0.5"
           :style="statusDotStyle(user)"
         />
       </button>
 
       <span
         v-if="overflowCount > 0"
-        class="relative flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-slate-100 px-1 text-[10px] font-semibold text-slate-600"
+        class="text-[10px] text-slate-600 font-semibold px-1 border border-slate-300 rounded-full bg-slate-100 flex shrink-0 h-7 min-w-7 items-center justify-center relative"
         :style="overflowStyle()"
       >
         +{{ overflowCount }}
@@ -256,18 +259,18 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div
         v-if="openUser"
-        class="fixed z-[2600] w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_18px_48px_rgba(15,23,42,0.18)]"
+        class="p-4 border border-slate-200 rounded-2xl bg-white w-72 shadow-[0_18px_48px_rgba(15,23,42,0.18)] fixed z-[2600]"
         :style="popoverStyle"
         data-testid="collab-presence-avatar-card"
         @mouseenter="clearClosePopoverTimer"
         @mouseleave="scheduleClosePopover"
       >
-        <div class="flex items-start gap-3">
+        <div class="flex gap-3 items-start">
           <div
-            class="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 bg-white"
+            class="border-2 rounded-full bg-white flex shrink-0 h-12 w-12 items-center justify-center relative"
             :style="{ borderColor: openUser.colorToken }"
           >
-            <span class="flex h-full w-full items-center justify-center overflow-hidden rounded-full">
+            <span class="rounded-full flex h-full w-full items-center justify-center overflow-hidden">
               <img
                 v-if="openUser.avatarUrl"
                 :src="openUser.avatarUrl"
@@ -276,82 +279,82 @@ onBeforeUnmount(() => {
               >
               <span
                 v-else
-                class="flex h-full w-full items-center justify-center text-sm font-semibold"
+                class="text-sm font-semibold flex h-full w-full items-center justify-center"
                 :style="avatarFallbackStyle(openUser)"
               >
                 {{ resolveWorkspaceCollabPresenceInitial(openUser.username) }}
               </span>
             </span>
             <span
-              class="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full"
+              class="rounded-full h-3 w-3 absolute -bottom-0.5 -right-0.5"
               :style="statusDotStyle(openUser)"
             />
           </div>
 
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <p class="truncate text-sm font-semibold text-slate-900">
+          <div class="flex-1 min-w-0">
+            <div class="flex gap-2 items-center">
+              <p class="text-sm text-slate-900 font-semibold truncate">
                 {{ openUser.username }}
               </p>
               <span
                 v-if="openUser.isCurrentUser"
-                class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500"
+                class="text-[10px] text-slate-500 font-medium px-2 py-0.5 rounded-full bg-slate-100"
               >
                 我
               </span>
             </div>
-            <p class="mt-1 text-xs text-slate-500">
+            <p class="text-xs text-slate-500 mt-1">
               {{ activityStateLabel(openUser) }}
             </p>
           </div>
         </div>
 
-        <dl class="mt-4 space-y-2 text-xs text-slate-600">
-          <div class="flex items-center justify-between gap-3">
+        <dl class="text-xs text-slate-600 mt-4 space-y-2">
+          <div class="flex gap-3 items-center justify-between">
             <dt class="text-slate-400">
               项目角色
             </dt>
-            <dd class="text-right text-slate-700">
+            <dd class="text-slate-700 text-right">
               {{ roleLabel(openUser.role) }}
             </dd>
           </div>
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex gap-3 items-center justify-between">
             <dt class="text-slate-400">
               当前状态
             </dt>
-            <dd class="text-right text-slate-700">
+            <dd class="text-slate-700 text-right">
               {{ activityStateLabel(openUser) }}
             </dd>
           </div>
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex gap-3 items-center justify-between">
             <dt class="text-slate-400">
               当前定位
             </dt>
-            <dd class="text-right text-slate-700">
+            <dd class="text-slate-700 text-right">
               {{ selectionStatusText(openUser) }}
             </dd>
           </div>
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex gap-3 items-center justify-between">
             <dt class="text-slate-400">
               选区摘要
             </dt>
-            <dd class="max-w-[168px] truncate text-right text-slate-700" :title="selectionPreviewText(openUser)">
+            <dd class="text-slate-700 text-right max-w-[168px] truncate" :title="selectionPreviewText(openUser)">
               {{ selectionPreviewText(openUser) }}
             </dd>
           </div>
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex gap-3 items-center justify-between">
             <dt class="text-slate-400">
               最后活跃
             </dt>
-            <dd class="text-right text-slate-700">
+            <dd class="text-slate-700 text-right">
               {{ formatDateTime(openUser.updatedAt) }}
             </dd>
           </div>
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex gap-3 items-center justify-between">
             <dt class="text-slate-400">
               用户 ID
             </dt>
-            <dd class="max-w-[168px] truncate text-right font-mono text-[11px] text-slate-700" :title="openUser.userId">
+            <dd class="text-[11px] text-slate-700 font-mono text-right max-w-[168px] truncate" :title="openUser.userId">
               {{ openUser.userId }}
             </dd>
           </div>

@@ -28,7 +28,7 @@ it('draw 协作头部改为右上角头像栈，并复用用户级聚合数据',
   assert.match(projectPageSource, /:collab-markdown-awareness="collabMarkdownAwareness"/, '项目页未向主面板透传 markdown Awareness')
   assert.match(panelSource, /import CollabPresenceAvatarStack from/, '主面板未接入头像栈组件')
   assert.match(panelSource, /import CollabPresenceDock from/, '主面板未接入底部成员栏组件')
-  assert.match(panelSource, /const collabPresenceUsers = computed<WorkspaceCollabPresenceUser\[]>\(\(\) => \{/, '主面板未聚合用户级在线成员数据')
+  assert.match(panelSource, /const collabPresenceUsers = computed<WorkspaceCollabPresenceUser\[\]>\(\(\) => \{/, '主面板未聚合用户级在线成员数据')
   assert.equal((panelSource.match(/<CollabPresenceAvatarStack\s+:users="collabPresenceUsers"\s*\/>/g) || []).length, 3, 'markdown、流程画布与自由画布未同时接入头像栈组件')
   assert.match(panelSource, /<CollabPresenceDock\s+:users="collabPresenceUsers"\s*\/>/, 'markdown 底部成员栏未接入 Dock 组件')
   assert.doesNotMatch(panelSource, /v-if="hasFlowResource" class="grid grid-cols-1 h-full md:grid-cols-\[1fr,220px\]"/, '流程画布仍保留旧双列在线成员布局')
@@ -45,8 +45,8 @@ it('draw 协作头部改为右上角头像栈，并复用用户级聚合数据',
 
   assert.match(presenceDockSource, /data-testid="collab-presence-dock"/, '底部成员栏缺少稳定测试锚点')
   assert.match(presenceDockSource, /当前光标位置、选区范围与文本摘要会随编辑实时同步/, '底部成员栏未展示 markdown 协同说明')
-  assert.match(presenceDockSource, /{{ selectionRangeText\(user\) }}/, '底部成员栏未展示选区范围')
-  assert.match(presenceDockSource, /{{ selectionPreviewText\(user\) }}/, '底部成员栏未展示选中文本摘要')
+  assert.match(presenceDockSource, /\{\{ selectionRangeText\(user\) \}\}/, '底部成员栏未展示选区范围')
+  assert.match(presenceDockSource, /\{\{ selectionPreviewText\(user\) \}\}/, '底部成员栏未展示选中文本摘要')
 
   assert.match(presenceHelperSource, /export interface WorkspaceCollabPresenceUser \{/, '共享 presence 用户模型缺失')
   assert.match(presenceHelperSource, /selection\?: WorkspaceCollabSelectionSummary \| null/, '共享 presence 用户模型未扩展选区摘要')
@@ -65,7 +65,7 @@ it('draw 协作画布展示不同用户的实时彩色鼠标', async () => {
   assert.match(projectPageSource, /collabSession\.updatePresenceCursor\(value\.cursorX, value\.cursorY\)/, '项目页未把画布鼠标事件回传到协作会话')
   assert.equal((panelSource.match(/:remote-cursors="collabPresenceCursors"/g) || []).length, 2, '流程画布与自由画布未同时接入远端鼠标数据')
   assert.equal((panelSource.match(/@update-collab-cursor="onCollabCursorUpdate"/g) || []).length, 2, '主面板未接收画布鼠标更新事件')
-  assert.match(panelSource, /const collabPresenceCursors = computed<WorkspaceCollabCursorUser\[]>\(\(\) => \{/, '主面板未按用户聚合远端鼠标数据')
+  assert.match(panelSource, /const collabPresenceCursors = computed<WorkspaceCollabCursorUser\[\]>\(\(\) => \{/, '主面板未按用户聚合远端鼠标数据')
 
   assert.match(canvasSource, /import type \{ WorkspaceCollabCursorUser \}/, '画布组件未声明远端鼠标类型')
   assert.match(canvasSource, /editor\.screenToPage\(\{/, '画布组件未将本地鼠标转换到画布世界坐标')

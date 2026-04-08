@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, it, vi } from 'vitest'
 import { ref } from 'vue'
-import * as Y from 'yjs'
 import { Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness'
+import * as Y from 'yjs'
 import { useCollabSession } from '../../app/composables/useCollabSession.ts'
 import { ensureMarkdownCollabDocShape, readMarkdownFromRichText, writeRichTextBlocksToFragment } from '../../shared/utils/collab-markdown-rich-text.ts'
 

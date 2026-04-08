@@ -5,10 +5,17 @@ import type {
   ProjectResourceUploadSession,
   Resource,
 } from '~~/shared/types/domain'
-import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
 import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
-import { createProjectPreviewDocumentWithTask, getProjectResourceDocumentByResourceId } from '~~/server/utils/project-resource-document-store'
+import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
 import { withTransaction } from '~~/server/utils/db'
+import { getVisibleProjectById } from '~~/server/utils/platform-store'
+import { teamCanManageProject } from '~~/server/utils/project-access-store'
+import { createProjectPreviewDocumentWithTask, getProjectResourceDocumentByResourceId } from '~~/server/utils/project-resource-document-store'
+import {
+  createProjectUploadedResource,
+  getProjectResourceById,
+  getProjectUploadedStorageUsageBytes,
+} from '~~/server/utils/project-resource-store'
 import {
   getProjectResourceUploadReservedBytes,
   getProjectResourceUploadSessionById,
@@ -17,13 +24,6 @@ import {
   markProjectResourceUploadSessionFailed,
   updateProjectResourceUploadSessionStatus,
 } from '~~/server/utils/project-resource-upload-session-store'
-import {
-  createProjectUploadedResource,
-  getProjectResourceById,
-  getProjectUploadedStorageUsageBytes,
-} from '~~/server/utils/project-resource-store'
-import { getVisibleProjectById } from '~~/server/utils/platform-store'
-import { teamCanManageProject } from '~~/server/utils/project-access-store'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -37,15 +37,15 @@ export async function resolveProjectResourceUploadAccessContext(
   },
 ): Promise<
   | {
-      ok: true
-      workspaceId: string
-      usedBytes: number
-      reservedBytes: number
-    }
+    ok: true
+    workspaceId: string
+    usedBytes: number
+    reservedBytes: number
+  }
   | {
-      ok: false
-      reason: 'PROJECT_NOT_FOUND' | 'FORBIDDEN'
-    }
+    ok: false
+    reason: 'PROJECT_NOT_FOUND' | 'FORBIDDEN'
+  }
 > {
   const projectId = normalizeString(input.projectId)
   const project = await getVisibleProjectById(db, input.user, projectId)

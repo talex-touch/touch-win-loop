@@ -1,18 +1,18 @@
 import type { Ref } from 'vue'
+import type { WorkspaceCollabPresenceActivityState, WorkspaceCollabPresenceMember } from '../components/workspace/collab/presence'
 import type { useWorkspaceRealtime } from '~/composables/useWorkspaceRealtime'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
-import {
-  normalizeWorkspaceCollabPresenceActivityState,
-  resolveWorkspaceCollabPresenceColor,
-  type WorkspaceCollabPresenceActivityState,
-  type WorkspaceCollabPresenceMember,
-} from '../components/workspace/collab/presence'
 import {
   ensureMarkdownCollabDocShape,
   syncMarkdownMirrorFromRichText,
 } from '../../shared/utils/collab-markdown-rich-text'
+import {
+  normalizeWorkspaceCollabPresenceActivityState,
+  resolveWorkspaceCollabPresenceColor,
+
+} from '../components/workspace/collab/presence'
 
 export interface CollabSnapshotPayload {
   kind: 'markdown' | 'draw'

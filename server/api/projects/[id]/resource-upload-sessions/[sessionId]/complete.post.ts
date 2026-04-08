@@ -1,4 +1,3 @@
-import type { Resource } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { finalizeProjectResourceUploadSession, resolveProjectResourceUploadAccessContext } from '~~/server/services/project-resource-upload'
 import { fail, ok } from '~~/server/utils/api'

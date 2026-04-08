@@ -38,7 +38,7 @@ it('增强版 markdown 文档可对标题、强调、引用、列表与链接做
   assert.match(output, /`const x = 1`/)
 })
 
-it('GFM 任务列表、代码块、分割线与表格在 round-trip 后结构不丢失', () => {
+it('gFM 任务列表、代码块、分割线与表格在 round-trip 后结构不丢失', () => {
   const input = [
     '- [x] 已完成任务',
     '- [ ] 待处理任务',
