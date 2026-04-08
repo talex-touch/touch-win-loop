@@ -163,10 +163,6 @@ const visibleModel = computed({
   set: value => emit('update:visible', value),
 })
 
-const activeTabMeta = computed(() => {
-  return tabItems.find(item => item.id === activeTab.value) || defaultTabMeta
-})
-
 const tabGroups = computed(() => {
   return tabGroupItems.map(group => ({
     ...group,
@@ -1483,7 +1479,7 @@ onBeforeUnmount(() => {
                     @click="selectTab(tab.id)"
                   >
                     <span class="material-symbols-outlined text-[18px]">{{ tab.icon }}</span>
-                    <span>{{ tab.label }}</span>
+                    <span class="user-settings-tab__label">{{ tab.label }}</span>
                   </button>
                 </div>
               </section>
@@ -1491,15 +1487,6 @@ onBeforeUnmount(() => {
           </aside>
 
           <section class="bg-white flex flex-1 flex-col min-h-0">
-            <div class="px-5 py-5 border-b border-slate-200 sm:px-6">
-              <p class="text-2xl text-slate-900 font-semibold">
-                {{ activeTabMeta.label }}
-              </p>
-              <p class="text-sm text-slate-500 mt-2">
-                {{ activeTabMeta.description }}
-              </p>
-            </div>
-
             <div class="px-5 py-5 flex-1 min-h-0 overflow-y-auto sm:px-6">
               <div v-if="activeTab === 'profile'" class="user-settings-panel user-settings-panel--stack">
                 <input
@@ -2471,8 +2458,10 @@ onBeforeUnmount(() => {
 
 .user-settings-nav-group__tabs {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  overflow-x: auto;
+  min-width: 0;
+  overflow: visible;
 }
 
 .user-settings-panel {
@@ -2969,8 +2958,9 @@ onBeforeUnmount(() => {
 }
 
 .user-settings-tab {
-  display: inline-flex;
-  min-width: max-content;
+  display: flex;
+  width: 100%;
+  min-width: 0;
   align-items: center;
   justify-content: flex-start;
   gap: 7px;
@@ -2986,6 +2976,17 @@ onBeforeUnmount(() => {
     background-color 0.15s ease,
     color 0.15s ease,
     border-color 0.15s ease;
+}
+
+.user-settings-tab__label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: keep-all;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
 }
 
 .user-settings-tab:hover {
@@ -3087,6 +3088,13 @@ onBeforeUnmount(() => {
     flex: none;
   }
 
+  .user-settings-nav-group__tabs {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
   .user-settings-panel--stack {
     gap: 14px;
   }
@@ -3144,6 +3152,18 @@ onBeforeUnmount(() => {
   .user-settings-nav-group__tabs,
   .user-settings-tab {
     white-space: nowrap;
+  }
+
+  .user-settings-tab {
+    width: auto;
+    min-width: max-content;
+    flex: 0 0 auto;
+  }
+
+  .user-settings-nav-group__tabs {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    padding-bottom: 2px;
   }
 }
 
