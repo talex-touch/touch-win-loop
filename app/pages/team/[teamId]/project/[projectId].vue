@@ -62,6 +62,12 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
+import {
+  buildProjectSettingsCommonPatch,
+  cloneProjectCommonForm,
+  createEmptyProjectCommonForm,
+  createProjectCommonFormFromProject,
+} from '~/composables/project-settings'
 import { useCollabSession } from '~/composables/useCollabSession'
 
 definePageMeta({
@@ -96,54 +102,6 @@ function linesToArray(text: string): string[] {
 
 function arrayToLines(list: string[] | undefined): string {
   return (list || []).join('\n')
-}
-
-function createEmptyProjectCommonForm(): WorkspaceProjectCommonForm {
-  return {
-    title: '',
-    summary: '',
-    icon: '',
-    accentColor: '',
-    problemStatement: '',
-    innovationPointsText: '',
-    techRouteStepsText: '',
-    scoringMappingText: '',
-    risksText: '',
-    deliverablesText: '',
-  }
-}
-
-function createProjectCommonFormFromProject(project: Project | null): WorkspaceProjectCommonForm {
-  if (!project)
-    return createEmptyProjectCommonForm()
-
-  return {
-    title: project.title || '',
-    summary: project.summary || '',
-    icon: project.display?.icon || '',
-    accentColor: project.display?.accentColor || '',
-    problemStatement: project.problemStatement || '',
-    innovationPointsText: arrayToLines(project.innovationPoints),
-    techRouteStepsText: arrayToLines(project.techRouteSteps),
-    scoringMappingText: arrayToLines(project.scoringMapping),
-    risksText: arrayToLines(project.risks),
-    deliverablesText: arrayToLines(project.deliverables),
-  }
-}
-
-function cloneProjectCommonForm(value: WorkspaceProjectCommonForm): WorkspaceProjectCommonForm {
-  return {
-    title: value.title,
-    summary: value.summary,
-    icon: value.icon,
-    accentColor: value.accentColor,
-    problemStatement: value.problemStatement,
-    innovationPointsText: value.innovationPointsText,
-    techRouteStepsText: value.techRouteStepsText,
-    scoringMappingText: value.scoringMappingText,
-    risksText: value.risksText,
-    deliverablesText: value.deliverablesText,
-  }
 }
 
 function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
@@ -222,7 +180,7 @@ function clamp(value: number, min: number, max: number): number {
 function defaultAssistantGreeting(): ChatMessage {
   return {
     role: 'assistant',
-    content: '你好，我是 WinLoop AI。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
+    content: '你好，我是 Loopy。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
   }
 }
 
@@ -1418,21 +1376,6 @@ function upsertProjectSettingsAdaptationDraft(form: WorkspaceProjectAdaptationFo
   }
 }
 
-function buildProjectSettingsCommonPatch() {
-  return {
-    title: projectSettingsCommon.title.trim(),
-    summary: projectSettingsCommon.summary.trim(),
-    icon: projectSettingsCommon.icon.trim(),
-    accentColor: projectSettingsCommon.accentColor.trim(),
-    problemStatement: projectSettingsCommon.problemStatement.trim(),
-    innovationPoints: linesToArray(projectSettingsCommon.innovationPointsText),
-    techRouteSteps: linesToArray(projectSettingsCommon.techRouteStepsText),
-    scoringMapping: linesToArray(projectSettingsCommon.scoringMappingText),
-    risks: linesToArray(projectSettingsCommon.risksText),
-    deliverables: linesToArray(projectSettingsCommon.deliverablesText),
-  }
-}
-
 function buildProjectSettingsAdaptationPatch(form: WorkspaceProjectAdaptationForm) {
   return {
     problemStatement: form.problemStatement.trim(),
@@ -2131,7 +2074,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     }
 
     if (projectSettingsCommonDirty.value)
-      body.common = buildProjectSettingsCommonPatch()
+      body.common = buildProjectSettingsCommonPatch(projectSettingsCommon)
     if (projectSettingsBindingsDirty.value)
       body.contestBindings = cloneProjectContestBindings(projectSettingsBindings.value)
 
@@ -3702,12 +3645,12 @@ function buildSessionTitleByMode(): string {
   const trackName = selectedTrack.value?.name || '未选择赛道'
 
   if (aiMode.value === 'auto_optimize')
-    return `自动优化 · ${contestName} · ${trackName}`
+    return `Loopy 自动优化 · ${contestName} · ${trackName}`
   if (aiMode.value === 'issue_discovery')
-    return `寻疑发现 · ${contestName} · ${trackName}`
+    return `Loopy 寻疑发现 · ${contestName} · ${trackName}`
   if (aiMode.value === 'defense')
-    return `答辩模拟 · ${contestName} · ${trackName}`
-  return `对话询问 · ${contestName} · ${trackName}`
+    return `Loopy 答辩模拟 · ${contestName} · ${trackName}`
+  return `Loopy 对话 · ${contestName} · ${trackName}`
 }
 
 async function createChatSession(preferredTitle = ''): Promise<string | null> {
@@ -3797,21 +3740,21 @@ async function switchChatSession(sessionId: string) {
 }
 
 async function startNewChatSession() {
-  let modeTitle = '新建 AI 对话'
+  let modeTitle = '新建 Loopy 对话'
   if (aiMode.value === 'defense')
-    modeTitle = '新建答辩会话'
+    modeTitle = '新建 Loopy 答辩会话'
   else if (aiMode.value === 'auto_optimize')
-    modeTitle = '新建自动优化会话'
+    modeTitle = '新建 Loopy 自动优化会话'
   else if (aiMode.value === 'issue_discovery')
-    modeTitle = '新建寻疑发现会话'
+    modeTitle = '新建 Loopy 寻疑发现会话'
   const createdId = await createChatSession(modeTitle)
   if (!createdId) {
-    statusLine.value = '新建对话失败，请稍后重试。'
+    statusLine.value = '新建 Loopy 会话失败，请稍后重试。'
     return
   }
 
   await loadChatSessions(createdId)
-  statusLine.value = '已创建新对话。'
+  statusLine.value = '已创建新的 Loopy 会话。'
 }
 
 function syncFormContestTrack() {
@@ -4620,6 +4563,7 @@ watch(() => workspaceRealtime.connected.value, () => {
     <WorkspaceHeader
       v-model="headerSearch"
       :project-name="headerProjectName"
+      :workspace-id="activeWorkspaceId"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
       @final-review="openFinalReviewFromHeader"
