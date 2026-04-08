@@ -1294,6 +1294,28 @@ const statusCursor = computed(() => {
   }
 })
 
+const rebindUploadInputRef = ref<HTMLInputElement | null>(null)
+const pendingRebindSessionId = ref('')
+
+const projectUploadManager = useProjectUploadManager({
+  projectId: activeProjectId,
+  endpoint,
+  realtimeConnected: workspaceRealtime.connected,
+  getUsedBytes: () => projectUploadStorageUsedBytes.value,
+  validateFiles: validateUploadFiles,
+  onStatusLine: (text) => {
+    statusLine.value = text
+  },
+  onRequireRefresh: async () => {
+    await refreshProjectResourceContext()
+    await loadProjectOutline()
+  },
+})
+
+const projectUploadTasks = projectUploadManager.tasks
+const projectUploadSummary = projectUploadManager.summary
+const uploadDrawerOpen = projectUploadManager.drawerOpen
+
 function mergeProjectIntoCollections(project: Project) {
   const merge = (list: Project[]): Project[] => {
     const index = list.findIndex(item => item.id === project.id)
@@ -3178,35 +3200,77 @@ async function uploadResourcesToProject(files: File[]) {
   if (!activeProjectId.value)
     return
 
-  const normalizedFiles = Array.from(files || []).filter(file => file instanceof File)
-  const validationError = validateUploadFiles(normalizedFiles, projectUploadStorageUsedBytes.value)
-  if (validationError) {
-    statusLine.value = validationError
-    return
-  }
-
-  resourceMutating.value = true
-  const formData = new FormData()
-  normalizedFiles.forEach((file) => {
-    formData.append('file', file, file.name)
-  })
-
   try {
-    const response = await $fetch<ApiResponse<{ uploadedCount?: number }>>(endpoint(`/projects/${activeProjectId.value}/resources/upload`), {
-      method: 'POST',
-      body: formData,
-    })
-    await refreshProjectResourceContext()
-    await generateProjectOutline('upload_success', true)
-    const uploadedCount = Math.max(0, Number(response.data?.uploadedCount || normalizedFiles.length))
-    statusLine.value = `上传成功：${uploadedCount} 个文件，结构大纲已刷新。`
+    await projectUploadManager.enqueueFiles(files)
+    projectUploadManager.setDrawerOpen(true)
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
   }
-  finally {
-    resourceMutating.value = false
+}
+
+function openUploadDrawer() {
+  projectUploadManager.setDrawerOpen(!uploadDrawerOpen.value)
+}
+
+async function pauseUploadTask(sessionId: string) {
+  await projectUploadManager.pauseTask(sessionId)
+}
+
+async function resumeUploadTask(sessionId: string) {
+  await projectUploadManager.resumeTask(sessionId)
+}
+
+async function retryUploadTask(sessionId: string) {
+  await projectUploadManager.retryTask(sessionId)
+}
+
+async function cancelUploadTask(sessionId: string) {
+  await projectUploadManager.cancelTask(sessionId)
+}
+
+function clearCompletedUploadTasks() {
+  projectUploadManager.clearCompletedTasks()
+}
+
+function requestRebindUploadTask(sessionId: string) {
+  pendingRebindSessionId.value = String(sessionId || '').trim()
+  if (!pendingRebindSessionId.value)
+    return
+  nextTick(() => {
+    rebindUploadInputRef.value?.click()
+  })
+}
+
+async function handleRebindUploadInputChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = Array.from(target.files || []).find(item => item instanceof File)
+  const sessionId = pendingRebindSessionId.value
+  target.value = ''
+  pendingRebindSessionId.value = ''
+  if (!file || !sessionId)
+    return
+
+  try {
+    await projectUploadManager.rebindTaskFile(sessionId, file)
+    projectUploadManager.setDrawerOpen(true)
+    statusLine.value = `已重新绑定文件：${file.name}。`
   }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '重新绑定上传文件失败，请稍后重试。')
+  }
+}
+
+async function pauseAllUploadTasks() {
+  const targets = projectUploadTasks.value.filter(task => task.status === 'uploading')
+  await Promise.allSettled(targets.map(task => projectUploadManager.pauseTask(task.sessionId)))
+}
+
+async function resumeAllUploadTasks() {
+  const targets = projectUploadTasks.value.filter((task) => {
+    return (task.status === 'paused' || task.status === 'failed') && !task.needsFileRebind
+  })
+  await Promise.allSettled(targets.map(task => projectUploadManager.resumeTask(task.sessionId)))
 }
 
 function clearPreviewStatusPolling() {
@@ -4593,6 +4657,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           :resource-library="resourceLibrary"
           :linked-contest-resource-groups="linkedContestResourceGroups"
           :linked-contest-binding-count="projectSettingsBindings.length"
+          :upload-tasks="projectUploadTasks"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
           :project-issues="projectIssues"
@@ -4631,6 +4696,11 @@ watch(() => workspaceRealtime.connected.value, () => {
           @restore-project-resource="restoreProjectResource"
           @purge-project-resource="purgeProjectResource"
           @upload-resources="uploadResourcesToProject"
+          @pause-upload-task="pauseUploadTask"
+          @resume-upload-task="resumeUploadTask"
+          @retry-upload-task="retryUploadTask"
+          @cancel-upload-task="cancelUploadTask"
+          @rebind-upload-task="requestRebindUploadTask"
         />
         <div class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-expanded">
           <button
@@ -4814,7 +4884,25 @@ watch(() => workspaceRealtime.connected.value, () => {
       :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
       :line="statusCursor.line"
       :column="statusCursor.column"
+      :upload-summary="projectUploadSummary"
+      :upload-drawer-open="uploadDrawerOpen"
+      :upload-tasks="projectUploadTasks"
+      @toggle-upload-drawer="openUploadDrawer"
+      @pause-upload-task="pauseUploadTask"
+      @resume-upload-task="resumeUploadTask"
+      @retry-upload-task="retryUploadTask"
+      @cancel-upload-task="cancelUploadTask"
+      @rebind-upload-task="requestRebindUploadTask"
+      @pause-all-upload-tasks="pauseAllUploadTasks"
+      @resume-all-upload-tasks="resumeAllUploadTasks"
+      @clear-completed-upload-tasks="clearCompletedUploadTasks"
     />
+    <input
+      ref="rebindUploadInputRef"
+      class="hidden"
+      type="file"
+      @change="handleRebindUploadInputChange"
+    >
   </div>
 </template>
 
