@@ -1111,6 +1111,39 @@ CREATE TABLE IF NOT EXISTS project_issues (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_topic_boards (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  contest_id TEXT NOT NULL DEFAULT '',
+  track_id TEXT NOT NULL DEFAULT '',
+  input_snapshot JSONB NOT NULL DEFAULT '{}'::JSONB,
+  team_skill_profile TEXT[] NOT NULL DEFAULT '{}',
+  compare_matrix JSONB NOT NULL DEFAULT '[]'::JSONB,
+  board_summary TEXT NOT NULL DEFAULT '',
+  selected_candidate_id TEXT NOT NULL DEFAULT '',
+  session_id TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_topic_candidates (
+  id TEXT PRIMARY KEY,
+  board_id TEXT NOT NULL REFERENCES project_topic_boards(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  candidate_id TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  decision_status TEXT NOT NULL DEFAULT 'candidate' CHECK (decision_status IN ('candidate', 'shortlisted', 'rejected', 'selected')),
+  total_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(board_id, candidate_id)
+);
+
 CREATE TABLE IF NOT EXISTS contest_trends (
   id TEXT PRIMARY KEY,
   contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
@@ -1528,6 +1561,10 @@ CREATE INDEX IF NOT EXISTS idx_ai_project_change_requests_session ON ai_project_
 CREATE INDEX IF NOT EXISTS idx_project_issue_reports_project_created ON project_issue_reports(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_issues_project_status ON project_issues(project_id, status, severity, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_issues_report ON project_issues(report_id);
+CREATE INDEX IF NOT EXISTS idx_project_topic_boards_project_updated ON project_topic_boards(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_topic_boards_workspace_status ON project_topic_boards(workspace_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_board_sort ON project_topic_candidates(board_id, sort_order ASC);
+CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_project_status ON project_topic_candidates(project_id, decision_status, total_score DESC);
 CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);

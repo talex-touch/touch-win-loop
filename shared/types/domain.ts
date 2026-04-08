@@ -292,13 +292,76 @@ export interface ContestFilterInput {
 }
 
 export interface TopicProposalItem {
+  id: string
   title: string
   reason: string
   innovationPoints: string[]
   techRouteSteps: string[]
   scoringMapping: string[]
   risks: string[]
+  estimatedWorkload: string
+  recommendedTrackId: string
+  recommendedTrackName: string
+  contestFitScore: number
+  contestFitReasons: string[]
+  similarAwards: TopicProposalSimilarityAward[]
+  trendSignals: TopicProposalTrendSignal[]
+  requiredSkills: string[]
+  teamMatchScore: number
+  teamGapNotes: string[]
+  evidenceRefs: TopicProposalEvidenceRef[]
+  decisionStatus: TopicProposalDecisionStatus
+  compareScores: TopicProposalCompareScores
+  totalScore: number
   references: string[]
+}
+
+export type TopicProposalDecisionStatus = 'candidate' | 'shortlisted' | 'rejected' | 'selected'
+
+export interface TopicProposalSimilarityAward {
+  title: string
+  summary: string
+  year?: number
+  contestId?: string
+  contestName?: string
+  trackId?: string
+  trackName?: string
+  similarityScore: number
+  reason?: string
+}
+
+export interface TopicProposalTrendSignal {
+  label: string
+  summary: string
+  heatScore: number
+  source: 'contest_trends' | 'internal_resource' | 'web_search'
+  confidence: number
+}
+
+export interface TopicProposalEvidenceRef {
+  title: string
+  summary: string
+  sourceType: 'project_resource' | 'contest_resource' | 'contest_trend' | 'web_search'
+  sourceLabel: string
+  url?: string
+  confidence: number
+}
+
+export interface TopicProposalCompareScores {
+  contestFit: number
+  noveltySimilarity: number
+  evidenceReadiness: number
+  trendHeat: number
+  teamMatch: number
+  workloadFeasibility: number
+}
+
+export interface TopicProposalCompareMatrixRow extends TopicProposalCompareScores {
+  candidateId: string
+  title: string
+  decisionStatus: TopicProposalDecisionStatus
+  totalScore: number
+  rank: number
 }
 
 export interface TopicProposal {
@@ -773,6 +836,11 @@ export interface AiTopicProposalRequest {
     contestId?: string
     trackId?: string
     major?: string
+    discipline?: string
+    topicType?: string
+    expectedDifficulty?: string
+    keywords?: string[]
+    teamSkillTags?: string[]
   }
 }
 
@@ -785,10 +853,93 @@ export interface AiTopicReference {
 export interface AiTopicProposalResult {
   assistantReply: string
   proposals: TopicProposalItem[]
+  compareMatrix: TopicProposalCompareMatrixRow[]
+  boardSummary: string
+  teamSkillProfile: string[]
   references: AiTopicReference[]
   missingFields: string[]
+  selectedCandidateId?: string
+  boardId?: string
   sessionId?: string
   webSearchEnabled?: boolean
+}
+
+export interface ProjectTopicBoardInput {
+  contestId: string
+  trackId: string
+  major?: string
+  discipline?: string
+  topicType?: string
+  expectedDifficulty?: string
+  keywords: string[]
+  teamSkillTags: string[]
+  candidateCount: number
+  source?: 'workspace_dashboard' | 'workspace_sidebar' | 'project_create'
+}
+
+export interface ProjectTopicBoardCreateSeed {
+  contestId?: string
+  trackId?: string
+  major?: string
+  discipline?: string
+  topicType?: string
+  expectedDifficulty?: string
+  keywords: string[]
+  teamSkillTags: string[]
+  candidateCount: number
+  source?: 'workspace_dashboard' | 'workspace_sidebar' | 'project_create'
+  autoGenerate?: boolean
+}
+
+export interface ProjectTopicBoardCandidate {
+  id: string
+  boardId: string
+  workspaceId: string
+  projectId: string
+  candidateId: string
+  sortOrder: number
+  decisionStatus: TopicProposalDecisionStatus
+  totalScore: number
+  payload: TopicProposalItem
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectTopicBoard {
+  id: string
+  workspaceId: string
+  projectId: string
+  contestId: string
+  trackId: string
+  input: ProjectTopicBoardInput
+  teamSkillProfile: string[]
+  boardSummary: string
+  compareMatrix: TopicProposalCompareMatrixRow[]
+  selectedCandidateId?: string
+  sessionId?: string
+  status: 'active' | 'archived'
+  createdByUserId: string
+  candidates: ProjectTopicBoardCandidate[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectTopicBoardListResult {
+  latestBoard: ProjectTopicBoard | null
+  history: ProjectTopicBoard[]
+}
+
+export interface ProjectTopicBoardGenerateRequest {
+  input: ProjectTopicBoardInput
+}
+
+export interface ProjectTopicBoardPatchRequest {
+  selectedCandidateId?: string
+  boardSummary?: string
+  candidateUpdates?: Array<{
+    candidateId: string
+    decisionStatus?: TopicProposalDecisionStatus
+  }>
 }
 
 export interface AiDefenseJudgeRound {
