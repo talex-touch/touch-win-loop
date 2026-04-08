@@ -722,7 +722,7 @@ export async function emitInvitationAcceptedNotifications(
         acceptedUserId: input.actorUser.id,
         acceptedUsername: input.actorUser.username,
       },
-      dedupeKey: `${projectInfo ? 'project' : 'workspace'}-invitation-accepted:${normalizeString(input.invitationId) || input.actorUser.id}`,
+      dedupeKey: `${projectInfo ? 'project' : 'workspace'}-invitation-accepted:${normalizeString(input.invitationId) || 'unknown'}:${input.actorUser.id}`,
     })
   }
 }
