@@ -401,6 +401,7 @@ export interface TeamWithQuota {
 export interface AuthUser {
   id: string
   username: string
+  avatarUrl?: string | null
   isPlatformAdmin: boolean
   isDisabled: boolean
   platformRoles?: PlatformRole[]
@@ -507,6 +508,44 @@ export interface ProjectInvitationSummary extends Invitation {
   isExpired: boolean
 }
 
+export type UserNotificationCategory = 'platform' | 'contest' | 'collab'
+export type UserNotificationType =
+  | 'platform.announcement'
+  | 'contest.deadline_reminder'
+  | 'workspace.invitation.created'
+  | 'workspace.invitation.accepted'
+  | 'workspace.member.removed'
+  | 'project.invitation.created'
+  | 'project.invitation.accepted'
+  | 'project.member.added'
+  | 'project.member.removed'
+  | 'project.member.role_changed'
+
+export interface UserNotification {
+  id: string
+  userId: string
+  workspaceId?: string | null
+  projectId?: string | null
+  category: UserNotificationCategory
+  type: UserNotificationType
+  title: string
+  body: string
+  actionUrl?: string | null
+  actionLabel?: string | null
+  actorUserId?: string | null
+  payload: Record<string, unknown>
+  dedupeKey: string
+  readAt?: string | null
+  createdAt: string
+  expiresAt?: string | null
+}
+
+export interface UserNotificationListResult {
+  items: UserNotification[]
+  unreadCount: number
+  nextCursor: string
+}
+
 export interface WorkspaceMemberManagementSnapshot {
   teamId: string
   workspaceId?: string
@@ -598,6 +637,14 @@ export interface ProjectSeatQuotaSummary {
   seatUsed: number
 }
 
+export interface ProjectMemberPreviewSummary {
+  projectId: string
+  userId: string
+  username: string
+  role: ProjectMemberRole
+  avatarUrl?: string | null
+}
+
 export interface Project extends ProjectPayload {
   id: string
   teamId: string
@@ -611,6 +658,7 @@ export interface Project extends ProjectPayload {
   advisorBindings: ProjectAdvisorBinding[]
   display?: ProjectDisplayConfig | null
   projectSeatQuota?: ProjectSeatQuotaSummary | null
+  memberPreview?: ProjectMemberPreviewSummary[]
   createdAt: string
   updatedAt: string
 }
@@ -619,6 +667,7 @@ export interface ProjectMemberSummary {
   projectId: string
   userId: string
   username: string
+  avatarUrl?: string | null
   role: ProjectMemberRole
   addedByUserId: string
   addedByUsername: string

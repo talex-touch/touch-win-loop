@@ -11,6 +11,7 @@ import type {
   ProjectDisplayConfig,
   ProjectInvitationSummary,
   ProjectMemberManagementSnapshot,
+  ProjectMemberPreviewSummary,
   ProjectMemberRole,
   ProjectMemberSummary,
   ProjectPayload,
@@ -78,6 +79,7 @@ const MAX_PROJECT_ADVISOR_COUNT = 3
 interface UserRow {
   id: string
   username: string
+  avatar_url: string | null
   is_platform_admin: boolean
   is_disabled: boolean
   created_at: string
@@ -88,11 +90,20 @@ interface ProjectMemberSummaryRow {
   project_id: string
   user_id: string
   username: string
+  avatar_url: string | null
   role: ProjectMemberRole
   added_by_user_id: string
   added_by_username: string
   created_at: string
   updated_at: string
+}
+
+interface ProjectMemberPreviewRow {
+  project_id: string
+  user_id: string
+  username: string
+  avatar_url: string | null
+  role: ProjectMemberRole
 }
 
 interface ProjectInvitationSummaryRow {
@@ -145,6 +156,7 @@ interface ProjectRow {
 interface CreateUserInput {
   username: string
   passwordHash: string
+  avatarUrl?: string | null
   isPlatformAdmin: boolean
 }
 
@@ -407,6 +419,7 @@ function mapUser(row: UserRow): AuthUser {
   return {
     id: row.id,
     username: row.username,
+    avatarUrl: row.avatar_url || null,
     isPlatformAdmin: row.is_platform_admin,
     isDisabled: Boolean(row.is_disabled),
     createdAt: row.created_at,
@@ -419,11 +432,22 @@ function mapProjectMemberSummary(row: ProjectMemberSummaryRow): ProjectMemberSum
     projectId: row.project_id,
     userId: row.user_id,
     username: row.username,
+    avatarUrl: row.avatar_url || null,
     role: row.role,
     addedByUserId: row.added_by_user_id,
     addedByUsername: row.added_by_username,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function mapProjectMemberPreview(row: ProjectMemberPreviewRow): ProjectMemberPreviewSummary {
+  return {
+    projectId: row.project_id,
+    userId: row.user_id,
+    username: row.username,
+    avatarUrl: row.avatar_url || null,
+    role: row.role,
   }
 }
 
@@ -483,7 +507,8 @@ function mapProject(
   row: ProjectRow,
   collegeBindings: ProjectCollegeBinding[],
   advisorBindings: ProjectAdvisorBinding[],
-  projectSeatQuota?: ProjectSeatQuotaSummary | null,
+  projectSeatQuota: ProjectSeatQuotaSummary | null = null,
+  memberPreview: ProjectMemberPreviewSummary[] = [],
 ): Project {
   const contestIds = normalizeProjectContestIds(row.contest_id, row.contest_ids)
   const display = normalizeProjectDisplayConfig((row.metadata as Record<string, unknown> | null | undefined)?.display)
@@ -511,6 +536,7 @@ function mapProject(
     collegeBindings,
     advisorBindings,
     projectSeatQuota: projectSeatQuota || null,
+    memberPreview,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -566,7 +592,7 @@ export async function ensureBootstrapPlatformSuperAdmin(db: Queryable, userId: s
 
 export async function findUserByUsername(db: Queryable, username: string): Promise<AuthUser | null> {
   const result = await db.query<UserRow>(
-    'SELECT id, username, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT FROM users WHERE username = $1 LIMIT 1',
+    'SELECT id, username, avatar_url, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT FROM users WHERE username = $1 LIMIT 1',
     [username],
   )
 
@@ -584,7 +610,7 @@ export async function getUserPasswordHashByUsername(db: Queryable, username: str
 
 export async function findUserById(db: Queryable, userId: string): Promise<AuthUser | null> {
   const result = await db.query<UserRow>(
-    'SELECT id, username, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT FROM users WHERE id = $1 LIMIT 1',
+    'SELECT id, username, avatar_url, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT FROM users WHERE id = $1 LIMIT 1',
     [userId],
   )
 
@@ -595,11 +621,12 @@ export async function findUserById(db: Queryable, userId: string): Promise<AuthU
 export async function createUserWithPersonalWorkspace(db: Queryable, input: CreateUserInput): Promise<AuthUser> {
   const userId = randomUUID()
   const now = new Date().toISOString()
+  const avatarUrl = String(input.avatarUrl || '').trim() || null
 
   await db.query(
-    `INSERT INTO users (id, username, password_hash, is_platform_admin, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $5)`,
-    [userId, input.username, input.passwordHash, input.isPlatformAdmin, now],
+    `INSERT INTO users (id, username, password_hash, avatar_url, is_platform_admin, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+    [userId, input.username, input.passwordHash, avatarUrl, input.isPlatformAdmin, now],
   )
 
   const workspaceId = randomUUID()
@@ -619,6 +646,32 @@ export async function createUserWithPersonalWorkspace(db: Queryable, input: Crea
   if (!user)
     throw new Error('failed to create user')
   return user
+}
+
+export async function syncUserAvatarUrl(
+  db: Queryable,
+  userId: string,
+  avatarUrl: string | null | undefined,
+): Promise<AuthUser | null> {
+  const normalizedAvatarUrl = String(avatarUrl || '').trim()
+  if (!normalizedAvatarUrl)
+    return findUserById(db, userId)
+
+  const now = new Date().toISOString()
+  const result = await db.query<UserRow>(
+    `UPDATE users
+     SET avatar_url = $2,
+         updated_at = $3
+     WHERE id = $1
+       AND COALESCE(avatar_url, '') <> $2
+     RETURNING id, username, avatar_url, is_platform_admin, is_disabled, created_at::TEXT, updated_at::TEXT`,
+    [userId, normalizedAvatarUrl, now],
+  )
+
+  const row = result.rows[0]
+  if (row)
+    return mapUser(row)
+  return findUserById(db, userId)
 }
 
 export async function createSession(db: Queryable, input: CreateSessionInput): Promise<AuthSession> {
@@ -1162,11 +1215,17 @@ async function loadMappedProjectById(db: Queryable, projectId: string): Promise<
   if (!row)
     return null
 
-  const { collegeMap, advisorMap } = await loadProjectBindingsByIds(db, [projectId])
+  const [{ collegeMap, advisorMap }, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
+    loadProjectBindingsByIds(db, [projectId]),
+    listProjectSeatQuotaSummaryByProjectIds(db, [projectId]),
+    listProjectMemberPreviewByProjectIds(db, [projectId]),
+  ])
   return mapProject(
     row,
     collegeMap.get(projectId) || [],
     advisorMap.get(projectId) || [],
+    projectSeatQuotaMap.get(projectId) || null,
+    projectMemberPreviewMap.get(projectId) || [],
   )
 }
 
@@ -1887,12 +1946,18 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
   if (input.advisorUserIds)
     await replaceAdvisorBindings(db, projectId, input.creatorUserId, input.advisorUserIds)
 
-  const { collegeMap, advisorMap } = await loadProjectBindingsByIds(db, [projectId])
+  const [{ collegeMap, advisorMap }, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
+    loadProjectBindingsByIds(db, [projectId]),
+    listProjectSeatQuotaSummaryByProjectIds(db, [projectId]),
+    listProjectMemberPreviewByProjectIds(db, [projectId]),
+  ])
 
   return mapProject(
     row,
     collegeMap.get(projectId) || [],
     advisorMap.get(projectId) || [],
+    projectSeatQuotaMap.get(projectId) || null,
+    projectMemberPreviewMap.get(projectId) || [],
   )
 }
 
@@ -1933,9 +1998,10 @@ export async function batchCreateProjects(
 
 async function loadProjectsFromRows(db: Queryable, rows: ProjectRow[]): Promise<Project[]> {
   const projectIds = rows.map(row => row.id)
-  const [bindings, projectSeatQuotaMap] = await Promise.all([
+  const [bindings, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
     loadProjectBindingsByIds(db, projectIds),
     listProjectSeatQuotaSummaryByProjectIds(db, projectIds),
+    listProjectMemberPreviewByProjectIds(db, projectIds),
   ])
   const { collegeMap, advisorMap } = bindings
 
@@ -1944,6 +2010,7 @@ async function loadProjectsFromRows(db: Queryable, rows: ProjectRow[]): Promise<
     collegeMap.get(row.id) || [],
     advisorMap.get(row.id) || [],
     projectSeatQuotaMap.get(row.id) || null,
+    projectMemberPreviewMap.get(row.id) || [],
   ))
 }
 
@@ -1967,6 +2034,45 @@ async function listProjectSeatQuotaSummaryByProjectIds(
   )
 
   return new Map(result.rows.map(row => [row.project_id, mapProjectSeatQuotaSummary(row)]))
+}
+
+async function listProjectMemberPreviewByProjectIds(
+  db: Queryable,
+  projectIds: string[],
+): Promise<Map<string, ProjectMemberPreviewSummary[]>> {
+  if (projectIds.length === 0)
+    return new Map<string, ProjectMemberPreviewSummary[]>()
+
+  const result = await db.query<ProjectMemberPreviewRow>(
+    `SELECT
+      pm.project_id,
+      pm.user_id,
+      u.username,
+      u.avatar_url,
+      pm.role
+     FROM project_members pm
+     JOIN users u ON u.id = pm.user_id
+     WHERE pm.project_id = ANY($1::TEXT[])
+     ORDER BY
+       pm.project_id ASC,
+       CASE pm.role
+         WHEN 'owner' THEN 0
+         WHEN 'manager' THEN 1
+         WHEN 'editor' THEN 2
+         ELSE 3
+       END,
+       pm.created_at ASC`,
+    [projectIds],
+  )
+
+  const map = new Map<string, ProjectMemberPreviewSummary[]>()
+  for (const row of result.rows) {
+    const items = map.get(row.project_id) || []
+    items.push(mapProjectMemberPreview(row))
+    map.set(row.project_id, items)
+  }
+
+  return map
 }
 
 export async function listVisibleProjects(
@@ -2475,6 +2581,7 @@ async function listProjectMembersByProjectId(
       pm.project_id,
       pm.user_id,
       u.username,
+      u.avatar_url,
       pm.role,
       pm.added_by_user_id,
       added_by.username AS added_by_username,
@@ -2619,6 +2726,7 @@ export async function upsertProjectMember(
     targetUserId?: string
     targetUsername?: string
     role?: ProjectMemberRole
+    source?: 'manual' | 'invitation'
   },
 ): Promise<ProjectMemberManagementSnapshot> {
   const project = await resolveProjectWorkspaceRow(db, input.projectId)
@@ -2701,6 +2809,16 @@ export async function upsertProjectMember(
     ],
   )
 
+  const { emitProjectMemberMutationNotifications } = await import('~~/server/utils/notification-store')
+  await emitProjectMemberMutationNotifications(db, {
+    actorUser: input.actorUser,
+    projectId: input.projectId,
+    targetUserId,
+    previousRole: existingRole || null,
+    nextRole: finalRole,
+    source: input.source || 'manual',
+  })
+
   await refreshProjectSeatUsage(db, input.projectId)
   const snapshot = await getProjectMemberManagementSnapshot(db, input.projectId)
   if (!snapshot)
@@ -2778,17 +2896,17 @@ export async function removeProjectMember(
   const isOwnerOrAdminActor = input.actorUser.isPlatformAdmin
     || actorHighestRole === 'owner'
     || actorHighestRole === 'admin'
+  const targetRoleResult = await db.query<{ role: ProjectMemberRole }>(
+    `SELECT role
+     FROM project_members
+     WHERE project_id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [input.projectId, normalizedTargetUserId],
+  )
+  const targetRole = targetRoleResult.rows[0]?.role || null
 
   if (!isOwnerOrAdminActor) {
-    const targetRoleResult = await db.query<{ role: ProjectMemberRole }>(
-      `SELECT role
-       FROM project_members
-       WHERE project_id = $1
-         AND user_id = $2
-       LIMIT 1`,
-      [input.projectId, normalizedTargetUserId],
-    )
-    const targetRole = targetRoleResult.rows[0]?.role || null
     if (targetRole && targetRole !== 'viewer')
       throw new Error('MANAGER_CAN_ONLY_REMOVE_MEMBER')
   }
@@ -2800,6 +2918,16 @@ export async function removeProjectMember(
        AND role <> 'owner'`,
     [input.projectId, normalizedTargetUserId],
   )
+
+  const { emitProjectMemberMutationNotifications } = await import('~~/server/utils/notification-store')
+  await emitProjectMemberMutationNotifications(db, {
+    actorUser: input.actorUser,
+    projectId: input.projectId,
+    targetUserId: normalizedTargetUserId,
+    previousRole: targetRole,
+    nextRole: null,
+    source: 'manual',
+  })
 
   await refreshProjectSeatUsage(db, input.projectId)
   const snapshot = await getProjectMemberManagementSnapshot(db, input.projectId)
@@ -3039,12 +3167,18 @@ export async function patchProjectBindings(
   if (!row)
     return null
 
-  const { collegeMap, advisorMap } = await loadProjectBindingsByIds(db, [projectId])
+  const [{ collegeMap, advisorMap }, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
+    loadProjectBindingsByIds(db, [projectId]),
+    listProjectSeatQuotaSummaryByProjectIds(db, [projectId]),
+    listProjectMemberPreviewByProjectIds(db, [projectId]),
+  ])
 
   return mapProject(
     row,
     collegeMap.get(projectId) || [],
     advisorMap.get(projectId) || [],
+    projectSeatQuotaMap.get(projectId) || null,
+    projectMemberPreviewMap.get(projectId) || [],
   )
 }
 

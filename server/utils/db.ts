@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  avatar_url TEXT,
   is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE,
   is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -39,6 +40,9 @@ CREATE TABLE IF NOT EXISTS users (
 
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -314,6 +318,37 @@ ALTER TABLE invitations
 
 ALTER TABLE invitations
   ADD COLUMN IF NOT EXISTS project_role TEXT;
+
+CREATE TABLE IF NOT EXISTS user_notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  category TEXT NOT NULL CHECK (category IN ('platform', 'contest', 'collab')),
+  type TEXT NOT NULL CHECK (type IN (
+    'platform.announcement',
+    'contest.deadline_reminder',
+    'workspace.invitation.created',
+    'workspace.invitation.accepted',
+    'workspace.member.removed',
+    'project.invitation.created',
+    'project.invitation.accepted',
+    'project.member.added',
+    'project.member.removed',
+    'project.member.role_changed'
+  )),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  action_url TEXT,
+  action_label TEXT,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  dedupe_key TEXT NOT NULL,
+  read_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, dedupe_key)
+);
 
 CREATE TABLE IF NOT EXISTS platform_user_roles (
   id TEXT PRIMARY KEY,
@@ -1679,6 +1714,9 @@ CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_
 CREATE INDEX IF NOT EXISTS idx_invitations_token_hash ON invitations(token_hash);
 CREATE INDEX IF NOT EXISTS idx_invitations_workspace_project_created ON invitations(workspace_id, project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_project_created ON invitations(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_created ON user_notifications(user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_workspace_created ON user_notifications(user_id, workspace_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_read_created ON user_notifications(user_id, read_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_platform_user_roles_user ON platform_user_roles(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_user ON auth_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);

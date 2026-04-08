@@ -1,6 +1,7 @@
 import type { FeishuOAuthLoginProfile } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type { AuthUser } from '~~/shared/types/domain'
+import { syncProvisionedUserAvatar } from '~~/server/services/auth/user-avatar-sync'
 import {
   findAuthIdentityByProviderAndUserId,
   findAuthIdentityByProviderUserId,
@@ -87,7 +88,7 @@ export async function ensureLocalUserByFeishuProfile(
         },
       })
       return {
-        user: existing,
+        user: await syncProvisionedUserAvatar(db, existing, profile.avatarUrl),
         created: false,
       }
     }
@@ -121,7 +122,7 @@ export async function ensureLocalUserByFeishuProfile(
     })
 
     return {
-      user: preferredUser,
+      user: await syncProvisionedUserAvatar(db, preferredUser, profile.avatarUrl),
       created: false,
     }
   }
@@ -134,6 +135,7 @@ export async function ensureLocalUserByFeishuProfile(
   const createdUser = await createUserWithPersonalWorkspace(db, {
     username,
     passwordHash: await hashPassword(createSessionToken()),
+    avatarUrl: profile.avatarUrl,
     isPlatformAdmin: totalUsers === 0,
   })
 
@@ -153,7 +155,7 @@ export async function ensureLocalUserByFeishuProfile(
   })
 
   return {
-    user: createdUser,
+    user: await syncProvisionedUserAvatar(db, createdUser, profile.avatarUrl),
     created: true,
   }
 }
