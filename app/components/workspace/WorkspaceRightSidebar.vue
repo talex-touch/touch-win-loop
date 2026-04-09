@@ -364,7 +364,7 @@ function requestExportIssueReport() {
                   提交时间：{{ issueReport.reviewSubmittedAt }}
                 </span>
                 <span v-if="issueReport.reviewSubmittedByUserId">
-                  提交人：{{ issueReport.reviewSubmittedByUserId }}
+                  提交人：{{ issueReport.reviewSubmittedByUsername || issueReport.reviewSubmittedByUserId }}
                 </span>
               </div>
               <div class="workspace-issue-report-actions">

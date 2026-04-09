@@ -1143,6 +1143,8 @@ CREATE TABLE IF NOT EXISTS contest_audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Audit logs intentionally avoid foreign keys so events remain queryable
+-- even after referenced workspaces, projects, resources, or users are deleted.
 CREATE TABLE IF NOT EXISTS billing_usage_events (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -1581,6 +1583,8 @@ CREATE INDEX IF NOT EXISTS idx_contest_resource_favorites_resource ON contest_re
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_workspace_created ON billing_usage_events(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_event_created ON billing_usage_events(event_code, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_actor_created ON billing_usage_events(actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_project_created ON billing_usage_events(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_contest_resource_id ON billing_usage_events(contest_resource_id);
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_report_id ON billing_usage_events(report_id);
 CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);

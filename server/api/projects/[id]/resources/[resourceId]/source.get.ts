@@ -2,9 +2,12 @@ import type { H3Event } from 'h3'
 import type { AuthUser } from '~~/shared/types/domain'
 import { sendRedirect, setHeader, setResponseStatus } from 'h3'
 import { verifyProjectResourceAccessToken } from '~~/server/services/document/project-resource-access-token'
-import { getDocumentStorage } from '~~/server/storage/document-storage'
-import { buildServerApiEndpoint, resolveServerApiUrl } from '~~/server/utils/api-url'
+import {
+  getDocumentStorage,
+  isDocumentStorageObjectNotFoundError,
+} from '~~/server/storage/document-storage'
 import { fail } from '~~/server/utils/api'
+import { buildServerApiEndpoint, resolveServerApiUrl } from '~~/server/utils/api-url'
 import { requireAuth } from '~~/server/utils/auth'
 import {
   getProjectBillingScopeById,
@@ -19,6 +22,7 @@ import {
   getProjectResourceDownloadDescriptor,
   getProjectUploadedFileRef,
 } from '~~/server/utils/project-resource-store'
+import { appendQueryParam } from '~~/shared/utils/api-url'
 
 interface DownloadFileRef {
   objectKey: string
@@ -41,6 +45,12 @@ interface DownloadPreparationResult {
 
 function encodeFileName(fileName: string): string {
   return encodeURIComponent(fileName).replace(/%20/g, '+')
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error)
+    return String(error.message || 'STORAGE_ERROR').trim() || 'STORAGE_ERROR'
+  return String(error || 'STORAGE_ERROR').trim() || 'STORAGE_ERROR'
 }
 
 async function recordDownloadUsage(
@@ -202,10 +212,13 @@ export default defineEventHandler(async (event) => {
     }
 
     if (descriptor.source === 'collab') {
+      const collabUrl = buildServerApiEndpoint(`/projects/${projectId}/resources/${resourceId}/collab`, event)
       return {
         ...baseResult,
         reason: '',
-        redirectUrl: buildServerApiEndpoint(`/projects/${projectId}/resources/${resourceId}/collab`, event),
+        redirectUrl: tokenAuthorized
+          ? appendQueryParam(collabUrl, 'token', token)
+          : collabUrl,
         fileRef: null,
       }
     }
@@ -347,7 +360,8 @@ export default defineEventHandler(async (event) => {
     setHeader(event, 'Content-Disposition', `attachment; filename*=UTF-8''${encodeFileName(fileRef.fileName || 'resource.bin')}`)
     return buffer
   }
-  catch {
+  catch (error) {
+    const storageObjectNotFound = isDocumentStorageObjectNotFoundError(error)
     await recordDownloadUsage(event, {
       workspaceId: prepared.workspaceId,
       projectId: prepared.projectId,
@@ -359,17 +373,30 @@ export default defineEventHandler(async (event) => {
       result: 'failed',
       sourceRoute,
       meta: {
-        reason: 'STORAGE_OBJECT_NOT_FOUND',
+        transport: 'file',
+        reason: storageObjectNotFound ? 'STORAGE_OBJECT_NOT_FOUND' : 'STORAGE_ERROR',
+        errorMessage: storageObjectNotFound ? undefined : toErrorMessage(error),
       },
     })
 
-    setResponseStatus(event, 404)
-    return fail('file not found', {
+    if (storageObjectNotFound) {
+      setResponseStatus(event, 404)
+      return fail('file not found', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 404125)
+    }
+
+    setResponseStatus(event, 502)
+    return fail('文件暂时不可用，请稍后重试。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 404125)
+    }, 502125)
   }
 })

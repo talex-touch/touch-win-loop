@@ -26,13 +26,15 @@ export type ResourcePreviewStatus = 'queued' | 'converting' | 'finalizing' | 'su
 export type ProjectResourceShareVisibility = 'public' | 'workspace'
 export type ProjectResourceShareDurationPreset = '1h' | '1d' | '3d' | '7d' | '1mon'
 export type ProjectIssueReviewSubmissionStatus = 'draft' | 'submitted'
-export type BillingUsageEventCode
-  = 'resource.download'
-    | 'resource.favorite.create'
-    | 'ai.topic_proposal.generate'
-    | 'review.submit'
-    | 'review.report.export'
-    | 'ai.defense.start'
+export const BILLING_USAGE_EVENT_CODES = [
+  'resource.download',
+  'resource.favorite.create',
+  'ai.topic_proposal.generate',
+  'review.submit',
+  'review.report.export',
+  'ai.defense.start',
+] as const
+export type BillingUsageEventCode = typeof BILLING_USAGE_EVENT_CODES[number]
 export type BillingUsageEventResult = 'success' | 'failed'
 
 export type ResourceCategory
@@ -902,6 +904,7 @@ export interface ProjectIssueReport {
   reviewSubmissionStatus: ProjectIssueReviewSubmissionStatus
   reviewSubmittedAt: string | null
   reviewSubmittedByUserId: string | null
+  reviewSubmittedByUsername?: string | null
   createdAt: string
   updatedAt: string
 }

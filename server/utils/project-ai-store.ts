@@ -48,6 +48,7 @@ interface ProjectIssueReportRow {
   review_submission_status: ProjectIssueReviewSubmissionStatus | string | null
   review_submitted_at: string | null
   review_submitted_by_user_id: string | null
+  review_submitted_by_username?: string | null
   created_by_user_id: string
   created_at: string
   updated_at: string
@@ -128,6 +129,7 @@ function mapProjectIssueReport(row: ProjectIssueReportRow): ProjectIssueReport {
     reviewSubmissionStatus: row.review_submission_status === 'submitted' ? 'submitted' : 'draft',
     reviewSubmittedAt: row.review_submitted_at,
     reviewSubmittedByUserId: row.review_submitted_by_user_id,
+    reviewSubmittedByUsername: row.review_submitted_by_username || null,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -586,23 +588,26 @@ export async function listProjectIssueReportsByProject(
   const limit = Math.max(1, Math.min(100, Number(input.limit || 20)))
   const result = await db.query<ProjectIssueReportRow>(
     `SELECT
-      id,
-      workspace_id,
-      project_id,
-      session_id,
-      source_mode,
-      title,
-      summary,
-      markdown,
-      review_submission_status,
-      review_submitted_at::TEXT,
-      review_submitted_by_user_id,
-      created_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM project_issue_reports
-     WHERE project_id = $1
-     ORDER BY created_at DESC
+      r.id,
+      r.workspace_id,
+      r.project_id,
+      r.session_id,
+      r.source_mode,
+      r.title,
+      r.summary,
+      r.markdown,
+      r.review_submission_status,
+      r.review_submitted_at::TEXT,
+      r.review_submitted_by_user_id,
+      reviewer.username AS review_submitted_by_username,
+      r.created_by_user_id,
+      r.created_at::TEXT,
+      r.updated_at::TEXT
+     FROM project_issue_reports r
+     LEFT JOIN users reviewer
+       ON reviewer.id = r.review_submitted_by_user_id
+     WHERE r.project_id = $1
+     ORDER BY r.created_at DESC
      LIMIT $2`,
     [input.projectId, limit],
   )
@@ -618,23 +623,26 @@ export async function getProjectIssueReportById(
 ): Promise<ProjectIssueReport | null> {
   const result = await db.query<ProjectIssueReportRow>(
     `SELECT
-      id,
-      workspace_id,
-      project_id,
-      session_id,
-      source_mode,
-      title,
-      summary,
-      markdown,
-      review_submission_status,
-      review_submitted_at::TEXT,
-      review_submitted_by_user_id,
-      created_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM project_issue_reports
-     WHERE project_id = $1
-       AND id = $2
+      r.id,
+      r.workspace_id,
+      r.project_id,
+      r.session_id,
+      r.source_mode,
+      r.title,
+      r.summary,
+      r.markdown,
+      r.review_submission_status,
+      r.review_submitted_at::TEXT,
+      r.review_submitted_by_user_id,
+      reviewer.username AS review_submitted_by_username,
+      r.created_by_user_id,
+      r.created_at::TEXT,
+      r.updated_at::TEXT
+     FROM project_issue_reports r
+     LEFT JOIN users reviewer
+       ON reviewer.id = r.review_submitted_by_user_id
+     WHERE r.project_id = $1
+       AND r.id = $2
      LIMIT 1`,
     [input.projectId, input.reportId],
   )
@@ -651,7 +659,7 @@ export async function submitProjectIssueReportForReview(
     actorUserId: string
   },
 ): Promise<{ report: ProjectIssueReport, justSubmitted: boolean } | null> {
-  const updated = await db.query<ProjectIssueReportRow>(
+  const updated = await db.query<{ id: string }>(
     `UPDATE project_issue_reports
      SET review_submission_status = 'submitted',
          review_submitted_at = COALESCE(review_submitted_at, NOW()),
@@ -660,28 +668,21 @@ export async function submitProjectIssueReportForReview(
      WHERE project_id = $1
        AND id = $2
        AND COALESCE(review_submission_status, 'draft') <> 'submitted'
-     RETURNING
-       id,
-       workspace_id,
-       project_id,
-       session_id,
-       source_mode,
-       title,
-       summary,
-       markdown,
-       review_submission_status,
-       review_submitted_at::TEXT,
-       review_submitted_by_user_id,
-       created_by_user_id,
-       created_at::TEXT,
-       updated_at::TEXT`,
+     RETURNING id`,
     [input.projectId, input.reportId, input.actorUserId],
   )
 
   const updatedRow = updated.rows[0]
   if (updatedRow) {
+    const report = await getProjectIssueReportById(db, {
+      projectId: input.projectId,
+      reportId: updatedRow.id,
+    })
+    if (!report)
+      return null
+
     return {
-      report: mapProjectIssueReport(updatedRow),
+      report,
       justSubmitted: true,
     }
   }

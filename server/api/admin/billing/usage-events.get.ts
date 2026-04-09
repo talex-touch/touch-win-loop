@@ -1,9 +1,10 @@
+import { setResponseStatus } from 'h3'
 import type {
   BillingUsageEventCode,
   BillingUsageEventResult,
   BillingUsageEventsPayload,
 } from '~~/shared/types/domain'
-import { setResponseStatus } from 'h3'
+import { BILLING_USAGE_EVENT_CODES } from '~~/shared/types/domain'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import {
@@ -13,15 +14,6 @@ import {
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-
-const BILLING_USAGE_EVENT_CODES: BillingUsageEventCode[] = [
-  'resource.download',
-  'resource.favorite.create',
-  'ai.topic_proposal.generate',
-  'review.submit',
-  'review.report.export',
-  'ai.defense.start',
-]
 
 const BILLING_USAGE_RESULTS: BillingUsageEventResult[] = ['success', 'failed']
 

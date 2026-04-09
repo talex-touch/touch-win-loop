@@ -73,6 +73,23 @@ function normalizeNullableText(value: unknown): string | null {
   return normalized || null
 }
 
+function normalizePositiveInt(
+  value: unknown,
+  fallback: number,
+  options?: {
+    min?: number
+    max?: number
+  },
+): number {
+  const parsed = Number.parseInt(normalizeString(value), 10)
+  if (Number.isNaN(parsed))
+    return fallback
+
+  const min = options?.min ?? Number.MIN_SAFE_INTEGER
+  const max = options?.max ?? Number.MAX_SAFE_INTEGER
+  return Math.min(max, Math.max(min, parsed))
+}
+
 function normalizeRecord(value: unknown): Record<string, unknown> {
   if (!value)
     return {}
@@ -232,8 +249,8 @@ export async function listBillingUsageEvents(
   db: Queryable,
   input: ListBillingUsageEventsInput,
 ): Promise<{ items: BillingUsageEvent[], total: number, page: number, pageSize: number }> {
-  const page = Math.max(1, Number(input.page || 1))
-  const pageSize = Math.max(1, Math.min(200, Number(input.pageSize || 20)))
+  const page = normalizePositiveInt(input.page, 1, { min: 1 })
+  const pageSize = normalizePositiveInt(input.pageSize, 20, { min: 1, max: 200 })
   const offset = (page - 1) * pageSize
   const filterState = buildFilterState(input)
 

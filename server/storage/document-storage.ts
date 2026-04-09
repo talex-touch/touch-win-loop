@@ -18,6 +18,47 @@ export interface DocumentStorage {
   deleteObject: (key: string) => Promise<void>
 }
 
+type StorageErrorLike = Error & {
+  code?: string
+  name?: string
+}
+
+export class DocumentStorageObjectNotFoundError extends Error {
+  constructor(readonly key: string) {
+    super(`对象存储文件不存在：${key}`)
+    this.name = 'DocumentStorageObjectNotFoundError'
+  }
+}
+
+function isFsObjectNotFoundError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'code' in error
+    && (error as StorageErrorLike).code === 'ENOENT',
+  )
+}
+
+function isRemoteObjectNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error))
+    return false
+
+  const storageError = error as StorageErrorLike
+  const normalizedMessage = error.message.toLowerCase()
+  return storageError.code === 'NoSuchKey'
+    || storageError.name === 'NoSuchKey'
+    || storageError.code === 'NotFound'
+    || storageError.name === 'NotFound'
+    || normalizedMessage.includes('no such key')
+    || normalizedMessage.includes('key does not exist')
+}
+
+export function isDocumentStorageObjectNotFoundError(error: unknown): error is DocumentStorageObjectNotFoundError {
+  return error instanceof DocumentStorageObjectNotFoundError
+    || isFsObjectNotFoundError(error)
+    || isRemoteObjectNotFoundError(error)
+}
+
 class LocalDocumentStorage implements DocumentStorage {
   provider = 'local'
 
@@ -30,7 +71,14 @@ class LocalDocumentStorage implements DocumentStorage {
   }
 
   async getObjectBuffer(key: string): Promise<Buffer> {
-    return readFile(this.resolveKey(key))
+    try {
+      return await readFile(this.resolveKey(key))
+    }
+    catch (error) {
+      if (isFsObjectNotFoundError(error))
+        throw new DocumentStorageObjectNotFoundError(key)
+      throw error
+    }
   }
 
   async deleteObject(key: string): Promise<void> {
@@ -121,11 +169,18 @@ class S3DocumentStorage implements DocumentStorage {
   }
 
   async getObjectBuffer(key: string): Promise<Buffer> {
-    const response = await this.client.send(new GetObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-    }))
-    return toBuffer(response.Body)
+    try {
+      const response = await this.client.send(new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+      }))
+      return toBuffer(response.Body)
+    }
+    catch (error) {
+      if (isRemoteObjectNotFoundError(error))
+        throw new DocumentStorageObjectNotFoundError(key)
+      throw error
+    }
   }
 
   async deleteObject(key: string): Promise<void> {

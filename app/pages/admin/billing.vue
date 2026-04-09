@@ -13,6 +13,7 @@ import type {
   WorkspaceBillingEstimate,
   WorkspaceWithQuota,
 } from "~~/shared/types/domain";
+import { BILLING_USAGE_EVENT_CODES } from "~~/shared/types/domain";
 
 definePageMeta({
   layout: "admin",
@@ -21,15 +22,6 @@ definePageMeta({
 const runtime = useRuntimeConfig();
 const { endpoint } = useApiEndpoint(runtime);
 const authApiFetch = useAuthApiFetch();
-
-const BILLING_USAGE_EVENT_CODES: BillingUsageEventCode[] = [
-  "resource.download",
-  "resource.favorite.create",
-  "ai.topic_proposal.generate",
-  "review.submit",
-  "review.report.export",
-  "ai.defense.start",
-];
 
 const permissions = ref<PlatformPermission[]>([]);
 const workspaces = ref<WorkspaceWithQuota[]>([]);

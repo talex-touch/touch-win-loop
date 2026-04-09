@@ -1,3 +1,4 @@
+import type { ProjectBillingScope } from '~~/server/utils/billing-usage-tracker'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -6,7 +7,7 @@ import {
   recordBillingUsageEventSafely,
   resolveBillingSourceRoute,
 } from '~~/server/utils/billing-usage-tracker'
-import { withTransaction } from '~~/server/utils/db'
+import { withClient, withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { submitProjectIssueReportForReview } from '~~/server/utils/project-ai-store'
@@ -18,6 +19,31 @@ export default defineEventHandler(async (event) => {
   const projectId = String(getRouterParam(event, 'id') || '').trim()
   const reportId = String(getRouterParam(event, 'reportId') || '').trim()
   const sourceRoute = resolveBillingSourceRoute(getQuery(event).sourceRoute, event.path)
+  let projectScope: ProjectBillingScope | null = null
+
+  const recordSubmitUsage = async (
+    result: 'success' | 'failed',
+    meta?: Record<string, unknown>,
+  ) => {
+    const scope = projectScope
+    if (!scope)
+      return
+
+    await withClient(event, async (db) => {
+      await recordBillingUsageEventSafely(db, {
+        workspaceId: scope.workspaceId,
+        projectId: scope.projectId,
+        contestId: scope.contestId,
+        trackId: scope.trackId,
+        reportId,
+        actorUserId: user.id,
+        eventCode: 'review.submit',
+        result,
+        sourceRoute,
+        meta,
+      })
+    }).catch(() => undefined)
+  }
 
   if (!projectId || !reportId) {
     setResponseStatus(event, 400)
@@ -32,28 +58,13 @@ export default defineEventHandler(async (event) => {
 
   try {
     const result = await withTransaction(event, async (db) => {
-      const projectScope = await getProjectBillingScopeById(db, projectId)
+      projectScope = await getProjectBillingScopeById(db, projectId)
       if (!projectScope)
         throw new Error('PROJECT_NOT_FOUND')
 
       const project = await getVisibleProjectById(db, user, projectId)
-      if (!project) {
-        await recordBillingUsageEventSafely(db, {
-          workspaceId: projectScope.workspaceId,
-          projectId: projectScope.projectId,
-          contestId: projectScope.contestId,
-          trackId: projectScope.trackId,
-          reportId,
-          actorUserId: user.id,
-          eventCode: 'review.submit',
-          result: 'failed',
-          sourceRoute,
-          meta: {
-            reason: 'PROJECT_NOT_VISIBLE',
-          },
-        })
+      if (!project)
         throw new Error('PROJECT_NOT_VISIBLE')
-      }
 
       const submitted = await submitProjectIssueReportForReview(db, {
         projectId,
@@ -61,43 +72,17 @@ export default defineEventHandler(async (event) => {
         actorUserId: user.id,
       })
 
-      if (!submitted) {
-        await recordBillingUsageEventSafely(db, {
-          workspaceId: projectScope.workspaceId,
-          projectId: projectScope.projectId,
-          contestId: projectScope.contestId,
-          trackId: projectScope.trackId,
-          reportId,
-          actorUserId: user.id,
-          eventCode: 'review.submit',
-          result: 'failed',
-          sourceRoute,
-          meta: {
-            reason: 'REPORT_NOT_FOUND',
-          },
-        })
+      if (!submitted)
         throw new Error('REPORT_NOT_FOUND')
-      }
-
-      if (submitted.justSubmitted) {
-        await recordBillingUsageEventSafely(db, {
-          workspaceId: projectScope.workspaceId,
-          projectId: projectScope.projectId,
-          contestId: projectScope.contestId,
-          trackId: projectScope.trackId,
-          reportId,
-          actorUserId: user.id,
-          eventCode: 'review.submit',
-          result: 'success',
-          sourceRoute,
-          meta: {
-            justSubmitted: true,
-          },
-        })
-      }
 
       return submitted
     })
+
+    if (result.justSubmitted) {
+      await recordSubmitUsage('success', {
+        justSubmitted: true,
+      })
+    }
 
     return ok(result, {
       startedAt,
@@ -108,6 +93,18 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error) {
+    if (error instanceof Error && error.message === 'PROJECT_NOT_VISIBLE') {
+      await recordSubmitUsage('failed', {
+        reason: 'PROJECT_NOT_VISIBLE',
+      })
+    }
+
+    if (error instanceof Error && error.message === 'REPORT_NOT_FOUND') {
+      await recordSubmitUsage('failed', {
+        reason: 'REPORT_NOT_FOUND',
+      })
+    }
+
     if (error instanceof Error && (error.message === 'PROJECT_NOT_FOUND' || error.message === 'PROJECT_NOT_VISIBLE')) {
       setResponseStatus(event, 404)
       return fail('project not found', {

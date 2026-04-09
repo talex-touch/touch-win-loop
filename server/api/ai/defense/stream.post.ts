@@ -1,4 +1,5 @@
 import type {
+  AiChatSession,
   AiDefenseRequest,
   AiDefenseResult,
   AiDefenseStreamEvent,
@@ -269,20 +270,23 @@ export default defineEventHandler(async (event) => {
       );
       if (!canUseWorkspace) throw new Error("FORBIDDEN");
 
-      let existingSession = request.sessionId
-        ? await getAiChatSessionById(db, {
-            workspaceId,
-            sessionId: request.sessionId,
-            projectId: scopeProjectId,
-            mode: scopeMode,
-            strictScope: Boolean(scopeProjectId),
-          })
-        : null;
+      let existingSession: AiChatSession | null = null;
+      let createdNewSession = false;
+      let existingMessageCount = 0;
 
-      const createdNewSession = !existingSession;
-      const existingMessageCount = existingSession?.messageCount || 0;
-
-      if (!existingSession) {
+      if (request.sessionId) {
+        existingSession = await getAiChatSessionById(db, {
+          workspaceId,
+          sessionId: request.sessionId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          strictScope: Boolean(scopeProjectId),
+        });
+        if (!existingSession)
+          throw new Error("SESSION_NOT_FOUND");
+        existingMessageCount = existingSession.messageCount || 0;
+      }
+      else {
         existingSession = await createAiChatSession(db, {
           workspaceId,
           projectId: scopeProjectId,
@@ -293,9 +297,11 @@ export default defineEventHandler(async (event) => {
           trackId: request.context.trackId,
           major: request.context.major,
         });
+        createdNewSession = true;
       }
 
-      if (!existingSession) throw new Error("SESSION_NOT_FOUND");
+      if (!existingSession)
+        throw new Error("SESSION_NOT_FOUND");
 
       const shouldRecordStart = createdNewSession || existingMessageCount === 0;
 
