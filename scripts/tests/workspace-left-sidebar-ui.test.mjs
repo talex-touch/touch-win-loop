@@ -11,11 +11,13 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   const railSource = await readFile(WORKSPACE_LEFT_RAIL_FILE, 'utf8')
 
   assert.match(source, /collapsed\?: boolean/, 'WorkspaceLeftSidebar 缺少 collapsed prop')
+  assert.match(source, /tabSpacingPreset\?: WorkspaceTabSpacingPreset \| ''/, 'WorkspaceLeftSidebar 缺少标签边距预设入参')
   assert.match(source, /'update:collapsed': \[value: boolean\]/, 'WorkspaceLeftSidebar 缺少折叠态更新事件')
   assert.match(source, /<WorkspaceLeftRail/, 'WorkspaceLeftSidebar 缺少常驻 left rail')
   assert.match(source, /:collapsed="props\.collapsed"/, 'WorkspaceLeftSidebar 未向 left rail 透传折叠态')
   assert.match(source, /v-show="!props\.collapsed" class="workspace-left-panel"/, 'WorkspaceLeftSidebar 未改成只折叠右侧 panel')
   assert.match(source, /workspace-left-dock--collapsed/, 'WorkspaceLeftSidebar 缺少折叠宽度样式')
+  assert.match(source, /workspace-left-dock--compact/, 'WorkspaceLeftSidebar 未为紧凑标签边距提供列表压缩样式')
   assert.match(railSource, /workspace-left-rail__item--active': !collapsed && item\.id === activeId/, 'left rail 在折叠态仍显示顶部模块选中标识')
 })
 
