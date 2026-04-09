@@ -22,6 +22,7 @@ const PROJECT_SETTINGS_PATCH_FILE = resolve(process.cwd(), 'server/api/projects/
 const PROJECT_SETTINGS_DRAFT_PATCH_FILE = resolve(process.cwd(), 'server/api/projects/[id]/settings-draft.patch.ts')
 const PROJECT_QUICK_CREATE_FILE = resolve(process.cwd(), 'server/api/projects/quick.post.ts')
 const PLATFORM_STORE_FILE = resolve(process.cwd(), 'server/utils/platform-store.ts')
+const UNSAFE_FETCH_PLUGIN_FILE = resolve(process.cwd(), 'app/plugins/unsafe-fetch.ts')
 
 it('team dashboard 基于计费估算计算项目配额剩余值', async () => {
   const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
@@ -51,6 +52,28 @@ it('team dashboard 只保留轻量 summary 文案，不再展示 summary 小块'
   assert.doesNotMatch(source, /#summary/, 'Team dashboard 仍在渲染自定义 summary slot')
   assert.doesNotMatch(source, /:summary-text=/, 'Team dashboard 仍在展示可见项目提示')
   assert.doesNotMatch(source, /:primary-action-hint-text=/, 'Team dashboard 仍在展示只读成员提示')
+})
+
+it('team dashboard 仅在主数据加载成功后渲染整合面板', async () => {
+  const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
+
+  assert.match(source, /const loading = ref\(true\)/, 'Team dashboard 首屏未默认进入 loading，容易先渲染空面板')
+  assert.match(source, /const shouldRenderIntegratedPanels = computed\(\(\) => !loading\.value && !errorText\.value\)/, 'Team dashboard 缺少整合面板错误边界')
+  assert.match(source, /<section\s+v-if="shouldRenderIntegratedPanels"[\s\S]*data-testid="team-dashboard-integrated-panels"/, 'Team dashboard 未在加载失败时隐藏整合面板')
+  assert.match(source, /const legacyProjectId = normalizeQueryValue\(route\.query\.projectId\)/, 'Team dashboard 缺少 legacy projectId 兼容跳转')
+  assert.doesNotMatch(source, /endpoint\(`\/teams\/\$\{workspaceId\}\/last-project`\)/, 'Team dashboard 仍会按最近项目自动跳转进项目工作区')
+  assert.match(source, /const \[projectsResult, contestsResult\] = await Promise\.allSettled\(\[/, 'Team dashboard 仍会因 contests 预加载失败而整体报错')
+  assert.match(source, /if \(projectsResult\.status !== 'fulfilled'\)\s+throw projectsResult\.reason/, 'Team dashboard 未将 projects 作为唯一必需主数据源')
+  assert.match(source, /console\.error\('\[team-dashboard\] preload contests failed'/, 'Team dashboard 未记录 contests 降级日志')
+  assert.match(source, /console\.error\('\[team-dashboard\] loadWorkspaceDashboard failed'/, 'Team dashboard 未记录主加载失败日志')
+  assert.match(source, /error\?\.response\?\._data\?\.message/, 'Team dashboard 未透传响应体中的后端错误消息')
+})
+
+it('unsafeFetch 默认透传认证上下文', async () => {
+  const source = await readFile(UNSAFE_FETCH_PLUGIN_FILE, 'utf8')
+
+  assert.match(source, /globalThis\.unsafeFetch = \(\(request, options = \{\}\) => \{/, 'unsafeFetch 未包装统一请求入口')
+  assert.match(source, /credentials: options\?\.credentials \?\? 'include'/, 'unsafeFetch 未默认包含认证凭据，跨域或代理场景下会丢失登录态')
 })
 
 it('项目卡展示图标徽标、底部摘要区、快捷操作区与稳定 display fallback', async () => {

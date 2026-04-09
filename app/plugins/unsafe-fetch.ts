@@ -4,8 +4,13 @@ declare global {
   var unsafeFetch: UnsafeFetch
 }
 
-export default defineNuxtPlugin((nuxtApp) => {
-  globalThis.unsafeFetch = nuxtApp.$fetch as UnsafeFetch
+export default defineNuxtPlugin(() => {
+  globalThis.unsafeFetch = ((request, options = {}) => {
+    return $fetch(request, {
+      ...options,
+      credentials: options?.credentials ?? 'include',
+    })
+  }) as UnsafeFetch
 })
 
 export {}
