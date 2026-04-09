@@ -28,8 +28,8 @@ export function useDashboardWorkspace() {
   const runtime = useRuntimeConfig()
   const { endpoint } = useApiEndpoint(runtime)
 
-  const searchQuery = ref('')
-  const feedFilter = ref<DashboardFeedFilter>('ongoing')
+  const searchQuery = useState('dashboard:search-query', () => '')
+  const feedFilter = useState<DashboardFeedFilter>('dashboard:feed-filter', () => 'ongoing')
   const overviewLoading = ref(false)
   const overviewError = ref('')
 
@@ -39,7 +39,7 @@ export function useDashboardWorkspace() {
   }
 
   const menuItems: DashboardMenuItem[] = [
-    { id: 'overview', label: '首页概览', icon: 'dashboard', to: '/dashboard' },
+    { id: 'overview', label: 'Loopy', icon: 'smart_toy', to: '/dashboard' },
     { id: 'contests', label: '赛事总库', icon: 'trophy', to: '/contests' },
     { id: 'resources', label: '资料中心', icon: 'folder_open', to: '/resources' },
     { id: 'team', label: '项目台', icon: 'construction', to: '/team' },

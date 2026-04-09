@@ -28,6 +28,9 @@ export default defineEventHandler(async (event) => {
   const { runtime, overrides, configSource } = await readEffectivePlatformRuntimeSettings(event)
 
   return ok({
+    auth: {
+      registrationEnabled: runtime.auth.registrationEnabled,
+    },
     feishuScheduler: {
       enabled: runtime.feishuScheduler.enabled,
       intervalMs: runtime.feishuScheduler.intervalMs,

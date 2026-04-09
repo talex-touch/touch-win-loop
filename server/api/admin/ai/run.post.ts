@@ -20,7 +20,6 @@ import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
 const ALLOWED_TASK_TYPES: AdminAgentTaskType[] = [
   'publish_assistant',
-  'import_sync_analysis',
   'general',
 ]
 
@@ -41,9 +40,6 @@ function normalizeRequest(body: Partial<AdminAgentRunRequest> | null | undefined
     context: {
       trackId: String(context.trackId || '').trim() || undefined,
       major: String(context.major || '').trim() || undefined,
-      csvText: String(context.csvText || '').trim() || undefined,
-      sourceId: String(context.sourceId || '').trim() || undefined,
-      sourceUrl: String(context.sourceUrl || '').trim() || undefined,
       targetModule: context.targetModule,
     },
   }
@@ -52,18 +48,15 @@ function normalizeRequest(body: Partial<AdminAgentRunRequest> | null | undefined
 function buildSessionTitle(request: AdminAgentRunRequest): string {
   const map: Record<AdminAgentTaskType, string> = {
     publish_assistant: '发布助手',
-    import_sync_analysis: '导入同步分析',
     general: '管理助手',
   }
 
   return `管理助手 · ${map[request.taskType]}`
 }
 
-function resolveAdminChannelKey(taskType: AdminAgentTaskType): 'admin_general' | 'admin_publish_assistant' | 'admin_import_sync_analysis' {
+function resolveAdminChannelKey(taskType: AdminAgentTaskType): 'admin_general' | 'admin_publish_assistant' {
   if (taskType === 'publish_assistant')
     return 'admin_publish_assistant'
-  if (taskType === 'import_sync_analysis')
-    return 'admin_import_sync_analysis'
   return 'admin_general'
 }
 

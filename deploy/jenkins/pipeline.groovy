@@ -274,6 +274,31 @@ void runPipeline(script, Map config = [:]) {
       }
     }
 
+    script.stage('Notify Feishu Start') {
+      try {
+        sendFeishuDeployNotification(script, [
+          feishuWebhookCredentialsId: config.feishuWebhookCredentialsId,
+          feishuWebhookSecretCredentialsId: config.feishuWebhookSecretCredentialsId,
+          sshCredentialsId: sshCredentialsId,
+          sshTarget: sshTarget,
+          sshOptions: sshOptions,
+        ], [
+          resultLabel: '开始',
+          deployEnvironment: deployEnvironment,
+          branch: branch,
+          buildVersion: buildVersion,
+          buildCommitSha: shortenSha(buildCommitSha),
+          imageRef: truncateText(imageRef, 120),
+          triggeredBy: triggeredBy,
+          workflowRunUrl: workflowRunUrl,
+          buildUrl: String.valueOf(script.env.BUILD_URL ?: '').trim(),
+        ])
+      }
+      catch (Throwable notifyError) {
+        script.echo("Feishu start notification failed: ${notifyError.message}")
+      }
+    }
+
     script.stage('Deploy over SSH') {
       script.withCredentials([
         [

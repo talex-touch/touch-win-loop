@@ -22,7 +22,7 @@ const contestId = computed(() => {
 const workspaceRootPath = computed(() => `/admin/contests/${contestId.value}`)
 const normalizedRoutePath = computed(() => route.path.replace(/\/+$/, ''))
 
-type WorkspaceModuleKey = 'overview' | 'faq' | 'tracks' | 'timelines' | 'rubrics' | 'resources' | 'prompts' | 'audit'
+type WorkspaceModuleKey = 'overview' | 'faq' | 'tracks' | 'trackTimelines' | 'timelines' | 'rubrics' | 'resources' | 'knowledge' | 'prompts' | 'audit'
 
 const workspaceModules = computed(() => {
   const id = contestId.value
@@ -30,9 +30,11 @@ const workspaceModules = computed(() => {
     { key: 'overview' as const, label: '基础信息', path: `/admin/contests/${id}/overview/edit` },
     { key: 'faq' as const, label: 'FAQ', path: `/admin/contests/${id}/faq` },
     { key: 'tracks' as const, label: '赛道管理', path: `/admin/contests/${id}/tracks` },
+    { key: 'trackTimelines' as const, label: '赛道时间线', path: `/admin/contests/${id}/track-timelines` },
     { key: 'timelines' as const, label: '时间节点', path: `/admin/contests/${id}/timelines` },
     { key: 'rubrics' as const, label: '评委细则', path: `/admin/contests/${id}/rubrics` },
     { key: 'resources' as const, label: '资料中心', path: `/admin/contests/${id}/resources` },
+    { key: 'knowledge' as const, label: '知识库治理', path: `/admin/contests/${id}/knowledge` },
     { key: 'prompts' as const, label: 'AI 提示词', path: `/admin/contests/${id}/ai-prompts` },
     { key: 'audit' as const, label: '审计历史', path: `/admin/contests/${id}/audit` },
   ]
@@ -52,12 +54,16 @@ function resolveModuleFromPath(path: string): WorkspaceModuleKey {
     return 'faq'
   if (tail.startsWith('tracks'))
     return 'tracks'
+  if (tail.startsWith('track-timelines'))
+    return 'trackTimelines'
   if (tail.startsWith('timelines'))
     return 'timelines'
   if (tail.startsWith('rubrics'))
     return 'rubrics'
   if (tail.startsWith('resources'))
     return 'resources'
+  if (tail.startsWith('knowledge'))
+    return 'knowledge'
   if (tail.startsWith('ai-prompts'))
     return 'prompts'
   if (tail.startsWith('audit'))

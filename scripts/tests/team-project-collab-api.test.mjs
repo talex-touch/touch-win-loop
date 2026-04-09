@@ -6,6 +6,7 @@ import { it } from 'vitest'
 const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
 const DB_SCHEMA_FILE = resolve(process.cwd(), 'server/utils/db.ts')
 const PLATFORM_STORE_FILE = resolve(process.cwd(), 'server/utils/platform-store.ts')
+const TEAM_INVITATION_STORE_FILE = resolve(process.cwd(), 'server/utils/team-invitation-store.ts')
 const CONTEST_STORE_FILE = resolve(process.cwd(), 'server/utils/contest-store.ts')
 const PROJECT_MEMBER_GET_FILE = resolve(process.cwd(), 'server/api/projects/[id]/members.get.ts')
 const PROJECT_INVITATION_CREATE_FILE = resolve(process.cwd(), 'server/api/projects/[id]/invitations/index.post.ts')
@@ -54,6 +55,14 @@ it('所有项目统一执行 15 席位上限与 3 位指导老师上限', async 
   assert.match(platformSource, /if \(resolvedIds\.length > MAX_PROJECT_ADVISOR_COUNT\)\s+throw new Error\('PROJECT_ADVISOR_LIMIT_EXCEEDED'\)/, '指导老师上限未限制为 3')
   assert.match(platformSource, /if \(nextSeatLimit > MAX_PROJECT_SEAT_LIMIT\)\s+throw new Error\('PROJECT_SEAT_LIMIT_MAX_EXCEEDED'\)/, '项目 seat 调整未统一限制为最大 15')
   assert.match(platformSource, /await assertProjectSeatAvailable\(db, input\.projectId, project\.workspaceId, 1\)/, '项目邀请创建未在满员或超限时阻止继续邀请')
+})
+
+it('项目邀请接受对通用链接支持多人复用，并继续补齐 Team member + 项目角色', async () => {
+  const source = await readFile(TEAM_INVITATION_STORE_FILE, 'utf8')
+
+  assert.match(source, /const isTargetedInvitation = Boolean\(invitation\.invitee_username\)/, '项目邀请接受链路未区分通用与定向邀请')
+  assert.match(source, /if \(!isTargetedInvitation\) \{[\s\S]*teamEnsureWorkspaceMember\(db, invitation\.workspace_id, user\.id, invitation\.role\)[\s\S]*ensureResolvedInvitationProjectMember\(db, invitation, resolvedProjectId, user\.id\)[\s\S]*acceptedAt: null[\s\S]*\}/, '通用项目邀请未在多人复用时补齐 Team member 与项目角色')
+  assert.match(source, /if \(isTargetedInvitation && invitation\.accepted_at\)/, '定向项目邀请未保留 accepted_at 单次消费语义')
 })
 
 it('personal 与 business 在项目数量能力上保持一致，不再默认限制 personal 仅 2 个项目', async () => {

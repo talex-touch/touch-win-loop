@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import NotificationBellButton from '~/components/notifications/NotificationBellButton.vue'
+
 interface WorkspaceQuickSwitchProject {
   projectId: string
   workspaceId: string
@@ -10,11 +12,13 @@ interface WorkspaceQuickSwitchProject {
 const props = withDefaults(defineProps<{
   modelValue?: string
   projectName?: string
+  workspaceId?: string
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
 }>(), {
   modelValue: '',
   projectName: '未命名项目',
+  workspaceId: '',
   myProjects: () => [],
   recentProjects: () => [],
 })
@@ -221,9 +225,7 @@ onBeforeUnmount(() => {
       >
         终审
       </button>
-      <button class="text-slate-500 p-1.5 rounded transition-colors hover:bg-slate-100">
-        <span class="material-symbols-outlined text-xl">notifications</span>
-      </button>
+      <NotificationBellButton compact :workspace-id="props.workspaceId" />
       <div class="border border-slate-300 rounded-full bg-slate-200 h-6 w-6 overflow-hidden">
         <img
           alt="avatar"

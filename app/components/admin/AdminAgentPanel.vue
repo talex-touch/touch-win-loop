@@ -52,7 +52,6 @@ function toJsonPayload(value: unknown): Record<string, unknown> {
 
 const taskTypeOptions: Array<{ value: AdminAgentTaskType, label: string }> = [
   { value: 'publish_assistant', label: '发布助手' },
-  { value: 'import_sync_analysis', label: '导入/同步分析' },
   { value: 'general', label: '通用咨询' },
 ]
 
@@ -75,9 +74,6 @@ const taskType = ref<AdminAgentTaskType>('publish_assistant')
 const message = ref('')
 const trackId = ref('')
 const major = ref('')
-const csvText = ref('')
-const sourceId = ref('')
-const sourceUrl = ref('')
 
 const timeline = ref<TimelineItem[]>([])
 const artifacts = ref<AdminAgentArtifact[]>([])
@@ -90,14 +86,14 @@ const runMeta = ref<{
 
 const contestDraftCount = computed(() => draftBridge.listDrafts(props.contestId).length)
 
-const showImportOptions = computed(() => taskType.value === 'import_sync_analysis')
-
 const modulePathMap: Record<AdminDraftModule, string> = {
   overview: '/overview/edit',
   tracks: '/tracks',
   timelines: '/timelines',
+  track_timelines: '/track-timelines',
   rubrics: '/rubrics',
   resources: '/resources',
+  knowledge: '/knowledge',
 }
 
 function pushTimeline(type: AdminAgentStreamEventType, text: string) {
@@ -243,14 +239,6 @@ function buildRequestBody(): AdminAgentRunRequest {
     context.trackId = trackId.value
   if (major.value)
     context.major = major.value
-  if (showImportOptions.value) {
-    if (csvText.value.trim())
-      context.csvText = csvText.value.trim()
-    if (sourceId.value.trim())
-      context.sourceId = sourceId.value.trim()
-    if (sourceUrl.value.trim())
-      context.sourceUrl = sourceUrl.value.trim()
-  }
 
   return {
     workspaceId: props.workspaceId,
@@ -491,16 +479,6 @@ watch(activeSessionId, async (value, previous) => {
       </a-select>
 
       <a-input v-model="major" size="small" placeholder="专业（可选）" />
-
-      <template v-if="showImportOptions">
-        <a-input v-model="sourceId" size="small" placeholder="同步源 ID（可选）" />
-        <a-input v-model="sourceUrl" size="small" placeholder="同步源 URL（可选）" />
-        <a-textarea
-          v-model="csvText"
-          :auto-size="{ minRows: 2, maxRows: 5 }"
-          placeholder="CSV 文本（可选）"
-        />
-      </template>
 
       <a-textarea
         v-model="message"

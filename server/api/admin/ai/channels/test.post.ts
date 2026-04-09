@@ -29,7 +29,6 @@ function resolveChannelKey(raw: unknown): PlatformAiChannelKey {
     'workspace_issue_discovery',
     'admin_general',
     'admin_publish_assistant',
-    'admin_import_sync_analysis',
   ]
   return allowed.includes(text) ? text : DEFAULT_CHANNEL
 }

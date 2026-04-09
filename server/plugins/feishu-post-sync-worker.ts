@@ -17,6 +17,7 @@ import {
   upsertFeishuSearchIndexDoc,
   upsertFeishuVectorChunk,
 } from '~~/server/utils/feishu-integration-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const FEISHU_POST_SYNC_WORKER_KEY = Symbol.for('winloop.feishu.post-sync-worker.runtime.v1')
 
@@ -123,7 +124,7 @@ async function handleEmbeddingUpsert(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'resource'
+    scope: 'contest' | 'track' | 'track_timeline' | 'resource'
     entityId: string
     externalId: string
     sourceHash: string
@@ -194,7 +195,7 @@ async function handleSearchIndexRefresh(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'resource'
+    scope: 'contest' | 'track' | 'track_timeline' | 'resource'
     entityId: string
     externalId: string
     sourceHash: string
@@ -234,7 +235,7 @@ async function handleEntityAnalysis(
     id: string
     syncItemId: string | null
     runId: string | null
-    scope: 'contest' | 'track' | 'resource'
+    scope: 'contest' | 'track' | 'track_timeline' | 'resource'
     entityId: string
     externalId: string
     sourceHash: string
@@ -379,6 +380,10 @@ async function processSingleTask(): Promise<boolean> {
         },
       })
     })
+    captureServerException(error, {
+      module: 'feishu-post-sync-worker',
+      taskId: task.id,
+    })
   }
 
   return true
@@ -415,11 +420,17 @@ export default defineNitroPlugin((nitroApp) => {
 
   void runTick().catch((error) => {
     console.error('[feishu-post-sync-worker] bootstrap failed:', toErrorMessage(error))
+    captureServerException(error, {
+      module: 'feishu-post-sync-worker',
+    })
   })
 
   runtimeState.timer = setInterval(() => {
     void runTick().catch((error) => {
       console.error('[feishu-post-sync-worker] tick failed:', toErrorMessage(error))
+      captureServerException(error, {
+        module: 'feishu-post-sync-worker',
+      })
     })
   }, intervalMs)
   runtimeState.timer.unref?.()

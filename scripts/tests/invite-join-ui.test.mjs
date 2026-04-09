@@ -36,6 +36,13 @@ it('team dashboard 与项目工作区都会消费 joined=1 一次性提示', asy
   assert.match(teamProjectSource, /if \(key === 'joined'\)\s+continue/, '项目工作区未清理 joined query')
 })
 
+it('邀请入口会明确区分通用链接与指定用户名邀请', async () => {
+  const teamDetailSource = await readFile(TEAM_DETAIL_FILE, 'utf8')
+
+  assert.match(teamDetailSource, /留空用户名 = 通用链接可多人加入；填写后仅指定账号可加入/, 'Team dashboard 邀请入口未说明通用链接与定向邀请的区别')
+  assert.match(teamDetailSource, /placeholder="留空则生成可多人加入的通用邀请链接"/, 'Team dashboard 邀请输入框未标注通用链接可多人加入')
+})
+
 it('/team 负责解析当前活跃项目台，/workspace 旧入口直接 404 下线', async () => {
   const teamHomeSource = await readFile(TEAM_HOME_FILE, 'utf8')
   const workspaceHomeSource = await readFile(WORKSPACE_HOME_FILE, 'utf8')

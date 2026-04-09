@@ -82,6 +82,7 @@ WINLOOP_CONTEST_AUTO_SEED=false
 - Redis 主要用于运行时配置信息与预留能力。
 - AI / 飞书等敏感配置支持加密存储。
 - 资源回收 worker 参数改为后台 UI 管理，不再从 Env 读取。
+- Sentry 为可选能力；未配置 `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT` 时应用仍可正常运行，只是不启用错误上报。
 
 ## 相关文档
 

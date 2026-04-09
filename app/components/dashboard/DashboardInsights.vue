@@ -3,55 +3,97 @@ import type { DashboardInsight } from '~/types/dashboard'
 
 withDefaults(defineProps<{
   insights?: DashboardInsight[]
+  loading?: boolean
+  moreTo?: string
 }>(), {
   insights: () => [],
+  loading: false,
+  moreTo: '/team',
 })
 
 const badgeClassMap: Record<DashboardInsight['tone'], string> = {
-  primary: 'bg-blue-100 text-blue-700',
-  success: 'bg-green-100 text-green-700',
+  primary: 'db-chip db-chip-primary',
+  success: 'db-chip db-chip-success',
 }
 </script>
 
 <template>
-  <section>
-    <div class="mb-4 flex items-center justify-between">
-      <h3 class="text-lg text-slate-900 font-bold flex gap-2 items-center">
-        <span class="material-symbols-outlined text-blue-700">auto_awesome</span>
-        AI 智能洞察
-      </h3>
-      <NuxtLink to="/team" class="text-sm text-blue-700 font-medium hover:underline">
+  <section class="db-appear" style="animation-delay: 300ms;">
+    <div class="mb-5 flex flex-wrap gap-3 items-end justify-between">
+      <div>
+        <p class="db-eyebrow db-eyebrow-tight">
+          AI Insights
+        </p>
+        <h3 class="text-2xl font-black tracking-[-0.03em] text-slate-900 flex gap-2 items-center">
+          <span class="rounded-2xl bg-[var(--db-primary-soft)] text-[var(--db-primary)] flex h-10 w-10 items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">auto_awesome</span>
+          </span>
+          AI 智能洞察
+        </h3>
+        <p class="db-muted mt-2 text-sm leading-6">
+          将当前最值得关注的趋势、项目进度与建议动作集中展示。
+        </p>
+      </div>
+      <NuxtLink :to="moreTo" class="db-btn db-btn-ghost db-focus-ring">
         查看全部
       </NuxtLink>
     </div>
 
-    <div class="gap-4 grid grid-cols-1 md:grid-cols-2">
+    <div v-if="loading" class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <article
+        v-for="index in 2"
+        :key="`dashboard-insight-skeleton-${index}`"
+        class="db-panel p-5"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <div class="db-skeleton h-7 w-24 rounded-full" />
+          <div class="db-skeleton h-5 w-16 rounded-full" />
+        </div>
+        <div class="db-skeleton mt-5 h-7 w-3/4 rounded-2xl" />
+        <div class="db-skeleton mt-3 h-20 w-full rounded-[18px]" />
+        <div class="db-skeleton mt-5 h-12 w-full rounded-[18px]" />
+      </article>
+    </div>
+
+    <div v-else-if="insights.length === 0" class="db-panel db-panel-muted px-5 py-6 text-sm text-slate-500">
+      当前暂无可展示的智能洞察。
+    </div>
+
+    <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2">
       <article
         v-for="item in insights"
         :key="item.id"
-        class="group p-5 border border-blue-100 rounded-xl bg-white shadow-sm transition-shadow hover:shadow-md"
+        class="db-panel db-hover-lift group relative overflow-hidden p-5"
       >
-        <div class="mb-3 flex items-start justify-between">
-          <span class="text-[10px] tracking-wider font-bold px-2 py-1 rounded uppercase" :class="badgeClassMap[item.tone]">
-            {{ item.tag }}
-          </span>
-          <span class="text-xs text-slate-400">{{ item.publishedAt }}</span>
-        </div>
-        <h4 class="text-slate-900 font-bold transition-colors group-hover:text-blue-700">
-          {{ item.title }}
-        </h4>
-        <p class="text-sm text-slate-600 leading-relaxed mt-2">
-          {{ item.description }}
-        </p>
-        <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
-          <span class="text-xs text-slate-500 font-medium flex gap-1 items-center">
-            <span class="material-symbols-outlined text-xs">{{ item.metricIcon }}</span>
-            {{ item.metricText }}
-          </span>
-          <button class="text-xs text-blue-700 font-bold flex gap-1 items-center">
-            {{ item.actionText }}
-            <span class="material-symbols-outlined text-sm">arrow_forward</span>
-          </button>
+        <div class="absolute right-[-18px] top-[-26px] h-24 w-24 rounded-full bg-[rgba(36,84,215,0.08)] blur-2xl" />
+        <div class="relative">
+          <div class="mb-4 flex items-start justify-between gap-3">
+            <span :class="badgeClassMap[item.tone]">
+              {{ item.tag }}
+            </span>
+            <span class="text-xs text-[var(--db-subtle)]">
+              {{ item.publishedAt }}
+            </span>
+          </div>
+
+          <h4 class="text-lg font-bold leading-7 text-slate-900 transition-colors group-hover:text-[var(--db-primary)]">
+            {{ item.title }}
+          </h4>
+          <p class="db-muted mt-3 text-sm leading-7">
+            {{ item.description }}
+          </p>
+
+          <div class="mt-5 rounded-[18px] border border-[var(--db-border)] bg-[var(--db-bg-alt)] px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
+            <span class="text-sm text-slate-600 font-medium flex gap-2 items-center">
+              <span class="rounded-xl bg-white text-[var(--db-primary)] flex h-8 w-8 items-center justify-center shadow-sm">
+                <span class="material-symbols-outlined text-base">{{ item.metricIcon }}</span>
+              </span>
+              {{ item.metricText }}
+            </span>
+            <span class="db-chip db-chip-primary">
+              {{ item.actionText }}
+            </span>
+          </div>
         </div>
       </article>
     </div>

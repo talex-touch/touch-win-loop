@@ -12,12 +12,14 @@ export interface FeishuDefaultSyncItemConfig {
 const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['竞赛', '赛事', 'contest', 'match'],
   track: ['赛道', '方向', 'track'],
+  track_timeline: ['赛道时间线', '赛道节点', '赛道日程', 'tracktimeline', 'track_timeline'],
   resource: ['资料', '资源', '素材', '文档', 'resource', 'material'],
 }
 
 const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['externalId', 'name', 'officialUrl'],
   track: ['externalId', 'contestExternalId', 'name'],
+  track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['externalId', 'contestExternalId', 'title', 'url'],
 }
 
@@ -70,14 +72,44 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         fieldMap: {
           name: '',
           summary: '',
+          coverImageUrl: '',
+          location: '',
+          organizer: '',
+          undertaker: '',
+          participantRequirements: '',
+          teamRule: '',
+          awardRatio: '',
           suitableMajors: '',
           deliverableTypes: '',
           sortOrder: '',
+          evidenceRequirements: '',
+          scoringPoints: '',
+          deductionItems: '',
         },
       },
       options: {
         contestId: '',
       },
+      writeback: buildDefaultWriteback(),
+    }
+  }
+
+  if (entityType === 'track_timeline') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        trackExternalIdField: '',
+        fieldMap: {
+          year: '',
+          nodeType: '',
+          startAt: '',
+          endAt: '',
+          note: '',
+          sourceLink: '',
+        },
+      },
+      options: {},
       writeback: buildDefaultWriteback(),
     }
   }
@@ -134,7 +166,7 @@ export function suggestSyncItemEntityType(input: {
   if (!sourceText)
     return null
 
-  for (const entityType of ['track', 'resource', 'contest'] as const) {
+  for (const entityType of ['track_timeline', 'track', 'resource', 'contest'] as const) {
     const hints = ENTITY_TYPE_SOURCE_HINTS[entityType]
     if (hints.some(hint => sourceText.includes(normalizeSourceHintText(hint))))
       return entityType
@@ -154,7 +186,9 @@ export function buildSuggestedSyncItemName(
     ? '竞赛同步'
     : entityType === 'track'
       ? '赛道同步'
-      : '资料同步'
+      : entityType === 'track_timeline'
+        ? '赛道时间线同步'
+        : '资料同步'
 
   if (normalizedTableName && normalizedViewName)
     return `${normalizedTableName} / ${normalizedViewName} · ${entityLabel}`

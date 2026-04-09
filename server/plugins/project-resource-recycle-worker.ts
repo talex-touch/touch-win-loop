@@ -9,6 +9,7 @@ import {
   listUnreferencedUploadObjectKeys,
   purgeExpiredProjectResourcesFromRecycleBinGlobal,
 } from '~~/server/utils/project-resource-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const WORKER_RUNTIME_STATE_KEY = Symbol.for('winloop.project-resource-recycle-worker.runtime.v1')
 
@@ -46,6 +47,9 @@ function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
     ? '[project-resource-recycle-worker] bootstrap failed:'
     : '[project-resource-recycle-worker] tick failed:'
   console.error(prefix, toErrorMessage(error))
+  captureServerException(error, {
+    module: 'project-resource-recycle-worker',
+  })
 }
 
 function ensureTickTimer(intervalMs: number): void {

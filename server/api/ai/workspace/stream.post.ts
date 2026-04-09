@@ -73,16 +73,47 @@ function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName
   const right = trackName.trim()
 
   const modeLabel = mode === 'auto_optimize'
-    ? '自动优化'
+    ? 'Loopy 自动优化'
     : mode === 'issue_discovery'
-      ? '寻疑发现'
-      : '对话询问'
+      ? 'Loopy 寻疑发现'
+      : 'Loopy 对话'
 
   if (left && right)
     return `${modeLabel} · ${left} · ${right}`
   if (left)
     return `${modeLabel} · ${left}`
   return modeLabel
+}
+
+function buildDialogSessionTitleFromMessage(message: string): string {
+  const compact = toText(message).replace(/\s+/g, ' ')
+  if (!compact)
+    return '新对话'
+  if (compact.length <= 16)
+    return compact
+  return `${compact.slice(0, 16)}…`
+}
+
+function resolveInitialSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName: string): string {
+  if (mode === 'dialog_ask')
+    return '新对话'
+  return buildSessionTitle(mode, contestName, trackName)
+}
+
+function resolvePersistedSessionTitle(input: {
+  mode: WorkspaceAiMode
+  latestUserMessage: string
+  initialMessageCount: number
+  contestName: string
+  trackName: string
+}): string | undefined {
+  if (input.mode === 'dialog_ask') {
+    if (input.initialMessageCount > 0)
+      return undefined
+    return buildDialogSessionTitleFromMessage(input.latestUserMessage)
+  }
+
+  return buildSessionTitle(input.mode, input.contestName, input.trackName)
 }
 
 function summarizeProjectSettings(snapshot: Awaited<ReturnType<typeof getProjectSettingsSnapshot>>): string {
@@ -226,6 +257,11 @@ export default defineEventHandler(async (event) => {
   const trackName = contestDetail?.contest?.tracks.find(item => item.id === request.context?.trackId)?.name || ''
   const scopeProjectId = String(request.projectId || '').trim()
   const scopeMode = request.mode || 'dialog_ask'
+  const latestUserMessage = [...(request.messages || [])]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
 
   const prepared = await withTransaction(event, async (db) => {
     const canUseWorkspace = await teamHasWorkspaceMembership(db, user, request.workspaceId || '')
@@ -248,7 +284,7 @@ export default defineEventHandler(async (event) => {
         projectId: scopeProjectId,
         mode: scopeMode,
         createdByUserId: user.id,
-        title: buildSessionTitle(scopeMode, contestName, trackName),
+        title: resolveInitialSessionTitle(scopeMode, contestName, trackName),
         contestId: request.context?.contestId,
         trackId: request.context?.trackId,
         major: request.context?.major,
@@ -266,7 +302,13 @@ export default defineEventHandler(async (event) => {
       contestId: request.context?.contestId,
       trackId: request.context?.trackId,
       major: request.context?.major,
-      title: buildSessionTitle(scopeMode, contestName, trackName),
+      title: resolvePersistedSessionTitle({
+        mode: scopeMode,
+        latestUserMessage,
+        initialMessageCount: session.messageCount,
+        contestName,
+        trackName,
+      }),
     })
 
     const quota = await teamConsumeAiQuota(db, {
@@ -281,6 +323,7 @@ export default defineEventHandler(async (event) => {
     return {
       sessionId: session.id,
       remainingQuota: quota.remaining,
+      initialMessageCount: session.messageCount,
     }
   }).catch((error) => {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
@@ -384,12 +427,6 @@ export default defineEventHandler(async (event) => {
         }
       })
 
-      const latestUserMessage = [...(request.messages || [])]
-        .reverse()
-        .find(message => message.role === 'user')
-        ?.content
-        ?.trim() || ''
-
       const execution = await executeWorkspaceAi({
         runtime: {
           ai: workspaceAiConfig,
@@ -479,7 +516,13 @@ export default defineEventHandler(async (event) => {
           contestId: request.context?.contestId,
           trackId: request.context?.trackId,
           major: request.context?.major,
-          title: buildSessionTitle(scopeMode, contestName, trackName),
+          title: resolvePersistedSessionTitle({
+            mode: scopeMode,
+            latestUserMessage,
+            initialMessageCount: prepared.initialMessageCount,
+            contestName,
+            trackName,
+          }),
         })
 
         const proposals = request.projectId
