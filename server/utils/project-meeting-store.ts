@@ -2,6 +2,7 @@ import type { Queryable } from '~~/server/utils/db'
 import type {
   ProjectMeeting,
   ProjectMeetingDetail,
+  ProjectMeetingInvitee,
   ProjectMeetingJob,
   ProjectMeetingJobStatus,
   ProjectMeetingJobType,
@@ -32,12 +33,29 @@ interface ProjectMeetingRow {
   summary_status: ProjectMeetingSummaryStatus
   recording_resource_id: string | null
   notes_resource_id: string | null
+  scheduled_start_at: string | null
+  scheduled_end_at: string | null
+  duration_minutes: string | number
+  invited_count: string | number
   started_by_user_id: string
   started_at: string
   ended_at: string | null
   provider_metadata: Record<string, unknown> | null
   created_at: string
   updated_at: string
+}
+
+interface ProjectMeetingInviteeRow {
+  id: string
+  meeting_id: string
+  project_id: string
+  user_id: string
+  role: ProjectMeetingParticipantRole
+  invited_at: string
+  created_at: string
+  updated_at: string
+  username?: string | null
+  avatar_url?: string | null
 }
 
 interface ProjectMeetingParticipantRow {
@@ -128,10 +146,29 @@ function mapMeeting(row: ProjectMeetingRow): ProjectMeeting {
     summaryStatus: row.summary_status,
     recordingResourceId: normalizeString(row.recording_resource_id) || null,
     notesResourceId: normalizeString(row.notes_resource_id) || null,
+    scheduledStartAt: row.scheduled_start_at,
+    scheduledEndAt: row.scheduled_end_at,
+    durationMinutes: Math.max(0, Math.trunc(toNumber(row.duration_minutes, 0))),
+    invitedCount: Math.max(0, Math.trunc(toNumber(row.invited_count, 0))),
     startedByUserId: row.started_by_user_id,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     providerMetadata: normalizeRecord(row.provider_metadata),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapInvitee(row: ProjectMeetingInviteeRow): ProjectMeetingInvitee {
+  return {
+    id: row.id,
+    meetingId: row.meeting_id,
+    projectId: row.project_id,
+    userId: row.user_id,
+    username: normalizeString(row.username),
+    avatarUrl: row.avatar_url || null,
+    role: row.role,
+    invitedAt: row.invited_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -214,6 +251,14 @@ const MEETING_BASE_SELECT = `
     summary_status,
     recording_resource_id,
     notes_resource_id,
+    scheduled_start_at::TEXT,
+    scheduled_end_at::TEXT,
+    duration_minutes,
+    (
+      SELECT COUNT(*)
+      FROM project_meeting_invitees pmi
+      WHERE pmi.meeting_id = project_meetings.id
+    )::TEXT AS invited_count,
     started_by_user_id,
     started_at::TEXT,
     ended_at::TEXT,
@@ -231,9 +276,14 @@ export async function createProjectMeeting(
     title: string
     mode: ProjectMeetingMode
     provider: string
-    providerRoomId: string
-    providerRoomName: string
+    providerRoomId?: string
+    providerRoomName?: string
+    status?: ProjectMeetingStatus
+    scheduledStartAt?: string | null
+    scheduledEndAt?: string | null
+    durationMinutes?: number
     startedByUserId: string
+    startedAt?: string
     providerMetadata?: Record<string, unknown>
     transcriptStatus?: ProjectMeetingTranscriptStatus
     recordingStatus?: ProjectMeetingRecordingStatus
@@ -242,6 +292,8 @@ export async function createProjectMeeting(
 ): Promise<ProjectMeeting> {
   const id = normalizeString(input.id) || randomUUID()
   const now = new Date().toISOString()
+  const status = input.status || 'active'
+  const startedAt = normalizeString(input.startedAt) || now
   await db.query(
     `INSERT INTO project_meetings (
       id,
@@ -257,12 +309,15 @@ export async function createProjectMeeting(
       recording_status,
       summary_status,
       started_by_user_id,
+      scheduled_start_at,
+      scheduled_end_at,
+      duration_minutes,
       started_at,
       provider_metadata,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $11, $12, $13, $14::JSONB, $15, $15
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::JSONB, $19, $19
     )`,
     [
       id,
@@ -273,11 +328,15 @@ export async function createProjectMeeting(
       normalizeString(input.provider) || 'mock',
       normalizeString(input.providerRoomId),
       normalizeString(input.providerRoomName),
+      status,
       input.transcriptStatus || 'idle',
       input.recordingStatus || 'idle',
       input.summaryStatus || 'idle',
       input.startedByUserId,
-      now,
+      normalizeString(input.scheduledStartAt) || null,
+      normalizeString(input.scheduledEndAt) || null,
+      Math.max(0, Math.trunc(toNumber(input.durationMinutes, 0))),
+      startedAt,
       JSON.stringify(normalizeRecord(input.providerMetadata)),
       now,
     ],
@@ -381,6 +440,12 @@ export async function patchProjectMeeting(
     summaryStatus?: ProjectMeetingSummaryStatus
     recordingResourceId?: string | null
     notesResourceId?: string | null
+    providerRoomId?: string | null
+    providerRoomName?: string | null
+    scheduledStartAt?: string | null
+    scheduledEndAt?: string | null
+    durationMinutes?: number
+    startedAt?: string | null
     endedAt?: string | null
     providerMetadata?: Record<string, unknown>
   },
@@ -426,6 +491,36 @@ export async function patchProjectMeeting(
     values.push(normalizeString(input.notesResourceId) || null)
     index += 1
   }
+  if (input.providerRoomId !== undefined) {
+    sets.push(`provider_room_id = $${index}`)
+    values.push(normalizeString(input.providerRoomId))
+    index += 1
+  }
+  if (input.providerRoomName !== undefined) {
+    sets.push(`provider_room_name = $${index}`)
+    values.push(normalizeString(input.providerRoomName))
+    index += 1
+  }
+  if (input.scheduledStartAt !== undefined) {
+    sets.push(`scheduled_start_at = $${index}`)
+    values.push(normalizeString(input.scheduledStartAt) || null)
+    index += 1
+  }
+  if (input.scheduledEndAt !== undefined) {
+    sets.push(`scheduled_end_at = $${index}`)
+    values.push(normalizeString(input.scheduledEndAt) || null)
+    index += 1
+  }
+  if (input.durationMinutes !== undefined) {
+    sets.push(`duration_minutes = $${index}`)
+    values.push(Math.max(0, Math.trunc(toNumber(input.durationMinutes, 0))))
+    index += 1
+  }
+  if (input.startedAt !== undefined) {
+    sets.push(`started_at = $${index}`)
+    values.push(normalizeString(input.startedAt) || current.startedAt)
+    index += 1
+  }
   if (input.endedAt !== undefined) {
     sets.push(`ended_at = $${index}`)
     values.push(input.endedAt || null)
@@ -458,6 +553,108 @@ export async function patchProjectMeeting(
   if (!meeting)
     throw new Error('MEETING_NOT_FOUND')
   return meeting
+}
+
+export async function listProjectMeetingInvitees(
+  db: Queryable,
+  input: {
+    meetingId: string
+  },
+): Promise<ProjectMeetingInvitee[]> {
+  const result = await db.query<ProjectMeetingInviteeRow>(
+    `SELECT
+      pmi.id,
+      pmi.meeting_id,
+      pmi.project_id,
+      pmi.user_id,
+      pmi.role,
+      pmi.invited_at::TEXT,
+      pmi.created_at::TEXT,
+      pmi.updated_at::TEXT,
+      u.username,
+      u.avatar_url
+     FROM project_meeting_invitees pmi
+     JOIN users u
+       ON u.id = pmi.user_id
+     WHERE pmi.meeting_id = $1
+     ORDER BY
+       CASE pmi.role
+         WHEN 'host' THEN 0
+         WHEN 'member' THEN 1
+         WHEN 'guest' THEN 2
+         ELSE 3
+       END,
+       pmi.invited_at ASC,
+       pmi.created_at ASC`,
+    [input.meetingId],
+  )
+  return result.rows.map(mapInvitee)
+}
+
+export async function replaceProjectMeetingInvitees(
+  db: Queryable,
+  input: {
+    meetingId: string
+    projectId: string
+    invitees: Array<{
+      userId: string
+      role?: ProjectMeetingParticipantRole
+      invitedAt?: string | null
+    }>
+  },
+): Promise<ProjectMeetingInvitee[]> {
+  const nextInvitees: Array<{ userId: string, role: ProjectMeetingParticipantRole, invitedAt: string }> = []
+  const seenUserIds = new Set<string>()
+  const now = new Date().toISOString()
+
+  for (const item of input.invitees) {
+    const userId = normalizeString(item.userId)
+    if (!userId || seenUserIds.has(userId))
+      continue
+
+    seenUserIds.add(userId)
+    nextInvitees.push({
+      userId,
+      role: item.role || 'member',
+      invitedAt: normalizeString(item.invitedAt) || now,
+    })
+  }
+
+  await db.query(
+    `DELETE FROM project_meeting_invitees
+     WHERE meeting_id = $1`,
+    [input.meetingId],
+  )
+
+  for (const invitee of nextInvitees) {
+    await db.query(
+      `INSERT INTO project_meeting_invitees (
+        id,
+        meeting_id,
+        project_id,
+        user_id,
+        role,
+        invited_at,
+        created_at,
+        updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $7
+      )`,
+      [
+        randomUUID(),
+        input.meetingId,
+        input.projectId,
+        invitee.userId,
+        invitee.role,
+        invitee.invitedAt,
+        now,
+      ],
+    )
+  }
+
+  return listProjectMeetingInvitees(db, {
+    meetingId: input.meetingId,
+  })
 }
 
 export async function listProjectMeetingParticipants(
@@ -1065,13 +1262,15 @@ export async function getProjectMeetingDetail(
   if (!meeting)
     return null
 
-  const [participants, recentJobs] = await Promise.all([
+  const [invitees, participants, recentJobs] = await Promise.all([
+    listProjectMeetingInvitees(db, { meetingId: input.meetingId }),
     listProjectMeetingParticipants(db, { meetingId: input.meetingId }),
     listProjectMeetingRecentJobs(db, { meetingId: input.meetingId }),
   ])
 
   return {
     ...meeting,
+    invitees,
     participants,
     recentJobs,
   }

@@ -17,6 +17,7 @@ interface WorkspaceRow {
 
 interface TeamQuotaRow {
   workspace_id: string
+  plan_tier?: 'personal_team' | 'business_team' | null
   seat_limit: number
   seat_used: number
   ai_quota_total: number
@@ -66,6 +67,7 @@ function mapTeamQuota(row: TeamQuotaRow): TeamQuota {
   return {
     teamId: row.workspace_id,
     workspaceId: row.workspace_id,
+    planTier: row.plan_tier || null,
     seatLimit: Number(row.seat_limit),
     seatUsed: Number(row.seat_used),
     aiQuotaTotal: Number(row.ai_quota_total),
@@ -90,9 +92,21 @@ async function listTeamQuotasByWorkspaceIds(db: Queryable, workspaceIds: string[
     return new Map<string, TeamQuota>()
 
   const result = await db.query<TeamQuotaRow>(
-    `SELECT workspace_id, seat_limit, seat_used, ai_quota_total, ai_quota_used, reset_cycle, updated_at::TEXT
-     FROM team_quotas
-     WHERE workspace_id = ANY($1::TEXT[])`,
+    `SELECT
+      tq.workspace_id,
+      bp.plan_tier,
+      tq.seat_limit,
+      tq.seat_used,
+      tq.ai_quota_total,
+      tq.ai_quota_used,
+      tq.reset_cycle,
+      tq.updated_at::TEXT
+     FROM team_quotas tq
+     LEFT JOIN workspace_billing wb
+       ON wb.workspace_id = tq.workspace_id
+     LEFT JOIN billing_plans bp
+       ON bp.id = wb.plan_id
+     WHERE tq.workspace_id = ANY($1::TEXT[])`,
     [workspaceIds],
   )
 

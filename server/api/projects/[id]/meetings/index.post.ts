@@ -1,6 +1,6 @@
 import type { ProjectMeetingMode } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { createProjectMeetingSession } from '~~/server/services/meeting/project-meeting'
+import { createProjectMeetingRecord } from '~~/server/services/meeting/project-meeting'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
@@ -12,6 +12,9 @@ import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 interface CreateMeetingBody {
   title?: string
   mode?: ProjectMeetingMode
+  invitedUserIds?: string[]
+  scheduledStartAt?: string | null
+  scheduledEndAt?: string | null
 }
 
 function normalizeString(value: unknown): string {
@@ -50,36 +53,31 @@ export default defineEventHandler(async (event) => {
       if (!access)
         throw new Error('FORBIDDEN')
 
-      return createProjectMeetingSession(db, {
+      return createProjectMeetingRecord(db, {
         projectId,
         workspaceId: access.workspaceId,
         user,
         title: normalizeString(body?.title),
         mode: normalizeMeetingMode(body?.mode),
+        invitedUserIds: Array.isArray(body?.invitedUserIds)
+          ? body.invitedUserIds.map(item => normalizeString(item)).filter(Boolean)
+          : [],
+        scheduledStartAt: normalizeString(body?.scheduledStartAt) || null,
+        scheduledEndAt: normalizeString(body?.scheduledEndAt) || null,
         runtime,
       })
     })
 
-    await Promise.allSettled([
-      emitRealtimeEvent({
-        type: 'meeting.state.updated',
-        workspaceId: payload.meeting.workspaceId,
-        projectId,
-        payload: {
-          meetingId: payload.meeting.id,
-        },
-      }),
-      emitRealtimeEvent({
-        type: 'meeting.participant.updated',
-        workspaceId: payload.meeting.workspaceId,
-        projectId,
-        payload: {
-          meetingId: payload.meeting.id,
-        },
-      }),
-    ])
+    await emitRealtimeEvent({
+      type: 'meeting.state.updated',
+      workspaceId: payload.meeting.workspaceId,
+      projectId,
+      payload: {
+        meetingId: payload.meeting.id,
+      },
+    }).catch(() => {})
 
-    return ok(payload, {
+    return ok(payload.detail, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -108,6 +106,39 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40393)
+    }
+
+    if (error instanceof Error && error.message === 'MEETING_INVITEE_NOT_PROJECT_MEMBER') {
+      setResponseStatus(event, 400)
+      return fail('参会人只能选择当前项目成员。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40096)
+    }
+
+    if (error instanceof Error && error.message === 'MEETING_INVALID_SCHEDULE') {
+      setResponseStatus(event, 400)
+      return fail('会议时间无效，结束时间必须晚于开始时间。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40097)
+    }
+
+    if (error instanceof Error && error.message === 'MEETING_DURATION_EXCEEDED') {
+      setResponseStatus(event, 400)
+      return fail('会议时长超过当前工作区套餐上限。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40098)
     }
 
     if (error instanceof Error && error.message === 'LIVEKIT_CONFIG_MISSING') {

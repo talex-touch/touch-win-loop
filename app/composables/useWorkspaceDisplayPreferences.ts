@@ -1,7 +1,7 @@
 import type {
   ApiResponse,
-  WorkspaceDisplayPreferenceSnapshot,
   WorkspaceDisplayPreferences,
+  WorkspaceDisplayPreferenceSnapshot,
   WorkspaceFontSizePreset,
   WorkspaceTabSpacingPreset,
 } from '~~/shared/types/domain'
@@ -146,48 +146,76 @@ export function normalizeWorkspaceDisplayPreferenceSnapshot(
   }
 }
 
+async function parseApiResponse<T>(response: Response, fallbackMessage: string): Promise<ApiResponse<T>> {
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw new Error(String(payload?.message || fallbackMessage))
+  return payload
+}
+
 export function useWorkspaceDisplayPreferenceApi() {
   const runtime = useRuntimeConfig()
   const { endpoint } = useApiEndpoint(runtime)
 
   async function loadUserDefaults(): Promise<WorkspaceDisplayPreferences | null> {
-    const response = await $fetch<ApiResponse<WorkspaceDisplayPreferences | null>>(endpoint('/user/workspace-display-preferences'))
-    return normalizeWorkspaceDisplayPreferences(response.data)
+    const response = await fetch(String(endpoint('/user/workspace-display-preferences')), {
+      credentials: 'include',
+    })
+    const payload = await parseApiResponse<WorkspaceDisplayPreferences | null>(response, '个人显示偏好加载失败。')
+    return normalizeWorkspaceDisplayPreferences(payload.data)
   }
 
   async function patchUserDefaults(payload: WorkspaceDisplayPreferencePatchPayload): Promise<WorkspaceDisplayPreferences | null> {
-    const response = await $fetch<ApiResponse<WorkspaceDisplayPreferences | null>>(endpoint('/user/workspace-display-preferences'), {
+    const response = await fetch(String(endpoint('/user/workspace-display-preferences')), {
       method: 'PATCH',
-      body: payload,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     })
-    return normalizeWorkspaceDisplayPreferences(response.data)
+    const result = await parseApiResponse<WorkspaceDisplayPreferences | null>(response, '个人显示偏好保存失败。')
+    return normalizeWorkspaceDisplayPreferences(result.data)
   }
 
   async function loadWorkspaceSnapshot(workspaceId: string): Promise<WorkspaceDisplayPreferenceSnapshot> {
-    const response = await $fetch<ApiResponse<WorkspaceDisplayPreferenceSnapshot>>(endpoint(`/teams/${workspaceId}/workspace-display-preferences`))
-    return normalizeWorkspaceDisplayPreferenceSnapshot(response.data)
+    const response = await fetch(String(endpoint(`/teams/${workspaceId}/workspace-display-preferences`)), {
+      credentials: 'include',
+    })
+    const payload = await parseApiResponse<WorkspaceDisplayPreferenceSnapshot>(response, '工作区显示偏好加载失败。')
+    return normalizeWorkspaceDisplayPreferenceSnapshot(payload.data)
   }
 
   async function patchWorkspaceUserOverride(
     workspaceId: string,
     payload: WorkspaceDisplayPreferencePatchPayload,
   ): Promise<WorkspaceDisplayPreferenceSnapshot> {
-    const response = await $fetch<ApiResponse<WorkspaceDisplayPreferenceSnapshot>>(endpoint(`/teams/${workspaceId}/workspace-display-preferences/user`), {
+    const response = await fetch(String(endpoint(`/teams/${workspaceId}/workspace-display-preferences/user`)), {
       method: 'PATCH',
-      body: payload,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     })
-    return normalizeWorkspaceDisplayPreferenceSnapshot(response.data)
+    const result = await parseApiResponse<WorkspaceDisplayPreferenceSnapshot>(response, '工作区个人显示偏好保存失败。')
+    return normalizeWorkspaceDisplayPreferenceSnapshot(result.data)
   }
 
   async function patchWorkspaceTeamDefault(
     workspaceId: string,
     payload: WorkspaceDisplayPreferencePatchPayload,
   ): Promise<WorkspaceDisplayPreferenceSnapshot> {
-    const response = await $fetch<ApiResponse<WorkspaceDisplayPreferenceSnapshot>>(endpoint(`/teams/${workspaceId}/workspace-display-preferences/default`), {
+    const response = await fetch(String(endpoint(`/teams/${workspaceId}/workspace-display-preferences/default`)), {
       method: 'PATCH',
-      body: payload,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     })
-    return normalizeWorkspaceDisplayPreferenceSnapshot(response.data)
+    const result = await parseApiResponse<WorkspaceDisplayPreferenceSnapshot>(response, '工作区默认显示偏好保存失败。')
+    return normalizeWorkspaceDisplayPreferenceSnapshot(result.data)
   }
 
   return {

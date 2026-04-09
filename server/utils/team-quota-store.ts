@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 interface TeamQuotaRow {
   workspace_id: string
+  plan_tier?: 'personal_team' | 'business_team' | null
   seat_limit: number
   seat_used: number
   ai_quota_total: number
@@ -16,6 +17,7 @@ function mapTeamQuota(row: TeamQuotaRow): TeamQuota {
   return {
     teamId: row.workspace_id,
     workspaceId: row.workspace_id,
+    planTier: row.plan_tier || null,
     seatLimit: Number(row.seat_limit),
     seatUsed: Number(row.seat_used),
     aiQuotaTotal: Number(row.ai_quota_total),

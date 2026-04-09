@@ -10,16 +10,17 @@ import type {
   FeishuAuthUnbindResult,
   FeishuIntegrationConfig,
   InvitationWithToken,
-  WorkspaceDisplayPreferences,
-  WorkspaceFontSizePreset,
-  WorkspaceTabSpacingPreset,
   WorkspaceAiUsageHistory,
   WorkspaceBillingEstimate,
+  WorkspaceDisplayPreferences,
+  WorkspaceFontSizePreset,
   WorkspaceMemberManagementSnapshot,
   WorkspaceMemberRole,
   WorkspaceMemberSummary,
+  WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import { formatFileSize } from '~~/shared/constants/project-resource-upload'
 import {
   isUserAvatarUploadFileSupported,
@@ -27,17 +28,16 @@ import {
   USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES,
   USER_AVATAR_UPLOAD_TYPES_LABEL,
 } from '~~/shared/constants/user-avatar-upload'
+import { formatDateTime } from '~/composables/team-ui'
 import {
   normalizeWorkspaceFontSizeDraft,
   normalizeWorkspaceTabSpacingDraft,
   resolveWorkspaceFontSizePresetLabel,
   resolveWorkspaceTabSpacingPresetLabel,
   useWorkspaceDisplayPreferenceApi,
-  type WorkspaceDisplayPreferencePatchPayload,
   WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
   WORKSPACE_TAB_SPACING_PRESET_OPTIONS,
 } from '~/composables/useWorkspaceDisplayPreferences'
-import { formatDateTime } from '~/composables/team-ui'
 
 type UserSettingsTabId = 'profile' | 'displayPreferences' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
 type UserSettingsNavGroupId = 'profile' | 'workspace'
@@ -899,6 +899,11 @@ function resetDialogState() {
 function syncUserWorkspaceDisplayDraft(): void {
   userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(userWorkspaceDisplayPreferences.value?.fontSizePreset)
   userWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(userWorkspaceDisplayPreferences.value?.tabSpacingPreset)
+}
+
+function clearUserWorkspaceDisplayDraft(): void {
+  userWorkspaceDisplayFontSizeDraft.value = ''
+  userWorkspaceDisplayTabSpacingDraft.value = ''
 }
 
 function applyUserWorkspaceDisplayPreferences(preferences: WorkspaceDisplayPreferences | null): void {
@@ -1820,10 +1825,7 @@ onBeforeUnmount(() => {
                       <button
                         class="user-settings-btn user-settings-btn--compact"
                         :disabled="userWorkspaceDisplayPreferencesSaving"
-                        @click="
-                          userWorkspaceDisplayFontSizeDraft = ''
-                          userWorkspaceDisplayTabSpacingDraft = ''
-                        "
+                        @click="clearUserWorkspaceDisplayDraft"
                       >
                         清除全局默认
                       </button>

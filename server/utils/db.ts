@@ -1281,12 +1281,15 @@ CREATE TABLE IF NOT EXISTS project_meetings (
   provider TEXT NOT NULL DEFAULT 'mock',
   provider_room_id TEXT NOT NULL DEFAULT '',
   provider_room_name TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'failed')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('scheduled', 'active', 'ended', 'failed')),
   transcript_status TEXT NOT NULL DEFAULT 'idle' CHECK (transcript_status IN ('idle', 'running', 'completed', 'failed')),
   recording_status TEXT NOT NULL DEFAULT 'idle' CHECK (recording_status IN ('idle', 'requested', 'processing', 'completed', 'failed')),
   summary_status TEXT NOT NULL DEFAULT 'idle' CHECK (summary_status IN ('idle', 'queued', 'processing', 'completed', 'failed')),
   recording_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
   notes_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
+  scheduled_start_at TIMESTAMPTZ,
+  scheduled_end_at TIMESTAMPTZ,
+  duration_minutes INTEGER NOT NULL DEFAULT 0,
   started_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ended_at TIMESTAMPTZ,
@@ -1312,6 +1315,18 @@ CREATE TABLE IF NOT EXISTS project_meeting_participants (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(meeting_id, provider_identity)
+);
+
+CREATE TABLE IF NOT EXISTS project_meeting_invitees (
+  id TEXT PRIMARY KEY,
+  meeting_id TEXT NOT NULL REFERENCES project_meetings(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('host', 'member', 'guest', 'system', 'unknown')),
+  invited_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(meeting_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS project_meeting_utterances (
@@ -1364,6 +1379,12 @@ CREATE INDEX IF NOT EXISTS idx_project_meeting_participants_meeting_joined_at
 CREATE INDEX IF NOT EXISTS idx_project_meeting_participants_project_user
   ON project_meeting_participants(project_id, user_id);
 
+CREATE INDEX IF NOT EXISTS idx_project_meeting_invitees_meeting_invited_at
+  ON project_meeting_invitees(meeting_id, invited_at ASC, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_invitees_project_user
+  ON project_meeting_invitees(project_id, user_id);
+
 CREATE INDEX IF NOT EXISTS idx_project_meeting_utterances_meeting_sequence
   ON project_meeting_utterances(meeting_id, sequence_no ASC, created_at ASC);
 
@@ -1375,6 +1396,42 @@ CREATE INDEX IF NOT EXISTS idx_project_meeting_jobs_meeting_created_at
 
 CREATE INDEX IF NOT EXISTS idx_project_meeting_jobs_status_next_run_at
   ON project_meeting_jobs(status, next_run_at ASC, created_at ASC);
+
+ALTER TABLE project_meetings
+  ADD COLUMN IF NOT EXISTS scheduled_start_at TIMESTAMPTZ;
+
+ALTER TABLE project_meetings
+  ADD COLUMN IF NOT EXISTS scheduled_end_at TIMESTAMPTZ;
+
+ALTER TABLE project_meetings
+  ADD COLUMN IF NOT EXISTS duration_minutes INTEGER NOT NULL DEFAULT 0;
+
+DO $$
+DECLARE
+  meeting_status_check_name TEXT;
+BEGIN
+  SELECT con.conname INTO meeting_status_check_name
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  WHERE rel.relname = 'project_meetings'
+    AND con.contype = 'c'
+    AND pg_get_constraintdef(con.oid) ILIKE '%status%'
+    AND pg_get_constraintdef(con.oid) ILIKE '%active%'
+    AND pg_get_constraintdef(con.oid) ILIKE '%ended%'
+    AND pg_get_constraintdef(con.oid) ILIKE '%failed%';
+
+  IF meeting_status_check_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE project_meetings DROP CONSTRAINT %I', meeting_status_check_name);
+  END IF;
+
+  BEGIN
+    ALTER TABLE project_meetings
+      ADD CONSTRAINT project_meetings_status_check
+      CHECK (status IN ('scheduled', 'active', 'ended', 'failed'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
 
 CREATE TABLE IF NOT EXISTS project_resource_document_tasks (
   id TEXT PRIMARY KEY,

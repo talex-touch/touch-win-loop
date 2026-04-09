@@ -697,6 +697,11 @@ function submitWorkspaceDisplayUserOverride(): void {
   })
 }
 
+function resetWorkspaceDisplayUserOverrideDraft(): void {
+  userWorkspaceDisplayFontSizeDraft.value = ''
+  userWorkspaceDisplayTabSpacingDraft.value = ''
+}
+
 function submitWorkspaceDisplayTeamDefault(): void {
   emit('saveWorkspaceDisplayTeamDefault', {
     fontSizePreset: teamWorkspaceDisplayFontSizeDraft.value || null,
@@ -3642,10 +3647,7 @@ watch(activeTabId, (next) => {
                       class="text-[11px] font-semibold px-3 py-1.5 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                       type="button"
                       :disabled="workspaceDisplaySavingUser"
-                      @click="
-                        userWorkspaceDisplayFontSizeDraft = ''
-                        userWorkspaceDisplayTabSpacingDraft = ''
-                      "
+                      @click="resetWorkspaceDisplayUserOverrideDraft"
                     >
                       还原为工作区推荐设置
                     </button>
