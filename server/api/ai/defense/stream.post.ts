@@ -1,13 +1,15 @@
 import type {
+  AiDefenseInputMode,
   AiDefenseRequest,
   AiDefenseResult,
+  AiDefenseStage,
   AiDefenseStreamEvent,
   AiDefenseStreamEventType,
 } from '~~/shared/types/domain'
 import { createEventStream, setResponseStatus } from 'h3'
+import { buildDefenseContextPack } from '~~/server/services/ai/defense-context'
 import { runDefenseChain } from '~~/server/services/ai/defense-chain'
 import { runDefenseFallback } from '~~/server/services/ai/fallback'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import {
@@ -16,7 +18,12 @@ import {
   getAiChatSessionById,
   patchAiChatSessionContext,
 } from '~~/server/utils/chat-store'
-import { getContestDetail, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
+import {
+  createProjectDefenseTurns,
+  getProjectDefenseSessionState,
+  upsertProjectDefenseSessionState,
+} from '~~/server/utils/project-defense-store'
+import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
@@ -29,11 +36,34 @@ function toText(value: unknown): string {
   return String(value || '').trim()
 }
 
+function normalizeStage(value: unknown): AiDefenseStage | undefined {
+  const normalized = toText(value)
+  if (normalized === 'opening' || normalized === 'qa' || normalized === 'rebuttal' || normalized === 'closing')
+    return normalized
+  return undefined
+}
+
+function normalizeInputMode(value: unknown): AiDefenseInputMode | undefined {
+  const normalized = toText(value)
+  if (normalized === 'text' || normalized === 'audio' || normalized === 'image' || normalized === 'video_frames' || normalized === 'mixed')
+    return normalized
+  return undefined
+}
+
 function normalizeRequest(body: Partial<AiDefenseRequest> | null | undefined, workspaceId: string): AiDefenseRequest {
+  const personaIds = Array.isArray(body?.personaIds)
+    ? body.personaIds.map(item => toText(item)).filter(Boolean)
+    : undefined
   return {
     teamId: workspaceId,
     workspaceId,
     sessionId: toText(body?.sessionId),
+    clientTurnId: toText(body?.clientTurnId) || undefined,
+    meetingId: toText(body?.meetingId) || undefined,
+    personaIds,
+    stageHint: normalizeStage(body?.stageHint),
+    inputMode: normalizeInputMode(body?.inputMode) || 'text',
+    attachments: Array.isArray(body?.attachments) ? body.attachments : [],
     messages: Array.isArray(body?.messages) ? body!.messages! : [],
     aiOptions: {
       reasoningEnabled: typeof body?.aiOptions?.reasoningEnabled === 'boolean' ? body.aiOptions.reasoningEnabled : undefined,
@@ -77,6 +107,16 @@ function toErrorMessage(error: unknown): string {
   return 'UNKNOWN_ERROR'
 }
 
+function deriveStageFromTurnCount(turnCount: number): AiDefenseStage {
+  if (turnCount <= 0)
+    return 'opening'
+  if (turnCount <= 2)
+    return 'qa'
+  if (turnCount <= 4)
+    return 'rebuttal'
+  return 'closing'
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
@@ -102,67 +142,13 @@ export default defineEventHandler(async (event) => {
     user.isPlatformAdmin
     || await checkPlatformPermission(event, user, 'contest.read_internal'),
   )
-
-  let contextBundle: {
-    detail: Awaited<ReturnType<typeof getContestDetail>> | null
-    injectedPrompt: string
-    localContext: string
-  }
-
-  try {
-    contextBundle = await withClient(event, async (db) => {
-      const detail = request.context.contestId
-        ? await getContestDetail(db, {
-            contestId: request.context.contestId || '',
-            includeInternal,
-          })
-        : null
-      const injectedPrompt = request.context.contestId
-        ? await resolveAiPromptText(db, {
-            contestId: request.context.contestId,
-            trackId: request.context.trackId,
-            target: 'defense',
-          })
-        : ''
-
-      const resources = await loadVisibleProjectResourcesForAi(db, user, {
-        workspaceId,
-        projectId: request.context.projectId,
-      })
-      const contestName = detail?.contest?.name || ''
-      const trackName = detail?.contest?.tracks.find(item => item.id === request.context.trackId)?.name || ''
-      const localContext = buildProjectResourceLocalContext(resources, {
-        contestName,
-        trackName,
-        major: request.context.major,
-        limit: 8,
-      })
-
-      return {
-        detail,
-        injectedPrompt,
-        localContext,
-      }
-    })
-  }
-  catch (error) {
-    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return fail('project not found', {
-        startedAt,
-        provider: channelAiConfig.provider,
-        model: channelAiConfig.model,
-        fallbackUsed: false,
-        attempts: 1,
-      }, 40478)
-    }
-    throw error
-  }
-
-  const contest = contextBundle.detail?.contest
-  const track = contest?.tracks.find(item => item.id === request.context.trackId)
-  const scopeProjectId = String(request.context.projectId || '').trim()
+  const scopeProjectId = toText(request.context.projectId)
   const scopeMode = 'defense' as const
+  const latestUserMessage = [...request.messages]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
 
   const prepared = await withTransaction(event, async (db) => {
     const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
@@ -185,7 +171,7 @@ export default defineEventHandler(async (event) => {
         projectId: scopeProjectId,
         mode: scopeMode,
         createdByUserId: user.id,
-        title: buildSessionTitle(contest?.name || '', track?.name || ''),
+        title: buildSessionTitle('', ''),
         contestId: request.context.contestId,
         trackId: request.context.trackId,
         major: request.context.major,
@@ -203,7 +189,6 @@ export default defineEventHandler(async (event) => {
       contestId: request.context.contestId,
       trackId: request.context.trackId,
       major: request.context.major,
-      title: buildSessionTitle(contest?.name || '', track?.name || ''),
     })
 
     const quota = await teamConsumeAiQuota(db, {
@@ -218,6 +203,9 @@ export default defineEventHandler(async (event) => {
     return {
       sessionId: session.id,
       remainingQuota: quota.remaining,
+      existingState: await getProjectDefenseSessionState(db, {
+        sessionId: session.id,
+      }),
     }
   }).catch((error) => {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
@@ -263,6 +251,56 @@ export default defineEventHandler(async (event) => {
     }, 42975)
   }
 
+  let contextPack
+  try {
+    contextPack = await withClient(event, async (db) => {
+      return buildDefenseContextPack({
+        db,
+        user,
+        workspaceId,
+        projectId: scopeProjectId,
+        contestId: request.context.contestId,
+        trackId: request.context.trackId,
+        major: request.context.major,
+        latestUserMessage,
+        personaIds: request.personaIds,
+        attachments: request.attachments,
+        includeInternal,
+      })
+    })
+  }
+  catch (error) {
+    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return fail('project not found', {
+        startedAt,
+        provider: channelAiConfig.provider,
+        model: channelAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40478)
+    }
+    throw error
+  }
+
+  const stage = request.stageHint
+    || prepared.existingState?.currentStage
+    || deriveStageFromTurnCount(prepared.existingState?.turnCount || 0)
+  const turnIndex = Math.max(1, (prepared.existingState?.turnCount || 0) + 1)
+
+  await withTransaction(event, async (db) => {
+    await patchAiChatSessionContext(db, {
+      workspaceId,
+      sessionId: prepared.sessionId,
+      projectId: scopeProjectId,
+      mode: scopeMode,
+      contestId: request.context.contestId,
+      trackId: request.context.trackId,
+      major: request.context.major,
+      title: buildSessionTitle(contextPack.contestName, contextPack.trackName),
+    })
+  })
+
   const stream = createEventStream(event)
   const pushEvent = async (eventType: AiDefenseStreamEventType, data: Record<string, unknown>) => {
     const payload: AiDefenseStreamEvent = {
@@ -278,9 +316,19 @@ export default defineEventHandler(async (event) => {
   const run = async () => {
     try {
       await pushEvent('progress', {
-        message: '已建立答辩会话，正在生成评委问题...',
+        message: '已建立答辩会话，正在组织评委团与证据包...',
         sessionId: prepared.sessionId,
       })
+      await pushEvent('stage', {
+        stage,
+        turnIndex,
+      })
+
+      if (contextPack.evidenceRefs.length > 0) {
+        await pushEvent('evidence', {
+          evidenceRefs: contextPack.evidenceRefs,
+        })
+      }
 
       const effectiveAiConfig = {
         ...channelAiConfig,
@@ -288,48 +336,63 @@ export default defineEventHandler(async (event) => {
           ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
           : channelAiConfig.temperature,
       }
-      const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
+      const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextPack.promptText)
+      const effectiveRequest: AiDefenseRequest = {
+        ...request,
+        stageHint: stage,
+      }
 
       const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
       const execution = onlyFallback
         ? {
-            data: runDefenseFallback(request),
+            data: runDefenseFallback(effectiveRequest),
             fallbackUsed: true,
             attempts: 1,
           }
         : await runWithRetry<AiDefenseResult>({
             maxRetries: effectiveAiConfig.maxRetries,
             run: () => runDefenseChain({
-              request,
+              request: effectiveRequest,
               ai: effectiveAiConfig,
-              contestName: contest?.name,
-              trackName: track?.name,
+              contestName: contextPack.contestName,
+              trackName: contextPack.trackName,
               injectedPrompt: mergedInjectedPrompt,
-              localContext: contextBundle.localContext,
+              rubricDigest: contextPack.rubricDigest,
+              promptContextText: contextPack.promptContextText,
+              evidenceRefs: contextPack.evidenceRefs,
+              personas: contextPack.personas,
+              stage,
+              turnIndex,
             }),
-            fallback: () => runDefenseFallback(request),
+            fallback: () => runDefenseFallback(effectiveRequest),
           })
 
-      for (const round of execution.data.rounds)
+      const result: AiDefenseResult = {
+        ...execution.data,
+        sessionId: prepared.sessionId,
+        stage,
+        turnIndex,
+        summaryStatus: 'queued',
+        selectedPersonaIds: execution.data.selectedPersonaIds || contextPack.personas.map(item => item.id),
+      }
+
+      for (const round of result.rounds)
         await pushEvent('judge', { round })
 
       await pushEvent('score', {
-        scorecard: execution.data.scorecard,
+        scorecard: result.scorecard,
       })
 
-      for (const chunk of chunkText(execution.data.assistantReply))
+      for (const chunk of chunkText(result.assistantReply))
         await pushEvent('delta', { text: chunk })
-
-      const latestUserMessage = [...request.messages]
-        .reverse()
-        .find(message => message.role === 'user')
-        ?.content
-        ?.trim() || ''
 
       await withTransaction(event, async (db) => {
         const modeMetadata = {
           mode: scopeMode,
           projectId: scopeProjectId,
+          stage,
+          turnIndex,
+          inputMode: request.inputMode || 'text',
         }
 
         if (latestUserMessage) {
@@ -345,6 +408,9 @@ export default defineEventHandler(async (event) => {
               ...modeMetadata,
               channelKey: channelRuntime.key,
               providerId: channelRuntime.provider?.id || null,
+              attachments: request.attachments || [],
+              clientTurnId: request.clientTurnId || null,
+              meetingId: request.meetingId || null,
             },
             createdByUserId: user.id,
           })
@@ -354,7 +420,7 @@ export default defineEventHandler(async (event) => {
           workspaceId,
           sessionId: prepared.sessionId,
           role: 'assistant',
-          content: execution.data.assistantReply,
+          content: result.assistantReply,
           provider: effectiveAiConfig.provider,
           model: effectiveAiConfig.model,
           fallbackUsed: execution.fallbackUsed,
@@ -362,9 +428,56 @@ export default defineEventHandler(async (event) => {
             ...modeMetadata,
             channelKey: channelRuntime.key,
             providerId: channelRuntime.provider?.id || null,
+            scorecard: result.scorecard,
+            evidenceRefs: result.evidenceRefs || [],
           },
           createdByUserId: user.id,
         })
+
+        if (scopeProjectId) {
+          await createProjectDefenseTurns(db, {
+            sessionId: prepared.sessionId,
+            projectId: scopeProjectId,
+            stage,
+            turnIndex,
+            turns: result.rounds.map(round => ({
+              personaId: round.personaId || null,
+              judgeType: round.judgeType,
+              judgeName: round.judge,
+              question: round.question,
+              comment: round.comment,
+              followUp: round.followUp,
+              score: round.score,
+              evidenceRefs: round.evidenceRefs,
+              attachments: request.attachments || [],
+              metadata: {
+                inputMode: request.inputMode || 'text',
+                meetingId: request.meetingId || null,
+                clientTurnId: request.clientTurnId || null,
+              },
+            })),
+          })
+
+          await upsertProjectDefenseSessionState(db, {
+            sessionId: prepared.sessionId,
+            projectId: scopeProjectId,
+            workspaceId,
+            currentStage: result.nextStage || stage,
+            turnCount: turnIndex,
+            selectedPersonaIds: result.selectedPersonaIds || [],
+            summaryStatus: 'queued',
+            summaryResourceId: prepared.existingState?.summaryResourceId || null,
+            linkedMeetingId: request.meetingId || prepared.existingState?.linkedMeetingId || null,
+            lastInputMode: request.inputMode || 'text',
+            lastContextPack: {
+              contestName: contextPack.contestName,
+              trackName: contextPack.trackName,
+              rubricDigest: contextPack.rubricDigest,
+              evidenceRefs: contextPack.evidenceRefs.slice(0, 8),
+            },
+            lastScorecard: result.scorecard,
+          })
+        }
 
         await recordContestAuditLog(db, {
           actorUserId: user.id,
@@ -382,15 +495,18 @@ export default defineEventHandler(async (event) => {
             attempts: execution.attempts,
             latencyMs: Date.now() - startedAt,
             remainingQuota: prepared.remainingQuota,
+            stage,
+            turnIndex,
           },
         })
       })
 
+      await pushEvent('summary', {
+        status: 'queued',
+        sessionId: prepared.sessionId,
+      })
       await pushEvent('done', {
-        result: {
-          ...execution.data,
-          sessionId: prepared.sessionId,
-        },
+        result,
         meta: {
           attempts: execution.attempts,
           fallbackUsed: execution.fallbackUsed,

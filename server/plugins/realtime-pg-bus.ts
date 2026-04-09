@@ -38,6 +38,24 @@ interface ParsedRealtimeNotification {
   presenceMembers: RealtimePresenceMemberPayload[]
 }
 
+const REALTIME_EVENT_TYPES = new Set<RealtimeEventPayload['type']>([
+  'project.resources.changed',
+  'project.outline.changed',
+  'collab.update',
+  'collab.presence',
+  'meeting.state.updated',
+  'meeting.participant.updated',
+  'meeting.caption.partial',
+  'meeting.caption.final',
+  'meeting.summary.ready',
+])
+
+function normalizePayload(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return undefined
+  return value as Record<string, unknown>
+}
+
 function parseRealtimePresenceMembers(rawMembers: unknown): RealtimePresenceMemberPayload[] {
   if (!Array.isArray(rawMembers))
     return []
@@ -138,7 +156,7 @@ function parseRealtimeEventPayload(rawPayload: string): ParsedRealtimeNotificati
   try {
     const parsed = JSON.parse(rawPayload) as Partial<RealtimeEventPayload> & Record<string, unknown>
     const type = normalizeString(parsed.type) as RealtimeEventPayload['type']
-    if (type !== 'project.resources.changed' && type !== 'project.outline.changed' && type !== 'collab.update' && type !== 'collab.presence')
+    if (!REALTIME_EVENT_TYPES.has(type))
       return null
 
     const eventId = normalizeString(parsed.eventId)
@@ -160,6 +178,7 @@ function parseRealtimeEventPayload(rawPayload: string): ParsedRealtimeNotificati
         projectId,
         resourceId: normalizeString(parsed.resourceId) || undefined,
         revision: Number.isFinite(revision) ? Math.max(0, Math.trunc(revision)) : undefined,
+        payload: normalizePayload(parsed.payload),
         sentAt: normalizeString(parsed.sentAt) || new Date().toISOString(),
       },
       presenceMembers: parseRealtimePresenceMembers(parsed.presenceMembers),

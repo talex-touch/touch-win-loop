@@ -4,9 +4,13 @@ import type {
   AiChatSession,
   AiContestFilterResult,
   AiDefenseJudgeRound,
+  AiDefensePersona,
   AiDefenseScorecard,
+  AiDefenseSessionDetail,
+  AiDefenseStage,
   AiDefenseStreamEvent,
   AiDefenseStreamEventType,
+  AiDefenseSummary,
   AiProjectChangeRequest,
   AiWorkspaceRequest,
   AiWorkspaceResult,
@@ -23,6 +27,10 @@ import type {
   ProjectInvitationSummary,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectMeeting,
+  ProjectMeetingDetail,
+  ProjectMeetingMode,
+  ProjectMeetingUtterance,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectMemberSummary,
@@ -46,6 +54,8 @@ import type {
   TopicProposalDecisionStatus,
   TopicProposalItem,
   WorkspaceAiMode,
+  WorkspaceDisplayPreferenceSnapshot,
+  WorkspaceFontSizePreset,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
@@ -78,6 +88,10 @@ import {
   createEmptyProjectCommonForm,
   createProjectCommonFormFromProject,
 } from '~/composables/project-settings'
+import {
+  defaultWorkspaceDisplayPreferenceSnapshot,
+  useWorkspaceDisplayPreferenceApi,
+} from '~/composables/useWorkspaceDisplayPreferences'
 import { useCollabSession } from '~/composables/useCollabSession'
 
 definePageMeta({
@@ -102,6 +116,11 @@ const { endpoint, resolveApiUrl, resolveAppUrl } = useApiEndpoint()
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
+const {
+  loadWorkspaceSnapshot: loadWorkspaceDisplayPreferenceSnapshotByApi,
+  patchWorkspaceUserOverride: patchWorkspaceDisplayUserOverrideByApi,
+  patchWorkspaceTeamDefault: patchWorkspaceDisplayTeamDefaultByApi,
+} = useWorkspaceDisplayPreferenceApi()
 
 interface TopicBoardConfirmOptions {
   title: string
@@ -292,6 +311,10 @@ function normalizeQueryParam(value: unknown): string {
   return String(value).trim()
 }
 
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
+
 function isTruthyQueryFlag(value: unknown): boolean {
   const normalized = normalizeQueryParam(value).toLowerCase()
   return normalized === '1' || normalized === 'true' || normalized === 'yes'
@@ -453,9 +476,46 @@ interface ProjectMemberRolePatchPayload {
   role: 'manager' | 'editor' | 'viewer'
 }
 
+interface WorkspaceMeetingCaptionItem {
+  id: string
+  text: string
+  speakerName: string
+  speakerLabel: string
+  startedAtMs: number
+  endedAtMs: number
+  final: boolean
+}
+
+interface ProjectMeetingJoinSessionPayload {
+  meeting: ProjectMeetingDetail
+  joinToken: string
+  joinExpiresAt: string
+  joinUrl?: string
+}
+
+interface ProjectMeetingCreateSessionPayload {
+  meeting: ProjectMeeting
+  detail: ProjectMeetingDetail
+  joinToken: string
+  joinExpiresAt: string
+  joinUrl?: string
+}
+
+interface DefenseRealtimeSessionPayload {
+  sessionId: string
+  meetingId: string
+  meeting: ProjectMeetingDetail
+  joinToken: string
+  joinExpiresAt: string
+  joinUrl?: string
+  selectedPersonaIds: string[]
+}
+
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
-type WorkspaceMainTabId = 'dashboard' | 'members' | 'flow' | 'settings' | `resource:${string}`
+type WorkspaceMainTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings' | `resource:${string}`
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
+type WorkspaceWorkbenchMode = 'project' | 'defense'
+type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
@@ -505,6 +565,11 @@ const resources = ref<Resource[]>([])
 const recycleResources = ref<Resource[]>([])
 const resourceLibrary = ref<Resource[]>([])
 const projectResourceShares = ref<ProjectResourceShare[]>([])
+const projectMeetings = ref<ProjectMeeting[]>([])
+const activeMeetingId = ref('')
+const activeMeetingDetail = ref<ProjectMeetingDetail | null>(null)
+const activeMeetingUtterances = ref<ProjectMeetingUtterance[]>([])
+const meetingLiveCaptions = ref<WorkspaceMeetingCaptionItem[]>([])
 const workspaceMembers = ref<ProjectMemberSummary[]>([])
 const workspaceInvitations = ref<ProjectInvitationSummary[]>([])
 const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
@@ -539,6 +604,13 @@ const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
 const previewMode = ref<WorkspacePreviewMode>('binary')
 const projectSettingsLoading = ref(false)
 const projectSettingsSaveState = ref<WorkspaceProjectSaveState>('idle')
+const workspaceDisplayPreferenceSnapshot = ref<WorkspaceDisplayPreferenceSnapshot>(defaultWorkspaceDisplayPreferenceSnapshot())
+const workspaceDisplayPreferenceLoading = ref(false)
+const workspaceDisplayPreferenceSavingScope = ref<'' | 'user' | 'team'>('')
+const workspaceDisplayPreferenceError = ref('')
+const meetingJoinUrl = ref('')
+const meetingJoinToken = ref('')
+const meetingJoinExpiresAt = ref('')
 const projectSettingsCommon = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
 const projectSettingsBindings = ref<WorkspaceProjectContestBindingForm[]>([])
 const projectSettingsCurrentContestId = ref('')
@@ -556,6 +628,7 @@ let projectSettingsDraftPersistSeq = 0
 let projectOutlineGenerateTimer: ReturnType<typeof setTimeout> | null = null
 let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let meetingRealtimeRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let unsubscribeRealtimeMessages: (() => void) | null = null
 let rightSidebarBreakpointMediaQuery: MediaQueryList | null = null
@@ -571,12 +644,15 @@ const resourceLibraryLoading = ref(false)
 const projectOutlineLoading = ref(false)
 const projectOutlineFirstLoaded = ref(false)
 const projectResourceSharesLoading = ref(false)
+const projectMeetingsLoading = ref(false)
+const meetingDetailLoading = ref(false)
 const workspaceMemberManagementLoading = ref(false)
 const workspaceInvitationSubmitting = ref(false)
 const workspaceMemberRoleUpdatingUserId = ref('')
 const workspaceMemberRemovingUserId = ref('')
 const workspaceInvitationRevokingId = ref('')
 const resourceMutating = ref(false)
+const meetingMutating = ref(false)
 
 const chatMessages = ref<ChatMessage[]>([defaultAssistantGreeting()])
 const chatSessions = ref<AiChatSession[]>([])
@@ -585,6 +661,8 @@ const chatInput = ref('')
 const chatMissingFields = ref<string[]>([])
 const chatDraft = ref<ProjectPayload | null>(null)
 const aiMode = ref<WorkspaceAiMode>('dialog_ask')
+const workbenchMode = ref<WorkspaceWorkbenchMode>('project')
+const lastPrimaryAiMode = ref<WorkspacePrimaryAiMode>('dialog_ask')
 const aiChangeRequests = ref<AiProjectChangeRequest[]>([])
 const aiChangeRequestsLoading = ref(false)
 const aiChangeActingIds = ref<string[]>([])
@@ -594,6 +672,12 @@ const projectIssues = ref<ProjectIssue[]>([])
 const issueCenterLoading = ref(false)
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
+const defensePersonas = ref<AiDefensePersona[]>([])
+const defensePersonasLoading = ref(false)
+const defenseSummary = ref<AiDefenseSummary | null>(null)
+const defenseSummaryLoading = ref(false)
+const defenseStage = ref<AiDefenseStage | undefined>(undefined)
+const defenseTurnCount = ref(0)
 const workspaceInvitationLink = ref('')
 const workspaceSeatLimitSaveLoading = ref(false)
 const workspaceSeatLimitError = ref('')
@@ -811,6 +895,9 @@ function resetChatStateWithGreeting() {
   chatMissingFields.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
+  defenseSummary.value = null
+  defenseStage.value = undefined
+  defenseTurnCount.value = 0
 }
 
 function resolveWorkspaceOptions(auth: AuthMeResult | null): WorkspaceWithQuota[] {
@@ -951,6 +1038,9 @@ const workspaceSeatLimit = computed<number | null>(() => {
   if (!Number.isFinite(raw) || raw <= 0)
     return null
   return Math.max(1, Math.trunc(raw))
+})
+const workspaceEffectiveFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  return workspaceDisplayPreferenceSnapshot.value.effective.fontSizePreset || 'md'
 })
 const quickSwitchSourceProjects = computed(() => {
   const source = allProjects.value.length > 0 ? allProjects.value : projects.value
@@ -1225,6 +1315,376 @@ function syncFallbackResourceRefreshTimer(): void {
   startFallbackResourceRefreshTimer()
 }
 
+function clearMeetingRealtimeRefreshTimer(): void {
+  if (!meetingRealtimeRefreshTimer)
+    return
+  clearTimeout(meetingRealtimeRefreshTimer)
+  meetingRealtimeRefreshTimer = null
+}
+
+function clearMeetingJoinSession(): void {
+  meetingJoinUrl.value = ''
+  meetingJoinToken.value = ''
+  meetingJoinExpiresAt.value = ''
+}
+
+function resetProjectMeetingState(): void {
+  clearMeetingRealtimeRefreshTimer()
+  projectMeetings.value = []
+  activeMeetingId.value = ''
+  activeMeetingDetail.value = null
+  activeMeetingUtterances.value = []
+  meetingLiveCaptions.value = []
+  clearMeetingJoinSession()
+}
+
+function buildMeetingCaptionKey(item: Pick<WorkspaceMeetingCaptionItem, 'speakerLabel' | 'startedAtMs'>): string {
+  return `${String(item.speakerLabel || '').trim()}::${Math.max(0, Math.trunc(Number(item.startedAtMs || 0)))}`
+}
+
+function trimMeetingLiveCaptions(items: WorkspaceMeetingCaptionItem[]): WorkspaceMeetingCaptionItem[] {
+  return [...items]
+    .sort((left, right) => left.startedAtMs - right.startedAtMs)
+    .slice(-20)
+}
+
+function buildMeetingCaptionItem(
+  payload: Record<string, unknown>,
+  final: boolean,
+): WorkspaceMeetingCaptionItem | null {
+  const rawText = normalizeString(payload.text)
+  if (!rawText)
+    return null
+
+  const startedAtMs = Math.max(0, Math.trunc(Number(payload.startedAtMs || 0)))
+  const endedAtMs = Math.max(startedAtMs, Math.trunc(Number(payload.endedAtMs || payload.startedAtMs || 0)))
+  const speakerName = normalizeString(payload.speakerName) || normalizeString(payload.speakerLabel) || 'Speaker'
+  const speakerLabel = normalizeString(payload.speakerLabel) || speakerName
+  const participantIdentity = normalizeString(payload.participantIdentity)
+  const utteranceId = normalizeString(payload.utteranceId)
+  const id = utteranceId
+    || (final
+      ? `final:${speakerLabel}:${startedAtMs}:${endedAtMs}`
+      : `partial:${participantIdentity || speakerLabel}:${startedAtMs}`)
+
+  return {
+    id,
+    text: rawText,
+    speakerName,
+    speakerLabel,
+    startedAtMs,
+    endedAtMs,
+    final,
+  }
+}
+
+function upsertMeetingLiveCaption(item: WorkspaceMeetingCaptionItem): void {
+  if (item.final) {
+    const targetKey = buildMeetingCaptionKey(item)
+    meetingLiveCaptions.value = trimMeetingLiveCaptions(
+      meetingLiveCaptions.value.filter(existing => buildMeetingCaptionKey(existing) !== targetKey),
+    )
+    return
+  }
+
+  const targetKey = buildMeetingCaptionKey(item)
+  const nextItems = meetingLiveCaptions.value.filter(existing => buildMeetingCaptionKey(existing) !== targetKey)
+  nextItems.push(item)
+  meetingLiveCaptions.value = trimMeetingLiveCaptions(nextItems)
+}
+
+function upsertProjectMeetingInList(meeting: ProjectMeeting): void {
+  const normalizedMeetingId = normalizeString(meeting.id)
+  if (!normalizedMeetingId)
+    return
+
+  const nextItems = [...projectMeetings.value]
+  const existingIndex = nextItems.findIndex(item => item.id === normalizedMeetingId)
+  if (existingIndex >= 0)
+    nextItems.splice(existingIndex, 1, meeting)
+  else
+    nextItems.unshift(meeting)
+
+  projectMeetings.value = nextItems
+    .sort((left, right) => {
+      const startedDiff = parseTimestamp(right.startedAt) - parseTimestamp(left.startedAt)
+      if (startedDiff !== 0)
+        return startedDiff
+      return parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt)
+    })
+    .slice(0, 12)
+}
+
+function applyProjectMeetingSession(
+  meeting: ProjectMeetingDetail | null,
+  options: {
+    joinUrl?: string
+    joinToken?: string
+    joinExpiresAt?: string
+    resetCaptions?: boolean
+  } = {},
+): void {
+  if (!meeting) {
+    activeMeetingId.value = ''
+    activeMeetingDetail.value = null
+    activeMeetingUtterances.value = []
+    if (options.resetCaptions !== false)
+      meetingLiveCaptions.value = []
+    clearMeetingJoinSession()
+    return
+  }
+
+  activeMeetingId.value = meeting.id
+  activeMeetingDetail.value = meeting
+  upsertProjectMeetingInList(meeting)
+  meetingJoinUrl.value = normalizeString(options.joinUrl)
+  meetingJoinToken.value = normalizeString(options.joinToken)
+  meetingJoinExpiresAt.value = normalizeString(options.joinExpiresAt)
+  if (options.resetCaptions)
+    meetingLiveCaptions.value = []
+}
+
+async function loadProjectMeetingUtterances(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId) {
+    activeMeetingUtterances.value = []
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectMeetingUtterance[]>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/utterances`),
+    )
+    if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
+      return
+    activeMeetingUtterances.value = Array.isArray(response.data) ? response.data : []
+  }
+  catch {
+    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
+      activeMeetingUtterances.value = []
+  }
+}
+
+async function loadProjectMeetingDetail(
+  meetingId: string,
+  options: {
+    resetCaptions?: boolean
+  } = {},
+): Promise<ProjectMeetingDetail | null> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId) {
+    applyProjectMeetingSession(null)
+    return null
+  }
+
+  meetingDetailLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}`),
+    )
+    if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
+      return response.data?.meeting || null
+
+    applyProjectMeetingSession(response.data.meeting, {
+      joinUrl: response.data.joinUrl,
+      joinToken: response.data.joinToken,
+      joinExpiresAt: response.data.joinExpiresAt,
+      resetCaptions: options.resetCaptions,
+    })
+    return response.data.meeting
+  }
+  catch (error) {
+    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId) {
+      activeMeetingDetail.value = null
+      activeMeetingUtterances.value = []
+      clearMeetingJoinSession()
+    }
+    statusLine.value = resolveApiErrorMessage(error, '加载会议详情失败，请稍后重试。')
+    return null
+  }
+  finally {
+    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
+      meetingDetailLoading.value = false
+    else if (!activeProjectId.value)
+      meetingDetailLoading.value = false
+  }
+}
+
+async function selectProjectMeeting(meetingId: string): Promise<void> {
+  const targetMeetingId = normalizeString(meetingId)
+  if (!targetMeetingId)
+    return
+
+  activeMainTabId.value = 'meeting'
+  const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
+  activeMeetingId.value = targetMeetingId
+  if (isSwitchingMeeting) {
+    activeMeetingDetail.value = null
+    activeMeetingUtterances.value = []
+    meetingLiveCaptions.value = []
+    clearMeetingJoinSession()
+  }
+
+  await Promise.all([
+    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting }),
+    loadProjectMeetingUtterances(targetMeetingId),
+  ])
+}
+
+async function loadProjectMeetings(options: { fallbackToFirst?: boolean } = {}): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    resetProjectMeetingState()
+    return
+  }
+
+  projectMeetingsLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<{ items: ProjectMeeting[] }>>(
+      endpoint(`/projects/${projectId}/meetings`),
+    )
+    if (activeProjectId.value !== projectId)
+      return
+
+    const items = Array.isArray(response.data?.items) ? response.data.items : []
+    projectMeetings.value = items
+
+    const selectedMeetingStillExists = Boolean(
+      activeMeetingId.value && items.some(item => item.id === activeMeetingId.value),
+    )
+    if (selectedMeetingStillExists)
+      return
+
+    if (options.fallbackToFirst !== false && items[0]?.id) {
+      await selectProjectMeeting(items[0].id)
+      return
+    }
+
+    applyProjectMeetingSession(null)
+  }
+  catch {
+    if (activeProjectId.value === projectId)
+      projectMeetings.value = []
+  }
+  finally {
+    if (activeProjectId.value === projectId || !activeProjectId.value)
+      projectMeetingsLoading.value = false
+  }
+}
+
+function scheduleMeetingRealtimeRefresh(options: {
+  meetingId?: string
+  refreshUtterances?: boolean
+} = {}): void {
+  const targetMeetingId = normalizeString(options.meetingId || activeMeetingId.value)
+  clearMeetingRealtimeRefreshTimer()
+  meetingRealtimeRefreshTimer = setTimeout(() => {
+    meetingRealtimeRefreshTimer = null
+    void loadProjectMeetings({ fallbackToFirst: true })
+    if (targetMeetingId && targetMeetingId === activeMeetingId.value) {
+      void loadProjectMeetingDetail(targetMeetingId)
+      if (options.refreshUtterances)
+        void loadProjectMeetingUtterances(targetMeetingId)
+    }
+  }, 250)
+}
+
+async function createProjectMeeting(payload: { mode: ProjectMeetingMode }): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || meetingMutating.value)
+    return
+
+  meetingMutating.value = true
+  try {
+    const response = await $fetch<ApiResponse<ProjectMeetingCreateSessionPayload>>(
+      endpoint(`/projects/${projectId}/meetings`),
+      {
+        method: 'POST',
+        body: {
+          mode: payload.mode,
+        },
+      },
+    )
+
+    activeMainTabId.value = 'meeting'
+    activeMeetingUtterances.value = []
+    applyProjectMeetingSession(response.data.detail, {
+      joinUrl: response.data.joinUrl,
+      joinToken: response.data.joinToken,
+      joinExpiresAt: response.data.joinExpiresAt,
+      resetCaptions: true,
+    })
+    upsertProjectMeetingInList(response.data.meeting)
+    statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议已创建。`
+    Message.success('会议已创建。')
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '创建会议失败，请稍后重试。')
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    meetingMutating.value = false
+  }
+}
+
+async function joinProjectMeeting(meetingId: string): Promise<void> {
+  const targetMeetingId = normalizeString(meetingId)
+  if (!targetMeetingId || meetingMutating.value)
+    return
+
+  meetingMutating.value = true
+  try {
+    activeMainTabId.value = 'meeting'
+    activeMeetingId.value = targetMeetingId
+    const meeting = await loadProjectMeetingDetail(targetMeetingId)
+    if (meeting)
+      await loadProjectMeetingUtterances(targetMeetingId)
+  }
+  finally {
+    meetingMutating.value = false
+  }
+}
+
+async function endProjectMeeting(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId || meetingMutating.value)
+    return
+
+  meetingMutating.value = true
+  try {
+    const response = await $fetch<ApiResponse<ProjectMeetingDetail>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/end`),
+      {
+        method: 'POST',
+      },
+    )
+
+    upsertProjectMeetingInList(response.data)
+    if (activeMeetingId.value === targetMeetingId) {
+      applyProjectMeetingSession(response.data, {
+        resetCaptions: false,
+      })
+      clearMeetingJoinSession()
+      await loadProjectMeetingUtterances(targetMeetingId)
+    }
+
+    statusLine.value = '会议已结束，系统正在整理录制与纪要。'
+    Message.success('会议已结束。')
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '结束会议失败，请稍后重试。')
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    meetingMutating.value = false
+  }
+}
+
 function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
   const messageType = String(message.type || '').trim()
   if (!messageType)
@@ -1252,6 +1712,53 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
       return
     refreshProjectUploadActivities()
     scheduleRealtimeProjectRefresh()
+    return
+  }
+
+  if (
+    messageType === 'meeting.state.updated'
+    || messageType === 'meeting.participant.updated'
+    || messageType === 'meeting.caption.partial'
+    || messageType === 'meeting.caption.final'
+    || messageType === 'meeting.summary.ready'
+  ) {
+    const workspaceId = String(message.workspaceId || '').trim()
+    const projectId = String(message.projectId || '').trim()
+    if (workspaceId && workspaceId !== activeWorkspaceId.value)
+      return
+    if (projectId && projectId !== activeProjectId.value)
+      return
+
+    const payload = message.payload && typeof message.payload === 'object'
+      ? message.payload as Record<string, unknown>
+      : {}
+    const meetingId = normalizeString(payload.meetingId)
+
+    if (messageType === 'meeting.caption.partial' || messageType === 'meeting.caption.final') {
+      if (meetingId && activeMeetingId.value && meetingId !== activeMeetingId.value)
+        return
+
+      const caption = buildMeetingCaptionItem(payload, messageType === 'meeting.caption.final')
+      if (!caption)
+        return
+
+      upsertMeetingLiveCaption(caption)
+      if (messageType === 'meeting.caption.final' && meetingId)
+        scheduleMeetingRealtimeRefresh({ meetingId, refreshUtterances: true })
+      return
+    }
+
+    if (messageType === 'meeting.summary.ready') {
+      statusLine.value = '会议纪要已就绪，资源区会自动补齐录制与纪要。'
+      scheduleMeetingRealtimeRefresh({
+        meetingId: meetingId || activeMeetingId.value,
+      })
+      return
+    }
+
+    scheduleMeetingRealtimeRefresh({
+      meetingId: meetingId || activeMeetingId.value,
+    })
     return
   }
 
@@ -2532,6 +3039,98 @@ async function loadContestCatalog() {
   }
 }
 
+function resetWorkspaceDisplayPreferenceState(): void {
+  workspaceDisplayPreferenceSnapshot.value = defaultWorkspaceDisplayPreferenceSnapshot()
+  workspaceDisplayPreferenceLoading.value = false
+  workspaceDisplayPreferenceSavingScope.value = ''
+  workspaceDisplayPreferenceError.value = ''
+}
+
+async function loadWorkspaceDisplayPreferenceSnapshot(workspaceId = activeWorkspaceId.value): Promise<void> {
+  const normalizedWorkspaceId = String(workspaceId || '').trim()
+  if (!normalizedWorkspaceId) {
+    resetWorkspaceDisplayPreferenceState()
+    return
+  }
+
+  workspaceDisplayPreferenceLoading.value = true
+  workspaceDisplayPreferenceError.value = ''
+  try {
+    const snapshot = await loadWorkspaceDisplayPreferenceSnapshotByApi(normalizedWorkspaceId)
+    if (activeWorkspaceId.value !== normalizedWorkspaceId)
+      return
+    workspaceDisplayPreferenceSnapshot.value = snapshot
+  }
+  catch (error) {
+    if (activeWorkspaceId.value !== normalizedWorkspaceId)
+      return
+    workspaceDisplayPreferenceSnapshot.value = defaultWorkspaceDisplayPreferenceSnapshot()
+    workspaceDisplayPreferenceError.value = resolveApiErrorMessage(error, '加载工作区显示偏好失败，请稍后重试。')
+  }
+  finally {
+    if (activeWorkspaceId.value === normalizedWorkspaceId)
+      workspaceDisplayPreferenceLoading.value = false
+  }
+}
+
+async function saveWorkspaceDisplayUserOverride(payload: { fontSizePreset: WorkspaceFontSizePreset | null }): Promise<void> {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId || workspaceDisplayPreferenceSavingScope.value)
+    return
+
+  workspaceDisplayPreferenceSavingScope.value = 'user'
+  workspaceDisplayPreferenceError.value = ''
+  try {
+    const snapshot = await patchWorkspaceDisplayUserOverrideByApi(workspaceId, payload.fontSizePreset)
+    if (activeWorkspaceId.value !== workspaceId)
+      return
+    workspaceDisplayPreferenceSnapshot.value = snapshot
+    statusLine.value = '当前工作区显示偏好已保存。'
+    Message.success('当前工作区显示偏好已保存。')
+  }
+  catch (error) {
+    if (activeWorkspaceId.value !== workspaceId)
+      return
+    const message = resolveApiErrorMessage(error, '保存当前工作区显示偏好失败，请稍后重试。')
+    workspaceDisplayPreferenceError.value = message
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    if (activeWorkspaceId.value === workspaceId)
+      workspaceDisplayPreferenceSavingScope.value = ''
+  }
+}
+
+async function saveWorkspaceDisplayTeamDefault(payload: { fontSizePreset: WorkspaceFontSizePreset | null }): Promise<void> {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId || workspaceDisplayPreferenceSavingScope.value)
+    return
+
+  workspaceDisplayPreferenceSavingScope.value = 'team'
+  workspaceDisplayPreferenceError.value = ''
+  try {
+    const snapshot = await patchWorkspaceDisplayTeamDefaultByApi(workspaceId, payload.fontSizePreset)
+    if (activeWorkspaceId.value !== workspaceId)
+      return
+    workspaceDisplayPreferenceSnapshot.value = snapshot
+    statusLine.value = '团队默认显示偏好已保存。'
+    Message.success('团队默认显示偏好已保存。')
+  }
+  catch (error) {
+    if (activeWorkspaceId.value !== workspaceId)
+      return
+    const message = resolveApiErrorMessage(error, '保存团队默认显示偏好失败，请稍后重试。')
+    workspaceDisplayPreferenceError.value = message
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    if (activeWorkspaceId.value === workspaceId)
+      workspaceDisplayPreferenceSavingScope.value = ''
+  }
+}
+
 async function loadContests() {
   listLoading.value = true
   statusLine.value = ''
@@ -3066,11 +3665,13 @@ async function consumeJoinedProjectNotice() {
 
 async function consumeProjectPanelQuery() {
   const panel = normalizeQueryParam(route.query.panel).toLowerCase()
-  if (panel !== 'members' && panel !== 'settings')
+  if (panel !== 'members' && panel !== 'settings' && panel !== 'meeting')
     return
 
   if (panel === 'members')
     openMemberManagementSignal.value += 1
+  else if (panel === 'meeting')
+    activeMainTabId.value = 'meeting'
   else
     openSettingsSignal.value += 1
 
@@ -3877,12 +4478,239 @@ async function loadChatMessages(sessionId: string) {
     chatMissingFields.value = []
     defenseRounds.value = []
     defenseScorecard.value = null
+    defenseSummary.value = null
+    defenseStage.value = undefined
+    defenseTurnCount.value = 0
     chatMessages.value = restoredMessages.length > 0
       ? restoredMessages
       : [defaultAssistantGreeting()]
+
+    if (aiMode.value === 'defense')
+      await loadDefenseSessionDetail(sessionId)
   }
   catch {
     resetChatStateWithGreeting()
+  }
+}
+
+async function loadDefensePersonas() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    defensePersonas.value = []
+    return
+  }
+
+  defensePersonasLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<{ items: AiDefensePersona[] }>>(
+      endpoint(`/projects/${projectId}/defense/personas`),
+    )
+    defensePersonas.value = response.data.items
+  }
+  catch {
+    defensePersonas.value = []
+  }
+  finally {
+    defensePersonasLoading.value = false
+  }
+}
+
+async function loadDefenseSessionDetail(sessionId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || !sessionId) {
+    defenseRounds.value = []
+    defenseSummary.value = null
+    defenseStage.value = undefined
+    defenseTurnCount.value = 0
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<AiDefenseSessionDetail>>(
+      endpoint(`/projects/${projectId}/defense/sessions/${sessionId}`),
+    )
+    const detail = response.data
+    defensePersonas.value = detail.personas || []
+    defenseSummary.value = detail.latestSummary || null
+    defenseStage.value = detail.state?.currentStage
+    defenseTurnCount.value = detail.state?.turnCount || 0
+    defenseScorecard.value = detail.state?.lastScorecard || defenseScorecard.value
+    if (detail.turns.length > 0) {
+      const latestTurnIndex = detail.state?.turnCount || detail.turns[detail.turns.length - 1]?.turnIndex || 0
+      defenseRounds.value = detail.turns
+        .filter(item => item.turnIndex === latestTurnIndex)
+        .map(item => ({
+          judge: item.judgeName,
+          judgeType: item.judgeType,
+          personaId: item.personaId || undefined,
+          question: item.question,
+          score: item.score,
+          comment: item.comment,
+          followUp: item.followUp,
+          evidenceRefs: item.evidenceRefs,
+        }))
+    }
+    else {
+      defenseRounds.value = []
+    }
+  }
+  catch {
+    defenseRounds.value = []
+    defenseScorecard.value = null
+    defenseSummary.value = null
+    defenseStage.value = undefined
+    defenseTurnCount.value = 0
+  }
+}
+
+async function importDefensePersonas() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || !selectedContestId.value) {
+    statusLine.value = '请先选择竞赛，再导入答辩人设。'
+    return
+  }
+
+  try {
+    await $fetch(endpoint(`/projects/${projectId}/defense/personas/import`), {
+      method: 'POST',
+      body: {
+        contestId: selectedContestId.value,
+        trackId: selectedTrackId.value,
+      },
+    })
+    await loadDefensePersonas()
+    statusLine.value = '已导入比赛预设人设。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '导入答辩人设失败，请稍后重试。')
+  }
+}
+
+async function saveDefensePersona(payload: {
+  personaId?: string
+  judgeType: AiDefensePersona['judgeType']
+  name: string
+  summary: string
+  systemPrompt: string
+  focusAreas: string[]
+  enabled: boolean
+}) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    statusLine.value = '请先选择项目。'
+    return
+  }
+
+  try {
+    if (payload.personaId) {
+      await $fetch(endpoint(`/projects/${projectId}/defense/personas/${payload.personaId}`), {
+        method: 'PATCH',
+        body: payload,
+      })
+    }
+    else {
+      await $fetch(endpoint(`/projects/${projectId}/defense/personas`), {
+        method: 'POST',
+        body: payload,
+      })
+    }
+    await loadDefensePersonas()
+    statusLine.value = '答辩人设已保存。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '保存答辩人设失败，请稍后重试。')
+  }
+}
+
+async function deleteDefensePersona(personaId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || !personaId)
+    return
+
+  try {
+    await $fetch(endpoint(`/projects/${projectId}/defense/personas/${personaId}`), {
+      method: 'DELETE',
+    })
+    await loadDefensePersonas()
+    statusLine.value = '答辩人设已删除。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '删除答辩人设失败，请稍后重试。')
+  }
+}
+
+async function generateDefenseSummary() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || !activeChatSessionId.value) {
+    statusLine.value = '请先完成至少一轮答辩，再生成总结。'
+    return
+  }
+
+  defenseSummaryLoading.value = true
+  try {
+    const response = await $fetch<ApiResponse<{ item: AiDefenseSummary }>>(
+      endpoint(`/projects/${projectId}/defense/sessions/${activeChatSessionId.value}/summary`),
+      {
+        method: 'POST',
+        body: {
+          summaryType: 'session',
+        },
+      },
+    )
+    defenseSummary.value = response.data.item
+    await loadDefenseSessionDetail(activeChatSessionId.value)
+    statusLine.value = '答辩总结已生成。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '生成答辩总结失败，请稍后重试。')
+  }
+  finally {
+    defenseSummaryLoading.value = false
+  }
+}
+
+async function startDefenseRealtime() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || meetingMutating.value) {
+    if (!projectId)
+      statusLine.value = '请先选择项目。'
+    return
+  }
+
+  meetingMutating.value = true
+  try {
+    const enabledPersonaIds = defensePersonas.value
+      .filter(item => item.enabled)
+      .map(item => item.id)
+    const response = await $fetch<ApiResponse<DefenseRealtimeSessionPayload>>(
+      endpoint(`/projects/${projectId}/defense/realtime-sessions`),
+      {
+        method: 'POST',
+        body: {
+          mode: 'audio',
+          personaIds: enabledPersonaIds,
+        },
+      },
+    )
+    activeChatSessionId.value = response.data.sessionId
+    defenseStage.value = 'opening'
+    defenseTurnCount.value = 0
+    activeMainTabId.value = 'meeting'
+    activeMeetingUtterances.value = []
+    applyProjectMeetingSession(response.data.meeting, {
+      joinUrl: response.data.joinUrl,
+      joinToken: response.data.joinToken,
+      joinExpiresAt: response.data.joinExpiresAt,
+      resetCaptions: true,
+    })
+    await loadChatSessions(response.data.sessionId)
+    statusLine.value = '已发起语音答辩会话，正在进入会议面板。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '发起语音答辩失败，请稍后重试。')
+  }
+  finally {
+    meetingMutating.value = false
   }
 }
 
@@ -4661,7 +5489,11 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
   chatMissingFields.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
+  defenseSummary.value = null
   let assistantText = ''
+  const enabledPersonaIds = defensePersonas.value
+    .filter(item => item.enabled)
+    .map(item => item.id)
 
   const response = await fetch(endpoint('/ai/defense/stream'), {
     method: 'POST',
@@ -4673,6 +5505,8 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
       teamId: activeWorkspaceId.value,
       workspaceId: activeWorkspaceId.value,
       sessionId: activeChatSessionId.value,
+      personaIds: enabledPersonaIds,
+      inputMode: 'text',
       messages: toModelMessages(pendingMessages),
       context: {
         teamId: activeWorkspaceId.value,
@@ -4727,6 +5561,13 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
           activeChatSessionId.value = String(data.sessionId)
         continue
       }
+      if (eventType === 'stage') {
+        if (data.stage)
+          defenseStage.value = String(data.stage) as AiDefenseStage
+        if (Number.isFinite(Number(data.turnIndex)))
+          defenseTurnCount.value = Math.max(defenseTurnCount.value, Number(data.turnIndex || 0) - 1)
+        continue
+      }
       if (eventType === 'judge') {
         const round = data.round as AiDefenseJudgeRound | undefined
         if (round)
@@ -4737,6 +5578,10 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
         const scorecard = data.scorecard as AiDefenseScorecard | undefined
         if (scorecard)
           defenseScorecard.value = scorecard
+        continue
+      }
+      if (eventType === 'summary') {
+        statusLine.value = '答辩轮次已完成，正在准备总结...'
         continue
       }
       if (eventType === 'delta') {
@@ -4757,6 +5602,10 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
           chatMissingFields.value = result.missingFields.map(item => String(item))
         if (result.sessionId)
           activeChatSessionId.value = String(result.sessionId)
+        if (result.stage)
+          defenseStage.value = String(result.stage) as AiDefenseStage
+        if (Number.isFinite(Number(result.turnIndex)))
+          defenseTurnCount.value = Number(result.turnIndex)
         statusLine.value = '模拟答辩完成，可继续追问下一轮。'
         continue
       }
@@ -4772,6 +5621,12 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
     if (payload.event === 'error')
       throw new Error(String(toJsonPayload(payload.data).message || '模拟答辩失败。'))
   }
+
+  if (activeChatSessionId.value)
+    await loadDefenseSessionDetail(activeChatSessionId.value)
+
+  if (activeChatSessionId.value)
+    await generateDefenseSummary()
 }
 
 async function sendChatMessage() {
@@ -4905,6 +5760,19 @@ async function switchProjectFromHeader(payload: { projectId: string, workspaceId
   await navigateTo(workspaceDetailPath(payload.workspaceId, payload.projectId))
 }
 
+function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
+  if (nextMode === 'defense') {
+    aiMode.value = 'defense'
+    return
+  }
+
+  aiMode.value = lastPrimaryAiMode.value || 'dialog_ask'
+}
+
+function updateWorkspaceAiMode(nextMode: WorkspaceAiMode) {
+  aiMode.value = nextMode
+}
+
 async function openFinalReviewFromHeader() {
   const opened = await ensureWorkflowCanvas()
   if (opened)
@@ -4927,11 +5795,6 @@ async function openFlowFromLeftSidebar() {
     statusLine.value = '已打开流程画布，可继续协作梳理项目流程。'
 }
 
-function openDefenseFromLeftSidebar() {
-  aiMode.value = 'defense'
-  statusLine.value = '已切换到答辩模拟模式，可直接发起多评委追问。'
-}
-
 onMounted(async () => {
   const canonicalRedirected = await ensureCanonicalWorkspaceProjectRoute()
   if (canonicalRedirected)
@@ -4949,7 +5812,16 @@ onMounted(async () => {
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
 
-  await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement(), loadTopicBoards()])
+  await Promise.all([
+    loadContestCatalog(),
+    loadContests(),
+    loadProjects(),
+    loadQuickSwitchProjects(),
+    loadChatSessions(),
+    loadWorkspaceMemberManagement(),
+    loadTopicBoards(),
+    loadWorkspaceDisplayPreferenceSnapshot(),
+  ])
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
   if (activeProjectId.value)
@@ -4957,7 +5829,8 @@ onMounted(async () => {
   await refreshProjectResourceContext()
   await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
-  await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
+  await Promise.all([loadAiChangeRequests(), loadProjectIssues(), loadProjectMeetings()])
+  await loadDefensePersonas()
   syncFallbackResourceRefreshTimer()
   syncFormContestTrack()
   await consumeTopicBoardCreateSeed()
@@ -4975,6 +5848,7 @@ onBeforeUnmount(() => {
   clearProjectOutlineGenerateTimer()
   clearPreviewStatusPolling()
   clearRealtimeProjectRefreshTimer()
+  clearMeetingRealtimeRefreshTimer()
   clearFallbackResourceRefreshTimer()
   if (unsubscribeRightSidebarBreakpoint) {
     unsubscribeRightSidebarBreakpoint()
@@ -4993,6 +5867,7 @@ watch(activeWorkspaceId, async (value, previous) => {
     return
 
   workspaceRealtime.subscribeWorkspace(value)
+  workspaceDisplayPreferenceError.value = ''
 
   if (value !== routeWorkspaceId.value)
     await navigateTo(workspaceDetailPath(value), { replace: true })
@@ -5022,9 +5897,18 @@ watch(routeWorkspaceId, async (value, previous) => {
   workspaceInvitationLink.value = ''
   projectSeatQuota.value = null
   workspaceSeatLimitError.value = ''
+  workspaceDisplayPreferenceError.value = ''
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
-  await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement(), loadTopicBoards()])
+  await Promise.all([
+    loadContestCatalog(),
+    loadProjects(),
+    loadQuickSwitchProjects(),
+    loadChatSessions(),
+    loadWorkspaceMemberManagement(),
+    loadTopicBoards(),
+    loadWorkspaceDisplayPreferenceSnapshot(value),
+  ])
   await refreshProjectResourceContext()
   await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
@@ -5044,6 +5928,7 @@ watch(activeProjectId, async (next, previous) => {
   clearProjectSettingsAutoTimers()
   clearProjectOutlineGenerateTimer()
   clearRealtimeProjectRefreshTimer()
+  clearMeetingRealtimeRefreshTimer()
   clearFallbackResourceRefreshTimer()
   projectOutlineFirstLoaded.value = false
   topicBoardLoading.value = false
@@ -5063,9 +5948,11 @@ watch(activeProjectId, async (next, previous) => {
     aiChangeRequests.value = []
     projectIssueReports.value = []
     projectIssues.value = []
+    resetProjectMeetingState()
     resetWorkspaceMemberManagementState()
     chatSessions.value = []
     activeChatSessionId.value = ''
+    defensePersonas.value = []
     resetChatStateWithGreeting()
     return
   }
@@ -5078,7 +5965,9 @@ watch(activeProjectId, async (next, previous) => {
     loadTopicBoards(),
     loadAiChangeRequests(),
     loadProjectIssues(),
+    loadProjectMeetings(),
     loadChatSessions(),
+    loadDefensePersonas(),
   ])
   await consumeTopicBoardCreateSeed()
 })
@@ -5146,6 +6035,14 @@ watch(aiMode, async (next, previous) => {
   if (next === previous)
     return
 
+  if (next === 'defense') {
+    workbenchMode.value = 'defense'
+  }
+  else {
+    workbenchMode.value = 'project'
+    lastPrimaryAiMode.value = next
+  }
+
   if (!activeWorkspaceId.value || !activeProjectId.value) {
     chatSessions.value = []
     activeChatSessionId.value = ''
@@ -5155,6 +6052,8 @@ watch(aiMode, async (next, previous) => {
 
   activeChatSessionId.value = ''
   resetChatStateWithGreeting()
+  if (next === 'defense')
+    await loadDefensePersonas()
   await loadChatSessions()
 })
 
@@ -5164,19 +6063,24 @@ watch(() => workspaceRealtime.connected.value, () => {
 </script>
 
 <template>
-  <div class="workspace-shell text-slate-800 bg-white h-full min-h-0 overflow-hidden">
+  <div
+    class="workspace-shell wl-workspace-font-scope text-slate-800 bg-white h-full min-h-0 overflow-hidden"
+    :data-workspace-font-size="workspaceEffectiveFontSizePreset"
+  >
     <WorkspaceHeader
       v-model="headerSearch"
       :project-name="headerProjectName"
       :workspace-id="activeWorkspaceId"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
+      :workbench-mode="workbenchMode"
+      @update:workbench-mode="updateWorkbenchMode"
       @final-review="openFinalReviewFromHeader"
       @quick-switch-project="switchProjectFromHeader"
     />
 
     <main class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
-      <div v-if="!leftSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--left">
+      <div class="workspace-side-anchor workspace-side-anchor--left">
         <WorkspaceLeftSidebar
           v-model:natural-query="naturalQuery"
           v-model:major="major"
@@ -5210,7 +6114,6 @@ watch(() => workspaceRealtime.connected.value, () => {
           :ai-filtering="aiFiltering"
           :is-admin-view="isAdminView"
           :active-main-tab-id="activeMainTabId"
-          :defense-active="aiMode === 'defense'"
           :current-user-id="me?.user.id || ''"
           :current-username="me?.user.username || ''"
           :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
@@ -5218,6 +6121,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           :topic-board-loading="topicBoardLoading"
           :topic-board-current-summary="topicBoardSnapshot?.boardSummary || ''"
           :topic-board-history-count="topicBoardHistory.length"
+          :workspace-id="activeWorkspaceId"
+          :collapsed="leftSidebarCollapsed"
           @load-contests="loadContests"
           @run-ai-filter="runAiFilter"
           @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
@@ -5226,7 +6131,6 @@ watch(() => workspaceRealtime.connected.value, () => {
           @open-member-management-panel="openMemberManagementFromLeftSidebar"
           @open-flow-panel="openFlowFromLeftSidebar"
           @create-collab-resource="createCollabResource"
-          @open-defense-mode="openDefenseFromLeftSidebar"
           @reload-issues="loadProjectIssues"
           @open-resource="openProjectResourcePreview"
           @download-project-resource="downloadProjectResource"
@@ -5243,29 +6147,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           @retry-upload-task="retryUploadTask"
           @cancel-upload-task="cancelUploadTask"
           @rebind-upload-task="requestRebindUploadTask"
+          @update:collapsed="leftSidebarCollapsed = $event"
         />
-        <div class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-expanded">
-          <button
-            class="workspace-side-toggle"
-            type="button"
-            title="收起左侧栏"
-            aria-label="收起左侧栏"
-            @click="leftSidebarCollapsed = true"
-          >
-            <span class="material-symbols-outlined">chevron_left</span>
-          </button>
-        </div>
-      </div>
-      <div v-else class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-collapsed">
-        <button
-          class="workspace-side-toggle"
-          type="button"
-          title="展开左侧栏"
-          aria-label="展开左侧栏"
-          @click="leftSidebarCollapsed = false"
-        >
-          <span class="material-symbols-outlined">chevron_right</span>
-        </button>
       </div>
 
       <WorkspaceMainPanel
@@ -5342,8 +6225,23 @@ watch(() => workspaceRealtime.connected.value, () => {
         :project-settings-current-contest-id="projectSettingsCurrentContestId"
         :project-settings-adaptation="projectSettingsAdaptation"
         :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+        :workspace-display-preferences="workspaceDisplayPreferenceSnapshot"
+        :workspace-display-preferences-loading="workspaceDisplayPreferenceLoading"
+        :workspace-display-preferences-saving-scope="workspaceDisplayPreferenceSavingScope"
+        :workspace-display-preferences-error="workspaceDisplayPreferenceError"
         :project-resource-shares="projectResourceShares"
         :project-resource-shares-loading="projectResourceSharesLoading"
+        :meetings="projectMeetings"
+        :active-meeting-id="activeMeetingId"
+        :active-meeting="activeMeetingDetail"
+        :meeting-utterances="activeMeetingUtterances"
+        :meeting-live-captions="meetingLiveCaptions"
+        :meeting-loading="projectMeetingsLoading"
+        :meeting-detail-loading="meetingDetailLoading"
+        :meeting-mutating="meetingMutating"
+        :meeting-join-url="meetingJoinUrl"
+        :meeting-join-token="meetingJoinToken"
+        :meeting-join-expires-at="meetingJoinExpiresAt"
         @update:active-tab-id="activeMainTabId = $event"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
@@ -5357,6 +6255,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
         @load-contests="loadContests"
         @save-project-settings="saveProjectSettingsManually"
+        @save-workspace-display-user-override="saveWorkspaceDisplayUserOverride"
+        @save-workspace-display-team-default="saveWorkspaceDisplayTeamDefault"
         @reload-workspace-member-management="loadWorkspaceMemberManagement"
         @create-workspace-invitation="createWorkspaceInvitation"
         @patch-workspace-member-role="patchWorkspaceMemberRole"
@@ -5367,6 +6267,12 @@ watch(() => workspaceRealtime.connected.value, () => {
         @save-workspace-seat-limit="saveWorkspaceSeatLimit"
         @copy-project-resource-share="copyProjectResourceShare"
         @revoke-project-resource-share="revokeProjectResourceShare"
+        @create-meeting="createProjectMeeting"
+        @refresh-meetings="loadProjectMeetings"
+        @join-meeting="joinProjectMeeting"
+        @end-meeting="endProjectMeeting"
+        @select-meeting="selectProjectMeeting"
+        @open-meeting-resource="openProjectResourcePreview"
         @reconvert-preview="reconvertProjectResourcePreview"
         @download-preview-source="downloadPreviewSource"
         @activate-preview-resource="activateProjectResourceTab"
@@ -5390,7 +6296,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         </div>
         <WorkspaceRightSidebar
           v-model:chat-input="chatInput"
-          v-model:ai-mode="aiMode"
+          :ai-mode="aiMode"
           class="min-h-0 overflow-hidden"
           :chat-sessions="chatSessions"
           :active-chat-session-id="activeChatSessionId"
@@ -5406,14 +6312,26 @@ watch(() => workspaceRealtime.connected.value, () => {
           :issue-loading="issueCenterLoading"
           :defense-rounds="defenseRounds"
           :defense-scorecard="defenseScorecard"
+          :defense-personas="defensePersonas"
+          :defense-stage="defenseStage"
+          :defense-turn-count="defenseTurnCount"
+          :defense-summary="defenseSummary"
+          :defense-personas-loading="defensePersonasLoading"
+          :defense-summary-loading="defenseSummaryLoading"
           :selected-contest="selectedContest"
           :selected-track="selectedTrack"
           :selected-resources="selectedResources"
           @send-chat="sendChatMessage"
+          @update:ai-mode="updateWorkspaceAiMode"
           @switch-chat-session="switchChatSession"
           @create-chat-session="startNewChatSession"
           @approve-change="approveAiChange"
           @reject-change="rejectAiChange"
+          @import-defense-personas="importDefensePersonas"
+          @save-defense-persona="saveDefensePersona"
+          @delete-defense-persona="deleteDefensePersona"
+          @generate-defense-summary="generateDefenseSummary"
+          @start-defense-realtime="startDefenseRealtime"
         />
       </div>
       <div v-else class="workspace-side-handle workspace-side-handle--right workspace-side-handle--right-collapsed">
@@ -5522,16 +6440,6 @@ watch(() => workspaceRealtime.connected.value, () => {
   pointer-events: auto;
 }
 
-.workspace-side-handle--left-expanded {
-  right: 0;
-  transform: translateX(50%);
-}
-
-.workspace-side-handle--left-collapsed {
-  left: 0;
-  transform: none;
-}
-
 .workspace-side-handle--right-expanded {
   left: 0;
   transform: translateX(-50%);
@@ -5560,10 +6468,6 @@ watch(() => workspaceRealtime.connected.value, () => {
     border-color 0.2s ease;
 }
 
-.workspace-side-handle--left .workspace-side-toggle {
-  border-right: 1px solid transparent;
-}
-
 .workspace-side-handle--right .workspace-side-toggle {
   border-left: 1px solid transparent;
 }
@@ -5577,14 +6481,9 @@ watch(() => workspaceRealtime.connected.value, () => {
     color 0.2s ease;
 }
 
-.workspace-side-handle:hover .workspace-side-toggle,
+.workspace-side-handle--right:hover .workspace-side-toggle,
 .workspace-side-toggle:focus-visible {
   background: #f3f6fc;
-}
-
-.workspace-side-handle--left:hover .workspace-side-toggle,
-.workspace-side-handle--left .workspace-side-toggle:focus-visible {
-  border-right-color: #d3d8e4;
 }
 
 .workspace-side-handle--right:hover .workspace-side-toggle,
@@ -5597,7 +6496,7 @@ watch(() => workspaceRealtime.connected.value, () => {
   outline-offset: -2px;
 }
 
-.workspace-side-handle:hover .material-symbols-outlined,
+.workspace-side-handle--right:hover .material-symbols-outlined,
 .workspace-side-toggle:focus-visible .material-symbols-outlined {
   opacity: 1;
   color: #2f6af2;

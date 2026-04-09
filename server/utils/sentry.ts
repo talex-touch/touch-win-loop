@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/nuxt'
+import { sanitizeSentryPayload, shouldCaptureSentryError } from '~~/lib/sentry'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { sanitizeSentryPayload, shouldCaptureSentryError } from '~~/shared/utils/sentry'
 
 type SentryLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug'
 

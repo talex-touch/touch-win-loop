@@ -12,7 +12,12 @@ import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
 import { buildServerApiEndpoint, resolveServerApiUrl } from '~~/server/utils/api-url'
 import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
-import { ensureMarkdownCollabDocShape } from '~~/shared/utils/collab-markdown-rich-text'
+import {
+  ensureMarkdownCollabDocShape,
+  parseMarkdownToRichTextDocument,
+  syncMarkdownMirrorFromRichText,
+  writeRichTextDocumentToFragment,
+} from '~~/shared/utils/collab-markdown-rich-text'
 
 interface ProjectResourceRow {
   id: string
@@ -817,6 +822,7 @@ export async function createProjectUploadedResource(
     summary?: string
     accessLevel?: ResourceAvailability
     category?: ResourceCategory
+    metadata?: Record<string, unknown>
   },
 ): Promise<Resource> {
   await ensureProjectExists(db, input.projectId)
@@ -833,6 +839,7 @@ export async function createProjectUploadedResource(
     fileSize: Number.isFinite(Number(input.fileSize)) ? Number(input.fileSize) : 0,
     storageProvider: normalizeString(input.storageProvider) || 'runtime',
     uploadedAt: now,
+    ...parseResourceMetadata(input.metadata),
   }
 
   await db.query(
@@ -892,6 +899,10 @@ export async function createProjectCollabResource(
     kind: Extract<ResourceKind, 'markdown' | 'draw'>
     purpose?: CollabPurpose
     title?: string
+    summary?: string
+    category?: ResourceCategory
+    availability?: ResourceAvailability
+    metadata?: Record<string, unknown>
   },
 ): Promise<{ resource: Resource, snapshot: ProjectCollabSnapshot }> {
   const projectResult = await db.query<ProjectWorkspaceRow>(
@@ -920,6 +931,13 @@ export async function createProjectCollabResource(
   const mimeType = kind === 'markdown'
     ? 'text/markdown'
     : 'application/vnd.winloop.draw+json'
+  const metadata = {
+    resourceKind: kind,
+    collabPurpose: purpose,
+    collab: true,
+    createdAt: now,
+    ...parseResourceMetadata(input.metadata),
+  }
 
   const doc = new Y.Doc()
   ensureCollabDocShape(kind, doc)
@@ -947,7 +965,7 @@ export async function createProjectCollabResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, 'collab', $3, NULL, $4, $5, 'templates', $6, $7, 'login_required', '', '', $8::JSONB, 'active', $9, $9, $10, $10
+      $1, $2, 'collab', $3, NULL, $4, $5, $6, $7, $8, $9, $10, '', $11::JSONB, 'active', $12, $12, $13, $13
     )`,
     [
       resourceId,
@@ -955,14 +973,12 @@ export async function createProjectCollabResource(
       kind,
       title,
       mimeType,
+      input.category || 'templates',
       new Date().getFullYear(),
       sourceLink,
-      JSON.stringify({
-        resourceKind: kind,
-        collabPurpose: purpose,
-        collab: true,
-        createdAt: now,
-      }),
+      input.availability || 'login_required',
+      normalizeString(input.summary),
+      JSON.stringify(metadata),
       input.actorUserId,
       now,
     ],
@@ -1573,6 +1589,135 @@ export async function patchProjectResourceMetadata(
   if (!resource)
     throw new Error('RESOURCE_NOT_FOUND')
   return resource
+}
+
+export async function mergeProjectResourceMetadata(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    metadata: Record<string, unknown>
+  },
+): Promise<Resource> {
+  const currentResult = await db.query<Pick<ProjectResourceRow, 'metadata'>>(
+    `SELECT metadata
+     FROM project_resources
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'
+     LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  const current = currentResult.rows[0]
+  if (!current)
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  const now = new Date().toISOString()
+  const nextMetadata = {
+    ...parseResourceMetadata(current.metadata),
+    ...parseResourceMetadata(input.metadata),
+  }
+
+  await db.query(
+    `UPDATE project_resources
+     SET metadata = $3::JSONB,
+         updated_by_user_id = $4,
+         updated_at = $5
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'`,
+    [input.projectId, input.resourceId, JSON.stringify(nextMetadata), input.actorUserId, now],
+  )
+
+  const resource = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+  })
+  if (!resource)
+    throw new Error('RESOURCE_NOT_FOUND')
+  return resource
+}
+
+export async function overwriteProjectMarkdownCollabResource(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    markdown: string
+  },
+): Promise<ProjectCollabSnapshot> {
+  const currentResult = await db.query<ProjectCollabDocRow>(
+    `SELECT
+      prcd.resource_id,
+      prcd.project_id,
+      prcd.kind,
+      prcd.ydoc_update,
+      prcd.revision,
+      prcd.updated_by_user_id,
+      prcd.updated_at::TEXT,
+      p.workspace_id,
+      pr.source,
+      pr.status,
+      pr.resource_kind
+     FROM project_resource_collab_docs prcd
+     JOIN project_resources pr
+       ON pr.id = prcd.resource_id
+      AND pr.project_id = prcd.project_id
+     JOIN projects p
+       ON p.id = prcd.project_id
+     WHERE prcd.project_id = $1
+       AND prcd.resource_id = $2
+     FOR UPDATE`,
+    [input.projectId, input.resourceId],
+  )
+
+  const current = currentResult.rows[0]
+  if (!current || normalizeString(current.source) !== 'collab' || normalizeString(current.status) !== 'active')
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  const kind = parseCollabKind(current.kind) || parseCollabKind(current.resource_kind)
+  if (kind !== 'markdown')
+    throw new Error('COLLAB_KIND_INVALID')
+
+  const doc = new Y.Doc()
+  ensureMarkdownCollabDocShape(doc)
+  writeRichTextDocumentToFragment(doc.getXmlFragment('prosemirror'), parseMarkdownToRichTextDocument(input.markdown))
+  syncMarkdownMirrorFromRichText(doc)
+
+  const mergedUpdate = Y.encodeStateAsUpdate(doc)
+  const nextRevision = Math.max(1, parseRevision(current.revision) + 1)
+  const now = new Date().toISOString()
+
+  await db.query(
+    `UPDATE project_resource_collab_docs
+     SET ydoc_update = $3::BYTEA,
+         revision = $4,
+         updated_by_user_id = $5,
+         updated_at = $6
+     WHERE project_id = $1
+       AND resource_id = $2`,
+    [
+      input.projectId,
+      input.resourceId,
+      Buffer.from(mergedUpdate),
+      nextRevision,
+      input.actorUserId,
+      now,
+    ],
+  )
+
+  return {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+    workspaceId: normalizeString(current.workspace_id),
+    kind: 'markdown',
+    revision: nextRevision,
+    update: mergedUpdate,
+    updatedAt: now,
+  }
 }
 
 export async function createProjectResourceDocumentWithTask(

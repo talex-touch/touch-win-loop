@@ -84,6 +84,37 @@ WINLOOP_CONTEST_AUTO_SEED=false
 - 资源回收 worker 参数改为后台 UI 管理，不再从 Env 读取。
 - Sentry 为可选能力；未配置 `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT` 时应用仍可正常运行，只是不启用错误上报。
 
+## 会议能力环境变量
+
+项目内置会议默认支持 `mock` 模式，本地未接真实 RTC / ASR 时也能跑通页面和后端链路。切到真实 provider 时，至少补齐以下参数：
+
+```txt
+WINLOOP_MEETING_RTC_PROVIDER=mock
+WINLOOP_MEETING_RTC_SERVER_URL=
+WINLOOP_MEETING_RTC_API_KEY=
+WINLOOP_MEETING_RTC_API_SECRET=
+WINLOOP_MEETING_RTC_EMBED_BASE_URL=
+WINLOOP_MEETING_RTC_WEBHOOK_SECRET=
+WINLOOP_MEETING_RTC_ROOM_PREFIX=winloop
+
+WINLOOP_MEETING_ASR_PROVIDER=mock
+WINLOOP_MEETING_ASR_SERVICE_URL=
+WINLOOP_MEETING_ASR_API_KEY=
+WINLOOP_MEETING_ASR_WEBHOOK_SECRET=
+
+WINLOOP_MEETING_WORKER_ENABLED=true
+WINLOOP_MEETING_WORKER_INTERVAL_MS=5000
+WINLOOP_MEETING_WORKER_BATCH_SIZE=6
+WINLOOP_MEETING_WORKER_MAX_ATTEMPTS=5
+```
+
+说明：
+
+- `RTC` 负责房间、入会 token、录制与 webhook。
+- `ASR` 负责实时字幕输入；partial 只广播，final 才会落库。
+- `WORKER` 负责会后录制入库、纪要生成和失败重试。
+- 默认按 `LiveKit` 风格能力建模，但通过 `RtcProviderGateway` / `MeetingAsrGateway` 做了适配隔离。
+
 ## 相关文档
 
 - [工作台信息架构](./docs/workspace-information-architecture.md)

@@ -12,7 +12,16 @@ import {
 export const REALTIME_PG_CHANNEL = 'wl_realtime'
 const REALTIME_INSTANCE_ID_KEY = Symbol.for('winloop.realtime.instance-id.v1')
 
-export type RealtimeEventType = 'project.resources.changed' | 'project.outline.changed' | 'collab.update' | 'collab.presence'
+export type RealtimeEventType
+  = | 'project.resources.changed'
+    | 'project.outline.changed'
+    | 'collab.update'
+    | 'collab.presence'
+    | 'meeting.state.updated'
+    | 'meeting.participant.updated'
+    | 'meeting.caption.partial'
+    | 'meeting.caption.final'
+    | 'meeting.summary.ready'
 
 export interface RealtimePresenceMemberPayload {
   peerId: string
@@ -34,6 +43,7 @@ export interface RealtimeEventPayload {
   projectId: string
   resourceId?: string
   revision?: number
+  payload?: Record<string, unknown>
   sentAt: string
 }
 
@@ -46,6 +56,7 @@ export interface PublishRealtimeEventOptions {
   presence?: {
     members?: RealtimePresenceMemberPayload[]
   }
+  payload?: Record<string, unknown>
 }
 
 function normalizeString(value: unknown): string {
@@ -82,6 +93,12 @@ function normalizePresenceMembers(rawMembers: unknown): RealtimePresenceMemberPa
   return normalized
 }
 
+function normalizePayload(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return undefined
+  return value as Record<string, unknown>
+}
+
 export function getRealtimeInstanceId(): string {
   const globalRef = globalThis as Record<symbol, unknown>
   const existing = normalizeString(globalRef[REALTIME_INSTANCE_ID_KEY])
@@ -99,6 +116,7 @@ export function createRealtimeEvent(input: {
   projectId: string
   resourceId?: string
   revision?: number
+  payload?: Record<string, unknown>
 }): RealtimeEventPayload {
   const revision = Number(input.revision)
   return {
@@ -109,6 +127,7 @@ export function createRealtimeEvent(input: {
     projectId: normalizeString(input.projectId),
     resourceId: normalizeString(input.resourceId) || undefined,
     revision: Number.isFinite(revision) && revision > 0 ? Math.trunc(revision) : undefined,
+    payload: normalizePayload(input.payload),
     sentAt: new Date().toISOString(),
   }
 }
@@ -129,6 +148,7 @@ export async function notifyRealtimeEvent(
     projectId: normalizeString(event.projectId),
     resourceId: normalizeString(event.resourceId) || undefined,
     revision: Number.isFinite(Number(event.revision)) ? Number(event.revision) : undefined,
+    payload: normalizePayload(options.payload) || normalizePayload(event.payload),
     sentAt: normalizeString(event.sentAt) || new Date().toISOString(),
     presenceMembers: presenceMembers.length > 0 ? presenceMembers : undefined,
   })
@@ -183,6 +203,8 @@ export function broadcastRealtimeEventLocally(
     revision,
     payload: {
       eventId,
+      ...(normalizePayload(event.payload) || {}),
+      ...(normalizePayload(options.payload) || {}),
     },
   }
 
@@ -208,6 +230,7 @@ export async function emitRealtimeEvent(
     projectId: string
     resourceId?: string
     revision?: number
+    payload?: Record<string, unknown>
   },
   options: PublishRealtimeEventOptions = {},
 ): Promise<RealtimeEventPayload> {

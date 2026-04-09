@@ -2,7 +2,11 @@
 import type {
   AiChatSession,
   AiDefenseJudgeRound,
+  AiDefensePersona,
+  AiDefensePersonaJudgeType,
   AiDefenseScorecard,
+  AiDefenseStage,
+  AiDefenseSummary,
   AiProjectChangeRequest,
   ChatMessage,
   Contest,
@@ -30,6 +34,12 @@ const props = withDefaults(defineProps<{
   changeSecondConfirmIds?: string[]
   defenseRounds?: AiDefenseJudgeRound[]
   defenseScorecard?: AiDefenseScorecard | null
+  defensePersonas?: AiDefensePersona[]
+  defenseStage?: AiDefenseStage
+  defenseTurnCount?: number
+  defenseSummary?: AiDefenseSummary | null
+  defensePersonasLoading?: boolean
+  defenseSummaryLoading?: boolean
   selectedContest?: Contest | null
   selectedTrack?: Track | null
   selectedResources?: Resource[]
@@ -50,6 +60,12 @@ const props = withDefaults(defineProps<{
   changeSecondConfirmIds: () => [],
   defenseRounds: () => [],
   defenseScorecard: null,
+  defensePersonas: () => [],
+  defenseStage: undefined,
+  defenseTurnCount: 0,
+  defenseSummary: null,
+  defensePersonasLoading: false,
+  defenseSummaryLoading: false,
   selectedContest: null,
   selectedTrack: null,
   selectedResources: () => [],
@@ -63,6 +79,19 @@ const emit = defineEmits<{
   'createChatSession': []
   'approveChange': [change: AiProjectChangeRequest]
   'rejectChange': [change: AiProjectChangeRequest]
+  'importDefensePersonas': []
+  'saveDefensePersona': [payload: {
+    personaId?: string
+    judgeType: AiDefensePersonaJudgeType
+    name: string
+    summary: string
+    systemPrompt: string
+    focusAreas: string[]
+    enabled: boolean
+  }]
+  'deleteDefensePersona': [personaId: string]
+  'generateDefenseSummary': []
+  'startDefenseRealtime': []
 }>()
 
 const PRIMARY_MODES: Array<{ value: Exclude<WorkspaceAiMode, 'defense'>, label: string }> = [
@@ -162,6 +191,95 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
     return
   event.preventDefault()
   cyclePrimaryMode()
+}
+
+function defenseStageLabel(stage: AiDefenseStage | undefined): string {
+  if (stage === 'opening')
+    return '开场'
+  if (stage === 'qa')
+    return '问答'
+  if (stage === 'rebuttal')
+    return '反驳'
+  if (stage === 'closing')
+    return '收束'
+  return '未开始'
+}
+
+const defensePersonaFormVisible = ref(false)
+const defensePersonaEditingId = ref('')
+const defensePersonaForm = reactive<{
+  judgeType: AiDefensePersonaJudgeType
+  name: string
+  summary: string
+  systemPrompt: string
+  focusAreasText: string
+  enabled: boolean
+}>({
+  judgeType: 'custom',
+  name: '',
+  summary: '',
+  systemPrompt: '',
+  focusAreasText: '',
+  enabled: true,
+})
+
+function resetDefensePersonaForm() {
+  defensePersonaEditingId.value = ''
+  defensePersonaForm.judgeType = 'custom'
+  defensePersonaForm.name = ''
+  defensePersonaForm.summary = ''
+  defensePersonaForm.systemPrompt = ''
+  defensePersonaForm.focusAreasText = ''
+  defensePersonaForm.enabled = true
+}
+
+function openCreateDefensePersonaForm() {
+  resetDefensePersonaForm()
+  defensePersonaFormVisible.value = true
+}
+
+function openEditDefensePersonaForm(persona: AiDefensePersona) {
+  defensePersonaEditingId.value = persona.id
+  defensePersonaForm.judgeType = persona.judgeType
+  defensePersonaForm.name = persona.name
+  defensePersonaForm.summary = persona.summary
+  defensePersonaForm.systemPrompt = persona.systemPrompt
+  defensePersonaForm.focusAreasText = (persona.focusAreas || []).join('\n')
+  defensePersonaForm.enabled = persona.enabled
+  defensePersonaFormVisible.value = true
+}
+
+function submitDefensePersonaForm() {
+  const name = defensePersonaForm.name.trim()
+  const systemPrompt = defensePersonaForm.systemPrompt.trim()
+  if (!name || !systemPrompt)
+    return
+  emit('saveDefensePersona', {
+    personaId: defensePersonaEditingId.value || undefined,
+    judgeType: defensePersonaForm.judgeType,
+    name,
+    summary: defensePersonaForm.summary.trim(),
+    systemPrompt,
+    focusAreas: defensePersonaForm.focusAreasText
+      .split(/\n+/)
+      .map(item => item.trim())
+      .filter(Boolean),
+    enabled: defensePersonaForm.enabled,
+  })
+  defensePersonaFormVisible.value = false
+  resetDefensePersonaForm()
+}
+
+function quickToggleDefensePersona(persona: AiDefensePersona) {
+  emit('saveDefensePersona', {
+    personaId: persona.id,
+    judgeType: persona.judgeType,
+    name: persona.name,
+    summary: persona.summary,
+    systemPrompt: persona.systemPrompt,
+    focusAreas: persona.focusAreas || [],
+    enabled: !persona.enabled,
+  })
 }
 </script>
 
@@ -359,6 +477,140 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
           </div>
 
           <div v-if="aiMode === 'defense'" class="space-y-2">
+            <div class="p-3 border border-slate-200 rounded bg-slate-50">
+              <div class="flex items-center justify-between gap-2">
+                <div>
+                  <div class="text-xs text-slate-700 font-semibold">
+                    答辩状态
+                  </div>
+                  <p class="text-[11px] text-slate-500 mt-1">
+                    阶段：{{ defenseStageLabel(defenseStage) }} · 已完成 {{ defenseTurnCount }} 轮
+                  </p>
+                </div>
+                <button
+                  class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                  :disabled="defenseSummaryLoading"
+                  @click="emit('generateDefenseSummary')"
+                >
+                  {{ defenseSummaryLoading ? '生成中...' : '生成总结' }}
+                </button>
+                <button
+                  class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
+                  @click="emit('startDefenseRealtime')"
+                >
+                  语音答辩
+                </button>
+              </div>
+            </div>
+
+            <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-xs text-slate-700 font-semibold">
+                  评委人设
+                </div>
+                <div class="flex items-center gap-2">
+                  <button
+                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
+                    @click="emit('importDefensePersonas')"
+                  >
+                    导入比赛预设
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
+                    @click="openCreateDefensePersonaForm"
+                  >
+                    新建
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="defensePersonasLoading" class="text-[11px] text-slate-500">
+                人设加载中...
+              </div>
+              <div v-else-if="defensePersonas.length === 0" class="text-[11px] text-slate-500 border border-dashed border-slate-200 rounded p-3">
+                当前项目还没有答辩人设。可先导入比赛预设，再按项目需要调整。
+              </div>
+              <div v-else class="space-y-2">
+                <div
+                  v-for="persona in defensePersonas"
+                  :key="persona.id"
+                  class="border border-slate-200 rounded p-3 bg-slate-50/60"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div>
+                      <div class="text-[11px] text-slate-800 font-semibold">
+                        {{ persona.name }}
+                      </div>
+                      <div class="text-[10px] text-slate-500 mt-1">
+                        {{ persona.judgeType }} · {{ persona.enabled ? '已启用' : '已停用' }}
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <button
+                        class="text-[10px] px-2 h-6 border border-slate-300 rounded bg-white hover:bg-slate-100"
+                        @click="quickToggleDefensePersona(persona)"
+                      >
+                        {{ persona.enabled ? '停用' : '启用' }}
+                      </button>
+                      <button
+                        class="text-[10px] px-2 h-6 border border-slate-300 rounded bg-white hover:bg-slate-100"
+                        @click="openEditDefensePersonaForm(persona)"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        class="text-[10px] px-2 h-6 border border-rose-200 text-rose-600 rounded bg-white hover:bg-rose-50"
+                        @click="emit('deleteDefensePersona', persona.id)"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                  <p v-if="persona.summary" class="text-[11px] text-slate-600 mt-2">
+                    {{ persona.summary }}
+                  </p>
+                  <p v-if="persona.focusAreas.length > 0" class="text-[10px] text-slate-500 mt-1">
+                    关注点：{{ persona.focusAreas.join('、') }}
+                  </p>
+                </div>
+              </div>
+
+              <div v-if="defensePersonaFormVisible" class="border border-blue-200 rounded p-3 bg-blue-50/60 space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-[11px] text-slate-800 font-semibold">
+                    {{ defensePersonaEditingId ? '编辑人设' : '新建人设' }}
+                  </div>
+                  <button
+                    class="text-[10px] px-2 h-6 border border-slate-300 rounded bg-white hover:bg-slate-100"
+                    @click="defensePersonaFormVisible = false"
+                  >
+                    取消
+                  </button>
+                </div>
+                <select v-model="defensePersonaForm.judgeType" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white">
+                  <option value="technical">technical</option>
+                  <option value="business">business</option>
+                  <option value="expression">expression</option>
+                  <option value="custom">custom</option>
+                </select>
+                <input v-model="defensePersonaForm.name" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white" placeholder="人设名称" />
+                <textarea v-model="defensePersonaForm.summary" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white h-16 resize-none" placeholder="一句话说明评委关注点" />
+                <textarea v-model="defensePersonaForm.systemPrompt" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white h-28 resize-none" placeholder="系统提示词" />
+                <textarea v-model="defensePersonaForm.focusAreasText" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white h-16 resize-none" placeholder="关注点，每行一个" />
+                <label class="flex items-center gap-2 text-[11px] text-slate-600">
+                  <input v-model="defensePersonaForm.enabled" type="checkbox">
+                  新建后立即启用
+                </label>
+                <button
+                  class="text-[11px] font-semibold px-3 border border-blue-500 text-white rounded bg-blue-600 h-8 hover:bg-blue-500 disabled:opacity-60"
+                  :disabled="!defensePersonaForm.name.trim() || !defensePersonaForm.systemPrompt.trim()"
+                  @click="submitDefensePersonaForm"
+                >
+                  保存人设
+                </button>
+              </div>
+            </div>
+
             <div v-if="defenseScorecard" class="p-3 border border-slate-200 rounded bg-slate-50">
               <div class="text-xs text-slate-700 font-semibold">
                 答辩评分
@@ -374,6 +626,21 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
               </p>
               <p v-if="defenseScorecard.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-1">
                 改进动作：{{ defenseScorecard.actionItems.join('；') }}
+              </p>
+            </div>
+
+            <div v-if="defenseSummary" class="p-3 border border-slate-200 rounded bg-white">
+              <div class="text-xs text-slate-700 font-semibold">
+                会话总结
+              </div>
+              <p class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
+                {{ defenseSummary.summary }}
+              </p>
+              <p v-if="defenseSummary.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-2">
+                动作：{{ defenseSummary.actionItems.join('；') }}
+              </p>
+              <p v-if="defenseSummary.evidenceGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
+                证据缺口：{{ defenseSummary.evidenceGaps.join('；') }}
               </p>
             </div>
             <div
@@ -424,12 +691,14 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
             已关联资料：{{ selectedResources.length }} · Shift+Tab 切换模式
           </div>
           <select
+            data-testid="workspace-right-sidebar-mode-select"
             class="workspace-mode-select shrink-0"
             :value="modeSelectValue()"
+            :disabled="aiMode === 'defense'"
             @change="handleModeSelectChange"
           >
             <option v-if="aiMode === 'defense'" value="" disabled>
-              答辩模拟（左侧入口）
+              答辩工作台（顶部切换）
             </option>
             <option
               v-for="mode in PRIMARY_MODES"
@@ -542,6 +811,11 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
 .workspace-mode-select:focus {
   border-color: #86aefb;
   box-shadow: 0 0 0 1px #86aefb;
+}
+
+.workspace-mode-select:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .workspace-issue-pill {

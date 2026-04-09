@@ -221,6 +221,29 @@ export interface RuntimeSettings {
   projectResource: {
     accessUrlTtlSeconds: number
   }
+  meeting: {
+    rtc: {
+      provider: string
+      serverUrl: string
+      apiKey: string
+      apiSecret: string
+      embedBaseUrl: string
+      webhookSecret: string
+      roomPrefix: string
+    }
+    asr: {
+      provider: string
+      serviceUrl: string
+      apiKey: string
+      webhookSecret: string
+    }
+    worker: {
+      enabled: boolean
+      intervalMs: number
+      batchSize: number
+      maxAttempts: number
+    }
+  }
 }
 
 function toBoolean(raw: unknown, fallback: boolean): boolean {
@@ -326,6 +349,29 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
     },
     projectResource: {
       accessUrlTtlSeconds: Math.max(60, Math.min(2 * 60 * 60, Math.trunc(toNumber(runtime.projectResource?.accessUrlTtlSeconds, DEFAULT_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS)))),
+    },
+    meeting: {
+      rtc: {
+        provider: String(runtime.meeting?.rtc?.provider ?? 'mock'),
+        serverUrl: trimTrailingSlash(String(runtime.meeting?.rtc?.serverUrl ?? '')),
+        apiKey: String(runtime.meeting?.rtc?.apiKey ?? ''),
+        apiSecret: String(runtime.meeting?.rtc?.apiSecret ?? ''),
+        embedBaseUrl: trimTrailingSlash(String(runtime.meeting?.rtc?.embedBaseUrl ?? '')),
+        webhookSecret: String(runtime.meeting?.rtc?.webhookSecret ?? ''),
+        roomPrefix: String(runtime.meeting?.rtc?.roomPrefix ?? 'winloop'),
+      },
+      asr: {
+        provider: String(runtime.meeting?.asr?.provider ?? 'mock'),
+        serviceUrl: trimTrailingSlash(String(runtime.meeting?.asr?.serviceUrl ?? '')),
+        apiKey: String(runtime.meeting?.asr?.apiKey ?? ''),
+        webhookSecret: String(runtime.meeting?.asr?.webhookSecret ?? ''),
+      },
+      worker: {
+        enabled: toBoolean(runtime.meeting?.worker?.enabled, true),
+        intervalMs: Math.max(1000, Math.min(60_000, Math.trunc(toNumber(runtime.meeting?.worker?.intervalMs, 5000)))),
+        batchSize: Math.max(1, Math.min(50, Math.trunc(toNumber(runtime.meeting?.worker?.batchSize, 6)))),
+        maxAttempts: Math.max(1, Math.min(20, Math.trunc(toNumber(runtime.meeting?.worker?.maxAttempts, 5)))),
+      },
     },
   }
 }

@@ -119,6 +119,29 @@ export default defineNuxtConfig({
     projectResource: {
       accessUrlTtlSeconds: resolveEnvNumber('WINLOOP_PROJECT_RESOURCE_ACCESS_URL_TTL_SECONDS', 600),
     },
+    meeting: {
+      rtc: {
+        provider: resolveEnvValue('WINLOOP_MEETING_RTC_PROVIDER', 'mock'),
+        serverUrl: resolveEnvValue('WINLOOP_MEETING_RTC_SERVER_URL', ''),
+        apiKey: resolveEnvValue('WINLOOP_MEETING_RTC_API_KEY', ''),
+        apiSecret: resolveEnvValue('WINLOOP_MEETING_RTC_API_SECRET', ''),
+        embedBaseUrl: resolveEnvValue('WINLOOP_MEETING_RTC_EMBED_BASE_URL', ''),
+        webhookSecret: resolveEnvValue('WINLOOP_MEETING_RTC_WEBHOOK_SECRET', ''),
+        roomPrefix: resolveEnvValue('WINLOOP_MEETING_RTC_ROOM_PREFIX', 'winloop'),
+      },
+      asr: {
+        provider: resolveEnvValue('WINLOOP_MEETING_ASR_PROVIDER', 'mock'),
+        serviceUrl: resolveEnvValue('WINLOOP_MEETING_ASR_SERVICE_URL', ''),
+        apiKey: resolveEnvValue('WINLOOP_MEETING_ASR_API_KEY', ''),
+        webhookSecret: resolveEnvValue('WINLOOP_MEETING_ASR_WEBHOOK_SECRET', ''),
+      },
+      worker: {
+        enabled: resolveEnvBoolean('WINLOOP_MEETING_WORKER_ENABLED', true),
+        intervalMs: resolveEnvNumber('WINLOOP_MEETING_WORKER_INTERVAL_MS', 5000),
+        batchSize: resolveEnvNumber('WINLOOP_MEETING_WORKER_BATCH_SIZE', 6),
+        maxAttempts: resolveEnvNumber('WINLOOP_MEETING_WORKER_MAX_ATTEMPTS', 5),
+      },
+    },
     storage: {
       provider: resolveEnvValue('WINLOOP_STORAGE_PROVIDER', 'local'),
       localRoot: resolveEnvValue('WINLOOP_STORAGE_LOCAL_ROOT', './tmp/document-storage'),

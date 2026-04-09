@@ -10,6 +10,8 @@ import type {
   FeishuAuthUnbindResult,
   FeishuIntegrationConfig,
   InvitationWithToken,
+  WorkspaceDisplayPreferences,
+  WorkspaceFontSizePreset,
   WorkspaceAiUsageHistory,
   WorkspaceBillingEstimate,
   WorkspaceMemberManagementSnapshot,
@@ -24,9 +26,15 @@ import {
   USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES,
   USER_AVATAR_UPLOAD_TYPES_LABEL,
 } from '~~/shared/constants/user-avatar-upload'
+import {
+  normalizeWorkspaceFontSizeDraft,
+  resolveWorkspaceFontSizePresetLabel,
+  useWorkspaceDisplayPreferenceApi,
+  WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
+} from '~/composables/useWorkspaceDisplayPreferences'
 import { formatDateTime } from '~/composables/team-ui'
 
-type UserSettingsTabId = 'profile' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
+type UserSettingsTabId = 'profile' | 'displayPreferences' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
 type UserSettingsNavGroupId = 'profile' | 'workspace'
 type EditableWorkspaceRole = 'admin' | 'manager' | 'member'
 
@@ -64,6 +72,10 @@ const route = useRoute()
 const authApiFetch = useAuthApiFetch()
 const runtime = useRuntimeConfig()
 const { endpoint, resolveAppUrl } = useApiEndpoint(runtime)
+const {
+  loadUserDefaults: loadUserWorkspaceDisplayDefaultsByApi,
+  patchUserDefaults: patchUserWorkspaceDisplayDefaultsByApi,
+} = useWorkspaceDisplayPreferenceApi()
 
 const activeTab = ref<UserSettingsTabId>('profile')
 const loggingOut = ref(false)
@@ -91,6 +103,12 @@ const casdoorBindRedirecting = ref(false)
 const casdoorBindError = ref('')
 const casdoorBindStatus = ref<CasdoorAuthBindStatus | null>(null)
 const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
+const userWorkspaceDisplayPreferences = ref<WorkspaceDisplayPreferences | null>(null)
+const userWorkspaceDisplayPreferencesLoading = ref(false)
+const userWorkspaceDisplayPreferencesSaving = ref(false)
+const userWorkspaceDisplayPreferencesError = ref('')
+const userWorkspaceDisplayPreferencesSuccess = ref('')
+const userWorkspaceDisplayFontSizeDraft = ref<WorkspaceFontSizePreset | ''>('')
 const aiUsage = ref<WorkspaceAiUsageHistory | null>(null)
 const aiUsageLoading = ref(false)
 const aiUsageError = ref('')
@@ -147,6 +165,7 @@ const defaultTabMeta: UserSettingsTabMeta = {
 
 const tabItems: UserSettingsTabMeta[] = [
   defaultTabMeta,
+  { id: 'displayPreferences', groupId: 'profile', label: '显示偏好', icon: 'format_size', description: '管理个人全局默认的工作区显示设置。' },
   { id: 'bindings', groupId: 'profile', label: '账号绑定', icon: 'link', description: '管理飞书和 Casdoor 身份绑定。' },
   { id: 'loginHistory', groupId: 'profile', label: '登录历史', icon: 'schedule', description: '查看个人账号近期登录与会话状态。' },
   { id: 'audits', groupId: 'profile', label: '操作记录', icon: 'history', description: '查看最近的绑定与解绑操作。' },
@@ -389,6 +408,10 @@ const userIdentityItems = computed(() => {
 
 const userInitial = computed(() => {
   return resolveInitial(props.userName)
+})
+
+const userWorkspaceDisplayCurrentLabel = computed(() => {
+  return resolveWorkspaceFontSizePresetLabel(userWorkspaceDisplayPreferences.value?.fontSizePreset)
 })
 
 const canRenameCurrentWorkspace = computed(() => {
@@ -850,6 +873,7 @@ function resetDialogState() {
   profileEditorDialogVisible.value = false
   clearAvatarActionFeedback()
   clearWorkspaceCopyFeedback()
+  resetUserWorkspaceDisplayPreferencesState()
   resetWorkspaceScopedState()
   authSessions.value = []
   authSessionsError.value = ''
@@ -860,6 +884,63 @@ function resetDialogState() {
   feishuUnbindConfirmText.value = ''
   clearFeishuBindQueryParamsFromUrl()
   clearCasdoorBindQueryParamsFromUrl()
+}
+
+function syncUserWorkspaceDisplayDraft(): void {
+  userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(userWorkspaceDisplayPreferences.value?.fontSizePreset)
+}
+
+function applyUserWorkspaceDisplayPreferences(preferences: WorkspaceDisplayPreferences | null): void {
+  userWorkspaceDisplayPreferences.value = preferences
+  syncUserWorkspaceDisplayDraft()
+}
+
+function resetUserWorkspaceDisplayPreferencesState(): void {
+  userWorkspaceDisplayPreferences.value = null
+  userWorkspaceDisplayPreferencesLoading.value = false
+  userWorkspaceDisplayPreferencesSaving.value = false
+  userWorkspaceDisplayPreferencesError.value = ''
+  userWorkspaceDisplayPreferencesSuccess.value = ''
+  userWorkspaceDisplayFontSizeDraft.value = ''
+}
+
+async function loadUserWorkspaceDisplayPreferences(): Promise<void> {
+  userWorkspaceDisplayPreferencesLoading.value = true
+  userWorkspaceDisplayPreferencesError.value = ''
+  userWorkspaceDisplayPreferencesSuccess.value = ''
+  try {
+    const preferences = await loadUserWorkspaceDisplayDefaultsByApi()
+    applyUserWorkspaceDisplayPreferences(preferences)
+  }
+  catch (error: any) {
+    applyUserWorkspaceDisplayPreferences(null)
+    userWorkspaceDisplayPreferencesError.value = String(error?.data?.message || '个人全局显示偏好加载失败。')
+  }
+  finally {
+    userWorkspaceDisplayPreferencesLoading.value = false
+  }
+}
+
+async function saveUserWorkspaceDisplayPreferences(): Promise<void> {
+  if (userWorkspaceDisplayPreferencesSaving.value)
+    return
+
+  userWorkspaceDisplayPreferencesSaving.value = true
+  userWorkspaceDisplayPreferencesError.value = ''
+  userWorkspaceDisplayPreferencesSuccess.value = ''
+  try {
+    const preferences = await patchUserWorkspaceDisplayDefaultsByApi(userWorkspaceDisplayFontSizeDraft.value || null)
+    applyUserWorkspaceDisplayPreferences(preferences)
+    userWorkspaceDisplayPreferencesSuccess.value = userWorkspaceDisplayFontSizeDraft.value
+      ? '个人全局默认已保存。'
+      : '个人全局默认已清空，将回退到团队默认或系统默认。'
+  }
+  catch (error: any) {
+    userWorkspaceDisplayPreferencesError.value = String(error?.data?.message || '个人全局显示偏好保存失败。')
+  }
+  finally {
+    userWorkspaceDisplayPreferencesSaving.value = false
+  }
 }
 
 async function copyWorkspaceInvitationLink() {
@@ -1148,6 +1229,13 @@ async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAi
       loadAuthMeta(),
       loadFeishuBindStatus(),
       loadCasdoorBindStatus(),
+    ])
+    return
+  }
+
+  if (tabId === 'displayPreferences') {
+    await Promise.allSettled([
+      loadUserWorkspaceDisplayPreferences(),
     ])
     return
   }
@@ -1531,6 +1619,7 @@ onBeforeUnmount(() => {
                     type="button"
                     class="user-settings-tab"
                     :class="{ 'is-active': activeTab === tab.id }"
+                    :data-testid="tab.id === 'displayPreferences' ? 'user-settings-display-preferences-tab' : undefined"
                     @click="selectTab(tab.id)"
                   >
                     <span class="material-symbols-outlined text-[18px]">{{ tab.icon }}</span>
@@ -1602,6 +1691,104 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                   </div>
+                </section>
+              </div>
+
+              <div v-else-if="activeTab === 'displayPreferences'" class="user-settings-panel user-settings-panel--stack" data-testid="user-settings-display-preferences-panel">
+                <section class="user-settings-card">
+                  <div class="user-settings-section-header">
+                    <div>
+                      <p class="text-base text-slate-900 font-semibold">
+                        显示偏好
+                      </p>
+                      <p class="text-sm text-slate-500 mt-1">
+                        配置你在所有工作区默认生效的字体大小。系统默认固定为 md。
+                      </p>
+                    </div>
+                  </div>
+
+                  <p v-if="userWorkspaceDisplayPreferencesError" class="user-settings-feedback user-settings-feedback--danger">
+                    {{ userWorkspaceDisplayPreferencesError }}
+                  </p>
+                  <p v-if="userWorkspaceDisplayPreferencesSuccess" class="user-settings-feedback user-settings-feedback--success">
+                    {{ userWorkspaceDisplayPreferencesSuccess }}
+                  </p>
+
+                  <div class="gap-4 grid md:grid-cols-3">
+                    <div class="user-settings-mini-card">
+                      <p class="user-settings-mini-card__label">
+                        当前个人全局默认
+                      </p>
+                      <p class="user-settings-mini-card__value">
+                        {{ userWorkspaceDisplayCurrentLabel }}
+                      </p>
+                    </div>
+                    <div class="user-settings-mini-card">
+                      <p class="user-settings-mini-card__label">
+                        系统默认
+                      </p>
+                      <p class="user-settings-mini-card__value">
+                        默认（md）
+                      </p>
+                    </div>
+                    <div class="user-settings-mini-card">
+                      <p class="user-settings-mini-card__label">
+                        影响范围
+                      </p>
+                      <p class="user-settings-mini-card__value">
+                        所有工作区
+                      </p>
+                    </div>
+                  </div>
+
+                  <div v-if="userWorkspaceDisplayPreferencesLoading" class="user-settings-empty">
+                    正在加载显示偏好...
+                  </div>
+
+                  <template v-else>
+                    <label class="user-settings-field">
+                      <span class="user-settings-field__label">字体大小</span>
+                      <select
+                        v-model="userWorkspaceDisplayFontSizeDraft"
+                        class="user-settings-select"
+                        data-testid="user-settings-display-font-size-select"
+                        :disabled="userWorkspaceDisplayPreferencesSaving"
+                      >
+                        <option value="">
+                          未设置，回退继承链
+                        </option>
+                        <option
+                          v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                          :key="`user-display-option-${option.value}`"
+                          :value="option.value"
+                        >
+                          {{ option.label }}（{{ option.value }}）
+                        </option>
+                      </select>
+                    </label>
+
+                    <p class="text-sm text-slate-500">
+                      清空后会在具体工作区继续继承团队默认或系统默认；工作区单独覆盖仍然优先。
+                    </p>
+
+                    <div class="flex flex-wrap gap-2 justify-end">
+                      <button
+                        class="user-settings-btn user-settings-btn--compact"
+                        :disabled="userWorkspaceDisplayPreferencesSaving"
+                        @click="userWorkspaceDisplayFontSizeDraft = ''"
+                      >
+                        清除全局默认
+                      </button>
+                      <button
+                        class="user-settings-btn user-settings-btn--compact user-settings-btn--primary"
+                        data-testid="user-settings-display-save-button"
+                        :disabled="userWorkspaceDisplayPreferencesSaving"
+                        @click="saveUserWorkspaceDisplayPreferences"
+                      >
+                        {{ userWorkspaceDisplayPreferencesSaving ? '保存中...' : '保存显示偏好' }}
+                      </button>
+                    </div>
+                  </template>
                 </section>
               </div>
 

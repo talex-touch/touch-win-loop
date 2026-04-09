@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import NotificationBellButton from '~/components/notifications/NotificationBellButton.vue'
+type WorkspaceWorkbenchMode = 'project' | 'defense'
 
 interface WorkspaceQuickSwitchProject {
   projectId: string
@@ -15,16 +15,19 @@ const props = withDefaults(defineProps<{
   workspaceId?: string
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
+  workbenchMode?: WorkspaceWorkbenchMode
 }>(), {
   modelValue: '',
   projectName: '未命名项目',
   workspaceId: '',
   myProjects: () => [],
   recentProjects: () => [],
+  workbenchMode: 'project',
 })
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
+  (event: 'update:workbenchMode', value: WorkspaceWorkbenchMode): void
   (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
   (event: 'finalReview'): void
 }>()
@@ -80,6 +83,12 @@ function goWorkspaceList() {
 function openFinalReview() {
   closeQuickSwitch()
   emit('finalReview')
+}
+
+function selectWorkbench(mode: WorkspaceWorkbenchMode) {
+  if (props.workbenchMode === mode)
+    return
+  emit('update:workbenchMode', mode)
 }
 
 function handleGlobalPointerDown(event: Event) {
@@ -218,6 +227,31 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="flex flex-1 gap-2 items-center justify-end">
+      <div
+        data-testid="workspace-header-workbench-tabs"
+        class="p-0.5 border border-slate-200 rounded-xl bg-slate-100/80 inline-flex items-center gap-0.5"
+      >
+        <button
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"
+          :class="workbenchMode === 'project'
+            ? 'bg-white text-slate-900 shadow-sm'
+            : 'text-slate-500 hover:text-slate-700'"
+          type="button"
+          @click="selectWorkbench('project')"
+        >
+          项目工作台
+        </button>
+        <button
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"
+          :class="workbenchMode === 'defense'
+            ? 'bg-[#d4a017] text-white shadow-sm'
+            : 'text-slate-500 hover:text-amber-700'"
+          type="button"
+          @click="selectWorkbench('defense')"
+        >
+          答辩工作台
+        </button>
+      </div>
       <button
         class="text-xs text-white font-semibold px-3 py-1.5 rounded bg-slate-900 hover:opacity-90"
         type="button"
@@ -225,7 +259,6 @@ onBeforeUnmount(() => {
       >
         终审
       </button>
-      <NotificationBellButton compact :workspace-id="props.workspaceId" />
       <div class="border border-slate-300 rounded-full bg-slate-200 h-6 w-6 overflow-hidden">
         <img
           alt="avatar"

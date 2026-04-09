@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/nuxt'
-import { buildSentryTracePropagationTargets, sanitizeSentryPayload } from './shared/utils/sentry'
+import { buildSentryTracePropagationTargets, sanitizeSentryPayload } from './lib/sentry'
 
 const runtimeConfig = useRuntimeConfig()
 const sentryConfig = runtimeConfig.public?.sentry || {}

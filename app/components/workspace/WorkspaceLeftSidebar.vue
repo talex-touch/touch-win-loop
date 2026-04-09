@@ -67,7 +67,7 @@ interface WorkspaceLinkedContestResourceDisplayGroup extends WorkspaceLinkedCont
   categories: WorkspaceLinkedContestResourceCategoryGroup[]
 }
 
-type ResourceSectionId = 'projectResources' | 'linkedContestResources' | 'systemLibrary' | 'outline'
+type ResourceSectionId = 'projectResources' | 'linkedContestResources' | 'outline'
 
 const props = withDefaults(defineProps<{
   naturalQuery: string
@@ -101,7 +101,6 @@ const props = withDefaults(defineProps<{
   aiFiltering: boolean
   isAdminView?: boolean
   activeMainTabId?: string
-  defenseActive?: boolean
   currentUserId?: string
   currentUsername?: string
   projectStorageLimitBytes?: number
@@ -109,6 +108,8 @@ const props = withDefaults(defineProps<{
   topicBoardLoading?: boolean
   topicBoardCurrentSummary?: string
   topicBoardHistoryCount?: number
+  workspaceId?: string
+  collapsed?: boolean
 }>(), {
   selectedResources: () => [],
   recycleResources: () => [],
@@ -129,7 +130,6 @@ const props = withDefaults(defineProps<{
   normalizedInfo: '',
   isAdminView: false,
   activeMainTabId: '',
-  defenseActive: false,
   currentUserId: '',
   currentUsername: '',
   projectStorageLimitBytes: 0,
@@ -144,6 +144,8 @@ const props = withDefaults(defineProps<{
   topicBoardLoading: false,
   topicBoardCurrentSummary: '',
   topicBoardHistoryCount: 0,
+  workspaceId: '',
+  collapsed: false,
 })
 
 const emit = defineEmits<{
@@ -162,7 +164,6 @@ const emit = defineEmits<{
   'openMemberManagementPanel': []
   'openFlowPanel': []
   'createCollabResource': [kind: 'markdown' | 'draw']
-  'openDefenseMode': []
   'reloadIssues': []
   'addResourceFromLibrary': [resourceId: string]
   'openResource': [resourceId: string]
@@ -179,6 +180,8 @@ const emit = defineEmits<{
   'retryUploadTask': [sessionId: string]
   'cancelUploadTask': [sessionId: string]
   'rebindUploadTask': [sessionId: string]
+  'update:collapsed': [value: boolean]
+  'toggleCollapsed': []
 }>()
 
 const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
@@ -299,7 +302,6 @@ const linkedCategoryExpanded = reactive<Record<string, boolean>>({})
 const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   projectResources: true,
   linkedContestResources: true,
-  systemLibrary: true,
   outline: true,
 })
 
@@ -384,27 +386,6 @@ const linkedContestResourceGroups = computed<WorkspaceLinkedContestResourceDispl
     categories: buildLinkedContestResourceCategories(group.resources || []),
   }))
 })
-const linkedContestResourceIdSet = computed(() => {
-  const ids = new Set<string>()
-  for (const group of linkedContestResourceGroups.value) {
-    for (const resource of group.resources) {
-      const resourceId = String(resource.id || '').trim()
-      if (resourceId)
-        ids.add(resourceId)
-    }
-  }
-  return ids
-})
-const visibleSystemLibraryResources = computed(() => {
-  if (linkedContestResourceIdSet.value.size === 0)
-    return props.resourceLibrary
-
-  return props.resourceLibrary.filter((item) => {
-    const resourceId = String(item.id || '').trim()
-    return resourceId ? !linkedContestResourceIdSet.value.has(resourceId) : true
-  })
-})
-
 const projectResourceSkeletonRows = [1, 2, 3, 4]
 const resourceLibrarySkeletonRows = [1, 2, 3]
 const projectOutlineSkeletonRows = [1, 2, 3, 4, 5]
@@ -737,9 +718,26 @@ function issueSeverityClass(value: string): string {
 function switchModule(moduleId: string) {
   if (!isWorkspaceLeftModuleId(moduleId))
     return
+
+  if (recyclePanelOpen.value) {
+    recyclePanelOpen.value = false
+    projectResourceAddMenuOpen.value = false
+    resourceActionOpenId.value = ''
+    activeModule.value = moduleId
+    expandPanel()
+    return
+  }
+
+  if (activeModule.value === moduleId) {
+    toggleCollapsed()
+    return
+  }
+
   recyclePanelOpen.value = false
   projectResourceAddMenuOpen.value = false
+  resourceActionOpenId.value = ''
   activeModule.value = moduleId
+  expandPanel()
 }
 
 function selectResource(resourceId: string) {
@@ -781,6 +779,24 @@ function toggleLinkedCategory(contestId: string, categoryId: string) {
   linkedCategoryExpanded[stateKey] = !isLinkedCategoryExpanded(contestId, categoryId)
 }
 
+function setCollapsed(nextValue: boolean) {
+  if (props.collapsed === nextValue)
+    return
+  emit('update:collapsed', nextValue)
+}
+
+function toggleCollapsed() {
+  emit('toggleCollapsed')
+  setCollapsed(!props.collapsed)
+}
+
+function expandPanel() {
+  if (!props.collapsed)
+    return
+  emit('toggleCollapsed')
+  emit('update:collapsed', false)
+}
+
 function toggleSection(sectionId: ResourceSectionId) {
   sectionExpanded[sectionId] = !sectionExpanded[sectionId]
 }
@@ -793,10 +809,6 @@ function openMemberManagementPanel() {
   emit('openMemberManagementPanel')
 }
 
-function openDefenseMode() {
-  emit('openDefenseMode')
-}
-
 function reloadIssueCenter() {
   emit('reloadIssues')
 }
@@ -805,6 +817,7 @@ function openRecycleBinPanel() {
   recyclePanelOpen.value = true
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
+  expandPanel()
 }
 
 function onTopKInput(event: Event) {
@@ -1670,6 +1683,13 @@ watch(() => props.hasActiveProject, (next) => {
   purgeResourceModalVisible.value = false
 })
 
+watch(() => props.collapsed, (next) => {
+  if (!next)
+    return
+  projectResourceAddMenuOpen.value = false
+  resourceActionOpenId.value = ''
+})
+
 watch(() => sectionExpanded.projectResources, (expanded) => {
   if (expanded)
     return
@@ -1691,10 +1711,7 @@ onMounted(() => {
     return
 
   const saved = localStorage.getItem(LEFT_MODULE_STORAGE_KEY)
-  if (!saved)
-    return
-
-  if (isWorkspaceLeftModuleId(saved))
+  if (saved && isWorkspaceLeftModuleId(saved))
     activeModule.value = saved
 
   document.addEventListener('pointerdown', closeResourceActionMenuByOutside)
@@ -1716,21 +1733,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside ref="sidebarPanelRef" class="workspace-left-dock">
+  <aside
+    ref="sidebarPanelRef"
+    class="workspace-left-dock"
+    :class="{ 'workspace-left-dock--collapsed': props.collapsed }"
+  >
     <WorkspaceLeftRail
       :items="modules"
       :active-id="activeModule"
+      :workspace-id="props.workspaceId"
+      :collapsed="props.collapsed"
       :recycle-active="recyclePanelOpen"
-      :defense-active="defenseActive"
       :member-management-active="props.activeMainTabId === 'members'"
       @select="switchModule"
-      @open-defense="openDefenseMode"
       @open-recycle-bin="openRecycleBinPanel"
       @open-member-management="openMemberManagementPanel"
       @open-settings="openSettingsPanel"
     />
 
-    <section class="workspace-left-panel">
+    <section v-show="!props.collapsed" class="workspace-left-panel">
       <div class="workspace-left-panel__body no-scrollbar">
         <template v-if="recyclePanelOpen">
           <section class="workspace-tree-block workspace-tree-block--recycle-panel">
@@ -1844,7 +1865,7 @@ onBeforeUnmount(() => {
                     :disabled="resourceMutating || !hasActiveProject"
                     @click.stop="openLibraryFromMenu"
                   >
-                    从系统资源库导入
+                    从系统资料库导入
                   </button>
                   <button
                     class="workspace-project-add-actions__menu-item"
@@ -2167,67 +2188,6 @@ onBeforeUnmount(() => {
             <button
               class="workspace-tree-block__title"
               type="button"
-              :aria-expanded="sectionExpanded.systemLibrary"
-              @click="toggleSection('systemLibrary')"
-            >
-              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.systemLibrary }">
-                keyboard_arrow_down
-              </span>
-              <span>系统资料库</span>
-            </button>
-
-            <div v-show="sectionExpanded.systemLibrary" class="workspace-tree-block__content">
-              <template v-if="resourceLibraryLoading">
-                <div
-                  v-for="row in resourceLibrarySkeletonRows"
-                  :key="`library-skeleton-${row}`"
-                  class="workspace-library-skeleton-item"
-                  aria-hidden="true"
-                >
-                  <div class="workspace-library-skeleton-item__left">
-                    <span class="workspace-library-skeleton-item__icon workspace-skeleton" />
-                    <div class="workspace-library-skeleton-item__content">
-                      <div class="workspace-library-skeleton-item__title workspace-skeleton" />
-                      <div class="workspace-library-skeleton-item__meta workspace-skeleton" />
-                    </div>
-                  </div>
-                  <span class="workspace-library-skeleton-item__action workspace-skeleton" />
-                </div>
-              </template>
-              <template v-else-if="visibleSystemLibraryResources.length > 0">
-                <div
-                  v-for="item in visibleSystemLibraryResources"
-                  :key="item.id"
-                  class="workspace-library-item"
-                >
-                  <div class="workspace-library-item__content">
-                    <div class="workspace-library-item__title">
-                      {{ resourceDisplayTitle(item) }}
-                    </div>
-                    <div class="workspace-library-item__meta">
-                      {{ item.type }} · {{ item.year }}
-                    </div>
-                  </div>
-                  <button
-                    class="workspace-library-item__add"
-                    type="button"
-                    :disabled="resourceMutating || !hasActiveProject"
-                    @click="addLibraryResource(item.id)"
-                  >
-                    添加
-                  </button>
-                </div>
-              </template>
-              <p v-else class="workspace-empty-text">
-                暂无资源
-              </p>
-            </div>
-          </section>
-
-          <section class="workspace-tree-block">
-            <button
-              class="workspace-tree-block__title"
-              type="button"
               :aria-expanded="sectionExpanded.outline"
               @click="toggleSection('outline')"
             >
@@ -2304,7 +2264,7 @@ onBeforeUnmount(() => {
 
           <a-modal
             v-model:visible="libraryModalVisible"
-            title="添加项目资源"
+            title="从系统资料库导入"
             width="560px"
             :footer="false"
             :esc-to-close="!resourceMutating"
@@ -2314,7 +2274,7 @@ onBeforeUnmount(() => {
               <input
                 v-model="libraryModalKeyword"
                 class="workspace-library-search"
-                placeholder="搜索系统库资源"
+                placeholder="搜索系统资料库资源"
                 type="text"
               >
 
@@ -2808,9 +2768,18 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.workspace-left-dock--collapsed {
+  width: 56px;
+  flex: 0 0 56px;
+}
+
 @media (min-width: 1280px) {
   .workspace-left-dock {
     width: 362px;
+  }
+
+  .workspace-left-dock--collapsed {
+    width: 56px;
   }
 }
 

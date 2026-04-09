@@ -6,7 +6,7 @@ import {
   resolveSentryRelease,
   resolveSentryTracesSampleRate,
 } from './config/sentry'
-import { sanitizeSentryPayload, shouldCaptureSentryError } from './shared/utils/sentry'
+import { sanitizeSentryPayload, shouldCaptureSentryError } from './lib/sentry'
 
 loadWinloopEnv()
 
