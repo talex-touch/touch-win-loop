@@ -223,6 +223,19 @@ onMounted(loadPermissions)
         </NuxtLink>
 
         <NuxtLink
+          v-if="canManageContest"
+          to="/admin/operations"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            运营管控
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            平台运营指标、用户画像、经营对账、风险监控与临时报表
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
           v-if="canManageIntegrations"
           to="/admin/integrations"
           class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
