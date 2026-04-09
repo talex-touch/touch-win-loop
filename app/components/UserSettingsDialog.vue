@@ -166,6 +166,8 @@ const visibleModel = computed({
   get: () => props.visible,
   set: value => emit('update:visible', value),
 })
+const dialogTitleId = 'user-settings-dialog-title'
+const activeTabMeta = computed(() => tabItems.find(item => item.id === activeTab.value) || defaultTabMeta)
 
 const tabGroups = computed(() => {
   return tabGroupItems.map(group => ({
@@ -1495,6 +1497,9 @@ onBeforeUnmount(() => {
     <div
       v-if="props.visible"
       class="p-4 bg-slate-950/40 flex items-center inset-0 justify-center fixed z-50"
+      aria-modal="true"
+      :aria-labelledby="dialogTitleId"
+      role="dialog"
       @click.self="closeDialog"
     >
       <div class="border border-slate-200 rounded-[24px] bg-white flex flex-col h-full max-h-[84vh] max-w-[860px] w-full shadow-2xl overflow-hidden lg:h-[560px] lg:max-h-[560px]">
@@ -1538,6 +1543,9 @@ onBeforeUnmount(() => {
 
           <section class="bg-white flex flex-1 flex-col min-h-0">
             <div class="px-4 py-4 flex-1 min-h-0 overflow-y-auto sm:px-5">
+              <h2 :id="dialogTitleId" class="sr-only">
+                {{ activeTabMeta.label }}
+              </h2>
               <div v-if="activeTab === 'profile'" class="user-settings-panel user-settings-panel--stack">
                 <input
                   ref="avatarFileInputRef"
