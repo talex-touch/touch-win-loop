@@ -173,11 +173,11 @@ function buildQualityIssues(input: {
   searchMetrics: SearchMetrics
 }): ResourceQualityIssue[] {
   const issues: ResourceQualityIssue[] = []
-  const contentLength = normalizeString(input.resource.content).length + normalizeString(input.resource.summary).length
   const normalizedText = normalizeText(input.combinedText)
+  const contentLength = normalizedText.length
   if (!normalizeString(input.resource.summary))
     issues.push({ code: 'summary_missing', message: '缺少摘要信息。', severity: 'warning', field: 'summary', scoreImpact: 8 })
-  if (!normalizeString(input.resource.content) && !input.documentAnalysis?.pages?.length)
+  if (!normalizedText)
     issues.push({ code: 'content_missing', message: '缺少正文或文档解析结果。', severity: 'error', field: 'content', scoreImpact: 16 })
   if (!normalizeString(input.resource.copyrightNote))
     issues.push({ code: 'copyright_missing', message: '缺少版权说明。', severity: 'warning', field: 'copyrightNote', scoreImpact: 8 })
@@ -195,6 +195,7 @@ function buildQualityIssues(input: {
 function computeQualityScore(input: {
   resource: Resource
   predictedCategory: ResourceCategory
+  combinedText: string
   documentAnalysis?: DocumentAnalysis | null
   searchMetrics: SearchMetrics
   issues: ResourceQualityIssue[]
@@ -202,7 +203,7 @@ function computeQualityScore(input: {
   contest: Contest
 }): { score: number, componentScores: Record<string, number> } {
   const summaryLength = normalizeString(input.resource.summary).length
-  const contentLength = normalizeString(input.resource.content).length
+  const contentLength = normalizeString(input.combinedText).length
   const hasUrl = Boolean(normalizeString(input.resource.sourceLink))
   const hasDocument = Boolean(input.documentAnalysis?.pages?.length)
   const completeness = Math.min(30,
@@ -412,6 +413,7 @@ export async function analyzeResourceKnowledgeProfile(input: {
   const quality = computeQualityScore({
     resource: input.resource,
     predictedCategory: predicted.category,
+    combinedText,
     documentAnalysis: input.documentAnalysis,
     searchMetrics: metrics,
     issues,
@@ -644,10 +646,15 @@ export function buildDemandInsights(events: ResourceSearchEvent[], limit = 20): 
   const searchEvents = events.filter(item => !item.clicked)
   const clickEvents = events.filter(item => item.clicked)
   const clicksByQuery = new Map<string, number>()
+  const clickDedup = new Set<string>()
   for (const event of clickEvents) {
     const key = normalizeString(event.query).toLowerCase()
     if (!key)
       continue
+    const dedupeKey = `${key}|${normalizeString(event.sessionId || event.id)}`
+    if (clickDedup.has(dedupeKey))
+      continue
+    clickDedup.add(dedupeKey)
     clicksByQuery.set(key, (clicksByQuery.get(key) || 0) + 1)
   }
 
@@ -675,7 +682,7 @@ export function buildDemandInsights(events: ResourceSearchEvent[], limit = 20): 
 
   return [...buckets.values()]
     .map((item) => {
-      const clickCount = clicksByQuery.get(item.query.toLowerCase()) || 0
+      const clickCount = Math.min(item.searchCount, clicksByQuery.get(item.query.toLowerCase()) || 0)
       const lowClickCount = Math.max(0, item.searchCount - item.zeroResultCount - clickCount)
       return {
         query: item.query,

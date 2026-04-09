@@ -628,7 +628,7 @@ CREATE TABLE IF NOT EXISTS rule_definitions (
   version_id TEXT NOT NULL REFERENCES rule_versions(id) ON DELETE CASCADE,
   code TEXT NOT NULL,
   name TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('eligibility', 'material', 'workflow', 'reminder')),
+  category TEXT NOT NULL CHECK (category IN ('eligibility', 'material', 'workflow', 'reminder', 'quality', 'compliance')),
   severity TEXT NOT NULL CHECK (severity IN ('error', 'warning', 'info')),
   when_expr JSONB NOT NULL DEFAULT '{}'::JSONB,
   assert_expr JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -869,7 +869,8 @@ CREATE TABLE IF NOT EXISTS contest_resources (
   created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(contest_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS project_resources (
@@ -991,7 +992,11 @@ CREATE TABLE IF NOT EXISTS contest_resource_profiles (
   created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT contest_resource_profiles_contest_resource_fk
+    FOREIGN KEY (contest_id, resource_id)
+    REFERENCES contest_resources(contest_id, id)
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS contest_resource_relations (
@@ -1005,6 +1010,14 @@ CREATE TABLE IF NOT EXISTS contest_resource_relations (
   metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT contest_resource_relations_source_contest_resource_fk
+    FOREIGN KEY (contest_id, source_resource_id)
+    REFERENCES contest_resources(contest_id, id)
+    ON DELETE CASCADE,
+  CONSTRAINT contest_resource_relations_target_contest_resource_fk
+    FOREIGN KEY (contest_id, target_resource_id)
+    REFERENCES contest_resources(contest_id, id)
+    ON DELETE CASCADE,
   UNIQUE(source_resource_id, target_resource_id, relation_type)
 );
 
@@ -1020,7 +1033,11 @@ CREATE TABLE IF NOT EXISTS contest_resource_search_events (
   workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
   user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT contest_resource_search_events_contest_resource_fk
+    FOREIGN KEY (contest_id, resource_id)
+    REFERENCES contest_resources(contest_id, id)
+    ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS contest_resource_governance_tasks (
@@ -1040,7 +1057,11 @@ CREATE TABLE IF NOT EXISTS contest_resource_governance_tasks (
   created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT contest_resource_governance_tasks_contest_resource_fk
+    FOREIGN KEY (contest_id, resource_id)
+    REFERENCES contest_resources(contest_id, id)
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS project_resource_documents (
@@ -2361,6 +2382,203 @@ BEGIN
     WHEN duplicate_object THEN NULL;
   END;
 END $$;
+
+DO $$
+DECLARE
+  rule_category_check_name TEXT;
+BEGIN
+  SELECT con.conname INTO rule_category_check_name
+  FROM pg_constraint con
+  JOIN pg_class rel ON rel.oid = con.conrelid
+  WHERE rel.relname = 'rule_definitions'
+    AND con.contype = 'c'
+    AND pg_get_constraintdef(con.oid) ILIKE '%category%'
+  ORDER BY con.conname
+  LIMIT 1;
+
+  IF rule_category_check_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE rule_definitions DROP CONSTRAINT %I', rule_category_check_name);
+  END IF;
+
+  BEGIN
+    ALTER TABLE rule_definitions
+      ADD CONSTRAINT rule_definitions_category_check
+      CHECK (category IN ('eligibility', 'material', 'workflow', 'reminder', 'quality', 'compliance'));
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'contest_resources_contest_id_id_key'
+      AND conrelid = 'contest_resources'::regclass
+  ) THEN
+    ALTER TABLE contest_resources
+      ADD CONSTRAINT contest_resources_contest_id_id_key
+      UNIQUE (contest_id, id);
+  END IF;
+END $$;
+
+DELETE FROM contest_resource_profiles profile
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM contest_resources resource
+  WHERE resource.id = profile.resource_id
+    AND resource.contest_id = profile.contest_id
+);
+
+DELETE FROM contest_resource_relations relation
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM contest_resources resource
+  WHERE resource.id = relation.source_resource_id
+    AND resource.contest_id = relation.contest_id
+)
+   OR NOT EXISTS (
+     SELECT 1
+     FROM contest_resources resource
+     WHERE resource.id = relation.target_resource_id
+       AND resource.contest_id = relation.contest_id
+   );
+
+UPDATE contest_resource_search_events event
+SET resource_id = NULL,
+    updated_at = NOW()
+WHERE event.resource_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM contest_resources resource
+    WHERE resource.id = event.resource_id
+      AND resource.contest_id = event.contest_id
+  );
+
+DELETE FROM contest_resource_governance_tasks task
+WHERE task.resource_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM contest_resources resource
+    WHERE resource.id = task.resource_id
+      AND resource.contest_id = task.contest_id
+  );
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'contest_resource_profiles_contest_resource_fk'
+      AND conrelid = 'contest_resource_profiles'::regclass
+  ) THEN
+    ALTER TABLE contest_resource_profiles
+      ADD CONSTRAINT contest_resource_profiles_contest_resource_fk
+      FOREIGN KEY (contest_id, resource_id)
+      REFERENCES contest_resources(contest_id, id)
+      ON DELETE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'contest_resource_relations_source_contest_resource_fk'
+      AND conrelid = 'contest_resource_relations'::regclass
+  ) THEN
+    ALTER TABLE contest_resource_relations
+      ADD CONSTRAINT contest_resource_relations_source_contest_resource_fk
+      FOREIGN KEY (contest_id, source_resource_id)
+      REFERENCES contest_resources(contest_id, id)
+      ON DELETE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'contest_resource_relations_target_contest_resource_fk'
+      AND conrelid = 'contest_resource_relations'::regclass
+  ) THEN
+    ALTER TABLE contest_resource_relations
+      ADD CONSTRAINT contest_resource_relations_target_contest_resource_fk
+      FOREIGN KEY (contest_id, target_resource_id)
+      REFERENCES contest_resources(contest_id, id)
+      ON DELETE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'contest_resource_search_events_contest_resource_fk'
+      AND conrelid = 'contest_resource_search_events'::regclass
+  ) THEN
+    ALTER TABLE contest_resource_search_events
+      ADD CONSTRAINT contest_resource_search_events_contest_resource_fk
+      FOREIGN KEY (contest_id, resource_id)
+      REFERENCES contest_resources(contest_id, id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'contest_resource_governance_tasks_contest_resource_fk'
+      AND conrelid = 'contest_resource_governance_tasks'::regclass
+  ) THEN
+    ALTER TABLE contest_resource_governance_tasks
+      ADD CONSTRAINT contest_resource_governance_tasks_contest_resource_fk
+      FOREIGN KEY (contest_id, resource_id)
+      REFERENCES contest_resources(contest_id, id)
+      ON DELETE CASCADE;
+  END IF;
+END $$;
+
+WITH ranked_governance_tasks AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY contest_id, COALESCE(resource_id, ''), task_type
+      ORDER BY
+        CASE WHEN status = 'processing' THEN 0 ELSE 1 END,
+        created_at ASC,
+        id ASC
+    ) AS rn
+  FROM contest_resource_governance_tasks
+  WHERE status IN ('queued', 'processing')
+)
+UPDATE contest_resource_governance_tasks task
+SET status = 'dead_letter',
+    finished_at = COALESCE(task.finished_at, NOW()),
+    updated_at = NOW(),
+    error_message = CASE
+      WHEN COALESCE(task.error_message, '') = '' THEN 'Superseded by active task deduplication.'
+      ELSE task.error_message
+    END
+FROM ranked_governance_tasks ranked
+WHERE task.id = ranked.id
+  AND ranked.rn > 1;
+
+CREATE INDEX IF NOT EXISTS idx_contest_resource_profiles_contest_resource
+  ON contest_resource_profiles(contest_id, resource_id);
+
+CREATE INDEX IF NOT EXISTS idx_contest_resource_search_events_contest_resource
+  ON contest_resource_search_events(contest_id, resource_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contest_resource_governance_tasks_active_unique
+  ON contest_resource_governance_tasks(contest_id, COALESCE(resource_id, ''), task_type)
+  WHERE status IN ('queued', 'processing');
 
 DO $$
 DECLARE

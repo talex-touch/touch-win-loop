@@ -712,6 +712,10 @@ export async function recordResourceSearchEvent(
 ): Promise<ResourceSearchEvent> {
   const eventId = randomUUID()
   const sessionId = normalizeString(input.sessionId) || randomUUID()
+  const parsedResultCount = Number(input.resultCount)
+  const normalizedResultCount = Number.isFinite(parsedResultCount)
+    ? Math.max(0, Math.floor(parsedResultCount))
+    : 0
   await db.query(
     `INSERT INTO contest_resource_search_events (
       id,
@@ -735,7 +739,7 @@ export async function recordResourceSearchEvent(
       normalizeString(input.resourceId) || null,
       normalizeString(input.query),
       JSON.stringify(normalizeRecord(input.filters)),
-      Math.max(0, Number(input.resultCount || 0)),
+      normalizedResultCount,
       Boolean(input.clicked),
       sessionId,
       normalizeString(input.workspaceId) || null,
@@ -809,6 +813,45 @@ export async function listResourceSearchEvents(
   return result.rows.map(toSearchEvent)
 }
 
+export async function getResourceSearchEventSummary(
+  db: Queryable,
+  input: {
+    contestId: string
+    days?: number
+  },
+): Promise<{
+  searchCount: number
+  clickCount: number
+  zeroResultCount: number
+}> {
+  const values: unknown[] = [input.contestId]
+  const where: string[] = ['contest_id = $1']
+  if (input.days) {
+    values.push(String(Math.max(1, Number(input.days))))
+    where.push(`created_at >= NOW() - ($${values.length}::TEXT || ' days')::INTERVAL`)
+  }
+
+  const result = await db.query<{
+    search_count: number
+    click_count: number
+    zero_result_count: number
+  }>(
+    `SELECT
+      COUNT(*) FILTER (WHERE clicked = FALSE) AS search_count,
+      COUNT(*) FILTER (WHERE clicked = TRUE) AS click_count,
+      COUNT(*) FILTER (WHERE clicked = FALSE AND result_count = 0) AS zero_result_count
+     FROM contest_resource_search_events
+     WHERE ${where.join(' AND ')}`,
+    values,
+  )
+
+  return {
+    searchCount: Number(result.rows[0]?.search_count || 0),
+    clickCount: Number(result.rows[0]?.click_count || 0),
+    zeroResultCount: Number(result.rows[0]?.zero_result_count || 0),
+  }
+}
+
 export async function buildResourceSearchMetricsMap(
   db: Queryable,
   input: {
@@ -871,6 +914,8 @@ export async function enqueueResourceGovernanceTask(
     force?: boolean
   },
 ): Promise<ResourceGovernanceTask> {
+  const normalizedResourceId = normalizeString(input.resourceId) || null
+
   if (!input.force) {
     const existing = await db.query<ResourceGovernanceTaskRow>(
       `SELECT
@@ -893,12 +938,12 @@ export async function enqueueResourceGovernanceTask(
        WHERE contest_id = $1
          AND COALESCE(resource_id, '') = COALESCE($2::TEXT, '')
          AND task_type = $3
-         AND status IN ('queued', 'processing')
+         AND status IN ('queued', 'processing', 'failed')
        ORDER BY created_at DESC
        LIMIT 1`,
       [
         input.contestId,
-        normalizeString(input.resourceId) || null,
+        normalizedResourceId,
         input.taskType,
       ],
     )
@@ -910,6 +955,7 @@ export async function enqueueResourceGovernanceTask(
   const taskId = randomUUID()
   const actorUserId = normalizeString(input.actorUserId) || null
   const nextRunAt = normalizeString(input.nextRunAt)
+  let existingTask: ResourceGovernanceTask | null = null
 
   await db.query(
     `INSERT INTO contest_resource_governance_tasks (
@@ -934,7 +980,7 @@ export async function enqueueResourceGovernanceTask(
     [
       taskId,
       input.contestId,
-      normalizeString(input.resourceId) || null,
+      normalizedResourceId,
       input.taskType,
       Math.max(1, Number(input.maxAttempt || 6)),
       nextRunAt || null,
@@ -942,6 +988,51 @@ export async function enqueueResourceGovernanceTask(
       actorUserId,
     ],
   )
+  .catch(async (error) => {
+    if ((error as { code?: string })?.code !== '23505' || input.force)
+      throw error
+
+    const existing = await db.query<ResourceGovernanceTaskRow>(
+      `SELECT
+        id,
+        contest_id,
+        resource_id,
+        task_type,
+        status,
+        attempt,
+        max_attempt,
+        next_run_at::TEXT,
+        error_message,
+        payload,
+        result_payload,
+        started_at::TEXT,
+        finished_at::TEXT,
+        created_at::TEXT,
+        updated_at::TEXT
+       FROM contest_resource_governance_tasks
+       WHERE contest_id = $1
+         AND COALESCE(resource_id, '') = COALESCE($2::TEXT, '')
+         AND task_type = $3
+         AND status IN ('queued', 'processing', 'failed')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [
+        input.contestId,
+        normalizedResourceId,
+        input.taskType,
+      ],
+    )
+
+    if (existing.rows[0]) {
+      existingTask = toTask(existing.rows[0])
+      return
+    }
+
+    throw error
+  })
+
+  if (existingTask)
+    return existingTask
 
   const created = await getResourceGovernanceTaskById(db, { taskId })
   if (!created)
@@ -1169,7 +1260,7 @@ export async function listResourceDocumentAnalyses(
       analysis_json
      FROM contest_resource_documents
      WHERE contest_id = $1${resourceSql}
-     ORDER BY resource_id ASC, updated_at DESC`,
+     ORDER BY resource_id ASC, (analysis_json IS NULL) ASC, updated_at DESC`,
     values,
   )
 

@@ -7,6 +7,10 @@ import type {
 import { computed } from 'vue'
 import { useState } from '#imports'
 
+const RESOURCE_KNOWLEDGE_SESSION_STORAGE_KEY = 'wl-resource-knowledge-session-id'
+const RESOURCE_KNOWLEDGE_SESSION_COOKIE_KEY = 'wl_resource_session'
+const RESOURCE_KNOWLEDGE_SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+
 export const resourceCategoryOptions: Array<{ value: ResourceCategory | '', label: string }> = [
   { value: '', label: '全部分类' },
   { value: 'basic_info', label: '基本信息' },
@@ -65,17 +69,13 @@ export function collectResourceTags(resources: Resource[]): string[] {
 export function useResourceKnowledgeSessionId() {
   const sessionId = useState<string>('resource-knowledge-session-id', () => '')
   if (import.meta.client && !sessionId.value) {
-    const storageKey = 'wl-resource-knowledge-session-id'
-    const stored = window.localStorage.getItem(storageKey)
-    if (stored) {
-      sessionId.value = stored
-    }
-    else {
-      const created = window.crypto?.randomUUID?.()
-        || `${Date.now()}-${Math.random().toString(16).slice(2)}`
-      window.localStorage.setItem(storageKey, created)
-      sessionId.value = created
-    }
+    const stored = window.localStorage.getItem(RESOURCE_KNOWLEDGE_SESSION_STORAGE_KEY)
+    const nextSessionId = stored
+      || window.crypto?.randomUUID?.()
+      || `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    window.localStorage.setItem(RESOURCE_KNOWLEDGE_SESSION_STORAGE_KEY, nextSessionId)
+    document.cookie = `${RESOURCE_KNOWLEDGE_SESSION_COOKIE_KEY}=${encodeURIComponent(nextSessionId)}; Path=/; Max-Age=${RESOURCE_KNOWLEDGE_SESSION_COOKIE_MAX_AGE}; SameSite=Lax`
+    sessionId.value = nextSessionId
   }
   return sessionId
 }

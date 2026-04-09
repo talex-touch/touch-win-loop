@@ -4,7 +4,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { listResourceDemandInsights, listResourceSearchEvents } from '~~/server/utils/resource-knowledge-store'
+import { getResourceSearchEventSummary, listResourceDemandInsights, listResourceSearchEvents } from '~~/server/utils/resource-knowledge-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
   const days = typeof query.days === 'string' ? Number(query.days) : 30
   const limit = typeof query.limit === 'string' ? Number(query.limit) : 20
   const payload = await withClient(event, async (db) => {
-    const [insights, recentEvents] = await Promise.all([
+    const [insights, recentEvents, summary] = await Promise.all([
       listResourceDemandInsights(db, {
         contestId,
         days,
@@ -50,17 +50,17 @@ export default defineEventHandler(async (event) => {
         days,
         limit: Math.max(20, limit * 3),
       }),
+      getResourceSearchEventSummary(db, {
+        contestId,
+        days,
+      }),
     ])
 
     return {
       contestId,
       insights,
       recentEvents,
-      summary: {
-        searchCount: recentEvents.filter(item => !item.clicked).length,
-        clickCount: recentEvents.filter(item => item.clicked).length,
-        zeroResultCount: recentEvents.filter(item => !item.clicked && Number(item.resultCount || 0) === 0).length,
-      },
+      summary,
     }
   })
 

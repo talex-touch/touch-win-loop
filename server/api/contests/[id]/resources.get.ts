@@ -62,32 +62,35 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  await withTransaction(event, async (db) => {
-    await recordResourceSearchEvent(db, {
-      contestId,
-      query: typeof query.q === 'string' ? query.q : '',
-      filters: {
-        category: typeof query.category === 'string' ? query.category : '',
-        year: typeof query.year === 'string' ? query.year : '',
-        availability: typeof query.availability === 'string' ? query.availability : '',
-        tags: parseResourceSearchTags(query.tags),
-        sort: parseResourceSearchSort(query.sort) || '',
-        minQuality: parseResourceMinQuality(query.minQuality) ?? null,
-        relatedTo: typeof query.relatedTo === 'string' ? query.relatedTo : '',
-      },
-      resultCount: resources.length,
-      clicked: false,
-      sessionId: resolveResourceSearchSessionId(event, auth?.session.id),
-      userId: auth?.user?.id || null,
+  const searchQuery = typeof query.q === 'string' ? query.q.trim() : ''
+  if (searchQuery) {
+    await withTransaction(event, async (db) => {
+      await recordResourceSearchEvent(db, {
+        contestId,
+        query: searchQuery,
+        filters: {
+          category: typeof query.category === 'string' ? query.category : '',
+          year: typeof query.year === 'string' ? query.year : '',
+          availability: typeof query.availability === 'string' ? query.availability : '',
+          tags: parseResourceSearchTags(query.tags),
+          sort: parseResourceSearchSort(query.sort) || '',
+          minQuality: parseResourceMinQuality(query.minQuality) ?? null,
+          relatedTo: typeof query.relatedTo === 'string' ? query.relatedTo : '',
+        },
+        resultCount: resources.length,
+        clicked: false,
+        sessionId: resolveResourceSearchSessionId(event, auth?.session.id),
+        userId: auth?.user?.id || null,
+      })
+      await enqueueResourceGovernanceTask(db, {
+        contestId,
+        taskType: 'search_metric_rollup',
+        payload: {
+          resourceIds: resources.slice(0, 8).map(item => item.id),
+        },
+      })
     })
-    await enqueueResourceGovernanceTask(db, {
-      contestId,
-      taskType: 'search_metric_rollup',
-      payload: {
-        resourceIds: resources.slice(0, 8).map(item => item.id),
-      },
-    })
-  })
+  }
 
   return ok(resources, {
     startedAt,

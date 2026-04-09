@@ -40,9 +40,25 @@ export default defineEventHandler(async (event) => {
     }, 403305)
   }
 
-  const resourceIds = [...new Set((body?.resourceIds || []).map(item => String(item || '').trim()).filter(Boolean))]
+  const resourceIds = [...new Set(
+    (Array.isArray(body?.resourceIds) ? body.resourceIds : [])
+      .map(item => String(item || '').trim())
+      .filter(Boolean),
+  )]
   const tasks = await withTransaction(event, async (db) => {
-    if (resourceIds.length === 0) {
+    let validResourceIds = resourceIds
+    if (resourceIds.length > 0) {
+      const result = await db.query<{ id: string }>(
+        `SELECT id
+         FROM contest_resources
+         WHERE contest_id = $1
+           AND id = ANY($2::TEXT[])`,
+        [contestId, resourceIds],
+      )
+      validResourceIds = result.rows.map(item => String(item.id || '').trim()).filter(Boolean)
+    }
+
+    if (validResourceIds.length === 0) {
       return [await enqueueResourceGovernanceTask(db, {
         contestId,
         taskType: 'profile_analyze',
@@ -52,7 +68,7 @@ export default defineEventHandler(async (event) => {
     }
 
     return Promise.all(
-      resourceIds.map(resourceId => enqueueResourceGovernanceTask(db, {
+      validResourceIds.map(resourceId => enqueueResourceGovernanceTask(db, {
         contestId,
         resourceId,
         taskType: 'profile_analyze',

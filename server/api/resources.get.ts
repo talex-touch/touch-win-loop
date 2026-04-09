@@ -68,30 +68,59 @@ export default defineEventHandler(async (event) => {
     : [...resultCountByContest.keys()]
 
   if (contestIds.length > 0) {
-    await withTransaction(event, async (db) => {
-      const sessionId = resolveResourceSearchSessionId(event, auth?.session.id)
-      for (const contestId of contestIds) {
-        const resourceIds = resourceIdsByContest.get(contestId) || []
-        await recordResourceSearchEvent(db, {
-          contestId,
-          query: queryText,
-          filters,
-          resultCount: explicitContestId ? resources.length : Number(resultCountByContest.get(contestId) || 0),
-          clicked: false,
-          sessionId,
-          userId: auth?.user?.id || null,
-        })
-        if (resourceIds.length > 0) {
-          await enqueueResourceGovernanceTask(db, {
-            contestId,
-            taskType: 'search_metric_rollup',
-            payload: {
-              resourceIds,
-            },
-          })
+    try {
+      await withTransaction(event, async (db) => {
+        const sessionId = resolveResourceSearchSessionId(event, auth?.session.id)
+        const knownContestIds = new Set<string>()
+        const knownResult = await db.query<{ id: string }>(
+          `SELECT id
+           FROM contests
+           WHERE id = ANY($1::TEXT[])`,
+          [contestIds],
+        )
+        for (const row of knownResult.rows)
+          knownContestIds.add(String(row.id || '').trim())
+
+        for (const contestId of contestIds) {
+          if (!knownContestIds.has(contestId))
+            continue
+
+          const resourceIds = resourceIdsByContest.get(contestId) || []
+          try {
+            await recordResourceSearchEvent(db, {
+              contestId,
+              query: queryText,
+              filters,
+              resultCount: explicitContestId ? resources.length : Number(resultCountByContest.get(contestId) || 0),
+              clicked: false,
+              sessionId,
+              userId: auth?.user?.id || null,
+            })
+          }
+          catch (error) {
+            console.warn('[resource-search] 记录检索事件失败', { contestId, error })
+          }
+
+          if (resourceIds.length > 0) {
+            try {
+              await enqueueResourceGovernanceTask(db, {
+                contestId,
+                taskType: 'search_metric_rollup',
+                payload: {
+                  resourceIds,
+                },
+              })
+            }
+            catch (error) {
+              console.warn('[resource-search] 入队检索治理任务失败', { contestId, error })
+            }
+          }
         }
-      }
-    })
+      })
+    }
+    catch (error) {
+      console.warn('[resource-search] 记录平台检索指标失败', error)
+    }
   }
 
   return ok(resources, {

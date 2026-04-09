@@ -65,11 +65,7 @@ export function buildDeterministicKnowledgeEmbedding(text: string, dimensions = 
 
 function normalizeEmbeddingModel(model: string): string {
   const candidate = toKnowledgeText(model)
-  if (!candidate)
-    return DEFAULT_EMBEDDING_MODEL
-  if (candidate.startsWith('text-embedding-'))
-    return candidate
-  return DEFAULT_EMBEDDING_MODEL
+  return candidate || DEFAULT_EMBEDDING_MODEL
 }
 
 function normalizeEmbeddingOutput(raw: unknown): number[] {
@@ -211,11 +207,11 @@ export async function analyzeKnowledgeEntity(input: {
   }
 
   const chatModel = createChatModel({
-    provider: runtime.ai.provider,
+    provider,
     baseURL: runtime.ai.baseURL,
     apiKey: runtime.ai.apiKey,
-    model: runtime.ai.model,
-    format: runtime.ai.provider === 'response' ? 'response' : 'openai-compatible',
+    model,
+    format: provider === 'response' ? 'response' : 'openai-compatible',
     temperature: 0.1,
     topP: runtime.ai.topP,
     maxTokens: runtime.ai.maxTokens,

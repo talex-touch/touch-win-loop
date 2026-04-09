@@ -90,6 +90,7 @@ const tasks = ref<ResourceGovernanceTask[]>([])
 const demand = ref<DemandPayload | null>(null)
 const detail = ref<KnowledgeDetailPayload | null>(null)
 const selectedResourceId = ref('')
+let detailRequestToken = 0
 
 const overrideForm = reactive({
   predictedCategory: '' as ResourceCategory | '',
@@ -168,14 +169,18 @@ async function loadDetail(resourceId: string) {
     resetOverrideForm(null)
     return
   }
+  const requestToken = ++detailRequestToken
   detailLoading.value = true
   try {
     const response = await $fetch<ApiResponse<KnowledgeDetailPayload>>(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/${resourceId}`))
+    if (requestToken !== detailRequestToken || selectedResourceId.value !== resourceId)
+      return
     detail.value = response.data
     resetOverrideForm(response.data)
   }
   finally {
-    detailLoading.value = false
+    if (requestToken === detailRequestToken)
+      detailLoading.value = false
   }
 }
 
@@ -202,8 +207,9 @@ async function loadAll() {
 }
 
 async function selectResource(resourceId: string) {
+  if (!resourceId || resourceId === selectedResourceId.value)
+    return
   selectedResourceId.value = resourceId
-  await loadDetail(resourceId)
 }
 
 async function triggerAnalyze(resourceIds?: string[]) {
@@ -252,13 +258,14 @@ async function createGovernanceTask(taskType: ResourceGovernanceTaskType) {
 }
 
 async function saveOverrides() {
-  if (!selectedResourceId.value)
+  const resourceId = selectedResourceId.value
+  if (!resourceId)
     return
   actionLoading.value = true
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/${selectedResourceId.value}`), {
+    await $fetch(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/${resourceId}`), {
       method: 'PATCH',
       body: {
         predictedCategory: overrideForm.predictedCategory || undefined,
@@ -275,7 +282,7 @@ async function saveOverrides() {
       loadOverview(),
       loadResources(),
       loadTasks(),
-      loadDetail(selectedResourceId.value),
+      loadDetail(resourceId),
     ])
   }
   catch (error: any) {

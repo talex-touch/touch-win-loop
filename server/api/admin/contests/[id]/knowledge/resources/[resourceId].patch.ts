@@ -53,6 +53,13 @@ export default defineEventHandler(async (event) => {
   }
 
   const detail = await withTransaction(event, async (db) => {
+    const existingDetail = await getResourceKnowledgeDetail(db, {
+      contestId,
+      resourceId,
+    })
+    if (!existingDetail)
+      throw new Error('RESOURCE_NOT_FOUND')
+
     const existingProfile = await getResourceKnowledgeProfileByResourceId(db, {
       contestId,
       resourceId,
@@ -95,6 +102,11 @@ export default defineEventHandler(async (event) => {
       contestId,
       resourceId,
     })
+  })
+  .catch((error) => {
+    if (error instanceof Error && error.message === 'RESOURCE_NOT_FOUND')
+      return null
+    throw error
   })
 
   if (!detail) {

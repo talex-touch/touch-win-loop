@@ -2853,6 +2853,48 @@ export async function listContestResourcesByContestId(
   return result.rows.map(mapResource)
 }
 
+export async function getContestResourceById(
+  db: Queryable,
+  input: {
+    contestId: string
+    resourceId: string
+    includeInternal: boolean
+  },
+): Promise<Resource | null> {
+  await ensureContestLibrarySeeded(db)
+
+  const where: string[] = ['contest_id = $1', 'id = $2']
+  const values: unknown[] = [input.contestId, input.resourceId]
+
+  if (!input.includeInternal)
+    where.push(`status = 'active'`)
+
+  const result = await db.query<ResourceRow>(
+    `SELECT
+      id,
+      contest_id,
+      category,
+      title,
+      year,
+      url,
+      access_level,
+      source_type,
+      summary,
+      content,
+      metadata,
+      copyright_note,
+      status,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM contest_resources
+     WHERE ${where.join(' AND ')}
+     LIMIT 1`,
+    values,
+  )
+
+  return result.rows[0] ? mapResource(result.rows[0]) : null
+}
+
 export async function listAllResources(
   db: Queryable,
   input: {

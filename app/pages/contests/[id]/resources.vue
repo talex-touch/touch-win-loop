@@ -104,6 +104,7 @@ async function loadResources() {
 }
 
 async function openResource(item: Resource) {
+  const popup = process.client ? window.open('about:blank', '_blank', 'noopener') : null
   try {
     const response = await $fetch<ApiResponse<{ resourceId: string, targetUrl: string }>>(endpoint(`/contests/${contestId.value}/resources/${item.id}/click`), {
       method: 'POST',
@@ -123,10 +124,18 @@ async function openResource(item: Resource) {
         'x-resource-session-id': sessionId.value,
       } : undefined,
     })
-    window.open(resolveApiUrl(response.data.targetUrl), '_blank', 'noopener')
+    const targetUrl = resolveApiUrl(response.data.targetUrl)
+    if (popup)
+      popup.location.href = targetUrl
+    else
+      window.open(targetUrl, '_blank', 'noopener')
   }
   catch {
-    window.open(resolveApiUrl(item.sourceLink), '_blank', 'noopener')
+    const fallbackUrl = resolveApiUrl(item.sourceLink)
+    if (popup)
+      popup.location.href = fallbackUrl
+    else
+      window.open(fallbackUrl, '_blank', 'noopener')
   }
 }
 

@@ -14,6 +14,13 @@ interface CreateGovernanceTaskBody {
   payload?: Record<string, unknown>
 }
 
+const ALLOWED_RESOURCE_GOVERNANCE_TASK_TYPES: ResourceGovernanceTaskType[] = [
+  'profile_analyze',
+  'relation_refresh',
+  'governance_apply',
+  'search_metric_rollup',
+]
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -21,9 +28,31 @@ export default defineEventHandler(async (event) => {
   const contestId = String(getRouterParam(event, 'id') || '').trim()
   const body = await readBody<CreateGovernanceTaskBody>(event)
 
-  if (!contestId || !body?.taskType) {
+  if (!contestId) {
     setResponseStatus(event, 400)
-    return fail('缺少 contestId 或 taskType。', {
+    return fail('缺少 contestId。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 400307)
+  }
+
+  if (!body?.taskType || !ALLOWED_RESOURCE_GOVERNANCE_TASK_TYPES.includes(body.taskType)) {
+    setResponseStatus(event, 400)
+    return fail('taskType 非法。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 400307)
+  }
+
+  if (body.resourceIds !== undefined && !Array.isArray(body.resourceIds)) {
+    setResponseStatus(event, 400)
+    return fail('resourceIds 必须为字符串数组。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -44,9 +73,16 @@ export default defineEventHandler(async (event) => {
     }, 403307)
   }
 
+  const normalizedResourceId = typeof body.resourceId === 'string' ? body.resourceId.trim() : ''
+  const normalizedResourceIds = (body.resourceIds || []).flatMap((item) => {
+    if (typeof item !== 'string')
+      return []
+    const normalized = item.trim()
+    return normalized ? [normalized] : []
+  })
   const resourceIds = [...new Set([
-    String(body.resourceId || '').trim(),
-    ...((body.resourceIds || []).map(item => String(item || '').trim())),
+    normalizedResourceId,
+    ...normalizedResourceIds,
   ].filter(Boolean))]
 
   const tasks = await withTransaction(event, async (db) => {
