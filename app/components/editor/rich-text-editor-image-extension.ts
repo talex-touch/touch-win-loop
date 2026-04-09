@@ -1,12 +1,9 @@
-import type { Editor } from '@tiptap/vue-3'
+import type { Editor, NodeViewRendererProps } from '@tiptap/core'
 import { NodeSelection } from '@tiptap/pm/state'
 import { CollabMarkdownImage } from '~~/shared/utils/collab-rich-text-schema'
 
-interface ImageNodeViewContext {
-  editor: Editor
-  node: any
-  getPos: (() => number) | boolean
-}
+type ImageNodeViewContext = Pick<NodeViewRendererProps, 'editor' | 'node' | 'getPos'>
+type ImageNodePositionResolver = ImageNodeViewContext['getPos']
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -17,15 +14,18 @@ function normalizeImageWidth(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
-function resolveNodePosition(getPos: (() => number) | boolean): number | null {
+function resolveNodePosition(getPos: ImageNodePositionResolver): number | null {
   if (typeof getPos !== 'function')
     return null
 
   const position = getPos()
-  return Number.isFinite(position) ? Math.max(0, Math.trunc(position)) : null
+  if (typeof position !== 'number' || !Number.isFinite(position))
+    return null
+
+  return Math.max(0, Math.trunc(position))
 }
 
-function selectImageNode(editor: Editor, getPos: (() => number) | boolean): void {
+function selectImageNode(editor: Editor, getPos: ImageNodePositionResolver): void {
   const position = resolveNodePosition(getPos)
   if (position === null)
     return
@@ -35,7 +35,7 @@ function selectImageNode(editor: Editor, getPos: (() => number) | boolean): void
   editor.view.focus()
 }
 
-function updateImageNodeAttributes(editor: Editor, getPos: (() => number) | boolean, attrs: Record<string, unknown>): void {
+function updateImageNodeAttributes(editor: Editor, getPos: ImageNodePositionResolver, attrs: Record<string, unknown>): void {
   const position = resolveNodePosition(getPos)
   if (position === null)
     return
