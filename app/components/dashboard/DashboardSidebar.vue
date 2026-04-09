@@ -117,128 +117,95 @@ function onUserUpdated(user: AuthUser) {
 </script>
 
 <template>
-  <aside class="border-r border-[var(--db-border)] bg-white/[0.72] shrink-0 flex-col w-[288px] hidden backdrop-blur-xl lg:flex">
-    <div class="p-5">
-      <div class="db-panel db-panel-soft px-5 py-4">
-        <div class="flex gap-3 items-center">
-          <div class="text-white rounded-[18px] bg-[var(--db-primary)] flex h-11 w-11 shadow-[0_14px_28px_rgba(36,84,215,0.22)] items-center justify-center">
-            <span class="material-symbols-outlined text-[22px]">analytics</span>
-          </div>
-          <div class="min-w-0">
-            <p class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold uppercase">
-              Analysis Workspace
-            </p>
-            <h1 class="text-lg text-slate-900 tracking-[-0.03em] font-black mt-1">
-              竞赛分析平台
-            </h1>
-          </div>
-        </div>
-        <p class="db-muted text-sm leading-6 mt-3">
-          围绕赛事、资料与项目推进构建的统一分析工作台。
-        </p>
+  <aside class="border-r border-blue-100 bg-white shrink-0 flex-col w-64 hidden lg:flex">
+    <div class="p-6 flex gap-3 items-center">
+      <div class="text-white rounded-lg bg-blue-700 flex h-8 w-8 items-center justify-center">
+        <span class="material-symbols-outlined text-xl">analytics</span>
       </div>
+      <h1 class="text-lg text-slate-900 tracking-tight font-bold">
+        竞赛分析平台
+      </h1>
     </div>
 
-    <div class="px-4 pb-4 flex flex-1 flex-col min-h-0">
-      <div class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold px-2 uppercase">
-        工作台导航
-      </div>
-      <nav class="mt-3 space-y-2">
-        <NuxtLink
-          v-for="item in props.menuItems"
-          :key="item.id"
-          :to="item.to"
-          class="db-focus-ring group px-3.5 py-3 rounded-[18px] flex gap-3 transition-all items-center relative"
-          :class="isMenuItemActive(item)
-            ? 'bg-[var(--db-primary-soft)] text-[var(--db-primary)] shadow-[0_12px_28px_rgba(36,84,215,0.12)]'
-            : 'text-slate-600 hover:bg-white/[0.86] hover:text-slate-900'"
-        >
-          <span
-            class="rounded-2xl flex shrink-0 h-10 w-10 transition-colors items-center justify-center"
-            :class="isMenuItemActive(item) ? 'bg-white text-[var(--db-primary)]' : 'bg-[var(--db-bg)] text-slate-500 group-hover:text-[var(--db-primary)]'"
-          >
-            <span class="material-symbols-outlined text-[21px]">{{ item.icon }}</span>
-          </span>
-          <span class="font-semibold flex-1 min-w-0 truncate">{{ item.label }}</span>
-          <span
-            v-if="isMenuItemActive(item)"
-            class="rounded-full bg-[var(--db-primary)] h-2.5 w-2.5"
-          />
-        </NuxtLink>
-      </nav>
+    <nav class="px-4 flex-1 space-y-1">
+      <NuxtLink
+        v-for="item in props.menuItems"
+        :key="item.id"
+        :to="item.to"
+        class="px-3 py-2 rounded-lg flex gap-3 transition-colors items-center"
+        :class="isMenuItemActive(item)
+          ? 'bg-blue-50 text-blue-700 font-medium'
+          : 'text-slate-600 hover:bg-slate-50'"
+      >
+        <span class="material-symbols-outlined text-[22px]">{{ item.icon }}</span>
+        <span>{{ item.label }}</span>
+      </NuxtLink>
+    </nav>
 
-      <div class="db-panel db-panel-muted mt-6 p-4">
-        <p class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold uppercase">
+    <div class="mt-auto p-4">
+      <div class="p-4 border border-slate-100 rounded-xl bg-slate-50">
+        <p class="text-xs text-slate-400 tracking-wider font-bold mb-3 uppercase">
           热门话题
         </p>
-        <ul class="mt-3 space-y-2.5">
+        <ul class="text-sm space-y-2">
           <li
             v-for="topic in props.topics"
             :key="topic.id"
-            class="db-hover-lift text-sm text-slate-600 px-3 py-2.5 border border-[var(--db-border)] rounded-[16px] bg-white/70 flex gap-2 items-center"
+            class="text-slate-600 flex gap-2 items-center hover:text-blue-700"
           >
-            <span class="text-xs text-[var(--db-primary)] font-bold">#</span>
-            <span class="truncate">{{ topic.label }}</span>
+            <span class="text-xs text-blue-700 font-bold">#</span>{{ topic.label }}
           </li>
         </ul>
       </div>
 
-      <div class="db-panel mt-4 p-4">
-        <p class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold uppercase">
-          工作区入口
-        </p>
-        <WorkspaceSwitchEntry
-          v-if="props.workspaceOptions.length > 0"
-          class="mt-3"
-          mode="select"
-          label="项目台切换"
-          :model-value="selectedWorkspaceId"
-          :workspace-options="props.workspaceOptions"
-          :show-quota="false"
-          @update:model-value="onWorkspaceSwitch"
-          @workspace-created="onWorkspaceCreated"
-        />
-        <WorkspaceSwitchEntry
-          v-else
-          class="mt-3"
-          mode="link"
-          label="项目台"
-          icon="workspaces"
-          to="/team"
-        />
-      </div>
+      <WorkspaceSwitchEntry
+        v-if="props.workspaceOptions.length > 0"
+        mode="select"
+        :model-value="selectedWorkspaceId"
+        :workspace-options="props.workspaceOptions"
+        :show-quota="false"
+        @update:model-value="onWorkspaceSwitch"
+        @workspace-created="onWorkspaceCreated"
+      />
+      <WorkspaceSwitchEntry
+        v-else
+        mode="link"
+        label="项目台"
+        icon="workspaces"
+        to="/team"
+      />
 
-      <div class="db-panel mt-4 p-3.5 flex gap-3 items-center">
+      <div class="mt-4 p-3 border border-slate-200 rounded-xl bg-white flex gap-3 items-center">
         <img
           v-if="displayAvatarUrl"
           :src="displayAvatarUrl"
-          class="border border-[var(--db-border)] rounded-full h-11 w-11 shadow-sm object-cover"
+          class="border border-slate-200 rounded-full h-10 w-10 object-cover"
           alt="用户头像"
         >
         <div
           v-else
-          class="text-sm text-white font-semibold border border-[var(--db-border)] rounded-full bg-slate-900 flex shrink-0 h-11 w-11 shadow-sm items-center justify-center"
+          class="text-sm text-white font-semibold border border-slate-200 rounded-full bg-slate-900 flex shrink-0 h-10 w-10 items-center justify-center"
         >
           {{ analystInitial }}
         </div>
-        <div class="flex-1 min-w-0">
+        <div class="min-w-0">
           <p class="text-sm text-slate-900 font-semibold truncate">
             {{ props.analystName }}
           </p>
           <p
             v-if="props.showAdminBadge"
-            class="db-chip db-chip-warning mt-1"
+            class="text-[10px] text-rose-700 font-semibold mt-1 px-1.5 py-0.5 border border-rose-200 rounded-md bg-rose-50 inline-flex"
           >
             管理页
           </p>
-          <p class="db-muted text-xs truncate" :class="props.showAdminBadge ? 'mt-1.5' : 'mt-1'">
+          <p class="text-xs text-slate-500 truncate">
             {{ props.analystTier }}
           </p>
         </div>
         <button
-          class="db-btn db-btn-ghost db-focus-ring ml-auto px-0 h-10 w-10"
-          title="个人设置"
           type="button"
+          class="text-slate-500 ml-auto rounded-md flex h-8 w-8 transition-colors items-center justify-center hover:text-slate-800 hover:bg-slate-100"
+          title="个人设置"
           @click.stop="openProfileDialog"
         >
           <span class="material-symbols-outlined text-[20px]">settings</span>
