@@ -19,6 +19,7 @@ import type {
   ApiResponse,
   ApproveChangeRequestPayload,
   AuthMeResult,
+  AuthUser,
   ChatMessage,
   CollabPurpose,
   Contest,
@@ -41,6 +42,7 @@ import type {
   ProjectResourceShareVisibility,
   ProjectSeatQuota,
   ProjectSettingsDraft,
+  ProjectSettingsDraftDevicePayload,
   ProjectSettingsDraftPayload,
   ProjectSettingsDraftUi,
   ProjectSettingsSnapshot,
@@ -49,14 +51,21 @@ import type {
   ProjectTopicBoardGenerateRequest,
   ProjectTopicBoardListResult,
   ProjectTopicBoardPatchRequest,
+  ProjectWorkbenchMode,
+  ProjectWorkspaceViewDeviceStatePayload,
+  ProjectWorkspaceViewPreference,
+  ProjectWorkspaceViewState,
   Resource,
   ResourcePreviewStatus,
+  TeamLastProjectPreference,
   TopicProposalDecisionStatus,
   TopicProposalItem,
   WorkspaceAiMode,
   WorkspaceDisplayPreferenceSnapshot,
   WorkspaceFontSizePreset,
   WorkspaceMemberRole,
+  WorkspaceOpenTabState,
+  WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
@@ -88,11 +97,12 @@ import {
   createEmptyProjectCommonForm,
   createProjectCommonFormFromProject,
 } from '~/composables/project-settings'
+import { useCollabSession } from '~/composables/useCollabSession'
 import {
   defaultWorkspaceDisplayPreferenceSnapshot,
   useWorkspaceDisplayPreferenceApi,
+  type WorkspaceDisplayPreferencePatchPayload,
 } from '~/composables/useWorkspaceDisplayPreferences'
-import { useCollabSession } from '~/composables/useCollabSession'
 
 definePageMeta({
   layout: 'dashboard',
@@ -134,6 +144,30 @@ interface TopicBoardConfirmState extends Required<TopicBoardConfirmOptions> {
   resolver: ((value: boolean) => void) | null
 }
 
+type DeviceRestoreChoice = 'sync' | 'keep'
+
+interface DeviceRestoreConfirmState {
+  visible: boolean
+  title: string
+  content: string
+  resolver: ((value: DeviceRestoreChoice) => void) | null
+}
+
+interface HydratedProjectWorkspaceViewStateResult {
+  state: ProjectWorkspaceViewState
+  bundle: ProjectWorkspaceViewDeviceStatePayload | null
+  hasManagedQuery: boolean
+}
+
+interface ProjectSettingsDraftHydrationResult {
+  bundle: ProjectSettingsDraftDevicePayload | null
+  localDraft: WorkspaceProjectSettingsDraftCache | null
+  currentDraft: WorkspaceProjectSettingsDraftCache | null
+  latestOtherDraft: WorkspaceProjectSettingsDraftCache | null
+  appliedDraft: WorkspaceProjectSettingsDraftCache | null
+  source: 'local' | 'current' | 'latest_other' | ''
+}
+
 function linesToArray(text: string): string[] {
   return text
     .split(/\n+/)
@@ -154,6 +188,13 @@ const topicBoardConfirmState = reactive<TopicBoardConfirmState>({
   resolver: null,
 })
 
+const deviceRestoreConfirmState = reactive<DeviceRestoreConfirmState>({
+  visible: false,
+  title: '',
+  content: '',
+  resolver: null,
+})
+
 function resolveTopicBoardConfirm(result: boolean) {
   const resolver = topicBoardConfirmState.resolver
   topicBoardConfirmState.visible = false
@@ -166,7 +207,7 @@ function resolveTopicBoardConfirm(result: boolean) {
 }
 
 function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolean> {
-  if (!process.client)
+  if (!import.meta.client)
     return Promise.resolve(true)
 
   if (topicBoardConfirmState.resolver)
@@ -180,6 +221,31 @@ function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolea
 
   return new Promise((resolve) => {
     topicBoardConfirmState.resolver = resolve
+  })
+}
+
+function resolveDeviceRestoreConfirm(result: DeviceRestoreChoice) {
+  const resolver = deviceRestoreConfirmState.resolver
+  deviceRestoreConfirmState.visible = false
+  deviceRestoreConfirmState.title = ''
+  deviceRestoreConfirmState.content = ''
+  deviceRestoreConfirmState.resolver = null
+  resolver?.(result)
+}
+
+function askDeviceRestoreConfirm(title: string, content: string): Promise<DeviceRestoreChoice> {
+  if (!import.meta.client)
+    return Promise.resolve('keep')
+
+  if (deviceRestoreConfirmState.resolver)
+    resolveDeviceRestoreConfirm('keep')
+
+  deviceRestoreConfirmState.visible = true
+  deviceRestoreConfirmState.title = title
+  deviceRestoreConfirmState.content = content
+
+  return new Promise<DeviceRestoreChoice>((resolve) => {
+    deviceRestoreConfirmState.resolver = resolve
   })
 }
 
@@ -512,13 +578,15 @@ interface DefenseRealtimeSessionPayload {
 }
 
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
-type WorkspaceMainTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings' | `resource:${string}`
+type WorkspaceMainTabId = WorkspaceOpenTabState
+type WorkspaceMeetingTabId = `meeting:${string}`
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
-type WorkspaceWorkbenchMode = 'project' | 'defense'
+type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
+const PROJECT_VIEW_STATE_QUERY_KEYS = ['wb', 'tab', 'tabs', 'res', 'contest', 'track', 'session', 'meeting', 'ls', 'rs', 'panel'] as const
 const RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
 
@@ -582,14 +650,17 @@ const selectedTrackId = ref('')
 
 const openSettingsSignal = ref(0)
 const openMemberManagementSignal = ref(0)
+const openDisplayPreferencesSignal = ref(0)
 const openFlowSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
+const accountCenterVisible = ref(false)
 const leftSidebarCollapsed = ref(false)
 const rightSidebarUserCollapsed = ref(false)
 const rightSidebarAutoCollapsed = ref(false)
 const rightSidebarAutoRestorePending = ref(false)
 const sidebarLayoutHydrating = ref(false)
+const openMainTabs = ref<WorkspaceMainTabId[]>(['dashboard'])
 const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const headerSearch = ref('')
 const aiReasoning = ref('')
@@ -621,10 +692,11 @@ const projectSettingsCommonDirty = ref(false)
 const projectSettingsBindingsDirty = ref(false)
 const projectSettingsDirtyAdaptationContestIds = ref<string[]>([])
 const projectSettingsDraftServerRevision = ref<number | null>(null)
-const projectSettingsDraftDeviceId = ref('')
+const workspaceDeviceId = ref('')
 
 let projectSettingsDraftTimer: ReturnType<typeof setTimeout> | null = null
 let projectSettingsDraftPersistSeq = 0
+let projectWorkspaceViewPersistTimer: ReturnType<typeof setTimeout> | null = null
 let projectOutlineGenerateTimer: ReturnType<typeof setTimeout> | null = null
 let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
@@ -684,8 +756,22 @@ const workspaceSeatLimitError = ref('')
 const workspaceSeatLimitUpdatedSignal = ref(0)
 const projectSeatQuota = ref<ProjectSeatQuota | null>(null)
 const rightSidebarCollapsed = computed(() => rightSidebarUserCollapsed.value || rightSidebarAutoCollapsed.value)
+const projectWorkspaceViewHydrating = ref(false)
+const projectWorkspaceModeHydrating = ref(false)
+const projectWorkspaceViewReady = ref(false)
 
 function getProjectSettingsDraftStorageKey(projectId: string): string {
+  if (!import.meta.client)
+    return ''
+  const normalizedProjectId = String(projectId || '').trim()
+  const userId = String(me.value?.user.id || '').trim()
+  const deviceId = ensureWorkspaceDeviceId()
+  if (!normalizedProjectId || !userId || !deviceId)
+    return ''
+  return `${PROJECT_SETTINGS_DRAFT_PREFIX}.${userId}.${deviceId}.${normalizedProjectId}`
+}
+
+function getLegacyProjectSettingsDraftStorageKey(projectId: string): string {
   if (!import.meta.client)
     return ''
   const normalizedProjectId = String(projectId || '').trim()
@@ -695,7 +781,7 @@ function getProjectSettingsDraftStorageKey(projectId: string): string {
   return `${PROJECT_SETTINGS_DRAFT_PREFIX}.${userId}.${normalizedProjectId}`
 }
 
-function getProjectSettingsDraftDeviceStorageKey(): string {
+function getWorkspaceDeviceStorageKey(): string {
   if (!import.meta.client)
     return ''
   const userId = String(me.value?.user.id || '').trim()
@@ -799,37 +885,555 @@ function expandRightSidebar(): void {
   setRightSidebarUserCollapsed(false)
 }
 
-function generateProjectSettingsDraftDeviceId(): string {
+function createResourceTabId(resourceId: string): WorkspaceMainTabId {
+  return `resource:${resourceId}` as WorkspaceMainTabId
+}
+
+function createMeetingTabId(meetingId: string): WorkspaceMeetingTabId {
+  return `meeting:${meetingId}` as WorkspaceMeetingTabId
+}
+
+function resolveMeetingIdFromTabId(tabId: string): string {
+  return tabId.startsWith('meeting:') ? tabId.slice('meeting:'.length) : ''
+}
+
+function ensureWorkspaceMainTabOpen(tabId: WorkspaceMainTabId, options: { activate?: boolean } = {}): void {
+  const normalizedTabId = normalizeString(tabId) as WorkspaceMainTabId
+  if (!isWorkspaceMainTabId(normalizedTabId))
+    return
+
+  if (!openMainTabs.value.includes(normalizedTabId)) {
+    openMainTabs.value = normalizeWorkspaceMainTabIds([...openMainTabs.value, normalizedTabId], {
+      allowEmpty: true,
+    })
+  }
+
+  if (options.activate !== false)
+    activeMainTabId.value = normalizedTabId
+}
+
+function ensureMeetingDetailTabOpen(meetingId: string, options: { activate?: boolean } = {}): WorkspaceMeetingTabId | '' {
+  const normalizedMeetingId = normalizeString(meetingId)
+  if (!normalizedMeetingId)
+    return ''
+
+  const tabId = createMeetingTabId(normalizedMeetingId)
+  ensureWorkspaceMainTabOpen(tabId, options)
+  return tabId
+}
+
+function isWorkspaceMainTabId(value: string): value is WorkspaceMainTabId {
+  return ['dashboard', 'meeting', 'members', 'flow', 'settings'].includes(value)
+    || (value.startsWith('meeting:') && value.length > 'meeting:'.length)
+    || (value.startsWith('resource:') && value.length > 'resource:'.length)
+}
+
+function normalizeWorkspaceMainTabIds(
+  value: WorkspaceOpenTabState[] | undefined,
+  options: { allowEmpty?: boolean } = {},
+): WorkspaceMainTabId[] {
+  const normalized: WorkspaceMainTabId[] = []
+  const used = new Set<string>()
+
+  for (const item of value || []) {
+    const tabId = normalizeString(item)
+    if (!isWorkspaceMainTabId(tabId) || used.has(tabId))
+      continue
+    normalized.push(tabId)
+    used.add(tabId)
+    if (normalized.length >= 8)
+      break
+  }
+
+  return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
+}
+
+function normalizeWorkspaceMainTabId(
+  value: unknown,
+  tabIds: WorkspaceMainTabId[],
+  options: { fallbackTabId?: WorkspaceMainTabId | '' } = {},
+): WorkspaceMainTabId | '' {
+  const normalized = normalizeString(value)
+  if (normalized && isWorkspaceMainTabId(normalized) && tabIds.includes(normalized))
+    return normalized
+  if (options.fallbackTabId && tabIds.includes(options.fallbackTabId))
+    return options.fallbackTabId
+  return tabIds[0] || ''
+}
+
+function createDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewState {
+  return {
+    workbenchMode: 'project',
+    mainTabs: ['dashboard'],
+    activeMainTabId: 'dashboard',
+    previewResourceId: '',
+    selectedContestId: '',
+    selectedTrackId: '',
+    activeChatSessionId: '',
+    activeMeetingId: '',
+    leftSidebarCollapsed: false,
+    rightSidebarCollapsed: false,
+  }
+}
+
+function normalizeProjectWorkspaceViewState(
+  value: Partial<ProjectWorkspaceViewState> | null | undefined,
+): ProjectWorkspaceViewState {
+  const source = value || {}
+  const allowEmptyMainTabs = Array.isArray(source.mainTabs)
+  const mainTabs = normalizeWorkspaceMainTabIds(source.mainTabs, { allowEmpty: allowEmptyMainTabs })
+  let previewResourceId = normalizeString(source.previewResourceId)
+  let activeMeetingId = normalizeString(source.activeMeetingId)
+
+  const requestedActiveTabId = normalizeString(source.activeMainTabId)
+  if (!previewResourceId && requestedActiveTabId.startsWith('resource:'))
+    previewResourceId = requestedActiveTabId.slice('resource:'.length)
+  if (!activeMeetingId && requestedActiveTabId.startsWith('meeting:'))
+    activeMeetingId = resolveMeetingIdFromTabId(requestedActiveTabId)
+
+  if (previewResourceId) {
+    const previewTabId = createResourceTabId(previewResourceId)
+    if (!mainTabs.includes(previewTabId))
+      mainTabs.push(previewTabId)
+  }
+
+  const normalizedMainTabs = normalizeWorkspaceMainTabIds(mainTabs, { allowEmpty: allowEmptyMainTabs })
+
+  return {
+    workbenchMode: source.workbenchMode === 'defense' ? 'defense' : 'project',
+    mainTabs: normalizedMainTabs,
+    activeMainTabId: normalizeWorkspaceMainTabId(source.activeMainTabId, normalizedMainTabs, {
+      fallbackTabId: allowEmptyMainTabs ? '' : 'dashboard',
+    }),
+    previewResourceId,
+    selectedContestId: normalizeString(source.selectedContestId),
+    selectedTrackId: normalizeString(source.selectedTrackId),
+    activeChatSessionId: normalizeString(source.activeChatSessionId),
+    activeMeetingId,
+    leftSidebarCollapsed: Boolean(source.leftSidebarCollapsed),
+    rightSidebarCollapsed: Boolean(source.rightSidebarCollapsed),
+  }
+}
+
+function isProjectWorkspaceViewStateEqual(
+  left: ProjectWorkspaceViewState,
+  right: ProjectWorkspaceViewState,
+): boolean {
+  return (
+    left.workbenchMode === right.workbenchMode
+    && left.activeMainTabId === right.activeMainTabId
+    && left.previewResourceId === right.previewResourceId
+    && left.selectedContestId === right.selectedContestId
+    && left.selectedTrackId === right.selectedTrackId
+    && left.activeChatSessionId === right.activeChatSessionId
+    && left.activeMeetingId === right.activeMeetingId
+    && left.leftSidebarCollapsed === right.leftSidebarCollapsed
+    && left.rightSidebarCollapsed === right.rightSidebarCollapsed
+    && left.mainTabs.length === right.mainTabs.length
+    && left.mainTabs.every((item, index) => item === right.mainTabs[index])
+  )
+}
+
+function buildProjectWorkspaceViewStateFromRefs(): ProjectWorkspaceViewState {
+  return normalizeProjectWorkspaceViewState({
+    workbenchMode: workbenchMode.value,
+    mainTabs: openMainTabs.value,
+    activeMainTabId: activeMainTabId.value,
+    previewResourceId: previewResourceId.value,
+    selectedContestId: selectedContestId.value,
+    selectedTrackId: selectedTrackId.value,
+    activeChatSessionId: activeChatSessionId.value,
+    activeMeetingId: activeMeetingId.value,
+    leftSidebarCollapsed: leftSidebarCollapsed.value,
+    rightSidebarCollapsed: rightSidebarUserCollapsed.value,
+  })
+}
+
+function sanitizeProjectWorkspaceViewState(
+  value: ProjectWorkspaceViewState,
+): ProjectWorkspaceViewState {
+  const nextState = normalizeProjectWorkspaceViewState(value)
+  const validResourceIdSet = new Set(resources.value.map(item => String(item.id || '').trim()).filter(Boolean))
+
+  const nextTabs = nextState.mainTabs.filter((tabId) => {
+    if (!tabId.startsWith('resource:'))
+      return true
+    return validResourceIdSet.has(tabId.slice('resource:'.length))
+  })
+
+  nextState.mainTabs = normalizeWorkspaceMainTabIds(nextTabs, { allowEmpty: true })
+
+  if (nextState.previewResourceId && !validResourceIdSet.has(nextState.previewResourceId))
+    nextState.previewResourceId = ''
+  if (!nextState.activeMeetingId && nextState.activeMainTabId.startsWith('meeting:'))
+    nextState.activeMeetingId = resolveMeetingIdFromTabId(nextState.activeMainTabId)
+
+  if (nextState.activeMainTabId.startsWith('resource:')) {
+    const resourceId = nextState.activeMainTabId.slice('resource:'.length)
+    if (!validResourceIdSet.has(resourceId))
+      nextState.activeMainTabId = 'dashboard'
+  }
+
+  nextState.activeMainTabId = normalizeWorkspaceMainTabId(nextState.activeMainTabId, nextState.mainTabs)
+
+  return nextState
+}
+
+function parseProjectWorkspaceViewStateFromQuery(): {
+  hasManagedQuery: boolean
+  state: Partial<ProjectWorkspaceViewState>
+} {
+  const hasManagedQuery = PROJECT_VIEW_STATE_QUERY_KEYS.some(key => key in route.query)
+  const hasManagedTabsQuery = ['tabs', 'tab', 'res', 'panel'].some(key => key in route.query)
+  const tabs = normalizeQueryParam(route.query.tabs)
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .filter(isWorkspaceMainTabId)
+    .slice(0, 8)
+
+  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
+  let legacyTabId: WorkspaceMainTabId | '' = ''
+  if (panel === 'members' || panel === 'settings' || panel === 'meeting')
+    legacyTabId = panel as WorkspaceMainTabId
+
+  const activeMainTabId = normalizeString(route.query.tab) || legacyTabId
+  const previewResourceId = normalizeString(route.query.res)
+  const activeMeetingId = normalizeString(route.query.meeting)
+    || resolveMeetingIdFromTabId(activeMainTabId)
+
+  if (!previewResourceId && isWorkspaceMainTabId(activeMainTabId) && activeMainTabId.startsWith('resource:'))
+    tabs.push(activeMainTabId)
+  if (previewResourceId)
+    tabs.push(createResourceTabId(previewResourceId))
+  if (isWorkspaceMainTabId(activeMainTabId))
+    tabs.push(activeMainTabId)
+
+  return {
+    hasManagedQuery,
+    state: {
+      workbenchMode: normalizeString(route.query.wb) === 'defense' ? 'defense' : 'project',
+      mainTabs: hasManagedTabsQuery ? tabs : undefined,
+      activeMainTabId: isWorkspaceMainTabId(activeMainTabId) ? activeMainTabId : '',
+      previewResourceId,
+      selectedContestId: normalizeString(route.query.contest),
+      selectedTrackId: normalizeString(route.query.track),
+      activeChatSessionId: normalizeString(route.query.session),
+      activeMeetingId,
+      leftSidebarCollapsed: isTruthyQueryFlag(route.query.ls),
+      rightSidebarCollapsed: isTruthyQueryFlag(route.query.rs),
+    },
+  }
+}
+
+function buildProjectWorkspaceQueryFromState(state: ProjectWorkspaceViewState): Record<string, string> {
+  const normalized = normalizeProjectWorkspaceViewState(state)
+  const query: Record<string, string> = {}
+
+  if (normalized.workbenchMode === 'defense')
+    query.wb = normalized.workbenchMode
+  if (normalized.mainTabs.length === 0)
+    query.tabs = ''
+  else if (normalized.mainTabs.length > 1 || normalized.mainTabs[0] !== 'dashboard')
+    query.tabs = normalized.mainTabs.join(',')
+  if (normalized.activeMainTabId && (normalized.activeMainTabId !== 'dashboard' || normalized.mainTabs.length > 1))
+    query.tab = normalized.activeMainTabId
+  if (normalized.previewResourceId)
+    query.res = normalized.previewResourceId
+  if (normalized.selectedContestId)
+    query.contest = normalized.selectedContestId
+  if (normalized.selectedTrackId)
+    query.track = normalized.selectedTrackId
+  if (normalized.activeChatSessionId)
+    query.session = normalized.activeChatSessionId
+  if (normalized.activeMeetingId)
+    query.meeting = normalized.activeMeetingId
+  if (normalized.leftSidebarCollapsed)
+    query.ls = '1'
+  if (normalized.rightSidebarCollapsed)
+    query.rs = '1'
+
+  return query
+}
+
+function buildProjectWorkspaceRouteQuery(state: ProjectWorkspaceViewState): Record<string, string> {
+  const nextQuery: Record<string, string> = {}
+
+  for (const [key, value] of Object.entries(route.query)) {
+    if ((PROJECT_VIEW_STATE_QUERY_KEYS as readonly string[]).includes(key))
+      continue
+    const normalized = normalizeQueryParam(value)
+    if (normalized)
+      nextQuery[key] = normalized
+  }
+
+  return {
+    ...nextQuery,
+    ...buildProjectWorkspaceQueryFromState(state),
+  }
+}
+
+function areRouteQueryRecordsEqual(
+  left: Record<string, string>,
+  right: Record<string, string>,
+): boolean {
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  if (leftKeys.length !== rightKeys.length)
+    return false
+  return leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
+}
+
+async function fetchProjectWorkspaceViewPreference(projectId: string): Promise<ProjectWorkspaceViewDeviceStatePayload | null> {
+  const normalizedProjectId = normalizeString(projectId)
+  const deviceId = ensureWorkspaceDeviceId()
+  if (!normalizedProjectId || !deviceId)
+    return null
+
+  const response = await $fetch<ApiResponse<ProjectWorkspaceViewDeviceStatePayload>>(
+    endpoint(`/projects/${normalizedProjectId}/view-state`),
+    {
+      query: {
+        deviceId,
+      },
+    },
+  )
+  return response.data || null
+}
+
+async function persistProjectWorkspaceViewPreference(
+  projectId: string,
+  state: ProjectWorkspaceViewState,
+): Promise<void> {
+  const normalizedProjectId = normalizeString(projectId)
+  const deviceId = ensureWorkspaceDeviceId()
+  if (!normalizedProjectId || !deviceId)
+    return
+
+  await $fetch<ApiResponse<ProjectWorkspaceViewPreference>>(
+    endpoint(`/projects/${normalizedProjectId}/view-state`),
+    {
+      method: 'PUT',
+      body: {
+        payload: state,
+        deviceId,
+      },
+    },
+  )
+}
+
+async function persistTeamLastProjectPreference(
+  workspaceId: string,
+  projectId: string,
+): Promise<void> {
+  const normalizedWorkspaceId = normalizeString(workspaceId)
+  const normalizedProjectId = normalizeString(projectId)
+  if (!normalizedWorkspaceId || !normalizedProjectId)
+    return
+
+  await $fetch<ApiResponse<TeamLastProjectPreference>>(
+    endpoint(`/teams/${normalizedWorkspaceId}/last-project`),
+    {
+      method: 'PUT',
+      body: {
+        projectId: normalizedProjectId,
+      },
+    },
+  )
+}
+
+async function replaceProjectWorkspaceRouteQueryIfNeeded(state: ProjectWorkspaceViewState): Promise<void> {
+  const currentQuery: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    const normalized = normalizeQueryParam(value)
+    if (normalized)
+      currentQuery[key] = normalized
+  }
+
+  const nextQuery = buildProjectWorkspaceRouteQuery(state)
+  if (areRouteQueryRecordsEqual(currentQuery, nextQuery))
+    return
+
+  await navigateTo({
+    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
+    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
+  }, { replace: true })
+}
+
+function clearProjectWorkspaceViewPersistTimer(): void {
+  if (!projectWorkspaceViewPersistTimer)
+    return
+  clearTimeout(projectWorkspaceViewPersistTimer)
+  projectWorkspaceViewPersistTimer = null
+}
+
+function applyProjectWorkspaceViewState(state: ProjectWorkspaceViewState): void {
+  const normalized = sanitizeProjectWorkspaceViewState(state)
+  const nextMeetingId = normalizeString(normalized.activeMeetingId)
+  const meetingChanged = nextMeetingId !== normalizeString(activeMeetingId.value)
+
+  projectWorkspaceViewHydrating.value = true
+  try {
+    projectWorkspaceModeHydrating.value = true
+    if (normalized.workbenchMode === 'defense') {
+      aiMode.value = 'defense'
+      workbenchMode.value = 'defense'
+    }
+    else {
+      const nextPrimaryMode = aiMode.value !== 'defense'
+        ? aiMode.value as WorkspacePrimaryAiMode
+        : (lastPrimaryAiMode.value || 'dialog_ask')
+      aiMode.value = nextPrimaryMode
+      lastPrimaryAiMode.value = nextPrimaryMode
+      workbenchMode.value = 'project'
+    }
+    projectWorkspaceModeHydrating.value = false
+
+    openMainTabs.value = [...normalized.mainTabs]
+    activeMainTabId.value = normalized.activeMainTabId
+    previewResourceId.value = normalized.previewResourceId
+    selectedContestId.value = normalized.selectedContestId
+    selectedTrackId.value = normalized.selectedTrackId
+    activeChatSessionId.value = normalized.activeChatSessionId
+    activeMeetingId.value = nextMeetingId
+    leftSidebarCollapsed.value = normalized.leftSidebarCollapsed
+    setRightSidebarUserCollapsed(normalized.rightSidebarCollapsed, { suppressPersist: true })
+
+    if (meetingChanged) {
+      activeMeetingDetail.value = null
+      activeMeetingUtterances.value = []
+      meetingLiveCaptions.value = []
+      clearMeetingJoinSession()
+    }
+  }
+  finally {
+    projectWorkspaceModeHydrating.value = false
+    projectWorkspaceViewHydrating.value = false
+  }
+}
+
+async function hydrateProjectWorkspaceViewState(projectId: string): Promise<HydratedProjectWorkspaceViewStateResult> {
+  const normalizedProjectId = normalizeString(projectId)
+  if (!normalizedProjectId) {
+    return {
+      state: createDefaultProjectWorkspaceViewState(),
+      bundle: null,
+      hasManagedQuery: false,
+    }
+  }
+
+  const queryResult = parseProjectWorkspaceViewStateFromQuery()
+  let nextState = createDefaultProjectWorkspaceViewState()
+  let bundle: ProjectWorkspaceViewDeviceStatePayload | null = null
+  let currentState: ProjectWorkspaceViewState | null = null
+  let latestOtherState: ProjectWorkspaceViewState | null = null
+
+  try {
+    bundle = await fetchProjectWorkspaceViewPreference(normalizedProjectId)
+    currentState = bundle?.current?.payload
+      ? normalizeProjectWorkspaceViewState(bundle.current.payload)
+      : null
+    latestOtherState = bundle?.latestOther?.payload
+      ? normalizeProjectWorkspaceViewState(bundle.latestOther.payload)
+      : null
+  }
+  catch {
+    bundle = null
+  }
+
+  if (queryResult.hasManagedQuery) {
+    nextState = normalizeProjectWorkspaceViewState(queryResult.state)
+  }
+  else if (currentState) {
+    nextState = currentState
+  }
+  else if (bundle?.resolution.isNewDevice && latestOtherState) {
+    nextState = latestOtherState
+  }
+
+  nextState = sanitizeProjectWorkspaceViewState(nextState)
+  applyProjectWorkspaceViewState(nextState)
+  projectWorkspaceViewReady.value = true
+  await replaceProjectWorkspaceRouteQueryIfNeeded(nextState)
+
+  if (queryResult.hasManagedQuery)
+    scheduleProjectWorkspaceViewPersist()
+
+  return {
+    state: nextState,
+    bundle,
+    hasManagedQuery: queryResult.hasManagedQuery,
+  }
+}
+
+function scheduleProjectWorkspaceViewPersist(): void {
+  if (!projectWorkspaceViewReady.value || projectWorkspaceViewHydrating.value)
+    return
+
+  const workspaceId = normalizeString(activeWorkspaceId.value)
+  const projectId = normalizeString(highlightedProjectId.value || routeProjectId.value)
+  if (!workspaceId || !projectId)
+    return
+
+  const state = sanitizeProjectWorkspaceViewState(buildProjectWorkspaceViewStateFromRefs())
+  clearProjectWorkspaceViewPersistTimer()
+  projectWorkspaceViewPersistTimer = setTimeout(() => {
+    projectWorkspaceViewPersistTimer = null
+    void persistProjectWorkspaceViewPreference(projectId, state).catch(() => {})
+    void persistTeamLastProjectPreference(workspaceId, projectId).catch(() => {})
+  }, 300)
+}
+
+async function syncProjectWorkspaceViewState(): Promise<void> {
+  if (!projectWorkspaceViewReady.value || projectWorkspaceViewHydrating.value)
+    return
+
+  const normalizedProjectId = normalizeString(highlightedProjectId.value || routeProjectId.value)
+  if (!normalizedProjectId)
+    return
+
+  const currentState = buildProjectWorkspaceViewStateFromRefs()
+  const normalizedState = sanitizeProjectWorkspaceViewState(currentState)
+  if (!isProjectWorkspaceViewStateEqual(currentState, normalizedState)) {
+    applyProjectWorkspaceViewState(normalizedState)
+    return
+  }
+
+  await replaceProjectWorkspaceRouteQueryIfNeeded(normalizedState)
+  scheduleProjectWorkspaceViewPersist()
+}
+
+function generateWorkspaceDeviceId(): string {
   if (import.meta.client && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
     return crypto.randomUUID()
   return `draft-device-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-function ensureProjectSettingsDraftDeviceId(): string {
+function ensureWorkspaceDeviceId(): string {
   if (!import.meta.client)
     return ''
-  if (projectSettingsDraftDeviceId.value)
-    return projectSettingsDraftDeviceId.value
+  if (workspaceDeviceId.value)
+    return workspaceDeviceId.value
 
-  const key = getProjectSettingsDraftDeviceStorageKey()
+  const key = getWorkspaceDeviceStorageKey()
   if (!key)
     return ''
 
   try {
     const cached = String(localStorage.getItem(key) || '').trim()
     if (cached) {
-      projectSettingsDraftDeviceId.value = cached
+      workspaceDeviceId.value = cached
       return cached
     }
 
-    const created = generateProjectSettingsDraftDeviceId()
+    const created = generateWorkspaceDeviceId()
     localStorage.setItem(key, created)
-    projectSettingsDraftDeviceId.value = created
+    workspaceDeviceId.value = created
     return created
   }
   catch {
-    const fallback = generateProjectSettingsDraftDeviceId()
-    projectSettingsDraftDeviceId.value = fallback
+    const fallback = generateWorkspaceDeviceId()
+    workspaceDeviceId.value = fallback
     return fallback
   }
 }
@@ -845,8 +1449,21 @@ function readProjectSettingsDraftCache(projectId: string): WorkspaceProjectSetti
 
   try {
     const raw = localStorage.getItem(key)
-    if (!raw)
-      return null
+    if (!raw) {
+      const legacyKey = getLegacyProjectSettingsDraftStorageKey(projectId)
+      const legacyRaw = legacyKey ? localStorage.getItem(legacyKey) : ''
+      if (!legacyRaw)
+        return null
+
+      const legacyParsed = JSON.parse(legacyRaw) as unknown
+      const legacyNormalized = normalizeProjectSettingsDraftCachePayload(legacyParsed)
+      if (!legacyNormalized)
+        return null
+
+      localStorage.setItem(key, JSON.stringify(legacyNormalized))
+      localStorage.removeItem(legacyKey)
+      return legacyNormalized
+    }
 
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object')
@@ -878,11 +1495,15 @@ function writeProjectSettingsDraftCache(projectId: string, payload: WorkspacePro
 
 function clearProjectSettingsDraftCache(projectId: string): void {
   const key = getProjectSettingsDraftStorageKey(projectId)
-  if (!key)
+  const legacyKey = getLegacyProjectSettingsDraftStorageKey(projectId)
+  if (!key && !legacyKey)
     return
 
   try {
-    localStorage.removeItem(key)
+    if (key)
+      localStorage.removeItem(key)
+    if (legacyKey)
+      localStorage.removeItem(legacyKey)
   }
   catch {
     // ignore local cache cleanup errors
@@ -985,6 +1606,9 @@ const projectSettingsHasCurrentContest = computed(() => {
 })
 const workspaceOptions = computed(() => resolveWorkspaceOptions(me.value))
 const isAdminView = computed(() => Boolean(me.value?.user.isPlatformAdmin))
+const currentUserEmail = computed(() => {
+  return String((me.value?.user as (AuthUser & { email?: string | null }) | undefined)?.email || '').trim()
+})
 const workspaceNameMap = computed(() => {
   const map = new Map<string, string>()
   for (const item of workspaceOptions.value)
@@ -996,6 +1620,9 @@ const visibleWorkspaceIdSet = computed(() => {
 })
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
+})
+const currentUserSubtitle = computed(() => {
+  return String(currentWorkspace.value?.workspace.name || '').trim()
 })
 const currentProjectMember = computed(() => {
   const userId = String(me.value?.user.id || '').trim()
@@ -1517,7 +2144,7 @@ async function selectProjectMeeting(meetingId: string): Promise<void> {
   if (!targetMeetingId)
     return
 
-  activeMainTabId.value = 'meeting'
+  ensureMeetingDetailTabOpen(targetMeetingId)
   const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
   activeMeetingId.value = targetMeetingId
   if (isSwitchingMeeting) {
@@ -1533,7 +2160,13 @@ async function selectProjectMeeting(meetingId: string): Promise<void> {
   ])
 }
 
-async function loadProjectMeetings(options: { fallbackToFirst?: boolean } = {}): Promise<void> {
+async function loadProjectMeetings(
+  options: {
+    fallbackToFirst?: boolean
+    preferredMeetingId?: string
+    hydrateSelectedDetail?: boolean
+  } = {},
+): Promise<void> {
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId) {
     resetProjectMeetingState()
@@ -1550,6 +2183,30 @@ async function loadProjectMeetings(options: { fallbackToFirst?: boolean } = {}):
 
     const items = Array.isArray(response.data?.items) ? response.data.items : []
     projectMeetings.value = items
+
+    const preferredMeetingId = normalizeString(options.preferredMeetingId || activeMeetingId.value)
+    const preferredMeeting = preferredMeetingId
+      ? items.find(item => item.id === preferredMeetingId) || null
+      : null
+    if (preferredMeeting) {
+      const isSwitchingMeeting = activeMeetingId.value !== preferredMeeting.id
+      activeMeetingId.value = preferredMeeting.id
+      if (isSwitchingMeeting) {
+        activeMeetingDetail.value = null
+        activeMeetingUtterances.value = []
+        meetingLiveCaptions.value = []
+        clearMeetingJoinSession()
+      }
+
+      if (options.hydrateSelectedDetail === false)
+        return
+
+      await Promise.all([
+        loadProjectMeetingDetail(preferredMeeting.id, { resetCaptions: isSwitchingMeeting }),
+        loadProjectMeetingUtterances(preferredMeeting.id),
+      ])
+      return
+    }
 
     const selectedMeetingStillExists = Boolean(
       activeMeetingId.value && items.some(item => item.id === activeMeetingId.value),
@@ -1608,7 +2265,6 @@ async function createProjectMeeting(payload: { mode: ProjectMeetingMode }): Prom
       },
     )
 
-    activeMainTabId.value = 'meeting'
     activeMeetingUtterances.value = []
     applyProjectMeetingSession(response.data.detail, {
       joinUrl: response.data.joinUrl,
@@ -1616,6 +2272,7 @@ async function createProjectMeeting(payload: { mode: ProjectMeetingMode }): Prom
       joinExpiresAt: response.data.joinExpiresAt,
       resetCaptions: true,
     })
+    ensureMeetingDetailTabOpen(response.data.meeting.id)
     upsertProjectMeetingInList(response.data.meeting)
     statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议已创建。`
     Message.success('会议已创建。')
@@ -1637,7 +2294,7 @@ async function joinProjectMeeting(meetingId: string): Promise<void> {
 
   meetingMutating.value = true
   try {
-    activeMainTabId.value = 'meeting'
+    ensureMeetingDetailTabOpen(targetMeetingId)
     activeMeetingId.value = targetMeetingId
     const meeting = await loadProjectMeetingDetail(targetMeetingId)
     if (meeting)
@@ -2406,7 +3063,7 @@ function buildProjectSettingsDraftCachePayload(): WorkspaceProjectSettingsDraftC
 
   return {
     updatedAt: new Date().toISOString(),
-    deviceId: ensureProjectSettingsDraftDeviceId() || undefined,
+    deviceId: ensureWorkspaceDeviceId() || undefined,
     common: cloneProjectCommonForm(projectSettingsCommon),
     bindings: cloneProjectContestBindings(projectSettingsBindings.value),
     currentContestId,
@@ -2485,13 +3142,18 @@ function applyProjectSettingsDraftCachePayload(
   return true
 }
 
-function applyProjectSettingsDraftServerRecord(record: ProjectSettingsDraft | null): WorkspaceProjectSettingsDraftCache | null {
+function normalizeProjectSettingsDraftServerRecord(
+  record: ProjectSettingsDraft | null,
+  options: { updateServerState?: boolean } = {},
+): WorkspaceProjectSettingsDraftCache | null {
   if (!record) {
-    resetProjectSettingsDraftServerState()
+    if (options.updateServerState)
+      resetProjectSettingsDraftServerState()
     return null
   }
 
-  projectSettingsDraftServerRevision.value = Number(record.revision || 0) || null
+  if (options.updateServerState)
+    projectSettingsDraftServerRevision.value = Number(record.revision || 0) || null
 
   const normalized = normalizeProjectSettingsDraftCachePayload(record.payload)
   if (!normalized)
@@ -2504,47 +3166,75 @@ function applyProjectSettingsDraftServerRecord(record: ProjectSettingsDraft | nu
   }
 }
 
-async function fetchProjectSettingsDraftFromServer(projectId: string): Promise<WorkspaceProjectSettingsDraftCache | null> {
-  const response = await $fetch<ApiResponse<ProjectSettingsDraft | null>>(endpoint(`/projects/${projectId}/settings-draft`))
-  return applyProjectSettingsDraftServerRecord(response.data)
+async function fetchProjectSettingsDraftFromServer(projectId: string): Promise<ProjectSettingsDraftDevicePayload | null> {
+  const deviceId = ensureWorkspaceDeviceId()
+  if (!projectId || !deviceId)
+    return null
+
+  const response = await $fetch<ApiResponse<ProjectSettingsDraftDevicePayload>>(
+    endpoint(`/projects/${projectId}/settings-draft`),
+    {
+      query: {
+        deviceId,
+      },
+    },
+  )
+  const bundle = response.data || null
+  normalizeProjectSettingsDraftServerRecord(bundle?.current || null, { updateServerState: true })
+  return bundle
 }
 
 function pickProjectSettingsDraftForHydration(
   localDraft: WorkspaceProjectSettingsDraftCache | null,
-  serverDraft: WorkspaceProjectSettingsDraftCache | null,
-): { draft: WorkspaceProjectSettingsDraftCache | null, source: 'local' | 'server' | '', hasConflict: boolean } {
-  if (!localDraft && !serverDraft)
-    return { draft: null, source: '', hasConflict: false }
-  if (localDraft && !serverDraft)
-    return { draft: localDraft, source: 'local', hasConflict: false }
-  if (!localDraft && serverDraft)
-    return { draft: serverDraft, source: 'server', hasConflict: false }
+  bundle: ProjectSettingsDraftDevicePayload | null,
+): ProjectSettingsDraftHydrationResult {
+  const currentDraft = normalizeProjectSettingsDraftServerRecord(bundle?.current || null, { updateServerState: true })
+  const latestOtherDraft = normalizeProjectSettingsDraftServerRecord(bundle?.latestOther || null)
+  const currentDeviceDraft = localDraft || currentDraft
 
-  const left = localDraft!
-  const right = serverDraft!
-  const localTime = parseTimestamp(left.updatedAt)
-  const serverTime = parseTimestamp(right.updatedAt)
-  const source: 'local' | 'server' = localTime >= serverTime ? 'local' : 'server'
-  const draft = source === 'local' ? left : right
-  const samePayload = isProjectSettingsDraftCacheEqual(left, right)
-  const localDeviceId = String(left.deviceId || '').trim()
-  const serverDeviceId = String(right.deviceId || '').trim()
-  const hasConflict = !samePayload && (
-    (localDeviceId && serverDeviceId && localDeviceId !== serverDeviceId)
-    || (localTime > 0 && serverTime > 0 && localTime !== serverTime)
-  )
+  if (currentDeviceDraft) {
+    return {
+      bundle,
+      localDraft,
+      currentDraft,
+      latestOtherDraft,
+      appliedDraft: currentDeviceDraft,
+      source: localDraft ? 'local' : 'current',
+    }
+  }
+
+  if (bundle?.resolution.isNewDevice && latestOtherDraft) {
+    return {
+      bundle,
+      localDraft,
+      currentDraft,
+      latestOtherDraft,
+      appliedDraft: latestOtherDraft,
+      source: 'latest_other',
+    }
+  }
 
   return {
-    draft,
-    source,
-    hasConflict,
+    bundle,
+    localDraft,
+    currentDraft,
+    latestOtherDraft,
+    appliedDraft: null,
+    source: '',
   }
 }
 
-async function loadProjectSettings(preferredContestId = '') {
+async function loadProjectSettings(preferredContestId = ''): Promise<ProjectSettingsDraftHydrationResult> {
   if (!activeProjectId.value) {
     resetProjectSettingsState(null)
-    return
+    return {
+      bundle: null,
+      localDraft: null,
+      currentDraft: null,
+      latestOtherDraft: null,
+      appliedDraft: null,
+      source: '',
+    }
   }
 
   const activeId = activeProjectId.value
@@ -2560,55 +3250,88 @@ async function loadProjectSettings(preferredContestId = '') {
       },
     )
 
-    if (activeProjectId.value !== activeId)
-      return
+    if (activeProjectId.value !== activeId) {
+      return {
+        bundle: null,
+        localDraft: null,
+        currentDraft: null,
+        latestOtherDraft: null,
+        appliedDraft: null,
+        source: '',
+      }
+    }
 
     applyProjectSettingsSnapshot(response.data, preferredContestId)
 
     const localDraft = readProjectSettingsDraftCache(activeId)
-    let serverDraft: WorkspaceProjectSettingsDraftCache | null = null
+    let bundle: ProjectSettingsDraftDevicePayload | null = null
     try {
-      serverDraft = await fetchProjectSettingsDraftFromServer(activeId)
+      bundle = await fetchProjectSettingsDraftFromServer(activeId)
     }
     catch {
       resetProjectSettingsDraftServerState()
     }
 
-    if (activeProjectId.value !== activeId)
-      return
-
-    const picked = pickProjectSettingsDraftForHydration(localDraft, serverDraft)
-    if (!picked.draft)
-      return
-
-    const applied = applyProjectSettingsDraftCachePayload(
-      picked.draft,
-      picked.hasConflict ? 'conflict' : 'saved_auto',
-    )
-    if (!applied)
-      return
-
-    if (picked.source === 'server')
-      writeProjectSettingsDraftCache(activeId, picked.draft)
-
-    if (picked.hasConflict) {
-      statusLine.value = picked.source === 'local'
-        ? '检测到多端草稿差异，已优先使用本地较新草稿。'
-        : '检测到多端草稿差异，已优先使用云端较新草稿。'
-      return
+    if (activeProjectId.value !== activeId) {
+      return {
+        bundle: null,
+        localDraft: null,
+        currentDraft: null,
+        latestOtherDraft: null,
+        appliedDraft: null,
+        source: '',
+      }
     }
 
-    statusLine.value = picked.source === 'server'
-      ? '已恢复云端草稿（未提交）。'
-      : '已恢复本地草稿（未提交）。'
+    const picked = pickProjectSettingsDraftForHydration(localDraft, bundle)
+    if (!picked.appliedDraft)
+      return picked
+
+    const applied = applyProjectSettingsDraftCachePayload(
+      picked.appliedDraft,
+      'saved_auto',
+    )
+    if (!applied)
+      return picked
+
+    if (picked.source === 'current' || picked.source === 'latest_other')
+      writeProjectSettingsDraftCache(activeId, picked.appliedDraft)
+
+    if (picked.source === 'latest_other') {
+      statusLine.value = '已从最近设备恢复草稿（未提交）。'
+    }
+    else if (picked.source === 'current') {
+      statusLine.value = '已恢复云端草稿（未提交）。'
+    }
+    else if (picked.source === 'local') {
+      statusLine.value = '已恢复本地草稿（未提交）。'
+    }
+
+    return picked
   }
   catch (error) {
-    if (activeProjectId.value !== activeId)
-      return
+    if (activeProjectId.value !== activeId) {
+      return {
+        bundle: null,
+        localDraft: null,
+        currentDraft: null,
+        latestOtherDraft: null,
+        appliedDraft: null,
+        source: '',
+      }
+    }
 
     resetProjectSettingsState(activeProject.value)
     projectSettingsSaveState.value = 'error'
     statusLine.value = resolveApiErrorMessage(error, '加载项目设置失败，请稍后重试。')
+    return {
+      bundle: null,
+      localDraft: null,
+      currentDraft: null,
+      latestOtherDraft: null,
+      appliedDraft: null,
+      source: '',
+    }
   }
   finally {
     if (activeProjectId.value === activeId)
@@ -2631,7 +3354,7 @@ async function persistProjectSettingsDraftToServer(
   persistSeq: number,
 ): Promise<'success' | 'conflict' | 'error' | 'stale'> {
   const expectedRevision = projectSettingsDraftServerRevision.value
-  const deviceId = ensureProjectSettingsDraftDeviceId()
+  const deviceId = ensureWorkspaceDeviceId()
   const requestPayload: WorkspaceProjectSettingsDraftCache = {
     ...payload,
     deviceId: payload.deviceId || deviceId || undefined,
@@ -2653,7 +3376,7 @@ async function persistProjectSettingsDraftToServer(
     if (activeProjectId.value !== projectId || persistSeq !== projectSettingsDraftPersistSeq)
       return 'stale'
 
-    applyProjectSettingsDraftServerRecord(response.data)
+    normalizeProjectSettingsDraftServerRecord(response.data, { updateServerState: true })
     return 'success'
   }
   catch (error) {
@@ -2673,15 +3396,18 @@ async function persistProjectSettingsDraftToServer(
   }
 }
 
-async function persistProjectSettingsDraftCache() {
-  if (projectSettingsHydrating.value || !activeProjectId.value)
+async function persistResolvedProjectSettingsDraft(
+  projectId: string,
+  payload: WorkspaceProjectSettingsDraftCache,
+  options: { silent?: boolean } = {},
+): Promise<void> {
+  const normalizedPayload = normalizeProjectSettingsDraftCachePayload(payload)
+  if (!normalizedPayload)
     return
 
-  const projectId = activeProjectId.value
   const persistSeq = ++projectSettingsDraftPersistSeq
-  const payload = buildProjectSettingsDraftCachePayload()
-  const localSuccess = writeProjectSettingsDraftCache(projectId, payload)
-  const serverResult = await persistProjectSettingsDraftToServer(projectId, payload, persistSeq)
+  const localSuccess = writeProjectSettingsDraftCache(projectId, normalizedPayload)
+  const serverResult = await persistProjectSettingsDraftToServer(projectId, normalizedPayload, persistSeq)
 
   if (activeProjectId.value !== projectId || persistSeq !== projectSettingsDraftPersistSeq)
     return
@@ -2691,26 +3417,42 @@ async function persistProjectSettingsDraftCache() {
 
   if (!localSuccess && serverResult !== 'success') {
     projectSettingsSaveState.value = 'error'
-    statusLine.value = '草稿缓存失败（可重试）'
+    if (!options.silent)
+      statusLine.value = '草稿缓存失败（可重试）'
     return
   }
 
   projectSettingsSaveState.value = 'saved_auto'
 
   if (localSuccess && serverResult === 'success') {
-    statusLine.value = '草稿已缓存（本地 + 云端，未提交）'
+    if (!options.silent)
+      statusLine.value = '草稿已缓存（本地 + 云端，未提交）'
     return
   }
   if (localSuccess && serverResult === 'error') {
-    statusLine.value = '草稿已本地缓存，云端同步失败（稍后重试）'
+    if (!options.silent)
+      statusLine.value = '草稿已本地缓存，云端同步失败（稍后重试）'
     return
   }
   if (!localSuccess && serverResult === 'success') {
-    statusLine.value = '草稿已云端缓存，本地写入失败（可重试）'
+    if (!options.silent)
+      statusLine.value = '草稿已云端缓存，本地写入失败（可重试）'
     return
   }
 
-  statusLine.value = '草稿已自动缓存（未提交）'
+  if (!options.silent)
+    statusLine.value = '草稿已自动缓存（未提交）'
+}
+
+async function persistProjectSettingsDraftCache(options: { silent?: boolean } = {}) {
+  if (projectSettingsHydrating.value || !activeProjectId.value)
+    return
+
+  await persistResolvedProjectSettingsDraft(
+    activeProjectId.value,
+    buildProjectSettingsDraftCachePayload(),
+    options,
+  )
 }
 
 function scheduleProjectSettingsDraftPersist() {
@@ -2728,7 +3470,8 @@ function scheduleProjectSettingsDraftPersist() {
 
 async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cleared' | 'none' | 'conflict' | 'error'> {
   const expectedRevision = projectSettingsDraftServerRevision.value
-  if (!expectedRevision)
+  const deviceId = ensureWorkspaceDeviceId()
+  if (!expectedRevision || !deviceId)
     return 'none'
 
   try {
@@ -2738,6 +3481,7 @@ async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cl
         method: 'DELETE',
         body: {
           expectedRevision,
+          deviceId,
         },
       },
     )
@@ -2751,6 +3495,91 @@ async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cl
     }
     return 'error'
   }
+}
+
+function resolveWorkspaceViewPreferenceState(record: ProjectWorkspaceViewPreference | null | undefined): ProjectWorkspaceViewState | null {
+  if (!record?.payload)
+    return null
+  return sanitizeProjectWorkspaceViewState(normalizeProjectWorkspaceViewState(record.payload))
+}
+
+function buildDeviceRestorePromptContent(options: { view: boolean, draft: boolean }): string {
+  if (options.view && options.draft) {
+    return '另一台设备存在较新的工作上下文，包括工作区位置和项目设置草稿。\n\n你可以同步最新设备，或继续保留本设备当前内容。'
+  }
+  if (options.view) {
+    return '另一台设备存在较新的工作区位置，包括当前工作台、打开的标签页、会话或会议定位。\n\n你可以同步最新设备，或继续保留本设备当前位置。'
+  }
+  return '另一台设备存在较新的项目设置草稿。\n\n你可以同步最新设备的草稿，或继续保留本设备当前草稿。'
+}
+
+async function resolveProjectDeviceRestore(
+  projectId: string,
+  restoredViewState: HydratedProjectWorkspaceViewStateResult,
+  draftResult: ProjectSettingsDraftHydrationResult,
+): Promise<void> {
+  if (!projectId || activeProjectId.value !== projectId)
+    return
+
+  const currentViewState = resolveWorkspaceViewPreferenceState(restoredViewState.bundle?.current || null)
+  const latestOtherViewState = resolveWorkspaceViewPreferenceState(restoredViewState.bundle?.latestOther || null)
+  const viewNeedsPrompt = Boolean(
+    restoredViewState.bundle?.resolution.isStaleDevice
+    && !restoredViewState.hasManagedQuery
+    && currentViewState
+    && latestOtherViewState
+    && !isProjectWorkspaceViewStateEqual(currentViewState, latestOtherViewState),
+  )
+
+  const currentDraftBaseline = draftResult.localDraft || draftResult.currentDraft
+  const latestOtherDraft = draftResult.latestOtherDraft
+  const draftNeedsPrompt = Boolean(
+    draftResult.bundle?.resolution.isStaleDevice
+    && currentDraftBaseline
+    && latestOtherDraft
+    && !isProjectSettingsDraftCacheEqual(currentDraftBaseline, latestOtherDraft),
+  )
+
+  let choice: DeviceRestoreChoice = 'keep'
+  if (viewNeedsPrompt || draftNeedsPrompt) {
+    choice = await askDeviceRestoreConfirm(
+      '同步最近设备的工作上下文？',
+      buildDeviceRestorePromptContent({ view: viewNeedsPrompt, draft: draftNeedsPrompt }),
+    )
+    if (activeProjectId.value !== projectId)
+      return
+  }
+
+  if (choice === 'sync') {
+    if (viewNeedsPrompt && latestOtherViewState) {
+      applyProjectWorkspaceViewState(latestOtherViewState)
+      projectSettingsCurrentContestId.value = String(latestOtherViewState.selectedContestId || '').trim()
+      syncProjectSettingsAdaptationFormByContest(projectSettingsCurrentContestId.value)
+      const syncedPreviewResourceId = normalizeString(latestOtherViewState.previewResourceId)
+      if (syncedPreviewResourceId && resources.value.some(item => item.id === syncedPreviewResourceId))
+        await openProjectResourcePreview(syncedPreviewResourceId, { openTab: false })
+    }
+
+    if (draftNeedsPrompt && latestOtherDraft) {
+      const applied = applyProjectSettingsDraftCachePayload(latestOtherDraft, 'saved_auto')
+      if (applied)
+        writeProjectSettingsDraftCache(projectId, latestOtherDraft)
+    }
+
+    statusLine.value = '已同步最近设备的工作上下文。'
+  }
+  else if (viewNeedsPrompt || draftNeedsPrompt) {
+    statusLine.value = '已保留当前设备的工作上下文。'
+  }
+
+  await syncProjectWorkspaceViewState()
+
+  const draftToPersist = (choice === 'sync' && draftNeedsPrompt && latestOtherDraft)
+    || draftResult.localDraft
+    || draftResult.currentDraft
+    || (draftResult.source === 'latest_other' ? draftResult.appliedDraft : null)
+  if (draftToPersist)
+    await persistResolvedProjectSettingsDraft(projectId, draftToPersist, { silent: true })
 }
 
 async function flushProjectSettingsSave(): Promise<boolean> {
@@ -3015,7 +3844,7 @@ async function loadAuthContext(): Promise<boolean> {
     }
 
     activeWorkspaceId.value = targetWorkspaceId
-    ensureProjectSettingsDraftDeviceId()
+    ensureWorkspaceDeviceId()
 
     return true
   }
@@ -3073,7 +3902,7 @@ async function loadWorkspaceDisplayPreferenceSnapshot(workspaceId = activeWorksp
   }
 }
 
-async function saveWorkspaceDisplayUserOverride(payload: { fontSizePreset: WorkspaceFontSizePreset | null }): Promise<void> {
+async function saveWorkspaceDisplayUserOverride(payload: WorkspaceDisplayPreferencePatchPayload): Promise<void> {
   const workspaceId = String(activeWorkspaceId.value || '').trim()
   if (!workspaceId || workspaceDisplayPreferenceSavingScope.value)
     return
@@ -3081,7 +3910,11 @@ async function saveWorkspaceDisplayUserOverride(payload: { fontSizePreset: Works
   workspaceDisplayPreferenceSavingScope.value = 'user'
   workspaceDisplayPreferenceError.value = ''
   try {
-    const snapshot = await patchWorkspaceDisplayUserOverrideByApi(workspaceId, payload.fontSizePreset)
+    const nextPayload: WorkspaceDisplayPreferencePatchPayload = {
+      fontSizePreset: payload.fontSizePreset,
+      tabSpacingPreset: payload.tabSpacingPreset,
+    }
+    const snapshot = await patchWorkspaceDisplayUserOverrideByApi(workspaceId, nextPayload)
     if (activeWorkspaceId.value !== workspaceId)
       return
     workspaceDisplayPreferenceSnapshot.value = snapshot
@@ -3102,7 +3935,7 @@ async function saveWorkspaceDisplayUserOverride(payload: { fontSizePreset: Works
   }
 }
 
-async function saveWorkspaceDisplayTeamDefault(payload: { fontSizePreset: WorkspaceFontSizePreset | null }): Promise<void> {
+async function saveWorkspaceDisplayTeamDefault(payload: WorkspaceDisplayPreferencePatchPayload): Promise<void> {
   const workspaceId = String(activeWorkspaceId.value || '').trim()
   if (!workspaceId || workspaceDisplayPreferenceSavingScope.value)
     return
@@ -3110,7 +3943,11 @@ async function saveWorkspaceDisplayTeamDefault(payload: { fontSizePreset: Worksp
   workspaceDisplayPreferenceSavingScope.value = 'team'
   workspaceDisplayPreferenceError.value = ''
   try {
-    const snapshot = await patchWorkspaceDisplayTeamDefaultByApi(workspaceId, payload.fontSizePreset)
+    const nextPayload: WorkspaceDisplayPreferencePatchPayload = {
+      fontSizePreset: payload.fontSizePreset,
+      tabSpacingPreset: payload.tabSpacingPreset,
+    }
+    const snapshot = await patchWorkspaceDisplayTeamDefaultByApi(workspaceId, nextPayload)
     if (activeWorkspaceId.value !== workspaceId)
       return
     workspaceDisplayPreferenceSnapshot.value = snapshot
@@ -3663,34 +4500,6 @@ async function consumeJoinedProjectNotice() {
   }, { replace: true })
 }
 
-async function consumeProjectPanelQuery() {
-  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
-  if (panel !== 'members' && panel !== 'settings' && panel !== 'meeting')
-    return
-
-  if (panel === 'members')
-    openMemberManagementSignal.value += 1
-  else if (panel === 'meeting')
-    activeMainTabId.value = 'meeting'
-  else
-    openSettingsSignal.value += 1
-
-  const nextQuery: Record<string, string> = {}
-  for (const [key, value] of Object.entries(route.query)) {
-    if (key === 'panel')
-      continue
-
-    const normalized = normalizeQueryParam(value)
-    if (normalized)
-      nextQuery[key] = normalized
-  }
-
-  await navigateTo({
-    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
-    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
-  }, { replace: true })
-}
-
 async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) {
   const projectId = String(activeProjectId.value || '').trim()
   const userId = String(payload.userId || '').trim()
@@ -3971,6 +4780,83 @@ async function uploadResourcesToProject(files: File[]) {
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
+  }
+}
+
+async function uploadMarkdownImage(file: File): Promise<{
+  src: string
+  alt?: string
+  title?: string
+  resourceId?: string
+}> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const hostMarkdownResourceId = String(previewResourceId.value || '').trim()
+  const mimeType = String(file?.type || '').trim()
+
+  if (!projectId) {
+    const message = '请先选择一个项目。'
+    statusLine.value = message
+    throw new Error(message)
+  }
+
+  if (!hostMarkdownResourceId) {
+    const message = '当前文档未就绪，暂时无法上传图片。'
+    statusLine.value = message
+    throw new Error(message)
+  }
+
+  if (!mimeType.startsWith('image/')) {
+    const message = '当前仅支持上传图片文件。'
+    statusLine.value = message
+    throw new Error(message)
+  }
+
+  if (!isProjectResourceUploadFileSupported(file.name)) {
+    const message = '图片格式不支持，请更换后重试。'
+    statusLine.value = message
+    throw new Error(message)
+  }
+
+  if (file.size > PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES) {
+    const message = `图片过大，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`
+    statusLine.value = message
+    throw new Error(message)
+  }
+
+  const formData = new FormData()
+  formData.append('category', 'basic_info')
+  formData.append('accessLevel', 'login_required')
+  formData.append('hostMarkdownResourceId', hostMarkdownResourceId)
+  formData.append('file', file)
+
+  try {
+    const response = await authApiFetch<ApiResponse<{
+      resources: Resource[]
+    }>>(`/projects/${projectId}/resources/upload`, {
+      method: 'POST',
+      body: formData,
+    })
+    const resource = response.data?.resources?.[0] || null
+    if (!resource?.id) {
+      const message = '图片上传成功，但资源回执缺失。'
+      statusLine.value = message
+      throw new Error(message)
+    }
+
+    const fallbackTitle = String(file.name || '').trim() || '图片'
+    const resolvedTitle = String(resource.title || '').trim() || fallbackTitle
+    statusLine.value = `图片已上传：${resolvedTitle}`
+    return {
+      src: endpoint(`/projects/${projectId}/resources/${resource.id}/file`),
+      alt: resolvedTitle,
+      title: resolvedTitle,
+      resourceId: resource.id,
+    }
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '上传图片失败，请稍后重试。')
+    statusLine.value = message
+    throw error instanceof Error ? error : new Error(message)
   }
 }
 
@@ -4695,7 +5581,6 @@ async function startDefenseRealtime() {
     activeChatSessionId.value = response.data.sessionId
     defenseStage.value = 'opening'
     defenseTurnCount.value = 0
-    activeMainTabId.value = 'meeting'
     activeMeetingUtterances.value = []
     applyProjectMeetingSession(response.data.meeting, {
       joinUrl: response.data.joinUrl,
@@ -4703,7 +5588,10 @@ async function startDefenseRealtime() {
       joinExpiresAt: response.data.joinExpiresAt,
       resetCaptions: true,
     })
-    await loadChatSessions(response.data.sessionId)
+    ensureMeetingDetailTabOpen(response.data.meeting.id)
+    await loadChatSessions({
+      preferredSessionId: response.data.sessionId,
+    })
     statusLine.value = '已发起语音答辩会话，正在进入会议面板。'
   }
   catch (error) {
@@ -4755,7 +5643,11 @@ async function createChatSession(preferredTitle = ''): Promise<string | null> {
   }
 }
 
-async function loadChatSessions(preferredSessionId = '') {
+async function loadChatSessions(options: {
+  preferredSessionId?: string
+  autoCreate?: boolean
+  fallbackToFirst?: boolean
+} = {}) {
   const projectId = String(activeProjectId.value || '').trim()
   if (!activeWorkspaceId.value || !projectId) {
     chatSessions.value = []
@@ -4778,9 +5670,21 @@ async function loadChatSessions(preferredSessionId = '') {
     )
     chatSessions.value = response.data
 
-    const nextSession = chatSessions.value.find(item => item.id === preferredSessionId) || chatSessions.value.find(item => item.id === activeChatSessionId.value) || chatSessions.value[0]
+    const preferredSessionId = normalizeString(options.preferredSessionId)
+    const fallbackToFirst = options.fallbackToFirst !== false
+    const nextSession = (
+      (preferredSessionId ? chatSessions.value.find(item => item.id === preferredSessionId) : null)
+      || chatSessions.value.find(item => item.id === activeChatSessionId.value)
+      || (fallbackToFirst ? chatSessions.value[0] : null)
+    )
 
     if (!nextSession) {
+      if (options.autoCreate === false) {
+        activeChatSessionId.value = ''
+        resetChatStateWithGreeting()
+        return
+      }
+
       const createdId = await createChatSession()
       if (!createdId) {
         activeChatSessionId.value = ''
@@ -4788,7 +5692,9 @@ async function loadChatSessions(preferredSessionId = '') {
         return
       }
       activeChatSessionId.value = createdId
-      await loadChatSessions(createdId)
+      await loadChatSessions({
+        preferredSessionId: createdId,
+      })
       return
     }
 
@@ -4827,7 +5733,9 @@ async function startNewChatSession() {
     return
   }
 
-  await loadChatSessions(createdId)
+  await loadChatSessions({
+    preferredSessionId: createdId,
+  })
   statusLine.value = '已创建新的 Loopy 会话。'
 }
 
@@ -5177,7 +6085,7 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
   if (!candidate)
     return
 
-  if (hasExistingFormDraftContent() && process.client) {
+  if (hasExistingFormDraftContent() && import.meta.client) {
     const confirmed = await askTopicBoardConfirm({
       title: '覆盖当前项目草案',
       content: '当前项目草案已有内容，继续写入会覆盖现有字段，是否继续？',
@@ -5198,7 +6106,7 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
     ? '已写入项目草案，并同步到项目设置草稿。'
     : '已写入项目草案，并同步到项目通用设置草稿。'
 
-  if (!process.client)
+  if (!import.meta.client)
     return
 
   const shouldSave = await askTopicBoardConfirm({
@@ -5215,7 +6123,7 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
 }
 
 async function consumeTopicBoardCreateSeed() {
-  if (!process.client || topicBoardCreateSeedHandled.value)
+  if (!import.meta.client || topicBoardCreateSeedHandled.value)
     return
 
   const projectId = String(activeProjectId.value || '').trim()
@@ -5661,7 +6569,9 @@ async function sendChatMessage() {
       return
     }
     activeChatSessionId.value = recreatedId
-    await loadChatSessions(recreatedId)
+    await loadChatSessions({
+      preferredSessionId: recreatedId,
+    })
   }
 
   const pendingMessages = [...chatMessages.value, { role: 'user' as const, content }]
@@ -5689,8 +6599,11 @@ async function sendChatMessage() {
   }
   finally {
     chatLoading.value = false
-    if (!streamFailed)
-      await loadChatSessions(activeChatSessionId.value)
+    if (!streamFailed) {
+      await loadChatSessions({
+        preferredSessionId: activeChatSessionId.value,
+      })
+    }
   }
 }
 
@@ -5760,6 +6673,14 @@ async function switchProjectFromHeader(payload: { projectId: string, workspaceId
   await navigateTo(workspaceDetailPath(payload.workspaceId, payload.projectId))
 }
 
+function switchWorkspaceFromHeader(workspaceId: string): void {
+  const normalizedWorkspaceId = String(workspaceId || '').trim()
+  if (!normalizedWorkspaceId || normalizedWorkspaceId === activeWorkspaceId.value)
+    return
+
+  activeWorkspaceId.value = normalizedWorkspaceId
+}
+
 function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
   if (nextMode === 'defense') {
     aiMode.value = 'defense'
@@ -5779,6 +6700,71 @@ async function openFinalReviewFromHeader() {
     statusLine.value = '已打开流程画布，可按流程继续推进终审。'
 }
 
+async function openWorkspaceHomeFromHeader() {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId)
+    return
+
+  statusLine.value = `正在打开空间首页：${currentWorkspace.value?.workspace.name || workspaceId}`
+  await navigateTo(teamDetailPath(workspaceId))
+}
+
+function openDisplayPreferencesFromHeader() {
+  openDisplayPreferencesSignal.value += 1
+  statusLine.value = '已打开设置页，可调整当前工作区显示偏好。'
+}
+
+function openAccountCenterFromHeader() {
+  accountCenterVisible.value = true
+}
+
+function onUserUpdatedFromAccountCenter(user: AuthUser) {
+  if (!me.value) {
+    return
+  }
+
+  me.value = {
+    ...me.value,
+    user: {
+      ...me.value.user,
+      ...user,
+    },
+  }
+}
+
+function onWorkspaceUpdatedFromAccountCenter(payload: { workspaceId: string, name: string }) {
+  if (!me.value)
+    return
+
+  me.value = {
+    ...me.value,
+    teams: (me.value.teams || []).map((item) => {
+      if (item.team.id !== payload.workspaceId)
+        return item
+
+      return {
+        ...item,
+        team: {
+          ...item.team,
+          name: payload.name,
+        },
+      }
+    }),
+    workspaces: (me.value.workspaces || []).map((item) => {
+      if (item.workspace.id !== payload.workspaceId)
+        return item
+
+      return {
+        ...item,
+        workspace: {
+          ...item.workspace,
+          name: payload.name,
+        },
+      }
+    }),
+  }
+}
+
 function openSettingsFromLeftSidebar() {
   openSettingsSignal.value += 1
   statusLine.value = '已打开设置页，可配置项目底座并管理项目协作邀请。'
@@ -5787,6 +6773,11 @@ function openSettingsFromLeftSidebar() {
 function openMemberManagementFromLeftSidebar() {
   openMemberManagementSignal.value += 1
   statusLine.value = '已打开项目协作，可查看成员、席位并发起邀请。'
+}
+
+function openMeetingFromLeftSidebar() {
+  ensureWorkspaceMainTabOpen('meeting')
+  statusLine.value = '已打开项目会议面板，可查看参会人、字幕和会议沉淀。'
 }
 
 async function openFlowFromLeftSidebar() {
@@ -5817,34 +6808,21 @@ onMounted(async () => {
     loadContests(),
     loadProjects(),
     loadQuickSwitchProjects(),
-    loadChatSessions(),
-    loadWorkspaceMemberManagement(),
-    loadTopicBoards(),
     loadWorkspaceDisplayPreferenceSnapshot(),
   ])
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
-  if (activeProjectId.value)
-    workspaceRealtime.subscribeProject(activeProjectId.value)
-  await refreshProjectResourceContext()
-  await loadProjectOutline()
-  await loadProjectSettings(selectedContestId.value)
-  await Promise.all([loadAiChangeRequests(), loadProjectIssues(), loadProjectMeetings()])
-  await loadDefensePersonas()
-  syncFallbackResourceRefreshTimer()
-  syncFormContestTrack()
-  await consumeTopicBoardCreateSeed()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
       statusLine.value = `已定位项目：${target.title}`
   }
   await consumeJoinedProjectNotice()
-  await consumeProjectPanelQuery()
 })
 
 onBeforeUnmount(() => {
   clearProjectSettingsAutoTimers()
+  clearProjectWorkspaceViewPersistTimer()
   clearProjectOutlineGenerateTimer()
   clearPreviewStatusPolling()
   clearRealtimeProjectRefreshTimer()
@@ -5904,16 +6882,8 @@ watch(routeWorkspaceId, async (value, previous) => {
     loadContestCatalog(),
     loadProjects(),
     loadQuickSwitchProjects(),
-    loadChatSessions(),
-    loadWorkspaceMemberManagement(),
-    loadTopicBoards(),
     loadWorkspaceDisplayPreferenceSnapshot(value),
   ])
-  await refreshProjectResourceContext()
-  await loadProjectOutline()
-  await loadProjectSettings(selectedContestId.value)
-  await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
-  await consumeTopicBoardCreateSeed()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -5930,9 +6900,11 @@ watch(activeProjectId, async (next, previous) => {
   clearRealtimeProjectRefreshTimer()
   clearMeetingRealtimeRefreshTimer()
   clearFallbackResourceRefreshTimer()
+  clearProjectWorkspaceViewPersistTimer()
   projectOutlineFirstLoaded.value = false
   topicBoardLoading.value = false
   topicBoardActioningCandidateId.value = ''
+  projectWorkspaceViewReady.value = false
   closeProjectResourcePreview()
   if (next)
     workspaceRealtime.subscribeProject(next)
@@ -5953,22 +6925,41 @@ watch(activeProjectId, async (next, previous) => {
     chatSessions.value = []
     activeChatSessionId.value = ''
     defensePersonas.value = []
+    openMainTabs.value = ['dashboard']
+    activeMainTabId.value = 'dashboard'
     resetChatStateWithGreeting()
     return
   }
   syncFallbackResourceRefreshTimer()
   resetProjectSettingsState(activeProject.value)
-  await Promise.all([
+  const restoredViewState = await hydrateProjectWorkspaceViewState(next)
+  const [
+    ,
+    ,
+    draftHydrationResult,
+  ] = await Promise.all([
     loadWorkspaceMemberManagement(),
     loadProjectOutline(),
-    loadProjectSettings(selectedContestId.value),
+    loadProjectSettings(restoredViewState.state.selectedContestId),
     loadTopicBoards(),
     loadAiChangeRequests(),
     loadProjectIssues(),
-    loadProjectMeetings(),
-    loadChatSessions(),
+    loadProjectMeetings({
+      fallbackToFirst: false,
+      preferredMeetingId: restoredViewState.state.activeMeetingId,
+      hydrateSelectedDetail: false,
+    }),
+    loadChatSessions({
+      preferredSessionId: restoredViewState.state.activeChatSessionId,
+      autoCreate: false,
+      fallbackToFirst: !restoredViewState.state.activeChatSessionId,
+    }),
     loadDefensePersonas(),
   ])
+  const restoredPreviewResourceId = normalizeString(previewResourceId.value)
+  if (restoredPreviewResourceId && resources.value.some(item => item.id === restoredPreviewResourceId))
+    await openProjectResourcePreview(restoredPreviewResourceId, { openTab: false })
+  await resolveProjectDeviceRestore(next, restoredViewState, draftHydrationResult)
   await consumeTopicBoardCreateSeed()
 })
 
@@ -5987,17 +6978,20 @@ watch(resources, (nextResources) => {
     if (shouldDispose)
       disposeCollabDocBinding(true)
   }
+
+  if (projectWorkspaceViewReady.value)
+    void syncProjectWorkspaceViewState()
+  if (activeMainTabId.value)
+    void syncActiveMainTabCollabBinding(activeMainTabId.value)
 }, { deep: true })
 
-watch(activeMainTabId, async (next, previous) => {
-  if (next === previous)
+async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value): Promise<void> {
+  if (!nextTabId)
     return
 
-  if (next === 'flow') {
+  if (nextTabId === 'flow') {
     const targetResourceId = String(flowResourceId.value || '').trim()
-    if (!targetResourceId)
-      return
-    if (collabBindingResourceId.value === targetResourceId)
+    if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
       return
     await openProjectCollabResource(targetResourceId, undefined, {
       openTab: false,
@@ -6006,10 +7000,10 @@ watch(activeMainTabId, async (next, previous) => {
     return
   }
 
-  if (!next.startsWith('resource:'))
+  if (!nextTabId.startsWith('resource:'))
     return
 
-  const targetResourceId = String(previewResourceId.value || '').trim()
+  const targetResourceId = nextTabId.slice('resource:'.length) || String(previewResourceId.value || '').trim()
   if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
     return
 
@@ -6021,7 +7015,62 @@ watch(activeMainTabId, async (next, previous) => {
     openTab: false,
     surface: 'preview',
   })
+}
+
+async function syncActiveMainTabMeetingSelection(nextTabId = activeMainTabId.value): Promise<void> {
+  const targetMeetingId = resolveMeetingIdFromTabId(String(nextTabId || ''))
+  if (!targetMeetingId || targetMeetingId === activeMeetingId.value)
+    return
+
+  const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
+  activeMeetingId.value = targetMeetingId
+  if (isSwitchingMeeting) {
+    activeMeetingDetail.value = null
+    activeMeetingUtterances.value = []
+    meetingLiveCaptions.value = []
+    clearMeetingJoinSession()
+  }
+
+  await Promise.all([
+    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting }),
+    loadProjectMeetingUtterances(targetMeetingId),
+  ])
+}
+
+watch([activeProjectId, activeMainTabId], async ([projectId, nextTabId], [previousProjectId, previousTabId]) => {
+  if (!projectId)
+    return
+  if (projectId === previousProjectId && nextTabId === previousTabId)
+    return
+  await syncActiveMainTabMeetingSelection(nextTabId)
+}, { immediate: true })
+
+watch(activeMainTabId, async (next, previous) => {
+  if (next === previous)
+    return
+  await syncActiveMainTabCollabBinding(next)
 })
+
+watch(
+  [
+    workbenchMode,
+    openMainTabs,
+    activeMainTabId,
+    previewResourceId,
+    selectedContestId,
+    selectedTrackId,
+    activeChatSessionId,
+    activeMeetingId,
+    leftSidebarCollapsed,
+    rightSidebarUserCollapsed,
+  ],
+  () => {
+    if (!activeProjectId.value || projectWorkspaceViewHydrating.value)
+      return
+    void syncProjectWorkspaceViewState()
+  },
+  { deep: true },
+)
 
 watch([leftSidebarCollapsed, rightSidebarCollapsed], ([nextLeft, nextRight], [prevLeft, prevRight]) => {
   if (nextLeft === prevLeft && nextRight === prevRight)
@@ -6034,6 +7083,14 @@ watch([leftSidebarCollapsed, rightSidebarCollapsed], ([nextLeft, nextRight], [pr
 watch(aiMode, async (next, previous) => {
   if (next === previous)
     return
+
+  if (projectWorkspaceModeHydrating.value) {
+    if (next === 'defense')
+      workbenchMode.value = 'defense'
+    else
+      workbenchMode.value = 'project'
+    return
+  }
 
   if (next === 'defense') {
     workbenchMode.value = 'defense'
@@ -6071,12 +7128,23 @@ watch(() => workspaceRealtime.connected.value, () => {
       v-model="headerSearch"
       :project-name="headerProjectName"
       :workspace-id="activeWorkspaceId"
+      :user-name="me?.user.username || ''"
+      :user-email="currentUserEmail"
+      :user-avatar-url="me?.user.avatarUrl || ''"
+      :workspace-options="workspaceOptions"
+      :workspace-can-manage-members="workspaceCanManageMembers"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
       :workbench-mode="workbenchMode"
       @update:workbench-mode="updateWorkbenchMode"
       @final-review="openFinalReviewFromHeader"
       @quick-switch-project="switchProjectFromHeader"
+      @switch-workspace="switchWorkspaceFromHeader"
+      @open-workspace-home="openWorkspaceHomeFromHeader"
+      @open-workspace-settings="openSettingsFromLeftSidebar"
+      @open-display-preferences="openDisplayPreferencesFromHeader"
+      @open-member-management="openMemberManagementFromLeftSidebar"
+      @open-account-center="openAccountCenterFromHeader"
     />
 
     <main class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
@@ -6097,6 +7165,10 @@ watch(() => workspaceRealtime.connected.value, () => {
           :linked-contest-resource-groups="linkedContestResourceGroups"
           :linked-contest-binding-count="projectSettingsBindings.length"
           :upload-tasks="projectUploadTasks"
+          :meetings="projectMeetings"
+          :active-meeting-id="activeMeetingId"
+          :meeting-loading="projectMeetingsLoading"
+          :meeting-mutating="meetingMutating"
           :project-members="workspaceMembers"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
@@ -6127,9 +7199,12 @@ watch(() => workspaceRealtime.connected.value, () => {
           @run-ai-filter="runAiFilter"
           @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
           @generate-topic-board="generateTopicBoard('workspace_sidebar')"
+          @open-meeting-panel="openMeetingFromLeftSidebar"
           @open-settings-panel="openSettingsFromLeftSidebar"
           @open-member-management-panel="openMemberManagementFromLeftSidebar"
           @open-flow-panel="openFlowFromLeftSidebar"
+          @create-meeting="createProjectMeeting"
+          @select-meeting="selectProjectMeeting"
           @create-collab-resource="createCollabResource"
           @reload-issues="loadProjectIssues"
           @open-resource="openProjectResourcePreview"
@@ -6152,6 +7227,8 @@ watch(() => workspaceRealtime.connected.value, () => {
       </div>
 
       <WorkspaceMainPanel
+        v-model:active-tab-id="activeMainTabId"
+        v-model:open-tabs="openMainTabs"
         v-model:selected-track-id="selectedTrackId"
         v-model:major="major"
         v-model:discipline="discipline"
@@ -6185,6 +7262,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
         :open-settings-signal="openSettingsSignal"
         :open-member-management-signal="openMemberManagementSignal"
+        :open-display-preferences-signal="openDisplayPreferencesSignal"
         :open-flow-signal="openFlowSignal"
         :open-preview-signal="openPreviewSignal"
         :close-preview-signal="closePreviewSignal"
@@ -6193,6 +7271,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-resource-id="previewResourceId"
         :closing-preview-resource-id="closingPreviewResourceId"
         :preview-resource-title="previewResourceTitle"
+        :markdown-image-upload-handler="uploadMarkdownImage"
         :preview-status="previewStatusPayload"
         :preview-status-loading="previewStatusLoading"
         :preview-mode="previewMode"
@@ -6242,7 +7321,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         :meeting-join-url="meetingJoinUrl"
         :meeting-join-token="meetingJoinToken"
         :meeting-join-expires-at="meetingJoinExpiresAt"
-        @update:active-tab-id="activeMainTabId = $event"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
         @generate-topic-board="generateTopicBoard('workspace_dashboard')"
@@ -6390,11 +7468,11 @@ watch(() => workspaceRealtime.connected.value, () => {
       @cancel="resolveTopicBoardConfirm(false)"
     >
       <div class="space-y-4">
-        <p class="m-0 text-sm text-slate-600 leading-6 whitespace-pre-line">
+        <p class="text-sm text-slate-600 leading-6 m-0 whitespace-pre-line">
           {{ topicBoardConfirmState.content }}
         </p>
 
-        <div class="flex justify-end gap-2">
+        <div class="flex gap-2 justify-end">
           <a-button @click="resolveTopicBoardConfirm(false)">
             {{ topicBoardConfirmState.cancelText }}
           </a-button>
@@ -6404,6 +7482,45 @@ watch(() => workspaceRealtime.connected.value, () => {
         </div>
       </div>
     </a-modal>
+
+    <a-modal
+      v-model:visible="deviceRestoreConfirmState.visible"
+      :title="deviceRestoreConfirmState.title"
+      width="460px"
+      :footer="false"
+      :mask-closable="false"
+      @cancel="resolveDeviceRestoreConfirm('keep')"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-slate-600 leading-6 m-0 whitespace-pre-line">
+          {{ deviceRestoreConfirmState.content }}
+        </p>
+
+        <div class="flex gap-2 justify-end">
+          <a-button @click="resolveDeviceRestoreConfirm('keep')">
+            保留本设备
+          </a-button>
+          <a-button type="primary" @click="resolveDeviceRestoreConfirm('sync')">
+            同步最新设备
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
+
+    <UserSettingsDialog
+      v-model:visible="accountCenterVisible"
+      :user-name="me?.user.username || ''"
+      :user-id="me?.user.id || ''"
+      :user-email="currentUserEmail"
+      :user-avatar-url="me?.user.avatarUrl || ''"
+      :user-subtitle="currentUserSubtitle"
+      :show-admin-badge="isAdminView"
+      :is-platform-admin-user="Boolean(me?.user.isPlatformAdmin)"
+      :workspace-options="workspaceOptions"
+      :active-workspace-id="activeWorkspaceId"
+      @user-updated="onUserUpdatedFromAccountCenter"
+      @workspace-updated="onWorkspaceUpdatedFromAccountCenter"
+    />
   </div>
 </template>
 

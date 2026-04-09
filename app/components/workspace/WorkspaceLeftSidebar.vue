@@ -4,6 +4,8 @@ import type {
   Contest,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectMeeting,
+  ProjectMeetingMode,
   ProjectMemberSummary,
   ProjectOutlineNode,
   ProjectResourceShareDurationPreset,
@@ -20,21 +22,13 @@ import {
   resolveProjectUploadTaskTone,
 } from '~/utils/project-upload'
 
-type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
+type WorkspaceLeftModuleId = 'resource_manager' | 'meeting' | 'analysis' | 'project_config' | 'issue_center'
 
 interface WorkspaceLeftModule {
   id: WorkspaceLeftModuleId
   title: string
   icon: string
   hint: string
-}
-
-interface FilterPreset {
-  id: string
-  title: string
-  level: string
-  trackType: string
-  topK: number
 }
 
 interface OutlineItem {
@@ -84,6 +78,10 @@ const props = withDefaults(defineProps<{
   linkedContestResourceGroups?: WorkspaceLinkedContestResourceGroup[]
   linkedContestBindingCount?: number
   uploadTasks?: ProjectUploadTask[]
+  meetings?: ProjectMeeting[]
+  activeMeetingId?: string
+  meetingLoading?: boolean
+  meetingMutating?: boolean
   projectMembers?: ProjectMemberSummary[]
   projectOutline?: ProjectOutlineNode[]
   issueReports?: ProjectIssueReport[]
@@ -117,6 +115,10 @@ const props = withDefaults(defineProps<{
   linkedContestResourceGroups: () => [],
   linkedContestBindingCount: 0,
   uploadTasks: () => [],
+  meetings: () => [],
+  activeMeetingId: '',
+  meetingLoading: false,
+  meetingMutating: false,
   projectMembers: () => [],
   projectOutline: () => [],
   issueReports: () => [],
@@ -160,9 +162,12 @@ const emit = defineEmits<{
   'loadContests': []
   'runAiFilter': []
   'generateTopicBoard': []
+  'openMeetingPanel': []
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
+  'createMeeting': [payload: { mode: ProjectMeetingMode }]
+  'selectMeeting': [meetingId: string]
   'createCollabResource': [kind: 'markdown' | 'draw']
   'reloadIssues': []
   'addResourceFromLibrary': [resourceId: string]
@@ -235,6 +240,12 @@ const modules: WorkspaceLeftModule[] = [
     hint: '项目资料与结构大纲',
   },
   {
+    id: 'meeting',
+    title: '项目会议',
+    icon: 'video_call',
+    hint: '发起会议与查看纪要',
+  },
+  {
     id: 'analysis',
     title: '竞赛分析',
     icon: 'grid_view',
@@ -251,30 +262,6 @@ const modules: WorkspaceLeftModule[] = [
     title: 'Issue',
     icon: 'bug_report',
     hint: '寻疑报告与问题清单',
-  },
-]
-
-const filterPresets: FilterPreset[] = [
-  {
-    id: 'national-ai',
-    title: '国赛 + AI',
-    level: 'national',
-    trackType: 'AI',
-    topK: 6,
-  },
-  {
-    id: 'industry-practice',
-    title: '行业实战',
-    level: 'industry',
-    trackType: '工程落地',
-    topK: 8,
-  },
-  {
-    id: 'school-sprint',
-    title: '校赛冲刺',
-    level: 'school',
-    trackType: '',
-    topK: 5,
   },
 ]
 
@@ -313,6 +300,7 @@ const suppressResourceSelection = computed(() => props.activeMainTabId === 'dash
 const visibleUploadTasks = computed(() => {
   return props.uploadTasks.filter(task => isProjectUploadTaskSidebarVisible(task))
 })
+const visibleMeetings = computed(() => props.meetings.slice(0, 8))
 const visibleResources = computed(() => props.selectedResources.slice(0, 10))
 const visibleRecycleResources = computed(() => props.recycleResources.slice(0, 20))
 const visibleLibraryResources = computed(() => {
@@ -738,6 +726,8 @@ function switchModule(moduleId: string) {
   resourceActionOpenId.value = ''
   activeModule.value = moduleId
   expandPanel()
+  if (moduleId === 'meeting')
+    emit('openMeetingPanel')
 }
 
 function selectResource(resourceId: string) {
@@ -818,18 +808,6 @@ function openRecycleBinPanel() {
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
   expandPanel()
-}
-
-function onTopKInput(event: Event) {
-  const target = event.target as HTMLInputElement
-  const value = Number(target.value)
-  emit('update:topK', Number.isNaN(value) ? 1 : value)
-}
-
-function applyFilterPreset(preset: FilterPreset) {
-  emit('update:level', preset.level)
-  emit('update:trackType', preset.trackType)
-  emit('update:topK', preset.topK)
 }
 
 function updateTopicBoardDraft<K extends keyof WorkspaceTopicBoardDraft>(field: K, value: WorkspaceTopicBoardDraft[K]) {
@@ -1287,9 +1265,29 @@ function rebindUploadTask(sessionId: string) {
 
 function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId {
   return value === 'resource_manager'
+    || value === 'meeting'
     || value === 'analysis'
     || value === 'project_config'
     || value === 'issue_center'
+}
+
+function openMeetingPanel() {
+  emit('openMeetingPanel')
+}
+
+function createMeeting(mode: ProjectMeetingMode) {
+  if (props.meetingMutating || !props.hasActiveProject)
+    return
+  emit('openMeetingPanel')
+  emit('createMeeting', { mode })
+}
+
+function openMeetingItem(meetingId: string) {
+  const normalizedMeetingId = String(meetingId || '').trim()
+  if (!normalizedMeetingId)
+    return
+  emit('openMeetingPanel')
+  emit('selectMeeting', normalizedMeetingId)
 }
 
 function openLibraryModal() {
@@ -1723,6 +1721,13 @@ watch(activeModule, (value) => {
     return
   localStorage.setItem(LEFT_MODULE_STORAGE_KEY, value)
 })
+
+watch(() => props.activeMainTabId, (value) => {
+  if (value !== 'meeting')
+    return
+  if (activeModule.value !== 'meeting')
+    activeModule.value = 'meeting'
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   if (!import.meta.client)
@@ -2486,6 +2491,75 @@ onBeforeUnmount(() => {
             </div>
           </a-modal>
         </template>
+        <template v-else-if="activeModule === 'meeting'">
+          <section class="workspace-card">
+            <div class="workspace-meeting-panel__header">
+              <div>
+                <h3>项目会议</h3>
+                <p class="workspace-meeting-panel__hint">
+                  从左侧直接发起会议，主工作区负责会中字幕、参会人和录制纪要。
+                </p>
+              </div>
+              <button
+                class="workspace-btn workspace-btn--ghost"
+                :disabled="meetingMutating"
+                type="button"
+                @click="openMeetingPanel"
+              >
+                打开面板
+              </button>
+            </div>
+
+            <div class="workspace-action-row workspace-action-row--meeting">
+              <button
+                class="workspace-btn workspace-btn--primary"
+                :disabled="meetingMutating || !hasActiveProject"
+                type="button"
+                @click="createMeeting('video')"
+              >
+                {{ meetingMutating ? '处理中...' : '发起视频会议' }}
+              </button>
+              <button
+                class="workspace-btn workspace-btn--ghost"
+                :disabled="meetingMutating || !hasActiveProject"
+                type="button"
+                @click="createMeeting('audio')"
+              >
+                发起语音会议
+              </button>
+            </div>
+          </section>
+
+          <section class="workspace-card">
+            <div class="workspace-issue-panel__header">
+              <h3>最近会议</h3>
+              <span class="workspace-meeting-panel__meta">{{ visibleMeetings.length }} 条</span>
+            </div>
+
+            <div v-if="meetingLoading" class="workspace-empty-text">
+              正在加载会议记录...
+            </div>
+            <div v-else-if="visibleMeetings.length === 0" class="workspace-empty-text">
+              暂无会议记录，可直接在上方发起首场会议。
+            </div>
+            <div v-else class="workspace-meeting-list">
+              <button
+                v-for="meeting in visibleMeetings"
+                :key="meeting.id"
+                class="workspace-meeting-list__item"
+                :class="{ 'workspace-meeting-list__item--active': meeting.id === activeMeetingId }"
+                type="button"
+                @click="openMeetingItem(meeting.id)"
+              >
+                <span class="workspace-meeting-list__title">{{ meeting.title }}</span>
+                <span class="workspace-meeting-list__subline">
+                  {{ meeting.status === 'active' ? '进行中' : meeting.status === 'ended' ? '已结束' : '失败' }}
+                  · {{ formatDateTime(meeting.startedAt) }}
+                </span>
+              </button>
+            </div>
+          </section>
+        </template>
         <template v-else-if="activeModule === 'analysis'">
           <section class="workspace-card">
             <h3>AI 竞赛分析</h3>
@@ -2629,7 +2703,7 @@ onBeforeUnmount(() => {
               >
             </div>
 
-            <label class="block text-xs text-slate-600">
+            <label class="text-xs text-slate-600 block">
               <span class="mb-1 block">关键词</span>
               <textarea
                 :value="topicBoardDraft.keywordsText"
@@ -2640,7 +2714,7 @@ onBeforeUnmount(() => {
               />
             </label>
 
-            <label class="mt-3 block text-xs text-slate-600">
+            <label class="text-xs text-slate-600 mt-3 block">
               <span class="mb-1 block">团队技能标签</span>
               <textarea
                 :value="topicBoardDraft.teamSkillTagsText"
@@ -2951,6 +3025,76 @@ onBeforeUnmount(() => {
   height: 1px;
   background: #e6ecf6;
   margin: 4px 6px;
+}
+
+.workspace-meeting-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-meeting-panel__hint {
+  margin: 4px 0 0;
+  color: #7b879c;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.workspace-action-row--meeting {
+  margin-top: 14px;
+}
+
+.workspace-meeting-panel__meta {
+  color: #8a97ac;
+  font-size: 11px;
+}
+
+.workspace-meeting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-meeting-list__item {
+  width: 100%;
+  border: 1px solid #e2e8f2;
+  border-radius: 10px;
+  background: #fff;
+  color: #44536c;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.workspace-meeting-list__item:hover {
+  border-color: #cfdbef;
+  background: #f8fbff;
+}
+
+.workspace-meeting-list__item--active {
+  border-color: #c8d8f4;
+  background: #eef4ff;
+  color: #2f4368;
+}
+
+.workspace-meeting-list__title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.workspace-meeting-list__subline {
+  color: #8090a6;
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .workspace-tree-block__content {

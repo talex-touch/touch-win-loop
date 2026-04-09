@@ -103,18 +103,17 @@ export function useLoopyDialog(input: {
     }
 
     try {
-      const response = await $fetch<ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>>(
-        endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions/${normalizedSessionId}/messages`),
+      const response = await fetch(
+        String(endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions/${normalizedSessionId}/messages?limit=200&projectId=&mode=dialog_ask`)),
         {
-          query: {
-            limit: 200,
-            projectId: '',
-            mode: 'dialog_ask',
-          },
+          credentials: 'include',
         },
       )
+      const payload = await response.json() as ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>
+      if (!response.ok)
+        throw new Error(String(payload?.message || '会话消息加载失败，请稍后重试。'))
 
-      const restoredMessages = response.data.messages.map(item => ({
+      const restoredMessages = payload.data.messages.map(item => ({
         role: item.role,
         content: item.content,
       })) as ChatMessage[]
@@ -127,7 +126,7 @@ export function useLoopyDialog(input: {
           }]
     }
     catch (error: any) {
-      errorText.value = String(error?.data?.message || '会话消息加载失败，请稍后重试。')
+      errorText.value = String(error?.data?.message || error?.message || '会话消息加载失败，请稍后重试。')
       resetConversation()
     }
   }
@@ -138,21 +137,26 @@ export function useLoopyDialog(input: {
       return null
 
     try {
-      const response = await $fetch<ApiResponse<AiChatSession>>(
-        endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions`),
-        {
-          method: 'POST',
-          body: {
-            projectId: '',
-            mode: 'dialog_ask',
-            title: preferredTitle || input.getSessionTitle(),
-          },
+      const response = await fetch(String(endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions`)), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      )
-      return response.data.id
+        body: JSON.stringify({
+          projectId: '',
+          mode: 'dialog_ask',
+          title: preferredTitle || input.getSessionTitle(),
+        }),
+      })
+      const payload = await response.json() as ApiResponse<AiChatSession>
+      if (!response.ok)
+        throw new Error(String(payload?.message || '新建会话失败，请稍后重试。'))
+
+      return payload.data.id
     }
     catch (error: any) {
-      errorText.value = String(error?.data?.message || '新建会话失败，请稍后重试。')
+      errorText.value = String(error?.data?.message || error?.message || '新建会话失败，请稍后重试。')
       return null
     }
   }
@@ -169,17 +173,17 @@ export function useLoopyDialog(input: {
     loadingSessions.value = true
     errorText.value = ''
     try {
-      const response = await $fetch<ApiResponse<AiChatSession[]>>(
-        endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions`),
+      const response = await fetch(
+        String(endpoint(`/teams/${normalizedWorkspaceId}/chat/sessions?limit=30&projectId=&mode=dialog_ask`)),
         {
-          query: {
-            limit: 30,
-            projectId: '',
-            mode: 'dialog_ask',
-          },
+          credentials: 'include',
         },
       )
-      sessions.value = response.data
+      const payload = await response.json() as ApiResponse<AiChatSession[]>
+      if (!response.ok)
+        throw new Error(String(payload?.message || '会话加载失败，请稍后重试。'))
+
+      sessions.value = payload.data
 
       const nextSession = sessions.value.find(item => item.id === preferredSessionId)
         || sessions.value.find(item => item.id === activeSessionId.value)
@@ -196,7 +200,7 @@ export function useLoopyDialog(input: {
     catch (error: any) {
       sessions.value = []
       activeSessionId.value = ''
-      errorText.value = String(error?.data?.message || '会话加载失败，请稍后重试。')
+      errorText.value = String(error?.data?.message || error?.message || '会话加载失败，请稍后重试。')
       resetConversation()
     }
     finally {

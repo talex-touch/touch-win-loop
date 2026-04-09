@@ -850,10 +850,89 @@ CREATE TABLE IF NOT EXISTS project_settings_drafts (
   payload JSONB NOT NULL DEFAULT '{}'::JSONB,
   revision BIGINT NOT NULL DEFAULT 1,
   device_id TEXT NOT NULL DEFAULT '',
+  last_opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(user_id, project_id)
+  UNIQUE(user_id, project_id, device_id)
 );
+
+CREATE TABLE IF NOT EXISTS project_workspace_view_states (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  revision BIGINT NOT NULL DEFAULT 1,
+  device_id TEXT NOT NULL DEFAULT '',
+  last_opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, project_id, device_id)
+);
+
+ALTER TABLE project_settings_drafts
+  ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE project_settings_drafts
+  ADD COLUMN IF NOT EXISTS last_opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE project_settings_drafts
+  DROP CONSTRAINT IF EXISTS project_settings_drafts_user_id_project_id_key;
+
+ALTER TABLE project_settings_drafts
+  DROP CONSTRAINT IF EXISTS project_settings_drafts_user_id_project_id_device_id_key;
+
+ALTER TABLE project_settings_drafts
+  ADD CONSTRAINT project_settings_drafts_user_id_project_id_device_id_key
+  UNIQUE (user_id, project_id, device_id);
+
+ALTER TABLE project_workspace_view_states
+  ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE project_workspace_view_states
+  ADD COLUMN IF NOT EXISTS last_opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE project_workspace_view_states
+  DROP CONSTRAINT IF EXISTS project_workspace_view_states_user_id_project_id_key;
+
+ALTER TABLE project_workspace_view_states
+  DROP CONSTRAINT IF EXISTS project_workspace_view_states_user_id_project_id_device_id_key;
+
+ALTER TABLE project_workspace_view_states
+  ADD CONSTRAINT project_workspace_view_states_user_id_project_id_device_id_key
+  UNIQUE (user_id, project_id, device_id);
+
+CREATE TABLE IF NOT EXISTS user_workspace_last_projects (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_workspace_display_defaults (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  preferences JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workspace_display_defaults (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  preferences JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_workspace_display_overrides (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  preferences JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, workspace_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_workspace_display_overrides_workspace_user
+  ON user_workspace_display_overrides (workspace_id, user_id);
 
 CREATE TABLE IF NOT EXISTS contest_timelines (
   id TEXT PRIMARY KEY,
@@ -935,6 +1014,20 @@ CREATE TABLE IF NOT EXISTS contest_resources (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(contest_id, id)
 );
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'contest_resources_contest_id_id_key'
+      AND conrelid = 'contest_resources'::regclass
+  ) THEN
+    ALTER TABLE contest_resources
+      ADD CONSTRAINT contest_resources_contest_id_id_key
+      UNIQUE (contest_id, id);
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS project_resources (
   id TEXT PRIMARY KEY,
@@ -1178,6 +1271,110 @@ CREATE TABLE IF NOT EXISTS project_resource_collab_docs (
   updated_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS project_meetings (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  mode TEXT NOT NULL CHECK (mode IN ('audio', 'video')),
+  provider TEXT NOT NULL DEFAULT 'mock',
+  provider_room_id TEXT NOT NULL DEFAULT '',
+  provider_room_name TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'failed')),
+  transcript_status TEXT NOT NULL DEFAULT 'idle' CHECK (transcript_status IN ('idle', 'running', 'completed', 'failed')),
+  recording_status TEXT NOT NULL DEFAULT 'idle' CHECK (recording_status IN ('idle', 'requested', 'processing', 'completed', 'failed')),
+  summary_status TEXT NOT NULL DEFAULT 'idle' CHECK (summary_status IN ('idle', 'queued', 'processing', 'completed', 'failed')),
+  recording_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
+  notes_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
+  started_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at TIMESTAMPTZ,
+  provider_metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_meeting_participants (
+  id TEXT PRIMARY KEY,
+  meeting_id TEXT NOT NULL REFERENCES project_meetings(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  provider_participant_id TEXT NOT NULL DEFAULT '',
+  provider_identity TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('host', 'member', 'guest', 'system', 'unknown')),
+  joined_at TIMESTAMPTZ,
+  left_at TIMESTAMPTZ,
+  audio_track_state TEXT NOT NULL DEFAULT 'unknown' CHECK (audio_track_state IN ('unknown', 'muted', 'active', 'ended')),
+  video_track_state TEXT NOT NULL DEFAULT 'unknown' CHECK (video_track_state IN ('unknown', 'muted', 'active', 'ended')),
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(meeting_id, provider_identity)
+);
+
+CREATE TABLE IF NOT EXISTS project_meeting_utterances (
+  id TEXT PRIMARY KEY,
+  meeting_id TEXT NOT NULL REFERENCES project_meetings(id) ON DELETE CASCADE,
+  participant_id TEXT REFERENCES project_meeting_participants(id) ON DELETE SET NULL,
+  speaker_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  speaker_name TEXT NOT NULL DEFAULT '',
+  speaker_label TEXT NOT NULL DEFAULT '',
+  sequence_no INTEGER NOT NULL DEFAULT 1,
+  started_at_ms BIGINT NOT NULL DEFAULT 0,
+  ended_at_ms BIGINT NOT NULL DEFAULT 0,
+  text TEXT NOT NULL DEFAULT '',
+  language TEXT NOT NULL DEFAULT '',
+  confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+  is_final BOOLEAN NOT NULL DEFAULT TRUE,
+  provider_event_key TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_meeting_jobs (
+  id TEXT PRIMARY KEY,
+  meeting_id TEXT NOT NULL REFERENCES project_meetings(id) ON DELETE CASCADE,
+  job_type TEXT NOT NULL CHECK (job_type IN ('transcript_finalize', 'recording_finalize', 'meeting_summary')),
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'succeeded', 'failed')),
+  attempt INTEGER NOT NULL DEFAULT 0,
+  max_attempt INTEGER NOT NULL DEFAULT 5,
+  next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  error_message TEXT NOT NULL DEFAULT '',
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_meetings_project_started_at
+  ON project_meetings(project_id, started_at DESC, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_project_meetings_provider_room_id
+  ON project_meetings(provider, provider_room_id);
+
+CREATE INDEX IF NOT EXISTS idx_project_meetings_provider_room_name
+  ON project_meetings(provider, provider_room_name);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_participants_meeting_joined_at
+  ON project_meeting_participants(meeting_id, joined_at ASC, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_participants_project_user
+  ON project_meeting_participants(project_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_utterances_meeting_sequence
+  ON project_meeting_utterances(meeting_id, sequence_no ASC, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_utterances_event_key
+  ON project_meeting_utterances(meeting_id, provider_event_key);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_jobs_meeting_created_at
+  ON project_meeting_jobs(meeting_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_jobs_status_next_run_at
+  ON project_meeting_jobs(status, next_run_at ASC, created_at ASC);
 
 CREATE TABLE IF NOT EXISTS project_resource_document_tasks (
   id TEXT PRIMARY KEY,
@@ -1870,6 +2067,13 @@ CREATE INDEX IF NOT EXISTS idx_project_contest_adaptations_project ON project_co
 CREATE INDEX IF NOT EXISTS idx_project_contest_adaptations_contest ON project_contest_adaptations(contest_id);
 CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_user_project ON project_settings_drafts(user_id, project_id);
 CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_project ON project_settings_drafts(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_user_project_opened ON project_settings_drafts(user_id, project_id, last_opened_at DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_settings_drafts_user_project_device ON project_settings_drafts(user_id, project_id, device_id);
+CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_user_project ON project_workspace_view_states(user_id, project_id);
+CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_project ON project_workspace_view_states(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_user_project_opened ON project_workspace_view_states(user_id, project_id, last_opened_at DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_user_project_device ON project_workspace_view_states(user_id, project_id, device_id);
+CREATE INDEX IF NOT EXISTS idx_user_workspace_last_projects_workspace_updated ON user_workspace_last_projects(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_updated ON ai_chat_sessions(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session_created ON ai_chat_messages(session_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_ai_project_change_requests_project_status ON ai_project_change_requests(project_id, status, created_at DESC);
@@ -2695,20 +2899,6 @@ BEGIN
   EXCEPTION
     WHEN duplicate_object THEN NULL;
   END;
-END $$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'contest_resources_contest_id_id_key'
-      AND conrelid = 'contest_resources'::regclass
-  ) THEN
-    ALTER TABLE contest_resources
-      ADD CONSTRAINT contest_resources_contest_id_id_key
-      UNIQUE (contest_id, id);
-  END IF;
 END $$;
 
 DELETE FROM contest_resource_profiles profile

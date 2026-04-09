@@ -5,7 +5,14 @@ import type {
   CollabPurpose,
   Contest,
   Project,
+  WorkspaceDisplayPreferenceSnapshot,
+  WorkspaceFontSizePreset,
+  WorkspaceTabSpacingPreset,
   ProjectInvitationSummary,
+  ProjectMeeting,
+  ProjectMeetingDetail,
+  ProjectMeetingMode,
+  ProjectMeetingUtterance,
   ProjectMemberRole,
   ProjectMemberSummary,
   ProjectResourceShare,
@@ -14,6 +21,8 @@ import type {
   ResourcePreviewStatus,
   Track,
   TopicProposalDecisionStatus,
+  WorkspaceFixedTabId as SharedWorkspaceFixedTabId,
+  WorkspaceOpenTabState,
   WorkspaceType,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
@@ -31,15 +40,26 @@ import type {
 import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
 import RichTextEditor from '~/components/editor/RichTextEditor.vue'
 import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
-import CollabPresenceDock from '~/components/workspace/collab/CollabPresenceDock.vue'
 import {
   normalizeWorkspaceCollabPresenceActivityState,
   resolveWorkspaceCollabPresenceColor,
-
 } from '~/components/workspace/collab/presence'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
+import WorkspaceMeetingPanel from '~/components/workspace/WorkspaceMeetingPanel.vue'
+import {
+  defaultWorkspaceDisplayPreferenceSnapshot,
+  normalizeWorkspaceFontSizeDraft,
+  normalizeWorkspaceTabSpacingDraft,
+  resolveWorkspaceDisplayPreferenceSourceLabel,
+  resolveWorkspaceFontSizePresetLabel,
+  resolveWorkspaceTabSpacingPresetLabel,
+  WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
+  WORKSPACE_TAB_SPACING_PRESET_OPTIONS,
+} from '~/composables/useWorkspaceDisplayPreferences'
 
 const props = withDefaults(defineProps<{
+  activeTabId?: WorkspaceOpenTabState | ''
+  openTabs?: WorkspaceOpenTabState[]
   selectedContest?: Contest | null
   selectedTrack?: Track | null
   selectedTrackId?: string
@@ -53,6 +73,7 @@ const props = withDefaults(defineProps<{
   topK?: number
   openSettingsSignal?: number
   openMemberManagementSignal?: number
+  openDisplayPreferencesSignal?: number
   openFlowSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
@@ -61,6 +82,7 @@ const props = withDefaults(defineProps<{
   previewResourceId?: string
   closingPreviewResourceId?: string
   previewResourceTitle?: string
+  markdownImageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
   previewStatus?: WorkspacePreviewStatusPayload | null
   previewStatusLoading?: boolean
   previewMode?: WorkspacePreviewMode
@@ -111,10 +133,27 @@ const props = withDefaults(defineProps<{
   projectSettingsCurrentContestId?: string
   projectSettingsAdaptation?: WorkspaceProjectAdaptationForm
   projectSettingsHasCurrentContest?: boolean
+  workspaceDisplayPreferences?: WorkspaceDisplayPreferenceSnapshot
+  workspaceDisplayPreferencesLoading?: boolean
+  workspaceDisplayPreferencesSavingScope?: '' | 'user' | 'team'
+  workspaceDisplayPreferencesError?: string
   projectResourceShares?: ProjectResourceShare[]
   projectResourceSharesLoading?: boolean
+  meetings?: ProjectMeeting[]
+  activeMeetingId?: string
+  activeMeeting?: ProjectMeetingDetail | null
+  meetingUtterances?: ProjectMeetingUtterance[]
+  meetingLiveCaptions?: WorkspaceMeetingCaptionItem[]
+  meetingLoading?: boolean
+  meetingDetailLoading?: boolean
+  meetingMutating?: boolean
+  meetingJoinUrl?: string
+  meetingJoinToken?: string
+  meetingJoinExpiresAt?: string
   toneMeta: Record<MappingTone, WorkspaceStatusToneMeta>
 }>(), {
+  activeTabId: 'dashboard',
+  openTabs: () => ['dashboard'],
   selectedContest: null,
   selectedTrack: null,
   selectedTrackId: '',
@@ -128,6 +167,7 @@ const props = withDefaults(defineProps<{
   topK: 6,
   openSettingsSignal: 0,
   openMemberManagementSignal: 0,
+  openDisplayPreferencesSignal: 0,
   openFlowSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
@@ -136,6 +176,7 @@ const props = withDefaults(defineProps<{
   previewResourceId: '',
   closingPreviewResourceId: '',
   previewResourceTitle: '',
+  markdownImageUploadHandler: null,
   previewStatus: null,
   previewStatusLoading: false,
   previewMode: 'binary',
@@ -217,12 +258,28 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   projectSettingsHasCurrentContest: false,
+  workspaceDisplayPreferences: () => defaultWorkspaceDisplayPreferenceSnapshot(),
+  workspaceDisplayPreferencesLoading: false,
+  workspaceDisplayPreferencesSavingScope: '',
+  workspaceDisplayPreferencesError: '',
   projectResourceShares: () => [],
   projectResourceSharesLoading: false,
+  meetings: () => [],
+  activeMeetingId: '',
+  activeMeeting: null,
+  meetingUtterances: () => [],
+  meetingLiveCaptions: () => [],
+  meetingLoading: false,
+  meetingDetailLoading: false,
+  meetingMutating: false,
+  meetingJoinUrl: '',
+  meetingJoinToken: '',
+  meetingJoinExpiresAt: '',
 })
 
 const emit = defineEmits<{
   'update:activeTabId': [value: WorkspaceMainTabId | '']
+  'update:openTabs': [value: WorkspaceMainTabId[]]
   'update:selectedTrackId': [value: string]
   'update:selectedContestId': [value: string]
   'update:major': [value: string]
@@ -252,6 +309,14 @@ const emit = defineEmits<{
   'copyProjectResourceShare': [shareId: string]
   'revokeProjectResourceShare': [shareId: string]
   'loadContests': []
+  'saveWorkspaceDisplayUserOverride': [value: { fontSizePreset?: WorkspaceFontSizePreset | null, tabSpacingPreset?: WorkspaceTabSpacingPreset | null }]
+  'saveWorkspaceDisplayTeamDefault': [value: { fontSizePreset?: WorkspaceFontSizePreset | null, tabSpacingPreset?: WorkspaceTabSpacingPreset | null }]
+  'createMeeting': [payload: { mode: ProjectMeetingMode }]
+  'refreshMeetings': []
+  'joinMeeting': [meetingId: string]
+  'endMeeting': [meetingId: string]
+  'selectMeeting': [meetingId: string]
+  'openMeetingResource': [resourceId: string]
   'reconvertPreview': []
   'downloadPreviewSource': []
   'activatePreviewResource': [resourceId: string]
@@ -261,19 +326,33 @@ const emit = defineEmits<{
   'updateCollabSelectionStatus': [value: { line: number, column: number, selectionLength: number, selection: WorkspaceCollabSelectionSummary | null }]
 }>()
 
-type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'settings'
+interface WorkspaceMeetingCaptionItem {
+  id: string
+  text: string
+  speakerName: string
+  speakerLabel: string
+  startedAtMs: number
+  endedAtMs: number
+  final: boolean
+}
+
+type WorkspaceFixedTabId = SharedWorkspaceFixedTabId
+type WorkspaceMeetingTabId = `meeting:${string}`
 type WorkspaceResourceTabId = `resource:${string}`
-type WorkspaceMainTabId = WorkspaceFixedTabId | WorkspaceResourceTabId
+type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
+type WorkspaceSettingsSecondaryTabId = 'project' | 'myDisplay' | 'teamDefault'
 
 interface WorkspaceMainTab {
   id: WorkspaceMainTabId
-  kind: 'fixed' | 'resource'
+  kind: 'fixed' | 'meeting' | 'resource'
   title: string
   icon: string
   closeable: boolean
+  meetingId?: string
   resourceId?: string
   previewMode?: WorkspacePreviewMode
+  collabPurpose?: CollabPurpose | ''
 }
 
 interface LinkedContestEntry {
@@ -306,6 +385,13 @@ const fixedTabs: WorkspaceMainTab[] = [
     closeable: true,
   },
   {
+    id: 'meeting',
+    kind: 'fixed',
+    title: '项目会议',
+    icon: 'video_call',
+    closeable: true,
+  },
+  {
     id: 'members',
     kind: 'fixed',
     title: '项目协作',
@@ -328,8 +414,55 @@ const fixedTabs: WorkspaceMainTab[] = [
   },
 ]
 
-const openTabs = ref<WorkspaceMainTab[]>(fixedTabs.filter(tab => tab.id === 'dashboard'))
-const activeTabId = ref<WorkspaceMainTabId | ''>('dashboard')
+function normalizeWorkspaceTabIds(
+  value: WorkspaceOpenTabState[] | undefined,
+  options: { allowEmpty?: boolean } = {},
+): WorkspaceMainTabId[] {
+  const normalized: WorkspaceMainTabId[] = []
+  const used = new Set<string>()
+  for (const item of value || []) {
+    const tabId = String(item || '').trim() as WorkspaceMainTabId
+    if (!tabId || used.has(tabId))
+      continue
+    if (!fixedTabs.some(tab => tab.id === tabId) && !tabId.startsWith('meeting:') && !tabId.startsWith('resource:'))
+      continue
+    normalized.push(tabId)
+    used.add(tabId)
+  }
+
+  return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
+}
+
+function normalizeActiveTabId(
+  value: WorkspaceOpenTabState | '' | undefined,
+  tabIds: WorkspaceMainTabId[],
+): WorkspaceMainTabId | '' {
+  const normalized = String(value || '').trim() as WorkspaceMainTabId | ''
+  if (normalized && tabIds.includes(normalized))
+    return normalized
+  return tabIds[0] || ''
+}
+
+function isSameTabIdList(left: WorkspaceMainTabId[], right: WorkspaceMainTabId[]): boolean {
+  if (left.length !== right.length)
+    return false
+  return left.every((item, index) => item === right[index])
+}
+
+function createMeetingTabId(meetingId: string): WorkspaceMeetingTabId {
+  return `meeting:${meetingId}` as WorkspaceMeetingTabId
+}
+
+function resolveMeetingIdFromTabId(tabId: string): string {
+  return tabId.startsWith('meeting:') ? tabId.slice('meeting:'.length) : ''
+}
+
+function resolveMeetingTabIcon(meeting: ProjectMeeting | ProjectMeetingDetail | null | undefined): string {
+  return meeting?.mode === 'audio' ? 'headset_mic' : 'video_call'
+}
+
+const openTabIds = ref<WorkspaceMainTabId[]>(normalizeWorkspaceTabIds(props.openTabs, { allowEmpty: true }))
+const activeTabId = ref<WorkspaceMainTabId | ''>(normalizeActiveTabId(props.activeTabId, openTabIds.value))
 const draggingTabId = ref<WorkspaceMainTabId | ''>('')
 const dragOverTabId = ref<WorkspaceMainTabId | ''>('')
 const tabContextMenuVisible = ref(false)
@@ -380,6 +513,10 @@ const projectSettingsContestName = computed(() => {
 const projectSettingsAddContestModalVisible = ref(false)
 const projectSettingsAddContestModalContestId = ref('')
 const projectSettingsAddContestModalTrackId = ref('')
+const settingsSecondaryTabId = ref<WorkspaceSettingsSecondaryTabId>('project')
+const userWorkspaceDisplayFontSizeDraft = ref<WorkspaceFontSizePreset | ''>('')
+const userWorkspaceDisplayTabSpacingDraft = ref<WorkspaceTabSpacingPreset | ''>('')
+const teamWorkspaceDisplayFontSizeDraft = ref<WorkspaceFontSizePreset | ''>('')
 
 const projectSettingsAddContestCandidates = computed<Contest[]>(() => {
   const usedContestIds = new Set(
@@ -394,6 +531,177 @@ const projectSettingsAddContestModalTrackOptions = computed<Track[]>(() => {
     return []
   return projectSettingsAddContestCandidates.value.find(item => item.id === contestId)?.tracks || []
 })
+
+const workspaceDisplayPreferenceState = computed<WorkspaceDisplayPreferenceSnapshot>(() => {
+  return props.workspaceDisplayPreferences || defaultWorkspaceDisplayPreferenceSnapshot()
+})
+
+const workspaceDisplayPreferencesLoading = computed(() => props.workspaceDisplayPreferencesLoading)
+const workspaceDisplayPreferencesError = computed(() => props.workspaceDisplayPreferencesError)
+const workspaceDisplaySavingUser = computed(() => props.workspaceDisplayPreferencesSavingScope === 'user')
+const workspaceDisplaySavingTeam = computed(() => props.workspaceDisplayPreferencesSavingScope === 'team')
+const WORKSPACE_FONT_SIZE_PRESET_VALUES = WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(option => option.value)
+
+const workspaceSettingsTabs = computed<Array<{ id: WorkspaceSettingsSecondaryTabId, label: string }>>(() => {
+  return [
+    { id: 'project', label: '项目设置' },
+    { id: 'myDisplay', label: '个人设置' },
+  ]
+})
+
+const workspaceDisplayEffectiveFontSizeLabel = computed(() => {
+  return resolveWorkspaceFontSizePresetLabel(workspaceDisplayPreferenceState.value.effective.fontSizePreset)
+})
+
+const workspaceDisplayEffectiveTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(workspaceDisplayPreferenceState.value.effective.tabSpacingPreset)
+})
+
+const workspaceDisplayEffectiveSourceLabel = computed(() => {
+  return resolveWorkspaceDisplayPreferenceSourceLabel(workspaceDisplayPreferenceState.value.sources.fontSizePreset)
+})
+
+const workspaceDisplayUserDefaultLabel = computed(() => {
+  return resolveWorkspaceFontSizePresetLabel(workspaceDisplayPreferenceState.value.userDefault?.fontSizePreset)
+})
+
+const workspaceDisplayTeamDefaultLabel = computed(() => {
+  return resolveWorkspaceFontSizePresetLabel(workspaceDisplayPreferenceState.value.teamDefault?.fontSizePreset)
+})
+
+const workspaceDisplayUserOverrideLabel = computed(() => {
+  return resolveWorkspaceFontSizePresetLabel(workspaceDisplayPreferenceState.value.workspaceOverride?.fontSizePreset)
+})
+
+const workspaceDisplayUserOverrideTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(workspaceDisplayPreferenceState.value.workspaceOverride?.tabSpacingPreset)
+})
+
+const workspaceDisplayRecommendedFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  if (workspaceDisplayPreferenceState.value.userDefault?.fontSizePreset)
+    return workspaceDisplayPreferenceState.value.userDefault.fontSizePreset
+
+  if (props.workspaceType === 'team' && workspaceDisplayPreferenceState.value.teamDefault?.fontSizePreset)
+    return workspaceDisplayPreferenceState.value.teamDefault.fontSizePreset
+
+  return 'md'
+})
+
+const workspaceDisplayRecommendedFontSizeLabel = computed(() => {
+  return resolveWorkspaceFontSizePresetLabel(workspaceDisplayRecommendedFontSizePreset.value)
+})
+
+const workspaceDisplayRecommendedTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  if (workspaceDisplayPreferenceState.value.userDefault?.tabSpacingPreset)
+    return workspaceDisplayPreferenceState.value.userDefault.tabSpacingPreset
+
+  if (props.workspaceType === 'team' && workspaceDisplayPreferenceState.value.teamDefault?.tabSpacingPreset)
+    return workspaceDisplayPreferenceState.value.teamDefault.tabSpacingPreset
+
+  return 'default'
+})
+
+const workspaceDisplayRecommendedTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(workspaceDisplayRecommendedTabSpacingPreset.value)
+})
+
+const userWorkspaceDisplayPreviewFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  return userWorkspaceDisplayFontSizeDraft.value || workspaceDisplayRecommendedFontSizePreset.value
+})
+
+const userWorkspaceDisplayPreviewFontSizeLabel = computed(() => {
+  return resolveWorkspaceFontSizePresetLabel(userWorkspaceDisplayPreviewFontSizePreset.value)
+})
+
+const userWorkspaceDisplayPreviewTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  return userWorkspaceDisplayTabSpacingDraft.value || workspaceDisplayRecommendedTabSpacingPreset.value
+})
+
+const userWorkspaceDisplayPreviewTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(userWorkspaceDisplayPreviewTabSpacingPreset.value)
+})
+
+const workspaceEffectiveTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  return normalizeWorkspaceTabSpacingDraft(workspaceDisplayPreferenceState.value.effective.tabSpacingPreset) || 'default'
+})
+
+const workspaceMainTabLayoutStyle = computed<Record<string, string>>(() => {
+  if (workspaceEffectiveTabSpacingPreset.value === 'compact') {
+    return {
+      '--workspace-main-tab-min-width': '136px',
+      '--workspace-main-tab-padding-x': '6px',
+      '--workspace-main-tab-gap': '2px',
+      '--workspace-main-tab-trigger-gap': '6px',
+      '--workspace-main-tab-close-padding': '2px',
+    }
+  }
+
+  if (workspaceEffectiveTabSpacingPreset.value === 'relaxed') {
+    return {
+      '--workspace-main-tab-min-width': '182px',
+      '--workspace-main-tab-padding-x': '10px',
+      '--workspace-main-tab-gap': '4px',
+      '--workspace-main-tab-trigger-gap': '8px',
+      '--workspace-main-tab-close-padding': '4px',
+    }
+  }
+
+  return {
+    '--workspace-main-tab-min-width': '170px',
+    '--workspace-main-tab-padding-x': '8px',
+    '--workspace-main-tab-gap': '4px',
+    '--workspace-main-tab-trigger-gap': '8px',
+    '--workspace-main-tab-close-padding': '4px',
+  }
+})
+
+const userWorkspaceDisplaySliderValue = computed(() => {
+  const targetPreset = userWorkspaceDisplayFontSizeDraft.value || workspaceDisplayRecommendedFontSizePreset.value
+  const matchedIndex = WORKSPACE_FONT_SIZE_PRESET_VALUES.findIndex(value => value === targetPreset)
+  return matchedIndex >= 0 ? matchedIndex : WORKSPACE_FONT_SIZE_PRESET_VALUES.indexOf('md')
+})
+
+const userWorkspaceDisplaySliderProgress = computed(() => {
+  const maxIndex = Math.max(1, WORKSPACE_FONT_SIZE_PRESET_VALUES.length - 1)
+  return `${(userWorkspaceDisplaySliderValue.value / maxIndex) * 100}%`
+})
+
+function resolveWorkspaceFontSizePresetBySliderValue(value: number): WorkspaceFontSizePreset {
+  const normalizedIndex = Number.isFinite(value)
+    ? Math.min(WORKSPACE_FONT_SIZE_PRESET_VALUES.length - 1, Math.max(0, Math.round(value)))
+    : WORKSPACE_FONT_SIZE_PRESET_VALUES.indexOf('md')
+
+  return WORKSPACE_FONT_SIZE_PRESET_VALUES[normalizedIndex] || 'md'
+}
+
+function updateUserWorkspaceDisplayFontSizeDraft(value: number | string): void {
+  userWorkspaceDisplayFontSizeDraft.value = resolveWorkspaceFontSizePresetBySliderValue(Number(value))
+}
+
+function syncWorkspaceDisplayDrafts(): void {
+  userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(workspaceDisplayPreferenceState.value.workspaceOverride?.fontSizePreset)
+  userWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(workspaceDisplayPreferenceState.value.workspaceOverride?.tabSpacingPreset)
+  teamWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(workspaceDisplayPreferenceState.value.teamDefault?.fontSizePreset)
+}
+
+function selectSettingsSecondaryTab(tabId: WorkspaceSettingsSecondaryTabId): void {
+  if (!workspaceSettingsTabs.value.some(tab => tab.id === tabId))
+    return
+  settingsSecondaryTabId.value = tabId
+}
+
+function submitWorkspaceDisplayUserOverride(): void {
+  emit('saveWorkspaceDisplayUserOverride', {
+    fontSizePreset: userWorkspaceDisplayFontSizeDraft.value || null,
+    tabSpacingPreset: userWorkspaceDisplayTabSpacingDraft.value || null,
+  })
+}
+
+function submitWorkspaceDisplayTeamDefault(): void {
+  emit('saveWorkspaceDisplayTeamDefault', {
+    fontSizePreset: teamWorkspaceDisplayFontSizeDraft.value || null,
+  })
+}
 
 const PROJECT_ROLE_OPTIONS: ProjectMemberRole[] = ['manager', 'editor', 'viewer']
 type PatchableWorkspaceRole = 'manager' | 'editor' | 'viewer'
@@ -460,6 +768,16 @@ watchEffect(() => {
   if (!workspaceInviteRoleOptions.value.includes(workspaceInviteForm.role))
     workspaceInviteForm.role = 'viewer'
 })
+
+watch(workspaceDisplayPreferenceState, () => {
+  syncWorkspaceDisplayDrafts()
+}, { immediate: true, deep: true })
+
+watch(workspaceSettingsTabs, (tabs) => {
+  if (tabs.some(tab => tab.id === settingsSecondaryTabId.value))
+    return
+  settingsSecondaryTabId.value = 'project'
+}, { immediate: true })
 
 const workspaceInviteProjectLabel = computed(() => {
   const projectTitle = String(props.activeProject?.title || '').trim()
@@ -564,6 +882,39 @@ function buildResourceTab(resourceId: string, title: string, mode: WorkspacePrev
     closeable: true,
     resourceId,
     previewMode: mode,
+    collabPurpose: purpose,
+  }
+}
+
+function buildResourceTabById(resourceId: string): WorkspaceMainTab {
+  const normalizedResourceId = String(resourceId || '').trim()
+  const resource = props.selectedResources.find(item => item.id === normalizedResourceId) || null
+  const isPreviewResource = normalizedResourceId === String(props.previewResourceId || '').trim()
+
+  return buildResourceTab(
+    normalizedResourceId,
+    resource?.title || (isPreviewResource ? props.previewResourceTitle : ''),
+    resource ? resolvePreviewModeFromResource(resource) : normalizePreviewModeValue(props.previewMode),
+    resolveCollabPurposeFromResource(resource),
+  )
+}
+
+function buildMeetingTabById(meetingId: string): WorkspaceMainTab {
+  const normalizedMeetingId = String(meetingId || '').trim()
+  const activeMeeting = props.activeMeeting?.id === normalizedMeetingId
+    ? props.activeMeeting
+    : null
+  const meeting = activeMeeting
+    || props.meetings.find(item => item.id === normalizedMeetingId)
+    || null
+
+  return {
+    id: createMeetingTabId(normalizedMeetingId),
+    kind: 'meeting',
+    title: meeting?.title || '项目会议',
+    icon: resolveMeetingTabIcon(meeting),
+    closeable: true,
+    meetingId: normalizedMeetingId,
   }
 }
 
@@ -571,17 +922,31 @@ function previewTabFromProps(): WorkspaceMainTab | null {
   const resourceId = String(props.previewResourceId || '').trim()
   if (!resourceId)
     return null
-  const previewResource = props.selectedResources.find(resource => resource.id === resourceId) || null
-  return buildResourceTab(
-    resourceId,
-    props.previewResourceTitle,
-    normalizePreviewModeValue(props.previewMode),
-    resolveCollabPurposeFromResource(previewResource),
-  )
+  return buildResourceTabById(resourceId)
 }
+
+function resolveTabById(tabId: WorkspaceMainTabId): WorkspaceMainTab {
+  const fixed = fixedTabs.find(tab => tab.id === tabId)
+  if (fixed)
+    return fixed
+  if (tabId.startsWith('meeting:'))
+    return buildMeetingTabById(resolveMeetingIdFromTabId(tabId))
+
+  return buildResourceTabById(tabId.slice('resource:'.length))
+}
+
+const openTabs = computed<WorkspaceMainTab[]>(() => {
+  return openTabIds.value.map(resolveTabById)
+})
 
 const activeTab = computed(() => {
   return openTabs.value.find(tab => tab.id === activeTabId.value) || null
+})
+
+const activeMeetingTab = computed(() => {
+  if (activeTab.value?.kind !== 'meeting')
+    return null
+  return activeTab.value
 })
 
 const activeResourceTab = computed(() => {
@@ -591,11 +956,13 @@ const activeResourceTab = computed(() => {
 })
 
 const hasFlowResource = computed(() => Boolean(String(props.flowResourceId || '').trim()))
-const flowPanelTitle = computed(() => String(props.flowResourceTitle || '').trim() || '流程画布')
+const hasOpenTabs = computed(() => openTabs.value.length > 0)
 
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
     const title = activeResourceTab.value.title
+    if (activeResourceTab.value.previewMode === 'draw')
+      return ['竞赛分析', title]
     if (props.selectedContest?.name)
       return ['竞赛分析', props.selectedContest.name, title]
     return ['竞赛分析', title]
@@ -612,16 +979,14 @@ const breadcrumbItems = computed(() => {
   if (activeTabId.value === 'members')
     return ['竞赛分析', '项目协作']
 
-  if (activeTabId.value === 'flow') {
-    if (props.selectedContest?.name) {
-      return [
-        '竞赛分析',
-        props.selectedContest.name,
-        '流程画布',
-      ]
-    }
+  if (activeMeetingTab.value)
+    return ['竞赛分析', '项目会议', activeMeetingTab.value.title]
+
+  if (activeTabId.value === 'meeting')
+    return ['竞赛分析', '项目会议']
+
+  if (activeTabId.value === 'flow')
     return ['竞赛分析', '流程画布']
-  }
 
   if (activeTabId.value === 'dashboard') {
     if (props.selectedContest?.name) {
@@ -741,12 +1106,9 @@ function findFixedTab(tabId: WorkspaceFixedTabId): WorkspaceMainTab | undefined 
 }
 
 function ensureFixedTabOpen(tabId: WorkspaceFixedTabId, activate = true) {
-  const existed = openTabs.value.some(tab => tab.id === tabId)
-  if (!existed) {
-    const target = findFixedTab(tabId)
-    if (target)
-      openTabs.value = [...openTabs.value, target]
-  }
+  const existed = openTabIds.value.includes(tabId)
+  if (!existed && findFixedTab(tabId))
+    openTabIds.value = [...openTabIds.value, tabId]
 
   if (activate)
     activeTabId.value = tabId
@@ -757,18 +1119,8 @@ function ensurePreviewTabOpen(activate = true): WorkspaceMainTab | null {
   if (!previewTab)
     return null
 
-  const existingIndex = openTabs.value.findIndex(tab => tab.id === previewTab.id)
-  if (existingIndex < 0) {
-    openTabs.value = [...openTabs.value, previewTab]
-  }
-  else {
-    const nextTabs = [...openTabs.value]
-    nextTabs.splice(existingIndex, 1, {
-      ...nextTabs[existingIndex],
-      ...previewTab,
-    })
-    openTabs.value = nextTabs
-  }
+  if (!openTabIds.value.includes(previewTab.id))
+    openTabIds.value = [...openTabIds.value, previewTab.id]
 
   if (activate)
     activeTabId.value = previewTab.id
@@ -846,7 +1198,7 @@ function closeTabsByIds(
     && activeTabBeforeClose?.id !== currentPreviewTabId,
   )
 
-  openTabs.value = openTabs.value.filter(tab => !closingSet.has(tab.id))
+  openTabIds.value = openTabIds.value.filter(tabId => !closingSet.has(tabId))
 
   if (hiddenPreviewTabWillClose && options.emitClosePreview !== false && currentPreviewResourceId)
     emit('closePreviewResource', currentPreviewResourceId)
@@ -884,66 +1236,24 @@ function closeResourceTabByResourceId(
 }
 
 function updateOpenResourceTabMetadata(): void {
-  const previewTab = previewTabFromProps()
-  const resourceMap = new Map(
-    props.selectedResources.map(resource => [resource.id, resource] as const),
-  )
+  const validResourceIds = new Set(props.selectedResources.map(resource => String(resource.id || '').trim()).filter(Boolean))
+  const previewTabId = String(props.previewResourceId || '').trim()
+    ? createResourceTabId(String(props.previewResourceId || '').trim())
+    : ''
+  const nextTabIds = openTabIds.value.filter((tabId) => {
+    if (tabId.startsWith('meeting:'))
+      return true
+    if (!tabId.startsWith('resource:'))
+      return true
+    const resourceId = tabId.slice('resource:'.length)
+    return validResourceIds.has(resourceId) || tabId === previewTabId || tabId === activeTabId.value
+  })
 
-  const nextTabs: WorkspaceMainTab[] = []
-  let changed = false
+  if (!isSameTabIdList(nextTabIds, openTabIds.value))
+    openTabIds.value = nextTabIds
 
-  for (const tab of openTabs.value) {
-    if (tab.kind !== 'resource' || !tab.resourceId) {
-      nextTabs.push(tab)
-      continue
-    }
-
-    if (previewTab && tab.id === previewTab.id) {
-      if (
-        tab.title !== previewTab.title
-        || tab.icon !== previewTab.icon
-        || tab.previewMode !== previewTab.previewMode
-      ) {
-        nextTabs.push(previewTab)
-        changed = true
-      }
-      else {
-        nextTabs.push(tab)
-      }
-      continue
-    }
-
-    const resource = resourceMap.get(tab.resourceId)
-    if (!resource) {
-      if (activeTabId.value === tab.id) {
-        nextTabs.push(tab)
-      }
-      else {
-        changed = true
-      }
-      continue
-    }
-
-    const nextMode = resolvePreviewModeFromResource(resource)
-    const nextPurpose = resolveCollabPurposeFromResource(resource)
-    const nextTitle = resolveResourceTabTitle(nextMode, resource.title, nextPurpose)
-    const nextIcon = resolveResourceTabIcon(nextMode, nextPurpose)
-    if (tab.title !== nextTitle || tab.icon !== nextIcon || tab.previewMode !== nextMode) {
-      nextTabs.push({
-        ...tab,
-        title: nextTitle,
-        icon: nextIcon,
-        previewMode: nextMode,
-      })
-      changed = true
-      continue
-    }
-
-    nextTabs.push(tab)
-  }
-
-  if (changed)
-    openTabs.value = nextTabs
+  if (activeTabId.value && !nextTabIds.includes(activeTabId.value))
+    activeTabId.value = nextTabIds[0] || ''
 }
 
 function openTabContextMenu(tabId: WorkspaceMainTabId, event: MouseEvent): void {
@@ -1036,18 +1346,18 @@ function moveTab(fromId: WorkspaceMainTabId, toId: WorkspaceMainTabId) {
   if (fromId === toId)
     return
 
-  const nextTabs = [...openTabs.value]
-  const fromIndex = nextTabs.findIndex(tab => tab.id === fromId)
-  const toIndex = nextTabs.findIndex(tab => tab.id === toId)
+  const nextTabIds = [...openTabIds.value]
+  const fromIndex = nextTabIds.findIndex(tabId => tabId === fromId)
+  const toIndex = nextTabIds.findIndex(tabId => tabId === toId)
   if (fromIndex < 0 || toIndex < 0)
     return
 
-  const [moved] = nextTabs.splice(fromIndex, 1)
+  const [moved] = nextTabIds.splice(fromIndex, 1)
   if (!moved)
     return
 
-  nextTabs.splice(toIndex, 0, moved)
-  openTabs.value = nextTabs
+  nextTabIds.splice(toIndex, 0, moved)
+  openTabIds.value = nextTabIds
 }
 
 function onTabDragStart(tabId: WorkspaceMainTabId) {
@@ -1341,6 +1651,12 @@ const normalizedPreviewMode = computed<WorkspacePreviewMode>(() => {
 
 const activePreviewMode = computed<WorkspacePreviewMode>(() => {
   return activeResourceTab.value?.previewMode || normalizedPreviewMode.value
+})
+
+const showBreadcrumbPresence = computed(() => {
+  if (activeTabId.value === 'flow')
+    return true
+  return Boolean(activeResourceTab.value && (activePreviewMode.value === 'draw' || activePreviewMode.value === 'markdown'))
 })
 
 const isMarkdownPreviewActive = computed(() => {
@@ -1851,6 +2167,13 @@ watch(() => props.openMemberManagementSignal, (next, previous) => {
   ensureFixedTabOpen('members', true)
 })
 
+watch(() => props.openDisplayPreferencesSignal, (next, previous) => {
+  if (next === previous)
+    return
+  ensureFixedTabOpen('settings', true)
+  selectSettingsSecondaryTab('myDisplay')
+})
+
 watch(() => props.openFlowSignal, (next, previous) => {
   if (next === previous)
     return
@@ -1887,6 +2210,36 @@ watch(() => props.selectedResources, () => {
   updateOpenResourceTabMetadata()
 }, { deep: true })
 
+watch(() => props.openTabs, (next) => {
+  const normalized = normalizeWorkspaceTabIds(next, { allowEmpty: true })
+  if (!isSameTabIdList(normalized, openTabIds.value))
+    openTabIds.value = normalized
+
+  const normalizedActiveTabId = normalizeActiveTabId(props.activeTabId, normalized)
+  if (activeTabId.value !== normalizedActiveTabId)
+    activeTabId.value = normalizedActiveTabId
+}, { deep: true, immediate: true })
+
+watch(() => props.activeTabId, (next) => {
+  const normalized = normalizeActiveTabId(next, openTabIds.value)
+  if (activeTabId.value !== normalized)
+    activeTabId.value = normalized
+}, { immediate: true })
+
+watch(openTabIds, (next) => {
+  const normalized = normalizeWorkspaceTabIds(next, { allowEmpty: true })
+  if (!isSameTabIdList(normalized, openTabIds.value)) {
+    openTabIds.value = normalized
+    return
+  }
+
+  const normalizedActiveTabId = normalizeActiveTabId(activeTabId.value, normalized)
+  if (activeTabId.value !== normalizedActiveTabId)
+    activeTabId.value = normalizedActiveTabId
+
+  emit('update:openTabs', normalized)
+}, { deep: true, immediate: true })
+
 onMounted(() => {
   document.addEventListener('pointerdown', handleGlobalPointerDown)
   document.addEventListener('keydown', handleGlobalEscape)
@@ -1904,18 +2257,23 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
 })
 
 watch(activeTabId, (next) => {
-  emit('update:activeTabId', next)
+  const normalized = normalizeActiveTabId(next, openTabIds.value)
+  if (normalized !== next) {
+    activeTabId.value = normalized
+    return
+  }
+  emit('update:activeTabId', normalized)
 }, { immediate: true })
 </script>
 
 <template>
-  <section class="bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
-    <div class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center relative">
-      <template v-if="openTabs.length > 0">
+  <section class="bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden" :style="workspaceMainTabLayoutStyle">
+    <div v-if="hasOpenTabs" class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center relative">
+      <div class="flex flex-1 h-full min-w-0 overflow-x-auto">
         <div
           v-for="tab in openTabs"
           :key="tab.id"
-          class="px-2 border-r border-slate-200 flex gap-1 h-full min-w-[170px] items-center"
+          class="workspace-main-tab px-2 border-r border-slate-200 flex gap-1 h-full min-w-[170px] shrink-0 items-center"
           :class="[
             tab.id === activeTabId ? 'bg-slate-50' : 'bg-white',
             dragOverTabId === tab.id ? 'ring-1 ring-inset ring-blue-300' : '',
@@ -1928,7 +2286,7 @@ watch(activeTabId, (next) => {
           @contextmenu.prevent="openTabContextMenu(tab.id, $event)"
         >
           <button
-            class="text-xs text-left flex flex-1 gap-2 h-full min-w-0 items-center"
+            class="workspace-main-tab__trigger text-xs text-left flex flex-1 gap-2 h-full min-w-0 items-center"
             :class="tab.id === activeTabId ? 'text-slate-800 font-medium' : 'text-slate-500 hover:text-slate-700'"
             type="button"
             @click="activateTab(tab.id)"
@@ -1939,24 +2297,13 @@ watch(activeTabId, (next) => {
 
           <button
             v-if="tab.closeable"
-            class="text-slate-400 p-1 rounded hover:text-slate-600 hover:bg-slate-100"
+            class="workspace-main-tab__close text-slate-400 p-1 rounded hover:text-slate-600 hover:bg-slate-100"
             type="button"
             @click.stop="closeTab(tab.id)"
           >
             <span class="material-symbols-outlined text-[14px]">close</span>
           </button>
         </div>
-      </template>
-
-      <div v-else class="px-3 flex w-full items-center justify-between">
-        <span class="text-[11px] text-slate-500 font-medium">WinLoop</span>
-        <button
-          class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white hover:bg-slate-50"
-          type="button"
-          @click="ensureFixedTabOpen('dashboard', true)"
-        >
-          打开仪表盘
-        </button>
       </div>
 
       <div
@@ -1973,7 +2320,8 @@ watch(activeTabId, (next) => {
           type="button"
           @click="closeTab(tabContextMenuTab.id)"
         >
-          关闭当前
+          <span class="material-symbols-outlined workspace-tab-context-menu__icon">close</span>
+          <span>关闭当前</span>
         </button>
         <button
           class="workspace-tab-context-menu__item"
@@ -1981,7 +2329,8 @@ watch(activeTabId, (next) => {
           :disabled="tabContextMenuLeftIds.length === 0"
           @click="closeTabsToLeft"
         >
-          关闭左侧所有
+          <span class="material-symbols-outlined workspace-tab-context-menu__icon">keyboard_double_arrow_left</span>
+          <span>关闭左侧所有</span>
         </button>
         <button
           class="workspace-tab-context-menu__item"
@@ -1989,7 +2338,8 @@ watch(activeTabId, (next) => {
           :disabled="tabContextMenuRightIds.length === 0"
           @click="closeTabsToRight"
         >
-          关闭右侧所有
+          <span class="material-symbols-outlined workspace-tab-context-menu__icon">keyboard_double_arrow_right</span>
+          <span>关闭右侧所有</span>
         </button>
         <button
           class="workspace-tab-context-menu__item"
@@ -1997,31 +2347,50 @@ watch(activeTabId, (next) => {
           :disabled="openTabs.length <= 1"
           @click="closeOtherTabs"
         >
-          关闭其他
+          <span class="material-symbols-outlined workspace-tab-context-menu__icon">filter_none</span>
+          <span>关闭其他</span>
         </button>
+        <div class="workspace-tab-context-menu__divider" />
         <button
           class="workspace-tab-context-menu__item workspace-tab-context-menu__item--danger"
           type="button"
           :disabled="openTabs.length === 0"
           @click="closeAllTabs"
         >
-          关闭所有
+          <span class="material-symbols-outlined workspace-tab-context-menu__icon">clear_all</span>
+          <span>关闭所有</span>
         </button>
       </div>
     </div>
 
-    <div class="text-[11px] text-slate-400 px-4 py-2 border-b border-slate-200 bg-white flex gap-2 items-center">
-      <template v-for="(item, index) in breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
-        <span :class="index === breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
-          {{ item }}
-        </span>
-        <span v-if="index < breadcrumbItems.length - 1" class="material-symbols-outlined text-[12px]">chevron_right</span>
-      </template>
+    <div
+      v-if="hasOpenTabs"
+      class="text-[10px] text-slate-400 px-3 py-1.5 border-b border-slate-200 bg-white flex gap-2 items-center justify-between"
+    >
+      <div class="flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto">
+        <template v-for="(item, index) in breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
+          <span :class="index === breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
+            {{ item }}
+          </span>
+          <span v-if="index < breadcrumbItems.length - 1" class="material-symbols-outlined text-[12px]">chevron_right</span>
+        </template>
+      </div>
+      <div v-if="showBreadcrumbPresence" class="shrink-0">
+        <CollabPresenceAvatarStack
+          :users="collabPresenceUsers"
+          appearance="flat"
+          size="sm"
+        />
+      </div>
     </div>
 
     <div
       class="flex-1 h-0 min-h-0"
-      :class="activeResourceTab ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
+      :class="!hasOpenTabs
+        ? 'overflow-hidden p-0'
+        : activeResourceTab
+          ? 'overflow-hidden'
+          : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
     >
       <div v-if="activeTabId === 'dashboard'" class="mx-auto max-w-5xl space-y-4">
         <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
@@ -2541,41 +2910,43 @@ watch(activeTabId, (next) => {
         </div>
       </div>
 
-      <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
-        <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
-          <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
-            <div class="text-xs text-slate-600">
-              {{ flowPanelTitle }}
-              <span class="text-slate-400 ml-2">rev {{ hasFlowResource ? Math.max(0, Number(collabRevision || 0)) : 0 }}</span>
-            </div>
-            <div class="flex flex-wrap gap-3 items-center justify-end">
-              <div
-                class="text-[11px]"
-                :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
-              >
-                {{ hasFlowResource ? collabConnectionText : '待初始化' }}
-              </div>
-              <CollabPresenceAvatarStack :users="collabPresenceUsers" />
-            </div>
-          </div>
+      <WorkspaceMeetingPanel
+        v-else-if="activeTabId === 'meeting' || activeMeetingTab"
+        :meetings="meetings"
+        :active-meeting-id="activeMeetingId"
+        :active-meeting="activeMeeting"
+        :utterances="meetingUtterances"
+        :live-captions="meetingLiveCaptions"
+        :loading="meetingLoading"
+        :detail-loading="meetingDetailLoading"
+        :mutating="meetingMutating"
+        :join-url="meetingJoinUrl"
+        :join-token="meetingJoinToken"
+        :join-expires-at="meetingJoinExpiresAt"
+        @create-meeting="emit('createMeeting', $event)"
+        @refresh-meetings="emit('refreshMeetings')"
+        @join-meeting="emit('joinMeeting', $event)"
+        @end-meeting="emit('endMeeting', $event)"
+        @select-meeting="emit('selectMeeting', $event)"
+        @open-resource="emit('openMeetingResource', $event)"
+      />
 
-          <div v-if="hasFlowResource" class="h-full">
-            <div class="flex flex-col h-full">
-              <WorkspaceTldrawCanvas
-                :key="props.flowResourceId || 'flow-canvas'"
-                class="h-full min-h-0 w-full"
-                :model-value="collabDrawValue"
-                :remote-cursors="collabPresenceCursors"
-                :persistence-key="`workspace-flow-${props.flowResourceId || 'default'}`"
-                :readonly="false"
-                @update:model-value="onCollabDrawModelUpdate"
-                @update-collab-cursor="onCollabCursorUpdate"
-              />
-              <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
-                {{ collabDrawError }}
-              </p>
-            </div>
-          </div>
+      <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
+        <div class="bg-white flex h-full min-h-0 w-full flex-col overflow-hidden">
+          <WorkspaceTldrawCanvas
+            v-if="hasFlowResource"
+            :key="props.flowResourceId || 'flow-canvas'"
+            class="flex-1 min-h-0 w-full"
+            :error-text="collabDrawError"
+            :model-value="collabDrawValue"
+            :remote-cursors="collabPresenceCursors"
+            :revision="Math.max(0, Number(collabRevision || 0))"
+            :warning-text="hasFlowResource && !collabConnected ? collabConnectionText : ''"
+            :persistence-key="`workspace-flow-${props.flowResourceId || 'default'}`"
+            :readonly="false"
+            @update:model-value="onCollabDrawModelUpdate"
+            @update-collab-cursor="onCollabCursorUpdate"
+          />
 
           <div v-else class="px-6 bg-slate-50 flex flex-1 items-center justify-center">
             <div class="px-6 py-8 text-center border border-slate-300 rounded-xl border-dashed bg-white max-w-md">
@@ -2798,6 +3169,43 @@ watch(activeTabId, (next) => {
       </div>
 
       <div v-else-if="activeTabId === 'settings'" class="mx-auto max-w-5xl space-y-4">
+        <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div class="flex gap-3 items-center">
+              <span class="material-symbols-outlined text-xl text-blue-600">settings</span>
+              <div>
+                <h2 class="text-sm font-bold">
+                  Settings
+                </h2>
+                <div class="text-[11px] text-slate-500 mt-0.5">
+                  项目设置与个人外观偏好
+                </div>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap gap-2 items-center">
+              <button
+                v-for="tab in workspaceSettingsTabs"
+                :key="`workspace-settings-tab-${tab.id}`"
+                :data-testid="tab.id === 'myDisplay'
+                  ? 'workspace-settings-tab-myDisplay'
+                  : tab.id === 'teamDefault'
+                    ? 'workspace-settings-tab-teamDefault'
+                    : 'workspace-settings-tab-project'"
+                class="text-[11px] font-semibold px-3 py-1.5 border rounded-full transition-colors"
+                :class="settingsSecondaryTabId === tab.id
+                  ? 'border-blue-200 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+                type="button"
+                @click="selectSettingsSecondaryTab(tab.id)"
+              >
+                {{ tab.label }}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <template v-if="settingsSecondaryTabId === 'project'">
         <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
           <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div class="flex gap-3 items-center">
@@ -3105,24 +3513,247 @@ watch(activeTabId, (next) => {
             </div>
           </section>
         </template>
+        </template>
+
+        <template v-else-if="settingsSecondaryTabId === 'myDisplay'">
+          <section class="border border-slate-200 rounded-lg bg-white overflow-hidden" data-testid="workspace-display-user-panel">
+            <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80">
+              <h3 class="text-sm font-bold text-slate-900">
+                个人设置
+              </h3>
+              <p class="text-[11px] text-slate-500 mt-1">
+                仅影响你在当前项目工作区里的个人显示方式。
+              </p>
+            </div>
+
+            <div class="p-4 space-y-4">
+              <p v-if="workspaceDisplayPreferencesError" class="text-[11px] text-rose-600 px-3 py-2 border border-rose-200 rounded bg-rose-50">
+                {{ workspaceDisplayPreferencesError }}
+              </p>
+
+              <div v-if="workspaceDisplayPreferencesLoading" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
+                正在加载显示偏好...
+              </div>
+
+              <template v-else>
+                <section class="border border-slate-200 rounded-xl bg-slate-50/70 p-4 space-y-4">
+                  <div>
+                    <div>
+                      <h4 class="text-sm text-slate-900 font-semibold">
+                        外观设置
+                      </h4>
+                      <p class="text-[11px] text-slate-500 mt-1">
+                        当前生效：{{ workspaceDisplayEffectiveFontSizeLabel }} 字号，{{ workspaceDisplayEffectiveTabSpacingLabel }}标签边距。
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="space-y-3">
+                    <div class="flex items-center justify-between text-xs text-slate-600">
+                      <span>字体大小</span>
+                    </div>
+
+                    <div class="workspace-display-slider-shell">
+                      <div class="workspace-display-slider-track" aria-hidden="true">
+                        <div
+                          class="workspace-display-slider-track__fill"
+                          :style="{ width: userWorkspaceDisplaySliderProgress }"
+                        />
+                        <span
+                          v-for="(option, index) in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                          :key="`workspace-display-user-track-stop-${option.value}`"
+                          class="workspace-display-slider-track__stop"
+                          :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                            ? 'workspace-display-slider-track__stop--active'
+                            : ''"
+                          :style="{ left: `${(index / (WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length - 1)) * 100}%` }"
+                        />
+                      </div>
+                      <input
+                        data-testid="workspace-display-user-font-size-select"
+                        class="workspace-display-slider"
+                        type="range"
+                        min="0"
+                        max="4"
+                        step="1"
+                        :value="userWorkspaceDisplaySliderValue"
+                        :style="{ '--workspace-display-slider-progress': userWorkspaceDisplaySliderProgress }"
+                        @input="updateUserWorkspaceDisplayFontSizeDraft(($event.target as HTMLInputElement).value)"
+                      >
+                    </div>
+
+                    <div class="grid grid-cols-5 gap-2">
+                      <span
+                        v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                        :key="`workspace-display-user-label-${option.value}`"
+                        class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                        :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                          ? 'text-blue-700'
+                          : 'text-slate-500'"
+                      >
+                        <span>{{ option.label }}</span>
+                        <span
+                          v-if="option.value === workspaceDisplayRecommendedFontSizePreset"
+                          class="workspace-display-slider-label__tag-wrap"
+                        >
+                          <span
+                            data-testid="workspace-display-recommended-tag"
+                            class="workspace-display-slider-label__tag"
+                            tabindex="0"
+                          >
+                            推荐
+                          </span>
+                          <span class="workspace-display-slider-label__tooltip">
+                            项目工作区推荐
+                          </span>
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <label class="text-xs text-slate-600 block space-y-2">
+                    <span class="flex items-center justify-between gap-3">
+                      <span>标签边距</span>
+                      <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
+                    </span>
+                    <select
+                      v-model="userWorkspaceDisplayTabSpacingDraft"
+                      data-testid="workspace-display-user-tab-spacing-select"
+                      class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                    >
+                      <option value="">
+                        未设置，回退到工作区推荐
+                      </option>
+                      <option
+                        v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                        :key="`workspace-display-user-tab-spacing-${option.value}`"
+                        :value="option.value"
+                      >
+                        {{ option.label }}
+                      </option>
+                    </select>
+                    <span class="text-[11px] text-slate-500 block">
+                      紧凑档会压缩顶部标签页的横向边距和最小宽度。推荐：{{ workspaceDisplayRecommendedTabSpacingLabel }}。
+                    </span>
+                  </label>
+
+                  <div class="flex flex-wrap gap-2 justify-end">
+                    <button
+                      class="text-[11px] font-semibold px-3 py-1.5 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      type="button"
+                      :disabled="workspaceDisplaySavingUser"
+                      @click="
+                        userWorkspaceDisplayFontSizeDraft = ''
+                        userWorkspaceDisplayTabSpacingDraft = ''
+                      "
+                    >
+                      还原为工作区推荐设置
+                    </button>
+                    <button
+                      class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                      type="button"
+                      :disabled="workspaceDisplaySavingUser"
+                      @click="submitWorkspaceDisplayUserOverride"
+                    >
+                      {{ workspaceDisplaySavingUser ? '保存中...' : '保存个人设置' }}
+                    </button>
+                  </div>
+                </section>
+              </template>
+            </div>
+          </section>
+        </template>
+
+        <template v-else-if="settingsSecondaryTabId === 'teamDefault'">
+          <section class="border border-slate-200 rounded-lg bg-white overflow-hidden" data-testid="workspace-display-team-panel">
+            <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80">
+              <h3 class="text-sm font-bold text-slate-900">
+                团队默认
+              </h3>
+              <p class="text-[11px] text-slate-500 mt-1">
+                仅对当前团队工作区生效，普通成员会继承这里的默认值。
+              </p>
+            </div>
+
+            <div class="p-4 space-y-4">
+              <div class="gap-3 grid grid-cols-1 md:grid-cols-3">
+                <div class="p-3 border border-slate-200 rounded bg-slate-50">
+                  <div class="text-[11px] text-slate-500">当前团队默认</div>
+                  <div class="text-sm text-slate-900 font-semibold mt-1">
+                    {{ workspaceDisplayTeamDefaultLabel }}
+                  </div>
+                </div>
+                <div class="p-3 border border-slate-200 rounded bg-slate-50">
+                  <div class="text-[11px] text-slate-500">个人全局默认</div>
+                  <div class="text-sm text-slate-900 font-semibold mt-1">
+                    {{ workspaceDisplayUserDefaultLabel }}
+                  </div>
+                </div>
+                <div class="p-3 border border-slate-200 rounded bg-slate-50">
+                  <div class="text-[11px] text-slate-500">系统默认</div>
+                  <div class="text-sm text-slate-900 font-semibold mt-1">
+                    默认（md）
+                  </div>
+                </div>
+              </div>
+
+              <p v-if="workspaceDisplayPreferencesError" class="text-[11px] text-rose-600 px-3 py-2 border border-rose-200 rounded bg-rose-50">
+                {{ workspaceDisplayPreferencesError }}
+              </p>
+
+              <div v-if="workspaceDisplayPreferencesLoading" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
+                正在加载显示偏好...
+              </div>
+
+              <template v-else>
+                <label class="text-xs text-slate-600 block space-y-1">
+                  <span class="block">团队默认字体大小</span>
+                  <select
+                    v-model="teamWorkspaceDisplayFontSizeDraft"
+                    data-testid="workspace-display-team-font-size-select"
+                    class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                  >
+                    <option value="">
+                      清空团队默认，回退到系统默认
+                    </option>
+                    <option
+                      v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                      :key="`workspace-display-team-option-${option.value}`"
+                      :value="option.value"
+                    >
+                      {{ option.label }}（{{ option.value }}）
+                    </option>
+                  </select>
+                </label>
+
+                <div class="flex flex-wrap gap-2 justify-end">
+                  <button
+                    class="text-[11px] font-semibold px-3 py-1.5 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="workspaceDisplaySavingTeam"
+                    @click="teamWorkspaceDisplayFontSizeDraft = ''"
+                  >
+                    清空团队默认
+                  </button>
+                  <button
+                    class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="workspaceDisplaySavingTeam"
+                    @click="submitWorkspaceDisplayTeamDefault"
+                  >
+                    {{ workspaceDisplaySavingTeam ? '保存中...' : '保存团队默认' }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </section>
+        </template>
       </div>
 
       <div v-else-if="activeResourceTab" class="h-full min-h-0 w-full">
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
           <div class="bg-slate-50 flex-1 min-h-0">
             <template v-if="activePreviewMode === 'markdown'">
-              <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
-                <div class="text-xs text-slate-600">
-                  {{ activeResourceTab.title }}
-                  <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
-                </div>
-                <div class="flex flex-wrap gap-3 items-center justify-end">
-                  <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                    {{ collabConnectionText }}
-                  </div>
-                  <CollabPresenceAvatarStack :users="collabPresenceUsers" />
-                </div>
-              </div>
               <div class="bg-white flex flex-col h-full min-h-0">
                 <RichTextEditor
                   :doc="collabMarkdownDoc"
@@ -3130,45 +3761,32 @@ watch(activeTabId, (next) => {
                   :current-user="collabCurrentUser"
                   :editable="true"
                   class="min-h-0 w-full"
+                  :enable-slash-menu="true"
+                  :image-upload-handler="markdownImageUploadHandler"
+                  :show-toolbar="false"
+                  content-max-width="1040px"
                   placeholder="输入正文或标题，协作文档会实时同步"
                   :heading-levels="[1, 2, 3]"
                   @selection-change="onMarkdownSelectionChange"
                   @remote-presence-change="onMarkdownRemotePresenceChange"
                 />
-                <CollabPresenceDock :users="collabPresenceUsers" />
               </div>
             </template>
 
             <template v-else-if="activePreviewMode === 'draw'">
-              <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
-                <div class="text-xs text-slate-600">
-                  {{ activeResourceTab.title }}
-                  <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
-                </div>
-                <div class="flex flex-wrap gap-3 items-center justify-end">
-                  <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                    {{ collabConnectionText }}
-                  </div>
-                  <CollabPresenceAvatarStack :users="collabPresenceUsers" />
-                </div>
-              </div>
-              <div class="h-full">
-                <div class="flex flex-col h-full">
-                  <WorkspaceTldrawCanvas
-                    :key="props.previewResourceId || activeResourceTab.id"
-                    class="h-full min-h-0 w-full"
-                    :model-value="collabDrawValue"
-                    :remote-cursors="collabPresenceCursors"
-                    :persistence-key="`workspace-collab-${props.previewResourceId || activeResourceTab.id}`"
-                    :readonly="false"
-                    @update:model-value="onCollabDrawModelUpdate"
-                    @update-collab-cursor="onCollabCursorUpdate"
-                  />
-                  <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
-                    {{ collabDrawError }}
-                  </p>
-                </div>
-              </div>
+              <WorkspaceTldrawCanvas
+                :key="props.previewResourceId || activeResourceTab.id"
+                class="h-full min-h-0 w-full"
+                :error-text="collabDrawError"
+                :model-value="collabDrawValue"
+                :remote-cursors="collabPresenceCursors"
+                :revision="Math.max(0, Number(collabRevision || 0))"
+                :warning-text="!collabConnected ? collabConnectionText : ''"
+                :persistence-key="`workspace-collab-${props.previewResourceId || activeResourceTab.id}`"
+                :readonly="false"
+                @update:model-value="onCollabDrawModelUpdate"
+                @update-collab-cursor="onCollabCursorUpdate"
+              />
             </template>
 
             <template v-else>
@@ -3218,14 +3836,19 @@ watch(activeTabId, (next) => {
         </div>
       </div>
 
-      <div v-else class="mx-auto max-w-5xl space-y-4">
-        <div class="p-6 text-center border border-slate-200 rounded-lg bg-white shadow-sm">
-          <div class="text-sm text-slate-700 font-semibold">
-            WinLoop
-          </div>
-          <div class="text-xs text-slate-500 mt-2">
-            当前没有打开的标签页，可点击上方“打开仪表盘”继续。
-          </div>
+      <div v-else class="workspace-main-empty-state">
+        <div class="workspace-main-empty-state__watermark" aria-hidden="true">
+          <span>WIN</span>
+          <span>LOOP</span>
+        </div>
+        <div class="workspace-main-empty-state__content">
+          <button
+            class="workspace-main-empty-state__button"
+            type="button"
+            @click="ensureFixedTabOpen('dashboard', true)"
+          >
+            打开默认仪表盘
+          </button>
         </div>
       </div>
     </div>
@@ -3523,10 +4146,94 @@ watch(activeTabId, (next) => {
 </template>
 
 <style scoped>
+.workspace-main-empty-state {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94) 52%, rgba(241, 245, 249, 0.98) 100%);
+}
+
+.workspace-main-empty-state__watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -58%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.02em;
+  font-size: clamp(80px, 15vw, 220px);
+  font-weight: 800;
+  line-height: 0.82;
+  letter-spacing: 0.18em;
+  color: rgba(148, 163, 184, 0.12);
+  pointer-events: none;
+  user-select: none;
+}
+
+.workspace-main-empty-state__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.workspace-main-empty-state__button {
+  min-width: 164px;
+  height: 40px;
+  padding: 0 18px;
+  border: 1px solid #d6deec;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.workspace-main-empty-state__button:hover {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+
+.workspace-main-empty-state__button:focus-visible {
+  outline: 2px solid #cbd5e1;
+  outline-offset: 2px;
+}
+
+.workspace-main-tab {
+  min-width: var(--workspace-main-tab-min-width) !important;
+  padding-right: var(--workspace-main-tab-padding-x) !important;
+  padding-left: var(--workspace-main-tab-padding-x) !important;
+  gap: var(--workspace-main-tab-gap) !important;
+}
+
+.workspace-main-tab__trigger {
+  gap: var(--workspace-main-tab-trigger-gap) !important;
+}
+
+.workspace-main-tab__close {
+  padding: var(--workspace-main-tab-close-padding) !important;
+}
+
 .workspace-tab-context-menu {
   position: fixed;
   z-index: 40;
-  min-width: 168px;
+  width: 176px;
   overflow: hidden;
   border: 1px solid #d9e1ef;
   border-radius: 10px;
@@ -3535,6 +4242,9 @@ watch(activeTabId, (next) => {
 }
 
 .workspace-tab-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 9px 12px;
   border: 0;
@@ -3545,6 +4255,17 @@ watch(activeTabId, (next) => {
   transition:
     background-color 0.2s ease,
     color 0.2s ease;
+}
+
+.workspace-tab-context-menu__icon {
+  font-size: 16px;
+  flex: 0 0 auto;
+}
+
+.workspace-tab-context-menu__divider {
+  height: 1px;
+  margin: 4px 10px;
+  background: #e2e8f0;
 }
 
 .workspace-tab-context-menu__item:hover:enabled {
@@ -3564,5 +4285,165 @@ watch(activeTabId, (next) => {
 .workspace-tab-context-menu__item--danger:hover:enabled {
   background: #fff1f2;
   color: #b91c1c;
+}
+
+.workspace-display-slider-shell {
+  position: relative;
+  height: 22px;
+  padding: 0 10px;
+  box-sizing: border-box;
+}
+
+.workspace-display-slider-track {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  left: 10px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbe5f1;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.workspace-display-slider-track__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.workspace-display-slider-track__stop {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  transform: translate(-50%, -50%);
+}
+
+.workspace-display-slider-track__stop--active {
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+}
+
+.workspace-display-slider {
+  appearance: none;
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.workspace-display-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  border: 2px solid #2563eb;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.92);
+}
+
+.workspace-display-slider::-webkit-slider-runnable-track {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-track {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-progress {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #2563eb;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.92);
+}
+
+.workspace-display-slider-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.workspace-display-slider-label__tag-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.workspace-display-slider-label__tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.workspace-display-slider-label__tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 6;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(4px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-display-slider-label__tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.workspace-display-slider-label__tag-wrap:hover .workspace-display-slider-label__tooltip,
+.workspace-display-slider-label__tag-wrap:focus-within .workspace-display-slider-label__tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 </style>

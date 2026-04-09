@@ -25,6 +25,29 @@ export type CollabPurpose = 'workflow' | 'freeform' | 'notes'
 export type ResourcePreviewStatus = 'queued' | 'converting' | 'finalizing' | 'succeeded' | 'failed'
 export type ProjectResourceShareVisibility = 'public' | 'workspace'
 export type ProjectResourceShareDurationPreset = '1h' | '1d' | '3d' | '7d' | '1mon'
+export type WorkspaceFontSizePreset = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+export type WorkspaceTabSpacingPreset = 'compact' | 'default' | 'relaxed'
+export type WorkspaceDisplayPreferenceSource = 'workspace_override' | 'user_default' | 'team_default' | 'system_default'
+
+export interface WorkspaceDisplayPreferences {
+  fontSizePreset?: WorkspaceFontSizePreset | null
+  tabSpacingPreset?: WorkspaceTabSpacingPreset | null
+  updatedAt?: string
+}
+
+export interface WorkspaceDisplayPreferenceSources {
+  fontSizePreset: WorkspaceDisplayPreferenceSource
+  tabSpacingPreset: WorkspaceDisplayPreferenceSource
+}
+
+export interface WorkspaceDisplayPreferenceSnapshot {
+  userDefault: WorkspaceDisplayPreferences | null
+  teamDefault: WorkspaceDisplayPreferences | null
+  workspaceOverride: WorkspaceDisplayPreferences | null
+  effective: WorkspaceDisplayPreferences
+  sources: WorkspaceDisplayPreferenceSources
+  canManageTeamDefault: boolean
+}
 
 export type ResourceCategory
   = 'basic_info'
@@ -985,6 +1008,105 @@ export interface ProjectOutlineSnapshot {
   reason: string
 }
 
+export type ProjectMeetingMode = 'audio' | 'video'
+export type ProjectMeetingStatus = 'active' | 'ended' | 'failed'
+export type ProjectMeetingTranscriptStatus = 'idle' | 'running' | 'completed' | 'failed'
+export type ProjectMeetingRecordingStatus = 'idle' | 'requested' | 'processing' | 'completed' | 'failed'
+export type ProjectMeetingSummaryStatus = 'idle' | 'queued' | 'processing' | 'completed' | 'failed'
+export type ProjectMeetingParticipantRole = 'host' | 'member' | 'guest' | 'system' | 'unknown'
+export type ProjectMeetingTrackState = 'unknown' | 'muted' | 'active' | 'ended'
+export type ProjectMeetingJobType = 'transcript_finalize' | 'recording_finalize' | 'meeting_summary'
+export type ProjectMeetingJobStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
+export type ProjectMeetingArtifactKind = 'meeting_recording' | 'meeting_notes'
+
+export interface ProjectMeeting {
+  id: string
+  projectId: string
+  workspaceId: string
+  title: string
+  mode: ProjectMeetingMode
+  provider: string
+  providerRoomId: string
+  providerRoomName: string
+  status: ProjectMeetingStatus
+  transcriptStatus: ProjectMeetingTranscriptStatus
+  recordingStatus: ProjectMeetingRecordingStatus
+  summaryStatus: ProjectMeetingSummaryStatus
+  recordingResourceId?: string | null
+  notesResourceId?: string | null
+  startedByUserId: string
+  startedAt: string
+  endedAt?: string | null
+  providerJoinUrl?: string
+  providerMetadata?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectMeetingParticipant {
+  id: string
+  meetingId: string
+  projectId: string
+  userId?: string | null
+  username?: string
+  avatarUrl?: string | null
+  providerParticipantId?: string
+  providerIdentity: string
+  displayName: string
+  role: ProjectMeetingParticipantRole
+  joinedAt?: string | null
+  leftAt?: string | null
+  audioTrackState: ProjectMeetingTrackState
+  videoTrackState: ProjectMeetingTrackState
+  metadata?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectMeetingUtterance {
+  id: string
+  meetingId: string
+  participantId?: string | null
+  speakerUserId?: string | null
+  speakerName: string
+  speakerLabel: string
+  sequenceNo: number
+  startedAtMs: number
+  endedAtMs: number
+  text: string
+  language: string
+  confidence: number
+  isFinal: boolean
+  providerEventKey?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectMeetingJob {
+  id: string
+  meetingId: string
+  jobType: ProjectMeetingJobType
+  status: ProjectMeetingJobStatus
+  attempt: number
+  maxAttempt: number
+  nextRunAt: string
+  errorMessage: string
+  payload: Record<string, unknown>
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectMeetingDetail extends ProjectMeeting {
+  participants: ProjectMeetingParticipant[]
+  recentJobs: ProjectMeetingJob[]
+}
+
+export interface ProjectMeetingListPayload {
+  items: ProjectMeeting[]
+}
+
 export interface ProjectSettingsDraftCommon {
   title: string
   summary: string
@@ -1037,6 +1159,63 @@ export interface ProjectSettingsDraft {
   revision: number
   deviceId: string
   createdAt: string
+  updatedAt: string
+  lastOpenedAt: string
+}
+
+export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings'
+export type WorkspaceMeetingTabId = `meeting:${string}`
+export type WorkspaceResourceTabId = `resource:${string}`
+export type WorkspaceOpenTabState = WorkspaceFixedTabId | WorkspaceMeetingTabId | WorkspaceResourceTabId
+export type ProjectWorkbenchMode = 'project' | 'defense'
+
+export interface ProjectWorkspaceViewState {
+  workbenchMode: ProjectWorkbenchMode
+  mainTabs: WorkspaceOpenTabState[]
+  activeMainTabId: WorkspaceOpenTabState | ''
+  previewResourceId: string
+  selectedContestId: string
+  selectedTrackId: string
+  activeChatSessionId: string
+  activeMeetingId: string
+  leftSidebarCollapsed: boolean
+  rightSidebarCollapsed: boolean
+}
+
+export interface ProjectWorkspaceViewPreference {
+  projectId: string
+  payload: ProjectWorkspaceViewState
+  revision: number
+  deviceId: string
+  updatedAt: string
+  lastOpenedAt: string
+}
+
+export interface DeviceScopedRestoreResolution {
+  deviceId: string
+  isNewDevice: boolean
+  isStaleDevice: boolean
+  shouldPrompt: boolean
+  latestOtherDeviceId: string
+  currentLastOpenedAt: string
+  latestOtherLastOpenedAt: string
+}
+
+export interface ProjectWorkspaceViewDeviceStatePayload {
+  current: ProjectWorkspaceViewPreference | null
+  latestOther: ProjectWorkspaceViewPreference | null
+  resolution: DeviceScopedRestoreResolution
+}
+
+export interface ProjectSettingsDraftDevicePayload {
+  current: ProjectSettingsDraft | null
+  latestOther: ProjectSettingsDraft | null
+  resolution: DeviceScopedRestoreResolution
+}
+
+export interface TeamLastProjectPreference {
+  workspaceId: string
+  projectId: string
   updatedAt: string
 }
 
@@ -1286,12 +1465,62 @@ export interface ProjectTopicBoardPatchRequest {
   }>
 }
 
+export type AiDefensePersonaJudgeType = 'technical' | 'business' | 'expression' | 'custom'
+export type AiDefenseStage = 'opening' | 'qa' | 'rebuttal' | 'closing'
+export type AiDefenseInputMode = 'text' | 'audio' | 'image' | 'video_frames' | 'mixed'
+export type AiDefenseSummaryType = 'turn' | 'session'
+export type AiDefenseSummaryStatus = 'idle' | 'queued' | 'processing' | 'completed' | 'failed'
+
+export interface AiDefenseAttachment {
+  id?: string
+  kind: string
+  resourceId?: string
+  name?: string
+  page?: number | null
+  caption?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface AiDefenseEvidenceRef {
+  resourceId?: string
+  resourceTitle: string
+  excerpt: string
+  page?: number | null
+  sourceType?: 'project' | 'contest' | 'attachment'
+  category?: string
+  score?: number
+}
+
+export interface AiDefensePersona {
+  id: string
+  projectId: string
+  sourceContestId?: string | null
+  sourceTrackId?: string | null
+  sourceTemplateKey?: string
+  judgeType: AiDefensePersonaJudgeType
+  name: string
+  summary: string
+  systemPrompt: string
+  focusAreas: string[]
+  scoringRubric: RubricDimension[]
+  enabled: boolean
+  sortOrder: number
+  isCustomized: boolean
+  createdByUserId: string
+  updatedByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface AiDefenseJudgeRound {
-  judge: 'technical' | 'business' | 'expression'
+  judge: string
+  judgeType: AiDefensePersonaJudgeType
+  personaId?: string | null
   question: string
   score: number
   comment: string
   followUp: string
+  evidenceRefs: AiDefenseEvidenceRef[]
 }
 
 export interface AiDefenseScorecard {
@@ -1304,10 +1533,79 @@ export interface AiDefenseScorecard {
   actionItems: string[]
 }
 
+export interface AiDefenseSessionState {
+  sessionId: string
+  projectId: string
+  workspaceId: string
+  currentStage: AiDefenseStage
+  turnCount: number
+  selectedPersonaIds: string[]
+  summaryStatus: AiDefenseSummaryStatus
+  summaryResourceId?: string | null
+  linkedMeetingId?: string | null
+  lastInputMode: AiDefenseInputMode
+  lastContextPack?: Record<string, unknown>
+  lastScorecard?: AiDefenseScorecard | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AiDefenseTurn {
+  id: string
+  sessionId: string
+  projectId: string
+  stage: AiDefenseStage
+  turnIndex: number
+  personaId?: string | null
+  judgeType: AiDefensePersonaJudgeType
+  judgeName: string
+  question: string
+  comment: string
+  followUp: string
+  score: number
+  evidenceRefs: AiDefenseEvidenceRef[]
+  attachments: AiDefenseAttachment[]
+  metadata?: Record<string, unknown>
+  createdAt: string
+}
+
+export interface AiDefenseSummary {
+  id: string
+  sessionId: string
+  projectId: string
+  summaryType: AiDefenseSummaryType
+  turnIndex?: number | null
+  status: AiDefenseSummaryStatus
+  summary: string
+  strengths: string[]
+  risks: string[]
+  actionItems: string[]
+  evidenceGaps: string[]
+  markdown: string
+  resourceId?: string | null
+  createdByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AiDefenseSessionDetail {
+  session: AiChatSession
+  state: AiDefenseSessionState | null
+  personas: AiDefensePersona[]
+  turns: AiDefenseTurn[]
+  latestSummary: AiDefenseSummary | null
+}
+
 export interface AiDefenseRequest {
   teamId?: string
   workspaceId?: string
   sessionId?: string
+  clientTurnId?: string
+  meetingId?: string
+  personaIds?: string[]
+  stageHint?: AiDefenseStage
+  inputMode?: AiDefenseInputMode
+  attachments?: AiDefenseAttachment[]
   messages: ChatMessage[]
   aiOptions?: Partial<AiAssistantOptions>
   context: {
@@ -1326,9 +1624,24 @@ export interface AiDefenseResult {
   scorecard: AiDefenseScorecard
   missingFields: string[]
   sessionId?: string
+  stage?: AiDefenseStage
+  nextStage?: AiDefenseStage
+  turnIndex?: number
+  evidenceRefs?: AiDefenseEvidenceRef[]
+  summaryStatus?: AiDefenseSummaryStatus
+  selectedPersonaIds?: string[]
 }
 
-export type AiDefenseStreamEventType = 'progress' | 'delta' | 'judge' | 'score' | 'done' | 'error'
+export type AiDefenseStreamEventType
+  = | 'progress'
+    | 'stage'
+    | 'evidence'
+    | 'delta'
+    | 'judge'
+    | 'score'
+    | 'summary'
+    | 'done'
+    | 'error'
 
 export interface AiDefenseStreamEvent {
   event: AiDefenseStreamEventType

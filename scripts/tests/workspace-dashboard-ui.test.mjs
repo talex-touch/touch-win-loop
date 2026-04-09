@@ -12,7 +12,10 @@ const TEAM_UI_FILE = resolve(process.cwd(), 'app/composables/team-ui.ts')
 const DASHBOARD_WORKSPACE_FILE = resolve(process.cwd(), 'app/composables/useDashboardWorkspace.ts')
 const LOOPY_DIALOG_FILE = resolve(process.cwd(), 'app/composables/useLoopyDialog.ts')
 const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const WORKSPACE_HEADER_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceHeader.vue')
 const WORKSPACE_MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
+const UNIFIED_AVATAR_FILE = resolve(process.cwd(), 'app/components/UnifiedAvatar.vue')
+const USER_SETTINGS_DIALOG_FILE = resolve(process.cwd(), 'app/components/UserSettingsDialog.vue')
 const PROJECT_BASIC_SETTINGS_EDITOR_FILE = resolve(process.cwd(), 'app/components/project/ProjectBasicSettingsEditor.vue')
 const PROJECT_SETTINGS_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/project-settings.ts')
 const PROJECT_SETTINGS_PATCH_FILE = resolve(process.cwd(), 'server/api/projects/[id]/settings.patch.ts')
@@ -109,7 +112,7 @@ it('项目卡展示图标徽标、底部摘要区、快捷操作区与稳定 dis
   assert.match(teamSource, /endpoint\(`\/projects\/\$\{projectId\}\/members\/\$\{normalizedUserId\}`\)/, '成员管理弹窗未命中成员移除接口路径')
   assert.match(teamSource, /method: 'DELETE'/, '成员管理弹窗未使用 DELETE 方法移除成员')
   assert.match(workspaceSource, /const panel = normalizeQueryParam\(route\.query\.panel\)\.toLowerCase\(\)/, '项目工作区未消费 panel query')
-  assert.match(workspaceSource, /if \(panel === 'members'\)\s+openMemberManagementSignal\.value \+= 1/, '项目工作区未支持成员管理快捷打开')
+  assert.match(workspaceSource, /if \(panel === 'members' \|\| panel === 'settings' \|\| panel === 'meeting'\)\s+legacyTabId = panel/, '项目工作区未兼容 legacy panel query')
   assert.match(workspaceSource, /openSettingsSignal\.value \+= 1/, '项目工作区未支持项目设置快捷打开')
 })
 
@@ -200,6 +203,72 @@ it('项目基础设置编辑器被抽成公共组件，并沿用 icon 与 accent
   assert.match(settingsPatchSource, /accentColor\?: string/, 'settings patch API 缺少 accentColor 字段')
   assert.match(draftPatchSource, /icon: normalizePlainText\(source\.icon\)/, '草稿 patch API 未处理 icon 字段')
   assert.match(draftPatchSource, /accentColor: normalizePlainText\(source\.accentColor\)/, '草稿 patch API 未处理 accentColor 字段')
+})
+
+it('项目工作区顶部头像 popover 已接入统一头像组件、空间切换与账号中心', async () => {
+  const [workspaceSource, headerSource, panelSource, avatarSource, dialogSource] = await Promise.all([
+    readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
+    readFile(WORKSPACE_HEADER_FILE, 'utf8'),
+    readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8'),
+    readFile(UNIFIED_AVATAR_FILE, 'utf8'),
+    readFile(USER_SETTINGS_DIALOG_FILE, 'utf8'),
+  ])
+
+  assert.match(avatarSource, /resolveAvatarFallbackValue/, '统一头像组件未复用统一 fallback 逻辑')
+  assert.match(avatarSource, /size\?: number/, '统一头像组件缺少 size 入参')
+  assert.match(avatarSource, /class="unified-avatar"/, '统一头像组件缺少稳定根节点类名')
+
+  assert.match(headerSource, /\(event: 'switchWorkspace', value: string\): void/, 'WorkspaceHeader 未声明空间切换事件')
+  assert.match(headerSource, /\(event: 'openAccountCenter'\): void/, 'WorkspaceHeader 未声明账号中心事件')
+  assert.match(headerSource, /data-testid="workspace-header-user-trigger"/, 'WorkspaceHeader 缺少头像触发器测试锚点')
+  assert.match(headerSource, /data-testid="workspace-header-user-popover"/, 'WorkspaceHeader 缺少头像 popover 测试锚点')
+  assert.match(headerSource, /data-testid="workspace-header-user-workspace-item"/, 'WorkspaceHeader 缺少空间切换项测试锚点')
+  assert.match(headerSource, /data-testid="workspace-header-user-action-display-preferences"/, 'WorkspaceHeader 缺少显示偏好快捷操作锚点')
+  assert.match(headerSource, /data-testid="workspace-header-user-action-account-center"/, 'WorkspaceHeader 缺少账号中心快捷操作锚点')
+  assert.match(headerSource, /<UnifiedAvatar/, 'WorkspaceHeader 未复用统一头像组件')
+  assert.match(headerSource, /快速切换空间/, 'WorkspaceHeader popover 未展示空间切换区块')
+  assert.match(headerSource, /workspaceCanManageMembers\?: boolean/, 'WorkspaceHeader 缺少成员管理权限入参')
+
+  assert.match(panelSource, /openDisplayPreferencesSignal\?: number/, 'WorkspaceMainPanel 缺少显示偏好 signal 入参')
+  assert.match(panelSource, /watch\(\(\) => props\.openDisplayPreferencesSignal, \(next, previous\) => \{[\s\S]*ensureFixedTabOpen\('settings', true\)[\s\S]*selectSettingsSecondaryTab\('myDisplay'\)/, 'WorkspaceMainPanel 未把显示偏好 signal 定向到个人设置 tab')
+
+  assert.match(workspaceSource, /:workspace-options="workspaceOptions"/, '项目工作区未向 WorkspaceHeader 透传工作区列表')
+  assert.match(workspaceSource, /:workspace-can-manage-members="workspaceCanManageMembers"/, '项目工作区未向 WorkspaceHeader 透传成员管理权限')
+  assert.match(workspaceSource, /@switch-workspace="switchWorkspaceFromHeader"/, '项目工作区未接住顶部空间切换事件')
+  assert.match(workspaceSource, /@open-display-preferences="openDisplayPreferencesFromHeader"/, '项目工作区未接住顶部显示偏好事件')
+  assert.match(workspaceSource, /@open-account-center="openAccountCenterFromHeader"/, '项目工作区未接住顶部账号中心事件')
+  assert.match(workspaceSource, /:open-display-preferences-signal="openDisplayPreferencesSignal"/, '项目工作区未向主面板透传显示偏好 signal')
+  assert.match(workspaceSource, /<UserSettingsDialog/, '项目工作区未挂载共享账号中心弹窗')
+  assert.match(workspaceSource, /v-model:visible="accountCenterVisible"/, '项目工作区账号中心弹窗未绑定显示状态')
+  assert.match(workspaceSource, /:active-workspace-id="activeWorkspaceId"/, '项目工作区账号中心弹窗未透传当前工作区')
+  assert.match(workspaceSource, /@workspace-updated="onWorkspaceUpdatedFromAccountCenter"/, '项目工作区未处理账号中心的工作区更新事件')
+  assert.match(workspaceSource, /@user-updated="onUserUpdatedFromAccountCenter"/, '项目工作区未处理账号中心的用户更新事件')
+  assert.match(dialogSource, /type UserSettingsTabId = 'profile' \| 'displayPreferences'/, '账号中心弹窗定义异常，无法复用现有个人设置能力')
+})
+
+it('项目主面板在无标签页时隐藏上方 chrome，并改成全幅默认仪表盘空态', async () => {
+  const source = await readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8')
+  const workspaceSource = await readFile(PROJECT_WORKSPACE_FILE, 'utf8')
+
+  assert.match(source, /const hasOpenTabs = computed\(\(\) => openTabs\.value\.length > 0\)/, '项目主面板未抽出是否存在标签页状态')
+  assert.doesNotMatch(source, /data-testid="workspace-close-all-tabs-button"/, '项目主面板仍保留显式的关闭全部标签按钮')
+  assert.match(source, /return normalized\.length > 0 \|\| options\.allowEmpty \? normalized : \['dashboard'\]/, '主面板 tabs 归一化仍会阻止关闭全部标签')
+  assert.match(source, /<div v-if="hasOpenTabs" class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center relative">/, '无标签页时顶部标签条仍未隐藏')
+  assert.match(source, /class="workspace-tab-context-menu__item workspace-tab-context-menu__item--danger"[\s\S]*@click="closeAllTabs"/, '标签页右键菜单缺少关闭所有动作')
+  assert.match(source, /workspace-tab-context-menu__divider/, '标签页右键菜单缺少分割线')
+  assert.match(source, /workspace-tab-context-menu__icon/, '标签页右键菜单缺少图标')
+  assert.match(source, /width: 176px;/, '标签页右键菜单宽度未收窄')
+  assert.match(source, /v-if="hasOpenTabs"[\s\S]*breadcrumbItems/, '无标签页时面包屑横条仍未隐藏')
+  assert.doesNotMatch(source, />\s*打开仪表盘\s*</, '顶部旧的打开仪表盘入口仍残留在主面板 chrome')
+  assert.match(source, /workspace-main-empty-state/, '无标签页时未渲染新的全幅空态')
+  assert.match(source, /workspace-main-empty-state__watermark" aria-hidden="true">[\s\S]*<span>WIN<\/span>[\s\S]*<span>LOOP<\/span>/, '无标签页空态缺少换行的 WIN \/ LOOP 水印')
+  assert.doesNotMatch(source, /当前没有打开的标签页/, '无标签页空态仍保留多余说明文案')
+  assert.match(source, /border-radius: 12px;/, '无标签页空态按钮圆角仍过于圆润')
+  assert.doesNotMatch(source, /transform: translateY\(-1px\);/, '无标签页空态按钮 hover 仍保留位移动效')
+  assert.match(source, /\.workspace-main-empty-state__button:hover \{\s+background: #2563eb;\s+border-color: #2563eb;\s+color: #ffffff;/, '无标签页空态按钮 hover 未切为主按钮态')
+  assert.match(source, /workspace-main-empty-state__button[\s\S]*打开默认仪表盘/, '无标签页空态缺少中央默认仪表盘按钮')
+  assert.match(workspaceSource, /return normalized\.length > 0 \|\| options\.allowEmpty \? normalized : \['dashboard'\]/, '项目页 mainTabs 归一化仍会阻止关闭全部标签')
+  assert.match(workspaceSource, /if \(normalized\.mainTabs\.length === 0\)\s+query\.tabs = ''/, '项目页未把“无标签页”状态同步到路由视图状态')
 })
 
 it('team 创建弹窗复用基础设置编辑器，并支持仅创建与复选框竞赛列表', async () => {

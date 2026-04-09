@@ -2,6 +2,7 @@ import type { Queryable } from '~~/server/utils/db'
 import type {
   AuthSession,
   AuthUser,
+  DeviceScopedRestoreResolution,
   Invitation,
   Project,
   ProjectAdvisorBinding,
@@ -18,6 +19,7 @@ import type {
   ProjectSeatQuota,
   ProjectSeatQuotaSummary,
   ProjectSettingsDraft,
+  ProjectSettingsDraftDevicePayload,
   ProjectSettingsDraftPayload,
   ProjectSettingsSnapshot,
   ProjectSource,
@@ -76,6 +78,7 @@ const WORKSPACE_ROLE_PRIORITY: Record<WorkspaceMemberRole, number> = {
 
 const MAX_PROJECT_SEAT_LIMIT = 15
 const MAX_PROJECT_ADVISOR_COUNT = 3
+const DEVICE_STALE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 interface UserRow {
   id: string
@@ -279,6 +282,7 @@ interface ProjectSettingsDraftRow {
   payload: ProjectSettingsDraftPayload
   revision: string | number
   device_id: string
+  last_opened_at: string
   created_at: string
   updated_at: string
 }
@@ -291,6 +295,7 @@ export interface ProjectSettingsDraftUpsertInput {
 
 export interface ProjectSettingsDraftDeleteInput {
   expectedRevision?: number | null
+  deviceId?: string
 }
 
 function normalizeStringArray(value: string[] | null | undefined): string[] {
@@ -375,18 +380,155 @@ function createEmptyProjectSettingsDraftPayload(): ProjectSettingsDraftPayload {
   }
 }
 
+function normalizeDraftString(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function normalizeDraftBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean')
+    return value
+  if (typeof value === 'number')
+    return value !== 0
+  const normalized = normalizeDraftString(value).toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes'
+}
+
+function parseTimestamp(value: string): number {
+  const timestamp = new Date(value).getTime()
+  if (Number.isNaN(timestamp))
+    return 0
+  return timestamp
+}
+
+function normalizeProjectSettingsDraftPayloadValue(value: unknown): ProjectSettingsDraftPayload {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+
+  const commonSource = source.common && typeof source.common === 'object' && !Array.isArray(source.common)
+    ? source.common as Record<string, unknown>
+    : {}
+
+  const bindings = Array.isArray(source.bindings)
+    ? source.bindings
+        .map((item, index) => {
+          const bindingSource = item && typeof item === 'object' && !Array.isArray(item)
+            ? item as Record<string, unknown>
+            : {}
+          return {
+            contestId: normalizeDraftString(bindingSource.contestId),
+            trackId: normalizeDraftString(bindingSource.trackId),
+            sortOrder: Number.isFinite(Number(bindingSource.sortOrder)) ? Number(bindingSource.sortOrder) : index,
+          }
+        })
+        .filter(item => item.contestId && item.trackId)
+    : []
+
+  const allowedContestIds = new Set(bindings.map(item => item.contestId))
+  const adaptationSource = source.adaptationDrafts && typeof source.adaptationDrafts === 'object' && !Array.isArray(source.adaptationDrafts)
+    ? source.adaptationDrafts as Record<string, unknown>
+    : {}
+  const adaptationDrafts: ProjectSettingsDraftPayload['adaptationDrafts'] = {}
+
+  for (const [contestIdKey, draftValue] of Object.entries(adaptationSource)) {
+    const contestId = normalizeDraftString(contestIdKey)
+    if (!contestId || !allowedContestIds.has(contestId))
+      continue
+
+    const draftSource = draftValue && typeof draftValue === 'object' && !Array.isArray(draftValue)
+      ? draftValue as Record<string, unknown>
+      : {}
+    const binding = bindings.find(item => item.contestId === contestId)
+    adaptationDrafts[contestId] = {
+      contestId,
+      trackId: normalizeDraftString(draftSource.trackId) || binding?.trackId || '',
+      problemStatement: String(draftSource.problemStatement || ''),
+      innovationPointsText: String(draftSource.innovationPointsText || ''),
+      techRouteStepsText: String(draftSource.techRouteStepsText || ''),
+      scoringMappingText: String(draftSource.scoringMappingText || ''),
+      risksText: String(draftSource.risksText || ''),
+      deliverablesText: String(draftSource.deliverablesText || ''),
+      summary: String(draftSource.summary || ''),
+    }
+  }
+
+  const currentContestIdRaw = normalizeDraftString(source.currentContestId)
+  const currentContestId = currentContestIdRaw && allowedContestIds.has(currentContestIdRaw)
+    ? currentContestIdRaw
+    : (bindings[0]?.contestId || '')
+  const uiSource = source.ui && typeof source.ui === 'object' && !Array.isArray(source.ui)
+    ? source.ui as Record<string, unknown>
+    : {}
+
+  return {
+    updatedAt: String(source.updatedAt || ''),
+    deviceId: normalizeDraftString(source.deviceId) || undefined,
+    common: {
+      title: String(commonSource.title || ''),
+      summary: String(commonSource.summary || ''),
+      icon: String(commonSource.icon || ''),
+      accentColor: String(commonSource.accentColor || ''),
+      problemStatement: String(commonSource.problemStatement || ''),
+      innovationPointsText: String(commonSource.innovationPointsText || ''),
+      techRouteStepsText: String(commonSource.techRouteStepsText || ''),
+      scoringMappingText: String(commonSource.scoringMappingText || ''),
+      risksText: String(commonSource.risksText || ''),
+      deliverablesText: String(commonSource.deliverablesText || ''),
+    },
+    bindings,
+    currentContestId,
+    adaptationDrafts,
+    ui: {
+      leftSidebarCollapsed: normalizeDraftBoolean(uiSource.leftSidebarCollapsed),
+      rightSidebarCollapsed: normalizeDraftBoolean(uiSource.rightSidebarCollapsed),
+    },
+  }
+}
+
+function serializeProjectSettingsDraftComparablePayload(value: unknown): string {
+  const normalized = normalizeProjectSettingsDraftPayloadValue(value)
+  const adaptationEntries = Object.keys(normalized.adaptationDrafts || {})
+    .sort((left, right) => left.localeCompare(right))
+    .map((contestId) => {
+      return [
+        contestId,
+        normalized.adaptationDrafts[contestId],
+      ] as const
+    })
+
+  return JSON.stringify({
+    common: normalized.common,
+    bindings: [...normalized.bindings].sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder)
+        return left.sortOrder - right.sortOrder
+      return left.contestId.localeCompare(right.contestId)
+    }),
+    currentContestId: normalized.currentContestId,
+    adaptationDrafts: Object.fromEntries(adaptationEntries),
+    ui: {
+      leftSidebarCollapsed: Boolean(normalized.ui?.leftSidebarCollapsed),
+      rightSidebarCollapsed: Boolean(normalized.ui?.rightSidebarCollapsed),
+    },
+  })
+}
+
 function mapProjectSettingsDraft(row: ProjectSettingsDraftRow): ProjectSettingsDraft {
   const payload = row.payload && typeof row.payload === 'object'
-    ? row.payload
+    ? normalizeProjectSettingsDraftPayloadValue(row.payload)
     : createEmptyProjectSettingsDraftPayload()
 
   return {
     projectId: row.project_id,
-    payload,
+    payload: {
+      ...payload,
+      updatedAt: payload.updatedAt || row.updated_at,
+      deviceId: payload.deviceId || String(row.device_id || ''),
+    },
     revision: Math.max(1, Number(row.revision || 1)),
     deviceId: String(row.device_id || ''),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastOpenedAt: row.last_opened_at,
   }
 }
 
@@ -2386,10 +2528,42 @@ function normalizeExpectedRevision(value: number | null | undefined): number | n
   return normalized > 0 ? normalized : null
 }
 
-async function getProjectSettingsDraftRowByUserProject(
+function buildProjectSettingsDraftRestoreResolution(
+  deviceId: string,
+  current: ProjectSettingsDraft | null,
+  latestOther: ProjectSettingsDraft | null,
+): DeviceScopedRestoreResolution {
+  const currentLastOpenedAt = normalizeDraftString(current?.lastOpenedAt)
+  const latestOtherLastOpenedAt = normalizeDraftString(latestOther?.lastOpenedAt)
+  const isNewDevice = !current
+  const isStaleDevice = Boolean(
+    currentLastOpenedAt
+    && parseTimestamp(currentLastOpenedAt) > 0
+    && (Date.now() - parseTimestamp(currentLastOpenedAt)) > DEVICE_STALE_WINDOW_MS,
+  )
+  const shouldPrompt = Boolean(
+    current
+    && latestOther
+    && isStaleDevice
+    && serializeProjectSettingsDraftComparablePayload(current.payload) !== serializeProjectSettingsDraftComparablePayload(latestOther.payload),
+  )
+
+  return {
+    deviceId,
+    isNewDevice,
+    isStaleDevice,
+    shouldPrompt,
+    latestOtherDeviceId: normalizeDraftString(latestOther?.deviceId),
+    currentLastOpenedAt,
+    latestOtherLastOpenedAt,
+  }
+}
+
+async function getProjectSettingsDraftRowByUserProjectDevice(
   db: Queryable,
   userId: string,
   projectId: string,
+  deviceId: string,
   lock = false,
 ): Promise<ProjectSettingsDraftRow | null> {
   const lockClause = lock ? 'FOR UPDATE' : ''
@@ -2399,14 +2573,90 @@ async function getProjectSettingsDraftRowByUserProject(
       payload,
       revision,
       device_id,
+      last_opened_at::TEXT,
       created_at::TEXT,
       updated_at::TEXT
      FROM project_settings_drafts
      WHERE user_id = $1
        AND project_id = $2
+       AND device_id = $3
      LIMIT 1
      ${lockClause}`,
-    [userId, projectId],
+    [userId, projectId, deviceId],
+  )
+
+  return result.rows[0] || null
+}
+
+async function getLegacyProjectSettingsDraftRowByUserProject(
+  db: Queryable,
+  userId: string,
+  projectId: string,
+  lock = false,
+): Promise<ProjectSettingsDraftRow | null> {
+  return getProjectSettingsDraftRowByUserProjectDevice(db, userId, projectId, '', lock)
+}
+
+async function claimLegacyProjectSettingsDraftRow(
+  db: Queryable,
+  userId: string,
+  projectId: string,
+  deviceId: string,
+): Promise<ProjectSettingsDraftRow | null> {
+  const normalizedDeviceId = normalizeDraftString(deviceId)
+  if (!normalizedDeviceId)
+    return null
+
+  const current = await getProjectSettingsDraftRowByUserProjectDevice(db, userId, projectId, normalizedDeviceId, true)
+  if (current)
+    return current
+
+  const legacy = await getLegacyProjectSettingsDraftRowByUserProject(db, userId, projectId, true)
+  if (!legacy)
+    return null
+
+  const claimed = await db.query<ProjectSettingsDraftRow>(
+    `UPDATE project_settings_drafts
+     SET device_id = $3
+     WHERE user_id = $1
+       AND project_id = $2
+       AND device_id = ''
+     RETURNING
+       project_id,
+       payload,
+       revision,
+       device_id,
+       last_opened_at::TEXT,
+       created_at::TEXT,
+       updated_at::TEXT`,
+    [userId, projectId, normalizedDeviceId],
+  )
+
+  return claimed.rows[0] || null
+}
+
+async function getLatestOtherProjectSettingsDraftRowByUserProjectDevice(
+  db: Queryable,
+  userId: string,
+  projectId: string,
+  deviceId: string,
+): Promise<ProjectSettingsDraftRow | null> {
+  const result = await db.query<ProjectSettingsDraftRow>(
+    `SELECT
+      project_id,
+      payload,
+      revision,
+      device_id,
+      last_opened_at::TEXT,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_settings_drafts
+     WHERE user_id = $1
+       AND project_id = $2
+       AND device_id <> $3
+     ORDER BY last_opened_at DESC, updated_at DESC
+     LIMIT 1`,
+    [userId, projectId, deviceId],
   )
 
   return result.rows[0] || null
@@ -2416,14 +2666,26 @@ export async function getProjectSettingsDraft(
   db: Queryable,
   user: AuthUser,
   projectId: string,
-): Promise<ProjectSettingsDraft | null> {
+  deviceId: string,
+): Promise<ProjectSettingsDraftDevicePayload> {
   await assertManageableProjectForSettingsDraft(db, user, projectId)
 
-  const row = await getProjectSettingsDraftRowByUserProject(db, user.id, projectId)
-  if (!row)
-    return null
+  const normalizedProjectId = normalizeDraftString(projectId)
+  const normalizedDeviceId = normalizeDraftString(deviceId)
+  if (!normalizedDeviceId)
+    throw new Error('DEVICE_ID_REQUIRED')
 
-  return mapProjectSettingsDraft(row)
+  const claimed = await claimLegacyProjectSettingsDraftRow(db, user.id, normalizedProjectId, normalizedDeviceId)
+  const currentRow = claimed || await getProjectSettingsDraftRowByUserProjectDevice(db, user.id, normalizedProjectId, normalizedDeviceId)
+  const latestOtherRow = await getLatestOtherProjectSettingsDraftRowByUserProjectDevice(db, user.id, normalizedProjectId, normalizedDeviceId)
+  const current = currentRow ? mapProjectSettingsDraft(currentRow) : null
+  const latestOther = latestOtherRow ? mapProjectSettingsDraft(latestOtherRow) : null
+
+  return {
+    current,
+    latestOther,
+    resolution: buildProjectSettingsDraftRestoreResolution(normalizedDeviceId, current, latestOther),
+  }
 }
 
 export async function upsertProjectSettingsDraft(
@@ -2436,8 +2698,13 @@ export async function upsertProjectSettingsDraft(
 
   const expectedRevision = normalizeExpectedRevision(input.expectedRevision)
   const now = new Date().toISOString()
-  const deviceId = String(input.deviceId || '').trim()
-  const existing = await getProjectSettingsDraftRowByUserProject(db, user.id, projectId, true)
+  const deviceId = normalizeDraftString(input.deviceId || input.payload?.deviceId)
+  if (!deviceId)
+    throw new Error('DEVICE_ID_REQUIRED')
+
+  const normalizedPayload = normalizeProjectSettingsDraftPayloadValue(input.payload)
+  const existing = await claimLegacyProjectSettingsDraftRow(db, user.id, projectId, deviceId)
+    || await getProjectSettingsDraftRowByUserProjectDevice(db, user.id, projectId, deviceId, true)
 
   if (!existing) {
     if (expectedRevision !== null)
@@ -2451,17 +2718,19 @@ export async function upsertProjectSettingsDraft(
         payload,
         revision,
         device_id,
+        last_opened_at,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4::JSONB, 1, $5, $6, $6)
+      ) VALUES ($1, $2, $3, $4::JSONB, 1, $5, $6, $6, $6)
       RETURNING
         project_id,
         payload,
         revision,
         device_id,
+        last_opened_at::TEXT,
         created_at::TEXT,
         updated_at::TEXT`,
-      [randomUUID(), user.id, projectId, JSON.stringify(input.payload || {}), deviceId, now],
+      [randomUUID(), user.id, projectId, JSON.stringify(normalizedPayload), deviceId, now],
     )
 
     const row = inserted.rows[0]
@@ -2474,22 +2743,26 @@ export async function upsertProjectSettingsDraft(
   if (expectedRevision === null || expectedRevision !== currentRevision)
     throw new Error('PROJECT_SETTINGS_DRAFT_CONFLICT')
 
+  const samePayload = serializeProjectSettingsDraftComparablePayload(existing.payload) === serializeProjectSettingsDraftComparablePayload(normalizedPayload)
   const updated = await db.query<ProjectSettingsDraftRow>(
     `UPDATE project_settings_drafts
      SET payload = $3::JSONB,
-         revision = revision + 1,
+         revision = CASE WHEN $6 THEN revision ELSE revision + 1 END,
          device_id = $4,
+         last_opened_at = $5,
          updated_at = $5
      WHERE user_id = $1
        AND project_id = $2
+       AND device_id = $4
      RETURNING
        project_id,
        payload,
        revision,
        device_id,
+       last_opened_at::TEXT,
        created_at::TEXT,
        updated_at::TEXT`,
-    [user.id, projectId, JSON.stringify(input.payload || {}), deviceId, now],
+    [user.id, projectId, JSON.stringify(normalizedPayload), deviceId, now, samePayload],
   )
 
   const row = updated.rows[0]
@@ -2506,7 +2779,12 @@ export async function deleteProjectSettingsDraft(
 ): Promise<ProjectSettingsDraft | null> {
   await assertManageableProjectForSettingsDraft(db, user, projectId)
 
-  const existing = await getProjectSettingsDraftRowByUserProject(db, user.id, projectId, true)
+  const deviceId = normalizeDraftString(input.deviceId)
+  if (!deviceId)
+    throw new Error('DEVICE_ID_REQUIRED')
+
+  const existing = await claimLegacyProjectSettingsDraftRow(db, user.id, projectId, deviceId)
+    || await getProjectSettingsDraftRowByUserProjectDevice(db, user.id, projectId, deviceId, true)
   if (!existing)
     return null
 
@@ -2519,14 +2797,16 @@ export async function deleteProjectSettingsDraft(
     `DELETE FROM project_settings_drafts
      WHERE user_id = $1
        AND project_id = $2
+       AND device_id = $3
      RETURNING
        project_id,
        payload,
        revision,
        device_id,
+       last_opened_at::TEXT,
        created_at::TEXT,
        updated_at::TEXT`,
-    [user.id, projectId],
+    [user.id, projectId, deviceId],
   )
 
   const row = deleted.rows[0]

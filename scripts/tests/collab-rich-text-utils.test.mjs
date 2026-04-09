@@ -54,7 +54,11 @@ it('gFM 任务列表、代码块、分割线与表格在 round-trip 后结构不
     '| A | B |',
   ].join('\n')
 
-  const output = serializeRichTextDocumentToMarkdown(parseMarkdownToRichTextDocument(input))
+  const documentNode = parseMarkdownToRichTextDocument(input)
+  const codeBlock = documentNode.content?.find(node => node?.type === 'codeBlock') || null
+  assert.equal(codeBlock?.attrs?.language, 'ts', '代码块语言未保留')
+
+  const output = serializeRichTextDocumentToMarkdown(documentNode)
   assert.match(output, /^[*-] \[x\] 已完成任务$/m)
   assert.match(output, /^[*-] \[ \] 待处理任务$/m)
   assert.match(output, /^(\*\*\*|---)$/m)
@@ -62,6 +66,21 @@ it('gFM 任务列表、代码块、分割线与表格在 round-trip 后结构不
   assert.match(output, /\|\s*列一\s*\|\s*列二\s*\|/)
   assert.match(output, /\|\s*-+\s*\|\s*-+\s*\|/)
   assert.match(output, /\|\s*A\s*\|\s*B\s*\|/)
+})
+
+it('markdown 图片节点可 round-trip，并对内部项目资源路径回填 resourceId', () => {
+  const input = '![架构草图](/api/projects/project-1/resources/resource-9/file "设计稿")'
+  const documentNode = parseMarkdownToRichTextDocument(input)
+  const imageNode = documentNode.content?.[0] || null
+
+  assert.equal(imageNode?.type, 'image')
+  assert.equal(imageNode?.attrs?.src, '/api/projects/project-1/resources/resource-9/file')
+  assert.equal(imageNode?.attrs?.alt, '架构草图')
+  assert.equal(imageNode?.attrs?.title, '设计稿')
+  assert.equal(imageNode?.attrs?.resourceId, 'resource-9')
+
+  const output = serializeRichTextDocumentToMarkdown(documentNode)
+  assert.match(output, /!\[架构草图\]\(\/api\/projects\/project-1\/resources\/resource-9\/file "设计稿"\)/)
 })
 
 it('旧 markdown 协作文档首次规范化时会补齐 prosemirror 片段并保留 markdown 镜像', () => {
@@ -96,4 +115,22 @@ it('旧 markdown 镜像中的 GFM 能在迁移后保留下划线与表格语义'
   assert.match(markdown, /<u>强调<\/u>/)
   assert.match(markdown, /\|\s*姓名\s*\|\s*角色\s*\|/)
   assert.match(markdown, /\|\s*Alice\s*\|\s*编辑者\s*\|/)
+})
+
+it('图片、任务列表与表格混排后，markdown 镜像不会丢失结构', () => {
+  const input = [
+    '![流程图](/api/projects/project-2/resources/resource-3/file)',
+    '',
+    '- [x] 已插图',
+    '- [ ] 待补说明',
+    '',
+    '| 节点 | 说明 |',
+    '| --- | --- |',
+    '| A | 起点 |',
+  ].join('\n')
+
+  const output = serializeRichTextDocumentToMarkdown(parseMarkdownToRichTextDocument(input))
+  assert.match(output, /!\[流程图\]\(\/api\/projects\/project-2\/resources\/resource-3\/file\)/)
+  assert.match(output, /^[*-] \[x\] 已插图$/m)
+  assert.match(output, /\|\s*节点\s*\|\s*说明\s*\|/)
 })

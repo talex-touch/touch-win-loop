@@ -34,6 +34,13 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+async function parseApiResponse<T>(response: Response, fallbackMessage: string): Promise<ApiResponse<T>> {
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw new Error(String(payload?.message || fallbackMessage))
+  return payload
+}
+
 function toSafeInteger(value: unknown, fallback = 0): number {
   const normalized = Number(value)
   if (!Number.isFinite(normalized))
@@ -504,8 +511,11 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     const projectId = getProjectId()
     if (!projectId)
       return []
-    const response = await $fetch<ApiResponse<ProjectResourceUploadSessionListResult>>(input.endpoint(`/projects/${projectId}/resource-upload-sessions`))
-    return Array.isArray(response.data?.items) ? response.data.items : []
+    const response = await fetch(String(input.endpoint(`/projects/${projectId}/resource-upload-sessions`)), {
+      credentials: 'include',
+    })
+    const payload = await parseApiResponse<ProjectResourceUploadSessionListResult>(response, '上传会话列表加载失败。')
+    return Array.isArray(payload.data?.items) ? payload.data.items : []
   }
 
   async function refreshProjectSessions(): Promise<ProjectResourceUploadSession[]> {
@@ -584,9 +594,13 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
 
   async function initializeUploadSessions(files: File[]): Promise<ProjectUploadTask[]> {
     const projectId = getProjectId()
-    const response = await $fetch<ApiResponse<ProjectResourceUploadSessionListResult>>(input.endpoint(`/projects/${projectId}/resource-upload-sessions`), {
+    const response = await fetch(String(input.endpoint(`/projects/${projectId}/resource-upload-sessions`)), {
       method: 'POST',
-      body: {
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         files: files.map(file => ({
           fileName: file.name,
           fileSize: file.size,
@@ -597,9 +611,10 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
           title: '',
           summary: '',
         })),
-      },
+      }),
     })
-    const sessions = Array.isArray(response.data?.items) ? response.data.items : []
+    const payload = await parseApiResponse<ProjectResourceUploadSessionListResult>(response, '上传会话初始化失败。')
+    const sessions = Array.isArray(payload.data?.items) ? payload.data.items : []
     upsertProjectSessions(sessions)
     return sessions.map((session, index) => createTaskFromSession(session, projectId, files[index]))
   }
@@ -768,12 +783,12 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     }))
 
     const projectId = getProjectId()
-    const response = await $fetch<ApiResponse<{
-      session: ProjectResourceUploadSession
-    }>>(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/complete`), {
+    const response = await fetch(String(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/complete`)), {
       method: 'POST',
+      credentials: 'include',
     })
-    const session = response.data?.session
+    const payload = await parseApiResponse<{ session: ProjectResourceUploadSession }>(response, '上传会话收尾失败。')
+    const session = payload.data?.session
     if (!session)
       throw new Error('UPLOAD_COMPLETE_EMPTY')
 
@@ -890,8 +905,9 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       progressPercent: getCommittedProgressPercent(task),
       updatedAt: new Date().toISOString(),
     }))
-    await $fetch(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/pause`), {
+    await fetch(String(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/pause`)), {
       method: 'POST',
+      credentials: 'include',
     }).catch(() => undefined)
     persistTasks()
     syncAutoCollapseState()
@@ -912,8 +928,9 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       scheduleProjectSessionPoll()
       return
     }
-    await $fetch(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/resume`), {
+    await fetch(String(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/resume`)), {
       method: 'POST',
+      credentials: 'include',
     }).catch(() => undefined)
     patchTask(sessionId, current => ({
       ...current,
@@ -933,8 +950,9 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
   async function cancelTask(sessionId: string): Promise<void> {
     const projectId = getProjectId()
     abortRunningRequest(sessionId, 'cancel')
-    await $fetch(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/cancel`), {
+    await fetch(String(input.endpoint(`/projects/${projectId}/resource-upload-sessions/${sessionId}/cancel`)), {
       method: 'POST',
+      credentials: 'include',
     }).catch(() => undefined)
     patchTask(sessionId, () => null)
     persistTasks()

@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import type { WorkspaceWithQuota } from '~~/shared/types/domain'
+
 type WorkspaceWorkbenchMode = 'project' | 'defense'
+type UserActionEvent = 'openWorkspaceHome' | 'openWorkspaceSettings' | 'openDisplayPreferences' | 'openMemberManagement' | 'openAccountCenter'
 
 interface WorkspaceQuickSwitchProject {
   projectId: string
@@ -13,6 +16,11 @@ const props = withDefaults(defineProps<{
   modelValue?: string
   projectName?: string
   workspaceId?: string
+  userName?: string
+  userEmail?: string
+  userAvatarUrl?: string
+  workspaceOptions?: WorkspaceWithQuota[]
+  workspaceCanManageMembers?: boolean
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
   workbenchMode?: WorkspaceWorkbenchMode
@@ -20,6 +28,11 @@ const props = withDefaults(defineProps<{
   modelValue: '',
   projectName: '未命名项目',
   workspaceId: '',
+  userName: '',
+  userEmail: '',
+  userAvatarUrl: '',
+  workspaceOptions: () => [],
+  workspaceCanManageMembers: false,
   myProjects: () => [],
   recentProjects: () => [],
   workbenchMode: 'project',
@@ -29,14 +42,64 @@ const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
   (event: 'update:workbenchMode', value: WorkspaceWorkbenchMode): void
   (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
+  (event: 'switchWorkspace', value: string): void
   (event: 'finalReview'): void
+  (event: 'openWorkspaceHome'): void
+  (event: 'openWorkspaceSettings'): void
+  (event: 'openDisplayPreferences'): void
+  (event: 'openMemberManagement'): void
+  (event: 'openAccountCenter'): void
 }>()
 
 const quickSwitchOpen = ref(false)
 const quickSwitchRef = ref<HTMLElement | null>(null)
+const userPopoverRef = ref<HTMLElement | null>(null)
+const userPopoverVisible = ref(false)
+
+let userPopoverCloseTimer: ReturnType<typeof setTimeout> | null = null
 
 const hasQuickSwitchOptions = computed(() => {
   return props.myProjects.length > 0 || props.recentProjects.length > 0
+})
+const normalizedUserName = computed(() => String(props.userName || '').trim() || '当前用户')
+const normalizedUserEmail = computed(() => String(props.userEmail || '').trim())
+const currentWorkspace = computed(() => {
+  const normalizedWorkspaceId = String(props.workspaceId || '').trim()
+  if (normalizedWorkspaceId) {
+    const matched = props.workspaceOptions.find(item => item.workspace.id === normalizedWorkspaceId)
+    if (matched)
+      return matched
+  }
+  return props.workspaceOptions[0] || null
+})
+const currentWorkspaceName = computed(() => {
+  return String(currentWorkspace.value?.workspace.name || '').trim() || '未连接空间'
+})
+const orderedWorkspaceOptions = computed(() => {
+  const currentId = String(props.workspaceId || '').trim()
+  const current: WorkspaceWithQuota[] = []
+  const otherTeams: WorkspaceWithQuota[] = []
+  const personal: WorkspaceWithQuota[] = []
+  const seen = new Set<string>()
+
+  for (const item of props.workspaceOptions) {
+    const workspaceId = String(item.workspace.id || '').trim()
+    if (!workspaceId || seen.has(workspaceId))
+      continue
+    seen.add(workspaceId)
+
+    if (workspaceId === currentId) {
+      current.push(item)
+      continue
+    }
+
+    if (item.workspace.type === 'team')
+      otherTeams.push(item)
+    else
+      personal.push(item)
+  }
+
+  return [...current, ...otherTeams, ...personal]
 })
 
 function onInput(event: Event) {
@@ -56,10 +119,60 @@ function formatShortTime(value: string): string {
   return `${month}-${day} ${hour}:${minute}`
 }
 
+function workspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type']): string {
+  if (type === 'personal')
+    return '个人空间'
+  return 'Team 空间'
+}
+
+function clearUserPopoverCloseTimer(): void {
+  if (!userPopoverCloseTimer)
+    return
+
+  clearTimeout(userPopoverCloseTimer)
+  userPopoverCloseTimer = null
+}
+
+function openUserPopover(): void {
+  clearUserPopoverCloseTimer()
+  closeQuickSwitch()
+  userPopoverVisible.value = true
+}
+
+function closeUserPopover(): void {
+  clearUserPopoverCloseTimer()
+  userPopoverVisible.value = false
+}
+
+function scheduleUserPopoverClose(): void {
+  clearUserPopoverCloseTimer()
+  userPopoverCloseTimer = setTimeout(() => {
+    userPopoverVisible.value = false
+  }, 120)
+}
+
+function handleUserPopoverFocusOut(event: FocusEvent): void {
+  const nextTarget = event.relatedTarget as Node | null
+  const container = userPopoverRef.value
+  if (container && nextTarget && container.contains(nextTarget))
+    return
+  scheduleUserPopoverClose()
+}
+
+function toggleUserPopover(): void {
+  if (userPopoverVisible.value) {
+    closeUserPopover()
+    return
+  }
+  openUserPopover()
+}
+
 function toggleQuickSwitch() {
   if (!hasQuickSwitchOptions.value)
     return
 
+  if (!quickSwitchOpen.value)
+    closeUserPopover()
   quickSwitchOpen.value = !quickSwitchOpen.value
 }
 
@@ -75,13 +188,52 @@ function switchProject(item: WorkspaceQuickSwitchProject) {
   closeQuickSwitch()
 }
 
+function selectWorkspace(item: WorkspaceWithQuota): void {
+  const workspaceId = String(item.workspace.id || '').trim()
+  if (!workspaceId) {
+    closeUserPopover()
+    return
+  }
+  if (workspaceId === String(props.workspaceId || '').trim()) {
+    closeUserPopover()
+    return
+  }
+  closeUserPopover()
+  emit('switchWorkspace', workspaceId)
+}
+
+function triggerUserAction(
+  eventName: UserActionEvent,
+): void {
+  closeUserPopover()
+  switch (eventName) {
+    case 'openWorkspaceHome':
+      emit('openWorkspaceHome')
+      break
+    case 'openWorkspaceSettings':
+      emit('openWorkspaceSettings')
+      break
+    case 'openDisplayPreferences':
+      emit('openDisplayPreferences')
+      break
+    case 'openMemberManagement':
+      emit('openMemberManagement')
+      break
+    case 'openAccountCenter':
+      emit('openAccountCenter')
+      break
+  }
+}
+
 function goWorkspaceList() {
   closeQuickSwitch()
+  closeUserPopover()
   navigateTo('/team')
 }
 
 function openFinalReview() {
   closeQuickSwitch()
+  closeUserPopover()
   emit('finalReview')
 }
 
@@ -92,24 +244,28 @@ function selectWorkbench(mode: WorkspaceWorkbenchMode) {
 }
 
 function handleGlobalPointerDown(event: Event) {
-  if (!quickSwitchOpen.value)
-    return
-
-  const container = quickSwitchRef.value
   const target = event.target as Node | null
-  if (!container || !target)
+  if (!target)
     return
 
-  if (container.contains(target))
-    return
+  if (quickSwitchOpen.value) {
+    const quickSwitchContainer = quickSwitchRef.value
+    if (!quickSwitchContainer || !quickSwitchContainer.contains(target))
+      closeQuickSwitch()
+  }
 
-  closeQuickSwitch()
+  if (userPopoverVisible.value) {
+    const userPopoverContainer = userPopoverRef.value
+    if (!userPopoverContainer || !userPopoverContainer.contains(target))
+      closeUserPopover()
+  }
 }
 
 function handleGlobalEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape')
     return
   closeQuickSwitch()
+  closeUserPopover()
 }
 
 onMounted(() => {
@@ -120,6 +276,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearUserPopoverCloseTimer()
   if (!import.meta.client)
     return
   document.removeEventListener('pointerdown', handleGlobalPointerDown)
@@ -259,12 +416,149 @@ onBeforeUnmount(() => {
       >
         终审
       </button>
-      <div class="border border-slate-300 rounded-full bg-slate-200 h-6 w-6 overflow-hidden">
-        <img
-          alt="avatar"
-          class="h-full w-full object-cover"
-          src="https://lh3.googleusercontent.com/aida-public/AB6AXuCpeK3ZzVd7LtrOg5h6iFhJ5azRbuUFRmmaMGNaVkipoRx2KeXJvGzjOem-njmZ1X2K7E5eZq7iEGey_U1YoWT2pMOklyV-WBBdEXaeAsz-Gr76uirUlHq69Ry0Fs7j56my_Rkzmsqgd-IwpFzP7GnGQQLMOQ5ow_q8rIICxDOttJQY_PinNCZcLPjEAJaTIm6TZKjFhUquEDOc_dJHU_4nZZUHpVc9q77XvmnEtM5aBVMhBO4J0oNIfiA6rLO49eLZ9IVEQs_CTyPt"
+
+      <div
+        ref="userPopoverRef"
+        class="relative"
+        @mouseenter="openUserPopover"
+        @mouseleave="scheduleUserPopoverClose"
+        @focusin="openUserPopover"
+        @focusout="handleUserPopoverFocusOut"
+      >
+        <button
+          type="button"
+          class="p-0.5 rounded-full flex items-center justify-center transition-colors hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+          :aria-expanded="userPopoverVisible ? 'true' : 'false'"
+          aria-haspopup="menu"
+          data-testid="workspace-header-user-trigger"
+          title="打开空间与账号菜单"
+          @click.stop="toggleUserPopover"
         >
+          <UnifiedAvatar
+            :name="normalizedUserName"
+            :src="props.userAvatarUrl"
+            :size="32"
+          />
+        </button>
+
+        <div
+          v-if="userPopoverVisible"
+          class="mt-2 p-3 border border-slate-200 rounded-2xl bg-white w-80 right-0 top-full absolute z-30 shadow-[0_18px_48px_rgba(15,23,42,0.16)]"
+          data-testid="workspace-header-user-popover"
+        >
+          <section class="pb-3 border-b border-slate-100">
+            <div class="flex gap-3 items-start">
+              <UnifiedAvatar
+                :name="normalizedUserName"
+                :src="props.userAvatarUrl"
+                :size="40"
+              />
+              <div class="flex-1 min-w-0">
+                <div class="text-sm text-slate-900 font-semibold truncate">
+                  {{ normalizedUserName }}
+                </div>
+                <div v-if="normalizedUserEmail" class="text-[11px] text-slate-500 mt-0.5 truncate">
+                  {{ normalizedUserEmail }}
+                </div>
+                <div class="text-[11px] text-slate-500 mt-1.5">
+                  当前空间
+                </div>
+                <div class="flex gap-2 mt-1 items-center">
+                  <span class="text-xs text-slate-700 font-medium truncate">
+                    {{ currentWorkspaceName }}
+                  </span>
+                  <span
+                    v-if="currentWorkspace"
+                    class="text-[10px] text-slate-500 px-2 py-0.5 rounded-full bg-slate-100 shrink-0"
+                  >
+                    {{ workspaceTypeLabel(currentWorkspace.workspace.type) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="py-3 border-b border-slate-100">
+            <div class="text-[11px] text-slate-500 font-medium px-1 pb-2">
+              快速切换空间
+            </div>
+            <div v-if="orderedWorkspaceOptions.length > 0" class="space-y-1">
+              <button
+                v-for="item in orderedWorkspaceOptions"
+                :key="item.workspace.id"
+                class="px-2.5 py-2 rounded-xl text-left w-full transition-colors"
+                :class="item.workspace.id === props.workspaceId
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-slate-700 hover:bg-slate-50'"
+                data-testid="workspace-header-user-workspace-item"
+                type="button"
+                @click="selectWorkspace(item)"
+              >
+                <div class="flex gap-2 items-center justify-between">
+                  <span class="text-xs font-semibold truncate">{{ item.workspace.name }}</span>
+                  <span class="text-[10px] px-2 py-0.5 rounded-full bg-white/80 border border-slate-200 shrink-0">
+                    {{ workspaceTypeLabel(item.workspace.type) }}
+                  </span>
+                </div>
+                <div class="text-[11px] mt-1" :class="item.workspace.id === props.workspaceId ? 'text-blue-600/80' : 'text-slate-500'">
+                  {{ item.workspace.id === props.workspaceId ? '当前空间' : '切换后将沿用当前工作区跳转逻辑' }}
+                </div>
+              </button>
+            </div>
+            <div v-else class="text-[11px] text-slate-400 px-1 py-2">
+              暂无可切换空间
+            </div>
+          </section>
+
+          <section class="pt-3 space-y-1">
+            <button
+              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+              data-testid="workspace-header-user-action-workspace-home"
+              type="button"
+              @click="triggerUserAction('openWorkspaceHome')"
+            >
+              <span class="material-symbols-outlined text-[18px]">home</span>
+              <span>打开空间首页</span>
+            </button>
+            <button
+              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+              data-testid="workspace-header-user-action-settings"
+              type="button"
+              @click="triggerUserAction('openWorkspaceSettings')"
+            >
+              <span class="material-symbols-outlined text-[18px]">tune</span>
+              <span>项目设置</span>
+            </button>
+            <button
+              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+              data-testid="workspace-header-user-action-display-preferences"
+              type="button"
+              @click="triggerUserAction('openDisplayPreferences')"
+            >
+              <span class="material-symbols-outlined text-[18px]">format_size</span>
+              <span>显示偏好</span>
+            </button>
+            <button
+              v-if="props.workspaceCanManageMembers"
+              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+              data-testid="workspace-header-user-action-member-management"
+              type="button"
+              @click="triggerUserAction('openMemberManagement')"
+            >
+              <span class="material-symbols-outlined text-[18px]">group</span>
+              <span>成员管理</span>
+            </button>
+            <button
+              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+              data-testid="workspace-header-user-action-account-center"
+              type="button"
+              @click="triggerUserAction('openAccountCenter')"
+            >
+              <span class="material-symbols-outlined text-[18px]">manage_accounts</span>
+              <span>账号中心</span>
+            </button>
+          </section>
+        </div>
       </div>
     </div>
   </header>

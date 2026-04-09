@@ -37,6 +37,10 @@ it('项目页从流程入口打开 workflow 画布，而不是继续依赖静态
   assert.match(panelSource, /title: '流程画布'/, '固定 flow tab 标题未切换为流程画布')
   assert.match(panelSource, /v-else-if="activeTabId === 'flow'"/, '主面板缺少 flow tab 渲染分支')
   assert.match(panelSource, /<WorkspaceTldrawCanvas[\s\S]*workspace-flow-/, 'flow tab 未渲染真实画布引擎')
+  assert.match(panelSource, /if \(activeTabId\.value === 'flow'\)\s+return \['竞赛分析', '流程画布'\]/, '流程画布 breadcrumb 仍然挂在当前竞赛名下')
+  assert.match(panelSource, /if \(activeResourceTab\.value\.previewMode === 'draw'\)\s+return \['竞赛分析', title\]/, '自由画布 breadcrumb 仍然错误绑定到竞赛语义')
+  assert.doesNotMatch(panelSource, /<div v-else-if="activeTabId === 'flow'"[\s\S]*flowPanelTitle/, '流程画布仍保留顶部副标题栏')
+  assert.doesNotMatch(panelSource, /<template v-else-if="activePreviewMode === 'draw'">[\s\S]*rev \{\{ Math\.max\(0, Number\(collabRevision \|\| 0\)\) \}\}/, '自由画布内部仍保留 rev 信息栏')
   assert.doesNotMatch(panelSource, /赛题确认/, 'flow tab 仍残留旧的静态 checklist 内容')
 })
 

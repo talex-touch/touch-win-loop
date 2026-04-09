@@ -12,6 +12,7 @@ import type {
   InvitationWithToken,
   WorkspaceDisplayPreferences,
   WorkspaceFontSizePreset,
+  WorkspaceTabSpacingPreset,
   WorkspaceAiUsageHistory,
   WorkspaceBillingEstimate,
   WorkspaceMemberManagementSnapshot,
@@ -28,9 +29,13 @@ import {
 } from '~~/shared/constants/user-avatar-upload'
 import {
   normalizeWorkspaceFontSizeDraft,
+  normalizeWorkspaceTabSpacingDraft,
   resolveWorkspaceFontSizePresetLabel,
+  resolveWorkspaceTabSpacingPresetLabel,
   useWorkspaceDisplayPreferenceApi,
+  type WorkspaceDisplayPreferencePatchPayload,
   WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
+  WORKSPACE_TAB_SPACING_PRESET_OPTIONS,
 } from '~/composables/useWorkspaceDisplayPreferences'
 import { formatDateTime } from '~/composables/team-ui'
 
@@ -109,6 +114,7 @@ const userWorkspaceDisplayPreferencesSaving = ref(false)
 const userWorkspaceDisplayPreferencesError = ref('')
 const userWorkspaceDisplayPreferencesSuccess = ref('')
 const userWorkspaceDisplayFontSizeDraft = ref<WorkspaceFontSizePreset | ''>('')
+const userWorkspaceDisplayTabSpacingDraft = ref<WorkspaceTabSpacingPreset | ''>('')
 const aiUsage = ref<WorkspaceAiUsageHistory | null>(null)
 const aiUsageLoading = ref(false)
 const aiUsageError = ref('')
@@ -412,6 +418,10 @@ const userInitial = computed(() => {
 
 const userWorkspaceDisplayCurrentLabel = computed(() => {
   return resolveWorkspaceFontSizePresetLabel(userWorkspaceDisplayPreferences.value?.fontSizePreset)
+})
+
+const userWorkspaceDisplayCurrentTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(userWorkspaceDisplayPreferences.value?.tabSpacingPreset)
 })
 
 const canRenameCurrentWorkspace = computed(() => {
@@ -888,6 +898,7 @@ function resetDialogState() {
 
 function syncUserWorkspaceDisplayDraft(): void {
   userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(userWorkspaceDisplayPreferences.value?.fontSizePreset)
+  userWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(userWorkspaceDisplayPreferences.value?.tabSpacingPreset)
 }
 
 function applyUserWorkspaceDisplayPreferences(preferences: WorkspaceDisplayPreferences | null): void {
@@ -902,6 +913,7 @@ function resetUserWorkspaceDisplayPreferencesState(): void {
   userWorkspaceDisplayPreferencesError.value = ''
   userWorkspaceDisplayPreferencesSuccess.value = ''
   userWorkspaceDisplayFontSizeDraft.value = ''
+  userWorkspaceDisplayTabSpacingDraft.value = ''
 }
 
 async function loadUserWorkspaceDisplayPreferences(): Promise<void> {
@@ -929,9 +941,13 @@ async function saveUserWorkspaceDisplayPreferences(): Promise<void> {
   userWorkspaceDisplayPreferencesError.value = ''
   userWorkspaceDisplayPreferencesSuccess.value = ''
   try {
-    const preferences = await patchUserWorkspaceDisplayDefaultsByApi(userWorkspaceDisplayFontSizeDraft.value || null)
+    const payload: WorkspaceDisplayPreferencePatchPayload = {
+      fontSizePreset: userWorkspaceDisplayFontSizeDraft.value || null,
+      tabSpacingPreset: userWorkspaceDisplayTabSpacingDraft.value || null,
+    }
+    const preferences = await patchUserWorkspaceDisplayDefaultsByApi(payload)
     applyUserWorkspaceDisplayPreferences(preferences)
-    userWorkspaceDisplayPreferencesSuccess.value = userWorkspaceDisplayFontSizeDraft.value
+    userWorkspaceDisplayPreferencesSuccess.value = userWorkspaceDisplayFontSizeDraft.value || userWorkspaceDisplayTabSpacingDraft.value
       ? '个人全局默认已保存。'
       : '个人全局默认已清空，将回退到团队默认或系统默认。'
   }
@@ -1702,7 +1718,7 @@ onBeforeUnmount(() => {
                         显示偏好
                       </p>
                       <p class="text-sm text-slate-500 mt-1">
-                        配置你在所有工作区默认生效的字体大小。系统默认固定为 md。
+                        配置你在所有工作区默认生效的字体大小和标签边距。系统默认固定为 md / 默认边距。
                       </p>
                     </div>
                   </div>
@@ -1714,10 +1730,10 @@ onBeforeUnmount(() => {
                     {{ userWorkspaceDisplayPreferencesSuccess }}
                   </p>
 
-                  <div class="gap-4 grid md:grid-cols-3">
+                  <div class="gap-4 grid md:grid-cols-4">
                     <div class="user-settings-mini-card">
                       <p class="user-settings-mini-card__label">
-                        当前个人全局默认
+                        当前全局字号
                       </p>
                       <p class="user-settings-mini-card__value">
                         {{ userWorkspaceDisplayCurrentLabel }}
@@ -1725,10 +1741,18 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="user-settings-mini-card">
                       <p class="user-settings-mini-card__label">
+                        当前标签边距
+                      </p>
+                      <p class="user-settings-mini-card__value">
+                        {{ userWorkspaceDisplayCurrentTabSpacingLabel }}
+                      </p>
+                    </div>
+                    <div class="user-settings-mini-card">
+                      <p class="user-settings-mini-card__label">
                         系统默认
                       </p>
                       <p class="user-settings-mini-card__value">
-                        默认（md）
+                        md / 默认
                       </p>
                     </div>
                     <div class="user-settings-mini-card">
@@ -1767,15 +1791,39 @@ onBeforeUnmount(() => {
                       </select>
                     </label>
 
+                    <label class="user-settings-field">
+                      <span class="user-settings-field__label">标签边距</span>
+                      <select
+                        v-model="userWorkspaceDisplayTabSpacingDraft"
+                        class="user-settings-select"
+                        data-testid="user-settings-display-tab-spacing-select"
+                        :disabled="userWorkspaceDisplayPreferencesSaving"
+                      >
+                        <option value="">
+                          未设置，回退继承链
+                        </option>
+                        <option
+                          v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                          :key="`user-display-tab-spacing-option-${option.value}`"
+                          :value="option.value"
+                        >
+                          {{ option.label }}
+                        </option>
+                      </select>
+                    </label>
+
                     <p class="text-sm text-slate-500">
-                      清空后会在具体工作区继续继承团队默认或系统默认；工作区单独覆盖仍然优先。
+                      紧凑档会压缩顶部标签页的横向边距和最小宽度。清空后会在具体工作区继续继承团队默认或系统默认；工作区单独覆盖仍然优先。
                     </p>
 
                     <div class="flex flex-wrap gap-2 justify-end">
                       <button
                         class="user-settings-btn user-settings-btn--compact"
                         :disabled="userWorkspaceDisplayPreferencesSaving"
-                        @click="userWorkspaceDisplayFontSizeDraft = ''"
+                        @click="
+                          userWorkspaceDisplayFontSizeDraft = ''
+                          userWorkspaceDisplayTabSpacingDraft = ''
+                        "
                       >
                         清除全局默认
                       </button>

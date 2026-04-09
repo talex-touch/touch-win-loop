@@ -98,12 +98,18 @@ export function useDashboardWorkspace() {
     overviewLoading.value = true
     overviewError.value = ''
     try {
-      const response = await $fetch<ApiResponse<DashboardOverviewPayload>>(endpoint('/dashboard/overview'))
-      summary.value = response.data.summary
-      insights.value = response.data.insights
-      competitions.value = response.data.competitions
-      skillMetrics.value = response.data.skillMetrics
-      scheduleItems.value = response.data.scheduleItems
+      const response = await fetch(String(endpoint('/dashboard/overview')), {
+        credentials: 'include',
+      })
+      const payload = await response.json() as ApiResponse<DashboardOverviewPayload>
+      if (!response.ok)
+        throw new Error(String(payload?.message || 'Dashboard 概览加载失败。'))
+
+      summary.value = payload.data.summary
+      insights.value = payload.data.insights
+      competitions.value = payload.data.competitions
+      skillMetrics.value = payload.data.skillMetrics
+      scheduleItems.value = payload.data.scheduleItems
     }
     catch (error: any) {
       overviewError.value = String(error?.data?.message || 'Dashboard 概览加载失败。')

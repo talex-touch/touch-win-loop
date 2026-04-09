@@ -7,6 +7,7 @@ const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/projec
 const USE_COLLAB_SESSION_FILE = resolve(process.cwd(), 'app/composables/useCollabSession.ts')
 const WORKSPACE_MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
 const RICH_TEXT_EDITOR_FILE = resolve(process.cwd(), 'app/components/editor/RichTextEditor.vue')
+const RICH_TEXT_COMMANDS_FILE = resolve(process.cwd(), 'app/components/editor/rich-text-editor-commands.ts')
 
 it('项目页使用 useCollabSession 统一协作状态机', async () => {
   const source = await readFile(PROJECT_PAGE_FILE, 'utf8')
@@ -30,22 +31,46 @@ it('项目页使用 useCollabSession 统一协作状态机', async () => {
 it('markdown 协作文档已切换为公共富文本编辑器，旧双栏预览已移除', async () => {
   const panelSource = await readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8')
   const editorSource = await readFile(RICH_TEXT_EDITOR_FILE, 'utf8')
+  const commandsSource = await readFile(RICH_TEXT_COMMANDS_FILE, 'utf8')
+  const markdownSection = panelSource.match(/<template v-if="activePreviewMode === 'markdown'">([\s\S]*?)<\/template>/)?.[1] || ''
 
   assert.match(panelSource, /<RichTextEditor[\s\S]*:doc="collabMarkdownDoc"/, '主面板未接入公共富文本编辑器')
+  assert.ok(markdownSection, '未找到 markdown 预览分支模板')
   assert.match(panelSource, /:awareness="collabMarkdownAwareness"/, '主面板未向富文本编辑器传入 Awareness')
   assert.match(panelSource, /:current-user="collabCurrentUser"/, '主面板未向富文本编辑器传入当前用户信息')
+  assert.match(panelSource, /:show-toolbar="false"/, 'markdown 仍然显示顶部工具栏')
+  assert.match(panelSource, /:enable-slash-menu="true"/, 'markdown 未启用 slash 菜单')
+  assert.match(panelSource, /:image-upload-handler="markdownImageUploadHandler"/, 'markdown 未接入图片上传处理器')
+  assert.match(panelSource, /content-max-width="1040px"/, 'markdown 未限制正文最大宽度')
   assert.match(panelSource, /@selection-change="onMarkdownSelectionChange"/, '主面板未接收 markdown 本地选区事件')
   assert.match(panelSource, /@remote-presence-change="onMarkdownRemotePresenceChange"/, '主面板未接收 markdown 远端选区事件')
+  assert.doesNotMatch(markdownSection, /\{\{ activeResourceTab\.title \}\}/, 'markdown 顶部仍然显示文档标题')
+  assert.doesNotMatch(markdownSection, /rev \{\{ Math\.max\(0, Number\(collabRevision \|\| 0\)\) \}\}/, 'markdown 顶部仍然显示修订版本')
+  assert.doesNotMatch(markdownSection, /collabConnectionText/, 'markdown 分支仍然显示协作连接文案')
+  assert.doesNotMatch(markdownSection, /CollabPresenceAvatarStack/, 'markdown 分支仍然保留第二条协作头')
   assert.doesNotMatch(panelSource, /Markdown 渲染预览/, '主面板仍保留旧的 Markdown 预览区')
   assert.doesNotMatch(panelSource, /workspace-markdown-preview__body/, '主面板仍保留旧的 Markdown 样式残留')
-  assert.match(panelSource, /<CollabPresenceAvatarStack\s+:users="collabPresenceUsers"\s*\/>/, 'markdown 头部未接入头像栈')
-  assert.match(panelSource, /<CollabPresenceDock\s+:users="collabPresenceUsers"\s*\/>/, 'markdown 底部成员栏未接入 Dock 组件')
+  assert.match(panelSource, /<CollabPresenceAvatarStack[\s\S]*:users="collabPresenceUsers"[\s\S]*appearance="flat"[\s\S]*size="sm"/, 'breadcrumb 右侧未接入紧凑头像栈')
+  assert.doesNotMatch(panelSource, /<CollabPresenceDock\s+:users="collabPresenceUsers"\s*\/>/, 'markdown 底部成员栏仍然存在')
 
   assert.match(editorSource, /createCollabMarkdownBaseExtensions\(\)/, '公共编辑器未复用共享 markdown schema 扩展')
   assert.match(editorSource, /Collaboration\.configure\(\{\s+document: doc,\s+field: 'prosemirror',/, '公共编辑器未接入 Yjs 协作片段')
   assert.match(editorSource, /yCursorPlugin\(awareness, \{/, '公共编辑器未接入 yCursorPlugin')
-  assert.match(editorSource, /label: '正文'/, '公共编辑器缺少正文工具按钮')
-  assert.match(editorSource, /label: `H\$\{level\}`/, '公共编辑器缺少标题工具按钮')
+  assert.match(editorSource, /showToolbar\?: boolean/, '公共编辑器未提供工具栏显隐开关')
+  assert.match(editorSource, /contentMaxWidth\?: number \| string/, '公共编辑器未提供正文最大宽度配置')
+  assert.match(editorSource, /enableSlashMenu\?: boolean/, '公共编辑器未提供 slash 菜单开关')
+  assert.match(editorSource, /imageUploadHandler\?: \(\(file: File\) => Promise<RichTextEditorImageUploadResult>\) \| null/, '公共编辑器未暴露图片上传处理器')
+  assert.match(editorSource, /v-if="showToolbar"\s+class="rich-text-editor__toolbar"/, '公共编辑器未按显隐开关渲染工具栏')
+  assert.match(editorSource, /--rich-text-editor-content-max-width/, '公共编辑器未通过变量限制正文最大宽度')
+  assert.match(editorSource, /data-testid="rich-text-editor-slash-menu"/, '公共编辑器未渲染 slash 菜单浮层')
+  assert.match(editorSource, /handlePaste: handleEditorPaste/, '公共编辑器未接入图片粘贴处理')
+  assert.match(editorSource, /handleDrop: handleEditorDrop/, '公共编辑器未接入图片拖拽处理')
+  assert.match(editorSource, /setCodeBlock\(\{ language: 'plaintext' \}\)/, '公共编辑器未为新建代码块设置默认语言')
+
+  assert.match(commandsSource, /label: '正文'/, '统一命令注册表缺少正文命令')
+  assert.match(commandsSource, /label: `H\$\{level\}`/, '统一命令注册表缺少标题命令')
+  assert.match(commandsSource, /label: '图片上传'/, '统一命令注册表缺少图片命令')
+  assert.match(commandsSource, /action: 'image'/, '统一命令注册表未定义图片动作')
 })
 
 it('画布已升级为真实引擎组件并移除 JSON 文本输入', async () => {

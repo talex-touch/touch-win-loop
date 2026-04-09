@@ -10,6 +10,7 @@ import type {
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectSettingsSnapshot,
+  TeamLastProjectPreference,
   WorkspaceBillingEstimate,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
@@ -908,6 +909,28 @@ async function loadWorkspaceDashboard() {
 
     writeActiveWorkspacePreference(workspaceId)
 
+    const legacyProjectId = normalizeQueryValue(route.query.projectId)
+    if (legacyProjectId) {
+      await navigateTo(projectWorkspacePath(workspaceId, legacyProjectId), { replace: true })
+      return
+    }
+
+    if (!shouldOpenCreateDialog(route.query.create) && !shouldOpenCreateDialog(route.query.joined)) {
+      try {
+        const lastProjectResponse = await $fetch<ApiResponse<TeamLastProjectPreference | null>>(
+          endpoint(`/teams/${workspaceId}/last-project`),
+        )
+        const lastProjectId = String(lastProjectResponse.data?.projectId || '').trim()
+        if (lastProjectId) {
+          await navigateTo(projectWorkspacePath(workspaceId, lastProjectId), { replace: true })
+          return
+        }
+      }
+      catch {
+        // ignore last-project lookup failures and continue rendering the dashboard list
+      }
+    }
+
     const [projectsResponse, contestsResponse] = await Promise.all([
       $fetch<ApiResponse<Project[]>>(endpoint('/projects'), {
         query: {
@@ -926,11 +949,6 @@ async function loadWorkspaceDashboard() {
       loadOverview(),
       loadPlatformPanel(meResponse.data),
     ])
-
-    const legacyProjectId = normalizeQueryValue(route.query.projectId)
-    if (legacyProjectId) {
-      await navigateTo(projectWorkspacePath(workspaceId, legacyProjectId), { replace: true })
-    }
   }
   catch (error: any) {
     const statusCode = Number(error?.statusCode || error?.response?.status)

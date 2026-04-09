@@ -29,6 +29,7 @@ interface MdastNode {
 }
 
 const collabMarkdownSchema = getCollabMarkdownSchema()
+const INTERNAL_RESOURCE_FILE_PATH_PATTERN = /^\/?(?:api\/)?projects\/[^/]+\/resources\/([^/]+)\/(?:file|source)(?:[/?#]|$)/i
 
 function normalizeLineBreaks(value: string): string {
   return String(value || '')
@@ -38,6 +39,11 @@ function normalizeLineBreaks(value: string): string {
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  const normalized = normalizeString(value)
+  return normalized || null
 }
 
 function normalizeBlockText(value: string): string {
@@ -51,6 +57,27 @@ function normalizeHeadingLevel(value: unknown): 1 | 2 | 3 {
   if (parsed === 1 || parsed === 2 || parsed === 3)
     return parsed
   return 1
+}
+
+function resolveResourceIdFromImageSrc(src: unknown): string | null {
+  const normalized = normalizeString(src)
+  if (!normalized)
+    return null
+
+  const matched = normalized.match(INTERNAL_RESOURCE_FILE_PATH_PATTERN)
+  const resourceId = normalizeString(matched?.[1])
+  return resourceId || null
+}
+
+function serializeMarkdownImageSyntax(node: MdastNode): string {
+  const alt = String(node.alt || '').replace(/\]/g, '\\]')
+  const src = normalizeString(node.url)
+  const title = normalizeString(node.title)
+  if (!src)
+    return alt
+  if (title)
+    return `![${alt}](${src} "${title.replace(/"/g, '\\"')}")`
+  return `![${alt}](${src})`
 }
 
 function createEmptyDocument(): JSONContent {
@@ -187,6 +214,11 @@ function mdastInlineToPm(nodes: MdastNode[] | undefined, marks: MarkdownMark[] =
       continue
     }
 
+    if (node.type === 'image') {
+      appendTextNode(result, serializeMarkdownImageSyntax(node), activeMarks)
+      continue
+    }
+
     if (node.type === 'break') {
       result.push({ type: 'hardBreak' })
       continue
@@ -268,6 +300,37 @@ function mdastTableCellToPm(node: MdastNode, isHeader: boolean): JSONContent {
   }
 }
 
+function mdastImageToPm(node: MdastNode): JSONContent | null {
+  const src = normalizeString(node.url)
+  if (!src)
+    return null
+
+  return {
+    type: 'image',
+    attrs: {
+      src,
+      alt: normalizeOptionalString(node.alt),
+      title: normalizeOptionalString(node.title),
+      resourceId: resolveResourceIdFromImageSrc(src),
+    },
+  }
+}
+
+function paragraphContainsSingleImage(node: MdastNode): boolean {
+  if (node?.type !== 'paragraph' || !Array.isArray(node.children))
+    return false
+
+  const meaningfulChildren = node.children.filter((child: MdastNode) => {
+    if (!child || typeof child !== 'object')
+      return false
+    if (child.type !== 'text')
+      return true
+    return Boolean(normalizeString(child.value))
+  })
+
+  return meaningfulChildren.length === 1 && meaningfulChildren[0]?.type === 'image'
+}
+
 function mdastBlocksToPm(nodes: MdastNode[] | undefined): JSONContent[] {
   if (!Array.isArray(nodes) || nodes.length === 0)
     return []
@@ -279,6 +342,13 @@ function mdastBlocksToPm(nodes: MdastNode[] | undefined): JSONContent[] {
       continue
 
     if (node.type === 'paragraph') {
+      if (paragraphContainsSingleImage(node)) {
+        const imageNode = mdastImageToPm(node.children?.find((child: MdastNode) => child?.type === 'image'))
+        if (imageNode)
+          result.push(imageNode)
+        continue
+      }
+
       const content = mdastInlineToPm(node.children)
       result.push(content.length > 0 ? { type: 'paragraph', content } : { type: 'paragraph' })
       continue
@@ -364,6 +434,13 @@ function mdastBlocksToPm(nodes: MdastNode[] | undefined): JSONContent[] {
         type: 'table',
         content,
       })
+      continue
+    }
+
+    if (node.type === 'image') {
+      const imageNode = mdastImageToPm(node)
+      if (imageNode)
+        result.push(imageNode)
       continue
     }
 
@@ -553,6 +630,25 @@ function pmBlocksToMdast(nodes: JSONContent[] | undefined): MdastNode[] {
               : [],
           }
         }),
+      })
+      continue
+    }
+
+    if (node.type === 'image') {
+      const src = normalizeString(node.attrs?.src)
+      if (!src)
+        continue
+
+      result.push({
+        type: 'paragraph',
+        children: [
+          {
+            type: 'image',
+            url: src,
+            alt: normalizeOptionalString(node.attrs?.alt) || '',
+            title: normalizeOptionalString(node.attrs?.title),
+          },
+        ],
       })
       continue
     }

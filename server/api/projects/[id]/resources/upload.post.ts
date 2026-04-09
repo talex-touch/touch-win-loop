@@ -174,6 +174,7 @@ export default defineEventHandler(async (event) => {
   const accessLevel = normalizeAccessLevel(normalizeString(fields.accessLevel))
   const title = normalizeString(fields.title)
   const summary = normalizeString(fields.summary)
+  const hostMarkdownResourceId = normalizeString(fields.hostMarkdownResourceId)
   const files: ProjectUploadFile[] = fileParts.map((part) => {
     const fileName = normalizeString(part.filename) || 'upload.bin'
     const mimeType = normalizeString(part.type) || 'application/octet-stream'
@@ -265,6 +266,14 @@ export default defineEventHandler(async (event) => {
           summary,
           category,
           accessLevel,
+          metadata: hostMarkdownResourceId
+            ? {
+                embeddedIn: {
+                  kind: 'markdown',
+                  resourceId: hostMarkdownResourceId,
+                },
+              }
+            : undefined,
         })
 
         const created = await createProjectPreviewDocumentWithTask(db, {

@@ -138,6 +138,9 @@ catalogs:
     '@tiptap/core':
       specifier: ^3.22.3
       version: 3.22.3
+    '@tiptap/extension-code-block-lowlight':
+      specifier: ^3.22.3
+      version: 3.22.3
     '@tiptap/extension-collaboration':
       specifier: ^3.22.3
       version: 3.22.3
@@ -151,6 +154,9 @@ catalogs:
       specifier: ^3.22.3
       version: 3.22.3
     '@tiptap/extension-heading':
+      specifier: ^3.22.3
+      version: 3.22.3
+    '@tiptap/extension-image':
       specifier: ^3.22.3
       version: 3.22.3
     '@tiptap/extension-link':
@@ -204,6 +210,12 @@ catalogs:
     '@vueuse/core':
       specifier: ^14.2.0
       version: 14.2.0
+    highlight.js:
+      specifier: ^11.11.1
+      version: 11.11.1
+    lowlight:
+      specifier: ^3.3.0
+      version: 3.3.0
     pinia:
       specifier: ^3.0.4
       version: 3.0.4
@@ -259,6 +271,9 @@ importers:
       '@tiptap/core':
         specifier: catalog:frontend
         version: 3.22.3(@tiptap/pm@3.22.3)
+      '@tiptap/extension-code-block-lowlight':
+        specifier: catalog:frontend
+        version: 3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/extension-code-block@3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3)(highlight.js@11.11.1)(lowlight@3.3.0)
       '@tiptap/extension-collaboration':
         specifier: catalog:frontend
         version: 3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3)(@tiptap/y-tiptap@3.0.2(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.7)(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30))(yjs@13.6.30)
@@ -272,6 +287,9 @@ importers:
         specifier: catalog:frontend
         version: 3.22.3(@tiptap/extensions@3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3))
       '@tiptap/extension-heading':
+        specifier: catalog:frontend
+        version: 3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))
+      '@tiptap/extension-image':
         specifier: catalog:frontend
         version: 3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))
       '@tiptap/extension-link':
@@ -331,6 +349,9 @@ importers:
       dotenv:
         specifier: 'catalog:'
         version: 17.3.1
+      highlight.js:
+        specifier: catalog:frontend
+        version: 11.11.1
       json-rules-engine:
         specifier: 'catalog:'
         version: 7.3.1
@@ -340,6 +361,9 @@ importers:
       langchain:
         specifier: 'catalog:'
         version: 1.2.33(@langchain/core@1.1.33(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.31.0(ws@8.18.3)(zod@4.3.6))(ws@8.18.3))(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.31.0(ws@8.18.3)(zod@4.3.6))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vue@3.5.27(typescript@5.9.3))(ws@8.18.3)
+      lowlight:
+        specifier: catalog:frontend
+        version: 3.3.0
       mdast-util-from-markdown:
         specifier: 'catalog:'
         version: 2.0.2
@@ -4192,6 +4216,15 @@ packages:
     peerDependencies:
       '@tiptap/extension-list': ^3.22.3
 
+  '@tiptap/extension-code-block-lowlight@3.22.3':
+    resolution: {integrity: sha512-NGFuD9zb1QfnCgD2zW4XaUEdQvd/ydm9FmXXh8eawx/+C8xt3p21DIKRERvxWrCvvVNzIUEpZRRYehPOJiD1eg==}
+    peerDependencies:
+      '@tiptap/core': ^3.22.3
+      '@tiptap/extension-code-block': ^3.22.3
+      '@tiptap/pm': ^3.22.3
+      highlight.js: ^11
+      lowlight: ^2 || ^3
+
   '@tiptap/extension-code-block@3.22.3':
     resolution: {integrity: sha512-RiQtEjDAPrHpdo6sw6b7fOw/PijqgFIsozKKkGcSeBgWHQuFg7q9OxJTj+l0e60rVwSu/5gmKEEobzM9bX+t2Q==}
     peerDependencies:
@@ -4265,6 +4298,11 @@ packages:
     peerDependencies:
       '@tiptap/core': ^3.22.3
       '@tiptap/pm': ^3.22.3
+
+  '@tiptap/extension-image@3.22.3':
+    resolution: {integrity: sha512-Qpp8c5LOQaNpHrzjqZtoxtIR+8sSqJ7k8v+8anmYw3nxjvt2kpfT28Vd7aWMX55ZS43LaxMx+MkZqbmgUmMP0w==}
+    peerDependencies:
+      '@tiptap/core': ^3.22.3
 
   '@tiptap/extension-italic@3.22.3':
     resolution: {integrity: sha512-LteA4cb4EGCiUtrK2JHvDF/Zg0/YqV4DUyHhAAho+oGEQDupZlsS6m0ia5wQcclkiTLzsoPrwcSNu6RDGQ16wQ==}
@@ -4452,6 +4490,9 @@ packages:
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
+
+  '@types/hast@3.0.4':
+    resolution: {integrity: sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ==}
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
@@ -6393,6 +6434,10 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
+  highlight.js@11.11.1:
+    resolution: {integrity: sha512-Xwwo44whKBVCYoliBQwaPvtd/2tYFkRQtXDWj1nackaV2JPXx3L0+Jvd8/qCJ2p+ML0/XVkJ2q+Mr+UVdpJK5w==}
+    engines: {node: '>=12.0.0'}
+
   hookable@5.5.3:
     resolution: {integrity: sha512-Yc+BQe8SvoXH1643Qez1zqLRmbA5rCL+sSmk6TVos0LWVfNIB7PGncdlId77WzLGSIB5KaWgTaNTs2lNVEI6VQ==}
 
@@ -6926,6 +6971,9 @@ packages:
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
+
+  lowlight@3.3.0:
+    resolution: {integrity: sha512-0JNhgFoPvP6U6lE/UdVsSq99tn6DhjjpAj5MxG49ewd2mOBVtwWYIT8ClyABhq198aXXODMU6Ox8DrGy/CpTZQ==}
 
   lru-cache@10.4.3:
     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
@@ -13641,6 +13689,14 @@ snapshots:
     dependencies:
       '@tiptap/extension-list': 3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3)
 
+  '@tiptap/extension-code-block-lowlight@3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/extension-code-block@3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3)(highlight.js@11.11.1)(lowlight@3.3.0)':
+    dependencies:
+      '@tiptap/core': 3.22.3(@tiptap/pm@3.22.3)
+      '@tiptap/extension-code-block': 3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3)
+      '@tiptap/pm': 3.22.3
+      highlight.js: 11.11.1
+      lowlight: 3.3.0
+
   '@tiptap/extension-code-block@3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))(@tiptap/pm@3.22.3)':
     dependencies:
       '@tiptap/core': 3.22.3(@tiptap/pm@3.22.3)
@@ -13703,6 +13759,10 @@ snapshots:
     dependencies:
       '@tiptap/core': 3.22.3(@tiptap/pm@3.22.3)
       '@tiptap/pm': 3.22.3
+
+  '@tiptap/extension-image@3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))':
+    dependencies:
+      '@tiptap/core': 3.22.3(@tiptap/pm@3.22.3)
 
   '@tiptap/extension-italic@3.22.3(@tiptap/core@3.22.3(@tiptap/pm@3.22.3))':
     dependencies:
@@ -13955,6 +14015,10 @@ snapshots:
   '@types/estree@0.0.39': {}
 
   '@types/estree@1.0.8': {}
+
+  '@types/hast@3.0.4':
+    dependencies:
+      '@types/unist': 3.0.3
 
   '@types/json-schema@7.0.15': {}
 
@@ -16247,6 +16311,8 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
+  highlight.js@11.11.1: {}
+
   hookable@5.5.3: {}
 
   hookable@6.0.1: {}
@@ -16778,6 +16844,12 @@ snapshots:
   longest-streak@3.1.0: {}
 
   loupe@3.2.1: {}
+
+  lowlight@3.3.0:
+    dependencies:
+      '@types/hast': 3.0.4
+      devlop: 1.1.0
+      highlight.js: 11.11.1
 
   lru-cache@10.4.3: {}
 

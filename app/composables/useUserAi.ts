@@ -81,26 +81,44 @@ function normalizeCatalog(input: AiModelCatalog | null | undefined): AiModelCata
   }
 }
 
+async function parseApiResponse<T>(response: Response, fallbackMessage: string): Promise<ApiResponse<T>> {
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw new Error(String(payload?.message || fallbackMessage))
+  return payload
+}
+
 export function useUserAiApi() {
   const runtime = useRuntimeConfig()
   const { endpoint } = useApiEndpoint(runtime)
 
   async function loadSettings(): Promise<UserAiSettings> {
-    const response = await $fetch<ApiResponse<UserAiSettings>>(endpoint('/user/ai/settings'))
-    return normalizeSettings(response.data)
+    const response = await fetch(String(endpoint('/user/ai/settings')), {
+      credentials: 'include',
+    })
+    const payload = await parseApiResponse<UserAiSettings>(response, 'AI 设置加载失败。')
+    return normalizeSettings(payload.data)
   }
 
   async function patchSettings(payload: PatchUserAiSettingsPayload): Promise<UserAiSettings> {
-    const response = await $fetch<ApiResponse<UserAiSettings>>(endpoint('/user/ai/settings'), {
+    const response = await fetch(String(endpoint('/user/ai/settings')), {
       method: 'PATCH',
-      body: payload,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     })
-    return normalizeSettings(response.data)
+    const result = await parseApiResponse<UserAiSettings>(response, 'AI 设置保存失败。')
+    return normalizeSettings(result.data)
   }
 
   async function loadModelCatalog(): Promise<AiModelCatalog> {
-    const response = await $fetch<ApiResponse<AiModelCatalog>>(endpoint('/user/ai/models'))
-    return normalizeCatalog(response.data)
+    const response = await fetch(String(endpoint('/user/ai/models')), {
+      credentials: 'include',
+    })
+    const payload = await parseApiResponse<AiModelCatalog>(response, '模型目录加载失败。')
+    return normalizeCatalog(payload.data)
   }
 
   return {

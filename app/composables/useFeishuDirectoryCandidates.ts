@@ -45,21 +45,24 @@ export function useFeishuDirectoryCandidates(input: UseFeishuDirectoryCandidates
     loading.value = true
     try {
       const refreshQuery = forceRefresh ? '&refresh=1' : ''
-      const response = await $fetch<ApiResponse<FeishuDirectorySearchResult>>(
-        input.endpoint(`/admin/integrations/feishu/admin-feishu-users?keyword=${encodeURIComponent(normalizedKeyword)}&limit=20${refreshQuery}`),
-      )
+      const response = await fetch(String(input.endpoint(`/admin/integrations/feishu/admin-feishu-users?keyword=${encodeURIComponent(normalizedKeyword)}&limit=20${refreshQuery}`)), {
+        credentials: 'include',
+      })
+      const payload = await response.json() as ApiResponse<FeishuDirectorySearchResult>
+      if (!response.ok)
+        throw new Error(String(payload?.message || '飞书成员搜索失败。'))
 
-      candidates.value = response.data.items || []
-      notice.value = String(response.data.notice || '')
-      source.value = response.data.source || ''
-      fromCache.value = Boolean(response.data.fromCache)
-      fetchedAt.value = String(response.data.fetchedAt || '')
-      cacheExpiresAt.value = String(response.data.cacheExpiresAt || '')
-      totalMembers.value = Number(response.data.totalMembers || 0)
-      permissionHint.value = String(response.data.permissionHint || '')
+      candidates.value = payload.data.items || []
+      notice.value = String(payload.data.notice || '')
+      source.value = payload.data.source || ''
+      fromCache.value = Boolean(payload.data.fromCache)
+      fetchedAt.value = String(payload.data.fetchedAt || '')
+      cacheExpiresAt.value = String(payload.data.cacheExpiresAt || '')
+      totalMembers.value = Number(payload.data.totalMembers || 0)
+      permissionHint.value = String(payload.data.permissionHint || '')
     }
     catch (error: any) {
-      const message = String(error?.data?.message || '飞书成员搜索失败。')
+      const message = String(error?.data?.message || error?.message || '飞书成员搜索失败。')
       reset()
       notice.value = message
       if (input.onError)

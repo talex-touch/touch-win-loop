@@ -227,6 +227,17 @@ export default defineEventHandler(async (event) => {
       }, 40975)
     }
 
+    if (error instanceof Error && error.message === 'DEVICE_ID_REQUIRED') {
+      setResponseStatus(event, 400)
+      return fail('缺少 deviceId。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40085)
+    }
+
     throw error
   }
 })
