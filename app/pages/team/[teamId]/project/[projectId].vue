@@ -4706,6 +4706,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           :linked-contest-resource-groups="linkedContestResourceGroups"
           :linked-contest-binding-count="projectSettingsBindings.length"
           :upload-tasks="projectUploadTasks"
+          :project-members="workspaceMembers"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
           :project-issues="projectIssues"

@@ -4,6 +4,7 @@ import type {
   Contest,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectMemberSummary,
   ProjectOutlineNode,
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
@@ -83,6 +84,7 @@ const props = withDefaults(defineProps<{
   linkedContestResourceGroups?: WorkspaceLinkedContestResourceGroup[]
   linkedContestBindingCount?: number
   uploadTasks?: ProjectUploadTask[]
+  projectMembers?: ProjectMemberSummary[]
   projectOutline?: ProjectOutlineNode[]
   issueReports?: ProjectIssueReport[]
   projectIssues?: ProjectIssue[]
@@ -110,6 +112,7 @@ const props = withDefaults(defineProps<{
   linkedContestResourceGroups: () => [],
   linkedContestBindingCount: 0,
   uploadTasks: () => [],
+  projectMembers: () => [],
   projectOutline: () => [],
   issueReports: () => [],
   projectIssues: () => [],
@@ -823,6 +826,14 @@ function metadataUploadedAt(resource: Resource): string {
   return normalizeMetadataString(resource, 'uploadedAt')
 }
 
+function findProjectMemberName(userId: string): string {
+  const normalizedUserId = String(userId || '').trim()
+  if (!normalizedUserId)
+    return ''
+  const matched = props.projectMembers.find(member => String(member.userId || '').trim() === normalizedUserId)
+  return String(matched?.username || '').trim()
+}
+
 function metadataUploader(resource: Resource): string {
   const metadata = metadataRecord(resource)
   const candidates = [
@@ -1053,21 +1064,27 @@ function formatDateTime(value: string): string {
 }
 
 function resourceUploaderLabel(resource: Resource): string {
-  const fromMetadata = metadataUploader(resource)
-  if (fromMetadata)
-    return fromMetadata
-
+  const uploaderUserId = String(resource.uploaderUserId || resource.createdBy || '').trim()
   const createdBy = String(resource.createdBy || '').trim()
-  if (!createdBy)
-    return '-'
-
   const currentUserId = String(props.currentUserId || '').trim()
-  if (currentUserId && createdBy === currentUserId) {
+
+  const resolvedName = String(
+    resource.uploaderUsername
+    || findProjectMemberName(uploaderUserId || createdBy)
+    || metadataUploader(resource)
+    || '',
+  ).trim()
+
+  if (currentUserId && uploaderUserId && uploaderUserId === currentUserId) {
     const currentUsername = String(props.currentUsername || '').trim()
-    return currentUsername ? `${currentUsername}（我）` : '我'
+    const displayName = resolvedName || currentUsername || '我'
+    return displayName === '我' ? displayName : `${displayName}（我）`
   }
 
-  return createdBy
+  if (resolvedName)
+    return resolvedName
+
+  return uploaderUserId || createdBy || '-'
 }
 
 function resourceStorageLabel(resource: Resource): string {
