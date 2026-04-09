@@ -30,8 +30,8 @@ export function useDashboardWorkspace() {
 
   const searchQuery = useState('dashboard:search-query', () => '')
   const feedFilter = useState<DashboardFeedFilter>('dashboard:feed-filter', () => 'ongoing')
-  const overviewLoading = useState('dashboard:overview-loading', () => false)
-  const overviewError = useState('dashboard:overview-error', () => '')
+  const overviewLoading = ref(false)
+  const overviewError = ref('')
 
   const analystProfile: DashboardAnalystProfile = {
     name: '分析师',
@@ -57,18 +57,18 @@ export function useDashboardWorkspace() {
     { id: 'rules', label: '规则查阅', icon: 'help', to: '/contests' },
   ]
 
-  const summary = useState<DashboardSummary>('dashboard:summary', () => ({
+  const summary = ref<DashboardSummary>({
     greeting: '你好',
     subtitle: '正在加载实时竞赛分析概览...',
     ongoingCount: 0,
     upcomingCount: 0,
     insightCount: 0,
-  }))
+  })
 
-  const insights = useState<DashboardInsight[]>('dashboard:insights', () => [])
-  const competitions = useState<DashboardCompetition[]>('dashboard:competitions', () => [])
-  const skillMetrics = useState<DashboardSkillMetric[]>('dashboard:skill-metrics', () => [])
-  const scheduleItems = useState<DashboardScheduleItem[]>('dashboard:schedule-items', () => [])
+  const insights = ref<DashboardInsight[]>([])
+  const competitions = ref<DashboardCompetition[]>([])
+  const skillMetrics = ref<DashboardSkillMetric[]>([])
+  const scheduleItems = ref<DashboardScheduleItem[]>([])
 
   const visibleInsights = computed(() => {
     const keyword = searchQuery.value.trim()

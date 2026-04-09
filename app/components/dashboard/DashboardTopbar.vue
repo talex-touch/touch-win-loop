@@ -9,6 +9,9 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
+const searchLabelId = 'dashboard-topbar-search-label'
+const searchInputId = 'dashboard-topbar-search-input'
+
 function onInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLInputElement).value)
 }
@@ -31,10 +34,16 @@ function onInput(event: Event) {
             <span class="material-symbols-outlined text-[20px]">search</span>
           </div>
           <div class="min-w-0 flex-1">
-            <p class="text-[11px] text-[var(--db-subtle)] font-semibold tracking-[0.14em] uppercase">
+            <label
+              :id="searchLabelId"
+              :for="searchInputId"
+              class="text-[11px] text-[var(--db-subtle)] font-semibold tracking-[0.14em] uppercase"
+            >
               工作台搜索
-            </p>
+            </label>
             <input
+              :id="searchInputId"
+              :aria-labelledby="searchLabelId"
               :value="modelValue"
               class="db-focus-ring text-sm text-slate-900 bg-transparent border-none outline-none mt-1 px-0 py-0 w-full placeholder:text-slate-400"
               placeholder="搜索赛事、洞察或项目台入口"

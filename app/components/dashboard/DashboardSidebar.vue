@@ -40,6 +40,7 @@ const feishuBindStatus = ref<FeishuAuthBindStatus | null>(null)
 const feishuMeta = ref<FeishuIntegrationConfig | null>(null)
 const feishuAudits = ref<FeishuAuthAuditItem[]>([])
 const selectedWorkspaceId = ref('')
+const profileDialogTitleId = 'dashboard-profile-dialog-title'
 
 function isMenuItemActive(item: DashboardMenuItem): boolean {
   if (item.to === '/dashboard')
@@ -427,11 +428,14 @@ async function onWorkspaceSwitch(workspaceId: string) {
     <div
       v-if="profileDialogVisible"
       class="dashboard-profile-dialog p-4 bg-slate-950/30 backdrop-blur-sm flex items-center inset-0 justify-center fixed z-50"
+      aria-modal="true"
+      :aria-labelledby="profileDialogTitleId"
+      role="dialog"
       @click.self="closeProfileDialog"
     >
       <div class="db-panel db-panel-soft p-4 max-w-sm w-full" style="box-shadow: var(--db-shadow-lg);">
         <div class="flex items-center justify-between">
-          <h3 class="text-base text-slate-900 font-semibold">
+          <h3 :id="profileDialogTitleId" class="text-base text-slate-900 font-semibold">
             个人信息
           </h3>
           <button
