@@ -6,6 +6,7 @@ import { patchAdminResource } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
 interface PatchResourceBody {
   resourceId?: string
@@ -70,7 +71,7 @@ export default defineEventHandler(async (event) => {
   let resource
   try {
     resource = await withTransaction(event, async (db) => {
-      return patchAdminResource(db, {
+      const patched = await patchAdminResource(db, {
         actorUserId: user.id,
         contestId,
         resourceId: body.resourceId!,
@@ -88,6 +89,15 @@ export default defineEventHandler(async (event) => {
           status: body?.status,
         },
       })
+      if (patched) {
+        await enqueueResourceGovernanceTask(db, {
+          contestId,
+          resourceId: patched.id,
+          taskType: 'profile_analyze',
+          actorUserId: user.id,
+        })
+      }
+      return patched
     })
   }
   catch (error) {

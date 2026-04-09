@@ -166,6 +166,131 @@ export interface PublishCheckResult {
   warnings: PublishCheckIssue[]
 }
 
+export type ResourceKnowledgeGovernanceStatus = 'pending' | 'healthy' | 'review' | 'suggested_invalid' | 'suggested_archive'
+export type ResourceGovernanceTaskType = 'profile_analyze' | 'relation_refresh' | 'governance_apply' | 'search_metric_rollup'
+export type ResourceGovernanceTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'dead_letter'
+export type ResourceRelationType = 'recommended' | 'similar' | 'duplicate' | 'complementary'
+export type ResourceSearchSort = 'relevance' | 'quality' | 'value' | 'hot'
+
+export interface ResourceQualityIssue {
+  code: string
+  message: string
+  severity: 'error' | 'warning' | 'info'
+  field?: string
+  scoreImpact?: number
+}
+
+export interface ResourceRelation {
+  id: string
+  contestId: string
+  sourceResourceId: string
+  targetResourceId: string
+  relationType: ResourceRelationType
+  weight: number
+  reason: string
+  targetTitle?: string
+  targetCategory?: ResourceCategory
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ResourceKnowledgeProfileSummary {
+  resourceId: string
+  predictedCategory?: ResourceCategory | ''
+  categoryConfidence: number
+  aiTags: string[]
+  majorTags: string[]
+  stageTags: string[]
+  qualityScore: number
+  valueScore: number
+  hotScore: number
+  governanceStatus: ResourceKnowledgeGovernanceStatus
+  qualityIssues: ResourceQualityIssue[]
+  relatedResources?: ResourceRelation[]
+}
+
+export interface ResourceKnowledgeProfile extends ResourceKnowledgeProfileSummary {
+  contestId: string
+  analysisVersion: string
+  manualOverrides: Record<string, unknown>
+  componentScores: Record<string, number>
+  analysisPayload: Record<string, unknown>
+  lastAnalyzedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ResourceDemandInsight {
+  query: string
+  searchCount: number
+  zeroResultCount: number
+  lowClickCount: number
+  clickCount: number
+  ctr: number
+  suggestedCategories: ResourceCategory[]
+  missingTags: string[]
+}
+
+export interface ResourceGovernanceTask {
+  id: string
+  contestId: string
+  resourceId?: string | null
+  taskType: ResourceGovernanceTaskType
+  status: ResourceGovernanceTaskStatus
+  attempt: number
+  maxAttempt: number
+  payload: Record<string, unknown>
+  resultPayload: Record<string, unknown>
+  errorMessage: string
+  nextRunAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ResourceSearchEvent {
+  id: string
+  contestId: string
+  resourceId?: string | null
+  query: string
+  filters: Record<string, unknown>
+  resultCount: number
+  clicked: boolean
+  sessionId: string
+  workspaceId?: string | null
+  userId?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ResourceKnowledgeOverview {
+  contestId: string
+  summary: {
+    totalResources: number
+    analyzedResources: number
+    healthyResources: number
+    reviewResources: number
+    suggestedInvalidResources: number
+    suggestedArchiveResources: number
+    pendingTasks: number
+    avgQualityScore: number
+    avgValueScore: number
+    avgHotScore: number
+  }
+  categoryStats: Array<{
+    category: ResourceCategory
+    count: number
+    avgQualityScore: number
+    avgValueScore: number
+    avgHotScore: number
+  }>
+  topQualityResources: Resource[]
+  topValueResources: Resource[]
+  topHotResources: Resource[]
+  demandInsights: ResourceDemandInsight[]
+}
+
 export interface Resource {
   id: string
   contestId: string
@@ -203,6 +328,7 @@ export interface Resource {
   uploaderAvatarUrl?: string | null
   createdAt?: string
   updatedAt?: string
+  aiProfile?: ResourceKnowledgeProfileSummary
 }
 
 export type ProjectResourceUploadSessionStatus
@@ -1326,7 +1452,7 @@ export type AdminAgentTaskType
   = 'publish_assistant'
     | 'general'
 
-export type AdminDraftModule = 'overview' | 'tracks' | 'timelines' | 'track_timelines' | 'rubrics' | 'resources'
+export type AdminDraftModule = 'overview' | 'tracks' | 'timelines' | 'track_timelines' | 'rubrics' | 'resources' | 'knowledge'
 
 export interface AdminAgentRunRequest {
   workspaceId: string
@@ -1442,7 +1568,7 @@ export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
 export type FeishuSyncRunMode = 'full' | 'delta'
 export type FeishuTaskScheduleMode = 'interval' | 'cron'
 export type RuleSeverity = 'error' | 'warning' | 'info'
-export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder'
+export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder' | 'quality' | 'compliance'
 export type RuleVersionStatus = 'draft' | 'published'
 export type ScopeType = 'global' | 'activity' | 'instance' | 'region' | 'stage' | 'track' | 'policy'
 export type FeishuSyncIssueStatus = 'open' | 'resolved' | 'ignored'

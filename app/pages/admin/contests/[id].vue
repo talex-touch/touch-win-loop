@@ -22,7 +22,7 @@ const contestId = computed(() => {
 const workspaceRootPath = computed(() => `/admin/contests/${contestId.value}`)
 const normalizedRoutePath = computed(() => route.path.replace(/\/+$/, ''))
 
-type WorkspaceModuleKey = 'overview' | 'faq' | 'tracks' | 'trackTimelines' | 'timelines' | 'rubrics' | 'resources' | 'prompts' | 'audit'
+type WorkspaceModuleKey = 'overview' | 'faq' | 'tracks' | 'trackTimelines' | 'timelines' | 'rubrics' | 'resources' | 'knowledge' | 'prompts' | 'audit'
 
 const workspaceModules = computed(() => {
   const id = contestId.value
@@ -34,6 +34,7 @@ const workspaceModules = computed(() => {
     { key: 'timelines' as const, label: '时间节点', path: `/admin/contests/${id}/timelines` },
     { key: 'rubrics' as const, label: '评委细则', path: `/admin/contests/${id}/rubrics` },
     { key: 'resources' as const, label: '资料中心', path: `/admin/contests/${id}/resources` },
+    { key: 'knowledge' as const, label: '知识库治理', path: `/admin/contests/${id}/knowledge` },
     { key: 'prompts' as const, label: 'AI 提示词', path: `/admin/contests/${id}/ai-prompts` },
     { key: 'audit' as const, label: '审计历史', path: `/admin/contests/${id}/audit` },
   ]
@@ -61,6 +62,8 @@ function resolveModuleFromPath(path: string): WorkspaceModuleKey {
     return 'rubrics'
   if (tail.startsWith('resources'))
     return 'resources'
+  if (tail.startsWith('knowledge'))
+    return 'knowledge'
   if (tail.startsWith('ai-prompts'))
     return 'prompts'
   if (tail.startsWith('audit'))

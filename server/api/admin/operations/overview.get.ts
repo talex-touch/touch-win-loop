@@ -1,35 +1,31 @@
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
-import { ensureContestLibrarySeeded } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { getAdminOperationsOverview } from '~~/server/utils/admin-operations-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { listKnowledgeContestSummaries } from '~~/server/utils/resource-knowledge-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
 
-  const canReadInternal = await checkPlatformPermission(event, user, 'contest.read_internal')
-  if (!canReadInternal) {
+  const canRead = await checkPlatformPermission(event, user, 'contest.read_internal')
+  if (!canRead) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权访问资料管理。', {
+    return fail('当前用户无权查看运营总览。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40393)
+    }, 403410)
   }
 
-  const resources = await withClient(event, async (db) => {
-    await ensureContestLibrarySeeded(db, user.id)
-    return listKnowledgeContestSummaries(db)
-  })
+  const payload = await withClient(event, async db => getAdminOperationsOverview(db, event))
 
-  return ok(resources, {
+  return ok(payload, {
     startedAt,
     provider: runtime.ai.provider,
     model: runtime.ai.model,
