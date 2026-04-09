@@ -8,21 +8,19 @@ import type {
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 
-export type MappingTone = 'complete' | 'warning' | 'todo'
-
 export interface WorkspaceMappingRow {
   id: string
   metric: string
   hint: string
   score: number
+  scoreLabel: string
   ability: string
-  tags: string[]
-  tone: MappingTone
+  supportingNote: string
 }
 
 export interface WorkspaceKeyword {
   label: string
-  count: number
+  count?: number | null
   active?: boolean
 }
 
@@ -45,12 +43,6 @@ export interface WorkspaceTopicBoardDraft {
   keywordsText: string
   teamSkillTagsText: string
   candidateCount: number
-}
-
-export interface WorkspaceStatusToneMeta {
-  label: string
-  badgeClass: string
-  barClass: string
 }
 
 export interface WorkspaceChatPanelState {
