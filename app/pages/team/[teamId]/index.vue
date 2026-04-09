@@ -10,7 +10,6 @@ import type {
   ProjectMemberRole,
   ProjectSettingsSnapshot,
   ProjectTopicBoardCreateSeed,
-  TeamLastProjectPreference,
   WorkspaceBillingEstimate,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
@@ -73,7 +72,7 @@ const routeWorkspaceId = computed(() => {
   return normalizeRouteParam(params.workspaceId || params.teamId)
 })
 
-const loading = ref(false)
+const loading = ref(true)
 const errorText = ref('')
 const noticeText = ref('')
 const joinedNoticeText = ref('')
@@ -194,6 +193,7 @@ const activeNoticeTone = computed<'success' | 'warning'>(() => {
     return 'success'
   return 'warning'
 })
+const shouldRenderIntegratedPanels = computed(() => !loading.value && !errorText.value)
 const portalCards = computed(() => {
   const cards: Array<{ id: string, title: string, desc: string, to: string, icon: string }> = [
     {
@@ -914,23 +914,7 @@ async function loadWorkspaceDashboard() {
       return
     }
 
-    if (!shouldOpenCreateDialog(route.query.create) && !shouldOpenCreateDialog(route.query.joined)) {
-      try {
-        const lastProjectResponse = await unsafeFetch(
-          endpoint(`/teams/${workspaceId}/last-project`),
-        ) as ApiResponse<TeamLastProjectPreference | null>
-        const lastProjectId = String(lastProjectResponse.data?.projectId || '').trim()
-        if (lastProjectId) {
-          await navigateTo(projectWorkspacePath(workspaceId, lastProjectId), { replace: true })
-          return
-        }
-      }
-      catch {
-        // ignore last-project lookup failures and continue rendering the dashboard list
-      }
-    }
-
-    const [projectsResponse, contestsResponse] = await Promise.all([
+    const [projectsResult, contestsResult] = await Promise.allSettled([
       unsafeFetch(endpoint('/projects'), {
         query: {
           teamId: workspaceId,
@@ -940,8 +924,21 @@ async function loadWorkspaceDashboard() {
       unsafeFetch(endpoint('/contests')) as Promise<ApiResponse<Contest[]>>,
     ])
 
-    projects.value = projectsResponse.data
-    contests.value = contestsResponse.data
+    if (projectsResult.status !== 'fulfilled')
+      throw projectsResult.reason
+
+    if (contestsResult.status !== 'fulfilled') {
+      console.error('[team-dashboard] preload contests failed', {
+        workspaceId,
+        error: contestsResult.reason,
+      })
+      contests.value = []
+    }
+    else {
+      contests.value = contestsResult.value.data
+    }
+
+    projects.value = projectsResult.value.data
 
     await Promise.all([
       loadWorkspaceBillingEstimate(workspaceId),
@@ -951,6 +948,12 @@ async function loadWorkspaceDashboard() {
   }
   catch (error: any) {
     const statusCode = Number(error?.statusCode || error?.response?.status)
+    console.error('[team-dashboard] loadWorkspaceDashboard failed', {
+      workspaceId,
+      statusCode,
+      error,
+    })
+
     if (statusCode === 401) {
       await navigateTo({
         path: '/login',
@@ -959,7 +962,12 @@ async function loadWorkspaceDashboard() {
       return
     }
 
-    errorText.value = String(error?.data?.message || '项目台加载失败，请稍后重试。')
+    errorText.value = String(
+      error?.data?.message
+      || error?.response?._data?.message
+      || error?.message
+      || (statusCode > 0 ? `项目台加载失败（HTTP ${statusCode}）。` : '项目台加载失败，请稍后重试。'),
+    )
     projects.value = []
     contests.value = []
     workspaceBillingEstimate.value = null
@@ -1033,7 +1041,11 @@ onMounted(async () => {
       />
     </DashboardOverviewShell>
 
-    <section class="gap-8 grid grid-cols-12" data-testid="team-dashboard-integrated-panels">
+    <section
+      v-if="shouldRenderIntegratedPanels"
+      class="gap-8 grid grid-cols-12"
+      data-testid="team-dashboard-integrated-panels"
+    >
       <div class="col-span-12 space-y-8 lg:col-span-8">
         <DashboardPlatformPanel
           :portal-cards="portalCards"
