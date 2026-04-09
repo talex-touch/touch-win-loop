@@ -43,6 +43,7 @@ const canManageIntegrations = computed(() => {
   return canManageRoles.value || permissions.value.includes('contest.write')
 })
 const canManageRuntimeSettings = computed(() => permissions.value.includes('contest.write'))
+const canPublishNotifications = computed(() => permissions.value.includes('contest.write'))
 
 function buildValueSourceLabel(source: BuildValueSource): string {
   if (source === 'env')
@@ -232,6 +233,19 @@ onMounted(loadPermissions)
           </p>
           <p class="text-[11px] text-slate-500 mt-1">
             飞书登录、管理员组同步、Bitable 映射任务
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canPublishNotifications"
+          to="/admin/notifications"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            通知管理
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            发布平台通知，按全局或 workspace 范围下发
           </p>
         </NuxtLink>
 

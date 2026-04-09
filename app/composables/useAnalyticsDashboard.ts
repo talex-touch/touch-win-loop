@@ -26,6 +26,8 @@ interface AnalyticsFilterOption {
   meta?: string
 }
 
+const CONTEST_PAGE_SIZE = 100
+
 const rangeOptions: AnalyticsOption<AnalyticsRangePreset>[] = [
   { value: '30d', label: '近 30 天', hint: '关注近期备赛和行为波动' },
   { value: '90d', label: '近 90 天', hint: '默认窗口，平衡趋势与样本量' },
@@ -223,6 +225,32 @@ export function useAnalyticsDashboard() {
   let overviewRequestId = 0
   let detailRequestId = 0
 
+  async function loadContestCatalog(): Promise<Contest[]> {
+    const contests: Contest[] = []
+    const seen = new Set<string>()
+
+    for (let page = 1; page <= 50; page += 1) {
+      const response = await authApiFetch<ApiResponse<Contest[]>>('/contests', {
+        query: {
+          page,
+          pageSize: CONTEST_PAGE_SIZE,
+          sort: 'deadline',
+        },
+      })
+      const items = Array.isArray(response.data) ? response.data : []
+      for (const item of items) {
+        if (!item?.id || seen.has(item.id))
+          continue
+        seen.add(item.id)
+        contests.push(item)
+      }
+      if (items.length < CONTEST_PAGE_SIZE)
+        break
+    }
+
+    return contests
+  }
+
   const selectedProject = computed(() => {
     return projectCatalog.value.find(item => item.id === filters.projectId) || null
   })
@@ -398,13 +426,7 @@ export function useAnalyticsDashboard() {
       const [authResponse, projectResponse, contestResponse] = await Promise.all([
         authApiFetch<ApiResponse<AuthMeResult>>('/auth/me'),
         authApiFetch<ApiResponse<Project[]>>('/projects'),
-        authApiFetch<ApiResponse<Contest[]>>('/contests', {
-          query: {
-            page: 1,
-            pageSize: 120,
-            sort: 'deadline',
-          },
-        }),
+        loadContestCatalog(),
       ])
 
       const workspaces = Array.isArray(authResponse.data.workspaces) && authResponse.data.workspaces.length > 0
@@ -419,7 +441,7 @@ export function useAnalyticsDashboard() {
 
       workspaceCatalog.value = sortByLabel(workspaces)
       projectCatalog.value = [...projectResponse.data].sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'))
-      contestCatalog.value = [...contestResponse.data].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+      contestCatalog.value = [...contestResponse].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
       optionsLoaded.value = true
 
       await normalizeFilterSelection()

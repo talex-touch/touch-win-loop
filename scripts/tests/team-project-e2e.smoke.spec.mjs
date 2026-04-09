@@ -201,14 +201,36 @@ test.describe('Team -> Project E2E smoke', () => {
       const teamInviteeUi = await loginViaUi(browser, teamInvitee, '/team')
       contexts.push(teamInviteeUi.context)
 
+      await test.step('登录后 /dashboard 显示纯 Loopy 首页，且不展示悬浮入口', async () => {
+        await teamInviteeUi.page.goto('/dashboard')
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-home')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-session-list')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-messages')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-trigger')).toBeHidden()
+      })
+
       await test.step('接受 Team 邀请后进入 dashboard，未分配项目不可见', async () => {
         await teamInviteeUi.page.goto(`/invite/${teamInvite.token}`)
         await expect(teamInviteeUi.page).toHaveURL(routePattern(`/team/${teamId}`))
         await expect(teamInviteeUi.page.getByTestId('team-dashboard-notice')).toContainText('已加入当前 Team')
+        await expect(teamInviteeUi.page.getByTestId('team-dashboard-integrated-panels')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-trigger')).toBeVisible()
         await expect(projectCard(teamInviteeUi.page, teamProjectId)).toHaveCount(0)
 
         await teamInviteeUi.page.goto(`/projects/${teamProjectId}`)
         await expect(teamInviteeUi.page.getByText('项目不存在或加载失败。')).toBeVisible()
+      })
+
+      await test.step('dashboard 与悬浮 Loopy 共享同一批 workspace 级会话', async () => {
+        await teamInviteeUi.page.goto('/dashboard')
+        await expect(teamInviteeUi.page.getByTestId('dashboard-loopy-session-list')).toBeVisible()
+        await teamInviteeUi.page.locator('[data-testid="dashboard-loopy-sidebar"] button').click()
+        await expect(teamInviteeUi.page.locator('[data-testid="dashboard-loopy-session-list"] button').first()).toContainText('新对话')
+
+        await teamInviteeUi.page.goto(`/team/${teamId}`)
+        await teamInviteeUi.page.getByTestId('loopy-floating-trigger').click()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-panel')).toBeVisible()
+        await expect(teamInviteeUi.page.locator('[data-testid="loopy-floating-panel"] select')).toContainText('新对话')
       })
 
       const teamProjectInvite = await apiPost(teamOwnerSession.api, `/api/projects/${teamProjectId}/invitations`, {
@@ -220,6 +242,7 @@ test.describe('Team -> Project E2E smoke', () => {
         await teamInviteeUi.page.goto(`/invite/${teamProjectInvite.token}`)
         await expect(teamInviteeUi.page).toHaveURL(routePattern(`/team/${teamId}/project/${teamProjectId}`))
         await expect(teamInviteeUi.page.getByTestId('workspace-left-rail-member-management-button')).toBeVisible()
+        await expect(teamInviteeUi.page.getByTestId('loopy-floating-trigger')).toBeHidden()
 
         await teamInviteeUi.page.goto(`/projects/${teamProjectId}`)
         await expect(teamInviteeUi.page).toHaveURL(routePattern(`/team/${teamId}/project/${teamProjectId}`))
@@ -257,6 +280,24 @@ test.describe('Team -> Project E2E smoke', () => {
 
         await teamInviteeUi.page.goto(`/team/${teamId}`)
         await expect(projectCard(teamInviteeUi.page, teamProjectId)).toHaveCount(0)
+      })
+
+      await test.step('Team 创建弹窗支持仅创建且停留在当前 Team 页', async () => {
+        const stayCreateTitle = `Team Stay ${seed}`
+        await teamOwnerUi.page.goto(`/team/${teamId}`)
+
+        const createButton = teamOwnerUi.page.getByTestId('team-dashboard-create-project-button')
+        await expect(createButton).toBeEnabled()
+        await createButton.click()
+
+        await expect(teamOwnerUi.page.getByTestId('team-create-project-dialog')).toBeVisible()
+        await teamOwnerUi.page.getByTestId('team-create-project-title-input').fill(stayCreateTitle)
+        await teamOwnerUi.page.getByTestId('team-create-project-summary-input').fill('用于验证仅创建后停留在当前 Team 页。')
+        await teamOwnerUi.page.getByTestId('team-create-project-stay-submit-button').click()
+
+        await expect(teamOwnerUi.page).toHaveURL(routePattern(`/team/${teamId}`))
+        await expect(teamOwnerUi.page.getByTestId('team-create-project-dialog')).toBeHidden()
+        await expect(teamOwnerUi.page.getByText(stayCreateTitle)).toBeVisible()
       })
 
       const personalOwnerSession = await createApiSession(personalOwner)

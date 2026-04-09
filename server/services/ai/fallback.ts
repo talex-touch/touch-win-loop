@@ -174,14 +174,17 @@ function toFallbackTopicItem(input: {
   index: number
   query: string
   major: string
+  discipline: string
   topicType: string
   expectedDifficulty: string
   keywords: string[]
   teamSkillTags: string[]
+  recommendedTrackId: string
+  recommendedTrackName: string
 }): TopicProposalItem {
   const suffix = input.index + 1
   const query = input.query || '智能化赛题'
-  const major = input.major || '跨专业'
+  const expertiseHint = [input.major, input.discipline].filter(Boolean).join(' / ') || '跨专业'
   const keywordHint = input.keywords.length > 0 ? `，并围绕${input.keywords.slice(0, 3).join('、')}展开` : ''
   const requiredSkills = input.teamSkillTags.length > 0
     ? input.teamSkillTags.slice(0, 4)
@@ -189,7 +192,7 @@ function toFallbackTopicItem(input: {
   return {
     id: `fallback-topic-${suffix}`,
     title: `${query} 方向命题方案 ${suffix}`,
-    reason: `结合${major}能力模型与竞赛评分维度${keywordHint}，方案 ${suffix} 更容易形成可验证成果。`,
+    reason: `结合${expertiseHint}能力模型与竞赛评分维度${keywordHint}，方案 ${suffix} 更容易形成可验证成果。`,
     innovationPoints: [
       '围绕真实业务痛点设计可量化指标。',
       '通过低成本原型快速验证核心假设。',
@@ -214,8 +217,8 @@ function toFallbackTopicItem(input: {
     estimatedWorkload: input.expectedDifficulty
       ? `按${input.expectedDifficulty}难度估计，建议 4-6 周完成 MVP、验证与答辩材料。`
       : '建议 4-6 周完成 MVP、验证与答辩材料。',
-    recommendedTrackId: '',
-    recommendedTrackName: input.topicType || '',
+    recommendedTrackId: input.recommendedTrackId,
+    recommendedTrackName: input.recommendedTrackName,
     contestFitScore: 72,
     contestFitReasons: [
       '题目方向与竞赛常见评分维度一致，便于组织答辩材料。',
@@ -242,6 +245,9 @@ function toFallbackTopicItem(input: {
 }
 
 export function runTopicProposalFallback(request: AiTopicProposalRequest): AiTopicProposalResult {
+  const track = request.context.contestId && request.context.trackId
+    ? findTrackById(request.context.contestId, request.context.trackId)
+    : undefined
   const latestUserMessage = [...request.messages]
     .reverse()
     .find(message => message.role === 'user')
@@ -254,10 +260,13 @@ export function runTopicProposalFallback(request: AiTopicProposalRequest): AiTop
       index,
       query: latestUserMessage,
       major: request.context.major || '',
+      discipline: request.context.discipline || '',
       topicType: request.context.topicType || '',
       expectedDifficulty: request.context.expectedDifficulty || '',
       keywords: request.context.keywords || [],
       teamSkillTags: request.context.teamSkillTags || [],
+      recommendedTrackId: request.context.trackId || '',
+      recommendedTrackName: track?.name || '',
     })
   })
 

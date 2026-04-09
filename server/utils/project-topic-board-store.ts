@@ -8,6 +8,7 @@ import type {
   TopicProposalItem,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 
 interface ProjectTopicBoardRow {
   id: string
@@ -78,6 +79,291 @@ function parseArray<T>(value: unknown, fallback: T[] = []): T[] {
   return Array.isArray(value) ? value as T[] : fallback
 }
 
+const topicProposalDecisionStatusSchema = z.enum(['candidate', 'shortlisted', 'rejected', 'selected'])
+
+const compareScoresSchema = z.object({
+  contestFit: z.coerce.number().default(0),
+  noveltySimilarity: z.coerce.number().default(0),
+  evidenceReadiness: z.coerce.number().default(0),
+  trendHeat: z.coerce.number().default(0),
+  teamMatch: z.coerce.number().default(0),
+  workloadFeasibility: z.coerce.number().default(0),
+})
+
+const topicProposalItemSchema = z.object({
+  id: z.string().default(''),
+  title: z.string().default(''),
+  reason: z.string().default(''),
+  innovationPoints: z.array(z.coerce.string()).default([]),
+  techRouteSteps: z.array(z.coerce.string()).default([]),
+  scoringMapping: z.array(z.coerce.string()).default([]),
+  risks: z.array(z.coerce.string()).default([]),
+  estimatedWorkload: z.string().default(''),
+  recommendedTrackId: z.string().default(''),
+  recommendedTrackName: z.string().default(''),
+  contestFitScore: z.coerce.number().default(0),
+  contestFitReasons: z.array(z.coerce.string()).default([]),
+  similarAwards: z.array(z.object({
+    title: z.string().default(''),
+    summary: z.string().default(''),
+    year: z.coerce.number().optional(),
+    contestId: z.string().optional(),
+    contestName: z.string().optional(),
+    trackId: z.string().optional(),
+    trackName: z.string().optional(),
+    similarityScore: z.coerce.number().default(0),
+    reason: z.string().optional(),
+  })).default([]),
+  trendSignals: z.array(z.object({
+    label: z.string().default(''),
+    summary: z.string().default(''),
+    heatScore: z.coerce.number().default(0),
+    source: z.enum(['contest_trends', 'internal_resource', 'web_search']).catch('contest_trends'),
+    confidence: z.coerce.number().default(0),
+  })).default([]),
+  requiredSkills: z.array(z.coerce.string()).default([]),
+  teamMatchScore: z.coerce.number().default(0),
+  teamGapNotes: z.array(z.coerce.string()).default([]),
+  evidenceRefs: z.array(z.object({
+    title: z.string().default(''),
+    summary: z.string().default(''),
+    sourceType: z.enum(['project_resource', 'contest_resource', 'contest_trend', 'web_search']).catch('project_resource'),
+    sourceLabel: z.string().default(''),
+    url: z.string().optional(),
+    confidence: z.coerce.number().default(0),
+  })).default([]),
+  decisionStatus: topicProposalDecisionStatusSchema.catch('candidate'),
+  compareScores: compareScoresSchema.default({
+    contestFit: 0,
+    noveltySimilarity: 0,
+    evidenceReadiness: 0,
+    trendHeat: 0,
+    teamMatch: 0,
+    workloadFeasibility: 0,
+  }),
+  totalScore: z.coerce.number().default(0),
+  references: z.array(z.coerce.string()).default([]),
+})
+
+const projectTopicBoardInputSchema = z.object({
+  contestId: z.string().default(''),
+  trackId: z.string().default(''),
+  major: z.string().default(''),
+  discipline: z.string().default(''),
+  topicType: z.string().default(''),
+  expectedDifficulty: z.string().default(''),
+  keywords: z.array(z.coerce.string()).default([]),
+  teamSkillTags: z.array(z.coerce.string()).default([]),
+  candidateCount: z.coerce.number().int().min(3).max(5).catch(3),
+  source: z.enum(['workspace_dashboard', 'workspace_sidebar', 'project_create']).catch('workspace_dashboard'),
+})
+
+const compareMatrixRowSchema = z.object({
+  candidateId: z.string().default(''),
+  title: z.string().default(''),
+  decisionStatus: topicProposalDecisionStatusSchema.catch('candidate'),
+  totalScore: z.coerce.number().default(0),
+  rank: z.coerce.number().int().default(0),
+  contestFit: z.coerce.number().default(0),
+  noveltySimilarity: z.coerce.number().default(0),
+  evidenceReadiness: z.coerce.number().default(0),
+  trendHeat: z.coerce.number().default(0),
+  teamMatch: z.coerce.number().default(0),
+  workloadFeasibility: z.coerce.number().default(0),
+})
+
+function normalizeTopicProposalDecisionStatus(value: unknown): TopicProposalDecisionStatus {
+  const parsed = topicProposalDecisionStatusSchema.safeParse(normalizeText(value))
+  return parsed.success ? parsed.data : 'candidate'
+}
+
+function createEmptyCompareScores(): TopicProposalItem['compareScores'] {
+  return {
+    contestFit: 0,
+    noveltySimilarity: 0,
+    evidenceReadiness: 0,
+    trendHeat: 0,
+    teamMatch: 0,
+    workloadFeasibility: 0,
+  }
+}
+
+function buildCompareMatrixFromCandidates(candidates: TopicProposalItem[]): TopicProposalCompareMatrixRow[] {
+  return candidates.map((candidate, index) => ({
+    candidateId: candidate.id,
+    title: candidate.title,
+    decisionStatus: candidate.decisionStatus,
+    totalScore: Number(candidate.totalScore || 0),
+    rank: index + 1,
+    ...createEmptyCompareScores(),
+    ...(candidate.compareScores || {}),
+  }))
+}
+
+function normalizeCandidatesForPersistence(
+  inputCandidates: TopicProposalItem[],
+  selectedCandidateId?: string,
+): {
+  candidates: TopicProposalItem[]
+  compareMatrix: TopicProposalCompareMatrixRow[]
+  selectedCandidateId: string
+} {
+  const seenCandidateIds = new Set<string>()
+  const requestedSelectedCandidateId = normalizeText(selectedCandidateId)
+  let normalizedSelectedCandidateId = ''
+
+  const normalizedCandidates = inputCandidates.map((candidate) => {
+    const rawCandidateId = normalizeText(candidate.id)
+    let candidateId = rawCandidateId || randomUUID()
+    while (seenCandidateIds.has(candidateId))
+      candidateId = randomUUID()
+    seenCandidateIds.add(candidateId)
+
+    if (!normalizedSelectedCandidateId && requestedSelectedCandidateId && rawCandidateId === requestedSelectedCandidateId)
+      normalizedSelectedCandidateId = candidateId
+
+    return {
+      ...candidate,
+      id: candidateId,
+      decisionStatus: normalizeTopicProposalDecisionStatus(candidate.decisionStatus),
+      totalScore: Number(candidate.totalScore || 0),
+      compareScores: {
+        ...createEmptyCompareScores(),
+        ...(candidate.compareScores || {}),
+      },
+    }
+  })
+
+  if (!normalizedSelectedCandidateId)
+    normalizedSelectedCandidateId = normalizedCandidates.find(candidate => candidate.decisionStatus === 'selected')?.id || ''
+
+  const candidates = normalizedCandidates.map((candidate) => {
+    const nextDecisionStatus = normalizedSelectedCandidateId
+      ? (candidate.id === normalizedSelectedCandidateId
+          ? 'selected'
+          : (candidate.decisionStatus === 'selected' ? 'candidate' : candidate.decisionStatus))
+      : candidate.decisionStatus
+    return {
+      ...candidate,
+      decisionStatus: nextDecisionStatus,
+    }
+  })
+
+  return {
+    candidates,
+    compareMatrix: buildCompareMatrixFromCandidates(candidates),
+    selectedCandidateId: normalizedSelectedCandidateId,
+  }
+}
+
+function createEmptyTopicProposalItem(candidateId: string, decisionStatus: TopicProposalDecisionStatus, totalScore: number): TopicProposalItem {
+  return {
+    id: candidateId,
+    title: '',
+    reason: '',
+    innovationPoints: [],
+    techRouteSteps: [],
+    scoringMapping: [],
+    risks: [],
+    estimatedWorkload: '',
+    recommendedTrackId: '',
+    recommendedTrackName: '',
+    contestFitScore: 0,
+    contestFitReasons: [],
+    similarAwards: [],
+    trendSignals: [],
+    requiredSkills: [],
+    teamMatchScore: 0,
+    teamGapNotes: [],
+    evidenceRefs: [],
+    decisionStatus,
+    compareScores: {
+      contestFit: 0,
+      noveltySimilarity: 0,
+      evidenceReadiness: 0,
+      trendHeat: 0,
+      teamMatch: 0,
+      workloadFeasibility: 0,
+    },
+    totalScore,
+    references: [],
+  }
+}
+
+function warnInvalidPayload(scope: string, payload: { rowId?: string, boardId?: string, issues: string[] }) {
+  console.warn(`[project-topic-board-store] ${scope} 校验失败`, payload)
+}
+
+function validateTopicProposalItem(row: ProjectTopicCandidateRow): TopicProposalItem {
+  const fallback = createEmptyTopicProposalItem(
+    row.candidate_id,
+    row.decision_status || 'candidate',
+    Number(row.total_score || 0),
+  )
+  const payload = parseRecord(row.payload)
+  const parsed = topicProposalItemSchema.safeParse({
+    ...fallback,
+    ...payload,
+    compareScores: {
+      ...fallback.compareScores,
+      ...parseRecord(payload.compareScores),
+    },
+  })
+
+  if (!parsed.success) {
+    warnInvalidPayload('candidate_payload', {
+      rowId: row.id,
+      boardId: row.board_id,
+      issues: parsed.error.issues.map(issue => `${issue.path.join('.') || 'root'}: ${issue.message}`),
+    })
+    return fallback
+  }
+
+  return {
+    ...parsed.data,
+    id: normalizeText(parsed.data.id) || fallback.id,
+    decisionStatus: row.decision_status,
+    totalScore: Number(row.total_score || 0),
+  }
+}
+
+function validateProjectTopicBoardInput(row: ProjectTopicBoardRow): ProjectTopicBoardInput {
+  const parsed = projectTopicBoardInputSchema.safeParse(parseRecord(row.input_snapshot))
+  if (!parsed.success) {
+    warnInvalidPayload('board_input', {
+      rowId: row.id,
+      issues: parsed.error.issues.map(issue => `${issue.path.join('.') || 'root'}: ${issue.message}`),
+    })
+    return {
+      contestId: '',
+      trackId: '',
+      major: '',
+      discipline: '',
+      topicType: '',
+      expectedDifficulty: '',
+      keywords: [],
+      teamSkillTags: [],
+      candidateCount: 3,
+      source: 'workspace_dashboard',
+    }
+  }
+
+  return parsed.data
+}
+
+function validateCompareMatrixRowArray(row: ProjectTopicBoardRow): TopicProposalCompareMatrixRow[] {
+  const parsed = z.array(compareMatrixRowSchema).safeParse(parseArray(row.compare_matrix))
+  if (!parsed.success) {
+    warnInvalidPayload('compare_matrix', {
+      rowId: row.id,
+      issues: parsed.error.issues.map(issue => `${issue.path.join('.') || 'root'}: ${issue.message}`),
+    })
+    return []
+  }
+
+  return parsed.data
+}
+
 function mapCandidateRow(row: ProjectTopicCandidateRow): ProjectTopicBoardCandidate {
   return {
     id: row.id,
@@ -88,7 +374,7 @@ function mapCandidateRow(row: ProjectTopicCandidateRow): ProjectTopicBoardCandid
     sortOrder: Number(row.sort_order || 0),
     decisionStatus: row.decision_status,
     totalScore: Number(row.total_score || 0),
-    payload: parseRecord(row.payload) as unknown as TopicProposalItem,
+    payload: validateTopicProposalItem(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -101,10 +387,10 @@ function mapBoardRow(row: ProjectTopicBoardRow, candidates: ProjectTopicBoardCan
     projectId: row.project_id,
     contestId: row.contest_id,
     trackId: row.track_id,
-    input: parseRecord(row.input_snapshot) as unknown as ProjectTopicBoardInput,
+    input: validateProjectTopicBoardInput(row),
     teamSkillProfile: parseArray<string>(row.team_skill_profile),
     boardSummary: row.board_summary,
-    compareMatrix: parseArray<TopicProposalCompareMatrixRow>(row.compare_matrix),
+    compareMatrix: validateCompareMatrixRowArray(row),
     selectedCandidateId: normalizeText(row.selected_candidate_id) || undefined,
     sessionId: normalizeText(row.session_id) || undefined,
     status: row.status,
@@ -184,6 +470,72 @@ async function getBoardRowsByProject(
   return result.rows
 }
 
+async function getBoardRowById(
+  db: Queryable,
+  input: {
+    projectId: string
+    boardId: string
+    forUpdate?: boolean
+  },
+): Promise<ProjectTopicBoardRow | null> {
+  const result = await db.query<ProjectTopicBoardRow>(
+    `SELECT
+      id,
+      workspace_id,
+      project_id,
+      contest_id,
+      track_id,
+      input_snapshot,
+      team_skill_profile,
+      compare_matrix,
+      board_summary,
+      selected_candidate_id,
+      session_id,
+      status,
+      created_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_topic_boards
+     WHERE project_id = $1
+       AND id = $2
+     LIMIT 1
+     ${input.forUpdate ? 'FOR UPDATE' : ''}`,
+    [input.projectId, input.boardId],
+  )
+
+  return result.rows[0] || null
+}
+
+async function listCandidateRowsByBoardId(
+  db: Queryable,
+  input: {
+    boardId: string
+    forUpdate?: boolean
+  },
+): Promise<ProjectTopicCandidateRow[]> {
+  const result = await db.query<ProjectTopicCandidateRow>(
+    `SELECT
+      id,
+      board_id,
+      workspace_id,
+      project_id,
+      candidate_id,
+      sort_order,
+      decision_status,
+      total_score,
+      payload,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_topic_candidates
+     WHERE board_id = $1
+     ORDER BY sort_order ASC, created_at ASC
+     ${input.forUpdate ? 'FOR UPDATE' : ''}`,
+    [input.boardId],
+  )
+
+  return result.rows
+}
+
 export async function createProjectTopicBoardWithCandidates(
   db: Queryable,
   input: {
@@ -202,6 +554,16 @@ export async function createProjectTopicBoardWithCandidates(
   },
 ): Promise<ProjectTopicBoard> {
   const boardId = randomUUID()
+  const prepared = normalizeCandidatesForPersistence(input.candidates, input.selectedCandidateId)
+
+  await db.query(
+    `SELECT id
+     FROM projects
+     WHERE id = $1
+     LIMIT 1
+     FOR UPDATE`,
+    [input.projectId],
+  )
 
   await db.query(
     `UPDATE project_topic_boards
@@ -240,15 +602,34 @@ export async function createProjectTopicBoardWithCandidates(
       input.trackId,
       JSON.stringify(input.boardInput),
       input.teamSkillProfile,
-      JSON.stringify(input.compareMatrix),
+      JSON.stringify(prepared.compareMatrix),
       input.boardSummary,
-      normalizeText(input.selectedCandidateId),
+      prepared.selectedCandidateId,
       normalizeText(input.sessionId),
       input.createdByUserId,
     ],
   )
 
-  for (const [index, candidate] of input.candidates.entries()) {
+  if (prepared.candidates.length > 0) {
+    const values: unknown[] = []
+    const placeholders: string[] = []
+    let parameterIndex = 1
+
+    for (const [index, candidate] of prepared.candidates.entries()) {
+      placeholders.push(`($${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}::JSONB, NOW(), NOW())`)
+      values.push(
+        randomUUID(),
+        boardId,
+        input.workspaceId,
+        input.projectId,
+        candidate.id,
+        index,
+        candidate.decisionStatus,
+        candidate.totalScore,
+        JSON.stringify(candidate),
+      )
+    }
+
     await db.query(
       `INSERT INTO project_topic_candidates (
         id,
@@ -262,20 +643,8 @@ export async function createProjectTopicBoardWithCandidates(
         payload,
         created_at,
         updated_at
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9::JSONB, NOW(), NOW()
-      )`,
-      [
-        randomUUID(),
-        boardId,
-        input.workspaceId,
-        input.projectId,
-        candidate.id,
-        index,
-        candidate.decisionStatus,
-        candidate.totalScore,
-        JSON.stringify(candidate),
-      ],
+      ) VALUES ${placeholders.join(', ')}`,
+      values,
     )
   }
 
@@ -297,31 +666,7 @@ export async function getProjectTopicBoardById(
     boardId: string
   },
 ): Promise<ProjectTopicBoard | null> {
-  const result = await db.query<ProjectTopicBoardRow>(
-    `SELECT
-      id,
-      workspace_id,
-      project_id,
-      contest_id,
-      track_id,
-      input_snapshot,
-      team_skill_profile,
-      compare_matrix,
-      board_summary,
-      selected_candidate_id,
-      session_id,
-      status,
-      created_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM project_topic_boards
-     WHERE project_id = $1
-       AND id = $2
-     LIMIT 1`,
-    [input.projectId, input.boardId],
-  )
-
-  const row = result.rows[0]
+  const row = await getBoardRowById(db, input)
   if (!row)
     return null
 
@@ -367,13 +712,19 @@ export async function patchProjectTopicBoard(
     }>
   },
 ): Promise<ProjectTopicBoard | null> {
-  const board = await getProjectTopicBoardById(db, {
+  const boardRow = await getBoardRowById(db, {
     projectId: input.projectId,
     boardId: input.boardId,
+    forUpdate: true,
   })
-
-  if (!board)
+  if (!boardRow)
     return null
+
+  const candidateRows = await listCandidateRowsByBoardId(db, {
+    boardId: input.boardId,
+    forUpdate: true,
+  })
+  const board = mapBoardRow(boardRow, candidateRows.map(mapCandidateRow))
 
   const nextCandidates = board.candidates.map(candidate => ({
     ...candidate,
@@ -411,33 +762,71 @@ export async function patchProjectTopicBoard(
     }
   }
 
-  const nextCompareMatrix = board.compareMatrix.map((row) => {
-    const candidate = nextCandidates.find(item => item.candidateId === row.candidateId)
-    return {
-      ...row,
-      decisionStatus: candidate?.decisionStatus || row.decisionStatus,
+  const normalized = normalizeCandidatesForPersistence(
+    nextCandidates.map(candidate => ({
+      ...candidate.payload,
+      id: candidate.candidateId,
+      decisionStatus: candidate.decisionStatus,
+      totalScore: candidate.totalScore,
+    })),
+    selectedCandidateId,
+  )
+  const nextCompareMatrix = normalized.compareMatrix
+  const normalizedCandidateMap = new Map(normalized.candidates.map(candidate => [candidate.id, candidate]))
+  const currentCandidates = new Map(board.candidates.map(item => [item.candidateId, item]))
+  const changedCandidates = nextCandidates.flatMap((candidate) => {
+    const normalizedCandidate = normalizedCandidateMap.get(candidate.candidateId)
+    if (!normalizedCandidate)
+      return []
+
+    const nextPayload = JSON.stringify({
+      ...normalizedCandidate,
+      decisionStatus: normalizedCandidate.decisionStatus,
+    })
+    const current = currentCandidates.get(candidate.candidateId)
+    const currentPayload = current
+      ? JSON.stringify({
+          ...current.payload,
+          decisionStatus: current.decisionStatus,
+        })
+      : ''
+
+    if (
+      current
+      && current.decisionStatus === candidate.decisionStatus
+      && currentPayload === nextPayload
+    ) {
+      return []
     }
+
+    return [{
+      candidateId: candidate.candidateId,
+      decisionStatus: normalizedCandidate.decisionStatus,
+      payload: nextPayload,
+    }]
   })
 
-  for (const candidate of nextCandidates) {
-    candidate.payload = {
-      ...candidate.payload,
-      decisionStatus: candidate.decisionStatus,
+  if (changedCandidates.length > 0) {
+    const values: unknown[] = [input.boardId]
+    const placeholders: string[] = []
+    let parameterIndex = 2
+
+    for (const candidate of changedCandidates) {
+      placeholders.push(`($${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}::JSONB)`)
+      values.push(candidate.candidateId, candidate.decisionStatus, candidate.payload)
     }
 
     await db.query(
-      `UPDATE project_topic_candidates
-       SET decision_status = $3,
-           payload = $4::JSONB,
+      `UPDATE project_topic_candidates AS target
+       SET decision_status = source.decision_status,
+           payload = source.payload,
            updated_at = NOW()
-       WHERE board_id = $1
-         AND candidate_id = $2`,
-      [
-        input.boardId,
-        candidate.candidateId,
-        candidate.decisionStatus,
-        JSON.stringify(candidate.payload),
-      ],
+       FROM (
+         VALUES ${placeholders.join(', ')}
+       ) AS source(candidate_id, decision_status, payload)
+       WHERE target.board_id = $1
+         AND target.candidate_id = source.candidate_id`,
+      values,
     )
   }
 
@@ -453,7 +842,7 @@ export async function patchProjectTopicBoard(
       input.projectId,
       input.boardId,
       input.boardSummary === undefined ? board.boardSummary : input.boardSummary,
-      selectedCandidateId,
+      normalized.selectedCandidateId,
       JSON.stringify(nextCompareMatrix),
     ],
   )

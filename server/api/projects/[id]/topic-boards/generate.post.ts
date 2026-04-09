@@ -28,6 +28,9 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
+    // 保持 withTransaction(getVisibleProjectById) 与 withTransaction(createProjectTopicBoardWithCandidates)
+    // 分离，避免在 executeTopicProposal 长耗时期间一直占用连接；项目若在中途被删除，
+    // 由后续事务与现有错误路径兜底处理这个可接受的 race window。
     const project = await withTransaction(event, async (db) => {
       const visible = await getVisibleProjectById(db, user, projectId)
       if (!visible)
@@ -153,17 +156,6 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 42982)
-    }
-
-    if (message === 'PROJECT_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return fail('project not found', {
-        startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
-        fallbackUsed: false,
-        attempts: 1,
-      }, 40482)
     }
 
     throw error

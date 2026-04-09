@@ -20,7 +20,10 @@ const topicProposalItemSchema = z.object({
   recommendedTrackId: z.string().default(''),
   recommendedTrackName: z.string().default(''),
   contestFitScore: z.number().min(0).max(100).default(72),
-  contestFitReasons: z.array(z.string()).min(2).max(4).default([]),
+  contestFitReasons: z.array(z.string()).min(2).max(4).default([
+    '题目方向与竞赛评分维度保持一致。',
+    '具备形成原型验证与答辩证据链的基础。',
+  ]),
   requiredSkills: z.array(z.string()).max(8).default([]),
   references: z.array(z.string()).default([]),
 })

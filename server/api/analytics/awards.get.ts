@@ -1,5 +1,5 @@
 import type { AnalyticsAwardFeatureAnalysisPayload, AnalyticsFilterInput } from '~~/shared/types/analytics'
-import { getQuery } from 'h3'
+import { readAnalyticsFilters } from '~~/server/utils/analytics-filters'
 import { getAwardFeatureAnalysis } from '~~/server/utils/analytics-store'
 import { ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -11,18 +11,12 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const query = getQuery(event)
   const includeInternal = Boolean(
     user.isPlatformAdmin
     || await checkPlatformPermission(event, user, 'contest.read_internal'),
   )
 
-  const filters: AnalyticsFilterInput = {
-    workspaceId: String(query.workspaceId || '').trim(),
-    projectId: String(query.projectId || '').trim(),
-    contestId: String(query.contestId || '').trim(),
-    rangePreset: String(query.rangePreset || '').trim() as AnalyticsFilterInput['rangePreset'],
-  }
+  const filters: AnalyticsFilterInput = readAnalyticsFilters(event)
 
   const payload = await withClient(event, db => getAwardFeatureAnalysis(db, {
     user,

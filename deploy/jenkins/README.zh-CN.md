@@ -81,6 +81,7 @@ chmod +x "deploy/jenkins/init-target-layout.sh"
 ```dotenv
 COMPOSE_PROJECT_NAME=touch-win-loop-staging
 SERVICE_NAME=winloop
+DOCKER_EXTERNAL_NETWORK=1panel-network
 RUNTIME_ENV_FILE=.env.runtime
 HEALTHCHECK_URL=http://127.0.0.1:3511/api/health
 HEALTHCHECK_ATTEMPTS=20
@@ -91,6 +92,11 @@ APP_BIND_IP=127.0.0.1
 APP_HOST_PORT=3511
 STORAGE_HOST_DIR=./storage
 ```
+
+其中：
+
+- `DOCKER_EXTERNAL_NETWORK` 用于指定应用容器加入的外部 Docker 网络，默认建议填 `1panel-network`
+- 如果 PostgreSQL / Redis / PgBouncer 通过容器名互联，应用必须与这些基础容器处于同一个外部网络
 
 production 只需要改成独立的：
 
@@ -109,8 +115,10 @@ production 只需要改成独立的：
 - `WINLOOP_PUBLIC_BASE_URL`
 - `WINLOOP_API_BASE_URL`
 - `WINLOOP_ONLYOFFICE_ENDPOINT` / `WINLOOP_ONLYOFFICE_JWT_SECRET`（如果启用再配）
+- `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT`（如果启用 Sentry 再配）
 
 资源回收 worker 参数已改为后台 UI 管理，不再通过 `.env.runtime` 配置。
+Sentry 未配置时应用仍可正常运行，只是不启用错误上报。
 
 必须保证 staging 与 production：
 
@@ -118,6 +126,7 @@ production 只需要改成独立的：
 - 使用不同 Redis DB/index
 - 使用不同域名或端口
 - 不共享同一份 `.env.runtime`
+- `WINLOOP_SENTRY_ENVIRONMENT` 分别显式设置为 `staging` / `production`
 
 ## 4）Jenkins Job 创建
 
@@ -200,6 +209,12 @@ feishuWebhookSecretCredentialsId: 'jenkins-feishu-webhook-secret',
 - `JENKINS_API_TOKEN`
 - `JENKINS_JOB_STAGING`
 - `JENKINS_JOB_PRODUCTION`
+
+如需在镜像构建阶段自动上传 Sentry source map，还需要补充：
+
+- `SENTRY_AUTH_TOKEN`
+- `WINLOOP_SENTRY_ORG`
+- `WINLOOP_SENTRY_PROJECT`
 
 Actions 会按分支调用不同 Job：
 

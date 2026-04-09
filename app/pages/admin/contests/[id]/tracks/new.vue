@@ -49,6 +49,13 @@ const draftBridge = useAdminAgentDraft()
 const form = reactive<{
   name: string
   summary: string
+  coverImageUrl: string
+  location: string
+  organizer: string
+  undertaker: string
+  participantRequirements: string
+  teamRule: string
+  awardRatio: string
   suitableMajorsCsv: string
   deliverableTypesCsv: string
   rubricId: string
@@ -57,6 +64,13 @@ const form = reactive<{
 }>({
   name: '',
   summary: '',
+  coverImageUrl: '',
+  location: '',
+  organizer: '',
+  undertaker: '',
+  participantRequirements: '',
+  teamRule: '',
+  awardRatio: '',
   suitableMajorsCsv: '',
   deliverableTypesCsv: '',
   rubricId: '',
@@ -79,6 +93,13 @@ function applyAiDraft() {
   const payload = moduleDraft.value?.payload || {}
   form.name = String(payload.name || '')
   form.summary = String(payload.summary || '')
+  form.coverImageUrl = String(payload.coverImageUrl || '')
+  form.location = String(payload.location || '')
+  form.organizer = String(payload.organizer || '')
+  form.undertaker = String(payload.undertaker || '')
+  form.participantRequirements = String(payload.participantRequirements || '')
+  form.teamRule = String(payload.teamRule || '')
+  form.awardRatio = String(payload.awardRatio || '')
   form.suitableMajorsCsv = toCsv(payload.suitableMajors)
   form.deliverableTypesCsv = toCsv(payload.deliverableTypes)
   form.rubricId = String(payload.rubricId || '')
@@ -110,6 +131,13 @@ async function save() {
       body: {
         name: form.name.trim(),
         summary: form.summary.trim(),
+        coverImageUrl: form.coverImageUrl.trim(),
+        location: form.location.trim(),
+        organizer: form.organizer.trim(),
+        undertaker: form.undertaker.trim(),
+        participantRequirements: form.participantRequirements.trim(),
+        teamRule: form.teamRule.trim(),
+        awardRatio: form.awardRatio.trim(),
         suitableMajors: splitCsv(form.suitableMajorsCsv),
         deliverableTypes: splitCsv(form.deliverableTypesCsv),
         rubricId: form.rubricId.trim() || null,
@@ -167,6 +195,13 @@ async function save() {
       <div class="space-y-2">
         <a-input v-model="form.name" size="small" placeholder="赛道名称" />
         <a-input v-model="form.summary" size="small" placeholder="赛道说明" />
+        <a-input v-model="form.coverImageUrl" size="small" placeholder="封面图片链接" />
+        <a-input v-model="form.location" size="small" placeholder="具体位置" />
+        <a-input v-model="form.organizer" size="small" placeholder="主办方" />
+        <a-input v-model="form.undertaker" size="small" placeholder="承办方" />
+        <a-input v-model="form.participantRequirements" size="small" placeholder="参赛对象" />
+        <a-input v-model="form.teamRule" size="small" placeholder="组队规则" />
+        <a-input v-model="form.awardRatio" size="small" placeholder="获奖比例" />
         <a-input v-model="form.suitableMajorsCsv" size="small" placeholder="适配专业（逗号分隔）" />
         <a-input v-model="form.deliverableTypesCsv" size="small" placeholder="交付物类型（逗号分隔）" />
         <a-input v-model="form.rubricId" size="small" placeholder="rubric_id（可为空）" />

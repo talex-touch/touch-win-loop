@@ -14,6 +14,9 @@ interface CachedRuntimeOverridesState {
 }
 
 export interface PlatformRuntimeOverrides {
+  auth?: {
+    registrationEnabled?: boolean
+  }
   feishuScheduler?: {
     enabled?: boolean
     intervalMs?: number
@@ -34,6 +37,7 @@ export interface PlatformRuntimeOverrides {
 }
 
 export interface RuntimeSettingsConfigSource {
+  authRegistration: 'env' | 'override'
   feishuScheduler: 'env' | 'override'
   resourceRecycle: 'env' | 'override'
   contestAutoSeed: 'env' | 'override'
@@ -106,6 +110,21 @@ function normalizeFeishuSchedulerSection(raw: unknown): PlatformRuntimeOverrides
     const value = toNumber(source.lockTtlMs)
     if (value !== undefined)
       output.lockTtlMs = value
+  }
+
+  return Object.keys(output).length > 0 ? output : undefined
+}
+
+function normalizeAuthSection(raw: unknown): PlatformRuntimeOverrides['auth'] {
+  const source = parseJsonObject(raw)
+  if (Object.keys(source).length === 0)
+    return undefined
+
+  const output: NonNullable<PlatformRuntimeOverrides['auth']> = {}
+  if (hasOwn(source, 'registrationEnabled')) {
+    const value = toBoolean(source.registrationEnabled)
+    if (value !== undefined)
+      output.registrationEnabled = value
   }
 
   return Object.keys(output).length > 0 ? output : undefined
@@ -186,6 +205,7 @@ export function normalizePlatformRuntimeOverrides(raw: unknown): PlatformRuntime
   const source = parseJsonObject(raw)
 
   const normalized: PlatformRuntimeOverrides = {
+    auth: normalizeAuthSection(source.auth),
     feishuScheduler: normalizeFeishuSchedulerSection(source.feishuScheduler),
     resourceRecycle: normalizeResourceRecycleSection(source.resourceRecycle),
     contest: normalizeContestSection(source.contest),
@@ -193,6 +213,8 @@ export function normalizePlatformRuntimeOverrides(raw: unknown): PlatformRuntime
     updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
   }
 
+  if (!normalized.auth)
+    delete normalized.auth
   if (!normalized.feishuScheduler)
     delete normalized.feishuScheduler
   if (!normalized.resourceRecycle)
@@ -247,9 +269,16 @@ export function applyPlatformRuntimeOverrides(
 ): RuntimeSettings {
   const next: RuntimeSettings = {
     ...runtime,
+    auth: { ...runtime.auth },
     contest: { ...runtime.contest },
     resourceRecycle: { ...runtime.resourceRecycle },
     feishuScheduler: { ...runtime.feishuScheduler },
+  }
+
+  const auth = overrides.auth
+  if (auth) {
+    if (auth.registrationEnabled !== undefined)
+      next.auth.registrationEnabled = Boolean(auth.registrationEnabled)
   }
 
   const contest = overrides.contest
@@ -323,6 +352,7 @@ export function applyPlatformRuntimeOverrides(
 
 export function getRuntimeSettingsConfigSource(overrides: PlatformRuntimeOverrides): RuntimeSettingsConfigSource {
   return {
+    authRegistration: hasSectionOverrides(overrides.auth as Record<string, unknown> | undefined) ? 'override' : 'env',
     feishuScheduler: hasSectionOverrides(overrides.feishuScheduler as Record<string, unknown> | undefined) ? 'override' : 'env',
     resourceRecycle: hasSectionOverrides(overrides.resourceRecycle as Record<string, unknown> | undefined) ? 'override' : 'env',
     contestAutoSeed: hasSectionOverrides(overrides.contest as Record<string, unknown> | undefined) ? 'override' : 'env',

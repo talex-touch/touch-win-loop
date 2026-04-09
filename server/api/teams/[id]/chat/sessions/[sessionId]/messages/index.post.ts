@@ -42,9 +42,9 @@ export default defineEventHandler(async (event) => {
   const role = body?.role || 'user'
   const content = String(body?.content || '').trim()
 
-  if (!workspaceId || !sessionId || !projectId || !mode || !content) {
+  if (!workspaceId || !sessionId || !mode || !content || (mode !== 'dialog_ask' && !projectId)) {
     setResponseStatus(event, 400)
-    return fail('teamId、sessionId、projectId、mode、content 不能为空。', {
+    return fail('teamId、sessionId、mode、content 不能为空，且非只读模式必须传 projectId。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

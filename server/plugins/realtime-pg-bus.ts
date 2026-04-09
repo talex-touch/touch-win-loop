@@ -14,6 +14,7 @@ import {
   hasSeenRealtimeEvent,
   rememberRealtimeEvent,
 } from '~~/server/utils/realtime-hub'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const REALTIME_PG_BUS_STATE_KEY = Symbol.for('winloop.realtime.pg-bus.runtime.v1')
 
@@ -51,12 +52,16 @@ function parseRealtimePresenceMembers(rawMembers: unknown): RealtimePresenceMemb
       continue
     const cursorX = Number(member.cursorX)
     const cursorY = Number(member.cursorY)
+    const awarenessClientId = Number(member.awarenessClientId)
     members.push({
       peerId,
       userId: normalizeString(member.userId),
       username: normalizeString(member.username),
       cursorX: Number.isFinite(cursorX) ? cursorX : undefined,
       cursorY: Number.isFinite(cursorY) ? cursorY : undefined,
+      awarenessClientId: Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+      awarenessUpdateBase64: normalizeString(member.awarenessUpdateBase64) || undefined,
+      activityState: normalizeString(member.activityState) === 'background' ? 'background' : 'active',
       updatedAt: normalizeString(member.updatedAt) || new Date().toISOString(),
     })
   }
@@ -257,6 +262,9 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
         console.error('[realtime-pg-bus] listener disconnected:', normalizeErrorMessage(error), {
           reason,
         })
+        captureServerException(error, {
+          module: 'realtime-pg-bus',
+        })
       }
       else {
         console.warn('[realtime-pg-bus] listener disconnected', {
@@ -288,6 +296,9 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
   }
   catch (error) {
     console.error('[realtime-pg-bus] bootstrap failed:', normalizeErrorMessage(error))
+    captureServerException(error, {
+      module: 'realtime-pg-bus',
+    })
     scheduleReconnect(state, 'bootstrap_failed')
   }
   finally {

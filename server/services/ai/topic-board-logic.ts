@@ -40,6 +40,8 @@ const SCORE_WEIGHTS = {
   workloadFeasibility: 10,
 } as const
 
+const TOPIC_PROPOSAL_DECISION_STATUSES: TopicProposalDecisionStatus[] = ['candidate', 'shortlisted', 'rejected', 'selected']
+
 function normalizeText(value: unknown): string {
   return String(value || '').trim()
 }
@@ -71,6 +73,13 @@ function normalizeList(values: unknown): string[] {
     result.push(normalized)
   }
   return result
+}
+
+function normalizeDecisionStatus(value: unknown): TopicProposalDecisionStatus {
+  const normalized = normalizeText(value)
+  if (TOPIC_PROPOSAL_DECISION_STATUSES.includes(normalized as TopicProposalDecisionStatus))
+    return normalized as TopicProposalDecisionStatus
+  return 'candidate'
 }
 
 function summarizeText(value: unknown, max = 120): string {
@@ -342,10 +351,13 @@ function buildTrendSignals(item: TopicProposalItem, boardInput: ProjectTopicBoar
 
       const summary = normalizeText(trend.summary) || trend.hotTags.join('、')
       const labels = trend.hotTags.length > 0 ? trend.hotTags.slice(0, 2) : [`${trend.year} 趋势`]
-      return labels.map((label) => ({
+      const currentYear = new Date().getFullYear()
+      const age = Math.max(0, currentYear - trend.year)
+      const recencyBonus = Math.max(0, 6 - age)
+      return labels.map(label => ({
         label,
         summary: summarizeText(summary, 110),
-        heatScore: clamp(Math.round(62 + overlap * 30 + Math.min(6, Math.max(0, 2026 - trend.year))), 50, 96),
+        heatScore: clamp(Math.round(62 + overlap * 30 + recencyBonus), 50, 96),
         source: 'contest_trends' as const,
         confidence: clamp(0.55 + overlap * 0.35, 0.55, 0.92),
       }))
@@ -405,7 +417,7 @@ function normalizeCandidate(item: TopicProposalItem, boardInput: ProjectTopicBoa
     teamMatchScore: clamp(normalizeNumber(item.teamMatchScore, 0), 0, 100),
     teamGapNotes: normalizeList(item.teamGapNotes),
     evidenceRefs: Array.isArray(item.evidenceRefs) ? item.evidenceRefs : [],
-    decisionStatus: (normalizeText(item.decisionStatus) as TopicProposalDecisionStatus) || 'candidate',
+    decisionStatus: normalizeDecisionStatus(item.decisionStatus),
     compareScores: item.compareScores || {
       contestFit: 0,
       noveltySimilarity: 0,
@@ -486,10 +498,15 @@ export function enrichTopicProposalResult(input: EnrichTopicProposalResultInput)
 
   const selectedCandidateId = normalizedCandidates[0]?.id
 
-  const proposals = normalizedCandidates.map((item, index) => ({
-    ...item,
-    decisionStatus: item.id === selectedCandidateId ? 'selected' : item.decisionStatus,
-  }))
+  const proposals: TopicProposalItem[] = normalizedCandidates.map((item) => {
+    const decisionStatus: TopicProposalDecisionStatus = item.id === selectedCandidateId
+      ? 'selected'
+      : (item.decisionStatus === 'selected' ? 'candidate' : item.decisionStatus)
+    return {
+      ...item,
+      decisionStatus,
+    }
+  })
 
   const compareMatrix: TopicProposalCompareMatrixRow[] = proposals.map((item, index) => ({
     candidateId: item.id,
@@ -520,4 +537,3 @@ export function enrichTopicProposalResult(input: EnrichTopicProposalResultInput)
 }
 
 export interface ProjectTopicBoardTrendRow extends ContestTrendRow {}
-

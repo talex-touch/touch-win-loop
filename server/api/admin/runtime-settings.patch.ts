@@ -14,6 +14,9 @@ import {
 } from '~~/server/utils/platform-runtime-config-store'
 
 interface RuntimeSettingsPatchBody {
+  auth?: {
+    registrationEnabled?: boolean
+  }
   feishuScheduler?: {
     enabled?: boolean
     intervalMs?: number
@@ -83,6 +86,16 @@ export default defineEventHandler(async (event) => {
       const existing = normalizePlatformRuntimeOverrides(await readPlatformRuntimeOverrides(db))
       const next = normalizePlatformRuntimeOverrides(existing)
 
+      const auth = body?.auth && typeof body.auth === 'object'
+        ? body.auth as Record<string, unknown>
+        : null
+      if (auth) {
+        const section = { ...(next.auth || {}) }
+        if (hasOwn(auth, 'registrationEnabled'))
+          section.registrationEnabled = toBoolean(auth.registrationEnabled, 'auth.registrationEnabled')
+        next.auth = section
+      }
+
       const feishuScheduler = body?.feishuScheduler && typeof body.feishuScheduler === 'object'
         ? body.feishuScheduler as Record<string, unknown>
         : null
@@ -134,6 +147,7 @@ export default defineEventHandler(async (event) => {
         actorUserId: user.id,
         action: 'write.admin.runtime.settings',
         payload: {
+          hasAuthUpdate: Boolean(auth),
           hasFeishuSchedulerUpdate: Boolean(feishuScheduler),
           hasResourceRecycleUpdate: Boolean(resourceRecycle),
           hasContestUpdate: Boolean(contest),
@@ -155,6 +169,9 @@ export default defineEventHandler(async (event) => {
 
   const { runtime, overrides, configSource } = await readEffectivePlatformRuntimeSettings(event)
   return ok({
+    auth: {
+      registrationEnabled: runtime.auth.registrationEnabled,
+    },
     feishuScheduler: {
       enabled: runtime.feishuScheduler.enabled,
       intervalMs: runtime.feishuScheduler.intervalMs,
