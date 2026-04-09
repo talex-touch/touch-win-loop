@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Awareness } from 'y-protocols/awareness'
+import type { WorkspaceFontSizePreset } from '~~/shared/types/domain'
 import type {
   WorkspaceCollabAwarenessSelectionState,
   WorkspaceCollabSelectionSummary,
@@ -53,6 +54,7 @@ const props = withDefaults(defineProps<{
   showToolbar?: boolean
   contentMaxWidth?: number | string
   enableSlashMenu?: boolean
+  uiFontSizePreset?: WorkspaceFontSizePreset
   imageUploadHandler?: ((file: File) => Promise<RichTextEditorImageUploadResult>) | null
 }>(), {
   awareness: null,
@@ -63,6 +65,7 @@ const props = withDefaults(defineProps<{
   showToolbar: true,
   contentMaxWidth: '1040px',
   enableSlashMenu: false,
+  uiFontSizePreset: 'md',
   imageUploadHandler: null,
 })
 
@@ -86,6 +89,11 @@ const slashMenuState = reactive({
   rangeTo: 0,
   selectedIndex: 0,
 })
+const selectionToolbarState = reactive({
+  visible: false,
+  top: 0,
+  left: 0,
+})
 
 const normalizedHeadingLevels = computed<Array<1 | 2 | 3>>(() => {
   const dedupe = new Set<1 | 2 | 3>()
@@ -106,6 +114,18 @@ const commandItems = computed(() => {
 
 const toolbarItems = computed(() => {
   return commandItems.value.filter(item => item.toolbarVisible !== false)
+})
+
+const selectionToolbarItems = computed(() => {
+  const actionWhitelist = new Set<RichTextEditorCommand['action']>([
+    'bold',
+    'italic',
+    'underline',
+    'strike',
+    'link',
+    'code',
+  ])
+  return commandItems.value.filter(item => actionWhitelist.has(item.action))
 })
 
 const slashMenuItems = computed(() => {
@@ -148,6 +168,20 @@ const slashMenuStyle = computed(() => {
   }
 })
 
+const selectionToolbarStyle = computed(() => {
+  const metrics = resolveSelectionToolbarMetrics()
+  return {
+    top: `${selectionToolbarState.top}px`,
+    left: `${selectionToolbarState.left}px`,
+    '--rich-text-editor-selection-toolbar-height': `${metrics.height}px`,
+    '--rich-text-editor-selection-toolbar-padding': `${metrics.padding}px`,
+    '--rich-text-editor-selection-toolbar-gap': `${metrics.gap}px`,
+    '--rich-text-editor-selection-toolbar-button-size': `${metrics.buttonSize}px`,
+    '--rich-text-editor-selection-toolbar-font-size': `${metrics.fontSize}px`,
+    '--rich-text-editor-selection-toolbar-icon-size': `${metrics.iconSize}px`,
+  }
+})
+
 let removeAwarenessListener: (() => void) | null = null
 
 function normalizeString(value: unknown): string {
@@ -168,6 +202,66 @@ function normalizePreviewText(value: string): string {
   if (!normalized)
     return ''
   return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized
+}
+
+function resolveSelectionToolbarMetrics() {
+  if (props.uiFontSizePreset === 'xs') {
+    return {
+      width: 228,
+      height: 36,
+      padding: 4,
+      gap: 4,
+      buttonSize: 28,
+      fontSize: 11,
+      iconSize: 16,
+    }
+  }
+
+  if (props.uiFontSizePreset === 'sm') {
+    return {
+      width: 236,
+      height: 38,
+      padding: 4,
+      gap: 4,
+      buttonSize: 30,
+      fontSize: 11,
+      iconSize: 17,
+    }
+  }
+
+  if (props.uiFontSizePreset === 'lg') {
+    return {
+      width: 260,
+      height: 42,
+      padding: 5,
+      gap: 5,
+      buttonSize: 32,
+      fontSize: 12,
+      iconSize: 19,
+    }
+  }
+
+  if (props.uiFontSizePreset === 'xl') {
+    return {
+      width: 272,
+      height: 44,
+      padding: 5,
+      gap: 6,
+      buttonSize: 34,
+      fontSize: 12,
+      iconSize: 20,
+    }
+  }
+
+  return {
+    width: 248,
+    height: 40,
+    padding: 4,
+    gap: 5,
+    buttonSize: 31,
+    fontSize: 12,
+    iconSize: 18,
+  }
 }
 
 function normalizeSelectionPosition(doc: any, position: number): { line: number, column: number } {
@@ -245,6 +339,9 @@ function defaultSelectionChangePayload(): RichTextEditorSelectionChangePayload {
 function closeLinkEditor(nextValue = 'https://'): void {
   linkDraft.value = nextValue
   linkInputVisible.value = false
+  nextTick(() => {
+    syncSelectionToolbar()
+  })
 }
 
 function openLinkEditor(): void {
@@ -255,6 +352,7 @@ function openLinkEditor(): void {
   const activeHref = normalizeString(instance.getAttributes('link').href)
   linkDraft.value = activeHref || 'https://'
   linkInputVisible.value = true
+  closeSelectionToolbar()
 
   nextTick(() => {
     linkInputRef.value?.focus()
@@ -379,6 +477,12 @@ function closeSlashMenu(): void {
   slashMenuState.selectedIndex = 0
 }
 
+function closeSelectionToolbar(): void {
+  selectionToolbarState.visible = false
+  selectionToolbarState.top = 0
+  selectionToolbarState.left = 0
+}
+
 function resolveSlashCommandTrigger() {
   const instance = editor.value
   if (!instance || !props.editable || !props.enableSlashMenu || linkInputVisible.value)
@@ -435,15 +539,72 @@ function syncSlashMenu(): void {
     slashMenuState.selectedIndex = 0
 }
 
+function resolveSelectionToolbarTrigger() {
+  const instance = editor.value
+  if (
+    !instance
+    || !props.editable
+    || linkInputVisible.value
+    || slashMenuState.visible
+    || selectionToolbarItems.value.length === 0
+  ) {
+    return null
+  }
+
+  const { selection } = instance.state
+  if (selection.empty)
+    return null
+
+  const selectedText = String(instance.state.doc.textBetween(selection.from, selection.to, '\n', '\n') || '')
+  if (!selectedText)
+    return null
+
+  const start = instance.view.coordsAtPos(selection.from)
+  const end = instance.view.coordsAtPos(selection.to)
+  const metrics = resolveSelectionToolbarMetrics()
+  const menuWidth = metrics.width
+  const menuHeight = metrics.height
+  const centerX = (Math.min(start.left, end.left) + Math.max(start.right, end.right)) / 2
+  const left = import.meta.client
+    ? Math.max(12, Math.min(centerX - menuWidth / 2, window.innerWidth - menuWidth - 12))
+    : centerX - menuWidth / 2
+  const preferredAbove = Math.min(start.top, end.top) - menuHeight - 12
+  const preferredBelow = Math.max(start.bottom, end.bottom) + 12
+  const top = import.meta.client
+    ? preferredAbove >= 12
+        ? preferredAbove
+        : Math.max(12, Math.min(preferredBelow, window.innerHeight - menuHeight - 12))
+    : preferredAbove
+
+  return {
+    left,
+    top,
+  }
+}
+
+function syncSelectionToolbar(): void {
+  const trigger = resolveSelectionToolbarTrigger()
+  if (!trigger) {
+    closeSelectionToolbar()
+    return
+  }
+
+  selectionToolbarState.visible = true
+  selectionToolbarState.left = trigger.left
+  selectionToolbarState.top = trigger.top
+}
+
 function syncDerivedState(): void {
   emitSelectionChange()
   emitRemotePresenceChange()
   syncSlashMenu()
+  syncSelectionToolbar()
 }
 
 function destroyEditor(): void {
   closeLinkEditor()
   closeSlashMenu()
+  closeSelectionToolbar()
   removeAwarenessListener?.()
   removeAwarenessListener = null
   if (!editor.value)
@@ -843,6 +1004,7 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
       emitSelectionChange()
       emitRemotePresenceChange()
       closeSlashMenu()
+      closeSelectionToolbar()
     },
     onTransaction: syncDerivedState,
   })
@@ -962,6 +1124,34 @@ onBeforeUnmount(() => {
     >
 
     <Teleport to="body">
+      <div
+        v-if="selectionToolbarState.visible"
+        class="rich-text-editor__selection-toolbar"
+        :style="selectionToolbarStyle"
+        data-testid="rich-text-editor-selection-toolbar"
+      >
+        <button
+          v-for="item in selectionToolbarItems"
+          :key="`selection-${item.id}`"
+          class="rich-text-editor__selection-toolbar-button"
+          :class="{ 'rich-text-editor__selection-toolbar-button--active': isToolbarItemActive(item) }"
+          type="button"
+          :title="item.label"
+          :aria-label="item.label"
+          @mousedown.prevent
+          @click="executeCommand(item)"
+        >
+          <span
+            v-if="item.icon"
+            class="rich-text-editor__selection-toolbar-icon material-symbols-outlined"
+            aria-hidden="true"
+          >
+            {{ item.icon }}
+          </span>
+          <span class="sr-only">{{ item.label }}</span>
+        </button>
+      </div>
+
       <div
         v-if="slashMenuState.visible"
         class="rich-text-editor__slash-menu"
@@ -1307,6 +1497,50 @@ onBeforeUnmount(() => {
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.rich-text-editor__selection-toolbar {
+  position: fixed;
+  z-index: 4000;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--rich-text-editor-selection-toolbar-gap, 5px);
+  align-items: center;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: var(--rich-text-editor-selection-toolbar-padding, 4px);
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: #fff;
+  overflow-x: auto;
+}
+
+.rich-text-editor__selection-toolbar-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: var(--rich-text-editor-selection-toolbar-button-size, 31px);
+  height: var(--rich-text-editor-selection-toolbar-button-size, 31px);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  font-size: var(--rich-text-editor-selection-toolbar-font-size, 12px);
+  font-weight: 600;
+}
+
+.rich-text-editor__selection-toolbar-button:hover,
+.rich-text-editor__selection-toolbar-button--active {
+  border-color: #dbe3ef;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.rich-text-editor__selection-toolbar-icon {
+  font-size: var(--rich-text-editor-selection-toolbar-icon-size, 18px);
+  line-height: 1;
 }
 
 .rich-text-editor__slash-menu {

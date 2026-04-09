@@ -21,7 +21,9 @@ import typescript from 'highlight.js/lib/languages/typescript'
 import xml from 'highlight.js/lib/languages/xml'
 import { createLowlight } from 'lowlight'
 
-export const COLLAB_MARKDOWN_HEADING_LEVELS = [1, 2, 3] as const
+export type CollabMarkdownHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
+
+export const COLLAB_MARKDOWN_HEADING_LEVELS = [1, 2, 3, 4, 5, 6] as const
 
 let cachedCollabMarkdownSchema: ReturnType<typeof getSchema> | null = null
 const lowlight = createLowlight()
@@ -37,7 +39,12 @@ lowlight.register({
   sql,
 })
 
-const CollabMarkdownImage = Image.extend({
+function normalizeImageWidth(value: unknown): number | null {
+  const parsed = Math.round(Number(value))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+export const CollabMarkdownImage = Image.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -47,6 +54,32 @@ const CollabMarkdownImage = Image.extend({
         renderHTML: (attributes) => {
           const resourceId = String(attributes.resourceId || '').trim()
           return resourceId ? { 'data-resource-id': resourceId } : {}
+        },
+      },
+      width: {
+        default: null,
+        parseHTML: (element) => {
+          return normalizeImageWidth(element.getAttribute('width'))
+        },
+        renderHTML: (attributes) => {
+          const width = normalizeImageWidth(attributes.width)
+          return width ? { width: String(width) } : {}
+        },
+      },
+      uploadStatus: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-upload-status'),
+        renderHTML: (attributes) => {
+          const uploadStatus = String(attributes.uploadStatus || '').trim()
+          return uploadStatus ? { 'data-upload-status': uploadStatus } : {}
+        },
+      },
+      uploadId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-upload-id'),
+        renderHTML: (attributes) => {
+          const uploadId = String(attributes.uploadId || '').trim()
+          return uploadId ? { 'data-upload-id': uploadId } : {}
         },
       },
     }
