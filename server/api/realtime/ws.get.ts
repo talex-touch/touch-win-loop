@@ -25,6 +25,7 @@ import {
   updateRealtimePresence,
 } from '~~/server/utils/realtime-hub'
 import { hashToken } from '~~/server/utils/security'
+import { captureServerException } from '~~/server/utils/sentry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 const HEARTBEAT_INTERVAL_MS = 25_000
@@ -135,6 +136,11 @@ function logRealtimeDebug(
 
   if (level === 'error') {
     console.error('[realtime-ws]', message, detail)
+    const detailMessage = normalizeString(detail.message)
+    captureServerException(new Error(detailMessage ? `${message}: ${detailMessage}` : message), {
+      module: 'realtime-ws',
+      traceId: normalizeString(detail.requestId),
+    })
     return
   }
 
@@ -670,12 +676,20 @@ export default defineWebSocketHandler({
 
         const cursorX = Number(parsedMessage.payload?.cursorX)
         const cursorY = Number(parsedMessage.payload?.cursorY)
+        const awarenessClientId = Number(parsedMessage.payload?.awarenessClientId)
+        const awarenessUpdateBase64 = normalizeString(parsedMessage.payload?.awarenessUpdateBase64)
+        const activityState = normalizeString(parsedMessage.payload?.activityState) === 'background'
+          ? 'background'
+          : 'active'
         const roomKey = buildCollabRoomKey(projectId, resourceId)
         updateRealtimePresence(
           runtimeContext.peerId,
           roomKey,
           Number.isFinite(cursorX) ? cursorX : undefined,
           Number.isFinite(cursorY) ? cursorY : undefined,
+          activityState,
+          Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+          awarenessUpdateBase64 || undefined,
         )
         publishCollabPresenceSnapshotSilently(roomKey)
         sendAck(peer, parsedMessage.requestId, {

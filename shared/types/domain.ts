@@ -44,8 +44,6 @@ export type ResourceCategory
 
 export type TimelineNodeType = 'registration' | 'submission' | 'preliminary' | 'final' | 'other'
 export type RubricScoringMode = 'weighted' | 'checklist'
-export type ContestSyncSourceType = 'csv_url'
-export type ContestSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 
 export interface ContestFaqItem {
   question: string
@@ -90,6 +88,13 @@ export interface Track {
   contestId: string
   name: string
   summary: string
+  coverImageUrl?: string
+  location?: string
+  organizer?: string
+  undertaker?: string
+  participantRequirements?: string
+  teamRule?: string
+  awardRatio?: string
   deliverableTypes: string[]
   suitableMajors: string[]
   sortOrder?: number
@@ -100,6 +105,18 @@ export interface Track {
 export interface ContestTimeline {
   id: string
   contestId: string
+  year: number
+  nodeType: TimelineNodeType
+  startAt: string | null
+  endAt: string | null
+  note: string
+  sourceLink: string
+}
+
+export interface TrackTimeline {
+  id: string
+  contestId: string
+  trackId: string
   year: number
   nodeType: TimelineNodeType
   startAt: string | null
@@ -149,6 +166,131 @@ export interface PublishCheckResult {
   warnings: PublishCheckIssue[]
 }
 
+export type ResourceKnowledgeGovernanceStatus = 'pending' | 'healthy' | 'review' | 'suggested_invalid' | 'suggested_archive'
+export type ResourceGovernanceTaskType = 'profile_analyze' | 'relation_refresh' | 'governance_apply' | 'search_metric_rollup'
+export type ResourceGovernanceTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'dead_letter'
+export type ResourceRelationType = 'recommended' | 'similar' | 'duplicate' | 'complementary'
+export type ResourceSearchSort = 'relevance' | 'quality' | 'value' | 'hot'
+
+export interface ResourceQualityIssue {
+  code: string
+  message: string
+  severity: 'error' | 'warning' | 'info'
+  field?: string
+  scoreImpact?: number
+}
+
+export interface ResourceRelation {
+  id: string
+  contestId: string
+  sourceResourceId: string
+  targetResourceId: string
+  relationType: ResourceRelationType
+  weight: number
+  reason: string
+  targetTitle?: string
+  targetCategory?: ResourceCategory
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ResourceKnowledgeProfileSummary {
+  resourceId: string
+  predictedCategory?: ResourceCategory | ''
+  categoryConfidence: number
+  aiTags: string[]
+  majorTags: string[]
+  stageTags: string[]
+  qualityScore: number
+  valueScore: number
+  hotScore: number
+  governanceStatus: ResourceKnowledgeGovernanceStatus
+  qualityIssues: ResourceQualityIssue[]
+  relatedResources?: ResourceRelation[]
+}
+
+export interface ResourceKnowledgeProfile extends ResourceKnowledgeProfileSummary {
+  contestId: string
+  analysisVersion: string
+  manualOverrides: Record<string, unknown>
+  componentScores: Record<string, number>
+  analysisPayload: Record<string, unknown>
+  lastAnalyzedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ResourceDemandInsight {
+  query: string
+  searchCount: number
+  zeroResultCount: number
+  lowClickCount: number
+  clickCount: number
+  ctr: number
+  suggestedCategories: ResourceCategory[]
+  missingTags: string[]
+}
+
+export interface ResourceGovernanceTask {
+  id: string
+  contestId: string
+  resourceId?: string | null
+  taskType: ResourceGovernanceTaskType
+  status: ResourceGovernanceTaskStatus
+  attempt: number
+  maxAttempt: number
+  payload: Record<string, unknown>
+  resultPayload: Record<string, unknown>
+  errorMessage: string
+  nextRunAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ResourceSearchEvent {
+  id: string
+  contestId: string
+  resourceId?: string | null
+  query: string
+  filters: Record<string, unknown>
+  resultCount: number
+  clicked: boolean
+  sessionId: string
+  workspaceId?: string | null
+  userId?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ResourceKnowledgeOverview {
+  contestId: string
+  summary: {
+    totalResources: number
+    analyzedResources: number
+    healthyResources: number
+    reviewResources: number
+    suggestedInvalidResources: number
+    suggestedArchiveResources: number
+    pendingTasks: number
+    avgQualityScore: number
+    avgValueScore: number
+    avgHotScore: number
+  }
+  categoryStats: Array<{
+    category: ResourceCategory
+    count: number
+    avgQualityScore: number
+    avgValueScore: number
+    avgHotScore: number
+  }>
+  topQualityResources: Resource[]
+  topValueResources: Resource[]
+  topHotResources: Resource[]
+  demandInsights: ResourceDemandInsight[]
+}
+
 export interface Resource {
   id: string
   contestId: string
@@ -181,8 +323,66 @@ export interface Resource {
   status?: ResourceStatus
   createdBy?: string
   updatedBy?: string
+  uploaderUserId?: string
+  uploaderUsername?: string
+  uploaderAvatarUrl?: string | null
   createdAt?: string
   updatedAt?: string
+  aiProfile?: ResourceKnowledgeProfileSummary
+}
+
+export type ProjectResourceUploadSessionStatus
+  = | 'queued'
+    | 'uploading'
+    | 'paused'
+    | 'finalizing'
+    | 'completed'
+    | 'failed'
+    | 'canceled'
+
+export interface ProjectResourceUploadSession {
+  id: string
+  projectId: string
+  actorUserId?: string | null
+  actorUsername?: string
+  actorAvatarUrl?: string | null
+  fileName: string
+  mimeType: string
+  fileSize: number
+  lastModified: number
+  category: ResourceCategory
+  accessLevel: ResourceAvailability
+  title: string
+  summary: string
+  chunkSize: number
+  chunkCount: number
+  uploadedBytes: number
+  uploadedChunkCount: number
+  status: ProjectResourceUploadSessionStatus
+  errorCode?: string
+  errorMessage?: string
+  finalObjectKey?: string
+  finalStorageProvider?: string
+  resourceId?: string
+  previewStatus?: ResourcePreviewStatus
+  createdAt: string
+  updatedAt: string
+  expiresAt: string
+  completedAt?: string | null
+}
+
+export interface ProjectResourceUploadSessionListResult {
+  items: ProjectResourceUploadSession[]
+}
+
+export interface ProjectResourceUploadChunkAck {
+  sessionId: string
+  chunkIndex: number
+  uploadedBytes: number
+  uploadedChunkCount: number
+  chunkCount: number
+  progressPercent: number
+  status: ProjectResourceUploadSessionStatus
 }
 
 export interface ProjectResourceShare {
@@ -292,13 +492,76 @@ export interface ContestFilterInput {
 }
 
 export interface TopicProposalItem {
+  id: string
   title: string
   reason: string
   innovationPoints: string[]
   techRouteSteps: string[]
   scoringMapping: string[]
   risks: string[]
+  estimatedWorkload: string
+  recommendedTrackId: string
+  recommendedTrackName: string
+  contestFitScore: number
+  contestFitReasons: string[]
+  similarAwards: TopicProposalSimilarityAward[]
+  trendSignals: TopicProposalTrendSignal[]
+  requiredSkills: string[]
+  teamMatchScore: number
+  teamGapNotes: string[]
+  evidenceRefs: TopicProposalEvidenceRef[]
+  decisionStatus: TopicProposalDecisionStatus
+  compareScores: TopicProposalCompareScores
+  totalScore: number
   references: string[]
+}
+
+export type TopicProposalDecisionStatus = 'candidate' | 'shortlisted' | 'rejected' | 'selected'
+
+export interface TopicProposalSimilarityAward {
+  title: string
+  summary: string
+  year?: number
+  contestId?: string
+  contestName?: string
+  trackId?: string
+  trackName?: string
+  similarityScore: number
+  reason?: string
+}
+
+export interface TopicProposalTrendSignal {
+  label: string
+  summary: string
+  heatScore: number
+  source: 'contest_trends' | 'internal_resource' | 'web_search'
+  confidence: number
+}
+
+export interface TopicProposalEvidenceRef {
+  title: string
+  summary: string
+  sourceType: 'project_resource' | 'contest_resource' | 'contest_trend' | 'web_search'
+  sourceLabel: string
+  url?: string
+  confidence: number
+}
+
+export interface TopicProposalCompareScores {
+  contestFit: number
+  noveltySimilarity: number
+  evidenceReadiness: number
+  trendHeat: number
+  teamMatch: number
+  workloadFeasibility: number
+}
+
+export interface TopicProposalCompareMatrixRow extends TopicProposalCompareScores {
+  candidateId: string
+  title: string
+  decisionStatus: TopicProposalDecisionStatus
+  totalScore: number
+  rank: number
 }
 
 export interface TopicProposal {
@@ -382,6 +645,7 @@ export interface TeamWithQuota {
 export interface AuthUser {
   id: string
   username: string
+  avatarUrl?: string | null
   isPlatformAdmin: boolean
   isDisabled: boolean
   platformRoles?: PlatformRole[]
@@ -395,6 +659,18 @@ export interface AuthSession {
   userId: string
   expiresAt: string
   createdAt: string
+}
+
+export type AuthSessionHistoryStatus = 'current' | 'active' | 'expired' | 'revoked'
+
+export interface AuthSessionHistoryItem {
+  id: string
+  userId: string
+  createdAt: string
+  expiresAt: string
+  revokedAt?: string | null
+  status: AuthSessionHistoryStatus
+  isCurrent: boolean
 }
 
 export interface AuthLoginResult {
@@ -414,6 +690,27 @@ export interface AuthMeResult {
   onboarding: {
     needCreateTeam: boolean
   }
+}
+
+export interface CasdoorAuthMeta {
+  enabled: boolean
+}
+
+export interface CasdoorIntegrationConfig {
+  enabled: boolean
+  issuer: string
+  clientId: string
+  clientSecretConfigured: boolean
+  scope: string
+  redirectUri: string
+  updatedAt: string
+  updatedByUserId: string
+}
+
+export interface AuthLoginMeta {
+  registrationEnabled: boolean
+  feishu: FeishuIntegrationConfig
+  casdoor: CasdoorAuthMeta
 }
 
 export interface Invitation {
@@ -455,11 +752,77 @@ export interface ProjectInvitationSummary extends Invitation {
   isExpired: boolean
 }
 
+export type UserNotificationCategory = 'platform' | 'contest' | 'collab'
+export type UserNotificationType
+  = | 'platform.announcement'
+    | 'contest.deadline_reminder'
+    | 'workspace.invitation.created'
+    | 'workspace.invitation.accepted'
+    | 'workspace.member.removed'
+    | 'project.invitation.created'
+    | 'project.invitation.accepted'
+    | 'project.member.added'
+    | 'project.member.removed'
+    | 'project.member.role_changed'
+
+export interface UserNotification {
+  id: string
+  userId: string
+  workspaceId?: string | null
+  projectId?: string | null
+  category: UserNotificationCategory
+  type: UserNotificationType
+  title: string
+  body: string
+  actionUrl?: string | null
+  actionLabel?: string | null
+  actorUserId?: string | null
+  payload: Record<string, unknown>
+  dedupeKey: string
+  readAt?: string | null
+  createdAt: string
+  expiresAt?: string | null
+}
+
+export interface UserNotificationListResult {
+  items: UserNotification[]
+  unreadCount: number
+  nextCursor: string
+}
+
 export interface WorkspaceMemberManagementSnapshot {
   teamId: string
   workspaceId?: string
   members: WorkspaceMemberSummary[]
   invitations: WorkspaceInvitationSummary[]
+}
+
+export interface WorkspaceAiUsageMemberSummary {
+  userId: string
+  username: string
+  units: number
+  calls: number
+  lastUsedAt: string | null
+}
+
+export interface WorkspaceAiUsageHistoryItem {
+  id: string
+  userId: string
+  username: string
+  route: string
+  units: number
+  createdAt: string
+}
+
+export interface WorkspaceAiUsageHistory {
+  workspaceId: string
+  page: number
+  pageSize: number
+  total: number
+  totalCalls: number
+  totalUnits: number
+  memberSummaries: WorkspaceAiUsageMemberSummary[]
+  items: WorkspaceAiUsageHistoryItem[]
 }
 
 export interface ProjectCollegeBinding {
@@ -486,9 +849,48 @@ export interface ProjectPayload {
   summary?: string
 }
 
+export type ProjectDisplayIcon
+  = | 'rocket_launch'
+    | 'shield'
+    | 'lightbulb'
+    | 'architecture'
+    | 'hub'
+    | 'science'
+    | 'public'
+    | 'school'
+
+export type ProjectDisplayPresetAccentColor
+  = | 'blue'
+    | 'indigo'
+    | 'pink'
+    | 'cyan'
+    | 'violet'
+    | 'emerald'
+    | 'lime'
+    | 'amber'
+    | 'orange'
+    | 'rose'
+    | 'slate'
+    | 'teal'
+
+export type ProjectDisplayAccentColor = ProjectDisplayPresetAccentColor | `#${string}`
+
+export interface ProjectDisplayConfig {
+  icon: ProjectDisplayIcon
+  accentColor: ProjectDisplayAccentColor
+}
+
 export interface ProjectSeatQuotaSummary {
   seatLimit: number
   seatUsed: number
+}
+
+export interface ProjectMemberPreviewSummary {
+  projectId: string
+  userId: string
+  username: string
+  role: ProjectMemberRole
+  avatarUrl?: string | null
 }
 
 export interface Project extends ProjectPayload {
@@ -502,7 +904,9 @@ export interface Project extends ProjectPayload {
   status: ProjectStatus
   collegeBindings: ProjectCollegeBinding[]
   advisorBindings: ProjectAdvisorBinding[]
+  display?: ProjectDisplayConfig | null
   projectSeatQuota?: ProjectSeatQuotaSummary | null
+  memberPreview?: ProjectMemberPreviewSummary[]
   createdAt: string
   updatedAt: string
 }
@@ -511,6 +915,7 @@ export interface ProjectMemberSummary {
   projectId: string
   userId: string
   username: string
+  avatarUrl?: string | null
   role: ProjectMemberRole
   addedByUserId: string
   addedByUsername: string
@@ -583,6 +988,8 @@ export interface ProjectOutlineSnapshot {
 export interface ProjectSettingsDraftCommon {
   title: string
   summary: string
+  icon: string
+  accentColor: string
   problemStatement: string
   innovationPointsText: string
   techRouteStepsText: string
@@ -773,6 +1180,11 @@ export interface AiTopicProposalRequest {
     contestId?: string
     trackId?: string
     major?: string
+    discipline?: string
+    topicType?: string
+    expectedDifficulty?: string
+    keywords?: string[]
+    teamSkillTags?: string[]
   }
 }
 
@@ -785,10 +1197,93 @@ export interface AiTopicReference {
 export interface AiTopicProposalResult {
   assistantReply: string
   proposals: TopicProposalItem[]
+  compareMatrix: TopicProposalCompareMatrixRow[]
+  boardSummary: string
+  teamSkillProfile: string[]
   references: AiTopicReference[]
   missingFields: string[]
+  selectedCandidateId?: string
+  boardId?: string
   sessionId?: string
   webSearchEnabled?: boolean
+}
+
+export interface ProjectTopicBoardInput {
+  contestId: string
+  trackId: string
+  major?: string
+  discipline?: string
+  topicType?: string
+  expectedDifficulty?: string
+  keywords: string[]
+  teamSkillTags: string[]
+  candidateCount: number
+  source?: 'workspace_dashboard' | 'workspace_sidebar' | 'project_create'
+}
+
+export interface ProjectTopicBoardCreateSeed {
+  contestId?: string
+  trackId?: string
+  major?: string
+  discipline?: string
+  topicType?: string
+  expectedDifficulty?: string
+  keywords: string[]
+  teamSkillTags: string[]
+  candidateCount: number
+  source?: 'workspace_dashboard' | 'workspace_sidebar' | 'project_create'
+  autoGenerate?: boolean
+}
+
+export interface ProjectTopicBoardCandidate {
+  id: string
+  boardId: string
+  workspaceId: string
+  projectId: string
+  candidateId: string
+  sortOrder: number
+  decisionStatus: TopicProposalDecisionStatus
+  totalScore: number
+  payload: TopicProposalItem
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectTopicBoard {
+  id: string
+  workspaceId: string
+  projectId: string
+  contestId: string
+  trackId: string
+  input: ProjectTopicBoardInput
+  teamSkillProfile: string[]
+  boardSummary: string
+  compareMatrix: TopicProposalCompareMatrixRow[]
+  selectedCandidateId?: string
+  sessionId?: string
+  status: 'active' | 'archived'
+  createdByUserId: string
+  candidates: ProjectTopicBoardCandidate[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectTopicBoardListResult {
+  latestBoard: ProjectTopicBoard | null
+  history: ProjectTopicBoard[]
+}
+
+export interface ProjectTopicBoardGenerateRequest {
+  input: ProjectTopicBoardInput
+}
+
+export interface ProjectTopicBoardPatchRequest {
+  selectedCandidateId?: string
+  boardSummary?: string
+  candidateUpdates?: Array<{
+    candidateId: string
+    decisionStatus?: TopicProposalDecisionStatus
+  }>
 }
 
 export interface AiDefenseJudgeRound {
@@ -955,10 +1450,9 @@ export interface AiWorkspaceResult {
 
 export type AdminAgentTaskType
   = 'publish_assistant'
-    | 'import_sync_analysis'
     | 'general'
 
-export type AdminDraftModule = 'overview' | 'tracks' | 'timelines' | 'rubrics' | 'resources'
+export type AdminDraftModule = 'overview' | 'tracks' | 'timelines' | 'track_timelines' | 'rubrics' | 'resources' | 'knowledge'
 
 export interface AdminAgentRunRequest {
   workspaceId: string
@@ -969,16 +1463,13 @@ export interface AdminAgentRunRequest {
   context?: {
     trackId?: string
     major?: string
-    csvText?: string
-    sourceId?: string
-    sourceUrl?: string
     targetModule?: AdminDraftModule
   }
 }
 
 export interface AdminAgentArtifact {
   id: string
-  type: 'draft' | 'publish_fix' | 'import_sync'
+  type: 'draft' | 'publish_fix'
   title: string
   summary: string
   module?: AdminDraftModule
@@ -998,38 +1489,6 @@ export type AdminAgentStreamEventType = 'progress' | 'tool' | 'delta' | 'artifac
 export interface AdminAgentStreamEvent {
   event: AdminAgentStreamEventType
   data: Record<string, unknown>
-}
-
-export interface ContestSyncSource {
-  id: string
-  name: string
-  sourceType: ContestSyncSourceType
-  sourceUrl: string
-  isActive: boolean
-  lastRunAt: string | null
-  createdByUserId: string
-  updatedByUserId: string
-  createdAt: string
-  updatedAt: string
-}
-
-export interface ContestSyncRun {
-  id: string
-  sourceId: string
-  sourceName: string
-  status: ContestSyncRunStatus
-  startedAt: string
-  finishedAt: string | null
-  previewTotal: number
-  previewValid: number
-  previewInvalid: number
-  createdCount: number
-  updatedCount: number
-  skippedCount: number
-  errorCount: number
-  errorMessage: string
-  createdByUserId: string
-  createdAt: string
 }
 
 export interface BillingPlan {
@@ -1103,13 +1562,13 @@ export interface PlatformRoleAssignment {
   updatedAt: string
 }
 
-export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'resource'
+export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
 export type FeishuSyncRunMode = 'full' | 'delta'
 export type FeishuTaskScheduleMode = 'interval' | 'cron'
 export type RuleSeverity = 'error' | 'warning' | 'info'
-export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder'
+export type RuleCategory = 'eligibility' | 'material' | 'workflow' | 'reminder' | 'quality' | 'compliance'
 export type RuleVersionStatus = 'draft' | 'published'
 export type ScopeType = 'global' | 'activity' | 'instance' | 'region' | 'stage' | 'track' | 'policy'
 export type FeishuSyncIssueStatus = 'open' | 'resolved' | 'ignored'
@@ -1535,6 +1994,15 @@ export interface FeishuAuthAuditItem {
   action: 'auth.feishu.bind.self' | 'auth.feishu.unbind.self'
   createdAt: string
   payload: Record<string, unknown>
+}
+
+export interface CasdoorAuthBindStatus {
+  linked: boolean
+  subject?: string
+  name?: string
+  preferredUsername?: string
+  email?: string
+  updatedAt?: string
 }
 
 export interface FeishuAdminGroupReconcileResult {

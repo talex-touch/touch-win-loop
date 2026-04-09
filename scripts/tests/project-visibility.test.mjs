@@ -10,7 +10,7 @@ const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
 it('listVisibleProjects 非平台管理员查询必须包含 workspace 可见性门槛', async () => {
   const source = await readFile(TARGET_FILE, 'utf8')
 
-  const requiredPattern = /WHERE \(\$2::TEXT IS NULL OR p\.workspace_id = \$2\)\s+AND EXISTS \(\s+SELECT 1\s+FROM workspace_members wm_visible\s+WHERE wm_visible\.workspace_id = p\.workspace_id\s+AND wm_visible\.user_id = \$1\s+AND wm_visible\.is_active = TRUE\s+\)\s+AND \(/
+  const requiredPattern = /WHERE \(\$2::TEXT IS NULL OR p\.workspace_id = \$2\)\s+AND EXISTS \(\s+SELECT 1\s+FROM workspace_members wm_visible\s+WHERE wm_visible\.workspace_id = p\.workspace_id\s+AND wm_visible\.user_id = \$1\s+AND wm_visible\.is_enabled = TRUE\s+\)\s+AND \(/
   assert.match(
     source,
     requiredPattern,
@@ -69,7 +69,7 @@ it('canManageProject owner/admin 全局可管理，manager 仅限分配项目', 
   )
   assert.match(
     source,
-    /JOIN workspace_members wm ON wm\.workspace_id = p\.workspace_id[\s\S]*wm\.user_id = \$2[\s\S]*wm\.is_active = TRUE[\s\S]*pm\.user_id = \$2[\s\S]*pm\.role = ANY\(\$3::TEXT\[\]\)/,
+    /JOIN workspace_members wm ON wm\.workspace_id = p\.workspace_id[\s\S]*wm\.user_id = \$2[\s\S]*wm\.is_enabled = TRUE[\s\S]*pm\.user_id = \$2[\s\S]*pm\.role = ANY\(\$3::TEXT\[\]\)/,
     'canManageProject 对 project owner\/manager 分支缺少 active workspace member 约束，移出 Team 后仍可能残留管理权限',
   )
 })
@@ -121,7 +121,7 @@ it('项目列表返回项目席位摘要，避免前端逐项目补请求', asyn
 
   assert.match(
     source,
-    /const \[bindings, projectSeatQuotaMap\] = await Promise\.all\(\[\s+loadProjectBindingsByIds\(db, projectIds\),\s+listProjectSeatQuotaSummaryByProjectIds\(db, projectIds\),\s+\]\)/,
+    /const \[bindings, projectSeatQuotaMap, projectMemberPreviewMap\] = await Promise\.all\(\[\s+loadProjectBindingsByIds\(db, projectIds\),\s+listProjectSeatQuotaSummaryByProjectIds\(db, projectIds\),\s+listProjectMemberPreviewByProjectIds\(db, projectIds\),\s+\]\)/,
     'loadProjectsFromRows 未批量加载项目席位摘要，可能导致前端 N+1 请求',
   )
   assert.match(
@@ -138,5 +138,20 @@ it('项目列表返回项目席位摘要，避免前端逐项目补请求', asyn
     domainSource,
     /projectSeatQuota\?: ProjectSeatQuotaSummary \| null/,
     'Project 类型未暴露 projectSeatQuota 摘要字段',
+  )
+  assert.match(
+    source,
+    /projectMemberPreviewMap\.get\(row\.id\) \|\| \[\]/,
+    'mapProject 未写入成员预览摘要，项目卡无法展示头像叠层',
+  )
+  assert.match(
+    domainSource,
+    /export interface ProjectMemberPreviewSummary \{\s+projectId: string\s+userId: string\s+username: string\s+role: ProjectMemberRole\s+avatarUrl\?: string \| null\s+\}/,
+    '共享类型缺少 ProjectMemberPreviewSummary 定义',
+  )
+  assert.match(
+    domainSource,
+    /memberPreview\?: ProjectMemberPreviewSummary\[\]/,
+    'Project 类型未暴露 memberPreview 摘要字段',
   )
 })

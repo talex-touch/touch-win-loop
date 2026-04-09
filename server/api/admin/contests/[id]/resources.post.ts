@@ -6,6 +6,7 @@ import { createAdminResource } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
 interface CreateResourceBody {
   category?: ResourceCategory
@@ -74,7 +75,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const resource = await withTransaction(event, async (db) => {
-    return createAdminResource(db, {
+    const created = await createAdminResource(db, {
       actorUserId: user.id,
       contestId,
       category: body.category!,
@@ -89,6 +90,13 @@ export default defineEventHandler(async (event) => {
       copyrightNote: body?.copyrightNote,
       status: body?.status,
     })
+    await enqueueResourceGovernanceTask(db, {
+      contestId,
+      resourceId: created.id,
+      taskType: 'profile_analyze',
+      actorUserId: user.id,
+    })
+    return created
   })
 
   return ok(resource, {

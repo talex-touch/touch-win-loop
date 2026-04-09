@@ -4,9 +4,11 @@ import type { DashboardInsight } from '~/types/dashboard'
 withDefaults(defineProps<{
   insights?: DashboardInsight[]
   loading?: boolean
+  moreTo?: string
 }>(), {
   insights: () => [],
   loading: false,
+  moreTo: '/team',
 })
 
 const badgeClassMap: Record<DashboardInsight['tone'], string> = {
@@ -32,7 +34,7 @@ const badgeClassMap: Record<DashboardInsight['tone'], string> = {
           将当前最值得关注的趋势、项目进度与建议动作集中展示。
         </p>
       </div>
-      <NuxtLink to="/team" class="db-btn db-btn-ghost db-focus-ring">
+      <NuxtLink :to="moreTo" class="db-btn db-btn-ghost db-focus-ring">
         查看全部
       </NuxtLink>
     </div>

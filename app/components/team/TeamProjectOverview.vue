@@ -1,219 +1,375 @@
 <script setup lang="ts">
 import type { TeamProjectCardItem } from '~/composables/team-ui'
-import { formatDateTime } from '~/composables/team-ui'
+import {
+  formatPreciseDateTime,
+  formatRelativeUpdatedAt,
+} from '~/composables/team-ui'
 
-type WorkspaceSummaryStatTone = 'neutral' | 'warning' | 'success'
-
-const props = withDefaults(defineProps<{
-  title: string
-  description: string
-  summaryText: string
-  actionLabel?: string
-  actionDisabled?: boolean
-  actionHintText?: string
-  noticeText?: string
-  noticeTone?: 'success' | 'warning'
-  loading?: boolean
-  errorText?: string
-  emptyTitle: string
-  emptyDescription?: string
+withDefaults(defineProps<{
   projects?: TeamProjectCardItem[]
   showTeamMeta?: boolean
-  loadingKeyPrefix?: string
-  summaryStats?: Array<{
-    label: string
-    value: string
-    tone?: WorkspaceSummaryStatTone
-  }>
+  canManageActions?: boolean
 }>(), {
-  actionLabel: '新建项目',
-  actionDisabled: false,
-  actionHintText: '',
-  noticeText: '',
-  noticeTone: 'warning',
-  loading: false,
-  errorText: '',
-  emptyDescription: '',
   projects: () => [],
   showTeamMeta: false,
-  loadingKeyPrefix: 'team-project',
-  summaryStats: () => [],
+  canManageActions: false,
 })
 
 const emit = defineEmits<{
-  (event: 'action'): void
-  (event: 'retry'): void
   (event: 'openProject', project: TeamProjectCardItem): void
+  (event: 'projectAction', payload: {
+    action: 'archive' | 'details' | 'members' | 'settings'
+    project: TeamProjectCardItem
+  }): void
 }>()
 
-const noticeClass = computed(() => {
-  if (props.noticeTone === 'success')
-    return 'text-emerald-700 border-emerald-200 bg-emerald-50'
-  return 'text-amber-700 border-amber-200 bg-amber-50'
-})
+const actionMenuProjectId = ref('')
 
 function openProject(project: TeamProjectCardItem) {
   emit('openProject', project)
 }
 
-function summaryStatClass(tone: WorkspaceSummaryStatTone | undefined) {
-  if (tone === 'warning')
-    return 'border-amber-200 bg-amber-50 text-amber-700'
-  if (tone === 'success')
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  return 'border-slate-200 bg-slate-50 text-slate-700'
+function setActionMenuVisible(projectId: string, visible: boolean) {
+  actionMenuProjectId.value = visible ? projectId : ''
+}
+
+function isActionMenuVisible(projectId: string): boolean {
+  return actionMenuProjectId.value === projectId
+}
+
+function triggerProjectAction(
+  project: TeamProjectCardItem,
+  action: 'archive' | 'details' | 'members' | 'settings',
+) {
+  actionMenuProjectId.value = ''
+  emit('projectAction', { action, project })
+}
+
+function statusBadgeClass(status: string): string {
+  if (status === 'active')
+    return 'text-emerald-700 border-emerald-200 bg-emerald-50'
+  if (status === 'archived')
+    return 'text-slate-500 border-slate-200 bg-slate-100'
+  return 'text-amber-700 border-amber-200 bg-amber-50'
+}
+
+function visibleMemberPreview(project: TeamProjectCardItem) {
+  return project.memberPreview.slice(0, 4)
 }
 </script>
 
 <template>
-  <div class="space-y-6">
-    <section class="p-6 border border-slate-200 rounded-2xl bg-white" data-testid="team-dashboard-overview">
-      <div class="flex flex-wrap gap-3 items-center justify-between">
-        <div>
-          <h2 class="text-2xl text-slate-900 font-bold">
-            {{ title }}
-          </h2>
-          <p class="text-sm text-slate-500 mt-1">
-            {{ description }}
-          </p>
-        </div>
-
-        <button
-          data-testid="team-dashboard-create-project-button"
-          class="text-sm text-white font-semibold px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          :disabled="actionDisabled"
-          @click="emit('action')"
-        >
-          {{ actionLabel }}
-        </button>
+  <section
+    v-if="projects.length === 0"
+    data-testid="team-project-empty-state"
+    class="p-5 border border-slate-200 rounded-2xl border-dashed bg-white"
+  >
+    <div class="flex gap-3 items-start">
+      <div class="text-slate-500 rounded-2xl bg-slate-100 flex shrink-0 h-11 w-11 items-center justify-center">
+        <span class="material-symbols-outlined text-[20px]">inventory_2</span>
       </div>
-
-      <div class="mt-4 space-y-3">
-        <p class="text-xs text-slate-500">
-          {{ summaryText }}
-        </p>
-
-        <div v-if="summaryStats.length > 0" class="gap-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-          <article
-            v-for="item in summaryStats"
-            :key="item.label"
-            class="p-4 border rounded-xl"
-            :class="summaryStatClass(item.tone)"
-          >
-            <p class="text-[11px] font-medium opacity-80">
-              {{ item.label }}
-            </p>
-            <p class="text-sm leading-6 font-semibold mt-2">
-              {{ item.value }}
-            </p>
-          </article>
-        </div>
-
-        <p v-if="actionHintText" class="text-xs text-amber-600">
-          {{ actionHintText }}
+      <div>
+        <h3 class="text-sm text-slate-900 font-semibold">
+          当前项目台暂无你可见的项目
+        </h3>
+        <p class="text-xs text-slate-500 mt-1">
+          如需加入项目，请联系 Team 管理者分配；如果你有权限，也可以直接使用右上角入口创建项目。
         </p>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <section
-      v-if="noticeText"
-      data-testid="team-dashboard-notice"
-      class="text-sm p-4 border rounded-xl"
-      :class="noticeClass"
+  <section v-else class="gap-4 grid grid-cols-1 xl:grid-cols-2">
+    <article
+      v-for="project in projects"
+      :key="project.id"
+      data-testid="team-project-card"
+      :data-project-id="project.id"
+      class="border rounded-2xl bg-white relative overflow-hidden"
+      :style="{
+        borderColor: project.accentBorder,
+        background: `linear-gradient(135deg, ${project.accentSoft} 0%, #ffffff 70%, ${project.accentSoft} 100%)`,
+      }"
     >
-      {{ noticeText }}
-    </section>
-
-    <section v-if="loading" class="gap-4 grid grid-cols-1 xl:grid-cols-2">
       <div
-        v-for="index in 6"
-        :key="`${loadingKeyPrefix}-${index}`"
-        class="p-5 border border-slate-200 rounded-xl bg-white animate-pulse"
-      >
-        <div class="rounded bg-slate-200 h-5 w-1/2" />
-        <div class="mt-3 rounded bg-slate-100 h-4 w-2/3" />
-        <div class="mt-2 rounded bg-slate-100 h-4 w-1/3" />
-      </div>
-    </section>
+        class="rounded-full h-20 w-20 right-[-10px] top-[-26px] absolute"
+        :style="{
+          background: `radial-gradient(circle, ${project.accentBorder} 0%, transparent 72%)`,
+          opacity: 0.34,
+        }"
+      />
+      <div class="p-4 relative">
+        <button class="text-left w-full block" type="button" @click="openProject(project)">
+          <div class="flex gap-3 items-start justify-between">
+            <div class="flex gap-3 min-w-0 items-start">
+              <div
+                data-testid="team-project-icon-badge"
+                class="rounded-2xl flex shrink-0 h-10 w-10 items-center justify-center"
+                :style="{
+                  color: project.accentText,
+                  backgroundColor: project.accentSoft,
+                }"
+              >
+                <span class="material-symbols-outlined text-[20px]">{{ project.displayIcon }}</span>
+              </div>
 
-    <section v-else-if="errorText" class="p-5 border border-rose-200 rounded-xl bg-rose-50">
-      <p class="text-sm text-rose-700">
-        {{ errorText }}
-      </p>
-      <button class="text-sm text-rose-700 font-semibold mt-3 px-3 py-1.5 border border-rose-300 rounded hover:bg-rose-100" @click="emit('retry')">
-        重新加载
-      </button>
-    </section>
+              <div class="min-w-0">
+                <div class="flex flex-wrap gap-2 items-center">
+                  <h3 class="text-[15px] text-slate-900 font-semibold truncate">
+                    {{ project.title }}
+                  </h3>
+                </div>
+              </div>
+            </div>
 
-    <section v-else-if="projects.length === 0" class="p-8 text-center border border-slate-300 rounded-2xl border-dashed bg-white" data-testid="team-dashboard-empty-state">
-      <h3 class="text-lg text-slate-900 font-semibold">
-        {{ emptyTitle }}
-      </h3>
-      <p v-if="emptyDescription" class="text-sm text-slate-500 mt-2">
-        {{ emptyDescription }}
-      </p>
-      <button
-        data-testid="team-dashboard-empty-create-project-button"
-        class="text-sm text-white font-semibold mt-4 px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-        :disabled="actionDisabled"
-        @click="emit('action')"
-      >
-        {{ actionLabel }}
-      </button>
-    </section>
+            <span
+              class="text-[10px] font-semibold px-2 py-1 border rounded-full shrink-0"
+              :class="statusBadgeClass(project.status)"
+              :style="{
+                marginTop: '1px',
+              }"
+            >
+              {{ project.status }}
+            </span>
+          </div>
 
-    <section v-else class="gap-4 grid grid-cols-1 xl:grid-cols-2">
-      <button
-        v-for="project in projects"
-        :key="project.id"
-        data-testid="team-project-card"
-        :data-project-id="project.id"
-        class="p-5 text-left border border-slate-200 rounded-xl bg-white transition-all hover:border-blue-200 hover:shadow-sm"
-        type="button"
-        @click="openProject(project)"
-      >
-        <div class="flex gap-2 items-center justify-between">
-          <h3 class="text-base text-slate-900 font-semibold pr-3 truncate">
-            {{ project.title }}
-          </h3>
-          <span class="text-[10px] text-slate-600 font-semibold px-2 py-1 rounded-full bg-slate-100 shrink-0">
-            {{ project.status }}
-          </span>
+          <p class="text-xs text-slate-600 mt-3 line-clamp-2">
+            {{ project.summary || '待补充项目摘要' }}
+          </p>
+
+          <div
+            v-if="showTeamMeta"
+            class="mt-3 flex flex-wrap gap-2 items-center"
+          >
+            <span
+              v-if="project.teamName && showTeamMeta"
+              class="text-[10px] font-semibold px-2 py-1 rounded-full"
+              :style="{
+                color: project.accentText,
+                backgroundColor: project.accentSoft,
+              }"
+            >
+              {{ project.teamName }}
+            </span>
+            <span
+              v-if="project.teamType && showTeamMeta"
+              class="text-[10px] text-slate-500 font-medium px-2 py-1 rounded-full bg-white/80"
+            >
+              {{ project.teamType }}
+            </span>
+            <span
+              v-if="project.source && showTeamMeta"
+              class="text-[10px] text-slate-500 font-medium px-2 py-1 rounded-full bg-white/80"
+            >
+              {{ project.source }}
+            </span>
+          </div>
+        </button>
+
+        <div class="mt-4 pt-3 border-t border-white/80 flex gap-3 items-center justify-between">
+          <div class="flex flex-1 flex-wrap gap-2 min-w-0 items-center">
+            <a-trigger trigger="hover" position="bl">
+              <button
+                data-testid="team-project-member-summary-trigger"
+                class="text-[11px] text-slate-600 px-2.5 py-1.5 rounded-full bg-white/80 flex gap-2 min-w-0 transition-colors items-center hover:bg-white"
+                type="button"
+              >
+                <span data-testid="team-project-member-avatar-stack" class="flex items-center">
+                  <template v-for="(member, index) in visibleMemberPreview(project)" :key="`${project.id}-${member.userId}`">
+                    <span
+                      class="text-[10px] text-slate-700 font-semibold border border-white rounded-full bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
+                      :class="index === 0 ? '' : '-ml-2'"
+                      :style="{
+                        backgroundColor: member.avatarUrl ? '#e2e8f0' : project.accentSoft,
+                        color: member.avatarUrl ? '#475569' : project.accentText,
+                      }"
+                    >
+                      <img
+                        v-if="member.avatarUrl"
+                        :src="member.avatarUrl"
+                        :alt="member.username"
+                        class="h-full w-full object-cover"
+                      >
+                      <span v-else>{{ member.avatarFallback }}</span>
+                    </span>
+                  </template>
+                  <span
+                    v-if="project.memberCount > 4"
+                    class="text-[10px] text-white font-semibold px-1 border border-white rounded-full bg-slate-900 flex shrink-0 h-6 min-w-6 items-center justify-center -ml-2"
+                  >
+                    +{{ project.memberCount - 4 }}
+                  </span>
+                </span>
+                <span class="truncate">{{ project.seatSummaryText }}</span>
+              </button>
+
+              <template #content>
+                <div
+                  data-testid="team-project-member-summary-popover"
+                  class="p-3 border border-slate-200 rounded-2xl bg-white w-72 shadow-sm"
+                >
+                  <div class="text-xs text-slate-900 font-semibold">
+                    项目席位
+                  </div>
+                  <div class="text-[11px] text-slate-500 mt-1">
+                    {{ project.seatSummaryText }}
+                  </div>
+                  <div v-if="project.memberPreview.length > 0" class="mt-3 space-y-2">
+                    <div
+                      v-for="member in project.memberPreview"
+                      :key="`${project.id}-member-${member.userId}`"
+                      class="flex gap-2 items-center justify-between"
+                    >
+                      <div class="flex gap-2 min-w-0 items-center">
+                        <span
+                          class="text-[10px] text-slate-700 font-semibold rounded-full bg-slate-200 flex shrink-0 h-7 w-7 items-center justify-center overflow-hidden"
+                          :style="{
+                            backgroundColor: member.avatarUrl ? '#e2e8f0' : project.accentSoft,
+                            color: member.avatarUrl ? '#475569' : project.accentText,
+                          }"
+                        >
+                          <img
+                            v-if="member.avatarUrl"
+                            :src="member.avatarUrl"
+                            :alt="member.username"
+                            class="h-full w-full object-cover"
+                          >
+                          <span v-else>{{ member.avatarFallback }}</span>
+                        </span>
+                        <span class="text-[12px] text-slate-700 truncate">{{ member.username }}</span>
+                      </div>
+                      <span class="text-[11px] text-slate-500 shrink-0">{{ member.roleLabel }}</span>
+                    </div>
+                  </div>
+                  <div v-else class="text-[11px] text-slate-400 mt-3">
+                    暂无席位成员
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+
+            <a-trigger trigger="hover" position="bottom">
+              <button
+                data-testid="team-project-contest-summary-trigger"
+                class="text-[11px] text-slate-600 px-2.5 py-1.5 rounded-full bg-white/80 flex gap-1 max-w-full min-w-0 transition-colors items-center hover:bg-white"
+                type="button"
+              >
+                <span class="truncate">{{ project.contestSummary }}</span>
+              </button>
+
+              <template #content>
+                <div
+                  data-testid="team-project-contest-summary-popover"
+                  class="p-3 border border-slate-200 rounded-2xl bg-white w-72 shadow-sm"
+                >
+                  <div class="text-xs text-slate-900 font-semibold">
+                    绑定比赛
+                  </div>
+                  <div v-if="project.contestNames.length > 0" class="mt-3 space-y-2">
+                    <div
+                      v-for="contestName in project.contestNames"
+                      :key="`${project.id}-contest-${contestName}`"
+                      class="text-[12px] text-slate-700 px-3 py-2 rounded-xl bg-slate-50"
+                    >
+                      {{ contestName }}
+                    </div>
+                  </div>
+                  <div v-else class="text-[11px] text-slate-400 mt-3">
+                    暂未绑定比赛
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+          </div>
+
+          <div class="flex shrink-0 gap-1 items-center">
+            <a-trigger trigger="hover" position="bottom">
+              <button
+                data-testid="team-project-updated-at-trigger"
+                class="text-[11px] text-slate-400 px-2 py-1.5 transition-colors hover:text-slate-500"
+                type="button"
+              >
+                {{ formatRelativeUpdatedAt(project.updatedAt) }}
+              </button>
+
+              <template #content>
+                <div
+                  data-testid="team-project-updated-at-popover"
+                  class="p-3 border border-slate-200 rounded-2xl bg-white shadow-sm"
+                >
+                  <div class="text-xs text-slate-900 font-semibold">
+                    最后更新时间
+                  </div>
+                  <div class="text-[11px] text-slate-500 mt-1">
+                    {{ formatPreciseDateTime(project.updatedAt) }}
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+
+            <a-trigger
+              trigger="click"
+              position="bl"
+              :popup-visible="isActionMenuVisible(project.id)"
+              @popup-visible-change="setActionMenuVisible(project.id, $event)"
+            >
+              <button
+                data-testid="team-project-action-trigger"
+                class="text-slate-400 rounded-full flex shrink-0 h-8 w-8 items-center justify-center"
+                type="button"
+                @click.stop
+              >
+                <span class="material-symbols-outlined text-[18px]">more_horiz</span>
+              </button>
+
+              <template #content>
+                <div class="p-2 border border-slate-200 rounded-2xl bg-white w-44">
+                  <button
+                    class="text-[12px] text-slate-700 px-3 py-2 text-left rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
+                    type="button"
+                    @click.stop="triggerProjectAction(project, 'details')"
+                  >
+                    <span class="material-symbols-outlined text-[16px]">open_in_new</span>
+                    <span>详细信息</span>
+                  </button>
+                  <button
+                    class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                    :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
+                    type="button"
+                    :disabled="!canManageActions"
+                    @click.stop="triggerProjectAction(project, 'settings')"
+                  >
+                    <span class="material-symbols-outlined text-[16px]">settings</span>
+                    <span>项目设置</span>
+                  </button>
+                  <button
+                    class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                    :class="canManageActions ? 'text-slate-700 transition-colors hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed'"
+                    type="button"
+                    :disabled="!canManageActions"
+                    @click.stop="triggerProjectAction(project, 'members')"
+                  >
+                    <span class="material-symbols-outlined text-[16px]">group</span>
+                    <span>成员管理</span>
+                  </button>
+                  <div class="mt-1 pt-1 border-t border-slate-100">
+                    <button
+                      class="text-[12px] px-3 py-2 text-left rounded-xl flex gap-2 w-full items-center"
+                      :class="canManageActions ? 'text-rose-600 transition-colors hover:bg-rose-50' : 'text-slate-300 cursor-not-allowed'"
+                      type="button"
+                      :disabled="!canManageActions"
+                      @click.stop="triggerProjectAction(project, 'archive')"
+                    >
+                      <span class="material-symbols-outlined text-[16px]">archive</span>
+                      <span>归档</span>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+          </div>
         </div>
-
-        <p
-          v-if="showTeamMeta"
-          class="text-xs text-slate-600 mt-3 flex flex-wrap gap-2 items-center"
-        >
-          <span v-if="project.teamName" class="text-blue-700 font-semibold px-2 py-1 rounded bg-blue-50">
-            {{ project.teamName }}
-          </span>
-          <span v-if="project.teamType" class="text-slate-400">{{ project.teamType }}</span>
-          <span v-if="project.source" class="text-slate-400">source={{ project.source }}</span>
-          <span v-if="project.contestNames.length > 0" class="text-slate-400">
-            关联竞赛 {{ project.contestNames.length }} 个
-          </span>
-        </p>
-
-        <p class="text-xs text-slate-500 mt-3 truncate">
-          简介：{{ project.summary }}
-        </p>
-
-        <p v-if="project.contestNames.length > 0" class="text-xs text-slate-500 mt-2 truncate">
-          竞赛：{{ project.contestNames.join(' / ') }}
-        </p>
-
-        <p
-          v-if="project.projectSeatLimit"
-          class="text-xs text-slate-500 mt-2"
-        >
-          项目席位：{{ project.projectSeatUsed }}/{{ project.projectSeatLimit }}，剩余 {{ project.projectSeatRemaining }}
-        </p>
-
-        <p class="text-xs text-slate-500 mt-2">
-          最近更新：{{ formatDateTime(project.updatedAt) }}
-        </p>
-      </button>
-    </section>
-  </div>
+      </div>
+    </article>
+  </section>
 </template>

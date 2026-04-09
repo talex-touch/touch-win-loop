@@ -26,9 +26,9 @@ export default defineEventHandler(async (event) => {
   const mode = parseMode(query.mode)
   const limit = Number(query.limit || 200)
 
-  if (!workspaceId || !sessionId || !projectId || !mode) {
+  if (!workspaceId || !sessionId || !mode || (mode !== 'dialog_ask' && !projectId)) {
     setResponseStatus(event, 400)
-    return fail('teamId、sessionId、projectId、mode 不能为空。', {
+    return fail('teamId、sessionId、mode 不能为空，且非只读模式必须传 projectId。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

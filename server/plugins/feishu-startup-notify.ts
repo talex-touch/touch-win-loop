@@ -6,6 +6,7 @@ import {
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const FEISHU_STARTUP_NOTIFY_RUNTIME_KEY = Symbol.for('winloop.feishu.startup-notify.runtime.v1')
 
@@ -84,6 +85,9 @@ async function runStartupNotify(): Promise<void> {
   }
   catch (error) {
     console.error('[feishu-startup-notify] startup notification failed:', toErrorMessage(error))
+    captureServerException(error, {
+      module: 'feishu-startup-notify',
+    })
   }
   finally {
     runtimeState.notifying = false

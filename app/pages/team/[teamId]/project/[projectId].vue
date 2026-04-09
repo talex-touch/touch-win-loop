@@ -36,8 +36,15 @@ import type {
   ProjectSettingsDraftPayload,
   ProjectSettingsDraftUi,
   ProjectSettingsSnapshot,
+  ProjectTopicBoard,
+  ProjectTopicBoardCreateSeed,
+  ProjectTopicBoardGenerateRequest,
+  ProjectTopicBoardListResult,
+  ProjectTopicBoardPatchRequest,
   Resource,
   ResourcePreviewStatus,
+  TopicProposalDecisionStatus,
+  TopicProposalItem,
   WorkspaceAiMode,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
@@ -54,7 +61,9 @@ import type {
   WorkspaceProjectContestBindingForm,
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
+  WorkspaceTopicBoardDraft,
 } from '~/types/workspace'
+import { Message } from '@arco-design/web-vue'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -62,6 +71,13 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
+import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
+import {
+  buildProjectSettingsCommonPatch,
+  cloneProjectCommonForm,
+  createEmptyProjectCommonForm,
+  createProjectCommonFormFromProject,
+} from '~/composables/project-settings'
 import { useCollabSession } from '~/composables/useCollabSession'
 
 definePageMeta({
@@ -87,6 +103,18 @@ const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
 
+interface TopicBoardConfirmOptions {
+  title: string
+  content: string
+  okText?: string
+  cancelText?: string
+}
+
+interface TopicBoardConfirmState extends Required<TopicBoardConfirmOptions> {
+  visible: boolean
+  resolver: ((value: boolean) => void) | null
+}
+
 function linesToArray(text: string): string[] {
   return text
     .split(/\n+/)
@@ -98,48 +126,66 @@ function arrayToLines(list: string[] | undefined): string {
   return (list || []).join('\n')
 }
 
-function createEmptyProjectCommonForm(): WorkspaceProjectCommonForm {
-  return {
-    title: '',
-    summary: '',
-    problemStatement: '',
-    innovationPointsText: '',
-    techRouteStepsText: '',
-    scoringMappingText: '',
-    risksText: '',
-    deliverablesText: '',
-  }
+const topicBoardConfirmState = reactive<TopicBoardConfirmState>({
+  visible: false,
+  title: '',
+  content: '',
+  okText: '确认',
+  cancelText: '取消',
+  resolver: null,
+})
+
+function resolveTopicBoardConfirm(result: boolean) {
+  const resolver = topicBoardConfirmState.resolver
+  topicBoardConfirmState.visible = false
+  topicBoardConfirmState.title = ''
+  topicBoardConfirmState.content = ''
+  topicBoardConfirmState.okText = '确认'
+  topicBoardConfirmState.cancelText = '取消'
+  topicBoardConfirmState.resolver = null
+  resolver?.(result)
 }
 
-function createProjectCommonFormFromProject(project: Project | null): WorkspaceProjectCommonForm {
-  if (!project)
-    return createEmptyProjectCommonForm()
+function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolean> {
+  if (!process.client)
+    return Promise.resolve(true)
 
-  return {
-    title: project.title || '',
-    summary: project.summary || '',
-    problemStatement: project.problemStatement || '',
-    innovationPointsText: arrayToLines(project.innovationPoints),
-    techRouteStepsText: arrayToLines(project.techRouteSteps),
-    scoringMappingText: arrayToLines(project.scoringMapping),
-    risksText: arrayToLines(project.risks),
-    deliverablesText: arrayToLines(project.deliverables),
-  }
+  if (topicBoardConfirmState.resolver)
+    resolveTopicBoardConfirm(false)
+
+  topicBoardConfirmState.visible = true
+  topicBoardConfirmState.title = options.title
+  topicBoardConfirmState.content = options.content
+  topicBoardConfirmState.okText = options.okText || '确认'
+  topicBoardConfirmState.cancelText = options.cancelText || '取消'
+
+  return new Promise((resolve) => {
+    topicBoardConfirmState.resolver = resolve
+  })
 }
 
-function cloneProjectCommonForm(value: WorkspaceProjectCommonForm): WorkspaceProjectCommonForm {
-  return {
-    title: value.title,
-    summary: value.summary,
-    problemStatement: value.problemStatement,
-    innovationPointsText: value.innovationPointsText,
-    techRouteStepsText: value.techRouteStepsText,
-    scoringMappingText: value.scoringMappingText,
-    risksText: value.risksText,
-    deliverablesText: value.deliverablesText,
-  }
+onBeforeUnmount(() => {
+  if (topicBoardConfirmState.resolver)
+    resolveTopicBoardConfirm(false)
+})
+
+function splitTopicBoardTags(text: string): string[] {
+  return String(text || '')
+    .split(/[\n,，、]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
 }
 
+function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
+  return {
+    discipline: '',
+    topicType: '',
+    expectedDifficulty: '',
+    keywordsText: '',
+    teamSkillTagsText: '',
+    candidateCount: 3,
+  }
+}
 function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
   return {
     contestId,
@@ -216,7 +262,7 @@ function clamp(value: number, min: number, max: number): number {
 function defaultAssistantGreeting(): ChatMessage {
   return {
     role: 'assistant',
-    content: '你好，我是 WinLoop AI。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
+    content: '你好，我是 Loopy。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
   }
 }
 
@@ -445,6 +491,13 @@ const discipline = ref('')
 const level = ref('')
 const trackType = ref('')
 const topK = ref(6)
+const topicBoardDraft = reactive<WorkspaceTopicBoardDraft>(createEmptyTopicBoardDraft())
+const topicBoardLoading = ref(false)
+const topicBoardError = ref('')
+const topicBoardSnapshot = ref<ProjectTopicBoard | null>(null)
+const topicBoardHistory = ref<ProjectTopicBoard[]>([])
+const topicBoardActioningCandidateId = ref('')
+const topicBoardCreateSeedHandled = ref(false)
 
 const contests = ref<Contest[]>([])
 const contestCatalog = ref<Contest[]>([])
@@ -943,15 +996,20 @@ const activeProject = computed(() => {
 })
 
 const activeProjectId = computed(() => activeProject.value?.id || '')
+const currentCollabUserId = computed(() => String(me.value?.user.id || '').trim())
+const currentCollabUsername = computed(() => String(me.value?.user.username || '').trim())
 const collabSession = useCollabSession({
   workspaceRealtime,
   projectId: activeProjectId,
   resourceId: collabBindingResourceId,
+  currentUserId: currentCollabUserId,
+  currentUsername: currentCollabUsername,
   statusLine,
   fetchSnapshot: async resourceId => await fetchCollabSnapshot(resourceId),
 })
 const collabRevision = collabSession.revision
 const collabMarkdownDoc = collabSession.markdownDoc
+const collabMarkdownAwareness = collabSession.markdownAwareness
 const collabDrawValue = collabSession.drawValue
 const collabDrawError = collabSession.drawError
 const collabPresenceMembers = collabSession.presenceMembers
@@ -1192,6 +1250,7 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
       return
     if (projectId && projectId !== activeProjectId.value)
       return
+    refreshProjectUploadActivities()
     scheduleRealtimeProjectRefresh()
     return
   }
@@ -1271,7 +1330,36 @@ const mappingRows = computed<WorkspaceMappingRow[]>(() => {
   ]
 })
 
+const activeTopicBoardCandidate = computed(() => {
+  const board = topicBoardSnapshot.value
+  if (!board || board.candidates.length === 0)
+    return null
+  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
+  return board.candidates.find(item => item.candidateId === selectedCandidateId)?.payload
+    || board.candidates[0]?.payload
+    || null
+})
+
 const keywordCloud = computed<WorkspaceKeyword[]>(() => {
+  if (topicBoardSnapshot.value && activeTopicBoardCandidate.value) {
+    const board = topicBoardSnapshot.value
+    const candidate = activeTopicBoardCandidate.value
+    const labels = [
+      ...board.input.keywords,
+      ...candidate.trendSignals.map(item => item.label),
+      ...candidate.requiredSkills,
+      candidate.recommendedTrackName,
+    ]
+      .filter(Boolean)
+      .slice(0, 8)
+
+    return labels.map((label, index) => ({
+      label,
+      count: clamp(54 - index * 5, 12, 60),
+      active: index < 3,
+    }))
+  }
+
   const seed = selectedContest.value?.keywords.length
     ? [...selectedContest.value.keywords]
     : ['人工智能', '工程落地', '评分映射', '答辩策略', '项目管理']
@@ -1291,6 +1379,17 @@ const keywordCloud = computed<WorkspaceKeyword[]>(() => {
 })
 
 const trendBars = computed<number[]>(() => {
+  if (activeTopicBoardCandidate.value) {
+    const scores = activeTopicBoardCandidate.value.compareScores
+    return [
+      scores.contestFit,
+      scores.noveltySimilarity,
+      scores.evidenceReadiness,
+      scores.trendHeat,
+      scores.teamMatch,
+    ].map(value => clamp(value, 18, 96))
+  }
+
   const filledSignals = [
     formState.problemStatement,
     formState.innovationPointsText,
@@ -1318,16 +1417,69 @@ const projectUploadStorageUsedBytes = computed(() => {
   return selectedResources.value.reduce((sum, resource) => sum + parseFileSizeFromResource(resource), 0)
 })
 
-const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value)
+const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value || topicBoardLoading.value)
+
+const collabSelectionStatus = ref({
+  line: 1,
+  column: 1,
+  selectionLength: 0,
+})
+
+const isMarkdownWorkspaceTabActive = computed(() => {
+  return activeMainTabId.value.startsWith('resource:') && previewMode.value === 'markdown'
+})
 
 const statusCursor = computed(() => {
+  if (isMarkdownWorkspaceTabActive.value) {
+    return {
+      line: collabSelectionStatus.value.line,
+      column: collabSelectionStatus.value.column,
+      selectionLength: collabSelectionStatus.value.selectionLength,
+    }
+  }
+
   const line = clamp(12 + chatMessages.value.length + (formState.problemStatement ? 3 : 0), 12, 96)
   const column = clamp((chatInput.value.length % 80) + 8, 8, 120)
   return {
     line,
     column,
+    selectionLength: 0,
   }
 })
+
+const rebindUploadInputRef = ref<HTMLInputElement | null>(null)
+const pendingRebindSessionId = ref('')
+const currentUploadActorUserId = computed(() => String(me.value?.user.id || '').trim())
+const currentUploadActorUsername = computed(() => String(me.value?.user.username || '').trim())
+const currentUploadActorAvatarUrl = computed(() => String(me.value?.user.avatarUrl || '').trim() || null)
+
+const projectUploadManager = useProjectUploadManager({
+  projectId: activeProjectId,
+  endpoint,
+  currentUserId: currentUploadActorUserId,
+  currentUsername: currentUploadActorUsername,
+  currentUserAvatarUrl: currentUploadActorAvatarUrl,
+  realtimeConnected: workspaceRealtime.connected,
+  getUsedBytes: () => projectUploadStorageUsedBytes.value,
+  validateFiles: validateUploadFiles,
+  onStatusLine: (text) => {
+    statusLine.value = text
+  },
+  onRequireRefresh: async () => {
+    await refreshProjectResourceContext()
+    await loadProjectOutline()
+  },
+})
+
+const projectUploadTasks = projectUploadManager.tasks
+const projectUploadSummary = projectUploadManager.summary
+const projectUploadActivityItems = projectUploadManager.activityItems
+const projectUploadHistoryLoaded = projectUploadManager.projectSessionHistoryLoaded
+const uploadDrawerOpen = projectUploadManager.drawerOpen
+
+function refreshProjectUploadActivities() {
+  void projectUploadManager.refreshProjectSessions()
+}
 
 function mergeProjectIntoCollections(project: Project) {
   const merge = (list: Project[]): Project[] => {
@@ -1409,19 +1561,6 @@ function upsertProjectSettingsAdaptationDraft(form: WorkspaceProjectAdaptationFo
   projectSettingsAdaptationDrafts.value = {
     ...projectSettingsAdaptationDrafts.value,
     [contestId]: cloneProjectAdaptationForm(form),
-  }
-}
-
-function buildProjectSettingsCommonPatch() {
-  return {
-    title: projectSettingsCommon.title.trim(),
-    summary: projectSettingsCommon.summary.trim(),
-    problemStatement: projectSettingsCommon.problemStatement.trim(),
-    innovationPoints: linesToArray(projectSettingsCommon.innovationPointsText),
-    techRouteSteps: linesToArray(projectSettingsCommon.techRouteStepsText),
-    scoringMapping: linesToArray(projectSettingsCommon.scoringMappingText),
-    risks: linesToArray(projectSettingsCommon.risksText),
-    deliverables: linesToArray(projectSettingsCommon.deliverablesText),
   }
 }
 
@@ -1663,6 +1802,8 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
     common: {
       title: String(commonSource.title || ''),
       summary: String(commonSource.summary || ''),
+      icon: String(commonSource.icon || ''),
+      accentColor: String(commonSource.accentColor || ''),
       problemStatement: String(commonSource.problemStatement || ''),
       innovationPointsText: String(commonSource.innovationPointsText || ''),
       techRouteStepsText: String(commonSource.techRouteStepsText || ''),
@@ -2121,7 +2262,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     }
 
     if (projectSettingsCommonDirty.value)
-      body.common = buildProjectSettingsCommonPatch()
+      body.common = buildProjectSettingsCommonPatch(projectSettingsCommon)
     if (projectSettingsBindingsDirty.value)
       body.contestBindings = cloneProjectContestBindings(projectSettingsBindings.value)
 
@@ -2139,6 +2280,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     return true
   }
   catch (error) {
+    Message.error(resolveApiErrorMessage(error, '保存失败'))
     projectSettingsSaveState.value = 'error'
     statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
     return false
@@ -2179,6 +2321,7 @@ async function flushProjectAdaptationSave(
     return true
   }
   catch (error) {
+    Message.error(resolveApiErrorMessage(error, '保存失败'))
     projectSettingsSaveState.value = 'error'
     statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
     return false
@@ -2210,18 +2353,21 @@ async function saveProjectSettingsManually() {
   if (clearResult === 'conflict') {
     projectSettingsSaveState.value = 'conflict'
     statusLine.value = '项目已保存，但检测到其他设备有更新草稿，云端缓存未清除。'
+    Message.warning('项目已保存，但检测到其他设备有更新草稿，云端缓存未清除。')
     return
   }
 
   if (clearResult === 'error') {
     projectSettingsSaveState.value = 'error'
     statusLine.value = '项目已保存，但清理云端草稿失败（可重试）。'
+    Message.error('项目已保存，但清理云端草稿失败（可重试）。')
     return
   }
 
   await generateProjectOutline('settings_saved', true)
   projectSettingsSaveState.value = 'saved_manual'
   statusLine.value = '手动保存成功，结构大纲已刷新。'
+  Message.success('项目设置已保存。')
 }
 
 function onProjectSettingsCommonChange(next: WorkspaceProjectCommonForm) {
@@ -2918,6 +3064,32 @@ async function consumeJoinedProjectNotice() {
   }, { replace: true })
 }
 
+async function consumeProjectPanelQuery() {
+  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
+  if (panel !== 'members' && panel !== 'settings')
+    return
+
+  if (panel === 'members')
+    openMemberManagementSignal.value += 1
+  else
+    openSettingsSignal.value += 1
+
+  const nextQuery: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    if (key === 'panel')
+      continue
+
+    const normalized = normalizeQueryParam(value)
+    if (normalized)
+      nextQuery[key] = normalized
+  }
+
+  await navigateTo({
+    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
+    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
+  }, { replace: true })
+}
+
 async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) {
   const projectId = String(activeProjectId.value || '').trim()
   const userId = String(payload.userId || '').trim()
@@ -3193,35 +3365,76 @@ async function uploadResourcesToProject(files: File[]) {
   if (!activeProjectId.value)
     return
 
-  const normalizedFiles = Array.from(files || []).filter(file => file instanceof File)
-  const validationError = validateUploadFiles(normalizedFiles, projectUploadStorageUsedBytes.value)
-  if (validationError) {
-    statusLine.value = validationError
-    return
-  }
-
-  resourceMutating.value = true
-  const formData = new FormData()
-  normalizedFiles.forEach((file) => {
-    formData.append('file', file, file.name)
-  })
-
   try {
-    const response = await $fetch<ApiResponse<{ uploadedCount?: number }>>(endpoint(`/projects/${activeProjectId.value}/resources/upload`), {
-      method: 'POST',
-      body: formData,
-    })
-    await refreshProjectResourceContext()
-    await generateProjectOutline('upload_success', true)
-    const uploadedCount = Math.max(0, Number(response.data?.uploadedCount || normalizedFiles.length))
-    statusLine.value = `上传成功：${uploadedCount} 个文件，结构大纲已刷新。`
+    await projectUploadManager.enqueueFiles(files)
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
   }
-  finally {
-    resourceMutating.value = false
+}
+
+function openUploadDrawer() {
+  projectUploadManager.toggleDrawer()
+}
+
+async function pauseUploadTask(sessionId: string) {
+  await projectUploadManager.pauseTask(sessionId)
+}
+
+async function resumeUploadTask(sessionId: string) {
+  await projectUploadManager.resumeTask(sessionId)
+}
+
+async function retryUploadTask(sessionId: string) {
+  await projectUploadManager.retryTask(sessionId)
+}
+
+async function cancelUploadTask(sessionId: string) {
+  await projectUploadManager.cancelTask(sessionId)
+}
+
+function clearCompletedUploadTasks() {
+  projectUploadManager.clearCompletedTasks()
+}
+
+function requestRebindUploadTask(sessionId: string) {
+  pendingRebindSessionId.value = String(sessionId || '').trim()
+  if (!pendingRebindSessionId.value)
+    return
+  nextTick(() => {
+    rebindUploadInputRef.value?.click()
+  })
+}
+
+async function handleRebindUploadInputChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = Array.from(target.files || []).find(item => item instanceof File)
+  const sessionId = pendingRebindSessionId.value
+  target.value = ''
+  pendingRebindSessionId.value = ''
+  if (!file || !sessionId)
+    return
+
+  try {
+    await projectUploadManager.rebindTaskFile(sessionId, file)
+    projectUploadManager.openDrawer('auto')
+    statusLine.value = `已重新绑定文件：${file.name}。`
   }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '重新绑定上传文件失败，请稍后重试。')
+  }
+}
+
+async function pauseAllUploadTasks() {
+  const targets = projectUploadTasks.value.filter(task => task.status === 'uploading')
+  await Promise.allSettled(targets.map(task => projectUploadManager.pauseTask(task.sessionId)))
+}
+
+async function resumeAllUploadTasks() {
+  const targets = projectUploadTasks.value.filter((task) => {
+    return (task.status === 'paused' || task.status === 'failed') && !task.needsFileRebind
+  })
+  await Promise.allSettled(targets.map(task => projectUploadManager.resumeTask(task.sessionId)))
 }
 
 function clearPreviewStatusPolling() {
@@ -3233,6 +3446,18 @@ function clearPreviewStatusPolling() {
 
 function updateCollabDrawContent(value: string): void {
   collabSession.updateDraw(String(value || ''))
+}
+
+function updateCollabCursor(value: { cursorX?: number, cursorY?: number }): void {
+  collabSession.updatePresenceCursor(value.cursorX, value.cursorY)
+}
+
+function updateCollabSelectionStatus(value: { line: number, column: number, selectionLength: number }): void {
+  collabSelectionStatus.value = {
+    line: Math.max(1, Math.trunc(Number(value.line) || 1)),
+    column: Math.max(1, Math.trunc(Number(value.column) || 1)),
+    selectionLength: Math.max(0, Math.trunc(Number(value.selectionLength) || 0)),
+  }
 }
 
 async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPayload | null> {
@@ -3666,12 +3891,12 @@ function buildSessionTitleByMode(): string {
   const trackName = selectedTrack.value?.name || '未选择赛道'
 
   if (aiMode.value === 'auto_optimize')
-    return `自动优化 · ${contestName} · ${trackName}`
+    return `Loopy 自动优化 · ${contestName} · ${trackName}`
   if (aiMode.value === 'issue_discovery')
-    return `寻疑发现 · ${contestName} · ${trackName}`
+    return `Loopy 寻疑发现 · ${contestName} · ${trackName}`
   if (aiMode.value === 'defense')
-    return `答辩模拟 · ${contestName} · ${trackName}`
-  return `对话询问 · ${contestName} · ${trackName}`
+    return `Loopy 答辩模拟 · ${contestName} · ${trackName}`
+  return `Loopy 对话 · ${contestName} · ${trackName}`
 }
 
 async function createChatSession(preferredTitle = ''): Promise<string | null> {
@@ -3761,21 +3986,21 @@ async function switchChatSession(sessionId: string) {
 }
 
 async function startNewChatSession() {
-  let modeTitle = '新建 AI 对话'
+  let modeTitle = '新建 Loopy 对话'
   if (aiMode.value === 'defense')
-    modeTitle = '新建答辩会话'
+    modeTitle = '新建 Loopy 答辩会话'
   else if (aiMode.value === 'auto_optimize')
-    modeTitle = '新建自动优化会话'
+    modeTitle = '新建 Loopy 自动优化会话'
   else if (aiMode.value === 'issue_discovery')
-    modeTitle = '新建寻疑发现会话'
+    modeTitle = '新建 Loopy 寻疑发现会话'
   const createdId = await createChatSession(modeTitle)
   if (!createdId) {
-    statusLine.value = '新建对话失败，请稍后重试。'
+    statusLine.value = '新建 Loopy 会话失败，请稍后重试。'
     return
   }
 
   await loadChatSessions(createdId)
-  statusLine.value = '已创建新对话。'
+  statusLine.value = '已创建新的 Loopy 会话。'
 }
 
 function syncFormContestTrack() {
@@ -3839,6 +4064,352 @@ async function runAiFilter() {
   }
   finally {
     aiFiltering.value = false
+  }
+}
+
+function buildTopicBoardInput(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard'): ProjectTopicBoardGenerateRequest['input'] {
+  return {
+    contestId: String(selectedContestId.value || '').trim(),
+    trackId: String(selectedTrackId.value || '').trim(),
+    major: major.value.trim(),
+    discipline: topicBoardDraft.discipline.trim() || discipline.value.trim(),
+    topicType: topicBoardDraft.topicType.trim() || trackType.value.trim(),
+    expectedDifficulty: topicBoardDraft.expectedDifficulty.trim() || level.value.trim(),
+    keywords: splitTopicBoardTags(topicBoardDraft.keywordsText),
+    teamSkillTags: splitTopicBoardTags(topicBoardDraft.teamSkillTagsText),
+    candidateCount: clamp(Math.round(Number(topicBoardDraft.candidateCount || 3)), 3, 5),
+    source,
+  }
+}
+
+function syncTopicBoardDraftFromSeed(seed: ProjectTopicBoardCreateSeed) {
+  topicBoardDraft.discipline = String(seed.discipline || '').trim()
+  topicBoardDraft.topicType = String(seed.topicType || '').trim()
+  topicBoardDraft.expectedDifficulty = String(seed.expectedDifficulty || '').trim()
+  topicBoardDraft.keywordsText = (seed.keywords || []).join('\n')
+  topicBoardDraft.teamSkillTagsText = (seed.teamSkillTags || []).join('\n')
+  topicBoardDraft.candidateCount = clamp(Math.round(Number(seed.candidateCount || 3)), 3, 5)
+}
+
+function findTopicBoardCandidate(candidateId: string): TopicProposalItem | null {
+  const normalizedCandidateId = String(candidateId || '').trim()
+  if (!normalizedCandidateId)
+    return null
+  return topicBoardSnapshot.value?.candidates.find(item => item.candidateId === normalizedCandidateId)?.payload || null
+}
+
+async function loadTopicBoards() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    topicBoardSnapshot.value = null
+    topicBoardHistory.value = []
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
+    topicBoardSnapshot.value = response.data.latestBoard
+    topicBoardHistory.value = response.data.history
+    topicBoardError.value = ''
+  }
+  catch {
+    topicBoardSnapshot.value = null
+    topicBoardHistory.value = []
+  }
+}
+
+async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard') {
+  if (!activeProjectId.value) {
+    statusLine.value = '请先选择一个项目。'
+    return
+  }
+
+  if (!activeWorkspaceId.value) {
+    statusLine.value = '请先选择一个空间。'
+    return
+  }
+
+  const input = buildTopicBoardInput(source)
+  if (!input.contestId || !input.trackId) {
+    statusLine.value = '请先锁定竞赛与赛道，再生成选题板。'
+    return
+  }
+
+  activeMainTabId.value = 'dashboard'
+  topicBoardLoading.value = true
+  topicBoardError.value = ''
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${activeProjectId.value}/topic-boards/generate`), {
+      method: 'POST',
+      body: {
+        input,
+      } satisfies ProjectTopicBoardGenerateRequest,
+    })
+
+    topicBoardSnapshot.value = response.data
+    topicBoardHistory.value = [response.data, ...topicBoardHistory.value.filter(item => item.id !== response.data.id)].slice(0, 5)
+    statusLine.value = response.meta.fallbackUsed
+      ? '选题板已生成，当前为内部资料/规则兜底结果。'
+      : '选题板已生成，可继续设主推、写入草案或发送到右侧 AI。'
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '生成选题板失败，请稍后重试。')
+    topicBoardError.value = message
+    statusLine.value = message
+  }
+  finally {
+    topicBoardLoading.value = false
+  }
+}
+
+async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
+  const boardId = String(topicBoardSnapshot.value?.id || '').trim()
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!boardId || !projectId)
+    return
+
+  const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/${boardId}`), {
+    method: 'PATCH',
+    body: payload,
+  })
+
+  topicBoardSnapshot.value = response.data
+  topicBoardHistory.value = topicBoardHistory.value.map(item => item.id === response.data.id ? response.data : item)
+}
+
+async function updateTopicBoardCandidateStatus(candidateId: string, decisionStatus: TopicProposalDecisionStatus) {
+  const normalizedCandidateId = String(candidateId || '').trim()
+  if (!normalizedCandidateId)
+    return
+
+  topicBoardActioningCandidateId.value = normalizedCandidateId
+  try {
+    await patchTopicBoard({
+      candidateUpdates: [
+        {
+          candidateId: normalizedCandidateId,
+          decisionStatus,
+        },
+      ],
+    })
+    statusLine.value = decisionStatus === 'shortlisted'
+      ? '已加入短名单。'
+      : decisionStatus === 'rejected'
+        ? '已标记为淘汰。'
+        : '候选题状态已更新。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '更新候选题状态失败。')
+  }
+  finally {
+    topicBoardActioningCandidateId.value = ''
+  }
+}
+
+async function selectTopicBoardCandidate(candidateId: string) {
+  const normalizedCandidateId = String(candidateId || '').trim()
+  if (!normalizedCandidateId)
+    return
+
+  topicBoardActioningCandidateId.value = normalizedCandidateId
+  try {
+    await patchTopicBoard({
+      selectedCandidateId: normalizedCandidateId,
+    })
+    statusLine.value = '已更新主推题。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '更新主推题失败。')
+  }
+  finally {
+    topicBoardActioningCandidateId.value = ''
+  }
+}
+
+function buildTopicBoardChatPrompt(candidate: TopicProposalItem): string {
+  return [
+    `请围绕候选题《${candidate.title}》继续深挖，并按当前项目上下文输出下一步建议。`,
+    `主推理由：${candidate.reason}`,
+    candidate.innovationPoints.length > 0 ? `创新点：${candidate.innovationPoints.join('；')}` : '',
+    candidate.contestFitReasons.length > 0 ? `竞赛适配：${candidate.contestFitReasons.join('；')}` : '',
+    candidate.requiredSkills.length > 0 ? `所需技能：${candidate.requiredSkills.join('、')}` : '',
+    candidate.teamGapNotes.length > 0 ? `能力缺口：${candidate.teamGapNotes.join('；')}` : '',
+    candidate.evidenceRefs.length > 0 ? `证据摘要：${candidate.evidenceRefs.map(item => `${item.sourceLabel}-${item.title}`).join('；')}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+async function sendTopicBoardCandidateToChat(candidateId: string) {
+  const candidate = findTopicBoardCandidate(candidateId)
+  if (!candidate)
+    return
+
+  expandRightSidebar()
+  aiMode.value = 'dialog_ask'
+  chatInput.value = buildTopicBoardChatPrompt(candidate)
+  await nextTick()
+  await sendChatMessage()
+}
+
+function hasExistingFormDraftContent(): boolean {
+  return Boolean(
+    formState.title
+    || formState.problemStatement
+    || formState.innovationPointsText
+    || formState.techRouteStepsText
+    || formState.scoringMappingText
+    || formState.risksText
+    || formState.deliverablesText
+    || formState.summary,
+  )
+}
+
+function resolveTopicBoardDraftDeliverables(): string[] {
+  const contestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
+  const contest = contestMap.value.get(contestId) || selectedContest.value
+  const trackId = String(projectSettingsBindingMap.value.get(contestId)?.trackId || selectedTrackId.value || '').trim()
+  const track = (trackId && contest?.tracks.find(item => item.id === trackId)) || selectedTrack.value || null
+
+  if (track?.deliverableTypes?.length)
+    return [...track.deliverableTypes]
+
+  return ['项目方案书', '演示材料', '答辩问题清单']
+}
+
+function buildTopicBoardDraftContent(candidate: TopicProposalItem): WorkspaceProjectCommonForm {
+  return {
+    title: candidate.title,
+    icon: '',
+    accentColor: '',
+    problemStatement: candidate.reason,
+    innovationPointsText: candidate.innovationPoints.join('\n'),
+    techRouteStepsText: candidate.techRouteSteps.join('\n'),
+    scoringMappingText: [
+      ...candidate.scoringMapping,
+      ...candidate.contestFitReasons.map(item => `适配说明 -> ${item}`),
+    ].join('\n'),
+    risksText: [...candidate.risks, ...candidate.teamGapNotes].join('\n'),
+    deliverablesText: resolveTopicBoardDraftDeliverables().join('\n'),
+    summary: [
+      candidate.reason,
+      candidate.evidenceRefs[0]?.summary || '',
+    ].filter(Boolean).join(' '),
+  }
+}
+
+function syncTopicBoardCandidateToProjectSettings(candidate: TopicProposalItem): {
+  draftContent: WorkspaceProjectCommonForm
+  syncedAdaptation: boolean
+} {
+  const draftContent = buildTopicBoardDraftContent(candidate)
+
+  Object.assign(projectSettingsCommon, cloneProjectCommonForm(draftContent))
+  projectSettingsCommonDirty.value = true
+
+  const contestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
+  const binding = projectSettingsBindingMap.value.get(contestId)
+  let syncedAdaptation = false
+
+  if (contestId && binding) {
+    const adaptationDraft: WorkspaceProjectAdaptationForm = {
+      contestId,
+      trackId: binding.trackId,
+      problemStatement: draftContent.problemStatement,
+      innovationPointsText: draftContent.innovationPointsText,
+      techRouteStepsText: draftContent.techRouteStepsText,
+      scoringMappingText: draftContent.scoringMappingText,
+      risksText: draftContent.risksText,
+      deliverablesText: draftContent.deliverablesText,
+      summary: draftContent.summary,
+    }
+
+    projectSettingsHydrating.value = true
+    try {
+      Object.assign(projectSettingsAdaptation, cloneProjectAdaptationForm(adaptationDraft))
+    }
+    finally {
+      projectSettingsHydrating.value = false
+    }
+
+    upsertProjectSettingsAdaptationDraft(adaptationDraft)
+    markProjectSettingsAdaptationDirty(contestId)
+    syncedAdaptation = true
+  }
+
+  scheduleProjectSettingsDraftPersist()
+
+  return {
+    draftContent,
+    syncedAdaptation,
+  }
+}
+
+async function applyTopicBoardCandidateToForm(candidateId: string) {
+  const candidate = findTopicBoardCandidate(candidateId)
+  if (!candidate)
+    return
+
+  if (hasExistingFormDraftContent() && process.client) {
+    const confirmed = await askTopicBoardConfirm({
+      title: '覆盖当前项目草案',
+      content: '当前项目草案已有内容，继续写入会覆盖现有字段，是否继续？',
+      okText: '继续写入',
+    })
+    if (!confirmed)
+      return
+  }
+
+  const { draftContent, syncedAdaptation } = syncTopicBoardCandidateToProjectSettings(candidate)
+
+  Object.assign(formState, {
+    source: 'form',
+    ...draftContent,
+  })
+
+  statusLine.value = syncedAdaptation
+    ? '已写入项目草案，并同步到项目设置草稿。'
+    : '已写入项目草案，并同步到项目通用设置草稿。'
+
+  if (!process.client)
+    return
+
+  const shouldSave = await askTopicBoardConfirm({
+    title: '立即保存项目设置',
+    content: syncedAdaptation
+      ? '已同步到项目设置草稿，是否立即保存到项目设置？'
+      : '已同步到项目通用设置草稿，是否立即保存到项目设置？',
+    okText: '立即保存',
+  })
+  if (!shouldSave)
+    return
+
+  await saveProjectSettingsManually()
+}
+
+async function consumeTopicBoardCreateSeed() {
+  if (!process.client || topicBoardCreateSeedHandled.value)
+    return
+
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || !selectedContestId.value || !selectedTrackId.value)
+    return
+
+  const storageKey = `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${projectId}`
+  const raw = window.sessionStorage.getItem(storageKey)
+  if (!raw)
+    return
+
+  topicBoardCreateSeedHandled.value = true
+  window.sessionStorage.removeItem(storageKey)
+
+  try {
+    const seed = JSON.parse(raw) as ProjectTopicBoardCreateSeed
+    syncTopicBoardDraftFromSeed(seed)
+    if (!topicBoardSnapshot.value && seed.autoGenerate !== false)
+      await generateTopicBoard(seed.source || 'project_create')
+  }
+  catch {
+    // ignore malformed seed
   }
 }
 
@@ -4378,7 +4949,7 @@ onMounted(async () => {
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
 
-  await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement()])
+  await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement(), loadTopicBoards()])
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
   if (activeProjectId.value)
@@ -4389,12 +4960,14 @@ onMounted(async () => {
   await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
   syncFallbackResourceRefreshTimer()
   syncFormContestTrack()
+  await consumeTopicBoardCreateSeed()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
       statusLine.value = `已定位项目：${target.title}`
   }
   await consumeJoinedProjectNotice()
+  await consumeProjectPanelQuery()
 })
 
 onBeforeUnmount(() => {
@@ -4451,11 +5024,12 @@ watch(routeWorkspaceId, async (value, previous) => {
   workspaceSeatLimitError.value = ''
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
-  await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement()])
+  await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement(), loadTopicBoards()])
   await refreshProjectResourceContext()
   await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
   await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
+  await consumeTopicBoardCreateSeed()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -4472,6 +5046,8 @@ watch(activeProjectId, async (next, previous) => {
   clearRealtimeProjectRefreshTimer()
   clearFallbackResourceRefreshTimer()
   projectOutlineFirstLoaded.value = false
+  topicBoardLoading.value = false
+  topicBoardActioningCandidateId.value = ''
   closeProjectResourcePreview()
   if (next)
     workspaceRealtime.subscribeProject(next)
@@ -4481,6 +5057,9 @@ watch(activeProjectId, async (next, previous) => {
     flowResourceId.value = ''
     projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
+    topicBoardSnapshot.value = null
+    topicBoardHistory.value = []
+    topicBoardCreateSeedHandled.value = false
     aiChangeRequests.value = []
     projectIssueReports.value = []
     projectIssues.value = []
@@ -4496,10 +5075,16 @@ watch(activeProjectId, async (next, previous) => {
     loadWorkspaceMemberManagement(),
     loadProjectOutline(),
     loadProjectSettings(selectedContestId.value),
+    loadTopicBoards(),
     loadAiChangeRequests(),
     loadProjectIssues(),
     loadChatSessions(),
   ])
+  await consumeTopicBoardCreateSeed()
+})
+
+watch([activeProjectId, selectedContestId, selectedTrackId], async () => {
+  await consumeTopicBoardCreateSeed()
 })
 
 watch(resources, (nextResources) => {
@@ -4583,6 +5168,7 @@ watch(() => workspaceRealtime.connected.value, () => {
     <WorkspaceHeader
       v-model="headerSearch"
       :project-name="headerProjectName"
+      :workspace-id="activeWorkspaceId"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
       @final-review="openFinalReviewFromHeader"
@@ -4606,6 +5192,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           :resource-library="resourceLibrary"
           :linked-contest-resource-groups="linkedContestResourceGroups"
           :linked-contest-binding-count="projectSettingsBindings.length"
+          :upload-tasks="projectUploadTasks"
+          :project-members="workspaceMembers"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
           :project-issues="projectIssues"
@@ -4626,8 +5214,14 @@ watch(() => workspaceRealtime.connected.value, () => {
           :current-user-id="me?.user.id || ''"
           :current-username="me?.user.username || ''"
           :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
+          :topic-board-draft="topicBoardDraft"
+          :topic-board-loading="topicBoardLoading"
+          :topic-board-current-summary="topicBoardSnapshot?.boardSummary || ''"
+          :topic-board-history-count="topicBoardHistory.length"
           @load-contests="loadContests"
           @run-ai-filter="runAiFilter"
+          @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
+          @generate-topic-board="generateTopicBoard('workspace_sidebar')"
           @open-settings-panel="openSettingsFromLeftSidebar"
           @open-member-management-panel="openMemberManagementFromLeftSidebar"
           @open-flow-panel="openFlowFromLeftSidebar"
@@ -4644,6 +5238,11 @@ watch(() => workspaceRealtime.connected.value, () => {
           @restore-project-resource="restoreProjectResource"
           @purge-project-resource="purgeProjectResource"
           @upload-resources="uploadResourcesToProject"
+          @pause-upload-task="pauseUploadTask"
+          @resume-upload-task="resumeUploadTask"
+          @retry-upload-task="retryUploadTask"
+          @cancel-upload-task="cancelUploadTask"
+          @rebind-upload-task="requestRebindUploadTask"
         />
         <div class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-expanded">
           <button
@@ -4716,7 +5315,10 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-mode="previewMode"
         :preview-pdf-url="previewPdfUrl"
         :preview-source-download-url="previewSourceDownloadUrl"
+        :current-user-id="me?.user.id || ''"
+        :current-user-name="me?.user.username || ''"
         :collab-markdown-doc="collabMarkdownDoc"
+        :collab-markdown-awareness="collabMarkdownAwareness"
         :collab-draw-value="collabDrawValue"
         :collab-draw-error="collabDrawError"
         :collab-revision="collabRevision"
@@ -4729,6 +5331,9 @@ watch(() => workspaceRealtime.connected.value, () => {
         :trend-bars="trendBars"
         :form-state="formState"
         :form-submitting="formSubmitting"
+        :topic-board="topicBoardSnapshot"
+        :topic-board-loading="topicBoardLoading"
+        :topic-board-actioning-candidate-id="topicBoardActioningCandidateId"
         :tone-meta="toneMeta"
         :project-settings-loading="projectSettingsLoading"
         :project-settings-save-state="projectSettingsSaveState"
@@ -4742,6 +5347,11 @@ watch(() => workspaceRealtime.connected.value, () => {
         @update:active-tab-id="activeMainTabId = $event"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
+        @generate-topic-board="generateTopicBoard('workspace_dashboard')"
+        @update-topic-board-candidate-status="updateTopicBoardCandidateStatus($event.candidateId, $event.decisionStatus)"
+        @select-topic-board-candidate="selectTopicBoardCandidate"
+        @send-topic-board-candidate-to-chat="sendTopicBoardCandidateToChat"
+        @apply-topic-board-candidate-to-form="applyTopicBoardCandidateToForm"
         @update:project-settings-common="onProjectSettingsCommonChange"
         @update:project-settings-bindings="onProjectSettingsBindingsChange"
         @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
@@ -4762,6 +5372,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         @activate-preview-resource="activateProjectResourceTab"
         @close-preview-resource="closeProjectResourcePreview"
         @update:collab-draw-value="updateCollabDrawContent"
+        @update-collab-cursor="updateCollabCursor"
+        @update-collab-selection-status="updateCollabSelectionStatus"
       />
 
       <div v-if="!rightSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--right">
@@ -4827,7 +5439,53 @@ watch(() => workspaceRealtime.connected.value, () => {
       :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
       :line="statusCursor.line"
       :column="statusCursor.column"
+      :selection-length="statusCursor.selectionLength"
+      :has-active-project="Boolean(activeProjectId)"
+      :upload-summary="projectUploadSummary"
+      :upload-drawer-open="uploadDrawerOpen"
+      :upload-tasks="projectUploadTasks"
+      :upload-activity-items="projectUploadActivityItems"
+      :upload-history-loaded="projectUploadHistoryLoaded"
+      @toggle-upload-drawer="openUploadDrawer"
+      @pause-upload-task="pauseUploadTask"
+      @resume-upload-task="resumeUploadTask"
+      @retry-upload-task="retryUploadTask"
+      @cancel-upload-task="cancelUploadTask"
+      @rebind-upload-task="requestRebindUploadTask"
+      @pause-all-upload-tasks="pauseAllUploadTasks"
+      @resume-all-upload-tasks="resumeAllUploadTasks"
+      @clear-completed-upload-tasks="clearCompletedUploadTasks"
     />
+    <input
+      ref="rebindUploadInputRef"
+      class="hidden"
+      type="file"
+      @change="handleRebindUploadInputChange"
+    >
+
+    <a-modal
+      v-model:visible="topicBoardConfirmState.visible"
+      :title="topicBoardConfirmState.title"
+      width="420px"
+      :footer="false"
+      :mask-closable="false"
+      @cancel="resolveTopicBoardConfirm(false)"
+    >
+      <div class="space-y-4">
+        <p class="m-0 text-sm text-slate-600 leading-6 whitespace-pre-line">
+          {{ topicBoardConfirmState.content }}
+        </p>
+
+        <div class="flex justify-end gap-2">
+          <a-button @click="resolveTopicBoardConfirm(false)">
+            {{ topicBoardConfirmState.cancelText }}
+          </a-button>
+          <a-button type="primary" @click="resolveTopicBoardConfirm(true)">
+            {{ topicBoardConfirmState.okText }}
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 

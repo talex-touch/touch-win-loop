@@ -32,6 +32,8 @@ interface ProjectResourceRow {
   status: ResourceStatus
   created_by_user_id: string | null
   updated_by_user_id: string | null
+  uploader_username?: string | null
+  uploader_avatar_url?: string | null
   created_at: string
   updated_at: string
   document_id?: string | null
@@ -379,6 +381,9 @@ function toResource(row: ProjectResourceRow): Resource {
     status: row.status,
     createdBy: row.created_by_user_id || undefined,
     updatedBy: row.updated_by_user_id || undefined,
+    uploaderUserId: sourceType === 'upload' ? (row.created_by_user_id || undefined) : undefined,
+    uploaderUsername: sourceType === 'upload' ? (normalizeString(row.uploader_username) || undefined) : undefined,
+    uploaderAvatarUrl: sourceType === 'upload' ? (normalizeString(row.uploader_avatar_url) || null) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     revision: collabRevision > 0 ? collabRevision : undefined,
@@ -448,6 +453,8 @@ export async function listProjectResources(
       pr.status,
       pr.created_by_user_id,
       pr.updated_by_user_id,
+      uploader.username AS uploader_username,
+      uploader.avatar_url AS uploader_avatar_url,
       pr.created_at::TEXT,
       pr.updated_at::TEXT,
       prd.id AS document_id,
@@ -457,6 +464,8 @@ export async function listProjectResources(
       prd.preview_error,
       prc.revision AS collab_revision
      FROM project_resources pr
+     LEFT JOIN users uploader
+       ON uploader.id = pr.created_by_user_id
      LEFT JOIN project_resource_documents prd
        ON prd.project_resource_id = pr.id
      LEFT JOIN project_resource_collab_docs prc
@@ -493,6 +502,8 @@ export async function listProjectRecycleResources(
       pr.status,
       pr.created_by_user_id,
       pr.updated_by_user_id,
+      uploader.username AS uploader_username,
+      uploader.avatar_url AS uploader_avatar_url,
       pr.created_at::TEXT,
       pr.updated_at::TEXT,
       prd.id AS document_id,
@@ -502,6 +513,8 @@ export async function listProjectRecycleResources(
       prd.preview_error,
       prc.revision AS collab_revision
      FROM project_resources pr
+     LEFT JOIN users uploader
+       ON uploader.id = pr.created_by_user_id
      LEFT JOIN project_resource_documents prd
        ON prd.project_resource_id = pr.id
      LEFT JOIN project_resource_collab_docs prc
@@ -513,6 +526,58 @@ export async function listProjectRecycleResources(
   )
 
   return result.rows.map(toResource)
+}
+
+export async function getProjectResourceById(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<Resource | null> {
+  const result = await db.query<ProjectResourceRow>(
+    `SELECT
+        pr.id,
+        pr.project_id,
+        pr.source,
+        pr.resource_kind,
+        pr.linked_contest_resource_id,
+        pr.title,
+        pr.mime_type,
+        pr.category,
+        pr.year,
+        pr.source_link,
+        pr.availability,
+        pr.summary,
+        pr.content,
+        pr.metadata,
+        pr.status,
+        pr.created_by_user_id,
+        pr.updated_by_user_id,
+        uploader.username AS uploader_username,
+        uploader.avatar_url AS uploader_avatar_url,
+        pr.created_at::TEXT,
+        pr.updated_at::TEXT,
+        prd.id AS document_id,
+        prd.preview_status,
+        prd.preview_progress_percent,
+        prd.preview_eta_seconds,
+        prd.preview_error,
+        prc.revision AS collab_revision
+       FROM project_resources pr
+       LEFT JOIN users uploader
+         ON uploader.id = pr.created_by_user_id
+       LEFT JOIN project_resource_documents prd
+         ON prd.project_resource_id = pr.id
+       LEFT JOIN project_resource_collab_docs prc
+         ON prc.resource_id = pr.id
+      WHERE pr.project_id = $1
+        AND pr.id = $2
+      LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  return result.rows[0] ? toResource(result.rows[0]!) : null
 }
 
 export async function listProjectLibraryResources(
@@ -770,7 +835,7 @@ export async function createProjectUploadedResource(
     uploadedAt: now,
   }
 
-  const result = await db.query<ProjectResourceRow>(
+  await db.query(
     `INSERT INTO project_resources (
       id,
       project_id,
@@ -793,27 +858,7 @@ export async function createProjectUploadedResource(
       updated_at
     ) VALUES (
       $1, $2, 'upload', 'binary', NULL, $3, $4, $5, $6, $7, $8, $9, '', $10::JSONB, 'active', $11, $11, $12, $12
-    )
-    RETURNING
-      id,
-      project_id,
-      source,
-      resource_kind,
-      linked_contest_resource_id,
-      title,
-      mime_type,
-      category,
-      year,
-      source_link,
-      availability,
-      summary,
-      content,
-      metadata,
-      status,
-      created_by_user_id,
-      updated_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT`,
+    )`,
     [
       resourceId,
       input.projectId,
@@ -830,7 +875,13 @@ export async function createProjectUploadedResource(
     ],
   )
 
-  return toResource(result.rows[0]!)
+  const resource = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId,
+  })
+  if (!resource)
+    throw new Error('RESOURCE_CREATE_FAILED')
+  return resource
 }
 
 export async function createProjectCollabResource(
@@ -1447,49 +1498,14 @@ export async function duplicateProjectResource(
     ],
   )
 
-  const duplicatedResult = await db.query<ProjectResourceRow>(
-    `SELECT
-      pr.id,
-      pr.project_id,
-      pr.source,
-      pr.resource_kind,
-      pr.linked_contest_resource_id,
-      pr.title,
-      pr.mime_type,
-      pr.category,
-      pr.year,
-      pr.source_link,
-      pr.availability,
-      pr.summary,
-      pr.content,
-      pr.metadata,
-      pr.status,
-      pr.created_by_user_id,
-      pr.updated_by_user_id,
-      pr.created_at::TEXT,
-      pr.updated_at::TEXT,
-      prd.id AS document_id,
-      prd.preview_status,
-      prd.preview_progress_percent,
-      prd.preview_eta_seconds,
-      prd.preview_error,
-      prc.revision AS collab_revision
-     FROM project_resources pr
-     LEFT JOIN project_resource_documents prd
-       ON prd.project_resource_id = pr.id
-     LEFT JOIN project_resource_collab_docs prc
-       ON prc.resource_id = pr.id
-     WHERE pr.project_id = $1
-       AND pr.id = $2
-     LIMIT 1`,
-    [input.projectId, duplicatedResourceId],
-  )
-
-  const duplicated = duplicatedResult.rows[0]
+  const duplicated = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId: duplicatedResourceId,
+  })
   if (!duplicated)
     throw new Error('RESOURCE_DUPLICATE_FAILED')
 
-  return toResource(duplicated)
+  return duplicated
 }
 
 export async function patchProjectResourceMetadata(
@@ -1538,38 +1554,25 @@ export async function patchProjectResourceMetadata(
   sets.push(`updated_at = $${index}`)
   values.push(new Date().toISOString())
 
-  const result = await db.query<ProjectResourceRow>(
+  const result = await db.query<{ id: string }>(
     `UPDATE project_resources
      SET ${sets.join(', ')}
      WHERE project_id = $1
-       AND id = $2
-       AND status = 'active'
-     RETURNING
-       id,
-       project_id,
-       source,
-       resource_kind,
-       linked_contest_resource_id,
-       title,
-       mime_type,
-       category,
-       year,
-       source_link,
-       availability,
-       summary,
-       content,
-       metadata,
-       status,
-       created_by_user_id,
-       updated_by_user_id,
-       created_at::TEXT,
-       updated_at::TEXT`,
+      AND id = $2
+      AND status = 'active'
+     RETURNING id`,
     values,
   )
   const row = result.rows[0]
   if (!row)
     throw new Error('RESOURCE_NOT_FOUND')
-  return toResource(row)
+  const resource = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId: row.id,
+  })
+  if (!resource)
+    throw new Error('RESOURCE_NOT_FOUND')
+  return resource
 }
 
 export async function createProjectResourceDocumentWithTask(
@@ -1759,7 +1762,7 @@ export async function restoreProjectResourceFromRecycleBin(
   },
 ): Promise<Resource> {
   const now = new Date().toISOString()
-  const result = await db.query<ProjectResourceRow>(
+  const result = await db.query<{ id: string }>(
     `UPDATE project_resources
      SET status = 'active',
          updated_by_user_id = $3,
@@ -1767,26 +1770,7 @@ export async function restoreProjectResourceFromRecycleBin(
      WHERE project_id = $1
        AND id = $2
        AND status = 'archived'
-     RETURNING
-       id,
-       project_id,
-       source,
-       resource_kind,
-       linked_contest_resource_id,
-       title,
-       mime_type,
-       category,
-       year,
-       source_link,
-       availability,
-       summary,
-       content,
-       metadata,
-       status,
-       created_by_user_id,
-       updated_by_user_id,
-       created_at::TEXT,
-       updated_at::TEXT`,
+     RETURNING id`,
     [input.projectId, input.resourceId, input.actorUserId, now],
   )
 
@@ -1794,7 +1778,13 @@ export async function restoreProjectResourceFromRecycleBin(
   if (!row)
     throw new Error('RESOURCE_NOT_FOUND')
 
-  return toResource(row)
+  const resource = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId: row.id,
+  })
+  if (!resource)
+    throw new Error('RESOURCE_NOT_FOUND')
+  return resource
 }
 
 export async function purgeProjectResourceFromRecycleBin(

@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import NotificationBellButton from '~/components/notifications/NotificationBellButton.vue'
+
 withDefaults(defineProps<{
   modelValue?: string
+  workspaceId?: string
 }>(), {
   modelValue: '',
+  workspaceId: '',
 })
 
 const emit = defineEmits<{
@@ -59,10 +63,7 @@ function onInput(event: Event) {
           <span class="material-symbols-outlined text-base">space_dashboard</span>
           仪表盘概览
         </div>
-        <button class="db-btn db-btn-ghost db-focus-ring h-11 w-11 px-0 relative" type="button" aria-label="通知中心">
-          <span class="material-symbols-outlined text-slate-600">notifications</span>
-          <span class="border-2 border-white rounded-full bg-rose-500 h-2.5 w-2.5 right-2.5 top-2.5 absolute" />
-        </button>
+        <NotificationBellButton :workspace-id="workspaceId" />
       </div>
     </div>
   </header>

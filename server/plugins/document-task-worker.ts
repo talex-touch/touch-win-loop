@@ -13,6 +13,8 @@ import {
   updateResourceDocumentFileAsset,
 } from '~~/server/utils/document-store'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
+import { captureServerException } from '~~/server/utils/sentry'
 
 const WORKER_STATE_KEY = Symbol.for('winloop.document-worker.state')
 
@@ -132,6 +134,11 @@ async function processSingleTask(): Promise<boolean> {
           conversion: conversionPayload,
         },
       })
+      await enqueueResourceGovernanceTask(db, {
+        contestId: context.resource.contestId,
+        resourceId: context.resource.id,
+        taskType: 'profile_analyze',
+      })
     })
   }
   catch (error) {
@@ -146,6 +153,10 @@ async function processSingleTask(): Promise<boolean> {
         },
       })
     })
+    captureServerException(error, {
+      module: 'document-worker',
+      taskId: context.task.id,
+    })
   }
 
   return true
@@ -154,6 +165,9 @@ async function processSingleTask(): Promise<boolean> {
 function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
   const prefix = stage === 'bootstrap' ? '[document-worker] bootstrap failed:' : '[document-worker] tick failed:'
   console.error(prefix, toErrorMessage(error))
+  captureServerException(error, {
+    module: 'document-worker',
+  })
 }
 
 async function runTick(state: WorkerState): Promise<void> {

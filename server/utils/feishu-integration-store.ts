@@ -1,5 +1,7 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  CasdoorAuthBindStatus,
+  CasdoorIntegrationConfig,
   FeishuAdminCandidate,
   FeishuAdminGroupReconcileResult,
   FeishuAdminManualAddResult,
@@ -43,6 +45,7 @@ import {
 import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEncryptedConfigValue } from '~~/server/utils/secure-config'
 
 const FEISHU_CONFIG_META_KEY = 'feishu_integration_config.v1'
+const CASDOOR_CONFIG_META_KEY = 'casdoor_integration_config.v1'
 const DEFAULT_WEBSDK_SCRIPT_URL = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js'
 
 interface AuthIdentityRow {
@@ -229,6 +232,17 @@ export interface FeishuIntegrationConfigInternal {
   startupNotifyRemark: string
   startupFallbackVersion: string
   startupFallbackCommitSha: string
+  updatedAt: string
+  updatedByUserId: string
+}
+
+export interface CasdoorIntegrationConfigInternal {
+  enabled: boolean
+  issuer: string
+  clientId: string
+  clientSecret: string
+  scope: string
+  redirectUri: string
   updatedAt: string
   updatedByUserId: string
 }
@@ -423,6 +437,20 @@ function normalizeFeishuConfigInternal(raw: unknown): FeishuIntegrationConfigInt
     startupNotifyRemark: hasOwn(source, 'startupNotifyRemark') ? toText(source.startupNotifyRemark) : '',
     startupFallbackVersion: hasOwn(source, 'startupFallbackVersion') ? toText(source.startupFallbackVersion) : '',
     startupFallbackCommitSha: hasOwn(source, 'startupFallbackCommitSha') ? toText(source.startupFallbackCommitSha) : '',
+    updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
+    updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
+  }
+}
+
+function normalizeCasdoorConfigInternal(raw: unknown): CasdoorIntegrationConfigInternal {
+  const source = parseJsonObject(raw)
+  return {
+    enabled: hasOwn(source, 'enabled') ? toBoolean(source.enabled, false) : false,
+    issuer: hasOwn(source, 'issuer') ? toText(source.issuer) : '',
+    clientId: hasOwn(source, 'clientId') ? toText(source.clientId) : '',
+    clientSecret: hasOwn(source, 'clientSecret') ? decryptConfigSecretSafe(source.clientSecret) : '',
+    scope: hasOwn(source, 'scope') ? toText(source.scope) : 'openid profile email',
+    redirectUri: hasOwn(source, 'redirectUri') ? toText(source.redirectUri) : '',
     updatedAt: hasOwn(source, 'updatedAt') ? toText(source.updatedAt) : '',
     updatedByUserId: hasOwn(source, 'updatedByUserId') ? toText(source.updatedByUserId) : '',
   }
@@ -699,6 +727,19 @@ export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigI
   }
 }
 
+export function toPublicCasdoorIntegrationConfig(config: CasdoorIntegrationConfigInternal): CasdoorIntegrationConfig {
+  return {
+    enabled: config.enabled,
+    issuer: config.issuer,
+    clientId: config.clientId,
+    clientSecretConfigured: Boolean(config.clientSecret),
+    scope: config.scope || 'openid profile email',
+    redirectUri: config.redirectUri,
+    updatedAt: config.updatedAt,
+    updatedByUserId: config.updatedByUserId,
+  }
+}
+
 export async function readFeishuIntegrationConfig(db: Queryable): Promise<FeishuIntegrationConfigInternal> {
   const result = await db.query<{ value: string }>(
     'SELECT value FROM migrations_meta WHERE key = $1 LIMIT 1',
@@ -714,6 +755,24 @@ export async function readFeishuIntegrationConfig(db: Queryable): Promise<Feishu
   }
   catch {
     return normalizeFeishuConfigInternal({})
+  }
+}
+
+export async function readCasdoorIntegrationConfig(db: Queryable): Promise<CasdoorIntegrationConfigInternal> {
+  const result = await db.query<{ value: string }>(
+    'SELECT value FROM migrations_meta WHERE key = $1 LIMIT 1',
+    [CASDOOR_CONFIG_META_KEY],
+  )
+
+  const raw = String(result.rows[0]?.value || '').trim()
+  if (!raw)
+    return normalizeCasdoorConfigInternal({})
+
+  try {
+    return normalizeCasdoorConfigInternal(JSON.parse(raw))
+  }
+  catch {
+    return normalizeCasdoorConfigInternal({})
   }
 }
 
@@ -745,10 +804,32 @@ export async function writeFeishuIntegrationConfig(
   return normalized
 }
 
+export async function writeCasdoorIntegrationConfig(
+  db: Queryable,
+  config: CasdoorIntegrationConfigInternal,
+): Promise<CasdoorIntegrationConfigInternal> {
+  const normalized = normalizeCasdoorConfigInternal(config)
+  const hasMasterKey = hasConfigMasterKey()
+  const persistable = {
+    ...normalized,
+    clientSecret: hasMasterKey && normalized.clientSecret && !isEncryptedConfigValue(normalized.clientSecret)
+      ? encryptConfigSecret(normalized.clientSecret)
+      : normalized.clientSecret,
+  }
+  await db.query(
+    `INSERT INTO migrations_meta (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+    [CASDOOR_CONFIG_META_KEY, JSON.stringify(persistable)],
+  )
+  return normalized
+}
+
 export async function findAuthIdentityByProviderUserId(
   db: Queryable,
   input: {
-    provider: 'feishu'
+    provider: 'feishu' | 'casdoor'
     providerUserId: string
   },
 ): Promise<AuthIdentityRow | null> {
@@ -774,7 +855,7 @@ export async function findAuthIdentityByProviderUserId(
 export async function findAuthIdentityByProviderAndUserId(
   db: Queryable,
   input: {
-    provider: 'feishu'
+    provider: 'feishu' | 'casdoor'
     userId: string
   },
 ): Promise<AuthIdentityRow | null> {
@@ -801,7 +882,7 @@ export async function findAuthIdentityByProviderAndUserId(
 export async function upsertAuthIdentity(
   db: Queryable,
   input: {
-    provider: 'feishu'
+    provider: 'feishu' | 'casdoor'
     providerUserId: string
     userId: string
     profile?: Record<string, unknown>
@@ -857,6 +938,32 @@ export async function getFeishuAuthBindStatusByUserId(
     enName: toText(profile.enName),
     email: toText(profile.email),
     mobile: toText(profile.mobile),
+    updatedAt: identity.updated_at || '',
+  }
+}
+
+export async function getCasdoorAuthBindStatusByUserId(
+  db: Queryable,
+  userId: string,
+): Promise<CasdoorAuthBindStatus> {
+  const identity = await findAuthIdentityByProviderAndUserId(db, {
+    provider: 'casdoor',
+    userId,
+  })
+
+  if (!identity) {
+    return {
+      linked: false,
+    }
+  }
+
+  const profile = parseJsonObject(identity.profile_json)
+  return {
+    linked: true,
+    subject: String(identity.provider_user_id || '').trim() || '',
+    name: toText(profile.name),
+    preferredUsername: toText(profile.preferredUsername),
+    email: toText(profile.email),
     updatedAt: identity.updated_at || '',
   }
 }

@@ -87,7 +87,7 @@ export default defineEventHandler(async (event) => {
           throw new Error('PROJECT_INVITE_FORBIDDEN')
       }
 
-      return teamCreateInvitation(db, {
+      const createdInvitation = await teamCreateInvitation(db, {
         workspaceId,
         projectId,
         invitedByUserId: user.id,
@@ -96,6 +96,18 @@ export default defineEventHandler(async (event) => {
         role,
         expiresAt,
       })
+      const { emitInvitationCreatedNotifications } = await import('~~/server/utils/notification-store')
+      await emitInvitationCreatedNotifications(db, {
+        actorUser: user,
+        workspaceId,
+        projectId,
+        inviteeUsername,
+        workspaceRole: role,
+        projectRole: projectId ? 'viewer' : null,
+        expiresAt,
+        token,
+      })
+      return createdInvitation
     })
 
     return ok(toTeamInvitationWithTokenResponse({

@@ -1,568 +1,454 @@
 <script setup lang="ts">
-import type {
-  ApiResponse,
-  AuthMeResult,
-  Contest,
-  PlatformPermission,
-} from '~~/shared/types/domain'
+import type { ApiResponse, AuthMeResult, WorkspaceWithQuota } from '~~/shared/types/domain'
+import { resolveWorkspaceOptions } from '~/composables/team-ui'
+import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 definePageMeta({
   layout: 'dashboard',
 })
 
 useHead({
-  title: '竞赛分析 Dashboard',
+  title: '对话',
+})
+
+const authApiFetch = useAuthApiFetch()
+
+const loading = ref(true)
+const errorText = ref('')
+const workspaceOptions = ref<WorkspaceWithQuota[]>([])
+const messageScrollRef = ref<HTMLDivElement | null>(null)
+const hasAvailableWorkspace = computed(() => workspaceOptions.value.length > 0)
+
+const suggestionPrompts = [
+  '帮我梳理当前工作空间里最值得优先关注的事项。',
+  '如果我要推进一个新项目，应该先看哪些资料和赛事？',
+  '请把这个工作空间当前可见的信息总结成一段简报。',
+  '从工作空间视角看，哪些问题最需要先补齐？',
+]
+
+function formatSessionTitle(title: string | null | undefined): string {
+  const normalizedTitle = String(title || '').trim()
+  if (!normalizedTitle)
+    return '新对话'
+
+  const trimmedTitle = normalizedTitle.replace(/^Loopy[\s\-_:：·]*/i, '').trim()
+  if (!trimmedTitle || trimmedTitle === '对话')
+    return '新对话'
+  return trimmedTitle
+}
+
+function buildDialogTitlePreview(content: string | null | undefined): string {
+  const compact = String(content || '').replace(/\s+/g, ' ').trim()
+  if (!compact)
+    return ''
+  if (compact.length <= 16)
+    return compact
+  return `${compact.slice(0, 16)}…`
+}
+
+function formatSessionTime(value: string | null | undefined): string {
+  if (!value)
+    return '刚刚'
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return '刚刚'
+
+  const diff = Date.now() - date.getTime()
+  if (diff < 60 * 1000)
+    return '刚刚'
+  if (diff < 60 * 60 * 1000)
+    return `${Math.max(1, Math.floor(diff / (60 * 1000)))} 分钟前`
+  if (diff < 24 * 60 * 60 * 1000)
+    return `${Math.max(1, Math.floor(diff / (60 * 60 * 1000)))} 小时前`
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+  }).format(date)
+}
+
+function formatSessionMeta(session: { messageCount: number, lastMessageAt: string | null, updatedAt: string }): string {
+  const parts: string[] = []
+  parts.push(`${session.messageCount} 条`)
+  parts.push(formatSessionTime(session.lastMessageAt || session.updatedAt))
+  return parts.join(' · ')
+}
+
+function formatMessageContent(message: { role: string, content: string }): string {
+  const normalizedContent = String(message.content || '')
+  if (message.role !== 'assistant')
+    return normalizedContent
+
+  if (normalizedContent === '我是 Loopy。当前没有可用工作区，暂时无法开始对话。')
+    return '当前没有可用工作区，暂时无法开始对话。'
+  if (normalizedContent === '我是 Loopy。当前工作空间已配备 AI 能力，你可以随时问我项目、赛事、资料和协作问题。')
+    return '当前工作空间已接入 AI 能力，你可以随时询问项目、赛事、资料和协作问题。'
+  return normalizedContent
+}
+
+const loopyState = useLoopyDialog({
+  getGreeting: () => {
+    if (!hasAvailableWorkspace.value)
+      return '当前没有可用工作区，暂时无法开始对话。'
+    return '当前工作空间已接入 AI 能力，你可以随时询问项目、赛事、资料和协作问题。'
+  },
+  getSessionTitle: () => '新对话',
 })
 
 const {
-  feedFilter,
-  summary,
-  quickActions: baseQuickActions,
-  visibleInsights,
-  visibleCompetitions,
-  skillMetrics,
-  scheduleItems,
-  overviewLoading,
-  overviewError,
-  loadOverview,
-} = useDashboardWorkspace()
+  selectedWorkspaceId: loopySelectedWorkspaceId,
+  sessions: loopySessions,
+  activeSessionId: loopyActiveSessionId,
+  messages: loopyMessages,
+  chatInput: loopyChatInput,
+  chatLoading: loopyChatLoading,
+  statusText: loopyStatusText,
+  errorText: loopyErrorText,
+  canSend: loopyCanSend,
+  showSuggestions: loopyShowSuggestions,
+  syncWorkspace: syncLoopyWorkspace,
+  switchSession: switchLoopySession,
+  startNewSession: startNewLoopySession,
+  sendMessage: sendLoopyMessage,
+  useSuggestion: useLoopySuggestion,
+} = loopyState
 
-const runtime = useRuntimeConfig()
-const { endpoint } = useApiEndpoint(runtime)
-const authApiFetch = useAuthApiFetch()
+const route = useRoute()
+const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
+const isDashboardIndex = computed(() => normalizedPath.value === '/dashboard')
 
-const platformPermissions = ref<PlatformPermission[]>([])
-const platformContests = ref<Contest[]>([])
-const platformLoading = ref(false)
-const platformError = ref('')
-
-const canManageContest = computed(() => {
-  return platformPermissions.value.some(item =>
-    ['contest.read_internal', 'contest.write', 'contest.publish', 'contest.archive'].includes(item),
-  )
-})
-const canManagePricing = computed(() => platformPermissions.value.includes('pricing.write'))
-const canManageRoles = computed(() => platformPermissions.value.includes('role.assign'))
-const hasPlatformPortal = computed(() => canManageContest.value || canManagePricing.value || canManageRoles.value)
-
-const quickActions = computed(() => {
-  const items = [...baseQuickActions]
-  if (canManageContest.value) {
-    items.push({
-      id: 'admin-contests',
-      label: '赛事录入',
-      icon: 'edit_note',
-      to: '/admin/contests',
-    })
-  }
-  if (canManagePricing.value) {
-    items.push({
-      id: 'admin-billing',
-      label: '席位计费',
-      icon: 'payments',
-      to: '/admin/billing',
-    })
-  }
-  return items
+const activeSession = computed(() => {
+  return loopySessions.value.find(item => item.id === loopyActiveSessionId.value) || null
 })
 
-const portalCards = computed(() => {
-  const cards: Array<{ id: string, title: string, desc: string, to: string, icon: string }> = [
-    {
-      id: 'contest-library',
-      title: '竞赛总库',
-      desc: '搜索筛选竞赛，查看详情、赛道与评分规则。',
-      to: '/contests',
-      icon: 'trophy',
-    },
-    {
-      id: 'resource-center',
-      title: '资料中心',
-      desc: '按分类、年份与可访问性检索权威资料。',
-      to: '/resources',
-      icon: 'folder_open',
-    },
-  ]
-
-  if (canManageContest.value) {
-    cards.push({
-      id: 'contest-admin',
-      title: '赛事录入台',
-      desc: '录入赛事、赛道、时间轴、Rubric 与资料并发布。',
-      to: '/admin/contests',
-      icon: 'edit_square',
-    })
-  }
-  if (canManagePricing.value) {
-    cards.push({
-      id: 'pricing-admin',
-      title: '套餐席位计费',
-      desc: '维护套餐规则，按席位估算工作区费用。',
-      to: '/admin/billing',
-      icon: 'attach_money',
-    })
-  }
-  if (canManageRoles.value) {
-    cards.push({
-      id: 'role-admin',
-      title: '平台角色分配',
-      desc: '给用户分配 contest_admin / pricing_admin 等角色。',
-      to: '/admin/roles',
-      icon: 'manage_accounts',
-    })
-  }
-
-  return cards
+const firstUserMessageTitle = computed(() => {
+  const firstUserMessage = loopyMessages.value.find(item => item.role === 'user')
+  return buildDialogTitlePreview(firstUserMessage?.content)
 })
 
-const heroBadges = computed(() => {
-  return [
-    {
-      id: 'status-insight',
-      label: `智能洞察 ${summary.value.insightCount} 条`,
-      className: 'db-chip db-chip-success',
-    },
-    {
-      id: 'status-platform',
-      label: hasPlatformPortal.value ? '已启用平台能力入口' : '标准用户工作台',
-      className: 'db-chip db-chip-primary',
-    },
-  ]
-})
-
-const heroFocusItems = computed(() => {
-  return [
-    {
-      id: 'focus-ongoing',
-      label: summary.value.ongoingCount > 0
-        ? `当前有 ${summary.value.ongoingCount} 场进行中赛事需要持续跟进`
-        : '当前没有进行中赛事，可优先整理资料与报名窗口',
-      icon: 'target',
-    },
-    {
-      id: 'focus-upcoming',
-      label: summary.value.upcomingCount > 0
-        ? `有 ${summary.value.upcomingCount} 场即将开始赛事值得提前准备`
-        : '近期赛程较平稳，可聚焦项目完善与资料沉淀',
-      icon: 'event_upcoming',
-    },
-    {
-      id: 'focus-insight',
-      label: summary.value.insightCount > 0
-        ? '智能洞察已同步，可直接查看重点提示'
-        : '智能洞察尚未生成，可稍后刷新查看',
-      icon: 'auto_awesome',
-    },
-  ]
-})
-
-const summaryCards = computed(() => {
-  return [
-    {
-      id: 'ongoing',
-      label: '进行中赛事',
-      value: summary.value.ongoingCount,
-      icon: 'trophy',
-      hint: '优先跟进提交窗口临近的赛事',
-      badgeClass: 'db-chip db-chip-primary',
-      valueClass: 'text-[var(--db-primary)]',
-    },
-    {
-      id: 'upcoming',
-      label: '即将开始',
-      value: summary.value.upcomingCount,
-      icon: 'schedule',
-      hint: '尽早准备赛道资料与报名信息',
-      badgeClass: 'db-chip db-chip-warning',
-      valueClass: 'text-[var(--db-warning)]',
-    },
-    {
-      id: 'insights',
-      label: '智能洞察',
-      value: summary.value.insightCount,
-      icon: 'lightbulb',
-      hint: '抓取当前最值得关注的数据结论',
-      badgeClass: 'db-chip db-chip-success',
-      valueClass: 'text-[var(--db-success)]',
-    },
-  ]
-})
-
-const showOverviewSkeleton = computed(() => {
-  return overviewLoading.value
-    && visibleInsights.value.length === 0
-    && visibleCompetitions.value.length === 0
-    && skillMetrics.value.length === 0
-    && scheduleItems.value.length === 0
-})
-
-const showOverviewError = computed(() => Boolean(overviewError.value))
-
-function permissionToneClass(permission: PlatformPermission): string {
-  if (permission === 'pricing.write')
-    return 'db-chip db-chip-warning'
-  if (permission === 'role.assign')
-    return 'db-chip db-chip-primary'
-  return 'db-chip db-chip-success'
+function resolveVisibleSessionTitle(session: { id: string, title: string } | null | undefined): string {
+  const normalizedTitle = formatSessionTitle(session?.title)
+  if (normalizedTitle !== '新对话')
+    return normalizedTitle
+  if (session?.id && session.id === loopyActiveSessionId.value && firstUserMessageTitle.value)
+    return firstUserMessageTitle.value
+  return normalizedTitle
 }
 
-function formatContestStatus(status?: string): string {
-  if (status === 'draft')
-    return '草稿'
-  if (status === 'archived')
-    return '已归档'
-  return '已发布'
-}
+const chatPanelTitle = computed(() => {
+  return resolveVisibleSessionTitle(activeSession.value) || '新对话'
+})
 
-async function loadPlatformPanel() {
-  platformLoading.value = true
-  platformError.value = ''
+const chatPanelSubtitle = computed(() => {
+  if (!loopySelectedWorkspaceId.value)
+    return '当前没有可用工作区，暂时无法开始对话。'
+  return ''
+})
+
+async function loadAuthContext() {
+  loading.value = true
+  errorText.value = ''
+
   try {
-    const meResponse = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
-    platformPermissions.value = meResponse.data.user.platformPermissions || []
+    const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
+    workspaceOptions.value = resolveWorkspaceOptions(response.data)
 
-    if (canManageContest.value) {
-      const adminContestsResponse = await $fetch<ApiResponse<Contest[]>>(endpoint('/admin/contests'))
-      platformContests.value = adminContestsResponse.data.slice(0, 5)
-    }
-    else {
-      const contestsResponse = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
-        query: {
-          page: 1,
-          pageSize: 5,
-          sort: 'deadline',
-        },
-      })
-      platformContests.value = contestsResponse.data
-    }
+    const storedWorkspaceId = readActiveWorkspacePreference()
+    const nextWorkspaceId = [
+      storedWorkspaceId,
+      workspaceOptions.value.find(item => item.workspace.type === 'team')?.workspace.id,
+      workspaceOptions.value[0]?.workspace.id,
+    ].find(workspaceId => workspaceId && workspaceOptions.value.some(item => item.workspace.id === workspaceId)) || ''
+
+    await syncLoopyWorkspace(nextWorkspaceId)
   }
   catch (error: any) {
-    platformContests.value = []
-    platformPermissions.value = []
-    platformError.value = String(error?.data?.message || '')
+    workspaceOptions.value = []
+    errorText.value = String(error?.data?.message || '对话初始化失败，请稍后重试。')
+    await syncLoopyWorkspace('')
   }
   finally {
-    platformLoading.value = false
+    loading.value = false
   }
 }
 
-onMounted(async () => {
-  await Promise.all([loadPlatformPanel(), loadOverview()])
+watch(
+  () => [
+    loopyMessages.value.length,
+    loopyMessages.value[loopyMessages.value.length - 1]?.content || '',
+    loopyChatLoading.value,
+  ],
+  async () => {
+    await nextTick()
+    if (messageScrollRef.value)
+      messageScrollRef.value.scrollTop = messageScrollRef.value.scrollHeight
+  },
+)
+
+onMounted(() => {
+  void loadAuthContext()
 })
 </script>
 
 <template>
-  <div class="space-y-6 xl:space-y-8">
-    <section class="db-panel db-panel-soft db-panel-elevated db-appear relative overflow-hidden px-5 py-6 md:px-7 md:py-7">
-      <div class="pointer-events-none absolute inset-y-0 right-0 w-2/5 opacity-80">
-        <div class="absolute right-[-10%] top-[-14%] h-48 w-48 rounded-full bg-[rgba(36,84,215,0.14)] blur-3xl" />
-        <div class="absolute bottom-[-18%] right-[12%] h-44 w-44 rounded-full bg-[rgba(14,165,233,0.12)] blur-3xl" />
-      </div>
-
-      <div class="relative grid gap-6 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.9fr)] xl:items-end">
-        <div class="min-w-0">
-          <p class="db-eyebrow">
-            Dashboard Overview
-          </p>
-          <h2 class="db-title text-3xl font-black md:text-[2.5rem]">
-            {{ summary.greeting }}
-          </h2>
-          <p class="db-muted mt-3 max-w-2xl text-sm leading-7 md:text-[15px]">
-            {{ summary.subtitle }}
-          </p>
-
-          <div class="mt-4 flex flex-wrap gap-2">
-            <span
-              v-for="badge in heroBadges"
-              :key="badge.id"
-              :class="badge.className"
-            >
-              {{ badge.label }}
-            </span>
-          </div>
-
-          <div class="mt-6 flex flex-wrap gap-3">
-            <button class="db-btn db-btn-ghost db-focus-ring" type="button" title="即将开放" disabled>
-              <span class="material-symbols-outlined text-lg">download</span>
-              导出报告
-            </button>
-            <NuxtLink
-              :to="{ path: '/team', query: { create: '1' } }"
-              class="db-btn db-btn-primary db-focus-ring"
-            >
-              <span class="material-symbols-outlined text-lg">add</span>
-              新建项目
-            </NuxtLink>
-          </div>
-        </div>
-
-        <div class="db-panel db-panel-muted relative z-10 p-4 md:p-5">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--db-subtle)]">
-                今日聚焦
-              </p>
-              <h3 class="mt-2 text-lg font-bold text-slate-900">
-                让核心数据更快进入操作流
-              </h3>
-            </div>
-            <div class="rounded-2xl bg-[var(--db-primary-soft)] text-[var(--db-primary)] flex h-11 w-11 items-center justify-center">
-              <span class="material-symbols-outlined text-[22px]">insights</span>
-            </div>
-          </div>
-
-          <div class="mt-4 space-y-3">
-            <article
-              v-for="item in heroFocusItems"
-              :key="item.id"
-              class="db-hover-lift rounded-[18px] border border-[var(--db-border)] bg-white/80 px-4 py-3"
-            >
-              <div class="flex gap-3 items-start">
-                <span class="rounded-2xl bg-[var(--db-bg)] text-[var(--db-primary)] flex h-9 w-9 shrink-0 items-center justify-center">
-                  <span class="material-symbols-outlined text-[18px]">{{ item.icon }}</span>
-                </span>
-                <div class="min-w-0">
-                  <p class="text-sm leading-6 text-slate-700">
-                    {{ item.label }}
-                  </p>
-                </div>
-              </div>
-            </article>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <article
-        v-for="(item, index) in summaryCards"
-        :key="item.id"
-        class="db-panel db-hover-lift db-appear relative overflow-hidden p-5"
-        :style="{ animationDelay: `${120 + index * 60}ms` }"
+  <NuxtPage v-if="!isDashboardIndex" />
+  <section
+    v-else
+    class="flex h-full min-h-0 w-full min-w-0 overflow-hidden"
+    data-testid="dashboard-loopy-home"
+  >
+    <div class="grid h-full min-h-0 w-full overflow-hidden border border-slate-200 rounded-lg bg-white lg:grid-cols-[280px_minmax(0,1fr)]">
+      <aside
+        data-testid="dashboard-loopy-sidebar"
+        class="border-r border-slate-200 bg-slate-50/55 flex flex-col min-h-0 overflow-hidden lg:h-full"
       >
-        <div class="absolute right-[-10px] top-[-14px] h-20 w-20 rounded-full bg-[rgba(36,84,215,0.08)] blur-2xl" />
-        <div class="relative flex items-start justify-between gap-3">
-          <div>
-            <span :class="item.badgeClass">
-              {{ item.label }}
-            </span>
-            <p class="mt-4 text-4xl font-black tracking-[-0.04em]" :class="item.valueClass">
-              {{ item.value }}
-            </p>
-            <p class="db-muted mt-2 text-sm leading-6">
-              {{ item.hint }}
-            </p>
-          </div>
-          <div class="rounded-2xl bg-[var(--db-bg)] text-[var(--db-primary)] flex h-12 w-12 items-center justify-center shrink-0">
-            <span class="material-symbols-outlined text-[22px]">{{ item.icon }}</span>
-          </div>
-        </div>
-      </article>
-    </section>
-
-    <section class="db-panel db-panel-soft db-appear p-5 md:p-6" style="animation-delay: 220ms;">
-      <div class="flex flex-wrap gap-3 items-start justify-between">
-        <div class="min-w-0">
-          <p class="db-eyebrow db-eyebrow-tight">
-            Platform Hub
+        <div class="px-2.5 py-2.5 border-b border-slate-200/80 flex shrink-0 items-center justify-between gap-2.5">
+          <p class="text-[11px] text-slate-400 tabular-nums font-medium">
+            {{ loopySessions.length }} 条会话
           </p>
-          <h3 class="text-2xl font-black tracking-[-0.03em] text-slate-900">
-            平台能力中心
-          </h3>
-          <p class="db-muted mt-2 max-w-2xl text-sm leading-7">
-            将赛事总库、资料中心与平台管理能力收敛到统一工作台，让常用入口、权限状态和关键赛事信息都在同一屏内可见。
-          </p>
-        </div>
-
-        <div class="flex flex-wrap gap-2 items-center">
-          <span class="db-chip db-chip-muted">
-            <span class="material-symbols-outlined text-base">grid_view</span>
-            {{ portalCards.length }} 个工作入口
-          </span>
-          <NuxtLink
-            v-if="hasPlatformPortal"
-            to="/admin"
-            class="db-btn db-btn-ghost db-focus-ring"
+          <button
+            class="loopy-page-ghost-btn"
+            type="button"
+            @click="startNewLoopySession"
           >
-            进入平台管理
-          </NuxtLink>
+            新建
+          </button>
         </div>
-      </div>
 
-      <div class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <NuxtLink
-          v-for="item in portalCards"
-          :key="item.id"
-          :to="item.to"
-          class="db-panel db-panel-muted db-hover-lift db-focus-ring group px-4 py-4"
+        <div
+          data-testid="dashboard-loopy-session-list"
+          class="p-2.5 flex-1 min-h-0 overflow-y-auto"
         >
-          <div class="flex items-start justify-between gap-4">
-            <div class="rounded-2xl bg-[var(--db-primary-soft)] text-[var(--db-primary)] flex h-11 w-11 shrink-0 items-center justify-center">
-              <span class="material-symbols-outlined text-[22px]">{{ item.icon }}</span>
-            </div>
-            <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--db-subtle)]">
-              {{ item.id.replace(/-/g, ' ') }}
-            </span>
-          </div>
-          <h4 class="mt-4 text-base font-bold text-slate-900 transition-colors group-hover:text-[var(--db-primary)]">
-            {{ item.title }}
-          </h4>
-          <p class="db-muted mt-2 text-sm leading-6">
-            {{ item.desc }}
-          </p>
-        </NuxtLink>
-      </div>
-
-      <div class="mt-6 grid gap-4 xl:grid-cols-2">
-        <article class="db-panel px-4 py-4 md:px-5">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h4 class="text-base font-bold text-slate-900">
-                最近赛事动态
-              </h4>
-              <p class="db-muted mt-1 text-xs">
-                优先展示当前账号可见的最新赛事记录
-              </p>
-            </div>
-            <NuxtLink to="/contests" class="db-chip db-chip-primary db-focus-ring">
-              查看全部
-            </NuxtLink>
-          </div>
-
-          <div v-if="platformLoading && platformContests.length === 0" class="mt-4 space-y-3">
+          <div v-if="loading" class="space-y-2">
             <div
-              v-for="index in 4"
-              :key="`dashboard-contest-skeleton-${index}`"
-              class="db-skeleton h-16 rounded-[18px]"
+              v-for="index in 6"
+              :key="`dashboard-loopy-session-skeleton-${index}`"
+              class="rounded-md bg-slate-100 h-14 animate-pulse"
             />
           </div>
 
-          <div v-else-if="platformContests.length === 0" class="db-panel db-panel-muted mt-4 px-4 py-5 text-sm text-slate-500">
-            暂无可展示赛事。
-          </div>
-
-          <div v-else class="mt-4 space-y-3">
-            <NuxtLink
-              v-for="item in platformContests"
-              :key="item.id"
-              :to="`/contests/${item.id}`"
-              class="db-hover-lift db-focus-ring flex items-center justify-between gap-3 rounded-[18px] border border-[var(--db-border)] bg-white px-4 py-3"
+          <div v-else class="space-y-2.5">
+            <button
+              v-for="session in loopySessions"
+              :key="session.id"
+              class="loopy-page-session"
+              :class="session.id === loopyActiveSessionId ? 'loopy-page-session--active' : ''"
+              type="button"
+              @click="switchLoopySession(session.id)"
             >
-              <div class="min-w-0">
-                <p class="truncate text-sm font-semibold text-slate-900">
-                  {{ item.name }}
-                </p>
-                <p class="db-muted mt-1 text-xs truncate">
-                  {{ item.summary || item.organizer || '查看赛事详情与赛道信息' }}
-                </p>
+              <span class="loopy-page-session__title line-clamp-1">{{ resolveVisibleSessionTitle(session) }}</span>
+              <span class="loopy-page-session__meta line-clamp-1">{{ formatSessionMeta(session) }}</span>
+            </button>
+
+            <p v-if="loopySessions.length === 0" class="text-xs text-slate-400 leading-5 px-2 py-3">
+              还没有历史会话，发起第一轮提问即可。
+            </p>
+          </div>
+        </div>
+      </aside>
+
+      <section class="bg-white flex flex-col min-h-0 overflow-hidden lg:h-full">
+        <header class="px-3 py-2.5 border-b border-slate-100 shrink-0 flex items-center justify-between gap-3">
+          <h2 class="text-sm text-slate-950 font-semibold truncate">
+            {{ chatPanelTitle }}
+          </h2>
+          <p v-if="chatPanelSubtitle" class="text-xs text-slate-400 leading-5 shrink-0 truncate">
+            {{ chatPanelSubtitle }}
+          </p>
+        </header>
+
+        <div v-if="loading" class="p-3 flex-1 space-y-3">
+          <div class="rounded-md bg-slate-100 h-16 animate-pulse" />
+          <div class="rounded-md bg-slate-100 h-16 w-10/12 animate-pulse" />
+          <div class="rounded-md bg-slate-100 h-16 w-8/12 animate-pulse" />
+        </div>
+
+        <div v-else class="flex flex-1 flex-col min-h-0 overflow-hidden">
+          <p v-if="loopyStatusText" class="text-xs text-blue-700 px-3 py-2 border-b border-blue-100 bg-blue-50/70">
+            {{ loopyStatusText }}
+          </p>
+          <p v-if="errorText || loopyErrorText" class="text-xs text-rose-600 px-3 py-2 border-b border-rose-100 bg-rose-50/80">
+            {{ errorText || loopyErrorText }}
+          </p>
+
+          <div
+            ref="messageScrollRef"
+            data-testid="dashboard-loopy-messages"
+            class="px-3 py-3 flex-1 min-h-0 overflow-y-auto"
+          >
+            <div class="space-y-3">
+              <div
+                v-for="(message, index) in loopyMessages"
+                :key="`${message.role}-${index}`"
+                class="flex"
+                :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
+              >
+                <article
+                  class="loopy-page-bubble"
+                  :class="message.role === 'user' ? 'loopy-page-bubble--user' : 'loopy-page-bubble--assistant'"
+                >
+                  {{ formatMessageContent(message) }}
+                </article>
               </div>
-              <span class="db-chip db-chip-muted shrink-0">
-                {{ formatContestStatus(item.status) }}
-              </span>
-            </NuxtLink>
-          </div>
-        </article>
 
-        <article class="db-panel px-4 py-4 md:px-5">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <h4 class="text-base font-bold text-slate-900">
-                当前平台权限
-              </h4>
-              <p class="db-muted mt-1 text-xs">
-                用于决定平台入口与管理能力是否可见
-              </p>
+              <section v-if="loopyShowSuggestions && loopySelectedWorkspaceId" class="space-y-2.5">
+                <div class="text-[11px] text-slate-400 tracking-[0.12em] font-medium uppercase">
+                  推荐起手问题
+                </div>
+                <div class="gap-2 grid xl:grid-cols-2">
+                  <button
+                    v-for="question in suggestionPrompts"
+                    :key="question"
+                    data-testid="dashboard-loopy-suggestion"
+                    class="loopy-page-suggestion"
+                    type="button"
+                    @click="useLoopySuggestion(question)"
+                  >
+                    {{ question }}
+                  </button>
+                </div>
+              </section>
             </div>
-            <span class="db-chip db-chip-muted">
-              {{ platformPermissions.length }} 项权限
-            </span>
           </div>
 
-          <div v-if="platformLoading && platformPermissions.length === 0" class="mt-4 flex flex-wrap gap-2">
-            <span
-              v-for="index in 4"
-              :key="`dashboard-permission-skeleton-${index}`"
-              class="db-skeleton h-8 w-28 rounded-full"
-            />
-          </div>
-
-          <div v-else-if="platformPermissions.length === 0" class="db-panel db-panel-muted mt-4 px-4 py-5 text-sm text-slate-500">
-            当前账号暂无平台管理权限，首页将保持标准用户视图。
-          </div>
-
-          <div v-else class="mt-4 flex flex-wrap gap-2">
-            <span
-              v-for="permission in platformPermissions"
-              :key="permission"
-              :class="permissionToneClass(permission)"
-            >
-              {{ permission }}
-            </span>
-          </div>
-
-          <p v-if="platformError" class="mt-3 text-xs text-rose-600">
-            {{ platformError }}
-          </p>
-        </article>
-      </div>
-    </section>
-
-    <section
-      v-if="showOverviewSkeleton"
-      class="db-panel db-panel-muted db-appear px-5 py-5 text-sm text-slate-500"
-      style="animation-delay: 260ms;"
-    >
-      <div class="flex items-center gap-3">
-        <span class="rounded-2xl bg-[var(--db-primary-soft)] text-[var(--db-primary)] flex h-10 w-10 items-center justify-center">
-          <span class="material-symbols-outlined text-[20px]">hourglass_top</span>
-        </span>
-        <div>
-          <p class="font-semibold text-slate-900">
-            正在加载 Dashboard 概览
-          </p>
-          <p class="db-muted mt-1 text-xs">
-            正在同步赛事、洞察与个人工作台数据。
-          </p>
+          <footer class="p-3 border-t border-slate-100 shrink-0">
+            <div class="relative">
+              <textarea
+                :value="loopyChatInput"
+                data-testid="dashboard-loopy-composer"
+                class="loopy-page-textarea"
+                :placeholder="loopySelectedWorkspaceId ? '直接输入内容，开始一轮新的对话' : '当前没有可用工作区，暂时无法发起对话'"
+                :disabled="!loopySelectedWorkspaceId"
+                @input="loopyChatInput = ($event.target as HTMLTextAreaElement).value"
+              />
+              <button
+                class="loopy-page-send"
+                type="button"
+                :disabled="!loopyCanSend || !loopyChatInput.trim()"
+                @click="sendLoopyMessage()"
+              >
+                <span class="material-symbols-outlined text-[18px]">{{ loopyChatLoading ? 'hourglass_top' : 'send' }}</span>
+              </button>
+            </div>
+          </footer>
         </div>
-      </div>
-    </section>
-
-    <section
-      v-if="showOverviewError"
-      class="db-panel db-appear border-[rgba(217,72,95,0.18)] bg-[var(--db-danger-soft)] px-5 py-5 text-sm text-rose-700"
-      style="animation-delay: 280ms;"
-    >
-      <div class="flex items-start gap-3">
-        <span class="rounded-2xl bg-white/80 text-rose-600 flex h-10 w-10 shrink-0 items-center justify-center">
-          <span class="material-symbols-outlined text-[20px]">error</span>
-        </span>
-        <div>
-          <p class="font-semibold">
-            Dashboard 概览加载失败
-          </p>
-          <p class="mt-1 text-sm leading-6">
-            {{ overviewError }}
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <div class="grid grid-cols-12 gap-6 xl:gap-8">
-      <div class="col-span-12 space-y-6 xl:space-y-8 lg:col-span-8">
-        <DashboardInsights :insights="visibleInsights" :loading="overviewLoading && visibleInsights.length === 0" />
-        <DashboardCompetitionFeed
-          v-model:active-filter="feedFilter"
-          :competitions="visibleCompetitions"
-          :loading="overviewLoading && visibleCompetitions.length === 0"
-        />
-      </div>
-
-      <DashboardRightRail
-        :quick-actions="quickActions"
-        :skill-metrics="skillMetrics"
-        :schedule-items="scheduleItems"
-        :loading="overviewLoading && skillMetrics.length === 0 && scheduleItems.length === 0"
-      />
+      </section>
     </div>
-  </div>
+  </section>
 </template>
+
+<style scoped>
+.loopy-page-ghost-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #dbe2f1;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.loopy-page-session {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+
+.loopy-page-session--active {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  box-shadow: inset 2px 0 0 #2563eb;
+}
+
+.loopy-page-session__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.loopy-page-session__meta {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+
+.loopy-page-bubble {
+  max-width: min(840px, 92%);
+  padding: 11px 13px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.loopy-page-bubble--assistant {
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+.loopy-page-bubble--user {
+  background: #eff6ff;
+  color: #1e3a8a;
+  border: 1px solid #bfdbfe;
+}
+
+.loopy-page-suggestion {
+  padding: 12px 13px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e3a8a;
+  font-size: 12px;
+  line-height: 1.65;
+  text-align: left;
+}
+
+.loopy-page-textarea {
+  width: 100%;
+  min-height: 104px;
+  resize: none;
+  border: 1px solid #dbe2f1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 14px 56px 14px 16px;
+  outline: none;
+}
+
+.loopy-page-textarea:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 1px #60a5fa;
+}
+
+.loopy-page-send {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+}
+
+.loopy-page-send:disabled {
+  opacity: 0.45;
+}
+</style>
