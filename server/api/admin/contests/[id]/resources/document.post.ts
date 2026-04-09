@@ -16,6 +16,7 @@ import {
 } from '~~/server/utils/document-store'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { enqueueResourceGovernanceTask } from '~~/server/utils/resource-knowledge-store'
 
 type DocumentKind = 'pdf' | 'doc' | 'docx'
 
@@ -225,6 +226,13 @@ export default defineEventHandler(async (event) => {
           storageProvider: storage.provider,
           documentKind: kind,
         },
+      })
+
+      await enqueueResourceGovernanceTask(db, {
+        contestId,
+        resourceId: resource.id,
+        taskType: 'profile_analyze',
+        actorUserId: user.id,
       })
 
       return {

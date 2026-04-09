@@ -5,7 +5,16 @@ import type {
   Resource,
   ResourceAvailability,
   ResourceCategory,
+  ResourceSearchSort,
 } from '~~/shared/types/domain'
+import {
+  collectResourceTags,
+  resourceAvailabilityLabelMap,
+  resourceAvailabilityOptions,
+  resourceCategoryOptions,
+  resourceSortOptions,
+  useResourceKnowledgeSessionId,
+} from '~~/app/composables/resource-knowledge'
 
 definePageMeta({
   layout: 'dashboard',
@@ -13,31 +22,7 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint, resolveApiUrl } = useApiEndpoint(runtime)
-
-const categoryOptions: Array<{ value: ResourceCategory | '', label: string }> = [
-  { value: '', label: '全部分类' },
-  { value: 'basic_info', label: '基本信息' },
-  { value: 'timeline', label: '时间轴' },
-  { value: 'tracks', label: '赛道设置' },
-  { value: 'scoring', label: '评分标准' },
-  { value: 'past_questions', label: '往届真题' },
-  { value: 'awarded_works', label: '获奖作品' },
-  { value: 'templates', label: '论文/作品模板' },
-  { value: 'faq', label: 'FAQ' },
-  { value: 'judge_guidelines', label: '评委细则' },
-  { value: 'track_details', label: '赛道详解' },
-  { value: 'ai_prompts', label: 'AI 提示词' },
-  { value: 'submission_examples', label: '材料示例' },
-  { value: 'policy_notice', label: '政策通知' },
-  { value: 'compliance', label: '合规与版权' },
-]
-
-const availabilityOptions: Array<{ value: ResourceAvailability | '', label: string }> = [
-  { value: '', label: '全部可访问性' },
-  { value: 'public', label: '公开' },
-  { value: 'login_required', label: '需登录' },
-  { value: 'unavailable', label: '不可用' },
-]
+const sessionId = useResourceKnowledgeSessionId()
 
 const loading = ref(false)
 const loadingContests = ref(false)
@@ -49,6 +34,10 @@ const contestId = ref('')
 const category = ref<ResourceCategory | ''>('')
 const year = ref('')
 const availability = ref<ResourceAvailability | ''>('')
+const queryText = ref('')
+const selectedTag = ref('')
+const sort = ref<ResourceSearchSort>('relevance')
+const minQuality = ref('')
 
 const years = computed(() => {
   const set = new Set<number>()
@@ -66,11 +55,7 @@ const contestNameMap = computed(() => {
   return map
 })
 
-const availabilityLabelMap: Record<ResourceAvailability, string> = {
-  public: '公开',
-  login_required: '需登录',
-  unavailable: '不可用',
-}
+const tagOptions = computed(() => collectResourceTags(resources.value))
 
 async function loadContests() {
   loadingContests.value = true
@@ -98,7 +83,14 @@ async function loadResources() {
         category: category.value,
         year: year.value,
         availability: availability.value,
+        q: queryText.value,
+        tags: selectedTag.value,
+        sort: sort.value,
+        minQuality: minQuality.value,
       },
+      headers: sessionId.value ? {
+        'x-resource-session-id': sessionId.value,
+      } : undefined,
     })
     resources.value = response.data
   }
@@ -111,6 +103,43 @@ async function loadResources() {
   }
 }
 
+async function openResource(item: Resource) {
+  const popup = process.client ? window.open('about:blank', '_blank', 'noopener') : null
+  try {
+    const response = await $fetch<ApiResponse<{ resourceId: string, targetUrl: string }>>(endpoint(`/contests/${item.contestId}/resources/${item.id}/click`), {
+      method: 'POST',
+      body: {
+        query: queryText.value,
+        filters: {
+          contestId: contestId.value,
+          category: category.value,
+          year: year.value,
+          availability: availability.value,
+          tag: selectedTag.value,
+          sort: sort.value,
+          minQuality: minQuality.value,
+        },
+        resultCount: resources.value.length,
+      },
+      headers: sessionId.value ? {
+        'x-resource-session-id': sessionId.value,
+      } : undefined,
+    })
+    const targetUrl = resolveApiUrl(response.data.targetUrl)
+    if (popup)
+      popup.location.href = targetUrl
+    else
+      window.open(targetUrl, '_blank', 'noopener')
+  }
+  catch {
+    const fallbackUrl = resolveApiUrl(item.sourceLink)
+    if (popup)
+      popup.location.href = fallbackUrl
+    else
+      window.open(fallbackUrl, '_blank', 'noopener')
+  }
+}
+
 onMounted(async () => {
   await Promise.all([loadContests(), loadResources()])
 })
@@ -118,17 +147,18 @@ onMounted(async () => {
 
 <template>
   <div class="mx-auto p-4 max-w-6xl space-y-4">
-    <div class="p-4 border border-slate-200 rounded-lg bg-white">
+    <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <h1 class="text-lg text-slate-900 font-semibold">
-        竞赛资料中心
+        平台资料中心
       </h1>
       <p class="text-xs text-slate-500 mt-1">
-        覆盖 14 类资料，可按竞赛、年份和可访问性筛选。
+        跨竞赛检索、AI 标签筛选、价值热度排序与相关推荐已统一接入知识治理能力。
       </p>
-    </div>
+    </section>
 
     <section class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div class="gap-2 grid md:grid-cols-5">
+      <div class="gap-2 grid md:grid-cols-6">
+        <input v-model="queryText" class="dense-input md:col-span-2" placeholder="搜索资料标题、摘要、AI 标签">
         <select v-model="contestId" class="dense-input">
           <option value="">
             全部竞赛
@@ -141,17 +171,30 @@ onMounted(async () => {
             {{ contest.name }}
           </option>
         </select>
-
         <select v-model="category" class="dense-input">
           <option
-            v-for="item in categoryOptions"
+            v-for="item in resourceCategoryOptions"
             :key="item.label"
             :value="item.value"
           >
             {{ item.label }}
           </option>
         </select>
-
+        <select v-model="selectedTag" class="dense-input">
+          <option value="">
+            全部标签
+          </option>
+          <option v-for="tag in tagOptions" :key="tag" :value="tag">
+            {{ tag }}
+          </option>
+        </select>
+        <select v-model="sort" class="dense-input">
+          <option v-for="item in resourceSortOptions" :key="item.value" :value="item.value">
+            {{ item.label }}
+          </option>
+        </select>
+      </div>
+      <div class="gap-2 grid md:grid-cols-4 mt-2">
         <select v-model="year" class="dense-input">
           <option value="">
             全部年份
@@ -163,7 +206,7 @@ onMounted(async () => {
 
         <select v-model="availability" class="dense-input">
           <option
-            v-for="item in availabilityOptions"
+            v-for="item in resourceAvailabilityOptions"
             :key="item.label"
             :value="item.value"
           >
@@ -171,16 +214,36 @@ onMounted(async () => {
           </option>
         </select>
 
-        <button class="dense-btn" @click="loadResources">
-          应用筛选
-        </button>
+        <input v-model="minQuality" class="dense-input" type="number" min="0" max="100" placeholder="最低质量分">
+
+        <div class="flex gap-2">
+          <button class="dense-btn" @click="loadResources">
+            应用筛选
+          </button>
+          <button
+            class="dense-btn"
+            @click="
+              contestId = '';
+              category = '';
+              year = '';
+              availability = '';
+              queryText = '';
+              selectedTag = '';
+              sort = 'relevance';
+              minQuality = '';
+              loadResources();
+            "
+          >
+            重置
+          </button>
+        </div>
       </div>
       <div v-if="loadingContests" class="mt-2 rounded bg-slate-200 h-3 w-40 animate-pulse" />
     </section>
 
-    <div v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
+    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
       {{ errorText }}
-    </div>
+    </section>
 
     <section class="p-4 border border-slate-200 rounded-lg bg-white">
       <div v-if="loading" class="space-y-3">
@@ -207,7 +270,7 @@ onMounted(async () => {
         <article
           v-for="item in resources"
           :key="item.id"
-          class="p-3 border border-slate-200 rounded"
+          class="p-4 border border-slate-200 rounded-lg"
         >
           <div class="flex flex-wrap gap-2 items-start justify-between">
             <div>
@@ -215,24 +278,42 @@ onMounted(async () => {
                 {{ item.title }}
               </h2>
               <p class="text-xs text-slate-600 mt-1">
-                {{ contestNameMap.get(item.contestId) || item.contestId }} · {{ item.year }} · {{ item.category || '未分类' }}
+                {{ contestNameMap.get(item.contestId) || item.contestId }} ｜ {{ item.year }} ｜ {{ resourceAvailabilityLabelMap[item.availability] || item.availability }} ｜ 质量 {{ item.aiProfile?.qualityScore || 0 }} ｜ 热度 {{ item.aiProfile?.hotScore || 0 }}
               </p>
             </div>
-            <a
-              v-if="item.sourceLink"
-              :href="resolveApiUrl(item.sourceLink)"
-              target="_blank"
-              class="text-xs text-blue-600 underline"
-            >
-              打开来源
-            </a>
+            <button class="dense-btn" @click="openResource(item)">
+              打开资料
+            </button>
           </div>
-          <p class="text-xs text-slate-700 mt-2">
+
+          <p class="text-xs text-slate-700 mt-3">
             {{ item.content || item.summary || '暂无摘要。' }}
           </p>
-          <p class="text-xs text-slate-500 mt-1">
-            可访问性：{{ availabilityLabelMap[item.availability] || item.availability }}；版权：{{ item.copyrightNote || '待补充' }}
-          </p>
+
+          <div class="mt-3 flex flex-wrap gap-2">
+            <span
+              v-for="tag in item.aiProfile?.aiTags || []"
+              :key="`${item.id}-${tag}`"
+              class="text-[11px] px-2 py-1 rounded bg-blue-50 text-blue-700"
+            >
+              {{ tag }}
+            </span>
+          </div>
+
+          <div v-if="item.aiProfile?.relatedResources?.length" class="mt-3 pt-3 border-t border-slate-100">
+            <p class="text-[11px] text-slate-500">
+              相关推荐
+            </p>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <span
+                v-for="relation in item.aiProfile.relatedResources"
+                :key="relation.id"
+                class="text-[11px] px-2 py-1 rounded bg-emerald-50 text-emerald-700"
+              >
+                {{ relation.targetTitle }} ｜ {{ relation.relationType }}
+              </span>
+            </div>
+          </div>
         </article>
       </div>
     </section>

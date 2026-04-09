@@ -28,8 +28,8 @@ export function useDashboardWorkspace() {
   const runtime = useRuntimeConfig()
   const { endpoint } = useApiEndpoint(runtime)
 
-  const searchQuery = ref('')
-  const feedFilter = ref<DashboardFeedFilter>('ongoing')
+  const searchQuery = useState('dashboard:search-query', () => '')
+  const feedFilter = useState<DashboardFeedFilter>('dashboard:feed-filter', () => 'ongoing')
   const overviewLoading = ref(false)
   const overviewError = ref('')
 

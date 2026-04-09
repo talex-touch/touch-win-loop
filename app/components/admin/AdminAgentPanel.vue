@@ -93,6 +93,7 @@ const modulePathMap: Record<AdminDraftModule, string> = {
   track_timelines: '/track-timelines',
   rubrics: '/rubrics',
   resources: '/resources',
+  knowledge: '/knowledge',
 }
 
 function pushTimeline(type: AdminAgentStreamEventType, text: string) {
