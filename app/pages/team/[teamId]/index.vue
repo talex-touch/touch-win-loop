@@ -100,14 +100,15 @@ function createEmptyTopicBoardSeed(): ProjectTopicBoardCreateSeed {
   }
 }
 
-const createForm = reactive<WorkspaceProjectCommonForm & {
-  contestIds: string[]
-  topicBoardSeed: ProjectTopicBoardCreateSeed
-}>({
+const createForm = reactive<WorkspaceProjectCommonForm & { contestIds: string[] }>({
   ...createEmptyProjectCommonForm(),
   contestIds: [] as string[],
-  topicBoardSeed: createEmptyTopicBoardSeed(),
-})
+}) as WorkspaceProjectCommonForm & {
+  contestIds: string[]
+  topicBoardSeed: ProjectTopicBoardCreateSeed
+}
+
+createForm.topicBoardSeed = createEmptyTopicBoardSeed()
 
 const workspaceOptions = computed<WorkspaceWithQuota[]>(() => {
   return resolveWorkspaceOptions(me.value)
