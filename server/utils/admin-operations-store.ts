@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import type { Queryable } from '~~/server/utils/db'
 import type {
   AdminContentAuditTrailItem,
   AdminContentGovernanceBacklogItem,
@@ -27,7 +28,6 @@ import type {
   AdminUserSegmentRow,
   AdminUserSegmentSnapshot,
 } from '~~/shared/types/admin-operations'
-import type { Queryable } from '~~/server/utils/db'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import { getProjectDocumentPreviewWorkerState } from '~~/server/utils/project-document-preview-worker-state'
 import { getProjectResourceRecycleWorkerState } from '~~/server/utils/project-resource-recycle-worker-state'
@@ -965,7 +965,7 @@ async function loadRevenueWorkspaceRows(db: Queryable): Promise<AdminRevenueWork
      ORDER BY w.updated_at DESC`,
   )
 
-  return result.rows.map(row => {
+  return result.rows.map((row) => {
     const seatUsed = toNumber(row.seat_used)
     const seatLimit = toNumber(row.seat_limit)
     const projectSeatUsedTotal = toNumber(row.project_seat_used_total)

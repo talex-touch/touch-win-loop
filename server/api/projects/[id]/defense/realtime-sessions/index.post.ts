@@ -7,8 +7,8 @@ import { createAiChatSession } from '~~/server/utils/chat-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { upsertProjectDefenseSessionState } from '~~/server/utils/project-defense-store'
-import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
+import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
 interface CreateDefenseRealtimeBody {
   title?: string

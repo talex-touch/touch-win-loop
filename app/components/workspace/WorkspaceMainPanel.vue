@@ -5,9 +5,6 @@ import type {
   CollabPurpose,
   Contest,
   Project,
-  WorkspaceDisplayPreferenceSnapshot,
-  WorkspaceFontSizePreset,
-  WorkspaceTabSpacingPreset,
   ProjectInvitationSummary,
   ProjectMeeting,
   ProjectMeetingDetail,
@@ -19,11 +16,14 @@ import type {
   ProjectTopicBoard,
   Resource,
   ResourcePreviewStatus,
-  Track,
-  TopicProposalDecisionStatus,
   WorkspaceFixedTabId as SharedWorkspaceFixedTabId,
   WorkspaceMeetingCreateTabId as SharedWorkspaceMeetingCreateTabId,
+  TopicProposalDecisionStatus,
+  Track,
+  WorkspaceDisplayPreferenceSnapshot,
+  WorkspaceFontSizePreset,
   WorkspaceOpenTabState,
+  WorkspaceTabSpacingPreset,
   WorkspaceType,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
@@ -53,7 +53,6 @@ import {
   defaultWorkspaceDisplayPreferenceSnapshot,
   normalizeWorkspaceFontSizeDraft,
   normalizeWorkspaceTabSpacingDraft,
-  resolveWorkspaceDisplayPreferenceSourceLabel,
   resolveWorkspaceFontSizePresetLabel,
   resolveWorkspaceTabSpacingPresetLabel,
   WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
@@ -586,24 +585,12 @@ const workspaceDisplayEffectiveTabSpacingLabel = computed(() => {
   return resolveWorkspaceTabSpacingPresetLabel(workspaceDisplayPreferenceState.value.effective.tabSpacingPreset)
 })
 
-const workspaceDisplayEffectiveSourceLabel = computed(() => {
-  return resolveWorkspaceDisplayPreferenceSourceLabel(workspaceDisplayPreferenceState.value.sources.fontSizePreset)
-})
-
 const workspaceDisplayUserDefaultLabel = computed(() => {
   return resolveWorkspaceFontSizePresetLabel(workspaceDisplayPreferenceState.value.userDefault?.fontSizePreset)
 })
 
 const workspaceDisplayTeamDefaultLabel = computed(() => {
   return resolveWorkspaceFontSizePresetLabel(workspaceDisplayPreferenceState.value.teamDefault?.fontSizePreset)
-})
-
-const workspaceDisplayUserOverrideLabel = computed(() => {
-  return resolveWorkspaceFontSizePresetLabel(workspaceDisplayPreferenceState.value.workspaceOverride?.fontSizePreset)
-})
-
-const workspaceDisplayUserOverrideTabSpacingLabel = computed(() => {
-  return resolveWorkspaceTabSpacingPresetLabel(workspaceDisplayPreferenceState.value.workspaceOverride?.tabSpacingPreset)
 })
 
 const workspaceDisplayRecommendedFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
@@ -614,10 +601,6 @@ const workspaceDisplayRecommendedFontSizePreset = computed<WorkspaceFontSizePres
     return workspaceDisplayPreferenceState.value.teamDefault.fontSizePreset
 
   return 'md'
-})
-
-const workspaceDisplayRecommendedFontSizeLabel = computed(() => {
-  return resolveWorkspaceFontSizePresetLabel(workspaceDisplayRecommendedFontSizePreset.value)
 })
 
 const workspaceDisplayRecommendedTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
@@ -636,10 +619,6 @@ const workspaceDisplayRecommendedTabSpacingLabel = computed(() => {
 
 const userWorkspaceDisplayPreviewFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
   return userWorkspaceDisplayFontSizeDraft.value || workspaceDisplayRecommendedFontSizePreset.value
-})
-
-const userWorkspaceDisplayPreviewFontSizeLabel = computed(() => {
-  return resolveWorkspaceFontSizePresetLabel(userWorkspaceDisplayPreviewFontSizePreset.value)
 })
 
 const userWorkspaceDisplayPreviewTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
@@ -1150,17 +1129,6 @@ const linkedContestEntries = computed<LinkedContestEntry[]>(() => {
   return result
 })
 
-const activeTopicBoardCandidate = computed(() => {
-  const board = props.topicBoard
-  if (!board || board.candidates.length === 0)
-    return null
-
-  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
-  return board.candidates.find(item => item.candidateId === selectedCandidateId)
-    || board.candidates[0]
-    || null
-})
-
 const selectedTopicBoardCandidate = computed(() => {
   const board = props.topicBoard
   if (!board)
@@ -1175,12 +1143,13 @@ const selectedTopicBoardCandidate = computed(() => {
 
 const topicBoardDecisionSummary = computed(() => {
   const board = props.topicBoard
-  if (!board)
+  if (!board) {
     return {
       shortlisted: 0,
       rejected: 0,
       selected: '',
     }
+  }
 
   return {
     shortlisted: board.candidates.filter(item => item.decisionStatus === 'shortlisted').length,
@@ -2392,7 +2361,7 @@ watch(activeTabId, (next) => {
           <div
             v-for="tab in openTabs"
             :key="tab.id"
-            class="workspace-main-tab px-2 border-r border-slate-200 flex gap-1 h-full shrink-0 items-center"
+            class="workspace-main-tab px-2 border-r border-slate-200 flex shrink-0 gap-1 h-full items-center"
             :class="[
               tab.id === activeTabId ? 'workspace-main-tab--active bg-slate-50' : 'workspace-main-tab--inactive bg-white',
               dragOverTabId === tab.id ? 'ring-1 ring-inset ring-blue-300' : '',
@@ -2490,7 +2459,7 @@ watch(activeTabId, (next) => {
       v-if="hasOpenTabs"
       class="workspace-main-breadcrumb text-[10px] text-slate-400 border-b border-slate-200 bg-white flex gap-2 items-center justify-between"
     >
-      <div class="workspace-main-breadcrumb__scroll flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden">
+      <div class="workspace-main-breadcrumb__scroll flex flex-1 gap-1.5 min-w-0 items-center overflow-x-auto overflow-y-hidden">
         <template v-for="(item, index) in breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
           <span :class="index === breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
             {{ item }}
@@ -2576,7 +2545,7 @@ watch(activeTabId, (next) => {
             </button>
           </div>
 
-          <div v-if="topicBoardLoading" class="p-4 text-xs text-slate-500">
+          <div v-if="topicBoardLoading" class="text-xs text-slate-500 p-4">
             正在基于当前竞赛、资料与团队标签生成候选题，请稍候...
           </div>
 
@@ -2611,11 +2580,11 @@ watch(activeTabId, (next) => {
               <article
                 v-for="candidate in topicBoard.candidates"
                 :key="candidate.candidateId"
-                class="border rounded-lg bg-white p-4"
+                class="p-4 border rounded-lg bg-white"
                 :class="candidate.decisionStatus === 'selected' ? 'border-emerald-200 shadow-sm' : 'border-slate-200'"
               >
                 <div class="flex flex-wrap gap-2 items-start justify-between">
-                  <div class="min-w-0 flex-1">
+                  <div class="flex-1 min-w-0">
                     <p class="text-sm text-slate-900 font-semibold">
                       {{ candidate.payload.title }}
                     </p>
@@ -2624,14 +2593,14 @@ watch(activeTabId, (next) => {
                     </p>
                   </div>
                   <span
-                    class="text-[10px] font-semibold px-2 py-0.5 rounded-full border"
+                    class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
                     :class="topicBoardDecisionClass(candidate.decisionStatus)"
                   >
                     {{ topicBoardDecisionLabel(candidate.decisionStatus) }}
                   </span>
                 </div>
 
-                <div class="mt-3 space-y-2 text-[11px] text-slate-600">
+                <div class="text-[11px] text-slate-600 mt-3 space-y-2">
                   <p>创新点：{{ candidate.payload.innovationPoints.slice(0, 2).join('；') || '待补充' }}</p>
                   <p>预估工作量：{{ candidate.payload.estimatedWorkload }}</p>
                   <p>能力匹配：{{ candidate.payload.teamMatchScore }} / 100</p>
@@ -2642,7 +2611,7 @@ watch(activeTabId, (next) => {
 
                 <div class="mt-3 flex flex-wrap gap-2">
                   <button
-                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-blue-200 bg-blue-50 text-blue-700 disabled:opacity-40"
+                    class="text-[11px] text-blue-700 font-semibold px-2.5 py-1 border border-blue-200 rounded bg-blue-50 disabled:opacity-40"
                     :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
                     type="button"
                     @click="emit('updateTopicBoardCandidateStatus', { candidateId: candidate.candidateId, decisionStatus: 'shortlisted' })"
@@ -2650,7 +2619,7 @@ watch(activeTabId, (next) => {
                     短名单
                   </button>
                   <button
-                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-rose-200 bg-rose-50 text-rose-700 disabled:opacity-40"
+                    class="text-[11px] text-rose-700 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-rose-50 disabled:opacity-40"
                     :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
                     type="button"
                     @click="emit('updateTopicBoardCandidateStatus', { candidateId: candidate.candidateId, decisionStatus: 'rejected' })"
@@ -2658,7 +2627,7 @@ watch(activeTabId, (next) => {
                     淘汰
                   </button>
                   <button
-                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 disabled:opacity-40"
+                    class="text-[11px] text-emerald-700 font-semibold px-2.5 py-1 border border-emerald-200 rounded bg-emerald-50 disabled:opacity-40"
                     :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
                     type="button"
                     @click="emit('selectTopicBoardCandidate', candidate.candidateId)"
@@ -2666,14 +2635,14 @@ watch(activeTabId, (next) => {
                     设为主推
                   </button>
                   <button
-                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700"
+                    class="text-[11px] text-slate-700 font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white"
                     type="button"
                     @click="emit('sendTopicBoardCandidateToChat', candidate.candidateId)"
                   >
                     发送到右侧 AI
                   </button>
                   <button
-                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700"
+                    class="text-[11px] text-slate-700 font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white"
                     type="button"
                     @click="emit('applyTopicBoardCandidateToForm', candidate.candidateId)"
                   >
@@ -2684,40 +2653,74 @@ watch(activeTabId, (next) => {
             </div>
 
             <section class="border border-slate-200 rounded bg-slate-50/60 overflow-hidden">
-              <div class="px-3 py-2 border-b border-slate-200 bg-white text-[11px] text-slate-600 font-semibold">
+              <div class="text-[11px] text-slate-600 font-semibold px-3 py-2 border-b border-slate-200 bg-white">
                 对比决策矩阵
               </div>
               <div class="overflow-x-auto">
-                <table class="min-w-180 w-full text-[11px] text-left border-collapse">
+                <table class="text-[11px] text-left min-w-180 w-full border-collapse">
                   <thead>
-                    <tr class="bg-slate-50 text-slate-500">
-                      <th class="px-3 py-2 border-b border-slate-200">候选题</th>
-                      <th class="px-3 py-2 border-b border-slate-200">竞赛适配</th>
-                      <th class="px-3 py-2 border-b border-slate-200">新颖度</th>
-                      <th class="px-3 py-2 border-b border-slate-200">证据完备</th>
-                      <th class="px-3 py-2 border-b border-slate-200">趋势热度</th>
-                      <th class="px-3 py-2 border-b border-slate-200">团队匹配</th>
-                      <th class="px-3 py-2 border-b border-slate-200">工作量</th>
-                      <th class="px-3 py-2 border-b border-slate-200">总分</th>
+                    <tr class="text-slate-500 bg-slate-50">
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        候选题
+                      </th>
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        竞赛适配
+                      </th>
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        新颖度
+                      </th>
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        证据完备
+                      </th>
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        趋势热度
+                      </th>
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        团队匹配
+                      </th>
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        工作量
+                      </th>
+                      <th class="px-3 py-2 border-b border-slate-200">
+                        总分
+                      </th>
                     </tr>
                   </thead>
-                  <tbody class="divide-y divide-slate-200">
+                  <tbody class="divide-slate-200 divide-y">
                     <tr
                       v-for="row in topicBoard.compareMatrix"
                       :key="row.candidateId"
                       class="bg-white"
                     >
                       <td class="px-3 py-2">
-                        <p class="font-semibold text-slate-800">{{ row.title }}</p>
-                        <p class="text-[10px] text-slate-500 mt-1">#{{ row.rank }} · {{ topicBoardDecisionLabel(row.decisionStatus) }}</p>
+                        <p class="text-slate-800 font-semibold">
+                          {{ row.title }}
+                        </p>
+                        <p class="text-[10px] text-slate-500 mt-1">
+                          #{{ row.rank }} · {{ topicBoardDecisionLabel(row.decisionStatus) }}
+                        </p>
                       </td>
-                      <td class="px-3 py-2">{{ row.contestFit }}</td>
-                      <td class="px-3 py-2">{{ row.noveltySimilarity }}</td>
-                      <td class="px-3 py-2">{{ row.evidenceReadiness }}</td>
-                      <td class="px-3 py-2">{{ row.trendHeat }}</td>
-                      <td class="px-3 py-2">{{ row.teamMatch }}</td>
-                      <td class="px-3 py-2">{{ row.workloadFeasibility }}</td>
-                      <td class="px-3 py-2 font-semibold text-slate-800">{{ row.totalScore }}</td>
+                      <td class="px-3 py-2">
+                        {{ row.contestFit }}
+                      </td>
+                      <td class="px-3 py-2">
+                        {{ row.noveltySimilarity }}
+                      </td>
+                      <td class="px-3 py-2">
+                        {{ row.evidenceReadiness }}
+                      </td>
+                      <td class="px-3 py-2">
+                        {{ row.trendHeat }}
+                      </td>
+                      <td class="px-3 py-2">
+                        {{ row.teamMatch }}
+                      </td>
+                      <td class="px-3 py-2">
+                        {{ row.workloadFeasibility }}
+                      </td>
+                      <td class="text-slate-800 font-semibold px-3 py-2">
+                        {{ row.totalScore }}
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -2725,7 +2728,7 @@ watch(activeTabId, (next) => {
             </section>
           </div>
 
-          <div v-else class="p-4 text-xs text-slate-500 space-y-3">
+          <div v-else class="text-xs text-slate-500 p-4 space-y-3">
             <p>当前项目还没有选题板。建议在左侧补齐领域、题目类型、关键词和团队技能后生成首版候选题。</p>
             <button
               class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -3075,7 +3078,7 @@ watch(activeTabId, (next) => {
       />
 
       <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
-        <div class="bg-white flex h-full min-h-0 w-full flex-col overflow-hidden">
+        <div class="bg-white flex flex-col h-full min-h-0 w-full overflow-hidden">
           <WorkspaceTldrawCanvas
             v-if="hasFlowResource"
             :key="props.flowResourceId || 'flow-canvas'"
@@ -3349,319 +3352,319 @@ watch(activeTabId, (next) => {
         </section>
 
         <template v-if="settingsSecondaryTabId === 'project'">
-        <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
-          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div class="flex gap-3 items-center">
-              <span class="material-symbols-outlined text-xl text-blue-600">settings</span>
-              <div>
-                <h2 class="text-sm font-bold">
-                  项目通用设置
-                </h2>
-                <div class="text-[11px] text-slate-500 mt-0.5">
-                  项目通用信息
+          <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div class="flex gap-3 items-center">
+                <span class="material-symbols-outlined text-xl text-blue-600">settings</span>
+                <div>
+                  <h2 class="text-sm font-bold">
+                    项目通用设置
+                  </h2>
+                  <div class="text-[11px] text-slate-500 mt-0.5">
+                    项目通用信息
+                  </div>
                 </div>
+              </div>
+
+              <div class="flex gap-2 items-center">
+                <span
+                  class="text-[11px] font-medium px-2 py-1 border rounded"
+                  :class="projectSettingsSaveBadgeClass"
+                >
+                  {{ projectSettingsSaveLabel }}
+                </span>
+                <button
+                  class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  type="button"
+                  :disabled="!hasActiveProject || projectSettingsLoading"
+                  @click="emit('saveProjectSettings')"
+                >
+                  立即保存
+                </button>
               </div>
             </div>
 
-            <div class="flex gap-2 items-center">
-              <span
-                class="text-[11px] font-medium px-2 py-1 border rounded"
-                :class="projectSettingsSaveBadgeClass"
-              >
-                {{ projectSettingsSaveLabel }}
-              </span>
-              <button
-                class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                type="button"
-                :disabled="!hasActiveProject || projectSettingsLoading"
-                @click="emit('saveProjectSettings')"
-              >
-                立即保存
-              </button>
+            <div class="p-4">
+              <div v-if="projectSettingsLoading" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
+                正在加载项目设置...
+              </div>
+
+              <div v-else-if="!hasActiveProject" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
+                当前 Team 暂无可编辑项目，请先创建或切换到目标项目。
+              </div>
+
+              <div v-else class="space-y-3">
+                <ProjectBasicSettingsEditor
+                  :model-value="projectSettingsCommon"
+                  :project="activeProject"
+                  :disabled="projectSettingsLoading"
+                  @update:model-value="emitProjectSettingsCommon"
+                />
+
+                <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
+                  <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
+                    <span class="block">问题陈述</span>
+                    <textarea
+                      :value="projectSettingsCommon.problemStatement"
+                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
+                      @input="updateProjectSettingsCommonField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                  </label>
+
+                  <label class="text-xs text-slate-600 block space-y-1">
+                    <span class="block">创新点（每行一条）</span>
+                    <textarea
+                      :value="projectSettingsCommon.innovationPointsText"
+                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
+                      @input="updateProjectSettingsCommonField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                  </label>
+                  <label class="text-xs text-slate-600 block space-y-1">
+                    <span class="block">技术路线（每行一条）</span>
+                    <textarea
+                      :value="projectSettingsCommon.techRouteStepsText"
+                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
+                      @input="updateProjectSettingsCommonField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                  </label>
+                  <label class="text-xs text-slate-600 block space-y-1">
+                    <span class="block">评分映射（每行一条）</span>
+                    <textarea
+                      :value="projectSettingsCommon.scoringMappingText"
+                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
+                      @input="updateProjectSettingsCommonField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                  </label>
+                  <label class="text-xs text-slate-600 block space-y-1">
+                    <span class="block">风险项（每行一条）</span>
+                    <textarea
+                      :value="projectSettingsCommon.risksText"
+                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
+                      @input="updateProjectSettingsCommonField('risksText', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                  </label>
+                  <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
+                    <span class="block">交付物（每行一条）</span>
+                    <textarea
+                      :value="projectSettingsCommon.deliverablesText"
+                      class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
+                      @input="updateProjectSettingsCommonField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
-          </div>
+          </section>
 
-          <div class="p-4">
-            <div v-if="projectSettingsLoading" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
-              正在加载项目设置...
-            </div>
+          <template v-if="!projectSettingsLoading && hasActiveProject">
+            <section class="p-4 border border-slate-200 rounded-lg bg-white">
+              <div class="mb-3 flex gap-2 items-center justify-between">
+                <h3 class="text-xs text-slate-700 font-semibold">
+                  竞赛与赛道绑定
+                </h3>
+                <button
+                  class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  type="button"
+                  @click="onAddProjectSettingsBinding"
+                >
+                  添加竞赛
+                </button>
+              </div>
 
-            <div v-else-if="!hasActiveProject" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
-              当前 Team 暂无可编辑项目，请先创建或切换到目标项目。
-            </div>
+              <div class="space-y-2">
+                <div
+                  v-for="(binding, index) in projectSettingsBindings"
+                  :key="`binding-${binding.contestId}-${index}`"
+                  class="gap-2 grid grid-cols-1 items-center md:grid-cols-[1fr,1fr,auto,auto]"
+                >
+                  <select
+                    :value="binding.contestId"
+                    class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                    @change="updateProjectSettingsBindingContest(index, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="" disabled>
+                      选择竞赛
+                    </option>
+                    <option v-for="contest in projectSettingsContestOptions" :key="contest.id" :value="contest.id">
+                      {{ contest.name }}
+                    </option>
+                  </select>
 
-            <div v-else class="space-y-3">
-              <ProjectBasicSettingsEditor
-                :model-value="projectSettingsCommon"
-                :project="activeProject"
-                :disabled="projectSettingsLoading"
-                @update:model-value="emitProjectSettingsCommon"
-              />
+                  <select
+                    :value="binding.trackId"
+                    class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
+                    @change="updateProjectSettingsBindingTrack(index, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="" disabled>
+                      选择赛道
+                    </option>
+                    <option v-for="track in contestTracksByContestId(binding.contestId)" :key="track.id" :value="track.id">
+                      {{ track.name }}
+                    </option>
+                  </select>
 
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 border rounded transition-colors"
+                    :class="binding.contestId === projectSettingsCurrentContestId ? 'text-blue-700 border-blue-200 bg-blue-50' : 'text-slate-600 border-slate-200 bg-white hover:bg-slate-50'"
+                    type="button"
+                    @click="useBindingAsCurrentContest(binding.contestId, binding.trackId)"
+                  >
+                    {{ binding.contestId === projectSettingsCurrentContestId ? '当前竞赛' : '设为当前' }}
+                  </button>
+
+                  <button
+                    class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="projectSettingsBindings.length <= 1"
+                    @click="removeProjectSettingsBinding(index)"
+                  >
+                    删除
+                  </button>
+                </div>
+
+                <p v-if="projectSettingsBindings.length === 0" class="text-[11px] text-slate-500">
+                  {{ projectSettingsContestOptions.length > 0 ? '暂无竞赛绑定，请先添加至少一个竞赛并指定赛道。' : '暂无可用竞赛，点击“添加竞赛”可在弹窗中刷新并绑定。' }}
+                </p>
+              </div>
+            </section>
+
+            <section v-if="projectSettingsHasCurrentContest" class="p-4 border border-slate-200 rounded-lg bg-white">
+              <h3 class="text-xs text-slate-700 font-semibold mb-3">
+                当前竞赛适配稿
+                <span class="text-slate-400 font-normal ml-1">
+                  {{ projectSettingsContestName || projectSettingsCurrentContestId }}
+                </span>
+              </h3>
               <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
                 <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
                   <span class="block">问题陈述</span>
                   <textarea
-                    :value="projectSettingsCommon.problemStatement"
+                    :value="projectSettingsAdaptation.problemStatement"
                     class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
+                    @input="updateProjectSettingsAdaptationField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
                   />
                 </label>
-
                 <label class="text-xs text-slate-600 block space-y-1">
                   <span class="block">创新点（每行一条）</span>
                   <textarea
-                    :value="projectSettingsCommon.innovationPointsText"
+                    :value="projectSettingsAdaptation.innovationPointsText"
                     class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
+                    @input="updateProjectSettingsAdaptationField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
                   />
                 </label>
                 <label class="text-xs text-slate-600 block space-y-1">
                   <span class="block">技术路线（每行一条）</span>
                   <textarea
-                    :value="projectSettingsCommon.techRouteStepsText"
+                    :value="projectSettingsAdaptation.techRouteStepsText"
                     class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
+                    @input="updateProjectSettingsAdaptationField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
                   />
                 </label>
                 <label class="text-xs text-slate-600 block space-y-1">
                   <span class="block">评分映射（每行一条）</span>
                   <textarea
-                    :value="projectSettingsCommon.scoringMappingText"
+                    :value="projectSettingsAdaptation.scoringMappingText"
                     class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
+                    @input="updateProjectSettingsAdaptationField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
                   />
                 </label>
                 <label class="text-xs text-slate-600 block space-y-1">
                   <span class="block">风险项（每行一条）</span>
                   <textarea
-                    :value="projectSettingsCommon.risksText"
+                    :value="projectSettingsAdaptation.risksText"
                     class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('risksText', ($event.target as HTMLTextAreaElement).value)"
+                    @input="updateProjectSettingsAdaptationField('risksText', ($event.target as HTMLTextAreaElement).value)"
                   />
                 </label>
                 <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
                   <span class="block">交付物（每行一条）</span>
                   <textarea
-                    :value="projectSettingsCommon.deliverablesText"
+                    :value="projectSettingsAdaptation.deliverablesText"
                     class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                    @input="updateProjectSettingsCommonField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
+                    @input="updateProjectSettingsAdaptationField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
+                  />
+                </label>
+                <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
+                  <span class="block">摘要</span>
+                  <textarea
+                    :value="projectSettingsAdaptation.summary"
+                    class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
+                    @input="updateProjectSettingsAdaptationField('summary', ($event.target as HTMLTextAreaElement).value)"
                   />
                 </label>
               </div>
-            </div>
-          </div>
-        </section>
+            </section>
 
-        <template v-if="!projectSettingsLoading && hasActiveProject">
-          <section class="p-4 border border-slate-200 rounded-lg bg-white">
-            <div class="mb-3 flex gap-2 items-center justify-between">
-              <h3 class="text-xs text-slate-700 font-semibold">
-                竞赛与赛道绑定
-              </h3>
-              <button
-                class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                type="button"
-                @click="onAddProjectSettingsBinding"
-              >
-                添加竞赛
-              </button>
-            </div>
-
-            <div class="space-y-2">
-              <div
-                v-for="(binding, index) in projectSettingsBindings"
-                :key="`binding-${binding.contestId}-${index}`"
-                class="gap-2 grid grid-cols-1 items-center md:grid-cols-[1fr,1fr,auto,auto]"
-              >
-                <select
-                  :value="binding.contestId"
-                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                  @change="updateProjectSettingsBindingContest(index, ($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="" disabled>
-                    选择竞赛
-                  </option>
-                  <option v-for="contest in projectSettingsContestOptions" :key="contest.id" :value="contest.id">
-                    {{ contest.name }}
-                  </option>
-                </select>
-
-                <select
-                  :value="binding.trackId"
-                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                  @change="updateProjectSettingsBindingTrack(index, ($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="" disabled>
-                    选择赛道
-                  </option>
-                  <option v-for="track in contestTracksByContestId(binding.contestId)" :key="track.id" :value="track.id">
-                    {{ track.name }}
-                  </option>
-                </select>
-
-                <button
-                  class="text-[11px] font-semibold px-2.5 py-1 border rounded transition-colors"
-                  :class="binding.contestId === projectSettingsCurrentContestId ? 'text-blue-700 border-blue-200 bg-blue-50' : 'text-slate-600 border-slate-200 bg-white hover:bg-slate-50'"
-                  type="button"
-                  @click="useBindingAsCurrentContest(binding.contestId, binding.trackId)"
-                >
-                  {{ binding.contestId === projectSettingsCurrentContestId ? '当前竞赛' : '设为当前' }}
-                </button>
-
-                <button
-                  class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  type="button"
-                  :disabled="projectSettingsBindings.length <= 1"
-                  @click="removeProjectSettingsBinding(index)"
-                >
-                  删除
-                </button>
+            <section class="p-4 border border-slate-200 rounded-lg bg-white">
+              <div class="mb-3 flex items-center justify-between">
+                <h3 class="text-xs text-slate-700 font-semibold">
+                  分享链接管理
+                </h3>
+                <span class="text-[11px] text-slate-500">
+                  共 {{ projectResourceShares.length }} 条
+                </span>
               </div>
 
-              <p v-if="projectSettingsBindings.length === 0" class="text-[11px] text-slate-500">
-                {{ projectSettingsContestOptions.length > 0 ? '暂无竞赛绑定，请先添加至少一个竞赛并指定赛道。' : '暂无可用竞赛，点击“添加竞赛”可在弹窗中刷新并绑定。' }}
-              </p>
-            </div>
-          </section>
+              <div v-if="projectResourceSharesLoading" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
+                正在加载分享链接...
+              </div>
 
-          <section v-if="projectSettingsHasCurrentContest" class="p-4 border border-slate-200 rounded-lg bg-white">
-            <h3 class="text-xs text-slate-700 font-semibold mb-3">
-              当前竞赛适配稿
-              <span class="text-slate-400 font-normal ml-1">
-                {{ projectSettingsContestName || projectSettingsCurrentContestId }}
-              </span>
-            </h3>
-            <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
-              <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                <span class="block">问题陈述</span>
-                <textarea
-                  :value="projectSettingsAdaptation.problemStatement"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('problemStatement', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">创新点（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.innovationPointsText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('innovationPointsText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">技术路线（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.techRouteStepsText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('techRouteStepsText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">评分映射（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.scoringMappingText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('scoringMappingText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">风险项（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.risksText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('risksText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                <span class="block">交付物（每行一条）</span>
-                <textarea
-                  :value="projectSettingsAdaptation.deliverablesText"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[96px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('deliverablesText', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-              <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
-                <span class="block">摘要</span>
-                <textarea
-                  :value="projectSettingsAdaptation.summary"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                  @input="updateProjectSettingsAdaptationField('summary', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
-            </div>
-          </section>
+              <div v-else-if="projectResourceShares.length === 0" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
+                暂无分享链接，可在左侧文件菜单点击“分享链接”创建。
+              </div>
 
-          <section class="p-4 border border-slate-200 rounded-lg bg-white">
-            <div class="mb-3 flex items-center justify-between">
-              <h3 class="text-xs text-slate-700 font-semibold">
-                分享链接管理
-              </h3>
-              <span class="text-[11px] text-slate-500">
-                共 {{ projectResourceShares.length }} 条
-              </span>
-            </div>
-
-            <div v-if="projectResourceSharesLoading" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
-              正在加载分享链接...
-            </div>
-
-            <div v-else-if="projectResourceShares.length === 0" class="text-xs text-slate-500 px-3 py-2 border border-slate-200 rounded bg-slate-50">
-              暂无分享链接，可在左侧文件菜单点击“分享链接”创建。
-            </div>
-
-            <div v-else class="space-y-2">
-              <article
-                v-for="share in projectResourceShares"
-                :key="share.id"
-                class="px-3 py-2 border border-slate-200 rounded"
-              >
-                <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div class="min-w-0">
-                    <p class="text-xs text-slate-700 font-semibold truncate">
-                      {{ share.resourceTitle || share.resourceId }}
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1 break-all">
-                      {{ share.shareUrl }}
-                    </p>
-                    <p class="text-[11px] text-slate-500 mt-1">
-                      {{ shareVisibilityLabel(share.visibility) }} · {{ share.duration }} · 到期 {{ formatDateTime(share.expiresAt) }}
-                    </p>
+              <div v-else class="space-y-2">
+                <article
+                  v-for="share in projectResourceShares"
+                  :key="share.id"
+                  class="px-3 py-2 border border-slate-200 rounded"
+                >
+                  <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div class="min-w-0">
+                      <p class="text-xs text-slate-700 font-semibold truncate">
+                        {{ share.resourceTitle || share.resourceId }}
+                      </p>
+                      <p class="text-[11px] text-slate-500 mt-1 break-all">
+                        {{ share.shareUrl }}
+                      </p>
+                      <p class="text-[11px] text-slate-500 mt-1">
+                        {{ shareVisibilityLabel(share.visibility) }} · {{ share.duration }} · 到期 {{ formatDateTime(share.expiresAt) }}
+                      </p>
+                    </div>
+                    <div class="flex gap-2 items-center">
+                      <span
+                        class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
+                        :class="shareStatusBadgeClass(share)"
+                      >
+                        {{ shareStatusLabel(share) }}
+                      </span>
+                      <button
+                        class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50"
+                        type="button"
+                        @click="emit('copyProjectResourceShare', share.id)"
+                      >
+                        复制链接
+                      </button>
+                      <button
+                        class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="getShareStatus(share) === 'revoked'"
+                        @click="emit('revokeProjectResourceShare', share.id)"
+                      >
+                        失效
+                      </button>
+                    </div>
                   </div>
-                  <div class="flex gap-2 items-center">
-                    <span
-                      class="text-[10px] font-semibold px-2 py-0.5 border rounded-full"
-                      :class="shareStatusBadgeClass(share)"
-                    >
-                      {{ shareStatusLabel(share) }}
-                    </span>
-                    <button
-                      class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50"
-                      type="button"
-                      @click="emit('copyProjectResourceShare', share.id)"
-                    >
-                      复制链接
-                    </button>
-                    <button
-                      class="text-[11px] text-rose-600 font-semibold px-2.5 py-1 border border-rose-200 rounded bg-white transition-colors hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      type="button"
-                      :disabled="getShareStatus(share) === 'revoked'"
-                      @click="emit('revokeProjectResourceShare', share.id)"
-                    >
-                      失效
-                    </button>
-                  </div>
-                </div>
-              </article>
-            </div>
-          </section>
-        </template>
+                </article>
+              </div>
+            </section>
+          </template>
         </template>
 
         <template v-else-if="settingsSecondaryTabId === 'myDisplay'">
           <section class="border border-slate-200 rounded-lg bg-white overflow-hidden" data-testid="workspace-display-user-panel">
             <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80">
-              <h3 class="text-sm font-bold text-slate-900">
+              <h3 class="text-sm text-slate-900 font-bold">
                 个人设置
               </h3>
               <p class="text-[11px] text-slate-500 mt-1">
@@ -3679,7 +3682,7 @@ watch(activeTabId, (next) => {
               </div>
 
               <template v-else>
-                <section class="border border-slate-200 rounded-xl bg-slate-50/70 p-4 space-y-4">
+                <section class="p-4 border border-slate-200 rounded-xl bg-slate-50/70 space-y-4">
                   <div>
                     <div>
                       <h4 class="text-sm text-slate-900 font-semibold">
@@ -3692,7 +3695,7 @@ watch(activeTabId, (next) => {
                   </div>
 
                   <div class="space-y-3">
-                    <div class="flex items-center justify-between text-xs text-slate-600">
+                    <div class="text-xs text-slate-600 flex items-center justify-between">
                       <span>字体大小</span>
                     </div>
 
@@ -3725,11 +3728,11 @@ watch(activeTabId, (next) => {
                       >
                     </div>
 
-                    <div class="grid grid-cols-5 gap-2">
+                    <div class="gap-2 grid grid-cols-5">
                       <span
                         v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
                         :key="`workspace-display-user-label-${option.value}`"
-                        class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                        class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
                         :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
                           ? 'text-blue-700'
                           : 'text-slate-500'"
@@ -3755,7 +3758,7 @@ watch(activeTabId, (next) => {
                   </div>
 
                   <div class="space-y-3">
-                    <div class="flex items-center justify-between text-xs text-slate-600">
+                    <div class="text-xs text-slate-600 flex items-center justify-between">
                       <span>标签边距</span>
                       <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
                     </div>
@@ -3789,11 +3792,11 @@ watch(activeTabId, (next) => {
                       >
                     </div>
 
-                    <div class="grid grid-cols-3 gap-2">
+                    <div class="gap-2 grid grid-cols-3">
                       <span
                         v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
                         :key="`workspace-display-user-tab-spacing-label-${option.value}`"
-                        class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                        class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
                         :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
                           ? 'text-blue-700'
                           : 'text-slate-500'"
@@ -3845,7 +3848,7 @@ watch(activeTabId, (next) => {
         <template v-else-if="settingsSecondaryTabId === 'teamDefault'">
           <section class="border border-slate-200 rounded-lg bg-white overflow-hidden" data-testid="workspace-display-team-panel">
             <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80">
-              <h3 class="text-sm font-bold text-slate-900">
+              <h3 class="text-sm text-slate-900 font-bold">
                 团队默认
               </h3>
               <p class="text-[11px] text-slate-500 mt-1">
@@ -3856,19 +3859,25 @@ watch(activeTabId, (next) => {
             <div class="p-4 space-y-4">
               <div class="gap-3 grid grid-cols-1 md:grid-cols-3">
                 <div class="p-3 border border-slate-200 rounded bg-slate-50">
-                  <div class="text-[11px] text-slate-500">当前团队默认</div>
+                  <div class="text-[11px] text-slate-500">
+                    当前团队默认
+                  </div>
                   <div class="text-sm text-slate-900 font-semibold mt-1">
                     {{ workspaceDisplayTeamDefaultLabel }}
                   </div>
                 </div>
                 <div class="p-3 border border-slate-200 rounded bg-slate-50">
-                  <div class="text-[11px] text-slate-500">个人全局默认</div>
+                  <div class="text-[11px] text-slate-500">
+                    个人全局默认
+                  </div>
                   <div class="text-sm text-slate-900 font-semibold mt-1">
                     {{ workspaceDisplayUserDefaultLabel }}
                   </div>
                 </div>
                 <div class="p-3 border border-slate-200 rounded bg-slate-50">
-                  <div class="text-[11px] text-slate-500">系统默认</div>
+                  <div class="text-[11px] text-slate-500">
+                    系统默认
+                  </div>
                   <div class="text-sm text-slate-900 font-semibold mt-1">
                     默认（md）
                   </div>
@@ -4334,8 +4343,12 @@ watch(activeTabId, (next) => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94) 52%, rgba(241, 245, 249, 0.98) 100%);
+  background: radial-gradient(
+    circle at 50% 42%,
+    rgba(255, 255, 255, 0.96),
+    rgba(248, 250, 252, 0.94) 52%,
+    rgba(241, 245, 249, 0.98) 100%
+  );
 }
 
 .workspace-main-empty-state__watermark {

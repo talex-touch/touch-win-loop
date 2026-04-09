@@ -1,9 +1,9 @@
 import type { AiTopicProposalRequest } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
+import { executeTopicProposal, normalizeTopicProposalApiRequest } from '~~/server/services/ai/topic-proposal-service'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-import { executeTopicProposal, normalizeTopicProposalApiRequest } from '~~/server/services/ai/topic-proposal-service'
 
 function toText(value: unknown): string {
   return String(value || '').trim()

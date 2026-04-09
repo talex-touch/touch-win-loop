@@ -1,16 +1,12 @@
 import type { Queryable } from '~~/server/utils/db'
-import type { Resource, ResourceKnowledgeProfile, ResourceQualityIssue, RuleDefinition, RuleResult } from '~~/shared/types/domain'
 import type { ResourceKnowledgeContext } from '~~/server/utils/resource-knowledge-store'
+import type { Resource, ResourceKnowledgeProfile, ResourceQualityIssue, RuleDefinition, RuleResult } from '~~/shared/types/domain'
 import {
   analyzeResourceKnowledgeProfile,
   buildResourceRelations,
 } from '~~/server/services/resource-knowledge'
-import { withClient, withTransaction } from '~~/server/utils/db'
 import { listAdminResources } from '~~/server/utils/contest-store'
-import {
-  buildContestRuleContext,
-  simulateRuleVersion,
-} from '~~/server/utils/rule-store'
+import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   claimNextQueuedResourceGovernanceTask,
   enqueueResourceGovernanceTask,
@@ -24,6 +20,10 @@ import {
   resetStaleResourceGovernanceTasks,
   upsertResourceKnowledgeProfile,
 } from '~~/server/utils/resource-knowledge-store'
+import {
+  buildContestRuleContext,
+  simulateRuleVersion,
+} from '~~/server/utils/rule-store'
 
 const WORKER_STATE_KEY = Symbol.for('winloop.resource-knowledge-worker.state')
 
@@ -162,7 +162,7 @@ async function applyRuleEvaluation(
     }
 
     const manualOverrides = analysis.manualOverrides || {}
-    const extraIssues = hits.map((result) => ({
+    const extraIssues = hits.map(result => ({
       code: `rule_${result.ruleCode}`,
       message: result.message,
       severity: result.severity === 'error' || result.severity === 'warning' || result.severity === 'info' ? result.severity : 'info',
@@ -189,8 +189,8 @@ async function applyRuleEvaluation(
     const governanceStatus = hasManualOverride(manualOverrides, 'governanceStatus')
       ? analysis.governanceStatus
       : hits.some(hit => hit.severity === 'error' && normalizeString(hit.targetPath).includes('copyright'))
-          ? 'suggested_invalid'
-          : analysis.governanceStatus
+        ? 'suggested_invalid'
+        : analysis.governanceStatus
 
     return {
       qualityScore,

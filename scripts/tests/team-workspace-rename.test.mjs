@@ -18,7 +18,7 @@ it('工作空间改名权限矩阵符合个人空间 owner、团队空间 owner/
   assert.doesNotMatch(storeSource, /workspaceType === 'team'.*manager/s, '团队空间改名权限错误地放开给 manager')
   assert.match(patchSource, /teamRenameWorkspace/, 'Team patch 接口未接入工作空间改名逻辑')
   assert.match(patchSource, /缺少 teamId 或名称。/, 'Team patch 接口缺少名称为空校验')
-  assert.match(storeSource, /UPDATE workspaces\s+SET name = \$2,/s, '工作空间改名未写入 workspaces.name')
+  assert.match(storeSource, /UPDATE workspaces\s+SET name = \$2,/, '工作空间改名未写入 workspaces.name')
   assert.match(storeSource, /canRenameWorkspaceWithRoles/, '工作空间改名未复用统一权限 helper')
   assert.match(storeSource, /WORKSPACE_NAME_REQUIRED/, '工作空间改名缺少空名称保护')
 })

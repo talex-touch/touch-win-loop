@@ -386,7 +386,7 @@ onBeforeUnmount(() => {
     <div class="flex flex-1 gap-2 items-center justify-end">
       <div
         data-testid="workspace-header-workbench-tabs"
-        class="p-0.5 border border-slate-200 rounded-xl bg-slate-100/80 inline-flex items-center gap-0.5"
+        class="p-0.5 border border-slate-200 rounded-xl bg-slate-100/80 inline-flex gap-0.5 items-center"
       >
         <button
           class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"
@@ -427,7 +427,7 @@ onBeforeUnmount(() => {
       >
         <button
           type="button"
-          class="p-0.5 rounded-full flex items-center justify-center transition-colors hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+          class="p-0.5 rounded-full flex transition-colors items-center justify-center focus:outline-none hover:bg-slate-100 focus:ring-2 focus:ring-blue-500/30"
           :aria-expanded="userPopoverVisible ? 'true' : 'false'"
           aria-haspopup="menu"
           data-testid="workspace-header-user-trigger"
@@ -443,7 +443,7 @@ onBeforeUnmount(() => {
 
         <div
           v-if="userPopoverVisible"
-          class="mt-2 p-3 border border-slate-200 rounded-2xl bg-white w-80 right-0 top-full absolute z-30 shadow-[0_18px_48px_rgba(15,23,42,0.16)]"
+          class="mt-2 p-3 border border-slate-200 rounded-2xl bg-white w-80 shadow-[0_18px_48px_rgba(15,23,42,0.16)] right-0 top-full absolute z-30"
           data-testid="workspace-header-user-popover"
         >
           <section class="pb-3 border-b border-slate-100">
@@ -463,7 +463,7 @@ onBeforeUnmount(() => {
                 <div class="text-[11px] text-slate-500 mt-1.5">
                   当前空间
                 </div>
-                <div class="flex gap-2 mt-1 items-center">
+                <div class="mt-1 flex gap-2 items-center">
                   <span class="text-xs text-slate-700 font-medium truncate">
                     {{ currentWorkspaceName }}
                   </span>
@@ -486,7 +486,7 @@ onBeforeUnmount(() => {
               <button
                 v-for="item in orderedWorkspaceOptions"
                 :key="item.workspace.id"
-                class="px-2.5 py-2 rounded-xl text-left w-full transition-colors"
+                class="px-2.5 py-2 text-left rounded-xl w-full transition-colors"
                 :class="item.workspace.id === props.workspaceId
                   ? 'bg-blue-50 text-blue-700'
                   : 'text-slate-700 hover:bg-slate-50'"
@@ -496,7 +496,7 @@ onBeforeUnmount(() => {
               >
                 <div class="flex gap-2 items-center justify-between">
                   <span class="text-xs font-semibold truncate">{{ item.workspace.name }}</span>
-                  <span class="text-[10px] px-2 py-0.5 rounded-full bg-white/80 border border-slate-200 shrink-0">
+                  <span class="text-[10px] px-2 py-0.5 border border-slate-200 rounded-full bg-white/80 shrink-0">
                     {{ workspaceTypeLabel(item.workspace.type) }}
                   </span>
                 </div>

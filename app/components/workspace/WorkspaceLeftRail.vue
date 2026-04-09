@@ -144,7 +144,10 @@ const emit = defineEmits<{
   height: 24px;
   font-size: 24px;
   line-height: 24px;
-  font-variation-settings: 'FILL' 0, 'wght' 320, 'opsz' 24;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 320,
+    'opsz' 24;
 }
 
 .workspace-left-rail__item:hover {

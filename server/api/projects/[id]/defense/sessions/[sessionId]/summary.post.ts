@@ -6,6 +6,7 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { getAiChatSessionById, listAiChatMessagesBySession } from '~~/server/utils/chat-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   getProjectDefenseSessionState,
@@ -14,7 +15,6 @@ import {
   upsertProjectDefenseSessionState,
   upsertProjectDefenseSummary,
 } from '~~/server/utils/project-defense-store'
-import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 
 interface CreateDefenseSummaryBody {

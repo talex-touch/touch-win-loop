@@ -1,11 +1,7 @@
-type UnsafeFetch = <T = any>(request: string, options?: any) => Promise<T>
-
-declare global {
-  var unsafeFetch: UnsafeFetch
-}
+type UnsafeFetch = typeof unsafeFetch
 
 export default defineNuxtPlugin((nuxtApp) => {
-  globalThis.unsafeFetch = nuxtApp.$fetch as UnsafeFetch
+  (globalThis as typeof globalThis & { unsafeFetch: UnsafeFetch }).unsafeFetch = nuxtApp.$fetch as UnsafeFetch
 })
 
 export {}

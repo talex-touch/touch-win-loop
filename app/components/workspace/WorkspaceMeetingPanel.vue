@@ -269,10 +269,10 @@ onBeforeUnmount(() => {
           {{ activeMeetingStatusLabel }}
         </div>
         <div>
-          <h2 class="text-2xl font-semibold text-slate-900">
+          <h2 class="text-2xl text-slate-900 font-semibold">
             {{ activeMeeting?.title || '项目会议详情' }}
           </h2>
-          <p class="mt-2 text-sm text-slate-600">
+          <p class="text-sm text-slate-600 mt-2">
             {{ meetingSummaryHint || '点击左侧最近会议或创建会议后，可在这里查看单场会议的完整详情。' }}
           </p>
         </div>
@@ -460,7 +460,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="meeting-panel__detail-box">
-              <div class="flex items-center justify-between gap-3">
+              <div class="flex gap-3 items-center justify-between">
                 <h3 class="meeting-panel__section-title">
                   实时字幕 / 逐句稿
                 </h3>
@@ -473,11 +473,11 @@ onBeforeUnmount(() => {
                   class="meeting-panel__caption-item"
                   :class="caption.final ? 'meeting-panel__caption-item--final' : 'meeting-panel__caption-item--partial'"
                 >
-                  <div class="flex items-center justify-between gap-3">
-                    <span class="text-sm font-medium text-slate-800">{{ caption.speakerName || caption.speakerLabel }}</span>
+                  <div class="flex gap-3 items-center justify-between">
+                    <span class="text-sm text-slate-800 font-medium">{{ caption.speakerName || caption.speakerLabel }}</span>
                     <span class="text-xs text-slate-400">{{ formatMs(caption.startedAtMs) }} - {{ formatMs(caption.endedAtMs) }}</span>
                   </div>
-                  <p class="mt-1 text-sm text-slate-600">
+                  <p class="text-sm text-slate-600 mt-1">
                     {{ caption.text }}
                   </p>
                 </div>

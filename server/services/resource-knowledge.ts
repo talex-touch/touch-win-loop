@@ -14,10 +14,9 @@ import type {
 import {
   analyzeKnowledgeEntity,
   extractKnowledgeKeywords,
-  toKnowledgeText,
 } from '~~/server/services/knowledge-ai'
 
-type SearchMetrics = {
+interface SearchMetrics {
   searchCount7d: number
   clickCount7d: number
   searchCount30d: number
@@ -58,12 +57,6 @@ function clampScore(value: number): number {
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
-}
-
-function normalizeStringArray(value: unknown): string[] {
-  if (!Array.isArray(value))
-    return []
-  return value.map(item => normalizeString(item)).filter(Boolean)
 }
 
 function normalizeText(value: string): string {
@@ -206,12 +199,10 @@ function computeQualityScore(input: {
   const contentLength = normalizeString(input.combinedText).length
   const hasUrl = Boolean(normalizeString(input.resource.sourceLink))
   const hasDocument = Boolean(input.documentAnalysis?.pages?.length)
-  const completeness = Math.min(30,
-    (summaryLength > 20 ? 8 : summaryLength > 0 ? 4 : 0)
+  const completeness = Math.min(30, (summaryLength > 20 ? 8 : summaryLength > 0 ? 4 : 0)
     + (contentLength > 120 ? 10 : contentLength > 0 ? 5 : 0)
     + (hasUrl ? 6 : 0)
-    + (hasDocument ? 6 : 0),
-  )
+    + (hasDocument ? 6 : 0))
 
   let compliance = 30
   if (!normalizeString(input.resource.copyrightNote))
@@ -224,11 +215,9 @@ function computeQualityScore(input: {
     compliance -= 16
 
   const totalBlocks = input.documentAnalysis?.pages?.reduce((sum, page) => sum + page.blocks.length + page.fields.length, 0) || 0
-  const structural = Math.min(20,
-    (hasDocument ? 8 : 0)
+  const structural = Math.min(20, (hasDocument ? 8 : 0)
     + (totalBlocks >= 10 ? 8 : totalBlocks >= 3 ? 5 : 0)
-    + (contentLength >= 400 ? 4 : contentLength >= 120 ? 2 : 0),
-  )
+    + (contentLength >= 400 ? 4 : contentLength >= 120 ? 2 : 0))
 
   const seasonYear = parseSeasonYear(input.contest)
   let consistency = input.resource.category === input.predictedCategory ? 12 : 7
@@ -271,12 +260,10 @@ function computeValueScore(input: {
   const contentLength = normalizeString(input.resource.content).length + normalizeString(input.resource.summary).length
   const depth = Math.min(25, (pageCount >= 8 ? 15 : pageCount >= 3 ? 10 : 4) + (contentLength >= 1000 ? 10 : contentLength >= 300 ? 6 : 3))
 
-  const coverage = Math.min(25,
-    (normalizeString(input.resource.summary) ? 6 : 0)
+  const coverage = Math.min(25, (normalizeString(input.resource.summary) ? 6 : 0)
     + (normalizeString(input.resource.content) ? 8 : 0)
     + (input.aiTags.length >= 6 ? 6 : input.aiTags.length >= 3 ? 4 : input.aiTags.length > 0 ? 2 : 0)
-    + (normalizeString(input.resource.copyrightNote) ? 5 : 0),
-  )
+    + (normalizeString(input.resource.copyrightNote) ? 5 : 0))
 
   const seasonYear = parseSeasonYear(input.contest)
   const year = Number(input.resource.year || seasonYear)

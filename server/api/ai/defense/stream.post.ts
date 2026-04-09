@@ -13,23 +13,23 @@ import { buildDefenseContextPack } from '~~/server/services/ai/defense-context'
 import { runDefenseFallback } from '~~/server/services/ai/fallback'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import { recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
 import {
   appendAiChatMessage,
   createAiChatSession,
   getAiChatSessionById,
   patchAiChatSessionContext,
 } from '~~/server/utils/chat-store'
-import { recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
-import {
-  createProjectDefenseTurns,
-  getProjectDefenseSessionState,
-  upsertProjectDefenseSessionState,
-} from '~~/server/utils/project-defense-store'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import {
+  createProjectDefenseTurns,
+  getProjectDefenseSessionState,
+  upsertProjectDefenseSessionState,
+} from '~~/server/utils/project-defense-store'
 import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
@@ -101,23 +101,23 @@ interface DefensePreparedFailureState {
 
 type DefensePreparedResult
   = {
-      kind: 'success'
-      sessionId: string
-      remainingQuota: number | null
-      shouldRecordStart: boolean
-      createdNewSession: boolean
-      existingState: Awaited<ReturnType<typeof getProjectDefenseSessionState>>
-    }
-    | {
-      kind: 'forbidden'
-    }
-    | {
-      kind: 'session_not_found'
-    }
-    | {
-      kind: 'quota_exceeded'
-      failureState: DefensePreparedFailureState | null
-    }
+    kind: 'success'
+    sessionId: string
+    remainingQuota: number | null
+    shouldRecordStart: boolean
+    createdNewSession: boolean
+    existingState: Awaited<ReturnType<typeof getProjectDefenseSessionState>>
+  }
+  | {
+    kind: 'forbidden'
+  }
+  | {
+    kind: 'session_not_found'
+  }
+  | {
+    kind: 'quota_exceeded'
+    failureState: DefensePreparedFailureState | null
+  }
 
 function chunkText(text: string, chunkSize = 28): string[] {
   const normalized = String(text || '')

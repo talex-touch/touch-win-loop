@@ -1,5 +1,6 @@
 import type { JSONContent } from '@tiptap/core'
 import type * as Y from 'yjs'
+import type { CollabMarkdownHeadingLevel } from './collab-rich-text-schema'
 import {
   prosemirrorJSONToYXmlFragment,
   yXmlFragmentToProsemirrorJSON,
@@ -9,7 +10,6 @@ import { gfmFromMarkdown, gfmToMarkdown } from 'mdast-util-gfm'
 import { toMarkdown } from 'mdast-util-to-markdown'
 import { gfm } from 'micromark-extension-gfm'
 import { getCollabMarkdownSchema } from './collab-rich-text-schema'
-import type { CollabMarkdownHeadingLevel } from './collab-rich-text-schema'
 
 export interface MarkdownRichTextBlock {
   type: 'paragraph' | 'heading'
@@ -31,8 +31,8 @@ interface MdastNode {
 
 const collabMarkdownSchema = getCollabMarkdownSchema()
 const INTERNAL_RESOURCE_FILE_PATH_PATTERN = /^\/?(?:api\/)?projects\/[^/]+\/resources\/([^/]+)\/(?:file|source)(?:[/?#]|$)/i
-const HTML_IMAGE_TAG_PATTERN = /^<img\b[^>]*\/?>$/i
-const HTML_ATTRIBUTE_PATTERN = /([:@A-Za-z0-9_-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+const HTML_IMAGE_TAG_PATTERN = /^<img\b[^>]*>$/i
+const HTML_ATTRIBUTE_PATTERN = /([:@\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
 
 function normalizeLineBreaks(value: string): string {
   return String(value || '')

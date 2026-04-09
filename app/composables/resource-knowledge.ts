@@ -4,8 +4,8 @@ import type {
   ResourceCategory,
   ResourceSearchSort,
 } from '~~/shared/types/domain'
-import { computed } from 'vue'
 import { useState } from '#imports'
+import { computed } from 'vue'
 
 const RESOURCE_KNOWLEDGE_SESSION_STORAGE_KEY = 'wl-resource-knowledge-session-id'
 const RESOURCE_KNOWLEDGE_SESSION_COOKIE_KEY = 'wl_resource_session'

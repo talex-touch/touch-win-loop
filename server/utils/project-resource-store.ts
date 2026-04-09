@@ -712,13 +712,13 @@ export async function getProjectResourceDownloadDescriptor(
     resourceId: string
   },
 ): Promise<{
-    id: string
-    source: ProjectResourceRow['source']
-    title: string
-    mimeType: string
-    sourceLink: string
-    linkedContestResourceId: string | null
-  } | null> {
+  id: string
+  source: ProjectResourceRow['source']
+  title: string
+  mimeType: string
+  sourceLink: string
+  linkedContestResourceId: string | null
+} | null> {
   const result = await db.query<ProjectResourceDownloadRow>(
     `SELECT
       id,

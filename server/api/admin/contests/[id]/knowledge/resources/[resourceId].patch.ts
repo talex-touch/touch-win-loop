@@ -103,11 +103,11 @@ export default defineEventHandler(async (event) => {
       resourceId,
     })
   })
-  .catch((error) => {
-    if (error instanceof Error && error.message === 'RESOURCE_NOT_FOUND')
-      return null
-    throw error
-  })
+    .catch((error) => {
+      if (error instanceof Error && error.message === 'RESOURCE_NOT_FOUND')
+        return null
+      throw error
+    })
 
   if (!detail) {
     setResponseStatus(event, 404)

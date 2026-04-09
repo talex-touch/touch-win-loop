@@ -1,5 +1,5 @@
-import type { WorkspaceDisplayPreferenceSnapshot, WorkspaceFontSizePreset, WorkspaceTabSpacingPreset } from '~~/shared/types/domain'
 import type { WorkspaceDisplayPreferencesPatchInput } from '~~/server/utils/workspace-display-preference-store'
+import type { WorkspaceDisplayPreferenceSnapshot, WorkspaceFontSizePreset, WorkspaceTabSpacingPreset } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'

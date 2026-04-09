@@ -428,7 +428,7 @@ watch(contestId, async (value, oldValue) => {
                     业务分类：{{ categoryLabelMap.get(item.category || 'basic_info') || item.category }} ｜ 推荐分类：{{ categoryLabelMap.get(item.aiProfile?.predictedCategory || 'basic_info') || item.aiProfile?.predictedCategory || '待分析' }}
                   </p>
                 </div>
-                <span class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-700">
+                <span class="text-xs text-slate-700 px-2 py-1 rounded bg-slate-100">
                   置信度 {{ item.aiProfile ? Math.round((item.aiProfile.categoryConfidence || 0) * 100) : 0 }}%
                 </span>
               </div>
@@ -436,7 +436,7 @@ watch(contestId, async (value, oldValue) => {
                 <span
                   v-for="tag in item.aiProfile?.aiTags || []"
                   :key="`${item.id}-${tag}`"
-                  class="text-[11px] px-2 py-1 rounded bg-blue-50 text-blue-700"
+                  class="text-[11px] text-blue-700 px-2 py-1 rounded bg-blue-50"
                 >
                   {{ tag }}
                 </span>
@@ -492,7 +492,7 @@ watch(contestId, async (value, oldValue) => {
                 <button
                   v-for="item in overview?.topValueResources || []"
                   :key="item.id"
-                  class="block w-full text-left text-xs text-slate-700 hover:text-slate-900"
+                  class="text-xs text-slate-700 text-left w-full block hover:text-slate-900"
                   @click="selectResource(item.id)"
                 >
                   {{ item.title }} ｜ {{ item.aiProfile?.valueScore || 0 }}
@@ -507,7 +507,7 @@ watch(contestId, async (value, oldValue) => {
                 <button
                   v-for="item in overview?.topHotResources || []"
                   :key="item.id"
-                  class="block w-full text-left text-xs text-slate-700 hover:text-slate-900"
+                  class="text-xs text-slate-700 text-left w-full block hover:text-slate-900"
                   @click="selectResource(item.id)"
                 >
                   {{ item.title }} ｜ {{ item.aiProfile?.hotScore || 0 }}
@@ -522,7 +522,7 @@ watch(contestId, async (value, oldValue) => {
                 <button
                   v-for="item in overview?.topQualityResources || []"
                   :key="item.id"
-                  class="block w-full text-left text-xs text-slate-700 hover:text-slate-900"
+                  class="text-xs text-slate-700 text-left w-full block hover:text-slate-900"
                   @click="selectResource(item.id)"
                 >
                   {{ item.title }} ｜ {{ item.aiProfile?.qualityScore || 0 }}
@@ -550,7 +550,7 @@ watch(contestId, async (value, oldValue) => {
                 <span
                   v-for="relation in item.aiProfile?.relatedResources || []"
                   :key="relation.id"
-                  class="text-[11px] px-2 py-1 rounded bg-emerald-50 text-emerald-700"
+                  class="text-[11px] text-emerald-700 px-2 py-1 rounded bg-emerald-50"
                 >
                   {{ relation.relationType }} ｜ {{ relation.targetTitle }}
                 </span>
@@ -564,9 +564,9 @@ watch(contestId, async (value, oldValue) => {
             需求洞察
           </h2>
           <div class="mt-3 overflow-x-auto">
-            <table class="w-full text-xs">
+            <table class="text-xs w-full">
               <thead>
-                <tr class="text-left text-slate-500 border-b border-slate-200">
+                <tr class="text-slate-500 text-left border-b border-slate-200">
                   <th class="py-2 pr-3">
                     查询词
                   </th>
@@ -586,16 +586,16 @@ watch(contestId, async (value, oldValue) => {
               </thead>
               <tbody>
                 <tr v-for="item in topDemandQueries" :key="item.query" class="border-b border-slate-100">
-                  <td class="py-2 pr-3 text-slate-800">
+                  <td class="text-slate-800 py-2 pr-3">
                     {{ item.query }}
                   </td>
                   <td class="py-2 pr-3">
                     {{ item.searchCount }}
                   </td>
-                  <td class="py-2 pr-3 text-rose-600">
+                  <td class="text-rose-600 py-2 pr-3">
                     {{ item.zeroResultCount }}
                   </td>
-                  <td class="py-2 pr-3 text-amber-600">
+                  <td class="text-amber-600 py-2 pr-3">
                     {{ item.lowClickCount }}
                   </td>
                   <td class="py-2 pr-3">
@@ -674,7 +674,7 @@ watch(contestId, async (value, oldValue) => {
                 <button
                   v-for="item in visibleResources.slice(0, 8)"
                   :key="`hot-${item.id}`"
-                  class="block w-full text-left text-xs text-slate-700 hover:text-slate-900"
+                  class="text-xs text-slate-700 text-left w-full block hover:text-slate-900"
                   @click="selectResource(item.id)"
                 >
                   {{ item.title }} ｜ 热度 {{ item.aiProfile?.hotScore || 0 }} ｜ 价值 {{ item.aiProfile?.valueScore || 0 }}
@@ -768,7 +768,7 @@ watch(contestId, async (value, oldValue) => {
                 <div
                   v-for="relation in relatedPreview"
                   :key="relation.id"
-                  class="p-2 rounded bg-slate-50 text-xs text-slate-700"
+                  class="text-xs text-slate-700 p-2 rounded bg-slate-50"
                 >
                   <p class="font-medium">
                     {{ relation.targetTitle }}
@@ -780,7 +780,7 @@ watch(contestId, async (value, oldValue) => {
               </div>
             </div>
           </div>
-          <div v-else class="mt-3 text-xs text-slate-500">
+          <div v-else class="text-xs text-slate-500 mt-3">
             选择左侧资源查看治理详情。
           </div>
         </section>

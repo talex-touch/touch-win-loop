@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ProjectMeeting } from '~~/shared/types/domain'
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   meetings?: ProjectMeeting[]
   loading?: boolean
 }>(), {
@@ -52,10 +52,10 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
           <span class="material-symbols-outlined text-sm">video_call</span>
           项目会议
         </div>
-        <h2 class="mt-3 text-2xl font-semibold text-slate-900">
+        <h2 class="text-2xl text-slate-900 font-semibold mt-3">
           会议总览
         </h2>
-        <p class="mt-2 text-sm text-slate-600">
+        <p class="text-sm text-slate-600 mt-2">
           这里仅负责查看最近会议、当前状态，以及录制和纪要资源入口。具体会议会在独立 tab 中展开。
         </p>
       </div>

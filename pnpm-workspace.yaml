@@ -56,8 +56,8 @@ catalogs:
     '@arco-design/web-vue': ^2.57.0
     '@floating-ui/dom': ^1.7.4
     '@tiptap/core': ^3.22.3
-    '@tiptap/extension-collaboration': ^3.22.3
     '@tiptap/extension-code-block-lowlight': ^3.22.3
+    '@tiptap/extension-collaboration': ^3.22.3
     '@tiptap/extension-document': ^3.22.3
     '@tiptap/extension-dropcursor': ^3.22.3
     '@tiptap/extension-gapcursor': ^3.22.3

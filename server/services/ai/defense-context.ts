@@ -9,9 +9,9 @@ import type {
   Resource,
   RubricDimension,
 } from '~~/shared/types/domain'
+import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { getContestDetail, listContestResourcesByContestId, resolveAiPromptText } from '~~/server/utils/contest-store'
 import { listProjectDefensePersonas, listProjectDefensePersonasByIds } from '~~/server/utils/project-defense-store'
-import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 
 export interface DefenseContextPack {
   contestName: string
@@ -536,7 +536,7 @@ export async function buildDefenseContextPack(input: BuildDefenseContextPackInpu
     attachmentResourceIds,
   })
   const contestCandidates = collectEvidenceCandidates({
-    resources: contestResources.filter(item => {
+    resources: contestResources.filter((item) => {
       const category = normalizeString(item.category)
       return category === 'judge_guidelines'
         || category === 'past_questions'
@@ -553,7 +553,7 @@ export async function buildDefenseContextPack(input: BuildDefenseContextPackInpu
     .reduce<AiDefenseEvidenceRef[]>((acc, item) => {
       if (acc.length >= 12)
         return acc
-      const duplicated = acc.some(existing => {
+      const duplicated = acc.some((existing) => {
         return existing.resourceId === item.resourceId
           && existing.excerpt === item.excerpt
       })

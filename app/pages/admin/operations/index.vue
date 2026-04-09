@@ -2,6 +2,7 @@
 import type {
   AdminContentTraceSnapshot,
   AdminEfficiencySnapshot,
+  AdminOperationsOverview,
   AdminOperationsTab,
   AdminReportDatasetKey,
   AdminReportFieldOption,
@@ -15,7 +16,6 @@ import type {
   AdminUserSegmentSnapshot,
 } from '~~/shared/types/admin-operations'
 import type { ApiResponse } from '~~/shared/types/domain'
-import type { AdminOperationsOverview } from '~~/shared/types/admin-operations'
 
 definePageMeta({
   layout: 'admin',
@@ -547,11 +547,11 @@ onBeforeUnmount(() => {
           v-for="tab in tabs"
           :key="tab.key"
           type="button"
-          class="px-3 py-3 text-left border-b border-r border-slate-200 transition-colors hover:bg-slate-50 last:border-r-0"
+          class="px-3 py-3 text-left border-b border-r border-slate-200 transition-colors last:border-r-0 hover:bg-slate-50"
           :class="activeTab === tab.key ? 'bg-slate-100' : 'bg-white'"
           @click="switchTab(tab.key)"
         >
-          <p class="text-[12px] font-semibold text-slate-900">
+          <p class="text-[12px] text-slate-900 font-semibold">
             {{ tab.label }}
           </p>
           <p class="text-[10px] text-slate-500 mt-1">
@@ -567,18 +567,18 @@ onBeforeUnmount(() => {
           <a-skeleton-line :rows="10" />
         </a-skeleton>
       </section>
-      <section v-else-if="errorByTab.overview" class="p-3 border border-rose-200 bg-rose-50 text-rose-700">
+      <section v-else-if="errorByTab.overview" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
         {{ errorByTab.overview }}
       </section>
       <template v-else-if="overview">
-        <section class="grid gap-2 md:grid-cols-3 xl:grid-cols-4">
+        <section class="gap-2 grid md:grid-cols-3 xl:grid-cols-4">
           <NuxtLink
             v-for="card in overview.cards"
             :key="card.key"
             :to="card.detailPath || '/admin/operations'"
             class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
           >
-            <p class="text-[10px] text-slate-500 uppercase tracking-wider">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
               {{ card.label }}
             </p>
             <p class="text-[18px] text-slate-900 font-bold mt-2">
@@ -587,29 +587,49 @@ onBeforeUnmount(() => {
           </NuxtLink>
         </section>
 
-        <section class="grid gap-3 xl:grid-cols-[1.3fr,0.9fr]">
+        <section class="gap-3 grid xl:grid-cols-[1.3fr,0.9fr]">
           <div class="border border-slate-200 bg-white overflow-hidden">
-            <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">
+            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
               Trend
             </div>
             <div class="overflow-auto">
-              <table class="min-w-full text-[11px]">
-                <thead class="bg-white text-slate-500">
+              <table class="text-[11px] min-w-full">
+                <thead class="text-slate-500 bg-white">
                   <tr>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">日期</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">新增用户</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">活跃用户</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">搜索事件</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">治理任务</th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      日期
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      新增用户
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      活跃用户
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      搜索事件
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      治理任务
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="item in overview.trend" :key="item.date" class="border-b border-slate-100">
-                    <td class="px-3 py-2">{{ item.date }}</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.newUsers) }}</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.activeUsers) }}</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.searchEvents) }}</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.governanceTasks) }}</td>
+                    <td class="px-3 py-2">
+                      {{ item.date }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.newUsers) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.activeUsers) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.searchEvents) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.governanceTasks) }}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -617,21 +637,21 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="border border-slate-200 bg-white overflow-hidden">
-            <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">
+            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
               Todo
             </div>
-            <div class="divide-y divide-slate-100">
+            <div class="divide-slate-100 divide-y">
               <NuxtLink
                 v-for="item in overview.todos"
                 :key="item.key"
                 :to="item.detailPath || '/admin/operations'"
-                class="block px-3 py-3 hover:bg-slate-50"
+                class="px-3 py-3 block hover:bg-slate-50"
               >
-                <div class="flex items-center justify-between gap-3">
-                  <p class="text-[12px] font-semibold text-slate-900">
+                <div class="flex gap-3 items-center justify-between">
+                  <p class="text-[12px] text-slate-900 font-semibold">
                     {{ item.label }}
                   </p>
-                  <span class="px-2 py-1 border text-[10px]" :class="toneClass(item.tone)">
+                  <span class="text-[10px] px-2 py-1 border" :class="toneClass(item.tone)">
                     {{ formatNumber(item.count) }}
                   </span>
                 </div>
@@ -651,22 +671,54 @@ onBeforeUnmount(() => {
           <a-skeleton-line :rows="10" />
         </a-skeleton>
       </section>
-      <section v-else-if="errorByTab.users" class="p-3 border border-rose-200 bg-rose-50 text-rose-700">
+      <section v-else-if="errorByTab.users" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
         {{ errorByTab.users }}
       </section>
       <template v-else-if="users">
-        <section class="grid gap-2 md:grid-cols-5">
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">用户总量</p><p class="text-[16px] font-bold text-slate-900 mt-2">{{ formatNumber(users.summary.totalUsers) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">活跃用户(7天)</p><p class="text-[16px] font-bold text-slate-900 mt-2">{{ formatNumber(users.summary.activeUsers7d) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">停用账号</p><p class="text-[16px] font-bold text-slate-900 mt-2">{{ formatNumber(users.summary.disabledUsers) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">平台管理员</p><p class="text-[16px] font-bold text-slate-900 mt-2">{{ formatNumber(users.summary.platformAdmins) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">新增用户(30天)</p><p class="text-[16px] font-bold text-slate-900 mt-2">{{ formatNumber(users.summary.newUsers30d) }}</p></div>
+        <section class="gap-2 grid md:grid-cols-5">
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              用户总量
+            </p><p class="text-[16px] text-slate-900 font-bold mt-2">
+              {{ formatNumber(users.summary.totalUsers) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              活跃用户(7天)
+            </p><p class="text-[16px] text-slate-900 font-bold mt-2">
+              {{ formatNumber(users.summary.activeUsers7d) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              停用账号
+            </p><p class="text-[16px] text-slate-900 font-bold mt-2">
+              {{ formatNumber(users.summary.disabledUsers) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              平台管理员
+            </p><p class="text-[16px] text-slate-900 font-bold mt-2">
+              {{ formatNumber(users.summary.platformAdmins) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              新增用户(30天)
+            </p><p class="text-[16px] text-slate-900 font-bold mt-2">
+              {{ formatNumber(users.summary.newUsers30d) }}
+            </p>
+          </div>
         </section>
 
-        <section class="grid gap-2 xl:grid-cols-3">
-          <div class="p-3 border border-slate-200 bg-white" v-for="(bucketList, label) in users.dimensions" :key="label">
-            <p class="text-[10px] text-slate-500 uppercase tracking-wider">{{ label }}</p>
-            <div class="space-y-2 mt-3">
+        <section class="gap-2 grid xl:grid-cols-3">
+          <div v-for="(bucketList, label) in users.dimensions" :key="label" class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              {{ label }}
+            </p>
+            <div class="mt-3 space-y-2">
               <div v-for="item in bucketList" :key="item.key" class="flex items-center justify-between">
                 <span class="text-slate-700">{{ item.label }}</span>
                 <span class="text-slate-900 font-semibold">{{ formatNumber(item.count) }}</span>
@@ -677,38 +729,76 @@ onBeforeUnmount(() => {
 
         <section class="border border-slate-200 bg-white overflow-hidden">
           <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-col gap-2 md:flex-row">
-            <input v-model="userFilters.keyword" class="px-2 py-1 border border-slate-200 bg-white" placeholder="搜索用户名" />
+            <input v-model="userFilters.keyword" class="px-2 py-1 border border-slate-200 bg-white" placeholder="搜索用户名">
             <select v-model="userFilters.accountStatus" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">全部账号状态</option>
-              <option v-for="item in users.dimensions.accountStatus" :key="item.key" :value="item.key">{{ item.label }}</option>
+              <option value="">
+                全部账号状态
+              </option>
+              <option v-for="item in users.dimensions.accountStatus" :key="item.key" :value="item.key">
+                {{ item.label }}
+              </option>
             </select>
             <select v-model="userFilters.primaryRole" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">全部平台角色</option>
-              <option v-for="item in users.dimensions.platformRole" :key="item.key" :value="item.key">{{ item.label }}</option>
+              <option value="">
+                全部平台角色
+              </option>
+              <option v-for="item in users.dimensions.platformRole" :key="item.key" :value="item.key">
+                {{ item.label }}
+              </option>
             </select>
           </div>
           <div class="overflow-auto">
-            <table class="min-w-full text-[11px]">
-              <thead class="bg-white text-slate-500">
+            <table class="text-[11px] min-w-full">
+              <thead class="text-slate-500 bg-white">
                 <tr>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">用户</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">角色/状态</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">工作区</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">项目</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">AI</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">资源搜索</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">最近活跃</th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    用户
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    角色/状态
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    工作区
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    项目
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    AI
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    资源搜索
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    最近活跃
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in userRows" :key="item.userId" class="border-b border-slate-100">
-                  <td class="px-3 py-2"><NuxtLink :to="item.detailPath || '/admin/users'" class="text-sky-700 hover:underline">{{ item.username }}</NuxtLink></td>
-                  <td class="px-3 py-2">{{ item.primaryRole }} / {{ item.accountStatus }}</td>
-                  <td class="px-3 py-2">{{ item.workspaceCount }} (团队 {{ item.teamWorkspaceCount }})</td>
-                  <td class="px-3 py-2">{{ item.projectCount }} / 完成 {{ item.completedProjectCount }}</td>
-                  <td class="px-3 py-2">{{ item.aiUsageBand }} / 会话 {{ item.aiSessionCount30d }}</td>
-                  <td class="px-3 py-2">{{ item.searchActivityBand }} / {{ item.resourceSearchCount30d }}</td>
-                  <td class="px-3 py-2">{{ formatDateTime(item.lastSeenAt) }}</td>
+                  <td class="px-3 py-2">
+                    <NuxtLink :to="item.detailPath || '/admin/users'" class="text-sky-700 hover:underline">
+                      {{ item.username }}
+                    </NuxtLink>
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.primaryRole }} / {{ item.accountStatus }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.workspaceCount }} (团队 {{ item.teamWorkspaceCount }})
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.projectCount }} / 完成 {{ item.completedProjectCount }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.aiUsageBand }} / 会话 {{ item.aiSessionCount30d }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.searchActivityBand }} / {{ item.resourceSearchCount30d }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ formatDateTime(item.lastSeenAt) }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -723,22 +813,54 @@ onBeforeUnmount(() => {
           <a-skeleton-line :rows="10" />
         </a-skeleton>
       </section>
-      <section v-else-if="errorByTab.content" class="p-3 border border-rose-200 bg-rose-50 text-rose-700">
+      <section v-else-if="errorByTab.content" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
         {{ errorByTab.content }}
       </section>
       <template v-else-if="content">
-        <section class="grid gap-2 md:grid-cols-3 xl:grid-cols-5">
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">竞赛数</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(content.summary.contestCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">资源数</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(content.summary.resourceCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">治理待处理</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(content.summary.governancePendingCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">30天搜索/点击</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(content.summary.searchCount30d) }} / {{ formatNumber(content.summary.clickCount30d) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">文档待处理/失败</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(content.summary.documentPendingCount) }} / {{ formatNumber(content.summary.documentFailedCount) }}</p></div>
+        <section class="gap-2 grid md:grid-cols-3 xl:grid-cols-5">
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              竞赛数
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(content.summary.contestCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              资源数
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(content.summary.resourceCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              治理待处理
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(content.summary.governancePendingCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              30天搜索/点击
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(content.summary.searchCount30d) }} / {{ formatNumber(content.summary.clickCount30d) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              文档待处理/失败
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(content.summary.documentPendingCount) }} / {{ formatNumber(content.summary.documentFailedCount) }}
+            </p>
+          </div>
         </section>
 
-        <section class="grid gap-3 xl:grid-cols-[0.8fr,0.8fr,1.2fr]">
+        <section class="gap-3 grid xl:grid-cols-[0.8fr,0.8fr,1.2fr]">
           <div class="p-3 border border-slate-200 bg-white">
-            <p class="text-[10px] text-slate-500 uppercase tracking-wider">分类分布</p>
-            <div class="space-y-2 mt-3">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              分类分布
+            </p>
+            <div class="mt-3 space-y-2">
               <div v-for="item in content.categoryDistribution" :key="item.key" class="flex items-center justify-between">
                 <span>{{ item.label }}</span>
                 <span class="font-semibold">{{ formatNumber(item.count) }}</span>
@@ -746,8 +868,10 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="p-3 border border-slate-200 bg-white">
-            <p class="text-[10px] text-slate-500 uppercase tracking-wider">治理分布</p>
-            <div class="space-y-2 mt-3">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              治理分布
+            </p>
+            <div class="mt-3 space-y-2">
               <div v-for="item in content.governanceDistribution" :key="item.key" class="flex items-center justify-between">
                 <span>{{ item.label }}</span>
                 <span class="font-semibold">{{ formatNumber(item.count) }}</span>
@@ -755,25 +879,47 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="border border-slate-200 bg-white overflow-hidden">
-            <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">需求洞察</div>
+            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
+              需求洞察
+            </div>
             <div class="overflow-auto">
-              <table class="min-w-full text-[11px]">
-                <thead class="bg-white text-slate-500">
+              <table class="text-[11px] min-w-full">
+                <thead class="text-slate-500 bg-white">
                   <tr>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">查询词</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">搜索</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">点击</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">零结果</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">CTR</th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      查询词
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      搜索
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      点击
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      零结果
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      CTR
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="item in content.searchInsights" :key="item.query" class="border-b border-slate-100">
-                    <td class="px-3 py-2">{{ item.query }}</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.searchCount) }}</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.clickCount) }}</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.zeroResultCount) }}</td>
-                    <td class="px-3 py-2">{{ formatPercent(item.ctr) }}</td>
+                    <td class="px-3 py-2">
+                      {{ item.query }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.searchCount) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.clickCount) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.zeroResultCount) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatPercent(item.ctr) }}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -784,32 +930,62 @@ onBeforeUnmount(() => {
         <section class="border border-slate-200 bg-white overflow-hidden">
           <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-col gap-2 md:flex-row">
             <select v-model="contentFilters.category" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">全部分类</option>
-              <option v-for="item in content.categoryDistribution" :key="item.key" :value="item.key">{{ item.label }}</option>
+              <option value="">
+                全部分类
+              </option>
+              <option v-for="item in content.categoryDistribution" :key="item.key" :value="item.key">
+                {{ item.label }}
+              </option>
             </select>
             <select v-model="contentFilters.governanceStatus" class="px-2 py-1 border border-slate-200 bg-white">
-              <option value="">全部治理状态</option>
-              <option v-for="item in content.governanceDistribution" :key="item.key" :value="item.key">{{ item.label }}</option>
+              <option value="">
+                全部治理状态
+              </option>
+              <option v-for="item in content.governanceDistribution" :key="item.key" :value="item.key">
+                {{ item.label }}
+              </option>
             </select>
           </div>
           <div class="overflow-auto">
-            <table class="min-w-full text-[11px]">
-              <thead class="bg-white text-slate-500">
+            <table class="text-[11px] min-w-full">
+              <thead class="text-slate-500 bg-white">
                 <tr>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">资源</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">竞赛/分类</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">状态</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">质量/价值/热度</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">30天搜索/点击</th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    资源
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    竞赛/分类
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    状态
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    质量/价值/热度
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    30天搜索/点击
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in contentRows" :key="item.resourceId" class="border-b border-slate-100">
-                  <td class="px-3 py-2"><NuxtLink :to="item.detailPath || '/admin/resources'" class="text-sky-700 hover:underline">{{ item.title }}</NuxtLink></td>
-                  <td class="px-3 py-2">{{ item.contestName }} / {{ item.category }}</td>
-                  <td class="px-3 py-2">{{ item.status }} / {{ item.governanceStatus }}</td>
-                  <td class="px-3 py-2">{{ item.qualityScore }} / {{ item.valueScore }} / {{ item.hotScore }}</td>
-                  <td class="px-3 py-2">{{ item.searchCount30d }} / {{ item.clickCount30d }}</td>
+                  <td class="px-3 py-2">
+                    <NuxtLink :to="item.detailPath || '/admin/resources'" class="text-sky-700 hover:underline">
+                      {{ item.title }}
+                    </NuxtLink>
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.contestName }} / {{ item.category }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.status }} / {{ item.governanceStatus }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.qualityScore }} / {{ item.valueScore }} / {{ item.hotScore }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.searchCount30d }} / {{ item.clickCount30d }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -824,35 +1000,79 @@ onBeforeUnmount(() => {
           <a-skeleton-line :rows="10" />
         </a-skeleton>
       </section>
-      <section v-else-if="errorByTab.revenue" class="p-3 border border-rose-200 bg-rose-50 text-rose-700">
+      <section v-else-if="errorByTab.revenue" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
         {{ errorByTab.revenue }}
       </section>
       <template v-else-if="revenue">
-        <section class="grid gap-2 md:grid-cols-3 xl:grid-cols-5">
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">团队工作区</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(revenue.summary.teamWorkspaceCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">已绑套餐</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(revenue.summary.planBoundWorkspaceCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">无套餐</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(revenue.summary.noPlanWorkspaceCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">超限工作区</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(revenue.summary.overSeatWorkspaceCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">估算金额</p><p class="text-[16px] font-bold mt-2">{{ formatYuan(revenue.summary.estimatedAmountYuan) }}</p></div>
+        <section class="gap-2 grid md:grid-cols-3 xl:grid-cols-5">
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              团队工作区
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(revenue.summary.teamWorkspaceCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              已绑套餐
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(revenue.summary.planBoundWorkspaceCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              无套餐
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(revenue.summary.noPlanWorkspaceCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              超限工作区
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(revenue.summary.overSeatWorkspaceCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              估算金额
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatYuan(revenue.summary.estimatedAmountYuan) }}
+            </p>
+          </div>
         </section>
 
-        <section class="grid gap-3 xl:grid-cols-[0.8fr,1.2fr]">
+        <section class="gap-3 grid xl:grid-cols-[0.8fr,1.2fr]">
           <div class="border border-slate-200 bg-white overflow-hidden">
-            <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">套餐分布</div>
+            <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
+              套餐分布
+            </div>
             <div class="overflow-auto">
-              <table class="min-w-full text-[11px]">
-                <thead class="bg-white text-slate-500">
+              <table class="text-[11px] min-w-full">
+                <thead class="text-slate-500 bg-white">
                   <tr>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">套餐</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">工作区数</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">估算金额</th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      套餐
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      工作区数
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      估算金额
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="item in revenue.planDistribution" :key="item.planCode" class="border-b border-slate-100">
-                    <td class="px-3 py-2">{{ item.planName }} ({{ item.planCode }})</td>
-                    <td class="px-3 py-2">{{ formatNumber(item.workspaceCount) }}</td>
-                    <td class="px-3 py-2">{{ formatYuan(item.estimatedAmountYuan) }}</td>
+                    <td class="px-3 py-2">
+                      {{ item.planName }} ({{ item.planCode }})
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatNumber(item.workspaceCount) }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatYuan(item.estimatedAmountYuan) }}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -862,33 +1082,65 @@ onBeforeUnmount(() => {
           <div class="border border-slate-200 bg-white overflow-hidden">
             <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-col gap-2 md:flex-row">
               <select v-model="revenueFilters.planCode" class="px-2 py-1 border border-slate-200 bg-white">
-                <option value="">全部套餐</option>
-                <option v-for="item in revenue.planDistribution" :key="item.planCode" :value="item.planCode">{{ item.planCode }}</option>
+                <option value="">
+                  全部套餐
+                </option>
+                <option v-for="item in revenue.planDistribution" :key="item.planCode" :value="item.planCode">
+                  {{ item.planCode }}
+                </option>
               </select>
               <select v-model="revenueFilters.hasPlan" class="px-2 py-1 border border-slate-200 bg-white">
-                <option value="">全部工作区</option>
-                <option value="yes">已绑套餐</option>
-                <option value="no">无套餐</option>
+                <option value="">
+                  全部工作区
+                </option>
+                <option value="yes">
+                  已绑套餐
+                </option>
+                <option value="no">
+                  无套餐
+                </option>
               </select>
             </div>
             <div class="overflow-auto">
-              <table class="min-w-full text-[11px]">
-                <thead class="bg-white text-slate-500">
+              <table class="text-[11px] min-w-full">
+                <thead class="text-slate-500 bg-white">
                   <tr>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">工作区</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">套餐/周期</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">团队席位</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">项目席位</th>
-                    <th class="px-3 py-2 text-left border-b border-slate-200">估算金额</th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      工作区
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      套餐/周期
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      团队席位
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      项目席位
+                    </th>
+                    <th class="px-3 py-2 text-left border-b border-slate-200">
+                      估算金额
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="item in revenueRows" :key="item.workspaceId" class="border-b border-slate-100">
-                    <td class="px-3 py-2"><NuxtLink :to="item.detailPath || '/admin/organizations'" class="text-sky-700 hover:underline">{{ item.workspaceName }}</NuxtLink></td>
-                    <td class="px-3 py-2">{{ item.planName }} / {{ item.billingCycle }}</td>
-                    <td class="px-3 py-2">{{ item.seatUsed }} / {{ item.seatLimit }}</td>
-                    <td class="px-3 py-2">{{ item.projectSeatUsedTotal }} / {{ item.projectSeatLimitTotal }}</td>
-                    <td class="px-3 py-2">{{ formatYuan(item.estimatedAmountYuan) }}</td>
+                    <td class="px-3 py-2">
+                      <NuxtLink :to="item.detailPath || '/admin/organizations'" class="text-sky-700 hover:underline">
+                        {{ item.workspaceName }}
+                      </NuxtLink>
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ item.planName }} / {{ item.billingCycle }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ item.seatUsed }} / {{ item.seatLimit }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ item.projectSeatUsedTotal }} / {{ item.projectSeatLimitTotal }}
+                    </td>
+                    <td class="px-3 py-2">
+                      {{ formatYuan(item.estimatedAmountYuan) }}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -904,39 +1156,91 @@ onBeforeUnmount(() => {
           <a-skeleton-line :rows="10" />
         </a-skeleton>
       </section>
-      <section v-else-if="errorByTab.efficiency" class="p-3 border border-rose-200 bg-rose-50 text-rose-700">
+      <section v-else-if="errorByTab.efficiency" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
         {{ errorByTab.efficiency }}
       </section>
       <template v-else-if="efficiency">
-        <section class="grid gap-2 md:grid-cols-4">
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">预览成功率(24h)</p><p class="text-[16px] font-bold mt-2">{{ formatPercent(efficiency.summary.previewSuccessRate24h) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">预览排队</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(efficiency.summary.previewQueuedCount) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">飞书运行(7天)</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(efficiency.summary.feishuRunCount7d) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">AI 活跃会话(7天)</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(efficiency.summary.aiActiveSessions7d) }}</p></div>
+        <section class="gap-2 grid md:grid-cols-4">
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              预览成功率(24h)
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatPercent(efficiency.summary.previewSuccessRate24h) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              预览排队
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(efficiency.summary.previewQueuedCount) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              飞书运行(7天)
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(efficiency.summary.feishuRunCount7d) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              AI 活跃会话(7天)
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(efficiency.summary.aiActiveSessions7d) }}
+            </p>
+          </div>
         </section>
 
         <section class="border border-slate-200 bg-white overflow-hidden">
-          <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">Systems</div>
+          <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
+            Systems
+          </div>
           <div class="overflow-auto">
-            <table class="min-w-full text-[11px]">
-              <thead class="bg-white text-slate-500">
+            <table class="text-[11px] min-w-full">
+              <thead class="text-slate-500 bg-white">
                 <tr>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">系统</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">健康度</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">吞吐</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">成功率</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">积压</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">最近结果</th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    系统
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    健康度
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    吞吐
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    成功率
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    积压
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    最近结果
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in efficiency.systems" :key="item.key" class="border-b border-slate-100">
-                  <td class="px-3 py-2"><NuxtLink :to="item.detailPath || '/admin/operations'" class="text-sky-700 hover:underline">{{ item.label }}</NuxtLink></td>
-                  <td class="px-3 py-2"><span class="px-2 py-1 border text-[10px]" :class="toneClass(item.health)">{{ item.health }}</span></td>
-                  <td class="px-3 py-2">{{ formatNumber(item.throughput) }} / {{ item.throughputLabel }}</td>
-                  <td class="px-3 py-2">{{ formatPercent(item.successRate) }}</td>
-                  <td class="px-3 py-2">{{ formatNumber(item.backlog) }}</td>
-                  <td class="px-3 py-2">{{ item.lastResult }}</td>
+                  <td class="px-3 py-2">
+                    <NuxtLink :to="item.detailPath || '/admin/operations'" class="text-sky-700 hover:underline">
+                      {{ item.label }}
+                    </NuxtLink>
+                  </td>
+                  <td class="px-3 py-2">
+                    <span class="text-[10px] px-2 py-1 border" :class="toneClass(item.health)">{{ item.health }}</span>
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ formatNumber(item.throughput) }} / {{ item.throughputLabel }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ formatPercent(item.successRate) }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ formatNumber(item.backlog) }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.lastResult }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -944,23 +1248,43 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="border border-slate-200 bg-white overflow-hidden">
-          <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">Recent Failures</div>
+          <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
+            Recent Failures
+          </div>
           <div class="overflow-auto">
-            <table class="min-w-full text-[11px]">
-              <thead class="bg-white text-slate-500">
+            <table class="text-[11px] min-w-full">
+              <thead class="text-slate-500 bg-white">
                 <tr>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">来源</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">标题</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">时间</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">原因</th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    来源
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    标题
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    时间
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    原因
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in efficiency.recentFailures" :key="item.id" class="border-b border-slate-100">
-                  <td class="px-3 py-2">{{ item.source }}</td>
-                  <td class="px-3 py-2"><NuxtLink :to="item.detailPath || '/admin/operations'" class="text-sky-700 hover:underline">{{ item.title }}</NuxtLink></td>
-                  <td class="px-3 py-2">{{ formatDateTime(item.occurredAt) }}</td>
-                  <td class="px-3 py-2">{{ item.reason }}</td>
+                  <td class="px-3 py-2">
+                    {{ item.source }}
+                  </td>
+                  <td class="px-3 py-2">
+                    <NuxtLink :to="item.detailPath || '/admin/operations'" class="text-sky-700 hover:underline">
+                      {{ item.title }}
+                    </NuxtLink>
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ formatDateTime(item.occurredAt) }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.reason }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -975,42 +1299,94 @@ onBeforeUnmount(() => {
           <a-skeleton-line :rows="10" />
         </a-skeleton>
       </section>
-      <section v-else-if="errorByTab.risks" class="p-3 border border-rose-200 bg-rose-50 text-rose-700">
+      <section v-else-if="errorByTab.risks" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
         {{ errorByTab.risks }}
       </section>
       <template v-else-if="risks">
-        <section class="p-3 border border-sky-200 bg-sky-50 text-sky-700">
+        <section class="text-sky-700 p-3 border border-sky-200 bg-sky-50">
           风险页每 30 秒自动轮询刷新一次，当前刷新粒度为准实时，不引入新的实时总线。
         </section>
-        <section class="grid gap-2 md:grid-cols-4">
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">总风险数</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(risks.summary.total) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">Critical</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(risks.summary.critical) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">High</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(risks.summary.high) }}</p></div>
-          <div class="p-3 border border-slate-200 bg-white"><p class="text-[10px] text-slate-500 uppercase tracking-wider">Medium</p><p class="text-[16px] font-bold mt-2">{{ formatNumber(risks.summary.medium) }}</p></div>
+        <section class="gap-2 grid md:grid-cols-4">
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              总风险数
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(risks.summary.total) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              Critical
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(risks.summary.critical) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              High
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(risks.summary.high) }}
+            </p>
+          </div>
+          <div class="p-3 border border-slate-200 bg-white">
+            <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+              Medium
+            </p><p class="text-[16px] font-bold mt-2">
+              {{ formatNumber(risks.summary.medium) }}
+            </p>
+          </div>
         </section>
 
         <section class="border border-slate-200 bg-white overflow-hidden">
-          <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">Alerts</div>
+          <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
+            Alerts
+          </div>
           <div class="overflow-auto">
-            <table class="min-w-full text-[11px]">
-              <thead class="bg-white text-slate-500">
+            <table class="text-[11px] min-w-full">
+              <thead class="text-slate-500 bg-white">
                 <tr>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">级别</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">来源</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">标题</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">当前值/阈值</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">检测时间</th>
-                  <th class="px-3 py-2 text-left border-b border-slate-200">说明</th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    级别
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    来源
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    标题
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    当前值/阈值
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    检测时间
+                  </th>
+                  <th class="px-3 py-2 text-left border-b border-slate-200">
+                    说明
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in risks.alerts" :key="item.id" class="border-b border-slate-100">
-                  <td class="px-3 py-2"><span class="px-2 py-1 border text-[10px]" :class="toneClass(item.severity)">{{ item.severity }}</span></td>
-                  <td class="px-3 py-2">{{ item.source }}</td>
-                  <td class="px-3 py-2"><NuxtLink :to="item.detailPath || '/admin/operations'" class="text-sky-700 hover:underline">{{ item.title }}</NuxtLink></td>
-                  <td class="px-3 py-2">{{ item.currentValue }} / {{ item.threshold }}</td>
-                  <td class="px-3 py-2">{{ formatDateTime(item.detectedAt) }}</td>
-                  <td class="px-3 py-2">{{ item.description }}</td>
+                  <td class="px-3 py-2">
+                    <span class="text-[10px] px-2 py-1 border" :class="toneClass(item.severity)">{{ item.severity }}</span>
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.source }}
+                  </td>
+                  <td class="px-3 py-2">
+                    <NuxtLink :to="item.detailPath || '/admin/operations'" class="text-sky-700 hover:underline">
+                      {{ item.title }}
+                    </NuxtLink>
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.currentValue }} / {{ item.threshold }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ formatDateTime(item.detectedAt) }}
+                  </td>
+                  <td class="px-3 py-2">
+                    {{ item.description }}
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -1025,33 +1401,33 @@ onBeforeUnmount(() => {
           <a-skeleton-line :rows="10" />
         </a-skeleton>
       </section>
-      <section v-else-if="errorByTab.reports" class="p-3 border border-rose-200 bg-rose-50 text-rose-700">
+      <section v-else-if="errorByTab.reports" class="text-rose-700 p-3 border border-rose-200 bg-rose-50">
         {{ errorByTab.reports }}
       </section>
       <template v-else-if="reportSchema && currentDatasetSchema">
-        <section class="border border-slate-200 bg-white p-3 space-y-3">
-          <div class="grid gap-3 md:grid-cols-4">
+        <section class="p-3 border border-slate-200 bg-white space-y-3">
+          <div class="gap-3 grid md:grid-cols-4">
             <label class="space-y-1">
-              <span class="text-[10px] text-slate-500 uppercase tracking-wider">数据集</span>
-              <select v-model="reportForm.dataset" class="w-full px-2 py-1 border border-slate-200 bg-white">
+              <span class="text-[10px] text-slate-500 tracking-wider uppercase">数据集</span>
+              <select v-model="reportForm.dataset" class="px-2 py-1 border border-slate-200 bg-white w-full">
                 <option v-for="dataset in reportSchema.datasets" :key="dataset.key" :value="dataset.key">{{ dataset.label }}</option>
               </select>
             </label>
             <label class="space-y-1">
-              <span class="text-[10px] text-slate-500 uppercase tracking-wider">维度</span>
-              <select v-model="reportForm.dimensions" multiple class="w-full min-h-[120px] px-2 py-1 border border-slate-200 bg-white">
+              <span class="text-[10px] text-slate-500 tracking-wider uppercase">维度</span>
+              <select v-model="reportForm.dimensions" multiple class="px-2 py-1 border border-slate-200 bg-white min-h-[120px] w-full">
                 <option v-for="item in currentDatasetSchema.dimensions" :key="item.key" :value="item.key">{{ item.label }}</option>
               </select>
             </label>
             <label class="space-y-1">
-              <span class="text-[10px] text-slate-500 uppercase tracking-wider">指标</span>
-              <select v-model="reportForm.metrics" multiple class="w-full min-h-[120px] px-2 py-1 border border-slate-200 bg-white">
+              <span class="text-[10px] text-slate-500 tracking-wider uppercase">指标</span>
+              <select v-model="reportForm.metrics" multiple class="px-2 py-1 border border-slate-200 bg-white min-h-[120px] w-full">
                 <option v-for="item in currentDatasetSchema.metrics" :key="item.key" :value="item.key">{{ item.label }}</option>
               </select>
             </label>
             <label class="space-y-1">
-              <span class="text-[10px] text-slate-500 uppercase tracking-wider">预览行数</span>
-              <select v-model="reportForm.limit" class="w-full px-2 py-1 border border-slate-200 bg-white">
+              <span class="text-[10px] text-slate-500 tracking-wider uppercase">预览行数</span>
+              <select v-model="reportForm.limit" class="px-2 py-1 border border-slate-200 bg-white w-full">
                 <option v-for="item in reportLimitOptions" :key="item" :value="item">{{ item }}</option>
               </select>
             </label>
@@ -1059,24 +1435,38 @@ onBeforeUnmount(() => {
 
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <p class="text-[10px] text-slate-500 uppercase tracking-wider">过滤条件</p>
-              <button type="button" class="px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50" @click="addReportFilter">新增条件</button>
+              <p class="text-[10px] text-slate-500 tracking-wider uppercase">
+                过滤条件
+              </p>
+              <button type="button" class="px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50" @click="addReportFilter">
+                新增条件
+              </button>
             </div>
-            <div v-for="(filter, index) in reportFilters" :key="`${filter.field}-${index}`" class="grid gap-2 md:grid-cols-[1fr,0.8fr,1fr,auto]">
+            <div v-for="(filter, index) in reportFilters" :key="`${filter.field}-${index}`" class="gap-2 grid md:grid-cols-[1fr,0.8fr,1fr,auto]">
               <select v-model="filter.field" class="px-2 py-1 border border-slate-200 bg-white" @change="syncReportDefaults()">
-                <option v-for="field in currentDatasetSchema.filters" :key="field.key" :value="field.key">{{ field.label }}</option>
+                <option v-for="field in currentDatasetSchema.filters" :key="field.key" :value="field.key">
+                  {{ field.label }}
+                </option>
               </select>
               <select v-model="filter.operator" class="px-2 py-1 border border-slate-200 bg-white">
-                <option v-for="operator in (getReportField(filter.field)?.operators || ['eq'])" :key="operator" :value="operator">{{ operator }}</option>
+                <option v-for="operator in (getReportField(filter.field)?.operators || ['eq'])" :key="operator" :value="operator">
+                  {{ operator }}
+                </option>
               </select>
-              <input v-model="filter.value" class="px-2 py-1 border border-slate-200 bg-white" placeholder="条件值" />
-              <button type="button" class="px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50" @click="removeReportFilter(index)">删除</button>
+              <input v-model="filter.value" class="px-2 py-1 border border-slate-200 bg-white" placeholder="条件值">
+              <button type="button" class="px-2 py-1 border border-slate-200 bg-white hover:bg-slate-50" @click="removeReportFilter(index)">
+                删除
+              </button>
             </div>
           </div>
 
           <div class="flex flex-wrap gap-2">
-            <button type="button" class="px-3 py-2 border border-slate-200 bg-slate-900 text-white hover:bg-slate-800" :disabled="reportBusy" @click="queryReport">{{ reportBusy ? '查询中...' : '预览报表' }}</button>
-            <button type="button" class="px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50" :disabled="exportBusy" @click="exportReport">{{ exportBusy ? '导出中...' : '导出 CSV' }}</button>
+            <button type="button" class="text-white px-3 py-2 border border-slate-200 bg-slate-900 hover:bg-slate-800" :disabled="reportBusy" @click="queryReport">
+              {{ reportBusy ? '查询中...' : '预览报表' }}
+            </button>
+            <button type="button" class="px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50" :disabled="exportBusy" @click="exportReport">
+              {{ exportBusy ? '导出中...' : '导出 CSV' }}
+            </button>
           </div>
           <p v-if="reportError" class="text-rose-700">
             {{ reportError }}
@@ -1084,14 +1474,16 @@ onBeforeUnmount(() => {
         </section>
 
         <section v-if="reportPreview" class="border border-slate-200 bg-white overflow-hidden">
-          <div class="px-3 py-2 border-b border-slate-200 bg-slate-50 text-[10px] font-bold tracking-wider uppercase text-slate-500">
+          <div class="text-[10px] text-slate-500 tracking-wider font-bold px-3 py-2 border-b border-slate-200 bg-slate-50 uppercase">
             Preview / 共 {{ formatNumber(reportPreview.total) }} 组
           </div>
           <div class="overflow-auto">
-            <table class="min-w-full text-[11px]">
-              <thead class="bg-white text-slate-500">
+            <table class="text-[11px] min-w-full">
+              <thead class="text-slate-500 bg-white">
                 <tr>
-                  <th v-for="column in reportPreview.columns" :key="column.key" class="px-3 py-2 text-left border-b border-slate-200">{{ column.label }}</th>
+                  <th v-for="column in reportPreview.columns" :key="column.key" class="px-3 py-2 text-left border-b border-slate-200">
+                    {{ column.label }}
+                  </th>
                 </tr>
               </thead>
               <tbody>

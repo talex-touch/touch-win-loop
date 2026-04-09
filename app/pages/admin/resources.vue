@@ -116,9 +116,9 @@ onMounted(async () => {
 
       <section class="p-4 border border-slate-200 rounded-lg bg-white">
         <div class="overflow-x-auto">
-          <table class="w-full text-xs">
+          <table class="text-xs w-full">
             <thead>
-              <tr class="text-left text-slate-500 border-b border-slate-200">
+              <tr class="text-slate-500 text-left border-b border-slate-200">
                 <th class="py-2 pr-3">
                   竞赛
                 </th>
@@ -169,13 +169,13 @@ onMounted(async () => {
                 <td class="py-3 pr-3">
                   {{ row.analyzedResources }}
                 </td>
-                <td class="py-3 pr-3 text-amber-600">
+                <td class="text-amber-600 py-3 pr-3">
                   {{ row.reviewResources }}
                 </td>
-                <td class="py-3 pr-3 text-rose-600">
+                <td class="text-rose-600 py-3 pr-3">
                   {{ row.suggestedInvalidResources }}
                 </td>
-                <td class="py-3 pr-3 text-slate-600">
+                <td class="text-slate-600 py-3 pr-3">
                   {{ row.suggestedArchiveResources }}
                 </td>
                 <td class="py-3 pr-3">

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import type { Awareness } from 'y-protocols/awareness'
 import type { WorkspaceFontSizePreset } from '~~/shared/types/domain'
+import type { RichTextEditorCommand } from '~/components/editor/rich-text-editor-commands'
 import type {
   WorkspaceCollabAwarenessSelectionState,
   WorkspaceCollabSelectionSummary,
 } from '~/components/workspace/collab/presence'
-import type { RichTextEditorCommand } from '~/components/editor/rich-text-editor-commands'
 import { Extension } from '@tiptap/core'
 import Collaboration from '@tiptap/extension-collaboration'
 import Dropcursor from '@tiptap/extension-dropcursor'
@@ -18,8 +18,8 @@ import {
   ySyncPluginKey,
 } from '@tiptap/y-tiptap'
 import * as Y from 'yjs'
-import { buildRichTextEditorCommands } from '~/components/editor/rich-text-editor-commands'
 import { createCollabMarkdownBaseExtensions } from '~~/shared/utils/collab-rich-text-schema'
+import { buildRichTextEditorCommands } from '~/components/editor/rich-text-editor-commands'
 
 interface RichTextEditorCurrentUser {
   id: string
@@ -171,8 +171,8 @@ const slashMenuStyle = computed(() => {
 const selectionToolbarStyle = computed(() => {
   const metrics = resolveSelectionToolbarMetrics()
   return {
-    top: `${selectionToolbarState.top}px`,
-    left: `${selectionToolbarState.left}px`,
+    'top': `${selectionToolbarState.top}px`,
+    'left': `${selectionToolbarState.left}px`,
     '--rich-text-editor-selection-toolbar-height': `${metrics.height}px`,
     '--rich-text-editor-selection-toolbar-padding': `${metrics.padding}px`,
     '--rich-text-editor-selection-toolbar-gap': `${metrics.gap}px`,
@@ -572,8 +572,8 @@ function resolveSelectionToolbarTrigger() {
   const preferredBelow = Math.max(start.bottom, end.bottom) + 12
   const top = import.meta.client
     ? preferredAbove >= 12
-        ? preferredAbove
-        : Math.max(12, Math.min(preferredBelow, window.innerHeight - menuHeight - 12))
+      ? preferredAbove
+      : Math.max(12, Math.min(preferredBelow, window.innerHeight - menuHeight - 12))
     : preferredAbove
 
   return {

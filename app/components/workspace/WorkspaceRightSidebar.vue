@@ -535,7 +535,7 @@ function requestExportIssueReport() {
 
           <div v-if="aiMode === 'defense'" class="space-y-2">
             <div class="p-3 border border-slate-200 rounded bg-slate-50">
-              <div class="flex items-center justify-between gap-2">
+              <div class="flex gap-2 items-center justify-between">
                 <div>
                   <div class="text-xs text-slate-700 font-semibold">
                     答辩状态
@@ -561,11 +561,11 @@ function requestExportIssueReport() {
             </div>
 
             <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
-              <div class="flex items-center justify-between gap-2">
+              <div class="flex gap-2 items-center justify-between">
                 <div class="text-xs text-slate-700 font-semibold">
                   评委人设
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex gap-2 items-center">
                   <button
                     class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
                     @click="emit('importDefensePersonas')"
@@ -584,16 +584,16 @@ function requestExportIssueReport() {
               <div v-if="defensePersonasLoading" class="text-[11px] text-slate-500">
                 人设加载中...
               </div>
-              <div v-else-if="defensePersonas.length === 0" class="text-[11px] text-slate-500 border border-dashed border-slate-200 rounded p-3">
+              <div v-else-if="defensePersonas.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
                 当前项目还没有答辩人设。可先导入比赛预设，再按项目需要调整。
               </div>
               <div v-else class="space-y-2">
                 <div
                   v-for="persona in defensePersonas"
                   :key="persona.id"
-                  class="border border-slate-200 rounded p-3 bg-slate-50/60"
+                  class="p-3 border border-slate-200 rounded bg-slate-50/60"
                 >
-                  <div class="flex items-start justify-between gap-2">
+                  <div class="flex gap-2 items-start justify-between">
                     <div>
                       <div class="text-[11px] text-slate-800 font-semibold">
                         {{ persona.name }}
@@ -602,21 +602,21 @@ function requestExportIssueReport() {
                         {{ persona.judgeType }} · {{ persona.enabled ? '已启用' : '已停用' }}
                       </div>
                     </div>
-                    <div class="flex items-center gap-1">
+                    <div class="flex gap-1 items-center">
                       <button
-                        class="text-[10px] px-2 h-6 border border-slate-300 rounded bg-white hover:bg-slate-100"
+                        class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
                         @click="quickToggleDefensePersona(persona)"
                       >
                         {{ persona.enabled ? '停用' : '启用' }}
                       </button>
                       <button
-                        class="text-[10px] px-2 h-6 border border-slate-300 rounded bg-white hover:bg-slate-100"
+                        class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
                         @click="openEditDefensePersonaForm(persona)"
                       >
                         编辑
                       </button>
                       <button
-                        class="text-[10px] px-2 h-6 border border-rose-200 text-rose-600 rounded bg-white hover:bg-rose-50"
+                        class="text-[10px] text-rose-600 px-2 border border-rose-200 rounded bg-white h-6 hover:bg-rose-50"
                         @click="emit('deleteDefensePersona', persona.id)"
                       >
                         删除
@@ -632,34 +632,42 @@ function requestExportIssueReport() {
                 </div>
               </div>
 
-              <div v-if="defensePersonaFormVisible" class="border border-blue-200 rounded p-3 bg-blue-50/60 space-y-2">
-                <div class="flex items-center justify-between gap-2">
+              <div v-if="defensePersonaFormVisible" class="p-3 border border-blue-200 rounded bg-blue-50/60 space-y-2">
+                <div class="flex gap-2 items-center justify-between">
                   <div class="text-[11px] text-slate-800 font-semibold">
                     {{ defensePersonaEditingId ? '编辑人设' : '新建人设' }}
                   </div>
                   <button
-                    class="text-[10px] px-2 h-6 border border-slate-300 rounded bg-white hover:bg-slate-100"
+                    class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
                     @click="defensePersonaFormVisible = false"
                   >
                     取消
                   </button>
                 </div>
-                <select v-model="defensePersonaForm.judgeType" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white">
-                  <option value="technical">technical</option>
-                  <option value="business">business</option>
-                  <option value="expression">expression</option>
-                  <option value="custom">custom</option>
+                <select v-model="defensePersonaForm.judgeType" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full">
+                  <option value="technical">
+                    technical
+                  </option>
+                  <option value="business">
+                    business
+                  </option>
+                  <option value="expression">
+                    expression
+                  </option>
+                  <option value="custom">
+                    custom
+                  </option>
                 </select>
-                <input v-model="defensePersonaForm.name" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white" placeholder="人设名称" />
-                <textarea v-model="defensePersonaForm.summary" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white h-16 resize-none" placeholder="一句话说明评委关注点" />
-                <textarea v-model="defensePersonaForm.systemPrompt" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white h-28 resize-none" placeholder="系统提示词" />
-                <textarea v-model="defensePersonaForm.focusAreasText" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1.5 bg-white h-16 resize-none" placeholder="关注点，每行一个" />
-                <label class="flex items-center gap-2 text-[11px] text-slate-600">
+                <input v-model="defensePersonaForm.name" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full" placeholder="人设名称">
+                <textarea v-model="defensePersonaForm.summary" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="一句话说明评委关注点" />
+                <textarea v-model="defensePersonaForm.systemPrompt" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-28 w-full resize-none" placeholder="系统提示词" />
+                <textarea v-model="defensePersonaForm.focusAreasText" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="关注点，每行一个" />
+                <label class="text-[11px] text-slate-600 flex gap-2 items-center">
                   <input v-model="defensePersonaForm.enabled" type="checkbox">
                   新建后立即启用
                 </label>
                 <button
-                  class="text-[11px] font-semibold px-3 border border-blue-500 text-white rounded bg-blue-600 h-8 hover:bg-blue-500 disabled:opacity-60"
+                  class="text-[11px] text-white font-semibold px-3 border border-blue-500 rounded bg-blue-600 h-8 hover:bg-blue-500 disabled:opacity-60"
                   :disabled="!defensePersonaForm.name.trim() || !defensePersonaForm.systemPrompt.trim()"
                   @click="submitDefensePersonaForm"
                 >

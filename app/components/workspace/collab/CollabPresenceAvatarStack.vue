@@ -619,7 +619,7 @@ onBeforeUnmount(() => {
     :style="rootStyle"
     data-testid="collab-presence-avatar-stack"
   >
-    <div class="flex items-center justify-end pointer-events-auto">
+    <div class="flex pointer-events-auto items-center justify-end">
       <button
         v-for="(user, index) in visibleUsers"
         :key="user.userId"

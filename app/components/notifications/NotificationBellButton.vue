@@ -33,7 +33,7 @@ function openDrawer() {
 </script>
 
 <template>
-  <div class="relative inline-flex">
+  <div class="inline-flex relative">
     <button
       type="button"
       aria-label="打开通知中心"
@@ -105,7 +105,10 @@ function openDrawer() {
 .notification-bell-button__icon--rail {
   font-size: 23px;
   line-height: 1;
-  font-variation-settings: 'FILL' 0, 'wght' 320, 'opsz' 24;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 320,
+    'opsz' 24;
 }
 
 .notification-bell-button__badge {

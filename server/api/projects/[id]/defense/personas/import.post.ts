@@ -4,12 +4,12 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import {
   createProjectDefensePersona,
   listProjectDefensePersonas,
   patchProjectDefensePersona,
 } from '~~/server/utils/project-defense-store'
-import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 
 interface ImportDefensePersonaBody {

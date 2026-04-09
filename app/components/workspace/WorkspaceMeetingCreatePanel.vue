@@ -220,7 +220,7 @@ watch(currentUser, (next, previous) => {
           <span class="material-symbols-outlined text-sm">{{ mode === 'audio' ? 'headset_mic' : 'video_call' }}</span>
           {{ panelTitle }}
         </div>
-        <h2 class="text-2xl font-semibold text-slate-900">
+        <h2 class="text-2xl text-slate-900 font-semibold">
           {{ panelTitle }}
         </h2>
         <p class="text-sm text-slate-600">

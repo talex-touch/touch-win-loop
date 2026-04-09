@@ -250,7 +250,7 @@ onMounted(async () => {
           </option>
         </select>
       </div>
-      <div class="gap-2 grid md:grid-cols-4 mt-2">
+      <div class="mt-2 gap-2 grid md:grid-cols-4">
         <select v-model="year" class="dense-input">
           <option value="">
             全部年份
@@ -350,7 +350,7 @@ onMounted(async () => {
             <span
               v-for="tag in item.aiProfile?.aiTags || []"
               :key="`${item.id}-${tag}`"
-              class="text-[11px] px-2 py-1 rounded bg-blue-50 text-blue-700"
+              class="text-[11px] text-blue-700 px-2 py-1 rounded bg-blue-50"
             >
               {{ tag }}
             </span>
@@ -364,7 +364,7 @@ onMounted(async () => {
               <span
                 v-for="relation in item.aiProfile.relatedResources"
                 :key="relation.id"
-                class="text-[11px] px-2 py-1 rounded bg-emerald-50 text-emerald-700"
+                class="text-[11px] text-emerald-700 px-2 py-1 rounded bg-emerald-50"
               >
                 {{ relation.targetTitle }} ｜ {{ relation.relationType }}
               </span>

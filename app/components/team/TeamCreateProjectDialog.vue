@@ -153,7 +153,7 @@ function splitSeedTags(value: string): string[] {
           </section>
 
           <section class="p-3 border border-slate-200 rounded-xl bg-slate-50/80 space-y-3">
-            <label class="flex items-center justify-between gap-3">
+            <label class="flex gap-3 items-center justify-between">
               <span class="text-xs text-slate-700 font-medium">创建后自动生成 AI 智能选题板</span>
               <input
                 :checked="topicBoardSeed.autoGenerate !== false"
@@ -163,7 +163,7 @@ function splitSeedTags(value: string): string[] {
             </label>
 
             <template v-if="topicBoardSeed.autoGenerate !== false">
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div class="gap-3 grid grid-cols-1 sm:grid-cols-2">
                 <label class="block">
                   <span class="text-xs text-slate-600 font-medium">所属领域</span>
                   <input

@@ -195,16 +195,16 @@ onMounted(() => {
   <NuxtPage v-if="!isDashboardIndex" />
   <section
     v-else
-    class="flex h-full min-h-0 w-full min-w-0 overflow-hidden"
+    class="flex h-full min-h-0 min-w-0 w-full overflow-hidden"
     data-testid="dashboard-loopy-home"
   >
-    <div class="grid h-full min-h-0 w-full overflow-hidden border border-slate-200 rounded-lg bg-white lg:grid-cols-[280px_minmax(0,1fr)]">
+    <div class="border border-slate-200 rounded-lg bg-white grid h-full min-h-0 w-full overflow-hidden lg:grid-cols-[280px_minmax(0,1fr)]">
       <aside
         data-testid="dashboard-loopy-sidebar"
         class="border-r border-slate-200 bg-slate-50/55 flex flex-col min-h-0 overflow-hidden lg:h-full"
       >
-        <div class="px-2.5 py-2.5 border-b border-slate-200/80 flex shrink-0 items-center justify-between gap-2.5">
-          <p class="text-[11px] text-slate-400 tabular-nums font-medium">
+        <div class="px-2.5 py-2.5 border-b border-slate-200/80 flex shrink-0 gap-2.5 items-center justify-between">
+          <p class="text-[11px] text-slate-400 font-medium tabular-nums">
             {{ loopySessions.length }} 条会话
           </p>
           <button
@@ -249,7 +249,7 @@ onMounted(() => {
       </aside>
 
       <section class="bg-white flex flex-col min-h-0 overflow-hidden lg:h-full">
-        <header class="px-3 py-2.5 border-b border-slate-100 shrink-0 flex items-center justify-between gap-3">
+        <header class="px-3 py-2.5 border-b border-slate-100 flex shrink-0 gap-3 items-center justify-between">
           <h2 class="text-sm text-slate-950 font-semibold truncate">
             {{ chatPanelTitle }}
           </h2>

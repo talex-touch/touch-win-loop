@@ -117,30 +117,30 @@ function onUserUpdated(user: AuthUser) {
 </script>
 
 <template>
-  <aside class="hidden w-[288px] shrink-0 flex-col border-r border-[var(--db-border)] bg-white/[0.72] backdrop-blur-xl lg:flex">
+  <aside class="border-r border-[var(--db-border)] bg-white/[0.72] shrink-0 flex-col w-[288px] hidden backdrop-blur-xl lg:flex">
     <div class="p-5">
       <div class="db-panel db-panel-soft px-5 py-4">
         <div class="flex gap-3 items-center">
-          <div class="text-white rounded-[18px] bg-[var(--db-primary)] flex h-11 w-11 items-center justify-center shadow-[0_14px_28px_rgba(36,84,215,0.22)]">
+          <div class="text-white rounded-[18px] bg-[var(--db-primary)] flex h-11 w-11 shadow-[0_14px_28px_rgba(36,84,215,0.22)] items-center justify-center">
             <span class="material-symbols-outlined text-[22px]">analytics</span>
           </div>
           <div class="min-w-0">
-            <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--db-subtle)]">
+            <p class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold uppercase">
               Analysis Workspace
             </p>
-            <h1 class="mt-1 text-lg font-black tracking-[-0.03em] text-slate-900">
+            <h1 class="text-lg text-slate-900 tracking-[-0.03em] font-black mt-1">
               竞赛分析平台
             </h1>
           </div>
         </div>
-        <p class="db-muted mt-3 text-sm leading-6">
+        <p class="db-muted text-sm leading-6 mt-3">
           围绕赛事、资料与项目推进构建的统一分析工作台。
         </p>
       </div>
     </div>
 
-    <div class="flex min-h-0 flex-1 flex-col px-4 pb-4">
-      <div class="px-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--db-subtle)]">
+    <div class="px-4 pb-4 flex flex-1 flex-col min-h-0">
+      <div class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold px-2 uppercase">
         工作台导航
       </div>
       <nav class="mt-3 space-y-2">
@@ -148,34 +148,34 @@ function onUserUpdated(user: AuthUser) {
           v-for="item in props.menuItems"
           :key="item.id"
           :to="item.to"
-          class="db-focus-ring group relative flex items-center gap-3 rounded-[18px] px-3.5 py-3 transition-all"
+          class="db-focus-ring group px-3.5 py-3 rounded-[18px] flex gap-3 transition-all items-center relative"
           :class="isMenuItemActive(item)
             ? 'bg-[var(--db-primary-soft)] text-[var(--db-primary)] shadow-[0_12px_28px_rgba(36,84,215,0.12)]'
             : 'text-slate-600 hover:bg-white/[0.86] hover:text-slate-900'"
         >
           <span
-            class="rounded-2xl flex h-10 w-10 shrink-0 items-center justify-center transition-colors"
+            class="rounded-2xl flex shrink-0 h-10 w-10 transition-colors items-center justify-center"
             :class="isMenuItemActive(item) ? 'bg-white text-[var(--db-primary)]' : 'bg-[var(--db-bg)] text-slate-500 group-hover:text-[var(--db-primary)]'"
           >
             <span class="material-symbols-outlined text-[21px]">{{ item.icon }}</span>
           </span>
-          <span class="min-w-0 flex-1 truncate font-semibold">{{ item.label }}</span>
+          <span class="font-semibold flex-1 min-w-0 truncate">{{ item.label }}</span>
           <span
             v-if="isMenuItemActive(item)"
-            class="h-2.5 w-2.5 rounded-full bg-[var(--db-primary)]"
+            class="rounded-full bg-[var(--db-primary)] h-2.5 w-2.5"
           />
         </NuxtLink>
       </nav>
 
       <div class="db-panel db-panel-muted mt-6 p-4">
-        <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--db-subtle)]">
+        <p class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold uppercase">
           热门话题
         </p>
         <ul class="mt-3 space-y-2.5">
           <li
             v-for="topic in props.topics"
             :key="topic.id"
-            class="db-hover-lift rounded-[16px] border border-[var(--db-border)] bg-white/70 px-3 py-2.5 text-sm text-slate-600 flex gap-2 items-center"
+            class="db-hover-lift text-sm text-slate-600 px-3 py-2.5 border border-[var(--db-border)] rounded-[16px] bg-white/70 flex gap-2 items-center"
           >
             <span class="text-xs text-[var(--db-primary)] font-bold">#</span>
             <span class="truncate">{{ topic.label }}</span>
@@ -184,7 +184,7 @@ function onUserUpdated(user: AuthUser) {
       </div>
 
       <div class="db-panel mt-4 p-4">
-        <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--db-subtle)]">
+        <p class="text-[11px] text-[var(--db-subtle)] tracking-[0.16em] font-semibold uppercase">
           工作区入口
         </p>
         <WorkspaceSwitchEntry
@@ -212,16 +212,16 @@ function onUserUpdated(user: AuthUser) {
         <img
           v-if="displayAvatarUrl"
           :src="displayAvatarUrl"
-          class="border border-[var(--db-border)] rounded-full h-11 w-11 object-cover shadow-sm"
+          class="border border-[var(--db-border)] rounded-full h-11 w-11 shadow-sm object-cover"
           alt="用户头像"
         >
         <div
           v-else
-          class="text-sm text-white font-semibold border border-[var(--db-border)] rounded-full bg-slate-900 flex shrink-0 h-11 w-11 items-center justify-center shadow-sm"
+          class="text-sm text-white font-semibold border border-[var(--db-border)] rounded-full bg-slate-900 flex shrink-0 h-11 w-11 shadow-sm items-center justify-center"
         >
           {{ analystInitial }}
         </div>
-        <div class="min-w-0 flex-1">
+        <div class="flex-1 min-w-0">
           <p class="text-sm text-slate-900 font-semibold truncate">
             {{ props.analystName }}
           </p>
@@ -236,7 +236,7 @@ function onUserUpdated(user: AuthUser) {
           </p>
         </div>
         <button
-          class="db-btn db-btn-ghost db-focus-ring h-10 w-10 px-0 ml-auto"
+          class="db-btn db-btn-ghost db-focus-ring ml-auto px-0 h-10 w-10"
           title="个人设置"
           type="button"
           @click.stop="openProfileDialog"

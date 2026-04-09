@@ -1,7 +1,7 @@
 import type { AiTopicProposalRequest, ProjectTopicBoardGenerateRequest } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { executeTopicProposal } from '~~/server/services/ai/topic-proposal-service'
 import { buildTopicBoardPromptMessage, normalizeTopicBoardInput } from '~~/server/services/ai/topic-board-logic'
+import { executeTopicProposal } from '~~/server/services/ai/topic-proposal-service'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'

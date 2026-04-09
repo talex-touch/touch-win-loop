@@ -1,10 +1,10 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
   AuthUser,
-  WorkspaceDisplayPreferenceSnapshot,
-  WorkspaceDisplayPreferenceSources,
-  WorkspaceDisplayPreferenceSource,
   WorkspaceDisplayPreferences,
+  WorkspaceDisplayPreferenceSnapshot,
+  WorkspaceDisplayPreferenceSource,
+  WorkspaceDisplayPreferenceSources,
   WorkspaceFontSizePreset,
   WorkspaceTabSpacingPreset,
   WorkspaceType,

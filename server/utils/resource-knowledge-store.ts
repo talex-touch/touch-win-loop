@@ -988,12 +988,12 @@ export async function enqueueResourceGovernanceTask(
       actorUserId,
     ],
   )
-  .catch(async (error) => {
-    if ((error as { code?: string })?.code !== '23505' || input.force)
-      throw error
+    .catch(async (error) => {
+      if ((error as { code?: string })?.code !== '23505' || input.force)
+        throw error
 
-    const existing = await db.query<ResourceGovernanceTaskRow>(
-      `SELECT
+      const existing = await db.query<ResourceGovernanceTaskRow>(
+        `SELECT
         id,
         contest_id,
         resource_id,
@@ -1016,20 +1016,20 @@ export async function enqueueResourceGovernanceTask(
          AND status IN ('queued', 'processing', 'failed')
        ORDER BY created_at DESC
        LIMIT 1`,
-      [
-        input.contestId,
-        normalizedResourceId,
-        input.taskType,
-      ],
-    )
+        [
+          input.contestId,
+          normalizedResourceId,
+          input.taskType,
+        ],
+      )
 
-    if (existing.rows[0]) {
-      existingTask = toTask(existing.rows[0])
-      return
-    }
+      if (existing.rows[0]) {
+        existingTask = toTask(existing.rows[0])
+        return
+      }
 
-    throw error
-  })
+      throw error
+    })
 
   if (existingTask)
     return existingTask

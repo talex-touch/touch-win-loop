@@ -480,11 +480,11 @@ onBeforeUnmount(() => {
   >
     <div ref="containerRef" class="h-full min-h-0 w-full" />
 
-    <div class="pointer-events-none absolute inset-0 overflow-hidden" data-testid="collab-cursor-overlay">
+    <div class="pointer-events-none inset-0 absolute overflow-hidden" data-testid="collab-cursor-overlay">
       <div
         v-for="cursor in remoteScreenCursors"
         :key="cursor.userId"
-        class="absolute left-0 top-0 will-change-transform"
+        class="will-change-transform left-0 top-0 absolute"
         :style="{ transform: `translate(${cursor.screenX}px, ${cursor.screenY}px)` }"
       >
         <div class="relative">
@@ -498,7 +498,7 @@ onBeforeUnmount(() => {
             />
           </svg>
           <div
-            class="absolute left-4 top-1 max-w-40 truncate rounded-full px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm"
+            class="text-[10px] text-white font-semibold px-2 py-0.5 rounded-full max-w-40 truncate shadow-sm left-4 top-1 absolute"
             :style="{ backgroundColor: cursor.colorToken }"
             :title="cursor.username"
           >
@@ -508,17 +508,17 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="pointer-events-none absolute inset-0 z-30">
-      <div v-if="warningText" class="absolute left-3 top-3">
+    <div class="pointer-events-none inset-0 absolute z-30">
+      <div v-if="warningText" class="left-3 top-3 absolute">
         <div class="text-[11px] text-amber-700 px-3 py-1.5 border border-amber-200 rounded-full bg-amber-50 shadow-sm">
           {{ warningText }}
         </div>
       </div>
-      <div v-if="errorText || mountError" class="absolute left-3 top-14 space-y-2">
-        <div v-if="errorText" class="text-[11px] text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 shadow-sm max-w-sm">
+      <div v-if="errorText || mountError" class="left-3 top-14 absolute space-y-2">
+        <div v-if="errorText" class="text-[11px] text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 max-w-sm shadow-sm">
           {{ errorText }}
         </div>
-        <div v-if="mountError" class="text-[11px] text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 shadow-sm max-w-sm">
+        <div v-if="mountError" class="text-[11px] text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 max-w-sm shadow-sm">
           {{ mountError }}
         </div>
       </div>

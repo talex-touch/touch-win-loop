@@ -277,8 +277,7 @@ watch(() => route.fullPath, async () => {
   content: '';
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.04) 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.04) 100%);
   pointer-events: none;
 }
 
@@ -474,7 +473,12 @@ watch(() => route.fullPath, async () => {
 .db-skeleton {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(110deg, rgba(226, 232, 240, 0.7) 8%, rgba(248, 250, 252, 0.95) 18%, rgba(226, 232, 240, 0.7) 33%);
+  background: linear-gradient(
+    110deg,
+    rgba(226, 232, 240, 0.7) 8%,
+    rgba(248, 250, 252, 0.95) 18%,
+    rgba(226, 232, 240, 0.7) 33%
+  );
   background-size: 220% 100%;
   animation: db-shimmer 1.8s linear infinite;
 }
