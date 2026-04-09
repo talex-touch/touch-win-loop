@@ -11,8 +11,8 @@ const props = withDefaults(defineProps<{
   tokenBalance?: number
   projectStorageUsedBytes?: number
   projectStorageLimitBytes?: number
-  line?: number
-  column?: number
+  line?: number | null
+  column?: number | null
   selectionLength?: number
   hasActiveProject?: boolean
   uploadSummary?: ProjectUploadSummary | null
@@ -28,8 +28,8 @@ const props = withDefaults(defineProps<{
   tokenBalance: 0,
   projectStorageUsedBytes: 0,
   projectStorageLimitBytes: 0,
-  line: 12,
-  column: 45,
+  line: null,
+  column: null,
   selectionLength: 0,
   hasActiveProject: false,
   uploadSummary: null,
@@ -190,6 +190,20 @@ const normalizedSelectionLength = computed(() => {
   const value = Number(props.selectionLength || 0)
   if (!Number.isFinite(value) || value <= 0)
     return 0
+  return Math.trunc(value)
+})
+
+const normalizedCursorLine = computed<number | null>(() => {
+  const value = Number(props.line)
+  if (!Number.isFinite(value) || value <= 0)
+    return null
+  return Math.trunc(value)
+})
+
+const normalizedCursorColumn = computed<number | null>(() => {
+  const value = Number(props.column)
+  if (!Number.isFinite(value) || value <= 0)
+    return null
   return Math.trunc(value)
 })
 
@@ -592,8 +606,8 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
         </button>
       </div>
       <div class="text-[10px] text-slate-500 font-medium gap-4 hidden items-center md:flex">
-        <span>
-          行 {{ line }}, 列 {{ column }}
+        <span v-if="normalizedCursorLine !== null && normalizedCursorColumn !== null">
+          行 {{ normalizedCursorLine }}, 列 {{ normalizedCursorColumn }}
           <template v-if="normalizedSelectionLength > 0">
             · 已选 {{ normalizedSelectionLength }} 字
           </template>

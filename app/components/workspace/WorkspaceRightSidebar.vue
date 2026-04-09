@@ -16,6 +16,7 @@ import type {
   Track,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
+import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
 
 const props = withDefaults(defineProps<{
   chatSessions?: AiChatSession[]
@@ -24,6 +25,9 @@ const props = withDefaults(defineProps<{
   chatMessages?: ChatMessage[]
   chatInput?: string
   chatLoading?: boolean
+  workspacePreparing?: boolean
+  currentUserName?: string
+  currentUserAvatarUrl?: string | null
   aiMode?: WorkspaceAiMode
   changeRequests?: AiProjectChangeRequest[]
   changeRequestsLoading?: boolean
@@ -52,6 +56,9 @@ const props = withDefaults(defineProps<{
   chatMessages: () => [],
   chatInput: '',
   chatLoading: false,
+  workspacePreparing: false,
+  currentUserName: '',
+  currentUserAvatarUrl: '',
   aiMode: 'dialog_ask',
   changeRequests: () => [],
   changeRequestsLoading: false,
@@ -118,6 +125,14 @@ const inputPlaceholder = computed(() => {
 
 const pendingChangeRequests = computed(() => {
   return props.changeRequests.filter(item => item.status === 'pending')
+})
+
+const showChatSkeleton = computed(() => {
+  return props.workspacePreparing || (props.chatSessionsLoading && props.chatMessages.length === 0)
+})
+
+const showDialogAskEmpty = computed(() => {
+  return !showChatSkeleton.value && props.aiMode === 'dialog_ask' && props.chatMessages.length === 0
 })
 
 const aiRunning = computed(() => {
@@ -327,8 +342,9 @@ function requestExportIssueReport() {
           新建
         </button>
       </div>
-      <div v-if="chatSessionsLoading" class="text-[11px] text-slate-500 leading-5">
-        会话加载中...
+      <div v-if="props.workspacePreparing || chatSessionsLoading" class="space-y-2" aria-hidden="true">
+        <div class="rounded bg-slate-100 h-7 animate-pulse" />
+        <div class="rounded bg-slate-100 h-7 animate-pulse" />
       </div>
       <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400 leading-5">
         暂无会话，点击“新建”开始 Loopy 对话。
@@ -354,7 +370,22 @@ function requestExportIssueReport() {
     <div class="flex flex-1 flex-col h-0 min-h-0 overflow-hidden">
       <div class="no-scrollbar p-4 flex-1 h-0 min-h-0 overflow-y-auto">
         <div class="workspace-chat-scroll-content">
-          <div class="workspace-chat-messages">
+          <div v-if="showChatSkeleton" class="workspace-chat-messages" aria-hidden="true">
+            <div
+              v-for="index in 4"
+              :key="`workspace-chat-skeleton-${index}`"
+              class="flex gap-2 items-start"
+              :class="index % 2 === 0 ? '' : 'justify-end'"
+            >
+              <div v-if="index % 2 === 0" class="rounded bg-slate-200 shrink-0 h-6 w-6 animate-pulse" />
+              <div
+                class="rounded-lg bg-slate-100 animate-pulse"
+                :class="index % 2 === 0 ? 'h-14 w-4/5 rounded-tl-none' : 'h-12 w-3/5 rounded-tr-none'"
+              />
+              <div v-if="index % 2 === 1" class="rounded-full bg-slate-200 shrink-0 h-6 w-6 animate-pulse" />
+            </div>
+          </div>
+          <div v-else class="workspace-chat-messages">
             <div
               v-for="(message, index) in chatMessages"
               :key="`${message.role}-${index}`"
@@ -391,15 +422,19 @@ function requestExportIssueReport() {
 
               <div
                 v-if="message.role === 'user'"
-                class="rounded bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
+                class="flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
               >
-                <img
-                  alt="avatar"
-                  class="h-full w-full object-cover"
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuCpeK3ZzVd7LtrOg5h6iFhJ5azRbuUFRmmaMGNaVkipoRx2KeXJvGzjOem-njmZ1X2K7E5eZq7iEGey_U1YoWT2pMOklyV-WBBdEXaeAsz-Gr76uirUlHq69Ry0Fs7j56my_Rkzmsqgd-IwpFzP7GnGQQLMOQ5ow_q8rIICxDOttJQY_PinNCZcLPjEAJaTIm6TZKjFhUquEDOc_dJHU_4nZZUHpVc9q77XvmnEtM5aBVMhBO4J0oNIfiA6rLO49eLZ9IVEQs_CTyPt"
-                >
+                <UnifiedAvatar
+                  :name="currentUserName"
+                  :src="currentUserAvatarUrl"
+                  :size="24"
+                />
               </div>
             </div>
+          </div>
+
+          <div v-if="showDialogAskEmpty" class="text-[11px] text-slate-500 leading-5 p-3 border border-slate-200 rounded border-dashed">
+            当前会话还没有消息，点击“新建”或直接发送问题开始 Loopy 对话。
           </div>
 
           <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">

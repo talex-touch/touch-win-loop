@@ -71,6 +71,22 @@ it('项目页头部工作台 tabs 与右栏答辩模式共用同一套状态', a
   assert.match(rightSidebarSource, /答辩工作台（顶部切换）/, '右栏答辩态缺少顶部切换提示')
 })
 
+it('右栏移除固定 mock 头像与默认欢迎语，空白期改成骨骼屏和真实头像组件', async () => {
+  const [workspaceSource, rightSidebarSource] = await Promise.all([
+    readFile(WORKSPACE_DETAIL_FILE, 'utf8'),
+    readFile(RIGHT_SIDEBAR_FILE, 'utf8'),
+  ])
+
+  assert.match(workspaceSource, /:workspace-preparing="workspacePreparing"/, '项目页未向右栏透传准备态')
+  assert.match(workspaceSource, /:current-user-name="me\?\.user\.username \|\| ''"/, '项目页未向右栏透传当前用户名')
+  assert.match(workspaceSource, /:current-user-avatar-url="me\?\.user\.avatarUrl \|\| ''"/, '项目页未向右栏透传当前用户头像')
+  assert.match(rightSidebarSource, /workspacePreparing\?: boolean/, '右栏缺少准备态入参')
+  assert.match(rightSidebarSource, /currentUserAvatarUrl\?: string \| null/, '右栏缺少真实头像入参')
+  assert.match(rightSidebarSource, /<UnifiedAvatar/, '右栏未改为统一头像组件')
+  assert.match(rightSidebarSource, /showChatSkeleton = computed\(\(\) => \{/, '右栏缺少聊天骨骼屏逻辑')
+  assert.doesNotMatch(rightSidebarSource, /googleusercontent\.com\/aida-public/, '右栏仍保留固定外链 mock 头像')
+})
+
 it('项目页左侧不再依赖 hover handle，leftSidebarCollapsed 仅控制 panel 折叠', async () => {
   const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
 

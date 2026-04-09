@@ -24,6 +24,7 @@ import {
 } from '~/utils/project-upload'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'meeting' | 'analysis' | 'project_config' | 'issue_center'
+type WorkspaceLeftPanelContentId = WorkspaceLeftModuleId | 'recycle'
 
 interface WorkspaceLeftModule {
   id: WorkspaceLeftModuleId
@@ -39,6 +40,11 @@ interface OutlineItem {
   uploadTask?: ProjectUploadTask
   statusText?: string
   progressPercent?: number
+}
+
+interface ProjectResourceTreeItem {
+  resource: Resource
+  children: Resource[]
 }
 
 interface ResourceAttributeField {
@@ -110,6 +116,9 @@ const props = withDefaults(defineProps<{
   workspaceId?: string
   tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
   collapsed?: boolean
+  commandSignal?: number
+  commandModuleId?: WorkspaceLeftPanelContentId | ''
+  commandOutlineId?: string
 }>(), {
   selectedResources: () => [],
   recycleResources: () => [],
@@ -151,6 +160,9 @@ const props = withDefaults(defineProps<{
   workspaceId: '',
   tabSpacingPreset: 'default',
   collapsed: false,
+  commandSignal: 0,
+  commandModuleId: '',
+  commandOutlineId: '',
 })
 
 const emit = defineEmits<{
@@ -235,6 +247,19 @@ const resourceCategoryLabels: Record<ResourceCategory, string> = {
   compliance: '合规与版权',
 }
 
+const IMAGE_RESOURCE_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'bmp',
+  'webp',
+  'svg',
+  'avif',
+  'heic',
+  'heif',
+])
+
 const modules: WorkspaceLeftModule[] = [
   {
     id: 'resource_manager',
@@ -289,6 +314,7 @@ const libraryModalVisible = ref(false)
 const projectResourceUploadInputRef = ref<HTMLInputElement | null>(null)
 const sidebarPanelRef = ref<HTMLElement | null>(null)
 const linkedCategoryExpanded = reactive<Record<string, boolean>>({})
+const embeddedMarkdownResourceExpanded = reactive<Record<string, boolean>>({})
 const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   projectResources: true,
   linkedContestResources: true,
@@ -304,7 +330,7 @@ const visibleUploadTasks = computed(() => {
   return props.uploadTasks.filter(task => isProjectUploadTaskSidebarVisible(task))
 })
 const visibleMeetings = computed(() => props.meetings.slice(0, 8))
-const visibleResources = computed(() => props.selectedResources.slice(0, 10))
+const visibleResources = computed(() => props.selectedResources)
 const visibleRecycleResources = computed(() => props.recycleResources.slice(0, 20))
 const visibleLibraryResources = computed(() => {
   const keyword = libraryModalKeyword.value.trim().toLowerCase()
@@ -317,6 +343,95 @@ const visibleLibraryResources = computed(() => {
       return context.includes(keyword)
     })
 })
+
+function resolveEmbeddedMarkdownResourceId(resource: Resource): string {
+  const metadata = metadataRecord(resource)
+  const embeddedIn = metadata.embeddedIn
+  if (!embeddedIn || typeof embeddedIn !== 'object' || Array.isArray(embeddedIn))
+    return ''
+
+  const kind = String((embeddedIn as Record<string, unknown>).kind || '').trim().toLowerCase()
+  const resourceId = String((embeddedIn as Record<string, unknown>).resourceId || '').trim()
+  if (kind !== 'markdown')
+    return ''
+  return resourceId
+}
+
+function isUploadedImageResource(resource: Resource): boolean {
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source !== 'upload')
+    return false
+
+  const mimeType = metadataMimeType(resource)
+  if (mimeType.startsWith('image/'))
+    return true
+
+  return IMAGE_RESOURCE_EXTENSIONS.has(resolveResourceExtension(resource))
+}
+
+const projectResourceTreeItems = computed<ProjectResourceTreeItem[]>(() => {
+  const resources = visibleResources.value
+  const markdownResourceIds = new Set(
+    resources
+      .filter(resource => String(resource.resourceKind || '').trim().toLowerCase() === 'markdown')
+      .map(resource => resource.id),
+  )
+  const embeddedChildren = new Map<string, Resource[]>()
+  const childResourceIds = new Set<string>()
+
+  for (const resource of resources) {
+    const embeddedMarkdownResourceId = resolveEmbeddedMarkdownResourceId(resource)
+    if (!embeddedMarkdownResourceId || !markdownResourceIds.has(embeddedMarkdownResourceId))
+      continue
+    if (!isUploadedImageResource(resource))
+      continue
+
+    childResourceIds.add(resource.id)
+    const siblings = embeddedChildren.get(embeddedMarkdownResourceId)
+    if (siblings) {
+      siblings.push(resource)
+      continue
+    }
+    embeddedChildren.set(embeddedMarkdownResourceId, [resource])
+  }
+
+  const treeItems: ProjectResourceTreeItem[] = []
+  for (const resource of resources) {
+    if (childResourceIds.has(resource.id))
+      continue
+
+    treeItems.push({
+      resource,
+      children: embeddedChildren.get(resource.id) || [],
+    })
+  }
+
+  return treeItems
+})
+
+function isEmbeddedMarkdownImageGroupExpanded(resourceId: string): boolean {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId)
+    return false
+  if (Object.prototype.hasOwnProperty.call(embeddedMarkdownResourceExpanded, normalizedResourceId))
+    return embeddedMarkdownResourceExpanded[normalizedResourceId] !== false
+
+  return projectResourceTreeItems.value.some((item) => {
+    if (item.resource.id !== normalizedResourceId)
+      return false
+    if (activeResourceId.value === normalizedResourceId)
+      return true
+    return item.children.some(child => child.id === activeResourceId.value)
+  })
+}
+
+function toggleEmbeddedMarkdownImageGroup(resourceId: string): void {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId)
+    return
+  embeddedMarkdownResourceExpanded[normalizedResourceId] = !isEmbeddedMarkdownImageGroupExpanded(normalizedResourceId)
+}
+
 function resolveResourceCategoryLabel(category: string): string {
   const normalized = String(category || '').trim() as ResourceCategory
   return resourceCategoryLabels[normalized] || normalized || '未分类'
@@ -377,6 +492,16 @@ const linkedContestResourceGroups = computed<WorkspaceLinkedContestResourceDispl
     categories: buildLinkedContestResourceCategories(group.resources || []),
   }))
 })
+const panelContentOrder: Record<WorkspaceLeftPanelContentId, number> = {
+  resource_manager: 0,
+  recycle: 0.5,
+  meeting: 1,
+  analysis: 2,
+  project_config: 3,
+  issue_center: 4,
+}
+const panelContentTransitionName = ref<'workspace-left-panel-content-forward' | 'workspace-left-panel-content-backward'>('workspace-left-panel-content-forward')
+const panelFooterTransitionName = ref<'workspace-left-panel-footer-forward' | 'workspace-left-panel-footer-backward'>('workspace-left-panel-footer-forward')
 const panelContentTransitionKey = computed(() => {
   return recyclePanelOpen.value ? 'recycle' : activeModule.value
 })
@@ -489,65 +614,6 @@ function normalizeOutlineLabel(value: string): string {
     .trim()
 }
 
-function stripOutlineHeadingPrefix(value: string): string {
-  return normalizeOutlineLabel(value)
-    .replace(/^#{1,6}\s+/, '')
-    .replace(/^第[一二三四五六七八九十百千\d]+[章节部分篇]\s*/, '')
-    .replace(/^\d+(?:\.\d+){0,3}[、.．\s]+/, '')
-    .replace(/^[一二三四五六七八九十]+[、.．\s]+/, '')
-    .replace(/^[（(]?[一二三四五六七八九十\d]+[)）][、.．\s]*/, '')
-    .replace(/^[-*•]\s+/, '')
-    .trim()
-}
-
-function isHeadingLine(line: string): boolean {
-  if (!line)
-    return false
-
-  return /^#{1,6}\s+/.test(line)
-    || /^\d+(?:\.\d+){0,3}[、.．\s]+/.test(line)
-    || /^[一二三四五六七八九十]+[、.．\s]+/.test(line)
-    || /^第[一二三四五六七八九十百千\d]+[章节部分篇]\s*/.test(line)
-    || /^[（(]?[一二三四五六七八九十\d]+[)）][、.．\s]*/.test(line)
-    || /^[-*•]\s+/.test(line)
-}
-
-function extractResourceOutlineChildren(resource: Resource): string[] {
-  const source = [resource.summary, resource.content].map(value => String(value || '').trim()).filter(Boolean).join('\n')
-  if (!source)
-    return []
-
-  const title = normalizeOutlineLabel(resourceDisplayTitle(resource))
-  const titleKey = title.toLowerCase()
-  const dedupe = new Set<string>()
-  const result: string[] = []
-  const lines = source
-    .split(/\r?\n+/)
-    .map(item => normalizeOutlineLabel(item))
-    .filter(Boolean)
-
-  for (const line of lines) {
-    if (result.length >= 4)
-      break
-    if (line.length < 2 || line.length > 48)
-      continue
-    if (!isHeadingLine(line))
-      continue
-
-    const normalized = stripOutlineHeadingPrefix(line)
-    const dedupeKey = normalized.toLowerCase()
-    if (!normalized || normalized === title || dedupeKey === titleKey || dedupe.has(dedupeKey))
-      continue
-    if (normalized.length > 36)
-      continue
-
-    dedupe.add(dedupeKey)
-    result.push(normalized)
-  }
-
-  return result
-}
-
 function flattenProjectOutlineNodes(
   nodes: ProjectOutlineNode[],
   parentOrders: number[] = [],
@@ -576,33 +642,6 @@ function flattenProjectOutlineNodes(
   return result
 }
 
-const fallbackOutlineItems = computed<OutlineItem[]>(() => {
-  const items: OutlineItem[] = []
-
-  visibleResources.value.forEach((resource, resourceIndex) => {
-    const topIndex = resourceIndex + 1
-    const topId = `resource-${resource.id || topIndex}`
-    const topLabel = normalizeOutlineLabel(resourceDisplayTitle(resource)) || `资料 ${topIndex}`
-
-    items.push({
-      id: topId,
-      label: `${topIndex}. ${topLabel}`,
-      level: 0,
-    })
-
-    const children = extractResourceOutlineChildren(resource)
-    children.forEach((childLabel, childIndex) => {
-      items.push({
-        id: `${topId}-child-${childIndex + 1}`,
-        label: `${topIndex}.${childIndex + 1} ${childLabel}`,
-        level: 1,
-      })
-    })
-  })
-
-  return items
-})
-
 function buildUploadOutlineItems(tasks: ProjectUploadTask[]): OutlineItem[] {
   return tasks.map(task => ({
     id: `upload-outline-${task.sessionId}`,
@@ -619,7 +658,7 @@ const outlineItems = computed<OutlineItem[]>(() => {
   const backendItems = flattenProjectOutlineNodes(props.projectOutline)
   if (backendItems.length > 0)
     return [...uploadItems, ...backendItems]
-  return [...uploadItems, ...fallbackOutlineItems.value]
+  return uploadItems
 })
 
 const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
@@ -709,11 +748,26 @@ function issueSeverityClass(value: string): string {
   return 'workspace-issue-tag workspace-issue-tag--medium'
 }
 
-function switchModule(moduleId: string) {
-  if (!isWorkspaceLeftModuleId(moduleId))
-    return
+function resolveCurrentPanelContentId(): WorkspaceLeftPanelContentId {
+  return recyclePanelOpen.value ? 'recycle' : activeModule.value
+}
 
+function syncPanelTransitionDirection(nextPanelId: WorkspaceLeftPanelContentId) {
+  const currentPanelId = resolveCurrentPanelContentId()
+  const currentOrder = panelContentOrder[currentPanelId]
+  const nextOrder = panelContentOrder[nextPanelId]
+  const isForward = nextOrder >= currentOrder
+  panelContentTransitionName.value = isForward
+    ? 'workspace-left-panel-content-forward'
+    : 'workspace-left-panel-content-backward'
+  panelFooterTransitionName.value = isForward
+    ? 'workspace-left-panel-footer-forward'
+    : 'workspace-left-panel-footer-backward'
+}
+
+function activateModule(moduleId: WorkspaceLeftModuleId, options: { force?: boolean } = {}) {
   if (recyclePanelOpen.value) {
+    syncPanelTransitionDirection(moduleId)
     recyclePanelOpen.value = false
     projectResourceAddMenuOpen.value = false
     resourceActionOpenId.value = ''
@@ -723,10 +777,14 @@ function switchModule(moduleId: string) {
   }
 
   if (activeModule.value === moduleId) {
-    toggleCollapsed()
+    if (!options.force)
+      toggleCollapsed()
+    else
+      expandPanel()
     return
   }
 
+  syncPanelTransitionDirection(moduleId)
   recyclePanelOpen.value = false
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
@@ -734,6 +792,12 @@ function switchModule(moduleId: string) {
   expandPanel()
   if (moduleId === 'meeting')
     emit('openMeetingPanel')
+}
+
+function switchModule(moduleId: string) {
+  if (!isWorkspaceLeftModuleId(moduleId))
+    return
+  activateModule(moduleId)
 }
 
 function selectResource(resourceId: string) {
@@ -810,6 +874,7 @@ function reloadIssueCenter() {
 }
 
 function openRecycleBinPanel() {
+  syncPanelTransitionDirection('recycle')
   recyclePanelOpen.value = true
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
@@ -1704,6 +1769,26 @@ watch(() => props.resourceMutating, (next) => {
   resourceActionOpenId.value = ''
 })
 
+watch(() => props.commandSignal, (next, previous) => {
+  if (!next || next === previous)
+    return
+
+  const commandModuleId = props.commandModuleId
+  if (commandModuleId === 'recycle') {
+    openRecycleBinPanel()
+  }
+  else if (commandModuleId && isWorkspaceLeftModuleId(commandModuleId)) {
+    activateModule(commandModuleId, { force: true })
+  }
+
+  const targetOutlineId = String(props.commandOutlineId || '').trim()
+  if (!targetOutlineId)
+    return
+
+  sectionExpanded.outline = true
+  activeOutlineId.value = targetOutlineId
+}, { immediate: false })
+
 onMounted(() => {
   if (!import.meta.client)
     return
@@ -1725,8 +1810,10 @@ watch(activeModule, (value) => {
 watch(() => props.activeMainTabId, (value) => {
   if (value !== 'meeting')
     return
-  if (activeModule.value !== 'meeting')
+  if (activeModule.value !== 'meeting') {
+    syncPanelTransitionDirection('meeting')
     activeModule.value = 'meeting'
+  }
 }, { immediate: true })
 
 onBeforeUnmount(() => {
@@ -1765,7 +1852,7 @@ onBeforeUnmount(() => {
       :aria-hidden="props.collapsed ? 'true' : 'false'"
     >
       <div class="workspace-left-panel__body no-scrollbar">
-        <Transition name="workspace-left-panel-content" mode="out-in">
+        <Transition :name="panelContentTransitionName" mode="out-in">
           <div :key="panelContentTransitionKey" class="workspace-left-panel__content">
             <template v-if="recyclePanelOpen">
               <section class="workspace-tree-block workspace-tree-block--recycle-panel">
@@ -1987,107 +2074,240 @@ onBeforeUnmount(() => {
                   </template>
                   <template v-else>
                     <div
-                      v-for="resource in visibleResources"
-                      :key="resource.id"
-                      class="workspace-tree-item-row"
-                      :class="{
-                        'workspace-tree-item-row--active': !suppressResourceSelection && resource.id === activeResourceId,
-                        'workspace-tree-item-row--menu-open': resourceActionOpenId === resource.id,
-                      }"
-                      @contextmenu="handleResourceItemContextMenu(resource.id, $event)"
+                      v-for="treeItem in projectResourceTreeItems"
+                      :key="treeItem.resource.id"
+                      class="workspace-resource-tree-group"
                     >
-                      <button
-                        class="workspace-tree-item"
-                        :class="{ 'workspace-tree-item--active': !suppressResourceSelection && resource.id === activeResourceId }"
-                        :title="resourceDisplayTitle(resource)"
-                        type="button"
-                        @click="openResource(resource)"
+                      <div
+                        class="workspace-tree-item-row"
+                        :class="{
+                          'workspace-tree-item-row--active': !suppressResourceSelection && treeItem.resource.id === activeResourceId,
+                          'workspace-tree-item-row--menu-open': resourceActionOpenId === treeItem.resource.id,
+                        }"
+                        @contextmenu="handleResourceItemContextMenu(treeItem.resource.id, $event)"
                       >
-                        <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
-                          {{ resourceIcon(resource) }}
-                        </span>
-                        <span class="workspace-tree-item__label">{{ resourceDisplayTitle(resource) }}</span>
-                      </button>
-
-                      <div class="workspace-resource-actions">
                         <button
-                          class="workspace-resource-actions__trigger"
+                          v-if="treeItem.children.length > 0"
+                          class="workspace-tree-item__expander"
                           type="button"
-                          title="资源操作"
-                          aria-label="资源操作"
-                          :disabled="resourceMutating || !hasActiveProject"
-                          @click.stop="toggleResourceActionMenu(resource.id)"
+                          :aria-label="isEmbeddedMarkdownImageGroupExpanded(treeItem.resource.id) ? '收起文档图片' : '展开文档图片'"
+                          :aria-expanded="isEmbeddedMarkdownImageGroupExpanded(treeItem.resource.id)"
+                          @click.stop="toggleEmbeddedMarkdownImageGroup(treeItem.resource.id)"
                         >
-                          <span class="material-symbols-outlined">more_horiz</span>
+                          <span
+                            class="material-symbols-outlined"
+                            :class="{ 'workspace-tree-item__expander-icon--expanded': isEmbeddedMarkdownImageGroupExpanded(treeItem.resource.id) }"
+                          >
+                            chevron_right
+                          </span>
                         </button>
 
+                        <button
+                          class="workspace-tree-item"
+                          :class="{
+                            'workspace-tree-item--active': !suppressResourceSelection && treeItem.resource.id === activeResourceId,
+                            'workspace-tree-item--with-expander': treeItem.children.length > 0,
+                          }"
+                          :title="resourceDisplayTitle(treeItem.resource)"
+                          type="button"
+                          @click="openResource(treeItem.resource)"
+                        >
+                          <span
+                            class="material-symbols-outlined workspace-tree-item__icon"
+                            :class="resourceIconClass(treeItem.resource)"
+                          >
+                            {{ resourceIcon(treeItem.resource) }}
+                          </span>
+                          <span class="workspace-tree-item__label">{{ resourceDisplayTitle(treeItem.resource) }}</span>
+                        </button>
+
+                        <div class="workspace-resource-actions">
+                          <button
+                            class="workspace-resource-actions__trigger"
+                            type="button"
+                            title="资源操作"
+                            aria-label="资源操作"
+                            :disabled="resourceMutating || !hasActiveProject"
+                            @click.stop="toggleResourceActionMenu(treeItem.resource.id)"
+                          >
+                            <span class="material-symbols-outlined">more_horiz</span>
+                          </button>
+
+                          <div
+                            v-if="resourceActionOpenId === treeItem.resource.id"
+                            class="workspace-resource-actions__menu"
+                            role="menu"
+                          >
+                            <button
+                              class="workspace-resource-actions__menu-item"
+                              type="button"
+                              :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(treeItem.resource)"
+                              @click.stop="requestPreviewResource(treeItem.resource.id)"
+                            >
+                              预览
+                            </button>
+                            <button
+                              class="workspace-resource-actions__menu-item"
+                              type="button"
+                              :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(treeItem.resource)"
+                              @click.stop="requestShareResource(treeItem.resource.id)"
+                            >
+                              分享链接
+                            </button>
+                            <button
+                              class="workspace-resource-actions__menu-item"
+                              type="button"
+                              :disabled="resourceMutating || !hasActiveProject"
+                              @click.stop="copyResourceName(treeItem.resource.id)"
+                            >
+                              复制名称
+                            </button>
+                            <button
+                              class="workspace-resource-actions__menu-item"
+                              type="button"
+                              :disabled="resourceMutating || !hasActiveProject || !canDuplicateResource(treeItem.resource)"
+                              @click.stop="createResourceDuplicate(treeItem.resource.id)"
+                            >
+                              创建副本
+                            </button>
+                            <div class="workspace-resource-actions__divider" />
+                            <button
+                              class="workspace-resource-actions__menu-item"
+                              type="button"
+                              :disabled="resourceMutating || !hasActiveProject"
+                              @click.stop="requestViewResourceDetails(treeItem.resource.id)"
+                            >
+                              文档属性
+                            </button>
+                            <button
+                              class="workspace-resource-actions__menu-item"
+                              type="button"
+                              :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(treeItem.resource)"
+                              @click.stop="requestDownloadResource(treeItem.resource.id)"
+                            >
+                              下载原文件
+                            </button>
+                            <div class="workspace-resource-actions__divider" />
+                            <button
+                              class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
+                              type="button"
+                              :disabled="resourceMutating || !hasActiveProject"
+                              @click.stop="requestRemoveResource(treeItem.resource.id)"
+                            >
+                              删除文件
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div
+                        v-if="treeItem.children.length > 0 && isEmbeddedMarkdownImageGroupExpanded(treeItem.resource.id)"
+                        class="workspace-resource-tree-group__children"
+                      >
                         <div
-                          v-if="resourceActionOpenId === resource.id"
-                          class="workspace-resource-actions__menu"
-                          role="menu"
+                          v-for="child in treeItem.children"
+                          :key="child.id"
+                          class="workspace-tree-item-row workspace-tree-item-row--child"
+                          :class="{
+                            'workspace-tree-item-row--active': !suppressResourceSelection && child.id === activeResourceId,
+                            'workspace-tree-item-row--menu-open': resourceActionOpenId === child.id,
+                          }"
+                          @contextmenu="handleResourceItemContextMenu(child.id, $event)"
                         >
                           <button
-                            class="workspace-resource-actions__menu-item"
+                            class="workspace-tree-item workspace-tree-item--child"
+                            :class="{ 'workspace-tree-item--active': !suppressResourceSelection && child.id === activeResourceId }"
+                            :title="resourceDisplayTitle(child)"
                             type="button"
-                            :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(resource)"
-                            @click.stop="requestPreviewResource(resource.id)"
+                            @click="openResource(child)"
                           >
-                            预览
+                            <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(child)">
+                              {{ resourceIcon(child) }}
+                            </span>
+                            <span class="workspace-tree-item__label">{{ resourceDisplayTitle(child) }}</span>
                           </button>
-                          <button
-                            class="workspace-resource-actions__menu-item"
-                            type="button"
-                            :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(resource)"
-                            @click.stop="requestShareResource(resource.id)"
-                          >
-                            分享链接
-                          </button>
-                          <button
-                            class="workspace-resource-actions__menu-item"
-                            type="button"
-                            :disabled="resourceMutating || !hasActiveProject"
-                            @click.stop="copyResourceName(resource.id)"
-                          >
-                            复制名称
-                          </button>
-                          <button
-                            class="workspace-resource-actions__menu-item"
-                            type="button"
-                            :disabled="resourceMutating || !hasActiveProject || !canDuplicateResource(resource)"
-                            @click.stop="createResourceDuplicate(resource.id)"
-                          >
-                            创建副本
-                          </button>
-                          <div class="workspace-resource-actions__divider" />
-                          <button
-                            class="workspace-resource-actions__menu-item"
-                            type="button"
-                            :disabled="resourceMutating || !hasActiveProject"
-                            @click.stop="requestViewResourceDetails(resource.id)"
-                          >
-                            文档属性
-                          </button>
-                          <button
-                            class="workspace-resource-actions__menu-item"
-                            type="button"
-                            :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(resource)"
-                            @click.stop="requestDownloadResource(resource.id)"
-                          >
-                            下载原文件
-                          </button>
-                          <div class="workspace-resource-actions__divider" />
-                          <button
-                            class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
-                            type="button"
-                            :disabled="resourceMutating || !hasActiveProject"
-                            @click.stop="requestRemoveResource(resource.id)"
-                          >
-                            删除文件
-                          </button>
+
+                          <div class="workspace-resource-actions">
+                            <button
+                              class="workspace-resource-actions__trigger"
+                              type="button"
+                              title="资源操作"
+                              aria-label="资源操作"
+                              :disabled="resourceMutating || !hasActiveProject"
+                              @click.stop="toggleResourceActionMenu(child.id)"
+                            >
+                              <span class="material-symbols-outlined">more_horiz</span>
+                            </button>
+
+                            <div
+                              v-if="resourceActionOpenId === child.id"
+                              class="workspace-resource-actions__menu"
+                              role="menu"
+                            >
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(child)"
+                                @click.stop="requestPreviewResource(child.id)"
+                              >
+                                预览
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(child)"
+                                @click.stop="requestShareResource(child.id)"
+                              >
+                                分享链接
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="copyResourceName(child.id)"
+                              >
+                                复制名称
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !canDuplicateResource(child)"
+                                @click.stop="createResourceDuplicate(child.id)"
+                              >
+                                创建副本
+                              </button>
+                              <div class="workspace-resource-actions__divider" />
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="requestViewResourceDetails(child.id)"
+                              >
+                                文档属性
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(child)"
+                                @click.stop="requestDownloadResource(child.id)"
+                              >
+                                下载原文件
+                              </button>
+                              <div class="workspace-resource-actions__divider" />
+                              <button
+                                class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="requestRemoveResource(child.id)"
+                              >
+                                删除文件
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                    <p v-if="visibleUploadTasks.length === 0 && visibleResources.length === 0" class="workspace-empty-text">
+                    <p v-if="visibleUploadTasks.length === 0 && projectResourceTreeItems.length === 0" class="workspace-empty-text">
                       暂无资源
                     </p>
                   </template>
@@ -2823,7 +3043,7 @@ onBeforeUnmount(() => {
         </Transition>
       </div>
 
-      <Transition name="workspace-left-panel-footer">
+      <Transition :name="panelFooterTransitionName">
         <WorkspaceResourceUploadHint
           v-if="activeModule === 'resource_manager' && !recyclePanelOpen"
           class="workspace-left-panel__footer"
@@ -2886,6 +3106,7 @@ onBeforeUnmount(() => {
   background: #ffffff;
   display: flex;
   flex-shrink: 0;
+  flex-basis: 100%;
   min-height: 0;
   overflow: hidden;
   transition:
@@ -2943,16 +3164,18 @@ onBeforeUnmount(() => {
 
 .workspace-left-dock--collapsed {
   width: 56px;
-  flex: 0 0 56px;
+  flex-basis: 56px;
 }
 
 @media (min-width: 1280px) {
   .workspace-left-dock {
     width: 362px;
+    flex-basis: 362px;
   }
 
   .workspace-left-dock--collapsed {
     width: 56px;
+    flex-basis: 56px;
   }
 }
 
@@ -2960,11 +3183,28 @@ onBeforeUnmount(() => {
   background: #ffffff;
   display: flex;
   flex: 1;
+  width: calc(100% - 56px);
+  max-width: calc(100% - 56px);
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
   transform-origin: left center;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    max-width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-left-panel--hidden {
+  width: 0;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-10px);
+  pointer-events: none;
 }
 
 .workspace-left-panel__content {
@@ -2973,43 +3213,64 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-.workspace-left-panel-enter-active,
-.workspace-left-panel-leave-active {
+.workspace-left-panel-content-forward-enter-active,
+.workspace-left-panel-content-forward-leave-active,
+.workspace-left-panel-content-backward-enter-active,
+.workspace-left-panel-content-backward-leave-active {
   transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
+    opacity 0.14s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
 }
 
-.workspace-left-panel-enter-from,
-.workspace-left-panel-leave-to {
+.workspace-left-panel-content-forward-enter-from {
   opacity: 0;
-  transform: translateX(-10px);
+  transform: translate3d(0, 10px, 0);
 }
 
-.workspace-left-panel-content-enter-active,
-.workspace-left-panel-content-leave-active {
+.workspace-left-panel-content-forward-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -8px, 0);
+}
+
+.workspace-left-panel-content-backward-enter-from {
+  opacity: 0;
+  transform: translate3d(0, -10px, 0);
+}
+
+.workspace-left-panel-content-backward-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+}
+
+.workspace-left-panel-footer-forward-enter-active,
+.workspace-left-panel-footer-forward-leave-active,
+.workspace-left-panel-footer-backward-enter-active,
+.workspace-left-panel-footer-backward-leave-active {
   transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
+    opacity 0.12s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.12s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
 }
 
-.workspace-left-panel-content-enter-from,
-.workspace-left-panel-content-leave-to {
+.workspace-left-panel-footer-forward-enter-from {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translate3d(0, 8px, 0);
 }
 
-.workspace-left-panel-footer-enter-active,
-.workspace-left-panel-footer-leave-active {
-  transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
-}
-
-.workspace-left-panel-footer-enter-from,
-.workspace-left-panel-footer-leave-to {
+.workspace-left-panel-footer-forward-leave-to {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translate3d(0, -6px, 0);
+}
+
+.workspace-left-panel-footer-backward-enter-from {
+  opacity: 0;
+  transform: translate3d(0, -8px, 0);
+}
+
+.workspace-left-panel-footer-backward-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
 }
 
 .workspace-left-panel__body {

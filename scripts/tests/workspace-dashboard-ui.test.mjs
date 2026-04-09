@@ -14,6 +14,7 @@ const LOOPY_DIALOG_FILE = resolve(process.cwd(), 'app/composables/useLoopyDialog
 const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const WORKSPACE_HEADER_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceHeader.vue')
 const WORKSPACE_MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
+const WORKSPACE_STATUS_BAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceStatusBar.vue')
 const UNIFIED_AVATAR_FILE = resolve(process.cwd(), 'app/components/UnifiedAvatar.vue')
 const USER_SETTINGS_DIALOG_FILE = resolve(process.cwd(), 'app/components/UserSettingsDialog.vue')
 const PROJECT_BASIC_SETTINGS_EDITOR_FILE = resolve(process.cwd(), 'app/components/project/ProjectBasicSettingsEditor.vue')
@@ -298,6 +299,43 @@ it('项目主面板在无标签页时隐藏上方 chrome，并改成全幅默认
   assert.match(source, /workspace-main-empty-state__button[\s\S]*打开默认仪表盘/, '无标签页空态缺少中央默认仪表盘按钮')
   assert.match(workspaceSource, /return normalized\.length > 0 \|\| options\.allowEmpty \? normalized : \['dashboard'\]/, '项目页 mainTabs 归一化仍会阻止关闭全部标签')
   assert.match(workspaceSource, /if \(normalized\.mainTabs\.length === 0\)\s+query\.tabs = ''/, '项目页未把“无标签页”状态同步到路由视图状态')
+})
+
+it('项目仪表盘移除本地 mock 分析数据，并接入准备态与真实规则加载链路', async () => {
+  const [workspaceSource, panelSource, statusBarSource] = await Promise.all([
+    readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
+    readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8'),
+    readFile(WORKSPACE_STATUS_BAR_FILE, 'utf8'),
+  ])
+
+  assert.match(workspaceSource, /const selectedContestDetail = ref<ContestDetailPayload \| null>\(null\)/, '项目页缺少竞赛详情真实数据容器')
+  assert.match(workspaceSource, /const selectedTrackRubric = computed\(\(\) => \{/, '项目页未根据竞赛详情解析当前赛道规则')
+  assert.match(workspaceSource, /async function loadSelectedContestDetail\(contestId = selectedContestId\.value\)/, '项目页缺少竞赛详情加载方法')
+  assert.match(workspaceSource, /const workspaceBootstrapLoading = ref\(false\)/, '项目页缺少工作区首屏准备态标记')
+  assert.match(workspaceSource, /const workspacePreparing = computed\(\(\) => \{/, '项目页缺少工作区准备态计算')
+  assert.match(workspaceSource, /:mapping-loading="selectedContestDetailLoading"/, '项目页未向主面板透传规则加载态')
+  assert.match(workspaceSource, /:workspace-preparing="workspacePreparing"/, '项目页未向主面板透传准备态')
+  assert.match(workspaceSource, /:topic-board-fetching="topicBoardFetching"/, '项目页未向主面板透传选题板拉取态')
+  assert.match(workspaceSource, /workspace-preparing-overlay__label">正在准备工作区</, '项目页缺少工作区准备态文案')
+  assert.match(workspaceSource, /workspace-preparing-overlay__title">WinLooooop</, '项目页缺少压暗态标题')
+  assert.doesNotMatch(workspaceSource, /defaultAssistantGreeting/, '项目页仍保留右栏默认欢迎语 mock')
+  assert.doesNotMatch(workspaceSource, /clamp\(35 \+ innovationCount \* 12 \+ routeCount \* 6, 10, 98\)/, '项目页仍在本地拼装核心指标 mock 分数')
+  assert.doesNotMatch(workspaceSource, /return \[30, 45, 68, 82, last\]/, '项目页仍在本地拼装趋势柱状图 mock 数据')
+
+  assert.match(panelSource, /workspacePreparing\?: boolean/, '主面板缺少工作区准备态入参')
+  assert.match(panelSource, /mappingLoading\?: boolean/, '主面板缺少规则加载态入参')
+  assert.match(panelSource, /topicBoardFetching\?: boolean/, '主面板缺少选题板拉取态入参')
+  assert.match(panelSource, /title: '查看核心指标要求'/, '主面板仍在使用旧的“完成对标”假完成文案')
+  assert.match(panelSource, /等待赛道评分规则返回。/, '主面板缺少真实规则等待文案')
+  assert.match(panelSource, /暂无赛道评分规则，待竞赛详情返回后展示真实指标要求。/, '主面板缺少真实规则空态')
+  assert.match(panelSource, /\{\{\s*row\.scoreLabel\s*\}\}/, '主面板未展示真实规则权重标签')
+  assert.match(panelSource, /\{\{\s*row\.supportingNote\s*\}\}/, '主面板未展示真实证据要求')
+  assert.doesNotMatch(panelSource, /toneMeta\[row\.tone\]/, '主面板仍依赖 mock toneMeta 渲染指标状态')
+  assert.doesNotMatch(panelSource, /\{\{\s*word\.label\s*\}\}\s*\(\{\{\s*word\.count\s*\}\}\)/, '主面板仍强制展示词云 mock 计数')
+
+  assert.match(statusBarSource, /line\?: number \| null/, '状态栏未允许行号为空')
+  assert.match(statusBarSource, /column\?: number \| null/, '状态栏未允许列号为空')
+  assert.match(statusBarSource, /v-if="normalizedCursorLine !== null && normalizedCursorColumn !== null"/, '状态栏仍在无真实光标时展示伪行列值')
 })
 
 it('team 创建弹窗复用基础设置编辑器，并支持仅创建与复选框竞赛列表', async () => {
