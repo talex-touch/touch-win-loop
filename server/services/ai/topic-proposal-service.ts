@@ -279,7 +279,6 @@ export async function executeTopicProposal(
 
   if (typeof existingSession === 'string')
     throw new Error('TOPIC_PROPOSAL_SESSION_NOT_FOUND')
-
   const quotaResult = await withTransaction(event, async (db) => {
     const canUseWorkspace = await teamHasWorkspaceMembership(db, input.user, workspaceId)
     if (!canUseWorkspace)
@@ -319,7 +318,6 @@ export async function executeTopicProposal(
       major: input.request.context.major,
     })
   })
-
   const includeInternal = Boolean(
     input.user.isPlatformAdmin
     || await checkPlatformPermission(event, input.user, 'contest.read_internal'),
