@@ -198,6 +198,9 @@ export interface Resource {
   status?: ResourceStatus
   createdBy?: string
   updatedBy?: string
+  uploaderUserId?: string
+  uploaderUsername?: string
+  uploaderAvatarUrl?: string | null
   createdAt?: string
   updatedAt?: string
 }
