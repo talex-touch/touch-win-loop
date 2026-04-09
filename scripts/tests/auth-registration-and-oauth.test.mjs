@@ -11,6 +11,9 @@ const ADMIN_CASDOOR_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/integrat
 const ADMIN_CASDOOR_CONFIG_GET_FILE = resolve(process.cwd(), 'server/api/admin/integrations/casdoor/config.get.ts')
 const ADMIN_CASDOOR_CONFIG_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/integrations/casdoor/config.patch.ts')
 const LOGIN_PAGE_FILE = resolve(process.cwd(), 'app/pages/login.vue')
+const LOGIN_PAGE_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useLoginPage.ts')
+const LOGIN_TEXT_ICON_FILE = resolve(process.cwd(), 'app/components/login/TextIcon.vue')
+const LOGIN_FOOTER_FILE = resolve(process.cwd(), 'app/components/login/FooterBar.vue')
 const NUXT_CONFIG_FILE = resolve(process.cwd(), 'nuxt.config.ts')
 const RUNTIME_SETTINGS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/runtime-settings.vue')
 const USER_SETTINGS_DIALOG_FILE = resolve(process.cwd(), 'app/components/UserSettingsDialog.vue')
@@ -32,11 +35,30 @@ it('登录元信息接口会暴露注册开关和 Casdoor 可用状态', async (
 })
 
 it('登录页提供 Casdoor OAuth 入口并根据注册开关切换文案', async () => {
-  const source = await readFile(LOGIN_PAGE_FILE, 'utf8')
+  const [pageSource, composableSource] = await Promise.all([
+    readFile(LOGIN_PAGE_FILE, 'utf8'),
+    readFile(LOGIN_PAGE_COMPOSABLE_FILE, 'utf8'),
+  ])
 
-  assert.match(source, /manualCasdoorLogin/, '登录页未接入 Casdoor 登录动作')
-  assert.match(source, /\/auth\/casdoor\/authorize\?redirect=/, '登录页未跳转 Casdoor authorize 接口')
-  assert.match(source, /registrationEnabled \? '首次登录将自动注册/, '登录页未按注册开关切换提示文案')
+  assert.match(pageSource, /useLoginPage\(/, '登录页未抽离登录逻辑 composable')
+  assert.match(composableSource, /manualCasdoorLogin/, '登录页未接入 Casdoor 登录动作')
+  assert.match(composableSource, /\/auth\/casdoor\/authorize\?redirect=/, '登录页未跳转 Casdoor authorize 接口')
+  assert.match(composableSource, /registrationEnabled\.value\s*\?\s*'首次登录将自动注册/, '登录页未按注册开关切换提示文案')
+})
+
+it('登录页品牌字标与底部信息拆分为独立组件', async () => {
+  const [pageSource, textIconSource, footerSource] = await Promise.all([
+    readFile(LOGIN_PAGE_FILE, 'utf8'),
+    readFile(LOGIN_TEXT_ICON_FILE, 'utf8'),
+    readFile(LOGIN_FOOTER_FILE, 'utf8'),
+  ])
+
+  assert.match(pageSource, /<LoginTextIcon/, '登录页未使用独立 TextIcon 组件')
+  assert.match(pageSource, /<LoginFooterBar/, '登录页未使用独立底部信息组件')
+  assert.match(textIconSource, /WinLoop/, 'TextIcon 组件未展示 WinLoop 字标')
+  assert.match(footerSource, /Powered by SayBang\./, '登录页底部未展示 Powered by SayBang.')
+  assert.match(footerSource, /隐私政策/, '登录页底部未展示隐私政策')
+  assert.match(footerSource, /使用协议/, '登录页底部未展示使用协议')
 })
 
 it('后台运行设置页支持切换 auth.registrationEnabled', async () => {
