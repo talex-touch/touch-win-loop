@@ -72,7 +72,7 @@ it('team dashboard 仅在主数据加载成功后渲染整合面板', async () =
 it('unsafeFetch 默认透传认证上下文', async () => {
   const source = await readFile(UNSAFE_FETCH_PLUGIN_FILE, 'utf8')
 
-  assert.match(source, /unsafeFetch = \(\(request, options = \{\}\) => \{/, 'unsafeFetch 未包装统一请求入口')
+  assert.match(source, /globalThis\.unsafeFetch = \(\(request, options = \{\}\) => \{/, 'unsafeFetch 未包装统一请求入口')
   assert.match(source, /credentials: options\?\.credentials \?\? 'include'/, 'unsafeFetch 未默认包含认证凭据，跨域或代理场景下会丢失登录态')
 })
 
