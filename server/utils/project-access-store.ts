@@ -63,7 +63,7 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
       JOIN workspace_members wm ON wm.workspace_id = p.workspace_id
       WHERE p.id = $1
         AND wm.user_id = $2
-        AND wm.is_active = TRUE
+        AND wm.is_enabled = TRUE
         AND wm.role = ANY($3::TEXT[])
     ) AS can_manage`,
     [projectId, user.id, FULL_WORKSPACE_ROLES],
@@ -80,7 +80,7 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
       JOIN project_members pm ON pm.project_id = p.id
       WHERE p.id = $1
         AND wm.user_id = $2
-        AND wm.is_active = TRUE
+        AND wm.is_enabled = TRUE
         AND wm.role = 'manager'
         AND pm.user_id = $2
     ) AS can_manage`,
@@ -98,7 +98,7 @@ export async function teamCanManageProject(db: Queryable, user: AuthUser, projec
       JOIN project_members pm ON pm.project_id = p.id
       WHERE p.id = $1
         AND wm.user_id = $2
-        AND wm.is_active = TRUE
+        AND wm.is_enabled = TRUE
         AND pm.user_id = $2
         AND pm.role = ANY($3::TEXT[])
     ) AS can_manage`,

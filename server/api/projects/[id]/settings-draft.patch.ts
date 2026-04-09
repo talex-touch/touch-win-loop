@@ -32,6 +32,8 @@ function normalizeCommonDraft(value: unknown): ProjectSettingsDraftCommon {
   return {
     title: normalizePlainText(source.title),
     summary: normalizePlainText(source.summary),
+    icon: normalizePlainText(source.icon),
+    accentColor: normalizePlainText(source.accentColor),
     problemStatement: normalizePlainText(source.problemStatement),
     innovationPointsText: normalizePlainText(source.innovationPointsText),
     techRouteStepsText: normalizePlainText(source.techRouteStepsText),

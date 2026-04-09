@@ -75,7 +75,7 @@ it('邀请创建具备活跃邀请去重逻辑', async () => {
 
 it('邀请接受接口实现幂等语义', async () => {
   const source = await readFile(TEAM_INVITATION_STORE_FILE, 'utf8')
-  assert.match(source, /if \(invitation\.accepted_at\)/, 'acceptInvitation 缺少已接受幂等分支')
+  assert.match(source, /if \(isTargetedInvitation && invitation\.accepted_at\)/, 'acceptInvitation 缺少定向邀请已接受幂等分支')
   const acceptInvitationSection = source.match(
     /export async function teamAcceptInvitation[\s\S]*?export async function teamRevokeWorkspaceInvitation/,
   )?.[0] || ''
@@ -88,6 +88,10 @@ it('邀请接受接口实现幂等语义', async () => {
     /accepted_at IS NULL|expires_at > NOW\(\)/,
     'acceptInvitation 仍使用旧的非幂等查询条件',
   )
+  assert.match(tokenQuerySql, /FOR UPDATE/, 'acceptInvitation 未对 invitation 行加锁')
+  assert.match(acceptInvitationSection, /const isTargetedInvitation = Boolean\(invitation\.invitee_username\)/, 'acceptInvitation 未按 invitee_username 区分定向与通用邀请')
+  assert.match(acceptInvitationSection, /if \(isTargetedInvitation && invitation\.accepted_at\)/, '定向邀请未保留 accepted_at 单次消费幂等分支')
+  assert.match(acceptInvitationSection, /if \(!isTargetedInvitation\) \{[\s\S]*acceptedAt: null[\s\S]*\}/, '通用邀请未保留 acceptedAt 为空的多人复用分支')
 })
 
 it('team 邀请支持携带项目上下文并在接受后补齐项目成员', async () => {

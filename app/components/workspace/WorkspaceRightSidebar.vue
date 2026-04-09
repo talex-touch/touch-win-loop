@@ -174,7 +174,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
     <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70 shrink-0 space-y-2">
       <div class="flex items-center justify-between">
         <div class="text-xs text-slate-800 font-semibold">
-          对话会话（{{ chatSessions.length }}）
+          Loopy 会话（{{ chatSessions.length }}）
         </div>
         <button
           class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
@@ -187,7 +187,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
         会话加载中...
       </div>
       <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400 leading-5">
-        暂无会话，点击“新建”开始。
+        暂无会话，点击“新建”开始 Loopy 对话。
       </div>
       <div v-else class="pr-1 max-h-32 overflow-y-auto space-y-1">
         <button
@@ -198,7 +198,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
           @click="emit('switchChatSession', session.id)"
         >
           <div class="text-[11px] text-slate-700 font-semibold truncate">
-            {{ session.title || 'AI 对话' }}
+            {{ session.title || 'Loopy 对话' }}
           </div>
           <div class="text-[10px] text-slate-500 mt-1">
             消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}

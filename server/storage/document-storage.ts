@@ -1,21 +1,36 @@
+import type { Writable } from 'node:stream'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import process from 'node:process'
+import { PassThrough, Readable } from 'node:stream'
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { readRuntimeSettings } from '~~/server/utils/env'
 
 export interface StoredObjectInput {
   key: string
-  body: Buffer
+  body: Buffer | Readable
+  contentType?: string
+}
+
+export interface MergeStoredObjectsInput {
+  key: string
+  sourceKeys: string[]
+  contentType?: string
 }
 
 export interface DocumentStorage {
   provider: string
   putObject: (input: StoredObjectInput) => Promise<void>
+  putChunkObject: (input: StoredObjectInput) => Promise<void>
   getObjectBuffer: (key: string) => Promise<Buffer>
+  getObjectStream: (key: string) => Promise<Readable>
   deleteObject: (key: string) => Promise<void>
+  deleteObjects: (keys: string[]) => Promise<void>
+  mergeObjects: (input: MergeStoredObjectsInput) => Promise<void>
 }
 
 class LocalDocumentStorage implements DocumentStorage {
@@ -26,15 +41,49 @@ class LocalDocumentStorage implements DocumentStorage {
   async putObject(input: StoredObjectInput): Promise<void> {
     const filePath = this.resolveKey(input.key)
     await mkdir(dirname(filePath), { recursive: true })
-    await writeFile(filePath, input.body)
+    if (Buffer.isBuffer(input.body)) {
+      await writeFile(filePath, input.body)
+      return
+    }
+    await writeReadableToFile(input.body, filePath)
+  }
+
+  async putChunkObject(input: StoredObjectInput): Promise<void> {
+    await this.putObject(input)
   }
 
   async getObjectBuffer(key: string): Promise<Buffer> {
     return readFile(this.resolveKey(key))
   }
 
+  async getObjectStream(key: string): Promise<Readable> {
+    return createReadStream(this.resolveKey(key))
+  }
+
   async deleteObject(key: string): Promise<void> {
     await rm(this.resolveKey(key), { force: true })
+  }
+
+  async deleteObjects(keys: string[]): Promise<void> {
+    await Promise.all(keys.map(async key => await this.deleteObject(key)))
+  }
+
+  async mergeObjects(input: MergeStoredObjectsInput): Promise<void> {
+    const filePath = this.resolveKey(input.key)
+    await mkdir(dirname(filePath), { recursive: true })
+    const target = createWriteStream(filePath)
+    try {
+      for (const sourceKey of input.sourceKeys) {
+        const source = createReadStream(this.resolveKey(sourceKey))
+        await pipeReadableIntoWritable(source, target, false)
+      }
+      target.end()
+      await once(target, 'finish')
+    }
+    catch (error) {
+      target.destroy()
+      throw error
+    }
   }
 
   private resolveKey(key: string): string {
@@ -58,7 +107,7 @@ async function toBuffer(value: unknown): Promise<Buffer> {
     return Buffer.from(value)
 
   const body = value as BodyLike
-  if (typeof body.transformToByteArray === 'function') {
+  if (body && typeof body.transformToByteArray === 'function') {
     const bytes = await body.transformToByteArray()
     return Buffer.from(bytes)
   }
@@ -80,6 +129,63 @@ async function toBuffer(value: unknown): Promise<Buffer> {
   }
 
   throw new Error('对象存储返回了不支持的内容类型。')
+}
+
+function toReadable(value: unknown): Readable {
+  if (value instanceof Readable)
+    return value
+
+  const body = value as BodyLike
+  if (body && typeof body[Symbol.asyncIterator] === 'function')
+    return Readable.from(body as AsyncIterable<unknown>)
+
+  if (typeof body.transformToByteArray === 'function') {
+    const transformToByteArray = body.transformToByteArray.bind(body)
+    return Readable.from((async function* () {
+      yield await transformToByteArray()
+    })())
+  }
+
+  throw new Error('对象存储返回了不支持的流类型。')
+}
+
+async function writeChunkToWritable(target: Writable, chunk: Buffer): Promise<void> {
+  if (target.write(chunk))
+    return
+  await once(target, 'drain')
+}
+
+async function pipeReadableIntoWritable(source: Readable, target: Writable, shouldEnd: boolean): Promise<void> {
+  try {
+    for await (const chunk of source) {
+      if (Buffer.isBuffer(chunk)) {
+        await writeChunkToWritable(target, chunk)
+        continue
+      }
+      if (chunk instanceof Uint8Array) {
+        await writeChunkToWritable(target, Buffer.from(chunk))
+        continue
+      }
+      await writeChunkToWritable(target, Buffer.from(String(chunk)))
+    }
+    if (shouldEnd)
+      target.end()
+  }
+  finally {
+    source.destroy()
+  }
+}
+
+async function writeReadableToFile(source: Readable, filePath: string): Promise<void> {
+  const target = createWriteStream(filePath)
+  try {
+    await pipeReadableIntoWritable(source, target, true)
+    await once(target, 'finish')
+  }
+  catch (error) {
+    target.destroy()
+    throw error
+  }
 }
 
 class S3DocumentStorage implements DocumentStorage {
@@ -116,8 +222,12 @@ class S3DocumentStorage implements DocumentStorage {
       Bucket: this.bucket,
       Key: input.key,
       Body: input.body,
-      ContentType: 'application/pdf',
+      ContentType: input.contentType || 'application/octet-stream',
     }))
+  }
+
+  async putChunkObject(input: StoredObjectInput): Promise<void> {
+    await this.putObject(input)
   }
 
   async getObjectBuffer(key: string): Promise<Buffer> {
@@ -128,11 +238,46 @@ class S3DocumentStorage implements DocumentStorage {
     return toBuffer(response.Body)
   }
 
+  async getObjectStream(key: string): Promise<Readable> {
+    const response = await this.client.send(new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+    }))
+    return toReadable(response.Body)
+  }
+
   async deleteObject(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({
       Bucket: this.bucket,
       Key: key,
     }))
+  }
+
+  async deleteObjects(keys: string[]): Promise<void> {
+    await Promise.all(keys.map(async key => await this.deleteObject(key)))
+  }
+
+  async mergeObjects(input: MergeStoredObjectsInput): Promise<void> {
+    const passThrough = new PassThrough()
+    const putPromise = this.client.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: input.key,
+      Body: passThrough,
+      ContentType: input.contentType || 'application/octet-stream',
+    }))
+
+    try {
+      for (const sourceKey of input.sourceKeys) {
+        const source = await this.getObjectStream(sourceKey)
+        await pipeReadableIntoWritable(source, passThrough, false)
+      }
+      passThrough.end()
+      await putPromise
+    }
+    catch (error) {
+      passThrough.destroy()
+      throw error
+    }
   }
 }
 

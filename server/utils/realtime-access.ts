@@ -44,7 +44,7 @@ export async function resolveProjectRealtimeAccess(
         FROM workspace_members wm
         WHERE wm.workspace_id = $1
           AND wm.user_id = $2
-          AND wm.is_active = TRUE
+          AND wm.is_enabled = TRUE
           AND wm.role = ANY($4::TEXT[])
       )
       OR EXISTS (
@@ -53,7 +53,7 @@ export async function resolveProjectRealtimeAccess(
         JOIN project_members pm ON pm.project_id = $3 AND pm.user_id = wm.user_id
         WHERE wm.workspace_id = $1
           AND wm.user_id = $2
-          AND wm.is_active = TRUE
+          AND wm.is_enabled = TRUE
           AND wm.role = ANY($5::TEXT[])
       )
     ) AS allowed`,

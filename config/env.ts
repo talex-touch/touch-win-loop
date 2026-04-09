@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import process from 'node:process'
+import { cwd, env as processEnv } from 'node:process'
 import { parse } from 'dotenv'
 
 const ENV_FILES = ['.env', '.env.dev', '.env.prod', '.env.local'] as const
@@ -12,7 +12,7 @@ let cachedRootDir = ''
 let cachedMode = ''
 let cachedMerged: Record<string, string> | null = null
 
-function getActiveEnvFiles(mode = process.env.NODE_ENV): EnvFileName[] {
+function getActiveEnvFiles(mode = processEnv.NODE_ENV): EnvFileName[] {
   if (mode === 'production')
     return ['.env', '.env.prod', '.env.local']
   if (mode === 'development')
@@ -20,11 +20,11 @@ function getActiveEnvFiles(mode = process.env.NODE_ENV): EnvFileName[] {
   return [...ENV_FILES]
 }
 
-export function getEnvPriorityOrder(mode = process.env.NODE_ENV): EnvFileName[] {
+export function getEnvPriorityOrder(mode = processEnv.NODE_ENV): EnvFileName[] {
   return [...getActiveEnvFiles(mode)].reverse() as EnvFileName[]
 }
 
-export function loadWinloopEnv(rootDir = process.cwd(), mode = process.env.NODE_ENV): Record<string, string> {
+export function loadWinloopEnv(rootDir = cwd(), mode = processEnv.NODE_ENV): Record<string, string> {
   if (cachedMerged && cachedRootDir === rootDir && cachedMode === mode)
     return cachedMerged
 
@@ -41,8 +41,8 @@ export function loadWinloopEnv(rootDir = process.cwd(), mode = process.env.NODE_
   }
 
   for (const [key, value] of Object.entries(merged)) {
-    if (process.env[key] === undefined)
-      process.env[key] = value
+    if (processEnv[key] === undefined)
+      processEnv[key] = value
   }
 
   cachedRootDir = rootDir
@@ -53,7 +53,7 @@ export function loadWinloopEnv(rootDir = process.cwd(), mode = process.env.NODE_
 
 export function resolveEnvValue(name: string, fallback = ''): string {
   const merged = loadWinloopEnv()
-  return process.env[name] ?? merged[name] ?? fallback
+  return processEnv[name] ?? merged[name] ?? fallback
 }
 
 export function resolveEnvNumber(name: string, fallback: number): number {
@@ -85,7 +85,7 @@ function firstNonEmpty(...values: string[]): string {
 function resolveGitOutput(command: string): string {
   try {
     return String(execSync(command, {
-      cwd: process.cwd(),
+      cwd: cwd(),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }) || '').trim()

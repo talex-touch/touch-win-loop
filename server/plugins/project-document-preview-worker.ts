@@ -18,6 +18,7 @@ import {
   updateProjectDocumentPreviewAsset,
   updateProjectDocumentTaskProgress,
 } from '~~/server/utils/project-resource-document-store'
+import { captureServerException } from '~~/server/utils/sentry'
 import {
   buildOnlyOfficeUserFacingErrorMessage,
   parseOnlyOfficeConvertErrorMessage,
@@ -303,6 +304,11 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
       rawError: rawErrorMessage,
       errorStack: error instanceof Error ? normalizeString(error.stack) : '',
     })
+    captureServerException(error, {
+      module: 'project-document-preview-worker',
+      projectId: context.document.projectId,
+      taskId: context.task.id,
+    })
   }
 
   return taskResult
@@ -313,6 +319,9 @@ function logWorkerError(stage: 'bootstrap' | 'tick', error: unknown): void {
     ? '[project-document-preview-worker] bootstrap failed:'
     : '[project-document-preview-worker] tick failed:'
   console.error(prefix, toErrorMessage(error))
+  captureServerException(error, {
+    module: 'project-document-preview-worker',
+  })
 }
 
 async function runTick(): Promise<void> {

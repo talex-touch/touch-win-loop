@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import NotificationBellButton from '~/components/notifications/NotificationBellButton.vue'
+
 withDefaults(defineProps<{
   modelValue?: string
+  workspaceId?: string
 }>(), {
   modelValue: '',
+  workspaceId: '',
 })
 
 const emit = defineEmits<{
@@ -15,8 +19,8 @@ function onInput(event: Event) {
 </script>
 
 <template>
-  <header class="px-4 border-b border-blue-100 bg-white flex shrink-0 gap-4 h-16 items-center justify-between md:px-8">
-    <div class="flex flex-1 gap-4 max-w-xl min-w-0 items-center">
+  <header class="px-4 pr-20 border-b border-blue-100 bg-white shrink-0 h-16 relative overflow-visible md:px-8 md:pr-24">
+    <div class="flex gap-4 h-full max-w-xl min-w-0 items-center">
       <NuxtLink to="/dashboard" class="text-white rounded-lg bg-blue-700 flex shrink-0 h-10 w-10 items-center justify-center lg:hidden">
         <span class="material-symbols-outlined text-lg">dashboard</span>
       </NuxtLink>
@@ -32,11 +36,8 @@ function onInput(event: Event) {
       </div>
     </div>
 
-    <div class="flex shrink-0 gap-4 items-center">
-      <button class="rounded-lg flex h-10 w-10 items-center justify-center relative hover:bg-slate-100">
-        <span class="material-symbols-outlined text-slate-600">notifications</span>
-        <span class="border-2 border-white rounded-full bg-red-500 h-2 w-2 right-2 top-2 absolute" />
-      </button>
+    <div class="right-4 top-1/2 absolute z-20 -translate-y-1/2 md:right-8">
+      <NotificationBellButton :workspace-id="workspaceId" />
     </div>
   </header>
 </template>

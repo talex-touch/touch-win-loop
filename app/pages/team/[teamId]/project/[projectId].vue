@@ -63,6 +63,7 @@ import type {
   WorkspaceStatusToneMeta,
   WorkspaceTopicBoardDraft,
 } from '~/types/workspace'
+import { Message } from '@arco-design/web-vue'
 import {
   formatFileSize,
   isProjectResourceUploadFileSupported,
@@ -71,6 +72,12 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
 import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
+import {
+  buildProjectSettingsCommonPatch,
+  cloneProjectCommonForm,
+  createEmptyProjectCommonForm,
+  createProjectCommonFormFromProject,
+} from '~/composables/project-settings'
 import { useCollabSession } from '~/composables/useCollabSession'
 
 definePageMeta({
@@ -179,49 +186,6 @@ function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
     candidateCount: 3,
   }
 }
-
-function createEmptyProjectCommonForm(): WorkspaceProjectCommonForm {
-  return {
-    title: '',
-    summary: '',
-    problemStatement: '',
-    innovationPointsText: '',
-    techRouteStepsText: '',
-    scoringMappingText: '',
-    risksText: '',
-    deliverablesText: '',
-  }
-}
-
-function createProjectCommonFormFromProject(project: Project | null): WorkspaceProjectCommonForm {
-  if (!project)
-    return createEmptyProjectCommonForm()
-
-  return {
-    title: project.title || '',
-    summary: project.summary || '',
-    problemStatement: project.problemStatement || '',
-    innovationPointsText: arrayToLines(project.innovationPoints),
-    techRouteStepsText: arrayToLines(project.techRouteSteps),
-    scoringMappingText: arrayToLines(project.scoringMapping),
-    risksText: arrayToLines(project.risks),
-    deliverablesText: arrayToLines(project.deliverables),
-  }
-}
-
-function cloneProjectCommonForm(value: WorkspaceProjectCommonForm): WorkspaceProjectCommonForm {
-  return {
-    title: value.title,
-    summary: value.summary,
-    problemStatement: value.problemStatement,
-    innovationPointsText: value.innovationPointsText,
-    techRouteStepsText: value.techRouteStepsText,
-    scoringMappingText: value.scoringMappingText,
-    risksText: value.risksText,
-    deliverablesText: value.deliverablesText,
-  }
-}
-
 function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
   return {
     contestId,
@@ -298,7 +262,7 @@ function clamp(value: number, min: number, max: number): number {
 function defaultAssistantGreeting(): ChatMessage {
   return {
     role: 'assistant',
-    content: '你好，我是 WinLoop AI。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
+    content: '你好，我是 Loopy。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
   }
 }
 
@@ -1032,15 +996,20 @@ const activeProject = computed(() => {
 })
 
 const activeProjectId = computed(() => activeProject.value?.id || '')
+const currentCollabUserId = computed(() => String(me.value?.user.id || '').trim())
+const currentCollabUsername = computed(() => String(me.value?.user.username || '').trim())
 const collabSession = useCollabSession({
   workspaceRealtime,
   projectId: activeProjectId,
   resourceId: collabBindingResourceId,
+  currentUserId: currentCollabUserId,
+  currentUsername: currentCollabUsername,
   statusLine,
   fetchSnapshot: async resourceId => await fetchCollabSnapshot(resourceId),
 })
 const collabRevision = collabSession.revision
 const collabMarkdownDoc = collabSession.markdownDoc
+const collabMarkdownAwareness = collabSession.markdownAwareness
 const collabDrawValue = collabSession.drawValue
 const collabDrawError = collabSession.drawError
 const collabPresenceMembers = collabSession.presenceMembers
@@ -1281,6 +1250,7 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
       return
     if (projectId && projectId !== activeProjectId.value)
       return
+    refreshProjectUploadActivities()
     scheduleRealtimeProjectRefresh()
     return
   }
@@ -1449,14 +1419,67 @@ const projectUploadStorageUsedBytes = computed(() => {
 
 const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value || topicBoardLoading.value)
 
+const collabSelectionStatus = ref({
+  line: 1,
+  column: 1,
+  selectionLength: 0,
+})
+
+const isMarkdownWorkspaceTabActive = computed(() => {
+  return activeMainTabId.value.startsWith('resource:') && previewMode.value === 'markdown'
+})
+
 const statusCursor = computed(() => {
+  if (isMarkdownWorkspaceTabActive.value) {
+    return {
+      line: collabSelectionStatus.value.line,
+      column: collabSelectionStatus.value.column,
+      selectionLength: collabSelectionStatus.value.selectionLength,
+    }
+  }
+
   const line = clamp(12 + chatMessages.value.length + (formState.problemStatement ? 3 : 0), 12, 96)
   const column = clamp((chatInput.value.length % 80) + 8, 8, 120)
   return {
     line,
     column,
+    selectionLength: 0,
   }
 })
+
+const rebindUploadInputRef = ref<HTMLInputElement | null>(null)
+const pendingRebindSessionId = ref('')
+const currentUploadActorUserId = computed(() => String(me.value?.user.id || '').trim())
+const currentUploadActorUsername = computed(() => String(me.value?.user.username || '').trim())
+const currentUploadActorAvatarUrl = computed(() => String(me.value?.user.avatarUrl || '').trim() || null)
+
+const projectUploadManager = useProjectUploadManager({
+  projectId: activeProjectId,
+  endpoint,
+  currentUserId: currentUploadActorUserId,
+  currentUsername: currentUploadActorUsername,
+  currentUserAvatarUrl: currentUploadActorAvatarUrl,
+  realtimeConnected: workspaceRealtime.connected,
+  getUsedBytes: () => projectUploadStorageUsedBytes.value,
+  validateFiles: validateUploadFiles,
+  onStatusLine: (text) => {
+    statusLine.value = text
+  },
+  onRequireRefresh: async () => {
+    await refreshProjectResourceContext()
+    await loadProjectOutline()
+  },
+})
+
+const projectUploadTasks = projectUploadManager.tasks
+const projectUploadSummary = projectUploadManager.summary
+const projectUploadActivityItems = projectUploadManager.activityItems
+const projectUploadHistoryLoaded = projectUploadManager.projectSessionHistoryLoaded
+const uploadDrawerOpen = projectUploadManager.drawerOpen
+
+function refreshProjectUploadActivities() {
+  void projectUploadManager.refreshProjectSessions()
+}
 
 function mergeProjectIntoCollections(project: Project) {
   const merge = (list: Project[]): Project[] => {
@@ -1538,19 +1561,6 @@ function upsertProjectSettingsAdaptationDraft(form: WorkspaceProjectAdaptationFo
   projectSettingsAdaptationDrafts.value = {
     ...projectSettingsAdaptationDrafts.value,
     [contestId]: cloneProjectAdaptationForm(form),
-  }
-}
-
-function buildProjectSettingsCommonPatch() {
-  return {
-    title: projectSettingsCommon.title.trim(),
-    summary: projectSettingsCommon.summary.trim(),
-    problemStatement: projectSettingsCommon.problemStatement.trim(),
-    innovationPoints: linesToArray(projectSettingsCommon.innovationPointsText),
-    techRouteSteps: linesToArray(projectSettingsCommon.techRouteStepsText),
-    scoringMapping: linesToArray(projectSettingsCommon.scoringMappingText),
-    risks: linesToArray(projectSettingsCommon.risksText),
-    deliverables: linesToArray(projectSettingsCommon.deliverablesText),
   }
 }
 
@@ -1792,6 +1802,8 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
     common: {
       title: String(commonSource.title || ''),
       summary: String(commonSource.summary || ''),
+      icon: String(commonSource.icon || ''),
+      accentColor: String(commonSource.accentColor || ''),
       problemStatement: String(commonSource.problemStatement || ''),
       innovationPointsText: String(commonSource.innovationPointsText || ''),
       techRouteStepsText: String(commonSource.techRouteStepsText || ''),
@@ -2250,7 +2262,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     }
 
     if (projectSettingsCommonDirty.value)
-      body.common = buildProjectSettingsCommonPatch()
+      body.common = buildProjectSettingsCommonPatch(projectSettingsCommon)
     if (projectSettingsBindingsDirty.value)
       body.contestBindings = cloneProjectContestBindings(projectSettingsBindings.value)
 
@@ -2268,6 +2280,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     return true
   }
   catch (error) {
+    Message.error(resolveApiErrorMessage(error, '保存失败'))
     projectSettingsSaveState.value = 'error'
     statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
     return false
@@ -2308,6 +2321,7 @@ async function flushProjectAdaptationSave(
     return true
   }
   catch (error) {
+    Message.error(resolveApiErrorMessage(error, '保存失败'))
     projectSettingsSaveState.value = 'error'
     statusLine.value = `${resolveApiErrorMessage(error, '保存失败')}（可重试）`
     return false
@@ -2339,18 +2353,21 @@ async function saveProjectSettingsManually() {
   if (clearResult === 'conflict') {
     projectSettingsSaveState.value = 'conflict'
     statusLine.value = '项目已保存，但检测到其他设备有更新草稿，云端缓存未清除。'
+    Message.warning('项目已保存，但检测到其他设备有更新草稿，云端缓存未清除。')
     return
   }
 
   if (clearResult === 'error') {
     projectSettingsSaveState.value = 'error'
     statusLine.value = '项目已保存，但清理云端草稿失败（可重试）。'
+    Message.error('项目已保存，但清理云端草稿失败（可重试）。')
     return
   }
 
   await generateProjectOutline('settings_saved', true)
   projectSettingsSaveState.value = 'saved_manual'
   statusLine.value = '手动保存成功，结构大纲已刷新。'
+  Message.success('项目设置已保存。')
 }
 
 function onProjectSettingsCommonChange(next: WorkspaceProjectCommonForm) {
@@ -3047,6 +3064,32 @@ async function consumeJoinedProjectNotice() {
   }, { replace: true })
 }
 
+async function consumeProjectPanelQuery() {
+  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
+  if (panel !== 'members' && panel !== 'settings')
+    return
+
+  if (panel === 'members')
+    openMemberManagementSignal.value += 1
+  else
+    openSettingsSignal.value += 1
+
+  const nextQuery: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    if (key === 'panel')
+      continue
+
+    const normalized = normalizeQueryParam(value)
+    if (normalized)
+      nextQuery[key] = normalized
+  }
+
+  await navigateTo({
+    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
+    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
+  }, { replace: true })
+}
+
 async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) {
   const projectId = String(activeProjectId.value || '').trim()
   const userId = String(payload.userId || '').trim()
@@ -3322,35 +3365,76 @@ async function uploadResourcesToProject(files: File[]) {
   if (!activeProjectId.value)
     return
 
-  const normalizedFiles = Array.from(files || []).filter(file => file instanceof File)
-  const validationError = validateUploadFiles(normalizedFiles, projectUploadStorageUsedBytes.value)
-  if (validationError) {
-    statusLine.value = validationError
-    return
-  }
-
-  resourceMutating.value = true
-  const formData = new FormData()
-  normalizedFiles.forEach((file) => {
-    formData.append('file', file, file.name)
-  })
-
   try {
-    const response = await $fetch<ApiResponse<{ uploadedCount?: number }>>(endpoint(`/projects/${activeProjectId.value}/resources/upload`), {
-      method: 'POST',
-      body: formData,
-    })
-    await refreshProjectResourceContext()
-    await generateProjectOutline('upload_success', true)
-    const uploadedCount = Math.max(0, Number(response.data?.uploadedCount || normalizedFiles.length))
-    statusLine.value = `上传成功：${uploadedCount} 个文件，结构大纲已刷新。`
+    await projectUploadManager.enqueueFiles(files)
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
   }
-  finally {
-    resourceMutating.value = false
+}
+
+function openUploadDrawer() {
+  projectUploadManager.toggleDrawer()
+}
+
+async function pauseUploadTask(sessionId: string) {
+  await projectUploadManager.pauseTask(sessionId)
+}
+
+async function resumeUploadTask(sessionId: string) {
+  await projectUploadManager.resumeTask(sessionId)
+}
+
+async function retryUploadTask(sessionId: string) {
+  await projectUploadManager.retryTask(sessionId)
+}
+
+async function cancelUploadTask(sessionId: string) {
+  await projectUploadManager.cancelTask(sessionId)
+}
+
+function clearCompletedUploadTasks() {
+  projectUploadManager.clearCompletedTasks()
+}
+
+function requestRebindUploadTask(sessionId: string) {
+  pendingRebindSessionId.value = String(sessionId || '').trim()
+  if (!pendingRebindSessionId.value)
+    return
+  nextTick(() => {
+    rebindUploadInputRef.value?.click()
+  })
+}
+
+async function handleRebindUploadInputChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = Array.from(target.files || []).find(item => item instanceof File)
+  const sessionId = pendingRebindSessionId.value
+  target.value = ''
+  pendingRebindSessionId.value = ''
+  if (!file || !sessionId)
+    return
+
+  try {
+    await projectUploadManager.rebindTaskFile(sessionId, file)
+    projectUploadManager.openDrawer('auto')
+    statusLine.value = `已重新绑定文件：${file.name}。`
   }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '重新绑定上传文件失败，请稍后重试。')
+  }
+}
+
+async function pauseAllUploadTasks() {
+  const targets = projectUploadTasks.value.filter(task => task.status === 'uploading')
+  await Promise.allSettled(targets.map(task => projectUploadManager.pauseTask(task.sessionId)))
+}
+
+async function resumeAllUploadTasks() {
+  const targets = projectUploadTasks.value.filter((task) => {
+    return (task.status === 'paused' || task.status === 'failed') && !task.needsFileRebind
+  })
+  await Promise.allSettled(targets.map(task => projectUploadManager.resumeTask(task.sessionId)))
 }
 
 function clearPreviewStatusPolling() {
@@ -3362,6 +3446,18 @@ function clearPreviewStatusPolling() {
 
 function updateCollabDrawContent(value: string): void {
   collabSession.updateDraw(String(value || ''))
+}
+
+function updateCollabCursor(value: { cursorX?: number, cursorY?: number }): void {
+  collabSession.updatePresenceCursor(value.cursorX, value.cursorY)
+}
+
+function updateCollabSelectionStatus(value: { line: number, column: number, selectionLength: number }): void {
+  collabSelectionStatus.value = {
+    line: Math.max(1, Math.trunc(Number(value.line) || 1)),
+    column: Math.max(1, Math.trunc(Number(value.column) || 1)),
+    selectionLength: Math.max(0, Math.trunc(Number(value.selectionLength) || 0)),
+  }
 }
 
 async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPayload | null> {
@@ -3795,12 +3891,12 @@ function buildSessionTitleByMode(): string {
   const trackName = selectedTrack.value?.name || '未选择赛道'
 
   if (aiMode.value === 'auto_optimize')
-    return `自动优化 · ${contestName} · ${trackName}`
+    return `Loopy 自动优化 · ${contestName} · ${trackName}`
   if (aiMode.value === 'issue_discovery')
-    return `寻疑发现 · ${contestName} · ${trackName}`
+    return `Loopy 寻疑发现 · ${contestName} · ${trackName}`
   if (aiMode.value === 'defense')
-    return `答辩模拟 · ${contestName} · ${trackName}`
-  return `对话询问 · ${contestName} · ${trackName}`
+    return `Loopy 答辩模拟 · ${contestName} · ${trackName}`
+  return `Loopy 对话 · ${contestName} · ${trackName}`
 }
 
 async function createChatSession(preferredTitle = ''): Promise<string | null> {
@@ -3890,21 +3986,21 @@ async function switchChatSession(sessionId: string) {
 }
 
 async function startNewChatSession() {
-  let modeTitle = '新建 AI 对话'
+  let modeTitle = '新建 Loopy 对话'
   if (aiMode.value === 'defense')
-    modeTitle = '新建答辩会话'
+    modeTitle = '新建 Loopy 答辩会话'
   else if (aiMode.value === 'auto_optimize')
-    modeTitle = '新建自动优化会话'
+    modeTitle = '新建 Loopy 自动优化会话'
   else if (aiMode.value === 'issue_discovery')
-    modeTitle = '新建寻疑发现会话'
+    modeTitle = '新建 Loopy 寻疑发现会话'
   const createdId = await createChatSession(modeTitle)
   if (!createdId) {
-    statusLine.value = '新建对话失败，请稍后重试。'
+    statusLine.value = '新建 Loopy 会话失败，请稍后重试。'
     return
   }
 
   await loadChatSessions(createdId)
-  statusLine.value = '已创建新对话。'
+  statusLine.value = '已创建新的 Loopy 会话。'
 }
 
 function syncFormContestTrack() {
@@ -4183,6 +4279,8 @@ function resolveTopicBoardDraftDeliverables(): string[] {
 function buildTopicBoardDraftContent(candidate: TopicProposalItem): WorkspaceProjectCommonForm {
   return {
     title: candidate.title,
+    icon: '',
+    accentColor: '',
     problemStatement: candidate.reason,
     innovationPointsText: candidate.innovationPoints.join('\n'),
     techRouteStepsText: candidate.techRouteSteps.join('\n'),
@@ -4869,6 +4967,7 @@ onMounted(async () => {
       statusLine.value = `已定位项目：${target.title}`
   }
   await consumeJoinedProjectNotice()
+  await consumeProjectPanelQuery()
 })
 
 onBeforeUnmount(() => {
@@ -5069,6 +5168,7 @@ watch(() => workspaceRealtime.connected.value, () => {
     <WorkspaceHeader
       v-model="headerSearch"
       :project-name="headerProjectName"
+      :workspace-id="activeWorkspaceId"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
       @final-review="openFinalReviewFromHeader"
@@ -5092,6 +5192,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           :resource-library="resourceLibrary"
           :linked-contest-resource-groups="linkedContestResourceGroups"
           :linked-contest-binding-count="projectSettingsBindings.length"
+          :upload-tasks="projectUploadTasks"
+          :project-members="workspaceMembers"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
           :project-issues="projectIssues"
@@ -5136,6 +5238,11 @@ watch(() => workspaceRealtime.connected.value, () => {
           @restore-project-resource="restoreProjectResource"
           @purge-project-resource="purgeProjectResource"
           @upload-resources="uploadResourcesToProject"
+          @pause-upload-task="pauseUploadTask"
+          @resume-upload-task="resumeUploadTask"
+          @retry-upload-task="retryUploadTask"
+          @cancel-upload-task="cancelUploadTask"
+          @rebind-upload-task="requestRebindUploadTask"
         />
         <div class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-expanded">
           <button
@@ -5208,7 +5315,10 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-mode="previewMode"
         :preview-pdf-url="previewPdfUrl"
         :preview-source-download-url="previewSourceDownloadUrl"
+        :current-user-id="me?.user.id || ''"
+        :current-user-name="me?.user.username || ''"
         :collab-markdown-doc="collabMarkdownDoc"
+        :collab-markdown-awareness="collabMarkdownAwareness"
         :collab-draw-value="collabDrawValue"
         :collab-draw-error="collabDrawError"
         :collab-revision="collabRevision"
@@ -5262,6 +5372,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         @activate-preview-resource="activateProjectResourceTab"
         @close-preview-resource="closeProjectResourcePreview"
         @update:collab-draw-value="updateCollabDrawContent"
+        @update-collab-cursor="updateCollabCursor"
+        @update-collab-selection-status="updateCollabSelectionStatus"
       />
 
       <div v-if="!rightSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--right">
@@ -5327,7 +5439,29 @@ watch(() => workspaceRealtime.connected.value, () => {
       :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
       :line="statusCursor.line"
       :column="statusCursor.column"
+      :selection-length="statusCursor.selectionLength"
+      :has-active-project="Boolean(activeProjectId)"
+      :upload-summary="projectUploadSummary"
+      :upload-drawer-open="uploadDrawerOpen"
+      :upload-tasks="projectUploadTasks"
+      :upload-activity-items="projectUploadActivityItems"
+      :upload-history-loaded="projectUploadHistoryLoaded"
+      @toggle-upload-drawer="openUploadDrawer"
+      @pause-upload-task="pauseUploadTask"
+      @resume-upload-task="resumeUploadTask"
+      @retry-upload-task="retryUploadTask"
+      @cancel-upload-task="cancelUploadTask"
+      @rebind-upload-task="requestRebindUploadTask"
+      @pause-all-upload-tasks="pauseAllUploadTasks"
+      @resume-all-upload-tasks="resumeAllUploadTasks"
+      @clear-completed-upload-tasks="clearCompletedUploadTasks"
     />
+    <input
+      ref="rebindUploadInputRef"
+      class="hidden"
+      type="file"
+      @change="handleRebindUploadInputChange"
+    >
 
     <a-modal
       v-model:visible="topicBoardConfirmState.visible"

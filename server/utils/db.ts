@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  avatar_url TEXT,
   is_platform_admin BOOLEAN NOT NULL DEFAULT FALSE,
   is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -39,6 +40,9 @@ CREATE TABLE IF NOT EXISTS users (
 
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -69,6 +73,43 @@ CREATE TABLE IF NOT EXISTS workspace_members (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(workspace_id, user_id, role)
 );
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspace_members'
+      AND column_name = 'is_active'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspace_members'
+      AND column_name = 'is_enabled'
+  ) THEN
+    ALTER TABLE workspace_members
+      RENAME COLUMN is_active TO is_enabled;
+  END IF;
+END $$;
+
+ALTER TABLE workspace_members
+  ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'workspace_members'
+      AND column_name = 'is_active'
+  ) THEN
+    UPDATE workspace_members
+    SET is_enabled = is_active;
+
+    ALTER TABLE workspace_members
+      DROP COLUMN is_active;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
@@ -114,6 +155,7 @@ CREATE TABLE IF NOT EXISTS projects (
   risks TEXT[] NOT NULL DEFAULT '{}',
   deliverables TEXT[] NOT NULL DEFAULT '{}',
   summary TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   source TEXT NOT NULL CHECK (source IN ('chat', 'form')),
   status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'completed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -226,37 +268,6 @@ CREATE TABLE IF NOT EXISTS user_ai_memories (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS contest_sync_sources (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  source_type TEXT NOT NULL CHECK (source_type IN ('csv_url')),
-  source_url TEXT NOT NULL,
-  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  last_run_at TIMESTAMPTZ,
-  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS contest_sync_runs (
-  id TEXT PRIMARY KEY,
-  source_id TEXT NOT NULL REFERENCES contest_sync_sources(id) ON DELETE CASCADE,
-  status TEXT NOT NULL CHECK (status IN ('running', 'success', 'partial_success', 'failed')),
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  finished_at TIMESTAMPTZ,
-  preview_total INTEGER NOT NULL DEFAULT 0,
-  preview_valid INTEGER NOT NULL DEFAULT 0,
-  preview_invalid INTEGER NOT NULL DEFAULT 0,
-  created_count INTEGER NOT NULL DEFAULT 0,
-  updated_count INTEGER NOT NULL DEFAULT 0,
-  skipped_count INTEGER NOT NULL DEFAULT 0,
-  error_count INTEGER NOT NULL DEFAULT 0,
-  error_message TEXT NOT NULL DEFAULT '',
-  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 CREATE TABLE IF NOT EXISTS invitations (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -276,6 +287,37 @@ ALTER TABLE invitations
 
 ALTER TABLE invitations
   ADD COLUMN IF NOT EXISTS project_role TEXT;
+
+CREATE TABLE IF NOT EXISTS user_notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  category TEXT NOT NULL CHECK (category IN ('platform', 'contest', 'collab')),
+  type TEXT NOT NULL CHECK (type IN (
+    'platform.announcement',
+    'contest.deadline_reminder',
+    'workspace.invitation.created',
+    'workspace.invitation.accepted',
+    'workspace.member.removed',
+    'project.invitation.created',
+    'project.invitation.accepted',
+    'project.member.added',
+    'project.member.removed',
+    'project.member.role_changed'
+  )),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  action_url TEXT,
+  action_label TEXT,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  dedupe_key TEXT NOT NULL,
+  read_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, dedupe_key)
+);
 
 CREATE TABLE IF NOT EXISTS platform_user_roles (
   id TEXT PRIMARY KEY,
@@ -376,7 +418,7 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_items (
   id TEXT PRIMARY KEY,
   sync_id TEXT REFERENCES feishu_bitable_syncs(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'resource')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource')),
   app_token TEXT NOT NULL,
   table_id TEXT NOT NULL,
   view_id TEXT NOT NULL DEFAULT '',
@@ -424,7 +466,7 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_item_runs (
 CREATE TABLE IF NOT EXISTS feishu_external_refs (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL CHECK (provider IN ('feishu_bitable')),
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource')),
   external_id TEXT NOT NULL,
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
   entity_id TEXT NOT NULL,
@@ -449,7 +491,7 @@ CREATE TABLE IF NOT EXISTS feishu_post_sync_tasks (
   id TEXT PRIMARY KEY,
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
   run_id TEXT REFERENCES feishu_bitable_sync_item_runs(id) ON DELETE SET NULL,
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
   task_type TEXT NOT NULL CHECK (task_type IN ('embedding_upsert', 'search_index_refresh', 'entity_analysis', 'writeback_retry')),
@@ -483,7 +525,7 @@ BEGIN
   ) THEN
     CREATE TABLE IF NOT EXISTS feishu_vectors (
       id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource')),
       entity_id TEXT NOT NULL,
       chunk_index INTEGER NOT NULL DEFAULT 0,
       content TEXT NOT NULL DEFAULT '',
@@ -497,7 +539,7 @@ BEGIN
   ELSE
     CREATE TABLE IF NOT EXISTS feishu_vectors (
       id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+      scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource')),
       entity_id TEXT NOT NULL,
       chunk_index INTEGER NOT NULL DEFAULT 0,
       content TEXT NOT NULL DEFAULT '',
@@ -513,7 +555,7 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS feishu_search_index (
   id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
@@ -531,7 +573,7 @@ CREATE TABLE IF NOT EXISTS feishu_search_index (
 
 CREATE TABLE IF NOT EXISTS feishu_entity_analysis (
   id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'resource')),
+  scope TEXT NOT NULL CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource')),
   entity_id TEXT NOT NULL,
   external_id TEXT NOT NULL DEFAULT '',
   sync_item_id TEXT REFERENCES feishu_bitable_sync_items(id) ON DELETE SET NULL,
@@ -708,7 +750,7 @@ CREATE TABLE IF NOT EXISTS rule_annotations (
 CREATE TABLE IF NOT EXISTS feishu_sync_issues (
   id TEXT PRIMARY KEY,
   sync_item_id TEXT NOT NULL REFERENCES feishu_bitable_sync_items(id) ON DELETE CASCADE,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'resource')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource')),
   record_id TEXT NOT NULL,
   external_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'ignored')),
@@ -756,6 +798,13 @@ CREATE TABLE IF NOT EXISTS contest_tracks (
   contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   summary TEXT NOT NULL DEFAULT '',
+  cover_image_url TEXT NOT NULL DEFAULT '',
+  location TEXT NOT NULL DEFAULT '',
+  organizer TEXT NOT NULL DEFAULT '',
+  undertaker TEXT NOT NULL DEFAULT '',
+  participant_requirements TEXT NOT NULL DEFAULT '',
+  team_rule TEXT NOT NULL DEFAULT '',
+  award_ratio TEXT NOT NULL DEFAULT '',
   suitable_majors TEXT[] NOT NULL DEFAULT '{}',
   deliverable_types TEXT[] NOT NULL DEFAULT '{}',
   rubric_id TEXT,
@@ -809,6 +858,20 @@ CREATE TABLE IF NOT EXISTS project_settings_drafts (
 CREATE TABLE IF NOT EXISTS contest_timelines (
   id TEXT PRIMARY KEY,
   contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+  year INTEGER NOT NULL,
+  node_type TEXT NOT NULL CHECK (node_type IN ('registration', 'submission', 'preliminary', 'final', 'other')),
+  start_at TIMESTAMPTZ,
+  end_at TIMESTAMPTZ,
+  note TEXT NOT NULL DEFAULT '',
+  source_link TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS contest_track_timelines (
+  id TEXT PRIMARY KEY,
+  contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
+  track_id TEXT NOT NULL REFERENCES contest_tracks(id) ON DELETE CASCADE,
   year INTEGER NOT NULL,
   node_type TEXT NOT NULL CHECK (node_type IN ('registration', 'submission', 'preliminary', 'final', 'other')),
   start_at TIMESTAMPTZ,
@@ -1041,6 +1104,65 @@ CREATE TABLE IF NOT EXISTS project_resource_document_tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_resource_upload_sessions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  file_name TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  file_size BIGINT NOT NULL DEFAULT 0,
+  last_modified BIGINT NOT NULL DEFAULT 0,
+  category TEXT NOT NULL CHECK (category IN (
+    'basic_info',
+    'timeline',
+    'tracks',
+    'scoring',
+    'past_questions',
+    'awarded_works',
+    'templates',
+    'faq',
+    'judge_guidelines',
+    'track_details',
+    'ai_prompts',
+    'submission_examples',
+    'policy_notice',
+    'compliance'
+  )),
+  access_level TEXT NOT NULL DEFAULT 'public' CHECK (access_level IN ('public', 'login_required', 'unavailable')),
+  title TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  chunk_size INTEGER NOT NULL DEFAULT 0,
+  chunk_count INTEGER NOT NULL DEFAULT 1,
+  uploaded_bytes BIGINT NOT NULL DEFAULT 0,
+  uploaded_chunk_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'uploading', 'paused', 'finalizing', 'completed', 'failed', 'canceled')),
+  error_code TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  final_object_key TEXT NOT NULL DEFAULT '',
+  final_storage_provider TEXT NOT NULL DEFAULT '',
+  resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_upload_chunks (
+  session_id TEXT NOT NULL REFERENCES project_resource_upload_sessions(id) ON DELETE CASCADE,
+  chunk_index INTEGER NOT NULL DEFAULT 0,
+  chunk_size INTEGER NOT NULL DEFAULT 0,
+  object_key TEXT NOT NULL DEFAULT '',
+  checksum_sha256 TEXT NOT NULL DEFAULT '',
+  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_resource_upload_sessions_project_updated
+  ON project_resource_upload_sessions(project_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_project_resource_upload_sessions_project_status
+  ON project_resource_upload_sessions(project_id, status, expires_at);
+
 CREATE TABLE IF NOT EXISTS project_outline_snapshots (
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   context_json JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -1199,6 +1321,43 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'billing_plans'
+      AND column_name = 'is_active'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'billing_plans'
+      AND column_name = 'is_enabled'
+  ) THEN
+    ALTER TABLE billing_plans
+      RENAME COLUMN is_active TO is_enabled;
+  END IF;
+END $$;
+
+ALTER TABLE billing_plans
+  ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'billing_plans'
+      AND column_name = 'is_active'
+  ) THEN
+    UPDATE billing_plans
+    SET is_enabled = is_active;
+
+    ALTER TABLE billing_plans
+      DROP COLUMN is_active;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS workspace_billing (
   workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1553,6 +1712,55 @@ BEGIN
   END IF;
 END $$;
 
+ALTER TABLE feishu_bitable_sync_items
+  DROP CONSTRAINT IF EXISTS feishu_bitable_sync_items_entity_type_check;
+
+ALTER TABLE feishu_bitable_sync_items
+  ADD CONSTRAINT feishu_bitable_sync_items_entity_type_check
+  CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource'));
+
+ALTER TABLE feishu_sync_issues
+  DROP CONSTRAINT IF EXISTS feishu_sync_issues_entity_type_check;
+
+ALTER TABLE feishu_sync_issues
+  ADD CONSTRAINT feishu_sync_issues_entity_type_check
+  CHECK (entity_type IN ('contest', 'track', 'track_timeline', 'resource'));
+
+ALTER TABLE feishu_external_refs
+  DROP CONSTRAINT IF EXISTS feishu_external_refs_scope_check;
+
+ALTER TABLE feishu_external_refs
+  ADD CONSTRAINT feishu_external_refs_scope_check
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource'));
+
+ALTER TABLE feishu_post_sync_tasks
+  DROP CONSTRAINT IF EXISTS feishu_post_sync_tasks_scope_check;
+
+ALTER TABLE feishu_post_sync_tasks
+  ADD CONSTRAINT feishu_post_sync_tasks_scope_check
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource'));
+
+ALTER TABLE feishu_vectors
+  DROP CONSTRAINT IF EXISTS feishu_vectors_scope_check;
+
+ALTER TABLE feishu_vectors
+  ADD CONSTRAINT feishu_vectors_scope_check
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource'));
+
+ALTER TABLE feishu_search_index
+  DROP CONSTRAINT IF EXISTS feishu_search_index_scope_check;
+
+ALTER TABLE feishu_search_index
+  ADD CONSTRAINT feishu_search_index_scope_check
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource'));
+
+ALTER TABLE feishu_entity_analysis
+  DROP CONSTRAINT IF EXISTS feishu_entity_analysis_scope_check;
+
+ALTER TABLE feishu_entity_analysis
+  ADD CONSTRAINT feishu_entity_analysis_scope_check
+  CHECK (scope IN ('contest', 'track', 'track_timeline', 'resource'));
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_sync_issues_sync_item_record_external_unique
   ON feishu_sync_issues(sync_item_id, record_id, external_id);
 
@@ -1585,11 +1793,12 @@ CREATE INDEX IF NOT EXISTS idx_analytics_events_project_created ON analytics_eve
 CREATE INDEX IF NOT EXISTS idx_analytics_events_page_created ON analytics_events(page_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_type_created ON analytics_events(event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_token_hash ON invitations(token_hash);
 CREATE INDEX IF NOT EXISTS idx_invitations_workspace_project_created ON invitations(workspace_id, project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_invitations_project_created ON invitations(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_created ON user_notifications(user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_workspace_created ON user_notifications(user_id, workspace_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_read_created ON user_notifications(user_id, read_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_platform_user_roles_user ON platform_user_roles(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_user ON auth_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);
@@ -1629,6 +1838,8 @@ CREATE INDEX IF NOT EXISTS idx_contests_status_visibility ON contests(status, vi
 CREATE INDEX IF NOT EXISTS idx_contests_level ON contests(level);
 CREATE INDEX IF NOT EXISTS idx_contest_tracks_contest ON contest_tracks(contest_id);
 CREATE INDEX IF NOT EXISTS idx_contest_timelines_contest ON contest_timelines(contest_id);
+CREATE INDEX IF NOT EXISTS idx_contest_track_timelines_contest ON contest_track_timelines(contest_id);
+CREATE INDEX IF NOT EXISTS idx_contest_track_timelines_track ON contest_track_timelines(track_id);
 CREATE INDEX IF NOT EXISTS idx_contest_rubrics_contest_track ON contest_rubrics(contest_id, track_id);
 CREATE INDEX IF NOT EXISTS idx_contest_resources_contest_category ON contest_resources(contest_id, category);
 CREATE INDEX IF NOT EXISTS idx_contest_resources_status ON contest_resources(status);
@@ -1937,11 +2148,29 @@ ALTER TABLE contests
 ALTER TABLE contest_tracks
   ADD COLUMN IF NOT EXISTS rubric_id TEXT;
 
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS cover_image_url TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS organizer TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS undertaker TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS participant_requirements TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS team_rule TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE contest_tracks
+  ADD COLUMN IF NOT EXISTS award_ratio TEXT NOT NULL DEFAULT '';
+
 ALTER TABLE contest_rubrics
   ADD COLUMN IF NOT EXISTS scoring_mode TEXT NOT NULL DEFAULT 'weighted';
-
-ALTER TABLE contest_sync_runs
-  ADD COLUMN IF NOT EXISTS updated_count INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE contest_resources
   ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '';
@@ -1974,6 +2203,9 @@ CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_project_mode_updated
 
 ALTER TABLE projects
   ADD COLUMN IF NOT EXISTS contest_ids TEXT[] NOT NULL DEFAULT '{}';
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
 
 ALTER TABLE project_resources
   ADD COLUMN IF NOT EXISTS resource_kind TEXT NOT NULL DEFAULT 'binary';

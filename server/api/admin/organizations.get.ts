@@ -60,7 +60,7 @@ export default defineEventHandler(async (event) => {
           SELECT COUNT(DISTINCT wm.user_id)::INT
           FROM workspace_members wm
           WHERE wm.workspace_id = w.id
-            AND wm.is_active = TRUE
+            AND wm.is_enabled = TRUE
         ) AS member_count,
         wb.plan_id,
         bp.code AS plan_code,

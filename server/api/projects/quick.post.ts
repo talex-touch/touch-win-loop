@@ -5,6 +5,7 @@ import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { createProject } from '~~/server/utils/platform-store'
 import { teamHasWorkspaceRoles } from '~~/server/utils/team-membership-store'
+import { normalizeProjectDisplayConfig } from '~~/shared/constants/project-display'
 
 interface QuickCreateBody {
   teamId?: string
@@ -12,6 +13,8 @@ interface QuickCreateBody {
   title?: string
   summary?: string
   contestIds?: string[]
+  icon?: string
+  accentColor?: string
 }
 
 export default defineEventHandler(async (event) => {
@@ -26,6 +29,10 @@ export default defineEventHandler(async (event) => {
   const contestIds = Array.isArray(body.contestIds)
     ? body.contestIds.map(item => String(item || '').trim()).filter(Boolean)
     : []
+  const display = normalizeProjectDisplayConfig({
+    icon: body.icon,
+    accentColor: body.accentColor,
+  })
   const primaryContestId = contestIds[0] || 'quick_draft'
 
   if (!workspaceId || !title) {
@@ -56,6 +63,7 @@ export default defineEventHandler(async (event) => {
         contestId: primaryContestId,
         trackId: 'quick_draft',
         contestIds,
+        display,
         problemStatement: summary || '待补充项目简介',
         innovationPoints: [],
         techRouteSteps: [],

@@ -25,12 +25,28 @@ function mapTeamQuota(row: TeamQuotaRow): TeamQuota {
   }
 }
 
+async function insertAiUsageLedgerRecord(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    userId: string
+    route: string
+    units: number
+  },
+): Promise<void> {
+  await db.query(
+    `INSERT INTO ai_usage_ledger (id, workspace_id, user_id, route, units, created_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())`,
+    [randomUUID(), input.workspaceId, input.userId, input.route, input.units],
+  )
+}
+
 async function countActiveWorkspaceSeatUsed(db: Queryable, workspaceId: string): Promise<number> {
   const usageResult = await db.query<{ count: string }>(
     `SELECT COUNT(DISTINCT wm.user_id)::TEXT AS count
      FROM workspace_members wm
      WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE`,
+       AND wm.is_enabled = TRUE`,
     [workspaceId],
   )
 
@@ -99,7 +115,7 @@ export async function teamRefreshSeatUsage(db: Queryable, workspaceId: string): 
      FROM workspace_members wm
      JOIN workspaces w ON w.id = wm.workspace_id
      WHERE wm.workspace_id = $1
-       AND wm.is_active = TRUE
+       AND wm.is_enabled = TRUE
        AND w.type = 'team'`,
     [workspaceId],
   )
@@ -173,6 +189,7 @@ export async function teamConsumeAiQuota(
     return { allowed: false, remaining: null }
 
   if (workspaceType === 'personal') {
+    await insertAiUsageLedgerRecord(db, input)
     return { allowed: true, remaining: null }
   }
 
@@ -215,11 +232,7 @@ export async function teamConsumeAiQuota(
     [input.workspaceId, nextUsed],
   )
 
-  await db.query(
-    `INSERT INTO ai_usage_ledger (id, workspace_id, user_id, route, units, created_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [randomUUID(), input.workspaceId, input.userId, input.route, input.units],
-  )
+  await insertAiUsageLedgerRecord(db, input)
 
   return {
     allowed: true,

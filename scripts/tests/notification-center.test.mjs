@@ -1,0 +1,91 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { it } from 'vitest'
+
+const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
+const DB_FILE = resolve(process.cwd(), 'server/utils/db.ts')
+const NOTIFICATION_STORE_FILE = resolve(process.cwd(), 'server/utils/notification-store.ts')
+const NOTIFICATION_LIST_API_FILE = resolve(process.cwd(), 'server/api/notifications/index.get.ts')
+const NOTIFICATION_READ_ALL_API_FILE = resolve(process.cwd(), 'server/api/notifications/read-all.post.ts')
+const ADMIN_NOTIFICATION_API_FILE = resolve(process.cwd(), 'server/api/admin/notifications/index.post.ts')
+const TEAM_INVITE_API_FILE = resolve(process.cwd(), 'server/api/teams/[id]/invitations.post.ts')
+const PROJECT_INVITE_API_FILE = resolve(process.cwd(), 'server/api/projects/[id]/invitations/index.post.ts')
+const INVITE_ACCEPT_API_FILE = resolve(process.cwd(), 'server/api/invitations/[token]/accept.post.ts')
+const PLATFORM_STORE_FILE = resolve(process.cwd(), 'server/utils/platform-store.ts')
+const TEAM_MEMBERSHIP_STORE_FILE = resolve(process.cwd(), 'server/utils/team-membership-store.ts')
+const NOTIFICATION_BELL_FILE = resolve(process.cwd(), 'app/components/notifications/NotificationBellButton.vue')
+const NOTIFICATION_DRAWER_FILE = resolve(process.cwd(), 'app/components/notifications/NotificationDrawer.vue')
+const NOTIFICATION_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useNotificationCenter.ts')
+const DASHBOARD_TOPBAR_FILE = resolve(process.cwd(), 'app/components/dashboard/DashboardTopbar.vue')
+const WORKSPACE_HEADER_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceHeader.vue')
+const ADMIN_INDEX_FILE = resolve(process.cwd(), 'app/pages/admin/index.vue')
+const ADMIN_NOTIFICATIONS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/notifications.vue')
+
+it('通知领域类型与 user_notifications 表已落地', async () => {
+  const domainSource = await readFile(DOMAIN_TYPES_FILE, 'utf8')
+  const dbSource = await readFile(DB_FILE, 'utf8')
+
+  assert.match(domainSource, /export type UserNotificationCategory = 'platform' \| 'contest' \| 'collab'/, '通知分类类型缺失')
+  assert.match(domainSource, /workspace\.member\.removed/, 'workspace 成员移除通知类型缺失')
+  assert.match(domainSource, /export interface UserNotificationListResult \{\s+items: UserNotification\[\][\s\S]*nextCursor: string/, '通知列表返回结构缺失')
+  assert.match(dbSource, /CREATE TABLE IF NOT EXISTS user_notifications \(/, 'user_notifications 表未创建')
+  assert.match(dbSource, /UNIQUE\(user_id, dedupe_key\)/, '通知去重约束缺失')
+  assert.match(dbSource, /idx_user_notifications_user_created/, '通知列表索引缺失')
+})
+
+it('通知 store 支持平台下发、比赛提醒与成员变更通知', async () => {
+  const source = await readFile(NOTIFICATION_STORE_FILE, 'utf8')
+
+  assert.match(source, /export async function ensureContestDeadlineNotifications\(/, '比赛提醒惰性生成入口缺失')
+  assert.match(source, /contest\.deadline_reminder/, '比赛提醒通知类型未接入')
+  assert.match(source, /export async function publishPlatformAnnouncement\(/, '平台通知发布函数缺失')
+  assert.match(source, /export async function emitProjectMemberMutationNotifications\(/, '项目成员变更通知函数缺失')
+  assert.match(source, /export async function emitWorkspaceMemberRemovedNotifications\(/, 'workspace 成员移除通知函数缺失')
+})
+
+it('通知 API 与业务写路径已接线', async () => {
+  const listApiSource = await readFile(NOTIFICATION_LIST_API_FILE, 'utf8')
+  const readAllApiSource = await readFile(NOTIFICATION_READ_ALL_API_FILE, 'utf8')
+  const adminApiSource = await readFile(ADMIN_NOTIFICATION_API_FILE, 'utf8')
+  const teamInviteApiSource = await readFile(TEAM_INVITE_API_FILE, 'utf8')
+  const projectInviteApiSource = await readFile(PROJECT_INVITE_API_FILE, 'utf8')
+  const acceptApiSource = await readFile(INVITE_ACCEPT_API_FILE, 'utf8')
+  const platformStoreSource = await readFile(PLATFORM_STORE_FILE, 'utf8')
+  const teamMembershipSource = await readFile(TEAM_MEMBERSHIP_STORE_FILE, 'utf8')
+
+  assert.match(listApiSource, /ensureContestDeadlineNotifications/, '通知列表接口未接入比赛提醒惰性生成')
+  assert.match(listApiSource, /listUserNotifications/, '通知列表接口未接入通知查询')
+  assert.match(readAllApiSource, /markAllUserNotificationsRead/, '全部已读接口缺失')
+  assert.match(adminApiSource, /publishPlatformAnnouncement/, '管理端通知发布接口缺失')
+  assert.match(teamInviteApiSource, /emitInvitationCreatedNotifications/, 'Team 邀请创建未接入通知')
+  assert.match(projectInviteApiSource, /emitInvitationCreatedNotifications/, '项目邀请创建未接入通知')
+  assert.match(acceptApiSource, /emitInvitationAcceptedNotifications/, '邀请接受未接入通知')
+  assert.match(platformStoreSource, /emitProjectMemberMutationNotifications/, '项目成员写路径未接入通知')
+  assert.match(teamMembershipSource, /emitWorkspaceMemberRemovedNotifications/, 'workspace 成员移除未接入通知')
+})
+
+it('前端已接入共享通知中心抽屉与铃铛入口', async () => {
+  const bellSource = await readFile(NOTIFICATION_BELL_FILE, 'utf8')
+  const drawerSource = await readFile(NOTIFICATION_DRAWER_FILE, 'utf8')
+  const composableSource = await readFile(NOTIFICATION_COMPOSABLE_FILE, 'utf8')
+  const dashboardTopbarSource = await readFile(DASHBOARD_TOPBAR_FILE, 'utf8')
+  const workspaceHeaderSource = await readFile(WORKSPACE_HEADER_FILE, 'utf8')
+  const adminIndexSource = await readFile(ADMIN_INDEX_FILE, 'utf8')
+  const adminNotificationsPageSource = await readFile(ADMIN_NOTIFICATIONS_PAGE_FILE, 'utf8')
+
+  assert.match(composableSource, /export function useNotificationCenter\(\)/, '通知中心 composable 缺失')
+  assert.match(composableSource, /\/notifications\/read-all/, '通知中心未接入全部已读接口')
+  assert.match(composableSource, /POLL_INTERVAL_MS = 60_000/, '通知中心缺少轮询策略')
+  assert.match(drawerSource, /title="通知中心"/, '通知抽屉标题缺失')
+  assert.match(drawerSource, /全部已读/, '通知抽屉未提供全部已读入口')
+  assert.match(bellSource, /<NotificationDrawer :workspace-id="props\.workspaceId" \/>/, '铃铛入口未挂载通知抽屉')
+  assert.match(dashboardTopbarSource, /import NotificationBellButton from '~\/components\/notifications\/NotificationBellButton\.vue'/, 'Dashboard 顶栏未显式导入通知铃铛')
+  assert.match(dashboardTopbarSource, /<NotificationBellButton :workspace-id="workspaceId" \/>/, 'Dashboard 顶栏未接入通知铃铛')
+  assert.match(workspaceHeaderSource, /import NotificationBellButton from '~\/components\/notifications\/NotificationBellButton\.vue'/, 'Workspace 头部未显式导入通知铃铛')
+  assert.match(workspaceHeaderSource, /<NotificationBellButton compact :workspace-id="props\.workspaceId" \/>/, 'Workspace 头部未接入通知铃铛')
+  assert.match(adminIndexSource, /to="\/admin\/notifications"/, '管理首页缺少通知管理入口')
+  assert.match(adminNotificationsPageSource, /通知管理/, '后台独立通知管理页缺失')
+  assert.match(adminNotificationsPageSource, /Publish Notification/, '独立通知管理页缺少发布表单')
+  assert.match(adminNotificationsPageSource, /\/admin\/notifications/, '独立通知管理页未接入通知发布接口')
+})

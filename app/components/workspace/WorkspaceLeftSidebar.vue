@@ -4,14 +4,21 @@ import type {
   Contest,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectMemberSummary,
   ProjectOutlineNode,
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
   Resource,
   ResourceCategory,
 } from '~~/shared/types/domain'
+import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup, WorkspaceTopicBoardDraft } from '~/types/workspace'
 import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
+import {
+  isProjectUploadTaskSidebarVisible,
+  resolveProjectUploadTaskStatusText,
+  resolveProjectUploadTaskTone,
+} from '~/utils/project-upload'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
 
@@ -34,6 +41,9 @@ interface OutlineItem {
   id: string
   label: string
   level: number
+  uploadTask?: ProjectUploadTask
+  statusText?: string
+  progressPercent?: number
 }
 
 interface ResourceAttributeField {
@@ -73,6 +83,8 @@ const props = withDefaults(defineProps<{
   resourceLibrary?: Resource[]
   linkedContestResourceGroups?: WorkspaceLinkedContestResourceGroup[]
   linkedContestBindingCount?: number
+  uploadTasks?: ProjectUploadTask[]
+  projectMembers?: ProjectMemberSummary[]
   projectOutline?: ProjectOutlineNode[]
   issueReports?: ProjectIssueReport[]
   projectIssues?: ProjectIssue[]
@@ -103,6 +115,8 @@ const props = withDefaults(defineProps<{
   resourceLibrary: () => [],
   linkedContestResourceGroups: () => [],
   linkedContestBindingCount: 0,
+  uploadTasks: () => [],
+  projectMembers: () => [],
   projectOutline: () => [],
   issueReports: () => [],
   projectIssues: () => [],
@@ -160,6 +174,11 @@ const emit = defineEmits<{
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
   'uploadResources': [files: File[]]
+  'pauseUploadTask': [sessionId: string]
+  'resumeUploadTask': [sessionId: string]
+  'retryUploadTask': [sessionId: string]
+  'cancelUploadTask': [sessionId: string]
+  'rebindUploadTask': [sessionId: string]
 }>()
 
 const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
@@ -289,6 +308,9 @@ const showAdminDetails = ref(false)
 
 const suppressResourceSelection = computed(() => props.activeMainTabId === 'dashboard')
 
+const visibleUploadTasks = computed(() => {
+  return props.uploadTasks.filter(task => isProjectUploadTaskSidebarVisible(task))
+})
 const visibleResources = computed(() => props.selectedResources.slice(0, 10))
 const visibleRecycleResources = computed(() => props.recycleResources.slice(0, 20))
 const visibleLibraryResources = computed(() => {
@@ -606,11 +628,23 @@ const fallbackOutlineItems = computed<OutlineItem[]>(() => {
   return items
 })
 
+function buildUploadOutlineItems(tasks: ProjectUploadTask[]): OutlineItem[] {
+  return tasks.map(task => ({
+    id: `upload-outline-${task.sessionId}`,
+    label: task.fileName,
+    level: 0,
+    uploadTask: task,
+    statusText: resolveProjectUploadTaskStatusText(task.status, task.needsFileRebind),
+    progressPercent: task.status === 'finalizing' ? 100 : Math.max(0, Math.min(100, Number(task.progressPercent || 0))),
+  }))
+}
+
 const outlineItems = computed<OutlineItem[]>(() => {
+  const uploadItems = buildUploadOutlineItems(visibleUploadTasks.value)
   const backendItems = flattenProjectOutlineNodes(props.projectOutline)
   if (backendItems.length > 0)
-    return backendItems
-  return fallbackOutlineItems.value
+    return [...uploadItems, ...backendItems]
+  return [...uploadItems, ...fallbackOutlineItems.value]
 })
 
 const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
@@ -820,6 +854,14 @@ function metadataMimeType(resource: Resource): string {
 
 function metadataUploadedAt(resource: Resource): string {
   return normalizeMetadataString(resource, 'uploadedAt')
+}
+
+function findProjectMemberName(userId: string): string {
+  const normalizedUserId = String(userId || '').trim()
+  if (!normalizedUserId)
+    return ''
+  const matched = props.projectMembers.find(member => String(member.userId || '').trim() === normalizedUserId)
+  return String(matched?.username || '').trim()
 }
 
 function metadataUploader(resource: Resource): string {
@@ -1052,21 +1094,27 @@ function formatDateTime(value: string): string {
 }
 
 function resourceUploaderLabel(resource: Resource): string {
-  const fromMetadata = metadataUploader(resource)
-  if (fromMetadata)
-    return fromMetadata
-
+  const uploaderUserId = String(resource.uploaderUserId || resource.createdBy || '').trim()
   const createdBy = String(resource.createdBy || '').trim()
-  if (!createdBy)
-    return '-'
-
   const currentUserId = String(props.currentUserId || '').trim()
-  if (currentUserId && createdBy === currentUserId) {
+
+  const resolvedName = String(
+    resource.uploaderUsername
+    || findProjectMemberName(uploaderUserId || createdBy)
+    || metadataUploader(resource)
+    || '',
+  ).trim()
+
+  if (currentUserId && uploaderUserId && uploaderUserId === currentUserId) {
     const currentUsername = String(props.currentUsername || '').trim()
-    return currentUsername ? `${currentUsername}（我）` : '我'
+    const displayName = resolvedName || currentUsername || '我'
+    return displayName === '我' ? displayName : `${displayName}（我）`
   }
 
-  return createdBy
+  if (resolvedName)
+    return resolvedName
+
+  return uploaderUserId || createdBy || '-'
 }
 
 function resourceStorageLabel(resource: Resource): string {
@@ -1099,6 +1147,129 @@ function resourceProjectCapacityShareLabel(resource: Resource): string {
 
   const percentage = (resourceSize / limitBytes) * 100
   return `${formatPercent(percentage)}（${formatFileSize(resourceSize)} / ${formatFileSize(limitBytes)}）`
+}
+
+function uploadTaskExtension(task: ProjectUploadTask): string {
+  const fileName = String(task.fileName || '').trim().toLowerCase()
+  const index = fileName.lastIndexOf('.')
+  if (index < 0)
+    return ''
+  return fileName.slice(index + 1)
+}
+
+function uploadTaskIcon(task: ProjectUploadTask): string {
+  const extension = uploadTaskExtension(task)
+  const mimeType = String(task.mimeType || '').trim().toLowerCase()
+  if (extension === 'pdf' || mimeType.includes('pdf'))
+    return 'picture_as_pdf'
+  if (extension === 'doc' || extension === 'docx')
+    return 'description'
+  if (extension === 'xls' || extension === 'xlsx' || extension === 'csv')
+    return 'table_chart'
+  if (extension === 'ppt' || extension === 'pptx')
+    return 'slideshow'
+  if (extension === 'md' || extension === 'markdown' || extension === 'txt' || extension === 'json')
+    return 'article'
+  if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'webp')
+    return 'image'
+  return 'draft'
+}
+
+function uploadTaskIconClass(task: ProjectUploadTask): string {
+  const extension = uploadTaskExtension(task)
+  const mimeType = String(task.mimeType || '').trim().toLowerCase()
+  if (extension === 'pdf' || mimeType.includes('pdf'))
+    return 'workspace-icon--pdf'
+  if (extension === 'doc' || extension === 'docx')
+    return 'workspace-icon--doc'
+  if (extension === 'xls' || extension === 'xlsx' || extension === 'csv')
+    return 'workspace-icon--table'
+  if (extension === 'ppt' || extension === 'pptx')
+    return 'workspace-icon--slide'
+  if (extension === 'md' || extension === 'markdown' || extension === 'txt' || extension === 'json')
+    return 'workspace-icon--text'
+  if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'webp')
+    return 'workspace-icon--image'
+  return 'workspace-icon--doc'
+}
+
+function uploadTaskStatusText(task: ProjectUploadTask): string {
+  return resolveProjectUploadTaskStatusText(task.status, task.needsFileRebind)
+}
+
+function uploadTaskMetaText(task: ProjectUploadTask): string {
+  const uploadedText = formatFileSize(task.uploadedBytes)
+  const totalText = formatFileSize(task.fileSize)
+  const chunkText = `${Math.min(task.uploadedChunkCount, task.chunkCount)} / ${task.chunkCount} 分片`
+  if (task.status === 'failed' && task.errorMessage)
+    return `${chunkText} · ${task.errorMessage}`
+  if (task.needsFileRebind)
+    return `${chunkText} · 请重新选择原文件继续上传`
+  if (task.status === 'finalizing')
+    return `${uploadedText} / ${totalText} · 正在创建资源与预览`
+  return `${uploadedText} / ${totalText} · ${chunkText}`
+}
+
+function uploadTaskToneClass(task: ProjectUploadTask): string {
+  const tone = resolveProjectUploadTaskTone(task.status, task.needsFileRebind)
+  if (tone === 'paused')
+    return 'workspace-upload-tone--paused'
+  if (tone === 'failed')
+    return 'workspace-upload-tone--failed'
+  if (tone === 'finalizing')
+    return 'workspace-upload-tone--finalizing'
+  if (tone === 'completed')
+    return 'workspace-upload-tone--completed'
+  return 'workspace-upload-tone--active'
+}
+
+function uploadTaskProgressStyle(task: ProjectUploadTask): Record<string, string> {
+  const progress = task.status === 'finalizing'
+    ? 100
+    : Math.max(0, Math.min(100, Number(task.progressPercent || 0)))
+  return {
+    '--upload-progress': `${progress}%`,
+  }
+}
+
+function canPauseUploadTask(task: ProjectUploadTask): boolean {
+  return task.status === 'uploading' && !task.needsFileRebind
+}
+
+function canResumeUploadTask(task: ProjectUploadTask): boolean {
+  return task.status === 'paused' && !task.needsFileRebind
+}
+
+function canRetryUploadTask(task: ProjectUploadTask): boolean {
+  return task.status === 'failed' && !task.needsFileRebind
+}
+
+function canCancelUploadTask(task: ProjectUploadTask): boolean {
+  return task.status !== 'finalizing'
+}
+
+function canRebindUploadTask(task: ProjectUploadTask): boolean {
+  return task.needsFileRebind || task.status === 'failed'
+}
+
+function pauseUploadTask(sessionId: string) {
+  emit('pauseUploadTask', sessionId)
+}
+
+function resumeUploadTask(sessionId: string) {
+  emit('resumeUploadTask', sessionId)
+}
+
+function retryUploadTask(sessionId: string) {
+  emit('retryUploadTask', sessionId)
+}
+
+function cancelUploadTask(sessionId: string) {
+  emit('cancelUploadTask', sessionId)
+}
+
+function rebindUploadTask(sessionId: string) {
+  emit('rebindUploadTask', sessionId)
 }
 
 function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId {
@@ -1688,6 +1859,80 @@ onBeforeUnmount(() => {
             </div>
 
             <div v-show="sectionExpanded.projectResources">
+              <div
+                v-for="task in visibleUploadTasks"
+                :key="task.sessionId"
+                class="workspace-tree-item-row workspace-tree-item-row--upload"
+              >
+                <div class="workspace-upload-task-item" :class="uploadTaskToneClass(task)">
+                  <span class="material-symbols-outlined workspace-tree-item__icon" :class="uploadTaskIconClass(task)">
+                    {{ uploadTaskIcon(task) }}
+                  </span>
+                  <div class="workspace-upload-task-item__content">
+                    <div class="workspace-upload-task-item__header">
+                      <span class="workspace-tree-item__label">{{ task.fileName }}</span>
+                      <span class="workspace-upload-task-item__status">{{ uploadTaskStatusText(task) }}</span>
+                    </div>
+                    <div class="workspace-upload-task-item__meta" :title="uploadTaskMetaText(task)">
+                      {{ uploadTaskMetaText(task) }}
+                    </div>
+                  </div>
+                  <span
+                    class="workspace-upload-ring"
+                    :class="[
+                      uploadTaskToneClass(task),
+                      task.status === 'finalizing' ? 'workspace-upload-ring--indeterminate' : '',
+                    ]"
+                    :style="uploadTaskProgressStyle(task)"
+                    aria-hidden="true"
+                  >
+                    <span class="workspace-upload-ring__core" />
+                  </span>
+                  <div class="workspace-upload-task-item__actions">
+                    <button
+                      v-if="canPauseUploadTask(task)"
+                      class="workspace-upload-task-item__action"
+                      type="button"
+                      @click="pauseUploadTask(task.sessionId)"
+                    >
+                      暂停
+                    </button>
+                    <button
+                      v-if="canResumeUploadTask(task)"
+                      class="workspace-upload-task-item__action"
+                      type="button"
+                      @click="resumeUploadTask(task.sessionId)"
+                    >
+                      继续
+                    </button>
+                    <button
+                      v-if="canRetryUploadTask(task)"
+                      class="workspace-upload-task-item__action"
+                      type="button"
+                      @click="retryUploadTask(task.sessionId)"
+                    >
+                      重试
+                    </button>
+                    <button
+                      v-if="canRebindUploadTask(task)"
+                      class="workspace-upload-task-item__action"
+                      type="button"
+                      @click="rebindUploadTask(task.sessionId)"
+                    >
+                      绑定文件
+                    </button>
+                    <button
+                      v-if="canCancelUploadTask(task)"
+                      class="workspace-upload-task-item__action workspace-upload-task-item__action--danger"
+                      type="button"
+                      @click="cancelUploadTask(task.sessionId)"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <template v-if="projectResourcesLoading">
                 <div
                   v-for="row in projectResourceSkeletonRows"
@@ -1807,8 +2052,7 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                 </div>
-
-                <p v-if="visibleResources.length === 0" class="workspace-empty-text">
+                <p v-if="visibleUploadTasks.length === 0 && visibleResources.length === 0" class="workspace-empty-text">
                   暂无资源
                 </p>
               </template>
@@ -1994,7 +2238,7 @@ onBeforeUnmount(() => {
             </button>
 
             <div v-show="sectionExpanded.outline">
-              <template v-if="projectOutlineLoading">
+              <template v-if="projectOutlineLoading && outlineItems.length === 0">
                 <div
                   v-for="row in projectOutlineSkeletonRows"
                   :key="`outline-skeleton-${row}`"
@@ -2007,20 +2251,49 @@ onBeforeUnmount(() => {
                 </div>
               </template>
               <template v-else>
-                <button
+                <template
                   v-for="item in outlineItems"
                   :key="item.id"
-                  class="workspace-outline-item"
-                  :class="[
-                    item.level > 0 ? 'workspace-outline-item--child' : '',
-                    activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
-                  ]"
-                  type="button"
-                  :title="item.label"
-                  @click="selectOutline(item.id)"
                 >
-                  {{ item.label }}
-                </button>
+                  <div
+                    v-if="item.uploadTask"
+                    class="workspace-outline-item workspace-outline-item--upload"
+                    :class="[
+                      item.level > 0 ? 'workspace-outline-item--child' : '',
+                      uploadTaskToneClass(item.uploadTask),
+                    ]"
+                    :title="item.label"
+                  >
+                    <div class="workspace-outline-item__content">
+                      <span class="workspace-outline-item__label">{{ item.label }}</span>
+                      <span class="workspace-outline-item__meta">{{ item.statusText }}</span>
+                    </div>
+                    <span
+                      class="workspace-upload-ring workspace-upload-ring--outline"
+                      :class="[
+                        uploadTaskToneClass(item.uploadTask),
+                        item.uploadTask.status === 'finalizing' ? 'workspace-upload-ring--indeterminate' : '',
+                      ]"
+                      :style="uploadTaskProgressStyle(item.uploadTask)"
+                      aria-hidden="true"
+                    >
+                      <span class="workspace-upload-ring__core" />
+                    </span>
+                  </div>
+                  <button
+                    v-else
+                    class="workspace-outline-item"
+                    :class="[
+                      item.level > 0 ? 'workspace-outline-item--child' : '',
+                      activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
+                    ]"
+                    type="button"
+                    :title="item.label"
+                    @click="selectOutline(item.id)"
+                  >
+                    {{ item.label }}
+                  </button>
+                </template>
 
                 <p v-if="outlineItems.length === 0" class="workspace-empty-text">
                   上传文件后自动生成大纲
@@ -2838,6 +3111,160 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+.workspace-tree-item-row--upload + .workspace-tree-item-row--upload {
+  border-top: 1px solid #eef3fb;
+}
+
+.workspace-upload-task-item {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 0;
+  background: #f8fbff;
+}
+
+.workspace-upload-task-item__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-upload-task-item__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-upload-task-item__status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.workspace-upload-task-item__meta {
+  margin-top: 3px;
+  color: #8290a6;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-upload-task-item__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.workspace-upload-task-item__action {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d7e2f0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #45608c;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workspace-upload-task-item__action:hover {
+  background: #eef4ff;
+}
+
+.workspace-upload-task-item__action--danger {
+  color: #c74747;
+  border-color: #efc6c6;
+}
+
+.workspace-upload-task-item__action--danger:hover {
+  background: #fff3f3;
+}
+
+.workspace-upload-ring {
+  --upload-progress: 0%;
+  width: 22px;
+  height: 22px;
+  position: relative;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: conic-gradient(#5b8dff var(--upload-progress), #dbe6f6 0);
+}
+
+.workspace-upload-ring__core {
+  position: absolute;
+  inset: 4px;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.workspace-upload-ring--outline {
+  width: 18px;
+  height: 18px;
+}
+
+.workspace-upload-ring--outline .workspace-upload-ring__core {
+  inset: 3px;
+}
+
+.workspace-upload-ring--indeterminate {
+  background: transparent;
+  border: 2px solid #dbe6f6;
+  border-top-color: #5b8dff;
+  animation: workspace-upload-ring-spin 0.9s linear infinite;
+}
+
+.workspace-upload-tone--active {
+  color: #31518e;
+}
+
+.workspace-upload-tone--active .workspace-upload-task-item__status {
+  color: #3f6ae0;
+}
+
+.workspace-upload-tone--paused {
+  background: #fffaf0;
+  color: #7f6330;
+}
+
+.workspace-upload-tone--paused .workspace-upload-task-item__status {
+  color: #c68a11;
+}
+
+.workspace-upload-tone--failed {
+  background: #fff6f6;
+  color: #884747;
+}
+
+.workspace-upload-tone--failed .workspace-upload-task-item__status {
+  color: #d14f4f;
+}
+
+.workspace-upload-tone--failed.workspace-upload-ring {
+  background: conic-gradient(#d14f4f var(--upload-progress), #f2d7d7 0);
+}
+
+.workspace-upload-tone--paused.workspace-upload-ring {
+  background: conic-gradient(#d8a33b var(--upload-progress), #f4e5c5 0);
+}
+
+.workspace-upload-tone--finalizing {
+  color: #31518e;
+}
+
+.workspace-upload-tone--completed {
+  color: #357262;
+}
+
+@keyframes workspace-upload-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .workspace-resource-actions {
   position: absolute;
   top: 50%;
@@ -3129,6 +3556,34 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.workspace-outline-item--upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  cursor: default;
+}
+
+.workspace-outline-item__content {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-outline-item__label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-outline-item__meta {
+  font-size: 10px;
+  color: #8895aa;
 }
 
 .workspace-outline-item:hover {

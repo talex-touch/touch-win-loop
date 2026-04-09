@@ -20,6 +20,9 @@ export interface RealtimePresenceMemberPayload {
   username: string
   cursorX?: number
   cursorY?: number
+  awarenessClientId?: number
+  awarenessUpdateBase64?: string
+  activityState: 'active' | 'background'
   updatedAt: string
 }
 
@@ -63,12 +66,16 @@ function normalizePresenceMembers(rawMembers: unknown): RealtimePresenceMemberPa
       continue
     const cursorX = Number(record.cursorX)
     const cursorY = Number(record.cursorY)
+    const awarenessClientId = Number(record.awarenessClientId)
     normalized.push({
       peerId,
       userId: normalizeString(record.userId),
       username: normalizeString(record.username),
       cursorX: Number.isFinite(cursorX) ? cursorX : undefined,
       cursorY: Number.isFinite(cursorY) ? cursorY : undefined,
+      awarenessClientId: Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+      awarenessUpdateBase64: normalizeString(record.awarenessUpdateBase64) || undefined,
+      activityState: normalizeString(record.activityState) === 'background' ? 'background' : 'active',
       updatedAt: normalizeString(record.updatedAt) || new Date().toISOString(),
     })
   }

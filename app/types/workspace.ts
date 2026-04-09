@@ -92,6 +92,8 @@ export interface WorkspaceLinkedContestResourceGroup {
 export interface WorkspaceProjectCommonForm {
   title: string
   summary: string
+  icon: string
+  accentColor: string
   problemStatement: string
   innovationPointsText: string
   techRouteStepsText: string
