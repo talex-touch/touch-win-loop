@@ -1,5 +1,6 @@
 import type { H3Event } from 'h3'
-import type { AuthUser, AiTopicProposalRequest, AiTopicProposalResult, Resource } from '~~/shared/types/domain'
+import type { Queryable } from '~~/server/utils/db'
+import type { AiTopicProposalRequest, AiTopicProposalResult, AuthUser, ChatMessage, Resource } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { searchWithTavily } from '~~/server/services/admin-ai/web'
 import { runTopicProposalFallback } from '~~/server/services/ai/fallback'
@@ -18,7 +19,6 @@ import {
   recordContestAuditLog,
   resolveAiPromptText,
 } from '~~/server/utils/contest-store'
-import type { Queryable } from '~~/server/utils/db'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
@@ -79,6 +79,28 @@ function normalizeStringArray(values: unknown): string[] {
       continue
     dedupe.add(key)
     result.push(normalized)
+  }
+  return result
+}
+
+function normalizeChatRole(value: unknown): ChatMessage['role'] | '' {
+  const normalized = toText(value)
+  if (normalized === 'system' || normalized === 'assistant' || normalized === 'user')
+    return normalized
+  return ''
+}
+
+function normalizeMessages(values: unknown): ChatMessage[] {
+  if (!Array.isArray(values))
+    return []
+
+  const result: ChatMessage[] = []
+  for (const item of values) {
+    const role = normalizeChatRole(item && typeof item === 'object' ? (item as { role?: unknown }).role : '')
+    const content = toText(item && typeof item === 'object' ? (item as { content?: unknown }).content : '')
+    if (!role || !content)
+      continue
+    result.push({ role, content })
   }
   return result
 }
@@ -152,7 +174,7 @@ function normalizeRequest(body: Partial<AiTopicProposalRequest> | null | undefin
     teamId: workspaceId,
     workspaceId,
     sessionId: toText(body?.sessionId),
-    messages: Array.isArray(body?.messages) ? body.messages : [],
+    messages: normalizeMessages(body?.messages),
     topK: normalizeTopK(body?.topK),
     aiOptions: {
       reasoningEnabled: typeof body?.aiOptions?.reasoningEnabled === 'boolean' ? body.aiOptions.reasoningEnabled : undefined,
@@ -219,6 +241,44 @@ export async function executeTopicProposal(
     source: 'workspace_dashboard',
   })
 
+  const scopeProjectId = toText(input.request.context.projectId)
+  const scopeMode = 'dialog_ask' as const
+  const existingSession = await withTransaction(event, async (db) => {
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, input.user, workspaceId)
+    if (!canUseWorkspace)
+      throw new Error('FORBIDDEN')
+
+    if (input.request.sessionId) {
+      const existing = await getAiChatSessionById(db, {
+        workspaceId,
+        sessionId: input.request.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        strictScope: Boolean(scopeProjectId),
+      })
+      if (!existing)
+        throw new Error('SESSION_NOT_FOUND')
+      return existing
+    }
+
+    return null
+  }).catch((error) => {
+    if (error instanceof Error && error.message === 'FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return 'FORBIDDEN'
+    }
+    if (error instanceof Error && error.message === 'SESSION_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return 'SESSION_NOT_FOUND'
+    }
+    throw error
+  })
+
+  if (existingSession === 'FORBIDDEN')
+    throw new Error('TOPIC_PROPOSAL_FORBIDDEN')
+
+  if (typeof existingSession === 'string')
+    throw new Error('TOPIC_PROPOSAL_SESSION_NOT_FOUND')
   const quotaResult = await withTransaction(event, async (db) => {
     const canUseWorkspace = await teamHasWorkspaceMembership(db, input.user, workspaceId)
     if (!canUseWorkspace)
@@ -238,40 +298,15 @@ export async function executeTopicProposal(
     throw error
   })
 
-  if (!quotaResult) {
+  if (!quotaResult)
     throw new Error('TOPIC_PROPOSAL_FORBIDDEN')
-  }
 
   if (!quotaResult.allowed) {
     setResponseStatus(event, 429)
     throw new Error('TOPIC_PROPOSAL_QUOTA_EXCEEDED')
   }
 
-  const scopeProjectId = toText(input.request.context.projectId)
-  const scopeMode = 'dialog_ask' as const
-  const activeSession = await withTransaction(event, async (db) => {
-    if (input.request.sessionId) {
-      const existing = await getAiChatSessionById(db, {
-        workspaceId,
-        sessionId: input.request.sessionId,
-        projectId: scopeProjectId,
-        mode: scopeMode,
-        strictScope: Boolean(scopeProjectId),
-      })
-      if (!existing)
-        throw new Error('SESSION_NOT_FOUND')
-      await patchAiChatSessionContext(db, {
-        workspaceId,
-        sessionId: input.request.sessionId,
-        projectId: scopeProjectId,
-        mode: scopeMode,
-        contestId: input.request.context.contestId,
-        trackId: input.request.context.trackId,
-        major: input.request.context.major,
-      })
-      return existing
-    }
-
+  const resolvedSession = existingSession || await withTransaction(event, async (db) => {
     return createAiChatSession(db, {
       workspaceId,
       projectId: scopeProjectId,
@@ -282,19 +317,7 @@ export async function executeTopicProposal(
       trackId: input.request.context.trackId,
       major: input.request.context.major,
     })
-  }).catch((error) => {
-    if (error instanceof Error && error.message === 'SESSION_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return 'SESSION_NOT_FOUND'
-    }
-    throw error
   })
-
-  if (typeof activeSession === 'string')
-    throw new Error('TOPIC_PROPOSAL_SESSION_NOT_FOUND')
-
-  const resolvedSession = activeSession
-
   const includeInternal = Boolean(
     input.user.isPlatformAdmin
     || await checkPlatformPermission(event, input.user, 'contest.read_internal'),
@@ -375,15 +398,15 @@ export async function executeTopicProposal(
   let webContext = '外网检索未启用。'
 
   if (webSearchEnabled) {
-    const webQuery = [
+    const webQuery = ([
       contest?.name,
       track?.name,
       input.request.context.major,
       ...(boardInput.keywords || []),
       boardInput.topicType,
-    ].filter(Boolean).join(' ')
-      || effectiveUserMessage
-      || '竞赛选题建议'
+    ].filter(Boolean).join(' '))
+    || effectiveUserMessage
+    || '竞赛选题建议'
 
     try {
       const webResults = await searchWithTavily({

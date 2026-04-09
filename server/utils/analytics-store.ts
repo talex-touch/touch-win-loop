@@ -128,6 +128,14 @@ interface AnalyticsSnapshot {
   lastUpdatedAt: string
 }
 
+interface AnalyticsScopeResolution {
+  filters: AnalyticsResolvedFilters
+  contests: Contest[]
+  projects: Project[]
+  workspaceIds: string[]
+  workspaceNameMap: Map<string, string>
+}
+
 function normalizeText(value: unknown): string {
   return String(value || '').trim()
 }
@@ -197,6 +205,12 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
     result.push(normalized)
   }
   return result
+}
+
+function collectProjectContestIds(project: Project | null | undefined): string[] {
+  if (!project)
+    return []
+  return uniqueStrings([project.contestId, ...(project.contestIds || [])])
 }
 
 function resolveRangePreset(value: unknown): AnalyticsRangePreset {
@@ -1171,21 +1185,143 @@ async function loadAiUsageUnits(db: Queryable, input: {
   return toCount(result.rows[0]?.total_units)
 }
 
-async function loadSyncTaskCount(db: Queryable, rangeStart: Date | null): Promise<number> {
-  const values: unknown[] = ['succeeded', 'entity_analysis']
-  let where = 'WHERE status = $1 AND task_type = $2'
-  if (rangeStart) {
-    values.push(rangeStart.toISOString())
-    where += ` AND created_at >= $${values.length}`
+async function loadSyncTaskCount(db: Queryable, input: {
+  contestIds: string[]
+  rangeStart: Date | null
+}): Promise<number> {
+  if (input.contestIds.length === 0)
+    return 0
+
+  const values: unknown[] = ['succeeded', 'entity_analysis', input.contestIds]
+  let where = 'WHERE t.status = $1 AND t.task_type = $2'
+  if (input.rangeStart) {
+    values.push(input.rangeStart.toISOString())
+    where += ` AND t.created_at >= $${values.length}`
   }
 
   const result = await db.query<SyncTaskCountRow>(
     `SELECT COUNT(*)::TEXT AS count
-     FROM feishu_post_sync_tasks
-     ${where}`,
+     FROM feishu_post_sync_tasks t
+     LEFT JOIN contest_tracks track
+       ON t.scope = 'track'
+      AND track.id = t.entity_id
+     LEFT JOIN contest_track_timelines timeline
+       ON t.scope = 'track_timeline'
+      AND timeline.id = t.entity_id
+     LEFT JOIN contest_resources resource
+       ON t.scope = 'resource'
+      AND resource.id = t.entity_id
+     ${where}
+       AND (
+         (t.scope = 'contest' AND t.entity_id = ANY($3::TEXT[]))
+         OR (t.scope = 'track' AND track.contest_id = ANY($3::TEXT[]))
+         OR (t.scope = 'track_timeline' AND timeline.contest_id = ANY($3::TEXT[]))
+         OR (t.scope = 'resource' AND resource.contest_id = ANY($3::TEXT[]))
+       )`,
     values,
   )
   return toCount(result.rows[0]?.count)
+}
+
+async function listAnalyticsContestCatalog(db: Queryable, includeInternal: boolean): Promise<Contest[]> {
+  const contests: Contest[] = []
+  const seen = new Set<string>()
+
+  for (let page = 1; page <= 50; page += 1) {
+    const result = await listContestLibrary(db, {
+      includeInternal,
+      sort: 'deadline',
+      page,
+      pageSize: 100,
+    })
+    for (const item of result.items) {
+      if (!item.id || seen.has(item.id))
+        continue
+      seen.add(item.id)
+      contests.push(item)
+    }
+    if (result.items.length < result.pageSize)
+      break
+  }
+
+  return contests
+}
+
+async function resolveAnalyticsScope(db: Queryable, input: {
+  user: AuthUser
+  includeInternal: boolean
+  requestedFilters: AnalyticsResolvedFilters
+}): Promise<AnalyticsScopeResolution> {
+  const [workspaceOptions, contestCatalog] = await Promise.all([
+    input.user.isPlatformAdmin ? Promise.resolve([] as Array<{ workspace: { id: string, name: string } }>) : teamListUserWorkspaces(db, input.user.id),
+    listAnalyticsContestCatalog(db, input.includeInternal),
+  ])
+
+  const filters: AnalyticsResolvedFilters = {
+    ...input.requestedFilters,
+  }
+  const allowedWorkspaceIds = new Set(workspaceOptions.map(item => normalizeText(item.workspace.id)))
+  const workspaceNameMap = new Map<string, string>(workspaceOptions.map(item => [item.workspace.id, item.workspace.name]))
+
+  if (filters.workspaceId && !input.user.isPlatformAdmin && !allowedWorkspaceIds.has(filters.workspaceId))
+    filters.workspaceId = ''
+
+  const scopedProject = filters.projectId
+    ? await getVisibleProjectById(db, input.user, filters.projectId)
+    : null
+  if (!scopedProject) {
+    filters.projectId = ''
+  }
+  else {
+    filters.projectId = scopedProject.id
+    filters.workspaceId = normalizeText(scopedProject.workspaceId)
+  }
+
+  let projects = scopedProject
+    ? [scopedProject]
+    : await listVisibleProjects(db, input.user, filters.workspaceId || undefined)
+
+  if (filters.contestId) {
+    const contestScopedProjects = projects.filter(project => collectProjectContestIds(project).includes(filters.contestId))
+    if (scopedProject && contestScopedProjects.length === 0)
+      filters.contestId = ''
+    else
+      projects = contestScopedProjects
+  }
+
+  const visibleContestIds = uniqueStrings(projects.flatMap(project => collectProjectContestIds(project)))
+  const contestCatalogIds = new Set(contestCatalog.map(item => item.id))
+  if (filters.contestId && !contestCatalogIds.has(filters.contestId) && !visibleContestIds.includes(filters.contestId))
+    filters.contestId = ''
+
+  let contests = contestCatalog
+  if (filters.contestId) {
+    contests = contestCatalog.filter(item => item.id === filters.contestId)
+  }
+  else if (filters.workspaceId || filters.projectId) {
+    contests = contestCatalog.filter(item => visibleContestIds.includes(item.id))
+  }
+
+  for (const project of projects) {
+    const workspaceId = normalizeText(project.workspaceId)
+    if (workspaceId && !workspaceNameMap.has(workspaceId))
+      workspaceNameMap.set(workspaceId, workspaceId)
+  }
+
+  const workspaceIds = filters.workspaceId
+    ? [filters.workspaceId]
+    : uniqueStrings([
+        ...projects.map(item => item.workspaceId || ''),
+        ...workspaceOptions.map(item => item.workspace.id),
+      ])
+
+  return {
+    filters,
+    contests,
+    projects,
+    workspaceIds,
+    workspaceNameMap,
+  }
 }
 
 async function buildAnalyticsSnapshot(db: Queryable, input: {
@@ -1193,51 +1329,29 @@ async function buildAnalyticsSnapshot(db: Queryable, input: {
   includeInternal: boolean
   filters?: AnalyticsFilterInput
 }): Promise<AnalyticsSnapshot> {
-  const filters: AnalyticsResolvedFilters = {
+  const requestedFilters: AnalyticsResolvedFilters = {
     workspaceId: normalizeText(input.filters?.workspaceId),
     projectId: normalizeText(input.filters?.projectId),
     contestId: normalizeText(input.filters?.contestId),
     rangePreset: resolveRangePreset(input.filters?.rangePreset),
   }
-  const rangeStart = resolveRangeStart(filters.rangePreset)
-
-  const [contestResult, workspaceOptions] = await Promise.all([
-    listContestLibrary(db, {
-      includeInternal: input.includeInternal,
-      sort: 'deadline',
-      page: 1,
-      pageSize: 120,
-    }),
-    input.user.isPlatformAdmin ? Promise.resolve([]) : teamListUserWorkspaces(db, input.user.id),
-  ])
-
-  let contests = contestResult.items
-  if (filters.contestId)
-    contests = contests.filter(item => item.id === filters.contestId)
-
-  let projects = await listVisibleProjects(db, input.user, filters.workspaceId || undefined)
-  if (filters.projectId)
-    projects = projects.filter(item => item.id === filters.projectId)
-  if (filters.contestId) {
-    projects = projects.filter(item =>
-      item.contestId === filters.contestId
-      || item.contestIds?.includes(filters.contestId),
-    )
-  }
+  const rangeStart = resolveRangeStart(requestedFilters.rangePreset)
+  const scope = await resolveAnalyticsScope(db, {
+    user: input.user,
+    includeInternal: input.includeInternal,
+    requestedFilters,
+  })
+  const filters = scope.filters
+  const contests = scope.contests
+  const projects = scope.projects
 
   const contestIds = uniqueStrings([
     ...contests.map(item => item.id),
-    ...projects.map(item => item.contestId),
-    ...projects.flatMap(item => item.contestIds || []),
+    ...projects.flatMap(item => collectProjectContestIds(item)),
   ])
   const projectIds = projects.map(item => item.id)
-  const workspaceIds = filters.workspaceId
-    ? [filters.workspaceId]
-    : uniqueStrings([
-        ...projects.map(item => item.workspaceId || ''),
-        ...workspaceOptions.map(item => item.workspace.id),
-      ])
-  const workspaceNameMap = new Map(workspaceOptions.map(item => [item.workspace.id, item.workspace.name]))
+  const workspaceIds = scope.workspaceIds
+  const workspaceNameMap = scope.workspaceNameMap
 
   const [trendRows, resourceRows, boardRows, docSucceededCount, eventCount, aiUsageUnits, syncTaskCount] = await Promise.all([
     loadContestTrends(db, contestIds, rangeStart),
@@ -1246,7 +1360,7 @@ async function buildAnalyticsSnapshot(db: Queryable, input: {
     loadDocumentSucceededCount(db, projectIds),
     loadEventCount(db, { user: input.user, workspaceIds, filters, rangeStart }),
     loadAiUsageUnits(db, { user: input.user, workspaceIds, filters, rangeStart }),
-    loadSyncTaskCount(db, rangeStart),
+    loadSyncTaskCount(db, { contestIds, rangeStart }),
   ])
 
   const candidateRows = await loadTopicCandidates(db, boardRows.map(item => item.id))

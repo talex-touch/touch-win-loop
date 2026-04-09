@@ -1937,6 +1937,29 @@ CREATE INDEX IF NOT EXISTS idx_billing_usage_events_contest_resource_id ON billi
 CREATE INDEX IF NOT EXISTS idx_billing_usage_events_report_id ON billing_usage_events(report_id);
 CREATE INDEX IF NOT EXISTS idx_project_topic_boards_project_updated ON project_topic_boards(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_boards_workspace_status ON project_topic_boards(workspace_id, status, updated_at DESC);
+DO $$
+BEGIN
+  IF to_regclass('public.project_topic_boards') IS NULL THEN
+    RETURN;
+  END IF;
+
+  WITH duplicated_active_boards AS (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY project_id
+        ORDER BY updated_at DESC, created_at DESC, id DESC
+      ) AS row_num
+    FROM project_topic_boards
+    WHERE status = 'active'
+  )
+  UPDATE project_topic_boards AS target
+  SET status = 'archived',
+      updated_at = NOW()
+  FROM duplicated_active_boards AS duplicated
+  WHERE target.id = duplicated.id
+    AND duplicated.row_num > 1;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_topic_boards_one_active_per_project ON project_topic_boards(project_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_board_sort ON project_topic_candidates(board_id, sort_order ASC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_project_status ON project_topic_candidates(project_id, decision_status, total_score DESC);

@@ -147,7 +147,7 @@ function resolveTopicBoardConfirm(result: boolean) {
 }
 
 function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolean> {
-  if (!process.client)
+  if (!import.meta.client)
     return Promise.resolve(true)
 
   if (topicBoardConfirmState.resolver)
@@ -520,6 +520,8 @@ const topicBoardSnapshot = ref<ProjectTopicBoard | null>(null)
 const topicBoardHistory = ref<ProjectTopicBoard[]>([])
 const topicBoardActioningCandidateId = ref('')
 const topicBoardCreateSeedHandled = ref(false)
+let topicBoardLoadRequestId = 0
+let topicBoardWriteRequestId = 0
 
 const contests = ref<Contest[]>([])
 const contestCatalog = ref<Contest[]>([])
@@ -4194,33 +4196,52 @@ function findTopicBoardCandidate(candidateId: string): TopicProposalItem | null 
   return topicBoardSnapshot.value?.candidates.find(item => item.candidateId === normalizedCandidateId)?.payload || null
 }
 
+function isCurrentTopicBoardScope(projectId: string, workspaceId = ''): boolean {
+  const currentProjectId = String(activeProjectId.value || '').trim()
+  if (projectId !== currentProjectId)
+    return false
+
+  if (!workspaceId)
+    return true
+
+  return workspaceId === String(activeWorkspaceId.value || '').trim()
+}
+
 async function loadTopicBoards() {
+  const requestId = ++topicBoardLoadRequestId
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId) {
     topicBoardSnapshot.value = null
     topicBoardHistory.value = []
     return
   }
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
 
   try {
     const response = await $fetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
+    if (requestId !== topicBoardLoadRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
     topicBoardSnapshot.value = response.data.latestBoard
     topicBoardHistory.value = response.data.history
     topicBoardError.value = ''
   }
   catch {
+    if (requestId !== topicBoardLoadRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
     topicBoardSnapshot.value = null
     topicBoardHistory.value = []
   }
 }
 
 async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard') {
-  if (!activeProjectId.value) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
     statusLine.value = '请先选择一个项目。'
     return
   }
 
-  if (!activeWorkspaceId.value) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId) {
     statusLine.value = '请先选择一个空间。'
     return
   }
@@ -4232,16 +4253,19 @@ async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] 
   }
 
   activeMainTabId.value = 'dashboard'
+  const requestId = ++topicBoardWriteRequestId
   topicBoardLoading.value = true
   topicBoardError.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${activeProjectId.value}/topic-boards/generate`), {
+    const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/generate`), {
       method: 'POST',
       body: {
         input,
       } satisfies ProjectTopicBoardGenerateRequest,
     })
+    if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
 
     topicBoardSnapshot.value = response.data
     topicBoardHistory.value = [response.data, ...topicBoardHistory.value.filter(item => item.id !== response.data.id)].slice(0, 5)
@@ -4251,17 +4275,22 @@ async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] 
   }
   catch (error) {
     const message = resolveApiErrorMessage(error, '生成选题板失败，请稍后重试。')
+    if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
     topicBoardError.value = message
     statusLine.value = message
   }
   finally {
-    topicBoardLoading.value = false
+    if (requestId === topicBoardWriteRequestId)
+      topicBoardLoading.value = false
   }
 }
 
 async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
+  const requestId = ++topicBoardWriteRequestId
   const boardId = String(topicBoardSnapshot.value?.id || '').trim()
   const projectId = String(activeProjectId.value || '').trim()
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
   if (!boardId || !projectId)
     return
 
@@ -4269,6 +4298,8 @@ async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
     method: 'PATCH',
     body: payload,
   })
+  if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+    return
 
   topicBoardSnapshot.value = response.data
   topicBoardHistory.value = topicBoardHistory.value.map(item => item.id === response.data.id ? response.data : item)
@@ -4337,11 +4368,16 @@ function buildTopicBoardChatPrompt(candidate: TopicProposalItem): string {
 
 async function sendTopicBoardCandidateToChat(candidateId: string) {
   const candidate = findTopicBoardCandidate(candidateId)
-  if (!candidate)
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!candidate || !projectId || !activeWorkspaceId.value)
     return
 
   expandRightSidebar()
   aiMode.value = 'dialog_ask'
+  await nextTick()
+  await loadChatSessions()
+  if (!isCurrentTopicBoardScope(projectId) || aiMode.value !== 'dialog_ask')
+    return
   chatInput.value = buildTopicBoardChatPrompt(candidate)
   await nextTick()
   await sendChatMessage()
@@ -4445,7 +4481,7 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
   if (!candidate)
     return
 
-  if (hasExistingFormDraftContent() && process.client) {
+  if (hasExistingFormDraftContent() && import.meta.client) {
     const confirmed = await askTopicBoardConfirm({
       title: '覆盖当前项目草案',
       content: '当前项目草案已有内容，继续写入会覆盖现有字段，是否继续？',
@@ -4466,7 +4502,7 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
     ? '已写入项目草案，并同步到项目设置草稿。'
     : '已写入项目草案，并同步到项目通用设置草稿。'
 
-  if (!process.client)
+  if (!import.meta.client)
     return
 
   const shouldSave = await askTopicBoardConfirm({
@@ -4483,7 +4519,7 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
 }
 
 async function consumeTopicBoardCreateSeed() {
-  if (!process.client || topicBoardCreateSeedHandled.value)
+  if (!import.meta.client || topicBoardCreateSeedHandled.value)
     return
 
   const projectId = String(activeProjectId.value || '').trim()
@@ -5572,11 +5608,11 @@ watch(() => workspaceRealtime.connected.value, () => {
       @cancel="resolveTopicBoardConfirm(false)"
     >
       <div class="space-y-4">
-        <p class="m-0 text-sm text-slate-600 leading-6 whitespace-pre-line">
+        <p class="text-sm text-slate-600 leading-6 m-0 whitespace-pre-line">
           {{ topicBoardConfirmState.content }}
         </p>
 
-        <div class="flex justify-end gap-2">
+        <div class="flex gap-2 justify-end">
           <a-button @click="resolveTopicBoardConfirm(false)">
             {{ topicBoardConfirmState.cancelText }}
           </a-button>
