@@ -413,6 +413,28 @@ function resolveApiStatusCode(error: unknown): number {
   return 0
 }
 
+function toIssueReportMarkdownFileName(title: string): string {
+  const normalized = String(title || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+  return `${normalized || 'issue-report'}.md`
+}
+
+function triggerBrowserDownloadFromBlob(blob: Blob, fileName: string): void {
+  if (!import.meta.client)
+    return
+
+  const url = window.URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  anchor.rel = 'noopener'
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  window.URL.revokeObjectURL(url)
+}
+
 interface WorkspaceQuickSwitchProject {
   projectId: string
   workspaceId: string
@@ -594,6 +616,8 @@ const aiChangeSecondConfirmIds = ref<string[]>([])
 const projectIssueReports = ref<ProjectIssueReport[]>([])
 const projectIssues = ref<ProjectIssue[]>([])
 const issueCenterLoading = ref(false)
+const issueReportSubmitting = ref(false)
+const issueReportExporting = ref(false)
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
 const workspaceInvitationLink = ref('')
@@ -2788,6 +2812,78 @@ async function loadProjectIssues() {
   finally {
     if (activeProjectId.value === projectId)
       issueCenterLoading.value = false
+  }
+}
+
+async function submitIssueReport(reportId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const normalizedReportId = String(reportId || '').trim()
+  if (!projectId || !normalizedReportId || issueReportSubmitting.value)
+    return
+
+  issueReportSubmitting.value = true
+  try {
+    const response = await $fetch<ApiResponse<{ report: ProjectIssueReport, justSubmitted: boolean }>>(
+      endpoint(`/projects/${projectId}/issues/${normalizedReportId}/submit`),
+      {
+        method: 'POST',
+      },
+    )
+
+    await loadProjectIssues()
+    statusLine.value = response.data.justSubmitted
+      ? '评审报告已提交。'
+      : '评审报告已提交，无需重复操作。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '提交评审失败，请稍后重试。')
+  }
+  finally {
+    issueReportSubmitting.value = false
+  }
+}
+
+async function exportIssueReport(reportId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const normalizedReportId = String(reportId || '').trim()
+  if (!projectId || !normalizedReportId || issueReportExporting.value || !import.meta.client)
+    return
+
+  issueReportExporting.value = true
+  try {
+    const response = await fetch(endpoint(`/projects/${projectId}/issues/${normalizedReportId}/export`), {
+      credentials: 'include',
+    })
+
+    if (!response.ok) {
+      let errorMessage = '导出评审报告失败，请稍后重试。'
+      try {
+        const payload = (await response.json()) as { message?: string }
+        const message = String(payload?.message || '').trim()
+        if (message)
+          errorMessage = message
+      }
+      catch {
+        const text = String(await response.text().catch(() => '') || '').trim()
+        if (text)
+          errorMessage = text
+      }
+      throw new Error(errorMessage)
+    }
+
+    const blob = await response.blob()
+    const report = projectIssueReports.value.find(item => item.id === normalizedReportId) || latestIssueReport.value
+    triggerBrowserDownloadFromBlob(
+      blob,
+      toIssueReportMarkdownFileName(report?.title || 'issue-report'),
+    )
+    statusLine.value = '评审报告已导出。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '导出评审报告失败，请稍后重试。')
+  }
+  finally {
+    issueReportExporting.value = false
   }
 }
 
@@ -5440,6 +5536,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           :issue-report="latestIssueReport"
           :project-issues="projectIssues"
           :issue-loading="issueCenterLoading"
+          :issue-report-submitting="issueReportSubmitting"
+          :issue-report-exporting="issueReportExporting"
           :defense-rounds="defenseRounds"
           :defense-scorecard="defenseScorecard"
           :selected-contest="selectedContest"
@@ -5450,6 +5548,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           @create-chat-session="startNewChatSession"
           @approve-change="approveAiChange"
           @reject-change="rejectAiChange"
+          @submit-issue-report="submitIssueReport"
+          @export-issue-report="exportIssueReport"
         />
       </div>
       <div v-else class="workspace-side-handle workspace-side-handle--right workspace-side-handle--right-collapsed">

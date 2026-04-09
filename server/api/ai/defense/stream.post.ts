@@ -1,44 +1,67 @@
 import type {
+  AiChatSession,
   AiDefenseRequest,
   AiDefenseResult,
   AiDefenseStreamEvent,
   AiDefenseStreamEventType,
-} from '~~/shared/types/domain'
-import { createEventStream, setResponseStatus } from 'h3'
-import { runDefenseChain } from '~~/server/services/ai/defense-chain'
-import { runDefenseFallback } from '~~/server/services/ai/fallback'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
-import { fail } from '~~/server/utils/api'
-import { requireAuth } from '~~/server/utils/auth'
+} from "~~/shared/types/domain";
+import { createEventStream, setResponseStatus } from "h3";
+import { runDefenseChain } from "~~/server/services/ai/defense-chain";
+import { runDefenseFallback } from "~~/server/services/ai/fallback";
+import {
+  buildProjectResourceLocalContext,
+  loadVisibleProjectResourcesForAi,
+} from "~~/server/services/ai/project-resource-context";
+import { fail } from "~~/server/utils/api";
+import { requireAuth } from "~~/server/utils/auth";
 import {
   appendAiChatMessage,
   createAiChatSession,
   getAiChatSessionById,
   patchAiChatSessionContext,
-} from '~~/server/utils/chat-store'
-import { getContestDetail, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
-import { withClient, withTransaction } from '~~/server/utils/db'
-import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
-import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
-import { runWithRetry } from '~~/server/utils/retry'
-import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
-import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
+} from "~~/server/utils/chat-store";
+import {
+  getContestDetail,
+  recordContestAuditLog,
+  resolveAiPromptText,
+} from "~~/server/utils/contest-store";
+import { recordBillingUsageEventSafely } from "~~/server/utils/billing-usage-tracker";
+import { withClient, withTransaction } from "~~/server/utils/db";
+import { checkPlatformPermission } from "~~/server/utils/platform-access";
+import {
+  buildMergedPrompt,
+  resolveAiRuntimeForChannel,
+} from "~~/server/utils/platform-ai-channels";
+import { readEffectiveRuntimeSettings } from "~~/server/utils/platform-ai-config-store";
+import { runWithRetry } from "~~/server/utils/retry";
+import { teamHasWorkspaceMembership } from "~~/server/utils/team-membership-store";
+import { teamConsumeAiQuota } from "~~/server/utils/team-quota-store";
 
 function toText(value: unknown): string {
-  return String(value || '').trim()
+  return String(value || "").trim();
 }
 
-function normalizeRequest(body: Partial<AiDefenseRequest> | null | undefined, workspaceId: string): AiDefenseRequest {
+function normalizeRequest(
+  body: Partial<AiDefenseRequest> | null | undefined,
+  workspaceId: string,
+): AiDefenseRequest {
   return {
     teamId: workspaceId,
     workspaceId,
     sessionId: toText(body?.sessionId),
-    messages: Array.isArray(body?.messages) ? body!.messages! : [],
+    messages: Array.isArray(body?.messages) ? body.messages : [],
     aiOptions: {
-      reasoningEnabled: typeof body?.aiOptions?.reasoningEnabled === 'boolean' ? body.aiOptions.reasoningEnabled : undefined,
-      networkEnabled: typeof body?.aiOptions?.networkEnabled === 'boolean' ? body.aiOptions.networkEnabled : undefined,
-      temperature: Number.isFinite(Number(body?.aiOptions?.temperature)) ? Number(body?.aiOptions?.temperature) : undefined,
+      reasoningEnabled:
+        typeof body?.aiOptions?.reasoningEnabled === "boolean"
+          ? body.aiOptions.reasoningEnabled
+          : undefined,
+      networkEnabled:
+        typeof body?.aiOptions?.networkEnabled === "boolean"
+          ? body.aiOptions.networkEnabled
+          : undefined,
+      temperature: Number.isFinite(Number(body?.aiOptions?.temperature))
+        ? Number(body?.aiOptions?.temperature)
+        : undefined,
     },
     context: {
       teamId: workspaceId,
@@ -48,249 +71,378 @@ function normalizeRequest(body: Partial<AiDefenseRequest> | null | undefined, wo
       trackId: toText(body?.context?.trackId),
       major: toText(body?.context?.major),
     },
-  }
+  };
 }
 
 function buildSessionTitle(contestName: string, trackName: string): string {
-  const left = contestName.trim()
-  const right = trackName.trim()
-  if (left && right)
-    return `答辩模拟 · ${left} · ${right}`
-  if (left)
-    return `答辩模拟 · ${left}`
-  return '答辩模拟'
+  const left = contestName.trim();
+  const right = trackName.trim();
+  if (left && right) return `答辩模拟 · ${left} · ${right}`;
+  if (left) return `答辩模拟 · ${left}`;
+  return "答辩模拟";
 }
 
+interface DefensePreparedFailureState {
+  sessionId: string;
+  shouldRecordStart: boolean;
+  createdNewSession: boolean;
+}
+
+type DefensePreparedResult =
+  | {
+      kind: "success";
+      sessionId: string;
+      remainingQuota: number | null;
+      shouldRecordStart: boolean;
+      createdNewSession: boolean;
+    }
+  | {
+      kind: "forbidden";
+    }
+  | {
+      kind: "session_not_found";
+    }
+  | {
+      kind: "quota_exceeded";
+      failureState: DefensePreparedFailureState | null;
+    };
+
 function chunkText(text: string, chunkSize = 28): string[] {
-  const normalized = String(text || '')
-  if (!normalized)
-    return []
-  const chunks: string[] = []
+  const normalized = String(text || "");
+  if (!normalized) return [];
+  const chunks: string[] = [];
   for (let i = 0; i < normalized.length; i += chunkSize)
-    chunks.push(normalized.slice(i, i + chunkSize))
-  return chunks
+    chunks.push(normalized.slice(i, i + chunkSize));
+  return chunks;
 }
 
 function toErrorMessage(error: unknown): string {
-  if (error instanceof Error)
-    return error.message || 'UNKNOWN_ERROR'
-  return 'UNKNOWN_ERROR'
+  if (error instanceof Error) return error.message || "UNKNOWN_ERROR";
+  return "UNKNOWN_ERROR";
 }
 
 export default defineEventHandler(async (event) => {
-  const startedAt = Date.now()
-  const { runtime } = await readEffectiveRuntimeSettings(event)
-  const channelRuntime = resolveAiRuntimeForChannel(runtime, 'defense')
-  const channelAiConfig = channelRuntime.ai
-  const { user } = await requireAuth(event)
-  const rawBody = await readBody<Partial<AiDefenseRequest>>(event).catch(() => ({} as Partial<AiDefenseRequest>))
-  const workspaceId = toText(rawBody?.teamId || rawBody?.workspaceId || rawBody?.context?.teamId || rawBody?.context?.workspaceId)
-  const request = normalizeRequest(rawBody, workspaceId)
+  const startedAt = Date.now();
+  const { runtime } = await readEffectiveRuntimeSettings(event);
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, "defense");
+  const channelAiConfig = channelRuntime.ai;
+  const { user } = await requireAuth(event);
+  const rawBody = await readBody<Partial<AiDefenseRequest>>(event).catch(
+    () => ({}) as Partial<AiDefenseRequest>,
+  );
+  const workspaceId = toText(
+    rawBody?.teamId ||
+      rawBody?.workspaceId ||
+      rawBody?.context?.teamId ||
+      rawBody?.context?.workspaceId,
+  );
+  const request = normalizeRequest(rawBody, workspaceId);
 
   if (!workspaceId) {
-    setResponseStatus(event, 400)
-    return fail('调用答辩模拟时必须传 teamId。', {
-      startedAt,
-      provider: channelAiConfig.provider,
-      model: channelAiConfig.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40074)
-  }
-
-  const includeInternal = Boolean(
-    user.isPlatformAdmin
-    || await checkPlatformPermission(event, user, 'contest.read_internal'),
-  )
-
-  let contextBundle: {
-    detail: Awaited<ReturnType<typeof getContestDetail>> | null
-    injectedPrompt: string
-    localContext: string
-  }
-
-  try {
-    contextBundle = await withClient(event, async (db) => {
-      const detail = request.context.contestId
-        ? await getContestDetail(db, {
-            contestId: request.context.contestId || '',
-            includeInternal,
-          })
-        : null
-      const injectedPrompt = request.context.contestId
-        ? await resolveAiPromptText(db, {
-            contestId: request.context.contestId,
-            trackId: request.context.trackId,
-            target: 'defense',
-          })
-        : ''
-
-      const resources = await loadVisibleProjectResourcesForAi(db, user, {
-        workspaceId,
-        projectId: request.context.projectId,
-      })
-      const contestName = detail?.contest?.name || ''
-      const trackName = detail?.contest?.tracks.find(item => item.id === request.context.trackId)?.name || ''
-      const localContext = buildProjectResourceLocalContext(resources, {
-        contestName,
-        trackName,
-        major: request.context.major,
-        limit: 8,
-      })
-
-      return {
-        detail,
-        injectedPrompt,
-        localContext,
-      }
-    })
-  }
-  catch (error) {
-    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return fail('project not found', {
+    setResponseStatus(event, 400);
+    return fail(
+      "调用答辩模拟时必须传 teamId。",
+      {
         startedAt,
         provider: channelAiConfig.provider,
         model: channelAiConfig.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 40478)
-    }
-    throw error
+      },
+      40074,
+    );
   }
 
-  const contest = contextBundle.detail?.contest
-  const track = contest?.tracks.find(item => item.id === request.context.trackId)
-  const scopeProjectId = String(request.context.projectId || '').trim()
-  const scopeMode = 'defense' as const
+  const includeInternal = Boolean(
+    user.isPlatformAdmin ||
+    (await checkPlatformPermission(event, user, "contest.read_internal")),
+  );
 
-  const prepared = await withTransaction(event, async (db) => {
-    const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
-    if (!canUseWorkspace)
-      throw new Error('FORBIDDEN')
+  let contextBundle: {
+    detail: Awaited<ReturnType<typeof getContestDetail>> | null;
+    injectedPrompt: string;
+    localContext: string;
+  };
 
-    let session = request.sessionId
-      ? await getAiChatSessionById(db, {
+  try {
+    contextBundle = await withClient(event, async (db) => {
+      const detail = request.context.contestId
+        ? await getContestDetail(db, {
+            contestId: request.context.contestId || "",
+            includeInternal,
+          })
+        : null;
+      const injectedPrompt = request.context.contestId
+        ? await resolveAiPromptText(db, {
+            contestId: request.context.contestId,
+            trackId: request.context.trackId,
+            target: "defense",
+          })
+        : "";
+
+      const resources = await loadVisibleProjectResourcesForAi(db, user, {
+        workspaceId,
+        projectId: request.context.projectId,
+      });
+      const contestName = detail?.contest?.name || "";
+      const trackName =
+        detail?.contest?.tracks.find(
+          (item) => item.id === request.context.trackId,
+        )?.name || "";
+      const localContext = buildProjectResourceLocalContext(resources, {
+        contestName,
+        trackName,
+        major: request.context.major,
+        limit: 8,
+      });
+
+      return {
+        detail,
+        injectedPrompt,
+        localContext,
+      };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") {
+      setResponseStatus(event, 404);
+      return fail(
+        "project not found",
+        {
+          startedAt,
+          provider: channelAiConfig.provider,
+          model: channelAiConfig.model,
+          fallbackUsed: false,
+          attempts: 1,
+        },
+        40478,
+      );
+    }
+    throw error;
+  }
+
+  const contest = contextBundle.detail?.contest;
+  const track = contest?.tracks.find(
+    (item) => item.id === request.context.trackId,
+  );
+  const scopeProjectId = String(request.context.projectId || "").trim();
+  const scopeMode = "defense" as const;
+  const latestUserMessage =
+    [...request.messages]
+      .reverse()
+      .find((message) => message.role === "user")
+      ?.content?.trim() || "";
+
+  const recordDefenseUsage = async (
+    result: "success" | "failed",
+    meta?: Record<string, unknown>,
+  ): Promise<void> => {
+    await withClient(event, async (db) => {
+      await recordBillingUsageEventSafely(db, {
+        workspaceId,
+        projectId: scopeProjectId || null,
+        contestId: request.context.contestId || null,
+        trackId: request.context.trackId || null,
+        actorUserId: user.id,
+        eventCode: "ai.defense.start",
+        result,
+        sourceRoute: "/api/ai/defense/stream",
+        meta: {
+          sessionId: toText(meta?.sessionId) || null,
+          fallbackUsed: Boolean(meta?.fallbackUsed),
+          attempts: Number(meta?.attempts || 1),
+          channelKey: channelRuntime.key,
+          isNewSession: Boolean(meta?.isNewSession),
+          ...meta,
+        },
+      });
+    }).catch(() => undefined);
+  };
+
+  let preparedForFailure: DefensePreparedFailureState | null = null;
+
+  const prepared: DefensePreparedResult = await withTransaction(
+    event,
+    async (db) => {
+      const canUseWorkspace = await teamHasWorkspaceMembership(
+        db,
+        user,
+        workspaceId,
+      );
+      if (!canUseWorkspace) throw new Error("FORBIDDEN");
+
+      let existingSession: AiChatSession | null = null;
+      let createdNewSession = false;
+      let existingMessageCount = 0;
+
+      if (request.sessionId) {
+        existingSession = await getAiChatSessionById(db, {
           workspaceId,
           sessionId: request.sessionId,
           projectId: scopeProjectId,
           mode: scopeMode,
           strictScope: Boolean(scopeProjectId),
-        })
-      : null
+        });
+        if (!existingSession)
+          throw new Error("SESSION_NOT_FOUND");
+        existingMessageCount = existingSession.messageCount || 0;
+      }
+      else {
+        existingSession = await createAiChatSession(db, {
+          workspaceId,
+          projectId: scopeProjectId,
+          mode: scopeMode,
+          createdByUserId: user.id,
+          title: buildSessionTitle(contest?.name || "", track?.name || ""),
+          contestId: request.context.contestId,
+          trackId: request.context.trackId,
+          major: request.context.major,
+        });
+        createdNewSession = true;
+      }
 
-    if (!session) {
-      session = await createAiChatSession(db, {
+      if (!existingSession)
+        throw new Error("SESSION_NOT_FOUND");
+
+      const shouldRecordStart = createdNewSession || existingMessageCount === 0;
+
+      await patchAiChatSessionContext(db, {
         workspaceId,
+        sessionId: existingSession.id,
         projectId: scopeProjectId,
         mode: scopeMode,
-        createdByUserId: user.id,
-        title: buildSessionTitle(contest?.name || '', track?.name || ''),
         contestId: request.context.contestId,
         trackId: request.context.trackId,
         major: request.context.major,
-      })
-    }
+        title: buildSessionTitle(contest?.name || "", track?.name || ""),
+      });
 
-    if (!session)
-      throw new Error('SESSION_NOT_FOUND')
+      preparedForFailure = {
+        sessionId: existingSession.id,
+        shouldRecordStart,
+        createdNewSession,
+      };
 
-    await patchAiChatSessionContext(db, {
-      workspaceId,
-      sessionId: session.id,
-      projectId: scopeProjectId,
-      mode: scopeMode,
-      contestId: request.context.contestId,
-      trackId: request.context.trackId,
-      major: request.context.major,
-      title: buildSessionTitle(contest?.name || '', track?.name || ''),
-    })
+      const quota = await teamConsumeAiQuota(db, {
+        workspaceId,
+        userId: user.id,
+        route: "/api/ai/defense/stream",
+        units: 1,
+      });
+      if (!quota.allowed) throw new Error("QUOTA_EXCEEDED");
 
-    const quota = await teamConsumeAiQuota(db, {
-      workspaceId,
-      userId: user.id,
-      route: '/api/ai/defense/stream',
-      units: 1,
-    })
-    if (!quota.allowed)
-      throw new Error('QUOTA_EXCEEDED')
+      return {
+        kind: "success" as const,
+        sessionId: existingSession.id,
+        remainingQuota: quota.remaining,
+        shouldRecordStart,
+        createdNewSession,
+      };
+    },
+  ).catch((error) => {
+    if (error instanceof Error && error.message === "FORBIDDEN") {
+      setResponseStatus(event, 403);
+      return { kind: "forbidden" as const };
+    }
+    if (error instanceof Error && error.message === "SESSION_NOT_FOUND") {
+      setResponseStatus(event, 404);
+      return { kind: "session_not_found" as const };
+    }
+    if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
+      setResponseStatus(event, 429);
+      return {
+        kind: "quota_exceeded" as const,
+        failureState: preparedForFailure,
+      };
+    }
+    throw error;
+  });
 
-    return {
-      sessionId: session.id,
-      remainingQuota: quota.remaining,
-    }
-  }).catch((error) => {
-    if (error instanceof Error && error.message === 'FORBIDDEN') {
-      setResponseStatus(event, 403)
-      return null
-    }
-    if (error instanceof Error && error.message === 'SESSION_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return 'SESSION_NOT_FOUND'
-    }
-    if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
-      setResponseStatus(event, 429)
-      return 'QUOTA_EXCEEDED'
-    }
-    throw error
-  })
-
-  if (!prepared) {
-    return fail('当前用户无权使用该空间。', {
-      startedAt,
-      provider: channelAiConfig.provider,
-      model: channelAiConfig.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40375)
+  if (prepared.kind === "forbidden") {
+    return fail(
+      "当前用户无权使用该空间。",
+      {
+        startedAt,
+        provider: channelAiConfig.provider,
+        model: channelAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      },
+      40375,
+    );
   }
-  if (prepared === 'SESSION_NOT_FOUND') {
-    return fail('会话不存在，请刷新后重试。', {
-      startedAt,
-      provider: channelAiConfig.provider,
-      model: channelAiConfig.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40475)
+  if (prepared.kind === "session_not_found") {
+    return fail(
+      "会话不存在，请刷新后重试。",
+      {
+        startedAt,
+        provider: channelAiConfig.provider,
+        model: channelAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      },
+      40475,
+    );
   }
-  if (prepared === 'QUOTA_EXCEEDED') {
-    return fail('Team AI 额度不足，请扩容或等待重置。', {
-      startedAt,
-      provider: channelAiConfig.provider,
-      model: channelAiConfig.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 42975)
+  if (prepared.kind === "quota_exceeded") {
+    const failureState = prepared.failureState;
+    if (failureState?.shouldRecordStart) {
+      await recordDefenseUsage("failed", {
+        sessionId: failureState.sessionId,
+        isNewSession: failureState.createdNewSession,
+        isFirstSessionMessage: true,
+        reason: "QUOTA_EXCEEDED",
+      });
+    }
+    return fail(
+      "Team AI 配额不足，请扩容或等待重置。",
+      {
+        startedAt,
+        provider: channelAiConfig.provider,
+        model: channelAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      },
+      42975,
+    );
   }
 
-  const stream = createEventStream(event)
-  const pushEvent = async (eventType: AiDefenseStreamEventType, data: Record<string, unknown>) => {
+  const stream = createEventStream(event);
+  const pushEvent = async (
+    eventType: AiDefenseStreamEventType,
+    data: Record<string, unknown>,
+  ) => {
     const payload: AiDefenseStreamEvent = {
       event: eventType,
       data,
-    }
+    };
     await stream.push({
       event: eventType,
       data: JSON.stringify(payload),
-    })
-  }
+    });
+  };
 
   const run = async () => {
+    let usageRecorded = !prepared.shouldRecordStart;
+
     try {
-      await pushEvent('progress', {
-        message: '已建立答辩会话，正在生成评委问题...',
+      await pushEvent("progress", {
+        message: "已建立答辩会话，正在生成评委问题...",
         sessionId: prepared.sessionId,
-      })
+      });
 
       const effectiveAiConfig = {
         ...channelAiConfig,
         temperature: Number.isFinite(Number(request.aiOptions?.temperature))
           ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
           : channelAiConfig.temperature,
-      }
-      const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
+      };
+      const mergedInjectedPrompt = buildMergedPrompt(
+        channelRuntime.prompt,
+        contextBundle.injectedPrompt,
+      );
 
-      const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
+      const onlyFallback =
+        effectiveAiConfig.provider === "mock" || !effectiveAiConfig.apiKey;
       const execution = onlyFallback
         ? {
             data: runDefenseFallback(request),
@@ -299,44 +451,39 @@ export default defineEventHandler(async (event) => {
           }
         : await runWithRetry<AiDefenseResult>({
             maxRetries: effectiveAiConfig.maxRetries,
-            run: () => runDefenseChain({
-              request,
-              ai: effectiveAiConfig,
-              contestName: contest?.name,
-              trackName: track?.name,
-              injectedPrompt: mergedInjectedPrompt,
-              localContext: contextBundle.localContext,
-            }),
+            run: () =>
+              runDefenseChain({
+                request,
+                ai: effectiveAiConfig,
+                contestName: contest?.name,
+                trackName: track?.name,
+                injectedPrompt: mergedInjectedPrompt,
+                localContext: contextBundle.localContext,
+              }),
             fallback: () => runDefenseFallback(request),
-          })
+          });
 
       for (const round of execution.data.rounds)
-        await pushEvent('judge', { round })
+        await pushEvent("judge", { round });
 
-      await pushEvent('score', {
+      await pushEvent("score", {
         scorecard: execution.data.scorecard,
-      })
+      });
 
       for (const chunk of chunkText(execution.data.assistantReply))
-        await pushEvent('delta', { text: chunk })
-
-      const latestUserMessage = [...request.messages]
-        .reverse()
-        .find(message => message.role === 'user')
-        ?.content
-        ?.trim() || ''
+        await pushEvent("delta", { text: chunk });
 
       await withTransaction(event, async (db) => {
         const modeMetadata = {
           mode: scopeMode,
           projectId: scopeProjectId,
-        }
+        };
 
         if (latestUserMessage) {
           await appendAiChatMessage(db, {
             workspaceId,
             sessionId: prepared.sessionId,
-            role: 'user',
+            role: "user",
             content: latestUserMessage,
             provider: effectiveAiConfig.provider,
             model: effectiveAiConfig.model,
@@ -347,13 +494,13 @@ export default defineEventHandler(async (event) => {
               providerId: channelRuntime.provider?.id || null,
             },
             createdByUserId: user.id,
-          })
+          });
         }
 
         await appendAiChatMessage(db, {
           workspaceId,
           sessionId: prepared.sessionId,
-          role: 'assistant',
+          role: "assistant",
           content: execution.data.assistantReply,
           provider: effectiveAiConfig.provider,
           model: effectiveAiConfig.model,
@@ -364,14 +511,14 @@ export default defineEventHandler(async (event) => {
             providerId: channelRuntime.provider?.id || null,
           },
           createdByUserId: user.id,
-        })
+        });
 
         await recordContestAuditLog(db, {
           actorUserId: user.id,
-          action: 'ai.invoke.defense',
+          action: "ai.invoke.defense",
           contestId: request.context.contestId,
           payload: {
-            route: '/api/ai/defense/stream',
+            route: "/api/ai/defense/stream",
             workspaceId,
             sessionId: prepared.sessionId,
             projectId: request.context.projectId,
@@ -383,10 +530,21 @@ export default defineEventHandler(async (event) => {
             latencyMs: Date.now() - startedAt,
             remainingQuota: prepared.remainingQuota,
           },
-        })
-      })
+        });
+      });
 
-      await pushEvent('done', {
+      if (prepared.shouldRecordStart) {
+        await recordDefenseUsage("success", {
+          sessionId: prepared.sessionId,
+          fallbackUsed: execution.fallbackUsed,
+          attempts: execution.attempts,
+          isNewSession: prepared.createdNewSession,
+          isFirstSessionMessage: true,
+        });
+        usageRecorded = true;
+      }
+
+      await pushEvent("done", {
         result: {
           ...execution.data,
           sessionId: prepared.sessionId,
@@ -396,17 +554,25 @@ export default defineEventHandler(async (event) => {
           fallbackUsed: execution.fallbackUsed,
           latencyMs: Date.now() - startedAt,
         },
-      })
-    }
-    catch (error) {
-      const message = toErrorMessage(error)
-      await pushEvent('error', { message })
-    }
-    finally {
-      await stream.close()
-    }
-  }
+      });
+    } catch (error) {
+      if (!usageRecorded && prepared.shouldRecordStart) {
+        await recordDefenseUsage("failed", {
+          sessionId: prepared.sessionId,
+          isNewSession: prepared.createdNewSession,
+          isFirstSessionMessage: true,
+          reason: "CHAIN_EXECUTION_FAILED",
+          error: toErrorMessage(error),
+        });
+      }
 
-  void run()
-  return stream.send()
-})
+      const message = toErrorMessage(error);
+      await pushEvent("error", { message });
+    } finally {
+      await stream.close();
+    }
+  };
+
+  void run();
+  return stream.send();
+});
