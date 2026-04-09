@@ -192,150 +192,152 @@ onMounted(() => {
 </script>
 
 <template>
-  <NuxtPage v-if="!isDashboardIndex" />
-  <section
-    v-else
-    class="flex h-full min-h-0 w-full min-w-0 overflow-hidden"
-    data-testid="dashboard-loopy-home"
-  >
-    <div class="grid h-full min-h-0 w-full overflow-hidden border border-slate-200 rounded-lg bg-white lg:grid-cols-[280px_minmax(0,1fr)]">
-      <aside
-        data-testid="dashboard-loopy-sidebar"
-        class="border-r border-slate-200 bg-slate-50/55 flex flex-col min-h-0 overflow-hidden lg:h-full"
-      >
-        <div class="px-2.5 py-2.5 border-b border-slate-200/80 flex shrink-0 items-center justify-between gap-2.5">
-          <p class="text-[11px] text-slate-400 tabular-nums font-medium">
-            {{ loopySessions.length }} 条会话
-          </p>
-          <button
-            class="loopy-page-ghost-btn"
-            type="button"
-            @click="startNewLoopySession"
-          >
-            新建
-          </button>
-        </div>
-
-        <div
-          data-testid="dashboard-loopy-session-list"
-          class="p-2.5 flex-1 min-h-0 overflow-y-auto"
+  <div class="contents">
+    <NuxtPage v-if="!isDashboardIndex" />
+    <section
+      v-else
+      class="flex h-full min-h-0 w-full min-w-0 overflow-hidden"
+      data-testid="dashboard-loopy-home"
+    >
+      <div class="grid h-full min-h-0 w-full overflow-hidden border border-slate-200 rounded-lg bg-white lg:grid-cols-[280px_minmax(0,1fr)]">
+        <aside
+          data-testid="dashboard-loopy-sidebar"
+          class="border-r border-slate-200 bg-slate-50/55 flex flex-col min-h-0 overflow-hidden lg:h-full"
         >
-          <div v-if="loading" class="space-y-2">
-            <div
-              v-for="index in 6"
-              :key="`dashboard-loopy-session-skeleton-${index}`"
-              class="rounded-md bg-slate-100 h-14 animate-pulse"
-            />
-          </div>
-
-          <div v-else class="space-y-2.5">
-            <button
-              v-for="session in loopySessions"
-              :key="session.id"
-              class="loopy-page-session"
-              :class="session.id === loopyActiveSessionId ? 'loopy-page-session--active' : ''"
-              type="button"
-              @click="switchLoopySession(session.id)"
-            >
-              <span class="loopy-page-session__title line-clamp-1">{{ resolveVisibleSessionTitle(session) }}</span>
-              <span class="loopy-page-session__meta line-clamp-1">{{ formatSessionMeta(session) }}</span>
-            </button>
-
-            <p v-if="loopySessions.length === 0" class="text-xs text-slate-400 leading-5 px-2 py-3">
-              还没有历史会话，发起第一轮提问即可。
+          <div class="px-2.5 py-2.5 border-b border-slate-200/80 flex shrink-0 items-center justify-between gap-2.5">
+            <p class="text-[11px] text-slate-400 tabular-nums font-medium">
+              {{ loopySessions.length }} 条会话
             </p>
+            <button
+              class="loopy-page-ghost-btn"
+              type="button"
+              @click="startNewLoopySession"
+            >
+              新建
+            </button>
           </div>
-        </div>
-      </aside>
-
-      <section class="bg-white flex flex-col min-h-0 overflow-hidden lg:h-full">
-        <header class="px-3 py-2.5 border-b border-slate-100 shrink-0 flex items-center justify-between gap-3">
-          <h2 class="text-sm text-slate-950 font-semibold truncate">
-            {{ chatPanelTitle }}
-          </h2>
-          <p v-if="chatPanelSubtitle" class="text-xs text-slate-400 leading-5 shrink-0 truncate">
-            {{ chatPanelSubtitle }}
-          </p>
-        </header>
-
-        <div v-if="loading" class="p-3 flex-1 space-y-3">
-          <div class="rounded-md bg-slate-100 h-16 animate-pulse" />
-          <div class="rounded-md bg-slate-100 h-16 w-10/12 animate-pulse" />
-          <div class="rounded-md bg-slate-100 h-16 w-8/12 animate-pulse" />
-        </div>
-
-        <div v-else class="flex flex-1 flex-col min-h-0 overflow-hidden">
-          <p v-if="loopyStatusText" class="text-xs text-blue-700 px-3 py-2 border-b border-blue-100 bg-blue-50/70">
-            {{ loopyStatusText }}
-          </p>
-          <p v-if="errorText || loopyErrorText" class="text-xs text-rose-600 px-3 py-2 border-b border-rose-100 bg-rose-50/80">
-            {{ errorText || loopyErrorText }}
-          </p>
 
           <div
-            ref="messageScrollRef"
-            data-testid="dashboard-loopy-messages"
-            class="px-3 py-3 flex-1 min-h-0 overflow-y-auto"
+            data-testid="dashboard-loopy-session-list"
+            class="p-2.5 flex-1 min-h-0 overflow-y-auto"
           >
-            <div class="space-y-3">
+            <div v-if="loading" class="space-y-2">
               <div
-                v-for="(message, index) in loopyMessages"
-                :key="`${message.role}-${index}`"
-                class="flex"
-                :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
-              >
-                <article
-                  class="loopy-page-bubble"
-                  :class="message.role === 'user' ? 'loopy-page-bubble--user' : 'loopy-page-bubble--assistant'"
-                >
-                  {{ formatMessageContent(message) }}
-                </article>
-              </div>
+                v-for="index in 6"
+                :key="`dashboard-loopy-session-skeleton-${index}`"
+                class="rounded-md bg-slate-100 h-14 animate-pulse"
+              />
+            </div>
 
-              <section v-if="loopyShowSuggestions && loopySelectedWorkspaceId" class="space-y-2.5">
-                <div class="text-[11px] text-slate-400 tracking-[0.12em] font-medium uppercase">
-                  推荐起手问题
-                </div>
-                <div class="gap-2 grid xl:grid-cols-2">
-                  <button
-                    v-for="question in suggestionPrompts"
-                    :key="question"
-                    data-testid="dashboard-loopy-suggestion"
-                    class="loopy-page-suggestion"
-                    type="button"
-                    @click="useLoopySuggestion(question)"
-                  >
-                    {{ question }}
-                  </button>
-                </div>
-              </section>
+            <div v-else class="space-y-2.5">
+              <button
+                v-for="session in loopySessions"
+                :key="session.id"
+                class="loopy-page-session"
+                :class="session.id === loopyActiveSessionId ? 'loopy-page-session--active' : ''"
+                type="button"
+                @click="switchLoopySession(session.id)"
+              >
+                <span class="loopy-page-session__title line-clamp-1">{{ resolveVisibleSessionTitle(session) }}</span>
+                <span class="loopy-page-session__meta line-clamp-1">{{ formatSessionMeta(session) }}</span>
+              </button>
+
+              <p v-if="loopySessions.length === 0" class="text-xs text-slate-400 leading-5 px-2 py-3">
+                还没有历史会话，发起第一轮提问即可。
+              </p>
             </div>
           </div>
+        </aside>
 
-          <footer class="p-3 border-t border-slate-100 shrink-0">
-            <div class="relative">
-              <textarea
-                :value="loopyChatInput"
-                data-testid="dashboard-loopy-composer"
-                class="loopy-page-textarea"
-                :placeholder="loopySelectedWorkspaceId ? '直接输入内容，开始一轮新的对话' : '当前没有可用工作区，暂时无法发起对话'"
-                :disabled="!loopySelectedWorkspaceId"
-                @input="loopyChatInput = ($event.target as HTMLTextAreaElement).value"
-              />
-              <button
-                class="loopy-page-send"
-                type="button"
-                :disabled="!loopyCanSend || !loopyChatInput.trim()"
-                @click="sendLoopyMessage()"
-              >
-                <span class="material-symbols-outlined text-[18px]">{{ loopyChatLoading ? 'hourglass_top' : 'send' }}</span>
-              </button>
+        <section class="bg-white flex flex-col min-h-0 overflow-hidden lg:h-full">
+          <header class="px-3 py-2.5 border-b border-slate-100 shrink-0 flex items-center justify-between gap-3">
+            <h2 class="text-sm text-slate-950 font-semibold truncate">
+              {{ chatPanelTitle }}
+            </h2>
+            <p v-if="chatPanelSubtitle" class="text-xs text-slate-400 leading-5 shrink-0 truncate">
+              {{ chatPanelSubtitle }}
+            </p>
+          </header>
+
+          <div v-if="loading" class="p-3 flex-1 space-y-3">
+            <div class="rounded-md bg-slate-100 h-16 animate-pulse" />
+            <div class="rounded-md bg-slate-100 h-16 w-10/12 animate-pulse" />
+            <div class="rounded-md bg-slate-100 h-16 w-8/12 animate-pulse" />
+          </div>
+
+          <div v-else class="flex flex-1 flex-col min-h-0 overflow-hidden">
+            <p v-if="loopyStatusText" class="text-xs text-blue-700 px-3 py-2 border-b border-blue-100 bg-blue-50/70">
+              {{ loopyStatusText }}
+            </p>
+            <p v-if="errorText || loopyErrorText" class="text-xs text-rose-600 px-3 py-2 border-b border-rose-100 bg-rose-50/80">
+              {{ errorText || loopyErrorText }}
+            </p>
+
+            <div
+              ref="messageScrollRef"
+              data-testid="dashboard-loopy-messages"
+              class="px-3 py-3 flex-1 min-h-0 overflow-y-auto"
+            >
+              <div class="space-y-3">
+                <div
+                  v-for="(message, index) in loopyMessages"
+                  :key="`${message.role}-${index}`"
+                  class="flex"
+                  :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
+                >
+                  <article
+                    class="loopy-page-bubble"
+                    :class="message.role === 'user' ? 'loopy-page-bubble--user' : 'loopy-page-bubble--assistant'"
+                  >
+                    {{ formatMessageContent(message) }}
+                  </article>
+                </div>
+
+                <section v-if="loopyShowSuggestions && loopySelectedWorkspaceId" class="space-y-2.5">
+                  <div class="text-[11px] text-slate-400 tracking-[0.12em] font-medium uppercase">
+                    推荐起手问题
+                  </div>
+                  <div class="gap-2 grid xl:grid-cols-2">
+                    <button
+                      v-for="question in suggestionPrompts"
+                      :key="question"
+                      data-testid="dashboard-loopy-suggestion"
+                      class="loopy-page-suggestion"
+                      type="button"
+                      @click="useLoopySuggestion(question)"
+                    >
+                      {{ question }}
+                    </button>
+                  </div>
+                </section>
+              </div>
             </div>
-          </footer>
-        </div>
-      </section>
-    </div>
-  </section>
+
+            <footer class="p-3 border-t border-slate-100 shrink-0">
+              <div class="relative">
+                <textarea
+                  :value="loopyChatInput"
+                  data-testid="dashboard-loopy-composer"
+                  class="loopy-page-textarea"
+                  :placeholder="loopySelectedWorkspaceId ? '直接输入内容，开始一轮新的对话' : '当前没有可用工作区，暂时无法发起对话'"
+                  :disabled="!loopySelectedWorkspaceId"
+                  @input="loopyChatInput = ($event.target as HTMLTextAreaElement).value"
+                />
+                <button
+                  class="loopy-page-send"
+                  type="button"
+                  :disabled="!loopyCanSend || !loopyChatInput.trim()"
+                  @click="sendLoopyMessage()"
+                >
+                  <span class="material-symbols-outlined text-[18px]">{{ loopyChatLoading ? 'hourglass_top' : 'send' }}</span>
+                </button>
+              </div>
+            </footer>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
 </template>
 
 <style scoped>
