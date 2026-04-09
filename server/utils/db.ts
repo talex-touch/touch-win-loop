@@ -1364,6 +1364,19 @@ CREATE TABLE IF NOT EXISTS project_meeting_jobs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_meeting_guest_shares (
+  id TEXT PRIMARY KEY,
+  meeting_id TEXT NOT NULL REFERENCES project_meetings(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  share_key TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_project_meetings_project_started_at
   ON project_meetings(project_id, started_at DESC, created_at DESC);
 
@@ -1396,6 +1409,13 @@ CREATE INDEX IF NOT EXISTS idx_project_meeting_jobs_meeting_created_at
 
 CREATE INDEX IF NOT EXISTS idx_project_meeting_jobs_status_next_run_at
   ON project_meeting_jobs(status, next_run_at ASC, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_project_meeting_guest_shares_meeting
+  ON project_meeting_guest_shares(meeting_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_meeting_guest_shares_active_meeting
+  ON project_meeting_guest_shares(meeting_id)
+  WHERE revoked_at IS NULL;
 
 ALTER TABLE project_meetings
   ADD COLUMN IF NOT EXISTS scheduled_start_at TIMESTAMPTZ;

@@ -81,7 +81,11 @@ export default defineEventHandler(async (event) => {
       return {
         sessionId: chatSession.id,
         meetingId: meetingSession.meeting.id,
-        meeting: meetingSession.detail,
+        meeting: meetingSession.meeting,
+        rtcJoinToken: meetingSession.rtcJoinToken,
+        rtcJoinExpiresAt: meetingSession.rtcJoinExpiresAt,
+        rtcServerUrl: meetingSession.rtcServerUrl,
+        rtcJoinUrl: meetingSession.rtcJoinUrl,
         joinToken: meetingSession.joinToken,
         joinExpiresAt: meetingSession.joinExpiresAt,
         joinUrl: meetingSession.joinUrl,

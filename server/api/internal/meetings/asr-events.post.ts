@@ -1,6 +1,9 @@
 import { setResponseStatus } from 'h3'
 import { getMeetingAsrGateway } from '~~/server/services/meeting/asr-gateway'
-import { persistProjectMeetingCaption } from '~~/server/services/meeting/project-meeting'
+import {
+  persistProjectMeetingCaption,
+  resolveMaskedProjectMeetingSpeakerLabel,
+} from '~~/server/services/meeting/project-meeting'
 import { fail, ok } from '~~/server/utils/api'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
@@ -101,6 +104,13 @@ export default defineEventHandler(async (event) => {
     || normalizeString(body?.displayName)
     || normalizeString(body?.speakerLabel)
     || 'Speaker'
+  const guestSpeakerLabel = resolveMaskedProjectMeetingSpeakerLabel({
+    participants: payload.caption.participants,
+    participantId: payload.caption.participant?.id || payload.caption.utterance?.participantId || '',
+    speakerUserId: payload.caption.utterance?.speakerUserId || '',
+    speakerLabel: payload.caption.utterance?.speakerLabel || normalizeString(body?.speakerLabel),
+    speakerName,
+  })
 
   await Promise.allSettled([
     emitRealtimeEvent({
@@ -113,6 +123,7 @@ export default defineEventHandler(async (event) => {
         participantIdentity: payload.caption.participant?.providerIdentity || normalizeString(body?.participantIdentity),
         speakerName,
         speakerLabel: payload.caption.utterance?.speakerLabel || normalizeString(body?.speakerLabel) || speakerName,
+        guestSpeakerLabel,
         text,
         startedAtMs: Number(body?.startedAtMs || 0),
         endedAtMs: Number(body?.endedAtMs || body?.startedAtMs || 0),

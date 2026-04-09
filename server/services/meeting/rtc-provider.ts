@@ -376,7 +376,13 @@ function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
 }
 
 export function buildMeetingParticipantIdentity(userId: string): string {
-  return `user:${normalizeString(userId)}`
+  const normalizedUserId = normalizeString(userId)
+  if (!normalizedUserId)
+    return `member:${randomUUID().slice(0, 12)}`
+
+  const runtime = readRuntimeSettings()
+  const secret = normalizeString(runtime.meeting.rtc.apiSecret || runtime.meeting.rtc.webhookSecret || 'winloop-meeting-identity')
+  return `member:${createHmac('sha256', secret).update(normalizedUserId).digest('hex').slice(0, 24)}`
 }
 
 export function getRtcProviderGateway(runtime = readRuntimeSettings()): RtcProviderGateway {

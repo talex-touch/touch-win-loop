@@ -20,8 +20,12 @@ interface RealtimeRemotePresenceSnapshot {
 interface RealtimePeerRecord {
   peer: any
   user: AuthUser
+  authKind: 'member' | 'meeting_guest'
+  guestShareId?: string
+  guestMeetingId?: string
   workspaces: Set<string>
   projects: Set<string>
+  meetings: Set<string>
   rooms: Set<string>
   lastSeenAt: number
 }
@@ -30,6 +34,7 @@ interface RealtimeHubState {
   peers: Map<string, RealtimePeerRecord>
   workspaceSubs: Map<string, Set<string>>
   projectSubs: Map<string, Set<string>>
+  meetingSubs: Map<string, Set<string>>
   roomSubs: Map<string, Set<string>>
   roomPresence: Map<string, Map<string, RealtimePeerPresence>>
   remoteRoomPresence: Map<string, Map<string, RealtimeRemotePresenceSnapshot>>
@@ -50,6 +55,7 @@ function getHubState(): RealtimeHubState {
     peers: new Map<string, RealtimePeerRecord>(),
     workspaceSubs: new Map<string, Set<string>>(),
     projectSubs: new Map<string, Set<string>>(),
+    meetingSubs: new Map<string, Set<string>>(),
     roomSubs: new Map<string, Set<string>>(),
     roomPresence: new Map<string, Map<string, RealtimePeerPresence>>(),
     remoteRoomPresence: new Map<string, Map<string, RealtimeRemotePresenceSnapshot>>(),
@@ -107,6 +113,36 @@ function safeSendJson(peer: any, payload: Record<string, unknown>): void {
   catch {
     // ignore socket send errors
   }
+}
+
+function sanitizeGuestMeetingPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const type = String(payload.type || '').trim()
+  const rawPayload = payload.payload && typeof payload.payload === 'object' && !Array.isArray(payload.payload)
+    ? payload.payload as Record<string, unknown>
+    : {}
+  const meetingId = String(rawPayload.meetingId || '').trim()
+  const basePayload: Record<string, unknown> = {
+    type,
+    payload: meetingId ? { meetingId } : {},
+  }
+
+  if (type === 'meeting.caption.partial' || type === 'meeting.caption.final') {
+    const speakerLabel = String(rawPayload.guestSpeakerLabel || rawPayload.speakerLabel || '发言人').trim() || '发言人'
+    basePayload.payload = {
+      meetingId,
+      speakerName: speakerLabel,
+      speakerLabel,
+      text: String(rawPayload.text || '').trim(),
+      startedAtMs: Number.isFinite(Number(rawPayload.startedAtMs)) ? Number(rawPayload.startedAtMs) : 0,
+      endedAtMs: Number.isFinite(Number(rawPayload.endedAtMs)) ? Number(rawPayload.endedAtMs) : 0,
+      confidence: Number.isFinite(Number(rawPayload.confidence)) ? Number(rawPayload.confidence) : 0,
+      utteranceId: String(rawPayload.utteranceId || '').trim() || undefined,
+      eventId: String(rawPayload.eventId || '').trim() || undefined,
+      final: type === 'meeting.caption.final',
+    }
+  }
+
+  return basePayload
 }
 
 function buildPresence(
@@ -222,7 +258,15 @@ export function buildCollabRoomKey(projectId: string, resourceId: string): strin
   return `${String(projectId || '').trim()}:${String(resourceId || '').trim()}`
 }
 
-export function registerRealtimePeer(peer: any, user: AuthUser): string {
+export function registerRealtimePeer(
+  peer: any,
+  user: AuthUser,
+  options: {
+    authKind?: 'member' | 'meeting_guest'
+    guestShareId?: string
+    guestMeetingId?: string
+  } = {},
+): string {
   const peerId = resolvePeerId(peer)
   if (!peerId)
     return ''
@@ -231,8 +275,12 @@ export function registerRealtimePeer(peer: any, user: AuthUser): string {
   state.peers.set(peerId, {
     peer,
     user,
+    authKind: options.authKind === 'meeting_guest' ? 'meeting_guest' : 'member',
+    guestShareId: String(options.guestShareId || '').trim() || undefined,
+    guestMeetingId: String(options.guestMeetingId || '').trim() || undefined,
     workspaces: new Set<string>(),
     projects: new Set<string>(),
+    meetings: new Set<string>(),
     rooms: new Set<string>(),
     lastSeenAt: Date.now(),
   })
@@ -264,6 +312,8 @@ export function removeRealtimePeer(peer: any): string[] {
     removePeerFromIndex(state.workspaceSubs, workspaceId, peerId)
   for (const projectId of record.projects)
     removePeerFromIndex(state.projectSubs, projectId, peerId)
+  for (const meetingId of record.meetings)
+    removePeerFromIndex(state.meetingSubs, meetingId, peerId)
   for (const roomKey of record.rooms) {
     removePeerFromIndex(state.roomSubs, roomKey, peerId)
     removePeerPresenceFromRoom(state, roomKey, peerId)
@@ -296,6 +346,19 @@ export function subscribeRealtimeProject(peerId: string, projectId: string): voi
 
   record.projects.add(normalizedProjectId)
   addPeerToIndex(state.projectSubs, normalizedProjectId, normalizedPeerId)
+  touchRealtimePeer(normalizedPeerId)
+}
+
+export function subscribeRealtimeMeeting(peerId: string, meetingId: string): void {
+  const state = getHubState()
+  const normalizedPeerId = String(peerId || '').trim()
+  const normalizedMeetingId = String(meetingId || '').trim()
+  const record = state.peers.get(normalizedPeerId)
+  if (!record || !normalizedMeetingId)
+    return
+
+  record.meetings.add(normalizedMeetingId)
+  addPeerToIndex(state.meetingSubs, normalizedMeetingId, normalizedPeerId)
   touchRealtimePeer(normalizedPeerId)
 }
 
@@ -424,6 +487,29 @@ export function broadcastRealtimeProjectEvent(
   }
 }
 
+export function broadcastRealtimeMeetingEvent(
+  meetingId: string,
+  payload: Record<string, unknown>,
+  excludePeerId = '',
+): void {
+  const state = getHubState()
+  const subscribers = state.meetingSubs.get(String(meetingId || '').trim())
+  if (!subscribers || subscribers.size === 0)
+    return
+
+  const excluded = String(excludePeerId || '').trim()
+  for (const record of getPeersByIds(subscribers)) {
+    if (excluded && resolvePeerId(record.peer) === excluded)
+      continue
+    safeSendJson(
+      record.peer,
+      record.authKind === 'meeting_guest'
+        ? sanitizeGuestMeetingPayload(payload)
+        : payload,
+    )
+  }
+}
+
 export function broadcastRealtimeRoomEvent(
   roomKey: string,
   payload: Record<string, unknown>,
@@ -507,4 +593,31 @@ export function hasSeenRealtimeEvent(eventId: string): boolean {
   const state = getHubState()
   cleanupSeenEvents(state)
   return state.seenEvents.has(normalized)
+}
+
+export function closeRealtimeMeetingGuestPeers(input: {
+  meetingId?: string
+  guestShareId?: string
+  code?: number
+  reason?: string
+}): void {
+  const state = getHubState()
+  const normalizedMeetingId = String(input.meetingId || '').trim()
+  const normalizedShareId = String(input.guestShareId || '').trim()
+  for (const record of state.peers.values()) {
+    if (record.authKind !== 'meeting_guest')
+      continue
+    if (normalizedMeetingId && record.guestMeetingId !== normalizedMeetingId)
+      continue
+    if (normalizedShareId && record.guestShareId !== normalizedShareId)
+      continue
+    try {
+      const result = record.peer?.close?.(Number(input.code || 4403), String(input.reason || 'meeting_share_revoked'))
+      if (result && typeof result.then === 'function')
+        void result.catch(() => undefined)
+    }
+    catch {
+      // ignore socket close failures
+    }
+  }
 }

@@ -2,6 +2,7 @@ import type { ResourceKind } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { query } from '~~/server/utils/db'
 import {
+  broadcastRealtimeMeetingEvent,
   broadcastRealtimeProjectEvent,
   broadcastRealtimeRoomEvent,
   broadcastRealtimeWorkspaceEvent,
@@ -207,11 +208,14 @@ export function broadcastRealtimeEventLocally(
       ...(normalizePayload(options.payload) || {}),
     },
   }
+  const meetingId = normalizeString(payload.payload?.meetingId)
 
   if (workspaceId)
     broadcastRealtimeWorkspaceEvent(workspaceId, payload, excludePeerId)
   if (projectId)
     broadcastRealtimeProjectEvent(projectId, payload, excludePeerId)
+  if (meetingId)
+    broadcastRealtimeMeetingEvent(meetingId, payload, excludePeerId)
 }
 
 export async function publishRealtimeEvent(

@@ -1138,6 +1138,70 @@ export interface ProjectMeetingListPayload {
   items: ProjectMeeting[]
 }
 
+export interface ProjectMeetingGuestShare {
+  id: string
+  meetingId: string
+  projectId: string
+  workspaceId: string
+  shareKey: string
+  shareUrl: string
+  expiresAt: string
+  revokedAt?: string | null
+  createdByUserId?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SharedProjectMeetingParticipant {
+  id: string
+  displayName: string
+  role: ProjectMeetingParticipantRole
+  audioTrackState: ProjectMeetingTrackState
+  videoTrackState: ProjectMeetingTrackState
+  joinedAt?: string | null
+  leftAt?: string | null
+}
+
+export interface SharedProjectMeetingUtterance {
+  id: string
+  participantId?: string | null
+  speakerLabel: string
+  sequenceNo: number
+  startedAtMs: number
+  endedAtMs: number
+  text: string
+  language: string
+  confidence: number
+  isFinal: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SharedProjectMeetingSnapshot {
+  meetingId: string
+  title: string
+  mode: ProjectMeetingMode
+  status: ProjectMeetingStatus
+  scheduledStartAt?: string | null
+  scheduledEndAt?: string | null
+  durationMinutes?: number
+  participantCount: number
+  shareExpiresAt?: string
+  participants: SharedProjectMeetingParticipant[]
+  utterances: SharedProjectMeetingUtterance[]
+}
+
+export interface ProjectMeetingGuestJoinSession {
+  meetingId: string
+  meetingGuestToken: string
+  meetingGuestExpiresAt: string
+  rtcJoinToken: string
+  rtcJoinExpiresAt: string
+  rtcServerUrl?: string
+  rtcJoinUrl?: string
+  snapshot: SharedProjectMeetingSnapshot
+}
+
 export interface ProjectSettingsDraftCommon {
   title: string
   summary: string
