@@ -1,5 +1,7 @@
+import type { AuthUser } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import { setResponseStatus } from 'h3'
+import { verifyProjectResourceAccessToken } from '~~/server/services/document/project-resource-access-token'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
@@ -18,9 +20,9 @@ function normalizeString(value: unknown): string {
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
-  const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const resourceId = normalizeString(getRouterParam(event, 'resourceId'))
+  const token = normalizeString(getQuery(event).token)
 
   if (!projectId || !resourceId) {
     setResponseStatus(event, 400)
@@ -32,6 +34,19 @@ export default defineEventHandler(async (event) => {
       attempts: 1,
     }, 40089)
   }
+
+  const tokenAuthorized = token
+    ? verifyProjectResourceAccessToken({
+        token,
+        projectId,
+        resourceId,
+        kind: 'source',
+      })
+    : false
+
+  let user: AuthUser | null = null
+  if (!tokenAuthorized)
+    ({ user } = await requireAuth(event))
 
   const result = await withClient(event, async (db) => {
     const projectExists = await db.query<ProjectExistsRow>(
@@ -45,9 +60,11 @@ export default defineEventHandler(async (event) => {
     if (!projectExists.rows[0]?.id)
       return 'PROJECT_NOT_FOUND' as const
 
-    const access = await resolveProjectRealtimeAccess(db, user, projectId)
-    if (!access)
-      return 'FORBIDDEN' as const
+    if (!tokenAuthorized) {
+      const access = await resolveProjectRealtimeAccess(db, user!, projectId)
+      if (!access)
+        return 'FORBIDDEN' as const
+    }
 
     const snapshot = await getProjectCollabSnapshot(db, {
       projectId,
