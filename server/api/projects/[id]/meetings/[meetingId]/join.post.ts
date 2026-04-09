@@ -6,6 +6,7 @@ import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
+import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -46,6 +47,15 @@ export default defineEventHandler(async (event) => {
         runtime,
       })
     })
+
+    await emitRealtimeEvent({
+      type: 'meeting.participant.updated',
+      workspaceId: payload.meeting.workspaceId,
+      projectId,
+      payload: {
+        meetingId,
+      },
+    }).catch(() => {})
 
     return ok(payload, {
       startedAt,

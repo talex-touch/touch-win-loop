@@ -15,9 +15,13 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   assert.match(source, /'update:collapsed': \[value: boolean\]/, 'WorkspaceLeftSidebar 缺少折叠态更新事件')
   assert.match(source, /<WorkspaceLeftRail/, 'WorkspaceLeftSidebar 缺少常驻 left rail')
   assert.match(source, /:collapsed="props\.collapsed"/, 'WorkspaceLeftSidebar 未向 left rail 透传折叠态')
+  assert.match(source, /<Transition name="workspace-left-panel">/, 'WorkspaceLeftSidebar 缺少左侧 panel 展开收起过渡')
+  assert.match(source, /<Transition name="workspace-left-panel-content" mode="out-in">/, 'WorkspaceLeftSidebar 缺少左侧模块内容切换过渡')
+  assert.match(source, /panelContentTransitionKey/, 'WorkspaceLeftSidebar 缺少左侧模块内容切换 key')
   assert.match(source, /v-show="!props\.collapsed" class="workspace-left-panel"/, 'WorkspaceLeftSidebar 未改成只折叠右侧 panel')
   assert.match(source, /workspace-left-dock--collapsed/, 'WorkspaceLeftSidebar 缺少折叠宽度样式')
   assert.match(source, /workspace-left-dock--compact/, 'WorkspaceLeftSidebar 未为紧凑标签边距提供列表压缩样式')
+  assert.match(source, /workspace-left-panel-enter-active/, 'WorkspaceLeftSidebar 缺少左侧 panel 展开收起动画样式')
   assert.match(railSource, /workspace-left-rail__item--active': !collapsed && item\.id === activeId/, 'left rail 在折叠态仍显示顶部模块选中标识')
 })
 

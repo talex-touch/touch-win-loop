@@ -1230,7 +1230,7 @@ async function fetchProjectWorkspaceViewPreference(projectId: string): Promise<P
   if (!normalizedProjectId || !deviceId)
     return null
 
-  const response = await $fetch<ApiResponse<ProjectWorkspaceViewDeviceStatePayload>>(
+  const response = await unsafeFetch<ApiResponse<ProjectWorkspaceViewDeviceStatePayload>>(
     endpoint(`/projects/${normalizedProjectId}/view-state`),
     {
       query: {
@@ -1250,7 +1250,7 @@ async function persistProjectWorkspaceViewPreference(
   if (!normalizedProjectId || !deviceId)
     return
 
-  await $fetch<ApiResponse<ProjectWorkspaceViewPreference>>(
+  await unsafeFetch<ApiResponse<ProjectWorkspaceViewPreference>>(
     endpoint(`/projects/${normalizedProjectId}/view-state`),
     {
       method: 'PUT',
@@ -1271,7 +1271,7 @@ async function persistTeamLastProjectPreference(
   if (!normalizedWorkspaceId || !normalizedProjectId)
     return
 
-  await $fetch<ApiResponse<TeamLastProjectPreference>>(
+  await unsafeFetch<ApiResponse<TeamLastProjectPreference>>(
     endpoint(`/teams/${normalizedWorkspaceId}/last-project`),
     {
       method: 'PUT',
@@ -2132,7 +2132,7 @@ async function loadProjectMeetingUtterances(meetingId: string): Promise<void> {
   }
 
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingUtterance[]>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingUtterance[]>>(
       endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/utterances`),
     )
     if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
@@ -2161,7 +2161,7 @@ async function loadProjectMeetingDetail(
 
   meetingDetailLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingDetail>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
       endpoint(`/projects/${projectId}/meetings/${targetMeetingId}`),
     )
     if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
@@ -2226,7 +2226,7 @@ async function loadProjectMeetings(
 
   projectMeetingsLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<{ items: ProjectMeeting[] }>>(
+    const response = await unsafeFetch<ApiResponse<{ items: ProjectMeeting[] }>>(
       endpoint(`/projects/${projectId}/meetings`),
     )
     if (activeProjectId.value !== projectId)
@@ -2311,7 +2311,7 @@ async function submitProjectMeetingCreate(payload: ProjectMeetingCreatePayload):
 
   meetingMutating.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingDetail>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
       endpoint(`/projects/${projectId}/meetings`),
       {
         method: 'POST',
@@ -2354,7 +2354,7 @@ async function joinProjectMeeting(meetingId: string): Promise<void> {
   try {
     ensureMeetingDetailTabOpen(targetMeetingId)
     activeMeetingId.value = targetMeetingId
-    const response = await $fetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
       endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/join`),
       {
         method: 'POST',
@@ -2387,7 +2387,7 @@ async function startProjectMeeting(meetingId: string): Promise<void> {
 
   meetingMutating.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
       endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/start`),
       {
         method: 'POST',
@@ -2422,7 +2422,7 @@ async function endProjectMeeting(meetingId: string): Promise<void> {
 
   meetingMutating.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingDetail>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
       endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/end`),
       {
         method: 'POST',
@@ -3280,7 +3280,7 @@ async function fetchProjectSettingsDraftFromServer(projectId: string): Promise<P
   if (!projectId || !deviceId)
     return null
 
-  const response = await $fetch<ApiResponse<ProjectSettingsDraftDevicePayload>>(
+  const response = await unsafeFetch<ApiResponse<ProjectSettingsDraftDevicePayload>>(
     endpoint(`/projects/${projectId}/settings-draft`),
     {
       query: {
@@ -3350,7 +3350,7 @@ async function loadProjectSettings(preferredContestId = ''): Promise<ProjectSett
   projectSettingsLoading.value = true
 
   try {
-    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
+    const response = await unsafeFetch<ApiResponse<ProjectSettingsSnapshot>>(
       endpoint(`/projects/${activeId}/settings`),
       {
         query: preferredContestId
@@ -3470,7 +3470,7 @@ async function persistProjectSettingsDraftToServer(
   }
 
   try {
-    const response = await $fetch<ApiResponse<ProjectSettingsDraft>>(
+    const response = await unsafeFetch<ApiResponse<ProjectSettingsDraft>>(
       endpoint(`/projects/${projectId}/settings-draft`),
       {
         method: 'PATCH',
@@ -3584,7 +3584,7 @@ async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cl
     return 'none'
 
   try {
-    await $fetch<ApiResponse<ProjectSettingsDraft | null>>(
+    await unsafeFetch<ApiResponse<ProjectSettingsDraft | null>>(
       endpoint(`/projects/${projectId}/settings-draft`),
       {
         method: 'DELETE',
@@ -3711,7 +3711,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     if (projectSettingsBindingsDirty.value)
       body.contestBindings = cloneProjectContestBindings(projectSettingsBindings.value)
 
-    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
+    const response = await unsafeFetch<ApiResponse<ProjectSettingsSnapshot>>(
       endpoint(`/projects/${activeProjectId.value}/settings`),
       {
         method: 'PATCH',
@@ -3751,7 +3751,7 @@ async function flushProjectAdaptationSave(
   statusLine.value = '保存中...'
 
   try {
-    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
+    const response = await unsafeFetch<ApiResponse<ProjectSettingsSnapshot>>(
       endpoint(`/projects/${activeProjectId.value}/adaptations/${normalizedContestId}`),
       {
         method: 'PATCH',
@@ -4133,7 +4133,7 @@ async function loadProjectResources() {
   }
 
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources`))
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources`))
     resources.value = response.data
   }
   catch {
@@ -4153,7 +4153,7 @@ async function loadProjectResourceLibrary() {
   }
 
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/library`))
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/library`))
     resourceLibrary.value = response.data
   }
   catch {
@@ -4171,7 +4171,7 @@ async function loadProjectRecycleResources() {
   }
 
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/recycle`))
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/recycle`))
     recycleResources.value = response.data
   }
   catch {
@@ -4188,7 +4188,7 @@ async function loadProjectResourceShares() {
   }
 
   try {
-    const response = await $fetch<ApiResponse<ProjectResourceShare[]>>(endpoint(`/projects/${activeProjectId.value}/resources/shares`))
+    const response = await unsafeFetch<ApiResponse<ProjectResourceShare[]>>(endpoint(`/projects/${activeProjectId.value}/resources/shares`))
     projectResourceShares.value = response.data.map(item => ({
       ...item,
       shareUrl: resolveProjectResourceShareUrl(String(item.shareUrl || '').trim()),
@@ -4240,7 +4240,7 @@ async function loadProjectOutline() {
   }
 
   try {
-    const response = await $fetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline`), {
+    const response = await unsafeFetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline`), {
       query: buildProjectOutlineContextPayload(),
     })
     if (activeProjectId.value !== projectId)
@@ -4272,7 +4272,7 @@ async function loadAiChangeRequests() {
 
   aiChangeRequestsLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<AiProjectChangeRequest[]>>(endpoint(`/projects/${projectId}/ai/changes`), {
+    const response = await unsafeFetch<ApiResponse<AiProjectChangeRequest[]>>(endpoint(`/projects/${projectId}/ai/changes`), {
       query: {
         statuses: 'pending,approved,rejected,failed',
         limit: 100,
@@ -4316,7 +4316,7 @@ async function loadProjectIssues() {
 
   issueCenterLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectIssuesBundle>>(endpoint(`/projects/${projectId}/issues`), {
+    const response = await unsafeFetch<ApiResponse<ProjectIssuesBundle>>(endpoint(`/projects/${projectId}/issues`), {
       query: {
         statuses: 'open,in_progress,resolved,ignored',
         reportLimit: 20,
@@ -4348,7 +4348,7 @@ async function submitIssueReport(reportId: string) {
 
   issueReportSubmitting.value = true
   try {
-    const response = await $fetch<ApiResponse<{ report: ProjectIssueReport, justSubmitted: boolean }>>(
+    const response = await unsafeFetch<ApiResponse<{ report: ProjectIssueReport, justSubmitted: boolean }>>(
       endpoint(`/projects/${projectId}/issues/${normalizedReportId}/submit`),
       {
         method: 'POST',
@@ -4442,7 +4442,7 @@ async function approveAiChange(change: AiProjectChangeRequest) {
     const payload: ApproveChangeRequestPayload = {
       destructiveConfirm: Boolean(change.destructive),
     }
-    await $fetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/approve`), {
+    await unsafeFetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/approve`), {
       method: 'POST',
       body: payload,
     })
@@ -4480,7 +4480,7 @@ async function rejectAiChange(change: AiProjectChangeRequest) {
 
   setAiChangeActing(changeId, true)
   try {
-    await $fetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/reject`), {
+    await unsafeFetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/reject`), {
       method: 'POST',
       body: {},
     })
@@ -4502,7 +4502,7 @@ async function generateProjectOutline(reason: string, silent = false) {
     return
 
   try {
-    const response = await $fetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline/generate`), {
+    const response = await unsafeFetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline/generate`), {
       method: 'POST',
       body: {
         reason,
@@ -4540,7 +4540,7 @@ async function loadProjects() {
   }
 
   try {
-    const response = await $fetch<ApiResponse<Project[]>>(endpoint('/projects'), {
+    const response = await unsafeFetch<ApiResponse<Project[]>>(endpoint('/projects'), {
       query: {
         teamId: activeWorkspaceId.value,
         workspaceId: activeWorkspaceId.value,
@@ -4555,7 +4555,7 @@ async function loadProjects() {
 
 async function loadQuickSwitchProjects() {
   try {
-    const response = await $fetch<ApiResponse<Project[]>>(endpoint('/projects'))
+    const response = await unsafeFetch<ApiResponse<Project[]>>(endpoint('/projects'))
     allProjects.value = response.data
   }
   catch {
@@ -4572,7 +4572,7 @@ async function loadWorkspaceMemberManagement() {
 
   workspaceMemberManagementLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
+    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
     if (activeProjectId.value !== projectId)
       return
     applyWorkspaceMemberManagementSnapshot(response.data)
@@ -4606,7 +4606,7 @@ async function saveWorkspaceSeatLimit(seatLimit: number) {
   workspaceSeatLimitSaveLoading.value = true
   workspaceSeatLimitError.value = ''
   try {
-    await $fetch<ApiResponse<ProjectSeatQuota>>(endpoint(`/projects/${projectId}/seats`), {
+    await unsafeFetch<ApiResponse<ProjectSeatQuota>>(endpoint(`/projects/${projectId}/seats`), {
       method: 'PATCH',
       body: {
         seatLimit: Math.max(1, Math.trunc(Number(seatLimit || 1))),
@@ -4643,7 +4643,7 @@ async function createWorkspaceInvitation(payload: ProjectInvitationCreatePayload
 
   workspaceInvitationSubmitting.value = true
   try {
-    const response = await $fetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
+    const response = await unsafeFetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
       method: 'POST',
       body: {
         inviteeUsername: String(payload.inviteeUsername || '').trim() || undefined,
@@ -4699,7 +4699,7 @@ async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) 
 
   workspaceMemberRoleUpdatingUserId.value = userId
   try {
-    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(
       endpoint(`/projects/${projectId}/members`),
       {
         method: 'POST',
@@ -4733,7 +4733,7 @@ async function removeWorkspaceMember(userId: string) {
 
   workspaceMemberRemovingUserId.value = normalizedUserId
   try {
-    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(
       endpoint(`/projects/${projectId}/members/${normalizedUserId}`),
       { method: 'DELETE' },
     )
@@ -4761,7 +4761,7 @@ async function revokeWorkspaceInvitation(invitationId: string) {
 
   workspaceInvitationRevokingId.value = normalizedInvitationId
   try {
-    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot & { revoked?: boolean }>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot & { revoked?: boolean }>>(
       endpoint(`/projects/${projectId}/invitations/${normalizedInvitationId}/revoke`),
       { method: 'POST' },
     )
@@ -4805,7 +4805,7 @@ async function addResourceFromLibrary(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/library`), {
+    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/library`), {
       method: 'POST',
       body: {
         resourceId: targetResourceId,
@@ -4831,7 +4831,7 @@ async function createCollabResource(kind: 'markdown' | 'draw') {
   resourceMutating.value = true
   const resourceLabel = kind === 'draw' ? '自由画布' : '协作文档'
   try {
-    const response = await $fetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
+    const response = await unsafeFetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
       method: 'POST',
       body: {
         kind,
@@ -4873,7 +4873,7 @@ async function removeProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}`), {
+    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}`), {
       method: 'DELETE',
     })
     if (isRemovingPreviewResource)
@@ -4897,7 +4897,7 @@ async function restoreProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/restore`), {
+    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/restore`), {
       method: 'POST',
     })
     await refreshProjectResourceContext()
@@ -4919,7 +4919,7 @@ async function purgeProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/purge`), {
+    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/purge`), {
       method: 'DELETE',
     })
     await refreshProjectResourceContext()
@@ -4940,7 +4940,7 @@ async function duplicateProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    const response = await $fetch<ApiResponse<Resource>>(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/duplicate`), {
+    const response = await unsafeFetch<ApiResponse<Resource>>(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/duplicate`), {
       method: 'POST',
     })
     await refreshProjectResourceContext()
@@ -5144,7 +5144,7 @@ async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPa
   const resourceLabel = resolveCollabResourceLabel(targetResource)
 
   try {
-    const response = await $fetch<ApiResponse<CollabSnapshotPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/collab`))
+    const response = await unsafeFetch<ApiResponse<CollabSnapshotPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/collab`))
     return response.data
   }
   catch (error) {
@@ -5218,7 +5218,7 @@ async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<b
     return false
 
   try {
-    const response = await $fetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
+    const response = await unsafeFetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
       method: 'POST',
       body: {
         kind: 'draw',
@@ -5249,7 +5249,7 @@ async function fetchResourcePreviewStatus(resourceId: string, silent = false) {
     previewStatusLoading.value = true
 
   try {
-    const response = await $fetch<ApiResponse<ResourcePreviewStatusPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/preview-status`))
+    const response = await unsafeFetch<ApiResponse<ResourcePreviewStatusPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/preview-status`))
     previewStatusPayload.value = response.data
 
     if (response.data.status === 'succeeded' || response.data.status === 'failed')
@@ -5409,7 +5409,7 @@ async function shareProjectResource(payload: ProjectResourceShareCreatePayload) 
     return
 
   try {
-    const response = await $fetch<ApiResponse<ProjectResourceShare>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/shares`), {
+    const response = await unsafeFetch<ApiResponse<ProjectResourceShare>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/shares`), {
       method: 'POST',
       body: {
         visibility,
@@ -5461,7 +5461,7 @@ async function revokeProjectResourceShare(shareId: string) {
     return
 
   try {
-    await $fetch(endpoint(`/projects/${projectId}/resources/shares/${targetShareId}`), {
+    await unsafeFetch(endpoint(`/projects/${projectId}/resources/shares/${targetShareId}`), {
       method: 'DELETE',
     })
     await loadProjectResourceShares()
@@ -5507,7 +5507,7 @@ async function reconvertProjectResourcePreview() {
 
   previewStatusLoading.value = true
   try {
-    await $fetch(endpoint(`/projects/${projectId}/resources/${resourceId}/reconvert`), {
+    await unsafeFetch(endpoint(`/projects/${projectId}/resources/${resourceId}/reconvert`), {
       method: 'POST',
     })
     statusLine.value = '已重新加入转换队列。'
@@ -5592,7 +5592,7 @@ async function loadDefensePersonas() {
 
   defensePersonasLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<{ items: AiDefensePersona[] }>>(
+    const response = await unsafeFetch<ApiResponse<{ items: AiDefensePersona[] }>>(
       endpoint(`/projects/${projectId}/defense/personas`),
     )
     defensePersonas.value = response.data.items
@@ -5616,7 +5616,7 @@ async function loadDefenseSessionDetail(sessionId: string) {
   }
 
   try {
-    const response = await $fetch<ApiResponse<AiDefenseSessionDetail>>(
+    const response = await unsafeFetch<ApiResponse<AiDefenseSessionDetail>>(
       endpoint(`/projects/${projectId}/defense/sessions/${sessionId}`),
     )
     const detail = response.data
@@ -5661,7 +5661,7 @@ async function importDefensePersonas() {
   }
 
   try {
-    await $fetch(endpoint(`/projects/${projectId}/defense/personas/import`), {
+    await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas/import`), {
       method: 'POST',
       body: {
         contestId: selectedContestId.value,
@@ -5693,13 +5693,13 @@ async function saveDefensePersona(payload: {
 
   try {
     if (payload.personaId) {
-      await $fetch(endpoint(`/projects/${projectId}/defense/personas/${payload.personaId}`), {
+      await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas/${payload.personaId}`), {
         method: 'PATCH',
         body: payload,
       })
     }
     else {
-      await $fetch(endpoint(`/projects/${projectId}/defense/personas`), {
+      await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas`), {
         method: 'POST',
         body: payload,
       })
@@ -5718,7 +5718,7 @@ async function deleteDefensePersona(personaId: string) {
     return
 
   try {
-    await $fetch(endpoint(`/projects/${projectId}/defense/personas/${personaId}`), {
+    await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas/${personaId}`), {
       method: 'DELETE',
     })
     await loadDefensePersonas()
@@ -5738,7 +5738,7 @@ async function generateDefenseSummary() {
 
   defenseSummaryLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<{ item: AiDefenseSummary }>>(
+    const response = await unsafeFetch<ApiResponse<{ item: AiDefenseSummary }>>(
       endpoint(`/projects/${projectId}/defense/sessions/${activeChatSessionId.value}/summary`),
       {
         method: 'POST',
@@ -5772,7 +5772,7 @@ async function startDefenseRealtime() {
     const enabledPersonaIds = defensePersonas.value
       .filter(item => item.enabled)
       .map(item => item.id)
-    const response = await $fetch<ApiResponse<DefenseRealtimeSessionPayload>>(
+    const response = await unsafeFetch<ApiResponse<DefenseRealtimeSessionPayload>>(
       endpoint(`/projects/${projectId}/defense/realtime-sessions`),
       {
         method: 'POST',
@@ -5825,7 +5825,7 @@ async function createChatSession(preferredTitle = ''): Promise<string | null> {
     return null
 
   try {
-    const response = await $fetch<ApiResponse<AiChatSession>>(
+    const response = await unsafeFetch<ApiResponse<AiChatSession>>(
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions`),
       {
         method: 'POST',
@@ -5963,7 +5963,7 @@ async function runAiFilter() {
   statusLine.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<AiContestFilterResult>>(endpoint('/ai/contest-filter'), {
+    const response = await unsafeFetch<ApiResponse<AiContestFilterResult>>(endpoint('/ai/contest-filter'), {
       method: 'POST',
       body: {
         teamId: activeWorkspaceId.value,
@@ -6059,7 +6059,7 @@ async function loadTopicBoards() {
   const workspaceId = String(activeWorkspaceId.value || '').trim()
 
   try {
-    const response = await $fetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
+    const response = await unsafeFetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
     if (requestId !== topicBoardLoadRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
       return
     topicBoardSnapshot.value = response.data.latestBoard
@@ -6099,7 +6099,7 @@ async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] 
   topicBoardError.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/generate`), {
+    const response = await unsafeFetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/generate`), {
       method: 'POST',
       body: {
         input,
@@ -6135,7 +6135,7 @@ async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
   if (!boardId || !projectId)
     return
 
-  const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/${boardId}`), {
+  const response = await unsafeFetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/${boardId}`), {
     method: 'PATCH',
     body: payload,
   })
@@ -6886,7 +6886,7 @@ async function submitProject(target?: { contestId?: string, trackId?: string }) 
       summary: formState.summary.trim(),
     }
 
-    const response = await $fetch<ApiResponse<Project>>(endpoint('/projects'), {
+    const response = await unsafeFetch<ApiResponse<Project>>(endpoint('/projects'), {
       method: 'POST',
       body: payload,
     })

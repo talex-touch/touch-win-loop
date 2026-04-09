@@ -3941,6 +3941,7 @@ watch(activeTabId, (next) => {
                   class="min-h-0 w-full"
                   :enable-slash-menu="true"
                   :image-upload-handler="markdownImageUploadHandler"
+                  :ui-font-size-preset="workspaceDisplayPreferenceState.effective.fontSizePreset || 'md'"
                   :show-toolbar="false"
                   content-max-width="1040px"
                   placeholder="输入正文或标题，协作文档会实时同步"

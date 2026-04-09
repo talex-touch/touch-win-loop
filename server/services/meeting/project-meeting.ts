@@ -296,6 +296,7 @@ export async function endProjectMeetingSession(
   input: {
     projectId: string
     meetingId: string
+    user?: AuthUser
     runtime?: RuntimeSettings
   },
 ): Promise<ProjectMeetingDetail> {
@@ -338,6 +339,56 @@ export async function endProjectMeetingSession(
   if (!detail)
     throw new Error('MEETING_NOT_FOUND')
   return detail
+}
+
+export async function joinProjectMeetingSession(
+  db: Queryable,
+  input: {
+    projectId: string
+    meetingId: string
+    user: AuthUser
+    runtime?: RuntimeSettings
+  },
+): Promise<{
+  meeting: ProjectMeetingDetail
+  joinToken: string
+  joinExpiresAt: string
+  joinUrl?: string
+}> {
+  const meeting = await getProjectMeetingDetail(db, {
+    projectId: input.projectId,
+    meetingId: input.meetingId,
+  })
+  if (!meeting)
+    throw new Error('MEETING_NOT_FOUND')
+  if (meeting.status === 'scheduled')
+    throw new Error('MEETING_NOT_STARTED')
+  return buildProjectMeetingJoinSession(db, input)
+}
+
+export async function startProjectMeetingSession(
+  db: Queryable,
+  input: {
+    projectId: string
+    meetingId: string
+    user: AuthUser
+    runtime?: RuntimeSettings
+  },
+): Promise<{
+  meeting: ProjectMeetingDetail
+  joinToken: string
+  joinExpiresAt: string
+  joinUrl?: string
+}> {
+  const meeting = await getProjectMeetingDetail(db, {
+    projectId: input.projectId,
+    meetingId: input.meetingId,
+  })
+  if (!meeting)
+    throw new Error('MEETING_NOT_FOUND')
+  if (meeting.status !== 'active')
+    throw new Error('MEETING_CANNOT_START')
+  return buildProjectMeetingJoinSession(db, input)
 }
 
 export async function resolveMeetingCaptionParticipant(

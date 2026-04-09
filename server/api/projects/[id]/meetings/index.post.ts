@@ -68,16 +68,30 @@ export default defineEventHandler(async (event) => {
       })
     })
 
-    await emitRealtimeEvent({
-      type: 'meeting.state.updated',
-      workspaceId: payload.meeting.workspaceId,
-      projectId,
-      payload: {
-        meetingId: payload.meeting.id,
-      },
-    }).catch(() => {})
+    await Promise.allSettled([
+      emitRealtimeEvent({
+        type: 'meeting.state.updated',
+        workspaceId: payload.meeting.workspaceId,
+        projectId,
+        payload: {
+          meetingId: payload.meeting.id,
+        },
+      }),
+      ...(payload.meeting.status === 'active'
+        ? [
+            emitRealtimeEvent({
+              type: 'meeting.participant.updated',
+              workspaceId: payload.meeting.workspaceId,
+              projectId,
+              payload: {
+                meetingId: payload.meeting.id,
+              },
+            }),
+          ]
+        : []),
+    ])
 
-    return ok(payload.detail, {
+    return ok(payload, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

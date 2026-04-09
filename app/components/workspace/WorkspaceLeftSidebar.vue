@@ -377,6 +377,9 @@ const linkedContestResourceGroups = computed<WorkspaceLinkedContestResourceDispl
     categories: buildLinkedContestResourceCategories(group.resources || []),
   }))
 })
+const panelContentTransitionKey = computed(() => {
+  return recyclePanelOpen.value ? 'recycle' : activeModule.value
+})
 const projectResourceSkeletonRows = [1, 2, 3, 4]
 const resourceLibrarySkeletonRows = [1, 2, 3]
 const projectOutlineSkeletonRows = [1, 2, 3, 4, 5]
@@ -1756,59 +1759,62 @@ onBeforeUnmount(() => {
       @open-settings="openSettingsPanel"
     />
 
-    <section v-show="!props.collapsed" class="workspace-left-panel">
-      <div class="workspace-left-panel__body no-scrollbar">
-        <template v-if="recyclePanelOpen">
-          <section class="workspace-tree-block workspace-tree-block--recycle-panel">
-            <header class="workspace-recycle-panel__header">
-              <span class="material-symbols-outlined">delete</span>
-              <h3>项目回收站</h3>
-            </header>
-            <p class="workspace-recycle-panel__hint">
-              删除后文件默认保留 30 天，你可在此恢复文件或彻底删除。
-            </p>
+    <Transition name="workspace-left-panel">
+      <section v-show="!props.collapsed" class="workspace-left-panel">
+        <div class="workspace-left-panel__body no-scrollbar">
+          <Transition name="workspace-left-panel-content" mode="out-in">
+            <div :key="panelContentTransitionKey" class="workspace-left-panel__content">
+              <template v-if="recyclePanelOpen">
+                <section class="workspace-tree-block workspace-tree-block--recycle-panel">
+                  <header class="workspace-recycle-panel__header">
+                    <span class="material-symbols-outlined">delete</span>
+                    <h3>项目回收站</h3>
+                  </header>
+                  <p class="workspace-recycle-panel__hint">
+                    删除后文件默认保留 30 天，你可在此恢复文件或彻底删除。
+                  </p>
 
-            <div
-              v-for="resource in visibleRecycleResources"
-              :key="`recycle-${resource.id}`"
-              class="workspace-recycle-item"
-            >
-              <div class="workspace-recycle-item__content">
-                <div class="workspace-recycle-item__title" :title="resourceDisplayTitle(resource)">
-                  {{ resourceDisplayTitle(resource) }}
-                </div>
-                <div class="workspace-recycle-item__meta">
-                  {{ recycleHint(resource) }}
-                </div>
-              </div>
+                  <div
+                    v-for="resource in visibleRecycleResources"
+                    :key="`recycle-${resource.id}`"
+                    class="workspace-recycle-item"
+                  >
+                    <div class="workspace-recycle-item__content">
+                      <div class="workspace-recycle-item__title" :title="resourceDisplayTitle(resource)">
+                        {{ resourceDisplayTitle(resource) }}
+                      </div>
+                      <div class="workspace-recycle-item__meta">
+                        {{ recycleHint(resource) }}
+                      </div>
+                    </div>
 
-              <div class="workspace-recycle-item__actions">
-                <button
-                  class="workspace-recycle-item__action workspace-recycle-item__action--ghost"
-                  type="button"
-                  :disabled="resourceMutating || !hasActiveProject"
-                  @click="restoreRecycleResource(resource.id)"
-                >
-                  恢复
-                </button>
-                <button
-                  class="workspace-recycle-item__action workspace-recycle-item__action--danger"
-                  type="button"
-                  :disabled="resourceMutating || !hasActiveProject"
-                  @click="requestPurgeRecycleResource(resource.id)"
-                >
-                  彻底删除
-                </button>
-              </div>
-            </div>
+                    <div class="workspace-recycle-item__actions">
+                      <button
+                        class="workspace-recycle-item__action workspace-recycle-item__action--ghost"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click="restoreRecycleResource(resource.id)"
+                      >
+                        恢复
+                      </button>
+                      <button
+                        class="workspace-recycle-item__action workspace-recycle-item__action--danger"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click="requestPurgeRecycleResource(resource.id)"
+                      >
+                        彻底删除
+                      </button>
+                    </div>
+                  </div>
 
-            <p v-if="visibleRecycleResources.length === 0" class="workspace-empty-text">
-              暂无已删除文件
-            </p>
-          </section>
-        </template>
+                  <p v-if="visibleRecycleResources.length === 0" class="workspace-empty-text">
+                    暂无已删除文件
+                  </p>
+                </section>
+              </template>
 
-        <template v-else-if="activeModule === 'resource_manager'">
+              <template v-else-if="activeModule === 'resource_manager'">
           <section class="workspace-tree-block">
             <div class="workspace-tree-block__title-row">
               <button
@@ -2490,8 +2496,8 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </a-modal>
-        </template>
-        <template v-else-if="activeModule === 'meeting'">
+              </template>
+              <template v-else-if="activeModule === 'meeting'">
           <section class="workspace-card">
             <div class="workspace-meeting-panel__header">
               <div>
@@ -2551,8 +2557,8 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </section>
-        </template>
-        <template v-else-if="activeModule === 'analysis'">
+              </template>
+              <template v-else-if="activeModule === 'analysis'">
           <section class="workspace-card">
             <h3>AI 竞赛分析</h3>
             <textarea
@@ -2651,9 +2657,9 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </section>
-        </template>
+              </template>
 
-        <template v-else-if="activeModule === 'project_config'">
+              <template v-else-if="activeModule === 'project_config'">
           <section class="workspace-card">
             <h3>选题配置</h3>
             <ul class="workspace-suggestion-list">
@@ -2747,9 +2753,9 @@ onBeforeUnmount(() => {
               {{ topicBoardLoading ? '生成中...' : '生成选题板' }}
             </button>
           </section>
-        </template>
+              </template>
 
-        <template v-else>
+              <template v-else>
           <section class="workspace-card">
             <div class="workspace-issue-panel__header">
               <h3>Issue 中心</h3>
@@ -2809,17 +2815,22 @@ onBeforeUnmount(() => {
               </article>
             </div>
           </section>
-        </template>
-      </div>
+              </template>
+            </div>
+          </Transition>
+        </div>
 
-      <WorkspaceResourceUploadHint
-        v-if="activeModule === 'resource_manager' && !recyclePanelOpen"
-        class="workspace-left-panel__footer"
-        :busy="resourceMutating"
-        :disabled="!hasActiveProject || resourceMutating"
-        @select-files="handleResourceUpload"
-      />
-    </section>
+        <Transition name="workspace-left-panel-footer">
+          <WorkspaceResourceUploadHint
+            v-if="activeModule === 'resource_manager' && !recyclePanelOpen"
+            class="workspace-left-panel__footer"
+            :busy="resourceMutating"
+            :disabled="!hasActiveProject || resourceMutating"
+            @select-files="handleResourceUpload"
+          />
+        </Transition>
+      </section>
+    </Transition>
   </aside>
 </template>
 
@@ -2875,6 +2886,9 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   min-height: 0;
   overflow: hidden;
+  transition:
+    width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    flex-basis 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   width: 100%;
 }
 
@@ -2947,6 +2961,53 @@ onBeforeUnmount(() => {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
+  transform-origin: left center;
+}
+
+.workspace-left-panel__content {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.workspace-left-panel-enter-active,
+.workspace-left-panel-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-left-panel-enter-from,
+.workspace-left-panel-leave-to {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+
+.workspace-left-panel-content-enter-active,
+.workspace-left-panel-content-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-left-panel-content-enter-from,
+.workspace-left-panel-content-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.workspace-left-panel-footer-enter-active,
+.workspace-left-panel-footer-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-left-panel-footer-enter-from,
+.workspace-left-panel-footer-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 .workspace-left-panel__body {
