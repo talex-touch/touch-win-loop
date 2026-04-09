@@ -12,6 +12,7 @@ import type {
   ProjectResourceShareVisibility,
   Resource,
   ResourceCategory,
+  WorkspaceTabSpacingPreset,
 } from '~~/shared/types/domain'
 import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup, WorkspaceTopicBoardDraft } from '~/types/workspace'
@@ -107,6 +108,7 @@ const props = withDefaults(defineProps<{
   topicBoardCurrentSummary?: string
   topicBoardHistoryCount?: number
   workspaceId?: string
+  tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
   collapsed?: boolean
 }>(), {
   selectedResources: () => [],
@@ -147,6 +149,7 @@ const props = withDefaults(defineProps<{
   topicBoardCurrentSummary: '',
   topicBoardHistoryCount: 0,
   workspaceId: '',
+  tabSpacingPreset: 'default',
   collapsed: false,
 })
 
@@ -1271,14 +1274,9 @@ function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId 
     || value === 'issue_center'
 }
 
-function openMeetingPanel() {
-  emit('openMeetingPanel')
-}
-
 function createMeeting(mode: ProjectMeetingMode) {
   if (props.meetingMutating || !props.hasActiveProject)
     return
-  emit('openMeetingPanel')
   emit('createMeeting', { mode })
 }
 
@@ -1286,7 +1284,6 @@ function openMeetingItem(meetingId: string) {
   const normalizedMeetingId = String(meetingId || '').trim()
   if (!normalizedMeetingId)
     return
-  emit('openMeetingPanel')
   emit('selectMeeting', normalizedMeetingId)
 }
 
@@ -1741,7 +1738,10 @@ onBeforeUnmount(() => {
   <aside
     ref="sidebarPanelRef"
     class="workspace-left-dock"
-    :class="{ 'workspace-left-dock--collapsed': props.collapsed }"
+    :class="{
+      'workspace-left-dock--collapsed': props.collapsed,
+      'workspace-left-dock--compact': props.tabSpacingPreset === 'compact',
+    }"
   >
     <WorkspaceLeftRail
       :items="modules"
@@ -2497,17 +2497,9 @@ onBeforeUnmount(() => {
               <div>
                 <h3>项目会议</h3>
                 <p class="workspace-meeting-panel__hint">
-                  从左侧直接发起会议，主工作区负责会中字幕、参会人和录制纪要。
+                  点击左侧模块本身可进入会议总览。具体会议会在右侧以独立 tab 打开。
                 </p>
               </div>
-              <button
-                class="workspace-btn workspace-btn--ghost"
-                :disabled="meetingMutating"
-                type="button"
-                @click="openMeetingPanel"
-              >
-                打开面板
-              </button>
             </div>
 
             <div class="workspace-action-row workspace-action-row--meeting">
@@ -2553,8 +2545,8 @@ onBeforeUnmount(() => {
               >
                 <span class="workspace-meeting-list__title">{{ meeting.title }}</span>
                 <span class="workspace-meeting-list__subline">
-                  {{ meeting.status === 'active' ? '进行中' : meeting.status === 'ended' ? '已结束' : '失败' }}
-                  · {{ formatDateTime(meeting.startedAt) }}
+                  {{ meeting.status === 'scheduled' ? '待开始' : meeting.status === 'active' ? '进行中' : meeting.status === 'ended' ? '已结束' : '失败' }}
+                  · {{ formatDateTime(meeting.scheduledStartAt || meeting.startedAt) }}
                 </span>
               </button>
             </div>
@@ -2833,6 +2825,50 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .workspace-left-dock {
+  --workspace-left-panel-body-padding-top: 10px;
+  --workspace-left-panel-body-padding-bottom: 14px;
+  --workspace-left-block-margin-bottom: 8px;
+  --workspace-left-title-row-padding-right: 10px;
+  --workspace-left-title-padding-y: 4px;
+  --workspace-left-title-padding-x: 14px;
+  --workspace-left-title-action-size: 24px;
+  --workspace-left-title-action-icon-size: 16px;
+  --workspace-left-tree-item-gap: 10px;
+  --workspace-left-tree-item-height: 44px;
+  --workspace-left-tree-item-padding-left: 14px;
+  --workspace-left-tree-item-padding-right: 42px;
+  --workspace-left-tree-item-icon-size: 18px;
+  --workspace-left-tree-item-label-size: 12px;
+  --workspace-left-upload-min-height: 56px;
+  --workspace-left-upload-padding-y: 8px;
+  --workspace-left-upload-padding-x: 14px;
+  --workspace-left-upload-meta-margin-top: 3px;
+  --workspace-left-recycle-padding-y: 7px;
+  --workspace-left-recycle-padding-x: 14px;
+  --workspace-left-recycle-action-height: 24px;
+  --workspace-left-recycle-action-min-width: 56px;
+  --workspace-left-library-item-padding-y: 8px;
+  --workspace-left-library-item-padding-x: 14px;
+  --workspace-left-library-item-title-size: 12px;
+  --workspace-left-library-item-meta-size: 10px;
+  --workspace-left-library-item-add-height: 26px;
+  --workspace-left-library-item-add-min-width: 48px;
+  --workspace-left-linked-group-padding-top: 6px;
+  --workspace-left-linked-group-padding-bottom: 8px;
+  --workspace-left-linked-header-padding-top: 4px;
+  --workspace-left-linked-header-padding-x: 14px;
+  --workspace-left-linked-header-padding-bottom: 8px;
+  --workspace-left-linked-category-padding-bottom: 4px;
+  --workspace-left-outline-skeleton-padding-y: 9px;
+  --workspace-left-outline-skeleton-padding-x: 14px;
+  --workspace-left-outline-skeleton-child-padding-left: 36px;
+  --workspace-left-outline-padding-y: 9px;
+  --workspace-left-outline-padding-x: 14px;
+  --workspace-left-outline-font-size: 13px;
+  --workspace-left-outline-child-padding-left: 36px;
+  --workspace-left-outline-child-font-size: 12px;
+  --workspace-left-outline-active-bar-top: 8px;
+  --workspace-left-outline-active-bar-bottom: 8px;
   border-right: 1px solid #d3d8e4;
   background: #ffffff;
   display: flex;
@@ -2840,6 +2876,53 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: hidden;
   width: 100%;
+}
+
+.workspace-left-dock--compact {
+  --workspace-left-panel-body-padding-top: 8px;
+  --workspace-left-panel-body-padding-bottom: 10px;
+  --workspace-left-block-margin-bottom: 6px;
+  --workspace-left-title-row-padding-right: 8px;
+  --workspace-left-title-padding-y: 3px;
+  --workspace-left-title-padding-x: 12px;
+  --workspace-left-title-action-size: 22px;
+  --workspace-left-title-action-icon-size: 15px;
+  --workspace-left-tree-item-gap: 8px;
+  --workspace-left-tree-item-height: 38px;
+  --workspace-left-tree-item-padding-left: 12px;
+  --workspace-left-tree-item-padding-right: 36px;
+  --workspace-left-tree-item-icon-size: 17px;
+  --workspace-left-tree-item-label-size: 11px;
+  --workspace-left-upload-min-height: 48px;
+  --workspace-left-upload-padding-y: 6px;
+  --workspace-left-upload-padding-x: 12px;
+  --workspace-left-upload-meta-margin-top: 2px;
+  --workspace-left-recycle-padding-y: 6px;
+  --workspace-left-recycle-padding-x: 12px;
+  --workspace-left-recycle-action-height: 22px;
+  --workspace-left-recycle-action-min-width: 52px;
+  --workspace-left-library-item-padding-y: 6px;
+  --workspace-left-library-item-padding-x: 12px;
+  --workspace-left-library-item-title-size: 11px;
+  --workspace-left-library-item-meta-size: 9px;
+  --workspace-left-library-item-add-height: 24px;
+  --workspace-left-library-item-add-min-width: 44px;
+  --workspace-left-linked-group-padding-top: 4px;
+  --workspace-left-linked-group-padding-bottom: 6px;
+  --workspace-left-linked-header-padding-top: 2px;
+  --workspace-left-linked-header-padding-x: 12px;
+  --workspace-left-linked-header-padding-bottom: 6px;
+  --workspace-left-linked-category-padding-bottom: 3px;
+  --workspace-left-outline-skeleton-padding-y: 7px;
+  --workspace-left-outline-skeleton-padding-x: 12px;
+  --workspace-left-outline-skeleton-child-padding-left: 30px;
+  --workspace-left-outline-padding-y: 7px;
+  --workspace-left-outline-padding-x: 12px;
+  --workspace-left-outline-font-size: 12px;
+  --workspace-left-outline-child-padding-left: 30px;
+  --workspace-left-outline-child-font-size: 11px;
+  --workspace-left-outline-active-bar-top: 6px;
+  --workspace-left-outline-active-bar-bottom: 6px;
 }
 
 .workspace-left-dock--collapsed {
@@ -2867,7 +2950,7 @@ onBeforeUnmount(() => {
 }
 
 .workspace-left-panel__body {
-  padding: 10px 0 14px;
+  padding: var(--workspace-left-panel-body-padding-top) 0 var(--workspace-left-panel-body-padding-bottom);
   overflow-y: auto;
   flex: 1;
   height: 0;
@@ -2882,7 +2965,7 @@ onBeforeUnmount(() => {
 }
 
 .workspace-tree-block {
-  margin-bottom: 8px;
+  margin-bottom: var(--workspace-left-block-margin-bottom);
 }
 
 .workspace-tree-block--recycle-panel {
@@ -2918,7 +3001,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-right: 10px;
+  padding-right: var(--workspace-left-title-row-padding-right);
 }
 
 .workspace-project-add-actions {
@@ -2940,7 +3023,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #7888a2;
-  padding: 4px 14px;
+  padding: var(--workspace-left-title-padding-y) var(--workspace-left-title-padding-x);
   text-transform: uppercase;
   text-align: left;
   cursor: pointer;
@@ -2963,8 +3046,8 @@ onBeforeUnmount(() => {
   border: 1px solid #d3dbe8;
   background: #ffffff;
   color: #43629c;
-  width: 24px;
-  height: 24px;
+  width: var(--workspace-left-title-action-size);
+  height: var(--workspace-left-title-action-size);
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
@@ -2983,7 +3066,7 @@ onBeforeUnmount(() => {
 }
 
 .workspace-tree-block__title-action .material-symbols-outlined {
-  font-size: 16px;
+  font-size: var(--workspace-left-title-action-icon-size);
 }
 
 .workspace-project-add-actions__menu {
@@ -3133,9 +3216,9 @@ onBeforeUnmount(() => {
   background: transparent;
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 44px;
-  padding: 0 42px 0 14px;
+  gap: var(--workspace-left-tree-item-gap);
+  height: var(--workspace-left-tree-item-height);
+  padding: 0 var(--workspace-left-tree-item-padding-right) 0 var(--workspace-left-tree-item-padding-left);
   color: #4f5f7f;
   cursor: pointer;
   text-align: left;
@@ -3208,14 +3291,14 @@ onBeforeUnmount(() => {
 }
 
 .workspace-tree-item__icon {
-  font-size: 18px;
-  width: 18px;
-  height: 18px;
-  line-height: 18px;
+  font-size: var(--workspace-left-tree-item-icon-size);
+  width: var(--workspace-left-tree-item-icon-size);
+  height: var(--workspace-left-tree-item-icon-size);
+  line-height: var(--workspace-left-tree-item-icon-size);
 }
 
 .workspace-tree-item__label {
-  font-size: 12px;
+  font-size: var(--workspace-left-tree-item-label-size);
   line-height: 1.3;
   flex: 1;
   min-width: 0;
@@ -3229,11 +3312,11 @@ onBeforeUnmount(() => {
 }
 
 .workspace-upload-task-item {
-  min-height: 56px;
+  min-height: var(--workspace-left-upload-min-height);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
+  gap: var(--workspace-left-tree-item-gap);
+  padding: var(--workspace-left-upload-padding-y) var(--workspace-left-upload-padding-x);
   border-radius: 0;
   background: #f8fbff;
 }
@@ -3256,7 +3339,7 @@ onBeforeUnmount(() => {
 }
 
 .workspace-upload-task-item__meta {
-  margin-top: 3px;
+  margin-top: var(--workspace-left-upload-meta-margin-top);
   color: #8290a6;
   font-size: 10px;
   line-height: 1.35;
@@ -3477,8 +3560,8 @@ onBeforeUnmount(() => {
 .workspace-recycle-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 14px;
+  gap: var(--workspace-left-tree-item-gap);
+  padding: var(--workspace-left-recycle-padding-y) var(--workspace-left-recycle-padding-x);
 }
 
 .workspace-recycle-item:hover {
@@ -3515,8 +3598,8 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: #ffffff;
   color: #4a5f84;
-  height: 24px;
-  min-width: 56px;
+  height: var(--workspace-left-recycle-action-height);
+  min-width: var(--workspace-left-recycle-action-min-width);
   padding: 0 8px;
   font-size: 11px;
   cursor: pointer;
@@ -3573,7 +3656,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 14px;
+  padding: var(--workspace-left-library-item-padding-y) var(--workspace-left-library-item-padding-x);
 }
 
 .workspace-library-skeleton-item__left {
@@ -3627,11 +3710,11 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 14px;
+  padding: var(--workspace-left-outline-skeleton-padding-y) var(--workspace-left-outline-skeleton-padding-x);
 }
 
 .workspace-outline-skeleton-row--child {
-  padding-left: 36px;
+  padding-left: var(--workspace-left-outline-skeleton-child-padding-left);
 }
 
 .workspace-outline-skeleton__dot {
@@ -3659,11 +3742,11 @@ onBeforeUnmount(() => {
   width: 100%;
   border: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--workspace-left-outline-font-size);
   line-height: 1.28;
   text-align: left;
   color: #6f7e98;
-  padding: 9px 14px;
+  padding: var(--workspace-left-outline-padding-y) var(--workspace-left-outline-padding-x);
   cursor: pointer;
   position: relative;
   white-space: nowrap;
@@ -3704,8 +3787,8 @@ onBeforeUnmount(() => {
 }
 
 .workspace-outline-item--child {
-  padding-left: 36px;
-  font-size: 12px;
+  padding-left: var(--workspace-left-outline-child-padding-left);
+  font-size: var(--workspace-left-outline-child-font-size);
 }
 
 .workspace-outline-item--active {
@@ -3718,8 +3801,8 @@ onBeforeUnmount(() => {
   content: '';
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
+  top: var(--workspace-left-outline-active-bar-top);
+  bottom: var(--workspace-left-outline-active-bar-bottom);
   width: 3px;
   border-radius: 3px;
   background: #2f6af2;
@@ -3771,7 +3854,7 @@ onBeforeUnmount(() => {
 }
 
 .workspace-linked-library-group {
-  padding: 6px 0 8px;
+  padding: var(--workspace-left-linked-group-padding-top) 0 var(--workspace-left-linked-group-padding-bottom);
 }
 
 .workspace-linked-library-group + .workspace-linked-library-group {
@@ -3779,7 +3862,10 @@ onBeforeUnmount(() => {
 }
 
 .workspace-linked-library-group__header {
-  padding: 4px 14px 8px;
+  padding:
+    var(--workspace-left-linked-header-padding-top)
+    var(--workspace-left-linked-header-padding-x)
+    var(--workspace-left-linked-header-padding-bottom);
 }
 
 .workspace-linked-library-group__title {
@@ -3806,7 +3892,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 14px 4px;
+  padding: 0 var(--workspace-left-linked-header-padding-x) var(--workspace-left-linked-category-padding-bottom);
   cursor: pointer;
   text-align: left;
 }
@@ -3844,8 +3930,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 14px;
+  gap: var(--workspace-left-tree-item-gap);
+  padding: var(--workspace-left-library-item-padding-y) var(--workspace-left-library-item-padding-x);
 }
 
 .workspace-library-item:hover {
@@ -3858,7 +3944,7 @@ onBeforeUnmount(() => {
 }
 
 .workspace-library-item__title {
-  font-size: 12px;
+  font-size: var(--workspace-left-library-item-title-size);
   color: #415474;
   font-weight: 600;
   white-space: nowrap;
@@ -3869,7 +3955,7 @@ onBeforeUnmount(() => {
 .workspace-library-item__meta {
   margin-top: 2px;
   color: #8694ac;
-  font-size: 10px;
+  font-size: var(--workspace-left-library-item-meta-size);
 }
 
 .workspace-library-item__add {
@@ -3877,8 +3963,8 @@ onBeforeUnmount(() => {
   background: #ffffff;
   color: #3f5f9f;
   border-radius: 7px;
-  height: 26px;
-  min-width: 48px;
+  height: var(--workspace-left-library-item-add-height);
+  min-width: var(--workspace-left-library-item-add-min-width);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;

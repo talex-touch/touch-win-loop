@@ -63,12 +63,14 @@ import type {
   WorkspaceAiMode,
   WorkspaceDisplayPreferenceSnapshot,
   WorkspaceFontSizePreset,
+  WorkspaceMeetingCreateTabId,
   WorkspaceMemberRole,
   WorkspaceOpenTabState,
+  WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
+import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -580,12 +582,12 @@ interface ProjectMeetingJoinSessionPayload {
   joinUrl?: string
 }
 
-interface ProjectMeetingCreateSessionPayload {
-  meeting: ProjectMeeting
-  detail: ProjectMeetingDetail
-  joinToken: string
-  joinExpiresAt: string
-  joinUrl?: string
+interface ProjectMeetingCreatePayload {
+  mode: ProjectMeetingMode
+  title?: string
+  invitedUserIds: string[]
+  scheduledStartAt: string
+  scheduledEndAt: string
 }
 
 interface DefenseRealtimeSessionPayload {
@@ -601,6 +603,7 @@ interface DefenseRealtimeSessionPayload {
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
 type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspaceMeetingTabId = `meeting:${string}`
+type WorkspaceMeetingCreateLocalTabId = WorkspaceMeetingCreateTabId
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
@@ -918,6 +921,10 @@ function createMeetingTabId(meetingId: string): WorkspaceMeetingTabId {
   return `meeting:${meetingId}` as WorkspaceMeetingTabId
 }
 
+function createMeetingCreateTabId(mode: ProjectMeetingMode): WorkspaceMeetingCreateLocalTabId {
+  return `meeting-create:${mode}` as WorkspaceMeetingCreateLocalTabId
+}
+
 function resolveMeetingIdFromTabId(tabId: string): string {
   return tabId.startsWith('meeting:') ? tabId.slice('meeting:'.length) : ''
 }
@@ -947,9 +954,17 @@ function ensureMeetingDetailTabOpen(meetingId: string, options: { activate?: boo
   return tabId
 }
 
+function ensureMeetingCreateTabOpen(mode: ProjectMeetingMode, options: { activate?: boolean } = {}): WorkspaceMeetingCreateLocalTabId {
+  const tabId = createMeetingCreateTabId(mode)
+  ensureWorkspaceMainTabOpen(tabId, options)
+  return tabId
+}
+
 function isWorkspaceMainTabId(value: string): value is WorkspaceMainTabId {
   return ['dashboard', 'meeting', 'members', 'flow', 'settings'].includes(value)
     || (value.startsWith('meeting:') && value.length > 'meeting:'.length)
+    || value === 'meeting-create:audio'
+    || value === 'meeting-create:video'
     || (value.startsWith('resource:') && value.length > 'resource:'.length)
 }
 
@@ -1646,6 +1661,12 @@ const visibleWorkspaceIdSet = computed(() => {
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
 })
+const currentWorkspaceMeetingPlanTier = computed<'personal_team' | 'business_team'>(() => {
+  const quotaPlanTier = currentWorkspace.value?.quota?.planTier
+  if (quotaPlanTier === 'personal_team' || quotaPlanTier === 'business_team')
+    return quotaPlanTier
+  return currentWorkspace.value?.workspace.type === 'personal' ? 'personal_team' : 'business_team'
+})
 const currentUserSubtitle = computed(() => {
   return String(currentWorkspace.value?.workspace.name || '').trim()
 })
@@ -1693,6 +1714,9 @@ const workspaceSeatLimit = computed<number | null>(() => {
 })
 const workspaceEffectiveFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
   return workspaceDisplayPreferenceSnapshot.value.effective.fontSizePreset || 'md'
+})
+const workspaceEffectiveTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  return workspaceDisplayPreferenceSnapshot.value.effective.tabSpacingPreset || 'default'
 })
 const quickSwitchSourceProjects = computed(() => {
   const source = allProjects.value.length > 0 ? allProjects.value : projects.value
@@ -2074,6 +2098,7 @@ function applyProjectMeetingSession(
     joinToken?: string
     joinExpiresAt?: string
     resetCaptions?: boolean
+    preserveJoinSession?: boolean
   } = {},
 ): void {
   if (!meeting) {
@@ -2089,9 +2114,11 @@ function applyProjectMeetingSession(
   activeMeetingId.value = meeting.id
   activeMeetingDetail.value = meeting
   upsertProjectMeetingInList(meeting)
-  meetingJoinUrl.value = normalizeString(options.joinUrl)
-  meetingJoinToken.value = normalizeString(options.joinToken)
-  meetingJoinExpiresAt.value = normalizeString(options.joinExpiresAt)
+  if (!options.preserveJoinSession) {
+    meetingJoinUrl.value = normalizeString(options.joinUrl)
+    meetingJoinToken.value = normalizeString(options.joinToken)
+    meetingJoinExpiresAt.value = normalizeString(options.joinExpiresAt)
+  }
   if (options.resetCaptions)
     meetingLiveCaptions.value = []
 }
@@ -2122,6 +2149,7 @@ async function loadProjectMeetingDetail(
   meetingId: string,
   options: {
     resetCaptions?: boolean
+    preserveJoinSession?: boolean
   } = {},
 ): Promise<ProjectMeetingDetail | null> {
   const projectId = String(activeProjectId.value || '').trim()
@@ -2133,19 +2161,17 @@ async function loadProjectMeetingDetail(
 
   meetingDetailLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
+    const response = await $fetch<ApiResponse<ProjectMeetingDetail>>(
       endpoint(`/projects/${projectId}/meetings/${targetMeetingId}`),
     )
     if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
-      return response.data?.meeting || null
+      return response.data || null
 
-    applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.joinUrl,
-      joinToken: response.data.joinToken,
-      joinExpiresAt: response.data.joinExpiresAt,
+    applyProjectMeetingSession(response.data, {
       resetCaptions: options.resetCaptions,
+      preserveJoinSession: options.preserveJoinSession !== false,
     })
-    return response.data.meeting
+    return response.data
   }
   catch (error) {
     if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId) {
@@ -2180,7 +2206,7 @@ async function selectProjectMeeting(meetingId: string): Promise<void> {
   }
 
   await Promise.all([
-    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting }),
+    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
     loadProjectMeetingUtterances(targetMeetingId),
   ])
 }
@@ -2227,7 +2253,7 @@ async function loadProjectMeetings(
         return
 
       await Promise.all([
-        loadProjectMeetingDetail(preferredMeeting.id, { resetCaptions: isSwitchingMeeting }),
+        loadProjectMeetingDetail(preferredMeeting.id, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
         loadProjectMeetingUtterances(preferredMeeting.id),
       ])
       return
@@ -2264,7 +2290,7 @@ function scheduleMeetingRealtimeRefresh(options: {
   clearMeetingRealtimeRefreshTimer()
   meetingRealtimeRefreshTimer = setTimeout(() => {
     meetingRealtimeRefreshTimer = null
-    void loadProjectMeetings({ fallbackToFirst: true })
+    void loadProjectMeetings({ fallbackToFirst: false })
     if (targetMeetingId && targetMeetingId === activeMeetingId.value) {
       void loadProjectMeetingDetail(targetMeetingId)
       if (options.refreshUtterances)
@@ -2274,31 +2300,37 @@ function scheduleMeetingRealtimeRefresh(options: {
 }
 
 async function createProjectMeeting(payload: { mode: ProjectMeetingMode }): Promise<void> {
+  ensureMeetingCreateTabOpen(payload.mode)
+  statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议创建页已打开。`
+}
+
+async function submitProjectMeetingCreate(payload: ProjectMeetingCreatePayload): Promise<void> {
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId || meetingMutating.value)
     return
 
   meetingMutating.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingCreateSessionPayload>>(
+    const response = await $fetch<ApiResponse<ProjectMeetingDetail>>(
       endpoint(`/projects/${projectId}/meetings`),
       {
         method: 'POST',
-        body: {
-          mode: payload.mode,
-        },
+        body: payload,
       },
     )
 
+    const targetMeeting = response.data
     activeMeetingUtterances.value = []
-    applyProjectMeetingSession(response.data.detail, {
-      joinUrl: response.data.joinUrl,
-      joinToken: response.data.joinToken,
-      joinExpiresAt: response.data.joinExpiresAt,
+    applyProjectMeetingSession(targetMeeting, {
       resetCaptions: true,
     })
-    ensureMeetingDetailTabOpen(response.data.meeting.id)
-    upsertProjectMeetingInList(response.data.meeting)
+    ensureMeetingDetailTabOpen(targetMeeting.id)
+    openMainTabs.value = normalizeWorkspaceMainTabIds(
+      openMainTabs.value.filter(tabId => tabId !== createMeetingCreateTabId(payload.mode)),
+      { allowEmpty: true },
+    )
+    if (targetMeeting.status !== 'scheduled')
+      await loadProjectMeetingUtterances(targetMeeting.id)
     statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议已创建。`
     Message.success('会议已创建。')
   }
@@ -2313,17 +2345,69 @@ async function createProjectMeeting(payload: { mode: ProjectMeetingMode }): Prom
 }
 
 async function joinProjectMeeting(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
   const targetMeetingId = normalizeString(meetingId)
-  if (!targetMeetingId || meetingMutating.value)
+  if (!projectId || !targetMeetingId || meetingMutating.value)
     return
 
   meetingMutating.value = true
   try {
     ensureMeetingDetailTabOpen(targetMeetingId)
     activeMeetingId.value = targetMeetingId
-    const meeting = await loadProjectMeetingDetail(targetMeetingId)
-    if (meeting)
+    const response = await $fetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/join`),
+      {
+        method: 'POST',
+      },
+    )
+    applyProjectMeetingSession(response.data.meeting, {
+      joinUrl: response.data.joinUrl,
+      joinToken: response.data.joinToken,
+      joinExpiresAt: response.data.joinExpiresAt,
+      resetCaptions: false,
+    })
+    if (response.data.meeting)
       await loadProjectMeetingUtterances(targetMeetingId)
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '加入会议失败，请稍后重试。')
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    meetingMutating.value = false
+  }
+}
+
+async function startProjectMeeting(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId || meetingMutating.value)
+    return
+
+  meetingMutating.value = true
+  try {
+    const response = await $fetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/start`),
+      {
+        method: 'POST',
+      },
+    )
+    applyProjectMeetingSession(response.data.meeting, {
+      joinUrl: response.data.joinUrl,
+      joinToken: response.data.joinToken,
+      joinExpiresAt: response.data.joinExpiresAt,
+      resetCaptions: true,
+    })
+    ensureMeetingDetailTabOpen(targetMeetingId)
+    await loadProjectMeetingUtterances(targetMeetingId)
+    statusLine.value = '会议已启动。'
+    Message.success('会议已启动。')
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '启动会议失败，请稍后重试。')
+    statusLine.value = message
+    Message.error(message)
   }
   finally {
     meetingMutating.value = false
@@ -3884,8 +3968,12 @@ async function loadAuthContext(): Promise<boolean> {
 
 async function loadContestCatalog() {
   try {
-    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'))
-    contestCatalog.value = response.data
+    const data = await requestProjectApi<Contest[]>(
+      endpoint('/contests'),
+      {},
+      '竞赛目录加载失败。',
+    )
+    contestCatalog.value = data
   }
   catch {
     if (contestCatalog.value.length === 0)
@@ -3997,20 +4085,22 @@ async function loadContests() {
   listLoading.value = true
   statusLine.value = ''
   try {
-    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
-      query: {
+    const data = await requestProjectApi<Contest[]>(
+      endpoint('/contests'),
+      {
         discipline: discipline.value,
         level: level.value,
         major: major.value,
         trackType: trackType.value,
       },
-    })
+      '竞赛列表加载失败。',
+    )
 
-    contests.value = response.data
+    contests.value = data
     const catalogMap = new Map<string, Contest>()
     for (const contest of contestCatalog.value)
       catalogMap.set(contest.id, contest)
-    for (const contest of response.data)
+    for (const contest of data)
       catalogMap.set(contest.id, contest)
     contestCatalog.value = [...catalogMap.values()]
 
@@ -5433,6 +5523,24 @@ async function reconvertProjectResourcePreview() {
   }
 }
 
+function buildProjectApiRequestUrl(path: string, query: Record<string, string | number>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(query))
+    search.set(key, String(value))
+  const queryText = search.toString()
+  return queryText ? `${path}?${queryText}` : path
+}
+
+async function requestProjectApi<T>(path: string, query: Record<string, string | number>, fallbackMessage: string): Promise<T> {
+  const response = await fetch(buildProjectApiRequestUrl(path, query), {
+    credentials: 'include',
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw new Error(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 async function loadChatMessages(sessionId: string) {
   const projectId = String(activeProjectId.value || '').trim()
   if (!activeWorkspaceId.value || !projectId || !sessionId) {
@@ -5441,18 +5549,17 @@ async function loadChatMessages(sessionId: string) {
   }
 
   try {
-    const response = await $fetch<ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>>(
+    const data = await requestProjectApi<{ session: AiChatSession, messages: AiChatMessage[] }>(
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions/${sessionId}/messages`),
       {
-        query: {
-          projectId,
-          mode: aiMode.value,
-          limit: 200,
-        },
+        projectId,
+        mode: aiMode.value,
+        limit: 200,
       },
+      '会话消息加载失败。',
     )
 
-    const restoredMessages = response.data.messages.map(item => ({
+    const restoredMessages = data.messages.map(item => ({
       role: item.role,
       content: item.content,
     })) as ChatMessage[]
@@ -5755,17 +5862,16 @@ async function loadChatSessions(options: {
 
   chatSessionsLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<AiChatSession[]>>(
+    const data = await requestProjectApi<AiChatSession[]>(
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions`),
       {
-        query: {
-          projectId,
-          mode: aiMode.value,
-          limit: 30,
-        },
+        projectId,
+        mode: aiMode.value,
+        limit: 30,
       },
+      '会话列表加载失败。',
     )
-    chatSessions.value = response.data
+    chatSessions.value = data
 
     const preferredSessionId = normalizeString(options.preferredSessionId)
     const fallbackToFirst = options.fallbackToFirst !== false
@@ -6908,7 +7014,7 @@ function openMemberManagementFromLeftSidebar() {
 
 function openMeetingFromLeftSidebar() {
   ensureWorkspaceMainTabOpen('meeting')
-  statusLine.value = '已打开项目会议面板，可查看参会人、字幕和会议沉淀。'
+  statusLine.value = '已打开项目会议总览，可查看最近会议、录制与纪要入口。'
 }
 
 async function openFlowFromLeftSidebar() {
@@ -7163,7 +7269,7 @@ async function syncActiveMainTabMeetingSelection(nextTabId = activeMainTabId.val
   }
 
   await Promise.all([
-    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting }),
+    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
     loadProjectMeetingUtterances(targetMeetingId),
   ])
 }
@@ -7325,6 +7431,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           :topic-board-current-summary="topicBoardSnapshot?.boardSummary || ''"
           :topic-board-history-count="topicBoardHistory.length"
           :workspace-id="activeWorkspaceId"
+          :tab-spacing-preset="workspaceEffectiveTabSpacingPreset"
           :collapsed="leftSidebarCollapsed"
           @load-contests="loadContests"
           @run-ai-filter="runAiFilter"
@@ -7452,6 +7559,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :meeting-join-url="meetingJoinUrl"
         :meeting-join-token="meetingJoinToken"
         :meeting-join-expires-at="meetingJoinExpiresAt"
+        :meeting-plan-tier="currentWorkspaceMeetingPlanTier"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
         @generate-topic-board="generateTopicBoard('workspace_dashboard')"
@@ -7477,8 +7585,11 @@ watch(() => workspaceRealtime.connected.value, () => {
         @copy-project-resource-share="copyProjectResourceShare"
         @revoke-project-resource-share="revokeProjectResourceShare"
         @create-meeting="createProjectMeeting"
+        @quick-create-meeting="submitProjectMeetingCreate"
+        @submit-meeting-create="submitProjectMeetingCreate"
         @refresh-meetings="loadProjectMeetings"
         @join-meeting="joinProjectMeeting"
+        @start-meeting="startProjectMeeting"
         @end-meeting="endProjectMeeting"
         @select-meeting="selectProjectMeeting"
         @open-meeting-resource="openProjectResourcePreview"

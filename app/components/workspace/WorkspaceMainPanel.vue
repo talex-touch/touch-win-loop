@@ -22,6 +22,7 @@ import type {
   Track,
   TopicProposalDecisionStatus,
   WorkspaceFixedTabId as SharedWorkspaceFixedTabId,
+  WorkspaceMeetingCreateTabId as SharedWorkspaceMeetingCreateTabId,
   WorkspaceOpenTabState,
   WorkspaceType,
 } from '~~/shared/types/domain'
@@ -45,6 +46,8 @@ import {
   resolveWorkspaceCollabPresenceColor,
 } from '~/components/workspace/collab/presence'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
+import WorkspaceMeetingCreatePanel from '~/components/workspace/WorkspaceMeetingCreatePanel.vue'
+import WorkspaceMeetingOverviewPanel from '~/components/workspace/WorkspaceMeetingOverviewPanel.vue'
 import WorkspaceMeetingPanel from '~/components/workspace/WorkspaceMeetingPanel.vue'
 import {
   defaultWorkspaceDisplayPreferenceSnapshot,
@@ -150,6 +153,7 @@ const props = withDefaults(defineProps<{
   meetingJoinUrl?: string
   meetingJoinToken?: string
   meetingJoinExpiresAt?: string
+  meetingPlanTier?: 'personal_team' | 'business_team' | null
   toneMeta: Record<MappingTone, WorkspaceStatusToneMeta>
 }>(), {
   activeTabId: 'dashboard',
@@ -275,6 +279,7 @@ const props = withDefaults(defineProps<{
   meetingJoinUrl: '',
   meetingJoinToken: '',
   meetingJoinExpiresAt: '',
+  meetingPlanTier: null,
 })
 
 const emit = defineEmits<{
@@ -312,8 +317,11 @@ const emit = defineEmits<{
   'saveWorkspaceDisplayUserOverride': [value: { fontSizePreset?: WorkspaceFontSizePreset | null, tabSpacingPreset?: WorkspaceTabSpacingPreset | null }]
   'saveWorkspaceDisplayTeamDefault': [value: { fontSizePreset?: WorkspaceFontSizePreset | null, tabSpacingPreset?: WorkspaceTabSpacingPreset | null }]
   'createMeeting': [payload: { mode: ProjectMeetingMode }]
+  'quickCreateMeeting': [payload: { mode: ProjectMeetingMode, title?: string, invitedUserIds: string[], scheduledStartAt: string, scheduledEndAt: string }]
+  'submitMeetingCreate': [payload: { mode: ProjectMeetingMode, title?: string, invitedUserIds: string[], scheduledStartAt: string, scheduledEndAt: string }]
   'refreshMeetings': []
   'joinMeeting': [meetingId: string]
+  'startMeeting': [meetingId: string]
   'endMeeting': [meetingId: string]
   'selectMeeting': [meetingId: string]
   'openMeetingResource': [resourceId: string]
@@ -338,6 +346,7 @@ interface WorkspaceMeetingCaptionItem {
 
 type WorkspaceFixedTabId = SharedWorkspaceFixedTabId
 type WorkspaceMeetingTabId = `meeting:${string}`
+type WorkspaceMeetingCreateTabId = SharedWorkspaceMeetingCreateTabId
 type WorkspaceResourceTabId = `resource:${string}`
 type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
@@ -345,11 +354,12 @@ type WorkspaceSettingsSecondaryTabId = 'project' | 'myDisplay' | 'teamDefault'
 
 interface WorkspaceMainTab {
   id: WorkspaceMainTabId
-  kind: 'fixed' | 'meeting' | 'resource'
+  kind: 'fixed' | 'meeting' | 'meeting-create' | 'resource'
   title: string
   icon: string
   closeable: boolean
   meetingId?: string
+  meetingMode?: ProjectMeetingMode
   resourceId?: string
   previewMode?: WorkspacePreviewMode
   collabPurpose?: CollabPurpose | ''
@@ -424,8 +434,14 @@ function normalizeWorkspaceTabIds(
     const tabId = String(item || '').trim() as WorkspaceMainTabId
     if (!tabId || used.has(tabId))
       continue
-    if (!fixedTabs.some(tab => tab.id === tabId) && !tabId.startsWith('meeting:') && !tabId.startsWith('resource:'))
+    if (
+      !fixedTabs.some(tab => tab.id === tabId)
+      && !tabId.startsWith('meeting:')
+      && !tabId.startsWith('meeting-create:')
+      && !tabId.startsWith('resource:')
+    ) {
       continue
+    }
     normalized.push(tabId)
     used.add(tabId)
   }
@@ -453,8 +469,20 @@ function createMeetingTabId(meetingId: string): WorkspaceMeetingTabId {
   return `meeting:${meetingId}` as WorkspaceMeetingTabId
 }
 
+function createMeetingCreateTabId(mode: ProjectMeetingMode): WorkspaceMeetingCreateTabId {
+  return `meeting-create:${mode}` as WorkspaceMeetingCreateTabId
+}
+
 function resolveMeetingIdFromTabId(tabId: string): string {
   return tabId.startsWith('meeting:') ? tabId.slice('meeting:'.length) : ''
+}
+
+function resolveMeetingCreateModeFromTabId(tabId: string): ProjectMeetingMode | '' {
+  if (tabId === 'meeting-create:audio')
+    return 'audio'
+  if (tabId === 'meeting-create:video')
+    return 'video'
+  return ''
 }
 
 function resolveMeetingTabIcon(meeting: ProjectMeeting | ProjectMeetingDetail | null | undefined): string {
@@ -541,6 +569,7 @@ const workspaceDisplayPreferencesError = computed(() => props.workspaceDisplayPr
 const workspaceDisplaySavingUser = computed(() => props.workspaceDisplayPreferencesSavingScope === 'user')
 const workspaceDisplaySavingTeam = computed(() => props.workspaceDisplayPreferencesSavingScope === 'team')
 const WORKSPACE_FONT_SIZE_PRESET_VALUES = WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(option => option.value)
+const WORKSPACE_TAB_SPACING_PRESET_VALUES = WORKSPACE_TAB_SPACING_PRESET_OPTIONS.map(option => option.value)
 
 const workspaceSettingsTabs = computed<Array<{ id: WorkspaceSettingsSecondaryTabId, label: string }>>(() => {
   return [
@@ -628,30 +657,48 @@ const workspaceEffectiveTabSpacingPreset = computed<WorkspaceTabSpacingPreset>((
 const workspaceMainTabLayoutStyle = computed<Record<string, string>>(() => {
   if (workspaceEffectiveTabSpacingPreset.value === 'compact') {
     return {
-      '--workspace-main-tab-min-width': '136px',
-      '--workspace-main-tab-padding-x': '6px',
+      '--workspace-main-tab-min-width': '124px',
+      '--workspace-main-tab-padding-x': '5px',
       '--workspace-main-tab-gap': '2px',
-      '--workspace-main-tab-trigger-gap': '6px',
-      '--workspace-main-tab-close-padding': '2px',
+      '--workspace-main-tab-trigger-gap': '5px',
+      '--workspace-main-tab-close-padding': '1px',
+      '--workspace-main-tab-strip-height': '36px',
+      '--workspace-main-tab-label-size': '11px',
+      '--workspace-main-tab-icon-size': '16px',
+      '--workspace-main-tab-close-icon-size': '13px',
+      '--workspace-main-breadcrumb-padding-x': '12px',
+      '--workspace-main-breadcrumb-padding-y': '4px',
     }
   }
 
   if (workspaceEffectiveTabSpacingPreset.value === 'relaxed') {
     return {
-      '--workspace-main-tab-min-width': '182px',
+      '--workspace-main-tab-min-width': '174px',
       '--workspace-main-tab-padding-x': '10px',
       '--workspace-main-tab-gap': '4px',
       '--workspace-main-tab-trigger-gap': '8px',
       '--workspace-main-tab-close-padding': '4px',
+      '--workspace-main-tab-strip-height': '42px',
+      '--workspace-main-tab-label-size': '12px',
+      '--workspace-main-tab-icon-size': '18px',
+      '--workspace-main-tab-close-icon-size': '14px',
+      '--workspace-main-breadcrumb-padding-x': '12px',
+      '--workspace-main-breadcrumb-padding-y': '6px',
     }
   }
 
   return {
-    '--workspace-main-tab-min-width': '170px',
-    '--workspace-main-tab-padding-x': '8px',
+    '--workspace-main-tab-min-width': '156px',
+    '--workspace-main-tab-padding-x': '7px',
     '--workspace-main-tab-gap': '4px',
-    '--workspace-main-tab-trigger-gap': '8px',
-    '--workspace-main-tab-close-padding': '4px',
+    '--workspace-main-tab-trigger-gap': '7px',
+    '--workspace-main-tab-close-padding': '3px',
+    '--workspace-main-tab-strip-height': '40px',
+    '--workspace-main-tab-label-size': '12px',
+    '--workspace-main-tab-icon-size': '17px',
+    '--workspace-main-tab-close-icon-size': '14px',
+    '--workspace-main-breadcrumb-padding-x': '12px',
+    '--workspace-main-breadcrumb-padding-y': '6px',
   }
 })
 
@@ -662,9 +709,24 @@ const userWorkspaceDisplaySliderValue = computed(() => {
 })
 
 const userWorkspaceDisplaySliderProgress = computed(() => {
-  const maxIndex = Math.max(1, WORKSPACE_FONT_SIZE_PRESET_VALUES.length - 1)
-  return `${(userWorkspaceDisplaySliderValue.value / maxIndex) * 100}%`
+  return resolveWorkspaceDisplaySliderProgress(userWorkspaceDisplaySliderValue.value, WORKSPACE_FONT_SIZE_PRESET_VALUES.length)
 })
+
+const userWorkspaceDisplayTabSpacingSliderValue = computed(() => {
+  const targetPreset = userWorkspaceDisplayTabSpacingDraft.value || workspaceDisplayRecommendedTabSpacingPreset.value
+  const matchedIndex = WORKSPACE_TAB_SPACING_PRESET_VALUES.findIndex(value => value === targetPreset)
+  return matchedIndex >= 0 ? matchedIndex : WORKSPACE_TAB_SPACING_PRESET_VALUES.indexOf('default')
+})
+
+const userWorkspaceDisplayTabSpacingSliderProgress = computed(() => {
+  return resolveWorkspaceDisplaySliderProgress(userWorkspaceDisplayTabSpacingSliderValue.value, WORKSPACE_TAB_SPACING_PRESET_VALUES.length)
+})
+
+function resolveWorkspaceDisplaySliderProgress(value: number, total: number): string {
+  const maxIndex = Math.max(1, total - 1)
+  const normalizedValue = Number.isFinite(value) ? Math.min(maxIndex, Math.max(0, value)) : 0
+  return `${(normalizedValue / maxIndex) * 100}%`
+}
 
 function resolveWorkspaceFontSizePresetBySliderValue(value: number): WorkspaceFontSizePreset {
   const normalizedIndex = Number.isFinite(value)
@@ -676,6 +738,27 @@ function resolveWorkspaceFontSizePresetBySliderValue(value: number): WorkspaceFo
 
 function updateUserWorkspaceDisplayFontSizeDraft(value: number | string): void {
   userWorkspaceDisplayFontSizeDraft.value = resolveWorkspaceFontSizePresetBySliderValue(Number(value))
+}
+
+function resolveWorkspaceTabSpacingPresetBySliderValue(value: number): WorkspaceTabSpacingPreset {
+  const normalizedIndex = Number.isFinite(value)
+    ? Math.min(WORKSPACE_TAB_SPACING_PRESET_VALUES.length - 1, Math.max(0, Math.round(value)))
+    : WORKSPACE_TAB_SPACING_PRESET_VALUES.indexOf('default')
+
+  return WORKSPACE_TAB_SPACING_PRESET_VALUES[normalizedIndex] || 'default'
+}
+
+function updateUserWorkspaceDisplayTabSpacingDraft(value: number | string): void {
+  userWorkspaceDisplayTabSpacingDraft.value = resolveWorkspaceTabSpacingPresetBySliderValue(Number(value))
+}
+
+function resolveWorkspaceDisplaySliderStopLeft(index: number, total: number): string {
+  const lastIndex = Math.max(0, total - 1)
+  if (index <= 0)
+    return '4px'
+  if (index >= lastIndex)
+    return 'calc(100% - 4px)'
+  return `${(index / lastIndex) * 100}%`
 }
 
 function syncWorkspaceDisplayDrafts(): void {
@@ -923,6 +1006,17 @@ function buildMeetingTabById(meetingId: string): WorkspaceMainTab {
   }
 }
 
+function buildMeetingCreateTab(mode: ProjectMeetingMode): WorkspaceMainTab {
+  return {
+    id: createMeetingCreateTabId(mode),
+    kind: 'meeting-create',
+    title: mode === 'audio' ? '新建语音会议' : '新建视频会议',
+    icon: mode === 'audio' ? 'headset_mic' : 'video_call',
+    closeable: true,
+    meetingMode: mode,
+  }
+}
+
 function previewTabFromProps(): WorkspaceMainTab | null {
   const resourceId = String(props.previewResourceId || '').trim()
   if (!resourceId)
@@ -936,6 +1030,8 @@ function resolveTabById(tabId: WorkspaceMainTabId): WorkspaceMainTab {
     return fixed
   if (tabId.startsWith('meeting:'))
     return buildMeetingTabById(resolveMeetingIdFromTabId(tabId))
+  if (tabId.startsWith('meeting-create:'))
+    return buildMeetingCreateTab(resolveMeetingCreateModeFromTabId(tabId) || 'video')
 
   return buildResourceTabById(tabId.slice('resource:'.length))
 }
@@ -954,6 +1050,12 @@ const activeMeetingTab = computed(() => {
   return activeTab.value
 })
 
+const activeMeetingCreateTab = computed(() => {
+  if (activeTab.value?.kind !== 'meeting-create')
+    return null
+  return activeTab.value
+})
+
 const activeResourceTab = computed(() => {
   if (activeTab.value?.kind !== 'resource')
     return null
@@ -966,6 +1068,8 @@ const hasOpenTabs = computed(() => openTabs.value.length > 0)
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
     const title = activeResourceTab.value.title
+    if (activeResourceTab.value.previewMode === 'markdown')
+      return ['项目资料', title]
     if (activeResourceTab.value.previewMode === 'draw')
       return ['竞赛分析', title]
     if (props.selectedContest?.name)
@@ -986,6 +1090,9 @@ const breadcrumbItems = computed(() => {
 
   if (activeMeetingTab.value)
     return ['竞赛分析', '项目会议', activeMeetingTab.value.title]
+
+  if (activeMeetingCreateTab.value)
+    return ['竞赛分析', '项目会议', activeMeetingCreateTab.value.title]
 
   if (activeTabId.value === 'meeting')
     return ['竞赛分析', '项目会议']
@@ -1247,6 +1354,8 @@ function updateOpenResourceTabMetadata(): void {
     : ''
   const nextTabIds = openTabIds.value.filter((tabId) => {
     if (tabId.startsWith('meeting:'))
+      return true
+    if (tabId.startsWith('meeting-create:'))
       return true
     if (!tabId.startsWith('resource:'))
       return true
@@ -2273,42 +2382,51 @@ watch(activeTabId, (next) => {
 
 <template>
   <section class="bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden" :style="workspaceMainTabLayoutStyle">
-    <div v-if="hasOpenTabs" class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center relative">
-      <div class="flex flex-1 h-full min-w-0 overflow-x-auto">
-        <div
-          v-for="tab in openTabs"
-          :key="tab.id"
-          class="workspace-main-tab px-2 border-r border-slate-200 flex gap-1 h-full min-w-[170px] shrink-0 items-center"
-          :class="[
-            tab.id === activeTabId ? 'bg-slate-50' : 'bg-white',
-            dragOverTabId === tab.id ? 'ring-1 ring-inset ring-blue-300' : '',
-          ]"
-          draggable="true"
-          @dragstart="onTabDragStart(tab.id)"
-          @dragover="onTabDragOver(tab.id, $event)"
-          @drop="onTabDrop(tab.id, $event)"
-          @dragend="onTabDragEnd"
-          @contextmenu.prevent="openTabContextMenu(tab.id, $event)"
+    <div v-if="hasOpenTabs" class="workspace-main-tab-strip-shell border-b border-slate-200 bg-white flex shrink-0 items-center relative">
+      <div class="workspace-main-tab-scroll flex flex-1 h-full min-w-0 overflow-x-auto overflow-y-hidden">
+        <TransitionGroup
+          name="workspace-main-tab-list"
+          tag="div"
+          class="workspace-main-tab-strip flex h-full min-w-0"
         >
-          <button
-            class="workspace-main-tab__trigger text-xs text-left flex flex-1 gap-2 h-full min-w-0 items-center"
-            :class="tab.id === activeTabId ? 'text-slate-800 font-medium' : 'text-slate-500 hover:text-slate-700'"
-            type="button"
-            @click="activateTab(tab.id)"
+          <div
+            v-for="tab in openTabs"
+            :key="tab.id"
+            class="workspace-main-tab px-2 border-r border-slate-200 flex gap-1 h-full shrink-0 items-center"
+            :class="[
+              tab.id === activeTabId ? 'workspace-main-tab--active bg-slate-50' : 'workspace-main-tab--inactive bg-white',
+              dragOverTabId === tab.id ? 'ring-1 ring-inset ring-blue-300' : '',
+            ]"
+            draggable="true"
+            @dragstart="onTabDragStart(tab.id)"
+            @dragover="onTabDragOver(tab.id, $event)"
+            @drop="onTabDrop(tab.id, $event)"
+            @dragend="onTabDragEnd"
+            @contextmenu.prevent="openTabContextMenu(tab.id, $event)"
           >
-            <span class="material-symbols-outlined text-sm" :class="tab.id === activeTabId ? 'text-blue-500' : 'text-slate-400'">{{ tab.icon }}</span>
-            <span class="truncate">{{ tab.title }}</span>
-          </button>
+            <button
+              class="workspace-main-tab__trigger text-left flex flex-1 h-full min-w-0 items-center"
+              :class="tab.id === activeTabId ? 'text-slate-800 font-medium' : 'text-slate-500 hover:text-slate-700'"
+              type="button"
+              @click="activateTab(tab.id)"
+            >
+              <span
+                class="workspace-main-tab__icon material-symbols-outlined"
+                :class="tab.id === activeTabId ? 'text-blue-500' : 'text-slate-400'"
+              >{{ tab.icon }}</span>
+              <span class="workspace-main-tab__label truncate">{{ tab.title }}</span>
+            </button>
 
-          <button
-            v-if="tab.closeable"
-            class="workspace-main-tab__close text-slate-400 p-1 rounded hover:text-slate-600 hover:bg-slate-100"
-            type="button"
-            @click.stop="closeTab(tab.id)"
-          >
-            <span class="material-symbols-outlined text-[14px]">close</span>
-          </button>
-        </div>
+            <button
+              v-if="tab.closeable"
+              class="workspace-main-tab__close text-slate-400 rounded hover:text-slate-600 hover:bg-slate-100"
+              type="button"
+              @click.stop="closeTab(tab.id)"
+            >
+              <span class="workspace-main-tab__close-icon material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </TransitionGroup>
       </div>
 
       <div
@@ -2370,9 +2488,9 @@ watch(activeTabId, (next) => {
 
     <div
       v-if="hasOpenTabs"
-      class="text-[10px] text-slate-400 px-3 py-1.5 border-b border-slate-200 bg-white flex gap-2 items-center justify-between"
+      class="workspace-main-breadcrumb text-[10px] text-slate-400 border-b border-slate-200 bg-white flex gap-2 items-center justify-between"
     >
-      <div class="flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto">
+      <div class="workspace-main-breadcrumb__scroll flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden">
         <template v-for="(item, index) in breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
           <span :class="index === breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
             {{ item }}
@@ -2915,24 +3033,44 @@ watch(activeTabId, (next) => {
         </div>
       </div>
 
-      <WorkspaceMeetingPanel
-        v-else-if="activeTabId === 'meeting' || activeMeetingTab"
+      <WorkspaceMeetingOverviewPanel
+        v-else-if="activeTabId === 'meeting'"
         :meetings="meetings"
-        :active-meeting-id="activeMeetingId"
+        :loading="meetingLoading"
+        @refresh-meetings="emit('refreshMeetings')"
+        @open-meeting="emit('selectMeeting', $event)"
+        @open-resource="emit('openMeetingResource', $event)"
+      />
+
+      <WorkspaceMeetingCreatePanel
+        v-else-if="activeMeetingCreateTab"
+        :mode="activeMeetingCreateTab.meetingMode || 'video'"
+        :project-members="workspaceMembers"
+        :current-user-id="currentUserId"
+        :workspace-type="workspaceType"
+        :meeting-plan-tier="meetingPlanTier"
+        :mutating="meetingMutating"
+        @quick-create="emit('quickCreateMeeting', $event)"
+        @submit-create="emit('submitMeetingCreate', $event)"
+        @open-meeting-overview="ensureFixedTabOpen('meeting')"
+      />
+
+      <WorkspaceMeetingPanel
+        v-else-if="activeMeetingTab"
         :active-meeting="activeMeeting"
         :utterances="meetingUtterances"
         :live-captions="meetingLiveCaptions"
-        :loading="meetingLoading"
         :detail-loading="meetingDetailLoading"
         :mutating="meetingMutating"
         :join-url="meetingJoinUrl"
         :join-token="meetingJoinToken"
         :join-expires-at="meetingJoinExpiresAt"
-        @create-meeting="emit('createMeeting', $event)"
-        @refresh-meetings="emit('refreshMeetings')"
+        :current-user-id="currentUserId"
+        :workspace-type="workspaceType"
+        :meeting-plan-tier="meetingPlanTier"
         @join-meeting="emit('joinMeeting', $event)"
+        @start-meeting="emit('startMeeting', $event)"
         @end-meeting="emit('endMeeting', $event)"
-        @select-meeting="emit('selectMeeting', $event)"
         @open-resource="emit('openMeetingResource', $event)"
       />
 
@@ -3571,7 +3709,7 @@ watch(activeTabId, (next) => {
                           :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
                             ? 'workspace-display-slider-track__stop--active'
                             : ''"
-                          :style="{ left: `${(index / (WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length - 1)) * 100}%` }"
+                          :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length) }"
                         />
                       </div>
                       <input
@@ -3616,31 +3754,69 @@ watch(activeTabId, (next) => {
                     </div>
                   </div>
 
-                  <label class="text-xs text-slate-600 block space-y-2">
-                    <span class="flex items-center justify-between gap-3">
+                  <div class="space-y-3">
+                    <div class="flex items-center justify-between text-xs text-slate-600">
                       <span>标签边距</span>
                       <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
-                    </span>
-                    <select
-                      v-model="userWorkspaceDisplayTabSpacingDraft"
-                      data-testid="workspace-display-user-tab-spacing-select"
-                      class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                    >
-                      <option value="">
-                        未设置，回退到工作区推荐
-                      </option>
-                      <option
-                        v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
-                        :key="`workspace-display-user-tab-spacing-${option.value}`"
-                        :value="option.value"
+                    </div>
+
+                    <div class="workspace-display-slider-shell">
+                      <div class="workspace-display-slider-track" aria-hidden="true">
+                        <div
+                          class="workspace-display-slider-track__fill"
+                          :style="{ width: userWorkspaceDisplayTabSpacingSliderProgress }"
+                        />
+                        <span
+                          v-for="(option, index) in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                          :key="`workspace-display-user-tab-spacing-track-stop-${option.value}`"
+                          class="workspace-display-slider-track__stop"
+                          :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                            ? 'workspace-display-slider-track__stop--active'
+                            : ''"
+                          :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length) }"
+                        />
+                      </div>
+                      <input
+                        data-testid="workspace-display-user-tab-spacing-select"
+                        class="workspace-display-slider"
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="1"
+                        :value="userWorkspaceDisplayTabSpacingSliderValue"
+                        :style="{ '--workspace-display-slider-progress': userWorkspaceDisplayTabSpacingSliderProgress }"
+                        @input="updateUserWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
                       >
-                        {{ option.label }}
-                      </option>
-                    </select>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2">
+                      <span
+                        v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                        :key="`workspace-display-user-tab-spacing-label-${option.value}`"
+                        class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                        :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                          ? 'text-blue-700'
+                          : 'text-slate-500'"
+                      >
+                        <span>{{ option.label }}</span>
+                        <span
+                          v-if="option.value === workspaceDisplayRecommendedTabSpacingPreset"
+                          class="workspace-display-slider-label__tag-wrap"
+                        >
+                          <span class="workspace-display-slider-label__tag" tabindex="0">
+                            推荐
+                          </span>
+                          <span class="workspace-display-slider-label__tooltip">
+                            工作区推荐
+                          </span>
+                        </span>
+                      </span>
+                    </div>
+
                     <span class="text-[11px] text-slate-500 block">
-                      紧凑档会压缩顶部标签页的横向边距和最小宽度。推荐：{{ workspaceDisplayRecommendedTabSpacingLabel }}。
+                      紧凑档会压缩顶部标签页的横向边距和最小宽度，并同步压缩左侧资源列表密度。推荐：{{ workspaceDisplayRecommendedTabSpacingLabel }}。
                     </span>
-                  </label>
+                  </div>
 
                   <div class="flex flex-wrap gap-2 justify-end">
                     <button
@@ -4217,19 +4393,103 @@ watch(activeTabId, (next) => {
   outline-offset: 2px;
 }
 
+.workspace-main-tab-strip-shell {
+  height: var(--workspace-main-tab-strip-height, 40px);
+}
+
+.workspace-main-tab-scroll,
+.workspace-main-breadcrumb__scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.workspace-main-tab-scroll::-webkit-scrollbar,
+.workspace-main-breadcrumb__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-main-breadcrumb {
+  padding-right: var(--workspace-main-breadcrumb-padding-x, 12px);
+  padding-left: var(--workspace-main-breadcrumb-padding-x, 12px);
+  padding-top: var(--workspace-main-breadcrumb-padding-y, 6px);
+  padding-bottom: var(--workspace-main-breadcrumb-padding-y, 6px);
+}
+
 .workspace-main-tab {
+  position: relative;
   min-width: var(--workspace-main-tab-min-width) !important;
   padding-right: var(--workspace-main-tab-padding-x) !important;
   padding-left: var(--workspace-main-tab-padding-x) !important;
   gap: var(--workspace-main-tab-gap) !important;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.workspace-main-tab::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 2px;
+  border-radius: 999px 999px 0 0;
+  background: #3b82f6;
+  opacity: 0;
+  transform: scaleX(0.55);
+  transform-origin: center;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-main-tab--active::after {
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .workspace-main-tab__trigger {
   gap: var(--workspace-main-tab-trigger-gap) !important;
+  font-size: var(--workspace-main-tab-label-size, 12px) !important;
+  line-height: 1;
+  transition: color 0.18s ease;
+}
+
+.workspace-main-tab__icon {
+  font-size: var(--workspace-main-tab-icon-size, 17px) !important;
+  transition: color 0.18s ease;
+}
+
+.workspace-main-tab__label {
+  transition: color 0.18s ease;
 }
 
 .workspace-main-tab__close {
   padding: var(--workspace-main-tab-close-padding) !important;
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.workspace-main-tab__close-icon {
+  font-size: var(--workspace-main-tab-close-icon-size, 14px) !important;
+}
+
+.workspace-main-tab-list-enter-active,
+.workspace-main-tab-list-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-main-tab-list-move {
+  transition: transform 0.22s ease;
+}
+
+.workspace-main-tab-list-enter-from,
+.workspace-main-tab-list-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 .workspace-tab-context-menu {
@@ -4351,7 +4611,7 @@ watch(activeTabId, (next) => {
   appearance: none;
   width: 14px;
   height: 14px;
-  margin-top: 1px;
+  margin-top: 4px;
   border: 2px solid #2563eb;
   border-radius: 999px;
   background: #ffffff;
