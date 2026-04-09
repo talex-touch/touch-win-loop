@@ -38,6 +38,30 @@ it('增强版 markdown 文档可对标题、强调、引用、列表与链接做
   assert.match(output, /`const x = 1`/)
 })
 
+it('markdown 标题支持 H1-H6 round-trip', () => {
+  const input = [
+    '# 一级标题',
+    '',
+    '## 二级标题',
+    '',
+    '### 三级标题',
+    '',
+    '#### 四级标题',
+    '',
+    '##### 五级标题',
+    '',
+    '###### 六级标题',
+  ].join('\n')
+
+  const output = serializeRichTextDocumentToMarkdown(parseMarkdownToRichTextDocument(input))
+  assert.match(output, /^# 一级标题$/m)
+  assert.match(output, /^## 二级标题$/m)
+  assert.match(output, /^### 三级标题$/m)
+  assert.match(output, /^#### 四级标题$/m)
+  assert.match(output, /^##### 五级标题$/m)
+  assert.match(output, /^###### 六级标题$/m)
+})
+
 it('gFM 任务列表、代码块、分割线与表格在 round-trip 后结构不丢失', () => {
   const input = [
     '- [x] 已完成任务',
@@ -81,6 +105,22 @@ it('markdown 图片节点可 round-trip，并对内部项目资源路径回填 r
 
   const output = serializeRichTextDocumentToMarkdown(documentNode)
   assert.match(output, /!\[架构草图\]\(\/api\/projects\/project-1\/resources\/resource-9\/file "设计稿"\)/)
+})
+
+it('markdown 图片尺寸变更后会回退到 html img，并保留 width 与 resourceId', () => {
+  const input = '<img src="/api/projects/project-1/resources/resource-12/file" alt="流程图" title="系统流程" width="420" data-resource-id="resource-12">'
+  const documentNode = parseMarkdownToRichTextDocument(input)
+  const imageNode = documentNode.content?.[0] || null
+
+  assert.equal(imageNode?.type, 'image')
+  assert.equal(imageNode?.attrs?.src, '/api/projects/project-1/resources/resource-12/file')
+  assert.equal(imageNode?.attrs?.alt, '流程图')
+  assert.equal(imageNode?.attrs?.title, '系统流程')
+  assert.equal(imageNode?.attrs?.width, 420)
+  assert.equal(imageNode?.attrs?.resourceId, 'resource-12')
+
+  const output = serializeRichTextDocumentToMarkdown(documentNode)
+  assert.match(output, /<img src="\/api\/projects\/project-1\/resources\/resource-12\/file" alt="流程图" title="系统流程" width="420" data-resource-id="resource-12">/)
 })
 
 it('旧 markdown 协作文档首次规范化时会补齐 prosemirror 片段并保留 markdown 镜像', () => {

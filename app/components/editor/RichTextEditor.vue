@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Awareness } from 'y-protocols/awareness'
 import type { WorkspaceFontSizePreset } from '~~/shared/types/domain'
+import type { CollabMarkdownHeadingLevel } from '~~/shared/utils/collab-rich-text-schema'
 import type { RichTextEditorCommand } from '~/components/editor/rich-text-editor-commands'
 import type {
   WorkspaceCollabAwarenessSelectionState,
@@ -18,8 +19,12 @@ import {
   ySyncPluginKey,
 } from '@tiptap/y-tiptap'
 import * as Y from 'yjs'
-import { createCollabMarkdownBaseExtensions } from '~~/shared/utils/collab-rich-text-schema'
+import {
+  COLLAB_MARKDOWN_HEADING_LEVELS,
+  createCollabMarkdownBaseExtensions,
+} from '~~/shared/utils/collab-rich-text-schema'
 import { buildRichTextEditorCommands } from '~/components/editor/rich-text-editor-commands'
+import { createRichTextEditorImageExtension } from '~/components/editor/rich-text-editor-image-extension'
 
 interface RichTextEditorCurrentUser {
   id: string
@@ -39,6 +44,12 @@ interface RichTextEditorSelectionChangePayload extends WorkspaceCollabSelectionS
   column: number
 }
 
+interface RichTextEditorOutlineItem {
+  pos: number
+  level: CollabMarkdownHeadingLevel
+  text: string
+}
+
 interface SlashCommandRange {
   from: number
   to: number
@@ -50,7 +61,7 @@ const props = withDefaults(defineProps<{
   currentUser?: RichTextEditorCurrentUser | null
   editable?: boolean
   placeholder?: string
-  headingLevels?: Array<1 | 2 | 3>
+  headingLevels?: CollabMarkdownHeadingLevel[]
   showToolbar?: boolean
   contentMaxWidth?: number | string
   enableSlashMenu?: boolean
@@ -61,7 +72,7 @@ const props = withDefaults(defineProps<{
   currentUser: null,
   editable: true,
   placeholder: '输入正文或标题，协作文档会实时同步',
-  headingLevels: () => [1, 2, 3],
+  headingLevels: () => [...COLLAB_MARKDOWN_HEADING_LEVELS],
   showToolbar: true,
   contentMaxWidth: '1040px',
   enableSlashMenu: false,
@@ -75,11 +86,14 @@ const emit = defineEmits<{
 }>()
 
 const editor = shallowRef<Editor | null>(null)
+const editorScrollRef = ref<HTMLElement | null>(null)
 const linkDraft = ref('https://')
 const linkInputVisible = ref(false)
 const linkInputRef = ref<HTMLInputElement | null>(null)
 const imageInputRef = ref<HTMLInputElement | null>(null)
 const pendingImageInsertPosition = ref<number | null>(null)
+const outlineItems = ref<RichTextEditorOutlineItem[]>([])
+const activeOutlineHeadingPos = ref<number | null>(null)
 const slashMenuState = reactive({
   visible: false,
   query: '',
@@ -94,16 +108,21 @@ const selectionToolbarState = reactive({
   top: 0,
   left: 0,
 })
+const headingMenuState = reactive({
+  visible: false,
+  top: 0,
+  left: 0,
+})
 
-const normalizedHeadingLevels = computed<Array<1 | 2 | 3>>(() => {
-  const dedupe = new Set<1 | 2 | 3>()
+const normalizedHeadingLevels = computed<CollabMarkdownHeadingLevel[]>(() => {
+  const dedupe = new Set<CollabMarkdownHeadingLevel>()
   for (const level of props.headingLevels) {
-    if (level === 1 || level === 2 || level === 3)
+    if (level >= 1 && level <= 6)
       dedupe.add(level)
   }
 
   const levels = [...dedupe].sort((left, right) => left - right)
-  return levels.length > 0 ? levels : [1, 2, 3]
+  return levels.length > 0 ? levels : [...COLLAB_MARKDOWN_HEADING_LEVELS]
 })
 
 const commandItems = computed(() => {
@@ -116,7 +135,7 @@ const toolbarItems = computed(() => {
   return commandItems.value.filter(item => item.toolbarVisible !== false)
 })
 
-const selectionToolbarItems = computed(() => {
+const selectionToolbarInlineItems = computed(() => {
   const actionWhitelist = new Set<RichTextEditorCommand['action']>([
     'bold',
     'italic',
@@ -126,6 +145,26 @@ const selectionToolbarItems = computed(() => {
     'code',
   ])
   return commandItems.value.filter(item => actionWhitelist.has(item.action))
+})
+
+const blockTypeMenuItems = computed(() => {
+  return commandItems.value.filter(item => item.action === 'paragraph' || item.action === 'heading')
+})
+
+const currentBlockTypeCommand = computed(() => {
+  const instance = editor.value
+  if (!instance)
+    return blockTypeMenuItems.value[0] || null
+
+  for (const item of blockTypeMenuItems.value) {
+    if (item.action === 'paragraph' && instance.isActive('paragraph'))
+      return item
+
+    if (item.action === 'heading' && item.level && instance.isActive('heading', { level: item.level }))
+      return item
+  }
+
+  return blockTypeMenuItems.value[0] || null
 })
 
 const slashMenuItems = computed(() => {
@@ -182,7 +221,15 @@ const selectionToolbarStyle = computed(() => {
   }
 })
 
+const headingMenuStyle = computed(() => {
+  return {
+    top: `${headingMenuState.top}px`,
+    left: `${headingMenuState.left}px`,
+  }
+})
+
 let removeAwarenessListener: (() => void) | null = null
+let removeWindowResizeListener: (() => void) | null = null
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -204,10 +251,29 @@ function normalizePreviewText(value: string): string {
   return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized
 }
 
+function normalizeImageUploadPlaceholderName(file: File): string {
+  return normalizeString(file.name) || '图片'
+}
+
+function createImageUploadId(file: File): string {
+  const normalizedName = normalizeImageUploadPlaceholderName(file)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24)
+
+  return `markdown-image-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${normalizedName || 'asset'}`
+}
+
+function normalizeOutlineText(value: string, level: CollabMarkdownHeadingLevel): string {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim()
+  return normalized || `H${level}`
+}
+
 function resolveSelectionToolbarMetrics() {
   if (props.uiFontSizePreset === 'xs') {
     return {
-      width: 228,
+      width: 286,
       height: 36,
       padding: 4,
       gap: 4,
@@ -219,7 +285,7 @@ function resolveSelectionToolbarMetrics() {
 
   if (props.uiFontSizePreset === 'sm') {
     return {
-      width: 236,
+      width: 296,
       height: 38,
       padding: 4,
       gap: 4,
@@ -231,7 +297,7 @@ function resolveSelectionToolbarMetrics() {
 
   if (props.uiFontSizePreset === 'lg') {
     return {
-      width: 260,
+      width: 332,
       height: 42,
       padding: 5,
       gap: 5,
@@ -243,7 +309,7 @@ function resolveSelectionToolbarMetrics() {
 
   if (props.uiFontSizePreset === 'xl') {
     return {
-      width: 272,
+      width: 348,
       height: 44,
       padding: 5,
       gap: 6,
@@ -254,7 +320,7 @@ function resolveSelectionToolbarMetrics() {
   }
 
   return {
-    width: 248,
+    width: 312,
     height: 40,
     padding: 4,
     gap: 5,
@@ -336,12 +402,136 @@ function defaultSelectionChangePayload(): RichTextEditorSelectionChangePayload {
   }
 }
 
+function collectOutlineItems(): RichTextEditorOutlineItem[] {
+  const instance = editor.value
+  if (!instance)
+    return []
+
+  const items: RichTextEditorOutlineItem[] = []
+  instance.state.doc.descendants((node, pos) => {
+    if (node.type.name !== 'heading')
+      return true
+
+    const level = Number(node.attrs?.level)
+    if (!Number.isFinite(level) || level < 1 || level > 6)
+      return true
+
+    items.push({
+      pos,
+      level: level as CollabMarkdownHeadingLevel,
+      text: normalizeOutlineText(String(node.textContent || ''), level as CollabMarkdownHeadingLevel),
+    })
+    return true
+  })
+
+  return items
+}
+
+function syncOutlineHeadingMarkers(): void {
+  const instance = editor.value
+  if (!instance || !import.meta.client)
+    return
+
+  for (const item of outlineItems.value) {
+    const headingDom = instance.view.nodeDOM(item.pos)
+    if (headingDom instanceof HTMLElement)
+      headingDom.dataset.outlineHeadingPos = String(item.pos)
+  }
+}
+
+function resolveActiveOutlineHeading(): number | null {
+  const instance = editor.value
+  const scroller = editorScrollRef.value
+  if (!instance || !scroller || outlineItems.value.length === 0)
+    return null
+
+  const scrollerRect = scroller.getBoundingClientRect()
+  let activePos: number | null = outlineItems.value[0]?.pos ?? null
+  for (const item of outlineItems.value) {
+    const headingDom = instance.view.nodeDOM(item.pos)
+    if (!(headingDom instanceof HTMLElement))
+      continue
+
+    const top = headingDom.getBoundingClientRect().top - scrollerRect.top
+    if (top <= 96)
+      activePos = item.pos
+    else
+      break
+  }
+
+  return activePos
+}
+
+function syncOutlineState(): void {
+  outlineItems.value = collectOutlineItems()
+  nextTick(() => {
+    syncOutlineHeadingMarkers()
+    syncOutlineActiveHeading()
+  })
+}
+
+function syncOutlineActiveHeading(): void {
+  activeOutlineHeadingPos.value = resolveActiveOutlineHeading()
+}
+
+function scrollToOutlineHeading(item: RichTextEditorOutlineItem): void {
+  const instance = editor.value
+  const scroller = editorScrollRef.value
+  if (!instance || !scroller)
+    return
+
+  const selectionPosition = Math.min(item.pos + 1, instance.state.doc.content.size)
+  instance.chain().focus().setTextSelection(selectionPosition).run()
+
+  nextTick(() => {
+    const headingDom = instance.view.nodeDOM(item.pos)
+    if (headingDom instanceof HTMLElement) {
+      scroller.scrollTo({
+        top: Math.max(0, headingDom.offsetTop - 28),
+        behavior: 'smooth',
+      })
+    }
+    activeOutlineHeadingPos.value = item.pos
+  })
+}
+
 function closeLinkEditor(nextValue = 'https://'): void {
   linkDraft.value = nextValue
   linkInputVisible.value = false
   nextTick(() => {
     syncSelectionToolbar()
   })
+}
+
+function closeHeadingMenu(): void {
+  headingMenuState.visible = false
+  headingMenuState.top = 0
+  headingMenuState.left = 0
+}
+
+function syncHeadingMenuPosition(): void {
+  if (!selectionToolbarState.visible || !headingMenuState.visible)
+    return
+
+  const metrics = resolveSelectionToolbarMetrics()
+  const top = selectionToolbarState.top + metrics.height + 8
+  headingMenuState.top = import.meta.client
+    ? Math.max(12, Math.min(top, window.innerHeight - 260))
+    : top
+  headingMenuState.left = selectionToolbarState.left
+}
+
+function toggleHeadingMenu(): void {
+  if (!selectionToolbarState.visible)
+    return
+
+  if (headingMenuState.visible) {
+    closeHeadingMenu()
+    return
+  }
+
+  headingMenuState.visible = true
+  syncHeadingMenuPosition()
 }
 
 function openLinkEditor(): void {
@@ -481,6 +671,7 @@ function closeSelectionToolbar(): void {
   selectionToolbarState.visible = false
   selectionToolbarState.top = 0
   selectionToolbarState.left = 0
+  closeHeadingMenu()
 }
 
 function resolveSlashCommandTrigger() {
@@ -546,7 +737,7 @@ function resolveSelectionToolbarTrigger() {
     || !props.editable
     || linkInputVisible.value
     || slashMenuState.visible
-    || selectionToolbarItems.value.length === 0
+    || selectionToolbarInlineItems.value.length === 0
   ) {
     return null
   }
@@ -592,6 +783,8 @@ function syncSelectionToolbar(): void {
   selectionToolbarState.visible = true
   selectionToolbarState.left = trigger.left
   selectionToolbarState.top = trigger.top
+  if (headingMenuState.visible)
+    syncHeadingMenuPosition()
 }
 
 function syncDerivedState(): void {
@@ -599,6 +792,7 @@ function syncDerivedState(): void {
   emitRemotePresenceChange()
   syncSlashMenu()
   syncSelectionToolbar()
+  syncOutlineState()
 }
 
 function destroyEditor(): void {
@@ -611,6 +805,8 @@ function destroyEditor(): void {
     return
   editor.value.destroy()
   editor.value = null
+  outlineItems.value = []
+  activeOutlineHeadingPos.value = null
 }
 
 function bindAwarenessListener(awareness: Awareness | null): void {
@@ -666,7 +862,108 @@ function normalizeImageUploadResult(result: RichTextEditorImageUploadResult, fil
     alt: normalizeOptionalString(result?.alt) || fallbackText,
     title: normalizeOptionalString(result?.title),
     resourceId: normalizeOptionalString(result?.resourceId),
+    width: null,
+    uploadStatus: null,
+    uploadId: null,
   }
+}
+
+function findImageNodeByUploadId(uploadId: string): { pos: number, node: any } | null {
+  const instance = editor.value
+  if (!instance || !uploadId)
+    return null
+
+  let matched: { pos: number, node: any } | null = null
+  instance.state.doc.descendants((node, pos) => {
+    if (node.type.name !== 'image')
+      return true
+
+    if (normalizeString(node.attrs?.uploadId) !== uploadId)
+      return true
+
+    matched = { pos, node }
+    return false
+  })
+
+  return matched
+}
+
+function insertUploadingImagePlaceholder(file: File, position?: number | null): { uploadId: string, nextPosition: number | null } | null {
+  const instance = editor.value
+  if (!instance || !props.editable)
+    return null
+
+  const uploadId = createImageUploadId(file)
+  const placeholderName = normalizeImageUploadPlaceholderName(file)
+  const anchorPosition = Number.isInteger(Number(position)) ? Math.max(0, Math.trunc(Number(position))) : null
+
+  if (anchorPosition !== null) {
+    instance
+      .chain()
+      .focus()
+      .setTextSelection(anchorPosition)
+      .insertContent({
+        type: 'image',
+        attrs: {
+          src: null,
+          alt: placeholderName,
+          title: placeholderName,
+          resourceId: null,
+          width: null,
+          uploadStatus: 'uploading',
+          uploadId,
+        },
+      })
+      .run()
+  }
+  else {
+    instance
+      .chain()
+      .focus()
+      .insertContent({
+        type: 'image',
+        attrs: {
+          src: null,
+          alt: placeholderName,
+          title: placeholderName,
+          resourceId: null,
+          width: null,
+          uploadStatus: 'uploading',
+          uploadId,
+        },
+      })
+      .run()
+  }
+
+  return {
+    uploadId,
+    nextPosition: editor.value?.state.selection.from ?? null,
+  }
+}
+
+function replaceUploadingImagePlaceholder(uploadId: string, attrs: Record<string, unknown>): boolean {
+  const instance = editor.value
+  const matched = findImageNodeByUploadId(uploadId)
+  if (!instance || !matched)
+    return false
+
+  instance.view.dispatch(instance.state.tr.setNodeMarkup(matched.pos, undefined, {
+    ...matched.node.attrs,
+    ...attrs,
+    uploadStatus: null,
+    uploadId: null,
+  }))
+  return true
+}
+
+function removeUploadingImagePlaceholder(uploadId: string): boolean {
+  const instance = editor.value
+  const matched = findImageNodeByUploadId(uploadId)
+  if (!instance || !matched)
+    return false
+
+  instance.view.dispatch(instance.state.tr.deleteRange(matched.pos, matched.pos + matched.node.nodeSize))
+  return true
 }
 
 async function uploadImagesAt(files: File[], position?: number | null): Promise<boolean> {
@@ -680,51 +977,41 @@ async function uploadImagesAt(files: File[], position?: number | null): Promise<
     return false
 
   let anchorPosition = Number.isInteger(Number(position)) ? Math.max(0, Math.trunc(Number(position))) : null
-  let inserted = false
+  const pendingUploads: Array<{ file: File, uploadId: string }> = []
 
   for (const file of imageFiles) {
+    const placeholder = insertUploadingImagePlaceholder(file, anchorPosition)
+    if (!placeholder)
+      continue
+
+    pendingUploads.push({
+      file,
+      uploadId: placeholder.uploadId,
+    })
+    anchorPosition = placeholder.nextPosition
+  }
+
+  if (pendingUploads.length === 0)
+    return false
+
+  for (const { file, uploadId } of pendingUploads) {
     try {
       const uploaded = await imageUploadHandler(file)
       const attrs = normalizeImageUploadResult(uploaded, file)
-      if (!attrs)
+      if (!attrs) {
+        removeUploadingImagePlaceholder(uploadId)
         continue
-
-      const currentEditor = editor.value
-      if (!currentEditor)
-        break
-
-      if (anchorPosition !== null) {
-        const boundedPosition = Math.max(0, Math.min(anchorPosition, currentEditor.state.doc.content.size))
-        currentEditor
-          .chain()
-          .focus()
-          .setTextSelection(boundedPosition)
-          .insertContent({
-            type: 'image',
-            attrs,
-          })
-          .run()
-      }
-      else {
-        currentEditor
-          .chain()
-          .focus()
-          .insertContent({
-            type: 'image',
-            attrs,
-          })
-          .run()
       }
 
-      anchorPosition = currentEditor.state.selection.from
-      inserted = true
+      replaceUploadingImagePlaceholder(uploadId, attrs)
     }
     catch {
+      removeUploadingImagePlaceholder(uploadId)
       // 上传状态由外层页面统一提示
     }
   }
 
-  return inserted
+  return true
 }
 
 function openImagePicker(position?: number | null): void {
@@ -784,6 +1071,7 @@ function executeCommand(command: RichTextEditorCommand, options?: { replaceRange
     prepareCommandSelection(replaceRange)
     openImagePicker(replaceRange?.from ?? instance.state.selection.from)
     closeSlashMenu()
+    closeHeadingMenu()
     return
   }
 
@@ -791,7 +1079,7 @@ function executeCommand(command: RichTextEditorCommand, options?: { replaceRange
 
   const chain = instance.chain().focus()
   if (command.action === 'heading' && command.level) {
-    chain.toggleHeading({ level: command.level }).run()
+    chain.setHeading({ level: command.level }).run()
   }
   else if (command.action === 'paragraph') {
     chain.setParagraph().run()
@@ -854,6 +1142,7 @@ function executeCommand(command: RichTextEditorCommand, options?: { replaceRange
     chain.setHorizontalRule().run()
   }
 
+  closeHeadingMenu()
   if (shouldCloseSlashMenu)
     closeSlashMenu()
 }
@@ -879,6 +1168,12 @@ function isToolbarItemActive(item: RichTextEditorCommand): boolean {
 }
 
 function handleEditorKeyDown(_view: unknown, event: KeyboardEvent): boolean {
+  if (headingMenuState.visible && event.key === 'Escape') {
+    event.preventDefault()
+    closeHeadingMenu()
+    return true
+  }
+
   if (!slashMenuState.visible)
     return false
 
@@ -964,8 +1259,12 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
   destroyEditor()
   bindAwarenessListener(awareness)
 
+  const baseExtensions = createCollabMarkdownBaseExtensions()
+    .filter(extension => normalizeString((extension as any)?.name) !== 'image')
+
   const extensions = [
-    ...createCollabMarkdownBaseExtensions(),
+    ...baseExtensions,
+    createRichTextEditorImageExtension(),
     Placeholder.configure({
       placeholder: props.placeholder,
     }),
@@ -1012,6 +1311,26 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
   syncLocalAwarenessUser()
 }
 
+function onEditorScroll(): void {
+  syncOutlineActiveHeading()
+  if (selectionToolbarState.visible)
+    syncSelectionToolbar()
+  if (slashMenuState.visible)
+    syncSlashMenu()
+  if (headingMenuState.visible)
+    syncHeadingMenuPosition()
+}
+
+function handleViewportResize(): void {
+  syncOutlineActiveHeading()
+  if (selectionToolbarState.visible)
+    syncSelectionToolbar()
+  if (slashMenuState.visible)
+    syncSlashMenu()
+  if (headingMenuState.visible)
+    syncHeadingMenuPosition()
+}
+
 watch(slashMenuItems, (items) => {
   if (items.length === 0) {
     slashMenuState.selectedIndex = 0
@@ -1054,7 +1373,19 @@ watch(() => props.currentUser, () => {
   syncLocalAwarenessUser()
 }, { deep: true })
 
+onMounted(() => {
+  if (!import.meta.client)
+    return
+
+  window.addEventListener('resize', handleViewportResize)
+  removeWindowResizeListener = () => {
+    window.removeEventListener('resize', handleViewportResize)
+    removeWindowResizeListener = null
+  }
+})
+
 onBeforeUnmount(() => {
+  removeWindowResizeListener?.()
   destroyEditor()
 })
 </script>
@@ -1106,10 +1437,45 @@ onBeforeUnmount(() => {
     </form>
 
     <div class="rich-text-editor__surface">
-      <div class="rich-text-editor__canvas">
-        <EditorContent v-if="editor" :editor="editor" />
-        <div v-else class="rich-text-editor__empty">
-          文档正在初始化...
+      <aside class="rich-text-editor__outline" data-testid="rich-text-editor-outline">
+        <div class="rich-text-editor__outline-header">
+          <span class="rich-text-editor__outline-header-icon material-symbols-outlined" aria-hidden="true">
+            toc
+          </span>
+          <span>大纲</span>
+        </div>
+
+        <nav v-if="outlineItems.length > 0" class="rich-text-editor__outline-list" aria-label="文档大纲">
+          <button
+            v-for="item in outlineItems"
+            :key="`${item.pos}-${item.level}`"
+            class="rich-text-editor__outline-item"
+            :class="{ 'rich-text-editor__outline-item--active': activeOutlineHeadingPos === item.pos }"
+            type="button"
+            :style="{ paddingLeft: `${(item.level - 1) * 14}px` }"
+            @click="scrollToOutlineHeading(item)"
+          >
+            <span class="rich-text-editor__outline-item-label">
+              {{ item.text }}
+            </span>
+          </button>
+        </nav>
+
+        <div v-else class="rich-text-editor__outline-empty">
+          添加标题后，这里会自动生成目录。
+        </div>
+      </aside>
+
+      <div
+        ref="editorScrollRef"
+        class="rich-text-editor__scroller"
+        @scroll.passive="onEditorScroll"
+      >
+        <div class="rich-text-editor__canvas">
+          <EditorContent v-if="editor" :editor="editor" />
+          <div v-else class="rich-text-editor__empty">
+            文档正在初始化...
+          </div>
         </div>
       </div>
     </div>
@@ -1131,7 +1497,26 @@ onBeforeUnmount(() => {
         data-testid="rich-text-editor-selection-toolbar"
       >
         <button
-          v-for="item in selectionToolbarItems"
+          class="rich-text-editor__selection-toolbar-heading"
+          :class="{ 'rich-text-editor__selection-toolbar-heading--active': headingMenuState.visible || (currentBlockTypeCommand?.action === 'heading') }"
+          type="button"
+          :aria-label="`切换块级标题，当前为 ${currentBlockTypeCommand?.label || '正文'}`"
+          @mousedown.prevent
+          @click="toggleHeadingMenu()"
+        >
+          <span class="rich-text-editor__selection-toolbar-icon material-symbols-outlined" aria-hidden="true">
+            title
+          </span>
+          <span class="rich-text-editor__selection-toolbar-heading-label">
+            {{ currentBlockTypeCommand?.label || '正文' }}
+          </span>
+          <span class="rich-text-editor__selection-toolbar-chevron material-symbols-outlined" aria-hidden="true">
+            keyboard_arrow_down
+          </span>
+        </button>
+
+        <button
+          v-for="item in selectionToolbarInlineItems"
           :key="`selection-${item.id}`"
           class="rich-text-editor__selection-toolbar-button"
           :class="{ 'rich-text-editor__selection-toolbar-button--active': isToolbarItemActive(item) }"
@@ -1153,6 +1538,41 @@ onBeforeUnmount(() => {
       </div>
 
       <div
+        v-if="headingMenuState.visible"
+        class="rich-text-editor__heading-menu"
+        :style="headingMenuStyle"
+        data-testid="rich-text-editor-heading-menu"
+      >
+        <button
+          v-for="item in blockTypeMenuItems"
+          :key="`heading-${item.id}`"
+          class="rich-text-editor__heading-menu-item"
+          :class="{ 'rich-text-editor__heading-menu-item--active': isToolbarItemActive(item) }"
+          type="button"
+          @mousedown.prevent
+          @click="executeCommand(item)"
+        >
+          <span
+            v-if="item.icon"
+            class="rich-text-editor__heading-menu-icon material-symbols-outlined"
+            aria-hidden="true"
+          >
+            {{ item.icon }}
+          </span>
+          <span class="rich-text-editor__heading-menu-label">
+            {{ item.label }}
+          </span>
+          <span
+            v-if="isToolbarItemActive(item)"
+            class="rich-text-editor__heading-menu-check material-symbols-outlined"
+            aria-hidden="true"
+          >
+            check
+          </span>
+        </button>
+      </div>
+
+      <div
         v-if="slashMenuState.visible"
         class="rich-text-editor__slash-menu"
         :style="slashMenuStyle"
@@ -1168,8 +1588,17 @@ onBeforeUnmount(() => {
             @mousedown.prevent
             @click="executeCommand(item, { replaceRange: { from: slashMenuState.rangeFrom, to: slashMenuState.rangeTo } })"
           >
-            <span class="rich-text-editor__slash-menu-label">
-              {{ item.label }}
+            <span class="rich-text-editor__slash-menu-main">
+              <span
+                v-if="item.icon"
+                class="rich-text-editor__slash-menu-icon material-symbols-outlined"
+                aria-hidden="true"
+              >
+                {{ item.icon }}
+              </span>
+              <span class="rich-text-editor__slash-menu-label">
+                {{ item.label }}
+              </span>
             </span>
             <span class="rich-text-editor__slash-menu-meta">
               {{ item.group === 'inline' ? '行内' : '块级' }}
@@ -1289,7 +1718,85 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__surface {
+  display: flex;
   flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: #fff;
+}
+
+.rich-text-editor__outline {
+  position: sticky;
+  top: 0;
+  display: flex;
+  width: 220px;
+  min-width: 220px;
+  flex-direction: column;
+  align-self: flex-start;
+  height: 100%;
+  padding: 20px 12px 24px 16px;
+  border-right: 1px solid #e6ebf2;
+  background: #fff;
+}
+
+.rich-text-editor__outline-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.rich-text-editor__outline-header-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.rich-text-editor__outline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rich-text-editor__outline-item {
+  width: 100%;
+  min-height: 28px;
+  padding-top: 5px;
+  padding-right: 10px;
+  padding-bottom: 5px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.rich-text-editor__outline-item:hover,
+.rich-text-editor__outline-item--active {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.rich-text-editor__outline-item-label {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rich-text-editor__outline-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.rich-text-editor__scroller {
+  flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   background: #fff;
@@ -1299,7 +1806,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   min-height: 100%;
-  padding: 0 18px;
+  padding: 0;
   background: transparent;
 }
 
@@ -1313,10 +1820,12 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__canvas :deep(.tiptap) {
+  box-sizing: border-box;
   width: 100%;
   max-width: var(--rich-text-editor-content-max-width);
   min-height: 520px;
   margin: 0 auto;
+  padding: 22px 24px 64px;
   outline: none;
   color: #0f172a;
   font-size: 16px;
@@ -1339,11 +1848,15 @@ onBeforeUnmount(() => {
 
 .rich-text-editor__canvas :deep(.tiptap h1),
 .rich-text-editor__canvas :deep(.tiptap h2),
-.rich-text-editor__canvas :deep(.tiptap h3) {
+.rich-text-editor__canvas :deep(.tiptap h3),
+.rich-text-editor__canvas :deep(.tiptap h4),
+.rich-text-editor__canvas :deep(.tiptap h5),
+.rich-text-editor__canvas :deep(.tiptap h6) {
   margin: 0;
   color: #0f172a;
   font-weight: 700;
   letter-spacing: -0.02em;
+  scroll-margin-top: 28px;
 }
 
 .rich-text-editor__canvas :deep(.tiptap h1) {
@@ -1352,13 +1865,29 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__canvas :deep(.tiptap h2) {
-  font-size: 24px;
-  line-height: 1.36;
+  font-size: 28px;
+  line-height: 1.34;
 }
 
 .rich-text-editor__canvas :deep(.tiptap h3) {
-  font-size: 20px;
-  line-height: 1.42;
+  font-size: 22px;
+  line-height: 1.4;
+}
+
+.rich-text-editor__canvas :deep(.tiptap h4) {
+  font-size: 18px;
+  line-height: 1.48;
+}
+
+.rich-text-editor__canvas :deep(.tiptap h5) {
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.rich-text-editor__canvas :deep(.tiptap h6) {
+  font-size: 15px;
+  line-height: 1.55;
+  color: #334155;
 }
 
 .rich-text-editor__canvas :deep(.tiptap blockquote) {
@@ -1372,14 +1901,6 @@ onBeforeUnmount(() => {
 .rich-text-editor__canvas :deep(.tiptap ol) {
   margin: 0;
   padding-left: 22px;
-}
-
-.rich-text-editor__canvas :deep(.tiptap img) {
-  display: block;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  border-radius: 14px;
 }
 
 .rich-text-editor__canvas :deep(.tiptap pre) {
@@ -1473,6 +1994,88 @@ onBeforeUnmount(() => {
   margin-top: 18px;
 }
 
+.rich-text-editor__canvas :deep(.rich-text-editor__image-node) {
+  position: relative;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-frame) {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-node--selected .rich-text-editor__image-frame) {
+  border-color: #93c5fd;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-element) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-placeholder) {
+  display: flex;
+  min-width: 220px;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  background: linear-gradient(135deg, rgba(226, 232, 240, 0.9), rgba(241, 245, 249, 0.95));
+  color: #475569;
+  text-align: center;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-placeholder-icon) {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-placeholder-title) {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-placeholder-meta) {
+  max-width: 100%;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-resize-handle) {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 52px;
+  border: none;
+  border-radius: 999px;
+  background: #1d4ed8;
+  transform: translateY(-50%);
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-resize-handle--left) {
+  left: 8px;
+  cursor: ew-resize;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-resize-handle--right) {
+  right: 8px;
+  cursor: ew-resize;
+}
+
 .rich-text-editor__canvas :deep(.rich-text-editor__remote-selection) {
   background: color-mix(in srgb, var(--collab-selection-color) 18%, transparent);
 }
@@ -1515,12 +2118,12 @@ onBeforeUnmount(() => {
   overflow-x: auto;
 }
 
+.rich-text-editor__selection-toolbar-heading,
 .rich-text-editor__selection-toolbar-button {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: var(--rich-text-editor-selection-toolbar-button-size, 31px);
   height: var(--rich-text-editor-selection-toolbar-button-size, 31px);
   padding: 0;
   border: 1px solid transparent;
@@ -1531,6 +2134,17 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+.rich-text-editor__selection-toolbar-button {
+  width: var(--rich-text-editor-selection-toolbar-button-size, 31px);
+}
+
+.rich-text-editor__selection-toolbar-heading {
+  gap: 4px;
+  padding: 0 10px;
+}
+
+.rich-text-editor__selection-toolbar-heading:hover,
+.rich-text-editor__selection-toolbar-heading--active,
 .rich-text-editor__selection-toolbar-button:hover,
 .rich-text-editor__selection-toolbar-button--active {
   border-color: #dbe3ef;
@@ -1543,10 +2157,60 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
+.rich-text-editor__selection-toolbar-heading-label {
+  line-height: 1;
+}
+
+.rich-text-editor__selection-toolbar-chevron {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.rich-text-editor__heading-menu {
+  position: fixed;
+  z-index: 4000;
+  display: flex;
+  min-width: 168px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.rich-text-editor__heading-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  text-align: left;
+}
+
+.rich-text-editor__heading-menu-item:hover,
+.rich-text-editor__heading-menu-item--active {
+  background: #f8fafc;
+}
+
+.rich-text-editor__heading-menu-icon,
+.rich-text-editor__heading-menu-check {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.rich-text-editor__heading-menu-label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .rich-text-editor__slash-menu {
   position: fixed;
   z-index: 4000;
-  width: 260px;
+  width: 280px;
   overflow: hidden;
   border: 1px solid #dbe3ef;
   border-radius: 14px;
@@ -1571,6 +2235,18 @@ onBeforeUnmount(() => {
   background: #f8fafc;
 }
 
+.rich-text-editor__slash-menu-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.rich-text-editor__slash-menu-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
 .rich-text-editor__slash-menu-label {
   font-size: 13px;
   font-weight: 600;
@@ -1587,13 +2263,20 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-@media (max-width: 960px) {
-  .rich-text-editor__canvas {
-    padding: 0 14px;
-  }
+:global(body.rich-text-editor--image-resizing) {
+  cursor: ew-resize;
+}
 
+@media (max-width: 1280px) {
+  .rich-text-editor__outline {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
   .rich-text-editor__canvas :deep(.tiptap) {
     min-height: 360px;
+    padding: 18px 16px 48px;
   }
 }
 </style>
