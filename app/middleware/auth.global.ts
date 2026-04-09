@@ -76,10 +76,13 @@ export default defineNuxtRouteMiddleware(async (to) => {
   let authenticated = false
   try {
     const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined
-    await $fetch<ApiResponse<AuthMeResult>>(authEndpoint, {
+    const response = await fetch(authEndpoint, {
       headers,
       credentials: 'include',
     })
+    const payload = await response.json().catch(() => null) as ApiResponse<AuthMeResult> | null
+    if (!response.ok || !payload || payload.code !== 0)
+      throw new Error(String(payload?.message || '认证状态校验失败。'))
     authenticated = true
   }
   catch {

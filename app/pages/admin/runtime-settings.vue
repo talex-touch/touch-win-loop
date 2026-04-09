@@ -110,9 +110,14 @@ async function loadSettings(showLoading = false) {
   errorText.value = ''
   successText.value = ''
   try {
-    const response = await $fetch<ApiResponse<RuntimeSettingsPayload>>(endpoint('/admin/runtime-settings'))
-    payload.value = response.data
-    applyPayload(response.data)
+    const response = await fetch(endpoint('/admin/runtime-settings'), {
+      credentials: 'include',
+    })
+    const result = await response.json().catch(() => null) as ApiResponse<RuntimeSettingsPayload> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '运行设置加载失败。'))
+    payload.value = result.data
+    applyPayload(result.data)
   }
   catch (error: any) {
     payload.value = null
@@ -128,9 +133,13 @@ async function saveSettings() {
   errorText.value = ''
   successText.value = ''
   try {
-    const response = await $fetch<ApiResponse<RuntimeSettingsPayload>>(endpoint('/admin/runtime-settings'), {
+    const response = await fetch(endpoint('/admin/runtime-settings'), {
       method: 'PATCH',
-      body: {
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         auth: {
           registrationEnabled: Boolean(form.auth.registrationEnabled),
         },
@@ -149,10 +158,13 @@ async function saveSettings() {
         contest: {
           autoSeed: Boolean(form.contest.autoSeed),
         },
-      },
+      }),
     })
-    payload.value = response.data
-    applyPayload(response.data)
+    const result = await response.json().catch(() => null) as ApiResponse<RuntimeSettingsPayload> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '运行设置保存失败。'))
+    payload.value = result.data
+    applyPayload(result.data)
     successText.value = '运行设置已保存，新的 worker 参数将自动生效。'
   }
   catch (error: any) {

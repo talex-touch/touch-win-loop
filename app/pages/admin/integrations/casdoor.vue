@@ -15,6 +15,46 @@ type SecretMode = 'keep' | 'replace' | 'clear'
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const loadingPermissions = ref(true)
 const loadingConfig = ref(false)
 const savingConfig = ref(false)
@@ -82,8 +122,8 @@ function fillConfigForm(payload: CasdoorIntegrationConfig) {
 async function loadPermissions() {
   loadingPermissions.value = true
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
-    permissions.value = response.data.user.platformPermissions || []
+    const data = await requestApi<AuthMeResult>(endpoint('/auth/me'), {}, '权限加载失败，请先登录。')
+    permissions.value = data.user.platformPermissions || []
   }
   catch (error: any) {
     permissions.value = []
@@ -102,9 +142,9 @@ async function loadConfig() {
 
   loadingConfig.value = true
   try {
-    const response = await $fetch<ApiResponse<CasdoorIntegrationConfig>>(endpoint('/admin/integrations/casdoor/config'))
-    config.value = response.data
-    fillConfigForm(response.data)
+    const data = await requestApi<CasdoorIntegrationConfig>(endpoint('/admin/integrations/casdoor/config'), {}, 'Casdoor 集成配置加载失败。')
+    config.value = data
+    fillConfigForm(data)
   }
   catch (error: any) {
     config.value = null
@@ -127,20 +167,24 @@ async function saveConfig() {
   clearFeedback()
   savingConfig.value = true
   try {
-    const response = await $fetch<ApiResponse<CasdoorIntegrationConfig>>(endpoint('/admin/integrations/casdoor/config'), {
-      method: 'PATCH',
-      body: {
-        enabled: Boolean(configForm.enabled),
-        issuer: configForm.issuer.trim(),
-        clientId: configForm.clientId.trim(),
-        scope: configForm.scope.trim() || 'openid profile email',
-        redirectUri: configForm.redirectUri.trim(),
-        clientSecretMode: configForm.clientSecretMode,
-        clientSecret: configForm.clientSecret,
+    const data = await requestApi<CasdoorIntegrationConfig>(
+      endpoint('/admin/integrations/casdoor/config'),
+      {
+        method: 'PATCH',
+        body: {
+          enabled: Boolean(configForm.enabled),
+          issuer: configForm.issuer.trim(),
+          clientId: configForm.clientId.trim(),
+          scope: configForm.scope.trim() || 'openid profile email',
+          redirectUri: configForm.redirectUri.trim(),
+          clientSecretMode: configForm.clientSecretMode,
+          clientSecret: configForm.clientSecret,
+        },
       },
-    })
-    config.value = response.data
-    fillConfigForm(response.data)
+      'Casdoor 集成配置保存失败。',
+    )
+    config.value = data
+    fillConfigForm(data)
     setSuccess('Casdoor 集成配置已保存。')
   }
   catch (error: any) {

@@ -108,7 +108,7 @@ async function save() {
   saving.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/timelines`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/timelines`), {
       method: 'POST',
       body: {
         year: Number(form.year || new Date().getFullYear()),

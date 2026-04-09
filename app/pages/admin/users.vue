@@ -118,8 +118,13 @@ async function loadPermission() {
 
 async function loadUsers(preferredUserId?: string) {
   try {
-    const response = await $fetch<ApiResponse<UserAdminRow[]>>(endpoint('/admin/users'))
-    rows.value = response.data
+    const response = await fetch(endpoint('/admin/users'), {
+      credentials: 'include',
+    })
+    const payload = await response.json().catch(() => null) as ApiResponse<UserAdminRow[]> | null
+    if (!response.ok || !payload || payload.code !== 0)
+      throw new Error(String(payload?.message || '用户信息加载失败。'))
+    rows.value = payload.data
     const next = rows.value.find(item => item.userId === (preferredUserId || form.targetUserId))
       || rows.value[0]
     if (next)
@@ -141,13 +146,20 @@ async function saveRoles() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint('/admin/platform-roles'), {
+    const response = await fetch(endpoint('/admin/platform-roles'), {
       method: 'POST',
-      body: {
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         targetUserId: selectedUser.value.userId,
         roles: selectedRoles(),
-      },
+      }),
     })
+    const payload = await response.json().catch(() => null) as ApiResponse<unknown> | null
+    if (!response.ok || (payload && payload.code !== 0))
+      throw new Error(String(payload?.message || '角色更新失败。'))
     successText.value = '角色更新成功。'
     await loadUsers(selectedUser.value.userId)
   }
@@ -167,12 +179,19 @@ async function saveStatus() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/users/${selectedUser.value.userId}/status`), {
+    const response = await fetch(endpoint(`/admin/users/${selectedUser.value.userId}/status`), {
       method: 'PATCH',
-      body: {
-        status: form.status,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        status: form.status,
+      }),
     })
+    const payload = await response.json().catch(() => null) as ApiResponse<unknown> | null
+    if (!response.ok || (payload && payload.code !== 0))
+      throw new Error(String(payload?.message || '状态更新失败。'))
     successText.value = '用户状态更新成功。'
     await loadUsers(selectedUser.value.userId)
   }

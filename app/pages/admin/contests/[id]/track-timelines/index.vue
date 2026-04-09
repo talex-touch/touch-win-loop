@@ -58,8 +58,8 @@ async function loadItems() {
   errorText.value = ''
   try {
     const [timelineRes, trackRes] = await Promise.all([
-      $fetch<ApiResponse<TrackTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/track-timelines`)),
-      $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
+      unsafeFetch<ApiResponse<TrackTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/track-timelines`)),
+      unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
     ])
     items.value = timelineRes.data
     tracks.value = trackRes.data

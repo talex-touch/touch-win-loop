@@ -70,7 +70,7 @@ async function loadItems() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`), {
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`), {
       query: {
         status: statusFilter.value,
         category: categoryFilter.value,

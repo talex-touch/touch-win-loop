@@ -322,12 +322,15 @@ async function loadData(showLoading = false) {
   errorText.value = ''
   try {
     const query = buildRequestQuery()
-    const response = await $fetch<ApiResponse<PreviewWorkerPayload>>(
-      endpoint(`/admin/resources/preview-worker?${query}`),
-    )
-    payload.value = response.data
-    filters.page = response.data.tasks.page
-    filters.pageSize = response.data.tasks.pageSize
+    const response = await fetch(endpoint(`/admin/resources/preview-worker?${query}`), {
+      credentials: 'include',
+    })
+    const result = await response.json().catch(() => null) as ApiResponse<PreviewWorkerPayload> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '文档转换监控加载失败。'))
+    payload.value = result.data
+    filters.page = result.data.tasks.page
+    filters.pageSize = result.data.tasks.pageSize
   }
   catch (error: any) {
     payload.value = null

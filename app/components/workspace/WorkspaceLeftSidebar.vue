@@ -1759,8 +1759,11 @@ onBeforeUnmount(() => {
       @open-settings="openSettingsPanel"
     />
 
-    <Transition name="workspace-left-panel">
-      <section v-show="!props.collapsed" class="workspace-left-panel">
+    <section
+      class="workspace-left-panel"
+      :class="{ 'workspace-left-panel--hidden': props.collapsed }"
+      :aria-hidden="props.collapsed ? 'true' : 'false'"
+    >
         <div class="workspace-left-panel__body no-scrollbar">
           <Transition name="workspace-left-panel-content" mode="out-in">
             <div :key="panelContentTransitionKey" class="workspace-left-panel__content">
@@ -2830,7 +2833,6 @@ onBeforeUnmount(() => {
           />
         </Transition>
       </section>
-    </Transition>
   </aside>
 </template>
 

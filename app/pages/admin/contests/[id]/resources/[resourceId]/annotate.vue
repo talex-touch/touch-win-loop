@@ -304,13 +304,13 @@ async function loadAll() {
   errorText.value = ''
   successText.value = ''
   try {
-    const docResponse = await $fetch<ApiResponse<(ResourceDocument & {
+    const docResponse = await unsafeFetch<ApiResponse<(ResourceDocument & {
       latestTask: ResourceDocumentTask | null
       previewUrl: string
     })>>(endpoint(`/admin/contests/${contestId.value}/resources/${resourceId.value}/document`))
     documentInfo.value = docResponse.data
 
-    const analysisResponse = await $fetch<ApiResponse<{
+    const analysisResponse = await unsafeFetch<ApiResponse<{
       analysisJson: DocumentAnalysis | null
       annotationJson: DocumentAnalysis | null
       parseStatus: string
@@ -356,7 +356,7 @@ function startPollingIfNeeded() {
     try {
       if (!documentInfo.value)
         return
-      const response = await $fetch<ApiResponse<{
+      const response = await unsafeFetch<ApiResponse<{
         analysisJson: DocumentAnalysis | null
         annotationJson: DocumentAnalysis | null
         parseStatus: string
@@ -390,7 +390,7 @@ async function saveAnnotation() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/documents/${documentInfo.value.id}/analysis`), {
+    await unsafeFetch(endpoint(`/admin/documents/${documentInfo.value.id}/analysis`), {
       method: 'PATCH',
       body: {
         annotationJson: editableAnalysis.value,

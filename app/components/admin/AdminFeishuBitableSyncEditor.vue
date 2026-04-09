@@ -90,6 +90,46 @@ const emit = defineEmits<{
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> = {
   contest: [
     { key: 'externalId', label: 'externalId（主键）' },
@@ -873,25 +913,32 @@ async function loadSyncDetail() {
     })
     if (props.includeArchived)
       query.set('includeArchived', 'true')
-    const response = await $fetch<ApiResponse<FeishuBitableSyncDetail>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}?${query.toString()}`))
-    syncDetail.value = response.data
-    syncForm.name = response.data.name || ''
-    syncForm.enabled = Boolean(response.data.enabled)
-    syncForm.environment = response.data.source.environment === 'production' || response.data.source.environment === 'test'
-      ? response.data.source.environment
+    const response = await fetch(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}?${query.toString()}`), {
+      credentials: 'include',
+    })
+    const payload = await response.json().catch(() => null) as ApiResponse<FeishuBitableSyncDetail> | null
+    if (!response.ok || !payload || payload.code !== 0)
+      throw new Error(String(payload?.message || '同步配置加载失败。'))
+
+    const detail = payload.data
+    syncDetail.value = detail
+    syncForm.name = detail.name || ''
+    syncForm.enabled = Boolean(detail.enabled)
+    syncForm.environment = detail.source.environment === 'production' || detail.source.environment === 'test'
+      ? detail.source.environment
       : ''
-    syncForm.scheduleEnabled = Boolean(response.data.schedule?.enabled)
-    syncForm.scheduleMode = response.data.schedule?.mode === 'cron' ? 'cron' : 'interval'
-    syncForm.scheduleIntervalMinutes = Number(response.data.schedule?.intervalMinutes || 60)
-    syncForm.scheduleCronExpr = response.data.schedule?.cronExpr || '0 * * * *'
-    syncForm.scheduleTimezone = response.data.schedule?.timezone || 'Asia/Shanghai'
-    itemForm.appToken = response.data.source.appToken || ''
-    itemForm.appName = response.data.source.appName || ''
+    syncForm.scheduleEnabled = Boolean(detail.schedule?.enabled)
+    syncForm.scheduleMode = detail.schedule?.mode === 'cron' ? 'cron' : 'interval'
+    syncForm.scheduleIntervalMinutes = Number(detail.schedule?.intervalMinutes || 60)
+    syncForm.scheduleCronExpr = detail.schedule?.cronExpr || '0 * * * *'
+    syncForm.scheduleTimezone = detail.schedule?.timezone || 'Asia/Shanghai'
+    itemForm.appToken = detail.source.appToken || ''
+    itemForm.appName = detail.source.appName || ''
     await loadTables()
 
-    const nextItemId = normalizedSelectedItemId.value && response.data.items.some(item => item.id === normalizedSelectedItemId.value)
+    const nextItemId = normalizedSelectedItemId.value && detail.items.some(item => item.id === normalizedSelectedItemId.value)
       ? normalizedSelectedItemId.value
-      : itemDrawerVisible.value && activeItemId.value && response.data.items.some(item => item.id === activeItemId.value)
+      : itemDrawerVisible.value && activeItemId.value && detail.items.some(item => item.id === activeItemId.value)
         ? activeItemId.value
         : ''
 
@@ -932,9 +979,13 @@ async function loadItemDetail(itemId: string) {
     })
     if (props.includeArchived)
       query.set('includeArchived', 'true')
-    const response = await $fetch<ApiResponse<FeishuBitableSyncItemDetail>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}?${query.toString()}`))
-    currentItem.value = response.data
-    fillItemForm(response.data)
+    const data = await requestApi<FeishuBitableSyncItemDetail>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(itemId)}?${query.toString()}`),
+      {},
+      '子表同步项详情加载失败。',
+    )
+    currentItem.value = data
+    fillItemForm(data)
     previewResult.value = null
     await loadViews()
     await inspectFields()
@@ -978,8 +1029,12 @@ async function loadTables() {
 
   loadingTables.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableTableMeta[]>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables`))
-    availableTables.value = response.data || []
+    const data = await requestApi<FeishuBitableTableMeta[]>(
+      endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables`),
+      {},
+      '可用数据表加载失败。',
+    )
+    availableTables.value = data || []
   }
   catch {
     availableTables.value = []
@@ -999,8 +1054,12 @@ async function loadViews() {
 
   loadingViews.value = true
   try {
-    const response = await $fetch<ApiResponse<{ tables: FeishuBitableTableMeta[], views: FeishuBitableViewMeta[] }>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`))
-    availableViews.value = response.data.views || []
+    const data = await requestApi<{ tables: FeishuBitableTableMeta[], views: FeishuBitableViewMeta[] }>(
+      endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`),
+      {},
+      '可用视图加载失败。',
+    )
+    availableViews.value = data.views || []
   }
   catch {
     availableViews.value = []
@@ -1021,8 +1080,12 @@ async function loadNewItemViews() {
 
   loadingViews.value = true
   try {
-    const response = await $fetch<ApiResponse<{ tables: FeishuBitableTableMeta[], views: FeishuBitableViewMeta[] }>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`))
-    newItemViews.value = response.data.views || []
+    const data = await requestApi<{ tables: FeishuBitableTableMeta[], views: FeishuBitableViewMeta[] }>(
+      endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`),
+      {},
+      '新增同步项视图加载失败。',
+    )
+    newItemViews.value = data.views || []
   }
   catch {
     newItemViews.value = []
@@ -1322,16 +1385,20 @@ async function inspectFields() {
   loadingFieldInspection.value = true
   fieldInspectionError.value = ''
   try {
-    const response = await $fetch<ApiResponse<FeishuFieldInspectionItem[]>>(endpoint('/admin/integrations/feishu/bitable/sources/inspect-fields'), {
-      method: 'POST',
-      body: {
-        appToken,
-        tableId,
-        viewId: toText(itemForm.viewId),
-        sampleRecords: 120,
+    const data = await requestApi<FeishuFieldInspectionItem[]>(
+      endpoint('/admin/integrations/feishu/bitable/sources/inspect-fields'),
+      {
+        method: 'POST',
+        body: {
+          appToken,
+          tableId,
+          viewId: toText(itemForm.viewId),
+          sampleRecords: 120,
+        },
       },
-    })
-    fieldInspection.value = response.data || []
+      '字段巡检失败。',
+    )
+    fieldInspection.value = data || []
     autoFillMappingWizardBindings()
   }
   catch (error: any) {
@@ -1391,29 +1458,33 @@ async function saveCurrentItem(saveContext: SaveCurrentItemContext = 'main') {
 
   savingItem.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSyncItem>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}`), {
-      method: 'PATCH',
-      body: {
-        name: itemForm.name.trim(),
-        entityType: itemForm.entityType,
-        tableId: itemForm.tableId.trim(),
-        viewId: itemForm.viewId.trim(),
-        source: {
-          appToken: itemForm.appToken.trim(),
-          appName: itemForm.appName.trim(),
+    const data = await requestApi<FeishuBitableSyncItem>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}`),
+      {
+        method: 'PATCH',
+        body: {
+          name: itemForm.name.trim(),
+          entityType: itemForm.entityType,
           tableId: itemForm.tableId.trim(),
-          tableName: itemForm.tableName.trim(),
           viewId: itemForm.viewId.trim(),
-          viewName: itemForm.viewName.trim(),
-          sourceUrl: itemForm.sourceUrl.trim(),
+          source: {
+            appToken: itemForm.appToken.trim(),
+            appName: itemForm.appName.trim(),
+            tableId: itemForm.tableId.trim(),
+            tableName: itemForm.tableName.trim(),
+            viewId: itemForm.viewId.trim(),
+            viewName: itemForm.viewName.trim(),
+            sourceUrl: itemForm.sourceUrl.trim(),
+          },
+          isEnabled: itemForm.isEnabled,
+          mapping,
+          options,
+          writeback,
         },
-        isEnabled: itemForm.isEnabled,
-        mapping,
-        options,
-        writeback,
       },
-    })
-    applySavedItemLocally(response.data)
+      '子表同步项保存失败。',
+    )
+    applySavedItemLocally(data)
     previewResult.value = null
     emit('updated')
     if (saveContext === 'mapping') {
@@ -1443,12 +1514,16 @@ async function toggleItemEnabled(item: FeishuBitableSyncItem, enabled: boolean) 
   itemToggleMutating[item.id] = true
   clearFeedback()
   try {
-    await $fetch(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(item.id)}`), {
-      method: 'PATCH',
-      body: {
-        isEnabled: enabled,
+    await requestApi(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(item.id)}`),
+      {
+        method: 'PATCH',
+        body: {
+          isEnabled: enabled,
+        },
       },
-    })
+      `子表同步项${enabled ? '启用' : '禁用'}失败。`,
+    )
     await loadSyncDetail()
     emit('updated')
     setSuccess(`子表同步项已${enabled ? '启用' : '禁用'}。`)
@@ -1478,29 +1553,32 @@ async function saveSyncInfo() {
   savingSync.value = true
   clearFeedback()
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}`), {
-      method: 'PATCH',
-      body: {
-        name,
-        enabled: syncForm.enabled,
-        source: syncDetail.value
-          ? {
-              ...syncDetail.value.source,
-              environment: syncForm.environment === 'production' || syncForm.environment === 'test'
-                ? syncForm.environment
-                : undefined,
-            }
-          : undefined,
-        schedule: {
-          enabled: syncForm.scheduleEnabled,
-          mode: syncForm.scheduleMode,
-          intervalMinutes: syncForm.scheduleMode === 'interval' ? Number(syncForm.scheduleIntervalMinutes || 60) : null,
-          cronExpr: syncForm.scheduleMode === 'cron' ? syncForm.scheduleCronExpr.trim() : null,
-          timezone: syncForm.scheduleTimezone.trim(),
+    const nextSync = await requestApi<FeishuBitableSync>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}`),
+      {
+        method: 'PATCH',
+        body: {
+          name,
+          enabled: syncForm.enabled,
+          source: syncDetail.value
+            ? {
+                ...syncDetail.value.source,
+                environment: syncForm.environment === 'production' || syncForm.environment === 'test'
+                  ? syncForm.environment
+                  : undefined,
+              }
+            : undefined,
+          schedule: {
+            enabled: syncForm.scheduleEnabled,
+            mode: syncForm.scheduleMode,
+            intervalMinutes: syncForm.scheduleMode === 'interval' ? Number(syncForm.scheduleIntervalMinutes || 60) : null,
+            cronExpr: syncForm.scheduleMode === 'cron' ? syncForm.scheduleCronExpr.trim() : null,
+            timezone: syncForm.scheduleTimezone.trim(),
+          },
         },
       },
-    })
-    const nextSync = response.data
+      '同步信息更新失败。',
+    )
     const nextName = String(nextSync?.name || name).trim()
     if (syncDetail.value && nextSync) {
       syncDetail.value = {
@@ -1560,11 +1638,15 @@ async function previewCurrentItem() {
       options,
       writeback,
     }
-    const response = await $fetch<ApiResponse<FeishuBitableSyncItemPreviewResult>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/preview`), {
-      method: 'POST',
-      body: draft,
-    })
-    previewResult.value = response.data
+    const data = await requestApi<FeishuBitableSyncItemPreviewResult>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/preview`),
+      {
+        method: 'POST',
+        body: draft,
+      },
+      '预检失败。',
+    )
+    previewResult.value = data
     setSuccess('预检完成。')
   }
   catch (error: any) {
@@ -1585,9 +1667,13 @@ async function runCurrentItem() {
   runningItem.value = true
   clearFeedback()
   try {
-    await $fetch(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/run`), {
-      method: 'POST',
-    })
+    await requestApi(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items/${encodeURIComponent(currentItem.value.id)}/run`),
+      {
+        method: 'POST',
+      },
+      '同步执行失败。',
+    )
     await loadSyncDetail()
     if (activeItemId.value)
       await loadItemDetail(activeItemId.value)
@@ -1640,31 +1726,35 @@ async function createItem() {
     const tableName = availableTables.value.find(item => item.tableId === newItemForm.tableId)?.name || ''
     const viewName = newItemViews.value.find(item => item.viewId === newItemForm.viewId)?.name || ''
     const defaults = buildDefaultSyncItemConfig(newItemForm.entityType)
-    const response = await $fetch<ApiResponse<FeishuBitableSyncItem>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items`), {
-      method: 'POST',
-      body: {
-        name: newItemForm.name.trim() || buildSuggestedSyncItemName(newItemForm.entityType, tableName, viewName),
-        entityType: newItemForm.entityType,
-        tableId,
-        viewId: toText(newItemForm.viewId),
-        source: {
-          appToken: syncDetail.value?.source.appToken || '',
-          appName: syncDetail.value?.source.appName || '',
+    const data = await requestApi<FeishuBitableSyncItem>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(normalizedSyncId.value)}/items`),
+      {
+        method: 'POST',
+        body: {
+          name: newItemForm.name.trim() || buildSuggestedSyncItemName(newItemForm.entityType, tableName, viewName),
+          entityType: newItemForm.entityType,
           tableId,
-          tableName,
           viewId: toText(newItemForm.viewId),
-          viewName,
-          sourceUrl: syncDetail.value?.source.sourceUrl || '',
+          source: {
+            appToken: syncDetail.value?.source.appToken || '',
+            appName: syncDetail.value?.source.appName || '',
+            tableId,
+            tableName,
+            viewId: toText(newItemForm.viewId),
+            viewName,
+            sourceUrl: syncDetail.value?.source.sourceUrl || '',
+          },
+          isEnabled: false,
+          mapping: defaults.mapping,
+          options: defaults.options,
+          writeback: defaults.writeback,
         },
-        isEnabled: false,
-        mapping: defaults.mapping,
-        options: defaults.options,
-        writeback: defaults.writeback,
       },
-    })
+      '子表同步项创建失败。',
+    )
     addItemDrawerVisible.value = false
     await loadSyncDetail()
-    await openItemDrawer(response.data.id)
+    await openItemDrawer(data.id)
     emit('updated')
     setSuccess('子表同步项已创建，已自动带入推荐模板，默认保持禁用。')
   }

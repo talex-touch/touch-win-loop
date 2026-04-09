@@ -133,19 +133,19 @@ function resetOverrideForm(payload: KnowledgeDetailPayload | null) {
 }
 
 async function loadOverview() {
-  const response = await $fetch<ApiResponse<ResourceKnowledgeOverview>>(endpoint(`/admin/contests/${contestId.value}/knowledge`))
+  const response = await unsafeFetch<ApiResponse<ResourceKnowledgeOverview>>(endpoint(`/admin/contests/${contestId.value}/knowledge`))
   overview.value = response.data
 }
 
 async function loadResources() {
-  const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/knowledge/resources`))
+  const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/knowledge/resources`))
   resources.value = response.data
   if (!selectedResourceId.value && resources.value[0]?.id)
     selectedResourceId.value = resources.value[0].id
 }
 
 async function loadTasks() {
-  const response = await $fetch<ApiResponse<ResourceGovernanceTask[]>>(endpoint(`/admin/contests/${contestId.value}/knowledge/governance/tasks`), {
+  const response = await unsafeFetch<ApiResponse<ResourceGovernanceTask[]>>(endpoint(`/admin/contests/${contestId.value}/knowledge/governance/tasks`), {
     query: {
       limit: 50,
     },
@@ -154,7 +154,7 @@ async function loadTasks() {
 }
 
 async function loadDemand() {
-  const response = await $fetch<ApiResponse<DemandPayload>>(endpoint(`/admin/contests/${contestId.value}/knowledge/demand`), {
+  const response = await unsafeFetch<ApiResponse<DemandPayload>>(endpoint(`/admin/contests/${contestId.value}/knowledge/demand`), {
     query: {
       limit: 20,
       days: 30,
@@ -172,7 +172,7 @@ async function loadDetail(resourceId: string) {
   const requestToken = ++detailRequestToken
   detailLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<KnowledgeDetailPayload>>(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/${resourceId}`))
+    const response = await unsafeFetch<ApiResponse<KnowledgeDetailPayload>>(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/${resourceId}`))
     if (requestToken !== detailRequestToken || selectedResourceId.value !== resourceId)
       return
     detail.value = response.data
@@ -217,7 +217,7 @@ async function triggerAnalyze(resourceIds?: string[]) {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/analyze`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/analyze`), {
       method: 'POST',
       body: {
         resourceIds,
@@ -239,7 +239,7 @@ async function createGovernanceTask(taskType: ResourceGovernanceTaskType) {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/knowledge/governance/tasks`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/knowledge/governance/tasks`), {
       method: 'POST',
       body: {
         taskType,
@@ -265,7 +265,7 @@ async function saveOverrides() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/${resourceId}`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/knowledge/resources/${resourceId}`), {
       method: 'PATCH',
       body: {
         predictedCategory: overrideForm.predictedCategory || undefined,

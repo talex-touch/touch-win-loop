@@ -23,6 +23,53 @@ const runtime = useRuntimeConfig();
 const { endpoint } = useApiEndpoint(runtime);
 const authApiFetch = useAuthApiFetch();
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string;
+  };
+};
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError;
+  error.data = { message };
+  return error;
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: "GET" | "POST" | "PATCH" | "DELETE";
+    query?: Record<string, string | number | undefined>;
+    body?: unknown;
+  } = {},
+  fallbackMessage = "请求失败。",
+): Promise<T> {
+  const url = new URL(path, "http://localhost");
+  for (const [key, value] of Object.entries(options.query || {})) {
+    if (value === undefined || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+
+  const headers = new Headers();
+  let body: BodyInit | undefined;
+  if (options.body !== undefined) {
+    headers.set("content-type", "application/json");
+    body = JSON.stringify(options.body);
+  }
+
+  const response = await fetch(`${url.pathname}${url.search}`, {
+    method: options.method || "GET",
+    credentials: "include",
+    headers,
+    body,
+  });
+  const payload = (await response.json().catch(() => null)) as ApiResponse<T> | null;
+  if (!response.ok || !payload || payload.code !== 0) {
+    throw createApiRequestError(String(payload?.message || fallbackMessage));
+  }
+  return payload.data;
+}
+
 const permissions = ref<PlatformPermission[]>([]);
 const workspaces = ref<WorkspaceWithQuota[]>([]);
 const plans = ref<BillingPlan[]>([]);
@@ -280,20 +327,22 @@ async function loadContext() {
 }
 
 async function loadPlans() {
-  const response = await $fetch<ApiResponse<BillingPlan[]>>(
+  plans.value = await requestApi<BillingPlan[]>(
     endpoint("/admin/billing/plans"),
+    {},
+    "套餐列表加载失败。",
   );
-  plans.value = response.data;
   if (!estimateForm.planId && plans.value[0])
     estimateForm.planId = plans.value[0].id;
 }
 
 async function loadEstimate() {
   if (!estimateForm.workspaceId) return;
-  const response = await $fetch<ApiResponse<WorkspaceBillingEstimate>>(
+  estimate.value = await requestApi<WorkspaceBillingEstimate>(
     endpoint(`/teams/${estimateForm.workspaceId}/billing/estimate`),
+    {},
+    "账单估算加载失败。",
   );
-  estimate.value = response.data;
 }
 
 async function loadUsageEvents() {
@@ -318,13 +367,13 @@ async function loadUsageEvents() {
     if (eventCode) query.eventCode = eventCode;
     if (result) query.result = result;
 
-    const response = await $fetch<ApiResponse<BillingUsageEventsPayload>>(
+    usageEventsPayload.value = await requestApi<BillingUsageEventsPayload>(
       endpoint("/admin/billing/usage-events"),
       {
         query,
       },
+      "计费行为事件加载失败。",
     );
-    usageEventsPayload.value = response.data;
   } catch (error: any) {
     usageEventsPayload.value = null;
     errorText.value = String(error?.data?.message || "计费行为事件加载失败。");
@@ -351,18 +400,22 @@ async function runAction(action: () => Promise<void>, message: string) {
 
 async function createPlan() {
   await runAction(async () => {
-    await $fetch(endpoint("/admin/billing/plans"), {
-      method: "POST",
-      body: {
-        code: createForm.code.trim(),
-        name: createForm.name.trim(),
-        basePriceCents: Number(createForm.basePriceCents || 0),
-        includedSeats: Number(createForm.includedSeats || 0),
-        extraSeatPriceCents: Number(createForm.extraSeatPriceCents || 0),
-        includedAiQuota: Number(createForm.includedAiQuota || 0),
-        isActive: createForm.isActive,
+    await requestApi<unknown>(
+      endpoint("/admin/billing/plans"),
+      {
+        method: "POST",
+        body: {
+          code: createForm.code.trim(),
+          name: createForm.name.trim(),
+          basePriceCents: Number(createForm.basePriceCents || 0),
+          includedSeats: Number(createForm.includedSeats || 0),
+          extraSeatPriceCents: Number(createForm.extraSeatPriceCents || 0),
+          includedAiQuota: Number(createForm.includedAiQuota || 0),
+          isActive: createForm.isActive,
+        },
       },
-    });
+      "套餐创建失败。",
+    );
     createForm.code = "";
     createForm.name = "";
     createForm.basePriceCents = 0;
@@ -376,19 +429,23 @@ async function createPlan() {
 
 async function patchPlan() {
   await runAction(async () => {
-    await $fetch(endpoint("/admin/billing/plans"), {
-      method: "PATCH",
-      body: {
-        planId: editForm.planId,
-        code: editForm.code.trim(),
-        name: editForm.name.trim(),
-        basePriceCents: Number(editForm.basePriceCents || 0),
-        includedSeats: Number(editForm.includedSeats || 0),
-        extraSeatPriceCents: Number(editForm.extraSeatPriceCents || 0),
-        includedAiQuota: Number(editForm.includedAiQuota || 0),
-        isActive: editForm.isActive,
+    await requestApi<unknown>(
+      endpoint("/admin/billing/plans"),
+      {
+        method: "PATCH",
+        body: {
+          planId: editForm.planId,
+          code: editForm.code.trim(),
+          name: editForm.name.trim(),
+          basePriceCents: Number(editForm.basePriceCents || 0),
+          includedSeats: Number(editForm.includedSeats || 0),
+          extraSeatPriceCents: Number(editForm.extraSeatPriceCents || 0),
+          includedAiQuota: Number(editForm.includedAiQuota || 0),
+          isActive: editForm.isActive,
+        },
       },
-    });
+      "套餐更新失败。",
+    );
   }, "套餐已更新。");
   if (!errorText.value) editDialogVisible.value = false;
 }
@@ -396,13 +453,17 @@ async function patchPlan() {
 async function switchWorkspacePlan() {
   if (!estimateForm.workspaceId || !estimateForm.planId) return;
   await runAction(async () => {
-    await $fetch(endpoint(`/teams/${estimateForm.workspaceId}/billing`), {
-      method: "PATCH",
-      body: {
-        planId: estimateForm.planId,
-        billingCycle: estimateForm.billingCycle,
+    await requestApi<unknown>(
+      endpoint(`/teams/${estimateForm.workspaceId}/billing`),
+      {
+        method: "PATCH",
+        body: {
+          planId: estimateForm.planId,
+          billingCycle: estimateForm.billingCycle,
+        },
       },
-    });
+      "工作区套餐切换失败。",
+    );
   }, "工作区套餐已切换并重新估算。");
 }
 

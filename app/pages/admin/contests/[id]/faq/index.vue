@@ -9,6 +9,45 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const contestId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
   const value = params.id
@@ -33,9 +72,9 @@ async function loadData() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`))
-    faqItems.value = (response.data.contest.faqItems || []).length > 0
-      ? [...(response.data.contest.faqItems || [])]
+    const data = await requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), {}, 'FAQ 加载失败。')
+    faqItems.value = (data.contest.faqItems || []).length > 0
+      ? [...(data.contest.faqItems || [])]
       : [{ question: '', answer: '', sortOrder: 0 }]
   }
   catch (error: any) {
@@ -51,18 +90,22 @@ async function save() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}`), {
-      method: 'PATCH',
-      body: {
-        faqItems: faqItems.value
-          .map((item, index) => ({
-            question: String(item.question || '').trim(),
-            answer: String(item.answer || '').trim(),
-            sortOrder: index,
-          }))
-          .filter(item => item.question || item.answer),
+    await requestApi<unknown>(
+      endpoint(`/admin/contests/${contestId.value}`),
+      {
+        method: 'PATCH',
+        body: {
+          faqItems: faqItems.value
+            .map((item, index) => ({
+              question: String(item.question || '').trim(),
+              answer: String(item.answer || '').trim(),
+              sortOrder: index,
+            }))
+            .filter(item => item.question || item.answer),
+        },
       },
-    })
+      'FAQ 保存失败。',
+    )
     successText.value = 'FAQ 已保存。'
   }
   catch (error: any) {

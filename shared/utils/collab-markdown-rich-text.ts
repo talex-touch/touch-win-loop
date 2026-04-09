@@ -9,10 +9,11 @@ import { gfmFromMarkdown, gfmToMarkdown } from 'mdast-util-gfm'
 import { toMarkdown } from 'mdast-util-to-markdown'
 import { gfm } from 'micromark-extension-gfm'
 import { getCollabMarkdownSchema } from './collab-rich-text-schema'
+import type { CollabMarkdownHeadingLevel } from './collab-rich-text-schema'
 
 export interface MarkdownRichTextBlock {
   type: 'paragraph' | 'heading'
-  level?: 1 | 2 | 3
+  level?: CollabMarkdownHeadingLevel
   text: string
 }
 
@@ -30,6 +31,8 @@ interface MdastNode {
 
 const collabMarkdownSchema = getCollabMarkdownSchema()
 const INTERNAL_RESOURCE_FILE_PATH_PATTERN = /^\/?(?:api\/)?projects\/[^/]+\/resources\/([^/]+)\/(?:file|source)(?:[/?#]|$)/i
+const HTML_IMAGE_TAG_PATTERN = /^<img\b[^>]*\/?>$/i
+const HTML_ATTRIBUTE_PATTERN = /([:@A-Za-z0-9_-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
 
 function normalizeLineBreaks(value: string): string {
   return String(value || '')
@@ -52,11 +55,24 @@ function normalizeBlockText(value: string): string {
     .trim()
 }
 
-function normalizeHeadingLevel(value: unknown): 1 | 2 | 3 {
+function normalizeHeadingLevel(value: unknown): CollabMarkdownHeadingLevel {
   const parsed = Number(value)
-  if (parsed === 1 || parsed === 2 || parsed === 3)
+  if (parsed === 1 || parsed === 2 || parsed === 3 || parsed === 4 || parsed === 5 || parsed === 6)
     return parsed
   return 1
+}
+
+function normalizeImageWidth(value: unknown): number | null {
+  const normalized = normalizeString(value)
+  if (!normalized)
+    return null
+
+  const matched = normalized.match(/^\s*(\d+)/)
+  if (!matched)
+    return null
+
+  const parsed = Math.round(Number(matched[1]))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
 function resolveResourceIdFromImageSrc(src: unknown): string | null {
@@ -69,6 +85,59 @@ function resolveResourceIdFromImageSrc(src: unknown): string | null {
   return resourceId || null
 }
 
+function decodeHtmlAttribute(value: string): string {
+  return String(value || '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, '\'')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+function encodeHtmlAttribute(value: string): string {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function parseHtmlImageAttributes(value: unknown): {
+  src: string
+  alt: string | null
+  title: string | null
+  width: number | null
+  resourceId: string | null
+} | null {
+  const html = String(value || '').trim()
+  if (!HTML_IMAGE_TAG_PATTERN.test(html))
+    return null
+
+  const attributes = new Map<string, string>()
+  for (const matched of html.matchAll(HTML_ATTRIBUTE_PATTERN)) {
+    const name = normalizeString(matched[1]).toLowerCase()
+    if (!name)
+      continue
+    const rawValue = matched[2] ?? matched[3] ?? matched[4] ?? ''
+    attributes.set(name, decodeHtmlAttribute(String(rawValue || '')))
+  }
+
+  const src = normalizeString(attributes.get('src'))
+  if (!src)
+    return null
+
+  const resourceId = normalizeOptionalString(attributes.get('data-resource-id'))
+    || resolveResourceIdFromImageSrc(src)
+
+  return {
+    src,
+    alt: normalizeOptionalString(attributes.get('alt')),
+    title: normalizeOptionalString(attributes.get('title')),
+    width: normalizeImageWidth(attributes.get('width')),
+    resourceId,
+  }
+}
+
 function serializeMarkdownImageSyntax(node: MdastNode): string {
   const alt = String(node.alt || '').replace(/\]/g, '\\]')
   const src = normalizeString(node.url)
@@ -78,6 +147,29 @@ function serializeMarkdownImageSyntax(node: MdastNode): string {
   if (title)
     return `![${alt}](${src} "${title.replace(/"/g, '\\"')}")`
   return `![${alt}](${src})`
+}
+
+function serializeHtmlImageSyntax(node: JSONContent): string {
+  const src = normalizeString(node.attrs?.src)
+  if (!src)
+    return ''
+
+  const attributes = [`src="${encodeHtmlAttribute(src)}"`]
+  const alt = normalizeOptionalString(node.attrs?.alt)
+  const title = normalizeOptionalString(node.attrs?.title)
+  const width = normalizeImageWidth(node.attrs?.width)
+  const resourceId = normalizeOptionalString(node.attrs?.resourceId)
+
+  if (alt)
+    attributes.push(`alt="${encodeHtmlAttribute(alt)}"`)
+  if (title)
+    attributes.push(`title="${encodeHtmlAttribute(title)}"`)
+  if (width)
+    attributes.push(`width="${width}"`)
+  if (resourceId)
+    attributes.push(`data-resource-id="${encodeHtmlAttribute(resourceId)}"`)
+
+  return `<img ${attributes.join(' ')}>`
 }
 
 function createEmptyDocument(): JSONContent {
@@ -312,6 +404,9 @@ function mdastImageToPm(node: MdastNode): JSONContent | null {
       alt: normalizeOptionalString(node.alt),
       title: normalizeOptionalString(node.title),
       resourceId: resolveResourceIdFromImageSrc(src),
+      width: null,
+      uploadStatus: null,
+      uploadId: null,
     },
   }
 }
@@ -356,7 +451,7 @@ function mdastBlocksToPm(nodes: MdastNode[] | undefined): JSONContent[] {
 
     if (node.type === 'heading') {
       const depth = Number(node.depth)
-      if (depth >= 1 && depth <= 3) {
+      if (depth >= 1 && depth <= 6) {
         const content = mdastInlineToPm(node.children)
         result.push(content.length > 0
           ? { type: 'heading', attrs: { level: depth }, content }
@@ -367,6 +462,21 @@ function mdastBlocksToPm(nodes: MdastNode[] | undefined): JSONContent[] {
         result.push(fallbackText ? { type: 'paragraph', content: [{ type: 'text', text: fallbackText }] } : { type: 'paragraph' })
       }
       continue
+    }
+
+    if (node.type === 'html') {
+      const imageAttrs = parseHtmlImageAttributes(node.value)
+      if (imageAttrs) {
+        result.push({
+          type: 'image',
+          attrs: {
+            ...imageAttrs,
+            uploadStatus: null,
+            uploadId: null,
+          },
+        })
+        continue
+      }
     }
 
     if (node.type === 'blockquote') {
@@ -638,6 +748,14 @@ function pmBlocksToMdast(nodes: JSONContent[] | undefined): MdastNode[] {
       const src = normalizeString(node.attrs?.src)
       if (!src)
         continue
+
+      if (normalizeImageWidth(node.attrs?.width)) {
+        result.push({
+          type: 'html',
+          value: serializeHtmlImageSyntax(node),
+        })
+        continue
+      }
 
       result.push({
         type: 'paragraph',

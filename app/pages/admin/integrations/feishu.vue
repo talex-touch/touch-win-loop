@@ -37,6 +37,46 @@ interface SourceViewsPayload {
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const loadingPermissions = ref(true)
 const loadingConfig = ref(false)
 const loadingSyncs = ref(false)
@@ -407,8 +447,8 @@ function onViewIdChanged() {
 async function loadPermissions() {
   loadingPermissions.value = true
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
-    permissions.value = response.data.user.platformPermissions || []
+    const data = await requestApi<AuthMeResult>(endpoint('/auth/me'), {}, '权限加载失败，请先登录。')
+    permissions.value = data.user.platformPermissions || []
   }
   catch (error: any) {
     permissions.value = []
@@ -427,9 +467,9 @@ async function loadConfig() {
 
   loadingConfig.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuIntegrationConfigView>>(endpoint('/admin/integrations/feishu/config'))
-    config.value = response.data
-    fillConfigForm(response.data)
+    const data = await requestApi<FeishuIntegrationConfigView>(endpoint('/admin/integrations/feishu/config'), {}, '飞书配置加载失败。')
+    config.value = data
+    fillConfigForm(data)
   }
   catch (error: any) {
     config.value = null
@@ -448,8 +488,7 @@ async function loadAdminOverview() {
 
   adminOverviewLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuAdminOverview>>(endpoint('/admin/integrations/feishu/admin-overview'))
-    adminOverview.value = response.data
+    adminOverview.value = await requestApi<FeishuAdminOverview>(endpoint('/admin/integrations/feishu/admin-overview'), {}, '管理员概览加载失败。')
   }
   catch (error: any) {
     adminOverview.value = null
@@ -469,8 +508,11 @@ async function loadSyncs() {
   loadingSyncs.value = true
   try {
     const query = showArchivedSyncs.value ? '?includeArchived=true' : ''
-    const response = await $fetch<ApiResponse<FeishuBitableSync[]>>(endpoint(`/admin/integrations/feishu/bitable-syncs${query}`))
-    syncs.value = response.data || []
+    syncs.value = await requestApi<FeishuBitableSync[]>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs${query}`),
+      {},
+      '多维同步信息加载失败。',
+    ) || []
   }
   catch (error: any) {
     syncs.value = []
@@ -494,8 +536,11 @@ async function loadBitableTablesAndViews() {
 
   sourceViewsLoading.value = true
   try {
-    const tablesResponse = await $fetch<ApiResponse<FeishuBitableTableMeta[]>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables`))
-    sourceTables.value = tablesResponse.data || []
+    sourceTables.value = await requestApi<FeishuBitableTableMeta[]>(
+      endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables`),
+      {},
+      '加载表/视图失败。',
+    ) || []
 
     if (!tableId) {
       sourceViews.value = []
@@ -504,8 +549,12 @@ async function loadBitableTablesAndViews() {
       return
     }
 
-    const viewsResponse = await $fetch<ApiResponse<SourceViewsPayload>>(endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`))
-    sourceViews.value = viewsResponse.data.views || []
+    const viewsPayload = await requestApi<SourceViewsPayload>(
+      endpoint(`/admin/integrations/feishu/bitable/sources/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/views`),
+      {},
+      '加载表/视图失败。',
+    )
+    sourceViews.value = viewsPayload.views || []
     onTableIdChanged(true)
     onViewIdChanged()
     setSuccess(`已加载 ${sourceTables.value.length} 个子表、${sourceViews.value.length} 个视图。`)
@@ -532,13 +581,16 @@ async function resolveBitableSourceInput() {
 
   sourceResolveLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSourceConfig>>(endpoint('/admin/integrations/feishu/bitable/sources/resolve'), {
-      method: 'POST',
-      body: {
-        input: sourceInput,
+    const source = await requestApi<FeishuBitableSourceConfig>(
+      endpoint('/admin/integrations/feishu/bitable/sources/resolve'),
+      {
+        method: 'POST',
+        body: {
+          input: sourceInput,
+        },
       },
-    })
-    const source = response.data
+      '来源解析失败。',
+    )
     createSyncForm.appToken = source.appToken || ''
     createSyncForm.tableId = source.tableId || ''
     createSyncForm.viewId = source.viewId || ''
@@ -580,30 +632,34 @@ async function saveConfig() {
 
   savingConfig.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuIntegrationConfig>>(endpoint('/admin/integrations/feishu/config'), {
-      method: 'PATCH',
-      body: {
-        enabled: configForm.enabled,
-        appId: configForm.appId.trim(),
-        oauthRedirectUri: configForm.oauthRedirectUri.trim(),
-        adminGroupIds: parseMultilineList(configForm.adminGroupIdsText),
-        webSdkScriptUrl: configForm.webSdkScriptUrl.trim(),
-        startupNotifyEnabled: configForm.startupNotifyEnabled,
-        startupNotifyChatId: configForm.startupNotifyChatId.trim(),
-        startupNotifyRemark: configForm.startupNotifyRemark.trim(),
-        startupFallbackVersion: configForm.startupFallbackVersion.trim(),
-        startupFallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
-        appSecretMode: configForm.appSecretMode,
-        appSecret: configForm.appSecret,
-        eventTokenMode: configForm.eventTokenMode,
-        eventToken: configForm.eventToken,
-        eventEncryptKeyMode: configForm.eventEncryptKeyMode,
-        eventEncryptKey: configForm.eventEncryptKey,
+    const data = await requestApi<FeishuIntegrationConfig>(
+      endpoint('/admin/integrations/feishu/config'),
+      {
+        method: 'PATCH',
+        body: {
+          enabled: configForm.enabled,
+          appId: configForm.appId.trim(),
+          oauthRedirectUri: configForm.oauthRedirectUri.trim(),
+          adminGroupIds: parseMultilineList(configForm.adminGroupIdsText),
+          webSdkScriptUrl: configForm.webSdkScriptUrl.trim(),
+          startupNotifyEnabled: configForm.startupNotifyEnabled,
+          startupNotifyChatId: configForm.startupNotifyChatId.trim(),
+          startupNotifyRemark: configForm.startupNotifyRemark.trim(),
+          startupFallbackVersion: configForm.startupFallbackVersion.trim(),
+          startupFallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
+          appSecretMode: configForm.appSecretMode,
+          appSecret: configForm.appSecret,
+          eventTokenMode: configForm.eventTokenMode,
+          eventToken: configForm.eventToken,
+          eventEncryptKeyMode: configForm.eventEncryptKeyMode,
+          eventEncryptKey: configForm.eventEncryptKey,
+        },
       },
-    })
+      '飞书配置保存失败。',
+    )
 
-    config.value = response.data
-    fillConfigForm(response.data)
+    config.value = data
+    fillConfigForm(data)
     configDialogVisible.value = false
     setSuccess('飞书集成配置已保存。')
   }
@@ -628,22 +684,26 @@ async function testStartupNotify() {
 
   testingStartupNotify.value = true
   try {
-    const response = await $fetch<ApiResponse<{
+    const data = await requestApi<{
       chatId: string
       version: string
       commitSha: string
       testedAt: string
-    }>>(endpoint('/admin/integrations/feishu/startup-notify/test'), {
-      method: 'POST',
-      body: {
-        chatId,
-        remark: configForm.startupNotifyRemark.trim(),
-        fallbackVersion: configForm.startupFallbackVersion.trim(),
-        fallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
+    }>(
+      endpoint('/admin/integrations/feishu/startup-notify/test'),
+      {
+        method: 'POST',
+        body: {
+          chatId,
+          remark: configForm.startupNotifyRemark.trim(),
+          fallbackVersion: configForm.startupFallbackVersion.trim(),
+          fallbackCommitSha: configForm.startupFallbackCommitSha.trim(),
+        },
       },
-    })
+      '启动通知测试失败。',
+    )
 
-    startupNotifyTestSuccessText.value = `测试消息已发送到 ${response.data.chatId}（版本 ${response.data.version} / Commit ${response.data.commitSha}）。`
+    startupNotifyTestSuccessText.value = `测试消息已发送到 ${data.chatId}（版本 ${data.version} / Commit ${data.commitSha}）。`
   }
   catch (error: any) {
     startupNotifyTestErrorText.value = String(error?.data?.message || '启动通知测试失败。')
@@ -671,10 +731,14 @@ async function loadStartupNotifyChatOptions(keyword = '') {
   const currentSequence = ++startupNotifyChatSearchSequence
   startupNotifyChatOptionsLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuChatCandidate[]>>(endpoint(`/admin/integrations/feishu/startup-groups/search?${query.toString()}`))
+    const data = await requestApi<FeishuChatCandidate[]>(
+      endpoint(`/admin/integrations/feishu/startup-groups/search?${query.toString()}`),
+      {},
+      '飞书群列表加载失败。',
+    )
     if (currentSequence !== startupNotifyChatSearchSequence)
       return
-    startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(response.data || [], selectedChatId)
+    startupNotifyChatOptions.value = normalizeStartupNotifyChatOptions(data || [], selectedChatId)
   }
   catch (error: any) {
     if (currentSequence !== startupNotifyChatSearchSequence)
@@ -760,17 +824,20 @@ async function createSync() {
 
   creatingSync.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuBitableSync>>(endpoint('/admin/integrations/feishu/bitable-syncs'), {
-      method: 'POST',
-      body: {
-        name,
-        source: {
-          ...resolvedSource,
-          appToken,
+    const createdSync = await requestApi<FeishuBitableSync>(
+      endpoint('/admin/integrations/feishu/bitable-syncs'),
+      {
+        method: 'POST',
+        body: {
+          name,
+          source: {
+            ...resolvedSource,
+            appToken,
+          },
         },
       },
-    })
-    const createdSync = response.data
+      '多维同步信息创建失败。',
+    )
     const draftTableId = createSyncForm.tableId.trim()
     const draftViewId = createSyncForm.viewId.trim()
     createSyncDrawerVisible.value = false
@@ -805,12 +872,16 @@ async function toggleSyncEnabled(sync: FeishuBitableSync, enabled: boolean) {
   syncToggleMutating[syncId] = true
   clearFeedback()
   try {
-    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}`), {
-      method: 'PATCH',
-      body: {
-        enabled,
+    await requestApi<unknown>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}`),
+      {
+        method: 'PATCH',
+        body: {
+          enabled,
+        },
       },
-    })
+      `同步信息${enabled ? '启用' : '禁用'}失败。`,
+    )
     await loadSyncs()
     setSuccess(`同步信息“${sync.name || syncId}”已${enabled ? '启用' : '禁用'}。`)
   }
@@ -833,9 +904,13 @@ async function archiveSync(sync: FeishuBitableSync) {
   archivingSyncMutating[syncId] = true
   clearFeedback()
   try {
-    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/archive`), {
-      method: 'POST',
-    })
+    await requestApi<unknown>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/archive`),
+      {
+        method: 'POST',
+      },
+      '同步信息归档失败。',
+    )
 
     if (editingSyncId.value === syncId)
       editSyncDrawerVisible.value = false
@@ -862,9 +937,13 @@ async function restoreSync(sync: FeishuBitableSync) {
   restoringSyncMutating[syncId] = true
   clearFeedback()
   try {
-    await $fetch<ApiResponse<FeishuBitableSync>>(endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/restore`), {
-      method: 'POST',
-    })
+    await requestApi<unknown>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/restore`),
+      {
+        method: 'POST',
+      },
+      '同步信息恢复失败。',
+    )
 
     await loadSyncs()
     setSuccess(`同步信息“${sync.name || syncId}”已恢复。为避免误触发，子表同步项与定时调度仍保持停用，请按需手动重新启用。`)
@@ -891,16 +970,20 @@ async function manualAddContestAdmin(targetUserId: string) {
   manualAddingKey.value = `user:${targetUserId}`
   clearFeedback()
   try {
-    const response = await $fetch<ApiResponse<FeishuAdminManualAddResult>>(endpoint('/admin/integrations/feishu/admin-members/manual-add'), {
-      method: 'POST',
-      body: {
-        targetUserId,
+    const data = await requestApi<FeishuAdminManualAddResult>(
+      endpoint('/admin/integrations/feishu/admin-members/manual-add'),
+      {
+        method: 'POST',
+        body: {
+          targetUserId,
+        },
       },
-    })
+      '手动添加管理员失败。',
+    )
 
-    setSuccess(response.data.granted
-      ? `已添加 ${response.data.username} 为 contest_admin。`
-      : `${response.data.username} 已经是 contest_admin。`)
+    setSuccess(data.granted
+      ? `已添加 ${data.username} 为 contest_admin。`
+      : `${data.username} 已经是 contest_admin。`)
     await Promise.all([
       loadAdminOverview(),
       loadFeishuDirectoryBrowser(true),
@@ -921,16 +1004,20 @@ async function manualAddContestAdminByUnionId(unionId: string) {
   manualAddingKey.value = `union:${unionId}`
   clearFeedback()
   try {
-    const response = await $fetch<ApiResponse<FeishuAdminManualAddResult>>(endpoint('/admin/integrations/feishu/admin-members/manual-add'), {
-      method: 'POST',
-      body: {
-        targetUnionId: unionId,
+    const data = await requestApi<FeishuAdminManualAddResult>(
+      endpoint('/admin/integrations/feishu/admin-members/manual-add'),
+      {
+        method: 'POST',
+        body: {
+          targetUnionId: unionId,
+        },
       },
-    })
+      '按飞书成员添加管理员失败。',
+    )
 
-    setSuccess(response.data.granted
-      ? `已添加 ${response.data.username} 为 contest_admin。`
-      : `${response.data.username} 已经是 contest_admin。`)
+    setSuccess(data.granted
+      ? `已添加 ${data.username} 为 contest_admin。`
+      : `${data.username} 已经是 contest_admin。`)
     await Promise.all([
       loadAdminOverview(),
       loadFeishuDirectoryBrowser(true),

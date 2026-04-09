@@ -114,7 +114,7 @@ async function loadTimeline() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/timelines`))
+    const response = await unsafeFetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/timelines`))
     const item = response.data.find(timeline => timeline.id === timelineId.value)
     if (!item) {
       errorText.value = '未找到该时间节点。'
@@ -140,7 +140,7 @@ async function save() {
   saving.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/timelines`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/timelines`), {
       method: 'PATCH',
       body: {
         timelineId: timelineId.value,

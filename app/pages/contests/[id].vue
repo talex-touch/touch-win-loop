@@ -15,6 +15,31 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const response = await fetch(path, {
+    credentials: 'include',
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const activeTab = ref<'overview' | 'track' | 'judge' | 'timeline' | 'faq' | 'resources' | 'policy'>('overview')
 
 const categoryLabels: Record<ResourceCategory, string> = {
@@ -125,15 +150,13 @@ const tabItems = [
 async function loadDetail() {
   if (!contestId.value)
     return
-  const response = await $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`))
-  detail.value = response.data
+  detail.value = await requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), '赛事详情加载失败。')
 }
 
 async function loadResources() {
   if (!contestId.value)
     return
-  const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/contests/${contestId.value}/resources`))
-  resources.value = response.data
+  resources.value = await requestApi<Resource[]>(endpoint(`/contests/${contestId.value}/resources`), '赛事资料加载失败。')
 }
 
 async function loadData() {

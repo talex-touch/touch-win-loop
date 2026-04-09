@@ -160,8 +160,8 @@ async function loadResource() {
   errorText.value = ''
   try {
     const [resourceResponse, docResponse] = await Promise.all([
-      $fetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`)),
-      $fetch<ApiResponse<(ResourceDocument & {
+      unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`)),
+      unsafeFetch<ApiResponse<(ResourceDocument & {
         latestTask: ResourceDocumentTask | null
         previewUrl: string
       })>>(endpoint(`/admin/contests/${contestId.value}/resources/${resourceId.value}/document`)).catch(() => null),
@@ -209,7 +209,7 @@ async function save() {
   errorText.value = ''
   try {
     const metadata = parseMetadataText(form.metadataText)
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/resources`), {
       method: 'PATCH',
       body: {
         resourceId: resourceId.value,
@@ -242,7 +242,7 @@ async function reparse() {
   reparseLoading.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/documents/${documentInfo.value.id}/reparse`), {
+    await unsafeFetch(endpoint(`/admin/documents/${documentInfo.value.id}/reparse`), {
       method: 'POST',
     })
     await loadResource()

@@ -32,6 +32,45 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const loading = ref(true)
 const errorText = ref('')
 const successText = ref('')
@@ -94,8 +133,7 @@ async function loadPermissions() {
 }
 
 async function loadOrganizations() {
-  const response = await $fetch<ApiResponse<OrgRow[]>>(endpoint('/admin/organizations'))
-  rows.value = response.data
+  rows.value = await requestApi<OrgRow[]>(endpoint('/admin/organizations'), {}, '组织列表加载失败。')
   page.value = 1
   hydrateDrafts()
 }
@@ -103,8 +141,8 @@ async function loadOrganizations() {
 async function loadPlans() {
   if (!canWritePricing.value)
     return
-  const response = await $fetch<ApiResponse<BillingPlan[]>>(endpoint('/admin/billing/plans'))
-  plans.value = response.data.filter(item => item.isActive)
+  const data = await requestApi<BillingPlan[]>(endpoint('/admin/billing/plans'), {}, '套餐列表加载失败。')
+  plans.value = data.filter((item: BillingPlan) => item.isActive)
   hydrateDrafts()
 }
 
@@ -120,14 +158,17 @@ async function switchPlan(workspaceId: string) {
   errorText.value = ''
   successText.value = ''
   try {
-    const response = await $fetch<ApiResponse<WorkspaceBillingEstimate>>(endpoint(`/admin/organizations/${workspaceId}/billing`), {
-      method: 'PATCH',
-      body: {
-        planId,
-        billingCycle,
+    estimateMap.value[workspaceId] = await requestApi<WorkspaceBillingEstimate>(
+      endpoint(`/admin/organizations/${workspaceId}/billing`),
+      {
+        method: 'PATCH',
+        body: {
+          planId,
+          billingCycle,
+        },
       },
-    })
-    estimateMap.value[workspaceId] = response.data
+      '套餐切换失败。',
+    )
     successText.value = '组织套餐切换成功，已完成费用估算。'
     await loadOrganizations()
   }

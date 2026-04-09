@@ -527,7 +527,7 @@ async function saveProjectProfileSettings() {
   projectProfileSaving.value = true
 
   try {
-    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(endpoint(`/projects/${projectId}/settings`), {
+    const response = await unsafeFetch<ApiResponse<ProjectSettingsSnapshot>>(endpoint(`/projects/${projectId}/settings`), {
       method: 'PATCH',
       body: {
         common: buildProjectSettingsCommonPatch(projectProfileForm),
@@ -557,7 +557,7 @@ async function openProjectMembersDialog(projectId: string) {
   projectMembersSnapshot.value = null
 
   try {
-    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
+    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
     if (actionProjectId.value !== projectId || !projectMembersDialogVisible.value)
       return
 
@@ -589,7 +589,7 @@ async function createProjectInvitation() {
   projectInvitationFeedbackText.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
+    const response = await unsafeFetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
       method: 'POST',
       body: {
         inviteeUsername: String(projectInvitationForm.inviteeUsername || '').trim() || undefined,
@@ -628,7 +628,7 @@ async function submitProjectMemberRole(member: { userId: string, role: ProjectMe
   projectMemberActionText.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`), {
+    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`), {
       method: 'POST',
       body: {
         userId,
@@ -661,7 +661,7 @@ async function removeProjectMember(userId: string) {
   projectMemberActionText.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members/${normalizedUserId}`), {
+    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members/${normalizedUserId}`), {
       method: 'DELETE',
     })
 
@@ -785,7 +785,7 @@ async function submitQuickCreate(mode: 'stay' | 'enter') {
   createErrorText.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<Project>>(endpoint('/projects/quick'), {
+    const response = await unsafeFetch<ApiResponse<Project>>(endpoint('/projects/quick'), {
       method: 'POST',
       body: {
         teamId: workspaceId,
@@ -840,7 +840,7 @@ async function submitQuickCreate(mode: 'stay' | 'enter') {
 
 async function loadWorkspaceBillingEstimate(workspaceId: string) {
   try {
-    const response = await $fetch<ApiResponse<WorkspaceBillingEstimate>>(endpoint(`/teams/${workspaceId}/billing/estimate`))
+    const response = await unsafeFetch(endpoint(`/teams/${workspaceId}/billing/estimate`)) as ApiResponse<WorkspaceBillingEstimate>
     if (activeWorkspaceId.value !== workspaceId)
       return
     workspaceBillingEstimate.value = response.data
@@ -859,18 +859,18 @@ async function loadPlatformPanel(auth: AuthMeResult) {
     platformPermissions.value = auth.user.platformPermissions || []
 
     if (canManageContest.value) {
-      const adminContestsResponse = await $fetch<ApiResponse<Contest[]>>(endpoint('/admin/contests'))
+      const adminContestsResponse = await unsafeFetch(endpoint('/admin/contests')) as ApiResponse<Contest[]>
       platformContests.value = adminContestsResponse.data.slice(0, 5)
       return
     }
 
-    const contestsResponse = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
+    const contestsResponse = await unsafeFetch(endpoint('/contests'), {
       query: {
         page: 1,
         pageSize: 5,
         sort: 'deadline',
       },
-    })
+    }) as ApiResponse<Contest[]>
     platformContests.value = contestsResponse.data
   }
   catch (error: any) {
@@ -916,9 +916,9 @@ async function loadWorkspaceDashboard() {
 
     if (!shouldOpenCreateDialog(route.query.create) && !shouldOpenCreateDialog(route.query.joined)) {
       try {
-        const lastProjectResponse = await $fetch<ApiResponse<TeamLastProjectPreference | null>>(
+        const lastProjectResponse = await unsafeFetch(
           endpoint(`/teams/${workspaceId}/last-project`),
-        )
+        ) as ApiResponse<TeamLastProjectPreference | null>
         const lastProjectId = String(lastProjectResponse.data?.projectId || '').trim()
         if (lastProjectId) {
           await navigateTo(projectWorkspacePath(workspaceId, lastProjectId), { replace: true })
@@ -931,13 +931,13 @@ async function loadWorkspaceDashboard() {
     }
 
     const [projectsResponse, contestsResponse] = await Promise.all([
-      $fetch<ApiResponse<Project[]>>(endpoint('/projects'), {
+      unsafeFetch(endpoint('/projects'), {
         query: {
           teamId: workspaceId,
           workspaceId,
         },
-      }),
-      $fetch<ApiResponse<Contest[]>>(endpoint('/contests')),
+      }) as Promise<ApiResponse<Project[]>>,
+      unsafeFetch(endpoint('/contests')) as Promise<ApiResponse<Contest[]>>,
     ])
 
     projects.value = projectsResponse.data

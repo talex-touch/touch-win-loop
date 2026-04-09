@@ -27,6 +27,46 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const loadingPermissions = ref(true)
 const loadingCasdoorStatus = ref(false)
 const loadingFeishuStatus = ref(false)
@@ -118,8 +158,8 @@ function setInfo(message: string) {
 async function loadPermissions() {
   loadingPermissions.value = true
   try {
-    const response = await $fetch<ApiResponse<AuthMeResult>>(endpoint('/auth/me'))
-    permissions.value = response.data.user.platformPermissions || []
+    const data = await requestApi<AuthMeResult>(endpoint('/auth/me'), {}, '权限加载失败，请先登录。')
+    permissions.value = data.user.platformPermissions || []
   }
   catch (error: any) {
     permissions.value = []
@@ -138,8 +178,8 @@ async function loadFeishuStatus() {
 
   loadingFeishuStatus.value = true
   try {
-    const response = await $fetch<ApiResponse<FeishuIntegrationConfig>>(endpoint('/admin/integrations/feishu/config'))
-    feishuEnabled.value = Boolean(response.data.enabled)
+    const data = await requestApi<FeishuIntegrationConfig>(endpoint('/admin/integrations/feishu/config'), {}, '飞书状态加载失败。')
+    feishuEnabled.value = Boolean(data.enabled)
   }
   catch {
     feishuEnabled.value = null
@@ -157,8 +197,8 @@ async function loadCasdoorStatus() {
 
   loadingCasdoorStatus.value = true
   try {
-    const response = await $fetch<ApiResponse<CasdoorIntegrationConfig>>(endpoint('/admin/integrations/casdoor/config'))
-    casdoorEnabled.value = isCasdoorConfigReady(response.data)
+    const data = await requestApi<CasdoorIntegrationConfig>(endpoint('/admin/integrations/casdoor/config'), {}, 'Casdoor 状态加载失败。')
+    casdoorEnabled.value = isCasdoorConfigReady(data)
   }
   catch {
     casdoorEnabled.value = null

@@ -48,7 +48,7 @@ async function loadItems() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/timelines`))
+    const response = await unsafeFetch<ApiResponse<ContestTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/timelines`))
     items.value = response.data
   }
   catch (error: any) {

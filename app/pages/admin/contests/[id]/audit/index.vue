@@ -34,7 +34,7 @@ async function loadLogs() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<AuditPagePayload>>(endpoint(`/admin/contests/${contestId.value}/audit`), {
+    const response = await unsafeFetch<ApiResponse<AuditPagePayload>>(endpoint(`/admin/contests/${contestId.value}/audit`), {
       query: {
         action: actionFilter.value.trim(),
         page: page.value,

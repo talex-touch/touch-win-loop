@@ -13,6 +13,45 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const contestId = computed(() => {
   const params = route.params as Record<string, string | string[] | undefined>
   const value = params.id
@@ -98,12 +137,12 @@ async function loadData() {
   loading.value = true
   errorText.value = ''
   try {
-    const [detailRes, checkRes] = await Promise.all([
-      $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`)),
-      $fetch<ApiResponse<PublishCheckResult>>(endpoint(`/admin/contests/${contestId.value}/publish-check`)),
+    const [detailData, checkData] = await Promise.all([
+      requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), {}, '数据加载失败。'),
+      requestApi<PublishCheckResult>(endpoint(`/admin/contests/${contestId.value}/publish-check`), {}, '数据加载失败。'),
     ])
-    detail.value = detailRes.data
-    publishCheck.value = checkRes.data
+    detail.value = detailData
+    publishCheck.value = checkData
   }
   catch (error: any) {
     detail.value = null
@@ -120,7 +159,11 @@ async function publishContest() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/publish`), { method: 'POST' })
+    await requestApi<unknown>(
+      endpoint(`/admin/contests/${contestId.value}/publish`),
+      { method: 'POST' },
+      '发布失败。',
+    )
     successText.value = '赛事已发布。'
     await loadData()
   }
@@ -137,7 +180,11 @@ async function archiveContest() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/archive`), { method: 'POST' })
+    await requestApi<unknown>(
+      endpoint(`/admin/contests/${contestId.value}/archive`),
+      { method: 'POST' },
+      '下架失败。',
+    )
     successText.value = '赛事已下架。'
     await loadData()
   }

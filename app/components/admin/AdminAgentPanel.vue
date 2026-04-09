@@ -50,6 +50,24 @@ function toJsonPayload(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+function buildRequestUrl(path: string, query: Record<string, string | number>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(query))
+    search.set(key, String(value))
+  const queryText = search.toString()
+  return queryText ? `${path}?${queryText}` : path
+}
+
+async function requestApi<T>(path: string, query: Record<string, string | number>, fallbackMessage: string): Promise<T> {
+  const response = await fetch(buildRequestUrl(path, query), {
+    credentials: 'include',
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw new Error(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const taskTypeOptions: Array<{ value: AdminAgentTaskType, label: string }> = [
   { value: 'publish_assistant', label: '发布助手' },
   { value: 'general', label: '通用咨询' },
@@ -152,21 +170,20 @@ async function loadSessions(preferredSessionId = '') {
 
   loadingSessions.value = true
   try {
-    const response = await $fetch<ApiResponse<AiChatSession[]>>(
+    const data = await requestApi<AiChatSession[]>(
       endpoint(`/teams/${props.workspaceId}/chat/sessions`),
       {
-        query: {
-          limit: 30,
-          projectId: adminChatProjectId.value,
-          mode: adminChatMode,
-        },
+        limit: 30,
+        projectId: adminChatProjectId.value,
+        mode: adminChatMode,
       },
+      '会话列表加载失败。',
     )
 
-    sessions.value = response.data
-    const preferred = response.data.find(item => item.id === preferredSessionId)
-      || response.data.find(item => item.id === activeSessionId.value)
-      || response.data[0]
+    sessions.value = data
+    const preferred = data.find(item => item.id === preferredSessionId)
+      || data.find(item => item.id === activeSessionId.value)
+      || data[0]
 
     activeSessionId.value = preferred?.id || ''
     if (preferred?.id)
@@ -192,17 +209,16 @@ async function loadMessages(sessionId: string) {
 
   loadingMessages.value = true
   try {
-    const response = await $fetch<ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>>(
+    const data = await requestApi<{ session: AiChatSession, messages: AiChatMessage[] }>(
       endpoint(`/teams/${props.workspaceId}/chat/sessions/${sessionId}/messages`),
       {
-        query: {
-          limit: 120,
-          projectId: adminChatProjectId.value,
-          mode: adminChatMode,
-        },
+        limit: 120,
+        projectId: adminChatProjectId.value,
+        mode: adminChatMode,
       },
+      '会话消息加载失败。',
     )
-    chatMessages.value = response.data.messages
+    chatMessages.value = data.messages
   }
   catch {
     chatMessages.value = []

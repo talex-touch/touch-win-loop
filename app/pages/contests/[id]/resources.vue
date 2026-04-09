@@ -32,6 +32,54 @@ const contestId = computed(() => {
 
 const sessionId = useResourceKnowledgeSessionId()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    query?: Record<string, string | number | undefined>
+    body?: unknown
+    headers?: Record<string, string> | undefined
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const url = new URL(path, 'http://localhost')
+  for (const [key, value] of Object.entries(options.query || {})) {
+    if (value === undefined || value === '')
+      continue
+    url.searchParams.set(key, String(value))
+  }
+
+  const headers = new Headers(options.headers)
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(`${url.pathname}${url.search}`, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const loading = ref(false)
 const loadingDetail = ref(false)
 const errorText = ref('')
@@ -63,9 +111,9 @@ async function loadDetail() {
     return
   loadingDetail.value = true
   try {
-    const response = await $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`))
-    contestName.value = response.data.contest.name
-    resourceStats.value = response.data.resourceStats
+    const data = await requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), {}, '资源详情加载失败。')
+    contestName.value = data.contest.name
+    resourceStats.value = data.resourceStats
   }
   finally {
     loadingDetail.value = false
@@ -78,21 +126,26 @@ async function loadResources() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/contests/${contestId.value}/resources`), {
-      query: {
-        category: category.value,
-        year: year.value,
-        availability: availability.value,
-        q: queryText.value,
-        tags: selectedTag.value,
-        sort: sort.value,
-        minQuality: minQuality.value,
+    resources.value = await requestApi<Resource[]>(
+      endpoint(`/contests/${contestId.value}/resources`),
+      {
+        query: {
+          category: category.value,
+          year: year.value,
+          availability: availability.value,
+          q: queryText.value,
+          tags: selectedTag.value,
+          sort: sort.value,
+          minQuality: minQuality.value,
+        },
+        headers: sessionId.value
+          ? {
+              'x-resource-session-id': sessionId.value,
+            }
+          : undefined,
       },
-      headers: sessionId.value ? {
-        'x-resource-session-id': sessionId.value,
-      } : undefined,
-    })
-    resources.value = response.data
+      '资源加载失败，请稍后重试。',
+    )
   }
   catch (error: any) {
     resources.value = []
@@ -104,27 +157,35 @@ async function loadResources() {
 }
 
 async function openResource(item: Resource) {
-  const popup = process.client ? window.open('about:blank', '_blank', 'noopener') : null
+  const popup = import.meta.client
+    ? window.open('about:blank', '_blank', 'noopener')
+    : null
   try {
-    const response = await $fetch<ApiResponse<{ resourceId: string, targetUrl: string }>>(endpoint(`/contests/${contestId.value}/resources/${item.id}/click`), {
-      method: 'POST',
-      body: {
-        query: queryText.value,
-        filters: {
-          category: category.value,
-          year: year.value,
-          availability: availability.value,
-          tag: selectedTag.value,
-          sort: sort.value,
-          minQuality: minQuality.value,
+    const data = await requestApi<{ resourceId: string, targetUrl: string }>(
+      endpoint(`/contests/${contestId.value}/resources/${item.id}/click`),
+      {
+        method: 'POST',
+        body: {
+          query: queryText.value,
+          filters: {
+            category: category.value,
+            year: year.value,
+            availability: availability.value,
+            tag: selectedTag.value,
+            sort: sort.value,
+            minQuality: minQuality.value,
+          },
+          resultCount: resources.value.length,
         },
-        resultCount: resources.value.length,
+        headers: sessionId.value
+          ? {
+              'x-resource-session-id': sessionId.value,
+            }
+          : undefined,
       },
-      headers: sessionId.value ? {
-        'x-resource-session-id': sessionId.value,
-      } : undefined,
-    })
-    const targetUrl = resolveApiUrl(response.data.targetUrl)
+      '资源访问记录失败。',
+    )
+    const targetUrl = resolveApiUrl(data.targetUrl)
     if (popup)
       popup.location.href = targetUrl
     else

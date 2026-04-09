@@ -126,7 +126,7 @@ async function save() {
   saving.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/tracks`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/tracks`), {
       method: 'POST',
       body: {
         name: form.name.trim(),

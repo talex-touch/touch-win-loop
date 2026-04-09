@@ -33,7 +33,7 @@ async function loadData() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`))
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/admin/contests/${contestId.value}/resources`))
     resources.value = response.data
   }
   catch (error: any) {

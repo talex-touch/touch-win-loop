@@ -112,7 +112,7 @@ function clearAiDraft() {
 async function loadTracks() {
   loadingTracks.value = true
   try {
-    const response = await $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
+    const response = await unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
     tracks.value = response.data
     if (!form.trackId && tracks.value.length > 0)
       form.trackId = tracks.value[0]!.id
@@ -134,7 +134,7 @@ async function save() {
   saving.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/track-timelines`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/track-timelines`), {
       method: 'POST',
       body: {
         trackId: form.trackId,

@@ -161,7 +161,7 @@ async function saveManual() {
     throw new Error('链接 URL 与正文内容至少填写一个。')
 
   const metadata = parseMetadataText(form.metadataText)
-  const response = await $fetch<ApiResponse<Resource>>(endpoint(`/admin/contests/${contestId.value}/resources`), {
+  const response = await unsafeFetch<ApiResponse<Resource>>(endpoint(`/admin/contests/${contestId.value}/resources`), {
     method: 'POST',
     body: {
       category: form.category,
@@ -207,7 +207,7 @@ async function saveDocument() {
   formData.append('copyrightNote', form.copyrightNote.trim())
   formData.append('status', form.status)
 
-  const response = await $fetch<ApiResponse<{
+  const response = await unsafeFetch<ApiResponse<{
     resource: { id: string }
     document: ResourceDocument
     task: ResourceDocumentTask

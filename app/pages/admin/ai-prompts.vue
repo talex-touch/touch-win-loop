@@ -801,17 +801,51 @@ function normalizeError(error: any, fallback: string): string {
   return String(error?.data?.message || error?.message || fallback)
 }
 
-function assertApiSuccess<T>(
-  response: ApiResponse<T> | null | undefined,
-  fallback: string,
-): T {
-  if (!response)
-    throw new Error(fallback)
-  if (response.code !== 0)
-    throw new Error(String(response.message || fallback))
-  if (response.data === null || response.data === undefined)
-    throw new Error(String(response.message || fallback))
-  return response.data
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    query?: Record<string, string | number | undefined>
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const url = new URL(path, 'http://localhost')
+  for (const [key, value] of Object.entries(options.query || {})) {
+    if (value === undefined || value === '')
+      continue
+    url.searchParams.set(key, String(value))
+  }
+
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(`${url.pathname}${url.search}`, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0 || payload.data === null || payload.data === undefined)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
 }
 
 function getRegistryChannelsSource(): RegistryChannel[] {
@@ -1070,12 +1104,15 @@ async function pullRegistryProviderModels(providerId: string) {
   registryProviderPullLoading[key] = true
   registryProviderTestMessage[key] = ''
   try {
-    const response = await $fetch<ApiResponse<ProviderModelsPayload>>(endpoint('/admin/ai/provider-models'), {
-      query: {
-        providerId: key,
+    const data = await requestApi<ProviderModelsPayload>(
+      endpoint('/admin/ai/provider-models'),
+      {
+        query: {
+          providerId: key,
+        },
       },
-    })
-    const data = assertApiSuccess(response, `Provider(${key}) 模型拉取失败。`)
+      `Provider(${key}) 模型拉取失败。`,
+    )
 
     const source = providers.value?.registry?.providers || []
     const updated = source.map((item) => {
@@ -1114,19 +1151,22 @@ async function testRegistryProvider(providerId: string) {
   registryProviderTestLoading[key] = true
   registryProviderTestMessage[key] = ''
   try {
-    const response = await $fetch<ApiResponse<{
+    const data = await requestApi<{
       provider: string
       model: string
       format: 'openai-compatible' | 'response'
       latencyMs: number
       responsePreview: string
-    }>>(endpoint('/admin/ai/providers/test'), {
-      method: 'POST',
-      body: {
-        providerId: key,
+    }>(
+      endpoint('/admin/ai/providers/test'),
+      {
+        method: 'POST',
+        body: {
+          providerId: key,
+        },
       },
-    })
-    const data = assertApiSuccess(response, `Provider(${key}) 测试失败。`)
+      `Provider(${key}) 测试失败。`,
+    )
     registryProviderTestMessage[key] = `测试成功：${data.provider}/${data.model}[${data.format}] · ${data.latencyMs}ms · ${toPromptPreview(data.responsePreview)}`
   }
   catch (error: any) {
@@ -1145,18 +1185,21 @@ async function testChannelScenario(channelKey: PlatformAiChannelKey) {
   registryChannelTestLoading[key] = true
   registryChannelTestMessage[key] = ''
   try {
-    const response = await $fetch<ApiResponse<{
+    const data = await requestApi<{
       responsePreview: string
       latencyMs: number
       provider: string
       model: string
-    }>>(endpoint('/admin/ai/channels/test'), {
-      method: 'POST',
-      body: {
-        channelKey: key,
+    }>(
+      endpoint('/admin/ai/channels/test'),
+      {
+        method: 'POST',
+        body: {
+          channelKey: key,
+        },
       },
-    })
-    const data = assertApiSuccess(response, `场景(${key}) 测试失败。`)
+      `场景(${key}) 测试失败。`,
+    )
     registryChannelTestMessage[key] = `测试成功：${data.provider}/${data.model} · ${data.latencyMs}ms`
   }
   catch (error: any) {
@@ -1233,12 +1276,15 @@ async function loadProviderModelOptions(
     errorMap.providers = ''
 
   try {
-    const response = await $fetch<ApiResponse<ProviderModelsPayload>>(endpoint('/admin/ai/provider-models'), {
-      query: {
-        scope: key,
+    const data = await requestApi<ProviderModelsPayload>(
+      endpoint('/admin/ai/provider-models'),
+      {
+        query: {
+          scope: key,
+        },
       },
-    })
-    const data = assertApiSuccess(response, `${toProviderModeLabel(key)} 模型拉取失败。`)
+      `${toProviderModeLabel(key)} 模型拉取失败。`,
+    )
 
     const items = data.items || []
     providerModelOptions[key] = items
@@ -1282,11 +1328,14 @@ async function patchProviders(
   errorMap.providers = ''
   errorMap.channels = ''
   try {
-    const response = await $fetch<ApiResponse<ProvidersPayload>>(endpoint('/admin/ai/providers'), {
-      method: 'PATCH',
-      body,
-    })
-    const data = assertApiSuccess(response, options.errorFallback)
+    const data = await requestApi<ProvidersPayload>(
+      endpoint('/admin/ai/providers'),
+      {
+        method: 'PATCH',
+        body,
+      },
+      options.errorFallback,
+    )
     providers.value = data
     applyProvidersToForm(data)
     if (channels.value) {
@@ -1419,8 +1468,7 @@ async function loadProviders() {
   loadingMap.providers = true
   errorMap.providers = ''
   try {
-    const response = await $fetch<ApiResponse<ProvidersPayload>>(endpoint('/admin/ai/providers'))
-    const data = assertApiSuccess(response, 'Providers 加载失败。')
+    const data = await requestApi<ProvidersPayload>(endpoint('/admin/ai/providers'), {}, 'Providers 加载失败。')
     providers.value = data
     applyProvidersToForm(data)
     loaded.providers = true
@@ -1446,12 +1494,15 @@ async function loadChannels() {
     if (!providers.value)
       await loadProviders()
 
-    const response = await $fetch<ApiResponse<ChannelsPayload>>(endpoint('/admin/ai/channels'), {
-      query: {
-        days: channelDays.value,
+    const data = await requestApi<ChannelsPayload>(
+      endpoint('/admin/ai/channels'),
+      {
+        query: {
+          days: channelDays.value,
+        },
       },
-    })
-    const data = assertApiSuccess(response, 'Channels 加载失败。')
+      'Channels 加载失败。',
+    )
     channels.value = data
     loaded.channels = true
   }
@@ -1468,12 +1519,15 @@ async function loadModels() {
   loadingMap.models = true
   errorMap.models = ''
   try {
-    const response = await $fetch<ApiResponse<ModelsPayload>>(endpoint('/admin/ai/models'), {
-      query: {
-        days: modelDays.value,
+    const data = await requestApi<ModelsPayload>(
+      endpoint('/admin/ai/models'),
+      {
+        query: {
+          days: modelDays.value,
+        },
       },
-    })
-    const data = assertApiSuccess(response, 'Models 加载失败。')
+      'Models 加载失败。',
+    )
     models.value = data
     loaded.models = true
   }
@@ -1490,14 +1544,17 @@ async function loadAudits() {
   loadingMap.audits = true
   errorMap.audits = ''
   try {
-    const response = await $fetch<ApiResponse<AuditsPayload>>(endpoint('/admin/ai/audits'), {
-      query: {
-        page: auditPage.value,
-        pageSize: auditPageSize.value,
-        action: auditAction.value.trim(),
+    const data = await requestApi<AuditsPayload>(
+      endpoint('/admin/ai/audits'),
+      {
+        query: {
+          page: auditPage.value,
+          pageSize: auditPageSize.value,
+          action: auditAction.value.trim(),
+        },
       },
-    })
-    const data = assertApiSuccess(response, 'Audits 加载失败。')
+      'Audits 加载失败。',
+    )
     audits.value = data.items || []
     auditTotal.value = Number(data.total || 0)
     loaded.audits = true
@@ -1516,20 +1573,23 @@ async function loadLogs() {
   loadingMap.logs = true
   errorMap.logs = ''
   try {
-    const response = await $fetch<ApiResponse<LogsPayload>>(endpoint('/admin/ai/logs'), {
-      query: {
-        page: logPage.value,
-        pageSize: logPageSize.value,
-        days: logFilters.days,
-        provider: logFilters.provider.trim(),
-        model: logFilters.model.trim(),
-        role: logFilters.role.trim(),
-        workspaceId: logFilters.workspaceId.trim(),
-        sessionId: logFilters.sessionId.trim(),
-        q: logFilters.q.trim(),
+    const data = await requestApi<LogsPayload>(
+      endpoint('/admin/ai/logs'),
+      {
+        query: {
+          page: logPage.value,
+          pageSize: logPageSize.value,
+          days: logFilters.days,
+          provider: logFilters.provider.trim(),
+          model: logFilters.model.trim(),
+          role: logFilters.role.trim(),
+          workspaceId: logFilters.workspaceId.trim(),
+          sessionId: logFilters.sessionId.trim(),
+          q: logFilters.q.trim(),
+        },
       },
-    })
-    const data = assertApiSuccess(response, 'Logs 加载失败。')
+      'Logs 加载失败。',
+    )
     logs.value = data.items || []
     logTotal.value = Number(data.total || 0)
     loaded.logs = true

@@ -248,8 +248,8 @@ async function loadRubric() {
   errorText.value = ''
   try {
     const [rubricsRes, tracksRes] = await Promise.all([
-      $fetch<ApiResponse<Rubric[]>>(endpoint(`/admin/contests/${contestId.value}/rubrics`)),
-      $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
+      unsafeFetch<ApiResponse<Rubric[]>>(endpoint(`/admin/contests/${contestId.value}/rubrics`)),
+      unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
     ])
     tracks.value = tracksRes.data
     const item = rubricsRes.data.find(rubric => rubric.id === rubricId.value)
@@ -294,7 +294,7 @@ async function save() {
   saving.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/rubrics`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/rubrics`), {
       method: 'PATCH',
       body: {
         rubricId: rubricId.value,

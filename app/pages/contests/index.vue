@@ -35,7 +35,7 @@ const levelOptions: Array<{ label: string, value: ContestLevel | '' }> = [
 async function loadContests() {
   loading.value = true
   try {
-    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
+    const response = await unsafeFetch(endpoint('/contests'), {
       query: {
         q: search.value,
         discipline: discipline.value,
@@ -46,7 +46,7 @@ async function loadContests() {
         page: 1,
         pageSize: 50,
       },
-    })
+    }) as ApiResponse<Contest[]>
     contests.value = response.data
   }
   finally {

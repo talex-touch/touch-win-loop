@@ -121,8 +121,8 @@ async function loadTimeline() {
   errorText.value = ''
   try {
     const [timelineRes, trackRes] = await Promise.all([
-      $fetch<ApiResponse<TrackTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/track-timelines`)),
-      $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
+      unsafeFetch<ApiResponse<TrackTimeline[]>>(endpoint(`/admin/contests/${contestId.value}/track-timelines`)),
+      unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`)),
     ])
     tracks.value = trackRes.data
     const item = timelineRes.data.find(timeline => timeline.id === timelineId.value)
@@ -157,7 +157,7 @@ async function save() {
   saving.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/track-timelines`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/track-timelines`), {
       method: 'PATCH',
       body: {
         trackTimelineId: timelineId.value,

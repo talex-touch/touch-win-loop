@@ -52,7 +52,7 @@ async function loadTracks() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
+    const response = await unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
     tracks.value = response.data
   }
   catch (error: any) {

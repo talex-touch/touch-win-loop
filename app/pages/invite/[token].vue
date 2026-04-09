@@ -102,7 +102,7 @@ async function acceptInvitationByToken() {
     return
 
   try {
-    const response = await $fetch<ApiResponse<{ invitation: Invitation }>>(endpoint(`/invitations/${encodeURIComponent(token)}/accept`), {
+    const response = await unsafeFetch<ApiResponse<{ invitation: Invitation }>>(endpoint(`/invitations/${encodeURIComponent(token)}/accept`), {
       method: 'POST',
     })
     await openJoinedDestination(response.data.invitation)

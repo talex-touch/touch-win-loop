@@ -132,7 +132,7 @@ async function loadTrack() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
+    const response = await unsafeFetch<ApiResponse<Track[]>>(endpoint(`/admin/contests/${contestId.value}/tracks`))
     const item = response.data.find(track => track.id === trackId.value)
     if (!item) {
       errorText.value = '未找到该赛道。'
@@ -170,7 +170,7 @@ async function save() {
   saving.value = true
   errorText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}/tracks`), {
+    await unsafeFetch(endpoint(`/admin/contests/${contestId.value}/tracks`), {
       method: 'PATCH',
       body: {
         trackId: trackId.value,

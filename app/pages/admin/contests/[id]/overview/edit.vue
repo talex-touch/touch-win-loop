@@ -15,6 +15,45 @@ const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const route = useRoute()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    body?: unknown
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const headers = new Headers()
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 function splitCsv(value: string): string[] {
   return value
     .split(/[\n,，、;]/g)
@@ -138,13 +177,13 @@ async function loadData() {
   loading.value = true
   errorText.value = ''
   try {
-    const [detailRes, disciplineRes] = await Promise.all([
-      $fetch<ApiResponse<ContestDetailPayload>>(endpoint(`/contests/${contestId.value}`)),
-      $fetch<ApiResponse<DisciplineDictionaryItem[]>>(endpoint('/admin/dictionaries/disciplines')),
+    const [detailData, disciplineData] = await Promise.all([
+      requestApi<ContestDetailPayload>(endpoint(`/contests/${contestId.value}`), {}, '基础信息加载失败。'),
+      requestApi<DisciplineDictionaryItem[]>(endpoint('/admin/dictionaries/disciplines'), {}, '基础信息加载失败。'),
     ])
 
-    const contest = detailRes.data.contest
-    disciplineOptions.value = disciplineRes.data
+    const contest = detailData.contest
+    disciplineOptions.value = disciplineData
 
     form.name = contest.name || ''
     form.level = contest.level
@@ -175,26 +214,30 @@ async function save() {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId.value}`), {
-      method: 'PATCH',
-      body: {
-        name: form.name.trim(),
-        level: form.level,
-        organizer: form.organizer.trim(),
-        coOrganizer: form.coOrganizer.trim(),
-        officialUrl: form.officialUrl.trim(),
-        summary: form.summary.trim(),
-        participantRequirements: form.participantRequirements.trim(),
-        teamRule: form.teamRule.trim(),
-        currentSeason: form.currentSeason.trim(),
-        disciplines: form.disciplines,
-        aliases: splitCsv(form.aliasesCsv),
-        keywords: splitCsv(form.keywordsCsv),
-        recommendedFor: splitCsv(form.recommendedForCsv),
-        hotScore: Number(form.hotScore || 0),
-        visibility: form.visibility,
+    await requestApi<unknown>(
+      endpoint(`/admin/contests/${contestId.value}`),
+      {
+        method: 'PATCH',
+        body: {
+          name: form.name.trim(),
+          level: form.level,
+          organizer: form.organizer.trim(),
+          coOrganizer: form.coOrganizer.trim(),
+          officialUrl: form.officialUrl.trim(),
+          summary: form.summary.trim(),
+          participantRequirements: form.participantRequirements.trim(),
+          teamRule: form.teamRule.trim(),
+          currentSeason: form.currentSeason.trim(),
+          disciplines: form.disciplines,
+          aliases: splitCsv(form.aliasesCsv),
+          keywords: splitCsv(form.keywordsCsv),
+          recommendedFor: splitCsv(form.recommendedForCsv),
+          hotScore: Number(form.hotScore || 0),
+          visibility: form.visibility,
+        },
       },
-    })
+      '基础信息保存失败。',
+    )
     successText.value = '基础信息已保存。'
   }
   catch (error: any) {

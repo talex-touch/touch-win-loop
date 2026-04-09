@@ -39,8 +39,13 @@ onMounted(async () => {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<ResourceAdminOverviewRow[]>>(endpoint('/admin/resources'))
-    rows.value = response.data
+    const response = await fetch(endpoint('/admin/resources'), {
+      credentials: 'include',
+    })
+    const result = await response.json().catch(() => null) as ApiResponse<ResourceAdminOverviewRow[]> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '资源治理总览加载失败。'))
+    rows.value = result.data
   }
   catch (error: any) {
     rows.value = []

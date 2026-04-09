@@ -21,7 +21,7 @@ async function loadProject() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Project>>(endpoint(`/projects/${projectId.value}`))
+    const response = await unsafeFetch<ApiResponse<Project>>(endpoint(`/projects/${projectId.value}`))
     const project = response.data
     const teamId = String(project.teamId || project.workspaceId || '').trim()
 

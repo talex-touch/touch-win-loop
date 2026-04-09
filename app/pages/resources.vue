@@ -24,6 +24,54 @@ const runtime = useRuntimeConfig()
 const { endpoint, resolveApiUrl } = useApiEndpoint(runtime)
 const sessionId = useResourceKnowledgeSessionId()
 
+type ApiRequestError = Error & {
+  data?: {
+    message?: string
+  }
+}
+
+function createApiRequestError(message: string): ApiRequestError {
+  const error = new Error(message) as ApiRequestError
+  error.data = { message }
+  return error
+}
+
+async function requestApi<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+    query?: Record<string, string | number | undefined>
+    body?: unknown
+    headers?: Record<string, string> | undefined
+  } = {},
+  fallbackMessage = '请求失败。',
+): Promise<T> {
+  const url = new URL(path, window.location.origin)
+  for (const [key, value] of Object.entries(options.query || {})) {
+    if (value === undefined || value === '')
+      continue
+    url.searchParams.set(key, String(value))
+  }
+
+  const headers = new Headers(options.headers)
+  let body: BodyInit | undefined
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json')
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(url.toString(), {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers,
+    body,
+  })
+  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
+  if (!response.ok || !payload || payload.code !== 0)
+    throw createApiRequestError(String(payload?.message || fallbackMessage))
+  return payload.data
+}
+
 const loading = ref(false)
 const loadingContests = ref(false)
 const errorText = ref('')
@@ -60,13 +108,12 @@ const tagOptions = computed(() => collectResourceTags(resources.value))
 async function loadContests() {
   loadingContests.value = true
   try {
-    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
+    contests.value = await requestApi<Contest[]>(endpoint('/contests'), {
       query: {
         page: 1,
         pageSize: 100,
       },
-    })
-    contests.value = response.data
+    }, '竞赛列表加载失败。')
   }
   finally {
     loadingContests.value = false
@@ -77,7 +124,7 @@ async function loadResources() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Resource[]>>(endpoint('/resources'), {
+    resources.value = await requestApi<Resource[]>(endpoint('/resources'), {
       query: {
         contestId: contestId.value,
         category: category.value,
@@ -88,11 +135,12 @@ async function loadResources() {
         sort: sort.value,
         minQuality: minQuality.value,
       },
-      headers: sessionId.value ? {
-        'x-resource-session-id': sessionId.value,
-      } : undefined,
-    })
-    resources.value = response.data
+      headers: sessionId.value
+        ? {
+            'x-resource-session-id': sessionId.value,
+          }
+        : undefined,
+    }, '资料加载失败，请稍后重试。')
   }
   catch (error: any) {
     resources.value = []
@@ -104,28 +152,36 @@ async function loadResources() {
 }
 
 async function openResource(item: Resource) {
-  const popup = process.client ? window.open('about:blank', '_blank', 'noopener') : null
+  const popup = import.meta.client
+    ? window.open('about:blank', '_blank', 'noopener')
+    : null
   try {
-    const response = await $fetch<ApiResponse<{ resourceId: string, targetUrl: string }>>(endpoint(`/contests/${item.contestId}/resources/${item.id}/click`), {
-      method: 'POST',
-      body: {
-        query: queryText.value,
-        filters: {
-          contestId: contestId.value,
-          category: category.value,
-          year: year.value,
-          availability: availability.value,
-          tag: selectedTag.value,
-          sort: sort.value,
-          minQuality: minQuality.value,
+    const data = await requestApi<{ resourceId: string, targetUrl: string }>(
+      endpoint(`/contests/${item.contestId}/resources/${item.id}/click`),
+      {
+        method: 'POST',
+        body: {
+          query: queryText.value,
+          filters: {
+            contestId: contestId.value,
+            category: category.value,
+            year: year.value,
+            availability: availability.value,
+            tag: selectedTag.value,
+            sort: sort.value,
+            minQuality: minQuality.value,
+          },
+          resultCount: resources.value.length,
         },
-        resultCount: resources.value.length,
+        headers: sessionId.value
+          ? {
+              'x-resource-session-id': sessionId.value,
+            }
+          : undefined,
       },
-      headers: sessionId.value ? {
-        'x-resource-session-id': sessionId.value,
-      } : undefined,
-    })
-    const targetUrl = resolveApiUrl(response.data.targetUrl)
+      '资料访问记录失败。',
+    )
+    const targetUrl = resolveApiUrl(data.targetUrl)
     if (popup)
       popup.location.href = targetUrl
     else

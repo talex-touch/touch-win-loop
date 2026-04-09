@@ -116,13 +116,19 @@ async function loadContests() {
   loading.value = true
   errorText.value = ''
   try {
-    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/admin/contests'), {
-      query: {
-        status: statusFilter.value,
-        q: search.value.trim(),
-      },
+    const url = new URL(endpoint('/admin/contests'), 'http://localhost')
+    if (statusFilter.value)
+      url.searchParams.set('status', statusFilter.value)
+    if (search.value.trim())
+      url.searchParams.set('q', search.value.trim())
+
+    const response = await fetch(`${url.pathname}${url.search}`, {
+      credentials: 'include',
     })
-    contests.value = response.data
+    const payload = await response.json().catch(() => null) as ApiResponse<Contest[]> | null
+    if (!response.ok || !payload || payload.code !== 0)
+      throw new Error(String(payload?.message || '赛事列表加载失败。'))
+    contests.value = payload.data
     page.value = 1
   }
   catch (error: any) {
@@ -148,9 +154,13 @@ async function publishContest(contestId: string) {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId}/publish`), {
+    const response = await fetch(endpoint(`/admin/contests/${contestId}/publish`), {
       method: 'POST',
+      credentials: 'include',
     })
+    const payload = await response.json().catch(() => null) as ApiResponse<unknown> | null
+    if (!response.ok || (payload && payload.code !== 0))
+      throw new Error(String(payload?.message || '发布失败。'))
     successText.value = '赛事发布成功。'
     await loadContests()
   }
@@ -169,9 +179,13 @@ async function archiveContest(contestId: string) {
   errorText.value = ''
   successText.value = ''
   try {
-    await $fetch(endpoint(`/admin/contests/${contestId}/archive`), {
+    const response = await fetch(endpoint(`/admin/contests/${contestId}/archive`), {
       method: 'POST',
+      credentials: 'include',
     })
+    const payload = await response.json().catch(() => null) as ApiResponse<unknown> | null
+    if (!response.ok || (payload && payload.code !== 0))
+      throw new Error(String(payload?.message || '下架失败。'))
     successText.value = '赛事已下架。'
     await loadContests()
   }
