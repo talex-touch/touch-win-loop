@@ -1,9 +1,25 @@
 <script setup lang="ts">
 import { appName } from '~/constants'
+import { createIconLogoFaviconHref } from '~/constants/icon-logo'
 
 useHead({
   title: appName,
 })
+
+if (import.meta.client) {
+  const colorMode = useColorMode()
+
+  useHead(() => ({
+    link: [{
+      key: 'app-favicon-svg',
+      id: 'app-favicon-svg',
+      rel: 'icon',
+      type: 'image/svg+xml',
+      sizes: 'any',
+      href: createIconLogoFaviconHref(colorMode.value === 'dark' ? 'dark' : 'light'),
+    }],
+  }))
+}
 </script>
 
 <template>
