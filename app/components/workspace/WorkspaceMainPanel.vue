@@ -8,6 +8,7 @@ import type {
   ProjectInvitationSummary,
   ProjectMeeting,
   ProjectMeetingDetail,
+  ProjectMeetingGuestShare,
   ProjectMeetingMode,
   ProjectMeetingUtterance,
   ProjectMemberRole,
@@ -28,7 +29,6 @@ import type {
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
 import type {
-  MappingTone,
   WorkspaceFormState,
   WorkspaceKeyword,
   WorkspaceMappingRow,
@@ -36,7 +36,6 @@ import type {
   WorkspaceProjectCommonForm,
   WorkspaceProjectContestBindingForm,
   WorkspaceProjectSaveState,
-  WorkspaceStatusToneMeta,
 } from '~/types/workspace'
 import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
 import RichTextEditor from '~/components/editor/RichTextEditor.vue'
@@ -100,12 +99,15 @@ const props = withDefaults(defineProps<{
   collabConnected?: boolean
   collabStatusText?: string
   collabPresenceMembers?: WorkspaceCollabPresenceMember[]
+  workspacePreparing?: boolean
   mappingRows?: WorkspaceMappingRow[]
+  mappingLoading?: boolean
   keywordCloud?: WorkspaceKeyword[]
   trendBars?: number[]
   formState?: WorkspaceFormState
   formSubmitting?: boolean
   topicBoard?: ProjectTopicBoard | null
+  topicBoardFetching?: boolean
   topicBoardLoading?: boolean
   topicBoardActioningCandidateId?: string
   activeProject?: Project | null
@@ -152,8 +154,10 @@ const props = withDefaults(defineProps<{
   meetingJoinUrl?: string
   meetingJoinToken?: string
   meetingJoinExpiresAt?: string
+  meetingRtcServerUrl?: string
+  activeMeetingGuestShare?: ProjectMeetingGuestShare | null
+  meetingGuestShareLoading?: boolean
   meetingPlanTier?: 'personal_team' | 'business_team' | null
-  toneMeta: Record<MappingTone, WorkspaceStatusToneMeta>
 }>(), {
   activeTabId: 'dashboard',
   openTabs: () => ['dashboard'],
@@ -195,7 +199,9 @@ const props = withDefaults(defineProps<{
   collabConnected: false,
   collabStatusText: '',
   collabPresenceMembers: () => [],
+  workspacePreparing: false,
   mappingRows: () => [],
+  mappingLoading: false,
   keywordCloud: () => [],
   trendBars: () => [],
   formState: () => ({
@@ -211,6 +217,7 @@ const props = withDefaults(defineProps<{
   }),
   formSubmitting: false,
   topicBoard: null,
+  topicBoardFetching: false,
   topicBoardLoading: false,
   topicBoardActioningCandidateId: '',
   activeProject: null,
@@ -278,6 +285,9 @@ const props = withDefaults(defineProps<{
   meetingJoinUrl: '',
   meetingJoinToken: '',
   meetingJoinExpiresAt: '',
+  meetingRtcServerUrl: '',
+  activeMeetingGuestShare: null,
+  meetingGuestShareLoading: false,
   meetingPlanTier: null,
 })
 
@@ -324,6 +334,9 @@ const emit = defineEmits<{
   'endMeeting': [meetingId: string]
   'selectMeeting': [meetingId: string]
   'openMeetingResource': [resourceId: string]
+  'createMeetingGuestShare': [meetingId: string]
+  'regenerateMeetingGuestShare': [meetingId: string]
+  'revokeMeetingGuestShare': [meetingId: string]
   'reconvertPreview': []
   'downloadPreviewSource': []
   'activatePreviewResource': [resourceId: string]
@@ -873,10 +886,10 @@ const dashboardGuide = computed(() => {
     },
     {
       id: 'mapping',
-      title: '完成核心指标对标',
+      title: '查看核心指标要求',
       done: props.mappingRows.length > 0,
-      doneText: `已生成 ${props.mappingRows.length} 条映射指标`,
-      todoText: '尚未生成映射指标。',
+      doneText: `已加载 ${props.mappingRows.length} 条赛道指标`,
+      todoText: '等待赛道评分规则返回。',
     },
     {
       id: 'submit',
@@ -887,6 +900,11 @@ const dashboardGuide = computed(() => {
     },
   ]
 })
+
+const showDashboardGuideSkeleton = computed(() => props.workspacePreparing)
+const showTopicBoardSkeleton = computed(() => props.workspacePreparing || props.topicBoardFetching)
+const showMappingSkeleton = computed(() => props.workspacePreparing || props.mappingLoading)
+const showInsightSkeleton = computed(() => props.workspacePreparing || props.topicBoardFetching || props.topicBoardLoading)
 
 function createResourceTabId(resourceId: string): WorkspaceResourceTabId {
   return `resource:${resourceId}` as WorkspaceResourceTabId
@@ -2498,7 +2516,21 @@ watch(activeTabId, (next) => {
             </div>
           </div>
 
-          <ol class="divide-slate-200 divide-y">
+          <div v-if="showDashboardGuideSkeleton" class="divide-slate-200 divide-y">
+            <div
+              v-for="index in 4"
+              :key="`dashboard-guide-skeleton-${index}`"
+              class="p-4 flex gap-3 items-start"
+              aria-hidden="true"
+            >
+              <span class="h-5 w-5 rounded-full bg-slate-200 animate-pulse shrink-0" />
+              <div class="flex-1 space-y-2">
+                <div class="h-3.5 w-32 rounded bg-slate-200 animate-pulse" />
+                <div class="h-3 w-3/5 rounded bg-slate-100 animate-pulse" />
+              </div>
+            </div>
+          </div>
+          <ol v-else class="divide-slate-200 divide-y">
             <li
               v-for="(step, index) in dashboardGuide"
               :key="step.id"
@@ -2545,7 +2577,42 @@ watch(activeTabId, (next) => {
             </button>
           </div>
 
-          <div v-if="topicBoardLoading" class="text-xs text-slate-500 p-4">
+          <div v-if="showTopicBoardSkeleton" class="p-4 space-y-4" aria-hidden="true">
+            <div class="grid grid-cols-1 gap-3 xl:grid-cols-[1.2fr,0.8fr]">
+              <div class="rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <div class="h-3 w-20 rounded bg-slate-200 animate-pulse" />
+                <div class="h-4 w-4/5 rounded bg-slate-200 animate-pulse" />
+                <div class="h-3 w-2/3 rounded bg-slate-100 animate-pulse" />
+              </div>
+              <div class="rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <div class="h-3 w-16 rounded bg-slate-200 animate-pulse" />
+                <div class="h-4 w-3/4 rounded bg-slate-200 animate-pulse" />
+                <div class="h-3 w-1/2 rounded bg-slate-100 animate-pulse" />
+              </div>
+            </div>
+            <div class="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              <div
+                v-for="index in 2"
+                :key="`topic-board-card-skeleton-${index}`"
+                class="rounded-lg border border-slate-200 bg-white p-4 space-y-3"
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <div class="w-full space-y-2">
+                    <div class="h-4 w-4/5 rounded bg-slate-200 animate-pulse" />
+                    <div class="h-3 w-2/3 rounded bg-slate-100 animate-pulse" />
+                  </div>
+                  <div class="h-5 w-12 rounded-full bg-slate-100 animate-pulse shrink-0" />
+                </div>
+                <div class="space-y-2">
+                  <div class="h-3 w-full rounded bg-slate-100 animate-pulse" />
+                  <div class="h-3 w-5/6 rounded bg-slate-100 animate-pulse" />
+                  <div class="h-3 w-2/3 rounded bg-slate-100 animate-pulse" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="topicBoardLoading" class="p-4 text-xs text-slate-500">
             正在基于当前竞赛、资料与团队标签生成候选题，请稍候...
           </div>
 
@@ -2770,21 +2837,39 @@ watch(activeTabId, (next) => {
             </div>
           </div>
 
-          <div class="overflow-x-auto">
+          <div v-if="showMappingSkeleton" class="p-4 space-y-3" aria-hidden="true">
+            <div
+              v-for="index in 4"
+              :key="`mapping-skeleton-${index}`"
+              class="grid grid-cols-[1.2fr,0.5fr,1fr,1fr] gap-4 items-center"
+            >
+              <div class="space-y-2">
+                <div class="h-3.5 w-3/5 rounded bg-slate-200 animate-pulse" />
+                <div class="h-3 w-4/5 rounded bg-slate-100 animate-pulse" />
+              </div>
+              <div class="h-2 w-20 rounded-full bg-slate-100 animate-pulse" />
+              <div class="h-3 w-full rounded bg-slate-100 animate-pulse" />
+              <div class="h-3 w-2/3 rounded bg-slate-100 animate-pulse" />
+            </div>
+          </div>
+          <div v-else-if="mappingRows.length === 0" class="px-4 py-8 text-center text-[11px] text-slate-500">
+            暂无赛道评分规则，待竞赛详情返回后展示真实指标要求。
+          </div>
+          <div v-else class="overflow-x-auto">
             <table class="text-xs text-left min-w-180 w-full border-collapse">
               <thead>
                 <tr class="text-slate-500 bg-slate-50/60">
                   <th class="font-semibold px-4 py-2 border-b border-slate-200">
-                    要求指标 (竞赛要求)
+                    要求指标
                   </th>
                   <th class="font-semibold px-4 py-2 text-center border-b border-slate-200">
-                    关联度
+                    权重
                   </th>
                   <th class="font-semibold px-4 py-2 border-b border-slate-200">
-                    对应项目能力点
+                    评分要点
                   </th>
                   <th class="font-semibold px-4 py-2 border-b border-slate-200">
-                    佐证材料状态
+                    证据要求
                   </th>
                 </tr>
               </thead>
@@ -2803,29 +2888,21 @@ watch(activeTabId, (next) => {
                     </div>
                   </td>
                   <td class="px-4 py-3.5 text-center">
-                    <span class="rounded-full bg-slate-100 h-1.5 w-20 inline-block overflow-hidden">
-                      <span
-                        class="h-full block"
-                        :class="toneMeta[row.tone].barClass"
-                        :style="{ width: `${row.score}%` }"
-                      />
-                    </span>
-                  </td>
-                  <td class="px-4 py-3.5">
-                    <div class="text-slate-700">
-                      {{ row.ability }}
-                    </div>
-                    <div class="text-[10px] text-blue-600 font-medium mt-1">
-                      <span v-for="tag in row.tags" :key="`${row.id}-${tag}`" class="mr-2">{{ tag }}</span>
+                    <div class="flex flex-col items-center gap-1">
+                      <span class="rounded-full bg-slate-100 h-1.5 w-20 inline-block overflow-hidden">
+                        <span
+                          class="h-full block bg-blue-500"
+                          :style="{ width: `${row.score}%` }"
+                        />
+                      </span>
+                      <span class="text-[10px] text-slate-500">{{ row.scoreLabel }}</span>
                     </div>
                   </td>
-                  <td class="px-4 py-3.5">
-                    <span
-                      class="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      :class="toneMeta[row.tone].badgeClass"
-                    >
-                      {{ toneMeta[row.tone].label }}
-                    </span>
+                  <td class="px-4 py-3.5 text-slate-700">
+                    {{ row.ability }}
+                  </td>
+                  <td class="px-4 py-3.5 text-slate-600">
+                    {{ row.supportingNote }}
                   </td>
                 </tr>
               </tbody>
@@ -2839,14 +2916,28 @@ watch(activeTabId, (next) => {
               <span class="material-symbols-outlined text-sm text-blue-500">hub</span>
               <span class="text-xs text-slate-500 tracking-wider font-bold uppercase">核心词云图</span>
             </div>
-            <div class="flex flex-wrap gap-2">
+            <div v-if="showInsightSkeleton" class="flex flex-wrap gap-2" aria-hidden="true">
+              <span
+                v-for="index in 6"
+                :key="`keyword-skeleton-${index}`"
+                class="h-6 rounded bg-slate-100 animate-pulse"
+                :class="index % 3 === 0 ? 'w-24' : index % 2 === 0 ? 'w-18' : 'w-14'"
+              />
+            </div>
+            <div v-else-if="keywordCloud.length === 0" class="text-[11px] text-slate-500">
+              暂无关键词洞察，待选题板返回真实标签后展示。
+            </div>
+            <div v-else class="flex flex-wrap gap-2">
               <span
                 v-for="word in keywordCloud"
                 :key="word.label"
                 class="text-[10px] px-2 py-1 rounded"
                 :class="word.active ? 'bg-blue-50 text-blue-600 font-bold' : 'bg-slate-50 text-slate-600'"
               >
-                {{ word.label }} ({{ word.count }})
+                {{ word.label }}
+                <template v-if="Number.isFinite(Number(word.count)) && Number(word.count) > 0">
+                  （{{ Number(word.count) }}）
+                </template>
               </span>
             </div>
           </div>
@@ -2856,7 +2947,18 @@ watch(activeTabId, (next) => {
               <span class="material-symbols-outlined text-sm text-green-500">show_chart</span>
               <span class="text-xs text-slate-500 tracking-wider font-bold uppercase">竞争力评估趋势</span>
             </div>
-            <div class="flex gap-1.5 h-16 items-end">
+            <div v-if="showInsightSkeleton" class="flex gap-1.5 h-16 items-end" aria-hidden="true">
+              <div
+                v-for="index in 5"
+                :key="`trend-skeleton-${index}`"
+                class="rounded-t flex-1 bg-slate-100 animate-pulse"
+                :style="{ height: `${24 + index * 10}%` }"
+              />
+            </div>
+            <div v-else-if="trendBars.length === 0" class="text-[11px] text-slate-500">
+              暂无趋势评分，待选题板返回真实对比结果后展示。
+            </div>
+            <div v-else class="flex gap-1.5 h-16 items-end">
               <div
                 v-for="(height, index) in trendBars"
                 :key="`trend-${index}`"
@@ -3068,6 +3170,9 @@ watch(activeTabId, (next) => {
         :join-url="meetingJoinUrl"
         :join-token="meetingJoinToken"
         :join-expires-at="meetingJoinExpiresAt"
+        :rtc-server-url="meetingRtcServerUrl"
+        :guest-share="activeMeetingGuestShare"
+        :guest-share-loading="meetingGuestShareLoading"
         :current-user-id="currentUserId"
         :workspace-type="workspaceType"
         :meeting-plan-tier="meetingPlanTier"
@@ -3075,6 +3180,9 @@ watch(activeTabId, (next) => {
         @start-meeting="emit('startMeeting', $event)"
         @end-meeting="emit('endMeeting', $event)"
         @open-resource="emit('openMeetingResource', $event)"
+        @create-guest-share="emit('createMeetingGuestShare', $event)"
+        @regenerate-guest-share="emit('regenerateMeetingGuestShare', $event)"
+        @revoke-guest-share="emit('revokeMeetingGuestShare', $event)"
       />
 
       <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
@@ -3954,7 +4062,7 @@ watch(activeTabId, (next) => {
                   :show-toolbar="false"
                   content-max-width="1040px"
                   placeholder="输入正文或标题，协作文档会实时同步"
-                  :heading-levels="[1, 2, 3]"
+                  :heading-levels="[1, 2, 3, 4, 5, 6]"
                   @selection-change="onMarkdownSelectionChange"
                   @remote-presence-change="onMarkdownRemotePresenceChange"
                 />

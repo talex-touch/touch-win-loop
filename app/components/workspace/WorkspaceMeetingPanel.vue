@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import type {
   ProjectMeetingDetail,
+  ProjectMeetingGuestShare,
   ProjectMeetingInvitee,
   ProjectMeetingUtterance,
   WorkspaceType,
 } from '~~/shared/types/domain'
+import { Message } from '@arco-design/web-vue'
+import ProjectMeetingWebClient from '~/components/meeting/ProjectMeetingWebClient.vue'
 
 interface MeetingCaptionItem {
   id: string
@@ -16,6 +19,16 @@ interface MeetingCaptionItem {
   final: boolean
 }
 
+interface MeetingParticipantViewItem {
+  id: string
+  displayName: string
+  role: string
+  audioTrackState: string
+  videoTrackState: string
+  joinedAt?: string | null
+  leftAt?: string | null
+}
+
 const props = withDefaults(defineProps<{
   activeMeeting?: ProjectMeetingDetail | null
   utterances?: ProjectMeetingUtterance[]
@@ -25,6 +38,9 @@ const props = withDefaults(defineProps<{
   joinUrl?: string
   joinToken?: string
   joinExpiresAt?: string
+  rtcServerUrl?: string
+  guestShare?: ProjectMeetingGuestShare | null
+  guestShareLoading?: boolean
   currentUserId?: string
   workspaceType?: WorkspaceType | ''
   meetingPlanTier?: 'personal_team' | 'business_team' | null
@@ -37,6 +53,9 @@ const props = withDefaults(defineProps<{
   joinUrl: '',
   joinToken: '',
   joinExpiresAt: '',
+  rtcServerUrl: '',
+  guestShare: null,
+  guestShareLoading: false,
   currentUserId: '',
   workspaceType: '',
   meetingPlanTier: null,
@@ -47,11 +66,17 @@ const emit = defineEmits<{
   startMeeting: [meetingId: string]
   endMeeting: [meetingId: string]
   openResource: [resourceId: string]
+  createGuestShare: [meetingId: string]
+  regenerateGuestShare: [meetingId: string]
+  revokeGuestShare: [meetingId: string]
 }>()
 
-const showEmbeddedMeeting = ref(false)
 const browserOnline = ref(true)
 const microphoneState = ref<'checking' | 'granted' | 'prompt' | 'denied' | 'unknown'>('checking')
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
 
 function resolvePlanTier(): 'personal_team' | 'business_team' {
   if (props.meetingPlanTier === 'personal_team')
@@ -62,7 +87,7 @@ function resolvePlanTier(): 'personal_team' | 'business_team' {
 }
 
 function formatDateTime(value: string | null | undefined): string {
-  const normalized = String(value || '').trim()
+  const normalized = normalizeString(value)
   if (!normalized)
     return '未设置'
 
@@ -109,11 +134,11 @@ function resolveStatusLabel(status: ProjectMeetingDetail['status'] | ''): string
 }
 
 function resolveInviteeName(invitee: ProjectMeetingInvitee): string {
-  return String(invitee.username || '').trim() || invitee.userId
+  return normalizeString(invitee.username) || invitee.userId
 }
 
 function openMeetingResource(resourceId: string | null | undefined): void {
-  const normalized = String(resourceId || '').trim()
+  const normalized = normalizeString(resourceId)
   if (!normalized)
     return
   emit('openResource', normalized)
@@ -146,7 +171,6 @@ function handleOnlineStatus(): void {
 function joinActiveMeeting(): void {
   if (!props.activeMeeting?.id || props.activeMeeting.status !== 'active')
     return
-  showEmbeddedMeeting.value = true
   emit('joinMeeting', props.activeMeeting.id)
 }
 
@@ -162,7 +186,39 @@ function endCurrentMeeting(): void {
   emit('endMeeting', props.activeMeeting.id)
 }
 
-const currentUserId = computed(() => String(props.currentUserId || '').trim())
+function createGuestShare(): void {
+  if (!props.activeMeeting?.id)
+    return
+  emit('createGuestShare', props.activeMeeting.id)
+}
+
+function regenerateGuestShare(): void {
+  if (!props.activeMeeting?.id)
+    return
+  emit('regenerateGuestShare', props.activeMeeting.id)
+}
+
+function revokeGuestShare(): void {
+  if (!props.activeMeeting?.id)
+    return
+  emit('revokeGuestShare', props.activeMeeting.id)
+}
+
+async function copyGuestShareUrl(): Promise<void> {
+  const shareUrl = normalizeString(props.guestShare?.shareUrl)
+  if (!import.meta.client || !shareUrl)
+    return
+
+  try {
+    await navigator.clipboard.writeText(shareUrl)
+    Message.success('外部参会链接已复制。')
+  }
+  catch {
+    Message.error('复制外部参会链接失败，请手动复制。')
+  }
+}
+
+const currentUserId = computed(() => normalizeString(props.currentUserId))
 const activeMeetingStatusLabel = computed(() => resolveStatusLabel(props.activeMeeting?.status || ''))
 const meetingModeLabel = computed(() => props.activeMeeting?.mode === 'audio' ? '语音会议' : '视频会议')
 const planLimitText = computed(() => resolvePlanTier() === 'personal_team' ? '15 分钟' : '24 小时')
@@ -170,13 +226,19 @@ const isHost = computed(() => {
   const meeting = props.activeMeeting
   if (!meeting)
     return false
-  return Boolean(currentUserId.value && meeting.startedByUserId === currentUserId.value)
+  return Boolean(currentUserId.value && normalizeString(meeting.startedByUserId) === currentUserId.value)
 })
-const canStartMeeting = computed(() => {
-  return props.activeMeeting?.status === 'scheduled' && isHost.value
-})
+const canStartMeeting = computed(() => props.activeMeeting?.status === 'scheduled' && isHost.value)
 const canJoinMeeting = computed(() => props.activeMeeting?.status === 'active')
 const canEndMeeting = computed(() => props.activeMeeting?.status === 'active' && isHost.value)
+const canManageGuestShare = computed(() => {
+  return Boolean(
+    isHost.value
+    && props.activeMeeting
+    && props.activeMeeting.status !== 'ended'
+    && props.activeMeeting.status !== 'failed',
+  )
+})
 const scheduledStartInFuture = computed(() => {
   const value = props.activeMeeting?.scheduledStartAt
   if (!value)
@@ -199,11 +261,11 @@ const infoRows = computed<Array<{ label: string, value: string }>>(() => {
     { label: '预约结束', value: formatDateTime(meeting.scheduledEndAt) },
     { label: '时长上限', value: planLimitText.value },
     { label: '本次时长', value: formatDurationMinutes(meeting.durationMinutes) },
-    { label: '主持人', value: meeting.startedByUserId || '未设置' },
+    { label: '主持人 ID', value: meeting.startedByUserId || '未设置' },
     { label: 'RTC Provider', value: meeting.provider || '未设置' },
   ]
 })
-const mergedCaptions = computed(() => {
+const mergedCaptions = computed<MeetingCaptionItem[]>(() => {
   const finals = props.utterances.map(item => ({
     id: item.id,
     text: item.text,
@@ -220,27 +282,32 @@ const mergedCaptions = computed(() => {
         return left.startedAtMs - right.startedAtMs
       return left.endedAtMs - right.endedAtMs
     })
-    .slice(-30)
+    .slice(-40)
+})
+const participantItems = computed<MeetingParticipantViewItem[]>(() => {
+  return (props.activeMeeting?.participants || []).map(item => ({
+    id: item.id,
+    displayName: item.displayName,
+    role: item.role,
+    audioTrackState: item.audioTrackState,
+    videoTrackState: item.videoTrackState,
+    joinedAt: item.joinedAt,
+    leftAt: item.leftAt,
+  }))
 })
 const meetingSummaryHint = computed(() => {
   if (!props.activeMeeting)
     return ''
   if (props.activeMeeting.status === 'scheduled') {
     return isHost.value
-      ? '预约会议尚未开始。你可以现在开始，也可以等到预约时间后再启动。'
-      : '预约会议尚未开始，需等待主持人启动后才能加入。'
+      ? '预约会议尚未开始。启动后才会创建 RTC 房间、签发成员 token，并开放外部 guest 入会。'
+      : '预约会议尚未开始。你可以先查看邀请信息，等待主持人手动启动。'
   }
   if (props.activeMeeting.status === 'active')
-    return '实时字幕只展示最终逐句稿与最新 partial，录制和纪要会在会议结束后自动沉淀到项目资源区。'
+    return '会议已切到站内 Web 客户端。实时字幕在右侧滚动，录制和纪要会在结束后自动沉淀。'
   if (props.activeMeeting.status === 'ended')
-    return '会议已结束，可继续查看逐句稿、录制与纪要资源。'
-  return '会议进入异常状态，可稍后刷新详情或重新发起。'
-})
-
-watch(() => props.joinUrl, (value) => {
-  if (!value)
-    return
-  showEmbeddedMeeting.value = true
+    return '会议已结束，可继续查看最终逐句稿、录制与纪要资源。'
+  return '会议进入异常状态，请稍后刷新详情或重新发起。'
 })
 
 onMounted(() => {
@@ -396,6 +463,67 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
+      <section v-if="canManageGuestShare" class="meeting-panel__card">
+        <div class="meeting-panel__share-head">
+          <div>
+            <h3 class="meeting-panel__section-title">
+              外部分享
+            </h3>
+            <p class="meeting-panel__share-hint">
+              单会议单链接。外部端严格脱敏，不展示项目 / 工作区 / 录制 / 纪要，guest token 为短时有效。
+            </p>
+          </div>
+          <div class="meeting-panel__share-actions">
+            <button
+              v-if="!guestShare"
+              class="meeting-btn"
+              type="button"
+              :disabled="guestShareLoading"
+              @click="createGuestShare"
+            >
+              {{ guestShareLoading ? '生成中...' : '生成外部链接' }}
+            </button>
+            <template v-else>
+              <button
+                class="meeting-btn"
+                type="button"
+                :disabled="guestShareLoading"
+                @click="copyGuestShareUrl"
+              >
+                复制外部参会链接
+              </button>
+              <button
+                class="meeting-btn meeting-btn--ghost"
+                type="button"
+                :disabled="guestShareLoading"
+                @click="regenerateGuestShare"
+              >
+                {{ guestShareLoading ? '处理中...' : '重新生成链接' }}
+              </button>
+              <button
+                class="meeting-btn meeting-btn--danger"
+                type="button"
+                :disabled="guestShareLoading"
+                @click="revokeGuestShare"
+              >
+                {{ guestShareLoading ? '处理中...' : '撤销链接' }}
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div v-if="guestShare" class="meeting-panel__share-body">
+          <label class="meeting-panel__share-field">
+            <span>当前有效链接</span>
+            <input :value="guestShare.shareUrl" readonly>
+          </label>
+          <div class="meeting-panel__share-meta">
+            <span>到期时间：{{ formatDateTime(guestShare.expiresAt) }}</span>
+            <span>会议结束后链接会立即失效</span>
+          </div>
+        </div>
+      </section>
+
       <section
         v-if="activeMeeting.status === 'scheduled'"
         class="meeting-panel__card"
@@ -409,7 +537,7 @@ onBeforeUnmount(() => {
             <p class="meeting-panel__notice-text">
               {{
                 isHost
-                  ? (scheduledStartInFuture ? '当前可提前开始，启动后才会创建 RTC 房间并签发 join token。' : '现在可以开始会议，启动后参会成员才能加入。')
+                  ? (scheduledStartInFuture ? '当前可提前开始，启动后才会创建 RTC 房间并签发成员 / guest join token。' : '现在可以开始会议，启动后成员与 guest 才能进入站内客户端。')
                   : '会议开始前可先查看邀请信息与预约时间，启动后才会出现加入入口。'
               }}
             </p>
@@ -417,78 +545,75 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <template v-else>
-        <section class="meeting-panel__card">
-          <div v-if="showEmbeddedMeeting && joinUrl" class="meeting-frame border border-slate-200 rounded-2xl overflow-hidden">
-            <iframe :src="joinUrl" title="meeting-embed" class="border-0 bg-slate-50 h-[560px] w-full" allow="camera; microphone; display-capture" />
-          </div>
-          <div v-else-if="activeMeeting.status === 'active'" class="meeting-panel__join-box">
-            <p class="text-sm text-slate-600">
-              当前会优先嵌入 provider join URL；若未返回嵌入地址，则展示 join token 供 RTC 客户端接入。
-            </p>
-            <div v-if="joinToken" class="mt-3">
-              <p class="text-xs text-slate-400">
-                Token 过期时间：{{ joinExpiresAt || '未提供' }}
-              </p>
-              <textarea class="meeting-token mt-2" readonly :value="joinToken" />
-            </div>
-          </div>
-
-          <div class="meeting-panel__content-grid">
-            <div class="meeting-panel__detail-box">
-              <h3 class="meeting-panel__section-title">
-                参会人
-              </h3>
-              <div class="meeting-panel__person-list">
-                <div
-                  v-for="participant in activeMeeting.participants"
-                  :key="participant.id"
-                  class="meeting-panel__person-item"
-                >
-                  <div class="meeting-panel__person-main">
-                    <span class="meeting-panel__person-name">{{ participant.displayName }}</span>
-                    <span class="meeting-panel__person-role">{{ participant.role }}</span>
-                  </div>
-                  <div class="meeting-panel__person-meta">
-                    音频：{{ participant.audioTrackState }} · 视频：{{ participant.videoTrackState }}
-                  </div>
-                </div>
-                <div v-if="activeMeeting.participants.length === 0" class="meeting-panel__empty-inline">
-                  暂无参会人数据。
-                </div>
-              </div>
-            </div>
-
-            <div class="meeting-panel__detail-box">
-              <div class="flex gap-3 items-center justify-between">
-                <h3 class="meeting-panel__section-title">
-                  实时字幕 / 逐句稿
-                </h3>
-                <span class="text-xs text-slate-400">{{ mergedCaptions.length }} 条</span>
-              </div>
-              <div class="meeting-panel__caption-list">
-                <div
-                  v-for="caption in mergedCaptions"
-                  :key="caption.id"
-                  class="meeting-panel__caption-item"
-                  :class="caption.final ? 'meeting-panel__caption-item--final' : 'meeting-panel__caption-item--partial'"
-                >
-                  <div class="flex gap-3 items-center justify-between">
-                    <span class="text-sm text-slate-800 font-medium">{{ caption.speakerName || caption.speakerLabel }}</span>
-                    <span class="text-xs text-slate-400">{{ formatMs(caption.startedAtMs) }} - {{ formatMs(caption.endedAtMs) }}</span>
-                  </div>
-                  <p class="text-sm text-slate-600 mt-1">
-                    {{ caption.text }}
-                  </p>
-                </div>
-                <div v-if="mergedCaptions.length === 0" class="meeting-panel__empty-inline">
-                  暂无逐句稿。
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+      <template v-else-if="activeMeeting.status === 'active'">
+        <ProjectMeetingWebClient
+          :provider="activeMeeting.provider"
+          :mode="activeMeeting.mode"
+          :meeting-id="activeMeeting.id"
+          :title="activeMeeting.title"
+          :rtc-join-token="joinToken"
+          :rtc-join-expires-at="joinExpiresAt"
+          :rtc-server-url="rtcServerUrl"
+          :rtc-join-url="joinUrl"
+          :participants="participantItems"
+          :captions="mergedCaptions"
+        />
       </template>
+
+      <section v-if="activeMeeting.status !== 'active'" class="meeting-panel__card">
+        <div class="meeting-panel__content-grid">
+          <div class="meeting-panel__detail-box">
+            <h3 class="meeting-panel__section-title">
+              参会人
+            </h3>
+            <div class="meeting-panel__person-list">
+              <div
+                v-for="participant in participantItems"
+                :key="participant.id"
+                class="meeting-panel__person-item"
+              >
+                <div class="meeting-panel__person-main">
+                  <span class="meeting-panel__person-name">{{ participant.displayName }}</span>
+                  <span class="meeting-panel__person-role">{{ participant.role }}</span>
+                </div>
+                <div class="meeting-panel__person-meta">
+                  音频：{{ participant.audioTrackState }} · 视频：{{ participant.videoTrackState }}
+                </div>
+              </div>
+              <div v-if="participantItems.length === 0" class="meeting-panel__empty-inline">
+                暂无参会人数据。
+              </div>
+            </div>
+          </div>
+
+          <div class="meeting-panel__detail-box">
+            <div class="flex gap-3 items-center justify-between">
+              <h3 class="meeting-panel__section-title">
+                最终逐句稿
+              </h3>
+              <span class="text-xs text-slate-400">{{ utterances.length }} 条</span>
+            </div>
+            <div class="meeting-panel__caption-list">
+              <div
+                v-for="caption in utterances"
+                :key="caption.id"
+                class="meeting-panel__caption-item"
+              >
+                <div class="flex gap-3 items-center justify-between">
+                  <span class="text-sm text-slate-800 font-medium">{{ caption.speakerName || caption.speakerLabel }}</span>
+                  <span class="text-xs text-slate-400">{{ formatMs(caption.startedAtMs) }} - {{ formatMs(caption.endedAtMs) }}</span>
+                </div>
+                <p class="text-sm text-slate-600 mt-1">
+                  {{ caption.text }}
+                </p>
+              </div>
+              <div v-if="utterances.length === 0" class="meeting-panel__empty-inline">
+                暂无逐句稿。
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </template>
   </div>
 </template>
@@ -526,7 +651,8 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.meeting-panel__actions {
+.meeting-panel__actions,
+.meeting-panel__share-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
@@ -550,7 +676,6 @@ onBeforeUnmount(() => {
 }
 
 .meeting-panel__content-grid {
-  margin-top: 1rem;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
 }
 
@@ -659,20 +784,49 @@ onBeforeUnmount(() => {
   color: #475569;
 }
 
-.meeting-panel__join-box {
-  border: 1px dashed #cbd5e1;
+.meeting-panel__share-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.meeting-panel__share-hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.meeting-panel__share-body {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.meeting-panel__share-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.meeting-panel__share-field input {
+  border: 1px solid #cbd5e1;
   border-radius: 1rem;
   background: #fff;
-  padding: 1rem;
+  padding: 0.85rem 1rem;
+  font-size: 0.85rem;
+  color: #334155;
 }
 
-.meeting-panel__caption-item--partial {
-  background: #fffbeb;
-  border-color: #fde68a;
-}
-
-.meeting-panel__caption-item--final {
-  background: #fff;
+.meeting-panel__share-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: #64748b;
 }
 
 .meeting-panel__empty,
@@ -732,18 +886,6 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
-.meeting-token {
-  width: 100%;
-  min-height: 132px;
-  border: 1px solid #cbd5e1;
-  border-radius: 1rem;
-  padding: 0.85rem 1rem;
-  resize: vertical;
-  background: #fff;
-  font-size: 0.8rem;
-  color: #334155;
-}
-
 @media (max-width: 1024px) {
   .meeting-panel__detail-grid,
   .meeting-panel__content-grid,
@@ -753,7 +895,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .meeting-panel__hero {
+  .meeting-panel__hero,
+  .meeting-panel__share-head {
     flex-direction: column;
   }
 

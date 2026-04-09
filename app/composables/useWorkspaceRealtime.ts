@@ -14,6 +14,7 @@ type RealtimeMessageListener = (message: RealtimeEnvelope) => void
 
 interface WorkspaceRealtimeClient {
   apiBase: string
+  guestToken: string
   socket: WebSocket | null
   serverReady: boolean
   requestSeed: number
@@ -27,6 +28,7 @@ interface WorkspaceRealtimeClient {
   listeners: Set<RealtimeMessageListener>
   workspaceSubscriptions: Set<string>
   projectSubscriptions: Set<string>
+  meetingSubscriptions: Set<string>
   collabSubscriptions: Set<string>
   status: Ref<RealtimeStatus>
   connected: Ref<boolean>
@@ -61,26 +63,34 @@ function splitRoomKey(roomKey: string): { projectId: string, resourceId: string 
   }
 }
 
-function buildRealtimeWsUrl(apiBase: string): string {
+function buildRealtimeWsUrl(apiBase: string, guestToken = ''): string {
   const normalizedApiBase = normalizeString(apiBase) || '/api'
   const origin = window.location.origin
   const wsOrigin = origin.replace(/^http/i, 'ws')
+  const normalizedGuestToken = normalizeString(guestToken)
   if (/^https?:\/\//i.test(normalizedApiBase)) {
     const parsed = new URL(normalizedApiBase)
     const wsProtocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:'
     const path = parsed.pathname.replace(/\/$/, '')
-    return `${wsProtocol}//${parsed.host}${path}/realtime/ws`
+    const url = new URL(`${wsProtocol}//${parsed.host}${path}/realtime/ws`)
+    if (normalizedGuestToken)
+      url.searchParams.set('meetingGuestToken', normalizedGuestToken)
+    return url.toString()
   }
 
   const path = normalizedApiBase.startsWith('/')
     ? normalizedApiBase
     : `/${normalizedApiBase}`
-  return `${wsOrigin}${path.replace(/\/$/, '')}/realtime/ws`
+  const url = new URL(`${wsOrigin}${path.replace(/\/$/, '')}/realtime/ws`)
+  if (normalizedGuestToken)
+    url.searchParams.set('meetingGuestToken', normalizedGuestToken)
+  return url.toString()
 }
 
-function createRealtimeClient(apiBase: string): WorkspaceRealtimeClient {
+function createRealtimeClient(apiBase: string, guestToken = ''): WorkspaceRealtimeClient {
   return {
     apiBase,
+    guestToken: normalizeString(guestToken),
     socket: null,
     serverReady: false,
     requestSeed: 0,
@@ -94,6 +104,7 @@ function createRealtimeClient(apiBase: string): WorkspaceRealtimeClient {
     listeners: new Set<RealtimeMessageListener>(),
     workspaceSubscriptions: new Set<string>(),
     projectSubscriptions: new Set<string>(),
+    meetingSubscriptions: new Set<string>(),
     collabSubscriptions: new Set<string>(),
     status: ref<RealtimeStatus>('idle'),
     connected: ref<boolean>(false),
@@ -200,6 +211,15 @@ function replaySubscriptions(client: WorkspaceRealtimeClient): void {
     })
   }
 
+  for (const meetingId of client.meetingSubscriptions) {
+    sendEnvelope(client, {
+      type: 'meeting.subscribe',
+      payload: {
+        meetingId,
+      },
+    })
+  }
+
   for (const roomKey of client.collabSubscriptions) {
     const { projectId, resourceId } = splitRoomKey(roomKey)
     if (!projectId || !resourceId)
@@ -237,7 +257,7 @@ function connectClient(client: WorkspaceRealtimeClient): void {
   client.closedByUser = false
   client.status.value = client.retryStep > 0 ? 'reconnecting' : 'connecting'
 
-  const socket = new WebSocket(buildRealtimeWsUrl(client.apiBase))
+  const socket = new WebSocket(buildRealtimeWsUrl(client.apiBase, client.guestToken))
   client.socket = socket
 
   socket.onopen = () => {
@@ -352,15 +372,28 @@ function closeClient(client: WorkspaceRealtimeClient): void {
   client.status.value = 'closed'
 }
 
-export function useWorkspaceRealtime() {
+export function useWorkspaceRealtime(options: {
+  guestToken?: string
+  forceIsolated?: boolean
+} = {}) {
   const runtime = useRuntimeConfig()
   const { apiBase } = useApiEndpoint(runtime)
   const normalizedApiBase = normalizeString(apiBase.value) || '/api'
+  const normalizedGuestToken = normalizeString(options.guestToken)
+  const isolated = Boolean(options.forceIsolated || normalizedGuestToken)
+
+  if (isolated) {
+    const client = createRealtimeClient(normalizedApiBase, normalizedGuestToken)
+    return createWorkspaceRealtimeFacade(client)
+  }
 
   if (!realtimeClientSingleton || realtimeClientSingleton.apiBase !== normalizedApiBase)
     realtimeClientSingleton = createRealtimeClient(normalizedApiBase)
 
-  const client = realtimeClientSingleton
+  return createWorkspaceRealtimeFacade(realtimeClientSingleton)
+}
+
+function createWorkspaceRealtimeFacade(client: WorkspaceRealtimeClient) {
 
   function connect(): void {
     connectClient(client)
@@ -398,6 +431,20 @@ export function useWorkspaceRealtime() {
     sendEnvelope(client, {
       type: 'project.subscribe',
       projectId: normalizedProjectId,
+    })
+  }
+
+  function subscribeMeeting(meetingId: string): void {
+    const normalizedMeetingId = normalizeString(meetingId)
+    if (!normalizedMeetingId)
+      return
+    client.meetingSubscriptions.add(normalizedMeetingId)
+    connectClient(client)
+    sendEnvelope(client, {
+      type: 'meeting.subscribe',
+      payload: {
+        meetingId: normalizedMeetingId,
+      },
     })
   }
 
@@ -491,6 +538,7 @@ export function useWorkspaceRealtime() {
     onMessage,
     subscribeWorkspace,
     subscribeProject,
+    subscribeMeeting,
     joinCollab,
     leaveCollab,
     sendCollabUpdate,

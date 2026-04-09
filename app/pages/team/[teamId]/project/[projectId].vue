@@ -23,6 +23,7 @@ import type {
   ChatMessage,
   CollabPurpose,
   Contest,
+  ContestDetailPayload,
   Project,
   ProjectContestAdaptation,
   ProjectInvitationSummary,
@@ -30,6 +31,7 @@ import type {
   ProjectIssueReport,
   ProjectMeeting,
   ProjectMeetingDetail,
+  ProjectMeetingGuestShare,
   ProjectMeetingMode,
   ProjectMeetingUtterance,
   ProjectMemberManagementSnapshot,
@@ -72,7 +74,6 @@ import type {
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type {
-  MappingTone,
   WorkspaceFormState,
   WorkspaceKeyword,
   WorkspaceLinkedContestResourceGroup,
@@ -81,7 +82,6 @@ import type {
   WorkspaceProjectCommonForm,
   WorkspaceProjectContestBindingForm,
   WorkspaceProjectSaveState,
-  WorkspaceStatusToneMeta,
   WorkspaceTopicBoardDraft,
 } from '~/types/workspace'
 import { Message } from '@arco-design/web-vue'
@@ -345,21 +345,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function defaultAssistantGreeting(): ChatMessage {
-  return {
-    role: 'assistant',
-    content: '你好，我是 Loopy。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
-  }
-}
-
-function toTone(score: number): MappingTone {
-  if (score >= 75)
-    return 'complete'
-  if (score >= 40)
-    return 'warning'
-  return 'todo'
-}
-
 function includesText(source: string, keyword: string): boolean {
   return source.toLowerCase().includes(keyword.toLowerCase())
 }
@@ -577,8 +562,12 @@ interface WorkspaceMeetingCaptionItem {
 
 interface ProjectMeetingJoinSessionPayload {
   meeting: ProjectMeetingDetail
-  joinToken: string
-  joinExpiresAt: string
+  rtcJoinToken?: string
+  rtcJoinExpiresAt?: string
+  rtcServerUrl?: string
+  rtcJoinUrl?: string
+  joinToken?: string
+  joinExpiresAt?: string
   joinUrl?: string
 }
 
@@ -594,6 +583,10 @@ interface DefenseRealtimeSessionPayload {
   sessionId: string
   meetingId: string
   meeting: ProjectMeetingDetail
+  rtcJoinToken?: string
+  rtcJoinExpiresAt?: string
+  rtcServerUrl?: string
+  rtcJoinUrl?: string
   joinToken: string
   joinExpiresAt: string
   joinUrl?: string
@@ -645,6 +638,7 @@ const trackType = ref('')
 const topK = ref(6)
 const topicBoardDraft = reactive<WorkspaceTopicBoardDraft>(createEmptyTopicBoardDraft())
 const topicBoardLoading = ref(false)
+const topicBoardFetching = ref(false)
 const topicBoardError = ref('')
 const topicBoardSnapshot = ref<ProjectTopicBoard | null>(null)
 const topicBoardHistory = ref<ProjectTopicBoard[]>([])
@@ -667,6 +661,7 @@ const meetingLiveCaptions = ref<WorkspaceMeetingCaptionItem[]>([])
 const workspaceMembers = ref<ProjectMemberSummary[]>([])
 const workspaceInvitations = ref<ProjectInvitationSummary[]>([])
 const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
+const selectedContestDetail = ref<ContestDetailPayload | null>(null)
 const projects = ref<Project[]>([])
 const allProjects = ref<Project[]>([])
 const me = ref<AuthMeResult | null>(null)
@@ -700,6 +695,7 @@ const previewStatusLoading = ref(false)
 const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
 const previewMode = ref<WorkspacePreviewMode>('binary')
 const projectSettingsLoading = ref(false)
+const selectedContestDetailLoading = ref(false)
 const projectSettingsSaveState = ref<WorkspaceProjectSaveState>('idle')
 const workspaceDisplayPreferenceSnapshot = ref<WorkspaceDisplayPreferenceSnapshot>(defaultWorkspaceDisplayPreferenceSnapshot())
 const workspaceDisplayPreferenceLoading = ref(false)
@@ -708,6 +704,8 @@ const workspaceDisplayPreferenceError = ref('')
 const meetingJoinUrl = ref('')
 const meetingJoinToken = ref('')
 const meetingJoinExpiresAt = ref('')
+const meetingRtcServerUrl = ref('')
+const activeMeetingGuestShare = ref<ProjectMeetingGuestShare | null>(null)
 const projectSettingsCommon = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
 const projectSettingsBindings = ref<WorkspaceProjectContestBindingForm[]>([])
 const projectSettingsCurrentContestId = ref('')
@@ -744,6 +742,7 @@ const projectOutlineFirstLoaded = ref(false)
 const projectResourceSharesLoading = ref(false)
 const projectMeetingsLoading = ref(false)
 const meetingDetailLoading = ref(false)
+const meetingGuestShareLoading = ref(false)
 const workspaceMemberManagementLoading = ref(false)
 const workspaceInvitationSubmitting = ref(false)
 const workspaceMemberRoleUpdatingUserId = ref('')
@@ -752,7 +751,7 @@ const workspaceInvitationRevokingId = ref('')
 const resourceMutating = ref(false)
 const meetingMutating = ref(false)
 
-const chatMessages = ref<ChatMessage[]>([defaultAssistantGreeting()])
+const chatMessages = ref<ChatMessage[]>([])
 const chatSessions = ref<AiChatSession[]>([])
 const activeChatSessionId = ref('')
 const chatInput = ref('')
@@ -787,6 +786,9 @@ const rightSidebarCollapsed = computed(() => rightSidebarUserCollapsed.value || 
 const projectWorkspaceViewHydrating = ref(false)
 const projectWorkspaceModeHydrating = ref(false)
 const projectWorkspaceViewReady = ref(false)
+const workspaceBootstrapLoading = ref(false)
+
+let workspaceBootstrapRequestId = 0
 
 function getProjectSettingsDraftStorageKey(projectId: string): string {
   if (!import.meta.client)
@@ -1550,8 +1552,8 @@ function clearProjectSettingsDraftCache(projectId: string): void {
   }
 }
 
-function resetChatStateWithGreeting() {
-  chatMessages.value = [defaultAssistantGreeting()]
+function resetChatState() {
+  chatMessages.value = []
   chatDraft.value = null
   chatMissingFields.value = []
   defenseRounds.value = []
@@ -1590,6 +1592,24 @@ const contestSource = computed(() => {
 })
 const selectedContest = computed(() => contestSource.value.find(contest => contest.id === selectedContestId.value) || null)
 const selectedTrack = computed(() => selectedContest.value?.tracks.find(track => track.id === selectedTrackId.value) || null)
+const selectedTrackRubric = computed(() => {
+  const detail = selectedContestDetail.value
+  const trackId = String(selectedTrackId.value || '').trim()
+  const rubricId = String(selectedTrack.value?.rubricId || '').trim()
+  if (!detail || (!trackId && !rubricId))
+    return null
+
+  if (rubricId) {
+    const matchedByRubricId = detail.rubrics.find(item => item.id === rubricId)
+    if (matchedByRubricId)
+      return matchedByRubricId
+  }
+
+  if (!trackId)
+    return null
+
+  return detail.rubrics.find(item => item.trackId === trackId) || null
+})
 const contestMap = computed(() => {
   const map = new Map<string, Contest>()
   for (const contest of contestSource.value)
@@ -1678,6 +1698,14 @@ const currentProjectMember = computed(() => {
 })
 const currentProjectMemberRole = computed<ProjectMemberRole | ''>(() => {
   return currentProjectMember.value?.role || ''
+})
+const currentUserMeetingHostId = computed(() => String(me.value?.user.id || '').trim())
+const activeMeetingIsHost = computed(() => {
+  return Boolean(
+    currentUserMeetingHostId.value
+    && activeMeetingDetail.value
+    && normalizeString(activeMeetingDetail.value.startedByUserId) === currentUserMeetingHostId.value,
+  )
 })
 const workspaceCanManageMembers = computed(() => {
   if (me.value?.user.isPlatformAdmin)
@@ -2002,6 +2030,7 @@ function clearMeetingJoinSession(): void {
   meetingJoinUrl.value = ''
   meetingJoinToken.value = ''
   meetingJoinExpiresAt.value = ''
+  meetingRtcServerUrl.value = ''
 }
 
 function resetProjectMeetingState(): void {
@@ -2011,6 +2040,7 @@ function resetProjectMeetingState(): void {
   activeMeetingDetail.value = null
   activeMeetingUtterances.value = []
   meetingLiveCaptions.value = []
+  activeMeetingGuestShare.value = null
   clearMeetingJoinSession()
 }
 
@@ -2097,6 +2127,7 @@ function applyProjectMeetingSession(
     joinUrl?: string
     joinToken?: string
     joinExpiresAt?: string
+    rtcServerUrl?: string
     resetCaptions?: boolean
     preserveJoinSession?: boolean
   } = {},
@@ -2107,6 +2138,7 @@ function applyProjectMeetingSession(
     activeMeetingUtterances.value = []
     if (options.resetCaptions !== false)
       meetingLiveCaptions.value = []
+    activeMeetingGuestShare.value = null
     clearMeetingJoinSession()
     return
   }
@@ -2118,9 +2150,49 @@ function applyProjectMeetingSession(
     meetingJoinUrl.value = normalizeString(options.joinUrl)
     meetingJoinToken.value = normalizeString(options.joinToken)
     meetingJoinExpiresAt.value = normalizeString(options.joinExpiresAt)
+    meetingRtcServerUrl.value = normalizeString(options.rtcServerUrl)
   }
   if (options.resetCaptions)
     meetingLiveCaptions.value = []
+  syncMeetingGuestShareState(meeting)
+}
+
+async function loadProjectMeetingGuestShare(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId || !activeMeetingIsHost.value) {
+    activeMeetingGuestShare.value = null
+    return
+  }
+
+  meetingGuestShareLoading.value = true
+  try {
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare | null>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
+    )
+    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
+      activeMeetingGuestShare.value = response.data || null
+  }
+  catch {
+    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
+      activeMeetingGuestShare.value = null
+  }
+  finally {
+    meetingGuestShareLoading.value = false
+  }
+}
+
+function syncMeetingGuestShareState(meeting: ProjectMeetingDetail | null): void {
+  if (!meeting) {
+    activeMeetingGuestShare.value = null
+    return
+  }
+  const currentUserId = currentUserMeetingHostId.value
+  if (!currentUserId || normalizeString(meeting.startedByUserId) !== currentUserId || meeting.status === 'ended' || meeting.status === 'failed') {
+    activeMeetingGuestShare.value = null
+    return
+  }
+  void loadProjectMeetingGuestShare(meeting.id)
 }
 
 async function loadProjectMeetingUtterances(meetingId: string): Promise<void> {
@@ -2177,6 +2249,7 @@ async function loadProjectMeetingDetail(
     if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId) {
       activeMeetingDetail.value = null
       activeMeetingUtterances.value = []
+      activeMeetingGuestShare.value = null
       clearMeetingJoinSession()
     }
     statusLine.value = resolveApiErrorMessage(error, '加载会议详情失败，请稍后重试。')
@@ -2196,6 +2269,7 @@ async function selectProjectMeeting(meetingId: string): Promise<void> {
     return
 
   ensureMeetingDetailTabOpen(targetMeetingId)
+  workspaceRealtime.subscribeMeeting(targetMeetingId)
   const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
   activeMeetingId.value = targetMeetingId
   if (isSwitchingMeeting) {
@@ -2240,6 +2314,7 @@ async function loadProjectMeetings(
       ? items.find(item => item.id === preferredMeetingId) || null
       : null
     if (preferredMeeting) {
+      workspaceRealtime.subscribeMeeting(preferredMeeting.id)
       const isSwitchingMeeting = activeMeetingId.value !== preferredMeeting.id
       activeMeetingId.value = preferredMeeting.id
       if (isSwitchingMeeting) {
@@ -2311,7 +2386,7 @@ async function submitProjectMeetingCreate(payload: ProjectMeetingCreatePayload):
 
   meetingMutating.value = true
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
       endpoint(`/projects/${projectId}/meetings`),
       {
         method: 'POST',
@@ -2319,12 +2394,17 @@ async function submitProjectMeetingCreate(payload: ProjectMeetingCreatePayload):
       },
     )
 
-    const targetMeeting = response.data
+    const targetMeeting = response.data.meeting
     activeMeetingUtterances.value = []
     applyProjectMeetingSession(targetMeeting, {
+      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
+      joinToken: response.data.rtcJoinToken || response.data.joinToken,
+      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
+      rtcServerUrl: response.data.rtcServerUrl,
       resetCaptions: true,
     })
     ensureMeetingDetailTabOpen(targetMeeting.id)
+    workspaceRealtime.subscribeMeeting(targetMeeting.id)
     openMainTabs.value = normalizeWorkspaceMainTabIds(
       openMainTabs.value.filter(tabId => tabId !== createMeetingCreateTabId(payload.mode)),
       { allowEmpty: true },
@@ -2353,6 +2433,7 @@ async function joinProjectMeeting(meetingId: string): Promise<void> {
   meetingMutating.value = true
   try {
     ensureMeetingDetailTabOpen(targetMeetingId)
+    workspaceRealtime.subscribeMeeting(targetMeetingId)
     activeMeetingId.value = targetMeetingId
     const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
       endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/join`),
@@ -2361,9 +2442,10 @@ async function joinProjectMeeting(meetingId: string): Promise<void> {
       },
     )
     applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.joinUrl,
-      joinToken: response.data.joinToken,
-      joinExpiresAt: response.data.joinExpiresAt,
+      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
+      joinToken: response.data.rtcJoinToken || response.data.joinToken,
+      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
+      rtcServerUrl: response.data.rtcServerUrl,
       resetCaptions: false,
     })
     if (response.data.meeting)
@@ -2394,12 +2476,14 @@ async function startProjectMeeting(meetingId: string): Promise<void> {
       },
     )
     applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.joinUrl,
-      joinToken: response.data.joinToken,
-      joinExpiresAt: response.data.joinExpiresAt,
+      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
+      joinToken: response.data.rtcJoinToken || response.data.joinToken,
+      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
+      rtcServerUrl: response.data.rtcServerUrl,
       resetCaptions: true,
     })
     ensureMeetingDetailTabOpen(targetMeetingId)
+    workspaceRealtime.subscribeMeeting(targetMeetingId)
     await loadProjectMeetingUtterances(targetMeetingId)
     statusLine.value = '会议已启动。'
     Message.success('会议已启动。')
@@ -2435,6 +2519,7 @@ async function endProjectMeeting(meetingId: string): Promise<void> {
         resetCaptions: false,
       })
       clearMeetingJoinSession()
+      activeMeetingGuestShare.value = null
       await loadProjectMeetingUtterances(targetMeetingId)
     }
 
@@ -2448,6 +2533,96 @@ async function endProjectMeeting(meetingId: string): Promise<void> {
   }
   finally {
     meetingMutating.value = false
+  }
+}
+
+async function createProjectMeetingGuestShare(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
+    return
+
+  meetingGuestShareLoading.value = true
+  try {
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
+      {
+        method: 'POST',
+      },
+    )
+    if (activeMeetingId.value === targetMeetingId)
+      activeMeetingGuestShare.value = response.data
+    statusLine.value = '外部分享链接已生成。'
+    Message.success('外部分享链接已生成。')
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '生成外部分享链接失败，请稍后重试。')
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    meetingGuestShareLoading.value = false
+  }
+}
+
+async function regenerateProjectMeetingGuestShare(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
+    return
+
+  meetingGuestShareLoading.value = true
+  try {
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
+      {
+        method: 'POST',
+        body: {
+          regenerate: true,
+        },
+      },
+    )
+    if (activeMeetingId.value === targetMeetingId)
+      activeMeetingGuestShare.value = response.data
+    statusLine.value = '外部分享链接已重新生成，旧链接已失效。'
+    Message.success('外部分享链接已重新生成。')
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '重新生成外部分享链接失败，请稍后重试。')
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    meetingGuestShareLoading.value = false
+  }
+}
+
+async function revokeProjectMeetingGuestShare(meetingId: string): Promise<void> {
+  const projectId = String(activeProjectId.value || '').trim()
+  const targetMeetingId = normalizeString(meetingId)
+  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
+    return
+
+  meetingGuestShareLoading.value = true
+  try {
+    await unsafeFetch<ApiResponse<ProjectMeetingGuestShare | null>>(
+      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
+      {
+        method: 'DELETE',
+      },
+    )
+    if (activeMeetingId.value === targetMeetingId)
+      activeMeetingGuestShare.value = null
+    statusLine.value = '外部分享链接已撤销。'
+    Message.success('外部分享链接已撤销。')
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '撤销外部分享链接失败，请稍后重试。')
+    statusLine.value = message
+    Message.error(message)
+  }
+  finally {
+    meetingGuestShareLoading.value = false
   }
 }
 
@@ -2531,76 +2706,33 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
   collabSession.handleRealtimeEnvelope(message)
 }
 
-const toneMeta: Record<MappingTone, WorkspaceStatusToneMeta> = {
-  complete: {
-    label: '已完备',
-    badgeClass: 'bg-green-100 text-green-700',
-    barClass: 'bg-green-500',
-  },
-  warning: {
-    label: '缺失材料',
-    badgeClass: 'bg-amber-100 text-amber-700',
-    barClass: 'bg-amber-500',
-  },
-  todo: {
-    label: '待处理',
-    badgeClass: 'bg-slate-100 text-slate-500',
-    barClass: 'bg-slate-300',
-  },
-}
-
 const mappingRows = computed<WorkspaceMappingRow[]>(() => {
-  const innovationCount = linesToArray(formState.innovationPointsText).length + (chatDraft.value?.innovationPoints.length || 0)
-  const routeCount = linesToArray(formState.techRouteStepsText).length + (chatDraft.value?.techRouteSteps.length || 0)
-  const scoringCount = linesToArray(formState.scoringMappingText).length + (chatDraft.value?.scoringMapping.length || 0)
-  const deliverableCount = linesToArray(formState.deliverablesText).length + (chatDraft.value?.deliverables.length || 0)
-  const impactSignal = /社会|可持续|公益|适老|普惠|impact/i.test(`${formState.summary} ${formState.problemStatement}`)
+  const rubric = selectedTrackRubric.value
+  if (!rubric)
+    return []
 
-  const innovationScore = clamp(35 + innovationCount * 12 + routeCount * 6, 10, 98)
-  const marketScore = clamp(28 + scoringCount * 10 + (selectedResources.value.length > 0 ? 12 : 0), 10, 96)
-  const teamScore = clamp(40 + deliverableCount * 9 + routeCount * 7, 10, 100)
-  const impactScore = clamp(impactSignal ? 74 : 18 + scoringCount * 4 + deliverableCount * 5, 5, 90)
+  return rubric.dimensions
+    .map((dimension, index) => {
+      const weight = Number(dimension.weight)
+      const normalizedWeight = Number.isFinite(weight) && weight > 0
+        ? clamp(weight, 0, 100)
+        : 0
 
-  return [
-    {
-      id: 'innovation',
-      metric: '技术创新性与前瞻性 (30%)',
-      hint: '要求体现核心算法自主研发能力',
-      score: innovationScore,
-      ability: innovationCount > 0
-        ? linesToArray(formState.innovationPointsText)[0] || '创新点已在草案中体现'
-        : '待补充：核心算法、性能对比与可复现实验设计',
-      tags: ['#创新能力', '#算法优化'],
-      tone: toTone(innovationScore),
-    },
-    {
-      id: 'market',
-      metric: '商业落地与市场潜力 (20%)',
-      hint: '需提供详实的市场调研数据支撑',
-      score: marketScore,
-      ability: linesToArray(formState.scoringMappingText)[0] || '待补充：用户场景拆解、市场对标和商业验证数据',
-      tags: ['#场景落地', '#评审关注'],
-      tone: toTone(marketScore),
-    },
-    {
-      id: 'team',
-      metric: '团队构成与分工 (15%)',
-      hint: '跨学科背景及核心人员资历',
-      score: teamScore,
-      ability: linesToArray(formState.deliverablesText)[0] || '可展示交付物框架已初步形成',
-      tags: ['#团队协同', '#交付闭环'],
-      tone: toTone(teamScore),
-    },
-    {
-      id: 'impact',
-      metric: '社会价值与影响力 (15%)',
-      hint: '需明确社会价值和长期影响路径',
-      score: impactScore,
-      ability: impactSignal ? '摘要中已包含社会价值路径，可继续补充量化指标' : '未映射：建议补充社会价值、可持续性或普惠性说明',
-      tags: ['#社会价值', '#可持续'],
-      tone: toTone(impactScore),
-    },
-  ]
+      return {
+        id: String(dimension.key || `${rubric.id}-${index + 1}`).trim() || `${rubric.id}-${index + 1}`,
+        metric: normalizedWeight > 0 ? `${dimension.name} (${normalizedWeight}%)` : dimension.name,
+        hint: String(dimension.description || '').trim() || '暂无指标说明',
+        score: normalizedWeight,
+        scoreLabel: normalizedWeight > 0 ? `${normalizedWeight}%` : '未标注',
+        ability: String(dimension.scoringPoint || '').trim()
+          || String(dimension.description || '').trim()
+          || '暂无评分要点',
+        supportingNote: String(dimension.evidenceRequirement || '').trim()
+          || String(dimension.deductionPoint || '').trim()
+          || '暂无明确证据要求',
+      }
+    })
+    .filter(row => row.metric.trim())
 })
 
 const activeTopicBoardCandidate = computed(() => {
@@ -2614,69 +2746,44 @@ const activeTopicBoardCandidate = computed(() => {
 })
 
 const keywordCloud = computed<WorkspaceKeyword[]>(() => {
-  if (topicBoardSnapshot.value && activeTopicBoardCandidate.value) {
-    const board = topicBoardSnapshot.value
-    const candidate = activeTopicBoardCandidate.value
-    const labels = [
-      ...board.input.keywords,
-      ...candidate.trendSignals.map(item => item.label),
-      ...candidate.requiredSkills,
-      candidate.recommendedTrackName,
-    ]
-      .filter(Boolean)
-      .slice(0, 8)
+  if (!topicBoardSnapshot.value || !activeTopicBoardCandidate.value)
+    return []
 
-    return labels.map((label, index) => ({
-      label,
-      count: clamp(54 - index * 5, 12, 60),
-      active: index < 3,
+  const board = topicBoardSnapshot.value
+  const candidate = activeTopicBoardCandidate.value
+  const seen = new Set<string>()
+
+  return [
+    ...board.input.keywords.map(label => ({ label, active: true })),
+    ...candidate.trendSignals.map(item => ({ label: item.label, active: true })),
+    ...candidate.requiredSkills.map(label => ({ label, active: false })),
+    { label: candidate.recommendedTrackName, active: false },
+  ]
+    .map(item => ({
+      label: String(item.label || '').trim(),
+      active: item.active,
     }))
-  }
-
-  const seed = selectedContest.value?.keywords.length
-    ? [...selectedContest.value.keywords]
-    : ['人工智能', '工程落地', '评分映射', '答辩策略', '项目管理']
-
-  const majors = selectedContest.value?.recommendedFor || []
-  const deliverables = selectedTrack.value?.deliverableTypes || []
-
-  const words = [...seed, ...majors.slice(0, 2), ...deliverables.slice(0, 2)]
-    .filter(Boolean)
+    .filter((item) => {
+      if (!item.label || seen.has(item.label))
+        return false
+      seen.add(item.label)
+      return true
+    })
     .slice(0, 8)
-
-  return words.map((label, index) => ({
-    label,
-    count: clamp(42 - index * 4 + (major.value && includesText(label, major.value) ? 6 : 0), 8, 56),
-    active: index % 3 === 0,
-  }))
 })
 
 const trendBars = computed<number[]>(() => {
-  if (activeTopicBoardCandidate.value) {
-    const scores = activeTopicBoardCandidate.value.compareScores
-    return [
-      scores.contestFit,
-      scores.noveltySimilarity,
-      scores.evidenceReadiness,
-      scores.trendHeat,
-      scores.teamMatch,
-    ].map(value => clamp(value, 18, 96))
-  }
+  if (!activeTopicBoardCandidate.value)
+    return []
 
-  const filledSignals = [
-    formState.problemStatement,
-    formState.innovationPointsText,
-    formState.techRouteStepsText,
-    formState.scoringMappingText,
-    formState.risksText,
-    formState.deliverablesText,
-    formState.summary,
-  ].filter(Boolean).length
-
-  const userMessages = chatMessages.value.filter(item => item.role === 'user').length
-  const last = clamp(38 + filledSignals * 7 + userMessages * 5, 22, 95)
-
-  return [30, 45, 68, 82, last]
+  const scores = activeTopicBoardCandidate.value.compareScores
+  return [
+    scores.contestFit,
+    scores.noveltySimilarity,
+    scores.evidenceReadiness,
+    scores.trendHeat,
+    scores.teamMatch,
+  ].map(value => clamp(value, 0, 100))
 })
 
 const tokenBalance = computed(() => {
@@ -2691,6 +2798,25 @@ const projectUploadStorageUsedBytes = computed(() => {
 })
 
 const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value || topicBoardLoading.value)
+const hasWorkspaceBootstrapData = computed(() => {
+  return Boolean(selectedContest.value)
+    || Boolean(selectedTrack.value)
+    || resources.value.length > 0
+    || resourceLibrary.value.length > 0
+    || projectOutlineItems.value.length > 0
+    || workspaceMembers.value.length > 0
+    || projectMeetings.value.length > 0
+    || chatSessions.value.length > 0
+    || Boolean(topicBoardSnapshot.value)
+    || projectIssueReports.value.length > 0
+    || projectIssues.value.length > 0
+    || projectResourceShares.value.length > 0
+})
+const workspacePreparing = computed(() => {
+  return Boolean(activeProjectId.value)
+    && workspaceBootstrapLoading.value
+    && !hasWorkspaceBootstrapData.value
+})
 
 const collabSelectionStatus = ref({
   line: 1,
@@ -2711,11 +2837,9 @@ const statusCursor = computed(() => {
     }
   }
 
-  const line = clamp(12 + chatMessages.value.length + (formState.problemStatement ? 3 : 0), 12, 96)
-  const column = clamp((chatInput.value.length % 80) + 8, 8, 120)
   return {
-    line,
-    column,
+    line: null,
+    column: null,
     selectionLength: 0,
   }
 })
@@ -3897,12 +4021,16 @@ watch(selectedContestId, (contestId) => {
 
   const normalizedContestId = String(contestId || '').trim()
   if (!normalizedContestId) {
+    selectedContestDetail.value = null
+    selectedContestDetailLoading.value = false
     selectedTrackId.value = ''
     projectSettingsCurrentContestId.value = ''
     syncProjectSettingsAdaptationFormByContest('')
     syncFormContestTrack()
     return
   }
+
+  void loadSelectedContestDetail(normalizedContestId)
 
   const binding = projectSettingsBindingMap.value.get(normalizedContestId)
   const contest = contestMap.value.get(normalizedContestId)
@@ -4078,6 +4206,40 @@ async function saveWorkspaceDisplayTeamDefault(payload: WorkspaceDisplayPreferen
   finally {
     if (activeWorkspaceId.value === workspaceId)
       workspaceDisplayPreferenceSavingScope.value = ''
+  }
+}
+
+let selectedContestDetailRequestId = 0
+
+async function loadSelectedContestDetail(contestId = selectedContestId.value) {
+  const normalizedContestId = String(contestId || '').trim()
+  const requestId = ++selectedContestDetailRequestId
+
+  if (!normalizedContestId) {
+    selectedContestDetail.value = null
+    selectedContestDetailLoading.value = false
+    return
+  }
+
+  selectedContestDetailLoading.value = true
+  try {
+    const data = await requestProjectApi<ContestDetailPayload>(
+      endpoint(`/contests/${normalizedContestId}`),
+      {},
+      '竞赛详情加载失败。',
+    )
+    if (requestId !== selectedContestDetailRequestId || normalizedContestId !== String(selectedContestId.value || '').trim())
+      return
+    selectedContestDetail.value = data
+  }
+  catch {
+    if (requestId !== selectedContestDetailRequestId || normalizedContestId !== String(selectedContestId.value || '').trim())
+      return
+    selectedContestDetail.value = null
+  }
+  finally {
+    if (requestId === selectedContestDetailRequestId && normalizedContestId === String(selectedContestId.value || '').trim())
+      selectedContestDetailLoading.value = false
   }
 }
 
@@ -5544,7 +5706,7 @@ async function requestProjectApi<T>(path: string, query: Record<string, string |
 async function loadChatMessages(sessionId: string) {
   const projectId = String(activeProjectId.value || '').trim()
   if (!activeWorkspaceId.value || !projectId || !sessionId) {
-    resetChatStateWithGreeting()
+    resetChatState()
     return
   }
 
@@ -5571,15 +5733,13 @@ async function loadChatMessages(sessionId: string) {
     defenseSummary.value = null
     defenseStage.value = undefined
     defenseTurnCount.value = 0
-    chatMessages.value = restoredMessages.length > 0
-      ? restoredMessages
-      : [defaultAssistantGreeting()]
+    chatMessages.value = restoredMessages
 
     if (aiMode.value === 'defense')
       await loadDefenseSessionDetail(sessionId)
   }
   catch {
-    resetChatStateWithGreeting()
+    resetChatState()
   }
 }
 
@@ -5787,12 +5947,14 @@ async function startDefenseRealtime() {
     defenseTurnCount.value = 0
     activeMeetingUtterances.value = []
     applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.joinUrl,
-      joinToken: response.data.joinToken,
-      joinExpiresAt: response.data.joinExpiresAt,
+      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
+      joinToken: response.data.rtcJoinToken || response.data.joinToken,
+      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
+      rtcServerUrl: response.data.rtcServerUrl,
       resetCaptions: true,
     })
     ensureMeetingDetailTabOpen(response.data.meeting.id)
+    workspaceRealtime.subscribeMeeting(response.data.meeting.id)
     await loadChatSessions({
       preferredSessionId: response.data.sessionId,
     })
@@ -5856,7 +6018,7 @@ async function loadChatSessions(options: {
   if (!activeWorkspaceId.value || !projectId) {
     chatSessions.value = []
     activeChatSessionId.value = ''
-    resetChatStateWithGreeting()
+    resetChatState()
     return
   }
 
@@ -5884,14 +6046,14 @@ async function loadChatSessions(options: {
     if (!nextSession) {
       if (options.autoCreate === false) {
         activeChatSessionId.value = ''
-        resetChatStateWithGreeting()
+        resetChatState()
         return
       }
 
       const createdId = await createChatSession()
       if (!createdId) {
         activeChatSessionId.value = ''
-        resetChatStateWithGreeting()
+        resetChatState()
         return
       }
       activeChatSessionId.value = createdId
@@ -5907,7 +6069,7 @@ async function loadChatSessions(options: {
   catch {
     chatSessions.value = []
     activeChatSessionId.value = ''
-    resetChatStateWithGreeting()
+    resetChatState()
   }
   finally {
     chatSessionsLoading.value = false
@@ -6052,11 +6214,13 @@ async function loadTopicBoards() {
   const requestId = ++topicBoardLoadRequestId
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId) {
+    topicBoardFetching.value = false
     topicBoardSnapshot.value = null
     topicBoardHistory.value = []
     return
   }
   const workspaceId = String(activeWorkspaceId.value || '').trim()
+  topicBoardFetching.value = true
 
   try {
     const response = await unsafeFetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
@@ -6071,6 +6235,10 @@ async function loadTopicBoards() {
       return
     topicBoardSnapshot.value = null
     topicBoardHistory.value = []
+  }
+  finally {
+    if (requestId === topicBoardLoadRequestId && isCurrentTopicBoardScope(projectId, workspaceId))
+      topicBoardFetching.value = false
   }
 }
 
@@ -7132,6 +7300,7 @@ watch(activeProjectId, async (next, previous) => {
   if (next === previous)
     return
 
+  const requestId = ++workspaceBootstrapRequestId
   clearProjectSettingsAutoTimers()
   clearProjectOutlineGenerateTimer()
   clearRealtimeProjectRefreshTimer()
@@ -7140,8 +7309,10 @@ watch(activeProjectId, async (next, previous) => {
   clearProjectWorkspaceViewPersistTimer()
   projectOutlineFirstLoaded.value = false
   topicBoardLoading.value = false
+  topicBoardFetching.value = false
   topicBoardActioningCandidateId.value = ''
   projectWorkspaceViewReady.value = false
+  workspaceBootstrapLoading.value = Boolean(next)
   closeProjectResourcePreview()
   if (next)
     workspaceRealtime.subscribeProject(next)
@@ -7162,42 +7333,53 @@ watch(activeProjectId, async (next, previous) => {
     chatSessions.value = []
     activeChatSessionId.value = ''
     defensePersonas.value = []
+    selectedContestDetail.value = null
+    selectedContestDetailLoading.value = false
     openMainTabs.value = ['dashboard']
     activeMainTabId.value = 'dashboard'
-    resetChatStateWithGreeting()
+    resetChatState()
+    workspaceBootstrapLoading.value = false
     return
   }
-  syncFallbackResourceRefreshTimer()
-  resetProjectSettingsState(activeProject.value)
-  const restoredViewState = await hydrateProjectWorkspaceViewState(next)
-  const [
-    ,
-    ,
-    draftHydrationResult,
-  ] = await Promise.all([
-    loadWorkspaceMemberManagement(),
-    loadProjectOutline(),
-    loadProjectSettings(restoredViewState.state.selectedContestId),
-    loadTopicBoards(),
-    loadAiChangeRequests(),
-    loadProjectIssues(),
-    loadProjectMeetings({
-      fallbackToFirst: false,
-      preferredMeetingId: restoredViewState.state.activeMeetingId,
-      hydrateSelectedDetail: false,
-    }),
-    loadChatSessions({
-      preferredSessionId: restoredViewState.state.activeChatSessionId,
-      autoCreate: false,
-      fallbackToFirst: !restoredViewState.state.activeChatSessionId,
-    }),
-    loadDefensePersonas(),
-  ])
-  const restoredPreviewResourceId = normalizeString(previewResourceId.value)
-  if (restoredPreviewResourceId && resources.value.some(item => item.id === restoredPreviewResourceId))
-    await openProjectResourcePreview(restoredPreviewResourceId, { openTab: false })
-  await resolveProjectDeviceRestore(next, restoredViewState, draftHydrationResult)
-  await consumeTopicBoardCreateSeed()
+  try {
+    syncFallbackResourceRefreshTimer()
+    resetProjectSettingsState(activeProject.value)
+    const restoredViewState = await hydrateProjectWorkspaceViewState(next)
+    const selectedContestIdFromState = String(restoredViewState.state.selectedContestId || '').trim()
+    const [
+      ,
+      ,
+      draftHydrationResult,
+    ] = await Promise.all([
+      loadWorkspaceMemberManagement(),
+      loadProjectOutline(),
+      loadProjectSettings(selectedContestIdFromState),
+      loadSelectedContestDetail(selectedContestIdFromState),
+      loadTopicBoards(),
+      loadAiChangeRequests(),
+      loadProjectIssues(),
+      loadProjectMeetings({
+        fallbackToFirst: false,
+        preferredMeetingId: restoredViewState.state.activeMeetingId,
+        hydrateSelectedDetail: false,
+      }),
+      loadChatSessions({
+        preferredSessionId: restoredViewState.state.activeChatSessionId,
+        autoCreate: false,
+        fallbackToFirst: !restoredViewState.state.activeChatSessionId,
+      }),
+      loadDefensePersonas(),
+    ])
+    const restoredPreviewResourceId = normalizeString(previewResourceId.value)
+    if (restoredPreviewResourceId && resources.value.some(item => item.id === restoredPreviewResourceId))
+      await openProjectResourcePreview(restoredPreviewResourceId, { openTab: false })
+    await resolveProjectDeviceRestore(next, restoredViewState, draftHydrationResult)
+    await consumeTopicBoardCreateSeed()
+  }
+  finally {
+    if (requestId === workspaceBootstrapRequestId && activeProjectId.value === next)
+      workspaceBootstrapLoading.value = false
+  }
 })
 
 watch([activeProjectId, selectedContestId, selectedTrackId], async () => {
@@ -7259,6 +7441,7 @@ async function syncActiveMainTabMeetingSelection(nextTabId = activeMainTabId.val
   if (!targetMeetingId || targetMeetingId === activeMeetingId.value)
     return
 
+  workspaceRealtime.subscribeMeeting(targetMeetingId)
   const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
   activeMeetingId.value = targetMeetingId
   if (isSwitchingMeeting) {
@@ -7340,12 +7523,12 @@ watch(aiMode, async (next, previous) => {
   if (!activeWorkspaceId.value || !activeProjectId.value) {
     chatSessions.value = []
     activeChatSessionId.value = ''
-    resetChatStateWithGreeting()
+    resetChatState()
     return
   }
 
   activeChatSessionId.value = ''
-  resetChatStateWithGreeting()
+  resetChatState()
   if (next === 'defense')
     await loadDefensePersonas()
   await loadChatSessions()
@@ -7527,14 +7710,16 @@ watch(() => workspaceRealtime.connected.value, () => {
         :collab-presence-members="collabPresenceMembers"
         :selected-resources="selectedResources"
         :mapping-rows="mappingRows"
+        :mapping-loading="selectedContestDetailLoading"
         :keyword-cloud="keywordCloud"
         :trend-bars="trendBars"
         :form-state="formState"
         :form-submitting="formSubmitting"
+        :workspace-preparing="workspacePreparing"
         :topic-board="topicBoardSnapshot"
+        :topic-board-fetching="topicBoardFetching"
         :topic-board-loading="topicBoardLoading"
         :topic-board-actioning-candidate-id="topicBoardActioningCandidateId"
-        :tone-meta="toneMeta"
         :project-settings-loading="projectSettingsLoading"
         :project-settings-save-state="projectSettingsSaveState"
         :project-settings-common="projectSettingsCommon"
@@ -7559,6 +7744,9 @@ watch(() => workspaceRealtime.connected.value, () => {
         :meeting-join-url="meetingJoinUrl"
         :meeting-join-token="meetingJoinToken"
         :meeting-join-expires-at="meetingJoinExpiresAt"
+        :meeting-rtc-server-url="meetingRtcServerUrl"
+        :active-meeting-guest-share="activeMeetingGuestShare"
+        :meeting-guest-share-loading="meetingGuestShareLoading"
         :meeting-plan-tier="currentWorkspaceMeetingPlanTier"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
@@ -7591,6 +7779,9 @@ watch(() => workspaceRealtime.connected.value, () => {
         @join-meeting="joinProjectMeeting"
         @start-meeting="startProjectMeeting"
         @end-meeting="endProjectMeeting"
+        @create-meeting-guest-share="createProjectMeetingGuestShare"
+        @regenerate-meeting-guest-share="regenerateProjectMeetingGuestShare"
+        @revoke-meeting-guest-share="revokeProjectMeetingGuestShare"
         @select-meeting="selectProjectMeeting"
         @open-meeting-resource="openProjectResourcePreview"
         @reconvert-preview="reconvertProjectResourcePreview"
@@ -7623,6 +7814,9 @@ watch(() => workspaceRealtime.connected.value, () => {
           :chat-sessions-loading="chatSessionsLoading"
           :chat-messages="chatMessages"
           :chat-loading="chatLoading"
+          :workspace-preparing="workspacePreparing"
+          :current-user-name="me?.user.username || ''"
+          :current-user-avatar-url="me?.user.avatarUrl || ''"
           :change-requests="aiChangeRequests"
           :change-requests-loading="aiChangeRequestsLoading"
           :change-acting-ids="aiChangeActingIds"
@@ -7668,6 +7862,12 @@ watch(() => workspaceRealtime.connected.value, () => {
         >
           <span class="material-symbols-outlined">chevron_left</span>
         </button>
+      </div>
+      <div v-if="workspacePreparing" class="workspace-preparing-overlay" aria-live="polite">
+        <div class="workspace-preparing-overlay__panel">
+          <span class="workspace-preparing-overlay__label">正在准备工作区</span>
+          <strong class="workspace-preparing-overlay__title">WinLooooop</strong>
+        </div>
       </div>
     </main>
 
@@ -7863,5 +8063,45 @@ watch(() => workspaceRealtime.connected.value, () => {
 .workspace-side-toggle:focus-visible .material-symbols-outlined {
   opacity: 1;
   color: #2f6af2;
+}
+
+.workspace-preparing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.workspace-preparing-overlay__panel {
+  min-width: 260px;
+  padding: 18px 22px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.workspace-preparing-overlay__label {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.workspace-preparing-overlay__title {
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
 }
 </style>

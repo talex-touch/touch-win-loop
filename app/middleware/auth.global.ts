@@ -2,6 +2,7 @@ import type { ApiResponse, AuthMeResult } from '~~/shared/types/domain'
 
 const PUBLIC_PATH_PREFIXES = [
   '/login',
+  '/meeting',
   '/contests',
   '/resources',
   '/hi',
