@@ -29,7 +29,10 @@ export default defineEventHandler(async (event) => {
       if (!project)
         throw new Error('PROJECT_NOT_FOUND')
 
-      return listProjectLibraryResources(db, projectId)
+      return listProjectLibraryResources(db, {
+        projectId,
+        actorUserId: user.id,
+      })
     })
 
     return ok(resources, {

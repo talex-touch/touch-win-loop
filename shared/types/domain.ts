@@ -25,6 +25,17 @@ export type CollabPurpose = 'workflow' | 'freeform' | 'notes'
 export type ResourcePreviewStatus = 'queued' | 'converting' | 'finalizing' | 'succeeded' | 'failed'
 export type ProjectResourceShareVisibility = 'public' | 'workspace'
 export type ProjectResourceShareDurationPreset = '1h' | '1d' | '3d' | '7d' | '1mon'
+export type ProjectIssueReviewSubmissionStatus = 'draft' | 'submitted'
+export const BILLING_USAGE_EVENT_CODES = [
+  'resource.download',
+  'resource.favorite.create',
+  'ai.topic_proposal.generate',
+  'review.submit',
+  'review.report.export',
+  'ai.defense.start',
+] as const
+export type BillingUsageEventCode = typeof BILLING_USAGE_EVENT_CODES[number]
+export type BillingUsageEventResult = 'success' | 'failed'
 
 export type ResourceCategory
   = 'basic_info'
@@ -320,6 +331,7 @@ export interface Resource {
   sourceType?: string
   source?: 'upload' | 'library' | 'collab'
   linkedContestResourceId?: string | null
+  isFavorite?: boolean
   status?: ResourceStatus
   createdBy?: string
   updatedBy?: string
@@ -1384,6 +1396,10 @@ export interface ProjectIssueReport {
   markdown: string
   sourceMode: WorkspaceAiMode
   createdByUserId: string
+  reviewSubmissionStatus: ProjectIssueReviewSubmissionStatus
+  reviewSubmittedAt: string | null
+  reviewSubmittedByUserId: string | null
+  reviewSubmittedByUsername?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -1401,6 +1417,41 @@ export interface ProjectIssue {
   createdByUserId: string
   createdAt: string
   updatedAt: string
+}
+
+export interface BillingUsageEvent {
+  id: string
+  workspaceId: string
+  workspaceName?: string
+  projectId: string | null
+  contestId: string | null
+  trackId: string | null
+  projectResourceId: string | null
+  contestResourceId: string | null
+  reportId: string | null
+  actorUserId: string | null
+  actorUsername?: string
+  eventCode: BillingUsageEventCode
+  result: BillingUsageEventResult
+  sourceRoute: string
+  meta: Record<string, unknown>
+  createdAt: string
+}
+
+export interface BillingUsageEventSummaryRow {
+  workspaceId: string
+  workspaceName?: string
+  eventCode: BillingUsageEventCode
+  result: BillingUsageEventResult
+  total: number
+}
+
+export interface BillingUsageEventsPayload {
+  items: BillingUsageEvent[]
+  summary: BillingUsageEventSummaryRow[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 export interface ApproveChangeRequestPayload {
