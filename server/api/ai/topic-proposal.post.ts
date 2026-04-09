@@ -17,6 +17,7 @@ import {
   recordContestAuditLog,
   resolveAiPromptText,
 } from '~~/server/utils/contest-store'
+import { recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
@@ -51,7 +52,7 @@ function normalizeRequest(body: Partial<AiTopicProposalRequest> | null | undefin
     teamId: workspaceId,
     workspaceId,
     sessionId: toText(body?.sessionId),
-    messages: Array.isArray(body?.messages) ? body!.messages! : [],
+    messages: Array.isArray(body?.messages) ? body.messages : [],
     topK: normalizeTopK(body?.topK),
     aiOptions: {
       reasoningEnabled: typeof body?.aiOptions?.reasoningEnabled === 'boolean' ? body.aiOptions.reasoningEnabled : undefined,
@@ -161,8 +162,32 @@ export default defineEventHandler(async (event) => {
     .find(item => item.role === 'user')
     ?.content
     ?.trim() || ''
-
   const localContext = contextBundle.localContext
+
+  const recordTopicProposalUsage = async (
+    result: 'success' | 'failed',
+    meta?: Record<string, unknown>,
+  ): Promise<void> => {
+    await withClient(event, async (db) => {
+      await recordBillingUsageEventSafely(db, {
+        workspaceId,
+        projectId: scopeProjectId || null,
+        contestId: request.context.contestId || null,
+        trackId: request.context.trackId || null,
+        actorUserId: user.id,
+        eventCode: 'ai.topic_proposal.generate',
+        result,
+        sourceRoute: '/api/ai/topic-proposal',
+        meta: {
+          sessionId: toText(meta?.sessionId) || null,
+          fallbackUsed: Boolean(meta?.fallbackUsed),
+          attempts: Number(meta?.attempts || 1),
+          channelKey: channelRuntime.key,
+          ...meta,
+        },
+      })
+    }).catch(() => undefined)
+  }
 
   let webSearchEnabled = Boolean(runtime.adminAi.tavilyApiKey)
   const webReferences: AiTopicProposalResult['references'] = []
@@ -191,7 +216,7 @@ export default defineEventHandler(async (event) => {
     }
     catch {
       webSearchEnabled = false
-      webContext = '外网检索失败，已降级为站内检索结果。'
+      webContext = '外网检索失败，已降级为站内上下文。'
     }
   }
 
@@ -210,6 +235,7 @@ export default defineEventHandler(async (event) => {
       })
       if (!existing)
         throw new Error('SESSION_NOT_FOUND')
+
       await patchAiChatSessionContext(db, {
         workspaceId,
         sessionId: request.sessionId,
@@ -245,6 +271,10 @@ export default defineEventHandler(async (event) => {
   })
 
   if (!activeSession) {
+    await recordTopicProposalUsage('failed', {
+      reason: 'WORKSPACE_FORBIDDEN',
+      sessionId: request.sessionId,
+    })
     return fail('当前用户无权使用该空间。', {
       startedAt,
       provider: channelAiConfig.provider,
@@ -255,6 +285,10 @@ export default defineEventHandler(async (event) => {
   }
 
   if (activeSession === 'SESSION_NOT_FOUND') {
+    await recordTopicProposalUsage('failed', {
+      reason: 'SESSION_NOT_FOUND',
+      sessionId: request.sessionId,
+    })
     return fail('会话不存在，请刷新后重试。', {
       startedAt,
       provider: channelAiConfig.provider,
@@ -284,6 +318,10 @@ export default defineEventHandler(async (event) => {
   })
 
   if (!quotaResult) {
+    await recordTopicProposalUsage('failed', {
+      reason: 'WORKSPACE_FORBIDDEN',
+      sessionId: activeSession.id,
+    })
     return fail('当前用户无权使用该空间。', {
       startedAt,
       provider: channelAiConfig.provider,
@@ -294,8 +332,12 @@ export default defineEventHandler(async (event) => {
   }
 
   if (!quotaResult.allowed) {
+    await recordTopicProposalUsage('failed', {
+      reason: 'QUOTA_EXCEEDED',
+      sessionId: activeSession.id,
+    })
     setResponseStatus(event, 429)
-    return fail('Team AI 额度不足，请扩容或等待重置。', {
+    return fail('Team AI 配额不足，请扩容或等待重置。', {
       startedAt,
       provider: channelAiConfig.provider,
       model: channelAiConfig.model,
@@ -312,26 +354,49 @@ export default defineEventHandler(async (event) => {
   }
   const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
 
-  const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
-  const result = onlyFallback
-    ? {
-        data: runTopicProposalFallback(request),
-        fallbackUsed: true,
-        attempts: 1,
-      }
-    : await runWithRetry({
-        maxRetries: effectiveAiConfig.maxRetries,
-        run: () => runTopicProposalChain({
-          request,
-          ai: effectiveAiConfig,
-          contestName: contest?.name,
-          trackName: track?.name,
-          injectedPrompt: mergedInjectedPrompt,
-          localContext,
-          webContext,
-        }),
-        fallback: () => runTopicProposalFallback(request),
-      })
+  let result: {
+    data: AiTopicProposalResult
+    fallbackUsed: boolean
+    attempts: number
+  }
+
+  try {
+    const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
+    result = onlyFallback
+      ? {
+          data: runTopicProposalFallback(request),
+          fallbackUsed: true,
+          attempts: 1,
+        }
+      : await runWithRetry({
+          maxRetries: effectiveAiConfig.maxRetries,
+          run: () => runTopicProposalChain({
+            request,
+            ai: effectiveAiConfig,
+            contestName: contest?.name,
+            trackName: track?.name,
+            injectedPrompt: mergedInjectedPrompt,
+            localContext,
+            webContext,
+          }),
+          fallback: () => runTopicProposalFallback(request),
+        })
+  }
+  catch (error) {
+    await recordTopicProposalUsage('failed', {
+      reason: 'CHAIN_EXECUTION_FAILED',
+      sessionId: activeSession.id,
+      error: error instanceof Error ? error.message : 'UNKNOWN_ERROR',
+    })
+    setResponseStatus(event, 500)
+    return fail('选题建议生成失败。', {
+      startedAt,
+      provider: effectiveAiConfig.provider,
+      model: effectiveAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50073)
+  }
 
   result.data.references = webReferences
   result.data.webSearchEnabled = webSearchEnabled
@@ -399,6 +464,13 @@ export default defineEventHandler(async (event) => {
         webSearchEnabled,
       },
     })
+  })
+
+  await recordTopicProposalUsage('success', {
+    sessionId: activeSession.id,
+    fallbackUsed: result.fallbackUsed,
+    attempts: result.attempts,
+    webSearchEnabled,
   })
 
   return ok(result.data, {

@@ -33,6 +33,8 @@ const props = withDefaults(defineProps<{
   selectedContest?: Contest | null
   selectedTrack?: Track | null
   selectedResources?: Resource[]
+  issueReportSubmitting?: boolean
+  issueReportExporting?: boolean
 }>(), {
   chatSessions: () => [],
   activeChatSessionId: '',
@@ -53,6 +55,8 @@ const props = withDefaults(defineProps<{
   selectedContest: null,
   selectedTrack: null,
   selectedResources: () => [],
+  issueReportSubmitting: false,
+  issueReportExporting: false,
 })
 
 const emit = defineEmits<{
@@ -63,6 +67,8 @@ const emit = defineEmits<{
   'createChatSession': []
   'approveChange': [change: AiProjectChangeRequest]
   'rejectChange': [change: AiProjectChangeRequest]
+  'submitIssueReport': [reportId: string]
+  'exportIssueReport': [reportId: string]
 }>()
 
 const PRIMARY_MODES: Array<{ value: Exclude<WorkspaceAiMode, 'defense'>, label: string }> = [
@@ -99,6 +105,12 @@ const aiRunningMarqueeText = computed(() => {
   if (props.aiMode === 'defense')
     return 'AI 正在模拟评委追问，请稍候生成答辩轮次'
   return 'AI 正在分析上下文、资料与问题，请稍候'
+})
+
+const issueReportStatusLabel = computed(() => {
+  if (props.issueReport?.reviewSubmissionStatus === 'submitted')
+    return '已提交评审'
+  return '草稿'
 })
 
 function isChangeActing(changeId: string): boolean {
@@ -162,6 +174,20 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
     return
   event.preventDefault()
   cyclePrimaryMode()
+}
+
+function requestSubmitIssueReport() {
+  const reportId = String(props.issueReport?.id || '').trim()
+  if (!reportId || props.issueReportSubmitting)
+    return
+  emit('submitIssueReport', reportId)
+}
+
+function requestExportIssueReport() {
+  const reportId = String(props.issueReport?.id || '').trim()
+  if (!reportId || props.issueReportExporting)
+    return
+  emit('exportIssueReport', reportId)
 }
 </script>
 
@@ -330,6 +356,37 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
               <div class="text-[11px] text-amber-700 mt-1 whitespace-pre-wrap">
                 {{ issueReport.summary }}
               </div>
+              <div class="workspace-issue-report-meta">
+                <span class="workspace-issue-report-status">
+                  {{ issueReportStatusLabel }}
+                </span>
+                <span v-if="issueReport.reviewSubmittedAt">
+                  提交时间：{{ issueReport.reviewSubmittedAt }}
+                </span>
+                <span v-if="issueReport.reviewSubmittedByUserId">
+                  提交人：{{ issueReport.reviewSubmittedByUserId }}
+                </span>
+              </div>
+              <div class="workspace-issue-report-actions">
+                <button
+                  class="workspace-issue-report-btn workspace-issue-report-btn--primary"
+                  type="button"
+                  :disabled="issueReportSubmitting || issueReport.reviewSubmissionStatus === 'submitted'"
+                  @click="requestSubmitIssueReport"
+                >
+                  {{ issueReportSubmitting
+                    ? '提交中...'
+                    : (issueReport.reviewSubmissionStatus === 'submitted' ? '已提交评审' : '提交评审') }}
+                </button>
+                <button
+                  class="workspace-issue-report-btn workspace-issue-report-btn--ghost"
+                  type="button"
+                  :disabled="issueReportExporting"
+                  @click="requestExportIssueReport"
+                >
+                  {{ issueReportExporting ? '导出中...' : '导出 Markdown' }}
+                </button>
+              </div>
             </div>
 
             <div
@@ -370,10 +427,10 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
                 {{ defenseScorecard.summary }}
               </p>
               <p v-if="defenseScorecard.materialGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
-                材料缺口：{{ defenseScorecard.materialGaps.join('；') }}
+                材料缺口：{{ defenseScorecard.materialGaps.join('、') }}
               </p>
               <p v-if="defenseScorecard.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-1">
-                改进动作：{{ defenseScorecard.actionItems.join('；') }}
+                改进动作：{{ defenseScorecard.actionItems.join('、') }}
               </p>
             </div>
             <div
@@ -577,5 +634,65 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
   border-color: #bbf7d0;
   color: #166534;
   background: #dcfce7;
+}
+
+.workspace-issue-report-meta {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #8a631d;
+  font-size: 10px;
+}
+
+.workspace-issue-report-status {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(146, 64, 14, 0.12);
+  color: #92400e;
+  font-weight: 700;
+}
+
+.workspace-issue-report-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.workspace-issue-report-btn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workspace-issue-report-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.workspace-issue-report-btn--primary {
+  background: #d97706;
+  color: #ffffff;
+}
+
+.workspace-issue-report-btn--primary:hover:enabled {
+  background: #b96504;
+}
+
+.workspace-issue-report-btn--ghost {
+  border-color: #f5d8a6;
+  background: #fff9ed;
+  color: #9a620e;
+}
+
+.workspace-issue-report-btn--ghost:hover:enabled {
+  background: #fff2d7;
 }
 </style>

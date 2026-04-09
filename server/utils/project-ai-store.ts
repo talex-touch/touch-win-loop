@@ -5,6 +5,7 @@ import type {
   AiProjectChangeType,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectIssueReviewSubmissionStatus,
   ProjectIssueSeverity,
   ProjectIssueStatus,
   WorkspaceAiMode,
@@ -44,6 +45,9 @@ interface ProjectIssueReportRow {
   title: string
   summary: string
   markdown: string
+  review_submission_status: ProjectIssueReviewSubmissionStatus | string | null
+  review_submitted_at: string | null
+  review_submitted_by_user_id: string | null
   created_by_user_id: string
   created_at: string
   updated_at: string
@@ -121,6 +125,9 @@ function mapProjectIssueReport(row: ProjectIssueReportRow): ProjectIssueReport {
     title: row.title,
     summary: row.summary,
     markdown: row.markdown,
+    reviewSubmissionStatus: row.review_submission_status === 'submitted' ? 'submitted' : 'draft',
+    reviewSubmittedAt: row.review_submitted_at,
+    reviewSubmittedByUserId: row.review_submitted_by_user_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -495,6 +502,9 @@ export async function createProjectIssueReportWithIssues(
       title,
       summary,
       markdown,
+      review_submission_status,
+      review_submitted_at::TEXT,
+      review_submitted_by_user_id,
       created_by_user_id,
       created_at::TEXT,
       updated_at::TEXT`,
@@ -584,6 +594,9 @@ export async function listProjectIssueReportsByProject(
       title,
       summary,
       markdown,
+      review_submission_status,
+      review_submitted_at::TEXT,
+      review_submitted_by_user_id,
       created_by_user_id,
       created_at::TEXT,
       updated_at::TEXT
@@ -594,6 +607,97 @@ export async function listProjectIssueReportsByProject(
     [input.projectId, limit],
   )
   return result.rows.map(mapProjectIssueReport)
+}
+
+export async function getProjectIssueReportById(
+  db: Queryable,
+  input: {
+    projectId: string
+    reportId: string
+  },
+): Promise<ProjectIssueReport | null> {
+  const result = await db.query<ProjectIssueReportRow>(
+    `SELECT
+      id,
+      workspace_id,
+      project_id,
+      session_id,
+      source_mode,
+      title,
+      summary,
+      markdown,
+      review_submission_status,
+      review_submitted_at::TEXT,
+      review_submitted_by_user_id,
+      created_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_issue_reports
+     WHERE project_id = $1
+       AND id = $2
+     LIMIT 1`,
+    [input.projectId, input.reportId],
+  )
+
+  const row = result.rows[0]
+  return row ? mapProjectIssueReport(row) : null
+}
+
+export async function submitProjectIssueReportForReview(
+  db: Queryable,
+  input: {
+    projectId: string
+    reportId: string
+    actorUserId: string
+  },
+): Promise<{ report: ProjectIssueReport, justSubmitted: boolean } | null> {
+  const updated = await db.query<ProjectIssueReportRow>(
+    `UPDATE project_issue_reports
+     SET review_submission_status = 'submitted',
+         review_submitted_at = COALESCE(review_submitted_at, NOW()),
+         review_submitted_by_user_id = COALESCE(review_submitted_by_user_id, $3),
+         updated_at = NOW()
+     WHERE project_id = $1
+       AND id = $2
+       AND COALESCE(review_submission_status, 'draft') <> 'submitted'
+     RETURNING
+       id,
+       workspace_id,
+       project_id,
+       session_id,
+       source_mode,
+       title,
+       summary,
+       markdown,
+       review_submission_status,
+       review_submitted_at::TEXT,
+       review_submitted_by_user_id,
+       created_by_user_id,
+       created_at::TEXT,
+       updated_at::TEXT`,
+    [input.projectId, input.reportId, input.actorUserId],
+  )
+
+  const updatedRow = updated.rows[0]
+  if (updatedRow) {
+    return {
+      report: mapProjectIssueReport(updatedRow),
+      justSubmitted: true,
+    }
+  }
+
+  const existing = await getProjectIssueReportById(db, {
+    projectId: input.projectId,
+    reportId: input.reportId,
+  })
+
+  if (!existing)
+    return null
+
+  return {
+    report: existing,
+    justSubmitted: false,
+  }
 }
 
 export async function listProjectIssuesByProject(
