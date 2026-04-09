@@ -10,6 +10,7 @@ import type {
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { TeamProjectCardItem } from '~/composables/team-ui'
+import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import {
   buildContestNameMap,
   buildTeamProjectCard,
@@ -59,7 +60,6 @@ const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
 const createDialogVisible = ref(false)
 const creatingProject = ref(false)
 const createErrorText = ref('')
-const TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX = 'workspace.topicBoardSeed.'
 
 function createEmptyTopicBoardSeed(): ProjectTopicBoardCreateSeed {
   return {
@@ -249,13 +249,18 @@ async function submitQuickCreate() {
     const createdWorkspaceId = String(created.teamId || created.workspaceId || '').trim() || workspaceId
 
     if (process.client && createForm.topicBoardSeed.autoGenerate !== false) {
-      window.sessionStorage.setItem(
-        `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${created.id}`,
-        JSON.stringify({
-          ...createForm.topicBoardSeed,
-          contestId: createForm.contestIds[0] || '',
-        } satisfies ProjectTopicBoardCreateSeed),
-      )
+      try {
+        window.sessionStorage.setItem(
+          `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${created.id}`,
+          JSON.stringify({
+            ...createForm.topicBoardSeed,
+            contestId: createForm.contestIds[0] || '',
+          } satisfies ProjectTopicBoardCreateSeed),
+        )
+      }
+      catch (error) {
+        console.warn('[topic-board] 创建后写入 seed 失败，已跳过自动接力。', error)
+      }
     }
 
     createForm.title = ''
