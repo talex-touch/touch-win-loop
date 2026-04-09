@@ -30,6 +30,7 @@ const {
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
+const route = useRoute()
 
 const platformPermissions = ref<PlatformPermission[]>([])
 const platformContests = ref<Contest[]>([])
@@ -44,6 +45,8 @@ const canManageContest = computed(() => {
 const canManagePricing = computed(() => platformPermissions.value.includes('pricing.write'))
 const canManageRoles = computed(() => platformPermissions.value.includes('role.assign'))
 const hasPlatformPortal = computed(() => canManageContest.value || canManagePricing.value || canManageRoles.value)
+const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
+const isDashboardIndex = computed(() => normalizedPath.value === '/dashboard')
 
 const quickActions = computed(() => {
   const items = [...baseQuickActions]
@@ -147,13 +150,16 @@ async function loadPlatformPanel() {
   }
 }
 
-onMounted(async () => {
+watch(isDashboardIndex, async (value) => {
+  if (!value)
+    return
   await Promise.all([loadPlatformPanel(), loadOverview()])
-})
+}, { immediate: true })
 </script>
 
 <template>
-  <div class="space-y-8">
+  <NuxtPage v-if="!isDashboardIndex" />
+  <div v-else class="space-y-8">
     <section class="flex flex-wrap gap-4 items-end justify-between">
       <div>
         <h2 class="text-3xl text-slate-900 tracking-tight font-extrabold">
@@ -174,6 +180,13 @@ onMounted(async () => {
           <span class="material-symbols-outlined text-lg">download</span>
           导出报告
         </button>
+        <NuxtLink
+          to="/dashboard/analytics"
+          class="text-sm font-semibold px-4 py-2 border border-slate-200 rounded-lg bg-white flex gap-2 transition-colors items-center hover:bg-slate-50"
+        >
+          <span class="material-symbols-outlined text-lg">monitoring</span>
+          综合分析
+        </NuxtLink>
         <NuxtLink
           :to="{ path: '/team', query: { create: '1' } }"
           class="text-sm text-white font-semibold px-4 py-2 rounded-lg bg-blue-700 flex gap-2 transition-colors items-center hover:bg-blue-600"

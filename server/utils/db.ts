@@ -1144,6 +1144,20 @@ CREATE TABLE IF NOT EXISTS project_topic_candidates (
   UNIQUE(board_id, candidate_id)
 );
 
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT '',
+  project_id TEXT NOT NULL DEFAULT '',
+  user_id TEXT NOT NULL DEFAULT '',
+  event_type TEXT NOT NULL DEFAULT 'page_view',
+  event_name TEXT NOT NULL DEFAULT '',
+  page_key TEXT NOT NULL DEFAULT '',
+  entity_type TEXT NOT NULL DEFAULT '',
+  entity_id TEXT NOT NULL DEFAULT '',
+  payload_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS contest_trends (
   id TEXT PRIMARY KEY,
   contest_id TEXT NOT NULL REFERENCES contests(id) ON DELETE CASCADE,
@@ -1565,6 +1579,10 @@ CREATE INDEX IF NOT EXISTS idx_project_topic_boards_project_updated ON project_t
 CREATE INDEX IF NOT EXISTS idx_project_topic_boards_workspace_status ON project_topic_boards(workspace_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_board_sort ON project_topic_candidates(board_id, sort_order ASC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_project_status ON project_topic_candidates(project_id, decision_status, total_score DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_workspace_created ON analytics_events(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_project_created ON analytics_events(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_page_created ON analytics_events(page_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_type_created ON analytics_events(event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_sources_created ON contest_sync_sources(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contest_sync_runs_source_started ON contest_sync_runs(source_id, started_at DESC);

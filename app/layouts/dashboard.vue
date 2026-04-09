@@ -36,6 +36,14 @@ const analystTier = computed(() => {
 
 const menuItems = computed(() => {
   const items = [...baseMenuItems]
+  if (!items.some(item => item.id === 'analytics')) {
+    items.splice(1, 0, {
+      id: 'analytics',
+      label: '综合分析',
+      icon: 'monitoring',
+      to: '/dashboard/analytics',
+    })
+  }
   if (canEnterAdmin.value || route.path.startsWith('/admin')) {
     items.push({
       id: 'platform-admin',
