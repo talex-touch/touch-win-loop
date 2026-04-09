@@ -29,6 +29,52 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+async function resolveProjectResourceUploadVisibleProject(
+  db: Queryable,
+  input: {
+    user: AuthUser
+    projectId: string
+  },
+): Promise<
+  | {
+    ok: true
+    workspaceId: string
+  }
+  | {
+    ok: false
+    reason: 'PROJECT_NOT_FOUND' | 'FORBIDDEN'
+  }
+> {
+  const projectId = normalizeString(input.projectId)
+  const project = await getVisibleProjectById(db, input.user, projectId)
+  if (!project)
+    return { ok: false, reason: 'PROJECT_NOT_FOUND' }
+
+  return {
+    ok: true,
+    workspaceId: project.workspaceId || project.teamId,
+  }
+}
+
+export async function resolveProjectResourceUploadViewAccessContext(
+  db: Queryable,
+  input: {
+    user: AuthUser
+    projectId: string
+  },
+): Promise<
+  | {
+    ok: true
+    workspaceId: string
+  }
+  | {
+    ok: false
+    reason: 'PROJECT_NOT_FOUND' | 'FORBIDDEN'
+  }
+> {
+  return resolveProjectResourceUploadVisibleProject(db, input)
+}
+
 export async function resolveProjectResourceUploadAccessContext(
   db: Queryable,
   input: {
@@ -48,9 +94,9 @@ export async function resolveProjectResourceUploadAccessContext(
   }
 > {
   const projectId = normalizeString(input.projectId)
-  const project = await getVisibleProjectById(db, input.user, projectId)
-  if (!project)
-    return { ok: false, reason: 'PROJECT_NOT_FOUND' }
+  const visible = await resolveProjectResourceUploadVisibleProject(db, input)
+  if (!visible.ok)
+    return visible
 
   const manageable = await teamCanManageProject(db, input.user, projectId)
   if (!manageable)
@@ -63,7 +109,7 @@ export async function resolveProjectResourceUploadAccessContext(
 
   return {
     ok: true,
-    workspaceId: project.workspaceId || project.teamId,
+    workspaceId: visible.workspaceId,
     usedBytes,
     reservedBytes,
   }

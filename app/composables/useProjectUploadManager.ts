@@ -523,8 +523,12 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       projectSessionHistoryLoaded.value = true
       return sessions
     }
-    catch {
+    catch (error) {
       projectSessionHistoryLoaded.value = false
+      const statusCode = Number((error as { statusCode?: number })?.statusCode || (error as { response?: { status?: number } })?.response?.status || 0)
+      const message = normalizeString((error as { data?: { message?: string } })?.data?.message)
+      if (statusCode === 403)
+        input.onStatusLine?.(message || '当前账号无权查看团队上传记录。')
       return []
     }
     finally {

@@ -1,6 +1,6 @@
 import type { ProjectResourceUploadSessionListResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { resolveProjectResourceUploadAccessContext } from '~~/server/services/project-resource-upload'
+import { resolveProjectResourceUploadViewAccessContext } from '~~/server/services/project-resource-upload'
 import { getDocumentStorage } from '~~/server/storage/document-storage'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
 
   const result = await withTransaction(event, async (db) => {
     const expiredChunkKeys = await expireProjectResourceUploadSessions(db, { projectId })
-    const access = await resolveProjectResourceUploadAccessContext(db, {
+    const access = await resolveProjectResourceUploadViewAccessContext(db, {
       user,
       projectId,
     })
