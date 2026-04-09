@@ -24,6 +24,7 @@ import {
   getProjectMeetingParticipantByIdentity,
   listProjectMeetingParticipants,
   patchProjectMeeting,
+  replaceProjectMeetingInvitees,
   upsertProjectMeetingParticipant,
 } from '~~/server/utils/project-meeting-store'
 
@@ -162,6 +163,63 @@ export async function createProjectMeetingSession(
     joinToken: join.token,
     joinExpiresAt: join.expiresAt,
     joinUrl: join.joinUrl,
+  }
+}
+
+export async function createProjectMeetingRecord(
+  db: Queryable,
+  input: {
+    projectId: string
+    workspaceId: string
+    user: AuthUser
+    title?: string
+    mode?: ProjectMeetingMode
+    invitedUserIds?: string[]
+    scheduledStartAt?: string | null
+    scheduledEndAt?: string | null
+    runtime?: RuntimeSettings
+  },
+): Promise<{
+  meeting: ProjectMeeting
+  detail: ProjectMeetingDetail
+  joinToken: string
+  joinExpiresAt: string
+  joinUrl?: string
+}> {
+  const payload = await createProjectMeetingSession(db, input)
+  let meeting = payload.meeting
+
+  if (input.scheduledStartAt !== undefined || input.scheduledEndAt !== undefined) {
+    meeting = await patchProjectMeeting(db, {
+      projectId: input.projectId,
+      meetingId: meeting.id,
+      scheduledStartAt: input.scheduledStartAt,
+      scheduledEndAt: input.scheduledEndAt,
+    })
+  }
+
+  if (Array.isArray(input.invitedUserIds)) {
+    await replaceProjectMeetingInvitees(db, {
+      meetingId: meeting.id,
+      projectId: input.projectId,
+      invitees: input.invitedUserIds.map(userId => ({
+        userId: normalizeString(userId),
+        role: 'member',
+      })),
+    })
+  }
+
+  const detail = await getProjectMeetingDetail(db, {
+    projectId: input.projectId,
+    meetingId: meeting.id,
+  })
+  if (!detail)
+    throw new Error('MEETING_NOT_FOUND')
+
+  return {
+    ...payload,
+    meeting,
+    detail,
   }
 }
 

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 const { endpoint } = useApiEndpoint()
 const pageviewData = ref<{ pageview: number, startAt: number } | null>(null)
+const pageviewUrl = import.meta.server
+  ? new URL(String(endpoint('/pageview')), useRequestURL()).toString()
+  : String(endpoint('/pageview'))
 
-pageviewData.value = await $fetch(String(endpoint('/pageview'))).catch(() => null) as {
-  pageview: number
-  startAt: number
-} | null
+pageviewData.value = await fetch(pageviewUrl)
+  .then(response => response.json())
+  .catch(() => null) as { pageview: number, startAt: number } | null
 
 const time = useTimeAgo(() => pageviewData.value?.startAt || 0)
 </script>
