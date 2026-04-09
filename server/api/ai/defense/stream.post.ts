@@ -1,4 +1,5 @@
 import type {
+  AiChatSession,
   AiDefenseInputMode,
   AiDefenseRequest,
   AiDefenseResult,
@@ -7,8 +8,8 @@ import type {
   AiDefenseStreamEventType,
 } from '~~/shared/types/domain'
 import { createEventStream, setResponseStatus } from 'h3'
-import { buildDefenseContextPack } from '~~/server/services/ai/defense-context'
 import { runDefenseChain } from '~~/server/services/ai/defense-chain'
+import { buildDefenseContextPack } from '~~/server/services/ai/defense-context'
 import { runDefenseFallback } from '~~/server/services/ai/fallback'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -18,6 +19,7 @@ import {
   getAiChatSessionById,
   patchAiChatSessionContext,
 } from '~~/server/utils/chat-store'
+import { recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
 import {
   createProjectDefenseTurns,
   getProjectDefenseSessionState,
@@ -64,7 +66,7 @@ function normalizeRequest(body: Partial<AiDefenseRequest> | null | undefined, wo
     stageHint: normalizeStage(body?.stageHint),
     inputMode: normalizeInputMode(body?.inputMode) || 'text',
     attachments: Array.isArray(body?.attachments) ? body.attachments : [],
-    messages: Array.isArray(body?.messages) ? body!.messages! : [],
+    messages: Array.isArray(body?.messages) ? body.messages : [],
     aiOptions: {
       reasoningEnabled: typeof body?.aiOptions?.reasoningEnabled === 'boolean' ? body.aiOptions.reasoningEnabled : undefined,
       networkEnabled: typeof body?.aiOptions?.networkEnabled === 'boolean' ? body.aiOptions.networkEnabled : undefined,
@@ -90,6 +92,32 @@ function buildSessionTitle(contestName: string, trackName: string): string {
     return `答辩模拟 · ${left}`
   return '答辩模拟'
 }
+
+interface DefensePreparedFailureState {
+  sessionId: string
+  shouldRecordStart: boolean
+  createdNewSession: boolean
+}
+
+type DefensePreparedResult
+  = {
+      kind: 'success'
+      sessionId: string
+      remainingQuota: number | null
+      shouldRecordStart: boolean
+      createdNewSession: boolean
+      existingState: Awaited<ReturnType<typeof getProjectDefenseSessionState>>
+    }
+    | {
+      kind: 'forbidden'
+    }
+    | {
+      kind: 'session_not_found'
+    }
+    | {
+      kind: 'quota_exceeded'
+      failureState: DefensePreparedFailureState | null
+    }
 
 function chunkText(text: string, chunkSize = 28): string[] {
   const normalized = String(text || '')
@@ -150,46 +178,122 @@ export default defineEventHandler(async (event) => {
     ?.content
     ?.trim() || ''
 
-  const prepared = await withTransaction(event, async (db) => {
+  const contextPack = await withClient(event, async (db) => {
+    return buildDefenseContextPack({
+      db,
+      user,
+      workspaceId,
+      projectId: scopeProjectId,
+      contestId: request.context.contestId,
+      trackId: request.context.trackId,
+      major: request.context.major,
+      latestUserMessage,
+      personaIds: request.personaIds,
+      attachments: request.attachments,
+      includeInternal,
+    })
+  }).catch((error) => {
+    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return null
+    }
+    throw error
+  })
+
+  if (!contextPack) {
+    return fail('project not found', {
+      startedAt,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40478)
+  }
+
+  const recordDefenseUsage = async (
+    result: 'success' | 'failed',
+    meta?: Record<string, unknown>,
+  ): Promise<void> => {
+    await withClient(event, async (db) => {
+      await recordBillingUsageEventSafely(db, {
+        workspaceId,
+        projectId: scopeProjectId || null,
+        contestId: request.context.contestId || null,
+        trackId: request.context.trackId || null,
+        actorUserId: user.id,
+        eventCode: 'ai.defense.start',
+        result,
+        sourceRoute: '/api/ai/defense/stream',
+        meta: {
+          sessionId: toText(meta?.sessionId) || null,
+          fallbackUsed: Boolean(meta?.fallbackUsed),
+          attempts: Number(meta?.attempts || 1),
+          channelKey: channelRuntime.key,
+          isNewSession: Boolean(meta?.isNewSession),
+          ...meta,
+        },
+      })
+    }).catch(() => undefined)
+  }
+
+  let preparedForFailure: DefensePreparedFailureState | null = null
+
+  const prepared: DefensePreparedResult = await withTransaction(event, async (db) => {
     const canUseWorkspace = await teamHasWorkspaceMembership(db, user, workspaceId)
     if (!canUseWorkspace)
       throw new Error('FORBIDDEN')
 
-    let session = request.sessionId
-      ? await getAiChatSessionById(db, {
-          workspaceId,
-          sessionId: request.sessionId,
-          projectId: scopeProjectId,
-          mode: scopeMode,
-          strictScope: Boolean(scopeProjectId),
-        })
-      : null
+    let existingSession: AiChatSession | null = null
+    let createdNewSession = false
+    let existingMessageCount = 0
 
-    if (!session) {
-      session = await createAiChatSession(db, {
+    if (request.sessionId) {
+      existingSession = await getAiChatSessionById(db, {
+        workspaceId,
+        sessionId: request.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        strictScope: Boolean(scopeProjectId),
+      })
+      if (!existingSession)
+        throw new Error('SESSION_NOT_FOUND')
+      existingMessageCount = existingSession.messageCount || 0
+    }
+    else {
+      existingSession = await createAiChatSession(db, {
         workspaceId,
         projectId: scopeProjectId,
         mode: scopeMode,
         createdByUserId: user.id,
-        title: buildSessionTitle('', ''),
+        title: buildSessionTitle(contextPack.contestName, contextPack.trackName),
         contestId: request.context.contestId,
         trackId: request.context.trackId,
         major: request.context.major,
       })
+      createdNewSession = true
     }
 
-    if (!session)
+    if (!existingSession)
       throw new Error('SESSION_NOT_FOUND')
+
+    const shouldRecordStart = createdNewSession || existingMessageCount === 0
 
     await patchAiChatSessionContext(db, {
       workspaceId,
-      sessionId: session.id,
+      sessionId: existingSession.id,
       projectId: scopeProjectId,
       mode: scopeMode,
       contestId: request.context.contestId,
       trackId: request.context.trackId,
       major: request.context.major,
+      title: buildSessionTitle(contextPack.contestName, contextPack.trackName),
     })
+
+    preparedForFailure = {
+      sessionId: existingSession.id,
+      shouldRecordStart,
+      createdNewSession,
+    }
 
     const quota = await teamConsumeAiQuota(db, {
       workspaceId,
@@ -201,29 +305,35 @@ export default defineEventHandler(async (event) => {
       throw new Error('QUOTA_EXCEEDED')
 
     return {
-      sessionId: session.id,
+      kind: 'success' as const,
+      sessionId: existingSession.id,
       remainingQuota: quota.remaining,
+      shouldRecordStart,
+      createdNewSession,
       existingState: await getProjectDefenseSessionState(db, {
-        sessionId: session.id,
+        sessionId: existingSession.id,
       }),
     }
   }).catch((error) => {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
       setResponseStatus(event, 403)
-      return null
+      return { kind: 'forbidden' as const }
     }
     if (error instanceof Error && error.message === 'SESSION_NOT_FOUND') {
       setResponseStatus(event, 404)
-      return 'SESSION_NOT_FOUND'
+      return { kind: 'session_not_found' as const }
     }
     if (error instanceof Error && error.message === 'QUOTA_EXCEEDED') {
       setResponseStatus(event, 429)
-      return 'QUOTA_EXCEEDED'
+      return {
+        kind: 'quota_exceeded' as const,
+        failureState: preparedForFailure,
+      }
     }
     throw error
   })
 
-  if (!prepared) {
+  if (prepared.kind === 'forbidden') {
     return fail('当前用户无权使用该空间。', {
       startedAt,
       provider: channelAiConfig.provider,
@@ -232,7 +342,7 @@ export default defineEventHandler(async (event) => {
       attempts: 1,
     }, 40375)
   }
-  if (prepared === 'SESSION_NOT_FOUND') {
+  if (prepared.kind === 'session_not_found') {
     return fail('会话不存在，请刷新后重试。', {
       startedAt,
       provider: channelAiConfig.provider,
@@ -241,8 +351,17 @@ export default defineEventHandler(async (event) => {
       attempts: 1,
     }, 40475)
   }
-  if (prepared === 'QUOTA_EXCEEDED') {
-    return fail('Team AI 额度不足，请扩容或等待重置。', {
+  if (prepared.kind === 'quota_exceeded') {
+    const failureState = prepared.failureState
+    if (failureState?.shouldRecordStart) {
+      await recordDefenseUsage('failed', {
+        sessionId: failureState.sessionId,
+        isNewSession: failureState.createdNewSession,
+        isFirstSessionMessage: true,
+        reason: 'QUOTA_EXCEEDED',
+      })
+    }
+    return fail('Team AI 配额不足，请扩容或等待重置。', {
       startedAt,
       provider: channelAiConfig.provider,
       model: channelAiConfig.model,
@@ -251,55 +370,10 @@ export default defineEventHandler(async (event) => {
     }, 42975)
   }
 
-  let contextPack
-  try {
-    contextPack = await withClient(event, async (db) => {
-      return buildDefenseContextPack({
-        db,
-        user,
-        workspaceId,
-        projectId: scopeProjectId,
-        contestId: request.context.contestId,
-        trackId: request.context.trackId,
-        major: request.context.major,
-        latestUserMessage,
-        personaIds: request.personaIds,
-        attachments: request.attachments,
-        includeInternal,
-      })
-    })
-  }
-  catch (error) {
-    if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return fail('project not found', {
-        startedAt,
-        provider: channelAiConfig.provider,
-        model: channelAiConfig.model,
-        fallbackUsed: false,
-        attempts: 1,
-      }, 40478)
-    }
-    throw error
-  }
-
   const stage = request.stageHint
     || prepared.existingState?.currentStage
     || deriveStageFromTurnCount(prepared.existingState?.turnCount || 0)
   const turnIndex = Math.max(1, (prepared.existingState?.turnCount || 0) + 1)
-
-  await withTransaction(event, async (db) => {
-    await patchAiChatSessionContext(db, {
-      workspaceId,
-      sessionId: prepared.sessionId,
-      projectId: scopeProjectId,
-      mode: scopeMode,
-      contestId: request.context.contestId,
-      trackId: request.context.trackId,
-      major: request.context.major,
-      title: buildSessionTitle(contextPack.contestName, contextPack.trackName),
-    })
-  })
 
   const stream = createEventStream(event)
   const pushEvent = async (eventType: AiDefenseStreamEventType, data: Record<string, unknown>) => {
@@ -314,6 +388,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const run = async () => {
+    let usageRecorded = !prepared.shouldRecordStart
+
     try {
       await pushEvent('progress', {
         message: '已建立答辩会话，正在组织评委团与证据包...',
@@ -505,6 +581,18 @@ export default defineEventHandler(async (event) => {
         status: 'queued',
         sessionId: prepared.sessionId,
       })
+
+      if (prepared.shouldRecordStart) {
+        await recordDefenseUsage('success', {
+          sessionId: prepared.sessionId,
+          fallbackUsed: execution.fallbackUsed,
+          attempts: execution.attempts,
+          isNewSession: prepared.createdNewSession,
+          isFirstSessionMessage: true,
+        })
+        usageRecorded = true
+      }
+
       await pushEvent('done', {
         result,
         meta: {
@@ -515,6 +603,16 @@ export default defineEventHandler(async (event) => {
       })
     }
     catch (error) {
+      if (!usageRecorded && prepared.shouldRecordStart) {
+        await recordDefenseUsage('failed', {
+          sessionId: prepared.sessionId,
+          isNewSession: prepared.createdNewSession,
+          isFirstSessionMessage: true,
+          reason: 'CHAIN_EXECUTION_FAILED',
+          error: toErrorMessage(error),
+        })
+      }
+
       const message = toErrorMessage(error)
       await pushEvent('error', { message })
     }

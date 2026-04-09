@@ -5,20 +5,20 @@ import type {
   Contest,
   PlatformPermission,
   Project,
-  ProjectTopicBoardCreateSeed,
   ProjectInvitationSummary,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectSettingsSnapshot,
+  ProjectTopicBoardCreateSeed,
   TeamLastProjectPreference,
   WorkspaceBillingEstimate,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { TeamProjectCardItem } from '~/composables/team-ui'
-import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import type { WorkspaceProjectCommonForm } from '~/types/workspace'
 import { Message } from '@arco-design/web-vue'
+import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
@@ -101,15 +101,14 @@ function createEmptyTopicBoardSeed(): ProjectTopicBoardCreateSeed {
   }
 }
 
-const createForm = reactive<WorkspaceProjectCommonForm & { contestIds: string[] }>({
-  ...createEmptyProjectCommonForm(),
-  contestIds: [] as string[],
-}) as WorkspaceProjectCommonForm & {
+const createForm = reactive<WorkspaceProjectCommonForm & {
   contestIds: string[]
   topicBoardSeed: ProjectTopicBoardCreateSeed
-}
-
-createForm.topicBoardSeed = createEmptyTopicBoardSeed()
+}>({
+  ...createEmptyProjectCommonForm(),
+  contestIds: [] as string[],
+  topicBoardSeed: createEmptyTopicBoardSeed(),
+})
 
 const workspaceOptions = computed<WorkspaceWithQuota[]>(() => {
   return resolveWorkspaceOptions(me.value)
@@ -802,7 +801,7 @@ async function submitQuickCreate(mode: 'stay' | 'enter') {
     const created = response.data
     const createdWorkspaceId = String(created.teamId || created.workspaceId || '').trim() || workspaceId
 
-    if (process.client && createForm.topicBoardSeed.autoGenerate !== false) {
+    if (import.meta.client && createForm.topicBoardSeed.autoGenerate !== false) {
       try {
         window.sessionStorage.setItem(
           `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${created.id}`,

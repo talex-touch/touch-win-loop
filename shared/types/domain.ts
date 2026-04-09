@@ -48,6 +48,17 @@ export interface WorkspaceDisplayPreferenceSnapshot {
   sources: WorkspaceDisplayPreferenceSources
   canManageTeamDefault: boolean
 }
+export type ProjectIssueReviewSubmissionStatus = 'draft' | 'submitted'
+export const BILLING_USAGE_EVENT_CODES = [
+  'resource.download',
+  'resource.favorite.create',
+  'ai.topic_proposal.generate',
+  'review.submit',
+  'review.report.export',
+  'ai.defense.start',
+] as const
+export type BillingUsageEventCode = typeof BILLING_USAGE_EVENT_CODES[number]
+export type BillingUsageEventResult = 'success' | 'failed'
 
 export type ResourceCategory
   = 'basic_info'
@@ -343,6 +354,7 @@ export interface Resource {
   sourceType?: string
   source?: 'upload' | 'library' | 'collab'
   linkedContestResourceId?: string | null
+  isFavorite?: boolean
   status?: ResourceStatus
   createdBy?: string
   updatedBy?: string
@@ -647,6 +659,7 @@ export type Team = Workspace
 export interface TeamQuota {
   teamId: string
   workspaceId?: string
+  planTier?: 'personal_team' | 'business_team' | null
   seatLimit: number
   seatUsed: number
   aiQuotaTotal: number
@@ -1009,7 +1022,7 @@ export interface ProjectOutlineSnapshot {
 }
 
 export type ProjectMeetingMode = 'audio' | 'video'
-export type ProjectMeetingStatus = 'active' | 'ended' | 'failed'
+export type ProjectMeetingStatus = 'scheduled' | 'active' | 'ended' | 'failed'
 export type ProjectMeetingTranscriptStatus = 'idle' | 'running' | 'completed' | 'failed'
 export type ProjectMeetingRecordingStatus = 'idle' | 'requested' | 'processing' | 'completed' | 'failed'
 export type ProjectMeetingSummaryStatus = 'idle' | 'queued' | 'processing' | 'completed' | 'failed'
@@ -1034,6 +1047,10 @@ export interface ProjectMeeting {
   summaryStatus: ProjectMeetingSummaryStatus
   recordingResourceId?: string | null
   notesResourceId?: string | null
+  scheduledStartAt?: string | null
+  scheduledEndAt?: string | null
+  durationMinutes?: number
+  invitedCount?: number
   startedByUserId: string
   startedAt: string
   endedAt?: string | null
@@ -1059,6 +1076,19 @@ export interface ProjectMeetingParticipant {
   audioTrackState: ProjectMeetingTrackState
   videoTrackState: ProjectMeetingTrackState
   metadata?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectMeetingInvitee {
+  id: string
+  meetingId: string
+  projectId: string
+  userId: string
+  username: string
+  avatarUrl?: string | null
+  role: ProjectMeetingParticipantRole
+  invitedAt: string
   createdAt: string
   updatedAt: string
 }
@@ -1099,6 +1129,7 @@ export interface ProjectMeetingJob {
 }
 
 export interface ProjectMeetingDetail extends ProjectMeeting {
+  invitees: ProjectMeetingInvitee[]
   participants: ProjectMeetingParticipant[]
   recentJobs: ProjectMeetingJob[]
 }
@@ -1165,8 +1196,9 @@ export interface ProjectSettingsDraft {
 
 export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings'
 export type WorkspaceMeetingTabId = `meeting:${string}`
+export type WorkspaceMeetingCreateTabId = 'meeting-create:audio' | 'meeting-create:video'
 export type WorkspaceResourceTabId = `resource:${string}`
-export type WorkspaceOpenTabState = WorkspaceFixedTabId | WorkspaceMeetingTabId | WorkspaceResourceTabId
+export type WorkspaceOpenTabState = WorkspaceFixedTabId | WorkspaceMeetingTabId | WorkspaceMeetingCreateTabId | WorkspaceResourceTabId
 export type ProjectWorkbenchMode = 'project' | 'defense'
 
 export interface ProjectWorkspaceViewState {
@@ -1697,6 +1729,10 @@ export interface ProjectIssueReport {
   markdown: string
   sourceMode: WorkspaceAiMode
   createdByUserId: string
+  reviewSubmissionStatus: ProjectIssueReviewSubmissionStatus
+  reviewSubmittedAt: string | null
+  reviewSubmittedByUserId: string | null
+  reviewSubmittedByUsername?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -1714,6 +1750,41 @@ export interface ProjectIssue {
   createdByUserId: string
   createdAt: string
   updatedAt: string
+}
+
+export interface BillingUsageEvent {
+  id: string
+  workspaceId: string
+  workspaceName?: string
+  projectId: string | null
+  contestId: string | null
+  trackId: string | null
+  projectResourceId: string | null
+  contestResourceId: string | null
+  reportId: string | null
+  actorUserId: string | null
+  actorUsername?: string
+  eventCode: BillingUsageEventCode
+  result: BillingUsageEventResult
+  sourceRoute: string
+  meta: Record<string, unknown>
+  createdAt: string
+}
+
+export interface BillingUsageEventSummaryRow {
+  workspaceId: string
+  workspaceName?: string
+  eventCode: BillingUsageEventCode
+  result: BillingUsageEventResult
+  total: number
+}
+
+export interface BillingUsageEventsPayload {
+  items: BillingUsageEvent[]
+  summary: BillingUsageEventSummaryRow[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 export interface ApproveChangeRequestPayload {

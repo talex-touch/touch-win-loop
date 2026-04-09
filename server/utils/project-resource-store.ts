@@ -81,6 +81,16 @@ interface ContestResourceRow {
   updated_by_user_id: string | null
   created_at: string
   updated_at: string
+  is_favorite?: boolean | null
+}
+
+interface ProjectResourceDownloadRow {
+  id: string
+  source: ProjectResourceRow['source']
+  title: string
+  mime_type: string
+  source_link: string
+  linked_contest_resource_id: string | null
 }
 
 interface ProjectUploadStorageUsageRow {
@@ -409,6 +419,7 @@ function toLibraryResource(row: ContestResourceRow): Resource {
     sourceType: row.source_type,
     source: 'library',
     linkedContestResourceId: row.id,
+    isFavorite: Boolean(row.is_favorite),
     summary: row.summary,
     content: row.content,
     metadata,
@@ -587,7 +598,10 @@ export async function getProjectResourceById(
 
 export async function listProjectLibraryResources(
   db: Queryable,
-  projectId: string,
+  input: {
+    projectId: string
+    actorUserId: string
+  },
 ): Promise<Resource[]> {
   const result = await db.query<ContestResourceRow>(
     `SELECT
@@ -607,7 +621,13 @@ export async function listProjectLibraryResources(
       r.created_by_user_id,
       r.updated_by_user_id,
       r.created_at::TEXT,
-      r.updated_at::TEXT
+      r.updated_at::TEXT,
+      EXISTS (
+        SELECT 1
+        FROM contest_resource_favorites f
+        WHERE f.actor_user_id = $2
+          AND f.contest_resource_id = r.id
+      ) AS is_favorite
      FROM contest_resources r
      WHERE r.status = 'active'
        AND COALESCE(r.source_type, '') <> 'project_upload'
@@ -619,11 +639,114 @@ export async function listProjectLibraryResources(
            AND pr.status = 'active'
        )
      ORDER BY r.year DESC, r.created_at DESC
-     LIMIT 80`,
-    [projectId],
+      LIMIT 80`,
+    [input.projectId, input.actorUserId],
   )
 
   return result.rows.map(toLibraryResource)
+}
+
+export async function createContestResourceFavorite(
+  db: Queryable,
+  input: {
+    resourceId: string
+    actorUserId: string
+  },
+): Promise<{ resource: Resource, alreadyFavorited: boolean }> {
+  const resourceResult = await db.query<ContestResourceRow>(
+    `SELECT
+      r.id,
+      r.contest_id,
+      r.category,
+      r.title,
+      r.year,
+      r.url,
+      r.access_level,
+      r.source_type,
+      r.summary,
+      r.content,
+      r.metadata,
+      r.copyright_note,
+      r.status,
+      r.created_by_user_id,
+      r.updated_by_user_id,
+      r.created_at::TEXT,
+      r.updated_at::TEXT,
+      TRUE AS is_favorite
+     FROM contest_resources r
+     WHERE r.id = $1
+       AND r.status = 'active'
+       AND COALESCE(r.source_type, '') <> 'project_upload'
+     LIMIT 1`,
+    [input.resourceId],
+  )
+
+  const resourceRow = resourceResult.rows[0]
+  if (!resourceRow)
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  const inserted = await db.query<{ id: string }>(
+    `INSERT INTO contest_resource_favorites (
+      id,
+      contest_resource_id,
+      actor_user_id,
+      created_at
+    ) VALUES (
+      $1, $2, $3, NOW()
+    )
+    ON CONFLICT (actor_user_id, contest_resource_id) DO NOTHING
+    RETURNING id`,
+    [randomUUID(), input.resourceId, input.actorUserId],
+  )
+
+  return {
+    resource: toLibraryResource(resourceRow),
+    alreadyFavorited: !inserted.rows[0]?.id,
+  }
+}
+
+export async function getProjectResourceDownloadDescriptor(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<{
+    id: string
+    source: ProjectResourceRow['source']
+    title: string
+    mimeType: string
+    sourceLink: string
+    linkedContestResourceId: string | null
+  } | null> {
+  const result = await db.query<ProjectResourceDownloadRow>(
+    `SELECT
+      id,
+      source,
+      title,
+      mime_type,
+      source_link,
+      linked_contest_resource_id
+     FROM project_resources
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'
+     LIMIT 1`,
+    [input.projectId, input.resourceId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  return {
+    id: row.id,
+    source: row.source,
+    title: normalizeString(row.title),
+    mimeType: normalizeString(row.mime_type),
+    sourceLink: normalizeString(row.source_link),
+    linkedContestResourceId: row.linked_contest_resource_id,
+  }
 }
 
 export async function bindLibraryResourceToProject(

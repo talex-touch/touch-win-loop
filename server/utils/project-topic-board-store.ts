@@ -172,6 +172,90 @@ const compareMatrixRowSchema = z.object({
   workloadFeasibility: z.coerce.number().default(0),
 })
 
+function normalizeTopicProposalDecisionStatus(value: unknown): TopicProposalDecisionStatus {
+  const parsed = topicProposalDecisionStatusSchema.safeParse(normalizeText(value))
+  return parsed.success ? parsed.data : 'candidate'
+}
+
+function createEmptyCompareScores(): TopicProposalItem['compareScores'] {
+  return {
+    contestFit: 0,
+    noveltySimilarity: 0,
+    evidenceReadiness: 0,
+    trendHeat: 0,
+    teamMatch: 0,
+    workloadFeasibility: 0,
+  }
+}
+
+function buildCompareMatrixFromCandidates(candidates: TopicProposalItem[]): TopicProposalCompareMatrixRow[] {
+  return candidates.map((candidate, index) => ({
+    candidateId: candidate.id,
+    title: candidate.title,
+    decisionStatus: candidate.decisionStatus,
+    totalScore: Number(candidate.totalScore || 0),
+    rank: index + 1,
+    ...createEmptyCompareScores(),
+    ...(candidate.compareScores || {}),
+  }))
+}
+
+function normalizeCandidatesForPersistence(
+  inputCandidates: TopicProposalItem[],
+  selectedCandidateId?: string,
+): {
+  candidates: TopicProposalItem[]
+  compareMatrix: TopicProposalCompareMatrixRow[]
+  selectedCandidateId: string
+} {
+  const seenCandidateIds = new Set<string>()
+  const requestedSelectedCandidateId = normalizeText(selectedCandidateId)
+  let normalizedSelectedCandidateId = ''
+
+  const normalizedCandidates = inputCandidates.map((candidate) => {
+    const rawCandidateId = normalizeText(candidate.id)
+    let candidateId = rawCandidateId || randomUUID()
+    while (seenCandidateIds.has(candidateId))
+      candidateId = randomUUID()
+    seenCandidateIds.add(candidateId)
+
+    if (!normalizedSelectedCandidateId && requestedSelectedCandidateId && rawCandidateId === requestedSelectedCandidateId)
+      normalizedSelectedCandidateId = candidateId
+
+    return {
+      ...candidate,
+      id: candidateId,
+      decisionStatus: normalizeTopicProposalDecisionStatus(candidate.decisionStatus),
+      totalScore: Number(candidate.totalScore || 0),
+      compareScores: {
+        ...createEmptyCompareScores(),
+        ...(candidate.compareScores || {}),
+      },
+    }
+  })
+
+  if (!normalizedSelectedCandidateId)
+    normalizedSelectedCandidateId = normalizedCandidates.find(candidate => candidate.decisionStatus === 'selected')?.id || ''
+
+  const candidates = normalizedCandidates.map((candidate) => {
+    const nextDecisionStatus = normalizedSelectedCandidateId
+      ? (candidate.id === normalizedSelectedCandidateId
+          ? 'selected'
+          : (candidate.decisionStatus === 'selected' ? 'candidate' : candidate.decisionStatus))
+      : candidate.decisionStatus
+    return {
+      ...candidate,
+      decisionStatus: nextDecisionStatus,
+    }
+  })
+
+  return {
+    candidates,
+    compareMatrix: buildCompareMatrixFromCandidates(candidates),
+    selectedCandidateId: normalizedSelectedCandidateId,
+  }
+}
+
 function createEmptyTopicProposalItem(candidateId: string, decisionStatus: TopicProposalDecisionStatus, totalScore: number): TopicProposalItem {
   return {
     id: candidateId,
@@ -386,6 +470,72 @@ async function getBoardRowsByProject(
   return result.rows
 }
 
+async function getBoardRowById(
+  db: Queryable,
+  input: {
+    projectId: string
+    boardId: string
+    forUpdate?: boolean
+  },
+): Promise<ProjectTopicBoardRow | null> {
+  const result = await db.query<ProjectTopicBoardRow>(
+    `SELECT
+      id,
+      workspace_id,
+      project_id,
+      contest_id,
+      track_id,
+      input_snapshot,
+      team_skill_profile,
+      compare_matrix,
+      board_summary,
+      selected_candidate_id,
+      session_id,
+      status,
+      created_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_topic_boards
+     WHERE project_id = $1
+       AND id = $2
+     LIMIT 1
+     ${input.forUpdate ? 'FOR UPDATE' : ''}`,
+    [input.projectId, input.boardId],
+  )
+
+  return result.rows[0] || null
+}
+
+async function listCandidateRowsByBoardId(
+  db: Queryable,
+  input: {
+    boardId: string
+    forUpdate?: boolean
+  },
+): Promise<ProjectTopicCandidateRow[]> {
+  const result = await db.query<ProjectTopicCandidateRow>(
+    `SELECT
+      id,
+      board_id,
+      workspace_id,
+      project_id,
+      candidate_id,
+      sort_order,
+      decision_status,
+      total_score,
+      payload,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_topic_candidates
+     WHERE board_id = $1
+     ORDER BY sort_order ASC, created_at ASC
+     ${input.forUpdate ? 'FOR UPDATE' : ''}`,
+    [input.boardId],
+  )
+
+  return result.rows
+}
+
 export async function createProjectTopicBoardWithCandidates(
   db: Queryable,
   input: {
@@ -404,6 +554,16 @@ export async function createProjectTopicBoardWithCandidates(
   },
 ): Promise<ProjectTopicBoard> {
   const boardId = randomUUID()
+  const prepared = normalizeCandidatesForPersistence(input.candidates, input.selectedCandidateId)
+
+  await db.query(
+    `SELECT id
+     FROM projects
+     WHERE id = $1
+     LIMIT 1
+     FOR UPDATE`,
+    [input.projectId],
+  )
 
   await db.query(
     `UPDATE project_topic_boards
@@ -442,20 +602,20 @@ export async function createProjectTopicBoardWithCandidates(
       input.trackId,
       JSON.stringify(input.boardInput),
       input.teamSkillProfile,
-      JSON.stringify(input.compareMatrix),
+      JSON.stringify(prepared.compareMatrix),
       input.boardSummary,
-      normalizeText(input.selectedCandidateId),
+      prepared.selectedCandidateId,
       normalizeText(input.sessionId),
       input.createdByUserId,
     ],
   )
 
-  if (input.candidates.length > 0) {
+  if (prepared.candidates.length > 0) {
     const values: unknown[] = []
     const placeholders: string[] = []
     let parameterIndex = 1
 
-    for (const [index, candidate] of input.candidates.entries()) {
+    for (const [index, candidate] of prepared.candidates.entries()) {
       placeholders.push(`($${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}, $${parameterIndex++}::JSONB, NOW(), NOW())`)
       values.push(
         randomUUID(),
@@ -506,31 +666,7 @@ export async function getProjectTopicBoardById(
     boardId: string
   },
 ): Promise<ProjectTopicBoard | null> {
-  const result = await db.query<ProjectTopicBoardRow>(
-    `SELECT
-      id,
-      workspace_id,
-      project_id,
-      contest_id,
-      track_id,
-      input_snapshot,
-      team_skill_profile,
-      compare_matrix,
-      board_summary,
-      selected_candidate_id,
-      session_id,
-      status,
-      created_by_user_id,
-      created_at::TEXT,
-      updated_at::TEXT
-     FROM project_topic_boards
-     WHERE project_id = $1
-       AND id = $2
-     LIMIT 1`,
-    [input.projectId, input.boardId],
-  )
-
-  const row = result.rows[0]
+  const row = await getBoardRowById(db, input)
   if (!row)
     return null
 
@@ -576,13 +712,19 @@ export async function patchProjectTopicBoard(
     }>
   },
 ): Promise<ProjectTopicBoard | null> {
-  const board = await getProjectTopicBoardById(db, {
+  const boardRow = await getBoardRowById(db, {
     projectId: input.projectId,
     boardId: input.boardId,
+    forUpdate: true,
   })
-
-  if (!board)
+  if (!boardRow)
     return null
+
+  const candidateRows = await listCandidateRowsByBoardId(db, {
+    boardId: input.boardId,
+    forUpdate: true,
+  })
+  const board = mapBoardRow(boardRow, candidateRows.map(mapCandidateRow))
 
   const nextCandidates = board.candidates.map(candidate => ({
     ...candidate,
@@ -620,27 +762,34 @@ export async function patchProjectTopicBoard(
     }
   }
 
-  const nextCompareMatrix = board.compareMatrix.map((row) => {
-    const candidate = nextCandidates.find(item => item.candidateId === row.candidateId)
-    return {
-      ...row,
-      decisionStatus: candidate?.decisionStatus || row.decisionStatus,
-    }
-  })
-
+  const normalized = normalizeCandidatesForPersistence(
+    nextCandidates.map(candidate => ({
+      ...candidate.payload,
+      id: candidate.candidateId,
+      decisionStatus: candidate.decisionStatus,
+      totalScore: candidate.totalScore,
+    })),
+    selectedCandidateId,
+  )
+  const nextCompareMatrix = normalized.compareMatrix
+  const normalizedCandidateMap = new Map(normalized.candidates.map(candidate => [candidate.id, candidate]))
   const currentCandidates = new Map(board.candidates.map(item => [item.candidateId, item]))
   const changedCandidates = nextCandidates.flatMap((candidate) => {
-    candidate.payload = {
-      ...candidate.payload,
-      decisionStatus: candidate.decisionStatus,
-    }
+    const normalizedCandidate = normalizedCandidateMap.get(candidate.candidateId)
+    if (!normalizedCandidate)
+      return []
 
+    const nextPayload = JSON.stringify({
+      ...normalizedCandidate,
+      decisionStatus: normalizedCandidate.decisionStatus,
+    })
     const current = currentCandidates.get(candidate.candidateId)
-    const nextPayload = JSON.stringify(candidate.payload)
-    const currentPayload = current ? JSON.stringify({
-      ...current.payload,
-      decisionStatus: current.decisionStatus,
-    }) : ''
+    const currentPayload = current
+      ? JSON.stringify({
+          ...current.payload,
+          decisionStatus: current.decisionStatus,
+        })
+      : ''
 
     if (
       current
@@ -652,7 +801,7 @@ export async function patchProjectTopicBoard(
 
     return [{
       candidateId: candidate.candidateId,
-      decisionStatus: candidate.decisionStatus,
+      decisionStatus: normalizedCandidate.decisionStatus,
       payload: nextPayload,
     }]
   })
@@ -693,7 +842,7 @@ export async function patchProjectTopicBoard(
       input.projectId,
       input.boardId,
       input.boardSummary === undefined ? board.boardSummary : input.boardSummary,
-      selectedCandidateId,
+      normalized.selectedCandidateId,
       JSON.stringify(nextCompareMatrix),
     ],
   )

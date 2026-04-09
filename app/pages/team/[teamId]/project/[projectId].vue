@@ -65,9 +65,9 @@ import type {
   WorkspaceFontSizePreset,
   WorkspaceMemberRole,
   WorkspaceOpenTabState,
-  WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type {
   MappingTone,
@@ -101,7 +101,6 @@ import { useCollabSession } from '~/composables/useCollabSession'
 import {
   defaultWorkspaceDisplayPreferenceSnapshot,
   useWorkspaceDisplayPreferenceApi,
-  type WorkspaceDisplayPreferencePatchPayload,
 } from '~/composables/useWorkspaceDisplayPreferences'
 
 definePageMeta({
@@ -502,6 +501,28 @@ function resolveApiStatusCode(error: unknown): number {
   return 0
 }
 
+function toIssueReportMarkdownFileName(title: string): string {
+  const normalized = String(title || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+  return `${normalized || 'issue-report'}.md`
+}
+
+function triggerBrowserDownloadFromBlob(blob: Blob, fileName: string): void {
+  if (!import.meta.client)
+    return
+
+  const url = window.URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  anchor.rel = 'noopener'
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  window.URL.revokeObjectURL(url)
+}
+
 interface WorkspaceQuickSwitchProject {
   projectId: string
   workspaceId: string
@@ -626,6 +647,8 @@ const topicBoardSnapshot = ref<ProjectTopicBoard | null>(null)
 const topicBoardHistory = ref<ProjectTopicBoard[]>([])
 const topicBoardActioningCandidateId = ref('')
 const topicBoardCreateSeedHandled = ref(false)
+let topicBoardLoadRequestId = 0
+let topicBoardWriteRequestId = 0
 
 const contests = ref<Contest[]>([])
 const contestCatalog = ref<Contest[]>([])
@@ -742,6 +765,8 @@ const aiChangeSecondConfirmIds = ref<string[]>([])
 const projectIssueReports = ref<ProjectIssueReport[]>([])
 const projectIssues = ref<ProjectIssue[]>([])
 const issueCenterLoading = ref(false)
+const issueReportSubmitting = ref(false)
+const issueReportExporting = ref(false)
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
 const defensePersonas = ref<AiDefensePersona[]>([])
@@ -4225,6 +4250,78 @@ async function loadProjectIssues() {
   }
 }
 
+async function submitIssueReport(reportId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const normalizedReportId = String(reportId || '').trim()
+  if (!projectId || !normalizedReportId || issueReportSubmitting.value)
+    return
+
+  issueReportSubmitting.value = true
+  try {
+    const response = await $fetch<ApiResponse<{ report: ProjectIssueReport, justSubmitted: boolean }>>(
+      endpoint(`/projects/${projectId}/issues/${normalizedReportId}/submit`),
+      {
+        method: 'POST',
+      },
+    )
+
+    await loadProjectIssues()
+    statusLine.value = response.data.justSubmitted
+      ? '评审报告已提交。'
+      : '评审报告已提交，无需重复操作。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '提交评审失败，请稍后重试。')
+  }
+  finally {
+    issueReportSubmitting.value = false
+  }
+}
+
+async function exportIssueReport(reportId: string) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const normalizedReportId = String(reportId || '').trim()
+  if (!projectId || !normalizedReportId || issueReportExporting.value || !import.meta.client)
+    return
+
+  issueReportExporting.value = true
+  try {
+    const response = await fetch(endpoint(`/projects/${projectId}/issues/${normalizedReportId}/export`), {
+      credentials: 'include',
+    })
+
+    if (!response.ok) {
+      let errorMessage = '导出评审报告失败，请稍后重试。'
+      try {
+        const payload = (await response.json()) as { message?: string }
+        const message = String(payload?.message || '').trim()
+        if (message)
+          errorMessage = message
+      }
+      catch {
+        const text = String(await response.text().catch(() => '') || '').trim()
+        if (text)
+          errorMessage = text
+      }
+      throw new Error(errorMessage)
+    }
+
+    const blob = await response.blob()
+    const report = projectIssueReports.value.find(item => item.id === normalizedReportId) || latestIssueReport.value
+    triggerBrowserDownloadFromBlob(
+      blob,
+      toIssueReportMarkdownFileName(report?.title || 'issue-report'),
+    )
+    statusLine.value = '评审报告已导出。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '导出评审报告失败，请稍后重试。')
+  }
+  finally {
+    issueReportExporting.value = false
+  }
+}
+
 function setAiChangeActing(changeId: string, active: boolean) {
   const normalizedId = String(changeId || '').trim()
   if (!normalizedId)
@@ -5834,33 +5931,52 @@ function findTopicBoardCandidate(candidateId: string): TopicProposalItem | null 
   return topicBoardSnapshot.value?.candidates.find(item => item.candidateId === normalizedCandidateId)?.payload || null
 }
 
+function isCurrentTopicBoardScope(projectId: string, workspaceId = ''): boolean {
+  const currentProjectId = String(activeProjectId.value || '').trim()
+  if (projectId !== currentProjectId)
+    return false
+
+  if (!workspaceId)
+    return true
+
+  return workspaceId === String(activeWorkspaceId.value || '').trim()
+}
+
 async function loadTopicBoards() {
+  const requestId = ++topicBoardLoadRequestId
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId) {
     topicBoardSnapshot.value = null
     topicBoardHistory.value = []
     return
   }
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
 
   try {
     const response = await $fetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
+    if (requestId !== topicBoardLoadRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
     topicBoardSnapshot.value = response.data.latestBoard
     topicBoardHistory.value = response.data.history
     topicBoardError.value = ''
   }
   catch {
+    if (requestId !== topicBoardLoadRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
     topicBoardSnapshot.value = null
     topicBoardHistory.value = []
   }
 }
 
 async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard') {
-  if (!activeProjectId.value) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
     statusLine.value = '请先选择一个项目。'
     return
   }
 
-  if (!activeWorkspaceId.value) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId) {
     statusLine.value = '请先选择一个空间。'
     return
   }
@@ -5872,16 +5988,19 @@ async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] 
   }
 
   activeMainTabId.value = 'dashboard'
+  const requestId = ++topicBoardWriteRequestId
   topicBoardLoading.value = true
   topicBoardError.value = ''
 
   try {
-    const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${activeProjectId.value}/topic-boards/generate`), {
+    const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/generate`), {
       method: 'POST',
       body: {
         input,
       } satisfies ProjectTopicBoardGenerateRequest,
     })
+    if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
 
     topicBoardSnapshot.value = response.data
     topicBoardHistory.value = [response.data, ...topicBoardHistory.value.filter(item => item.id !== response.data.id)].slice(0, 5)
@@ -5891,17 +6010,22 @@ async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] 
   }
   catch (error) {
     const message = resolveApiErrorMessage(error, '生成选题板失败，请稍后重试。')
+    if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+      return
     topicBoardError.value = message
     statusLine.value = message
   }
   finally {
-    topicBoardLoading.value = false
+    if (requestId === topicBoardWriteRequestId)
+      topicBoardLoading.value = false
   }
 }
 
 async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
+  const requestId = ++topicBoardWriteRequestId
   const boardId = String(topicBoardSnapshot.value?.id || '').trim()
   const projectId = String(activeProjectId.value || '').trim()
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
   if (!boardId || !projectId)
     return
 
@@ -5909,6 +6033,8 @@ async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
     method: 'PATCH',
     body: payload,
   })
+  if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
+    return
 
   topicBoardSnapshot.value = response.data
   topicBoardHistory.value = topicBoardHistory.value.map(item => item.id === response.data.id ? response.data : item)
@@ -5977,11 +6103,16 @@ function buildTopicBoardChatPrompt(candidate: TopicProposalItem): string {
 
 async function sendTopicBoardCandidateToChat(candidateId: string) {
   const candidate = findTopicBoardCandidate(candidateId)
-  if (!candidate)
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!candidate || !projectId || !activeWorkspaceId.value)
     return
 
   expandRightSidebar()
   aiMode.value = 'dialog_ask'
+  await nextTick()
+  await loadChatSessions()
+  if (!isCurrentTopicBoardScope(projectId) || aiMode.value !== 'dialog_ask')
+    return
   chatInput.value = buildTopicBoardChatPrompt(candidate)
   await nextTick()
   await sendChatMessage()
@@ -7388,6 +7519,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           :issue-report="latestIssueReport"
           :project-issues="projectIssues"
           :issue-loading="issueCenterLoading"
+          :issue-report-submitting="issueReportSubmitting"
+          :issue-report-exporting="issueReportExporting"
           :defense-rounds="defenseRounds"
           :defense-scorecard="defenseScorecard"
           :defense-personas="defensePersonas"
@@ -7410,6 +7543,8 @@ watch(() => workspaceRealtime.connected.value, () => {
           @delete-defense-persona="deleteDefensePersona"
           @generate-defense-summary="generateDefenseSummary"
           @start-defense-realtime="startDefenseRealtime"
+          @submit-issue-report="submitIssueReport"
+          @export-issue-report="exportIssueReport"
         />
       </div>
       <div v-else class="workspace-side-handle workspace-side-handle--right workspace-side-handle--right-collapsed">

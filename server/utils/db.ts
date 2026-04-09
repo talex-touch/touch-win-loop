@@ -1504,9 +1504,20 @@ CREATE TABLE IF NOT EXISTS project_issue_reports (
   title TEXT NOT NULL DEFAULT '',
   summary TEXT NOT NULL DEFAULT '',
   markdown TEXT NOT NULL DEFAULT '',
+  review_submission_status TEXT NOT NULL DEFAULT 'draft' CHECK (review_submission_status IN ('draft', 'submitted')),
+  review_submitted_at TIMESTAMPTZ,
+  review_submitted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS contest_resource_favorites (
+  id TEXT PRIMARY KEY,
+  contest_resource_id TEXT NOT NULL REFERENCES contest_resources(id) ON DELETE CASCADE,
+  actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(actor_user_id, contest_resource_id)
 );
 
 CREATE TABLE IF NOT EXISTS project_issues (
@@ -1589,6 +1600,32 @@ CREATE TABLE IF NOT EXISTS contest_audit_logs (
   actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   action TEXT NOT NULL,
   payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Audit logs intentionally avoid foreign keys so events remain queryable
+-- even after referenced workspaces, projects, resources, or users are deleted.
+CREATE TABLE IF NOT EXISTS billing_usage_events (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  project_id TEXT,
+  contest_id TEXT,
+  track_id TEXT,
+  project_resource_id TEXT,
+  contest_resource_id TEXT,
+  report_id TEXT,
+  actor_user_id TEXT,
+  event_code TEXT NOT NULL CHECK (event_code IN (
+    'resource.download',
+    'resource.favorite.create',
+    'ai.topic_proposal.generate',
+    'review.submit',
+    'review.report.export',
+    'ai.defense.start'
+  )),
+  result TEXT NOT NULL CHECK (result IN ('success', 'failed')),
+  source_route TEXT NOT NULL DEFAULT '',
+  meta JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -1675,6 +1712,19 @@ CREATE TABLE IF NOT EXISTS migrations_meta (
   value TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE project_issue_reports
+  ADD COLUMN IF NOT EXISTS review_submission_status TEXT NOT NULL DEFAULT 'draft';
+
+ALTER TABLE project_issue_reports
+  ADD COLUMN IF NOT EXISTS review_submitted_at TIMESTAMPTZ;
+
+ALTER TABLE project_issue_reports
+  ADD COLUMN IF NOT EXISTS review_submitted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+UPDATE project_issue_reports
+SET review_submission_status = 'draft'
+WHERE COALESCE(review_submission_status, '') NOT IN ('draft', 'submitted');
 
 -- 先补齐旧库在索引依赖上的缺失列，避免 CREATE INDEX 因列不存在而中断整段迁移。
 ALTER TABLE project_resource_documents
@@ -2081,8 +2131,39 @@ CREATE INDEX IF NOT EXISTS idx_ai_project_change_requests_session ON ai_project_
 CREATE INDEX IF NOT EXISTS idx_project_issue_reports_project_created ON project_issue_reports(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_issues_project_status ON project_issues(project_id, status, severity, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_issues_report ON project_issues(report_id);
+CREATE INDEX IF NOT EXISTS idx_contest_resource_favorites_actor_created ON contest_resource_favorites(actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_contest_resource_favorites_resource ON contest_resource_favorites(contest_resource_id);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_workspace_created ON billing_usage_events(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_event_created ON billing_usage_events(event_code, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_actor_created ON billing_usage_events(actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_project_created ON billing_usage_events(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_contest_resource_id ON billing_usage_events(contest_resource_id);
+CREATE INDEX IF NOT EXISTS idx_billing_usage_events_report_id ON billing_usage_events(report_id);
 CREATE INDEX IF NOT EXISTS idx_project_topic_boards_project_updated ON project_topic_boards(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_boards_workspace_status ON project_topic_boards(workspace_id, status, updated_at DESC);
+DO $$
+BEGIN
+  IF to_regclass('public.project_topic_boards') IS NULL THEN
+    RETURN;
+  END IF;
+
+  WITH duplicated_active_boards AS (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY project_id
+        ORDER BY updated_at DESC, created_at DESC, id DESC
+      ) AS row_num
+    FROM project_topic_boards
+    WHERE status = 'active'
+  )
+  UPDATE project_topic_boards AS target
+  SET status = 'archived',
+      updated_at = NOW()
+  FROM duplicated_active_boards AS duplicated
+  WHERE target.id = duplicated.id
+    AND duplicated.row_num > 1;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_topic_boards_one_active_per_project ON project_topic_boards(project_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_board_sort ON project_topic_candidates(board_id, sort_order ASC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_project_status ON project_topic_candidates(project_id, decision_status, total_score DESC);
