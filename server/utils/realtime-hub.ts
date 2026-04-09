@@ -6,6 +6,9 @@ export interface RealtimePeerPresence {
   username: string
   cursorX?: number
   cursorY?: number
+  awarenessClientId?: number
+  awarenessUpdateBase64?: string
+  activityState: 'active' | 'background'
   updatedAt: string
 }
 
@@ -111,6 +114,9 @@ function buildPresence(
   user: AuthUser,
   cursorX?: number,
   cursorY?: number,
+  activityState: 'active' | 'background' = 'active',
+  awarenessClientId?: number,
+  awarenessUpdateBase64?: string,
 ): RealtimePeerPresence {
   return {
     peerId,
@@ -118,6 +124,9 @@ function buildPresence(
     username: String(user.username || ''),
     cursorX: Number.isFinite(Number(cursorX)) ? Number(cursorX) : undefined,
     cursorY: Number.isFinite(Number(cursorY)) ? Number(cursorY) : undefined,
+    awarenessClientId: Number.isInteger(Number(awarenessClientId)) ? Math.trunc(Number(awarenessClientId)) : undefined,
+    awarenessUpdateBase64: String(awarenessUpdateBase64 || '').trim() || undefined,
+    activityState,
     updatedAt: new Date().toISOString(),
   }
 }
@@ -144,13 +153,20 @@ function normalizePeerPresence(rawMember: unknown): RealtimePeerPresence | null 
 
   const cursorX = Number(member.cursorX)
   const cursorY = Number(member.cursorY)
+  const awarenessClientId = Number(member.awarenessClientId)
   const updatedAt = String(member.updatedAt || '').trim() || new Date().toISOString()
+  const activityState = String(member.activityState || '').trim().toLowerCase() === 'background'
+    ? 'background'
+    : 'active'
   return {
     peerId,
     userId,
     username,
     cursorX: Number.isFinite(cursorX) ? cursorX : undefined,
     cursorY: Number.isFinite(cursorY) ? cursorY : undefined,
+    awarenessClientId: Number.isInteger(awarenessClientId) ? Math.trunc(awarenessClientId) : undefined,
+    awarenessUpdateBase64: String(member.awarenessUpdateBase64 || '').trim() || undefined,
+    activityState,
     updatedAt,
   }
 }
@@ -330,6 +346,9 @@ export function updateRealtimePresence(
   roomKey: string,
   cursorX?: number,
   cursorY?: number,
+  activityState?: 'active' | 'background',
+  awarenessClientId?: number,
+  awarenessUpdateBase64?: string,
 ): void {
   const state = getHubState()
   const normalizedPeerId = String(peerId || '').trim()
@@ -344,7 +363,16 @@ export function updateRealtimePresence(
     state.roomPresence.set(normalizedRoomKey, roomPresence)
   }
 
-  roomPresence.set(normalizedPeerId, buildPresence(normalizedPeerId, record.user, cursorX, cursorY))
+  const currentPresence = roomPresence.get(normalizedPeerId)
+  roomPresence.set(normalizedPeerId, buildPresence(
+    normalizedPeerId,
+    record.user,
+    cursorX,
+    cursorY,
+    activityState || currentPresence?.activityState || 'active',
+    awarenessClientId || currentPresence?.awarenessClientId,
+    awarenessUpdateBase64 || currentPresence?.awarenessUpdateBase64,
+  ))
   touchRealtimePeer(normalizedPeerId)
   broadcastRoomPresence(normalizedRoomKey)
 }

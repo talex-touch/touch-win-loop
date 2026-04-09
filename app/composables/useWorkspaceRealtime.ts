@@ -460,6 +460,9 @@ export function useWorkspaceRealtime() {
     resourceId: string
     cursorX?: number
     cursorY?: number
+    activityState?: 'active' | 'background'
+    awarenessClientId?: number
+    awarenessUpdateBase64?: string
   }): void {
     const projectId = normalizeString(input.projectId)
     const resourceId = normalizeString(input.resourceId)
@@ -473,6 +476,9 @@ export function useWorkspaceRealtime() {
       payload: {
         cursorX: Number.isFinite(Number(input.cursorX)) ? Number(input.cursorX) : undefined,
         cursorY: Number.isFinite(Number(input.cursorY)) ? Number(input.cursorY) : undefined,
+        activityState: input.activityState === 'background' ? 'background' : 'active',
+        awarenessClientId: Number.isInteger(Number(input.awarenessClientId)) ? Math.trunc(Number(input.awarenessClientId)) : undefined,
+        awarenessUpdateBase64: normalizeString(input.awarenessUpdateBase64) || undefined,
       },
     })
   }

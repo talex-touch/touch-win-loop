@@ -167,6 +167,9 @@ export interface RuntimeSettings {
     timeoutMs: number
     maxRetries: number
   }
+  auth: {
+    registrationEnabled: boolean
+  }
   onlyOffice: {
     endpoint: string
     sourceBaseURL: string
@@ -269,6 +272,9 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       modelPricingJson: String(runtime.docAi?.modelPricingJson ?? ''),
       timeoutMs: toNumber(runtime.docAi?.timeoutMs, 15000),
       maxRetries: toNumber(runtime.docAi?.maxRetries, 2),
+    },
+    auth: {
+      registrationEnabled: toBoolean(runtime.auth?.registrationEnabled, true),
     },
     onlyOffice: {
       endpoint: String(runtime.onlyOffice?.endpoint ?? ''),

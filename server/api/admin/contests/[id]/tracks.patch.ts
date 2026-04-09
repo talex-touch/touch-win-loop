@@ -11,6 +11,13 @@ interface PatchTrackBody {
   trackId?: string
   name?: string
   summary?: string
+  coverImageUrl?: string
+  location?: string
+  organizer?: string
+  undertaker?: string
+  participantRequirements?: string
+  teamRule?: string
+  awardRatio?: string
   suitableMajors?: string[]
   deliverableTypes?: string[]
   rubricId?: string | null
@@ -58,6 +65,13 @@ export default defineEventHandler(async (event) => {
         patch: {
           name: body?.name,
           summary: body?.summary,
+          coverImageUrl: body?.coverImageUrl,
+          location: body?.location,
+          organizer: body?.organizer,
+          undertaker: body?.undertaker,
+          participantRequirements: body?.participantRequirements,
+          teamRule: body?.teamRule,
+          awardRatio: body?.awardRatio,
           suitableMajors: body?.suitableMajors,
           deliverableTypes: body?.deliverableTypes,
           rubricId: body?.rubricId,

@@ -17,7 +17,7 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="col-span-12 space-y-8 lg:col-span-4">
+  <div class="space-y-8">
     <section>
       <h3 class="text-lg text-slate-900 font-bold mb-4">
         工作台快捷访问

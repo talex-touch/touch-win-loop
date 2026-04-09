@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Awareness } from 'y-protocols/awareness'
 import type { Doc as YDoc } from 'yjs'
 import type {
   CollabPurpose,
@@ -8,11 +9,14 @@ import type {
   ProjectMemberRole,
   ProjectMemberSummary,
   ProjectResourceShare,
+  ProjectTopicBoard,
   Resource,
   ResourcePreviewStatus,
   Track,
+  TopicProposalDecisionStatus,
   WorkspaceType,
 } from '~~/shared/types/domain'
+import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -26,7 +30,13 @@ import type {
 } from '~/types/workspace'
 import { buildOnlyOfficeUserFacingErrorMessage } from '~~/shared/constants/onlyoffice'
 import RichTextEditor from '~/components/editor/RichTextEditor.vue'
-import CollabPresencePanel from '~/components/workspace/collab/CollabPresencePanel.vue'
+import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
+import CollabPresenceDock from '~/components/workspace/collab/CollabPresenceDock.vue'
+import {
+  normalizeWorkspaceCollabPresenceActivityState,
+  resolveWorkspaceCollabPresenceColor,
+
+} from '~/components/workspace/collab/presence'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
 
 const props = withDefaults(defineProps<{
@@ -56,7 +66,10 @@ const props = withDefaults(defineProps<{
   previewMode?: WorkspacePreviewMode
   previewPdfUrl?: string
   previewSourceDownloadUrl?: string
+  currentUserId?: string
+  currentUserName?: string
   collabMarkdownDoc?: YDoc | null
+  collabMarkdownAwareness?: Awareness | null
   collabDrawValue?: string
   collabDrawError?: string
   collabRevision?: number
@@ -68,6 +81,9 @@ const props = withDefaults(defineProps<{
   trendBars?: number[]
   formState?: WorkspaceFormState
   formSubmitting?: boolean
+  topicBoard?: ProjectTopicBoard | null
+  topicBoardLoading?: boolean
+  topicBoardActioningCandidateId?: string
   activeProject?: Project | null
   workspaceName?: string
   workspaceType?: WorkspaceType | ''
@@ -125,7 +141,10 @@ const props = withDefaults(defineProps<{
   previewMode: 'binary',
   previewPdfUrl: '',
   previewSourceDownloadUrl: '',
+  currentUserId: '',
+  currentUserName: '',
   collabMarkdownDoc: null,
+  collabMarkdownAwareness: null,
   collabDrawValue: '{}',
   collabDrawError: '',
   collabRevision: 0,
@@ -147,6 +166,9 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   formSubmitting: false,
+  topicBoard: null,
+  topicBoardLoading: false,
+  topicBoardActioningCandidateId: '',
   activeProject: null,
   workspaceName: '',
   workspaceType: '',
@@ -172,6 +194,8 @@ const props = withDefaults(defineProps<{
   projectSettingsCommon: () => ({
     title: '',
     summary: '',
+    icon: '',
+    accentColor: '',
     problemStatement: '',
     innovationPointsText: '',
     techRouteStepsText: '',
@@ -208,6 +232,11 @@ const emit = defineEmits<{
   'update:topK': [value: number]
   'update:formState': [value: WorkspaceFormState]
   'submitProjectForContest': [value: { contestId: string, trackId: string }]
+  'generateTopicBoard': []
+  'updateTopicBoardCandidateStatus': [value: { candidateId: string, decisionStatus: TopicProposalDecisionStatus }]
+  'selectTopicBoardCandidate': [candidateId: string]
+  'sendTopicBoardCandidateToChat': [candidateId: string]
+  'applyTopicBoardCandidateToForm': [candidateId: string]
   'update:projectSettingsCommon': [value: WorkspaceProjectCommonForm]
   'update:projectSettingsBindings': [value: WorkspaceProjectContestBindingForm[]]
   'update:projectSettingsAdaptation': [value: WorkspaceProjectAdaptationForm]
@@ -228,6 +257,8 @@ const emit = defineEmits<{
   'activatePreviewResource': [resourceId: string]
   'closePreviewResource': [resourceId: string]
   'update:collabDrawValue': [value: string]
+  'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
+  'updateCollabSelectionStatus': [value: { line: number, column: number, selectionLength: number, selection: WorkspaceCollabSelectionSummary | null }]
 }>()
 
 type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'settings'
@@ -264,15 +295,6 @@ interface WorkspacePreviewStatusPayload {
   previewUrlExpiresAt: string
   sourceDownloadUrl: string
   sourceDownloadUrlExpiresAt: string
-}
-
-interface WorkspaceCollabPresenceMember {
-  peerId: string
-  userId: string
-  username: string
-  cursorX?: number
-  cursorY?: number
-  updatedAt?: string
 }
 
 const fixedTabs: WorkspaceMainTab[] = [
@@ -650,6 +672,69 @@ const linkedContestEntries = computed<LinkedContestEntry[]>(() => {
 
   return result
 })
+
+const activeTopicBoardCandidate = computed(() => {
+  const board = props.topicBoard
+  if (!board || board.candidates.length === 0)
+    return null
+
+  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
+  return board.candidates.find(item => item.candidateId === selectedCandidateId)
+    || board.candidates[0]
+    || null
+})
+
+const selectedTopicBoardCandidate = computed(() => {
+  const board = props.topicBoard
+  if (!board)
+    return null
+
+  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
+  if (selectedCandidateId)
+    return board.candidates.find(item => item.candidateId === selectedCandidateId) || null
+
+  return board.candidates.find(item => item.decisionStatus === 'selected') || null
+})
+
+const topicBoardDecisionSummary = computed(() => {
+  const board = props.topicBoard
+  if (!board)
+    return {
+      shortlisted: 0,
+      rejected: 0,
+      selected: '',
+    }
+
+  return {
+    shortlisted: board.candidates.filter(item => item.decisionStatus === 'shortlisted').length,
+    rejected: board.candidates.filter(item => item.decisionStatus === 'rejected').length,
+    selected: selectedTopicBoardCandidate.value?.payload.title || '',
+  }
+})
+
+function topicBoardDecisionLabel(status: TopicProposalDecisionStatus): string {
+  if (status === 'selected')
+    return '主推'
+  if (status === 'shortlisted')
+    return '短名单'
+  if (status === 'rejected')
+    return '淘汰'
+  return '待评估'
+}
+
+function topicBoardDecisionClass(status: TopicProposalDecisionStatus): string {
+  if (status === 'selected')
+    return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  if (status === 'shortlisted')
+    return 'bg-blue-50 text-blue-700 border-blue-200'
+  if (status === 'rejected')
+    return 'bg-rose-50 text-rose-700 border-rose-200'
+  return 'bg-slate-50 text-slate-600 border-slate-200'
+}
+
+function isTopicBoardCandidateActing(candidateId: string): boolean {
+  return String(props.topicBoardActioningCandidateId || '').trim() === String(candidateId || '').trim()
+}
 
 function findFixedTab(tabId: WorkspaceFixedTabId): WorkspaceMainTab | undefined {
   return fixedTabs.find(tab => tab.id === tabId)
@@ -1258,11 +1343,197 @@ const activePreviewMode = computed<WorkspacePreviewMode>(() => {
   return activeResourceTab.value?.previewMode || normalizedPreviewMode.value
 })
 
+const isMarkdownPreviewActive = computed(() => {
+  return Boolean(activeResourceTab.value && activePreviewMode.value === 'markdown')
+})
+
 const collabConnectionText = computed(() => {
   const customText = String(props.collabStatusText || '').trim()
   if (customText)
     return customText
   return props.collabConnected ? '实时连接中' : '离线编辑（待重连）'
+})
+
+const workspaceMemberMap = computed(() => {
+  const map = new Map<string, ProjectMemberSummary>()
+  for (const member of props.workspaceMembers) {
+    const userId = String(member.userId || '').trim()
+    if (!userId)
+      continue
+    map.set(userId, member)
+  }
+  return map
+})
+
+const markdownLocalSelectionStatus = ref<{
+  line: number
+  column: number
+  selectionLength: number
+  selection: WorkspaceCollabSelectionSummary | null
+}>({
+  line: 1,
+  column: 1,
+  selectionLength: 0,
+  selection: null,
+})
+
+const markdownRemoteSelectionStates = ref<WorkspaceCollabAwarenessSelectionState[]>([])
+
+const collabCurrentUser = computed(() => {
+  const userId = String(props.currentUserId || '').trim()
+  const userName = String(props.currentUserName || '').trim()
+  if (!userId || !userName)
+    return null
+
+  return {
+    id: userId,
+    name: userName,
+    color: resolveWorkspaceCollabPresenceColor(userId),
+  }
+})
+
+const markdownRemoteSelectionMap = computed(() => {
+  const map = new Map<number, WorkspaceCollabSelectionSummary | null>()
+  for (const item of markdownRemoteSelectionStates.value) {
+    if (!Number.isInteger(Number(item.awarenessClientId)))
+      continue
+    map.set(Math.trunc(Number(item.awarenessClientId)), item.selection)
+  }
+  return map
+})
+
+const collabPresenceUsers = computed<WorkspaceCollabPresenceUser[]>(() => {
+  const merged = new Map<string, WorkspaceCollabPresenceUser & {
+    selectionActivityRank: number
+    selectionUpdatedAtMs: number
+  }>()
+  const currentUserId = String(props.currentUserId || '').trim()
+  for (const member of props.collabPresenceMembers) {
+    const userId = String(member.userId || '').trim()
+    const username = String(member.username || '').trim()
+    if (!userId || !username)
+      continue
+
+    const activityState = normalizeWorkspaceCollabPresenceActivityState(member.activityState)
+    const existing = merged.get(userId)
+    const projectMember = workspaceMemberMap.value.get(userId)
+    const updatedAt = String(member.updatedAt || '').trim()
+
+    if (!existing) {
+      merged.set(userId, {
+        userId,
+        username,
+        avatarUrl: projectMember?.avatarUrl || null,
+        role: projectMember?.role || '',
+        colorToken: resolveWorkspaceCollabPresenceColor(userId),
+        activityState,
+        updatedAt,
+        peerCount: 1,
+        isCurrentUser: userId === currentUserId,
+        selection: isMarkdownPreviewActive.value && userId === currentUserId ? markdownLocalSelectionStatus.value.selection : null,
+        selectionActivityRank: isMarkdownPreviewActive.value && userId === currentUserId && markdownLocalSelectionStatus.value.selection ? 1 : -1,
+        selectionUpdatedAtMs: Number.isFinite(Date.parse(updatedAt || '')) ? Date.parse(updatedAt || '') : -1,
+      })
+      if (isMarkdownPreviewActive.value && userId !== currentUserId && Number.isInteger(Number(member.awarenessClientId))) {
+        const remoteSelection = markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId)))
+        if (remoteSelection) {
+          const created = merged.get(userId)
+          if (created) {
+            created.selection = remoteSelection
+            created.selectionActivityRank = activityState === 'active' ? 1 : 0
+            created.selectionUpdatedAtMs = Number.isFinite(Date.parse(updatedAt || '')) ? Date.parse(updatedAt || '') : -1
+          }
+        }
+      }
+      continue
+    }
+
+    existing.peerCount += 1
+    existing.activityState = existing.activityState === 'active' || activityState === 'active'
+      ? 'active'
+      : 'background'
+    if (!existing.avatarUrl && projectMember?.avatarUrl)
+      existing.avatarUrl = projectMember.avatarUrl
+    if (!existing.role && projectMember?.role)
+      existing.role = projectMember.role
+
+    const nextUpdatedAtMs = Date.parse(updatedAt || '')
+    const currentUpdatedAtMs = Date.parse(existing.updatedAt || '')
+    if (Number.isFinite(nextUpdatedAtMs) && (!Number.isFinite(currentUpdatedAtMs) || nextUpdatedAtMs > currentUpdatedAtMs))
+      existing.updatedAt = updatedAt
+
+    const candidateSelection = !isMarkdownPreviewActive.value
+      ? null
+      : userId === currentUserId
+        ? markdownLocalSelectionStatus.value.selection
+        : (Number.isInteger(Number(member.awarenessClientId))
+            ? markdownRemoteSelectionMap.value.get(Math.trunc(Number(member.awarenessClientId))) || null
+            : null)
+    const candidateRank = activityState === 'active' ? 1 : 0
+    if (
+      candidateSelection
+      && (
+        existing.selectionActivityRank < candidateRank
+        || (existing.selectionActivityRank === candidateRank && (!Number.isFinite(existing.selectionUpdatedAtMs) || nextUpdatedAtMs > existing.selectionUpdatedAtMs))
+      )
+    ) {
+      existing.selection = candidateSelection
+      existing.selectionActivityRank = candidateRank
+      existing.selectionUpdatedAtMs = Number.isFinite(nextUpdatedAtMs) ? nextUpdatedAtMs : existing.selectionUpdatedAtMs
+    }
+  }
+
+  return [...merged.values()].sort((left, right) => {
+    if (left.activityState !== right.activityState)
+      return left.activityState === 'active' ? -1 : 1
+
+    const rightUpdatedAt = Date.parse(String(right.updatedAt || ''))
+    const leftUpdatedAt = Date.parse(String(left.updatedAt || ''))
+    if (Number.isFinite(rightUpdatedAt) && Number.isFinite(leftUpdatedAt) && rightUpdatedAt !== leftUpdatedAt)
+      return rightUpdatedAt - leftUpdatedAt
+
+    return left.username.localeCompare(right.username, 'zh-CN')
+  })
+})
+
+const collabPresenceCursors = computed<WorkspaceCollabCursorUser[]>(() => {
+  const merged = new Map<string, WorkspaceCollabCursorUser & { updatedAtMs: number }>()
+  const currentUserId = String(props.currentUserId || '').trim()
+
+  for (const member of props.collabPresenceMembers) {
+    const userId = String(member.userId || '').trim()
+    if (!userId || userId === currentUserId)
+      continue
+    if (normalizeWorkspaceCollabPresenceActivityState(member.activityState) !== 'active')
+      continue
+
+    const cursorX = Number(member.cursorX)
+    const cursorY = Number(member.cursorY)
+    if (!Number.isFinite(cursorX) || !Number.isFinite(cursorY))
+      continue
+
+    const user = collabPresenceUsers.value.find(item => item.userId === userId)
+    if (!user)
+      continue
+
+    const updatedAtMs = Date.parse(String(member.updatedAt || ''))
+    const existing = merged.get(userId)
+    if (existing && Number.isFinite(existing.updatedAtMs) && Number.isFinite(updatedAtMs) && existing.updatedAtMs >= updatedAtMs)
+      continue
+
+    merged.set(userId, {
+      userId,
+      username: user.username,
+      colorToken: user.colorToken,
+      cursorX,
+      cursorY,
+      updatedAtMs,
+    })
+  }
+
+  return [...merged.values()]
+    .map(({ updatedAtMs: _updatedAtMs, ...cursor }) => cursor)
+    .sort((left, right) => left.username.localeCompare(right.username, 'zh-CN'))
 })
 
 const canSubmitWorkspaceInvitation = computed(() => {
@@ -1354,6 +1625,50 @@ function submitWorkspaceSeatLimit(): void {
 
 function onCollabDrawModelUpdate(value: string): void {
   emit('update:collabDrawValue', value)
+}
+
+function onCollabCursorUpdate(value: { cursorX?: number, cursorY?: number }): void {
+  emit('updateCollabCursor', value)
+}
+
+function onMarkdownSelectionChange(value: {
+  line: number
+  column: number
+  selectionLength: number
+  anchorLine: number
+  anchorColumn: number
+  headLine: number
+  headColumn: number
+  isCollapsed: boolean
+  selectedTextPreview: string
+}): void {
+  const selection: WorkspaceCollabSelectionSummary = {
+    anchorLine: value.anchorLine,
+    anchorColumn: value.anchorColumn,
+    headLine: value.headLine,
+    headColumn: value.headColumn,
+    isCollapsed: value.isCollapsed,
+    selectionLength: value.selectionLength,
+    selectedTextPreview: value.selectedTextPreview,
+  }
+
+  markdownLocalSelectionStatus.value = {
+    line: Math.max(1, Math.trunc(Number(value.line) || 1)),
+    column: Math.max(1, Math.trunc(Number(value.column) || 1)),
+    selectionLength: Math.max(0, Math.trunc(Number(value.selectionLength) || 0)),
+    selection,
+  }
+
+  emit('updateCollabSelectionStatus', {
+    line: markdownLocalSelectionStatus.value.line,
+    column: markdownLocalSelectionStatus.value.column,
+    selectionLength: markdownLocalSelectionStatus.value.selectionLength,
+    selection,
+  })
+}
+
+function onMarkdownRemotePresenceChange(value: WorkspaceCollabAwarenessSelectionState[]): void {
+  markdownRemoteSelectionStates.value = Array.isArray(value) ? value : []
 }
 
 function workspaceTypeLabel(value: WorkspaceType | ''): string {
@@ -1749,6 +2064,191 @@ watch(activeTabId, (next) => {
         <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
           <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div class="flex gap-3 items-center">
+              <span class="material-symbols-outlined text-xl text-violet-600">psychology</span>
+              <div>
+                <h2 class="text-sm font-bold">
+                  AI 智能选题板
+                </h2>
+                <div class="text-[11px] text-slate-500 mt-0.5">
+                  先生成 3-5 个候选题，再做对比、主推决策与草案回填。
+                </div>
+              </div>
+            </div>
+            <button
+              class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="topicBoardLoading"
+              type="button"
+              @click="emit('generateTopicBoard')"
+            >
+              {{ topicBoardLoading ? '生成中...' : (topicBoard ? '更新选题板' : '生成选题板') }}
+            </button>
+          </div>
+
+          <div v-if="topicBoardLoading" class="p-4 text-xs text-slate-500">
+            正在基于当前竞赛、资料与团队标签生成候选题，请稍候...
+          </div>
+
+          <div v-else-if="topicBoard && topicBoard.candidates.length > 0" class="p-4 space-y-4">
+            <div class="gap-3 grid grid-cols-1 xl:grid-cols-[1.2fr,0.8fr]">
+              <section class="p-3 border border-slate-200 rounded bg-slate-50">
+                <p class="text-[11px] text-slate-600 font-semibold">
+                  看板摘要
+                </p>
+                <p class="text-sm text-slate-800 font-semibold mt-1">
+                  {{ topicBoard.boardSummary || '已生成候选题，可继续评估。' }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-2">
+                  团队技能画像：{{ topicBoard.teamSkillProfile.length > 0 ? topicBoard.teamSkillProfile.join('、') : '尚未录入' }}
+                </p>
+              </section>
+
+              <section class="p-3 border border-slate-200 rounded bg-slate-50">
+                <p class="text-[11px] text-slate-600 font-semibold">
+                  决策条
+                </p>
+                <p class="text-sm text-slate-800 font-semibold mt-1">
+                  主推题：{{ topicBoardDecisionSummary.selected || '待选择' }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-2">
+                  短名单 {{ topicBoardDecisionSummary.shortlisted }} 个 · 淘汰 {{ topicBoardDecisionSummary.rejected }} 个
+                </p>
+              </section>
+            </div>
+
+            <div class="gap-3 grid grid-cols-1 xl:grid-cols-2">
+              <article
+                v-for="candidate in topicBoard.candidates"
+                :key="candidate.candidateId"
+                class="border rounded-lg bg-white p-4"
+                :class="candidate.decisionStatus === 'selected' ? 'border-emerald-200 shadow-sm' : 'border-slate-200'"
+              >
+                <div class="flex flex-wrap gap-2 items-start justify-between">
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm text-slate-900 font-semibold">
+                      {{ candidate.payload.title }}
+                    </p>
+                    <p class="text-[11px] text-slate-500 mt-1">
+                      总分 {{ candidate.payload.totalScore }} · 推荐赛道 {{ candidate.payload.recommendedTrackName || '沿用当前赛道' }}
+                    </p>
+                  </div>
+                  <span
+                    class="text-[10px] font-semibold px-2 py-0.5 rounded-full border"
+                    :class="topicBoardDecisionClass(candidate.decisionStatus)"
+                  >
+                    {{ topicBoardDecisionLabel(candidate.decisionStatus) }}
+                  </span>
+                </div>
+
+                <div class="mt-3 space-y-2 text-[11px] text-slate-600">
+                  <p>创新点：{{ candidate.payload.innovationPoints.slice(0, 2).join('；') || '待补充' }}</p>
+                  <p>预估工作量：{{ candidate.payload.estimatedWorkload }}</p>
+                  <p>能力匹配：{{ candidate.payload.teamMatchScore }} / 100</p>
+                  <p>风险提示：{{ candidate.payload.risks.slice(0, 2).join('；') || '待补充' }}</p>
+                  <p>相似往届作品：{{ candidate.payload.similarAwards.slice(0, 2).map(item => item.title).join('；') || '未命中高相似作品' }}</p>
+                  <p>证据摘要：{{ candidate.payload.evidenceRefs.slice(0, 2).map(item => item.title).join('；') || '当前以内部资料生成，待继续补证' }}</p>
+                </div>
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-blue-200 bg-blue-50 text-blue-700 disabled:opacity-40"
+                    :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
+                    type="button"
+                    @click="emit('updateTopicBoardCandidateStatus', { candidateId: candidate.candidateId, decisionStatus: 'shortlisted' })"
+                  >
+                    短名单
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-rose-200 bg-rose-50 text-rose-700 disabled:opacity-40"
+                    :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
+                    type="button"
+                    @click="emit('updateTopicBoardCandidateStatus', { candidateId: candidate.candidateId, decisionStatus: 'rejected' })"
+                  >
+                    淘汰
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 disabled:opacity-40"
+                    :disabled="isTopicBoardCandidateActing(candidate.candidateId)"
+                    type="button"
+                    @click="emit('selectTopicBoardCandidate', candidate.candidateId)"
+                  >
+                    设为主推
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700"
+                    type="button"
+                    @click="emit('sendTopicBoardCandidateToChat', candidate.candidateId)"
+                  >
+                    发送到右侧 AI
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2.5 py-1 rounded border border-slate-200 bg-white text-slate-700"
+                    type="button"
+                    @click="emit('applyTopicBoardCandidateToForm', candidate.candidateId)"
+                  >
+                    写入项目草案
+                  </button>
+                </div>
+              </article>
+            </div>
+
+            <section class="border border-slate-200 rounded bg-slate-50/60 overflow-hidden">
+              <div class="px-3 py-2 border-b border-slate-200 bg-white text-[11px] text-slate-600 font-semibold">
+                对比决策矩阵
+              </div>
+              <div class="overflow-x-auto">
+                <table class="min-w-180 w-full text-[11px] text-left border-collapse">
+                  <thead>
+                    <tr class="bg-slate-50 text-slate-500">
+                      <th class="px-3 py-2 border-b border-slate-200">候选题</th>
+                      <th class="px-3 py-2 border-b border-slate-200">竞赛适配</th>
+                      <th class="px-3 py-2 border-b border-slate-200">新颖度</th>
+                      <th class="px-3 py-2 border-b border-slate-200">证据完备</th>
+                      <th class="px-3 py-2 border-b border-slate-200">趋势热度</th>
+                      <th class="px-3 py-2 border-b border-slate-200">团队匹配</th>
+                      <th class="px-3 py-2 border-b border-slate-200">工作量</th>
+                      <th class="px-3 py-2 border-b border-slate-200">总分</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-200">
+                    <tr
+                      v-for="row in topicBoard.compareMatrix"
+                      :key="row.candidateId"
+                      class="bg-white"
+                    >
+                      <td class="px-3 py-2">
+                        <p class="font-semibold text-slate-800">{{ row.title }}</p>
+                        <p class="text-[10px] text-slate-500 mt-1">#{{ row.rank }} · {{ topicBoardDecisionLabel(row.decisionStatus) }}</p>
+                      </td>
+                      <td class="px-3 py-2">{{ row.contestFit }}</td>
+                      <td class="px-3 py-2">{{ row.noveltySimilarity }}</td>
+                      <td class="px-3 py-2">{{ row.evidenceReadiness }}</td>
+                      <td class="px-3 py-2">{{ row.trendHeat }}</td>
+                      <td class="px-3 py-2">{{ row.teamMatch }}</td>
+                      <td class="px-3 py-2">{{ row.workloadFeasibility }}</td>
+                      <td class="px-3 py-2 font-semibold text-slate-800">{{ row.totalScore }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <div v-else class="p-4 text-xs text-slate-500 space-y-3">
+            <p>当前项目还没有选题板。建议在左侧补齐领域、题目类型、关键词和团队技能后生成首版候选题。</p>
+            <button
+              class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="topicBoardLoading"
+              type="button"
+              @click="emit('generateTopicBoard')"
+            >
+              立即生成
+            </button>
+          </div>
+        </div>
+
+        <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div class="flex gap-3 items-center">
               <span class="material-symbols-outlined text-xl text-blue-600">account_tree</span>
               <div>
                 <h2 class="text-sm font-bold">
@@ -2043,34 +2543,38 @@ watch(activeTabId, (next) => {
 
       <div v-else-if="activeTabId === 'flow'" class="h-full min-h-0 w-full">
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
-          <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
+          <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
             <div class="text-xs text-slate-600">
               {{ flowPanelTitle }}
               <span class="text-slate-400 ml-2">rev {{ hasFlowResource ? Math.max(0, Number(collabRevision || 0)) : 0 }}</span>
             </div>
-            <div
-              class="text-[11px]"
-              :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
-            >
-              {{ hasFlowResource ? collabConnectionText : '待初始化' }}
+            <div class="flex flex-wrap gap-3 items-center justify-end">
+              <div
+                class="text-[11px]"
+                :class="hasFlowResource ? (collabConnected ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'"
+              >
+                {{ hasFlowResource ? collabConnectionText : '待初始化' }}
+              </div>
+              <CollabPresenceAvatarStack :users="collabPresenceUsers" />
             </div>
           </div>
 
-          <div v-if="hasFlowResource" class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
+          <div v-if="hasFlowResource" class="h-full">
             <div class="flex flex-col h-full">
               <WorkspaceTldrawCanvas
                 :key="props.flowResourceId || 'flow-canvas'"
                 class="h-full min-h-0 w-full"
                 :model-value="collabDrawValue"
+                :remote-cursors="collabPresenceCursors"
                 :persistence-key="`workspace-flow-${props.flowResourceId || 'default'}`"
                 :readonly="false"
                 @update:model-value="onCollabDrawModelUpdate"
+                @update-collab-cursor="onCollabCursorUpdate"
               />
               <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
                 {{ collabDrawError }}
               </p>
             </div>
-            <CollabPresencePanel :members="collabPresenceMembers" />
           </div>
 
           <div v-else class="px-6 bg-slate-50 flex flex-1 items-center justify-center">
@@ -2336,25 +2840,12 @@ watch(activeTabId, (next) => {
             </div>
 
             <div v-else class="space-y-3">
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">项目标题</span>
-                <input
-                  :value="projectSettingsCommon.title"
-                  class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-                  placeholder="输入项目标题"
-                  @input="updateProjectSettingsCommonField('title', ($event.target as HTMLInputElement).value)"
-                >
-              </label>
-
-              <label class="text-xs text-slate-600 block space-y-1">
-                <span class="block">项目介绍（摘要）</span>
-                <textarea
-                  :value="projectSettingsCommon.summary"
-                  class="text-xs px-2 py-2 outline-none border border-slate-200 rounded bg-white min-h-[70px] w-full focus:border-blue-500"
-                  placeholder="输入项目介绍"
-                  @input="updateProjectSettingsCommonField('summary', ($event.target as HTMLTextAreaElement).value)"
-                />
-              </label>
+              <ProjectBasicSettingsEditor
+                :model-value="projectSettingsCommon"
+                :project="activeProject"
+                :disabled="projectSettingsLoading"
+                @update:model-value="emitProjectSettingsCommon"
+              />
 
               <div class="gap-3 grid grid-cols-1 md:grid-cols-2">
                 <label class="text-xs text-slate-600 block space-y-1 md:col-span-2">
@@ -2620,53 +3111,63 @@ watch(activeTabId, (next) => {
         <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
           <div class="bg-slate-50 flex-1 min-h-0">
             <template v-if="activePreviewMode === 'markdown'">
-              <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
+              <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
                 <div class="text-xs text-slate-600">
                   {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
-                <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ collabConnectionText }}
+                <div class="flex flex-wrap gap-3 items-center justify-end">
+                  <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
+                    {{ collabConnectionText }}
+                  </div>
+                  <CollabPresenceAvatarStack :users="collabPresenceUsers" />
                 </div>
               </div>
-              <div class="grid grid-cols-1 h-full xl:grid-cols-[minmax(0,1fr),220px]">
-                <div class="border-b border-slate-200 bg-white min-h-0 xl:border-b-0 xl:border-r">
-                  <RichTextEditor
-                    :doc="collabMarkdownDoc"
-                    :editable="true"
-                    placeholder="输入正文或标题，协作文档会实时同步"
-                    :heading-levels="[1, 2, 3]"
-                  />
-                </div>
-                <CollabPresencePanel :members="collabPresenceMembers" />
+              <div class="bg-white flex flex-col h-full min-h-0">
+                <RichTextEditor
+                  :doc="collabMarkdownDoc"
+                  :awareness="collabMarkdownAwareness"
+                  :current-user="collabCurrentUser"
+                  :editable="true"
+                  class="min-h-0 w-full"
+                  placeholder="输入正文或标题，协作文档会实时同步"
+                  :heading-levels="[1, 2, 3]"
+                  @selection-change="onMarkdownSelectionChange"
+                  @remote-presence-change="onMarkdownRemotePresenceChange"
+                />
+                <CollabPresenceDock :users="collabPresenceUsers" />
               </div>
             </template>
 
             <template v-else-if="activePreviewMode === 'draw'">
-              <div class="p-4 border-b border-slate-200 bg-white flex items-center justify-between">
+              <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
                 <div class="text-xs text-slate-600">
                   {{ activeResourceTab.title }}
                   <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(collabRevision || 0)) }}</span>
                 </div>
-                <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                  {{ collabConnectionText }}
+                <div class="flex flex-wrap gap-3 items-center justify-end">
+                  <div class="text-[11px]" :class="collabConnected ? 'text-emerald-600' : 'text-amber-600'">
+                    {{ collabConnectionText }}
+                  </div>
+                  <CollabPresenceAvatarStack :users="collabPresenceUsers" />
                 </div>
               </div>
-              <div class="grid grid-cols-1 h-full md:grid-cols-[1fr,220px]">
+              <div class="h-full">
                 <div class="flex flex-col h-full">
                   <WorkspaceTldrawCanvas
                     :key="props.previewResourceId || activeResourceTab.id"
                     class="h-full min-h-0 w-full"
                     :model-value="collabDrawValue"
+                    :remote-cursors="collabPresenceCursors"
                     :persistence-key="`workspace-collab-${props.previewResourceId || activeResourceTab.id}`"
                     :readonly="false"
                     @update:model-value="onCollabDrawModelUpdate"
+                    @update-collab-cursor="onCollabCursorUpdate"
                   />
                   <p v-if="collabDrawError" class="text-[11px] text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
                     {{ collabDrawError }}
                   </p>
                 </div>
-                <CollabPresencePanel :members="collabPresenceMembers" />
               </div>
             </template>
 
@@ -2746,6 +3247,9 @@ watch(activeTabId, (next) => {
           <p class="m-0 mt-1">
             {{ workspaceInviteProjectLabel }}
           </p>
+          <p class="m-0 mt-1">
+            留空用户名 = 通用链接可多人加入；填写后仅指定账号可加入。
+          </p>
         </div>
 
         <template v-if="workspaceCanManageMembers">
@@ -2755,7 +3259,7 @@ watch(activeTabId, (next) => {
               v-model="workspaceInviteForm.inviteeUsername"
               data-testid="project-invite-username-input"
               class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 w-full focus:border-blue-500"
-              placeholder="留空时生成通用邀请"
+              placeholder="留空则生成可多人加入的通用邀请"
             >
           </label>
 

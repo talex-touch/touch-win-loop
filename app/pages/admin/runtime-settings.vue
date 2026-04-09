@@ -6,6 +6,9 @@ definePageMeta({
 })
 
 interface RuntimeSettingsPayload {
+  auth: {
+    registrationEnabled: boolean
+  }
   feishuScheduler: {
     enabled: boolean
     intervalMs: number
@@ -26,6 +29,7 @@ interface RuntimeSettingsPayload {
     updatedByUserId: string
   }
   configSource: {
+    authRegistration: 'env' | 'override'
     feishuScheduler: 'env' | 'override'
     resourceRecycle: 'env' | 'override'
     contestAutoSeed: 'env' | 'override'
@@ -44,6 +48,9 @@ const successText = ref('')
 const payload = ref<RuntimeSettingsPayload | null>(null)
 
 const form = reactive({
+  auth: {
+    registrationEnabled: true,
+  },
   feishuScheduler: {
     enabled: true,
     intervalMs: 60_000,
@@ -72,6 +79,8 @@ function formatTime(raw: string): string {
 }
 
 function applyPayload(nextPayload: RuntimeSettingsPayload): void {
+  form.auth.registrationEnabled = Boolean(nextPayload.auth.registrationEnabled)
+
   form.feishuScheduler.enabled = Boolean(nextPayload.feishuScheduler.enabled)
   form.feishuScheduler.intervalMs = Number(nextPayload.feishuScheduler.intervalMs || 60_000)
   form.feishuScheduler.batchSize = Number(nextPayload.feishuScheduler.batchSize || 20)
@@ -89,7 +98,7 @@ function displayConfigSource(section: RuntimeConfigSection, value?: RuntimeSetti
   if (value === 'override')
     return 'override'
 
-  if (section === 'contestAutoSeed')
+  if (section === 'contestAutoSeed' || section === 'authRegistration')
     return 'env'
 
   return 'default'
@@ -122,6 +131,9 @@ async function saveSettings() {
     const response = await $fetch<ApiResponse<RuntimeSettingsPayload>>(endpoint('/admin/runtime-settings'), {
       method: 'PATCH',
       body: {
+        auth: {
+          registrationEnabled: Boolean(form.auth.registrationEnabled),
+        },
         feishuScheduler: {
           enabled: Boolean(form.feishuScheduler.enabled),
           intervalMs: Number(form.feishuScheduler.intervalMs || 60_000),
@@ -192,6 +204,21 @@ onMounted(async () => {
     <template v-else>
       <section v-if="successText" class="text-emerald-700 p-3 border border-emerald-200 bg-emerald-50">
         {{ successText }}
+      </section>
+
+      <section class="p-3 border border-slate-200 bg-white space-y-3">
+        <div class="flex gap-3 items-center justify-between">
+          <h2 class="text-[12px] text-slate-900 font-bold m-0">
+            认证参数（auth）
+          </h2>
+          <a-tag size="small" :color="payload?.configSource?.authRegistration === 'override' ? 'green' : 'gray'">
+            {{ displayConfigSource('authRegistration', payload?.configSource?.authRegistration) }}
+          </a-tag>
+        </div>
+        <label class="inline-flex gap-2 items-center">
+          <a-switch v-model="form.auth.registrationEnabled" size="small" />
+          <span class="text-[11px] text-slate-700">允许首次登录自动注册本地账号（auth.registrationEnabled）</span>
+        </label>
       </section>
 
       <section class="p-3 border border-slate-200 bg-white space-y-3">

@@ -2,9 +2,13 @@
 import type {
   ApiResponse,
   AuthMeResult,
+  AuthUser,
   PlatformPermission,
   PlatformRole,
+  WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import { resolveWorkspaceOptions } from '~/composables/team-ui'
+import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
 
 interface AdminNavItem {
   key: string
@@ -19,13 +23,16 @@ const route = useRoute()
 const authApiFetch = useAuthApiFetch()
 
 const userName = ref('平台管理员')
+const userId = ref('')
+const userEmail = ref('')
+const userAvatarUrl = ref('')
 const platformRoles = ref<PlatformRole[]>([])
 const permissions = ref<PlatformPermission[]>([])
 const isPlatformAdmin = ref(false)
 const loadingProfile = ref(true)
 const profileDialogVisible = ref(false)
-const loggingOut = ref(false)
-const actionError = ref('')
+const workspaceOptions = ref<WorkspaceWithQuota[]>([])
+const activeWorkspaceId = ref('')
 
 const navItems: AdminNavItem[] = [
   { key: 'admin-home', to: '/admin', label: '管理首页', icon: 'i-heroicons-outline-home', section: 'core' },
@@ -34,6 +41,7 @@ const navItems: AdminNavItem[] = [
   { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-integrations', to: '/admin/integrations', label: '集成中心', icon: 'i-heroicons-outline-puzzle-piece', section: 'system', requiredAny: ['role.assign', 'contest.write'] },
+  { key: 'admin-notifications', to: '/admin/notifications', label: '通知管理', icon: 'i-heroicons-outline-bell', section: 'system', requiredAny: ['contest.write'] },
   { key: 'admin-runtime-settings', to: '/admin/runtime-settings', label: '运行设置', icon: 'i-heroicons-outline-adjustments-horizontal', section: 'system', requiredAny: ['contest.write'] },
   { key: 'admin-resources', to: '/admin/resources', label: '资料管理', icon: 'i-heroicons-outline-folder-open', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-operations', to: '/admin/operations', label: '运营管控', icon: 'i-heroicons-outline-chart-bar', section: 'system', requiredAny: ['contest.read_internal'] },
@@ -91,6 +99,10 @@ const showAdminBadge = computed(() => {
   return isPlatformAdmin.value || platformRoles.value.length > 0 || permissions.value.length > 0
 })
 
+const userSubtitle = computed(() => {
+  return showAdminBadge.value ? '平台管理员' : '系统访问账号'
+})
+
 const userInitial = computed(() => {
   const normalized = userName.value.trim()
   if (!normalized)
@@ -139,6 +151,7 @@ function resolveContestModuleLabel(segment: string): string {
     'overview': '基础信息',
     'faq': 'FAQ',
     'tracks': '赛道',
+    'track-timelines': '赛道时间线',
     'timelines': '时间节点',
     'rubrics': '评委细则',
     'judge-guidelines': '赛道详解',
@@ -337,46 +350,60 @@ async function closeRouteTab(tabId: string) {
 }
 
 function openProfileDialog() {
-  actionError.value = ''
   profileDialogVisible.value = true
 }
 
-function closeProfileDialog() {
-  if (loggingOut.value)
-    return
-  profileDialogVisible.value = false
+function onUserUpdated(user: AuthUser) {
+  userId.value = user.id || ''
+  userName.value = user.username || '平台管理员'
+  userAvatarUrl.value = user.avatarUrl || ''
 }
 
-async function logout() {
-  loggingOut.value = true
-  actionError.value = ''
-  try {
-    await authApiFetch('/auth/logout', { method: 'POST' })
-    profileDialogVisible.value = false
-    await navigateTo('/login')
-  }
-  catch (error: any) {
-    actionError.value = String(error?.data?.message || '退出失败，请稍后重试。')
-  }
-  finally {
-    loggingOut.value = false
-  }
+function onWorkspaceUpdated(payload: { workspaceId: string, name: string }) {
+  workspaceOptions.value = workspaceOptions.value.map((item) => {
+    if (item.workspace.id !== payload.workspaceId)
+      return item
+
+    return {
+      ...item,
+      workspace: {
+        ...item.workspace,
+        name: payload.name,
+      },
+    }
+  })
 }
 
 async function loadProfile() {
   loadingProfile.value = true
   try {
     const response = await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
+    const nextWorkspaceOptions = resolveWorkspaceOptions(response.data)
+    const preferredWorkspaceId = readActiveWorkspacePreference()
+    const currentUserEmail = String((response.data.user as AuthUser & { email?: string | null }).email || '').trim()
+
+    userId.value = response.data.user.id || ''
+    userEmail.value = currentUserEmail
     userName.value = response.data.user.username || '平台管理员'
+    userAvatarUrl.value = response.data.user.avatarUrl || ''
     platformRoles.value = response.data.user.platformRoles || []
     permissions.value = response.data.user.platformPermissions || []
     isPlatformAdmin.value = Boolean(response.data.user.isPlatformAdmin)
+    workspaceOptions.value = nextWorkspaceOptions
+    activeWorkspaceId.value = preferredWorkspaceId && nextWorkspaceOptions.some(item => item.workspace.id === preferredWorkspaceId)
+      ? preferredWorkspaceId
+      : (nextWorkspaceOptions[0]?.workspace.id || '')
   }
   catch {
+    userId.value = ''
+    userEmail.value = ''
     userName.value = '未登录用户'
+    userAvatarUrl.value = ''
     platformRoles.value = []
     permissions.value = []
     isPlatformAdmin.value = false
+    workspaceOptions.value = []
+    activeWorkspaceId.value = ''
   }
   finally {
     loadingProfile.value = false
@@ -472,7 +499,10 @@ if (import.meta.client) {
             </template>
             <template v-else>
               <a-avatar :size="28" class="admin-avatar">
-                {{ userInitial }}
+                <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="用户头像" class="admin-avatar-image">
+                <template v-else>
+                  {{ userInitial }}
+                </template>
               </a-avatar>
               <div class="admin-user-meta">
                 <p class="admin-user-name">
@@ -482,7 +512,7 @@ if (import.meta.client) {
                   管理页
                 </p>
               </div>
-              <a-button type="text" size="mini" class="admin-setting-btn" @click="openProfileDialog">
+              <a-button type="text" size="mini" class="admin-setting-btn" @click.stop="openProfileDialog">
                 <template #icon>
                   <span class="admin-inline-icon i-heroicons-outline-cog-6-tooth" />
                 </template>
@@ -528,45 +558,20 @@ if (import.meta.client) {
       </a-layout>
     </a-layout>
 
-    <a-modal
+    <UserSettingsDialog
       v-model:visible="profileDialogVisible"
-      :mask-closable="!loggingOut"
-      :closable="!loggingOut"
-      :footer="false"
-      title="个人信息"
-      class="admin-profile-modal"
-    >
-      <div class="admin-profile-card">
-        <template v-if="loadingProfile">
-          <span class="admin-user-skeleton-line admin-user-skeleton-line-main" />
-          <span class="admin-user-skeleton-line admin-user-skeleton-line-sub mt-1" />
-        </template>
-        <template v-else>
-          <p class="admin-user-name">
-            {{ userName }}
-          </p>
-          <p v-if="showAdminBadge" class="admin-admin-badge mt-1">
-            管理页
-          </p>
-        </template>
-      </div>
-
-      <p v-if="actionError" class="admin-error-text">
-        {{ actionError }}
-      </p>
-
-      <div class="admin-profile-actions">
-        <a-button size="small" @click="closeProfileDialog">
-          关闭
-        </a-button>
-        <a-button status="danger" size="small" :loading="loggingOut" @click="logout">
-          <template #icon>
-            <span class="admin-inline-icon i-heroicons-outline-arrow-right-on-rectangle" />
-          </template>
-          退出登录
-        </a-button>
-      </div>
-    </a-modal>
+      :user-name="userName"
+      :user-id="userId"
+      :user-email="userEmail"
+      :user-avatar-url="userAvatarUrl"
+      :user-subtitle="userSubtitle"
+      :show-admin-badge="showAdminBadge"
+      :is-platform-admin-user="isPlatformAdmin"
+      :workspace-options="workspaceOptions"
+      :active-workspace-id="activeWorkspaceId"
+      @user-updated="onUserUpdated"
+      @workspace-updated="onWorkspaceUpdated"
+    />
   </div>
 </template>
 
@@ -738,6 +743,13 @@ if (import.meta.client) {
   color: #475569;
   font-size: 11px;
   font-weight: 700;
+  overflow: hidden;
+}
+
+.admin-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .admin-user-meta {
@@ -893,25 +905,6 @@ if (import.meta.client) {
   padding: 12px;
 }
 
-.admin-profile-card {
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  padding: 10px;
-}
-
-.admin-profile-actions {
-  margin-top: 14px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.admin-error-text {
-  margin: 10px 0 0;
-  color: #dc2626;
-  font-size: 11px;
-}
-
 :deep(*) {
   border-radius: 0 !important;
 }
@@ -960,14 +953,5 @@ if (import.meta.client) {
 
 :deep(.arco-btn-size-mini) {
   font-size: 11px;
-}
-
-:deep(.arco-modal-header .arco-modal-title) {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-:deep(.arco-modal-body) {
-  padding-top: 10px;
 }
 </style>

@@ -4,7 +4,7 @@ import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { toTeamMemberManagementSnapshotResponse } from '~~/server/utils/team-api-presenter'
-import { teamGetWorkspaceMemberManagementSnapshot } from '~~/server/utils/team-membership-store'
+import { teamGetWorkspaceMemberManagementSnapshot, teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()

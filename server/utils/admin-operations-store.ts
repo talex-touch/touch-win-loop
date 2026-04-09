@@ -221,6 +221,34 @@ type ReportValue = string | number | boolean | null
 type ReportRecord = Record<string, ReportValue>
 type ReportFieldMap = Map<string, AdminReportFieldOption>
 
+function normalizeReportRecord(input: object, extras: Record<string, ReportValue> = {}): ReportRecord {
+  const record: ReportRecord = {}
+
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (Array.isArray(value)) {
+      record[key] = value.join(', ')
+      continue
+    }
+
+    if (
+      typeof value === 'string'
+      || typeof value === 'number'
+      || typeof value === 'boolean'
+      || value === null
+    ) {
+      record[key] = value
+      continue
+    }
+
+    record[key] = value == null ? null : String(value)
+  }
+
+  for (const [key, value] of Object.entries(extras))
+    record[key] = value
+
+  return record
+}
+
 interface InternalUserRow extends AdminUserSegmentRow {
   aiSessionCount7d: number
   searchCount7d: number
@@ -1862,26 +1890,26 @@ export async function getAdminOperationsReportSchema(): Promise<{ datasets: Admi
 async function loadReportRecords(db: Queryable, dataset: AdminReportDatasetKey, event?: H3Event): Promise<ReportRecord[]> {
   if (dataset === 'users') {
     const snapshot = await getAdminOperationsUsers(db)
-    return snapshot.users.map(item => ({ ...item, rowCount: 1 }))
+    return snapshot.users.map(item => normalizeReportRecord(item, { rowCount: 1 }))
   }
 
   if (dataset === 'content') {
     const resources = await loadContentResources(db)
-    return resources.map(item => ({ ...item, rowCount: 1 }))
+    return resources.map(item => normalizeReportRecord(item, { rowCount: 1 }))
   }
 
   if (dataset === 'revenue') {
     const snapshot = await getAdminOperationsRevenue(db)
-    return snapshot.workspaces.map(item => ({ ...item, rowCount: 1 }))
+    return snapshot.workspaces.map(item => normalizeReportRecord(item, { rowCount: 1 }))
   }
 
   if (dataset === 'efficiency') {
     const snapshot = await getAdminOperationsEfficiency(db)
-    return snapshot.systems.map(item => ({ ...item, rowCount: 1 }))
+    return snapshot.systems.map(item => normalizeReportRecord(item, { rowCount: 1 }))
   }
 
   const snapshot = await getAdminOperationsRisks(db, event)
-  return snapshot.alerts.map(item => ({ ...item, rowCount: 1 }))
+  return snapshot.alerts.map(item => normalizeReportRecord(item, { rowCount: 1 }))
 }
 
 function matchesFilter(record: ReportRecord, field: AdminReportFieldOption, operator: string, rawValue: ReportValue): boolean {
@@ -2000,12 +2028,13 @@ export async function queryAdminOperationsReport(
     return row
   })
 
-  if (selectedMetrics.length > 0) {
-    const sortMetric = selectedMetrics[0]
+  const sortMetric = selectedMetrics[0]
+  const sortDimension = selectedDimensions[0]
+
+  if (sortMetric) {
     rows.sort((left, right) => Number(right[sortMetric] || 0) - Number(left[sortMetric] || 0))
   }
-  else if (selectedDimensions.length > 0) {
-    const sortDimension = selectedDimensions[0]
+  else if (sortDimension) {
     rows.sort((left, right) => String(left[sortDimension] || '').localeCompare(String(right[sortDimension] || '')))
   }
 

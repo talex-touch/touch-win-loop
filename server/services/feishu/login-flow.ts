@@ -9,6 +9,7 @@ import {
   readFeishuIntegrationConfig,
   toPublicFeishuIntegrationConfig,
 } from '~~/server/utils/feishu-integration-store'
+import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 
 function parseFeishuErrorDetail(raw: string): string {
   const source = String(raw || '').trim()
@@ -57,6 +58,8 @@ export function resolveFeishuLoginErrorInfo(error: unknown): {
     return { code, message: '当前登录会话无效，请重新登录后再绑定飞书账号。' }
   if (code === 'USER_DISABLED')
     return { code, message: '当前账号已被禁用，请联系平台管理员。' }
+  if (code === 'AUTH_REGISTRATION_DISABLED')
+    return { code, message: '平台暂未开放注册，请联系管理员开通账号或开启注册。' }
   if (code === 'FEISHU_INTEGRATION_DISABLED')
     return { code, message: '飞书登录尚未启用。' }
   if (code === 'FEISHU_APP_CONFIG_INCOMPLETE')
@@ -82,6 +85,7 @@ export async function loginByFeishuOAuthCode(
   event: H3Event,
   code: string,
 ): Promise<AuthLoginResult> {
+  const { runtime } = await readEffectivePlatformRuntimeSettings(event)
   const auth = await getAuthFromEvent(event).catch(() => null)
   const preferredUserId = String(auth?.user?.id || '').trim()
 
@@ -101,6 +105,7 @@ export async function loginByFeishuOAuthCode(
 
   const loginResult = await loginWithFeishuProfile(event, profile, {
     preferredUserId: preferredUserId || undefined,
+    allowRegistration: runtime.auth.registrationEnabled,
   })
   setSessionCookie(event, loginResult.sessionToken, loginResult.session.expiresAt)
 

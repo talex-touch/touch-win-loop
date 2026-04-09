@@ -12,6 +12,7 @@ const tabItems = computed(() => {
     { key: 'basic', label: '基础信息', to: `/admin/contests/${id}/overview/edit` },
     { key: 'faq', label: 'FAQ', to: `/admin/contests/${id}/faq` },
     { key: 'tracks', label: '赛道', to: `/admin/contests/${id}/tracks` },
+    { key: 'track-timelines', label: '赛道时间线', to: `/admin/contests/${id}/track-timelines` },
     { key: 'timelines', label: '时间节点', to: `/admin/contests/${id}/timelines` },
     { key: 'rubrics', label: '评委细则', to: `/admin/contests/${id}/rubrics` },
     { key: 'guidelines', label: '赛道详解', to: `/admin/contests/${id}/judge-guidelines` },

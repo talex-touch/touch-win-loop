@@ -1,6 +1,7 @@
 import type { FeishuOAuthLoginProfile } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type { AuthUser } from '~~/shared/types/domain'
+import { syncProvisionedUserAvatar } from '~~/server/services/auth/user-avatar-sync'
 import {
   findAuthIdentityByProviderAndUserId,
   findAuthIdentityByProviderUserId,
@@ -56,9 +57,11 @@ export async function ensureLocalUserByFeishuProfile(
   profile: FeishuOAuthLoginProfile,
   input: {
     preferredUserId?: string | null
+    allowRegistration?: boolean
   } = {},
 ): Promise<{ user: AuthUser, created: boolean }> {
   const preferredUserId = String(input.preferredUserId || '').trim()
+  const allowRegistration = input.allowRegistration !== false
   const identity = await findAuthIdentityByProviderUserId(db, {
     provider: 'feishu',
     providerUserId: profile.unionId,
@@ -85,7 +88,7 @@ export async function ensureLocalUserByFeishuProfile(
         },
       })
       return {
-        user: existing,
+        user: await syncProvisionedUserAvatar(db, existing, profile.avatarUrl),
         created: false,
       }
     }
@@ -119,16 +122,20 @@ export async function ensureLocalUserByFeishuProfile(
     })
 
     return {
-      user: preferredUser,
+      user: await syncProvisionedUserAvatar(db, preferredUser, profile.avatarUrl),
       created: false,
     }
   }
+
+  if (!allowRegistration)
+    throw new Error('AUTH_REGISTRATION_DISABLED')
 
   const username = await allocateUniqueUsername(db, normalizeUsernameSeed(profile))
   const totalUsers = await countUsers(db)
   const createdUser = await createUserWithPersonalWorkspace(db, {
     username,
     passwordHash: await hashPassword(createSessionToken()),
+    avatarUrl: profile.avatarUrl,
     isPlatformAdmin: totalUsers === 0,
   })
 
@@ -148,7 +155,7 @@ export async function ensureLocalUserByFeishuProfile(
   })
 
   return {
-    user: createdUser,
+    user: await syncProvisionedUserAvatar(db, createdUser, profile.avatarUrl),
     created: true,
   }
 }

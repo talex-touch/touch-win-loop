@@ -505,7 +505,7 @@ export async function executeWorkspaceAi(input: {
       model: createChatModel(input.runtime.ai),
       tools,
       systemPrompt: [
-        '你是 WinLoop 工作台 AI 助手。',
+        '你是 Loopy，负责 Team 与项目上下文下的工作台问答与分析。',
         buildModePrompt(input.mode),
         channelPrompt ? `[场景提示词]\n${channelPrompt}` : '',
         '必须先获取上下文再作答，避免与上下文冲突。',

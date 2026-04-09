@@ -20,7 +20,6 @@ type PlatformAiChannelKey
     | 'workspace_issue_discovery'
     | 'admin_general'
     | 'admin_publish_assistant'
-    | 'admin_import_sync_analysis'
 
 interface RegistryProviderModel {
   model: string
