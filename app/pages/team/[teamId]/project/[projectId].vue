@@ -70,6 +70,7 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
+import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import { useCollabSession } from '~/composables/useCollabSession'
 
 definePageMeta({
@@ -95,6 +96,18 @@ const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
 
+interface TopicBoardConfirmOptions {
+  title: string
+  content: string
+  okText?: string
+  cancelText?: string
+}
+
+interface TopicBoardConfirmState extends Required<TopicBoardConfirmOptions> {
+  visible: boolean
+  resolver: ((value: boolean) => void) | null
+}
+
 function linesToArray(text: string): string[] {
   return text
     .split(/\n+/)
@@ -106,7 +119,48 @@ function arrayToLines(list: string[] | undefined): string {
   return (list || []).join('\n')
 }
 
-const TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX = 'workspace.topicBoardSeed.'
+const topicBoardConfirmState = reactive<TopicBoardConfirmState>({
+  visible: false,
+  title: '',
+  content: '',
+  okText: '确认',
+  cancelText: '取消',
+  resolver: null,
+})
+
+function resolveTopicBoardConfirm(result: boolean) {
+  const resolver = topicBoardConfirmState.resolver
+  topicBoardConfirmState.visible = false
+  topicBoardConfirmState.title = ''
+  topicBoardConfirmState.content = ''
+  topicBoardConfirmState.okText = '确认'
+  topicBoardConfirmState.cancelText = '取消'
+  topicBoardConfirmState.resolver = null
+  resolver?.(result)
+}
+
+function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolean> {
+  if (!process.client)
+    return Promise.resolve(true)
+
+  if (topicBoardConfirmState.resolver)
+    resolveTopicBoardConfirm(false)
+
+  topicBoardConfirmState.visible = true
+  topicBoardConfirmState.title = options.title
+  topicBoardConfirmState.content = options.content
+  topicBoardConfirmState.okText = options.okText || '确认'
+  topicBoardConfirmState.cancelText = options.cancelText || '取消'
+
+  return new Promise((resolve) => {
+    topicBoardConfirmState.resolver = resolve
+  })
+}
+
+onBeforeUnmount(() => {
+  if (topicBoardConfirmState.resolver)
+    resolveTopicBoardConfirm(false)
+})
 
 function splitTopicBoardTags(text: string): string[] {
   return String(text || '')
@@ -4198,7 +4252,11 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
     return
 
   if (hasExistingFormDraftContent() && process.client) {
-    const confirmed = window.confirm('当前项目草案已有内容，继续写入会覆盖现有字段，是否继续？')
+    const confirmed = await askTopicBoardConfirm({
+      title: '覆盖当前项目草案',
+      content: '当前项目草案已有内容，继续写入会覆盖现有字段，是否继续？',
+      okText: '继续写入',
+    })
     if (!confirmed)
       return
   }
@@ -4217,11 +4275,13 @@ async function applyTopicBoardCandidateToForm(candidateId: string) {
   if (!process.client)
     return
 
-  const shouldSave = window.confirm(
-    syncedAdaptation
+  const shouldSave = await askTopicBoardConfirm({
+    title: '立即保存项目设置',
+    content: syncedAdaptation
       ? '已同步到项目设置草稿，是否立即保存到项目设置？'
       : '已同步到项目通用设置草稿，是否立即保存到项目设置？',
-  )
+    okText: '立即保存',
+  })
   if (!shouldSave)
     return
 
@@ -5268,6 +5328,30 @@ watch(() => workspaceRealtime.connected.value, () => {
       :line="statusCursor.line"
       :column="statusCursor.column"
     />
+
+    <a-modal
+      v-model:visible="topicBoardConfirmState.visible"
+      :title="topicBoardConfirmState.title"
+      width="420px"
+      :footer="false"
+      :mask-closable="false"
+      @cancel="resolveTopicBoardConfirm(false)"
+    >
+      <div class="space-y-4">
+        <p class="m-0 text-sm text-slate-600 leading-6 whitespace-pre-line">
+          {{ topicBoardConfirmState.content }}
+        </p>
+
+        <div class="flex justify-end gap-2">
+          <a-button @click="resolveTopicBoardConfirm(false)">
+            {{ topicBoardConfirmState.cancelText }}
+          </a-button>
+          <a-button type="primary" @click="resolveTopicBoardConfirm(true)">
+            {{ topicBoardConfirmState.okText }}
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 

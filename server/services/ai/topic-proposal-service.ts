@@ -206,11 +206,6 @@ export async function executeTopicProposal(
     throw new Error('TOPIC_PROPOSAL_WORKSPACE_REQUIRED')
   }
 
-  const includeInternal = Boolean(
-    input.user.isPlatformAdmin
-    || await checkPlatformPermission(event, input.user, 'contest.read_internal'),
-  )
-
   const boardInput = normalizeTopicBoardInput({
     contestId: input.request.context.contestId,
     trackId: input.request.context.trackId,
@@ -223,6 +218,87 @@ export async function executeTopicProposal(
     candidateCount: input.request.topK || 3,
     source: 'workspace_dashboard',
   })
+
+  const quotaResult = await withTransaction(event, async (db) => {
+    const canUseWorkspace = await teamHasWorkspaceMembership(db, input.user, workspaceId)
+    if (!canUseWorkspace)
+      throw new Error('FORBIDDEN')
+
+    return teamConsumeAiQuota(db, {
+      workspaceId,
+      userId: input.user.id,
+      route: '/api/ai/topic-proposal',
+      units: 1,
+    })
+  }).catch((error) => {
+    if (error instanceof Error && error.message === 'FORBIDDEN') {
+      setResponseStatus(event, 403)
+      return null
+    }
+    throw error
+  })
+
+  if (!quotaResult) {
+    throw new Error('TOPIC_PROPOSAL_FORBIDDEN')
+  }
+
+  if (!quotaResult.allowed) {
+    setResponseStatus(event, 429)
+    throw new Error('TOPIC_PROPOSAL_QUOTA_EXCEEDED')
+  }
+
+  const scopeProjectId = toText(input.request.context.projectId)
+  const scopeMode = 'dialog_ask' as const
+  const activeSession = await withTransaction(event, async (db) => {
+    if (input.request.sessionId) {
+      const existing = await getAiChatSessionById(db, {
+        workspaceId,
+        sessionId: input.request.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        strictScope: Boolean(scopeProjectId),
+      })
+      if (!existing)
+        throw new Error('SESSION_NOT_FOUND')
+      await patchAiChatSessionContext(db, {
+        workspaceId,
+        sessionId: input.request.sessionId,
+        projectId: scopeProjectId,
+        mode: scopeMode,
+        contestId: input.request.context.contestId,
+        trackId: input.request.context.trackId,
+        major: input.request.context.major,
+      })
+      return existing
+    }
+
+    return createAiChatSession(db, {
+      workspaceId,
+      projectId: scopeProjectId,
+      mode: scopeMode,
+      createdByUserId: input.user.id,
+      title: buildSessionTitle('', ''),
+      contestId: input.request.context.contestId,
+      trackId: input.request.context.trackId,
+      major: input.request.context.major,
+    })
+  }).catch((error) => {
+    if (error instanceof Error && error.message === 'SESSION_NOT_FOUND') {
+      setResponseStatus(event, 404)
+      return 'SESSION_NOT_FOUND'
+    }
+    throw error
+  })
+
+  if (typeof activeSession === 'string')
+    throw new Error('TOPIC_PROPOSAL_SESSION_NOT_FOUND')
+
+  const resolvedSession = activeSession
+
+  const includeInternal = Boolean(
+    input.user.isPlatformAdmin
+    || await checkPlatformPermission(event, input.user, 'contest.read_internal'),
+  )
 
   const contextBundle = await withClient(event, async (db) => {
     const detail = input.request.context.contestId
@@ -286,8 +362,6 @@ export async function executeTopicProposal(
 
   const contest = contextBundle.detail?.contest
   const track = contextBundle.track || contest?.tracks.find(item => item.id === input.request.context.trackId) || null
-  const scopeProjectId = toText(input.request.context.projectId)
-  const scopeMode = 'dialog_ask' as const
   const latestUserMessage = [...input.request.messages]
     .reverse()
     .find(message => message.role === 'user')
@@ -335,91 +409,6 @@ export async function executeTopicProposal(
     }
   }
 
-  const activeSession = await withTransaction(event, async (db) => {
-    const canUseWorkspace = await teamHasWorkspaceMembership(db, input.user, workspaceId)
-    if (!canUseWorkspace)
-      throw new Error('FORBIDDEN')
-
-    if (input.request.sessionId) {
-      const existing = await getAiChatSessionById(db, {
-        workspaceId,
-        sessionId: input.request.sessionId,
-        projectId: scopeProjectId,
-        mode: scopeMode,
-        strictScope: Boolean(scopeProjectId),
-      })
-      if (!existing)
-        throw new Error('SESSION_NOT_FOUND')
-      await patchAiChatSessionContext(db, {
-        workspaceId,
-        sessionId: input.request.sessionId,
-        projectId: scopeProjectId,
-        mode: scopeMode,
-        contestId: input.request.context.contestId,
-        trackId: input.request.context.trackId,
-        major: input.request.context.major,
-      })
-      return existing
-    }
-
-    return createAiChatSession(db, {
-      workspaceId,
-      projectId: scopeProjectId,
-      mode: scopeMode,
-      createdByUserId: input.user.id,
-      title: buildSessionTitle(contest?.name || '', track?.name || ''),
-      contestId: input.request.context.contestId,
-      trackId: input.request.context.trackId,
-      major: input.request.context.major,
-    })
-  }).catch((error) => {
-    if (error instanceof Error && error.message === 'FORBIDDEN') {
-      setResponseStatus(event, 403)
-      return null
-    }
-    if (error instanceof Error && error.message === 'SESSION_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return 'SESSION_NOT_FOUND'
-    }
-    throw error
-  })
-
-  if (!activeSession) {
-    throw new Error('TOPIC_PROPOSAL_FORBIDDEN')
-  }
-
-  if (activeSession === 'SESSION_NOT_FOUND') {
-    throw new Error('TOPIC_PROPOSAL_SESSION_NOT_FOUND')
-  }
-
-  const quotaResult = await withTransaction(event, async (db) => {
-    const canUseWorkspace = await teamHasWorkspaceMembership(db, input.user, workspaceId)
-    if (!canUseWorkspace)
-      throw new Error('FORBIDDEN')
-
-    return teamConsumeAiQuota(db, {
-      workspaceId,
-      userId: input.user.id,
-      route: '/api/ai/topic-proposal',
-      units: 1,
-    })
-  }).catch((error) => {
-    if (error instanceof Error && error.message === 'FORBIDDEN') {
-      setResponseStatus(event, 403)
-      return null
-    }
-    throw error
-  })
-
-  if (!quotaResult) {
-    throw new Error('TOPIC_PROPOSAL_FORBIDDEN')
-  }
-
-  if (!quotaResult.allowed) {
-    setResponseStatus(event, 429)
-    throw new Error('TOPIC_PROPOSAL_QUOTA_EXCEEDED')
-  }
-
   const effectiveAiConfig = {
     ...channelAiConfig,
     temperature: Number.isFinite(Number(input.request.aiOptions?.temperature))
@@ -452,7 +441,7 @@ export async function executeTopicProposal(
     ...result.data,
     references: webReferences,
     webSearchEnabled,
-    sessionId: activeSession.id,
+    sessionId: resolvedSession.id,
   }
 
   const enrichedResult = enrichTopicProposalResult({
@@ -479,7 +468,7 @@ export async function executeTopicProposal(
     if (effectiveUserMessage) {
       await appendAiChatMessage(db, {
         workspaceId,
-        sessionId: activeSession.id,
+        sessionId: resolvedSession.id,
         role: 'user',
         content: effectiveUserMessage,
         provider: effectiveAiConfig.provider,
@@ -492,7 +481,7 @@ export async function executeTopicProposal(
 
     await appendAiChatMessage(db, {
       workspaceId,
-      sessionId: activeSession.id,
+      sessionId: resolvedSession.id,
       role: 'assistant',
       content: enrichedResult.assistantReply,
       provider: effectiveAiConfig.provider,
@@ -504,7 +493,7 @@ export async function executeTopicProposal(
 
     await patchAiChatSessionContext(db, {
       workspaceId,
-      sessionId: activeSession.id,
+      sessionId: resolvedSession.id,
       projectId: scopeProjectId,
       mode: scopeMode,
       contestId: input.request.context.contestId,
@@ -518,7 +507,7 @@ export async function executeTopicProposal(
       action: 'ai.invoke.topic_proposal',
       contestId: input.request.context.contestId,
       payload: {
-        sessionId: activeSession.id,
+        sessionId: resolvedSession.id,
         projectId: input.request.context.projectId,
         trackId: input.request.context.trackId,
         channelKey: channelRuntime.key,
@@ -534,7 +523,7 @@ export async function executeTopicProposal(
   return {
     result: {
       ...enrichedResult,
-      sessionId: activeSession.id,
+      sessionId: resolvedSession.id,
       webSearchEnabled,
     },
     meta: {

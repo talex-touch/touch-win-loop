@@ -675,6 +675,18 @@ const activeTopicBoardCandidate = computed(() => {
     || null
 })
 
+const selectedTopicBoardCandidate = computed(() => {
+  const board = props.topicBoard
+  if (!board)
+    return null
+
+  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
+  if (selectedCandidateId)
+    return board.candidates.find(item => item.candidateId === selectedCandidateId) || null
+
+  return board.candidates.find(item => item.decisionStatus === 'selected') || null
+})
+
 const topicBoardDecisionSummary = computed(() => {
   const board = props.topicBoard
   if (!board)
@@ -687,7 +699,7 @@ const topicBoardDecisionSummary = computed(() => {
   return {
     shortlisted: board.candidates.filter(item => item.decisionStatus === 'shortlisted').length,
     rejected: board.candidates.filter(item => item.decisionStatus === 'rejected').length,
-    selected: activeTopicBoardCandidate.value?.payload.title || '',
+    selected: selectedTopicBoardCandidate.value?.payload.title || '',
   }
 })
 

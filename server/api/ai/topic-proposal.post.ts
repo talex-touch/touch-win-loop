@@ -38,17 +38,6 @@ export default defineEventHandler(async (event) => {
       }, 40073)
     }
 
-    if (message === 'PROJECT_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return fail('project not found', {
-        startedAt: Date.now(),
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
-        fallbackUsed: false,
-        attempts: 1,
-      }, 40477)
-    }
-
     if (message === 'TOPIC_PROPOSAL_FORBIDDEN') {
       setResponseStatus(event, 403)
       return fail('当前用户无权使用该空间。', {

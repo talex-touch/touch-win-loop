@@ -1563,6 +1563,7 @@ CREATE INDEX IF NOT EXISTS idx_project_issues_project_status ON project_issues(p
 CREATE INDEX IF NOT EXISTS idx_project_issues_report ON project_issues(report_id);
 CREATE INDEX IF NOT EXISTS idx_project_topic_boards_project_updated ON project_topic_boards(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_boards_workspace_status ON project_topic_boards(workspace_id, status, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_topic_boards_one_active_per_project ON project_topic_boards(project_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_board_sort ON project_topic_candidates(board_id, sort_order ASC);
 CREATE INDEX IF NOT EXISTS idx_project_topic_candidates_project_status ON project_topic_candidates(project_id, decision_status, total_score DESC);
 CREATE INDEX IF NOT EXISTS idx_user_ai_memories_user_created ON user_ai_memories(user_id, created_at DESC);

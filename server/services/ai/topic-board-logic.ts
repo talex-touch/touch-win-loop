@@ -342,10 +342,13 @@ function buildTrendSignals(item: TopicProposalItem, boardInput: ProjectTopicBoar
 
       const summary = normalizeText(trend.summary) || trend.hotTags.join('、')
       const labels = trend.hotTags.length > 0 ? trend.hotTags.slice(0, 2) : [`${trend.year} 趋势`]
+      const currentYear = new Date().getFullYear()
+      const age = Math.max(0, currentYear - trend.year)
+      const recencyBonus = Math.max(0, 6 - age)
       return labels.map((label) => ({
         label,
         summary: summarizeText(summary, 110),
-        heatScore: clamp(Math.round(62 + overlap * 30 + Math.min(6, Math.max(0, 2026 - trend.year))), 50, 96),
+        heatScore: clamp(Math.round(62 + overlap * 30 + recencyBonus), 50, 96),
         source: 'contest_trends' as const,
         confidence: clamp(0.55 + overlap * 0.35, 0.55, 0.92),
       }))
@@ -520,4 +523,3 @@ export function enrichTopicProposalResult(input: EnrichTopicProposalResultInput)
 }
 
 export interface ProjectTopicBoardTrendRow extends ContestTrendRow {}
-
