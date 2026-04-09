@@ -114,6 +114,10 @@ const {
   useSuggestion: useLoopySuggestion,
 } = loopyState
 
+const route = useRoute()
+const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
+const isDashboardIndex = computed(() => normalizedPath.value === '/dashboard')
+
 const activeSession = computed(() => {
   return loopySessions.value.find(item => item.id === loopyActiveSessionId.value) || null
 })
@@ -188,7 +192,9 @@ onMounted(() => {
 </script>
 
 <template>
+  <NuxtPage v-if="!isDashboardIndex" />
   <section
+    v-else
     class="flex h-full min-h-0 w-full min-w-0 overflow-hidden"
     data-testid="dashboard-loopy-home"
   >

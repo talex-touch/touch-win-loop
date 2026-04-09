@@ -36,8 +36,15 @@ import type {
   ProjectSettingsDraftPayload,
   ProjectSettingsDraftUi,
   ProjectSettingsSnapshot,
+  ProjectTopicBoard,
+  ProjectTopicBoardCreateSeed,
+  ProjectTopicBoardGenerateRequest,
+  ProjectTopicBoardListResult,
+  ProjectTopicBoardPatchRequest,
   Resource,
   ResourcePreviewStatus,
+  TopicProposalDecisionStatus,
+  TopicProposalItem,
   WorkspaceAiMode,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
@@ -54,6 +61,7 @@ import type {
   WorkspaceProjectContestBindingForm,
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
+  WorkspaceTopicBoardDraft,
 } from '~/types/workspace'
 import { Message } from '@arco-design/web-vue'
 import {
@@ -63,6 +71,7 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
+import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
@@ -94,6 +103,18 @@ const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
 
+interface TopicBoardConfirmOptions {
+  title: string
+  content: string
+  okText?: string
+  cancelText?: string
+}
+
+interface TopicBoardConfirmState extends Required<TopicBoardConfirmOptions> {
+  visible: boolean
+  resolver: ((value: boolean) => void) | null
+}
+
 function linesToArray(text: string): string[] {
   return text
     .split(/\n+/)
@@ -105,6 +126,66 @@ function arrayToLines(list: string[] | undefined): string {
   return (list || []).join('\n')
 }
 
+const topicBoardConfirmState = reactive<TopicBoardConfirmState>({
+  visible: false,
+  title: '',
+  content: '',
+  okText: '确认',
+  cancelText: '取消',
+  resolver: null,
+})
+
+function resolveTopicBoardConfirm(result: boolean) {
+  const resolver = topicBoardConfirmState.resolver
+  topicBoardConfirmState.visible = false
+  topicBoardConfirmState.title = ''
+  topicBoardConfirmState.content = ''
+  topicBoardConfirmState.okText = '确认'
+  topicBoardConfirmState.cancelText = '取消'
+  topicBoardConfirmState.resolver = null
+  resolver?.(result)
+}
+
+function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolean> {
+  if (!process.client)
+    return Promise.resolve(true)
+
+  if (topicBoardConfirmState.resolver)
+    resolveTopicBoardConfirm(false)
+
+  topicBoardConfirmState.visible = true
+  topicBoardConfirmState.title = options.title
+  topicBoardConfirmState.content = options.content
+  topicBoardConfirmState.okText = options.okText || '确认'
+  topicBoardConfirmState.cancelText = options.cancelText || '取消'
+
+  return new Promise((resolve) => {
+    topicBoardConfirmState.resolver = resolve
+  })
+}
+
+onBeforeUnmount(() => {
+  if (topicBoardConfirmState.resolver)
+    resolveTopicBoardConfirm(false)
+})
+
+function splitTopicBoardTags(text: string): string[] {
+  return String(text || '')
+    .split(/[\n,，、]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
+  return {
+    discipline: '',
+    topicType: '',
+    expectedDifficulty: '',
+    keywordsText: '',
+    teamSkillTagsText: '',
+    candidateCount: 3,
+  }
+}
 function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
   return {
     contestId,
@@ -410,6 +491,13 @@ const discipline = ref('')
 const level = ref('')
 const trackType = ref('')
 const topK = ref(6)
+const topicBoardDraft = reactive<WorkspaceTopicBoardDraft>(createEmptyTopicBoardDraft())
+const topicBoardLoading = ref(false)
+const topicBoardError = ref('')
+const topicBoardSnapshot = ref<ProjectTopicBoard | null>(null)
+const topicBoardHistory = ref<ProjectTopicBoard[]>([])
+const topicBoardActioningCandidateId = ref('')
+const topicBoardCreateSeedHandled = ref(false)
 
 const contests = ref<Contest[]>([])
 const contestCatalog = ref<Contest[]>([])
@@ -1242,7 +1330,36 @@ const mappingRows = computed<WorkspaceMappingRow[]>(() => {
   ]
 })
 
+const activeTopicBoardCandidate = computed(() => {
+  const board = topicBoardSnapshot.value
+  if (!board || board.candidates.length === 0)
+    return null
+  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
+  return board.candidates.find(item => item.candidateId === selectedCandidateId)?.payload
+    || board.candidates[0]?.payload
+    || null
+})
+
 const keywordCloud = computed<WorkspaceKeyword[]>(() => {
+  if (topicBoardSnapshot.value && activeTopicBoardCandidate.value) {
+    const board = topicBoardSnapshot.value
+    const candidate = activeTopicBoardCandidate.value
+    const labels = [
+      ...board.input.keywords,
+      ...candidate.trendSignals.map(item => item.label),
+      ...candidate.requiredSkills,
+      candidate.recommendedTrackName,
+    ]
+      .filter(Boolean)
+      .slice(0, 8)
+
+    return labels.map((label, index) => ({
+      label,
+      count: clamp(54 - index * 5, 12, 60),
+      active: index < 3,
+    }))
+  }
+
   const seed = selectedContest.value?.keywords.length
     ? [...selectedContest.value.keywords]
     : ['人工智能', '工程落地', '评分映射', '答辩策略', '项目管理']
@@ -1262,6 +1379,17 @@ const keywordCloud = computed<WorkspaceKeyword[]>(() => {
 })
 
 const trendBars = computed<number[]>(() => {
+  if (activeTopicBoardCandidate.value) {
+    const scores = activeTopicBoardCandidate.value.compareScores
+    return [
+      scores.contestFit,
+      scores.noveltySimilarity,
+      scores.evidenceReadiness,
+      scores.trendHeat,
+      scores.teamMatch,
+    ].map(value => clamp(value, 18, 96))
+  }
+
   const filledSignals = [
     formState.problemStatement,
     formState.innovationPointsText,
@@ -1289,7 +1417,7 @@ const projectUploadStorageUsedBytes = computed(() => {
   return selectedResources.value.reduce((sum, resource) => sum + parseFileSizeFromResource(resource), 0)
 })
 
-const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value)
+const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value || topicBoardLoading.value)
 
 const collabSelectionStatus = ref({
   line: 1,
@@ -3939,6 +4067,352 @@ async function runAiFilter() {
   }
 }
 
+function buildTopicBoardInput(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard'): ProjectTopicBoardGenerateRequest['input'] {
+  return {
+    contestId: String(selectedContestId.value || '').trim(),
+    trackId: String(selectedTrackId.value || '').trim(),
+    major: major.value.trim(),
+    discipline: topicBoardDraft.discipline.trim() || discipline.value.trim(),
+    topicType: topicBoardDraft.topicType.trim() || trackType.value.trim(),
+    expectedDifficulty: topicBoardDraft.expectedDifficulty.trim() || level.value.trim(),
+    keywords: splitTopicBoardTags(topicBoardDraft.keywordsText),
+    teamSkillTags: splitTopicBoardTags(topicBoardDraft.teamSkillTagsText),
+    candidateCount: clamp(Math.round(Number(topicBoardDraft.candidateCount || 3)), 3, 5),
+    source,
+  }
+}
+
+function syncTopicBoardDraftFromSeed(seed: ProjectTopicBoardCreateSeed) {
+  topicBoardDraft.discipline = String(seed.discipline || '').trim()
+  topicBoardDraft.topicType = String(seed.topicType || '').trim()
+  topicBoardDraft.expectedDifficulty = String(seed.expectedDifficulty || '').trim()
+  topicBoardDraft.keywordsText = (seed.keywords || []).join('\n')
+  topicBoardDraft.teamSkillTagsText = (seed.teamSkillTags || []).join('\n')
+  topicBoardDraft.candidateCount = clamp(Math.round(Number(seed.candidateCount || 3)), 3, 5)
+}
+
+function findTopicBoardCandidate(candidateId: string): TopicProposalItem | null {
+  const normalizedCandidateId = String(candidateId || '').trim()
+  if (!normalizedCandidateId)
+    return null
+  return topicBoardSnapshot.value?.candidates.find(item => item.candidateId === normalizedCandidateId)?.payload || null
+}
+
+async function loadTopicBoards() {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
+    topicBoardSnapshot.value = null
+    topicBoardHistory.value = []
+    return
+  }
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
+    topicBoardSnapshot.value = response.data.latestBoard
+    topicBoardHistory.value = response.data.history
+    topicBoardError.value = ''
+  }
+  catch {
+    topicBoardSnapshot.value = null
+    topicBoardHistory.value = []
+  }
+}
+
+async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard') {
+  if (!activeProjectId.value) {
+    statusLine.value = '请先选择一个项目。'
+    return
+  }
+
+  if (!activeWorkspaceId.value) {
+    statusLine.value = '请先选择一个空间。'
+    return
+  }
+
+  const input = buildTopicBoardInput(source)
+  if (!input.contestId || !input.trackId) {
+    statusLine.value = '请先锁定竞赛与赛道，再生成选题板。'
+    return
+  }
+
+  activeMainTabId.value = 'dashboard'
+  topicBoardLoading.value = true
+  topicBoardError.value = ''
+
+  try {
+    const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${activeProjectId.value}/topic-boards/generate`), {
+      method: 'POST',
+      body: {
+        input,
+      } satisfies ProjectTopicBoardGenerateRequest,
+    })
+
+    topicBoardSnapshot.value = response.data
+    topicBoardHistory.value = [response.data, ...topicBoardHistory.value.filter(item => item.id !== response.data.id)].slice(0, 5)
+    statusLine.value = response.meta.fallbackUsed
+      ? '选题板已生成，当前为内部资料/规则兜底结果。'
+      : '选题板已生成，可继续设主推、写入草案或发送到右侧 AI。'
+  }
+  catch (error) {
+    const message = resolveApiErrorMessage(error, '生成选题板失败，请稍后重试。')
+    topicBoardError.value = message
+    statusLine.value = message
+  }
+  finally {
+    topicBoardLoading.value = false
+  }
+}
+
+async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
+  const boardId = String(topicBoardSnapshot.value?.id || '').trim()
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!boardId || !projectId)
+    return
+
+  const response = await $fetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/${boardId}`), {
+    method: 'PATCH',
+    body: payload,
+  })
+
+  topicBoardSnapshot.value = response.data
+  topicBoardHistory.value = topicBoardHistory.value.map(item => item.id === response.data.id ? response.data : item)
+}
+
+async function updateTopicBoardCandidateStatus(candidateId: string, decisionStatus: TopicProposalDecisionStatus) {
+  const normalizedCandidateId = String(candidateId || '').trim()
+  if (!normalizedCandidateId)
+    return
+
+  topicBoardActioningCandidateId.value = normalizedCandidateId
+  try {
+    await patchTopicBoard({
+      candidateUpdates: [
+        {
+          candidateId: normalizedCandidateId,
+          decisionStatus,
+        },
+      ],
+    })
+    statusLine.value = decisionStatus === 'shortlisted'
+      ? '已加入短名单。'
+      : decisionStatus === 'rejected'
+        ? '已标记为淘汰。'
+        : '候选题状态已更新。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '更新候选题状态失败。')
+  }
+  finally {
+    topicBoardActioningCandidateId.value = ''
+  }
+}
+
+async function selectTopicBoardCandidate(candidateId: string) {
+  const normalizedCandidateId = String(candidateId || '').trim()
+  if (!normalizedCandidateId)
+    return
+
+  topicBoardActioningCandidateId.value = normalizedCandidateId
+  try {
+    await patchTopicBoard({
+      selectedCandidateId: normalizedCandidateId,
+    })
+    statusLine.value = '已更新主推题。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '更新主推题失败。')
+  }
+  finally {
+    topicBoardActioningCandidateId.value = ''
+  }
+}
+
+function buildTopicBoardChatPrompt(candidate: TopicProposalItem): string {
+  return [
+    `请围绕候选题《${candidate.title}》继续深挖，并按当前项目上下文输出下一步建议。`,
+    `主推理由：${candidate.reason}`,
+    candidate.innovationPoints.length > 0 ? `创新点：${candidate.innovationPoints.join('；')}` : '',
+    candidate.contestFitReasons.length > 0 ? `竞赛适配：${candidate.contestFitReasons.join('；')}` : '',
+    candidate.requiredSkills.length > 0 ? `所需技能：${candidate.requiredSkills.join('、')}` : '',
+    candidate.teamGapNotes.length > 0 ? `能力缺口：${candidate.teamGapNotes.join('；')}` : '',
+    candidate.evidenceRefs.length > 0 ? `证据摘要：${candidate.evidenceRefs.map(item => `${item.sourceLabel}-${item.title}`).join('；')}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+async function sendTopicBoardCandidateToChat(candidateId: string) {
+  const candidate = findTopicBoardCandidate(candidateId)
+  if (!candidate)
+    return
+
+  expandRightSidebar()
+  aiMode.value = 'dialog_ask'
+  chatInput.value = buildTopicBoardChatPrompt(candidate)
+  await nextTick()
+  await sendChatMessage()
+}
+
+function hasExistingFormDraftContent(): boolean {
+  return Boolean(
+    formState.title
+    || formState.problemStatement
+    || formState.innovationPointsText
+    || formState.techRouteStepsText
+    || formState.scoringMappingText
+    || formState.risksText
+    || formState.deliverablesText
+    || formState.summary,
+  )
+}
+
+function resolveTopicBoardDraftDeliverables(): string[] {
+  const contestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
+  const contest = contestMap.value.get(contestId) || selectedContest.value
+  const trackId = String(projectSettingsBindingMap.value.get(contestId)?.trackId || selectedTrackId.value || '').trim()
+  const track = (trackId && contest?.tracks.find(item => item.id === trackId)) || selectedTrack.value || null
+
+  if (track?.deliverableTypes?.length)
+    return [...track.deliverableTypes]
+
+  return ['项目方案书', '演示材料', '答辩问题清单']
+}
+
+function buildTopicBoardDraftContent(candidate: TopicProposalItem): WorkspaceProjectCommonForm {
+  return {
+    title: candidate.title,
+    icon: '',
+    accentColor: '',
+    problemStatement: candidate.reason,
+    innovationPointsText: candidate.innovationPoints.join('\n'),
+    techRouteStepsText: candidate.techRouteSteps.join('\n'),
+    scoringMappingText: [
+      ...candidate.scoringMapping,
+      ...candidate.contestFitReasons.map(item => `适配说明 -> ${item}`),
+    ].join('\n'),
+    risksText: [...candidate.risks, ...candidate.teamGapNotes].join('\n'),
+    deliverablesText: resolveTopicBoardDraftDeliverables().join('\n'),
+    summary: [
+      candidate.reason,
+      candidate.evidenceRefs[0]?.summary || '',
+    ].filter(Boolean).join(' '),
+  }
+}
+
+function syncTopicBoardCandidateToProjectSettings(candidate: TopicProposalItem): {
+  draftContent: WorkspaceProjectCommonForm
+  syncedAdaptation: boolean
+} {
+  const draftContent = buildTopicBoardDraftContent(candidate)
+
+  Object.assign(projectSettingsCommon, cloneProjectCommonForm(draftContent))
+  projectSettingsCommonDirty.value = true
+
+  const contestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
+  const binding = projectSettingsBindingMap.value.get(contestId)
+  let syncedAdaptation = false
+
+  if (contestId && binding) {
+    const adaptationDraft: WorkspaceProjectAdaptationForm = {
+      contestId,
+      trackId: binding.trackId,
+      problemStatement: draftContent.problemStatement,
+      innovationPointsText: draftContent.innovationPointsText,
+      techRouteStepsText: draftContent.techRouteStepsText,
+      scoringMappingText: draftContent.scoringMappingText,
+      risksText: draftContent.risksText,
+      deliverablesText: draftContent.deliverablesText,
+      summary: draftContent.summary,
+    }
+
+    projectSettingsHydrating.value = true
+    try {
+      Object.assign(projectSettingsAdaptation, cloneProjectAdaptationForm(adaptationDraft))
+    }
+    finally {
+      projectSettingsHydrating.value = false
+    }
+
+    upsertProjectSettingsAdaptationDraft(adaptationDraft)
+    markProjectSettingsAdaptationDirty(contestId)
+    syncedAdaptation = true
+  }
+
+  scheduleProjectSettingsDraftPersist()
+
+  return {
+    draftContent,
+    syncedAdaptation,
+  }
+}
+
+async function applyTopicBoardCandidateToForm(candidateId: string) {
+  const candidate = findTopicBoardCandidate(candidateId)
+  if (!candidate)
+    return
+
+  if (hasExistingFormDraftContent() && process.client) {
+    const confirmed = await askTopicBoardConfirm({
+      title: '覆盖当前项目草案',
+      content: '当前项目草案已有内容，继续写入会覆盖现有字段，是否继续？',
+      okText: '继续写入',
+    })
+    if (!confirmed)
+      return
+  }
+
+  const { draftContent, syncedAdaptation } = syncTopicBoardCandidateToProjectSettings(candidate)
+
+  Object.assign(formState, {
+    source: 'form',
+    ...draftContent,
+  })
+
+  statusLine.value = syncedAdaptation
+    ? '已写入项目草案，并同步到项目设置草稿。'
+    : '已写入项目草案，并同步到项目通用设置草稿。'
+
+  if (!process.client)
+    return
+
+  const shouldSave = await askTopicBoardConfirm({
+    title: '立即保存项目设置',
+    content: syncedAdaptation
+      ? '已同步到项目设置草稿，是否立即保存到项目设置？'
+      : '已同步到项目通用设置草稿，是否立即保存到项目设置？',
+    okText: '立即保存',
+  })
+  if (!shouldSave)
+    return
+
+  await saveProjectSettingsManually()
+}
+
+async function consumeTopicBoardCreateSeed() {
+  if (!process.client || topicBoardCreateSeedHandled.value)
+    return
+
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || !selectedContestId.value || !selectedTrackId.value)
+    return
+
+  const storageKey = `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${projectId}`
+  const raw = window.sessionStorage.getItem(storageKey)
+  if (!raw)
+    return
+
+  topicBoardCreateSeedHandled.value = true
+  window.sessionStorage.removeItem(storageKey)
+
+  try {
+    const seed = JSON.parse(raw) as ProjectTopicBoardCreateSeed
+    syncTopicBoardDraftFromSeed(seed)
+    if (!topicBoardSnapshot.value && seed.autoGenerate !== false)
+      await generateTopicBoard(seed.source || 'project_create')
+  }
+  catch {
+    // ignore malformed seed
+  }
+}
+
 function parseSseBlock(rawBlock: string): { eventType: string, dataText: string } | null {
   const block = rawBlock.trim()
   if (!block)
@@ -4475,7 +4949,7 @@ onMounted(async () => {
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
 
-  await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement()])
+  await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement(), loadTopicBoards()])
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
   if (activeProjectId.value)
@@ -4486,6 +4960,7 @@ onMounted(async () => {
   await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
   syncFallbackResourceRefreshTimer()
   syncFormContestTrack()
+  await consumeTopicBoardCreateSeed()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -4549,11 +5024,12 @@ watch(routeWorkspaceId, async (value, previous) => {
   workspaceSeatLimitError.value = ''
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
-  await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement()])
+  await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement(), loadTopicBoards()])
   await refreshProjectResourceContext()
   await loadProjectOutline()
   await loadProjectSettings(selectedContestId.value)
   await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
+  await consumeTopicBoardCreateSeed()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -4570,6 +5046,8 @@ watch(activeProjectId, async (next, previous) => {
   clearRealtimeProjectRefreshTimer()
   clearFallbackResourceRefreshTimer()
   projectOutlineFirstLoaded.value = false
+  topicBoardLoading.value = false
+  topicBoardActioningCandidateId.value = ''
   closeProjectResourcePreview()
   if (next)
     workspaceRealtime.subscribeProject(next)
@@ -4579,6 +5057,9 @@ watch(activeProjectId, async (next, previous) => {
     flowResourceId.value = ''
     projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
+    topicBoardSnapshot.value = null
+    topicBoardHistory.value = []
+    topicBoardCreateSeedHandled.value = false
     aiChangeRequests.value = []
     projectIssueReports.value = []
     projectIssues.value = []
@@ -4594,10 +5075,16 @@ watch(activeProjectId, async (next, previous) => {
     loadWorkspaceMemberManagement(),
     loadProjectOutline(),
     loadProjectSettings(selectedContestId.value),
+    loadTopicBoards(),
     loadAiChangeRequests(),
     loadProjectIssues(),
     loadChatSessions(),
   ])
+  await consumeTopicBoardCreateSeed()
+})
+
+watch([activeProjectId, selectedContestId, selectedTrackId], async () => {
+  await consumeTopicBoardCreateSeed()
 })
 
 watch(resources, (nextResources) => {
@@ -4727,8 +5214,14 @@ watch(() => workspaceRealtime.connected.value, () => {
           :current-user-id="me?.user.id || ''"
           :current-username="me?.user.username || ''"
           :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
+          :topic-board-draft="topicBoardDraft"
+          :topic-board-loading="topicBoardLoading"
+          :topic-board-current-summary="topicBoardSnapshot?.boardSummary || ''"
+          :topic-board-history-count="topicBoardHistory.length"
           @load-contests="loadContests"
           @run-ai-filter="runAiFilter"
+          @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
+          @generate-topic-board="generateTopicBoard('workspace_sidebar')"
           @open-settings-panel="openSettingsFromLeftSidebar"
           @open-member-management-panel="openMemberManagementFromLeftSidebar"
           @open-flow-panel="openFlowFromLeftSidebar"
@@ -4838,6 +5331,9 @@ watch(() => workspaceRealtime.connected.value, () => {
         :trend-bars="trendBars"
         :form-state="formState"
         :form-submitting="formSubmitting"
+        :topic-board="topicBoardSnapshot"
+        :topic-board-loading="topicBoardLoading"
+        :topic-board-actioning-candidate-id="topicBoardActioningCandidateId"
         :tone-meta="toneMeta"
         :project-settings-loading="projectSettingsLoading"
         :project-settings-save-state="projectSettingsSaveState"
@@ -4851,6 +5347,11 @@ watch(() => workspaceRealtime.connected.value, () => {
         @update:active-tab-id="activeMainTabId = $event"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
+        @generate-topic-board="generateTopicBoard('workspace_dashboard')"
+        @update-topic-board-candidate-status="updateTopicBoardCandidateStatus($event.candidateId, $event.decisionStatus)"
+        @select-topic-board-candidate="selectTopicBoardCandidate"
+        @send-topic-board-candidate-to-chat="sendTopicBoardCandidateToChat"
+        @apply-topic-board-candidate-to-form="applyTopicBoardCandidateToForm"
         @update:project-settings-common="onProjectSettingsCommonChange"
         @update:project-settings-bindings="onProjectSettingsBindingsChange"
         @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
@@ -4961,6 +5462,30 @@ watch(() => workspaceRealtime.connected.value, () => {
       type="file"
       @change="handleRebindUploadInputChange"
     >
+
+    <a-modal
+      v-model:visible="topicBoardConfirmState.visible"
+      :title="topicBoardConfirmState.title"
+      width="420px"
+      :footer="false"
+      :mask-closable="false"
+      @cancel="resolveTopicBoardConfirm(false)"
+    >
+      <div class="space-y-4">
+        <p class="m-0 text-sm text-slate-600 leading-6 whitespace-pre-line">
+          {{ topicBoardConfirmState.content }}
+        </p>
+
+        <div class="flex justify-end gap-2">
+          <a-button @click="resolveTopicBoardConfirm(false)">
+            {{ topicBoardConfirmState.cancelText }}
+          </a-button>
+          <a-button type="primary" @click="resolveTopicBoardConfirm(true)">
+            {{ topicBoardConfirmState.okText }}
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 

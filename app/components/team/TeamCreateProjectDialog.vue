@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Contest } from '~~/shared/types/domain'
+import type { Contest, ProjectTopicBoardCreateSeed } from '~~/shared/types/domain'
 import type { WorkspaceProjectCommonForm } from '~/types/workspace'
 
 const props = withDefaults(defineProps<{
@@ -8,12 +8,20 @@ const props = withDefaults(defineProps<{
   helperText?: string
   modelValue: WorkspaceProjectCommonForm
   contestIds: string[]
+  topicBoardSeed?: ProjectTopicBoardCreateSeed
   contests?: Contest[]
   errorText?: string
   submitting?: boolean
   submittingMode?: 'stay' | 'enter' | ''
 }>(), {
   helperText: '',
+  topicBoardSeed: () => ({
+    keywords: [],
+    teamSkillTags: [],
+    candidateCount: 3,
+    source: 'project_create',
+    autoGenerate: true,
+  }),
   contests: () => [],
   errorText: '',
   submitting: false,
@@ -25,6 +33,7 @@ const emit = defineEmits<{
   (event: 'submit', mode: 'stay' | 'enter'): void
   (event: 'update:modelValue', value: WorkspaceProjectCommonForm): void
   (event: 'update:contestIds', value: string[]): void
+  (event: 'update:topicBoardSeed', value: ProjectTopicBoardCreateSeed): void
 }>()
 
 function emitClose() {
@@ -43,6 +52,20 @@ function toggleContestId(contestId: string) {
     : [...props.contestIds, normalizedContestId]
 
   emit('update:contestIds', nextContestIds)
+}
+
+function updateTopicBoardSeed<K extends keyof ProjectTopicBoardCreateSeed>(field: K, value: ProjectTopicBoardCreateSeed[K]) {
+  emit('update:topicBoardSeed', {
+    ...props.topicBoardSeed,
+    [field]: value,
+  })
+}
+
+function splitSeedTags(value: string): string[] {
+  return String(value || '')
+    .split(/[\n,，、]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
 }
 </script>
 
@@ -127,6 +150,80 @@ function toggleContestId(contestId: string) {
                 </label>
               </div>
             </div>
+          </section>
+
+          <section class="p-3 border border-slate-200 rounded-xl bg-slate-50/80 space-y-3">
+            <label class="flex items-center justify-between gap-3">
+              <span class="text-xs text-slate-700 font-medium">创建后自动生成 AI 智能选题板</span>
+              <input
+                :checked="topicBoardSeed.autoGenerate !== false"
+                type="checkbox"
+                @change="updateTopicBoardSeed('autoGenerate', ($event.target as HTMLInputElement).checked)"
+              >
+            </label>
+
+            <template v-if="topicBoardSeed.autoGenerate !== false">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label class="block">
+                  <span class="text-xs text-slate-600 font-medium">所属领域</span>
+                  <input
+                    :value="topicBoardSeed.discipline || ''"
+                    class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
+                    placeholder="例如：AI 应用、智慧校园"
+                    @input="updateTopicBoardSeed('discipline', String(($event.target as HTMLInputElement).value || ''))"
+                  >
+                </label>
+                <label class="block">
+                  <span class="text-xs text-slate-600 font-medium">题目类型</span>
+                  <input
+                    :value="topicBoardSeed.topicType || ''"
+                    class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
+                    placeholder="例如：产品型、研究型、工程型"
+                    @input="updateTopicBoardSeed('topicType', String(($event.target as HTMLInputElement).value || ''))"
+                  >
+                </label>
+                <label class="block">
+                  <span class="text-xs text-slate-600 font-medium">期望难度</span>
+                  <input
+                    :value="topicBoardSeed.expectedDifficulty || ''"
+                    class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
+                    placeholder="例如：中等偏上"
+                    @input="updateTopicBoardSeed('expectedDifficulty', String(($event.target as HTMLInputElement).value || ''))"
+                  >
+                </label>
+                <label class="block">
+                  <span class="text-xs text-slate-600 font-medium">候选数（3-5）</span>
+                  <input
+                    :value="topicBoardSeed.candidateCount || 3"
+                    class="text-sm mt-1 px-3 border border-slate-300 rounded-lg bg-white h-10 w-full focus:outline-none focus:border-blue-500"
+                    max="5"
+                    min="3"
+                    type="number"
+                    @input="updateTopicBoardSeed('candidateCount', Math.max(3, Math.min(5, Math.round(Number(($event.target as HTMLInputElement).value || 3)))))"
+                  >
+                </label>
+              </div>
+
+              <label class="block">
+                <span class="text-xs text-slate-600 font-medium">关键词</span>
+                <textarea
+                  :value="(topicBoardSeed.keywords || []).join('\n')"
+                  class="text-sm mt-1 p-3 border border-slate-300 rounded-lg bg-white min-h-24 w-full resize-y focus:outline-none focus:border-blue-500"
+                  placeholder="每行一个，或使用逗号分隔"
+                  @input="updateTopicBoardSeed('keywords', splitSeedTags(($event.target as HTMLTextAreaElement).value))"
+                />
+              </label>
+
+              <label class="block">
+                <span class="text-xs text-slate-600 font-medium">团队技能标签</span>
+                <textarea
+                  :value="(topicBoardSeed.teamSkillTags || []).join('\n')"
+                  class="text-sm mt-1 p-3 border border-slate-300 rounded-lg bg-white min-h-24 w-full resize-y focus:outline-none focus:border-blue-500"
+                  placeholder="例如：前端、后端、算法、设计"
+                  @input="updateTopicBoardSeed('teamSkillTags', splitSeedTags(($event.target as HTMLTextAreaElement).value))"
+                />
+              </label>
+            </template>
           </section>
 
           <p v-if="errorText" class="text-xs text-rose-600" data-testid="team-create-project-error-text">

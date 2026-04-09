@@ -12,7 +12,7 @@ import type {
   ResourceCategory,
 } from '~~/shared/types/domain'
 import type { ProjectUploadTask } from '~/types/project-upload'
-import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
+import type { WorkspaceLinkedContestResourceGroup, WorkspaceTopicBoardDraft } from '~/types/workspace'
 import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
 import {
   isProjectUploadTaskSidebarVisible,
@@ -105,6 +105,10 @@ const props = withDefaults(defineProps<{
   currentUserId?: string
   currentUsername?: string
   projectStorageLimitBytes?: number
+  topicBoardDraft?: WorkspaceTopicBoardDraft
+  topicBoardLoading?: boolean
+  topicBoardCurrentSummary?: string
+  topicBoardHistoryCount?: number
 }>(), {
   selectedResources: () => [],
   recycleResources: () => [],
@@ -129,6 +133,17 @@ const props = withDefaults(defineProps<{
   currentUserId: '',
   currentUsername: '',
   projectStorageLimitBytes: 0,
+  topicBoardDraft: () => ({
+    discipline: '',
+    topicType: '',
+    expectedDifficulty: '',
+    keywordsText: '',
+    teamSkillTagsText: '',
+    candidateCount: 3,
+  }),
+  topicBoardLoading: false,
+  topicBoardCurrentSummary: '',
+  topicBoardHistoryCount: 0,
 })
 
 const emit = defineEmits<{
@@ -139,8 +154,10 @@ const emit = defineEmits<{
   'update:trackType': [value: string]
   'update:topK': [value: number]
   'update:selectedContestId': [value: string]
+  'update:topicBoardDraft': [value: WorkspaceTopicBoardDraft]
   'loadContests': []
   'runAiFilter': []
+  'generateTopicBoard': []
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
@@ -800,6 +817,19 @@ function applyFilterPreset(preset: FilterPreset) {
   emit('update:level', preset.level)
   emit('update:trackType', preset.trackType)
   emit('update:topK', preset.topK)
+}
+
+function updateTopicBoardDraft<K extends keyof WorkspaceTopicBoardDraft>(field: K, value: WorkspaceTopicBoardDraft[K]) {
+  emit('update:topicBoardDraft', {
+    ...props.topicBoardDraft,
+    [field]: value,
+  })
+}
+
+function onTopicBoardCandidateCountInput(event: Event) {
+  const target = event.target as HTMLInputElement
+  const value = Number(target.value)
+  updateTopicBoardDraft('candidateCount', Number.isNaN(value) ? 3 : Math.max(3, Math.min(5, Math.round(value))))
 }
 
 function metadataRecord(resource: Resource): Record<string, unknown> {
@@ -2599,7 +2629,7 @@ onBeforeUnmount(() => {
 
         <template v-else-if="activeModule === 'project_config'">
           <section class="workspace-card">
-            <h3>项目分析</h3>
+            <h3>选题配置</h3>
             <ul class="workspace-suggestion-list">
               <li
                 v-for="(item, index) in analysisSuggestions"
@@ -2611,81 +2641,84 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="workspace-card">
-            <h3>分析参数</h3>
+            <h3>AI 智能选题板</h3>
             <div class="workspace-form-grid">
               <input
-                :value="major"
+                :value="topicBoardDraft.discipline"
                 class="workspace-input"
-                placeholder="专业"
-                @input="emit('update:major', ($event.target as HTMLInputElement).value)"
+                placeholder="所属领域"
+                @input="updateTopicBoardDraft('discipline', ($event.target as HTMLInputElement).value)"
               >
               <input
-                :value="discipline"
+                :value="topicBoardDraft.topicType"
                 class="workspace-input"
-                placeholder="学科/方向"
-                @input="emit('update:discipline', ($event.target as HTMLInputElement).value)"
+                placeholder="题目类型"
+                @input="updateTopicBoardDraft('topicType', ($event.target as HTMLInputElement).value)"
               >
-              <select
-                :value="level"
-                class="workspace-input"
-                @change="emit('update:level', ($event.target as HTMLSelectElement).value)"
-              >
-                <option value="">
-                  级别（全部）
-                </option>
-                <option value="national">
-                  national
-                </option>
-                <option value="provincial">
-                  provincial
-                </option>
-                <option value="school">
-                  school
-                </option>
-                <option value="industry">
-                  industry
-                </option>
-              </select>
               <input
-                :value="trackType"
+                :value="topicBoardDraft.expectedDifficulty"
                 class="workspace-input"
-                placeholder="赛道偏好"
-                @input="emit('update:trackType', ($event.target as HTMLInputElement).value)"
+                placeholder="期望难度"
+                @input="updateTopicBoardDraft('expectedDifficulty', ($event.target as HTMLInputElement).value)"
+              >
+              <input
+                :value="selectedContestId ? contests.find(item => item.id === selectedContestId)?.name || '' : ''"
+                class="workspace-input"
+                disabled
+                placeholder="当前竞赛"
               >
             </div>
+
+            <label class="block text-xs text-slate-600">
+              <span class="mb-1 block">关键词</span>
+              <textarea
+                :value="topicBoardDraft.keywordsText"
+                class="workspace-textarea"
+                placeholder="每行一个，或使用逗号分隔"
+                rows="4"
+                @input="updateTopicBoardDraft('keywordsText', ($event.target as HTMLTextAreaElement).value)"
+              />
+            </label>
+
+            <label class="mt-3 block text-xs text-slate-600">
+              <span class="mb-1 block">团队技能标签</span>
+              <textarea
+                :value="topicBoardDraft.teamSkillTagsText"
+                class="workspace-textarea"
+                placeholder="例如：前端、后端、建模、视觉设计"
+                rows="4"
+                @input="updateTopicBoardDraft('teamSkillTagsText', ($event.target as HTMLTextAreaElement).value)"
+              />
+            </label>
 
             <div class="workspace-topk-row">
-              <label>返回条数</label>
+              <label>候选数（3-5）</label>
               <input
-                :value="topK"
+                :value="topicBoardDraft.candidateCount"
                 class="workspace-input workspace-input--small"
-                max="20"
-                min="1"
+                max="5"
+                min="3"
                 type="number"
-                @input="onTopKInput"
+                @input="onTopicBoardCandidateCountInput"
               >
             </div>
-          </section>
 
-          <section class="workspace-card">
-            <h3>快速配置模板</h3>
-            <div class="workspace-preset-list">
-              <button
-                v-for="preset in filterPresets"
-                :key="preset.id"
-                class="workspace-preset-item"
-                type="button"
-                @click="applyFilterPreset(preset)"
-              >
-                {{ preset.title }}：{{ levelLabels[preset.level] || preset.level }} / {{ preset.topK }} 条
-              </button>
-            </div>
+            <p v-if="topicBoardCurrentSummary" class="workspace-empty-text">
+              当前看板：{{ topicBoardCurrentSummary }}
+            </p>
+            <p v-else class="workspace-empty-text">
+              当前项目暂无选题板，可在仪表盘顶部生成首个候选方案。
+            </p>
+            <p class="workspace-empty-text">
+              历史看板：{{ topicBoardHistoryCount }} 个
+            </p>
+
             <button
               class="workspace-btn workspace-btn--primary"
-              :disabled="aiFiltering"
-              @click="emit('runAiFilter')"
+              :disabled="topicBoardLoading"
+              @click="emit('generateTopicBoard')"
             >
-              以当前配置执行 AI 分析
+              {{ topicBoardLoading ? '生成中...' : '生成选题板' }}
             </button>
           </section>
         </template>
