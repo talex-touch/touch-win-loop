@@ -266,6 +266,7 @@ export default defineEventHandler(async (event) => {
           summary,
           category,
           accessLevel,
+          hostMarkdownResourceId,
           metadata: hostMarkdownResourceId
             ? {
                 embeddedIn: {

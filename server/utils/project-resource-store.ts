@@ -243,21 +243,172 @@ function ensureCollabDocShape(kind: Extract<ResourceKind, 'markdown' | 'draw'>, 
   drawMap.set('nodes', nodes)
 }
 
+const GENERIC_EMBEDDED_IMAGE_TITLE_KEYS = new Set([
+  'image',
+  'img',
+  'screenshot',
+  'screen-shot',
+  'clipboard',
+  'paste',
+  'snipaste',
+  'mmexport',
+  'wechat-image',
+])
+
+const IMAGE_UPLOAD_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'bmp',
+  'webp',
+  'svg',
+  'avif',
+  'heic',
+  'heif',
+])
+
+function normalizeUploadTitleBase(fileName: string): string {
+  return normalizeString(fileName)
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[（(]\d+[)）]\s*$/g, '')
+    .replace(/[-_ ]?副本(?:\s*\d+)?$/g, '')
+    .trim()
+}
+
 function normalizeUploadTitle(fileName: string, inputTitle?: string): string {
   const trimmedInput = normalizeString(inputTitle)
   if (trimmedInput)
     return trimmedInput
 
-  const base = normalizeString(fileName)
-    .replace(/\.[^/.]+$/, '')
-    .replace(/[（(]\d+[)）]\s*$/g, '')
-    .replace(/[-_ ]?副本(?:\s*\d+)?$/g, '')
-    .trim()
-
+  const base = normalizeUploadTitleBase(fileName)
   if (base)
     return base
 
   return '上传资料'
+}
+
+function normalizeEmbeddedImageTitleKey(value: string): string {
+  return normalizeString(value)
+    .toLowerCase()
+    .replace(/[-_ ]*\d+$/g, '')
+    .replace(/[_\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function isImageUploadInput(fileName: string, mimeType?: string): boolean {
+  const normalizedMimeType = normalizeString(mimeType).toLowerCase()
+  if (normalizedMimeType.startsWith('image/'))
+    return true
+
+  const extension = normalizeString(fileName)
+    .toLowerCase()
+    .match(/\.([a-z0-9]+)$/)?.[1] || ''
+  return IMAGE_UPLOAD_EXTENSIONS.has(extension)
+}
+
+export function isGenericEmbeddedImageTitleCandidate(value: string): boolean {
+  const normalized = normalizeEmbeddedImageTitleKey(value)
+  if (!normalized)
+    return true
+  return GENERIC_EMBEDDED_IMAGE_TITLE_KEYS.has(normalized)
+}
+
+export function resolveEmbeddedMarkdownImageUploadTitle(input: {
+  fileName: string
+  inputTitle?: string
+  hostResourceTitle?: string
+  existingTitles?: string[]
+}): string {
+  const explicitTitle = normalizeString(input.inputTitle)
+  if (explicitTitle)
+    return explicitTitle
+
+  const baseTitle = normalizeUploadTitleBase(input.fileName)
+  const existingTitles = Array.isArray(input.existingTitles)
+    ? input.existingTitles.map(title => normalizeString(title)).filter(Boolean)
+    : []
+
+  if (!baseTitle || isGenericEmbeddedImageTitleCandidate(baseTitle)) {
+    const hostResourceTitle = normalizeString(input.hostResourceTitle) || '协作文档'
+    const prefix = `${hostResourceTitle} - 图片`
+    const pattern = new RegExp(`^${escapeRegExp(prefix)}\\s+(\\d{3})$`)
+    let maxIndex = 0
+
+    for (const title of existingTitles) {
+      const matched = title.match(pattern)
+      if (!matched)
+        continue
+      const currentIndex = Number(matched[1] || 0)
+      if (Number.isFinite(currentIndex))
+        maxIndex = Math.max(maxIndex, Math.max(0, Math.trunc(currentIndex)))
+    }
+
+    return `${prefix} ${String(maxIndex + 1).padStart(3, '0')}`
+  }
+
+  const pattern = new RegExp(`^${escapeRegExp(baseTitle)}(?:\\s+(\\d+))?$`)
+  let maxIndex = 0
+
+  for (const title of existingTitles) {
+    const matched = title.match(pattern)
+    if (!matched)
+      continue
+    const currentIndex = Number(matched[1] || 1)
+    if (Number.isFinite(currentIndex))
+      maxIndex = Math.max(maxIndex, Math.max(1, Math.trunc(currentIndex)))
+  }
+
+  return maxIndex > 0 ? `${baseTitle} ${maxIndex + 1}` : baseTitle
+}
+
+async function resolveProjectUploadTitle(
+  db: Queryable,
+  input: {
+    projectId: string
+    fileName: string
+    mimeType?: string
+    title?: string
+    hostMarkdownResourceId?: string
+  },
+): Promise<string> {
+  const explicitTitle = normalizeString(input.title)
+  if (explicitTitle)
+    return explicitTitle
+
+  const hostMarkdownResourceId = normalizeString(input.hostMarkdownResourceId)
+  if (!hostMarkdownResourceId || !isImageUploadInput(input.fileName, input.mimeType))
+    return normalizeUploadTitle(input.fileName, input.title)
+
+  const hostResourceResult = await db.query<{ title: string, resource_kind: string }>(
+    `SELECT title, resource_kind
+     FROM project_resources
+     WHERE project_id = $1
+       AND id = $2
+     LIMIT 1`,
+    [input.projectId, hostMarkdownResourceId],
+  )
+  const hostResource = hostResourceResult.rows[0]
+  if (!hostResource || parseResourceKind(hostResource.resource_kind) !== 'markdown')
+    return normalizeUploadTitle(input.fileName, input.title)
+
+  const siblingResult = await db.query<{ title: string }>(
+    `SELECT title
+     FROM project_resources
+     WHERE project_id = $1
+       AND source = 'upload'
+       AND COALESCE(metadata->'embeddedIn'->>'kind', '') = 'markdown'
+       AND COALESCE(metadata->'embeddedIn'->>'resourceId', '') = $2`,
+    [input.projectId, hostMarkdownResourceId],
+  )
+
+  return resolveEmbeddedMarkdownImageUploadTitle({
+    fileName: input.fileName,
+    inputTitle: input.title,
+    hostResourceTitle: hostResource.title,
+    existingTitles: siblingResult.rows.map(row => row.title),
+  })
 }
 
 function normalizeDuplicateTitle(title: string): string {
@@ -601,8 +752,42 @@ export async function listProjectLibraryResources(
   input: {
     projectId: string
     actorUserId: string
+    query?: string
+    limit?: number
   },
 ): Promise<Resource[]> {
+  const normalizedQuery = normalizeString(input.query)
+  const normalizedLimit = Number.isFinite(Number(input.limit))
+    ? Math.max(1, Math.min(20, Math.trunc(Number(input.limit))))
+    : null
+  const values: Array<string | number> = [input.projectId, input.actorUserId]
+  const filters = [
+    `r.status = 'active'`,
+    `COALESCE(r.source_type, '') <> 'project_upload'`,
+    `NOT EXISTS (
+      SELECT 1
+      FROM project_resources pr
+      WHERE pr.project_id = $1
+        AND pr.linked_contest_resource_id = r.id
+        AND pr.status = 'active'
+    )`,
+  ]
+
+  if (normalizedQuery) {
+    const queryIndex = values.push(`%${normalizedQuery}%`)
+    filters.push(`(
+      r.title ILIKE $${queryIndex}
+      OR COALESCE(r.summary, '') ILIKE $${queryIndex}
+      OR COALESCE(r.content, '') ILIKE $${queryIndex}
+      OR COALESCE(r.source_type, '') ILIKE $${queryIndex}
+      OR COALESCE(r.category::TEXT, '') ILIKE $${queryIndex}
+      OR COALESCE(r.year::TEXT, '') ILIKE $${queryIndex}
+    )`)
+  }
+
+  const limitSql = normalizedQuery
+    ? `LIMIT $${values.push(normalizedLimit || 8)}`
+    : 'LIMIT 80'
   const result = await db.query<ContestResourceRow>(
     `SELECT
       r.id,
@@ -629,18 +814,10 @@ export async function listProjectLibraryResources(
           AND f.contest_resource_id = r.id
       ) AS is_favorite
      FROM contest_resources r
-     WHERE r.status = 'active'
-       AND COALESCE(r.source_type, '') <> 'project_upload'
-       AND NOT EXISTS (
-         SELECT 1
-         FROM project_resources pr
-         WHERE pr.project_id = $1
-           AND pr.linked_contest_resource_id = r.id
-           AND pr.status = 'active'
-       )
+     WHERE ${filters.join('\n       AND ')}
      ORDER BY r.year DESC, r.created_at DESC
-      LIMIT 80`,
-    [input.projectId, input.actorUserId],
+     ${limitSql}`,
+    values,
   )
 
   return result.rows.map(toLibraryResource)
@@ -945,6 +1122,7 @@ export async function createProjectUploadedResource(
     summary?: string
     accessLevel?: ResourceAvailability
     category?: ResourceCategory
+    hostMarkdownResourceId?: string
     metadata?: Record<string, unknown>
   },
 ): Promise<Resource> {
@@ -952,7 +1130,13 @@ export async function createProjectUploadedResource(
 
   const resourceId = randomUUID()
   const now = new Date().toISOString()
-  const title = normalizeUploadTitle(input.fileName, input.title)
+  const title = await resolveProjectUploadTitle(db, {
+    projectId: input.projectId,
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    title: input.title,
+    hostMarkdownResourceId: input.hostMarkdownResourceId,
+  })
   const sourceLink = buildServerApiEndpoint(`/projects/${input.projectId}/resources/${resourceId}/source`)
   const metadata = {
     resourceKind: 'binary',

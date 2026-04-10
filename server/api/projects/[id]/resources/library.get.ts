@@ -6,11 +6,21 @@ import { readRuntimeSettings } from '~~/server/utils/env'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { listProjectLibraryResources } from '~~/server/utils/project-resource-store'
 
+function parsePositiveLimit(value: unknown): number | undefined {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed))
+    return undefined
+  return Math.max(1, Math.min(20, Math.trunc(parsed)))
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = String(getRouterParam(event, 'id') || '').trim()
+  const query = getQuery(event)
+  const keyword = String(query.q || '').trim()
+  const limit = parsePositiveLimit(query.limit)
 
   if (!projectId) {
     setResponseStatus(event, 400)
@@ -32,6 +42,8 @@ export default defineEventHandler(async (event) => {
       return listProjectLibraryResources(db, {
         projectId,
         actorUserId: user.id,
+        query: keyword,
+        limit,
       })
     })
 
