@@ -413,16 +413,20 @@ function isEmbeddedMarkdownImageGroupExpanded(resourceId: string): boolean {
   const normalizedResourceId = String(resourceId || '').trim()
   if (!normalizedResourceId)
     return false
-  if (Object.prototype.hasOwnProperty.call(embeddedMarkdownResourceExpanded, normalizedResourceId))
-    return embeddedMarkdownResourceExpanded[normalizedResourceId] !== false
 
-  return projectResourceTreeItems.value.some((item) => {
+  const activeGroup = projectResourceTreeItems.value.find((item) => {
     if (item.resource.id !== normalizedResourceId)
       return false
     if (activeResourceId.value === normalizedResourceId)
       return true
     return item.children.some(child => child.id === activeResourceId.value)
   })
+  if (activeGroup)
+    return true
+
+  if (Object.prototype.hasOwnProperty.call(embeddedMarkdownResourceExpanded, normalizedResourceId))
+    return embeddedMarkdownResourceExpanded[normalizedResourceId] !== false
+  return false
 }
 
 function toggleEmbeddedMarkdownImageGroup(resourceId: string): void {
@@ -1718,6 +1722,19 @@ watch(linkedContestResourceGroups, (groups) => {
   }
 }, { immediate: true, deep: true })
 
+watch(projectResourceTreeItems, (items) => {
+  const activeKeys = new Set(
+    items
+      .filter(item => item.children.length > 0)
+      .map(item => item.resource.id),
+  )
+
+  for (const resourceId of Object.keys(embeddedMarkdownResourceExpanded)) {
+    if (!activeKeys.has(resourceId))
+      delete embeddedMarkdownResourceExpanded[resourceId]
+  }
+}, { immediate: true, deep: true })
+
 watch(() => props.aiFiltering, (next) => {
   if (!next)
     return
@@ -2083,6 +2100,7 @@ onBeforeUnmount(() => {
                         :class="{
                           'workspace-tree-item-row--active': !suppressResourceSelection && treeItem.resource.id === activeResourceId,
                           'workspace-tree-item-row--menu-open': resourceActionOpenId === treeItem.resource.id,
+                          'workspace-tree-item-row--with-expander': treeItem.children.length > 0,
                         }"
                         @contextmenu="handleResourceItemContextMenu(treeItem.resource.id, $event)"
                       >
@@ -3532,6 +3550,59 @@ onBeforeUnmount(() => {
 
 .workspace-tree-item-row {
   position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.workspace-resource-tree-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-resource-tree-group__children {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-tree-item-row--with-expander {
+  gap: 2px;
+}
+
+.workspace-tree-item-row--child {
+  padding-left: 26px;
+}
+
+.workspace-tree-item__expander {
+  width: 24px;
+  height: 24px;
+  margin-left: 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #8a97ac;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.workspace-tree-item__expander:hover {
+  background: #edf2fb;
+  color: #4a648f;
+}
+
+.workspace-tree-item__expander .material-symbols-outlined {
+  font-size: 18px;
+  transition: transform 0.2s ease;
+}
+
+.workspace-tree-item__expander-icon--expanded {
+  transform: rotate(90deg);
 }
 
 .workspace-tree-item {
@@ -3547,7 +3618,17 @@ onBeforeUnmount(() => {
   cursor: pointer;
   text-align: left;
   position: relative;
+  flex: 1;
+  min-width: 0;
   transition: background-color 0.2s ease;
+}
+
+.workspace-tree-item--with-expander {
+  padding-left: 4px;
+}
+
+.workspace-tree-item--child {
+  padding-left: var(--workspace-left-tree-item-padding-left);
 }
 
 .workspace-tree-item:hover {
