@@ -13,7 +13,6 @@ interface WorkspaceQuickSwitchProject {
 }
 
 const props = withDefaults(defineProps<{
-  modelValue?: string
   projectName?: string
   workspaceId?: string
   userName?: string
@@ -24,8 +23,8 @@ const props = withDefaults(defineProps<{
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
   workbenchMode?: WorkspaceWorkbenchMode
+  metaKShortcutLabel?: string
 }>(), {
-  modelValue: '',
   projectName: '未命名项目',
   workspaceId: '',
   userName: '',
@@ -36,14 +35,15 @@ const props = withDefaults(defineProps<{
   myProjects: () => [],
   recentProjects: () => [],
   workbenchMode: 'project',
+  metaKShortcutLabel: '⌘K',
 })
 
 const emit = defineEmits<{
-  (event: 'update:modelValue', value: string): void
   (event: 'update:workbenchMode', value: WorkspaceWorkbenchMode): void
   (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
   (event: 'switchWorkspace', value: string): void
   (event: 'finalReview'): void
+  (event: 'openMetaK'): void
   (event: 'openWorkspaceHome'): void
   (event: 'openWorkspaceSettings'): void
   (event: 'openDisplayPreferences'): void
@@ -101,11 +101,6 @@ const orderedWorkspaceOptions = computed(() => {
 
   return [...current, ...otherTeams, ...personal]
 })
-
-function onInput(event: Event) {
-  const target = event.target as HTMLInputElement
-  emit('update:modelValue', target.value)
-}
 
 function formatShortTime(value: string): string {
   const date = new Date(value)
@@ -235,6 +230,12 @@ function openFinalReview() {
   closeQuickSwitch()
   closeUserPopover()
   emit('finalReview')
+}
+
+function openMetaK() {
+  closeQuickSwitch()
+  closeUserPopover()
+  emit('openMetaK')
 }
 
 function selectWorkbench(mode: WorkspaceWorkbenchMode) {
@@ -371,16 +372,26 @@ onBeforeUnmount(() => {
         </div>
       </nav>
     </div>
-    <div class="shrink-0 max-w-[40vw] w-96 relative">
-      <span class="material-symbols-outlined text-sm text-slate-400 left-2.5 top-1/2 absolute -translate-y-1/2">search</span>
-      <input
-        :value="modelValue"
-        class="text-xs py-1 pl-8 pr-4 outline-none border border-slate-200 rounded bg-slate-50 w-full focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-        placeholder="搜索资源、文档或指令..."
-        type="text"
-        @input="onInput"
+    <div class="shrink-0 max-w-[42vw] w-[28rem]">
+      <button
+        type="button"
+        class="group px-3 text-left border border-slate-200 rounded-2xl bg-slate-50/90 h-10 w-full transition-all focus:outline-none hover:border-slate-300 hover:bg-white focus:ring-2 focus:ring-blue-500/25 hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+        data-testid="workspace-header-metak-trigger"
+        @click="openMetaK"
       >
-      <span class="text-[10px] text-slate-400 px-1 border border-slate-200 rounded right-2 top-1/2 absolute -translate-y-1/2">⌘K</span>
+        <span class="flex gap-3 min-w-0 items-center">
+          <span class="text-blue-600 rounded-xl bg-blue-50 inline-flex shrink-0 h-8 w-8 transition-colors items-center justify-center group-hover:bg-blue-100">
+            <span class="material-symbols-outlined text-[18px]">search</span>
+          </span>
+          <span class="flex-1 min-w-0">
+            <span class="text-[10px] text-slate-400 tracking-[0.14em] font-semibold block uppercase">MetaK</span>
+            <span class="text-xs text-slate-500 block truncate">搜索命令、资源、会议或项目</span>
+          </span>
+          <span class="text-[10px] text-slate-400 font-semibold px-2 py-1 border border-slate-200 rounded-xl bg-white shrink-0">
+            {{ metaKShortcutLabel }}
+          </span>
+        </span>
+      </button>
     </div>
 
     <div class="flex flex-1 gap-2 items-center justify-end">

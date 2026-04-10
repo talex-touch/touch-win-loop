@@ -37,6 +37,7 @@ import type {
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectMemberSummary,
+  ProjectOutlineNode,
   ProjectOutlineSnapshot,
   ProjectPayload,
   ProjectResourceShare,
@@ -84,6 +85,7 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceTopicBoardDraft,
 } from '~/types/workspace'
+import type { WorkspaceMetaKActionId, WorkspaceMetaKItem, WorkspaceMetaKSection, WorkspaceMetaKSectionDefinition } from '~/utils/workspace-metak'
 import { Message } from '@arco-design/web-vue'
 import {
   formatFileSize,
@@ -104,6 +106,12 @@ import {
   defaultWorkspaceDisplayPreferenceSnapshot,
   useWorkspaceDisplayPreferenceApi,
 } from '~/composables/useWorkspaceDisplayPreferences'
+import {
+  buildWorkspaceMetaKSections,
+  matchAndSortWorkspaceMetaKItems,
+  resolveWorkspaceMetaKShortcutLabel,
+
+} from '~/utils/workspace-metak'
 
 definePageMeta({
   layout: 'dashboard',
@@ -345,10 +353,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function includesText(source: string, keyword: string): boolean {
-  return source.toLowerCase().includes(keyword.toLowerCase())
-}
-
 function normalizeRouteParam(value: string | string[] | undefined): string {
   if (Array.isArray(value))
     return String(value[0] || '').trim()
@@ -365,6 +369,84 @@ function normalizeQueryParam(value: unknown): string {
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function buildWorkspaceMetaKItemId(prefix: string, value: unknown): string {
+  return `${prefix}:${normalizeString(value)}`
+}
+
+function buildWorkspaceMetaKKeywords(...parts: unknown[]): string[] {
+  return parts
+    .flatMap((part) => {
+      if (Array.isArray(part))
+        return part.map(item => normalizeString(item)).filter(Boolean)
+      return normalizeString(part) ? [normalizeString(part)] : []
+    })
+}
+
+function flattenProjectOutlineNodes(items: ProjectOutlineNode[]): ProjectOutlineNode[] {
+  const result: ProjectOutlineNode[] = []
+  const visit = (nodes: ProjectOutlineNode[]) => {
+    for (const node of nodes) {
+      result.push(node)
+      if (node.children.length > 0)
+        visit(node.children)
+    }
+  }
+  visit(items)
+  return result
+}
+
+function isWorkspaceMetaKEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement))
+    return false
+  if (target.isContentEditable)
+    return true
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"], .tiptap, .ProseMirror'))
+}
+
+function isWorkspaceMetaKHotkey(event: KeyboardEvent): boolean {
+  if (event.key.toLowerCase() !== 'k')
+    return false
+  if (event.altKey || event.shiftKey)
+    return false
+  return event.metaKey || event.ctrlKey
+}
+
+function formatMetaKDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()))
+    return ''
+
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${month}-${day} ${hour}:${minute}`
+}
+
+function resolveMetaKResourceTitle(resource: Resource): string {
+  const title = normalizeString(resource.title)
+  if (title)
+    return title
+  if (resource.resourceKind === 'markdown')
+    return '协作文档'
+  if (resource.resourceKind === 'draw')
+    return resource.collabPurpose === 'workflow' ? '流程画布' : '自由画布'
+  return '未命名资源'
+}
+
+function resolveMetaKResourceIcon(resource: Resource): string {
+  if (resource.resourceKind === 'markdown')
+    return 'edit_note'
+  if (resource.resourceKind === 'draw')
+    return resource.collabPurpose === 'workflow' ? 'flowsheet' : 'draw'
+  const typeText = normalizeString(resource.type).toLowerCase()
+  if (typeText.includes('pdf'))
+    return 'picture_as_pdf'
+  if (typeText.includes('image'))
+    return 'image'
+  return 'description'
 }
 
 function isTruthyQueryFlag(value: unknown): boolean {
@@ -600,12 +682,23 @@ type WorkspaceMeetingCreateLocalTabId = WorkspaceMeetingCreateTabId
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
+type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
 const PROJECT_VIEW_STATE_QUERY_KEYS = ['wb', 'tab', 'tabs', 'res', 'contest', 'track', 'session', 'meeting', 'ls', 'rs', 'panel'] as const
 const RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
+const METAK_SECTION_DEFINITIONS: WorkspaceMetaKSectionDefinition[] = [
+  { id: 'actions', title: '快捷命令', maxItems: 8 },
+  { id: 'resources', title: '项目资源', maxItems: 8 },
+  { id: 'meetings', title: '项目会议', maxItems: 6 },
+  { id: 'issues', title: 'Issue', maxItems: 6 },
+  { id: 'contests', title: '竞赛', maxItems: 6 },
+  { id: 'outline', title: '结构大纲', maxItems: 6 },
+  { id: 'workspaces', title: '空间切换', maxItems: 6 },
+  { id: 'projects', title: '项目切换', maxItems: 6 },
+]
 
 function parseTimestamp(value: string): number {
   const time = new Date(value).getTime()
@@ -677,13 +770,18 @@ const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
 const accountCenterVisible = ref(false)
 const leftSidebarCollapsed = ref(false)
+const leftSidebarMetaKSignal = ref(0)
+const leftSidebarMetaKModuleId = ref<WorkspaceLeftSidebarCommandModuleId | ''>('')
+const leftSidebarMetaKOutlineId = ref('')
 const rightSidebarUserCollapsed = ref(false)
 const rightSidebarAutoCollapsed = ref(false)
 const rightSidebarAutoRestorePending = ref(false)
 const sidebarLayoutHydrating = ref(false)
 const openMainTabs = ref<WorkspaceMainTabId[]>(['dashboard'])
 const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
-const headerSearch = ref('')
+const metaKOpen = ref(false)
+const metaKQuery = ref('')
+const metaKShortcutLabel = ref('⌘K')
 const aiReasoning = ref('')
 const normalizedInfo = ref('')
 const statusLine = ref('')
@@ -726,6 +824,8 @@ let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let meetingRealtimeRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
+let metaKRemoteSearchTimer: ReturnType<typeof setTimeout> | null = null
+let metaKRemoteRequestSequence = 0
 let unsubscribeRealtimeMessages: (() => void) | null = null
 let rightSidebarBreakpointMediaQuery: MediaQueryList | null = null
 let unsubscribeRightSidebarBreakpoint: (() => void) | null = null
@@ -769,6 +869,8 @@ const projectIssues = ref<ProjectIssue[]>([])
 const issueCenterLoading = ref(false)
 const issueReportSubmitting = ref(false)
 const issueReportExporting = ref(false)
+const metaKRemoteLoading = ref(false)
+const metaKRemoteLibraryItems = ref<WorkspaceMetaKItem[]>([])
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
 const defensePersonas = ref<AiDefensePersona[]>([])
@@ -1818,30 +1920,487 @@ const headerProjectName = computed(() => {
   return currentWorkspace.value?.workspace.name || '未命名项目'
 })
 
-const filteredContests = computed(() => {
-  const keyword = headerSearch.value.trim()
-  if (!keyword)
-    return contests.value
-
-  return contests.value.filter((contest) => {
-    const context = [
-      contest.name,
-      contest.organizer,
-      ...contest.keywords,
-      ...contest.recommendedFor,
-      ...contest.tracks.map(track => track.name),
-    ].join(' ')
-
-    return includesText(context, keyword)
-  })
-})
-
 const selectedResources = computed(() => resources.value)
 const projectOutlineItems = computed(() => projectOutlineSnapshot.value?.items || [])
+const projectOutlineFlatItems = computed(() => flattenProjectOutlineNodes(projectOutlineItems.value))
 const projectOutlineFirstLoadLoading = computed(() => {
   return projectOutlineLoading.value && !projectOutlineFirstLoaded.value
 })
 const latestIssueReport = computed(() => projectIssueReports.value[0] || null)
+const metaKResourceTitleMap = computed(() => {
+  return new Map(selectedResources.value.map(resource => [resource.id, resolveMetaKResourceTitle(resource)]))
+})
+const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
+  return [
+    {
+      id: 'metak-command-open-resource-manager',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开资源管理器',
+      subtitle: '查看项目资源、结构大纲与系统资料库导入入口。',
+      icon: 'folder_open',
+      source: 'local',
+      priority: 420,
+      defaultVisible: true,
+      actionId: 'open_resource_manager',
+      keywords: buildWorkspaceMetaKKeywords('资源管理器', '资料', '文件', '大纲'),
+    },
+    {
+      id: 'metak-command-open-analysis',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开竞赛分析',
+      subtitle: '切回左侧竞赛分析模块，继续筛选目标竞赛与赛道。',
+      icon: 'manage_search',
+      source: 'local',
+      priority: 410,
+      defaultVisible: true,
+      actionId: 'open_analysis',
+      keywords: buildWorkspaceMetaKKeywords('竞赛分析', '筛选', '赛道', '比赛'),
+    },
+    {
+      id: 'metak-command-open-meeting',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开项目会议',
+      subtitle: '查看会议总览、会议详情、录制与纪要入口。',
+      icon: 'video_call',
+      source: 'local',
+      priority: 400,
+      defaultVisible: true,
+      actionId: 'open_meeting',
+      keywords: buildWorkspaceMetaKKeywords('会议', '语音会议', '视频会议', '纪要'),
+    },
+    {
+      id: 'metak-command-open-issue-view',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开 Issue 视图',
+      subtitle: '切到右侧寻疑发现模式并展开 Issue 结果。',
+      icon: 'bug_report',
+      source: 'local',
+      priority: 395,
+      defaultVisible: true,
+      actionId: 'open_issue_view',
+      badge: aiMode.value === 'issue_discovery' ? '当前' : '',
+      keywords: buildWorkspaceMetaKKeywords('issue', '寻疑', '问题', '风险'),
+    },
+    {
+      id: 'metak-command-open-flow',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开流程画布',
+      subtitle: '进入 workflow 画布，继续梳理流程与终审路径。',
+      icon: 'flowsheet',
+      source: 'local',
+      priority: 390,
+      defaultVisible: true,
+      actionId: 'open_flow',
+      keywords: buildWorkspaceMetaKKeywords('流程', '画布', 'workflow', '终审'),
+    },
+    {
+      id: 'metak-command-open-final-review',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开终审',
+      subtitle: '快速进入终审工作流入口。',
+      icon: 'task_alt',
+      source: 'local',
+      priority: 380,
+      defaultVisible: true,
+      actionId: 'open_final_review',
+      keywords: buildWorkspaceMetaKKeywords('终审', 'final review', '复核'),
+    },
+    {
+      id: 'metak-command-open-workspace-home',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开空间首页',
+      subtitle: `返回 ${currentWorkspace.value?.workspace.name || '当前空间'} 的 Team 首页。`,
+      icon: 'home_storage',
+      source: 'local',
+      priority: 360,
+      defaultVisible: true,
+      actionId: 'open_workspace_home',
+      keywords: buildWorkspaceMetaKKeywords('空间首页', 'team', 'home'),
+    },
+    {
+      id: 'metak-command-open-workspace-settings',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开项目设置',
+      subtitle: '进入项目设置固定页签，维护项目底座与绑定关系。',
+      icon: 'settings',
+      source: 'local',
+      priority: 355,
+      defaultVisible: true,
+      actionId: 'open_workspace_settings',
+      keywords: buildWorkspaceMetaKKeywords('项目设置', 'settings', '配置'),
+    },
+    {
+      id: 'metak-command-open-member-management',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开成员管理',
+      subtitle: '查看成员、席位和邀请记录。',
+      icon: 'group',
+      source: 'local',
+      priority: 350,
+      defaultVisible: true,
+      actionId: 'open_member_management',
+      keywords: buildWorkspaceMetaKKeywords('成员', '邀请', '协作', 'seat'),
+    },
+    {
+      id: 'metak-command-open-display-preferences',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开显示偏好',
+      subtitle: '调整字体大小、页签间距与工作区显示习惯。',
+      icon: 'tune',
+      source: 'local',
+      priority: 340,
+      defaultVisible: true,
+      actionId: 'open_display_preferences',
+      keywords: buildWorkspaceMetaKKeywords('显示偏好', '字体', 'tab spacing', '布局'),
+    },
+    {
+      id: 'metak-command-open-account-center',
+      sectionId: 'actions',
+      type: 'command',
+      title: '打开账号中心',
+      subtitle: '查看个人资料与账号设置。',
+      icon: 'account_circle',
+      source: 'local',
+      priority: 330,
+      defaultVisible: true,
+      actionId: 'open_account_center',
+      keywords: buildWorkspaceMetaKKeywords('账号中心', 'profile', '账户'),
+    },
+    {
+      id: 'metak-command-switch-workbench-project',
+      sectionId: 'actions',
+      type: 'command',
+      title: '切换到项目工作台',
+      subtitle: '回到项目推进主工作台。',
+      icon: 'space_dashboard',
+      source: 'local',
+      priority: 320,
+      defaultVisible: true,
+      actionId: 'switch_workbench_project',
+      badge: workbenchMode.value === 'project' ? '当前' : '',
+      keywords: buildWorkspaceMetaKKeywords('项目工作台', 'project workbench'),
+    },
+    {
+      id: 'metak-command-switch-workbench-defense',
+      sectionId: 'actions',
+      type: 'command',
+      title: '切换到答辩工作台',
+      subtitle: '进入答辩工作台与模拟答辩链路。',
+      icon: 'record_voice_over',
+      source: 'local',
+      priority: 315,
+      defaultVisible: true,
+      actionId: 'switch_workbench_defense',
+      badge: workbenchMode.value === 'defense' ? '当前' : '',
+      keywords: buildWorkspaceMetaKKeywords('答辩工作台', 'defense', '答辩'),
+    },
+    {
+      id: 'metak-command-switch-ai-dialog',
+      sectionId: 'actions',
+      type: 'command',
+      title: '切换 AI 到对话询问',
+      subtitle: '回到 Loopy 常规对话模式。',
+      icon: 'chat',
+      source: 'local',
+      priority: 305,
+      defaultVisible: true,
+      actionId: 'switch_ai_dialog',
+      badge: aiMode.value === 'dialog_ask' ? '当前' : '',
+      keywords: buildWorkspaceMetaKKeywords('Loopy', '对话', 'dialog ask'),
+    },
+    {
+      id: 'metak-command-switch-ai-optimize',
+      sectionId: 'actions',
+      type: 'command',
+      title: '切换 AI 到自动优化',
+      subtitle: '让右侧 AI 进入自动优化模式。',
+      icon: 'auto_fix_high',
+      source: 'local',
+      priority: 300,
+      defaultVisible: true,
+      actionId: 'switch_ai_optimize',
+      badge: aiMode.value === 'auto_optimize' ? '当前' : '',
+      keywords: buildWorkspaceMetaKKeywords('自动优化', 'auto optimize'),
+    },
+    {
+      id: 'metak-command-switch-ai-issue',
+      sectionId: 'actions',
+      type: 'command',
+      title: '切换 AI 到寻疑发现',
+      subtitle: '切到问题发现链路，查看证据与建议。',
+      icon: 'search_insights',
+      source: 'local',
+      priority: 295,
+      defaultVisible: true,
+      actionId: 'switch_ai_issue',
+      badge: aiMode.value === 'issue_discovery' ? '当前' : '',
+      keywords: buildWorkspaceMetaKKeywords('寻疑发现', 'issue discovery', '问题发现'),
+    },
+    {
+      id: 'metak-command-create-collab-markdown',
+      sectionId: 'actions',
+      type: 'command',
+      title: '新建协作文档',
+      subtitle: '创建 markdown 协作文档并直接打开。',
+      icon: 'edit_document',
+      source: 'local',
+      priority: 290,
+      defaultVisible: true,
+      actionId: 'create_collab_markdown',
+      keywords: buildWorkspaceMetaKKeywords('协作文档', 'markdown', 'notes'),
+    },
+    {
+      id: 'metak-command-create-collab-draw',
+      sectionId: 'actions',
+      type: 'command',
+      title: '新建自由画布',
+      subtitle: '创建自由画布并直接打开。',
+      icon: 'draw',
+      source: 'local',
+      priority: 285,
+      defaultVisible: true,
+      actionId: 'create_collab_draw',
+      keywords: buildWorkspaceMetaKKeywords('自由画布', 'draw', 'canvas'),
+    },
+    {
+      id: 'metak-command-create-meeting-audio',
+      sectionId: 'actions',
+      type: 'command',
+      title: '发起语音会议',
+      subtitle: '打开语音会议创建页。',
+      icon: 'call',
+      source: 'local',
+      priority: 280,
+      defaultVisible: true,
+      actionId: 'create_meeting_audio',
+      keywords: buildWorkspaceMetaKKeywords('语音会议', 'audio meeting'),
+    },
+    {
+      id: 'metak-command-create-meeting-video',
+      sectionId: 'actions',
+      type: 'command',
+      title: '发起视频会议',
+      subtitle: '打开视频会议创建页。',
+      icon: 'videocam',
+      source: 'local',
+      priority: 275,
+      defaultVisible: true,
+      actionId: 'create_meeting_video',
+      keywords: buildWorkspaceMetaKKeywords('视频会议', 'video meeting'),
+    },
+  ]
+})
+const metaKResourceItems = computed<WorkspaceMetaKItem[]>(() => {
+  return selectedResources.value.map((resource) => {
+    const resourceTitle = resolveMetaKResourceTitle(resource)
+    const sourceType = normalizeString(resource.type)
+    const summary = normalizeString(resource.summary)
+    return {
+      id: buildWorkspaceMetaKItemId('resource', resource.id),
+      sectionId: 'resources',
+      type: 'resource',
+      title: resourceTitle,
+      subtitle: [sourceType, resource.year ? `${resource.year}` : '', summary].filter(Boolean).join(' · '),
+      icon: resolveMetaKResourceIcon(resource),
+      badge: resource.category || '',
+      hint: resource.resourceKind === 'draw' || resource.resourceKind === 'markdown' ? '打开协作页' : '打开预览',
+      keywords: buildWorkspaceMetaKKeywords(resource.title, resource.summary, resource.type, resource.category, resource.year),
+      source: 'local',
+      priority: 240,
+      payload: {
+        resourceId: resource.id,
+      },
+    }
+  })
+})
+const metaKMeetingItems = computed<WorkspaceMetaKItem[]>(() => {
+  return projectMeetings.value.map((meeting) => {
+    const scheduleLabel = formatMetaKDateTime(meeting.scheduledStartAt || meeting.startedAt || meeting.updatedAt || '')
+    return {
+      id: buildWorkspaceMetaKItemId('meeting', meeting.id),
+      sectionId: 'meetings',
+      type: 'meeting',
+      title: normalizeString(meeting.title) || '未命名会议',
+      subtitle: [meeting.mode === 'audio' ? '语音会议' : '视频会议', meeting.status, scheduleLabel].filter(Boolean).join(' · '),
+      icon: meeting.mode === 'audio' ? 'call' : 'videocam',
+      badge: meeting.status,
+      hint: '打开会议详情',
+      keywords: buildWorkspaceMetaKKeywords(meeting.title, meeting.mode, meeting.status, scheduleLabel),
+      source: 'local',
+      priority: 220,
+      payload: {
+        meetingId: meeting.id,
+      },
+    }
+  })
+})
+const metaKIssueItems = computed<WorkspaceMetaKItem[]>(() => {
+  return projectIssues.value.map((issue) => {
+    return {
+      id: buildWorkspaceMetaKItemId('issue', issue.id),
+      sectionId: 'issues',
+      type: 'issue',
+      title: normalizeString(issue.title) || '未命名 Issue',
+      subtitle: [issue.severity, issue.status, normalizeString(issue.recommendation || issue.evidence)].filter(Boolean).join(' · '),
+      icon: 'bug_report',
+      badge: issue.severity,
+      hint: '切到 Issue 视图',
+      keywords: buildWorkspaceMetaKKeywords(issue.title, issue.severity, issue.status, issue.evidence, issue.recommendation),
+      source: 'local',
+      priority: 210,
+      payload: {
+        issueId: issue.id,
+      },
+    }
+  })
+})
+const metaKContestItems = computed<WorkspaceMetaKItem[]>(() => {
+  return contestSource.value.map((contest) => {
+    return {
+      id: buildWorkspaceMetaKItemId('contest', contest.id),
+      sectionId: 'contests',
+      type: 'contest',
+      title: normalizeString(contest.name) || '未命名竞赛',
+      subtitle: [contest.organizer, contest.registrationWindow, contest.tracks[0]?.name || ''].filter(Boolean).join(' · '),
+      icon: 'emoji_events',
+      badge: contest.id === selectedContestId.value ? '当前' : '',
+      hint: '切到竞赛分析',
+      keywords: buildWorkspaceMetaKKeywords(
+        contest.name,
+        contest.organizer,
+        contest.registrationWindow,
+        contest.keywords,
+        contest.recommendedFor,
+        contest.tracks.map(track => track.name),
+      ),
+      source: 'local',
+      priority: 190,
+      payload: {
+        contestId: contest.id,
+      },
+    }
+  })
+})
+const metaKOutlineItems = computed<WorkspaceMetaKItem[]>(() => {
+  return projectOutlineFlatItems.value.map((item) => {
+    const linkedResourceTitles = item.sourceResourceIds
+      .map(resourceId => metaKResourceTitleMap.value.get(resourceId) || '')
+      .filter(Boolean)
+    return {
+      id: buildWorkspaceMetaKItemId('outline', item.id),
+      sectionId: 'outline',
+      type: 'outline',
+      title: normalizeString(item.title) || '未命名大纲节点',
+      subtitle: linkedResourceTitles.length > 0
+        ? linkedResourceTitles.slice(0, 2).join('、')
+        : `L${Math.max(1, item.level + 1)} · 暂无关联资源`,
+      icon: 'segment',
+      hint: linkedResourceTitles.length > 0 ? '打开关联资源' : '定位到大纲',
+      keywords: buildWorkspaceMetaKKeywords(item.title, linkedResourceTitles),
+      source: 'local',
+      priority: 180,
+      payload: {
+        outlineId: item.id,
+        sourceResourceId: item.sourceResourceIds[0] || '',
+      },
+    }
+  })
+})
+const metaKWorkspaceItems = computed<WorkspaceMetaKItem[]>(() => {
+  return workspaceOptions.value.map((item) => {
+    const workspaceName = normalizeString(item.workspace.name) || '未命名空间'
+    return {
+      id: buildWorkspaceMetaKItemId('workspace', item.workspace.id),
+      sectionId: 'workspaces',
+      type: 'workspace',
+      title: workspaceName,
+      subtitle: item.workspace.type === 'personal' ? '个人空间' : 'Team 空间',
+      icon: item.workspace.type === 'personal' ? 'person' : 'groups',
+      badge: item.workspace.id === activeWorkspaceId.value ? '当前' : '',
+      hint: '切换空间',
+      keywords: buildWorkspaceMetaKKeywords(
+        workspaceName,
+        item.workspace.type,
+        item.workspace.teamProfile?.orgName,
+        item.workspace.teamProfile?.orgCode,
+      ),
+      source: 'local',
+      priority: 170,
+      defaultVisible: true,
+      payload: {
+        workspaceId: item.workspace.id,
+      },
+    }
+  })
+})
+const metaKProjectItems = computed<WorkspaceMetaKItem[]>(() => {
+  const items = new Map<string, WorkspaceMetaKItem>()
+  for (const project of [...recentQuickSwitchProjects.value, ...myQuickSwitchProjects.value]) {
+    const badge = myQuickSwitchProjects.value.some(item => item.projectId === project.projectId)
+      ? '我的'
+      : '最近'
+    items.set(project.projectId, {
+      id: buildWorkspaceMetaKItemId('project', project.projectId),
+      sectionId: 'projects',
+      type: 'project',
+      title: normalizeString(project.title) || '未命名项目',
+      subtitle: [project.workspaceName, formatMetaKDateTime(project.updatedAt)].filter(Boolean).join(' · '),
+      icon: 'dataset',
+      badge: activeProjectId.value === project.projectId ? '当前' : badge,
+      hint: '切换项目',
+      keywords: buildWorkspaceMetaKKeywords(project.title, project.workspaceName),
+      source: 'local',
+      priority: 165,
+      defaultVisible: true,
+      payload: {
+        projectId: project.projectId,
+        workspaceId: project.workspaceId,
+      },
+    })
+  }
+  return [...items.values()]
+})
+const metaKLocalItems = computed<WorkspaceMetaKItem[]>(() => {
+  return [
+    ...metaKCommandItems.value,
+    ...metaKResourceItems.value,
+    ...metaKMeetingItems.value,
+    ...metaKIssueItems.value,
+    ...metaKContestItems.value,
+    ...metaKOutlineItems.value,
+    ...metaKWorkspaceItems.value,
+    ...metaKProjectItems.value,
+  ]
+})
+const metaKLocalSections = computed(() => {
+  return buildWorkspaceMetaKSections({
+    items: metaKLocalItems.value,
+    query: metaKQuery.value,
+    definitions: METAK_SECTION_DEFINITIONS,
+  })
+})
+const metaKSections = computed<WorkspaceMetaKSection[]>(() => {
+  const sections = [...metaKLocalSections.value]
+  if (metaKQuery.value.trim() && (metaKRemoteLoading.value || metaKRemoteLibraryItems.value.length > 0)) {
+    sections.push({
+      id: 'library',
+      title: '系统资料库',
+      items: metaKRemoteLibraryItems.value,
+      loading: metaKRemoteLoading.value,
+    })
+  }
+  return sections
+})
 const previewResource = computed(() => {
   const targetId = String(previewResourceId.value || '').trim()
   if (!targetId)
@@ -7192,7 +7751,310 @@ async function openFlowFromLeftSidebar() {
     statusLine.value = '已打开流程画布，可继续协作梳理项目流程。'
 }
 
+function clearMetaKRemoteSearchTimer(): void {
+  if (!metaKRemoteSearchTimer)
+    return
+  clearTimeout(metaKRemoteSearchTimer)
+  metaKRemoteSearchTimer = null
+}
+
+function resetMetaKRemoteState(): void {
+  metaKRemoteLoading.value = false
+  metaKRemoteLibraryItems.value = []
+}
+
+function setLeftSidebarMetaKCommand(
+  moduleId: WorkspaceLeftSidebarCommandModuleId,
+  outlineId = '',
+): void {
+  leftSidebarCollapsed.value = false
+  leftSidebarMetaKModuleId.value = moduleId
+  leftSidebarMetaKOutlineId.value = normalizeString(outlineId)
+  leftSidebarMetaKSignal.value += 1
+}
+
+function closeMetaK(): void {
+  metaKOpen.value = false
+  metaKQuery.value = ''
+  clearMetaKRemoteSearchTimer()
+  metaKRemoteRequestSequence += 1
+  resetMetaKRemoteState()
+}
+
+function openMetaK(): void {
+  metaKOpen.value = true
+}
+
+function buildMetaKRemoteLibraryItems(resources: Resource[], query: string): WorkspaceMetaKItem[] {
+  const items = resources.map((resource) => {
+    const resourceTitle = resolveMetaKResourceTitle(resource)
+    return {
+      id: buildWorkspaceMetaKItemId('library', resource.id),
+      sectionId: 'library',
+      type: 'library_resource',
+      title: resourceTitle,
+      subtitle: [normalizeString(resource.type), normalizeString(resource.summary)].filter(Boolean).join(' · '),
+      icon: resolveMetaKResourceIcon(resource),
+      badge: resource.category || '',
+      hint: '添加到项目',
+      keywords: buildWorkspaceMetaKKeywords(resource.title, resource.summary, resource.type, resource.category, resource.year),
+      source: 'remote',
+      priority: 120,
+      payload: {
+        resourceId: resource.id,
+      },
+    } satisfies WorkspaceMetaKItem
+  })
+
+  return matchAndSortWorkspaceMetaKItems(items, query).slice(0, 8)
+}
+
+async function loadMetaKRemoteLibraryItems(query: string): Promise<void> {
+  const projectId = normalizeString(activeProjectId.value)
+  const normalizedQuery = normalizeString(query)
+  if (!projectId || !normalizedQuery) {
+    resetMetaKRemoteState()
+    return
+  }
+
+  const requestId = ++metaKRemoteRequestSequence
+  metaKRemoteLoading.value = true
+
+  try {
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(
+      buildProjectApiRequestUrl(
+        endpoint(`/projects/${projectId}/resources/library`),
+        {
+          q: normalizedQuery,
+          limit: 8,
+        },
+      ),
+    )
+
+    if (
+      requestId !== metaKRemoteRequestSequence
+      || !metaKOpen.value
+      || normalizeString(activeProjectId.value) !== projectId
+      || normalizeString(metaKQuery.value) !== normalizedQuery
+    ) {
+      return
+    }
+
+    metaKRemoteLibraryItems.value = buildMetaKRemoteLibraryItems(
+      Array.isArray(response.data) ? response.data : [],
+      normalizedQuery,
+    )
+  }
+  catch {
+    if (
+      requestId !== metaKRemoteRequestSequence
+      || !metaKOpen.value
+      || normalizeString(activeProjectId.value) !== projectId
+      || normalizeString(metaKQuery.value) !== normalizedQuery
+    ) {
+      return
+    }
+    metaKRemoteLibraryItems.value = []
+  }
+  finally {
+    if (
+      requestId === metaKRemoteRequestSequence
+      && metaKOpen.value
+      && normalizeString(activeProjectId.value) === projectId
+      && normalizeString(metaKQuery.value) === normalizedQuery
+    ) {
+      metaKRemoteLoading.value = false
+    }
+  }
+}
+
+function scheduleMetaKRemoteLibrarySearch(query: string): void {
+  const normalizedQuery = normalizeString(query)
+  clearMetaKRemoteSearchTimer()
+  metaKRemoteRequestSequence += 1
+
+  if (!normalizedQuery) {
+    resetMetaKRemoteState()
+    return
+  }
+
+  metaKRemoteSearchTimer = setTimeout(() => {
+    metaKRemoteSearchTimer = null
+    void loadMetaKRemoteLibraryItems(normalizedQuery)
+  }, 180)
+}
+
+async function executeMetaKCommandAction(actionId: WorkspaceMetaKActionId): Promise<void> {
+  switch (actionId) {
+    case 'open_workspace_home':
+      await openWorkspaceHomeFromHeader()
+      return
+    case 'open_workspace_settings':
+      openSettingsFromLeftSidebar()
+      return
+    case 'open_member_management':
+      openMemberManagementFromLeftSidebar()
+      return
+    case 'open_display_preferences':
+      openDisplayPreferencesFromHeader()
+      return
+    case 'open_account_center':
+      openAccountCenterFromHeader()
+      return
+    case 'open_resource_manager':
+      setLeftSidebarMetaKCommand('resource_manager')
+      statusLine.value = '已打开资源管理器。'
+      return
+    case 'open_analysis':
+      setLeftSidebarMetaKCommand('analysis')
+      statusLine.value = '已切到竞赛分析，可继续筛选竞赛与赛道。'
+      return
+    case 'open_meeting':
+      openMeetingFromLeftSidebar()
+      return
+    case 'open_issue_view':
+      expandRightSidebar()
+      updateWorkspaceAiMode('issue_discovery')
+      statusLine.value = '已切到 Issue 视图。'
+      return
+    case 'open_flow':
+      await openFlowFromLeftSidebar()
+      return
+    case 'open_final_review':
+      await openFinalReviewFromHeader()
+      return
+    case 'switch_workbench_project':
+      updateWorkbenchMode('project')
+      statusLine.value = '已切回项目工作台。'
+      return
+    case 'switch_workbench_defense':
+      updateWorkbenchMode('defense')
+      statusLine.value = '已切到答辩工作台。'
+      return
+    case 'switch_ai_dialog':
+      expandRightSidebar()
+      updateWorkspaceAiMode('dialog_ask')
+      statusLine.value = '已切到 AI 对话模式。'
+      return
+    case 'switch_ai_optimize':
+      expandRightSidebar()
+      updateWorkspaceAiMode('auto_optimize')
+      statusLine.value = '已切到 AI 自动优化模式。'
+      return
+    case 'switch_ai_issue':
+      expandRightSidebar()
+      updateWorkspaceAiMode('issue_discovery')
+      statusLine.value = '已切到 AI 寻疑发现模式。'
+      return
+    case 'create_collab_markdown':
+      await createCollabResource('markdown')
+      return
+    case 'create_collab_draw':
+      await createCollabResource('draw')
+      return
+    case 'create_meeting_audio':
+      await createProjectMeeting({ mode: 'audio' })
+      return
+    case 'create_meeting_video':
+      await createProjectMeeting({ mode: 'video' })
+  }
+}
+
+async function executeMetaKItem(item: WorkspaceMetaKItem): Promise<void> {
+  closeMetaK()
+
+  if (item.actionId) {
+    await executeMetaKCommandAction(item.actionId)
+    return
+  }
+
+  switch (item.type) {
+    case 'resource': {
+      const resourceId = normalizeString(item.payload?.resourceId)
+      if (resourceId)
+        await openProjectResourcePreview(resourceId)
+      return
+    }
+    case 'meeting': {
+      const meetingId = normalizeString(item.payload?.meetingId)
+      if (meetingId)
+        await selectProjectMeeting(meetingId)
+      return
+    }
+    case 'issue':
+      expandRightSidebar()
+      updateWorkspaceAiMode('issue_discovery')
+      statusLine.value = `已定位 Issue：${item.title}`
+      return
+    case 'contest': {
+      const contestId = normalizeString(item.payload?.contestId)
+      if (!contestId)
+        return
+      selectedContestId.value = contestId
+      setLeftSidebarMetaKCommand('analysis')
+      statusLine.value = `已切到竞赛：${item.title}`
+      return
+    }
+    case 'outline': {
+      const outlineId = normalizeString(item.payload?.outlineId)
+      const sourceResourceId = normalizeString(item.payload?.sourceResourceId)
+      setLeftSidebarMetaKCommand('resource_manager', outlineId)
+      if (sourceResourceId) {
+        await openProjectResourcePreview(sourceResourceId)
+      }
+      else {
+        statusLine.value = `已定位大纲节点：${item.title}`
+      }
+      return
+    }
+    case 'workspace': {
+      const workspaceId = normalizeString(item.payload?.workspaceId)
+      if (!workspaceId)
+        return
+      statusLine.value = `已切换到空间：${item.title}`
+      switchWorkspaceFromHeader(workspaceId)
+      return
+    }
+    case 'project': {
+      const projectId = normalizeString(item.payload?.projectId)
+      const workspaceId = normalizeString(item.payload?.workspaceId)
+      if (!projectId || !workspaceId)
+        return
+      await switchProjectFromHeader({
+        projectId,
+        workspaceId,
+      })
+      return
+    }
+    case 'command':
+      return
+    case 'library_resource': {
+      const resourceId = normalizeString(item.payload?.resourceId)
+      if (!resourceId)
+        return
+      await addResourceFromLibrary(resourceId)
+      setLeftSidebarMetaKCommand('resource_manager')
+      break
+    }
+  }
+}
+
+function onMetaKGlobalKeydown(event: KeyboardEvent): void {
+  if (!isWorkspaceMetaKHotkey(event))
+    return
+  if (isWorkspaceMetaKEditableTarget(event.target))
+    return
+
+  event.preventDefault()
+  openMetaK()
+}
+
 onMounted(async () => {
+  if (import.meta.client) {
+    metaKShortcutLabel.value = resolveWorkspaceMetaKShortcutLabel(window.navigator.platform)
+    document.addEventListener('keydown', onMetaKGlobalKeydown)
+  }
+
   const canonicalRedirected = await ensureCanonicalWorkspaceProjectRoute()
   if (canonicalRedirected)
     return
@@ -7244,6 +8106,9 @@ onBeforeUnmount(() => {
   }
   disposeCollabDocBinding(true)
   workspaceRealtime.disconnect()
+  if (import.meta.client)
+    document.removeEventListener('keydown', onMetaKGlobalKeydown)
+  clearMetaKRemoteSearchTimer()
 })
 
 watch(activeWorkspaceId, async (value, previous) => {
@@ -7381,6 +8246,20 @@ watch(activeProjectId, async (next, previous) => {
     if (requestId === workspaceBootstrapRequestId && activeProjectId.value === next)
       workspaceBootstrapLoading.value = false
   }
+})
+
+watch(metaKOpen, (next) => {
+  if (next)
+    return
+  clearMetaKRemoteSearchTimer()
+  metaKRemoteRequestSequence += 1
+  resetMetaKRemoteState()
+})
+
+watch(metaKQuery, (nextQuery) => {
+  if (!metaKOpen.value)
+    return
+  scheduleMetaKRemoteLibrarySearch(nextQuery)
 })
 
 watch([activeProjectId, selectedContestId, selectedTrackId], async () => {
@@ -7546,7 +8425,6 @@ watch(() => workspaceRealtime.connected.value, () => {
     :data-workspace-font-size="workspaceEffectiveFontSizePreset"
   >
     <WorkspaceHeader
-      v-model="headerSearch"
       :project-name="headerProjectName"
       :workspace-id="activeWorkspaceId"
       :user-name="me?.user.username || ''"
@@ -7557,8 +8435,10 @@ watch(() => workspaceRealtime.connected.value, () => {
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
       :workbench-mode="workbenchMode"
+      :meta-k-shortcut-label="metaKShortcutLabel"
       @update:workbench-mode="updateWorkbenchMode"
       @final-review="openFinalReviewFromHeader"
+      @open-meta-k="openMetaK"
       @quick-switch-project="switchProjectFromHeader"
       @switch-workspace="switchWorkspaceFromHeader"
       @open-workspace-home="openWorkspaceHomeFromHeader"
@@ -7579,7 +8459,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           v-model:top-k="topK"
           v-model:selected-contest-id="selectedContestId"
           class="min-h-0 overflow-hidden"
-          :contests="filteredContests"
+          :contests="contestSource"
           :selected-resources="selectedResources"
           :recycle-resources="recycleResources"
           :resource-library="resourceLibrary"
@@ -7617,6 +8497,9 @@ watch(() => workspaceRealtime.connected.value, () => {
           :workspace-id="activeWorkspaceId"
           :tab-spacing-preset="workspaceEffectiveTabSpacingPreset"
           :collapsed="leftSidebarCollapsed"
+          :command-signal="leftSidebarMetaKSignal"
+          :command-module-id="leftSidebarMetaKModuleId"
+          :command-outline-id="leftSidebarMetaKOutlineId"
           @load-contests="loadContests"
           @run-ai-filter="runAiFilter"
           @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
@@ -7953,6 +8836,16 @@ watch(() => workspaceRealtime.connected.value, () => {
         </div>
       </div>
     </a-modal>
+
+    <WorkspaceMetaK
+      :visible="metaKOpen"
+      :query="metaKQuery"
+      :sections="metaKSections"
+      :shortcut-label="metaKShortcutLabel"
+      @update:query="metaKQuery = $event"
+      @close="closeMetaK"
+      @execute="executeMetaKItem"
+    />
 
     <UserSettingsDialog
       v-model:visible="accountCenterVisible"
