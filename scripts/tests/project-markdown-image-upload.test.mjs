@@ -11,18 +11,21 @@ const RICH_TEXT_IMAGE_EXTENSION_FILE = resolve(process.cwd(), 'app/components/ed
 const RICH_TEXT_SCHEMA_FILE = resolve(process.cwd(), 'shared/utils/collab-rich-text-schema.ts')
 const RESOURCE_UPLOAD_API_FILE = resolve(process.cwd(), 'server/api/projects/[id]/resources/upload.post.ts')
 const RESOURCE_FILE_API_FILE = resolve(process.cwd(), 'server/api/projects/[id]/resources/[resourceId]/file.get.ts')
+const RESOURCE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-resource-store.ts')
 
 it('项目文档图片上传复用项目资源链路，并写入 markdown 归属关系', async () => {
   const projectPageSource = await readFile(PROJECT_PAGE_FILE, 'utf8')
   const panelSource = await readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8')
   const uploadApiSource = await readFile(RESOURCE_UPLOAD_API_FILE, 'utf8')
   const fileApiSource = await readFile(RESOURCE_FILE_API_FILE, 'utf8')
+  const resourceStoreSource = await readFile(RESOURCE_STORE_FILE, 'utf8')
 
   assert.match(projectPageSource, /async function uploadMarkdownImage\(file: File\): Promise<\{/, '项目页未定义 markdown 图片上传处理器')
   assert.match(projectPageSource, /formData\.append\('category', 'basic_info'\)/, '图片上传未固定写入 basic_info 分类')
   assert.match(projectPageSource, /formData\.append\('accessLevel', 'login_required'\)/, '图片上传未固定写入 login_required 访问级别')
   assert.match(projectPageSource, /formData\.append\('hostMarkdownResourceId', hostMarkdownResourceId\)/, '图片上传未传递 hostMarkdownResourceId')
   assert.match(projectPageSource, /authApiFetch<ApiResponse<\{\s+resources: Resource\[\]\s+\}>>\(`\/projects\/\$\{projectId\}\/resources\/upload`/, '图片上传未复用项目资源上传 API')
+  assert.match(projectPageSource, /await refreshProjectResourceContext\(\)/, '图片上传成功后未回刷项目资源上下文')
   assert.match(projectPageSource, /src: endpoint\(`\/projects\/\$\{projectId\}\/resources\/\$\{resource\.id\}\/file`\)/, '图片节点 src 未指向稳定的内部 file 路由')
   assert.match(projectPageSource, /:markdown-image-upload-handler="uploadMarkdownImage"/, '项目页未把图片上传处理器透传给主面板')
 
@@ -31,6 +34,11 @@ it('项目文档图片上传复用项目资源链路，并写入 markdown 归属
 
   assert.match(uploadApiSource, /const hostMarkdownResourceId = normalizeString\(fields\.hostMarkdownResourceId\)/, '上传 API 未读取 hostMarkdownResourceId')
   assert.match(uploadApiSource, /metadata: hostMarkdownResourceId\s+\?\s+\{\s+embeddedIn: \{\s+kind: 'markdown',\s+resourceId: hostMarkdownResourceId,/, '上传 API 未写入 markdown embeddedIn 元数据')
+
+  assert.match(resourceStoreSource, /async function resolveProjectUploadTitle\(/, '资源仓储未抽出 markdown 图片标题裁决逻辑')
+  assert.match(resourceStoreSource, /resolveEmbeddedMarkdownImageUploadTitle\(/, '资源仓储未复用 markdown 图片标题生成器')
+  assert.match(resourceStoreSource, /hostMarkdownResourceId\?: string/, '资源仓储未接收 hostMarkdownResourceId')
+  assert.match(resourceStoreSource, /const title = await resolveProjectUploadTitle\(db, \{/, '上传资源创建流程未接入标题裁决')
 
   assert.match(fileApiSource, /Content-Disposition', `inline; filename\*=UTF-8''\$\{encodeFileName/, '图片 file 路由未以内联方式返回文件')
 })

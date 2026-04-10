@@ -42,6 +42,23 @@ it('资源管理器删除独立系统资料库分组，只保留导入入口', a
   assert.match(source, /title="从系统资料库导入"/, '系统资料库导入弹窗标题未更新')
 })
 
+it('项目资料区改为 markdown 文档图片虚拟树，不再截断前 10 项', async () => {
+  const source = await readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8')
+
+  assert.match(source, /interface ProjectResourceTreeItem \{\s+resource: Resource\s+children: Resource\[\]\s+\}/, '左栏未定义资源树节点结构')
+  assert.match(source, /const visibleResources = computed\(\(\) => props\.selectedResources\)/, '左栏仍未使用完整资源列表')
+  assert.doesNotMatch(source, /selectedResources\.slice\(0,\s*10\)/, '左栏仍然截断前 10 个资源')
+  assert.match(source, /function resolveEmbeddedMarkdownResourceId\(resource: Resource\): string \{/, '左栏缺少 markdown 嵌入资源归属解析')
+  assert.match(source, /function isUploadedImageResource\(resource: Resource\): boolean \{/, '左栏缺少上传图片资源识别')
+  assert.match(source, /const projectResourceTreeItems = computed<ProjectResourceTreeItem\[\]>\(\(\) => \{/, '左栏未构建项目资源虚拟树')
+  assert.match(source, /if \(!embeddedMarkdownResourceId \|\| !markdownResourceIds\.has\(embeddedMarkdownResourceId\)\)\s+continue/, 'orphan 图片未保留顶层回退逻辑')
+  assert.match(source, /watch\(projectResourceTreeItems, \(items\) => \{/, '左栏未清理失效的文档展开状态')
+  assert.match(source, /v-for="treeItem in projectResourceTreeItems"/, '左栏模板未按树节点渲染项目资料')
+  assert.match(source, /v-for="child in treeItem\.children"/, '左栏模板未渲染文档图片子节点')
+  assert.match(source, /workspace-resource-tree-group__children/, '左栏未为文档图片子树提供容器')
+  assert.match(source, /workspace-tree-item__expander/, '左栏未提供文档图片展开按钮')
+})
+
 it('左栏结构大纲不再用本地推断结果充当真实大纲', async () => {
   const source = await readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8')
 

@@ -17,6 +17,10 @@ export type RichTextEditorCommandAction
     | 'table'
     | 'horizontalRule'
     | 'image'
+    | 'comment'
+    | 'aiSummarize'
+    | 'aiRewrite'
+    | 'aiContinue'
 
 export interface RichTextEditorCommand {
   id: string
@@ -58,6 +62,8 @@ export function buildRichTextEditorCommands(
   levels: CollabMarkdownHeadingLevel[] | undefined,
   options?: {
     includeImageCommand?: boolean
+    includeCommentCommand?: boolean
+    includeDocumentAssistCommands?: boolean
   },
 ): RichTextEditorCommand[] {
   const normalizedHeadingLevels = normalizeHeadingLevels(levels)
@@ -106,6 +112,50 @@ export function buildRichTextEditorCommands(
       keywords: ['image', 'img', 'upload', 'picture'],
       toolbarVisible: false,
     })
+  }
+
+  if (options?.includeCommentCommand) {
+    commands.push({
+      id: 'comment',
+      label: '评论',
+      icon: 'add_comment',
+      action: 'comment',
+      group: 'inline',
+      keywords: ['comment', 'review', 'discussion'],
+      toolbarVisible: false,
+    })
+  }
+
+  if (options?.includeDocumentAssistCommands) {
+    commands.push(
+      {
+        id: 'ai-summarize',
+        label: '总结选区',
+        icon: 'short_text',
+        action: 'aiSummarize',
+        group: 'inline',
+        keywords: ['ai', 'summary', 'summarize'],
+        toolbarVisible: false,
+      },
+      {
+        id: 'ai-rewrite',
+        label: '改写选区',
+        icon: 'edit_note',
+        action: 'aiRewrite',
+        group: 'inline',
+        keywords: ['ai', 'rewrite', 'polish'],
+        toolbarVisible: false,
+      },
+      {
+        id: 'ai-continue',
+        label: '续写当前位置',
+        icon: 'auto_awesome',
+        action: 'aiContinue',
+        group: 'block',
+        keywords: ['ai', 'continue', 'expand'],
+        toolbarVisible: false,
+      },
+    )
   }
 
   return commands

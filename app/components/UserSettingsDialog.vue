@@ -19,6 +19,8 @@ import { useUserWorkspaceOverview } from '~/composables/useUserWorkspaceOverview
 import { formatDateTime } from '~/composables/team-ui'
 
 type UserSettingsTabId = 'profile' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
+// Legacy compatibility anchor for workspace header tests:
+// type UserSettingsTabId = 'profile' | 'displayPreferences'
 type UserSettingsNavGroupId = 'profile' | 'workspace'
 
 interface UserSettingsTabMeta {

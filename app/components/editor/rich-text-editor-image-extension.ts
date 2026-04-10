@@ -1,9 +1,28 @@
 import type { Editor, NodeViewRendererProps } from '@tiptap/core'
+import type { ProjectResourceCommentImageNodeAnchor } from '~~/shared/types/domain'
 import { NodeSelection } from '@tiptap/pm/state'
 import { CollabMarkdownImage } from '~~/shared/utils/collab-rich-text-schema'
 
 type ImageNodeViewContext = Pick<NodeViewRendererProps, 'editor' | 'node' | 'getPos'>
 type ImageNodePositionResolver = ImageNodeViewContext['getPos']
+
+export interface RichTextEditorImageNodeActionPayload {
+  resourceId?: string | null
+  src: string
+  mode: 'delete_node' | 'delete_and_recycle'
+}
+
+export interface RichTextEditorImageNodeCommentThread {
+  id: string
+}
+
+export interface RichTextEditorImageExtensionOptions {
+  getImageCommentThreads?: (attrs: Record<string, unknown>) => RichTextEditorImageNodeCommentThread[]
+  getActiveCommentThreadId?: () => string
+  onOpenCommentThread?: (threadId: string) => void
+  onCreateCommentFromImage?: (anchor: ProjectResourceCommentImageNodeAnchor) => void
+  onRequestImageAction?: (payload: RichTextEditorImageNodeActionPayload) => void
+}
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -50,6 +69,20 @@ function updateImageNodeAttributes(editor: Editor, getPos: ImageNodePositionReso
   }))
 }
 
+function deleteImageNode(editor: Editor, getPos: ImageNodePositionResolver): boolean {
+  const position = resolveNodePosition(getPos)
+  if (position === null)
+    return false
+
+  const node = editor.state.doc.nodeAt(position)
+  if (!node)
+    return false
+
+  editor.view.dispatch(editor.state.tr.deleteRange(position, position + node.nodeSize))
+  editor.view.focus()
+  return true
+}
+
 function createResizeHandle(direction: 'left' | 'right'): HTMLButtonElement {
   const handle = document.createElement('button')
   handle.className = `rich-text-editor__image-resize-handle rich-text-editor__image-resize-handle--${direction}`
@@ -58,10 +91,42 @@ function createResizeHandle(direction: 'left' | 'right'): HTMLButtonElement {
   return handle
 }
 
-function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeViewContext) {
+function createIconButton(label: string, icon: string, className: string): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = className
+  button.setAttribute('aria-label', label)
+  button.title = label
+
+  const iconElement = document.createElement('span')
+  iconElement.className = 'material-symbols-outlined'
+  iconElement.setAttribute('aria-hidden', 'true')
+  iconElement.textContent = icon
+  button.append(iconElement)
+  return button
+}
+
+function buildImageCommentAnchor(attrs: Record<string, unknown>): ProjectResourceCommentImageNodeAnchor | null {
+  const src = normalizeString(attrs.src)
+  if (!src)
+    return null
+
+  return {
+    type: 'image_node',
+    resourceId: normalizeString(attrs.resourceId) || null,
+    src,
+    alt: normalizeString(attrs.alt) || null,
+    title: normalizeString(attrs.title) || null,
+  }
+}
+
+function createImageNodeView(options: RichTextEditorImageExtensionOptions, { editor, node: initialNode, getPos }: ImageNodeViewContext) {
   let currentNode = initialNode
   let selected = false
   let dragCleanup: (() => void) | null = null
+  let metadataEditorVisible = false
+  let loadError = false
+  let imageReloadToken = 0
 
   const dom = document.createElement('figure')
   dom.className = 'rich-text-editor__image-node'
@@ -87,12 +152,68 @@ function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeVie
   const placeholderMeta = document.createElement('span')
   placeholderMeta.className = 'rich-text-editor__image-placeholder-meta'
 
-  placeholder.append(placeholderIcon, placeholderTitle, placeholderMeta)
+  const placeholderActions = document.createElement('div')
+  placeholderActions.className = 'rich-text-editor__image-placeholder-actions'
+
+  const retryButton = document.createElement('button')
+  retryButton.type = 'button'
+  retryButton.className = 'rich-text-editor__image-placeholder-action'
+  retryButton.textContent = '重试加载'
+
+  const openResourceButton = document.createElement('button')
+  openResourceButton.type = 'button'
+  openResourceButton.className = 'rich-text-editor__image-placeholder-action'
+  openResourceButton.textContent = '打开原图'
+
+  placeholderActions.append(retryButton, openResourceButton)
+  placeholder.append(placeholderIcon, placeholderTitle, placeholderMeta, placeholderActions)
+
+  const actionBar = document.createElement('div')
+  actionBar.className = 'rich-text-editor__image-action-bar'
+
+  const commentBadge = document.createElement('button')
+  commentBadge.type = 'button'
+  commentBadge.className = 'rich-text-editor__image-comment-badge'
+
+  const editMetaButton = createIconButton('编辑图片说明', 'edit', 'rich-text-editor__image-action-button')
+  const openButton = createIconButton('打开资源', 'open_in_new', 'rich-text-editor__image-action-button')
+  const commentButton = createIconButton('添加评论', 'add_comment', 'rich-text-editor__image-action-button')
+  const deleteButton = createIconButton('删除图片', 'delete', 'rich-text-editor__image-action-button')
+  const recycleButton = createIconButton('删除并回收资源', 'delete_forever', 'rich-text-editor__image-action-button rich-text-editor__image-action-button--danger')
+
+  actionBar.append(editMetaButton, openButton, commentButton, deleteButton, recycleButton)
+
+  const metadataEditor = document.createElement('div')
+  metadataEditor.className = 'rich-text-editor__image-meta-editor'
+
+  const altInput = document.createElement('input')
+  altInput.className = 'rich-text-editor__image-meta-input'
+  altInput.placeholder = 'Alt 文本'
+
+  const titleInput = document.createElement('input')
+  titleInput.className = 'rich-text-editor__image-meta-input'
+  titleInput.placeholder = '标题'
+
+  const metadataActions = document.createElement('div')
+  metadataActions.className = 'rich-text-editor__image-meta-actions'
+
+  const metadataCancel = document.createElement('button')
+  metadataCancel.type = 'button'
+  metadataCancel.className = 'rich-text-editor__image-meta-button'
+  metadataCancel.textContent = '取消'
+
+  const metadataSave = document.createElement('button')
+  metadataSave.type = 'button'
+  metadataSave.className = 'rich-text-editor__image-meta-button rich-text-editor__image-meta-button--primary'
+  metadataSave.textContent = '保存'
+
+  metadataActions.append(metadataCancel, metadataSave)
+  metadataEditor.append(altInput, titleInput, metadataActions)
 
   const leftHandle = createResizeHandle('left')
   const rightHandle = createResizeHandle('right')
 
-  frame.append(image, placeholder, leftHandle, rightHandle)
+  frame.append(image, placeholder, commentBadge, actionBar, metadataEditor, leftHandle, rightHandle)
   dom.append(frame)
 
   const render = () => {
@@ -100,19 +221,30 @@ function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeVie
     const uploadStatus = normalizeString(currentNode.attrs?.uploadStatus)
     const alt = normalizeString(currentNode.attrs?.alt)
     const title = normalizeString(currentNode.attrs?.title)
+    const resourceId = normalizeString(currentNode.attrs?.resourceId)
     const width = normalizeImageWidth(currentNode.attrs?.width)
     const placeholderName = title || alt || '未命名图片'
+    const commentThreads = options.getImageCommentThreads?.(currentNode.attrs || {}) || []
+    const activeCommentThreadId = normalizeString(options.getActiveCommentThreadId?.())
+    const hasActiveComment = commentThreads.some(thread => thread.id === activeCommentThreadId)
 
     dom.classList.toggle('rich-text-editor__image-node--selected', selected)
     dom.classList.toggle('rich-text-editor__image-node--uploading', uploadStatus === 'uploading')
+    dom.classList.toggle('rich-text-editor__image-node--load-error', loadError)
+    dom.classList.toggle('rich-text-editor__image-node--comment-active', hasActiveComment)
     if (width)
       dom.style.width = `${width}px`
     else
       dom.style.removeProperty('width')
 
-    if (src) {
+    const renderedSrc = src && imageReloadToken
+      ? `${src}${src.includes('?') ? '&' : '?'}retry=${imageReloadToken}`
+      : src
+
+    if (src && !loadError) {
       image.hidden = false
-      image.setAttribute('src', src)
+      if (image.getAttribute('src') !== renderedSrc)
+        image.setAttribute('src', renderedSrc)
       image.setAttribute('alt', alt || title || '图片')
       if (title)
         image.setAttribute('title', title)
@@ -128,10 +260,30 @@ function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeVie
       placeholder.hidden = false
     }
 
-    placeholderTitle.textContent = uploadStatus === 'uploading' ? '图片上传中' : '图片'
-    placeholderMeta.textContent = placeholderName
+    if (loadError) {
+      placeholderTitle.textContent = '图片加载失败'
+      placeholderMeta.textContent = placeholderName || '资源地址不可用'
+      placeholderActions.hidden = false
+      placeholderIcon.textContent = 'broken_image'
+    }
+    else {
+      placeholderTitle.textContent = uploadStatus === 'uploading' ? '图片上传中' : '图片'
+      placeholderMeta.textContent = placeholderName
+      placeholderActions.hidden = true
+      placeholderIcon.textContent = 'image'
+    }
+
+    commentBadge.hidden = commentThreads.length === 0
+    commentBadge.textContent = commentThreads.length > 99 ? '99+' : String(commentThreads.length || '')
+    commentBadge.classList.toggle('rich-text-editor__image-comment-badge--active', hasActiveComment)
+    actionBar.hidden = !selected || !src || uploadStatus === 'uploading'
+    metadataEditor.hidden = !selected || !metadataEditorVisible || !src || uploadStatus === 'uploading'
+    recycleButton.hidden = !resourceId
+    commentButton.hidden = typeof options.onCreateCommentFromImage !== 'function'
     leftHandle.hidden = !selected || !src || uploadStatus === 'uploading'
     rightHandle.hidden = !selected || !src || uploadStatus === 'uploading'
+    altInput.value = alt
+    titleInput.value = title
   }
 
   const stopResize = () => {
@@ -171,8 +323,131 @@ function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeVie
     }
   }
 
+  const openSourceResource = () => {
+    const src = normalizeString(currentNode.attrs?.src)
+    if (!src)
+      return
+    window.open(src, '_blank', 'noopener,noreferrer')
+  }
+
+  const deleteCurrentNode = (mode: RichTextEditorImageNodeActionPayload['mode']) => {
+    const src = normalizeString(currentNode.attrs?.src)
+    if (!src)
+      return
+
+    const payload: RichTextEditorImageNodeActionPayload = {
+      resourceId: normalizeString(currentNode.attrs?.resourceId) || null,
+      src,
+      mode,
+    }
+    deleteImageNode(editor, getPos)
+    if (mode === 'delete_and_recycle')
+      options.onRequestImageAction?.(payload)
+  }
+
+  const openMetadataEditor = () => {
+    metadataEditorVisible = true
+    render()
+    requestAnimationFrame(() => {
+      altInput.focus()
+      altInput.select()
+    })
+  }
+
+  const closeMetadataEditor = () => {
+    metadataEditorVisible = false
+    render()
+  }
+
+  const saveMetadata = () => {
+    updateImageNodeAttributes(editor, getPos, {
+      alt: normalizeString(altInput.value) || null,
+      title: normalizeString(titleInput.value) || null,
+    })
+    metadataEditorVisible = false
+  }
+
   leftHandle.addEventListener('mousedown', event => startResize(event, -1))
   rightHandle.addEventListener('mousedown', event => startResize(event, 1))
+
+  commentBadge.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    selectImageNode(editor, getPos)
+    const threads = options.getImageCommentThreads?.(currentNode.attrs || {}) || []
+    if (threads[0]?.id)
+      options.onOpenCommentThread?.(threads[0].id)
+  })
+
+  retryButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    loadError = false
+    imageReloadToken = Date.now()
+    render()
+  })
+
+  openResourceButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    openSourceResource()
+  })
+
+  editMetaButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    openMetadataEditor()
+  })
+
+  openButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    openSourceResource()
+  })
+
+  commentButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const anchor = buildImageCommentAnchor(currentNode.attrs || {})
+    if (anchor)
+      options.onCreateCommentFromImage?.(anchor)
+  })
+
+  deleteButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    deleteCurrentNode('delete_node')
+  })
+
+  recycleButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    deleteCurrentNode('delete_and_recycle')
+  })
+
+  metadataCancel.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    closeMetadataEditor()
+  })
+
+  metadataSave.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    saveMetadata()
+  })
+
+  image.addEventListener('load', () => {
+    loadError = false
+    render()
+  })
+
+  image.addEventListener('error', () => {
+    if (!normalizeString(currentNode.attrs?.src))
+      return
+    loadError = true
+    render()
+  })
 
   dom.addEventListener('mousedown', (event) => {
     if (!(event.target instanceof HTMLElement))
@@ -194,6 +469,8 @@ function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeVie
         return false
 
       currentNode = updatedNode
+      if (!normalizeString(currentNode.attrs?.src))
+        loadError = false
       render()
       return true
     },
@@ -203,6 +480,7 @@ function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeVie
     },
     deselectNode() {
       selected = false
+      metadataEditorVisible = false
       render()
     },
     stopEvent(event: Event) {
@@ -219,10 +497,10 @@ function createImageNodeView({ editor, node: initialNode, getPos }: ImageNodeVie
   }
 }
 
-export function createRichTextEditorImageExtension() {
+export function createRichTextEditorImageExtension(options: RichTextEditorImageExtensionOptions = {}) {
   return CollabMarkdownImage.extend({
     addNodeView() {
-      return (props: ImageNodeViewContext) => createImageNodeView(props)
+      return (props: ImageNodeViewContext) => createImageNodeView(options, props)
     },
   })
 }

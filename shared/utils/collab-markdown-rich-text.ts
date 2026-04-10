@@ -17,6 +17,13 @@ export interface MarkdownRichTextBlock {
   text: string
 }
 
+export interface MarkdownRichTextImageReference {
+  resourceId: string | null
+  src: string
+  alt: string | null
+  title: string | null
+}
+
 type MarkdownMarkType = 'bold' | 'italic' | 'strike' | 'underline' | 'code' | 'link'
 
 interface MarkdownMark {
@@ -252,6 +259,34 @@ function plainTextFromPmNode(node: JSONContent | null | undefined): string {
     return ''
 
   return node.content.map(child => plainTextFromPmNode(child)).join('')
+}
+
+function collectPmImageReference(node: JSONContent | null | undefined): MarkdownRichTextImageReference | null {
+  if (!node || node.type !== 'image')
+    return null
+
+  const src = normalizeString(node.attrs?.src)
+  if (!src)
+    return null
+
+  return {
+    resourceId: normalizeOptionalString(node.attrs?.resourceId) || resolveResourceIdFromImageSrc(src),
+    src,
+    alt: normalizeOptionalString(node.attrs?.alt),
+    title: normalizeOptionalString(node.attrs?.title),
+  }
+}
+
+function visitPmNode(node: JSONContent | null | undefined, visit: (value: JSONContent) => void): void {
+  if (!node || typeof node !== 'object')
+    return
+
+  visit(node)
+  if (!Array.isArray(node.content))
+    return
+
+  for (const child of node.content)
+    visitPmNode(child, visit)
 }
 
 function normalizeDocumentContent(content: JSONContent[] | undefined): JSONContent[] {
@@ -852,6 +887,34 @@ export function serializeRichTextBlocksToMarkdown(blocks: MarkdownRichTextBlock[
   return serializeRichTextDocumentToMarkdown(blocksToDocument(blocks))
 }
 
+export function extractPrimaryHeadingFromRichTextDocument(documentNode: JSONContent | null | undefined): string {
+  const normalized = normalizeDocument(documentNode)
+  for (const block of normalized.content || []) {
+    if (block?.type !== 'heading')
+      continue
+    const level = normalizeHeadingLevel(block.attrs?.level)
+    if (level !== 1)
+      continue
+
+    const text = normalizeBlockText(plainTextFromPmNode(block))
+    if (text)
+      return text
+  }
+
+  return ''
+}
+
+export function collectImageReferencesFromRichTextDocument(documentNode: JSONContent | null | undefined): MarkdownRichTextImageReference[] {
+  const normalized = normalizeDocument(documentNode)
+  const result: MarkdownRichTextImageReference[] = []
+  visitPmNode(normalized, (node) => {
+    const reference = collectPmImageReference(node)
+    if (reference)
+      result.push(reference)
+  })
+  return result
+}
+
 export function readRichTextDocumentFromFragment(fragment: Y.XmlFragment): JSONContent {
   if (fragment.length === 0)
     return createEmptyDocument()
@@ -861,6 +924,14 @@ export function readRichTextDocumentFromFragment(fragment: Y.XmlFragment): JSONC
 
 export function readRichTextBlocksFromFragment(fragment: Y.XmlFragment): MarkdownRichTextBlock[] {
   return richTextDocumentToBlocks(readRichTextDocumentFromFragment(fragment))
+}
+
+export function extractPrimaryHeadingFromFragment(fragment: Y.XmlFragment): string {
+  return extractPrimaryHeadingFromRichTextDocument(readRichTextDocumentFromFragment(fragment))
+}
+
+export function collectImageReferencesFromFragment(fragment: Y.XmlFragment): MarkdownRichTextImageReference[] {
+  return collectImageReferencesFromRichTextDocument(readRichTextDocumentFromFragment(fragment))
 }
 
 export function writeRichTextDocumentToFragment(fragment: Y.XmlFragment, documentNode: JSONContent): void {
@@ -875,6 +946,22 @@ export function writeRichTextBlocksToFragment(fragment: Y.XmlFragment, blocks: M
 
 export function readMarkdownFromRichText(doc: Y.Doc): string {
   return serializeRichTextDocumentToMarkdown(readRichTextDocumentFromFragment(doc.getXmlFragment('prosemirror')))
+}
+
+export function extractPrimaryHeadingFromMarkdown(markdown: string): string {
+  return extractPrimaryHeadingFromRichTextDocument(parseMarkdownToRichTextDocument(markdown))
+}
+
+export function collectImageReferencesFromMarkdown(markdown: string): MarkdownRichTextImageReference[] {
+  return collectImageReferencesFromRichTextDocument(parseMarkdownToRichTextDocument(markdown))
+}
+
+export function extractPrimaryHeadingFromCollabDoc(doc: Y.Doc): string {
+  return extractPrimaryHeadingFromFragment(doc.getXmlFragment('prosemirror'))
+}
+
+export function collectImageReferencesFromCollabDoc(doc: Y.Doc): MarkdownRichTextImageReference[] {
+  return collectImageReferencesFromFragment(doc.getXmlFragment('prosemirror'))
 }
 
 export function isRichTextFragmentSemanticallyEmpty(fragment: Y.XmlFragment): boolean {

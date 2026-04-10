@@ -39,6 +39,13 @@ export interface WorkspaceAiExecutionContext {
   major: string
   contestName: string
   trackName: string
+  resourceId: string
+  resourceTitle: string
+  markdown: string
+  selectionText: string
+  selectionRange: Record<string, unknown> | null
+  trigger: string
+  documentAction: string
   projectSettingsSummary: string
   projectOutlineSummary: string
   resourceSummary: string
@@ -136,6 +143,13 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
     major: context.major,
     contestName: context.contestName,
     trackName: context.trackName,
+    resourceId: context.resourceId,
+    resourceTitle: context.resourceTitle,
+    markdown: context.markdown,
+    selectionText: context.selectionText,
+    selectionRange: context.selectionRange,
+    trigger: context.trigger,
+    documentAction: context.documentAction,
     projectSettingsSummary: context.projectSettingsSummary,
     projectOutlineSummary: context.projectOutlineSummary,
     resourceSummary: context.resourceSummary,
@@ -169,6 +183,43 @@ function buildIssueMarkdown(input: {
 }
 
 function buildFallbackResult(mode: WorkspaceAiMode, context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
+  if (mode === 'document_assist') {
+    const selection = context.selectionText || '当前选区'
+    if (context.documentAction === 'rewrite') {
+      return {
+        mode,
+        assistantReply: `改写建议：围绕“${selection.slice(0, 36)}”补齐主语、动作和结果，让句子更直接、更像项目文档。`,
+        changeDrafts: [],
+        issueDrafts: [],
+        reportTitle: '',
+        reportSummary: '',
+        reportMarkdown: '',
+      }
+    }
+
+    if (context.documentAction === 'continue') {
+      return {
+        mode,
+        assistantReply: `建议继续补一段“目标、方法、预期产出”三句式说明，承接 ${context.resourceTitle || '当前文档'} 的上下文。`,
+        changeDrafts: [],
+        issueDrafts: [],
+        reportTitle: '',
+        reportSummary: '',
+        reportMarkdown: '',
+      }
+    }
+
+    return {
+      mode,
+      assistantReply: `摘要：${selection.slice(0, 72) || context.resourceTitle || '当前文档'} 的核心是先明确问题，再用可验证路径组织方案与交付。`,
+      changeDrafts: [],
+      issueDrafts: [],
+      reportTitle: '',
+      reportSummary: '',
+      reportMarkdown: '',
+    }
+  }
+
   if (mode === 'auto_optimize') {
     const draftSummary = context.projectSettingsSummary || '项目设置信息较少，建议先补齐。'
     const changeDrafts: WorkspaceAiChangeDraft[] = [
@@ -278,10 +329,36 @@ function buildModePrompt(mode: WorkspaceAiMode): string {
     ].join('\n')
   }
 
+  if (mode === 'document_assist') {
+    return [
+      '模式：文档增强（只读生成，用户确认后才落文）。',
+      '禁止产出任何可执行写入动作，也不要假设已经修改文档。',
+      '仅输出适合直接插入 markdown 文档的结果正文，不要附加冗长说明。',
+      '若是 summarize，则输出精炼摘要；若是 rewrite，则直接输出改写后的替代文本；若是 continue，则输出自然续写段落。',
+    ].join('\n')
+  }
+
   return '模式：答辩模拟。'
 }
 
 function buildPrompt(mode: WorkspaceAiMode, context: WorkspaceAiExecutionContext): string {
+  if (mode === 'document_assist') {
+    return [
+      `当前模式：${mode}`,
+      `文档标题：${context.resourceTitle || '未命名文档'}`,
+      `动作：${context.documentAction || 'summarize'}`,
+      `触发来源：${context.trigger || 'right_sidebar'}`,
+      '',
+      '当前选区：',
+      context.selectionText || '（无选区）',
+      '',
+      '文档正文（截断前文）：',
+      context.markdown || '（空文档）',
+      '',
+      '请严格按动作返回可直接落入文档的正文内容。',
+    ].join('\n')
+  }
+
   const lines = [
     `当前模式：${mode}`,
     `竞赛：${context.contestName || '未选择'}`,

@@ -331,6 +331,9 @@ export interface Resource {
   projectId?: string
   resourceKind?: ResourceKind
   collabPurpose?: CollabPurpose
+  drawMode?: DrawMode
+  sceneSourceType?: SceneSourceType
+  templateKey?: string
   revision?: number
   documentId?: string
   title: string
@@ -364,6 +367,289 @@ export interface Resource {
   createdAt?: string
   updatedAt?: string
   aiProfile?: ResourceKnowledgeProfileSummary
+}
+
+export type DrawMode = 'freeform' | 'diagram' | 'schema' | 'architecture' | 'composition'
+export type SceneSourceType = 'manual' | 'mermaid' | 'markdown_outline' | 'ddl' | 'db_introspection' | 'repo_arch' | 'image_mockup'
+export type SceneLayoutDirection = 'TB' | 'BT' | 'LR' | 'RL' | 'none'
+export type SceneEdgeStyle = 'solid' | 'dashed' | 'dotted'
+export type SceneNodeShape = 'rect' | 'rounded' | 'pill' | 'diamond' | 'note' | 'image' | 'table'
+export type SceneTemplateCategory = 'diagram' | 'schema' | 'architecture' | 'composition'
+export type SceneExportFormat = 'svg' | 'png' | 'pdf'
+export type SceneExportStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
+
+export interface SceneNode {
+  id: string
+  type: string
+  label: string
+  x: number
+  y: number
+  width: number
+  height: number
+  shape?: SceneNodeShape
+  parentId?: string
+  content?: string
+  metadata?: Record<string, unknown>
+  style?: Record<string, string | number | boolean | null>
+}
+
+export interface SceneEdge {
+  id: string
+  source: string
+  target: string
+  label?: string
+  style?: SceneEdgeStyle
+  metadata?: Record<string, unknown>
+}
+
+export interface SceneArtboard {
+  id: string
+  name: string
+  width: number
+  height: number
+  background?: string
+  padding?: number
+  metadata?: Record<string, unknown>
+}
+
+export interface SceneModel {
+  nodes: SceneNode[]
+  edges: SceneEdge[]
+  artboards?: SceneArtboard[]
+  layout?: {
+    engine?: string
+    direction?: SceneLayoutDirection
+    compact?: boolean
+  }
+  themeTokens?: Record<string, string>
+  metadata?: Record<string, unknown>
+}
+
+export interface GraphSourceNode {
+  id: string
+  label: string
+  type?: string
+  parentId?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface GraphSourceEdge {
+  id: string
+  source: string
+  target: string
+  label?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface GraphSourceModel {
+  kind: 'graph'
+  diagramType: 'flowchart' | 'mindmap' | 'relationship' | 'architecture'
+  nodes: GraphSourceNode[]
+  edges: GraphSourceEdge[]
+  groups?: Array<{
+    id: string
+    label: string
+    childNodeIds: string[]
+    metadata?: Record<string, unknown>
+  }>
+  sourceText?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaColumnModel {
+  name: string
+  type: string
+  nullable: boolean
+  defaultValue?: string
+  comment?: string
+  isPrimaryKey?: boolean
+  referencesTable?: string
+  referencesColumn?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaForeignKeyModel {
+  name?: string
+  columns: string[]
+  referencedTable: string
+  referencedColumns: string[]
+  onDelete?: string
+  onUpdate?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaIndexModel {
+  name: string
+  columns: string[]
+  unique?: boolean
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaTableModel {
+  name: string
+  schemaName?: string
+  columns: SchemaColumnModel[]
+  primaryKeys?: string[]
+  foreignKeys?: SchemaForeignKeyModel[]
+  indexes?: SchemaIndexModel[]
+  comment?: string
+  domain?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaTypeModel {
+  name: string
+  kind: 'scalar' | 'enum' | 'json' | 'custom'
+  values?: string[]
+  comment?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaModel {
+  kind: 'schema'
+  dialect?: 'postgres' | 'mysql' | 'generic'
+  tables: SchemaTableModel[]
+  types?: SchemaTypeModel[]
+  comments?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface ArchitectureElementModel {
+  id: string
+  label: string
+  type?: string
+  description?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface ArchitectureRelationModel {
+  id: string
+  source: string
+  target: string
+  label?: string
+  protocol?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface ArchitectureModel {
+  kind: 'architecture'
+  systems: ArchitectureElementModel[]
+  services: ArchitectureElementModel[]
+  components: ArchitectureElementModel[]
+  databases: ArchitectureElementModel[]
+  queues: ArchitectureElementModel[]
+  externalDependencies: ArchitectureElementModel[]
+  interfaces?: Array<ArchitectureElementModel & {
+    protocol?: string
+  }>
+  relations: ArchitectureRelationModel[]
+  metadata?: Record<string, unknown>
+}
+
+export interface CompositionBlock {
+  id: string
+  type: 'headline' | 'subheadline' | 'image' | 'metric' | 'badge' | 'caption' | 'comparison'
+  title?: string
+  body?: string
+  imageSrc?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface CompositionModel {
+  kind: 'composition'
+  templateKey: string
+  slots?: Record<string, unknown>
+  themeTokens?: Record<string, string>
+  layoutRules?: Record<string, unknown>
+  allowedBlocks?: string[]
+  exportPresets?: string[]
+  aspectRatio?: string
+  deviceFramePresetKey?: string
+  blocks?: CompositionBlock[]
+  metadata?: Record<string, unknown>
+}
+
+export type SceneSourceModel = GraphSourceModel | SchemaModel | ArchitectureModel | CompositionModel
+export type DrawRuntimeSnapshot = Record<string, unknown> | unknown[]
+
+export interface SceneDocument {
+  version: number
+  drawMode: DrawMode
+  sourceType: SceneSourceType
+  templateKey?: string
+  sourceModel: SceneSourceModel
+  sceneModel: SceneModel
+  runtimeSnapshot?: DrawRuntimeSnapshot | null
+  metadata?: Record<string, unknown>
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface SceneTemplateSummary {
+  templateKey: string
+  category: SceneTemplateCategory
+  title: string
+  summary: string
+  drawMode: DrawMode
+  sourceTypes?: SceneSourceType[]
+  tags?: string[]
+}
+
+export interface DesignTemplateManifest extends SceneTemplateSummary {
+  slotSchema: Record<string, unknown>
+  themeTokens: Record<string, string>
+  layoutRules: Record<string, unknown>
+  allowedBlocks: string[]
+  exportPresets: SceneExportFormat[]
+}
+
+export interface DeviceFramePreset {
+  key: string
+  title: string
+  deviceFamily: 'phone' | 'tablet' | 'desktop' | 'browser'
+  width: number
+  height: number
+  framePadding: number
+  bezelRadius: number
+  screenRadius: number
+  background: string
+  shadow: string
+}
+
+export interface DataSourceConnector {
+  key: string
+  title: string
+  type: SceneSourceType | 'composition_render'
+  readonly: boolean
+  capabilities: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface SceneExportJob {
+  id: string
+  format: SceneExportFormat
+  status: SceneExportStatus
+  width: number
+  height: number
+  background?: string
+  templateKey?: string
+  drawMode?: DrawMode
+  error?: string
+  downloadUrl?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface SchemaImportResult {
+  schemaModel: SchemaModel
+  sceneDocument: SceneDocument
+  warnings: string[]
+}
+
+export interface ArchitectureImportResult {
+  architectureModel: ArchitectureModel
+  sceneDocument: SceneDocument
+  warnings: string[]
 }
 
 export type ProjectResourceUploadSessionStatus
@@ -1262,7 +1548,7 @@ export interface ProjectSettingsDraft {
   lastOpenedAt: string
 }
 
-export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings'
+export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'design' | 'settings'
 export type WorkspaceMeetingTabId = `meeting:${string}`
 export type WorkspaceMeetingCreateTabId = 'meeting-create:audio' | 'meeting-create:video'
 export type WorkspaceResourceTabId = `resource:${string}`
@@ -1443,7 +1729,79 @@ export interface AiProjectChatResult {
   sessionId?: string
 }
 
-export type WorkspaceAiMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'defense'
+export type WorkspaceAiMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'defense' | 'document_assist'
+
+export type ProjectResourceCommentAnchorType = 'text_selection' | 'image_node'
+export type ProjectResourceCommentThreadStatus = 'open' | 'resolved'
+export type AiWorkspaceDocumentTrigger = 'selection_toolbar' | 'slash_menu' | 'right_sidebar'
+export type AiWorkspaceDocumentAction = 'summarize' | 'rewrite' | 'continue'
+
+export interface AiWorkspaceDocumentSelectionRange {
+  anchorLine: number
+  anchorColumn: number
+  headLine: number
+  headColumn: number
+  isCollapsed: boolean
+  selectionLength: number
+}
+
+export interface ProjectResourceCommentTextSelectionAnchor {
+  type: 'text_selection'
+  anchor: Record<string, unknown>
+  head: Record<string, unknown>
+  selectedTextPreview: string
+  headingText: string
+  anchorLine: number
+  anchorColumn: number
+  headLine: number
+  headColumn: number
+  selectionLength: number
+  isCollapsed: boolean
+}
+
+export interface ProjectResourceCommentImageNodeAnchor {
+  type: 'image_node'
+  resourceId?: string | null
+  src: string
+  alt?: string | null
+  title?: string | null
+}
+
+export type ProjectResourceCommentAnchor
+  = | ProjectResourceCommentTextSelectionAnchor
+    | ProjectResourceCommentImageNodeAnchor
+
+export interface ProjectResourceCommentMessage {
+  id: string
+  projectId: string
+  resourceId: string
+  threadId: string
+  body: string
+  createdByUserId: string
+  createdByUsername?: string | null
+  createdByAvatarUrl?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectResourceCommentThread {
+  id: string
+  projectId: string
+  resourceId: string
+  status: ProjectResourceCommentThreadStatus
+  anchorType: ProjectResourceCommentAnchorType
+  anchor: ProjectResourceCommentAnchor
+  summaryText: string
+  createdByUserId: string
+  createdByUsername?: string | null
+  createdByAvatarUrl?: string | null
+  resolvedByUserId?: string | null
+  resolvedByUsername?: string | null
+  resolvedAt?: string | null
+  createdAt: string
+  updatedAt: string
+  messages: ProjectResourceCommentMessage[]
+}
 
 export interface AiTopicProposalRequest {
   teamId?: string
@@ -1880,6 +2238,13 @@ export interface AiWorkspaceRequest {
     contestId?: string
     trackId?: string
     major?: string
+    resourceId?: string
+    resourceTitle?: string
+    markdown?: string
+    selectionText?: string
+    selectionRange?: AiWorkspaceDocumentSelectionRange | null
+    trigger?: AiWorkspaceDocumentTrigger
+    documentAction?: AiWorkspaceDocumentAction
   }
   aiOptions?: Partial<AiAssistantOptions>
 }

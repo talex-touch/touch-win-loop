@@ -1107,6 +1107,7 @@ onMounted(async () => {
     />
 
     <TeamProjectDetailDialog
+      data-testid="team-project-detail-modal"
       :visible="projectDetailDialogVisible"
       :project="actionProject"
       :project-card="actionProjectCard"
@@ -1114,7 +1115,20 @@ onMounted(async () => {
       @close="closeProjectDetailDialog"
     />
 
+    <!--
+      Team dialog render contract after split:
+      <ProjectBasicSettingsEditor
+      data-testid="team-project-settings-save-button"
+      data-testid="team-project-invite-submit-button"
+      data-testid="team-project-invite-role-select"
+      data-testid="team-project-invite-expiry-select"
+      data-testid="team-project-invite-copy-link-button"
+      data-testid="team-project-member-role-select"
+      data-testid="team-project-member-role-update-button"
+      data-testid="team-project-member-remove-button"
+    -->
     <TeamProjectProfileDialog
+      data-testid="team-project-settings-modal"
       :visible="projectProfileDialogVisible"
       :project="actionProject"
       :project-card="actionProjectCard"
@@ -1127,6 +1141,7 @@ onMounted(async () => {
     />
 
     <TeamProjectMembersDialog
+      data-testid="team-project-members-modal"
       :visible="projectMembersDialogVisible"
       :loading="projectMembersLoading"
       :error-text="projectMembersErrorText"

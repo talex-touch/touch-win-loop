@@ -50,11 +50,10 @@ watch(() => props.workspaceId, (value) => {
 
 <template>
   <a-drawer
-    :visible="drawerVisible"
+    v-model:visible="drawerVisible"
     width="420px"
     unmount-on-close
     title="通知中心"
-    @cancel="center.closeDrawer"
   >
     <template #title>
       <div class="pr-4 flex items-center justify-between">

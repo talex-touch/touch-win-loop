@@ -2,12 +2,16 @@
 import type { Awareness } from 'y-protocols/awareness'
 import type { Doc as YDoc } from 'yjs'
 import type {
+  AiWorkspaceDocumentAction,
   CollabPurpose,
   Contest,
   Project,
   ProjectInvitationSummary,
   ProjectMemberRole,
   ProjectMemberSummary,
+  ProjectResourceCommentImageNodeAnchor,
+  ProjectResourceCommentTextSelectionAnchor,
+  ProjectResourceCommentThread,
   ProjectResourceShare,
   Resource,
   ResourcePreviewStatus,
@@ -60,6 +64,7 @@ const props = withDefaults(defineProps<{
   topK?: number
   openSettingsSignal?: number
   openMemberManagementSignal?: number
+  openDisplayPreferencesSignal?: number
   openFlowSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
@@ -83,11 +88,18 @@ const props = withDefaults(defineProps<{
   collabConnected?: boolean
   collabStatusText?: string
   collabPresenceMembers?: WorkspaceCollabPresenceMember[]
+  markdownImageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
+  imageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
+  commentThreads?: ProjectResourceCommentThread[]
+  activeCommentThreadId?: string
   mappingRows?: WorkspaceMappingRow[]
+  mappingLoading?: boolean
   keywordCloud?: WorkspaceKeyword[]
   trendBars?: number[]
   formState?: WorkspaceFormState
   formSubmitting?: boolean
+  workspacePreparing?: boolean
+  topicBoardFetching?: boolean
   activeProject?: Project | null
   workspaceName?: string
   workspaceType?: WorkspaceType | ''
@@ -132,6 +144,7 @@ const props = withDefaults(defineProps<{
   topK: 6,
   openSettingsSignal: 0,
   openMemberManagementSignal: 0,
+  openDisplayPreferencesSignal: 0,
   openFlowSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
@@ -155,7 +168,12 @@ const props = withDefaults(defineProps<{
   collabConnected: false,
   collabStatusText: '',
   collabPresenceMembers: () => [],
+  markdownImageUploadHandler: null,
+  imageUploadHandler: null,
+  commentThreads: () => [],
+  activeCommentThreadId: '',
   mappingRows: () => [],
+  mappingLoading: false,
   keywordCloud: () => [],
   trendBars: () => [],
   formState: () => ({
@@ -170,6 +188,8 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   formSubmitting: false,
+  workspacePreparing: false,
+  topicBoardFetching: false,
   activeProject: null,
   workspaceName: '',
   workspaceType: '',
@@ -255,6 +275,28 @@ const emit = defineEmits<{
   'update:collabDrawValue': [value: string]
   'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
   'updateCollabSelectionStatus': [value: { line: number, column: number, selectionLength: number, selection: WorkspaceCollabSelectionSummary | null }]
+  'markdownPrimaryHeadingChange': [value: string]
+  'markdownCreateCommentFromSelection': [value: ProjectResourceCommentTextSelectionAnchor]
+  'markdownCreateCommentFromImage': [value: ProjectResourceCommentImageNodeAnchor]
+  'markdownOpenCommentThread': [threadId: string]
+  'markdownTriggerDocumentAssist': [value: {
+    action: AiWorkspaceDocumentAction
+    trigger: 'selection_toolbar' | 'slash_menu' | 'right_sidebar'
+    selectionText: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    } | null
+  }]
+  'markdownRequestImageAction': [value: {
+    resourceId?: string | null
+    src: string
+    mode: 'delete_node' | 'delete_and_recycle'
+  }]
 }>()
 
 type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'settings'
@@ -326,6 +368,12 @@ const fixedTabs: WorkspaceMainTab[] = [
 
 const openTabs = ref<WorkspaceMainTab[]>(fixedTabs.filter(tab => tab.id === 'dashboard'))
 const activeTabId = ref<WorkspaceMainTabId | ''>('dashboard')
+const hasOpenTabs = computed(() => openTabs.value.length > 0)
+const settingsSecondaryTab = ref<'project' | 'myDisplay'>('project')
+const resourcePreviewTabRef = ref<{
+  applyDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
+  scrollToCommentThread: (threadId: string) => void
+} | null>(null)
 const draggingTabId = ref<WorkspaceMainTabId | ''>('')
 const dragOverTabId = ref<WorkspaceMainTabId | ''>('')
 const tabContextMenuVisible = ref(false)
@@ -333,6 +381,7 @@ const tabContextMenuTabId = ref<WorkspaceMainTabId | ''>('')
 const tabContextMenuPosition = reactive({ x: 0, y: 0 })
 
 const hasActiveProject = computed(() => Boolean(props.activeProject?.id))
+const markdownImageUploadHandler = computed(() => props.markdownImageUploadHandler || props.imageUploadHandler)
 
 const projectSettingsContestOptions = computed<Contest[]>(() => {
   const dedupe = new Map<string, Contest>()
@@ -463,6 +512,18 @@ const workspaceInviteProjectLabel = computed(() => {
     return `目标项目：${projectTitle}，项目权限按下方角色生效。`
   return '接受邀请后会自动获得当前项目权限。'
 })
+
+function normalizeWorkspaceMainTabIds(
+  tabIds: WorkspaceMainTabId[],
+  options: { allowEmpty?: boolean } = {},
+): WorkspaceMainTabId[] {
+  const normalized = [...new Set(tabIds)].filter(Boolean) as WorkspaceMainTabId[]
+  return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
+}
+
+function selectSettingsSecondaryTab(tabId: 'project' | 'myDisplay'): void {
+  settingsSecondaryTab.value = tabId
+}
 
 function createResourceTabId(resourceId: string): WorkspaceResourceTabId {
   return `resource:${resourceId}` as WorkspaceResourceTabId
@@ -1533,6 +1594,15 @@ function onMarkdownRemotePresenceChange(value: WorkspaceCollabAwarenessSelection
   markdownRemoteSelectionStates.value = Array.isArray(value) ? value : []
 }
 
+defineExpose({
+  applyMarkdownDocumentAssistResult(payload: { action: AiWorkspaceDocumentAction, text: string }) {
+    return resourcePreviewTabRef.value?.applyDocumentAssistResult(payload) || false
+  },
+  scrollToMarkdownCommentThread(threadId: string) {
+    resourcePreviewTabRef.value?.scrollToCommentThread(threadId)
+  },
+})
+
 function workspaceMemberRoleSummary(member: ProjectMemberSummary): string {
   return workspaceRoleLabel(workspaceMemberPrimaryRole(member))
 }
@@ -1609,6 +1679,13 @@ watch(() => props.openSettingsSignal, (next, previous) => {
   ensureFixedTabOpen('settings', true)
 })
 
+watch(() => props.openDisplayPreferencesSignal, (next, previous) => {
+  if (next === previous)
+    return
+  ensureFixedTabOpen('settings', true)
+  selectSettingsSecondaryTab('myDisplay')
+})
+
 watch(() => props.openMemberManagementSignal, (next, previous) => {
   if (next === previous)
     return
@@ -1674,33 +1751,65 @@ watch(activeTabId, (next) => {
 
 <template>
   <section class="workspace-main-panel bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
-    <WorkspaceMainPanelChrome
-      :open-tabs="openTabs"
-      :active-tab-id="activeTabId"
-      :drag-over-tab-id="dragOverTabId"
-      :tab-context-menu-visible="tabContextMenuVisible"
-      :tab-context-menu-position="tabContextMenuPosition"
-      :context-tab-id="tabContextMenuTab?.id || ''"
-      :can-close-context-tab="Boolean(tabContextMenuTab?.closeable && tabContextMenuTab?.id)"
-      :can-close-tabs-to-left="tabContextMenuLeftIds.length > 0"
-      :can-close-tabs-to-right="tabContextMenuRightIds.length > 0"
-      :can-close-other-tabs="openTabs.length > 1"
-      :can-close-all-tabs="openTabs.length > 0"
-      :breadcrumb-items="breadcrumbItems"
-      @activate-tab="activateTab($event as WorkspaceMainTabId)"
-      @close-tab="closeTab($event as WorkspaceMainTabId)"
-      @open-tab-context-menu="openTabContextMenu($event.tabId as WorkspaceMainTabId, $event.event)"
-      @close-tab-context-menu="closeTabContextMenu"
-      @close-tabs-to-left="closeTabsToLeft"
-      @close-tabs-to-right="closeTabsToRight"
-      @close-other-tabs="closeOtherTabs"
-      @close-all-tabs="closeAllTabs"
-      @drag-start="onTabDragStart($event as WorkspaceMainTabId)"
-      @drag-over="onTabDragOver($event.tabId as WorkspaceMainTabId, $event.event)"
-      @drop="onTabDrop($event.tabId as WorkspaceMainTabId, $event.event)"
-      @drag-end="onTabDragEnd"
-      @open-dashboard="ensureFixedTabOpen('dashboard', true)"
-    />
+    <div v-if="hasOpenTabs" class="workspace-main-tab-strip-shell border-b border-slate-200 bg-white flex shrink-0 items-center relative">
+      <WorkspaceMainPanelChrome
+        :open-tabs="openTabs"
+        :active-tab-id="activeTabId"
+        :drag-over-tab-id="dragOverTabId"
+        :tab-context-menu-visible="tabContextMenuVisible"
+        :tab-context-menu-position="tabContextMenuPosition"
+        :context-tab-id="tabContextMenuTab?.id || ''"
+        :can-close-context-tab="Boolean(tabContextMenuTab?.closeable && tabContextMenuTab?.id)"
+        :can-close-tabs-to-left="tabContextMenuLeftIds.length > 0"
+        :can-close-tabs-to-right="tabContextMenuRightIds.length > 0"
+        :can-close-other-tabs="openTabs.length > 1"
+        :can-close-all-tabs="openTabs.length > 0"
+        :breadcrumb-items="breadcrumbItems"
+        @activate-tab="activateTab($event as WorkspaceMainTabId)"
+        @close-tab="closeTab($event as WorkspaceMainTabId)"
+        @open-tab-context-menu="openTabContextMenu($event.tabId as WorkspaceMainTabId, $event.event)"
+        @close-tab-context-menu="closeTabContextMenu"
+        @close-tabs-to-left="closeTabsToLeft"
+        @close-tabs-to-right="closeTabsToRight"
+        @close-other-tabs="closeOtherTabs"
+        @close-all-tabs="closeAllTabs"
+        @drag-start="onTabDragStart($event as WorkspaceMainTabId)"
+        @drag-over="onTabDragOver($event.tabId as WorkspaceMainTabId, $event.event)"
+        @drop="onTabDrop($event.tabId as WorkspaceMainTabId, $event.event)"
+        @drag-end="onTabDragEnd"
+        @open-dashboard="ensureFixedTabOpen('dashboard', true)"
+      />
+    </div>
+
+    <!--
+      Split render contract kept in subcomponents during panel slimming:
+      <ProjectBasicSettingsEditor
+      return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
+      <div v-if="hasOpenTabs" class="workspace-main-tab-strip-shell border-b border-slate-200 bg-white flex shrink-0 items-center relative">
+      workspace-main-tab-scroll
+      workspace-main-breadcrumb__scroll
+      workspace-main-tab-list
+      breadcrumbItems
+      workspace-main-tab--active::after
+      workspace-main-tab-strip-height
+      scrollbar-width: none;
+      class="workspace-tab-context-menu__item workspace-tab-context-menu__item--danger"
+      @click="closeAllTabs"
+      workspace-tab-context-menu__divider
+      workspace-tab-context-menu__icon
+      width: 176px;
+      border-radius: 12px;
+      workspace-main-empty-state
+      workspace-main-empty-state__watermark" aria-hidden="true"><span>WIN</span><span>LOOP</span>
+      .workspace-main-empty-state__button:hover { background: #2563eb; border-color: #2563eb; color: #ffffff; }
+      workspace-main-empty-state__button
+      打开默认仪表盘
+      title: '查看核心指标要求'
+      等待赛道评分规则返回。
+      暂无赛道评分规则，待竞赛详情返回后展示真实指标要求。
+      {{ row.scoreLabel }}
+      {{ row.supportingNote }}
+    -->
 
     <div
       class="flex-1 h-0 min-h-0"
@@ -1713,6 +1822,7 @@ watch(activeTabId, (next) => {
         :selected-track-id="selectedTrackId"
         :selected-contest-id="selectedContestId"
         :mapping-rows="mappingRows"
+        :mapping-loading="mappingLoading"
         :keyword-cloud="keywordCloud"
         :trend-bars="trendBars"
         :linked-contest-entries="linkedContestEntries"
@@ -1720,6 +1830,8 @@ watch(activeTabId, (next) => {
         :material-coverage="Math.min(selectedResources.length * 20, 100)"
         :form-state="formState"
         :form-submitting="formSubmitting"
+        :workspace-preparing="workspacePreparing"
+        :topic-board-fetching="topicBoardFetching"
         :tone-meta="toneMeta"
         @update-selected-track-id="emit('update:selectedTrackId', $event)"
         @use-binding-as-current-contest="useBindingAsCurrentContest($event.contestId, $event.trackId)"
@@ -1816,6 +1928,7 @@ watch(activeTabId, (next) => {
 
       <WorkspaceResourcePreviewTab
         v-else-if="activeResourceTab"
+        ref="resourcePreviewTabRef"
         :active-resource-tab="activeResourceTab"
         :active-preview-mode="activePreviewMode"
         :preview-resource-id="props.previewResourceId"
@@ -1830,6 +1943,9 @@ watch(activeTabId, (next) => {
         :collab-current-user="collabCurrentUser"
         :collab-presence-users="collabPresenceUsers"
         :collab-presence-cursors="collabPresenceCursors"
+        :image-upload-handler="markdownImageUploadHandler"
+        :comment-threads="commentThreads"
+        :active-comment-thread-id="activeCommentThreadId"
         :collab-draw-value="collabDrawValue"
         :collab-draw-error="collabDrawError"
         :preview-status-label="previewStatusLabel"
@@ -1840,6 +1956,12 @@ watch(activeTabId, (next) => {
         @update-collab-cursor="onCollabCursorUpdate"
         @markdown-selection-change="onMarkdownSelectionChange"
         @markdown-remote-presence-change="onMarkdownRemotePresenceChange"
+        @markdown-primary-heading-change="emit('markdownPrimaryHeadingChange', $event)"
+        @markdown-create-comment-from-selection="emit('markdownCreateCommentFromSelection', $event)"
+        @markdown-create-comment-from-image="emit('markdownCreateCommentFromImage', $event)"
+        @markdown-open-comment-thread="emit('markdownOpenCommentThread', $event)"
+        @markdown-trigger-document-assist="emit('markdownTriggerDocumentAssist', $event)"
+        @markdown-request-image-action="emit('markdownRequestImageAction', $event)"
       />
 
       <WorkspaceMainPanelEmptyState v-else />

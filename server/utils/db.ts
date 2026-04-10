@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_sessions (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL DEFAULT '',
-  mode TEXT NOT NULL DEFAULT 'dialog_ask' CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense')),
+  mode TEXT NOT NULL DEFAULT 'dialog_ask' CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist')),
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT '',
   contest_id TEXT NOT NULL DEFAULT '',
@@ -1272,6 +1272,32 @@ CREATE TABLE IF NOT EXISTS project_resource_collab_docs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_resource_comment_threads (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+  anchor_type TEXT NOT NULL CHECK (anchor_type IN ('text_selection', 'image_node')),
+  anchor_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  summary_text TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  resolved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS project_resource_comment_messages (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL REFERENCES project_resources(id) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL REFERENCES project_resource_comment_threads(id) ON DELETE CASCADE,
+  body TEXT NOT NULL DEFAULT '',
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS project_meetings (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -1552,7 +1578,7 @@ CREATE TABLE IF NOT EXISTS ai_project_change_requests (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL REFERENCES ai_chat_sessions(id) ON DELETE CASCADE,
-  mode TEXT NOT NULL CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense')),
+  mode TEXT NOT NULL CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist')),
   change_type TEXT NOT NULL CHECK (change_type IN (
     'settings_common_patch',
     'contest_bindings_replace',
@@ -1585,7 +1611,7 @@ CREATE TABLE IF NOT EXISTS project_issue_reports (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL REFERENCES ai_chat_sessions(id) ON DELETE CASCADE,
-  source_mode TEXT NOT NULL CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense')),
+  source_mode TEXT NOT NULL CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist')),
   title TEXT NOT NULL DEFAULT '',
   summary TEXT NOT NULL DEFAULT '',
   markdown TEXT NOT NULL DEFAULT '',
@@ -2335,6 +2361,9 @@ CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_document ON proje
 CREATE INDEX IF NOT EXISTS idx_project_resource_document_tasks_stage ON project_resource_document_tasks(stage, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_collab_docs_project_resource ON project_resource_collab_docs(project_id, resource_id);
 CREATE INDEX IF NOT EXISTS idx_project_resource_collab_docs_project_updated ON project_resource_collab_docs(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_comment_threads_resource_updated ON project_resource_comment_threads(project_id, resource_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_comment_threads_status ON project_resource_comment_threads(project_id, resource_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resource_comment_messages_thread_created ON project_resource_comment_messages(thread_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_resource_documents_contest_status ON contest_resource_documents(contest_id, parse_status);
 CREATE INDEX IF NOT EXISTS idx_resource_documents_resource ON contest_resource_documents(resource_id);
 CREATE INDEX IF NOT EXISTS idx_resource_document_tasks_status_created ON contest_resource_document_tasks(status, created_at);
@@ -2663,14 +2692,28 @@ ALTER TABLE ai_chat_sessions
 
 UPDATE ai_chat_sessions
 SET mode = 'dialog_ask'
-WHERE COALESCE(mode, '') NOT IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense');
+WHERE COALESCE(mode, '') NOT IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist');
 
 ALTER TABLE ai_chat_sessions
   DROP CONSTRAINT IF EXISTS ai_chat_sessions_mode_check;
 
 ALTER TABLE ai_chat_sessions
   ADD CONSTRAINT ai_chat_sessions_mode_check
-  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense'));
+  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist'));
+
+ALTER TABLE ai_project_change_requests
+  DROP CONSTRAINT IF EXISTS ai_project_change_requests_mode_check;
+
+ALTER TABLE ai_project_change_requests
+  ADD CONSTRAINT ai_project_change_requests_mode_check
+  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist'));
+
+ALTER TABLE project_issue_reports
+  DROP CONSTRAINT IF EXISTS project_issue_reports_source_mode_check;
+
+ALTER TABLE project_issue_reports
+  ADD CONSTRAINT project_issue_reports_source_mode_check
+  CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist'));
 
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_project_mode_updated
   ON ai_chat_sessions(workspace_id, project_id, mode, updated_at DESC);

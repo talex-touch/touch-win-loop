@@ -8,6 +8,14 @@ import type {
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 
+export type MappingTone = 'critical' | 'high' | 'medium' | 'low' | 'complete' | 'warning' | 'todo'
+
+export interface WorkspaceStatusToneMeta {
+  label: string
+  badgeClass: string
+  barClass: string
+}
+
 export interface WorkspaceMappingRow {
   id: string
   metric: string
@@ -16,6 +24,8 @@ export interface WorkspaceMappingRow {
   scoreLabel: string
   ability: string
   supportingNote: string
+  tone: MappingTone
+  tags: string[]
 }
 
 export interface WorkspaceKeyword {

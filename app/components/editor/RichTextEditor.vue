@@ -1,5 +1,13 @@
 <script setup lang="ts">
 import type { Awareness } from 'y-protocols/awareness'
+import type {
+  AiWorkspaceDocumentAction,
+  AiWorkspaceDocumentSelectionRange,
+  AiWorkspaceDocumentTrigger,
+  ProjectResourceCommentImageNodeAnchor,
+  ProjectResourceCommentTextSelectionAnchor,
+  ProjectResourceCommentThread,
+} from '~~/shared/types/domain'
 import type { WorkspaceFontSizePreset } from '~~/shared/types/domain'
 import type { CollabMarkdownHeadingLevel } from '~~/shared/utils/collab-rich-text-schema'
 import type { RichTextEditorCommand } from '~/components/editor/rich-text-editor-commands'
@@ -8,12 +16,15 @@ import type {
   WorkspaceCollabSelectionSummary,
 } from '~/components/workspace/collab/presence'
 import { Extension } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import Collaboration from '@tiptap/extension-collaboration'
 import Dropcursor from '@tiptap/extension-dropcursor'
 import Gapcursor from '@tiptap/extension-gapcursor'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Editor, EditorContent } from '@tiptap/vue-3'
 import {
+  absolutePositionToRelativePosition,
   relativePositionToAbsolutePosition,
   yCursorPlugin,
   ySyncPluginKey,
@@ -24,7 +35,10 @@ import {
   createCollabMarkdownBaseExtensions,
 } from '~~/shared/utils/collab-rich-text-schema'
 import { buildRichTextEditorCommands } from '~/components/editor/rich-text-editor-commands'
-import { createRichTextEditorImageExtension } from '~/components/editor/rich-text-editor-image-extension'
+import {
+  createRichTextEditorImageExtension,
+  type RichTextEditorImageNodeActionPayload,
+} from '~/components/editor/rich-text-editor-image-extension'
 
 interface RichTextEditorCurrentUser {
   id: string
@@ -42,6 +56,13 @@ interface RichTextEditorImageUploadResult {
 interface RichTextEditorSelectionChangePayload extends WorkspaceCollabSelectionSummary {
   line: number
   column: number
+}
+
+interface RichTextEditorDocumentAssistPayload {
+  action: AiWorkspaceDocumentAction
+  trigger: AiWorkspaceDocumentTrigger
+  selectionText: string
+  selectionRange: AiWorkspaceDocumentSelectionRange | null
 }
 
 interface RichTextEditorOutlineItem {
@@ -66,6 +87,10 @@ const props = withDefaults(defineProps<{
   contentMaxWidth?: number | string
   enableSlashMenu?: boolean
   uiFontSizePreset?: WorkspaceFontSizePreset
+  enableComments?: boolean
+  commentThreads?: ProjectResourceCommentThread[]
+  activeCommentThreadId?: string
+  enableDocumentAssist?: boolean
   imageUploadHandler?: ((file: File) => Promise<RichTextEditorImageUploadResult>) | null
 }>(), {
   awareness: null,
@@ -77,12 +102,22 @@ const props = withDefaults(defineProps<{
   contentMaxWidth: '1040px',
   enableSlashMenu: false,
   uiFontSizePreset: 'md',
+  enableComments: false,
+  commentThreads: () => [],
+  activeCommentThreadId: '',
+  enableDocumentAssist: false,
   imageUploadHandler: null,
 })
 
 const emit = defineEmits<{
   selectionChange: [value: RichTextEditorSelectionChangePayload]
   remotePresenceChange: [value: WorkspaceCollabAwarenessSelectionState[]]
+  primaryHeadingChange: [value: string]
+  createCommentFromSelection: [value: ProjectResourceCommentTextSelectionAnchor]
+  createCommentFromImage: [value: ProjectResourceCommentImageNodeAnchor]
+  openCommentThread: [threadId: string]
+  triggerDocumentAssist: [value: RichTextEditorDocumentAssistPayload]
+  requestImageAction: [value: RichTextEditorImageNodeActionPayload]
 }>()
 
 const editor = shallowRef<Editor | null>(null)
@@ -94,6 +129,7 @@ const imageInputRef = ref<HTMLInputElement | null>(null)
 const pendingImageInsertPosition = ref<number | null>(null)
 const outlineItems = ref<RichTextEditorOutlineItem[]>([])
 const activeOutlineHeadingPos = ref<number | null>(null)
+const lastPrimaryHeadingTitle = ref('')
 const slashMenuState = reactive({
   visible: false,
   query: '',
@@ -128,6 +164,8 @@ const normalizedHeadingLevels = computed<CollabMarkdownHeadingLevel[]>(() => {
 const commandItems = computed(() => {
   return buildRichTextEditorCommands(normalizedHeadingLevels.value, {
     includeImageCommand: Boolean(props.imageUploadHandler),
+    includeCommentCommand: props.enableComments,
+    includeDocumentAssistCommands: props.enableDocumentAssist,
   })
 })
 
@@ -143,6 +181,9 @@ const selectionToolbarInlineItems = computed(() => {
     'strike',
     'link',
     'code',
+    'comment',
+    'aiSummarize',
+    'aiRewrite',
   ])
   return commandItems.value.filter(item => actionWhitelist.has(item.action))
 })
@@ -230,6 +271,7 @@ const headingMenuStyle = computed(() => {
 
 let removeAwarenessListener: (() => void) | null = null
 let removeWindowResizeListener: (() => void) | null = null
+const commentDecorationPluginKey = new PluginKey('rich-text-editor-comments')
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -356,6 +398,218 @@ function buildSelectionSummary(doc: any, anchor: number, head: number): Workspac
     selectionLength: String(selectedText || '').length,
     selectedTextPreview: normalizePreviewText(String(selectedText || '')),
   }
+}
+
+function toDocumentSelectionRange(summary: WorkspaceCollabSelectionSummary | null): AiWorkspaceDocumentSelectionRange | null {
+  if (!summary)
+    return null
+  return {
+    anchorLine: summary.anchorLine,
+    anchorColumn: summary.anchorColumn,
+    headLine: summary.headLine,
+    headColumn: summary.headColumn,
+    isCollapsed: summary.isCollapsed,
+    selectionLength: summary.selectionLength,
+  }
+}
+
+function resolvePrimaryHeadingTitle(): string {
+  const instance = editor.value
+  if (!instance)
+    return ''
+
+  let title = ''
+  instance.state.doc.descendants((node) => {
+    if (node.type.name !== 'heading' || Number(node.attrs?.level) !== 1)
+      return true
+
+    title = normalizeString(node.textContent)
+    return !title
+  })
+  return title
+}
+
+function emitPrimaryHeadingChange(): void {
+  const nextTitle = resolvePrimaryHeadingTitle()
+  if (nextTitle === lastPrimaryHeadingTitle.value)
+    return
+  lastPrimaryHeadingTitle.value = nextTitle
+  emit('primaryHeadingChange', nextTitle)
+}
+
+function buildCommentSelectionAnchor(): ProjectResourceCommentTextSelectionAnchor | null {
+  const instance = editor.value
+  const doc = props.doc
+  if (!instance || !doc)
+    return null
+
+  const { selection } = instance.state
+  if (selection.empty)
+    return null
+
+  const syncState = ySyncPluginKey.getState(instance.state)
+  const mapping = syncState?.binding?.mapping
+  if (!mapping)
+    return null
+
+  try {
+    const fragment = doc.getXmlFragment('prosemirror')
+    const anchor = absolutePositionToRelativePosition(selection.anchor, fragment, mapping)
+    const head = absolutePositionToRelativePosition(selection.head, fragment, mapping)
+    const summary = buildSelectionSummary(instance.state.doc, selection.anchor, selection.head)
+    return {
+      type: 'text_selection',
+      anchor: JSON.parse(JSON.stringify(anchor)),
+      head: JSON.parse(JSON.stringify(head)),
+      selectedTextPreview: summary.selectedTextPreview,
+      headingText: resolvePrimaryHeadingTitle(),
+      anchorLine: summary.anchorLine,
+      anchorColumn: summary.anchorColumn,
+      headLine: summary.headLine,
+      headColumn: summary.headColumn,
+      selectionLength: summary.selectionLength,
+      isCollapsed: summary.isCollapsed,
+    }
+  }
+  catch {
+    return null
+  }
+}
+
+function emitCommentFromSelection(): void {
+  const anchor = buildCommentSelectionAnchor()
+  if (anchor)
+    emit('createCommentFromSelection', anchor)
+}
+
+function resolveCurrentSelectionText(): string {
+  const instance = editor.value
+  if (!instance)
+    return ''
+  const { selection } = instance.state
+  if (selection.empty)
+    return ''
+  return String(instance.state.doc.textBetween(selection.from, selection.to, '\n', '\n') || '').trim()
+}
+
+function emitDocumentAssistAction(action: AiWorkspaceDocumentAction, trigger: AiWorkspaceDocumentTrigger): void {
+  const instance = editor.value
+  const selectionSummary = instance
+    ? buildSelectionSummary(instance.state.doc, instance.state.selection.anchor, instance.state.selection.head)
+    : null
+  emit('triggerDocumentAssist', {
+    action,
+    trigger,
+    selectionText: resolveCurrentSelectionText(),
+    selectionRange: toDocumentSelectionRange(selectionSummary),
+  })
+}
+
+function buildCommentMarker(threadId: string, active: boolean): HTMLElement {
+  const marker = document.createElement('button')
+  marker.type = 'button'
+  marker.className = 'rich-text-editor__comment-marker'
+  if (active)
+    marker.classList.add('rich-text-editor__comment-marker--active')
+  marker.dataset.commentThreadId = threadId
+  marker.setAttribute('aria-label', '打开评论线程')
+  marker.textContent = '评'
+  return marker
+}
+
+function resolveCommentThreadSelection(thread: ProjectResourceCommentThread, state: any): { from: number, to: number } | null {
+  if (thread.anchor.type !== 'text_selection')
+    return null
+
+  const instance = editor.value
+  const doc = props.doc
+  if (!instance || !doc)
+    return null
+
+  const syncState = ySyncPluginKey.getState(state)
+  const mapping = syncState?.binding?.mapping
+  if (!mapping)
+    return null
+
+  try {
+    const fragment = doc.getXmlFragment('prosemirror')
+    const anchor = relativePositionToAbsolutePosition(
+      doc,
+      fragment,
+      Y.createRelativePositionFromJSON(thread.anchor.anchor),
+      mapping,
+    )
+    const head = relativePositionToAbsolutePosition(
+      doc,
+      fragment,
+      Y.createRelativePositionFromJSON(thread.anchor.head),
+      mapping,
+    )
+    if (anchor === null || head === null)
+      return null
+    return {
+      from: Math.max(0, Math.min(anchor, head)),
+      to: Math.max(0, Math.max(anchor, head)),
+    }
+  }
+  catch {
+    return null
+  }
+}
+
+function buildCommentDecorations(state: any): DecorationSet {
+  if (!props.enableComments || props.commentThreads.length === 0)
+    return DecorationSet.empty
+
+  const decorations: Decoration[] = []
+  const activeThreadId = normalizeString(props.activeCommentThreadId)
+  for (const thread of props.commentThreads) {
+    const selection = resolveCommentThreadSelection(thread, state)
+    if (!selection)
+      continue
+
+    const active = thread.id === activeThreadId
+    if (selection.from < selection.to) {
+      decorations.push(Decoration.inline(selection.from, selection.to, {
+        class: active
+          ? 'rich-text-editor__comment-selection rich-text-editor__comment-selection--active'
+          : 'rich-text-editor__comment-selection',
+        'data-comment-thread-id': thread.id,
+      }))
+    }
+
+    decorations.push(Decoration.widget(selection.to, () => buildCommentMarker(thread.id, active), {
+      side: 1,
+    }))
+  }
+
+  return decorations.length > 0 ? DecorationSet.create(state.doc, decorations) : DecorationSet.empty
+}
+
+function createCommentExtension() {
+  return Extension.create({
+    name: 'workspace-comment-threads',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: commentDecorationPluginKey,
+          props: {
+            decorations: state => buildCommentDecorations(state),
+            handleClick(_view, _pos, event) {
+              const target = event.target
+              if (!(target instanceof HTMLElement))
+                return false
+              const threadId = normalizeString(target.closest('[data-comment-thread-id]')?.getAttribute('data-comment-thread-id'))
+              if (!threadId)
+                return false
+              emit('openCommentThread', threadId)
+              return true
+            },
+          },
+        }),
+      ]
+    },
+  })
 }
 
 function buildCursorElement(user: { color?: string, name?: string }): HTMLElement {
@@ -790,6 +1044,7 @@ function syncSelectionToolbar(): void {
 function syncDerivedState(): void {
   emitSelectionChange()
   emitRemotePresenceChange()
+  emitPrimaryHeadingChange()
   syncSlashMenu()
   syncSelectionToolbar()
   syncOutlineState()
@@ -807,6 +1062,7 @@ function destroyEditor(): void {
   editor.value = null
   outlineItems.value = []
   activeOutlineHeadingPos.value = null
+  lastPrimaryHeadingTitle.value = ''
 }
 
 function bindAwarenessListener(awareness: Awareness | null): void {
@@ -886,6 +1142,46 @@ function findImageNodeByUploadId(uploadId: string): { pos: number, node: any } |
   })
 
   return matched
+}
+
+function findImageNodeByCommentAnchor(anchor: ProjectResourceCommentImageNodeAnchor): { pos: number, node: any } | null {
+  const instance = editor.value
+  if (!instance)
+    return null
+
+  const resourceId = normalizeString(anchor.resourceId)
+  const src = normalizeString(anchor.src)
+  let matched: { pos: number, node: any } | null = null
+  instance.state.doc.descendants((node, pos) => {
+    if (node.type.name !== 'image')
+      return true
+
+    const nodeResourceId = normalizeString(node.attrs?.resourceId)
+    const nodeSrc = normalizeString(node.attrs?.src)
+    if ((resourceId && nodeResourceId === resourceId) || (src && nodeSrc === src)) {
+      matched = { pos, node }
+      return false
+    }
+    return true
+  })
+  return matched
+}
+
+function resolveImageCommentThreads(attrs: Record<string, unknown>): Array<{ id: string }> {
+  const resourceId = normalizeString(attrs.resourceId)
+  const src = normalizeString(attrs.src)
+  if (!resourceId && !src)
+    return []
+
+  return props.commentThreads
+    .filter((thread) => {
+      if (thread.anchor.type !== 'image_node')
+        return false
+      const threadResourceId = normalizeString(thread.anchor.resourceId)
+      const threadSrc = normalizeString(thread.anchor.src)
+      return (resourceId && threadResourceId === resourceId) || (src && threadSrc === src)
+    })
+    .map(thread => ({ id: thread.id }))
 }
 
 function insertUploadingImagePlaceholder(file: File, position?: number | null): { uploadId: string, nextPosition: number | null } | null {
@@ -1014,6 +1310,80 @@ async function uploadImagesAt(files: File[], position?: number | null): Promise<
   return true
 }
 
+function refreshCommentDecorations(): void {
+  const instance = editor.value
+  if (!instance)
+    return
+  instance.view.dispatch(instance.state.tr.setMeta(commentDecorationPluginKey, Date.now()))
+}
+
+function scrollToCommentThread(threadId: string): void {
+  const normalizedThreadId = normalizeString(threadId)
+  const instance = editor.value
+  if (!instance || !normalizedThreadId)
+    return
+
+  const thread = props.commentThreads.find(item => item.id === normalizedThreadId)
+  if (!thread)
+    return
+
+  if (thread.anchor.type === 'image_node') {
+    const matched = findImageNodeByCommentAnchor(thread.anchor)
+    if (!matched)
+      return
+    instance.chain().focus().setNodeSelection(matched.pos).run()
+    nextTick(() => {
+      const targetNode = instance.view.nodeDOM(matched.pos)
+      if (targetNode instanceof HTMLElement) {
+        targetNode.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        })
+      }
+    })
+    return
+  }
+
+  const selection = resolveCommentThreadSelection(thread, instance.state)
+  if (!selection)
+    return
+
+  instance.chain().focus().setTextSelection(selection.from).run()
+  nextTick(() => {
+    const scroller = editorScrollRef.value
+    if (scroller) {
+      const scrollerRect = scroller.getBoundingClientRect()
+      const start = instance.view.coordsAtPos(selection.from)
+      scroller.scrollTo({
+        top: Math.max(0, scroller.scrollTop + start.top - scrollerRect.top - 120),
+        behavior: 'smooth',
+      })
+    }
+  })
+}
+
+function applyDocumentAssistResult(input: { action: AiWorkspaceDocumentAction, text: string }): boolean {
+  const instance = editor.value
+  const text = String(input.text || '').trim()
+  if (!instance || !props.editable || !text)
+    return false
+
+  const { selection } = instance.state
+  const chain = instance.chain().focus()
+  if (input.action === 'rewrite' && !selection.empty) {
+    chain.insertContentAt({ from: selection.from, to: selection.to }, text).run()
+    return true
+  }
+
+  if (input.action === 'summarize' && !selection.empty) {
+    chain.insertContentAt(selection.to, `\n\n${text}`).run()
+    return true
+  }
+
+  chain.insertContent(text).run()
+  return true
+}
+
 function openImagePicker(position?: number | null): void {
   if (!props.editable || !props.imageUploadHandler)
     return
@@ -1070,6 +1440,35 @@ function executeCommand(command: RichTextEditorCommand, options?: { replaceRange
   if (command.action === 'image') {
     prepareCommandSelection(replaceRange)
     openImagePicker(replaceRange?.from ?? instance.state.selection.from)
+    closeSlashMenu()
+    closeHeadingMenu()
+    return
+  }
+
+  if (command.action === 'comment') {
+    emitCommentFromSelection()
+    closeSlashMenu()
+    closeHeadingMenu()
+    return
+  }
+
+  if (command.action === 'aiSummarize') {
+    emitDocumentAssistAction('summarize', replaceRange ? 'slash_menu' : 'selection_toolbar')
+    closeSlashMenu()
+    closeHeadingMenu()
+    return
+  }
+
+  if (command.action === 'aiRewrite') {
+    emitDocumentAssistAction('rewrite', replaceRange ? 'slash_menu' : 'selection_toolbar')
+    closeSlashMenu()
+    closeHeadingMenu()
+    return
+  }
+
+  if (command.action === 'aiContinue') {
+    prepareCommandSelection(replaceRange)
+    emitDocumentAssistAction('continue', replaceRange ? 'slash_menu' : 'right_sidebar')
     closeSlashMenu()
     closeHeadingMenu()
     return
@@ -1264,7 +1663,13 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
 
   const extensions = [
     ...baseExtensions,
-    createRichTextEditorImageExtension(),
+    createRichTextEditorImageExtension({
+      getImageCommentThreads: attrs => resolveImageCommentThreads(attrs),
+      getActiveCommentThreadId: () => props.activeCommentThreadId,
+      onOpenCommentThread: threadId => emit('openCommentThread', threadId),
+      onCreateCommentFromImage: anchor => emit('createCommentFromImage', anchor),
+      onRequestImageAction: payload => emit('requestImageAction', payload),
+    }),
     Placeholder.configure({
       placeholder: props.placeholder,
     }),
@@ -1281,6 +1686,8 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
 
   if (awareness)
     extensions.push(createCollabCursorExtension(awareness))
+  if (props.enableComments)
+    extensions.push(createCommentExtension())
 
   editor.value = new Editor({
     element: document.createElement('div'),
@@ -1331,6 +1738,11 @@ function handleViewportResize(): void {
     syncHeadingMenuPosition()
 }
 
+defineExpose({
+  applyDocumentAssistResult,
+  scrollToCommentThread,
+})
+
 watch(slashMenuItems, (items) => {
   if (items.length === 0) {
     slashMenuState.selectedIndex = 0
@@ -1369,9 +1781,28 @@ watch(() => props.placeholder, () => {
   createEditor(props.doc, props.awareness)
 })
 
+watch(() => props.enableComments, () => {
+  if (!props.doc)
+    return
+  createEditor(props.doc, props.awareness)
+})
+
 watch(() => props.currentUser, () => {
   syncLocalAwarenessUser()
 }, { deep: true })
+
+watch(() => props.commentThreads, () => {
+  refreshCommentDecorations()
+}, { deep: true })
+
+watch(() => props.activeCommentThreadId, (threadId) => {
+  refreshCommentDecorations()
+  if (!threadId)
+    return
+  nextTick(() => {
+    scrollToCommentThread(threadId)
+  })
+})
 
 onMounted(() => {
   if (!import.meta.client)
@@ -2014,6 +2445,10 @@ onBeforeUnmount(() => {
   border-color: #93c5fd;
 }
 
+.rich-text-editor__canvas :deep(.rich-text-editor__image-node--comment-active .rich-text-editor__image-frame) {
+  border-color: #f59e0b;
+}
+
 .rich-text-editor__canvas :deep(.rich-text-editor__image-element) {
   display: block;
   width: 100%;
@@ -2033,6 +2468,24 @@ onBeforeUnmount(() => {
   background: linear-gradient(135deg, rgba(226, 232, 240, 0.9), rgba(241, 245, 249, 0.95));
   color: #475569;
   text-align: center;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-placeholder-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-placeholder-action) {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .rich-text-editor__canvas :deep(.rich-text-editor__image-placeholder-icon) {
@@ -2069,6 +2522,143 @@ onBeforeUnmount(() => {
 .rich-text-editor__canvas :deep(.rich-text-editor__image-resize-handle--left) {
   left: 8px;
   cursor: ew-resize;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-comment-badge) {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-comment-badge--active) {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-action-bar) {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(219, 227, 239, 0.96);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-action-button) {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #334155;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-action-button:hover) {
+  border-color: #dbe3ef;
+  background: #f8fafc;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-action-button--danger) {
+  color: #b91c1c;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-meta-editor) {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 12px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(219, 227, 239, 0.96);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-meta-input) {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-meta-actions) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-meta-button) {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__image-meta-button--primary) {
+  border-color: #cfe0ff;
+  background: #edf4ff;
+  color: #1d4ed8;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__comment-selection) {
+  background: rgba(245, 158, 11, 0.16);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.42);
+  cursor: pointer;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__comment-selection--active) {
+  background: rgba(245, 158, 11, 0.24);
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__comment-marker) {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 999px;
+  background: #fffbeb;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.rich-text-editor__canvas :deep(.rich-text-editor__comment-marker--active) {
+  border-color: #f59e0b;
+  background: #fef3c7;
 }
 
 .rich-text-editor__canvas :deep(.rich-text-editor__image-resize-handle--right) {

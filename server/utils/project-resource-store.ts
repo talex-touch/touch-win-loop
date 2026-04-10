@@ -13,7 +13,9 @@ import * as Y from 'yjs'
 import { buildServerApiEndpoint, resolveServerApiUrl } from '~~/server/utils/api-url'
 import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
 import {
+  collectImageReferencesFromMarkdown,
   ensureMarkdownCollabDocShape,
+  extractPrimaryHeadingFromCollabDoc,
   parseMarkdownToRichTextDocument,
   syncMarkdownMirrorFromRichText,
   writeRichTextDocumentToFragment,
@@ -204,6 +206,51 @@ function parseRevision(value: unknown): number {
   if (!Number.isFinite(parsed))
     return 0
   return Math.max(0, Math.trunc(parsed))
+}
+
+async function syncMarkdownResourceProjection(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    actorUserId: string
+    updatedAt: string
+    doc: Y.Doc
+  },
+): Promise<{ markdown: string, derivedTitle: string }> {
+  const mirrorResult = syncMarkdownMirrorFromRichText(input.doc)
+  const derivedTitle = normalizeString(extractPrimaryHeadingFromCollabDoc(input.doc))
+  const values: unknown[] = [
+    input.projectId,
+    input.resourceId,
+    mirrorResult.markdown,
+    input.actorUserId,
+    input.updatedAt,
+  ]
+  const sets = [
+    'content = $3',
+    'updated_by_user_id = $4',
+    'updated_at = $5',
+  ]
+
+  if (derivedTitle) {
+    values.push(derivedTitle)
+    sets.unshift(`title = $${values.length}`)
+  }
+
+  await db.query(
+    `UPDATE project_resources
+     SET ${sets.join(', ')}
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'`,
+    values,
+  )
+
+  return {
+    markdown: mirrorResult.markdown,
+    derivedTitle,
+  }
 }
 
 function toUint8Array(value: unknown): Uint8Array {
@@ -1568,6 +1615,16 @@ export async function applyProjectCollabUpdate(
     ],
   )
 
+  if (kind === 'markdown') {
+    await syncMarkdownResourceProjection(db, {
+      projectId: input.projectId,
+      resourceId: input.resourceId,
+      actorUserId: input.actorUserId,
+      updatedAt: now,
+      doc,
+    })
+  }
+
   return {
     projectId: input.projectId,
     resourceId: input.resourceId,
@@ -1992,7 +2049,6 @@ export async function overwriteProjectMarkdownCollabResource(
   const doc = new Y.Doc()
   ensureMarkdownCollabDocShape(doc)
   writeRichTextDocumentToFragment(doc.getXmlFragment('prosemirror'), parseMarkdownToRichTextDocument(input.markdown))
-  syncMarkdownMirrorFromRichText(doc)
 
   const mergedUpdate = Y.encodeStateAsUpdate(doc)
   const nextRevision = Math.max(1, parseRevision(current.revision) + 1)
@@ -2015,6 +2071,14 @@ export async function overwriteProjectMarkdownCollabResource(
       now,
     ],
   )
+
+  await syncMarkdownResourceProjection(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+    actorUserId: input.actorUserId,
+    updatedAt: now,
+    doc,
+  })
 
   return {
     projectId: input.projectId,
@@ -2203,6 +2267,50 @@ export async function moveProjectResourceToRecycleBin(
     source: row.source,
     objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
   }
+}
+
+export async function countProjectMarkdownResourceImageReferences(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId?: string | null
+    src?: string | null
+  },
+): Promise<number> {
+  const normalizedProjectId = normalizeString(input.projectId)
+  const normalizedResourceId = normalizeString(input.resourceId)
+  const normalizedSrc = normalizeString(input.src)
+  if (!normalizedProjectId || (!normalizedResourceId && !normalizedSrc))
+    return 0
+
+  const result = await db.query<Pick<ProjectResourceRow, 'id' | 'content'>>(
+    `SELECT id, content
+     FROM project_resources
+     WHERE project_id = $1
+       AND status = 'active'
+       AND source = 'collab'
+       AND resource_kind = 'markdown'`,
+    [normalizedProjectId],
+  )
+
+  let referenceCount = 0
+  for (const row of result.rows) {
+    const markdown = normalizeString(row.content)
+    if (!markdown)
+      continue
+
+    const references = collectImageReferencesFromMarkdown(markdown)
+    for (const reference of references) {
+      const referenceResourceId = normalizeString(reference.resourceId)
+      const referenceSrc = normalizeString(reference.src)
+      const matchedByResourceId = Boolean(normalizedResourceId && referenceResourceId === normalizedResourceId)
+      const matchedBySrc = Boolean(normalizedSrc && referenceSrc === normalizedSrc)
+      if (matchedByResourceId || matchedBySrc)
+        referenceCount += 1
+    }
+  }
+
+  return referenceCount
 }
 
 export async function restoreProjectResourceFromRecycleBin(

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type {
+  AiWorkspaceDocumentAction,
+  AiWorkspaceDocumentSelectionRange,
   AiChatSession,
   AiDefenseJudgeRound,
   AiDefensePersona,
@@ -12,11 +14,16 @@ import type {
   Contest,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectResourceCommentAnchor,
+  ProjectResourceCommentThread,
   Resource,
   Track,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
+
+type WorkspacePrimarySidebarAiMode = Exclude<WorkspaceAiMode, 'defense' | 'document_assist'>
+type WorkspaceRightSidebarView = 'ai' | 'comments'
 
 const props = withDefaults(defineProps<{
   chatSessions?: AiChatSession[]
@@ -47,8 +54,21 @@ const props = withDefaults(defineProps<{
   selectedContest?: Contest | null
   selectedTrack?: Track | null
   selectedResources?: Resource[]
+  sidebarView?: WorkspaceRightSidebarView
+  commentThreads?: ProjectResourceCommentThread[]
+  activeCommentThreadId?: string
+  commentDraftAnchor?: ProjectResourceCommentAnchor | null
+  commentLoading?: boolean
+  commentMutating?: boolean
+  documentResourceTitle?: string
+  documentSelectionText?: string
+  documentSelectionRange?: AiWorkspaceDocumentSelectionRange | null
+  documentAssistAction?: AiWorkspaceDocumentAction | ''
+  documentAssistResult?: string
+  documentAssistRunning?: boolean
   issueReportSubmitting?: boolean
   issueReportExporting?: boolean
+  collapsed?: boolean
 }>(), {
   chatSessions: () => [],
   activeChatSessionId: '',
@@ -78,13 +98,28 @@ const props = withDefaults(defineProps<{
   selectedContest: null,
   selectedTrack: null,
   selectedResources: () => [],
+  sidebarView: 'ai',
+  commentThreads: () => [],
+  activeCommentThreadId: '',
+  commentDraftAnchor: null,
+  commentLoading: false,
+  commentMutating: false,
+  documentResourceTitle: '',
+  documentSelectionText: '',
+  documentSelectionRange: null,
+  documentAssistAction: '',
+  documentAssistResult: '',
+  documentAssistRunning: false,
   issueReportSubmitting: false,
   issueReportExporting: false,
+  collapsed: false,
 })
 
 const emit = defineEmits<{
   'update:chatInput': [value: string]
   'update:aiMode': [value: WorkspaceAiMode]
+  'update:sidebarView': [value: WorkspaceRightSidebarView]
+  'collapse': []
   'sendChat': []
   'switchChatSession': [sessionId: string]
   'createChatSession': []
@@ -105,9 +140,17 @@ const emit = defineEmits<{
   'startDefenseRealtime': []
   'submitIssueReport': [reportId: string]
   'exportIssueReport': [reportId: string]
+  'selectCommentThread': [threadId: string]
+  'createCommentThread': [body: string]
+  'replyCommentThread': [payload: { threadId: string, body: string }]
+  'resolveCommentThread': [threadId: string]
+  'reopenCommentThread': [threadId: string]
+  'cancelCommentDraft': []
+  'runDocumentAssist': [action: AiWorkspaceDocumentAction]
+  'applyDocumentAssist': []
 }>()
 
-const PRIMARY_MODES: Array<{ value: Exclude<WorkspaceAiMode, 'defense'>, label: string }> = [
+const PRIMARY_MODES: Array<{ value: WorkspacePrimarySidebarAiMode, label: string }> = [
   { value: 'dialog_ask', label: '对话询问' },
   { value: 'auto_optimize', label: '自动优化' },
   { value: 'issue_discovery', label: '寻疑发现' },
@@ -157,6 +200,100 @@ const issueReportStatusLabel = computed(() => {
   return '草稿'
 })
 
+const commentDraftText = ref('')
+const commentReplyDraftMap = reactive<Record<string, string>>({})
+
+const showCommentsView = computed(() => props.sidebarView === 'comments')
+const showDocumentAssistView = computed(() => props.sidebarView === 'ai' && props.aiMode === 'document_assist')
+const markdownSidebarEnabled = computed(() => {
+  return Boolean(
+    props.documentResourceTitle
+    || props.commentDraftAnchor
+    || props.commentThreads.length > 0
+    || props.aiMode === 'document_assist',
+  )
+})
+const activeCommentThread = computed(() => {
+  const threadId = String(props.activeCommentThreadId || '').trim()
+  if (!threadId)
+    return null
+  return props.commentThreads.find(item => item.id === threadId) || null
+})
+const documentAssistSelectionLabel = computed(() => {
+  const text = String(props.documentSelectionText || '').trim()
+  if (text)
+    return text.length > 140 ? `${text.slice(0, 140)}…` : text
+
+  const range = props.documentSelectionRange
+  if (!range)
+    return '未指定选区，将基于当前文档上下文执行。'
+
+  const anchor = `${range.anchorLine}:${range.anchorColumn}`
+  const head = `${range.headLine}:${range.headColumn}`
+  if (range.isCollapsed)
+    return `当前位置 ${head}`
+  return `选区 ${anchor} → ${head} · ${range.selectionLength} 字`
+})
+const canApplyDocumentAssist = computed(() => {
+  return Boolean(String(props.documentAssistResult || '').trim()) && !props.documentAssistRunning
+})
+
+watch(() => props.commentDraftAnchor, (nextAnchor) => {
+  if (nextAnchor)
+    emit('update:sidebarView', 'comments')
+})
+
+watch(() => props.documentAssistAction, (nextAction) => {
+  if (nextAction)
+    emit('update:sidebarView', 'ai')
+})
+
+function summarizeCommentAnchor(anchor: ProjectResourceCommentAnchor | null | undefined): string {
+  if (!anchor)
+    return '未指定锚点'
+  if (anchor.type === 'image_node')
+    return anchor.title || anchor.alt || '图片评论'
+  return anchor.selectedTextPreview || anchor.headingText || `文本选区 ${anchor.anchorLine}:${anchor.anchorColumn}`
+}
+
+function requestShowAiView(): void {
+  emit('update:sidebarView', 'ai')
+}
+
+function requestShowCommentsView(): void {
+  emit('update:sidebarView', 'comments')
+}
+
+function selectCommentThread(threadId: string): void {
+  emit('selectCommentThread', threadId)
+}
+
+function submitCommentDraft(): void {
+  const body = commentDraftText.value.trim()
+  if (!body)
+    return
+  emit('createCommentThread', body)
+  commentDraftText.value = ''
+}
+
+function submitCommentReply(threadId: string): void {
+  const body = String(commentReplyDraftMap[threadId] || '').trim()
+  if (!body)
+    return
+  emit('replyCommentThread', { threadId, body })
+  commentReplyDraftMap[threadId] = ''
+}
+
+function documentAssistActionLabel(action: AiWorkspaceDocumentAction | ''): string {
+  if (action === 'summarize')
+    return '总结选区'
+  if (action === 'rewrite')
+    return '改写选区'
+  if (action === 'continue')
+    return '续写当前位置'
+  return '文档增强'
+}
+
 function isChangeActing(changeId: string): boolean {
   return props.changeActingIds.includes(changeId)
 }
@@ -187,12 +324,12 @@ function severityClass(value: string): string {
   return 'workspace-issue-pill workspace-issue-pill--medium'
 }
 
-function selectMode(mode: Exclude<WorkspaceAiMode, 'defense'>) {
+function selectMode(mode: WorkspacePrimarySidebarAiMode) {
   emit('update:aiMode', mode)
 }
 
-function modeSelectValue(): Exclude<WorkspaceAiMode, 'defense'> | '' {
-  if (props.aiMode === 'defense')
+function modeSelectValue(): WorkspacePrimarySidebarAiMode | '' {
+  if (props.aiMode === 'defense' || props.aiMode === 'document_assist')
     return ''
   return props.aiMode
 }
@@ -202,7 +339,7 @@ function handleModeSelectChange(event: Event) {
   if (!value)
     return
   if (value === 'dialog_ask' || value === 'auto_optimize' || value === 'issue_discovery')
-    selectMode(value)
+    selectMode(value as WorkspacePrimarySidebarAiMode)
 }
 
 function cyclePrimaryMode() {
@@ -326,50 +463,245 @@ function requestExportIssueReport() {
 
 <template>
   <aside
-    class="workspace-right-sidebar border-l border-slate-200 bg-white flex shrink-0 flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
-    tabindex="0"
+    class="border-l border-slate-200 bg-white flex flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
+    :tabindex="props.collapsed ? -1 : 0"
     @keydown.capture="handleModeCycleHotkey"
   >
     <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70 shrink-0 space-y-2">
-      <div class="flex items-center justify-between">
-        <div class="text-xs text-slate-800 font-semibold">
-          Loopy 会话（{{ chatSessions.length }}）
+      <div class="flex items-center justify-between gap-3">
+        <div class="workspace-right-sidebar__header-main">
+          <button
+            data-testid="workspace-right-sidebar-collapse-button"
+            class="workspace-right-sidebar__collapse-button"
+            type="button"
+            aria-label="收起右侧栏"
+            title="收起右侧栏"
+            @click="emit('collapse')"
+          >
+            <span class="material-symbols-outlined">right_panel_close</span>
+          </button>
+          <div class="text-xs text-slate-800 font-semibold">
+            <template v-if="showCommentsView">
+              文档评论（{{ props.commentThreads.length }}）
+            </template>
+            <template v-else-if="showDocumentAssistView">
+              文档增强
+            </template>
+            <template v-else>
+              Loopy 会话（{{ chatSessions.length }}）
+            </template>
+          </div>
         </div>
         <button
+          v-if="!showCommentsView && !showDocumentAssistView"
           class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
           @click="emit('createChatSession')"
         >
           新建
         </button>
       </div>
-      <div v-if="props.workspacePreparing || chatSessionsLoading" class="space-y-2" aria-hidden="true">
-        <div class="rounded bg-slate-100 h-7 animate-pulse" />
-        <div class="rounded bg-slate-100 h-7 animate-pulse" />
-      </div>
-      <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400 leading-5">
-        暂无会话，点击“新建”开始 Loopy 对话。
-      </div>
-      <div v-else class="pr-1 max-h-32 overflow-y-auto space-y-1">
+
+      <div v-if="markdownSidebarEnabled" class="flex gap-1 rounded-lg bg-white border border-slate-200 p-1">
         <button
-          v-for="session in chatSessions"
-          :key="session.id"
-          class="px-2 py-1.5 text-left border rounded w-full"
-          :class="session.id === activeChatSessionId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'"
-          @click="emit('switchChatSession', session.id)"
+          class="workspace-right-sidebar__switch-pill"
+          :class="{ 'workspace-right-sidebar__switch-pill--active': !showCommentsView }"
+          type="button"
+          @click="requestShowAiView"
         >
-          <div class="text-[11px] text-slate-700 font-semibold truncate">
-            {{ session.title || 'Loopy 对话' }}
-          </div>
-          <div class="text-[10px] text-slate-500 mt-1">
-            消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}
-          </div>
+          <span class="material-symbols-outlined text-sm">smart_toy</span>
+          <span>AI</span>
+        </button>
+        <button
+          class="workspace-right-sidebar__switch-pill"
+          :class="{ 'workspace-right-sidebar__switch-pill--active': showCommentsView }"
+          type="button"
+          @click="requestShowCommentsView"
+        >
+          <span class="material-symbols-outlined text-sm">comment</span>
+          <span>评论</span>
         </button>
       </div>
+
+      <template v-if="showCommentsView">
+        <div class="text-[11px] text-slate-500 leading-5">
+          <template v-if="props.commentDraftAnchor">
+            当前将基于“{{ summarizeCommentAnchor(props.commentDraftAnchor) }}”创建新线程。
+          </template>
+          <template v-else-if="activeCommentThread">
+            当前线程：{{ activeCommentThread.summaryText || summarizeCommentAnchor(activeCommentThread.anchor) }}
+          </template>
+          <template v-else>
+            选择文内评论标记，或先在正文里选区后发起评论。
+          </template>
+        </div>
+      </template>
+
+      <template v-else-if="showDocumentAssistView">
+        <div class="space-y-2">
+          <div class="p-3 border border-slate-200 rounded bg-white">
+            <div class="text-[10px] text-slate-500 font-semibold tracking-wide uppercase">
+              当前文档
+            </div>
+            <div class="text-[11px] text-slate-800 font-semibold mt-1">
+              {{ props.documentResourceTitle || '未命名协作文档' }}
+            </div>
+            <div class="text-[10px] text-slate-500 mt-2 leading-5 whitespace-pre-wrap">
+              {{ documentAssistSelectionLabel }}
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <div v-if="props.workspacePreparing || chatSessionsLoading" class="space-y-2" aria-hidden="true">
+          <div class="rounded bg-slate-100 h-7 animate-pulse" />
+          <div class="rounded bg-slate-100 h-7 animate-pulse" />
+        </div>
+        <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400 leading-5">
+          暂无会话，点击“新建”开始 Loopy 对话。
+        </div>
+        <div v-else class="pr-1 max-h-32 overflow-y-auto space-y-1">
+          <button
+            v-for="session in chatSessions"
+            :key="session.id"
+            class="px-2 py-1.5 text-left border rounded w-full"
+            :class="session.id === activeChatSessionId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'"
+            @click="emit('switchChatSession', session.id)"
+          >
+            <div class="text-[11px] text-slate-700 font-semibold truncate">
+              {{ session.title || 'Loopy 对话' }}
+            </div>
+            <div class="text-[10px] text-slate-500 mt-1">
+              消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}
+            </div>
+          </button>
+        </div>
+      </template>
     </div>
 
     <div class="flex flex-1 flex-col h-0 min-h-0 overflow-hidden">
       <div class="no-scrollbar p-4 flex-1 h-0 min-h-0 overflow-y-auto">
-        <div class="workspace-chat-scroll-content">
+        <template v-if="showCommentsView">
+          <div class="space-y-3">
+            <div v-if="props.commentLoading && props.commentThreads.length === 0" class="space-y-2" aria-hidden="true">
+              <div class="rounded bg-slate-100 h-16 animate-pulse" />
+              <div class="rounded bg-slate-100 h-16 animate-pulse" />
+            </div>
+            <div v-else-if="props.commentThreads.length === 0 && !props.commentDraftAnchor" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+              当前文档还没有评论线程。
+            </div>
+            <div
+              v-for="thread in props.commentThreads"
+              :key="thread.id"
+              class="p-3 border rounded-lg bg-white transition-colors"
+              :class="thread.id === props.activeCommentThreadId ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200'"
+            >
+              <button
+                class="w-full text-left"
+                type="button"
+                @click="selectCommentThread(thread.id)"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="text-[11px] text-slate-800 font-semibold truncate">
+                      {{ thread.summaryText || summarizeCommentAnchor(thread.anchor) }}
+                    </div>
+                    <div class="text-[10px] text-slate-500 mt-1">
+                      {{ thread.createdByUsername || thread.createdByUserId }} · {{ thread.updatedAt || thread.createdAt }}
+                    </div>
+                  </div>
+                  <span
+                    class="shrink-0 text-[10px] px-2 py-0.5 rounded-full"
+                    :class="thread.status === 'resolved' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'"
+                  >
+                    {{ thread.status === 'resolved' ? '已解决' : '进行中' }}
+                  </span>
+                </div>
+              </button>
+
+              <div class="mt-3 space-y-2">
+                <div
+                  v-for="message in thread.messages"
+                  :key="message.id"
+                  class="rounded border border-slate-200 bg-slate-50 px-3 py-2"
+                >
+                  <div class="text-[10px] text-slate-500">
+                    {{ message.createdByUsername || message.createdByUserId }} · {{ message.createdAt }}
+                  </div>
+                  <div class="text-[11px] text-slate-700 mt-1 whitespace-pre-wrap">
+                    {{ message.body }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-3 flex flex-wrap gap-2">
+                <button
+                  v-if="thread.status !== 'resolved'"
+                  class="text-[11px] font-semibold px-2.5 py-1 border border-emerald-200 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+                  :disabled="props.commentMutating"
+                  type="button"
+                  @click="emit('resolveCommentThread', thread.id)"
+                >
+                  解决
+                </button>
+                <button
+                  v-else
+                  class="text-[11px] font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                  :disabled="props.commentMutating"
+                  type="button"
+                  @click="emit('reopenCommentThread', thread.id)"
+                >
+                  重新打开
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="showDocumentAssistView">
+          <div class="space-y-3">
+            <div class="p-3 border border-slate-200 rounded bg-white">
+              <div class="text-[10px] text-slate-500 font-semibold tracking-wide uppercase">
+                当前动作
+              </div>
+              <div class="text-[11px] text-slate-800 font-semibold mt-1">
+                {{ documentAssistActionLabel(props.documentAssistAction) }}
+              </div>
+              <div class="text-[10px] text-slate-500 mt-2 leading-5 whitespace-pre-wrap">
+                {{ documentAssistSelectionLabel }}
+              </div>
+            </div>
+
+            <div
+              v-if="props.documentAssistRunning"
+              class="text-[11px] text-blue-700 p-3 border border-blue-200 rounded bg-blue-50"
+            >
+              文档 AI 正在生成结果，请稍候。
+            </div>
+
+            <div
+              v-if="props.documentAssistResult"
+              class="p-3 border border-slate-200 rounded bg-white"
+            >
+              <div class="text-[10px] text-slate-500 font-semibold tracking-wide uppercase">
+                结果预览
+              </div>
+              <div class="text-[11px] text-slate-700 mt-2 leading-6 whitespace-pre-wrap">
+                {{ props.documentAssistResult }}
+              </div>
+            </div>
+
+            <div
+              v-else-if="!props.documentAssistRunning"
+              class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed"
+            >
+              从正文里的浮动工具栏、`/` 菜单，或下面的动作按钮触发文档增强。
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="workspace-chat-scroll-content">
           <div v-if="showChatSkeleton" class="workspace-chat-messages" aria-hidden="true">
             <div
               v-for="index in 4"
@@ -760,55 +1092,157 @@ function requestExportIssueReport() {
             </div>
           </div>
         </div>
+        </template>
       </div>
 
       <div class="workspace-chat-composer">
-        <div v-if="aiRunning" class="workspace-ai-marquee" aria-live="polite">
-          <div class="workspace-ai-marquee__track">
-            <span>{{ aiRunningMarqueeText }}</span>
-            <span>{{ aiRunningMarqueeText }}</span>
-          </div>
-        </div>
-
-        <div class="relative">
-          <textarea
-            :value="chatInput"
-            class="text-xs p-2.5 pr-10 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-            :placeholder="inputPlaceholder"
-            @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
-          />
-          <button
-            class="text-white p-1.5 rounded-md bg-blue-600 bottom-2 right-2 absolute hover:bg-blue-500 disabled:opacity-60"
-            :disabled="chatLoading"
-            @click="emit('sendChat')"
+        <template v-if="showCommentsView">
+          <div
+            v-if="props.commentDraftAnchor"
+            class="space-y-3"
           >
-            <span class="material-symbols-outlined text-sm">{{ chatLoading ? 'hourglass_top' : 'send' }}</span>
-          </button>
-        </div>
-
-        <div class="workspace-chat-composer__meta">
-          <div class="workspace-chat-composer__meta-text">
-            已关联资料：{{ selectedResources.length }} · Shift+Tab 切换模式
+            <div class="text-[11px] text-slate-600">
+              新线程将锚定到：{{ summarizeCommentAnchor(props.commentDraftAnchor) }}
+            </div>
+            <textarea
+              v-model="commentDraftText"
+              class="text-xs p-2.5 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+              placeholder="输入评论内容"
+            />
+            <div class="flex items-center justify-between gap-2">
+              <button
+                class="text-[11px] font-semibold px-3 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-100"
+                type="button"
+                @click="emit('cancelCommentDraft')"
+              >
+                取消
+              </button>
+              <button
+                class="text-[11px] font-semibold px-3 py-1.5 border border-blue-600 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-60"
+                :disabled="props.commentMutating || !commentDraftText.trim()"
+                type="button"
+                @click="submitCommentDraft"
+              >
+                {{ props.commentMutating ? '创建中...' : '创建评论' }}
+              </button>
+            </div>
           </div>
-          <select
-            data-testid="workspace-right-sidebar-mode-select"
-            class="workspace-mode-select shrink-0"
-            :value="modeSelectValue()"
-            :disabled="aiMode === 'defense'"
-            @change="handleModeSelectChange"
+
+          <div
+            v-else-if="activeCommentThread"
+            class="space-y-3"
           >
-            <option v-if="aiMode === 'defense'" value="" disabled>
-              答辩工作台（顶部切换）
-            </option>
-            <option
-              v-for="mode in PRIMARY_MODES"
-              :key="mode.value"
-              :value="mode.value"
+            <div class="text-[11px] text-slate-600">
+              回复线程：{{ activeCommentThread.summaryText || summarizeCommentAnchor(activeCommentThread.anchor) }}
+            </div>
+            <textarea
+              v-model="commentReplyDraftMap[activeCommentThread.id]"
+              class="text-xs p-2.5 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+              placeholder="输入回复内容"
+            />
+            <button
+              class="text-[11px] font-semibold px-3 py-1.5 border border-blue-600 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-60"
+              :disabled="props.commentMutating || !String(commentReplyDraftMap[activeCommentThread.id] || '').trim()"
+              type="button"
+              @click="submitCommentReply(activeCommentThread.id)"
             >
-              {{ mode.label }}
-            </option>
-          </select>
-        </div>
+              {{ props.commentMutating ? '发送中...' : '发送回复' }}
+            </button>
+          </div>
+
+          <div v-else class="text-[11px] text-slate-500">
+            选择一个线程查看详情，或先在正文里发起新评论。
+          </div>
+        </template>
+
+        <template v-else-if="showDocumentAssistView">
+          <div class="grid grid-cols-3 gap-2">
+            <button
+              class="workspace-right-sidebar__doc-action"
+              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'summarize' }"
+              type="button"
+              :disabled="props.documentAssistRunning"
+              @click="emit('runDocumentAssist', 'summarize')"
+            >
+              总结
+            </button>
+            <button
+              class="workspace-right-sidebar__doc-action"
+              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'rewrite' }"
+              type="button"
+              :disabled="props.documentAssistRunning"
+              @click="emit('runDocumentAssist', 'rewrite')"
+            >
+              改写
+            </button>
+            <button
+              class="workspace-right-sidebar__doc-action"
+              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'continue' }"
+              type="button"
+              :disabled="props.documentAssistRunning"
+              @click="emit('runDocumentAssist', 'continue')"
+            >
+              续写
+            </button>
+          </div>
+          <button
+            class="workspace-right-sidebar__doc-apply"
+            type="button"
+            :disabled="!canApplyDocumentAssist"
+            @click="emit('applyDocumentAssist')"
+          >
+            应用到文档
+          </button>
+        </template>
+
+        <template v-else>
+          <div v-if="aiRunning" class="workspace-ai-marquee" aria-live="polite">
+            <div class="workspace-ai-marquee__track">
+              <span>{{ aiRunningMarqueeText }}</span>
+              <span>{{ aiRunningMarqueeText }}</span>
+            </div>
+          </div>
+
+          <div class="relative">
+            <textarea
+              :value="chatInput"
+              class="text-xs p-2.5 pr-10 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+              :placeholder="inputPlaceholder"
+              @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
+            />
+            <button
+              class="text-white p-1.5 rounded-md bg-blue-600 bottom-2 right-2 absolute hover:bg-blue-500 disabled:opacity-60"
+              :disabled="chatLoading"
+              @click="emit('sendChat')"
+            >
+              <span class="material-symbols-outlined text-sm">{{ chatLoading ? 'hourglass_top' : 'send' }}</span>
+            </button>
+          </div>
+
+          <div class="workspace-chat-composer__meta">
+            <div class="workspace-chat-composer__meta-text">
+              已关联资料：{{ selectedResources.length }} · Shift+Tab 切换模式
+            </div>
+            <select
+              data-testid="workspace-right-sidebar-mode-select"
+              class="workspace-mode-select shrink-0"
+              :value="modeSelectValue()"
+              :disabled="aiMode === 'defense'"
+              @change="handleModeSelectChange"
+            >
+              <option v-if="aiMode === 'defense'" value="" disabled>
+                答辩工作台（顶部切换）
+              </option>
+              <option
+                v-for="mode in PRIMARY_MODES"
+                :key="mode.value"
+                :value="mode.value"
+              >
+                {{ mode.label }}
+              </option>
+            </select>
+          </div>
+        </template>
       </div>
     </div>
   </aside>
@@ -829,6 +1263,72 @@ function requestExportIssueReport() {
   flex-direction: column;
   gap: 12px;
   min-height: 100%;
+}
+
+.workspace-right-sidebar__switch-pill {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workspace-right-sidebar__switch-pill--active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.workspace-right-sidebar__header-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace-right-sidebar__collapse-button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #d7dfed;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #6b7b95;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.workspace-right-sidebar__collapse-button:hover {
+  background: #f3f6fc;
+  color: #35537f;
+  border-color: #cbd7eb;
+}
+
+.workspace-right-sidebar__collapse-button:focus-visible {
+  outline: 2px solid #cddcf7;
+  outline-offset: 1px;
+}
+
+.workspace-right-sidebar__collapse-button .material-symbols-outlined {
+  font-size: 18px;
+  line-height: 1;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 340,
+    'opsz' 24;
 }
 
 .workspace-chat-messages {
@@ -859,7 +1359,7 @@ function requestExportIssueReport() {
   min-width: 0;
   flex: 1 1 140px;
   color: #94a3b8;
-  font-size: var(--wl-text-caption);
+  font-size: 10px;
   line-height: 1.4;
 }
 
@@ -870,7 +1370,7 @@ function requestExportIssueReport() {
   border-radius: 999px;
   background: linear-gradient(90deg, #eff6ff 0%, #eef2ff 100%);
   color: #1d4ed8;
-  font-size: var(--wl-text-caption);
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -903,7 +1403,7 @@ function requestExportIssueReport() {
   border-radius: 6px;
   background: #f8fafc;
   color: #395077;
-  font-size: var(--wl-text-caption);
+  font-size: 11px;
   padding: 0 24px 0 8px;
   outline: none;
 }
@@ -918,13 +1418,44 @@ function requestExportIssueReport() {
   cursor: not-allowed;
 }
 
+.workspace-right-sidebar__doc-action {
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workspace-right-sidebar__doc-action--active {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.workspace-right-sidebar__doc-apply {
+  height: 36px;
+  border: 1px solid #2563eb;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workspace-right-sidebar__doc-apply:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .workspace-issue-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   border: 1px solid transparent;
-  font-size: var(--wl-text-caption);
+  font-size: 10px;
   line-height: 1;
   padding: 3px 7px;
 }

@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import type { Awareness } from 'y-protocols/awareness'
 import type { Doc as YDoc } from 'yjs'
-import type { ResourcePreviewStatus } from '~~/shared/types/domain'
+import type {
+  AiWorkspaceDocumentAction,
+  ProjectResourceCommentImageNodeAnchor,
+  ProjectResourceCommentTextSelectionAnchor,
+  ProjectResourceCommentThread,
+  ResourcePreviewStatus,
+} from '~~/shared/types/domain'
 import type { WorkspaceCollabCursorUser, WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
 
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
@@ -34,6 +40,9 @@ const props = withDefaults(defineProps<{
   collabCurrentUser?: any
   collabPresenceUsers?: WorkspaceCollabPresenceUser[]
   collabPresenceCursors?: WorkspaceCollabCursorUser[]
+  imageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
+  commentThreads?: ProjectResourceCommentThread[]
+  activeCommentThreadId?: string
   collabDrawValue?: string
   collabDrawError?: string
   previewStatusLabel: (status: ResourcePreviewStatus | '') => string
@@ -54,9 +63,17 @@ const props = withDefaults(defineProps<{
   collabCurrentUser: null,
   collabPresenceUsers: () => [],
   collabPresenceCursors: () => [],
+  imageUploadHandler: null,
+  commentThreads: () => [],
+  activeCommentThreadId: '',
   collabDrawValue: '{}',
   collabDrawError: '',
 })
+
+const richTextEditorRef = ref<{
+  applyDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
+  scrollToCommentThread: (threadId: string) => void
+} | null>(null)
 
 const emit = defineEmits<{
   reconvertPreview: []
@@ -74,7 +91,38 @@ const emit = defineEmits<{
     selectedTextPreview: string
   }]
   markdownRemotePresenceChange: [value: any[]]
+  markdownPrimaryHeadingChange: [value: string]
+  markdownCreateCommentFromSelection: [value: ProjectResourceCommentTextSelectionAnchor]
+  markdownCreateCommentFromImage: [value: ProjectResourceCommentImageNodeAnchor]
+  markdownOpenCommentThread: [threadId: string]
+  markdownTriggerDocumentAssist: [value: {
+    action: AiWorkspaceDocumentAction
+    trigger: 'selection_toolbar' | 'slash_menu' | 'right_sidebar'
+    selectionText: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    } | null
+  }]
+  markdownRequestImageAction: [value: {
+    resourceId?: string | null
+    src: string
+    mode: 'delete_node' | 'delete_and_recycle'
+  }]
 }>()
+
+defineExpose({
+  applyDocumentAssistResult(payload: { action: AiWorkspaceDocumentAction, text: string }) {
+    return richTextEditorRef.value?.applyDocumentAssistResult(payload) || false
+  },
+  scrollToCommentThread(threadId: string) {
+    richTextEditorRef.value?.scrollToCommentThread(threadId)
+  },
+})
 </script>
 
 <template>
@@ -82,31 +130,32 @@ const emit = defineEmits<{
     <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
       <div class="bg-slate-50 flex-1 min-h-0">
         <template v-if="props.activePreviewMode === 'markdown'">
-          <div class="p-4 border-b border-slate-200 bg-white flex flex-wrap gap-3 items-start justify-between">
-            <div class="text-xs text-slate-600">
-              {{ props.activeResourceTab.title }}
-              <span class="text-slate-400 ml-2">rev {{ Math.max(0, Number(props.collabRevision || 0)) }}</span>
-            </div>
-            <div class="flex flex-wrap gap-3 items-center justify-end">
-              <div class="text-xs" :class="props.collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-                {{ props.collabConnectionText }}
-              </div>
-              <CollabPresenceAvatarStack :users="props.collabPresenceUsers" />
-            </div>
-          </div>
           <div class="bg-white flex flex-col h-full min-h-0">
             <RichTextEditor
+              ref="richTextEditorRef"
               :doc="props.collabMarkdownDoc"
               :awareness="props.collabMarkdownAwareness"
               :current-user="props.collabCurrentUser"
               :editable="true"
               class="min-h-0 w-full"
               placeholder="输入正文或标题，协作文档会实时同步"
-              :heading-levels="[1, 2, 3]"
+              :heading-levels="[1, 2, 3, 4, 5, 6]"
+              :show-toolbar="false"
+              :enable-slash-menu="true"
+              :enable-comments="true"
+              :comment-threads="props.commentThreads"
+              :active-comment-thread-id="props.activeCommentThreadId"
+              :enable-document-assist="true"
+              :image-upload-handler="props.imageUploadHandler"
               @selection-change="emit('markdownSelectionChange', $event)"
               @remote-presence-change="emit('markdownRemotePresenceChange', $event)"
+              @primary-heading-change="emit('markdownPrimaryHeadingChange', $event)"
+              @create-comment-from-selection="emit('markdownCreateCommentFromSelection', $event)"
+              @create-comment-from-image="emit('markdownCreateCommentFromImage', $event)"
+              @open-comment-thread="emit('markdownOpenCommentThread', $event)"
+              @trigger-document-assist="emit('markdownTriggerDocumentAssist', $event)"
+              @request-image-action="emit('markdownRequestImageAction', $event)"
             />
-            <CollabPresenceDock :users="props.collabPresenceUsers" />
           </div>
         </template>
 

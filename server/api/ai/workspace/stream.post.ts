@@ -34,6 +34,7 @@ const ALLOWED_MODES: WorkspaceAiMode[] = [
   'dialog_ask',
   'auto_optimize',
   'issue_discovery',
+  'document_assist',
 ]
 
 function toText(value: unknown): string {
@@ -63,6 +64,13 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       contestId: toText(context.contestId),
       trackId: toText(context.trackId),
       major: toText(context.major),
+      resourceId: toText(context.resourceId),
+      resourceTitle: toText(context.resourceTitle),
+      markdown: toText(context.markdown),
+      selectionText: toText(context.selectionText),
+      selectionRange: context.selectionRange || null,
+      trigger: context.trigger,
+      documentAction: context.documentAction,
     },
     aiOptions: body?.aiOptions || {},
   }
@@ -76,6 +84,8 @@ function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName
     ? 'Loopy 自动优化'
     : mode === 'issue_discovery'
       ? 'Loopy 寻疑发现'
+      : mode === 'document_assist'
+        ? 'Loopy 文档增强'
       : 'Loopy 对话'
 
   if (left && right)
@@ -441,6 +451,17 @@ export default defineEventHandler(async (event) => {
           major: request.context?.major || '',
           contestName,
           trackName,
+          resourceId: request.context?.resourceId || '',
+          resourceTitle: request.context?.resourceTitle || '',
+          markdown: request.context?.markdown || '',
+          selectionText: request.context?.selectionText || '',
+          selectionRange: request.context?.selectionRange
+            ? {
+                ...request.context.selectionRange,
+              } as Record<string, unknown>
+            : null,
+          trigger: toText(request.context?.trigger),
+          documentAction: toText(request.context?.documentAction),
           projectSettingsSummary: contextBundle.projectSettingsSummary,
           projectOutlineSummary: contextBundle.projectOutlineSummary,
           resourceSummary: contextBundle.resourceSummary,

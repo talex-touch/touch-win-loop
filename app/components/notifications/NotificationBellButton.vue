@@ -144,8 +144,9 @@ function openDrawer() {
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
+  cursor: pointer;
   box-shadow: 0 12px 24px rgba(31, 45, 70, 0.12);
-  pointer-events: none;
+  pointer-events: auto;
   opacity: 0;
   visibility: hidden;
   transition:

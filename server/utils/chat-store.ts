@@ -7,6 +7,7 @@ const CHAT_SESSION_MODE_SET = new Set<WorkspaceAiMode>([
   'auto_optimize',
   'issue_discovery',
   'defense',
+  'document_assist',
 ])
 
 interface AiChatSessionRow {
