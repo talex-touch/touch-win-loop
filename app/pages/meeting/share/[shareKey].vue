@@ -45,6 +45,10 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+function resolveShareKey(): string {
+  return normalizeString((route.params as Record<string, unknown>)?.shareKey)
+}
+
 function resolveApiErrorMessage(error: unknown, fallback: string): string {
   if (error && typeof error === 'object') {
     const maybeData = (error as { data?: { message?: string } }).data
@@ -183,6 +187,7 @@ function handleGuestRealtimeMessage(message: { type?: string, payload?: Record<s
   if (
     messageType === 'meeting.state.updated'
     || messageType === 'meeting.participant.updated'
+    || messageType === 'meeting.share.updated'
     || messageType === 'meeting.summary.ready'
   ) {
     void loadSharedMeetingSnapshot({ silent: true })
@@ -203,7 +208,7 @@ function connectGuestRealtime(session: ProjectMeetingGuestJoinSession): void {
 }
 
 async function loadSharedMeetingSnapshot(options: { silent?: boolean } = {}): Promise<void> {
-  const shareKey = normalizeString(route.params.shareKey)
+  const shareKey = resolveShareKey()
   if (!shareKey)
     return
 
@@ -211,9 +216,7 @@ async function loadSharedMeetingSnapshot(options: { silent?: boolean } = {}): Pr
     pageLoading.value = true
 
   try {
-    const response = await $fetch<ApiResponse<SharedProjectMeetingSnapshot>>(
-      endpoint(`/share/meetings/${shareKey}`),
-    )
+    const response = await unsafeFetch<ApiResponse<SharedProjectMeetingSnapshot>>(endpoint(`/share/meetings/${shareKey}`))
     applyShareSnapshot(response.data || null)
     pageError.value = ''
   }
@@ -228,14 +231,14 @@ async function loadSharedMeetingSnapshot(options: { silent?: boolean } = {}): Pr
 }
 
 async function joinSharedMeeting(): Promise<void> {
-  const shareKey = normalizeString(route.params.shareKey)
+  const shareKey = resolveShareKey()
   const normalizedDisplayName = normalizeString(displayName.value)
   if (!shareKey || !normalizedDisplayName || joinLoading.value)
     return
 
   joinLoading.value = true
   try {
-    const response = await $fetch<ApiResponse<ProjectMeetingGuestJoinSession>>(
+    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestJoinSession>>(
       endpoint(`/share/meetings/${shareKey}/join`),
       {
         method: 'POST',

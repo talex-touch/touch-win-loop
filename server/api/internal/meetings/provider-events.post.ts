@@ -27,6 +27,8 @@ interface ProviderEventBody {
   leftAt?: string
   audioTrackState?: string
   videoTrackState?: string
+  screenShareTrackState?: string
+  screenShareAudioTrackState?: string
   artifact?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
@@ -66,7 +68,7 @@ export default defineEventHandler(async (event) => {
     if (!meeting)
       throw new Error('MEETING_NOT_FOUND')
 
-    if (eventType === 'participant_joined' || eventType === 'participant_left') {
+    if (eventType === 'participant_joined' || eventType === 'participant_left' || eventType === 'participant_track_updated') {
       const participantIdentity = normalizeString(body?.participantIdentity)
         || normalizeString(body?.participantId)
         || normalizeString(body?.displayName)
@@ -80,14 +82,16 @@ export default defineEventHandler(async (event) => {
         role: normalizeString(body?.role) as any || 'member',
         joinedAt: eventType === 'participant_joined' ? (normalizeString(body?.joinedAt) || new Date().toISOString()) : undefined,
         leftAt: eventType === 'participant_left' ? (normalizeString(body?.leftAt) || new Date().toISOString()) : undefined,
-        audioTrackState: normalizeString(body?.audioTrackState) as any || (eventType === 'participant_left' ? 'ended' : 'active'),
-        videoTrackState: normalizeString(body?.videoTrackState) as any || 'unknown',
+        audioTrackState: normalizeString(body?.audioTrackState) as any || (eventType === 'participant_left' ? 'ended' : eventType === 'participant_joined' ? 'active' : undefined),
+        videoTrackState: normalizeString(body?.videoTrackState) as any || (eventType === 'participant_left' ? 'ended' : undefined),
+        screenShareTrackState: normalizeString(body?.screenShareTrackState) as any || (eventType === 'participant_left' ? 'ended' : undefined),
+        screenShareAudioTrackState: normalizeString(body?.screenShareAudioTrackState) as any || (eventType === 'participant_left' ? 'ended' : undefined),
         metadata: body?.metadata || {},
       })
 
       return {
         meeting,
-        type: 'participant',
+        type: eventType === 'participant_track_updated' ? 'share' : 'participant',
         participant,
       }
     }
@@ -171,12 +175,18 @@ export default defineEventHandler(async (event) => {
 
   await Promise.allSettled([
     emitRealtimeEvent({
-      type: payload.type === 'participant' ? 'meeting.participant.updated' : 'meeting.state.updated',
+      type: payload.type === 'participant'
+        ? 'meeting.participant.updated'
+        : payload.type === 'share'
+          ? 'meeting.share.updated'
+          : 'meeting.state.updated',
       workspaceId: payload.meeting.workspaceId,
       projectId: payload.meeting.projectId,
       payload: {
         meetingId: payload.meeting.id,
-        participantId: payload.type === 'participant' ? payload.participant?.id : undefined,
+        participantId: payload.type === 'participant' || payload.type === 'share' ? payload.participant?.id : undefined,
+        screenShareTrackState: payload.type === 'share' ? payload.participant?.screenShareTrackState : undefined,
+        screenShareAudioTrackState: payload.type === 'share' ? payload.participant?.screenShareAudioTrackState : undefined,
       },
     }),
   ])

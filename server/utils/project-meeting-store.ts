@@ -71,6 +71,8 @@ interface ProjectMeetingParticipantRow {
   left_at: string | null
   audio_track_state: ProjectMeetingTrackState
   video_track_state: ProjectMeetingTrackState
+  screen_share_track_state: ProjectMeetingTrackState
+  screen_share_audio_track_state: ProjectMeetingTrackState
   metadata: Record<string, unknown> | null
   created_at: string
   updated_at: string
@@ -190,6 +192,8 @@ function mapParticipant(row: ProjectMeetingParticipantRow): ProjectMeetingPartic
     leftAt: row.left_at,
     audioTrackState: row.audio_track_state,
     videoTrackState: row.video_track_state,
+    screenShareTrackState: row.screen_share_track_state,
+    screenShareAudioTrackState: row.screen_share_audio_track_state,
     metadata: normalizeRecord(row.metadata),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -677,6 +681,8 @@ export async function listProjectMeetingParticipants(
       pmp.left_at::TEXT,
       pmp.audio_track_state,
       pmp.video_track_state,
+      pmp.screen_share_track_state,
+      pmp.screen_share_audio_track_state,
       pmp.metadata,
       pmp.created_at::TEXT,
       pmp.updated_at::TEXT,
@@ -706,6 +712,8 @@ export async function upsertProjectMeetingParticipant(
     leftAt?: string | null
     audioTrackState?: ProjectMeetingTrackState
     videoTrackState?: ProjectMeetingTrackState
+    screenShareTrackState?: ProjectMeetingTrackState
+    screenShareAudioTrackState?: ProjectMeetingTrackState
     metadata?: Record<string, unknown>
   },
 ): Promise<ProjectMeetingParticipant> {
@@ -725,11 +733,13 @@ export async function upsertProjectMeetingParticipant(
       left_at,
       audio_track_state,
       video_track_state,
+      screen_share_track_state,
+      screen_share_audio_track_state,
       metadata,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::JSONB, $14, $14
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::JSONB, $16, $16
     )
     ON CONFLICT (meeting_id, provider_identity)
     DO UPDATE SET
@@ -747,6 +757,8 @@ export async function upsertProjectMeetingParticipant(
       left_at = COALESCE(EXCLUDED.left_at, project_meeting_participants.left_at),
       audio_track_state = COALESCE(EXCLUDED.audio_track_state, project_meeting_participants.audio_track_state),
       video_track_state = COALESCE(EXCLUDED.video_track_state, project_meeting_participants.video_track_state),
+      screen_share_track_state = COALESCE(EXCLUDED.screen_share_track_state, project_meeting_participants.screen_share_track_state),
+      screen_share_audio_track_state = COALESCE(EXCLUDED.screen_share_audio_track_state, project_meeting_participants.screen_share_audio_track_state),
       metadata = project_meeting_participants.metadata || EXCLUDED.metadata,
       updated_at = EXCLUDED.updated_at`,
     [
@@ -762,6 +774,8 @@ export async function upsertProjectMeetingParticipant(
       input.leftAt || null,
       input.audioTrackState || 'unknown',
       input.videoTrackState || 'unknown',
+      input.screenShareTrackState || 'unknown',
+      input.screenShareAudioTrackState || 'unknown',
       JSON.stringify(normalizeRecord(input.metadata)),
       now,
     ],
@@ -781,6 +795,8 @@ export async function upsertProjectMeetingParticipant(
       pmp.left_at::TEXT,
       pmp.audio_track_state,
       pmp.video_track_state,
+      pmp.screen_share_track_state,
+      pmp.screen_share_audio_track_state,
       pmp.metadata,
       pmp.created_at::TEXT,
       pmp.updated_at::TEXT,
@@ -821,6 +837,8 @@ export async function getProjectMeetingParticipantByIdentity(
       pmp.left_at::TEXT,
       pmp.audio_track_state,
       pmp.video_track_state,
+      pmp.screen_share_track_state,
+      pmp.screen_share_audio_track_state,
       pmp.metadata,
       pmp.created_at::TEXT,
       pmp.updated_at::TEXT,

@@ -1075,6 +1075,8 @@ export interface ProjectMeetingParticipant {
   leftAt?: string | null
   audioTrackState: ProjectMeetingTrackState
   videoTrackState: ProjectMeetingTrackState
+  screenShareTrackState: ProjectMeetingTrackState
+  screenShareAudioTrackState: ProjectMeetingTrackState
   metadata?: Record<string, unknown>
   createdAt: string
   updatedAt: string
@@ -1158,6 +1160,8 @@ export interface SharedProjectMeetingParticipant {
   role: ProjectMeetingParticipantRole
   audioTrackState: ProjectMeetingTrackState
   videoTrackState: ProjectMeetingTrackState
+  screenShareTrackState: ProjectMeetingTrackState
+  screenShareAudioTrackState: ProjectMeetingTrackState
   joinedAt?: string | null
   leftAt?: string | null
 }

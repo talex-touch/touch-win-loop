@@ -2659,6 +2659,7 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
   if (
     messageType === 'meeting.state.updated'
     || messageType === 'meeting.participant.updated'
+    || messageType === 'meeting.share.updated'
     || messageType === 'meeting.caption.partial'
     || messageType === 'meeting.caption.final'
     || messageType === 'meeting.summary.ready'

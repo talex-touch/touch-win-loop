@@ -20,6 +20,7 @@ export type RealtimeEventType
     | 'collab.presence'
     | 'meeting.state.updated'
     | 'meeting.participant.updated'
+    | 'meeting.share.updated'
     | 'meeting.caption.partial'
     | 'meeting.caption.final'
     | 'meeting.summary.ready'
@@ -196,7 +197,7 @@ export function broadcastRealtimeEventLocally(
     return
   }
 
-  const payload = {
+  const nextPayload = {
     type: event.type,
     workspaceId,
     projectId,
@@ -207,15 +208,22 @@ export function broadcastRealtimeEventLocally(
       ...(normalizePayload(event.payload) || {}),
       ...(normalizePayload(options.payload) || {}),
     },
+  } as {
+    type: RealtimeEventType
+    workspaceId: string
+    projectId: string
+    resourceId?: string
+    revision?: number
+    payload: Record<string, unknown>
   }
-  const meetingId = normalizeString(payload.payload?.meetingId)
+  const meetingId = normalizeString(nextPayload.payload.meetingId)
 
   if (workspaceId)
-    broadcastRealtimeWorkspaceEvent(workspaceId, payload, excludePeerId)
+    broadcastRealtimeWorkspaceEvent(workspaceId, nextPayload, excludePeerId)
   if (projectId)
-    broadcastRealtimeProjectEvent(projectId, payload, excludePeerId)
+    broadcastRealtimeProjectEvent(projectId, nextPayload, excludePeerId)
   if (meetingId)
-    broadcastRealtimeMeetingEvent(meetingId, payload, excludePeerId)
+    broadcastRealtimeMeetingEvent(meetingId, nextPayload, excludePeerId)
 }
 
 export async function publishRealtimeEvent(

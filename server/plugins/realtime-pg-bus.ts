@@ -45,6 +45,7 @@ const REALTIME_EVENT_TYPES = new Set<RealtimeEventPayload['type']>([
   'collab.presence',
   'meeting.state.updated',
   'meeting.participant.updated',
+  'meeting.share.updated',
   'meeting.caption.partial',
   'meeting.caption.final',
   'meeting.summary.ready',

@@ -406,7 +406,7 @@ export async function createProjectMeetingSession(
     scheduledEndAt: null,
   })
 
-  if (!payload.rtcJoinToken || !payload.rtcJoinExpiresAt)
+  if (!payload.rtcJoinToken || !payload.rtcJoinExpiresAt || !payload.joinToken || !payload.joinExpiresAt)
     throw new Error('MEETING_CREATE_FAILED')
 
   return {
@@ -726,6 +726,8 @@ function buildSharedParticipantMaskState(input: {
     role: ProjectMeetingParticipantRole
     audioTrackState: ProjectMeetingParticipant['audioTrackState']
     videoTrackState: ProjectMeetingParticipant['videoTrackState']
+    screenShareTrackState: ProjectMeetingParticipant['screenShareTrackState']
+    screenShareAudioTrackState: ProjectMeetingParticipant['screenShareAudioTrackState']
     joinedAt?: string | null
     leftAt?: string | null
   }> = input.participants.length > 0
@@ -734,6 +736,8 @@ function buildSharedParticipantMaskState(input: {
         role: item.role,
         audioTrackState: item.audioTrackState,
         videoTrackState: item.videoTrackState,
+        screenShareTrackState: item.screenShareTrackState,
+        screenShareAudioTrackState: item.screenShareAudioTrackState,
         joinedAt: item.joinedAt,
         leftAt: item.leftAt,
       }))
@@ -742,6 +746,8 @@ function buildSharedParticipantMaskState(input: {
         role: item.role,
         audioTrackState: 'unknown',
         videoTrackState: 'unknown',
+        screenShareTrackState: 'unknown',
+        screenShareAudioTrackState: 'unknown',
         joinedAt: null,
         leftAt: null,
       }))
@@ -762,6 +768,8 @@ function buildSharedParticipantMaskState(input: {
       role: item.role,
       audioTrackState: item.audioTrackState,
       videoTrackState: item.videoTrackState,
+      screenShareTrackState: item.screenShareTrackState,
+      screenShareAudioTrackState: item.screenShareAudioTrackState,
       joinedAt: item.joinedAt,
       leftAt: item.leftAt,
     }

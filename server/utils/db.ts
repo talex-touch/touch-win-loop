@@ -1311,6 +1311,8 @@ CREATE TABLE IF NOT EXISTS project_meeting_participants (
   left_at TIMESTAMPTZ,
   audio_track_state TEXT NOT NULL DEFAULT 'unknown' CHECK (audio_track_state IN ('unknown', 'muted', 'active', 'ended')),
   video_track_state TEXT NOT NULL DEFAULT 'unknown' CHECK (video_track_state IN ('unknown', 'muted', 'active', 'ended')),
+  screen_share_track_state TEXT NOT NULL DEFAULT 'unknown' CHECK (screen_share_track_state IN ('unknown', 'muted', 'active', 'ended')),
+  screen_share_audio_track_state TEXT NOT NULL DEFAULT 'unknown' CHECK (screen_share_audio_track_state IN ('unknown', 'muted', 'active', 'ended')),
   metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1425,6 +1427,12 @@ ALTER TABLE project_meetings
 
 ALTER TABLE project_meetings
   ADD COLUMN IF NOT EXISTS duration_minutes INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE project_meeting_participants
+  ADD COLUMN IF NOT EXISTS screen_share_track_state TEXT NOT NULL DEFAULT 'unknown';
+
+ALTER TABLE project_meeting_participants
+  ADD COLUMN IF NOT EXISTS screen_share_audio_track_state TEXT NOT NULL DEFAULT 'unknown';
 
 DO $$
 DECLARE
