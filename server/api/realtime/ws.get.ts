@@ -2,12 +2,12 @@ import type { Peer } from 'crossws'
 import type { AuthUser } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
 import process from 'node:process'
+import { resolveValidatedMeetingGuestToken } from '~~/server/services/meeting/project-meeting'
 import {
   ACCESS_COOKIE_NAME,
   LEGACY_SESSION_COOKIE_NAME,
   REFRESH_COOKIE_NAME,
 } from '~~/server/utils/auth'
-import { resolveValidatedMeetingGuestToken } from '~~/server/services/meeting/project-meeting'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { findAuthBySessionTokenHash } from '~~/server/utils/platform-store'
 import { getProjectMeetingDetailByMeetingId } from '~~/server/utils/project-meeting-store'

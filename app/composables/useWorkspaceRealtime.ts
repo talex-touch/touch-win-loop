@@ -394,7 +394,6 @@ export function useWorkspaceRealtime(options: {
 }
 
 function createWorkspaceRealtimeFacade(client: WorkspaceRealtimeClient) {
-
   function connect(): void {
     connectClient(client)
   }
