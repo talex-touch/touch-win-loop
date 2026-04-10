@@ -13,6 +13,8 @@
     "start:generate": "npx serve .output/public",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
+    "test:style-system": "vitest run ./scripts/tests/style-system-guard.test.mjs ./scripts/tests/admin-contest-route.test.mjs ./scripts/tests/page-primitives-ui.test.mjs",
+    "test:ui-structure": "vitest run ./scripts/tests/workspace-project-structure.test.mjs ./scripts/tests/workspace-main-panel-structure.test.mjs ./scripts/tests/workspace-left-sidebar-structure.test.mjs ./scripts/tests/user-settings-structure.test.mjs ./scripts/tests/team-dashboard-structure.test.mjs ./scripts/tests/admin-layout-structure.test.mjs",
     "test:project-visibility": "vitest run ./scripts/tests/project-visibility.test.mjs",
     "ci:smoke": "node ./scripts/ci-smoke.mjs",
     "ci:e2e-smoke": "node ./scripts/team-project-e2e-smoke.mjs",

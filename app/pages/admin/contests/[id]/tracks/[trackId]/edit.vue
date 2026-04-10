@@ -7,7 +7,7 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
+const { contestId, trackId, withEmbed } = useAdminContestRoute()
 
 function splitCsv(value: string): string[] {
   return value
@@ -24,31 +24,6 @@ function toCsvFromUnknown(values: unknown): string {
   if (!Array.isArray(values))
     return ''
   return values.map(item => String(item || '').trim()).filter(Boolean).join(', ')
-}
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const trackId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.trackId
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
 }
 
 const loading = ref(false)
@@ -204,86 +179,26 @@ onMounted(loadTrack)
 </script>
 
 <template>
-  <div class="space-y-4">
-    <section class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div>
-          <h1 class="text-lg text-slate-900 font-semibold">
-            编辑赛道
-          </h1>
-          <p class="text-xs text-slate-500 mt-1">
-            track_id：{{ trackId }}
-          </p>
-        </div>
+  <PageShell size="compact">
+    <PageHeader title="编辑赛道" :meta="`track_id：${trackId}`">
+      <template #actions>
         <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/tracks`)">
           返回赛道列表
         </NuxtLink>
-      </div>
-    </section>
+      </template>
+    </PageHeader>
 
-    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="6" />
-      </a-skeleton>
-    </section>
-
-    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div v-if="moduleDraft" class="text-xs text-emerald-700 mb-3 p-3 border border-emerald-200 rounded bg-emerald-50">
-        <p class="font-semibold">
-          检测到 AI 草稿：{{ moduleDraft.title || '赛道草稿' }}
-        </p>
-        <p class="mt-1">
-          更新时间：{{ draftUpdatedAt }}。应用后仍需手动保存。
-        </p>
-        <div class="mt-2 flex gap-2 items-center">
-          <a-button size="mini" type="outline" @click="applyAiDraft">
-            应用到表单
-          </a-button>
-          <a-button size="mini" status="danger" @click="clearAiDraft">
-            清除草稿
-          </a-button>
-        </div>
-      </div>
-
-      <div class="space-y-2">
-        <a-input v-model="form.name" size="small" placeholder="赛道名称" />
-        <a-input v-model="form.summary" size="small" placeholder="赛道说明" />
-        <a-input v-model="form.coverImageUrl" size="small" placeholder="封面图片链接" />
-        <a-input v-model="form.location" size="small" placeholder="具体位置" />
-        <a-input v-model="form.organizer" size="small" placeholder="主办方" />
-        <a-input v-model="form.undertaker" size="small" placeholder="承办方" />
-        <a-input v-model="form.participantRequirements" size="small" placeholder="参赛对象" />
-        <a-input v-model="form.teamRule" size="small" placeholder="组队规则" />
-        <a-input v-model="form.awardRatio" size="small" placeholder="获奖比例" />
-        <a-input v-model="form.suitableMajorsCsv" size="small" placeholder="适配专业（逗号分隔）" />
-        <a-input v-model="form.deliverableTypesCsv" size="small" placeholder="交付物类型（逗号分隔）" />
-        <a-input v-model="form.rubricId" size="small" placeholder="rubric_id（可为空）" />
-        <div class="gap-2 grid grid-cols-2">
-          <a-input-number v-model="form.sortOrder" size="small" :min="0" placeholder="排序" />
-          <a-select v-model="form.status" size="small" placeholder="状态">
-            <a-option value="draft">
-              draft
-            </a-option>
-            <a-option value="published">
-              published
-            </a-option>
-            <a-option value="archived">
-              archived
-            </a-option>
-          </a-select>
-        </div>
-      </div>
-      <a-button type="primary" size="small" class="mt-3" :loading="saving" @click="save">
-        {{ saving ? '保存中...' : '保存' }}
-      </a-button>
-    </section>
-
-    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
-      {{ errorText }}
-    </section>
-
-    <section v-if="draftText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
-      {{ draftText }}
-    </section>
-  </div>
+    <AdminTrackForm
+      :form="form"
+      :loading="loading"
+      :saving="saving"
+      :error-text="errorText"
+      :draft-text="draftText"
+      :draft-title="moduleDraft?.title || (moduleDraft ? '赛道草稿' : '')"
+      :draft-updated-at="draftUpdatedAt"
+      @submit="save"
+      @apply-draft="applyAiDraft"
+      @clear-draft="clearAiDraft"
+    />
+  </PageShell>
 </template>

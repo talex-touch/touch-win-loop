@@ -7,55 +7,7 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
-
-function toDatetimeLocal(value: string | null): string {
-  if (!value)
-    return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()))
-    return ''
-  const local = date.toLocaleString('sv-SE', {
-    hour12: false,
-    timeZone: 'Asia/Shanghai',
-  })
-  return local.replace(' ', 'T').slice(0, 16)
-}
-
-function fromDatetimeLocal(value: string): string | null {
-  const text = value.trim()
-  if (!text)
-    return null
-  const timestamp = new Date(`${text}:00+08:00`).getTime()
-  if (Number.isNaN(timestamp))
-    return null
-  return new Date(timestamp).toISOString()
-}
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const timelineId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.timelineId
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
-}
+const { contestId, timelineId, withEmbed } = useAdminContestRoute()
 
 const loading = ref(false)
 const loadingTracks = ref(false)
@@ -184,102 +136,28 @@ onMounted(loadTimeline)
 </script>
 
 <template>
-  <div class="space-y-4">
-    <section class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div>
-          <h1 class="text-lg text-slate-900 font-semibold">
-            编辑赛道时间线
-          </h1>
-          <p class="text-xs text-slate-500 mt-1">
-            timeline_id：{{ timelineId }}
-          </p>
-        </div>
+  <PageShell size="compact">
+    <PageHeader title="编辑赛道时间线" :meta="`timeline_id：${timelineId}`">
+      <template #actions>
         <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/track-timelines`)">
           返回赛道时间线列表
         </NuxtLink>
-      </div>
-    </section>
+      </template>
+    </PageHeader>
 
-    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="6" />
-      </a-skeleton>
-    </section>
-
-    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div v-if="moduleDraft" class="text-xs text-emerald-700 mb-3 p-3 border border-emerald-200 rounded bg-emerald-50">
-        <p class="font-semibold">
-          检测到 AI 草稿：{{ moduleDraft.title || '赛道时间线草稿' }}
-        </p>
-        <p class="mt-1">
-          更新时间：{{ draftUpdatedAt }}。应用后仍需手动保存。
-        </p>
-        <div class="mt-2 flex gap-2 items-center">
-          <a-button size="mini" type="outline" @click="applyAiDraft">
-            应用到表单
-          </a-button>
-          <a-button size="mini" status="danger" @click="clearAiDraft">
-            清除草稿
-          </a-button>
-        </div>
-      </div>
-
-      <div class="gap-2 grid grid-cols-2">
-        <a-select v-model="form.trackId" size="small" :loading="loadingTracks" placeholder="赛道">
-          <a-option v-for="item in tracks" :key="item.id" :value="item.id">
-            {{ item.name }}
-          </a-option>
-        </a-select>
-        <a-input-number v-model="form.year" size="small" :min="2000" :max="2100" placeholder="年份" />
-        <a-select v-model="form.nodeType" size="small" placeholder="节点类型">
-          <a-option value="registration">
-            registration
-          </a-option>
-          <a-option value="submission">
-            submission
-          </a-option>
-          <a-option value="preliminary">
-            preliminary
-          </a-option>
-          <a-option value="final">
-            final
-          </a-option>
-          <a-option value="other">
-            other
-          </a-option>
-        </a-select>
-        <div />
-        <a-date-picker
-          v-model="form.startAt"
-          size="small"
-          show-time
-          format="YYYY-MM-DD HH:mm"
-          value-format="YYYY-MM-DDTHH:mm"
-          placeholder="开始时间"
-        />
-        <a-date-picker
-          v-model="form.endAt"
-          size="small"
-          show-time
-          format="YYYY-MM-DD HH:mm"
-          value-format="YYYY-MM-DDTHH:mm"
-          placeholder="结束时间"
-        />
-        <a-input v-model="form.note" size="small" class="col-span-2" placeholder="备注" />
-        <a-input v-model="form.sourceLink" size="small" class="col-span-2" placeholder="来源链接" />
-      </div>
-      <a-button type="primary" size="small" class="mt-3" :loading="saving" @click="save">
-        {{ saving ? '保存中...' : '保存' }}
-      </a-button>
-    </section>
-
-    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
-      {{ errorText }}
-    </section>
-
-    <section v-if="draftText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
-      {{ draftText }}
-    </section>
-  </div>
+    <AdminTimelineForm
+      :form="form"
+      :tracks="tracks"
+      include-track
+      :loading="loading"
+      :saving="saving"
+      :error-text="errorText"
+      :draft-text="draftText"
+      :draft-title="moduleDraft?.title || (moduleDraft ? '赛道时间线草稿' : '')"
+      :draft-updated-at="draftUpdatedAt"
+      @submit="save"
+      @apply-draft="applyAiDraft"
+      @clear-draft="clearAiDraft"
+    />
+  </PageShell>
 </template>

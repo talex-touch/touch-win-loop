@@ -4,13 +4,9 @@ import type {
   AiChatSession,
   AiContestFilterResult,
   AiDefenseJudgeRound,
-  AiDefensePersona,
   AiDefenseScorecard,
-  AiDefenseSessionDetail,
-  AiDefenseStage,
   AiDefenseStreamEvent,
   AiDefenseStreamEventType,
-  AiDefenseSummary,
   AiProjectChangeRequest,
   AiWorkspaceRequest,
   AiWorkspaceResult,
@@ -19,25 +15,16 @@ import type {
   ApiResponse,
   ApproveChangeRequestPayload,
   AuthMeResult,
-  AuthUser,
   ChatMessage,
   CollabPurpose,
   Contest,
-  ContestDetailPayload,
   Project,
-  ProjectContestAdaptation,
   ProjectInvitationSummary,
   ProjectIssue,
   ProjectIssueReport,
-  ProjectMeeting,
-  ProjectMeetingDetail,
-  ProjectMeetingGuestShare,
-  ProjectMeetingMode,
-  ProjectMeetingUtterance,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectMemberSummary,
-  ProjectOutlineNode,
   ProjectOutlineSnapshot,
   ProjectPayload,
   ProjectResourceShare,
@@ -45,36 +32,17 @@ import type {
   ProjectResourceShareVisibility,
   ProjectSeatQuota,
   ProjectSettingsDraft,
-  ProjectSettingsDraftDevicePayload,
   ProjectSettingsDraftPayload,
   ProjectSettingsDraftUi,
   ProjectSettingsSnapshot,
-  ProjectTopicBoard,
-  ProjectTopicBoardCreateSeed,
-  ProjectTopicBoardGenerateRequest,
-  ProjectTopicBoardListResult,
-  ProjectTopicBoardPatchRequest,
-  ProjectWorkbenchMode,
-  ProjectWorkspaceViewDeviceStatePayload,
-  ProjectWorkspaceViewPreference,
-  ProjectWorkspaceViewState,
   Resource,
   ResourcePreviewStatus,
-  TeamLastProjectPreference,
-  TopicProposalDecisionStatus,
-  TopicProposalItem,
   WorkspaceAiMode,
-  WorkspaceDisplayPreferenceSnapshot,
-  WorkspaceFontSizePreset,
-  WorkspaceMeetingCreateTabId,
   WorkspaceMemberRole,
-  WorkspaceOpenTabState,
-  WorkspaceTabSpacingPreset,
-  WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
-import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type {
+  MappingTone,
   WorkspaceFormState,
   WorkspaceKeyword,
   WorkspaceLinkedContestResourceGroup,
@@ -83,35 +51,42 @@ import type {
   WorkspaceProjectCommonForm,
   WorkspaceProjectContestBindingForm,
   WorkspaceProjectSaveState,
-  WorkspaceTopicBoardDraft,
+  WorkspaceStatusToneMeta,
 } from '~/types/workspace'
-import type { WorkspaceMetaKActionId, WorkspaceMetaKItem, WorkspaceMetaKSection, WorkspaceMetaKSectionDefinition } from '~/utils/workspace-metak'
 import { Message } from '@arco-design/web-vue'
 import {
-  formatFileSize,
-  isProjectResourceUploadFileSupported,
   PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
-  PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
-  PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
-import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
   createEmptyProjectCommonForm,
   createProjectCommonFormFromProject,
 } from '~/composables/project-settings'
+import {
+  normalizeQueryValue as normalizeQueryParam,
+  resolveWorkspaceOptions,
+  shouldOpenCreateDialog as isTruthyQueryFlag,
+  teamDashboardPath,
+} from '~/composables/team-ui'
 import { useCollabSession } from '~/composables/useCollabSession'
+import { useWorkspaceProjectRoute, workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
+import { useWorkspaceSidebarLayout } from '~/composables/useWorkspaceSidebarLayout'
 import {
-  defaultWorkspaceDisplayPreferenceSnapshot,
-  useWorkspaceDisplayPreferenceApi,
-} from '~/composables/useWorkspaceDisplayPreferences'
-import {
-  buildWorkspaceMetaKSections,
-  matchAndSortWorkspaceMetaKItems,
-  resolveWorkspaceMetaKShortcutLabel,
-
-} from '~/utils/workspace-metak'
+  clamp,
+  cloneProjectAdaptationForm,
+  cloneProjectContestBindings,
+  createEmptyProjectAdaptationForm,
+  createProjectAdaptationFormFromSnapshot,
+  defaultAssistantGreeting,
+  includesText,
+  parseFileSizeFromResource,
+  resolveApiErrorMessage,
+  resolveApiStatusCode,
+  sortByUpdatedAtDesc,
+  toTone,
+  validateUploadFiles,
+} from '~/utils/workspace-project-helpers'
 
 definePageMeta({
   layout: 'dashboard',
@@ -119,478 +94,12 @@ definePageMeta({
 
 useHead({
   title: '项目工作区',
-  link: [
-    {
-      rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
-    },
-    {
-      rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;600;700&display=swap',
-    },
-  ],
 })
 
 const { endpoint, resolveApiUrl, resolveAppUrl } = useApiEndpoint()
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
-const {
-  loadWorkspaceSnapshot: loadWorkspaceDisplayPreferenceSnapshotByApi,
-  patchWorkspaceUserOverride: patchWorkspaceDisplayUserOverrideByApi,
-  patchWorkspaceTeamDefault: patchWorkspaceDisplayTeamDefaultByApi,
-} = useWorkspaceDisplayPreferenceApi()
-
-interface TopicBoardConfirmOptions {
-  title: string
-  content: string
-  okText?: string
-  cancelText?: string
-}
-
-interface TopicBoardConfirmState extends Required<TopicBoardConfirmOptions> {
-  visible: boolean
-  resolver: ((value: boolean) => void) | null
-}
-
-type DeviceRestoreChoice = 'sync' | 'keep'
-
-interface DeviceRestoreConfirmState {
-  visible: boolean
-  title: string
-  content: string
-  resolver: ((value: DeviceRestoreChoice) => void) | null
-}
-
-interface HydratedProjectWorkspaceViewStateResult {
-  state: ProjectWorkspaceViewState
-  bundle: ProjectWorkspaceViewDeviceStatePayload | null
-  hasManagedQuery: boolean
-}
-
-interface ProjectSettingsDraftHydrationResult {
-  bundle: ProjectSettingsDraftDevicePayload | null
-  localDraft: WorkspaceProjectSettingsDraftCache | null
-  currentDraft: WorkspaceProjectSettingsDraftCache | null
-  latestOtherDraft: WorkspaceProjectSettingsDraftCache | null
-  appliedDraft: WorkspaceProjectSettingsDraftCache | null
-  source: 'local' | 'current' | 'latest_other' | ''
-}
-
-function linesToArray(text: string): string[] {
-  return text
-    .split(/\n+/)
-    .map(item => item.trim())
-    .filter(Boolean)
-}
-
-function arrayToLines(list: string[] | undefined): string {
-  return (list || []).join('\n')
-}
-
-const topicBoardConfirmState = reactive<TopicBoardConfirmState>({
-  visible: false,
-  title: '',
-  content: '',
-  okText: '确认',
-  cancelText: '取消',
-  resolver: null,
-})
-
-const deviceRestoreConfirmState = reactive<DeviceRestoreConfirmState>({
-  visible: false,
-  title: '',
-  content: '',
-  resolver: null,
-})
-
-function resolveTopicBoardConfirm(result: boolean) {
-  const resolver = topicBoardConfirmState.resolver
-  topicBoardConfirmState.visible = false
-  topicBoardConfirmState.title = ''
-  topicBoardConfirmState.content = ''
-  topicBoardConfirmState.okText = '确认'
-  topicBoardConfirmState.cancelText = '取消'
-  topicBoardConfirmState.resolver = null
-  resolver?.(result)
-}
-
-function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolean> {
-  if (!import.meta.client)
-    return Promise.resolve(true)
-
-  if (topicBoardConfirmState.resolver)
-    resolveTopicBoardConfirm(false)
-
-  topicBoardConfirmState.visible = true
-  topicBoardConfirmState.title = options.title
-  topicBoardConfirmState.content = options.content
-  topicBoardConfirmState.okText = options.okText || '确认'
-  topicBoardConfirmState.cancelText = options.cancelText || '取消'
-
-  return new Promise((resolve) => {
-    topicBoardConfirmState.resolver = resolve
-  })
-}
-
-function resolveDeviceRestoreConfirm(result: DeviceRestoreChoice) {
-  const resolver = deviceRestoreConfirmState.resolver
-  deviceRestoreConfirmState.visible = false
-  deviceRestoreConfirmState.title = ''
-  deviceRestoreConfirmState.content = ''
-  deviceRestoreConfirmState.resolver = null
-  resolver?.(result)
-}
-
-function askDeviceRestoreConfirm(title: string, content: string): Promise<DeviceRestoreChoice> {
-  if (!import.meta.client)
-    return Promise.resolve('keep')
-
-  if (deviceRestoreConfirmState.resolver)
-    resolveDeviceRestoreConfirm('keep')
-
-  deviceRestoreConfirmState.visible = true
-  deviceRestoreConfirmState.title = title
-  deviceRestoreConfirmState.content = content
-
-  return new Promise<DeviceRestoreChoice>((resolve) => {
-    deviceRestoreConfirmState.resolver = resolve
-  })
-}
-
-onBeforeUnmount(() => {
-  if (topicBoardConfirmState.resolver)
-    resolveTopicBoardConfirm(false)
-})
-
-function splitTopicBoardTags(text: string): string[] {
-  return String(text || '')
-    .split(/[\n,，、]+/)
-    .map(item => item.trim())
-    .filter(Boolean)
-}
-
-function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
-  return {
-    discipline: '',
-    topicType: '',
-    expectedDifficulty: '',
-    keywordsText: '',
-    teamSkillTagsText: '',
-    candidateCount: 3,
-  }
-}
-function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
-  return {
-    contestId,
-    trackId,
-    problemStatement: '',
-    innovationPointsText: '',
-    techRouteStepsText: '',
-    scoringMappingText: '',
-    risksText: '',
-    deliverablesText: '',
-    summary: '',
-  }
-}
-
-function createProjectAdaptationFormFromSnapshot(
-  adaptation: ProjectContestAdaptation | null,
-  project: Project | null,
-  contestId: string,
-  trackId: string,
-): WorkspaceProjectAdaptationForm {
-  if (!adaptation) {
-    return {
-      contestId,
-      trackId,
-      problemStatement: project?.problemStatement || '',
-      innovationPointsText: arrayToLines(project?.innovationPoints),
-      techRouteStepsText: arrayToLines(project?.techRouteSteps),
-      scoringMappingText: arrayToLines(project?.scoringMapping),
-      risksText: arrayToLines(project?.risks),
-      deliverablesText: arrayToLines(project?.deliverables),
-      summary: project?.summary || '',
-    }
-  }
-
-  return {
-    contestId,
-    trackId,
-    problemStatement: adaptation.problemStatement || '',
-    innovationPointsText: arrayToLines(adaptation.innovationPoints),
-    techRouteStepsText: arrayToLines(adaptation.techRouteSteps),
-    scoringMappingText: arrayToLines(adaptation.scoringMapping),
-    risksText: arrayToLines(adaptation.risks),
-    deliverablesText: arrayToLines(adaptation.deliverables),
-    summary: adaptation.summary || '',
-  }
-}
-
-function cloneProjectAdaptationForm(value: WorkspaceProjectAdaptationForm): WorkspaceProjectAdaptationForm {
-  return {
-    contestId: value.contestId,
-    trackId: value.trackId,
-    problemStatement: value.problemStatement,
-    innovationPointsText: value.innovationPointsText,
-    techRouteStepsText: value.techRouteStepsText,
-    scoringMappingText: value.scoringMappingText,
-    risksText: value.risksText,
-    deliverablesText: value.deliverablesText,
-    summary: value.summary,
-  }
-}
-
-function cloneProjectContestBindings(value: WorkspaceProjectContestBindingForm[]): WorkspaceProjectContestBindingForm[] {
-  return value.map(item => ({
-    contestId: item.contestId,
-    trackId: item.trackId,
-    sortOrder: item.sortOrder,
-  }))
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
-function normalizeRouteParam(value: string | string[] | undefined): string {
-  if (Array.isArray(value))
-    return String(value[0] || '').trim()
-  return String(value || '').trim()
-}
-
-function normalizeQueryParam(value: unknown): string {
-  if (Array.isArray(value))
-    return String(value[0] || '').trim()
-  if (value === null || value === undefined)
-    return ''
-  return String(value).trim()
-}
-
-function normalizeString(value: unknown): string {
-  return String(value || '').trim()
-}
-
-function buildWorkspaceMetaKItemId(prefix: string, value: unknown): string {
-  return `${prefix}:${normalizeString(value)}`
-}
-
-function buildWorkspaceMetaKKeywords(...parts: unknown[]): string[] {
-  return parts
-    .flatMap((part) => {
-      if (Array.isArray(part))
-        return part.map(item => normalizeString(item)).filter(Boolean)
-      return normalizeString(part) ? [normalizeString(part)] : []
-    })
-}
-
-function flattenProjectOutlineNodes(items: ProjectOutlineNode[]): ProjectOutlineNode[] {
-  const result: ProjectOutlineNode[] = []
-  const visit = (nodes: ProjectOutlineNode[]) => {
-    for (const node of nodes) {
-      result.push(node)
-      if (node.children.length > 0)
-        visit(node.children)
-    }
-  }
-  visit(items)
-  return result
-}
-
-function isWorkspaceMetaKEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement))
-    return false
-  if (target.isContentEditable)
-    return true
-  return Boolean(target.closest('input, textarea, select, [contenteditable="true"], .tiptap, .ProseMirror'))
-}
-
-function isWorkspaceMetaKHotkey(event: KeyboardEvent): boolean {
-  if (event.key.toLowerCase() !== 'k')
-    return false
-  if (event.altKey || event.shiftKey)
-    return false
-  return event.metaKey || event.ctrlKey
-}
-
-function formatMetaKDateTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()))
-    return ''
-
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hour = String(date.getHours()).padStart(2, '0')
-  const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${month}-${day} ${hour}:${minute}`
-}
-
-function resolveMetaKResourceTitle(resource: Resource): string {
-  const title = normalizeString(resource.title)
-  if (title)
-    return title
-  if (resource.resourceKind === 'markdown')
-    return '协作文档'
-  if (resource.resourceKind === 'draw')
-    return resource.collabPurpose === 'workflow' ? '流程画布' : '自由画布'
-  return '未命名资源'
-}
-
-function resolveMetaKResourceIcon(resource: Resource): string {
-  if (resource.resourceKind === 'markdown')
-    return 'edit_note'
-  if (resource.resourceKind === 'draw')
-    return resource.collabPurpose === 'workflow' ? 'flowsheet' : 'draw'
-  const typeText = normalizeString(resource.type).toLowerCase()
-  if (typeText.includes('pdf'))
-    return 'picture_as_pdf'
-  if (typeText.includes('image'))
-    return 'image'
-  return 'description'
-}
-
-function isTruthyQueryFlag(value: unknown): boolean {
-  const normalized = normalizeQueryParam(value).toLowerCase()
-  return normalized === '1' || normalized === 'true' || normalized === 'yes'
-}
-
-function teamDashboardPath(): string {
-  return '/team'
-}
-
-function teamDetailPath(teamId: string): string {
-  return `/team/${teamId}`
-}
-
-function teamProjectPath(teamId: string, projectId: string): string {
-  return `/team/${teamId}/project/${projectId}`
-}
-
-function workspaceDetailPath(workspaceId: string, projectId = ''): string {
-  const normalizedWorkspaceId = String(workspaceId || '').trim()
-  const normalizedProjectId = String(projectId || '').trim()
-  if (normalizedWorkspaceId && normalizedProjectId)
-    return teamProjectPath(normalizedWorkspaceId, normalizedProjectId)
-  return teamDetailPath(normalizedWorkspaceId)
-}
-
-async function ensureCanonicalWorkspaceProjectRoute(): Promise<boolean> {
-  if (!route.path.startsWith('/workspace/'))
-    return false
-
-  const params = route.params as Record<string, string | string[] | undefined>
-  const workspaceId = normalizeRouteParam(params.teamId || params.workspaceId)
-  const projectId = normalizeRouteParam(params.projectId)
-  if (!workspaceId || !projectId)
-    return false
-
-  await navigateTo({
-    path: workspaceDetailPath(workspaceId, projectId),
-    query: route.query,
-  }, { replace: true })
-  return true
-}
-
-function resolveApiErrorMessage(error: unknown, fallback: string): string {
-  if (error && typeof error === 'object') {
-    const maybeData = (error as { data?: { message?: string } }).data
-    const message = String(maybeData?.message || '').trim()
-    if (message)
-      return message
-  }
-
-  if (error instanceof Error && error.message.trim())
-    return error.message.trim()
-
-  return fallback
-}
-
-function parseFileSizeFromResource(resource: Resource): number {
-  const sourceType = String(resource.sourceType || resource.source || '').trim()
-  if (sourceType !== 'project_upload' && sourceType !== 'upload')
-    return 0
-
-  const metadata = resource.metadata
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
-    return 0
-
-  const rawSize = (metadata as Record<string, unknown>).fileSize
-  const size = Number(rawSize)
-  if (!Number.isFinite(size) || size <= 0)
-    return 0
-  return size
-}
-
-function validateUploadFiles(files: File[], usedBytes: number): string | null {
-  if (!files.length)
-    return '未检测到可上传文件。'
-
-  if (files.length > PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH) {
-    return `单次最多上传 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个文件。`
-  }
-
-  const invalidTypeFiles = files
-    .filter(file => !isProjectResourceUploadFileSupported(file.name))
-    .slice(0, 3)
-    .map(file => file.name)
-
-  if (invalidTypeFiles.length) {
-    return `文件格式不支持：${invalidTypeFiles.join('、')}。`
-  }
-
-  const oversizeFile = files.find(file => file.size > PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)
-  if (oversizeFile) {
-    return `文件过大：${oversizeFile.name}，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`
-  }
-
-  const incomingBytes = files.reduce((sum, file) => sum + Math.max(0, Number(file.size || 0)), 0)
-  if (usedBytes + incomingBytes > PROJECT_RESOURCE_STORAGE_LIMIT_BYTES) {
-    return `当前项目容量超限：上限 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`
-  }
-
-  return null
-}
-
-function resolveApiStatusCode(error: unknown): number {
-  if (!error || typeof error !== 'object')
-    return 0
-
-  const statusCode = Number((error as { statusCode?: number }).statusCode || 0)
-  if (Number.isFinite(statusCode) && statusCode > 0)
-    return statusCode
-
-  const responseStatus = Number((error as { response?: { status?: number } }).response?.status || 0)
-  if (Number.isFinite(responseStatus) && responseStatus > 0)
-    return responseStatus
-
-  const dataStatus = Number((error as { data?: { statusCode?: number } }).data?.statusCode || 0)
-  if (Number.isFinite(dataStatus) && dataStatus > 0)
-    return dataStatus
-
-  return 0
-}
-
-function toIssueReportMarkdownFileName(title: string): string {
-  const normalized = String(title || '')
-    .trim()
-    .replace(/[\\/:*?"<>|]+/g, '-')
-  return `${normalized || 'issue-report'}.md`
-}
-
-function triggerBrowserDownloadFromBlob(blob: Blob, fileName: string): void {
-  if (!import.meta.client)
-    return
-
-  const url = window.URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = fileName
-  anchor.rel = 'noopener'
-  document.body.appendChild(anchor)
-  anchor.click()
-  document.body.removeChild(anchor)
-  window.URL.revokeObjectURL(url)
-}
 
 interface WorkspaceQuickSwitchProject {
   projectId: string
@@ -632,96 +141,26 @@ interface ProjectMemberRolePatchPayload {
   role: 'manager' | 'editor' | 'viewer'
 }
 
-interface WorkspaceMeetingCaptionItem {
-  id: string
-  text: string
-  speakerName: string
-  speakerLabel: string
-  startedAtMs: number
-  endedAtMs: number
-  final: boolean
-}
-
-interface ProjectMeetingJoinSessionPayload {
-  meeting: ProjectMeetingDetail
-  rtcJoinToken?: string
-  rtcJoinExpiresAt?: string
-  rtcServerUrl?: string
-  rtcJoinUrl?: string
-  joinToken?: string
-  joinExpiresAt?: string
-  joinUrl?: string
-}
-
-interface ProjectMeetingCreatePayload {
-  mode: ProjectMeetingMode
-  title?: string
-  invitedUserIds: string[]
-  scheduledStartAt: string
-  scheduledEndAt: string
-}
-
-interface DefenseRealtimeSessionPayload {
-  sessionId: string
-  meetingId: string
-  meeting: ProjectMeetingDetail
-  rtcJoinToken?: string
-  rtcJoinExpiresAt?: string
-  rtcServerUrl?: string
-  rtcJoinUrl?: string
-  joinToken: string
-  joinExpiresAt: string
-  joinUrl?: string
-  selectedPersonaIds: string[]
-}
-
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
-type WorkspaceMainTabId = WorkspaceOpenTabState
-type WorkspaceMeetingTabId = `meeting:${string}`
-type WorkspaceMeetingCreateLocalTabId = WorkspaceMeetingCreateTabId
+type WorkspaceMainTabId = 'dashboard' | 'members' | 'flow' | 'settings' | `resource:${string}`
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
-type WorkspaceWorkbenchMode = ProjectWorkbenchMode
-type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
-type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
-const PROJECT_VIEW_STATE_QUERY_KEYS = ['wb', 'tab', 'tabs', 'res', 'contest', 'track', 'session', 'meeting', 'ls', 'rs', 'panel'] as const
-const RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
-const METAK_SECTION_DEFINITIONS: WorkspaceMetaKSectionDefinition[] = [
-  { id: 'actions', title: '快捷命令', maxItems: 8 },
-  { id: 'resources', title: '项目资源', maxItems: 8 },
-  { id: 'meetings', title: '项目会议', maxItems: 6 },
-  { id: 'issues', title: 'Issue', maxItems: 6 },
-  { id: 'contests', title: '竞赛', maxItems: 6 },
-  { id: 'outline', title: '结构大纲', maxItems: 6 },
-  { id: 'workspaces', title: '空间切换', maxItems: 6 },
-  { id: 'projects', title: '项目切换', maxItems: 6 },
-]
-
-function parseTimestamp(value: string): number {
-  const time = new Date(value).getTime()
-  if (Number.isNaN(time))
-    return 0
-  return time
-}
-
-function sortByUpdatedAtDesc(items: Project[]): Project[] {
-  return [...items].sort((a, b) => parseTimestamp(b.updatedAt) - parseTimestamp(a.updatedAt))
-}
-
-const routeWorkspaceId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  return normalizeRouteParam(params.teamId || params.workspaceId)
-})
-
-const routeProjectId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  return normalizeRouteParam(params.projectId || '')
-})
-
-const highlightedProjectId = computed(() => routeProjectId.value || normalizeQueryParam(route.query.projectId))
+const { routeWorkspaceId, routeProjectId, highlightedProjectId, ensureCanonicalWorkspaceProjectRoute } = useWorkspaceProjectRoute()
+const {
+  leftSidebarCollapsed,
+  rightSidebarUserCollapsed,
+  sidebarLayoutHydrating,
+  rightSidebarCollapsed,
+  withSidebarLayoutHydrating,
+  initializeRightSidebarBreakpointTracking,
+  disposeRightSidebarBreakpointTracking,
+  applySidebarLayoutState,
+  collapseRightSidebar,
+  expandRightSidebar,
+} = useWorkspaceSidebarLayout()
 
 const naturalQuery = ref('')
 const major = ref('')
@@ -729,16 +168,6 @@ const discipline = ref('')
 const level = ref('')
 const trackType = ref('')
 const topK = ref(6)
-const topicBoardDraft = reactive<WorkspaceTopicBoardDraft>(createEmptyTopicBoardDraft())
-const topicBoardLoading = ref(false)
-const topicBoardFetching = ref(false)
-const topicBoardError = ref('')
-const topicBoardSnapshot = ref<ProjectTopicBoard | null>(null)
-const topicBoardHistory = ref<ProjectTopicBoard[]>([])
-const topicBoardActioningCandidateId = ref('')
-const topicBoardCreateSeedHandled = ref(false)
-let topicBoardLoadRequestId = 0
-let topicBoardWriteRequestId = 0
 
 const contests = ref<Contest[]>([])
 const contestCatalog = ref<Contest[]>([])
@@ -746,15 +175,9 @@ const resources = ref<Resource[]>([])
 const recycleResources = ref<Resource[]>([])
 const resourceLibrary = ref<Resource[]>([])
 const projectResourceShares = ref<ProjectResourceShare[]>([])
-const projectMeetings = ref<ProjectMeeting[]>([])
-const activeMeetingId = ref('')
-const activeMeetingDetail = ref<ProjectMeetingDetail | null>(null)
-const activeMeetingUtterances = ref<ProjectMeetingUtterance[]>([])
-const meetingLiveCaptions = ref<WorkspaceMeetingCaptionItem[]>([])
 const workspaceMembers = ref<ProjectMemberSummary[]>([])
 const workspaceInvitations = ref<ProjectInvitationSummary[]>([])
 const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
-const selectedContestDetail = ref<ContestDetailPayload | null>(null)
 const projects = ref<Project[]>([])
 const allProjects = ref<Project[]>([])
 const me = ref<AuthMeResult | null>(null)
@@ -764,24 +187,11 @@ const selectedTrackId = ref('')
 
 const openSettingsSignal = ref(0)
 const openMemberManagementSignal = ref(0)
-const openDisplayPreferencesSignal = ref(0)
 const openFlowSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
-const accountCenterVisible = ref(false)
-const leftSidebarCollapsed = ref(false)
-const leftSidebarMetaKSignal = ref(0)
-const leftSidebarMetaKModuleId = ref<WorkspaceLeftSidebarCommandModuleId | ''>('')
-const leftSidebarMetaKOutlineId = ref('')
-const rightSidebarUserCollapsed = ref(false)
-const rightSidebarAutoCollapsed = ref(false)
-const rightSidebarAutoRestorePending = ref(false)
-const sidebarLayoutHydrating = ref(false)
-const openMainTabs = ref<WorkspaceMainTabId[]>(['dashboard'])
 const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
-const metaKOpen = ref(false)
-const metaKQuery = ref('')
-const metaKShortcutLabel = ref('⌘K')
+const headerSearch = ref('')
 const aiReasoning = ref('')
 const normalizedInfo = ref('')
 const statusLine = ref('')
@@ -793,17 +203,7 @@ const previewStatusLoading = ref(false)
 const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
 const previewMode = ref<WorkspacePreviewMode>('binary')
 const projectSettingsLoading = ref(false)
-const selectedContestDetailLoading = ref(false)
 const projectSettingsSaveState = ref<WorkspaceProjectSaveState>('idle')
-const workspaceDisplayPreferenceSnapshot = ref<WorkspaceDisplayPreferenceSnapshot>(defaultWorkspaceDisplayPreferenceSnapshot())
-const workspaceDisplayPreferenceLoading = ref(false)
-const workspaceDisplayPreferenceSavingScope = ref<'' | 'user' | 'team'>('')
-const workspaceDisplayPreferenceError = ref('')
-const meetingJoinUrl = ref('')
-const meetingJoinToken = ref('')
-const meetingJoinExpiresAt = ref('')
-const meetingRtcServerUrl = ref('')
-const activeMeetingGuestShare = ref<ProjectMeetingGuestShare | null>(null)
 const projectSettingsCommon = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
 const projectSettingsBindings = ref<WorkspaceProjectContestBindingForm[]>([])
 const projectSettingsCurrentContestId = ref('')
@@ -814,21 +214,15 @@ const projectSettingsCommonDirty = ref(false)
 const projectSettingsBindingsDirty = ref(false)
 const projectSettingsDirtyAdaptationContestIds = ref<string[]>([])
 const projectSettingsDraftServerRevision = ref<number | null>(null)
-const workspaceDeviceId = ref('')
+const projectSettingsDraftDeviceId = ref('')
 
 let projectSettingsDraftTimer: ReturnType<typeof setTimeout> | null = null
 let projectSettingsDraftPersistSeq = 0
-let projectWorkspaceViewPersistTimer: ReturnType<typeof setTimeout> | null = null
 let projectOutlineGenerateTimer: ReturnType<typeof setTimeout> | null = null
 let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
-let meetingRealtimeRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
-let metaKRemoteSearchTimer: ReturnType<typeof setTimeout> | null = null
-let metaKRemoteRequestSequence = 0
 let unsubscribeRealtimeMessages: (() => void) | null = null
-let rightSidebarBreakpointMediaQuery: MediaQueryList | null = null
-let unsubscribeRightSidebarBreakpoint: (() => void) | null = null
 
 const listLoading = ref(false)
 const aiFiltering = ref(false)
@@ -840,26 +234,20 @@ const resourceLibraryLoading = ref(false)
 const projectOutlineLoading = ref(false)
 const projectOutlineFirstLoaded = ref(false)
 const projectResourceSharesLoading = ref(false)
-const projectMeetingsLoading = ref(false)
-const meetingDetailLoading = ref(false)
-const meetingGuestShareLoading = ref(false)
 const workspaceMemberManagementLoading = ref(false)
 const workspaceInvitationSubmitting = ref(false)
 const workspaceMemberRoleUpdatingUserId = ref('')
 const workspaceMemberRemovingUserId = ref('')
 const workspaceInvitationRevokingId = ref('')
 const resourceMutating = ref(false)
-const meetingMutating = ref(false)
 
-const chatMessages = ref<ChatMessage[]>([])
+const chatMessages = ref<ChatMessage[]>([defaultAssistantGreeting()])
 const chatSessions = ref<AiChatSession[]>([])
 const activeChatSessionId = ref('')
 const chatInput = ref('')
 const chatMissingFields = ref<string[]>([])
 const chatDraft = ref<ProjectPayload | null>(null)
 const aiMode = ref<WorkspaceAiMode>('dialog_ask')
-const workbenchMode = ref<WorkspaceWorkbenchMode>('project')
-const lastPrimaryAiMode = ref<WorkspacePrimaryAiMode>('dialog_ask')
 const aiChangeRequests = ref<AiProjectChangeRequest[]>([])
 const aiChangeRequestsLoading = ref(false)
 const aiChangeActingIds = ref<string[]>([])
@@ -867,43 +255,14 @@ const aiChangeSecondConfirmIds = ref<string[]>([])
 const projectIssueReports = ref<ProjectIssueReport[]>([])
 const projectIssues = ref<ProjectIssue[]>([])
 const issueCenterLoading = ref(false)
-const issueReportSubmitting = ref(false)
-const issueReportExporting = ref(false)
-const metaKRemoteLoading = ref(false)
-const metaKRemoteLibraryItems = ref<WorkspaceMetaKItem[]>([])
 const defenseRounds = ref<AiDefenseJudgeRound[]>([])
 const defenseScorecard = ref<AiDefenseScorecard | null>(null)
-const defensePersonas = ref<AiDefensePersona[]>([])
-const defensePersonasLoading = ref(false)
-const defenseSummary = ref<AiDefenseSummary | null>(null)
-const defenseSummaryLoading = ref(false)
-const defenseStage = ref<AiDefenseStage | undefined>(undefined)
-const defenseTurnCount = ref(0)
 const workspaceInvitationLink = ref('')
 const workspaceSeatLimitSaveLoading = ref(false)
 const workspaceSeatLimitError = ref('')
 const workspaceSeatLimitUpdatedSignal = ref(0)
 const projectSeatQuota = ref<ProjectSeatQuota | null>(null)
-const rightSidebarCollapsed = computed(() => rightSidebarUserCollapsed.value || rightSidebarAutoCollapsed.value)
-const projectWorkspaceViewHydrating = ref(false)
-const projectWorkspaceModeHydrating = ref(false)
-const projectWorkspaceViewReady = ref(false)
-const workspaceBootstrapLoading = ref(false)
-
-let workspaceBootstrapRequestId = 0
-
 function getProjectSettingsDraftStorageKey(projectId: string): string {
-  if (!import.meta.client)
-    return ''
-  const normalizedProjectId = String(projectId || '').trim()
-  const userId = String(me.value?.user.id || '').trim()
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!normalizedProjectId || !userId || !deviceId)
-    return ''
-  return `${PROJECT_SETTINGS_DRAFT_PREFIX}.${userId}.${deviceId}.${normalizedProjectId}`
-}
-
-function getLegacyProjectSettingsDraftStorageKey(projectId: string): string {
   if (!import.meta.client)
     return ''
   const normalizedProjectId = String(projectId || '').trim()
@@ -913,7 +272,7 @@ function getLegacyProjectSettingsDraftStorageKey(projectId: string): string {
   return `${PROJECT_SETTINGS_DRAFT_PREFIX}.${userId}.${normalizedProjectId}`
 }
 
-function getWorkspaceDeviceStorageKey(): string {
+function getProjectSettingsDraftDeviceStorageKey(): string {
   if (!import.meta.client)
     return ''
   const userId = String(me.value?.user.id || '').trim()
@@ -922,662 +281,37 @@ function getWorkspaceDeviceStorageKey(): string {
   return `${PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX}.${userId}`
 }
 
-function withSidebarLayoutHydrating<T>(callback: () => T): T {
-  sidebarLayoutHydrating.value = true
-  try {
-    return callback()
-  }
-  finally {
-    sidebarLayoutHydrating.value = false
-  }
-}
-
-function applyRightSidebarAutoCollapse(nextCollapsed: boolean, nextRestorePending = rightSidebarAutoRestorePending.value): void {
-  const normalizedCollapsed = Boolean(nextCollapsed)
-  const normalizedRestorePending = Boolean(nextRestorePending)
-  if (
-    rightSidebarAutoCollapsed.value === normalizedCollapsed
-    && rightSidebarAutoRestorePending.value === normalizedRestorePending
-  ) {
-    return
-  }
-
-  withSidebarLayoutHydrating(() => {
-    rightSidebarAutoCollapsed.value = normalizedCollapsed
-    rightSidebarAutoRestorePending.value = normalizedRestorePending
-  })
-}
-
-function handleRightSidebarBreakpointChange(isWide: boolean): void {
-  if (isWide) {
-    if (rightSidebarAutoCollapsed.value || rightSidebarAutoRestorePending.value)
-      applyRightSidebarAutoCollapse(false, false)
-    return
-  }
-
-  if (rightSidebarCollapsed.value)
-    return
-
-  applyRightSidebarAutoCollapse(true, true)
-}
-
-function initializeRightSidebarBreakpointTracking(): void {
-  if (!import.meta.client)
-    return
-
-  if (unsubscribeRightSidebarBreakpoint) {
-    unsubscribeRightSidebarBreakpoint()
-    unsubscribeRightSidebarBreakpoint = null
-  }
-
-  rightSidebarBreakpointMediaQuery = window.matchMedia(RIGHT_SIDEBAR_BREAKPOINT_QUERY)
-  handleRightSidebarBreakpointChange(rightSidebarBreakpointMediaQuery.matches)
-
-  const handleChange = (event: MediaQueryListEvent) => {
-    handleRightSidebarBreakpointChange(event.matches)
-  }
-
-  if (typeof rightSidebarBreakpointMediaQuery.addEventListener === 'function') {
-    rightSidebarBreakpointMediaQuery.addEventListener('change', handleChange)
-    unsubscribeRightSidebarBreakpoint = () => {
-      rightSidebarBreakpointMediaQuery?.removeEventListener('change', handleChange)
-      rightSidebarBreakpointMediaQuery = null
-    }
-    return
-  }
-
-  rightSidebarBreakpointMediaQuery.addListener(handleChange)
-  unsubscribeRightSidebarBreakpoint = () => {
-    rightSidebarBreakpointMediaQuery?.removeListener(handleChange)
-    rightSidebarBreakpointMediaQuery = null
-  }
-}
-
-function setRightSidebarUserCollapsed(nextCollapsed: boolean, options: { suppressPersist?: boolean } = {}): void {
-  const normalizedCollapsed = Boolean(nextCollapsed)
-  const apply = () => {
-    rightSidebarUserCollapsed.value = normalizedCollapsed
-    rightSidebarAutoCollapsed.value = false
-    rightSidebarAutoRestorePending.value = false
-  }
-
-  if (options.suppressPersist) {
-    withSidebarLayoutHydrating(apply)
-    return
-  }
-
-  apply()
-}
-
-function collapseRightSidebar(): void {
-  setRightSidebarUserCollapsed(true)
-}
-
-function expandRightSidebar(): void {
-  setRightSidebarUserCollapsed(false)
-}
-
-function createResourceTabId(resourceId: string): WorkspaceMainTabId {
-  return `resource:${resourceId}` as WorkspaceMainTabId
-}
-
-function createMeetingTabId(meetingId: string): WorkspaceMeetingTabId {
-  return `meeting:${meetingId}` as WorkspaceMeetingTabId
-}
-
-function createMeetingCreateTabId(mode: ProjectMeetingMode): WorkspaceMeetingCreateLocalTabId {
-  return `meeting-create:${mode}` as WorkspaceMeetingCreateLocalTabId
-}
-
-function resolveMeetingIdFromTabId(tabId: string): string {
-  return tabId.startsWith('meeting:') ? tabId.slice('meeting:'.length) : ''
-}
-
-function ensureWorkspaceMainTabOpen(tabId: WorkspaceMainTabId, options: { activate?: boolean } = {}): void {
-  const normalizedTabId = normalizeString(tabId) as WorkspaceMainTabId
-  if (!isWorkspaceMainTabId(normalizedTabId))
-    return
-
-  if (!openMainTabs.value.includes(normalizedTabId)) {
-    openMainTabs.value = normalizeWorkspaceMainTabIds([...openMainTabs.value, normalizedTabId], {
-      allowEmpty: true,
-    })
-  }
-
-  if (options.activate !== false)
-    activeMainTabId.value = normalizedTabId
-}
-
-function ensureMeetingDetailTabOpen(meetingId: string, options: { activate?: boolean } = {}): WorkspaceMeetingTabId | '' {
-  const normalizedMeetingId = normalizeString(meetingId)
-  if (!normalizedMeetingId)
-    return ''
-
-  const tabId = createMeetingTabId(normalizedMeetingId)
-  ensureWorkspaceMainTabOpen(tabId, options)
-  return tabId
-}
-
-function ensureMeetingCreateTabOpen(mode: ProjectMeetingMode, options: { activate?: boolean } = {}): WorkspaceMeetingCreateLocalTabId {
-  const tabId = createMeetingCreateTabId(mode)
-  ensureWorkspaceMainTabOpen(tabId, options)
-  return tabId
-}
-
-function isWorkspaceMainTabId(value: string): value is WorkspaceMainTabId {
-  return ['dashboard', 'meeting', 'members', 'flow', 'settings'].includes(value)
-    || (value.startsWith('meeting:') && value.length > 'meeting:'.length)
-    || value === 'meeting-create:audio'
-    || value === 'meeting-create:video'
-    || (value.startsWith('resource:') && value.length > 'resource:'.length)
-}
-
-function normalizeWorkspaceMainTabIds(
-  value: WorkspaceOpenTabState[] | undefined,
-  options: { allowEmpty?: boolean } = {},
-): WorkspaceMainTabId[] {
-  const normalized: WorkspaceMainTabId[] = []
-  const used = new Set<string>()
-
-  for (const item of value || []) {
-    const tabId = normalizeString(item)
-    if (!isWorkspaceMainTabId(tabId) || used.has(tabId))
-      continue
-    normalized.push(tabId)
-    used.add(tabId)
-    if (normalized.length >= 8)
-      break
-  }
-
-  return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
-}
-
-function normalizeWorkspaceMainTabId(
-  value: unknown,
-  tabIds: WorkspaceMainTabId[],
-  options: { fallbackTabId?: WorkspaceMainTabId | '' } = {},
-): WorkspaceMainTabId | '' {
-  const normalized = normalizeString(value)
-  if (normalized && isWorkspaceMainTabId(normalized) && tabIds.includes(normalized))
-    return normalized
-  if (options.fallbackTabId && tabIds.includes(options.fallbackTabId))
-    return options.fallbackTabId
-  return tabIds[0] || ''
-}
-
-function createDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewState {
-  return {
-    workbenchMode: 'project',
-    mainTabs: ['dashboard'],
-    activeMainTabId: 'dashboard',
-    previewResourceId: '',
-    selectedContestId: '',
-    selectedTrackId: '',
-    activeChatSessionId: '',
-    activeMeetingId: '',
-    leftSidebarCollapsed: false,
-    rightSidebarCollapsed: false,
-  }
-}
-
-function normalizeProjectWorkspaceViewState(
-  value: Partial<ProjectWorkspaceViewState> | null | undefined,
-): ProjectWorkspaceViewState {
-  const source = value || {}
-  const allowEmptyMainTabs = Array.isArray(source.mainTabs)
-  const mainTabs = normalizeWorkspaceMainTabIds(source.mainTabs, { allowEmpty: allowEmptyMainTabs })
-  let previewResourceId = normalizeString(source.previewResourceId)
-  let activeMeetingId = normalizeString(source.activeMeetingId)
-
-  const requestedActiveTabId = normalizeString(source.activeMainTabId)
-  if (!previewResourceId && requestedActiveTabId.startsWith('resource:'))
-    previewResourceId = requestedActiveTabId.slice('resource:'.length)
-  if (!activeMeetingId && requestedActiveTabId.startsWith('meeting:'))
-    activeMeetingId = resolveMeetingIdFromTabId(requestedActiveTabId)
-
-  if (previewResourceId) {
-    const previewTabId = createResourceTabId(previewResourceId)
-    if (!mainTabs.includes(previewTabId))
-      mainTabs.push(previewTabId)
-  }
-
-  const normalizedMainTabs = normalizeWorkspaceMainTabIds(mainTabs, { allowEmpty: allowEmptyMainTabs })
-
-  return {
-    workbenchMode: source.workbenchMode === 'defense' ? 'defense' : 'project',
-    mainTabs: normalizedMainTabs,
-    activeMainTabId: normalizeWorkspaceMainTabId(source.activeMainTabId, normalizedMainTabs, {
-      fallbackTabId: allowEmptyMainTabs ? '' : 'dashboard',
-    }),
-    previewResourceId,
-    selectedContestId: normalizeString(source.selectedContestId),
-    selectedTrackId: normalizeString(source.selectedTrackId),
-    activeChatSessionId: normalizeString(source.activeChatSessionId),
-    activeMeetingId,
-    leftSidebarCollapsed: Boolean(source.leftSidebarCollapsed),
-    rightSidebarCollapsed: Boolean(source.rightSidebarCollapsed),
-  }
-}
-
-function isProjectWorkspaceViewStateEqual(
-  left: ProjectWorkspaceViewState,
-  right: ProjectWorkspaceViewState,
-): boolean {
-  return (
-    left.workbenchMode === right.workbenchMode
-    && left.activeMainTabId === right.activeMainTabId
-    && left.previewResourceId === right.previewResourceId
-    && left.selectedContestId === right.selectedContestId
-    && left.selectedTrackId === right.selectedTrackId
-    && left.activeChatSessionId === right.activeChatSessionId
-    && left.activeMeetingId === right.activeMeetingId
-    && left.leftSidebarCollapsed === right.leftSidebarCollapsed
-    && left.rightSidebarCollapsed === right.rightSidebarCollapsed
-    && left.mainTabs.length === right.mainTabs.length
-    && left.mainTabs.every((item, index) => item === right.mainTabs[index])
-  )
-}
-
-function buildProjectWorkspaceViewStateFromRefs(): ProjectWorkspaceViewState {
-  return normalizeProjectWorkspaceViewState({
-    workbenchMode: workbenchMode.value,
-    mainTabs: openMainTabs.value,
-    activeMainTabId: activeMainTabId.value,
-    previewResourceId: previewResourceId.value,
-    selectedContestId: selectedContestId.value,
-    selectedTrackId: selectedTrackId.value,
-    activeChatSessionId: activeChatSessionId.value,
-    activeMeetingId: activeMeetingId.value,
-    leftSidebarCollapsed: leftSidebarCollapsed.value,
-    rightSidebarCollapsed: rightSidebarUserCollapsed.value,
-  })
-}
-
-function sanitizeProjectWorkspaceViewState(
-  value: ProjectWorkspaceViewState,
-): ProjectWorkspaceViewState {
-  const nextState = normalizeProjectWorkspaceViewState(value)
-  const validResourceIdSet = new Set(resources.value.map(item => String(item.id || '').trim()).filter(Boolean))
-
-  const nextTabs = nextState.mainTabs.filter((tabId) => {
-    if (!tabId.startsWith('resource:'))
-      return true
-    return validResourceIdSet.has(tabId.slice('resource:'.length))
-  })
-
-  nextState.mainTabs = normalizeWorkspaceMainTabIds(nextTabs, { allowEmpty: true })
-
-  if (nextState.previewResourceId && !validResourceIdSet.has(nextState.previewResourceId))
-    nextState.previewResourceId = ''
-  if (!nextState.activeMeetingId && nextState.activeMainTabId.startsWith('meeting:'))
-    nextState.activeMeetingId = resolveMeetingIdFromTabId(nextState.activeMainTabId)
-
-  if (nextState.activeMainTabId.startsWith('resource:')) {
-    const resourceId = nextState.activeMainTabId.slice('resource:'.length)
-    if (!validResourceIdSet.has(resourceId))
-      nextState.activeMainTabId = 'dashboard'
-  }
-
-  nextState.activeMainTabId = normalizeWorkspaceMainTabId(nextState.activeMainTabId, nextState.mainTabs)
-
-  return nextState
-}
-
-function parseProjectWorkspaceViewStateFromQuery(): {
-  hasManagedQuery: boolean
-  state: Partial<ProjectWorkspaceViewState>
-} {
-  const hasManagedQuery = PROJECT_VIEW_STATE_QUERY_KEYS.some(key => key in route.query)
-  const hasManagedTabsQuery = ['tabs', 'tab', 'res', 'panel'].some(key => key in route.query)
-  const tabs = normalizeQueryParam(route.query.tabs)
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .filter(isWorkspaceMainTabId)
-    .slice(0, 8)
-
-  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
-  let legacyTabId: WorkspaceMainTabId | '' = ''
-  if (panel === 'members' || panel === 'settings' || panel === 'meeting')
-    legacyTabId = panel as WorkspaceMainTabId
-
-  const activeMainTabId = normalizeString(route.query.tab) || legacyTabId
-  const previewResourceId = normalizeString(route.query.res)
-  const activeMeetingId = normalizeString(route.query.meeting)
-    || resolveMeetingIdFromTabId(activeMainTabId)
-
-  if (!previewResourceId && isWorkspaceMainTabId(activeMainTabId) && activeMainTabId.startsWith('resource:'))
-    tabs.push(activeMainTabId)
-  if (previewResourceId)
-    tabs.push(createResourceTabId(previewResourceId))
-  if (isWorkspaceMainTabId(activeMainTabId))
-    tabs.push(activeMainTabId)
-
-  return {
-    hasManagedQuery,
-    state: {
-      workbenchMode: normalizeString(route.query.wb) === 'defense' ? 'defense' : 'project',
-      mainTabs: hasManagedTabsQuery ? tabs : undefined,
-      activeMainTabId: isWorkspaceMainTabId(activeMainTabId) ? activeMainTabId : '',
-      previewResourceId,
-      selectedContestId: normalizeString(route.query.contest),
-      selectedTrackId: normalizeString(route.query.track),
-      activeChatSessionId: normalizeString(route.query.session),
-      activeMeetingId,
-      leftSidebarCollapsed: isTruthyQueryFlag(route.query.ls),
-      rightSidebarCollapsed: isTruthyQueryFlag(route.query.rs),
-    },
-  }
-}
-
-function buildProjectWorkspaceQueryFromState(state: ProjectWorkspaceViewState): Record<string, string> {
-  const normalized = normalizeProjectWorkspaceViewState(state)
-  const query: Record<string, string> = {}
-
-  if (normalized.workbenchMode === 'defense')
-    query.wb = normalized.workbenchMode
-  if (normalized.mainTabs.length === 0)
-    query.tabs = ''
-  else if (normalized.mainTabs.length > 1 || normalized.mainTabs[0] !== 'dashboard')
-    query.tabs = normalized.mainTabs.join(',')
-  if (normalized.activeMainTabId && (normalized.activeMainTabId !== 'dashboard' || normalized.mainTabs.length > 1))
-    query.tab = normalized.activeMainTabId
-  if (normalized.previewResourceId)
-    query.res = normalized.previewResourceId
-  if (normalized.selectedContestId)
-    query.contest = normalized.selectedContestId
-  if (normalized.selectedTrackId)
-    query.track = normalized.selectedTrackId
-  if (normalized.activeChatSessionId)
-    query.session = normalized.activeChatSessionId
-  if (normalized.activeMeetingId)
-    query.meeting = normalized.activeMeetingId
-  if (normalized.leftSidebarCollapsed)
-    query.ls = '1'
-  if (normalized.rightSidebarCollapsed)
-    query.rs = '1'
-
-  return query
-}
-
-function buildProjectWorkspaceRouteQuery(state: ProjectWorkspaceViewState): Record<string, string> {
-  const nextQuery: Record<string, string> = {}
-
-  for (const [key, value] of Object.entries(route.query)) {
-    if ((PROJECT_VIEW_STATE_QUERY_KEYS as readonly string[]).includes(key))
-      continue
-    const normalized = normalizeQueryParam(value)
-    if (normalized)
-      nextQuery[key] = normalized
-  }
-
-  return {
-    ...nextQuery,
-    ...buildProjectWorkspaceQueryFromState(state),
-  }
-}
-
-function areRouteQueryRecordsEqual(
-  left: Record<string, string>,
-  right: Record<string, string>,
-): boolean {
-  const leftKeys = Object.keys(left).sort()
-  const rightKeys = Object.keys(right).sort()
-  if (leftKeys.length !== rightKeys.length)
-    return false
-  return leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
-}
-
-async function fetchProjectWorkspaceViewPreference(projectId: string): Promise<ProjectWorkspaceViewDeviceStatePayload | null> {
-  const normalizedProjectId = normalizeString(projectId)
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!normalizedProjectId || !deviceId)
-    return null
-
-  const response = await unsafeFetch<ApiResponse<ProjectWorkspaceViewDeviceStatePayload>>(
-    endpoint(`/projects/${normalizedProjectId}/view-state`),
-    {
-      query: {
-        deviceId,
-      },
-    },
-  )
-  return response.data || null
-}
-
-async function persistProjectWorkspaceViewPreference(
-  projectId: string,
-  state: ProjectWorkspaceViewState,
-): Promise<void> {
-  const normalizedProjectId = normalizeString(projectId)
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!normalizedProjectId || !deviceId)
-    return
-
-  await unsafeFetch<ApiResponse<ProjectWorkspaceViewPreference>>(
-    endpoint(`/projects/${normalizedProjectId}/view-state`),
-    {
-      method: 'PUT',
-      body: {
-        payload: state,
-        deviceId,
-      },
-    },
-  )
-}
-
-async function persistTeamLastProjectPreference(
-  workspaceId: string,
-  projectId: string,
-): Promise<void> {
-  const normalizedWorkspaceId = normalizeString(workspaceId)
-  const normalizedProjectId = normalizeString(projectId)
-  if (!normalizedWorkspaceId || !normalizedProjectId)
-    return
-
-  await unsafeFetch<ApiResponse<TeamLastProjectPreference>>(
-    endpoint(`/teams/${normalizedWorkspaceId}/last-project`),
-    {
-      method: 'PUT',
-      body: {
-        projectId: normalizedProjectId,
-      },
-    },
-  )
-}
-
-async function replaceProjectWorkspaceRouteQueryIfNeeded(state: ProjectWorkspaceViewState): Promise<void> {
-  const currentQuery: Record<string, string> = {}
-  for (const [key, value] of Object.entries(route.query)) {
-    const normalized = normalizeQueryParam(value)
-    if (normalized)
-      currentQuery[key] = normalized
-  }
-
-  const nextQuery = buildProjectWorkspaceRouteQuery(state)
-  if (areRouteQueryRecordsEqual(currentQuery, nextQuery))
-    return
-
-  await navigateTo({
-    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
-    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
-  }, { replace: true })
-}
-
-function clearProjectWorkspaceViewPersistTimer(): void {
-  if (!projectWorkspaceViewPersistTimer)
-    return
-  clearTimeout(projectWorkspaceViewPersistTimer)
-  projectWorkspaceViewPersistTimer = null
-}
-
-function applyProjectWorkspaceViewState(state: ProjectWorkspaceViewState): void {
-  const normalized = sanitizeProjectWorkspaceViewState(state)
-  const nextMeetingId = normalizeString(normalized.activeMeetingId)
-  const meetingChanged = nextMeetingId !== normalizeString(activeMeetingId.value)
-
-  projectWorkspaceViewHydrating.value = true
-  try {
-    projectWorkspaceModeHydrating.value = true
-    if (normalized.workbenchMode === 'defense') {
-      aiMode.value = 'defense'
-      workbenchMode.value = 'defense'
-    }
-    else {
-      const nextPrimaryMode = aiMode.value !== 'defense'
-        ? aiMode.value as WorkspacePrimaryAiMode
-        : (lastPrimaryAiMode.value || 'dialog_ask')
-      aiMode.value = nextPrimaryMode
-      lastPrimaryAiMode.value = nextPrimaryMode
-      workbenchMode.value = 'project'
-    }
-    projectWorkspaceModeHydrating.value = false
-
-    openMainTabs.value = [...normalized.mainTabs]
-    activeMainTabId.value = normalized.activeMainTabId
-    previewResourceId.value = normalized.previewResourceId
-    selectedContestId.value = normalized.selectedContestId
-    selectedTrackId.value = normalized.selectedTrackId
-    activeChatSessionId.value = normalized.activeChatSessionId
-    activeMeetingId.value = nextMeetingId
-    leftSidebarCollapsed.value = normalized.leftSidebarCollapsed
-    setRightSidebarUserCollapsed(normalized.rightSidebarCollapsed, { suppressPersist: true })
-
-    if (meetingChanged) {
-      activeMeetingDetail.value = null
-      activeMeetingUtterances.value = []
-      meetingLiveCaptions.value = []
-      clearMeetingJoinSession()
-    }
-  }
-  finally {
-    projectWorkspaceModeHydrating.value = false
-    projectWorkspaceViewHydrating.value = false
-  }
-}
-
-async function hydrateProjectWorkspaceViewState(projectId: string): Promise<HydratedProjectWorkspaceViewStateResult> {
-  const normalizedProjectId = normalizeString(projectId)
-  if (!normalizedProjectId) {
-    return {
-      state: createDefaultProjectWorkspaceViewState(),
-      bundle: null,
-      hasManagedQuery: false,
-    }
-  }
-
-  const queryResult = parseProjectWorkspaceViewStateFromQuery()
-  let nextState = createDefaultProjectWorkspaceViewState()
-  let bundle: ProjectWorkspaceViewDeviceStatePayload | null = null
-  let currentState: ProjectWorkspaceViewState | null = null
-  let latestOtherState: ProjectWorkspaceViewState | null = null
-
-  try {
-    bundle = await fetchProjectWorkspaceViewPreference(normalizedProjectId)
-    currentState = bundle?.current?.payload
-      ? normalizeProjectWorkspaceViewState(bundle.current.payload)
-      : null
-    latestOtherState = bundle?.latestOther?.payload
-      ? normalizeProjectWorkspaceViewState(bundle.latestOther.payload)
-      : null
-  }
-  catch {
-    bundle = null
-  }
-
-  if (queryResult.hasManagedQuery) {
-    nextState = normalizeProjectWorkspaceViewState(queryResult.state)
-  }
-  else if (currentState) {
-    nextState = currentState
-  }
-  else if (bundle?.resolution.isNewDevice && latestOtherState) {
-    nextState = latestOtherState
-  }
-
-  nextState = sanitizeProjectWorkspaceViewState(nextState)
-  applyProjectWorkspaceViewState(nextState)
-  projectWorkspaceViewReady.value = true
-  await replaceProjectWorkspaceRouteQueryIfNeeded(nextState)
-
-  if (queryResult.hasManagedQuery)
-    scheduleProjectWorkspaceViewPersist()
-
-  return {
-    state: nextState,
-    bundle,
-    hasManagedQuery: queryResult.hasManagedQuery,
-  }
-}
-
-function scheduleProjectWorkspaceViewPersist(): void {
-  if (!projectWorkspaceViewReady.value || projectWorkspaceViewHydrating.value)
-    return
-
-  const workspaceId = normalizeString(activeWorkspaceId.value)
-  const projectId = normalizeString(highlightedProjectId.value || routeProjectId.value)
-  if (!workspaceId || !projectId)
-    return
-
-  const state = sanitizeProjectWorkspaceViewState(buildProjectWorkspaceViewStateFromRefs())
-  clearProjectWorkspaceViewPersistTimer()
-  projectWorkspaceViewPersistTimer = setTimeout(() => {
-    projectWorkspaceViewPersistTimer = null
-    void persistProjectWorkspaceViewPreference(projectId, state).catch(() => {})
-    void persistTeamLastProjectPreference(workspaceId, projectId).catch(() => {})
-  }, 300)
-}
-
-async function syncProjectWorkspaceViewState(): Promise<void> {
-  if (!projectWorkspaceViewReady.value || projectWorkspaceViewHydrating.value)
-    return
-
-  const normalizedProjectId = normalizeString(highlightedProjectId.value || routeProjectId.value)
-  if (!normalizedProjectId)
-    return
-
-  const currentState = buildProjectWorkspaceViewStateFromRefs()
-  const normalizedState = sanitizeProjectWorkspaceViewState(currentState)
-  if (!isProjectWorkspaceViewStateEqual(currentState, normalizedState)) {
-    applyProjectWorkspaceViewState(normalizedState)
-    return
-  }
-
-  await replaceProjectWorkspaceRouteQueryIfNeeded(normalizedState)
-  scheduleProjectWorkspaceViewPersist()
-}
-
-function generateWorkspaceDeviceId(): string {
+function generateProjectSettingsDraftDeviceId(): string {
   if (import.meta.client && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
     return crypto.randomUUID()
   return `draft-device-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-function ensureWorkspaceDeviceId(): string {
+function ensureProjectSettingsDraftDeviceId(): string {
   if (!import.meta.client)
     return ''
-  if (workspaceDeviceId.value)
-    return workspaceDeviceId.value
+  if (projectSettingsDraftDeviceId.value)
+    return projectSettingsDraftDeviceId.value
 
-  const key = getWorkspaceDeviceStorageKey()
+  const key = getProjectSettingsDraftDeviceStorageKey()
   if (!key)
     return ''
 
   try {
     const cached = String(localStorage.getItem(key) || '').trim()
     if (cached) {
-      workspaceDeviceId.value = cached
+      projectSettingsDraftDeviceId.value = cached
       return cached
     }
 
-    const created = generateWorkspaceDeviceId()
+    const created = generateProjectSettingsDraftDeviceId()
     localStorage.setItem(key, created)
-    workspaceDeviceId.value = created
+    projectSettingsDraftDeviceId.value = created
     return created
   }
   catch {
-    const fallback = generateWorkspaceDeviceId()
-    workspaceDeviceId.value = fallback
+    const fallback = generateProjectSettingsDraftDeviceId()
+    projectSettingsDraftDeviceId.value = fallback
     return fallback
   }
 }
@@ -1593,21 +327,8 @@ function readProjectSettingsDraftCache(projectId: string): WorkspaceProjectSetti
 
   try {
     const raw = localStorage.getItem(key)
-    if (!raw) {
-      const legacyKey = getLegacyProjectSettingsDraftStorageKey(projectId)
-      const legacyRaw = legacyKey ? localStorage.getItem(legacyKey) : ''
-      if (!legacyRaw)
-        return null
-
-      const legacyParsed = JSON.parse(legacyRaw) as unknown
-      const legacyNormalized = normalizeProjectSettingsDraftCachePayload(legacyParsed)
-      if (!legacyNormalized)
-        return null
-
-      localStorage.setItem(key, JSON.stringify(legacyNormalized))
-      localStorage.removeItem(legacyKey)
-      return legacyNormalized
-    }
+    if (!raw)
+      return null
 
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object')
@@ -1639,42 +360,23 @@ function writeProjectSettingsDraftCache(projectId: string, payload: WorkspacePro
 
 function clearProjectSettingsDraftCache(projectId: string): void {
   const key = getProjectSettingsDraftStorageKey(projectId)
-  const legacyKey = getLegacyProjectSettingsDraftStorageKey(projectId)
-  if (!key && !legacyKey)
+  if (!key)
     return
 
   try {
-    if (key)
-      localStorage.removeItem(key)
-    if (legacyKey)
-      localStorage.removeItem(legacyKey)
+    localStorage.removeItem(key)
   }
   catch {
     // ignore local cache cleanup errors
   }
 }
 
-function resetChatState() {
-  chatMessages.value = []
+function resetChatStateWithGreeting() {
+  chatMessages.value = [defaultAssistantGreeting()]
   chatDraft.value = null
   chatMissingFields.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
-  defenseSummary.value = null
-  defenseStage.value = undefined
-  defenseTurnCount.value = 0
-}
-
-function resolveWorkspaceOptions(auth: AuthMeResult | null): WorkspaceWithQuota[] {
-  if (!auth)
-    return []
-  if (Array.isArray(auth.teams) && auth.teams.length > 0) {
-    return auth.teams.map(item => ({
-      workspace: item.team,
-      quota: item.quota,
-    }))
-  }
-  return auth.workspaces || []
 }
 
 const formState = reactive<WorkspaceFormState>({
@@ -1694,24 +396,6 @@ const contestSource = computed(() => {
 })
 const selectedContest = computed(() => contestSource.value.find(contest => contest.id === selectedContestId.value) || null)
 const selectedTrack = computed(() => selectedContest.value?.tracks.find(track => track.id === selectedTrackId.value) || null)
-const selectedTrackRubric = computed(() => {
-  const detail = selectedContestDetail.value
-  const trackId = String(selectedTrackId.value || '').trim()
-  const rubricId = String(selectedTrack.value?.rubricId || '').trim()
-  if (!detail || (!trackId && !rubricId))
-    return null
-
-  if (rubricId) {
-    const matchedByRubricId = detail.rubrics.find(item => item.id === rubricId)
-    if (matchedByRubricId)
-      return matchedByRubricId
-  }
-
-  if (!trackId)
-    return null
-
-  return detail.rubrics.find(item => item.trackId === trackId) || null
-})
 const contestMap = computed(() => {
   const map = new Map<string, Contest>()
   for (const contest of contestSource.value)
@@ -1768,9 +452,6 @@ const projectSettingsHasCurrentContest = computed(() => {
 })
 const workspaceOptions = computed(() => resolveWorkspaceOptions(me.value))
 const isAdminView = computed(() => Boolean(me.value?.user.isPlatformAdmin))
-const currentUserEmail = computed(() => {
-  return String((me.value?.user as (AuthUser & { email?: string | null }) | undefined)?.email || '').trim()
-})
 const workspaceNameMap = computed(() => {
   const map = new Map<string, string>()
   for (const item of workspaceOptions.value)
@@ -1783,15 +464,6 @@ const visibleWorkspaceIdSet = computed(() => {
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
 })
-const currentWorkspaceMeetingPlanTier = computed<'personal_team' | 'business_team'>(() => {
-  const quotaPlanTier = currentWorkspace.value?.quota?.planTier
-  if (quotaPlanTier === 'personal_team' || quotaPlanTier === 'business_team')
-    return quotaPlanTier
-  return currentWorkspace.value?.workspace.type === 'personal' ? 'personal_team' : 'business_team'
-})
-const currentUserSubtitle = computed(() => {
-  return String(currentWorkspace.value?.workspace.name || '').trim()
-})
 const currentProjectMember = computed(() => {
   const userId = String(me.value?.user.id || '').trim()
   if (!userId)
@@ -1800,14 +472,6 @@ const currentProjectMember = computed(() => {
 })
 const currentProjectMemberRole = computed<ProjectMemberRole | ''>(() => {
   return currentProjectMember.value?.role || ''
-})
-const currentUserMeetingHostId = computed(() => String(me.value?.user.id || '').trim())
-const activeMeetingIsHost = computed(() => {
-  return Boolean(
-    currentUserMeetingHostId.value
-    && activeMeetingDetail.value
-    && normalizeString(activeMeetingDetail.value.startedByUserId) === currentUserMeetingHostId.value,
-  )
 })
 const workspaceCanManageMembers = computed(() => {
   if (me.value?.user.isPlatformAdmin)
@@ -1841,12 +505,6 @@ const workspaceSeatLimit = computed<number | null>(() => {
   if (!Number.isFinite(raw) || raw <= 0)
     return null
   return Math.max(1, Math.trunc(raw))
-})
-const workspaceEffectiveFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
-  return workspaceDisplayPreferenceSnapshot.value.effective.fontSizePreset || 'md'
-})
-const workspaceEffectiveTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
-  return workspaceDisplayPreferenceSnapshot.value.effective.tabSpacingPreset || 'default'
 })
 const quickSwitchSourceProjects = computed(() => {
   const source = allProjects.value.length > 0 ? allProjects.value : projects.value
@@ -1920,487 +578,30 @@ const headerProjectName = computed(() => {
   return currentWorkspace.value?.workspace.name || '未命名项目'
 })
 
+const filteredContests = computed(() => {
+  const keyword = headerSearch.value.trim()
+  if (!keyword)
+    return contests.value
+
+  return contests.value.filter((contest) => {
+    const context = [
+      contest.name,
+      contest.organizer,
+      ...contest.keywords,
+      ...contest.recommendedFor,
+      ...contest.tracks.map(track => track.name),
+    ].join(' ')
+
+    return includesText(context, keyword)
+  })
+})
+
 const selectedResources = computed(() => resources.value)
 const projectOutlineItems = computed(() => projectOutlineSnapshot.value?.items || [])
-const projectOutlineFlatItems = computed(() => flattenProjectOutlineNodes(projectOutlineItems.value))
 const projectOutlineFirstLoadLoading = computed(() => {
   return projectOutlineLoading.value && !projectOutlineFirstLoaded.value
 })
 const latestIssueReport = computed(() => projectIssueReports.value[0] || null)
-const metaKResourceTitleMap = computed(() => {
-  return new Map(selectedResources.value.map(resource => [resource.id, resolveMetaKResourceTitle(resource)]))
-})
-const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
-  return [
-    {
-      id: 'metak-command-open-resource-manager',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开资源管理器',
-      subtitle: '查看项目资源、结构大纲与系统资料库导入入口。',
-      icon: 'folder_open',
-      source: 'local',
-      priority: 420,
-      defaultVisible: true,
-      actionId: 'open_resource_manager',
-      keywords: buildWorkspaceMetaKKeywords('资源管理器', '资料', '文件', '大纲'),
-    },
-    {
-      id: 'metak-command-open-analysis',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开竞赛分析',
-      subtitle: '切回左侧竞赛分析模块，继续筛选目标竞赛与赛道。',
-      icon: 'manage_search',
-      source: 'local',
-      priority: 410,
-      defaultVisible: true,
-      actionId: 'open_analysis',
-      keywords: buildWorkspaceMetaKKeywords('竞赛分析', '筛选', '赛道', '比赛'),
-    },
-    {
-      id: 'metak-command-open-meeting',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开项目会议',
-      subtitle: '查看会议总览、会议详情、录制与纪要入口。',
-      icon: 'video_call',
-      source: 'local',
-      priority: 400,
-      defaultVisible: true,
-      actionId: 'open_meeting',
-      keywords: buildWorkspaceMetaKKeywords('会议', '语音会议', '视频会议', '纪要'),
-    },
-    {
-      id: 'metak-command-open-issue-view',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开 Issue 视图',
-      subtitle: '切到右侧寻疑发现模式并展开 Issue 结果。',
-      icon: 'bug_report',
-      source: 'local',
-      priority: 395,
-      defaultVisible: true,
-      actionId: 'open_issue_view',
-      badge: aiMode.value === 'issue_discovery' ? '当前' : '',
-      keywords: buildWorkspaceMetaKKeywords('issue', '寻疑', '问题', '风险'),
-    },
-    {
-      id: 'metak-command-open-flow',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开流程画布',
-      subtitle: '进入 workflow 画布，继续梳理流程与终审路径。',
-      icon: 'flowsheet',
-      source: 'local',
-      priority: 390,
-      defaultVisible: true,
-      actionId: 'open_flow',
-      keywords: buildWorkspaceMetaKKeywords('流程', '画布', 'workflow', '终审'),
-    },
-    {
-      id: 'metak-command-open-final-review',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开终审',
-      subtitle: '快速进入终审工作流入口。',
-      icon: 'task_alt',
-      source: 'local',
-      priority: 380,
-      defaultVisible: true,
-      actionId: 'open_final_review',
-      keywords: buildWorkspaceMetaKKeywords('终审', 'final review', '复核'),
-    },
-    {
-      id: 'metak-command-open-workspace-home',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开空间首页',
-      subtitle: `返回 ${currentWorkspace.value?.workspace.name || '当前空间'} 的 Team 首页。`,
-      icon: 'home_storage',
-      source: 'local',
-      priority: 360,
-      defaultVisible: true,
-      actionId: 'open_workspace_home',
-      keywords: buildWorkspaceMetaKKeywords('空间首页', 'team', 'home'),
-    },
-    {
-      id: 'metak-command-open-workspace-settings',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开项目设置',
-      subtitle: '进入项目设置固定页签，维护项目底座与绑定关系。',
-      icon: 'settings',
-      source: 'local',
-      priority: 355,
-      defaultVisible: true,
-      actionId: 'open_workspace_settings',
-      keywords: buildWorkspaceMetaKKeywords('项目设置', 'settings', '配置'),
-    },
-    {
-      id: 'metak-command-open-member-management',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开成员管理',
-      subtitle: '查看成员、席位和邀请记录。',
-      icon: 'group',
-      source: 'local',
-      priority: 350,
-      defaultVisible: true,
-      actionId: 'open_member_management',
-      keywords: buildWorkspaceMetaKKeywords('成员', '邀请', '协作', 'seat'),
-    },
-    {
-      id: 'metak-command-open-display-preferences',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开显示偏好',
-      subtitle: '调整字体大小、页签间距与工作区显示习惯。',
-      icon: 'tune',
-      source: 'local',
-      priority: 340,
-      defaultVisible: true,
-      actionId: 'open_display_preferences',
-      keywords: buildWorkspaceMetaKKeywords('显示偏好', '字体', 'tab spacing', '布局'),
-    },
-    {
-      id: 'metak-command-open-account-center',
-      sectionId: 'actions',
-      type: 'command',
-      title: '打开账号中心',
-      subtitle: '查看个人资料与账号设置。',
-      icon: 'account_circle',
-      source: 'local',
-      priority: 330,
-      defaultVisible: true,
-      actionId: 'open_account_center',
-      keywords: buildWorkspaceMetaKKeywords('账号中心', 'profile', '账户'),
-    },
-    {
-      id: 'metak-command-switch-workbench-project',
-      sectionId: 'actions',
-      type: 'command',
-      title: '切换到项目工作台',
-      subtitle: '回到项目推进主工作台。',
-      icon: 'space_dashboard',
-      source: 'local',
-      priority: 320,
-      defaultVisible: true,
-      actionId: 'switch_workbench_project',
-      badge: workbenchMode.value === 'project' ? '当前' : '',
-      keywords: buildWorkspaceMetaKKeywords('项目工作台', 'project workbench'),
-    },
-    {
-      id: 'metak-command-switch-workbench-defense',
-      sectionId: 'actions',
-      type: 'command',
-      title: '切换到答辩工作台',
-      subtitle: '进入答辩工作台与模拟答辩链路。',
-      icon: 'record_voice_over',
-      source: 'local',
-      priority: 315,
-      defaultVisible: true,
-      actionId: 'switch_workbench_defense',
-      badge: workbenchMode.value === 'defense' ? '当前' : '',
-      keywords: buildWorkspaceMetaKKeywords('答辩工作台', 'defense', '答辩'),
-    },
-    {
-      id: 'metak-command-switch-ai-dialog',
-      sectionId: 'actions',
-      type: 'command',
-      title: '切换 AI 到对话询问',
-      subtitle: '回到 Loopy 常规对话模式。',
-      icon: 'chat',
-      source: 'local',
-      priority: 305,
-      defaultVisible: true,
-      actionId: 'switch_ai_dialog',
-      badge: aiMode.value === 'dialog_ask' ? '当前' : '',
-      keywords: buildWorkspaceMetaKKeywords('Loopy', '对话', 'dialog ask'),
-    },
-    {
-      id: 'metak-command-switch-ai-optimize',
-      sectionId: 'actions',
-      type: 'command',
-      title: '切换 AI 到自动优化',
-      subtitle: '让右侧 AI 进入自动优化模式。',
-      icon: 'auto_fix_high',
-      source: 'local',
-      priority: 300,
-      defaultVisible: true,
-      actionId: 'switch_ai_optimize',
-      badge: aiMode.value === 'auto_optimize' ? '当前' : '',
-      keywords: buildWorkspaceMetaKKeywords('自动优化', 'auto optimize'),
-    },
-    {
-      id: 'metak-command-switch-ai-issue',
-      sectionId: 'actions',
-      type: 'command',
-      title: '切换 AI 到寻疑发现',
-      subtitle: '切到问题发现链路，查看证据与建议。',
-      icon: 'search_insights',
-      source: 'local',
-      priority: 295,
-      defaultVisible: true,
-      actionId: 'switch_ai_issue',
-      badge: aiMode.value === 'issue_discovery' ? '当前' : '',
-      keywords: buildWorkspaceMetaKKeywords('寻疑发现', 'issue discovery', '问题发现'),
-    },
-    {
-      id: 'metak-command-create-collab-markdown',
-      sectionId: 'actions',
-      type: 'command',
-      title: '新建协作文档',
-      subtitle: '创建 markdown 协作文档并直接打开。',
-      icon: 'edit_document',
-      source: 'local',
-      priority: 290,
-      defaultVisible: true,
-      actionId: 'create_collab_markdown',
-      keywords: buildWorkspaceMetaKKeywords('协作文档', 'markdown', 'notes'),
-    },
-    {
-      id: 'metak-command-create-collab-draw',
-      sectionId: 'actions',
-      type: 'command',
-      title: '新建自由画布',
-      subtitle: '创建自由画布并直接打开。',
-      icon: 'draw',
-      source: 'local',
-      priority: 285,
-      defaultVisible: true,
-      actionId: 'create_collab_draw',
-      keywords: buildWorkspaceMetaKKeywords('自由画布', 'draw', 'canvas'),
-    },
-    {
-      id: 'metak-command-create-meeting-audio',
-      sectionId: 'actions',
-      type: 'command',
-      title: '发起语音会议',
-      subtitle: '打开语音会议创建页。',
-      icon: 'call',
-      source: 'local',
-      priority: 280,
-      defaultVisible: true,
-      actionId: 'create_meeting_audio',
-      keywords: buildWorkspaceMetaKKeywords('语音会议', 'audio meeting'),
-    },
-    {
-      id: 'metak-command-create-meeting-video',
-      sectionId: 'actions',
-      type: 'command',
-      title: '发起视频会议',
-      subtitle: '打开视频会议创建页。',
-      icon: 'videocam',
-      source: 'local',
-      priority: 275,
-      defaultVisible: true,
-      actionId: 'create_meeting_video',
-      keywords: buildWorkspaceMetaKKeywords('视频会议', 'video meeting'),
-    },
-  ]
-})
-const metaKResourceItems = computed<WorkspaceMetaKItem[]>(() => {
-  return selectedResources.value.map((resource) => {
-    const resourceTitle = resolveMetaKResourceTitle(resource)
-    const sourceType = normalizeString(resource.type)
-    const summary = normalizeString(resource.summary)
-    return {
-      id: buildWorkspaceMetaKItemId('resource', resource.id),
-      sectionId: 'resources',
-      type: 'resource',
-      title: resourceTitle,
-      subtitle: [sourceType, resource.year ? `${resource.year}` : '', summary].filter(Boolean).join(' · '),
-      icon: resolveMetaKResourceIcon(resource),
-      badge: resource.category || '',
-      hint: resource.resourceKind === 'draw' || resource.resourceKind === 'markdown' ? '打开协作页' : '打开预览',
-      keywords: buildWorkspaceMetaKKeywords(resource.title, resource.summary, resource.type, resource.category, resource.year),
-      source: 'local',
-      priority: 240,
-      payload: {
-        resourceId: resource.id,
-      },
-    }
-  })
-})
-const metaKMeetingItems = computed<WorkspaceMetaKItem[]>(() => {
-  return projectMeetings.value.map((meeting) => {
-    const scheduleLabel = formatMetaKDateTime(meeting.scheduledStartAt || meeting.startedAt || meeting.updatedAt || '')
-    return {
-      id: buildWorkspaceMetaKItemId('meeting', meeting.id),
-      sectionId: 'meetings',
-      type: 'meeting',
-      title: normalizeString(meeting.title) || '未命名会议',
-      subtitle: [meeting.mode === 'audio' ? '语音会议' : '视频会议', meeting.status, scheduleLabel].filter(Boolean).join(' · '),
-      icon: meeting.mode === 'audio' ? 'call' : 'videocam',
-      badge: meeting.status,
-      hint: '打开会议详情',
-      keywords: buildWorkspaceMetaKKeywords(meeting.title, meeting.mode, meeting.status, scheduleLabel),
-      source: 'local',
-      priority: 220,
-      payload: {
-        meetingId: meeting.id,
-      },
-    }
-  })
-})
-const metaKIssueItems = computed<WorkspaceMetaKItem[]>(() => {
-  return projectIssues.value.map((issue) => {
-    return {
-      id: buildWorkspaceMetaKItemId('issue', issue.id),
-      sectionId: 'issues',
-      type: 'issue',
-      title: normalizeString(issue.title) || '未命名 Issue',
-      subtitle: [issue.severity, issue.status, normalizeString(issue.recommendation || issue.evidence)].filter(Boolean).join(' · '),
-      icon: 'bug_report',
-      badge: issue.severity,
-      hint: '切到 Issue 视图',
-      keywords: buildWorkspaceMetaKKeywords(issue.title, issue.severity, issue.status, issue.evidence, issue.recommendation),
-      source: 'local',
-      priority: 210,
-      payload: {
-        issueId: issue.id,
-      },
-    }
-  })
-})
-const metaKContestItems = computed<WorkspaceMetaKItem[]>(() => {
-  return contestSource.value.map((contest) => {
-    return {
-      id: buildWorkspaceMetaKItemId('contest', contest.id),
-      sectionId: 'contests',
-      type: 'contest',
-      title: normalizeString(contest.name) || '未命名竞赛',
-      subtitle: [contest.organizer, contest.registrationWindow, contest.tracks[0]?.name || ''].filter(Boolean).join(' · '),
-      icon: 'emoji_events',
-      badge: contest.id === selectedContestId.value ? '当前' : '',
-      hint: '切到竞赛分析',
-      keywords: buildWorkspaceMetaKKeywords(
-        contest.name,
-        contest.organizer,
-        contest.registrationWindow,
-        contest.keywords,
-        contest.recommendedFor,
-        contest.tracks.map(track => track.name),
-      ),
-      source: 'local',
-      priority: 190,
-      payload: {
-        contestId: contest.id,
-      },
-    }
-  })
-})
-const metaKOutlineItems = computed<WorkspaceMetaKItem[]>(() => {
-  return projectOutlineFlatItems.value.map((item) => {
-    const linkedResourceTitles = item.sourceResourceIds
-      .map(resourceId => metaKResourceTitleMap.value.get(resourceId) || '')
-      .filter(Boolean)
-    return {
-      id: buildWorkspaceMetaKItemId('outline', item.id),
-      sectionId: 'outline',
-      type: 'outline',
-      title: normalizeString(item.title) || '未命名大纲节点',
-      subtitle: linkedResourceTitles.length > 0
-        ? linkedResourceTitles.slice(0, 2).join('、')
-        : `L${Math.max(1, item.level + 1)} · 暂无关联资源`,
-      icon: 'segment',
-      hint: linkedResourceTitles.length > 0 ? '打开关联资源' : '定位到大纲',
-      keywords: buildWorkspaceMetaKKeywords(item.title, linkedResourceTitles),
-      source: 'local',
-      priority: 180,
-      payload: {
-        outlineId: item.id,
-        sourceResourceId: item.sourceResourceIds[0] || '',
-      },
-    }
-  })
-})
-const metaKWorkspaceItems = computed<WorkspaceMetaKItem[]>(() => {
-  return workspaceOptions.value.map((item) => {
-    const workspaceName = normalizeString(item.workspace.name) || '未命名空间'
-    return {
-      id: buildWorkspaceMetaKItemId('workspace', item.workspace.id),
-      sectionId: 'workspaces',
-      type: 'workspace',
-      title: workspaceName,
-      subtitle: item.workspace.type === 'personal' ? '个人空间' : 'Team 空间',
-      icon: item.workspace.type === 'personal' ? 'person' : 'groups',
-      badge: item.workspace.id === activeWorkspaceId.value ? '当前' : '',
-      hint: '切换空间',
-      keywords: buildWorkspaceMetaKKeywords(
-        workspaceName,
-        item.workspace.type,
-        item.workspace.teamProfile?.orgName,
-        item.workspace.teamProfile?.orgCode,
-      ),
-      source: 'local',
-      priority: 170,
-      defaultVisible: true,
-      payload: {
-        workspaceId: item.workspace.id,
-      },
-    }
-  })
-})
-const metaKProjectItems = computed<WorkspaceMetaKItem[]>(() => {
-  const items = new Map<string, WorkspaceMetaKItem>()
-  for (const project of [...recentQuickSwitchProjects.value, ...myQuickSwitchProjects.value]) {
-    const badge = myQuickSwitchProjects.value.some(item => item.projectId === project.projectId)
-      ? '我的'
-      : '最近'
-    items.set(project.projectId, {
-      id: buildWorkspaceMetaKItemId('project', project.projectId),
-      sectionId: 'projects',
-      type: 'project',
-      title: normalizeString(project.title) || '未命名项目',
-      subtitle: [project.workspaceName, formatMetaKDateTime(project.updatedAt)].filter(Boolean).join(' · '),
-      icon: 'dataset',
-      badge: activeProjectId.value === project.projectId ? '当前' : badge,
-      hint: '切换项目',
-      keywords: buildWorkspaceMetaKKeywords(project.title, project.workspaceName),
-      source: 'local',
-      priority: 165,
-      defaultVisible: true,
-      payload: {
-        projectId: project.projectId,
-        workspaceId: project.workspaceId,
-      },
-    })
-  }
-  return [...items.values()]
-})
-const metaKLocalItems = computed<WorkspaceMetaKItem[]>(() => {
-  return [
-    ...metaKCommandItems.value,
-    ...metaKResourceItems.value,
-    ...metaKMeetingItems.value,
-    ...metaKIssueItems.value,
-    ...metaKContestItems.value,
-    ...metaKOutlineItems.value,
-    ...metaKWorkspaceItems.value,
-    ...metaKProjectItems.value,
-  ]
-})
-const metaKLocalSections = computed(() => {
-  return buildWorkspaceMetaKSections({
-    items: metaKLocalItems.value,
-    query: metaKQuery.value,
-    definitions: METAK_SECTION_DEFINITIONS,
-  })
-})
-const metaKSections = computed<WorkspaceMetaKSection[]>(() => {
-  const sections = [...metaKLocalSections.value]
-  if (metaKQuery.value.trim() && (metaKRemoteLoading.value || metaKRemoteLibraryItems.value.length > 0)) {
-    sections.push({
-      id: 'library',
-      title: '系统资料库',
-      items: metaKRemoteLibraryItems.value,
-      loading: metaKRemoteLoading.value,
-    })
-  }
-  return sections
-})
 const previewResource = computed(() => {
   const targetId = String(previewResourceId.value || '').trim()
   if (!targetId)
@@ -2578,613 +779,6 @@ function syncFallbackResourceRefreshTimer(): void {
   startFallbackResourceRefreshTimer()
 }
 
-function clearMeetingRealtimeRefreshTimer(): void {
-  if (!meetingRealtimeRefreshTimer)
-    return
-  clearTimeout(meetingRealtimeRefreshTimer)
-  meetingRealtimeRefreshTimer = null
-}
-
-function clearMeetingJoinSession(): void {
-  meetingJoinUrl.value = ''
-  meetingJoinToken.value = ''
-  meetingJoinExpiresAt.value = ''
-  meetingRtcServerUrl.value = ''
-}
-
-function resetProjectMeetingState(): void {
-  clearMeetingRealtimeRefreshTimer()
-  projectMeetings.value = []
-  activeMeetingId.value = ''
-  activeMeetingDetail.value = null
-  activeMeetingUtterances.value = []
-  meetingLiveCaptions.value = []
-  activeMeetingGuestShare.value = null
-  clearMeetingJoinSession()
-}
-
-function buildMeetingCaptionKey(item: Pick<WorkspaceMeetingCaptionItem, 'speakerLabel' | 'startedAtMs'>): string {
-  return `${String(item.speakerLabel || '').trim()}::${Math.max(0, Math.trunc(Number(item.startedAtMs || 0)))}`
-}
-
-function trimMeetingLiveCaptions(items: WorkspaceMeetingCaptionItem[]): WorkspaceMeetingCaptionItem[] {
-  return [...items]
-    .sort((left, right) => left.startedAtMs - right.startedAtMs)
-    .slice(-20)
-}
-
-function buildMeetingCaptionItem(
-  payload: Record<string, unknown>,
-  final: boolean,
-): WorkspaceMeetingCaptionItem | null {
-  const rawText = normalizeString(payload.text)
-  if (!rawText)
-    return null
-
-  const startedAtMs = Math.max(0, Math.trunc(Number(payload.startedAtMs || 0)))
-  const endedAtMs = Math.max(startedAtMs, Math.trunc(Number(payload.endedAtMs || payload.startedAtMs || 0)))
-  const speakerName = normalizeString(payload.speakerName) || normalizeString(payload.speakerLabel) || 'Speaker'
-  const speakerLabel = normalizeString(payload.speakerLabel) || speakerName
-  const participantIdentity = normalizeString(payload.participantIdentity)
-  const utteranceId = normalizeString(payload.utteranceId)
-  const id = utteranceId
-    || (final
-      ? `final:${speakerLabel}:${startedAtMs}:${endedAtMs}`
-      : `partial:${participantIdentity || speakerLabel}:${startedAtMs}`)
-
-  return {
-    id,
-    text: rawText,
-    speakerName,
-    speakerLabel,
-    startedAtMs,
-    endedAtMs,
-    final,
-  }
-}
-
-function upsertMeetingLiveCaption(item: WorkspaceMeetingCaptionItem): void {
-  if (item.final) {
-    const targetKey = buildMeetingCaptionKey(item)
-    meetingLiveCaptions.value = trimMeetingLiveCaptions(
-      meetingLiveCaptions.value.filter(existing => buildMeetingCaptionKey(existing) !== targetKey),
-    )
-    return
-  }
-
-  const targetKey = buildMeetingCaptionKey(item)
-  const nextItems = meetingLiveCaptions.value.filter(existing => buildMeetingCaptionKey(existing) !== targetKey)
-  nextItems.push(item)
-  meetingLiveCaptions.value = trimMeetingLiveCaptions(nextItems)
-}
-
-function upsertProjectMeetingInList(meeting: ProjectMeeting): void {
-  const normalizedMeetingId = normalizeString(meeting.id)
-  if (!normalizedMeetingId)
-    return
-
-  const nextItems = [...projectMeetings.value]
-  const existingIndex = nextItems.findIndex(item => item.id === normalizedMeetingId)
-  if (existingIndex >= 0)
-    nextItems.splice(existingIndex, 1, meeting)
-  else
-    nextItems.unshift(meeting)
-
-  projectMeetings.value = nextItems
-    .sort((left, right) => {
-      const startedDiff = parseTimestamp(right.startedAt) - parseTimestamp(left.startedAt)
-      if (startedDiff !== 0)
-        return startedDiff
-      return parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt)
-    })
-    .slice(0, 12)
-}
-
-function applyProjectMeetingSession(
-  meeting: ProjectMeetingDetail | null,
-  options: {
-    joinUrl?: string
-    joinToken?: string
-    joinExpiresAt?: string
-    rtcServerUrl?: string
-    resetCaptions?: boolean
-    preserveJoinSession?: boolean
-  } = {},
-): void {
-  if (!meeting) {
-    activeMeetingId.value = ''
-    activeMeetingDetail.value = null
-    activeMeetingUtterances.value = []
-    if (options.resetCaptions !== false)
-      meetingLiveCaptions.value = []
-    activeMeetingGuestShare.value = null
-    clearMeetingJoinSession()
-    return
-  }
-
-  activeMeetingId.value = meeting.id
-  activeMeetingDetail.value = meeting
-  upsertProjectMeetingInList(meeting)
-  if (!options.preserveJoinSession) {
-    meetingJoinUrl.value = normalizeString(options.joinUrl)
-    meetingJoinToken.value = normalizeString(options.joinToken)
-    meetingJoinExpiresAt.value = normalizeString(options.joinExpiresAt)
-    meetingRtcServerUrl.value = normalizeString(options.rtcServerUrl)
-  }
-  if (options.resetCaptions)
-    meetingLiveCaptions.value = []
-  syncMeetingGuestShareState(meeting)
-}
-
-async function loadProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || !activeMeetingIsHost.value) {
-    activeMeetingGuestShare.value = null
-    return
-  }
-
-  meetingGuestShareLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare | null>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-    )
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = response.data || null
-  }
-  catch {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = null
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
-function syncMeetingGuestShareState(meeting: ProjectMeetingDetail | null): void {
-  if (!meeting) {
-    activeMeetingGuestShare.value = null
-    return
-  }
-  const currentUserId = currentUserMeetingHostId.value
-  if (!currentUserId || normalizeString(meeting.startedByUserId) !== currentUserId || meeting.status === 'ended' || meeting.status === 'failed') {
-    activeMeetingGuestShare.value = null
-    return
-  }
-  void loadProjectMeetingGuestShare(meeting.id)
-}
-
-async function loadProjectMeetingUtterances(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId) {
-    activeMeetingUtterances.value = []
-    return
-  }
-
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingUtterance[]>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/utterances`),
-    )
-    if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
-      return
-    activeMeetingUtterances.value = Array.isArray(response.data) ? response.data : []
-  }
-  catch {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      activeMeetingUtterances.value = []
-  }
-}
-
-async function loadProjectMeetingDetail(
-  meetingId: string,
-  options: {
-    resetCaptions?: boolean
-    preserveJoinSession?: boolean
-  } = {},
-): Promise<ProjectMeetingDetail | null> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId) {
-    applyProjectMeetingSession(null)
-    return null
-  }
-
-  meetingDetailLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}`),
-    )
-    if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
-      return response.data || null
-
-    applyProjectMeetingSession(response.data, {
-      resetCaptions: options.resetCaptions,
-      preserveJoinSession: options.preserveJoinSession !== false,
-    })
-    return response.data
-  }
-  catch (error) {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId) {
-      activeMeetingDetail.value = null
-      activeMeetingUtterances.value = []
-      activeMeetingGuestShare.value = null
-      clearMeetingJoinSession()
-    }
-    statusLine.value = resolveApiErrorMessage(error, '加载会议详情失败，请稍后重试。')
-    return null
-  }
-  finally {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      meetingDetailLoading.value = false
-    else if (!activeProjectId.value)
-      meetingDetailLoading.value = false
-  }
-}
-
-async function selectProjectMeeting(meetingId: string): Promise<void> {
-  const targetMeetingId = normalizeString(meetingId)
-  if (!targetMeetingId)
-    return
-
-  ensureMeetingDetailTabOpen(targetMeetingId)
-  workspaceRealtime.subscribeMeeting(targetMeetingId)
-  const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
-  activeMeetingId.value = targetMeetingId
-  if (isSwitchingMeeting) {
-    activeMeetingDetail.value = null
-    activeMeetingUtterances.value = []
-    meetingLiveCaptions.value = []
-    clearMeetingJoinSession()
-  }
-
-  await Promise.all([
-    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
-    loadProjectMeetingUtterances(targetMeetingId),
-  ])
-}
-
-async function loadProjectMeetings(
-  options: {
-    fallbackToFirst?: boolean
-    preferredMeetingId?: string
-    hydrateSelectedDetail?: boolean
-  } = {},
-): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId) {
-    resetProjectMeetingState()
-    return
-  }
-
-  projectMeetingsLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<{ items: ProjectMeeting[] }>>(
-      endpoint(`/projects/${projectId}/meetings`),
-    )
-    if (activeProjectId.value !== projectId)
-      return
-
-    const items = Array.isArray(response.data?.items) ? response.data.items : []
-    projectMeetings.value = items
-
-    const preferredMeetingId = normalizeString(options.preferredMeetingId || activeMeetingId.value)
-    const preferredMeeting = preferredMeetingId
-      ? items.find(item => item.id === preferredMeetingId) || null
-      : null
-    if (preferredMeeting) {
-      workspaceRealtime.subscribeMeeting(preferredMeeting.id)
-      const isSwitchingMeeting = activeMeetingId.value !== preferredMeeting.id
-      activeMeetingId.value = preferredMeeting.id
-      if (isSwitchingMeeting) {
-        activeMeetingDetail.value = null
-        activeMeetingUtterances.value = []
-        meetingLiveCaptions.value = []
-        clearMeetingJoinSession()
-      }
-
-      if (options.hydrateSelectedDetail === false)
-        return
-
-      await Promise.all([
-        loadProjectMeetingDetail(preferredMeeting.id, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
-        loadProjectMeetingUtterances(preferredMeeting.id),
-      ])
-      return
-    }
-
-    const selectedMeetingStillExists = Boolean(
-      activeMeetingId.value && items.some(item => item.id === activeMeetingId.value),
-    )
-    if (selectedMeetingStillExists)
-      return
-
-    if (options.fallbackToFirst !== false && items[0]?.id) {
-      await selectProjectMeeting(items[0].id)
-      return
-    }
-
-    applyProjectMeetingSession(null)
-  }
-  catch {
-    if (activeProjectId.value === projectId)
-      projectMeetings.value = []
-  }
-  finally {
-    if (activeProjectId.value === projectId || !activeProjectId.value)
-      projectMeetingsLoading.value = false
-  }
-}
-
-function scheduleMeetingRealtimeRefresh(options: {
-  meetingId?: string
-  refreshUtterances?: boolean
-} = {}): void {
-  const targetMeetingId = normalizeString(options.meetingId || activeMeetingId.value)
-  clearMeetingRealtimeRefreshTimer()
-  meetingRealtimeRefreshTimer = setTimeout(() => {
-    meetingRealtimeRefreshTimer = null
-    void loadProjectMeetings({ fallbackToFirst: false })
-    if (targetMeetingId && targetMeetingId === activeMeetingId.value) {
-      void loadProjectMeetingDetail(targetMeetingId)
-      if (options.refreshUtterances)
-        void loadProjectMeetingUtterances(targetMeetingId)
-    }
-  }, 250)
-}
-
-async function createProjectMeeting(payload: { mode: ProjectMeetingMode }): Promise<void> {
-  ensureMeetingCreateTabOpen(payload.mode)
-  statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议创建页已打开。`
-}
-
-async function submitProjectMeetingCreate(payload: ProjectMeetingCreatePayload): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
-      endpoint(`/projects/${projectId}/meetings`),
-      {
-        method: 'POST',
-        body: payload,
-      },
-    )
-
-    const targetMeeting = response.data.meeting
-    activeMeetingUtterances.value = []
-    applyProjectMeetingSession(targetMeeting, {
-      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
-      joinToken: response.data.rtcJoinToken || response.data.joinToken,
-      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
-      rtcServerUrl: response.data.rtcServerUrl,
-      resetCaptions: true,
-    })
-    ensureMeetingDetailTabOpen(targetMeeting.id)
-    workspaceRealtime.subscribeMeeting(targetMeeting.id)
-    openMainTabs.value = normalizeWorkspaceMainTabIds(
-      openMainTabs.value.filter(tabId => tabId !== createMeetingCreateTabId(payload.mode)),
-      { allowEmpty: true },
-    )
-    if (targetMeeting.status !== 'scheduled')
-      await loadProjectMeetingUtterances(targetMeeting.id)
-    statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议已创建。`
-    Message.success('会议已创建。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '创建会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function joinProjectMeeting(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    ensureMeetingDetailTabOpen(targetMeetingId)
-    workspaceRealtime.subscribeMeeting(targetMeetingId)
-    activeMeetingId.value = targetMeetingId
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/join`),
-      {
-        method: 'POST',
-      },
-    )
-    applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
-      joinToken: response.data.rtcJoinToken || response.data.joinToken,
-      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
-      rtcServerUrl: response.data.rtcServerUrl,
-      resetCaptions: false,
-    })
-    if (response.data.meeting)
-      await loadProjectMeetingUtterances(targetMeetingId)
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '加入会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function startProjectMeeting(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/start`),
-      {
-        method: 'POST',
-      },
-    )
-    applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
-      joinToken: response.data.rtcJoinToken || response.data.joinToken,
-      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
-      rtcServerUrl: response.data.rtcServerUrl,
-      resetCaptions: true,
-    })
-    ensureMeetingDetailTabOpen(targetMeetingId)
-    workspaceRealtime.subscribeMeeting(targetMeetingId)
-    await loadProjectMeetingUtterances(targetMeetingId)
-    statusLine.value = '会议已启动。'
-    Message.success('会议已启动。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '启动会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function endProjectMeeting(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/end`),
-      {
-        method: 'POST',
-      },
-    )
-
-    upsertProjectMeetingInList(response.data)
-    if (activeMeetingId.value === targetMeetingId) {
-      applyProjectMeetingSession(response.data, {
-        resetCaptions: false,
-      })
-      clearMeetingJoinSession()
-      activeMeetingGuestShare.value = null
-      await loadProjectMeetingUtterances(targetMeetingId)
-    }
-
-    statusLine.value = '会议已结束，系统正在整理录制与纪要。'
-    Message.success('会议已结束。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '结束会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function createProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
-    return
-
-  meetingGuestShareLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-      {
-        method: 'POST',
-      },
-    )
-    if (activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = response.data
-    statusLine.value = '外部分享链接已生成。'
-    Message.success('外部分享链接已生成。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '生成外部分享链接失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
-async function regenerateProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
-    return
-
-  meetingGuestShareLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-      {
-        method: 'POST',
-        body: {
-          regenerate: true,
-        },
-      },
-    )
-    if (activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = response.data
-    statusLine.value = '外部分享链接已重新生成，旧链接已失效。'
-    Message.success('外部分享链接已重新生成。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '重新生成外部分享链接失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
-async function revokeProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
-    return
-
-  meetingGuestShareLoading.value = true
-  try {
-    await unsafeFetch<ApiResponse<ProjectMeetingGuestShare | null>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-      {
-        method: 'DELETE',
-      },
-    )
-    if (activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = null
-    statusLine.value = '外部分享链接已撤销。'
-    Message.success('外部分享链接已撤销。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '撤销外部分享链接失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
 function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
   const messageType = String(message.type || '').trim()
   if (!messageType)
@@ -3215,135 +809,115 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
     return
   }
 
-  if (
-    messageType === 'meeting.state.updated'
-    || messageType === 'meeting.participant.updated'
-    || messageType === 'meeting.share.updated'
-    || messageType === 'meeting.caption.partial'
-    || messageType === 'meeting.caption.final'
-    || messageType === 'meeting.summary.ready'
-  ) {
-    const workspaceId = String(message.workspaceId || '').trim()
-    const projectId = String(message.projectId || '').trim()
-    if (workspaceId && workspaceId !== activeWorkspaceId.value)
-      return
-    if (projectId && projectId !== activeProjectId.value)
-      return
-
-    const payload = message.payload && typeof message.payload === 'object'
-      ? message.payload as Record<string, unknown>
-      : {}
-    const meetingId = normalizeString(payload.meetingId)
-
-    if (messageType === 'meeting.caption.partial' || messageType === 'meeting.caption.final') {
-      if (meetingId && activeMeetingId.value && meetingId !== activeMeetingId.value)
-        return
-
-      const caption = buildMeetingCaptionItem(payload, messageType === 'meeting.caption.final')
-      if (!caption)
-        return
-
-      upsertMeetingLiveCaption(caption)
-      if (messageType === 'meeting.caption.final' && meetingId)
-        scheduleMeetingRealtimeRefresh({ meetingId, refreshUtterances: true })
-      return
-    }
-
-    if (messageType === 'meeting.summary.ready') {
-      statusLine.value = '会议纪要已就绪，资源区会自动补齐录制与纪要。'
-      scheduleMeetingRealtimeRefresh({
-        meetingId: meetingId || activeMeetingId.value,
-      })
-      return
-    }
-
-    scheduleMeetingRealtimeRefresh({
-      meetingId: meetingId || activeMeetingId.value,
-    })
-    return
-  }
-
   collabSession.handleRealtimeEnvelope(message)
 }
 
+const toneMeta: Record<MappingTone, WorkspaceStatusToneMeta> = {
+  complete: {
+    label: '已完备',
+    badgeClass: 'bg-green-100 text-green-700',
+    barClass: 'bg-green-500',
+  },
+  warning: {
+    label: '缺失材料',
+    badgeClass: 'bg-amber-100 text-amber-700',
+    barClass: 'bg-amber-500',
+  },
+  todo: {
+    label: '待处理',
+    badgeClass: 'bg-slate-100 text-slate-500',
+    barClass: 'bg-slate-300',
+  },
+}
+
 const mappingRows = computed<WorkspaceMappingRow[]>(() => {
-  const rubric = selectedTrackRubric.value
-  if (!rubric)
-    return []
+  const innovationCount = linesToArray(formState.innovationPointsText).length + (chatDraft.value?.innovationPoints.length || 0)
+  const routeCount = linesToArray(formState.techRouteStepsText).length + (chatDraft.value?.techRouteSteps.length || 0)
+  const scoringCount = linesToArray(formState.scoringMappingText).length + (chatDraft.value?.scoringMapping.length || 0)
+  const deliverableCount = linesToArray(formState.deliverablesText).length + (chatDraft.value?.deliverables.length || 0)
+  const impactSignal = /社会|可持续|公益|适老|普惠|impact/i.test(`${formState.summary} ${formState.problemStatement}`)
 
-  return rubric.dimensions
-    .map((dimension, index) => {
-      const weight = Number(dimension.weight)
-      const normalizedWeight = Number.isFinite(weight) && weight > 0
-        ? clamp(weight, 0, 100)
-        : 0
+  const innovationScore = clamp(35 + innovationCount * 12 + routeCount * 6, 10, 98)
+  const marketScore = clamp(28 + scoringCount * 10 + (selectedResources.value.length > 0 ? 12 : 0), 10, 96)
+  const teamScore = clamp(40 + deliverableCount * 9 + routeCount * 7, 10, 100)
+  const impactScore = clamp(impactSignal ? 74 : 18 + scoringCount * 4 + deliverableCount * 5, 5, 90)
 
-      return {
-        id: String(dimension.key || `${rubric.id}-${index + 1}`).trim() || `${rubric.id}-${index + 1}`,
-        metric: normalizedWeight > 0 ? `${dimension.name} (${normalizedWeight}%)` : dimension.name,
-        hint: String(dimension.description || '').trim() || '暂无指标说明',
-        score: normalizedWeight,
-        scoreLabel: normalizedWeight > 0 ? `${normalizedWeight}%` : '未标注',
-        ability: String(dimension.scoringPoint || '').trim()
-          || String(dimension.description || '').trim()
-          || '暂无评分要点',
-        supportingNote: String(dimension.evidenceRequirement || '').trim()
-          || String(dimension.deductionPoint || '').trim()
-          || '暂无明确证据要求',
-      }
-    })
-    .filter(row => row.metric.trim())
-})
-
-const activeTopicBoardCandidate = computed(() => {
-  const board = topicBoardSnapshot.value
-  if (!board || board.candidates.length === 0)
-    return null
-  const selectedCandidateId = String(board.selectedCandidateId || '').trim()
-  return board.candidates.find(item => item.candidateId === selectedCandidateId)?.payload
-    || board.candidates[0]?.payload
-    || null
+  return [
+    {
+      id: 'innovation',
+      metric: '技术创新性与前瞻性 (30%)',
+      hint: '要求体现核心算法自主研发能力',
+      score: innovationScore,
+      ability: innovationCount > 0
+        ? linesToArray(formState.innovationPointsText)[0] || '创新点已在草案中体现'
+        : '待补充：核心算法、性能对比与可复现实验设计',
+      tags: ['#创新能力', '#算法优化'],
+      tone: toTone(innovationScore),
+    },
+    {
+      id: 'market',
+      metric: '商业落地与市场潜力 (20%)',
+      hint: '需提供详实的市场调研数据支撑',
+      score: marketScore,
+      ability: linesToArray(formState.scoringMappingText)[0] || '待补充：用户场景拆解、市场对标和商业验证数据',
+      tags: ['#场景落地', '#评审关注'],
+      tone: toTone(marketScore),
+    },
+    {
+      id: 'team',
+      metric: '团队构成与分工 (15%)',
+      hint: '跨学科背景及核心人员资历',
+      score: teamScore,
+      ability: linesToArray(formState.deliverablesText)[0] || '可展示交付物框架已初步形成',
+      tags: ['#团队协同', '#交付闭环'],
+      tone: toTone(teamScore),
+    },
+    {
+      id: 'impact',
+      metric: '社会价值与影响力 (15%)',
+      hint: '需明确社会价值和长期影响路径',
+      score: impactScore,
+      ability: impactSignal ? '摘要中已包含社会价值路径，可继续补充量化指标' : '未映射：建议补充社会价值、可持续性或普惠性说明',
+      tags: ['#社会价值', '#可持续'],
+      tone: toTone(impactScore),
+    },
+  ]
 })
 
 const keywordCloud = computed<WorkspaceKeyword[]>(() => {
-  if (!topicBoardSnapshot.value || !activeTopicBoardCandidate.value)
-    return []
+  const seed = selectedContest.value?.keywords.length
+    ? [...selectedContest.value.keywords]
+    : ['人工智能', '工程落地', '评分映射', '答辩策略', '项目管理']
 
-  const board = topicBoardSnapshot.value
-  const candidate = activeTopicBoardCandidate.value
-  const seen = new Set<string>()
+  const majors = selectedContest.value?.recommendedFor || []
+  const deliverables = selectedTrack.value?.deliverableTypes || []
 
-  return [
-    ...board.input.keywords.map(label => ({ label, active: true })),
-    ...candidate.trendSignals.map(item => ({ label: item.label, active: true })),
-    ...candidate.requiredSkills.map(label => ({ label, active: false })),
-    { label: candidate.recommendedTrackName, active: false },
-  ]
-    .map(item => ({
-      label: String(item.label || '').trim(),
-      active: item.active,
-    }))
-    .filter((item) => {
-      if (!item.label || seen.has(item.label))
-        return false
-      seen.add(item.label)
-      return true
-    })
+  const words = [...seed, ...majors.slice(0, 2), ...deliverables.slice(0, 2)]
+    .filter(Boolean)
     .slice(0, 8)
+
+  return words.map((label, index) => ({
+    label,
+    count: clamp(42 - index * 4 + (major.value && includesText(label, major.value) ? 6 : 0), 8, 56),
+    active: index % 3 === 0,
+  }))
 })
 
 const trendBars = computed<number[]>(() => {
-  if (!activeTopicBoardCandidate.value)
-    return []
+  const filledSignals = [
+    formState.problemStatement,
+    formState.innovationPointsText,
+    formState.techRouteStepsText,
+    formState.scoringMappingText,
+    formState.risksText,
+    formState.deliverablesText,
+    formState.summary,
+  ].filter(Boolean).length
 
-  const scores = activeTopicBoardCandidate.value.compareScores
-  return [
-    scores.contestFit,
-    scores.noveltySimilarity,
-    scores.evidenceReadiness,
-    scores.trendHeat,
-    scores.teamMatch,
-  ].map(value => clamp(value, 0, 100))
+  const userMessages = chatMessages.value.filter(item => item.role === 'user').length
+  const last = clamp(38 + filledSignals * 7 + userMessages * 5, 22, 95)
+
+  return [30, 45, 68, 82, last]
 })
 
 const tokenBalance = computed(() => {
@@ -3357,26 +931,7 @@ const projectUploadStorageUsedBytes = computed(() => {
   return selectedResources.value.reduce((sum, resource) => sum + parseFileSizeFromResource(resource), 0)
 })
 
-const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value || topicBoardLoading.value)
-const hasWorkspaceBootstrapData = computed(() => {
-  return Boolean(selectedContest.value)
-    || Boolean(selectedTrack.value)
-    || resources.value.length > 0
-    || resourceLibrary.value.length > 0
-    || projectOutlineItems.value.length > 0
-    || workspaceMembers.value.length > 0
-    || projectMeetings.value.length > 0
-    || chatSessions.value.length > 0
-    || Boolean(topicBoardSnapshot.value)
-    || projectIssueReports.value.length > 0
-    || projectIssues.value.length > 0
-    || projectResourceShares.value.length > 0
-})
-const workspacePreparing = computed(() => {
-  return Boolean(activeProjectId.value)
-    && workspaceBootstrapLoading.value
-    && !hasWorkspaceBootstrapData.value
-})
+const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value)
 
 const collabSelectionStatus = ref({
   line: 1,
@@ -3397,9 +952,11 @@ const statusCursor = computed(() => {
     }
   }
 
+  const line = clamp(12 + chatMessages.value.length + (formState.problemStatement ? 3 : 0), 12, 96)
+  const column = clamp((chatInput.value.length % 80) + 8, 8, 120)
   return {
-    line: null,
-    column: null,
+    line,
+    column,
     selectionLength: 0,
   }
 })
@@ -3775,22 +1332,6 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
   }
 }
 
-function applySidebarLayoutState(value: ProjectSettingsDraftUi | null | undefined): void {
-  const nextLeftCollapsed = Boolean(value?.leftSidebarCollapsed)
-  const nextRightCollapsed = Boolean(value?.rightSidebarCollapsed)
-  if (
-    leftSidebarCollapsed.value === nextLeftCollapsed
-    && rightSidebarUserCollapsed.value === nextRightCollapsed
-  ) {
-    return
-  }
-
-  withSidebarLayoutHydrating(() => {
-    leftSidebarCollapsed.value = nextLeftCollapsed
-    rightSidebarUserCollapsed.value = nextRightCollapsed
-  })
-}
-
 function serializeProjectSettingsDraftCachePayload(payload: WorkspaceProjectSettingsDraftCache): string {
   const adaptationEntries = Object.keys(payload.adaptationDrafts || {})
     .sort((left, right) => left.localeCompare(right))
@@ -3856,7 +1397,7 @@ function buildProjectSettingsDraftCachePayload(): WorkspaceProjectSettingsDraftC
 
   return {
     updatedAt: new Date().toISOString(),
-    deviceId: ensureWorkspaceDeviceId() || undefined,
+    deviceId: ensureProjectSettingsDraftDeviceId() || undefined,
     common: cloneProjectCommonForm(projectSettingsCommon),
     bindings: cloneProjectContestBindings(projectSettingsBindings.value),
     currentContestId,
@@ -3935,18 +1476,13 @@ function applyProjectSettingsDraftCachePayload(
   return true
 }
 
-function normalizeProjectSettingsDraftServerRecord(
-  record: ProjectSettingsDraft | null,
-  options: { updateServerState?: boolean } = {},
-): WorkspaceProjectSettingsDraftCache | null {
+function applyProjectSettingsDraftServerRecord(record: ProjectSettingsDraft | null): WorkspaceProjectSettingsDraftCache | null {
   if (!record) {
-    if (options.updateServerState)
-      resetProjectSettingsDraftServerState()
+    resetProjectSettingsDraftServerState()
     return null
   }
 
-  if (options.updateServerState)
-    projectSettingsDraftServerRevision.value = Number(record.revision || 0) || null
+  projectSettingsDraftServerRevision.value = Number(record.revision || 0) || null
 
   const normalized = normalizeProjectSettingsDraftCachePayload(record.payload)
   if (!normalized)
@@ -3959,82 +1495,54 @@ function normalizeProjectSettingsDraftServerRecord(
   }
 }
 
-async function fetchProjectSettingsDraftFromServer(projectId: string): Promise<ProjectSettingsDraftDevicePayload | null> {
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!projectId || !deviceId)
-    return null
-
-  const response = await unsafeFetch<ApiResponse<ProjectSettingsDraftDevicePayload>>(
-    endpoint(`/projects/${projectId}/settings-draft`),
-    {
-      query: {
-        deviceId,
-      },
-    },
-  )
-  const bundle = response.data || null
-  normalizeProjectSettingsDraftServerRecord(bundle?.current || null, { updateServerState: true })
-  return bundle
+async function fetchProjectSettingsDraftFromServer(projectId: string): Promise<WorkspaceProjectSettingsDraftCache | null> {
+  const response = await $fetch<ApiResponse<ProjectSettingsDraft | null>>(endpoint(`/projects/${projectId}/settings-draft`))
+  return applyProjectSettingsDraftServerRecord(response.data)
 }
 
 function pickProjectSettingsDraftForHydration(
   localDraft: WorkspaceProjectSettingsDraftCache | null,
-  bundle: ProjectSettingsDraftDevicePayload | null,
-): ProjectSettingsDraftHydrationResult {
-  const currentDraft = normalizeProjectSettingsDraftServerRecord(bundle?.current || null, { updateServerState: true })
-  const latestOtherDraft = normalizeProjectSettingsDraftServerRecord(bundle?.latestOther || null)
-  const currentDeviceDraft = localDraft || currentDraft
+  serverDraft: WorkspaceProjectSettingsDraftCache | null,
+): { draft: WorkspaceProjectSettingsDraftCache | null, source: 'local' | 'server' | '', hasConflict: boolean } {
+  if (!localDraft && !serverDraft)
+    return { draft: null, source: '', hasConflict: false }
+  if (localDraft && !serverDraft)
+    return { draft: localDraft, source: 'local', hasConflict: false }
+  if (!localDraft && serverDraft)
+    return { draft: serverDraft, source: 'server', hasConflict: false }
 
-  if (currentDeviceDraft) {
-    return {
-      bundle,
-      localDraft,
-      currentDraft,
-      latestOtherDraft,
-      appliedDraft: currentDeviceDraft,
-      source: localDraft ? 'local' : 'current',
-    }
-  }
-
-  if (bundle?.resolution.isNewDevice && latestOtherDraft) {
-    return {
-      bundle,
-      localDraft,
-      currentDraft,
-      latestOtherDraft,
-      appliedDraft: latestOtherDraft,
-      source: 'latest_other',
-    }
-  }
+  const left = localDraft!
+  const right = serverDraft!
+  const localTime = parseTimestamp(left.updatedAt)
+  const serverTime = parseTimestamp(right.updatedAt)
+  const source: 'local' | 'server' = localTime >= serverTime ? 'local' : 'server'
+  const draft = source === 'local' ? left : right
+  const samePayload = isProjectSettingsDraftCacheEqual(left, right)
+  const localDeviceId = String(left.deviceId || '').trim()
+  const serverDeviceId = String(right.deviceId || '').trim()
+  const hasConflict = !samePayload && (
+    (localDeviceId && serverDeviceId && localDeviceId !== serverDeviceId)
+    || (localTime > 0 && serverTime > 0 && localTime !== serverTime)
+  )
 
   return {
-    bundle,
-    localDraft,
-    currentDraft,
-    latestOtherDraft,
-    appliedDraft: null,
-    source: '',
+    draft,
+    source,
+    hasConflict,
   }
 }
 
-async function loadProjectSettings(preferredContestId = ''): Promise<ProjectSettingsDraftHydrationResult> {
+async function loadProjectSettings(preferredContestId = '') {
   if (!activeProjectId.value) {
     resetProjectSettingsState(null)
-    return {
-      bundle: null,
-      localDraft: null,
-      currentDraft: null,
-      latestOtherDraft: null,
-      appliedDraft: null,
-      source: '',
-    }
+    return
   }
 
   const activeId = activeProjectId.value
   projectSettingsLoading.value = true
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectSettingsSnapshot>>(
+    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
       endpoint(`/projects/${activeId}/settings`),
       {
         query: preferredContestId
@@ -4043,88 +1551,55 @@ async function loadProjectSettings(preferredContestId = ''): Promise<ProjectSett
       },
     )
 
-    if (activeProjectId.value !== activeId) {
-      return {
-        bundle: null,
-        localDraft: null,
-        currentDraft: null,
-        latestOtherDraft: null,
-        appliedDraft: null,
-        source: '',
-      }
-    }
+    if (activeProjectId.value !== activeId)
+      return
 
     applyProjectSettingsSnapshot(response.data, preferredContestId)
 
     const localDraft = readProjectSettingsDraftCache(activeId)
-    let bundle: ProjectSettingsDraftDevicePayload | null = null
+    let serverDraft: WorkspaceProjectSettingsDraftCache | null = null
     try {
-      bundle = await fetchProjectSettingsDraftFromServer(activeId)
+      serverDraft = await fetchProjectSettingsDraftFromServer(activeId)
     }
     catch {
       resetProjectSettingsDraftServerState()
     }
 
-    if (activeProjectId.value !== activeId) {
-      return {
-        bundle: null,
-        localDraft: null,
-        currentDraft: null,
-        latestOtherDraft: null,
-        appliedDraft: null,
-        source: '',
-      }
-    }
+    if (activeProjectId.value !== activeId)
+      return
 
-    const picked = pickProjectSettingsDraftForHydration(localDraft, bundle)
-    if (!picked.appliedDraft)
-      return picked
+    const picked = pickProjectSettingsDraftForHydration(localDraft, serverDraft)
+    if (!picked.draft)
+      return
 
     const applied = applyProjectSettingsDraftCachePayload(
-      picked.appliedDraft,
-      'saved_auto',
+      picked.draft,
+      picked.hasConflict ? 'conflict' : 'saved_auto',
     )
     if (!applied)
-      return picked
+      return
 
-    if (picked.source === 'current' || picked.source === 'latest_other')
-      writeProjectSettingsDraftCache(activeId, picked.appliedDraft)
+    if (picked.source === 'server')
+      writeProjectSettingsDraftCache(activeId, picked.draft)
 
-    if (picked.source === 'latest_other') {
-      statusLine.value = '已从最近设备恢复草稿（未提交）。'
-    }
-    else if (picked.source === 'current') {
-      statusLine.value = '已恢复云端草稿（未提交）。'
-    }
-    else if (picked.source === 'local') {
-      statusLine.value = '已恢复本地草稿（未提交）。'
+    if (picked.hasConflict) {
+      statusLine.value = picked.source === 'local'
+        ? '检测到多端草稿差异，已优先使用本地较新草稿。'
+        : '检测到多端草稿差异，已优先使用云端较新草稿。'
+      return
     }
 
-    return picked
+    statusLine.value = picked.source === 'server'
+      ? '已恢复云端草稿（未提交）。'
+      : '已恢复本地草稿（未提交）。'
   }
   catch (error) {
-    if (activeProjectId.value !== activeId) {
-      return {
-        bundle: null,
-        localDraft: null,
-        currentDraft: null,
-        latestOtherDraft: null,
-        appliedDraft: null,
-        source: '',
-      }
-    }
+    if (activeProjectId.value !== activeId)
+      return
 
     resetProjectSettingsState(activeProject.value)
     projectSettingsSaveState.value = 'error'
     statusLine.value = resolveApiErrorMessage(error, '加载项目设置失败，请稍后重试。')
-    return {
-      bundle: null,
-      localDraft: null,
-      currentDraft: null,
-      latestOtherDraft: null,
-      appliedDraft: null,
-      source: '',
-    }
   }
   finally {
     if (activeProjectId.value === activeId)
@@ -4147,14 +1622,14 @@ async function persistProjectSettingsDraftToServer(
   persistSeq: number,
 ): Promise<'success' | 'conflict' | 'error' | 'stale'> {
   const expectedRevision = projectSettingsDraftServerRevision.value
-  const deviceId = ensureWorkspaceDeviceId()
+  const deviceId = ensureProjectSettingsDraftDeviceId()
   const requestPayload: WorkspaceProjectSettingsDraftCache = {
     ...payload,
     deviceId: payload.deviceId || deviceId || undefined,
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectSettingsDraft>>(
+    const response = await $fetch<ApiResponse<ProjectSettingsDraft>>(
       endpoint(`/projects/${projectId}/settings-draft`),
       {
         method: 'PATCH',
@@ -4169,7 +1644,7 @@ async function persistProjectSettingsDraftToServer(
     if (activeProjectId.value !== projectId || persistSeq !== projectSettingsDraftPersistSeq)
       return 'stale'
 
-    normalizeProjectSettingsDraftServerRecord(response.data, { updateServerState: true })
+    applyProjectSettingsDraftServerRecord(response.data)
     return 'success'
   }
   catch (error) {
@@ -4189,18 +1664,15 @@ async function persistProjectSettingsDraftToServer(
   }
 }
 
-async function persistResolvedProjectSettingsDraft(
-  projectId: string,
-  payload: WorkspaceProjectSettingsDraftCache,
-  options: { silent?: boolean } = {},
-): Promise<void> {
-  const normalizedPayload = normalizeProjectSettingsDraftCachePayload(payload)
-  if (!normalizedPayload)
+async function persistProjectSettingsDraftCache() {
+  if (projectSettingsHydrating.value || !activeProjectId.value)
     return
 
+  const projectId = activeProjectId.value
   const persistSeq = ++projectSettingsDraftPersistSeq
-  const localSuccess = writeProjectSettingsDraftCache(projectId, normalizedPayload)
-  const serverResult = await persistProjectSettingsDraftToServer(projectId, normalizedPayload, persistSeq)
+  const payload = buildProjectSettingsDraftCachePayload()
+  const localSuccess = writeProjectSettingsDraftCache(projectId, payload)
+  const serverResult = await persistProjectSettingsDraftToServer(projectId, payload, persistSeq)
 
   if (activeProjectId.value !== projectId || persistSeq !== projectSettingsDraftPersistSeq)
     return
@@ -4210,42 +1682,26 @@ async function persistResolvedProjectSettingsDraft(
 
   if (!localSuccess && serverResult !== 'success') {
     projectSettingsSaveState.value = 'error'
-    if (!options.silent)
-      statusLine.value = '草稿缓存失败（可重试）'
+    statusLine.value = '草稿缓存失败（可重试）'
     return
   }
 
   projectSettingsSaveState.value = 'saved_auto'
 
   if (localSuccess && serverResult === 'success') {
-    if (!options.silent)
-      statusLine.value = '草稿已缓存（本地 + 云端，未提交）'
+    statusLine.value = '草稿已缓存（本地 + 云端，未提交）'
     return
   }
   if (localSuccess && serverResult === 'error') {
-    if (!options.silent)
-      statusLine.value = '草稿已本地缓存，云端同步失败（稍后重试）'
+    statusLine.value = '草稿已本地缓存，云端同步失败（稍后重试）'
     return
   }
   if (!localSuccess && serverResult === 'success') {
-    if (!options.silent)
-      statusLine.value = '草稿已云端缓存，本地写入失败（可重试）'
+    statusLine.value = '草稿已云端缓存，本地写入失败（可重试）'
     return
   }
 
-  if (!options.silent)
-    statusLine.value = '草稿已自动缓存（未提交）'
-}
-
-async function persistProjectSettingsDraftCache(options: { silent?: boolean } = {}) {
-  if (projectSettingsHydrating.value || !activeProjectId.value)
-    return
-
-  await persistResolvedProjectSettingsDraft(
-    activeProjectId.value,
-    buildProjectSettingsDraftCachePayload(),
-    options,
-  )
+  statusLine.value = '草稿已自动缓存（未提交）'
 }
 
 function scheduleProjectSettingsDraftPersist() {
@@ -4263,18 +1719,16 @@ function scheduleProjectSettingsDraftPersist() {
 
 async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cleared' | 'none' | 'conflict' | 'error'> {
   const expectedRevision = projectSettingsDraftServerRevision.value
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!expectedRevision || !deviceId)
+  if (!expectedRevision)
     return 'none'
 
   try {
-    await unsafeFetch<ApiResponse<ProjectSettingsDraft | null>>(
+    await $fetch<ApiResponse<ProjectSettingsDraft | null>>(
       endpoint(`/projects/${projectId}/settings-draft`),
       {
         method: 'DELETE',
         body: {
           expectedRevision,
-          deviceId,
         },
       },
     )
@@ -4288,91 +1742,6 @@ async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cl
     }
     return 'error'
   }
-}
-
-function resolveWorkspaceViewPreferenceState(record: ProjectWorkspaceViewPreference | null | undefined): ProjectWorkspaceViewState | null {
-  if (!record?.payload)
-    return null
-  return sanitizeProjectWorkspaceViewState(normalizeProjectWorkspaceViewState(record.payload))
-}
-
-function buildDeviceRestorePromptContent(options: { view: boolean, draft: boolean }): string {
-  if (options.view && options.draft) {
-    return '另一台设备存在较新的工作上下文，包括工作区位置和项目设置草稿。\n\n你可以同步最新设备，或继续保留本设备当前内容。'
-  }
-  if (options.view) {
-    return '另一台设备存在较新的工作区位置，包括当前工作台、打开的标签页、会话或会议定位。\n\n你可以同步最新设备，或继续保留本设备当前位置。'
-  }
-  return '另一台设备存在较新的项目设置草稿。\n\n你可以同步最新设备的草稿，或继续保留本设备当前草稿。'
-}
-
-async function resolveProjectDeviceRestore(
-  projectId: string,
-  restoredViewState: HydratedProjectWorkspaceViewStateResult,
-  draftResult: ProjectSettingsDraftHydrationResult,
-): Promise<void> {
-  if (!projectId || activeProjectId.value !== projectId)
-    return
-
-  const currentViewState = resolveWorkspaceViewPreferenceState(restoredViewState.bundle?.current || null)
-  const latestOtherViewState = resolveWorkspaceViewPreferenceState(restoredViewState.bundle?.latestOther || null)
-  const viewNeedsPrompt = Boolean(
-    restoredViewState.bundle?.resolution.isStaleDevice
-    && !restoredViewState.hasManagedQuery
-    && currentViewState
-    && latestOtherViewState
-    && !isProjectWorkspaceViewStateEqual(currentViewState, latestOtherViewState),
-  )
-
-  const currentDraftBaseline = draftResult.localDraft || draftResult.currentDraft
-  const latestOtherDraft = draftResult.latestOtherDraft
-  const draftNeedsPrompt = Boolean(
-    draftResult.bundle?.resolution.isStaleDevice
-    && currentDraftBaseline
-    && latestOtherDraft
-    && !isProjectSettingsDraftCacheEqual(currentDraftBaseline, latestOtherDraft),
-  )
-
-  let choice: DeviceRestoreChoice = 'keep'
-  if (viewNeedsPrompt || draftNeedsPrompt) {
-    choice = await askDeviceRestoreConfirm(
-      '同步最近设备的工作上下文？',
-      buildDeviceRestorePromptContent({ view: viewNeedsPrompt, draft: draftNeedsPrompt }),
-    )
-    if (activeProjectId.value !== projectId)
-      return
-  }
-
-  if (choice === 'sync') {
-    if (viewNeedsPrompt && latestOtherViewState) {
-      applyProjectWorkspaceViewState(latestOtherViewState)
-      projectSettingsCurrentContestId.value = String(latestOtherViewState.selectedContestId || '').trim()
-      syncProjectSettingsAdaptationFormByContest(projectSettingsCurrentContestId.value)
-      const syncedPreviewResourceId = normalizeString(latestOtherViewState.previewResourceId)
-      if (syncedPreviewResourceId && resources.value.some(item => item.id === syncedPreviewResourceId))
-        await openProjectResourcePreview(syncedPreviewResourceId, { openTab: false })
-    }
-
-    if (draftNeedsPrompt && latestOtherDraft) {
-      const applied = applyProjectSettingsDraftCachePayload(latestOtherDraft, 'saved_auto')
-      if (applied)
-        writeProjectSettingsDraftCache(projectId, latestOtherDraft)
-    }
-
-    statusLine.value = '已同步最近设备的工作上下文。'
-  }
-  else if (viewNeedsPrompt || draftNeedsPrompt) {
-    statusLine.value = '已保留当前设备的工作上下文。'
-  }
-
-  await syncProjectWorkspaceViewState()
-
-  const draftToPersist = (choice === 'sync' && draftNeedsPrompt && latestOtherDraft)
-    || draftResult.localDraft
-    || draftResult.currentDraft
-    || (draftResult.source === 'latest_other' ? draftResult.appliedDraft : null)
-  if (draftToPersist)
-    await persistResolvedProjectSettingsDraft(projectId, draftToPersist, { silent: true })
 }
 
 async function flushProjectSettingsSave(): Promise<boolean> {
@@ -4395,7 +1764,7 @@ async function flushProjectSettingsSave(): Promise<boolean> {
     if (projectSettingsBindingsDirty.value)
       body.contestBindings = cloneProjectContestBindings(projectSettingsBindings.value)
 
-    const response = await unsafeFetch<ApiResponse<ProjectSettingsSnapshot>>(
+    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
       endpoint(`/projects/${activeProjectId.value}/settings`),
       {
         method: 'PATCH',
@@ -4435,7 +1804,7 @@ async function flushProjectAdaptationSave(
   statusLine.value = '保存中...'
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectSettingsSnapshot>>(
+    const response = await $fetch<ApiResponse<ProjectSettingsSnapshot>>(
       endpoint(`/projects/${activeProjectId.value}/adaptations/${normalizedContestId}`),
       {
         method: 'PATCH',
@@ -4581,16 +1950,12 @@ watch(selectedContestId, (contestId) => {
 
   const normalizedContestId = String(contestId || '').trim()
   if (!normalizedContestId) {
-    selectedContestDetail.value = null
-    selectedContestDetailLoading.value = false
     selectedTrackId.value = ''
     projectSettingsCurrentContestId.value = ''
     syncProjectSettingsAdaptationFormByContest('')
     syncFormContestTrack()
     return
   }
-
-  void loadSelectedContestDetail(normalizedContestId)
 
   const binding = projectSettingsBindingMap.value.get(normalizedContestId)
   const contest = contestMap.value.get(normalizedContestId)
@@ -4641,7 +2006,7 @@ async function loadAuthContext(): Promise<boolean> {
     }
 
     activeWorkspaceId.value = targetWorkspaceId
-    ensureWorkspaceDeviceId()
+    ensureProjectSettingsDraftDeviceId()
 
     return true
   }
@@ -4656,12 +2021,8 @@ async function loadAuthContext(): Promise<boolean> {
 
 async function loadContestCatalog() {
   try {
-    const data = await requestProjectApi<Contest[]>(
-      endpoint('/contests'),
-      {},
-      '竞赛目录加载失败。',
-    )
-    contestCatalog.value = data
+    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'))
+    contestCatalog.value = response.data
   }
   catch {
     if (contestCatalog.value.length === 0)
@@ -4669,160 +2030,24 @@ async function loadContestCatalog() {
   }
 }
 
-function resetWorkspaceDisplayPreferenceState(): void {
-  workspaceDisplayPreferenceSnapshot.value = defaultWorkspaceDisplayPreferenceSnapshot()
-  workspaceDisplayPreferenceLoading.value = false
-  workspaceDisplayPreferenceSavingScope.value = ''
-  workspaceDisplayPreferenceError.value = ''
-}
-
-async function loadWorkspaceDisplayPreferenceSnapshot(workspaceId = activeWorkspaceId.value): Promise<void> {
-  const normalizedWorkspaceId = String(workspaceId || '').trim()
-  if (!normalizedWorkspaceId) {
-    resetWorkspaceDisplayPreferenceState()
-    return
-  }
-
-  workspaceDisplayPreferenceLoading.value = true
-  workspaceDisplayPreferenceError.value = ''
-  try {
-    const snapshot = await loadWorkspaceDisplayPreferenceSnapshotByApi(normalizedWorkspaceId)
-    if (activeWorkspaceId.value !== normalizedWorkspaceId)
-      return
-    workspaceDisplayPreferenceSnapshot.value = snapshot
-  }
-  catch (error) {
-    if (activeWorkspaceId.value !== normalizedWorkspaceId)
-      return
-    workspaceDisplayPreferenceSnapshot.value = defaultWorkspaceDisplayPreferenceSnapshot()
-    workspaceDisplayPreferenceError.value = resolveApiErrorMessage(error, '加载工作区显示偏好失败，请稍后重试。')
-  }
-  finally {
-    if (activeWorkspaceId.value === normalizedWorkspaceId)
-      workspaceDisplayPreferenceLoading.value = false
-  }
-}
-
-async function saveWorkspaceDisplayUserOverride(payload: WorkspaceDisplayPreferencePatchPayload): Promise<void> {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId || workspaceDisplayPreferenceSavingScope.value)
-    return
-
-  workspaceDisplayPreferenceSavingScope.value = 'user'
-  workspaceDisplayPreferenceError.value = ''
-  try {
-    const nextPayload: WorkspaceDisplayPreferencePatchPayload = {
-      fontSizePreset: payload.fontSizePreset,
-      tabSpacingPreset: payload.tabSpacingPreset,
-    }
-    const snapshot = await patchWorkspaceDisplayUserOverrideByApi(workspaceId, nextPayload)
-    if (activeWorkspaceId.value !== workspaceId)
-      return
-    workspaceDisplayPreferenceSnapshot.value = snapshot
-    statusLine.value = '当前工作区显示偏好已保存。'
-    Message.success('当前工作区显示偏好已保存。')
-  }
-  catch (error) {
-    if (activeWorkspaceId.value !== workspaceId)
-      return
-    const message = resolveApiErrorMessage(error, '保存当前工作区显示偏好失败，请稍后重试。')
-    workspaceDisplayPreferenceError.value = message
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    if (activeWorkspaceId.value === workspaceId)
-      workspaceDisplayPreferenceSavingScope.value = ''
-  }
-}
-
-async function saveWorkspaceDisplayTeamDefault(payload: WorkspaceDisplayPreferencePatchPayload): Promise<void> {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId || workspaceDisplayPreferenceSavingScope.value)
-    return
-
-  workspaceDisplayPreferenceSavingScope.value = 'team'
-  workspaceDisplayPreferenceError.value = ''
-  try {
-    const nextPayload: WorkspaceDisplayPreferencePatchPayload = {
-      fontSizePreset: payload.fontSizePreset,
-      tabSpacingPreset: payload.tabSpacingPreset,
-    }
-    const snapshot = await patchWorkspaceDisplayTeamDefaultByApi(workspaceId, nextPayload)
-    if (activeWorkspaceId.value !== workspaceId)
-      return
-    workspaceDisplayPreferenceSnapshot.value = snapshot
-    statusLine.value = '团队默认显示偏好已保存。'
-    Message.success('团队默认显示偏好已保存。')
-  }
-  catch (error) {
-    if (activeWorkspaceId.value !== workspaceId)
-      return
-    const message = resolveApiErrorMessage(error, '保存团队默认显示偏好失败，请稍后重试。')
-    workspaceDisplayPreferenceError.value = message
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    if (activeWorkspaceId.value === workspaceId)
-      workspaceDisplayPreferenceSavingScope.value = ''
-  }
-}
-
-let selectedContestDetailRequestId = 0
-
-async function loadSelectedContestDetail(contestId = selectedContestId.value) {
-  const normalizedContestId = String(contestId || '').trim()
-  const requestId = ++selectedContestDetailRequestId
-
-  if (!normalizedContestId) {
-    selectedContestDetail.value = null
-    selectedContestDetailLoading.value = false
-    return
-  }
-
-  selectedContestDetailLoading.value = true
-  try {
-    const data = await requestProjectApi<ContestDetailPayload>(
-      endpoint(`/contests/${normalizedContestId}`),
-      {},
-      '竞赛详情加载失败。',
-    )
-    if (requestId !== selectedContestDetailRequestId || normalizedContestId !== String(selectedContestId.value || '').trim())
-      return
-    selectedContestDetail.value = data
-  }
-  catch {
-    if (requestId !== selectedContestDetailRequestId || normalizedContestId !== String(selectedContestId.value || '').trim())
-      return
-    selectedContestDetail.value = null
-  }
-  finally {
-    if (requestId === selectedContestDetailRequestId && normalizedContestId === String(selectedContestId.value || '').trim())
-      selectedContestDetailLoading.value = false
-  }
-}
-
 async function loadContests() {
   listLoading.value = true
   statusLine.value = ''
   try {
-    const data = await requestProjectApi<Contest[]>(
-      endpoint('/contests'),
-      {
+    const response = await $fetch<ApiResponse<Contest[]>>(endpoint('/contests'), {
+      query: {
         discipline: discipline.value,
         level: level.value,
         major: major.value,
         trackType: trackType.value,
       },
-      '竞赛列表加载失败。',
-    )
+    })
 
-    contests.value = data
+    contests.value = response.data
     const catalogMap = new Map<string, Contest>()
     for (const contest of contestCatalog.value)
       catalogMap.set(contest.id, contest)
-    for (const contest of data)
+    for (const contest of response.data)
       catalogMap.set(contest.id, contest)
     contestCatalog.value = [...catalogMap.values()]
 
@@ -4855,7 +2080,7 @@ async function loadProjectResources() {
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources`))
+    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources`))
     resources.value = response.data
   }
   catch {
@@ -4875,7 +2100,7 @@ async function loadProjectResourceLibrary() {
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/library`))
+    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/library`))
     resourceLibrary.value = response.data
   }
   catch {
@@ -4893,7 +2118,7 @@ async function loadProjectRecycleResources() {
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/recycle`))
+    const response = await $fetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/recycle`))
     recycleResources.value = response.data
   }
   catch {
@@ -4910,7 +2135,7 @@ async function loadProjectResourceShares() {
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectResourceShare[]>>(endpoint(`/projects/${activeProjectId.value}/resources/shares`))
+    const response = await $fetch<ApiResponse<ProjectResourceShare[]>>(endpoint(`/projects/${activeProjectId.value}/resources/shares`))
     projectResourceShares.value = response.data.map(item => ({
       ...item,
       shareUrl: resolveProjectResourceShareUrl(String(item.shareUrl || '').trim()),
@@ -4962,7 +2187,7 @@ async function loadProjectOutline() {
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline`), {
+    const response = await $fetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline`), {
       query: buildProjectOutlineContextPayload(),
     })
     if (activeProjectId.value !== projectId)
@@ -4994,7 +2219,7 @@ async function loadAiChangeRequests() {
 
   aiChangeRequestsLoading.value = true
   try {
-    const response = await unsafeFetch<ApiResponse<AiProjectChangeRequest[]>>(endpoint(`/projects/${projectId}/ai/changes`), {
+    const response = await $fetch<ApiResponse<AiProjectChangeRequest[]>>(endpoint(`/projects/${projectId}/ai/changes`), {
       query: {
         statuses: 'pending,approved,rejected,failed',
         limit: 100,
@@ -5038,7 +2263,7 @@ async function loadProjectIssues() {
 
   issueCenterLoading.value = true
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectIssuesBundle>>(endpoint(`/projects/${projectId}/issues`), {
+    const response = await $fetch<ApiResponse<ProjectIssuesBundle>>(endpoint(`/projects/${projectId}/issues`), {
       query: {
         statuses: 'open,in_progress,resolved,ignored',
         reportLimit: 20,
@@ -5059,78 +2284,6 @@ async function loadProjectIssues() {
   finally {
     if (activeProjectId.value === projectId)
       issueCenterLoading.value = false
-  }
-}
-
-async function submitIssueReport(reportId: string) {
-  const projectId = String(activeProjectId.value || '').trim()
-  const normalizedReportId = String(reportId || '').trim()
-  if (!projectId || !normalizedReportId || issueReportSubmitting.value)
-    return
-
-  issueReportSubmitting.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<{ report: ProjectIssueReport, justSubmitted: boolean }>>(
-      endpoint(`/projects/${projectId}/issues/${normalizedReportId}/submit`),
-      {
-        method: 'POST',
-      },
-    )
-
-    await loadProjectIssues()
-    statusLine.value = response.data.justSubmitted
-      ? '评审报告已提交。'
-      : '评审报告已提交，无需重复操作。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '提交评审失败，请稍后重试。')
-  }
-  finally {
-    issueReportSubmitting.value = false
-  }
-}
-
-async function exportIssueReport(reportId: string) {
-  const projectId = String(activeProjectId.value || '').trim()
-  const normalizedReportId = String(reportId || '').trim()
-  if (!projectId || !normalizedReportId || issueReportExporting.value || !import.meta.client)
-    return
-
-  issueReportExporting.value = true
-  try {
-    const response = await fetch(endpoint(`/projects/${projectId}/issues/${normalizedReportId}/export`), {
-      credentials: 'include',
-    })
-
-    if (!response.ok) {
-      let errorMessage = '导出评审报告失败，请稍后重试。'
-      try {
-        const payload = (await response.json()) as { message?: string }
-        const message = String(payload?.message || '').trim()
-        if (message)
-          errorMessage = message
-      }
-      catch {
-        const text = String(await response.text().catch(() => '') || '').trim()
-        if (text)
-          errorMessage = text
-      }
-      throw new Error(errorMessage)
-    }
-
-    const blob = await response.blob()
-    const report = projectIssueReports.value.find(item => item.id === normalizedReportId) || latestIssueReport.value
-    triggerBrowserDownloadFromBlob(
-      blob,
-      toIssueReportMarkdownFileName(report?.title || 'issue-report'),
-    )
-    statusLine.value = '评审报告已导出。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '导出评审报告失败，请稍后重试。')
-  }
-  finally {
-    issueReportExporting.value = false
   }
 }
 
@@ -5164,7 +2317,7 @@ async function approveAiChange(change: AiProjectChangeRequest) {
     const payload: ApproveChangeRequestPayload = {
       destructiveConfirm: Boolean(change.destructive),
     }
-    await unsafeFetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/approve`), {
+    await $fetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/approve`), {
       method: 'POST',
       body: payload,
     })
@@ -5202,7 +2355,7 @@ async function rejectAiChange(change: AiProjectChangeRequest) {
 
   setAiChangeActing(changeId, true)
   try {
-    await unsafeFetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/reject`), {
+    await $fetch<ApiResponse<AiProjectChangeRequest>>(endpoint(`/projects/${projectId}/ai/changes/${changeId}/reject`), {
       method: 'POST',
       body: {},
     })
@@ -5224,7 +2377,7 @@ async function generateProjectOutline(reason: string, silent = false) {
     return
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline/generate`), {
+    const response = await $fetch<ApiResponse<ProjectOutlineSnapshot>>(endpoint(`/projects/${projectId}/outline/generate`), {
       method: 'POST',
       body: {
         reason,
@@ -5262,7 +2415,7 @@ async function loadProjects() {
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<Project[]>>(endpoint('/projects'), {
+    const response = await $fetch<ApiResponse<Project[]>>(endpoint('/projects'), {
       query: {
         teamId: activeWorkspaceId.value,
         workspaceId: activeWorkspaceId.value,
@@ -5277,7 +2430,7 @@ async function loadProjects() {
 
 async function loadQuickSwitchProjects() {
   try {
-    const response = await unsafeFetch<ApiResponse<Project[]>>(endpoint('/projects'))
+    const response = await $fetch<ApiResponse<Project[]>>(endpoint('/projects'))
     allProjects.value = response.data
   }
   catch {
@@ -5294,7 +2447,7 @@ async function loadWorkspaceMemberManagement() {
 
   workspaceMemberManagementLoading.value = true
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(endpoint(`/projects/${projectId}/members`))
     if (activeProjectId.value !== projectId)
       return
     applyWorkspaceMemberManagementSnapshot(response.data)
@@ -5328,7 +2481,7 @@ async function saveWorkspaceSeatLimit(seatLimit: number) {
   workspaceSeatLimitSaveLoading.value = true
   workspaceSeatLimitError.value = ''
   try {
-    await unsafeFetch<ApiResponse<ProjectSeatQuota>>(endpoint(`/projects/${projectId}/seats`), {
+    await $fetch<ApiResponse<ProjectSeatQuota>>(endpoint(`/projects/${projectId}/seats`), {
       method: 'PATCH',
       body: {
         seatLimit: Math.max(1, Math.trunc(Number(seatLimit || 1))),
@@ -5365,7 +2518,7 @@ async function createWorkspaceInvitation(payload: ProjectInvitationCreatePayload
 
   workspaceInvitationSubmitting.value = true
   try {
-    const response = await unsafeFetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
+    const response = await $fetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
       method: 'POST',
       body: {
         inviteeUsername: String(payload.inviteeUsername || '').trim() || undefined,
@@ -5409,6 +2562,32 @@ async function consumeJoinedProjectNotice() {
   }, { replace: true })
 }
 
+async function consumeProjectPanelQuery() {
+  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
+  if (panel !== 'members' && panel !== 'settings')
+    return
+
+  if (panel === 'members')
+    openMemberManagementSignal.value += 1
+  else
+    openSettingsSignal.value += 1
+
+  const nextQuery: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    if (key === 'panel')
+      continue
+
+    const normalized = normalizeQueryParam(value)
+    if (normalized)
+      nextQuery[key] = normalized
+  }
+
+  await navigateTo({
+    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
+    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
+  }, { replace: true })
+}
+
 async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) {
   const projectId = String(activeProjectId.value || '').trim()
   const userId = String(payload.userId || '').trim()
@@ -5421,7 +2600,7 @@ async function patchWorkspaceMemberRole(payload: ProjectMemberRolePatchPayload) 
 
   workspaceMemberRoleUpdatingUserId.value = userId
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(
       endpoint(`/projects/${projectId}/members`),
       {
         method: 'POST',
@@ -5455,7 +2634,7 @@ async function removeWorkspaceMember(userId: string) {
 
   workspaceMemberRemovingUserId.value = normalizedUserId
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot>>(
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot>>(
       endpoint(`/projects/${projectId}/members/${normalizedUserId}`),
       { method: 'DELETE' },
     )
@@ -5483,7 +2662,7 @@ async function revokeWorkspaceInvitation(invitationId: string) {
 
   workspaceInvitationRevokingId.value = normalizedInvitationId
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectMemberManagementSnapshot & { revoked?: boolean }>>(
+    const response = await $fetch<ApiResponse<ProjectMemberManagementSnapshot & { revoked?: boolean }>>(
       endpoint(`/projects/${projectId}/invitations/${normalizedInvitationId}/revoke`),
       { method: 'POST' },
     )
@@ -5527,7 +2706,7 @@ async function addResourceFromLibrary(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/library`), {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/library`), {
       method: 'POST',
       body: {
         resourceId: targetResourceId,
@@ -5553,7 +2732,7 @@ async function createCollabResource(kind: 'markdown' | 'draw') {
   resourceMutating.value = true
   const resourceLabel = kind === 'draw' ? '自由画布' : '协作文档'
   try {
-    const response = await unsafeFetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
+    const response = await $fetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
       method: 'POST',
       body: {
         kind,
@@ -5595,7 +2774,7 @@ async function removeProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}`), {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}`), {
       method: 'DELETE',
     })
     if (isRemovingPreviewResource)
@@ -5619,7 +2798,7 @@ async function restoreProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/restore`), {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/restore`), {
       method: 'POST',
     })
     await refreshProjectResourceContext()
@@ -5641,7 +2820,7 @@ async function purgeProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    await unsafeFetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/purge`), {
+    await $fetch(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/purge`), {
       method: 'DELETE',
     })
     await refreshProjectResourceContext()
@@ -5662,7 +2841,7 @@ async function duplicateProjectResource(resourceId: string) {
 
   resourceMutating.value = true
   try {
-    const response = await unsafeFetch<ApiResponse<Resource>>(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/duplicate`), {
+    const response = await $fetch<ApiResponse<Resource>>(endpoint(`/projects/${activeProjectId.value}/resources/${targetResourceId}/duplicate`), {
       method: 'POST',
     })
     await refreshProjectResourceContext()
@@ -5689,83 +2868,6 @@ async function uploadResourcesToProject(files: File[]) {
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
-  }
-}
-
-async function uploadMarkdownImage(file: File): Promise<{
-  src: string
-  alt?: string
-  title?: string
-  resourceId?: string
-}> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const hostMarkdownResourceId = String(previewResourceId.value || '').trim()
-  const mimeType = String(file?.type || '').trim()
-
-  if (!projectId) {
-    const message = '请先选择一个项目。'
-    statusLine.value = message
-    throw new Error(message)
-  }
-
-  if (!hostMarkdownResourceId) {
-    const message = '当前文档未就绪，暂时无法上传图片。'
-    statusLine.value = message
-    throw new Error(message)
-  }
-
-  if (!mimeType.startsWith('image/')) {
-    const message = '当前仅支持上传图片文件。'
-    statusLine.value = message
-    throw new Error(message)
-  }
-
-  if (!isProjectResourceUploadFileSupported(file.name)) {
-    const message = '图片格式不支持，请更换后重试。'
-    statusLine.value = message
-    throw new Error(message)
-  }
-
-  if (file.size > PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES) {
-    const message = `图片过大，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`
-    statusLine.value = message
-    throw new Error(message)
-  }
-
-  const formData = new FormData()
-  formData.append('category', 'basic_info')
-  formData.append('accessLevel', 'login_required')
-  formData.append('hostMarkdownResourceId', hostMarkdownResourceId)
-  formData.append('file', file)
-
-  try {
-    const response = await authApiFetch<ApiResponse<{
-      resources: Resource[]
-    }>>(`/projects/${projectId}/resources/upload`, {
-      method: 'POST',
-      body: formData,
-    })
-    const resource = response.data?.resources?.[0] || null
-    if (!resource?.id) {
-      const message = '图片上传成功，但资源回执缺失。'
-      statusLine.value = message
-      throw new Error(message)
-    }
-
-    const fallbackTitle = String(file.name || '').trim() || '图片'
-    const resolvedTitle = String(resource.title || '').trim() || fallbackTitle
-    statusLine.value = `图片已上传：${resolvedTitle}`
-    return {
-      src: endpoint(`/projects/${projectId}/resources/${resource.id}/file`),
-      alt: resolvedTitle,
-      title: resolvedTitle,
-      resourceId: resource.id,
-    }
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '上传图片失败，请稍后重试。')
-    statusLine.value = message
-    throw error instanceof Error ? error : new Error(message)
   }
 }
 
@@ -5866,7 +2968,7 @@ async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPa
   const resourceLabel = resolveCollabResourceLabel(targetResource)
 
   try {
-    const response = await unsafeFetch<ApiResponse<CollabSnapshotPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/collab`))
+    const response = await $fetch<ApiResponse<CollabSnapshotPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/collab`))
     return response.data
   }
   catch (error) {
@@ -5940,7 +3042,7 @@ async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<b
     return false
 
   try {
-    const response = await unsafeFetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
+    const response = await $fetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
       method: 'POST',
       body: {
         kind: 'draw',
@@ -5971,7 +3073,7 @@ async function fetchResourcePreviewStatus(resourceId: string, silent = false) {
     previewStatusLoading.value = true
 
   try {
-    const response = await unsafeFetch<ApiResponse<ResourcePreviewStatusPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/preview-status`))
+    const response = await $fetch<ApiResponse<ResourcePreviewStatusPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/preview-status`))
     previewStatusPayload.value = response.data
 
     if (response.data.status === 'succeeded' || response.data.status === 'failed')
@@ -6131,7 +3233,7 @@ async function shareProjectResource(payload: ProjectResourceShareCreatePayload) 
     return
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectResourceShare>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/shares`), {
+    const response = await $fetch<ApiResponse<ProjectResourceShare>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/shares`), {
       method: 'POST',
       body: {
         visibility,
@@ -6183,7 +3285,7 @@ async function revokeProjectResourceShare(shareId: string) {
     return
 
   try {
-    await unsafeFetch(endpoint(`/projects/${projectId}/resources/shares/${targetShareId}`), {
+    await $fetch(endpoint(`/projects/${projectId}/resources/shares/${targetShareId}`), {
       method: 'DELETE',
     })
     await loadProjectResourceShares()
@@ -6229,7 +3331,7 @@ async function reconvertProjectResourcePreview() {
 
   previewStatusLoading.value = true
   try {
-    await unsafeFetch(endpoint(`/projects/${projectId}/resources/${resourceId}/reconvert`), {
+    await $fetch(endpoint(`/projects/${projectId}/resources/${resourceId}/reconvert`), {
       method: 'POST',
     })
     statusLine.value = '已重新加入转换队列。'
@@ -6245,43 +3347,26 @@ async function reconvertProjectResourcePreview() {
   }
 }
 
-function buildProjectApiRequestUrl(path: string, query: Record<string, string | number>): string {
-  const search = new URLSearchParams()
-  for (const [key, value] of Object.entries(query))
-    search.set(key, String(value))
-  const queryText = search.toString()
-  return queryText ? `${path}?${queryText}` : path
-}
-
-async function requestProjectApi<T>(path: string, query: Record<string, string | number>, fallbackMessage: string): Promise<T> {
-  const response = await fetch(buildProjectApiRequestUrl(path, query), {
-    credentials: 'include',
-  })
-  const payload = await response.json().catch(() => null) as ApiResponse<T> | null
-  if (!response.ok || !payload || payload.code !== 0)
-    throw new Error(String(payload?.message || fallbackMessage))
-  return payload.data
-}
-
 async function loadChatMessages(sessionId: string) {
   const projectId = String(activeProjectId.value || '').trim()
   if (!activeWorkspaceId.value || !projectId || !sessionId) {
-    resetChatState()
+    resetChatStateWithGreeting()
     return
   }
 
   try {
-    const data = await requestProjectApi<{ session: AiChatSession, messages: AiChatMessage[] }>(
+    const response = await $fetch<ApiResponse<{ session: AiChatSession, messages: AiChatMessage[] }>>(
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions/${sessionId}/messages`),
       {
-        projectId,
-        mode: aiMode.value,
-        limit: 200,
+        query: {
+          projectId,
+          mode: aiMode.value,
+          limit: 200,
+        },
       },
-      '会话消息加载失败。',
     )
 
-    const restoredMessages = data.messages.map(item => ({
+    const restoredMessages = response.data.messages.map(item => ({
       role: item.role,
       content: item.content,
     })) as ChatMessage[]
@@ -6290,241 +3375,12 @@ async function loadChatMessages(sessionId: string) {
     chatMissingFields.value = []
     defenseRounds.value = []
     defenseScorecard.value = null
-    defenseSummary.value = null
-    defenseStage.value = undefined
-    defenseTurnCount.value = 0
-    chatMessages.value = restoredMessages
-
-    if (aiMode.value === 'defense')
-      await loadDefenseSessionDetail(sessionId)
+    chatMessages.value = restoredMessages.length > 0
+      ? restoredMessages
+      : [defaultAssistantGreeting()]
   }
   catch {
-    resetChatState()
-  }
-}
-
-async function loadDefensePersonas() {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId) {
-    defensePersonas.value = []
-    return
-  }
-
-  defensePersonasLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<{ items: AiDefensePersona[] }>>(
-      endpoint(`/projects/${projectId}/defense/personas`),
-    )
-    defensePersonas.value = response.data.items
-  }
-  catch {
-    defensePersonas.value = []
-  }
-  finally {
-    defensePersonasLoading.value = false
-  }
-}
-
-async function loadDefenseSessionDetail(sessionId: string) {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || !sessionId) {
-    defenseRounds.value = []
-    defenseSummary.value = null
-    defenseStage.value = undefined
-    defenseTurnCount.value = 0
-    return
-  }
-
-  try {
-    const response = await unsafeFetch<ApiResponse<AiDefenseSessionDetail>>(
-      endpoint(`/projects/${projectId}/defense/sessions/${sessionId}`),
-    )
-    const detail = response.data
-    defensePersonas.value = detail.personas || []
-    defenseSummary.value = detail.latestSummary || null
-    defenseStage.value = detail.state?.currentStage
-    defenseTurnCount.value = detail.state?.turnCount || 0
-    defenseScorecard.value = detail.state?.lastScorecard || defenseScorecard.value
-    if (detail.turns.length > 0) {
-      const latestTurnIndex = detail.state?.turnCount || detail.turns[detail.turns.length - 1]?.turnIndex || 0
-      defenseRounds.value = detail.turns
-        .filter(item => item.turnIndex === latestTurnIndex)
-        .map(item => ({
-          judge: item.judgeName,
-          judgeType: item.judgeType,
-          personaId: item.personaId || undefined,
-          question: item.question,
-          score: item.score,
-          comment: item.comment,
-          followUp: item.followUp,
-          evidenceRefs: item.evidenceRefs,
-        }))
-    }
-    else {
-      defenseRounds.value = []
-    }
-  }
-  catch {
-    defenseRounds.value = []
-    defenseScorecard.value = null
-    defenseSummary.value = null
-    defenseStage.value = undefined
-    defenseTurnCount.value = 0
-  }
-}
-
-async function importDefensePersonas() {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || !selectedContestId.value) {
-    statusLine.value = '请先选择竞赛，再导入答辩人设。'
-    return
-  }
-
-  try {
-    await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas/import`), {
-      method: 'POST',
-      body: {
-        contestId: selectedContestId.value,
-        trackId: selectedTrackId.value,
-      },
-    })
-    await loadDefensePersonas()
-    statusLine.value = '已导入比赛预设人设。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '导入答辩人设失败，请稍后重试。')
-  }
-}
-
-async function saveDefensePersona(payload: {
-  personaId?: string
-  judgeType: AiDefensePersona['judgeType']
-  name: string
-  summary: string
-  systemPrompt: string
-  focusAreas: string[]
-  enabled: boolean
-}) {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId) {
-    statusLine.value = '请先选择项目。'
-    return
-  }
-
-  try {
-    if (payload.personaId) {
-      await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas/${payload.personaId}`), {
-        method: 'PATCH',
-        body: payload,
-      })
-    }
-    else {
-      await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas`), {
-        method: 'POST',
-        body: payload,
-      })
-    }
-    await loadDefensePersonas()
-    statusLine.value = '答辩人设已保存。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '保存答辩人设失败，请稍后重试。')
-  }
-}
-
-async function deleteDefensePersona(personaId: string) {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || !personaId)
-    return
-
-  try {
-    await unsafeFetch(endpoint(`/projects/${projectId}/defense/personas/${personaId}`), {
-      method: 'DELETE',
-    })
-    await loadDefensePersonas()
-    statusLine.value = '答辩人设已删除。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '删除答辩人设失败，请稍后重试。')
-  }
-}
-
-async function generateDefenseSummary() {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || !activeChatSessionId.value) {
-    statusLine.value = '请先完成至少一轮答辩，再生成总结。'
-    return
-  }
-
-  defenseSummaryLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<{ item: AiDefenseSummary }>>(
-      endpoint(`/projects/${projectId}/defense/sessions/${activeChatSessionId.value}/summary`),
-      {
-        method: 'POST',
-        body: {
-          summaryType: 'session',
-        },
-      },
-    )
-    defenseSummary.value = response.data.item
-    await loadDefenseSessionDetail(activeChatSessionId.value)
-    statusLine.value = '答辩总结已生成。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '生成答辩总结失败，请稍后重试。')
-  }
-  finally {
-    defenseSummaryLoading.value = false
-  }
-}
-
-async function startDefenseRealtime() {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || meetingMutating.value) {
-    if (!projectId)
-      statusLine.value = '请先选择项目。'
-    return
-  }
-
-  meetingMutating.value = true
-  try {
-    const enabledPersonaIds = defensePersonas.value
-      .filter(item => item.enabled)
-      .map(item => item.id)
-    const response = await unsafeFetch<ApiResponse<DefenseRealtimeSessionPayload>>(
-      endpoint(`/projects/${projectId}/defense/realtime-sessions`),
-      {
-        method: 'POST',
-        body: {
-          mode: 'audio',
-          personaIds: enabledPersonaIds,
-        },
-      },
-    )
-    activeChatSessionId.value = response.data.sessionId
-    defenseStage.value = 'opening'
-    defenseTurnCount.value = 0
-    activeMeetingUtterances.value = []
-    applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
-      joinToken: response.data.rtcJoinToken || response.data.joinToken,
-      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
-      rtcServerUrl: response.data.rtcServerUrl,
-      resetCaptions: true,
-    })
-    ensureMeetingDetailTabOpen(response.data.meeting.id)
-    workspaceRealtime.subscribeMeeting(response.data.meeting.id)
-    await loadChatSessions({
-      preferredSessionId: response.data.sessionId,
-    })
-    statusLine.value = '已发起语音答辩会话，正在进入会议面板。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '发起语音答辩失败，请稍后重试。')
-  }
-  finally {
-    meetingMutating.value = false
+    resetChatStateWithGreeting()
   }
 }
 
@@ -6547,7 +3403,7 @@ async function createChatSession(preferredTitle = ''): Promise<string | null> {
     return null
 
   try {
-    const response = await unsafeFetch<ApiResponse<AiChatSession>>(
+    const response = await $fetch<ApiResponse<AiChatSession>>(
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions`),
       {
         method: 'POST',
@@ -6569,57 +3425,40 @@ async function createChatSession(preferredTitle = ''): Promise<string | null> {
   }
 }
 
-async function loadChatSessions(options: {
-  preferredSessionId?: string
-  autoCreate?: boolean
-  fallbackToFirst?: boolean
-} = {}) {
+async function loadChatSessions(preferredSessionId = '') {
   const projectId = String(activeProjectId.value || '').trim()
   if (!activeWorkspaceId.value || !projectId) {
     chatSessions.value = []
     activeChatSessionId.value = ''
-    resetChatState()
+    resetChatStateWithGreeting()
     return
   }
 
   chatSessionsLoading.value = true
   try {
-    const data = await requestProjectApi<AiChatSession[]>(
+    const response = await $fetch<ApiResponse<AiChatSession[]>>(
       endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions`),
       {
-        projectId,
-        mode: aiMode.value,
-        limit: 30,
+        query: {
+          projectId,
+          mode: aiMode.value,
+          limit: 30,
+        },
       },
-      '会话列表加载失败。',
     )
-    chatSessions.value = data
+    chatSessions.value = response.data
 
-    const preferredSessionId = normalizeString(options.preferredSessionId)
-    const fallbackToFirst = options.fallbackToFirst !== false
-    const nextSession = (
-      (preferredSessionId ? chatSessions.value.find(item => item.id === preferredSessionId) : null)
-      || chatSessions.value.find(item => item.id === activeChatSessionId.value)
-      || (fallbackToFirst ? chatSessions.value[0] : null)
-    )
+    const nextSession = chatSessions.value.find(item => item.id === preferredSessionId) || chatSessions.value.find(item => item.id === activeChatSessionId.value) || chatSessions.value[0]
 
     if (!nextSession) {
-      if (options.autoCreate === false) {
-        activeChatSessionId.value = ''
-        resetChatState()
-        return
-      }
-
       const createdId = await createChatSession()
       if (!createdId) {
         activeChatSessionId.value = ''
-        resetChatState()
+        resetChatStateWithGreeting()
         return
       }
       activeChatSessionId.value = createdId
-      await loadChatSessions({
-        preferredSessionId: createdId,
-      })
+      await loadChatSessions(createdId)
       return
     }
 
@@ -6629,7 +3468,7 @@ async function loadChatSessions(options: {
   catch {
     chatSessions.value = []
     activeChatSessionId.value = ''
-    resetChatState()
+    resetChatStateWithGreeting()
   }
   finally {
     chatSessionsLoading.value = false
@@ -6658,9 +3497,7 @@ async function startNewChatSession() {
     return
   }
 
-  await loadChatSessions({
-    preferredSessionId: createdId,
-  })
+  await loadChatSessions(createdId)
   statusLine.value = '已创建新的 Loopy 会话。'
 }
 
@@ -6685,7 +3522,7 @@ async function runAiFilter() {
   statusLine.value = ''
 
   try {
-    const response = await unsafeFetch<ApiResponse<AiContestFilterResult>>(endpoint('/ai/contest-filter'), {
+    const response = await $fetch<ApiResponse<AiContestFilterResult>>(endpoint('/ai/contest-filter'), {
       method: 'POST',
       body: {
         teamId: activeWorkspaceId.value,
@@ -6725,392 +3562,6 @@ async function runAiFilter() {
   }
   finally {
     aiFiltering.value = false
-  }
-}
-
-function buildTopicBoardInput(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard'): ProjectTopicBoardGenerateRequest['input'] {
-  return {
-    contestId: String(selectedContestId.value || '').trim(),
-    trackId: String(selectedTrackId.value || '').trim(),
-    major: major.value.trim(),
-    discipline: topicBoardDraft.discipline.trim() || discipline.value.trim(),
-    topicType: topicBoardDraft.topicType.trim() || trackType.value.trim(),
-    expectedDifficulty: topicBoardDraft.expectedDifficulty.trim() || level.value.trim(),
-    keywords: splitTopicBoardTags(topicBoardDraft.keywordsText),
-    teamSkillTags: splitTopicBoardTags(topicBoardDraft.teamSkillTagsText),
-    candidateCount: clamp(Math.round(Number(topicBoardDraft.candidateCount || 3)), 3, 5),
-    source,
-  }
-}
-
-function syncTopicBoardDraftFromSeed(seed: ProjectTopicBoardCreateSeed) {
-  topicBoardDraft.discipline = String(seed.discipline || '').trim()
-  topicBoardDraft.topicType = String(seed.topicType || '').trim()
-  topicBoardDraft.expectedDifficulty = String(seed.expectedDifficulty || '').trim()
-  topicBoardDraft.keywordsText = (seed.keywords || []).join('\n')
-  topicBoardDraft.teamSkillTagsText = (seed.teamSkillTags || []).join('\n')
-  topicBoardDraft.candidateCount = clamp(Math.round(Number(seed.candidateCount || 3)), 3, 5)
-}
-
-function findTopicBoardCandidate(candidateId: string): TopicProposalItem | null {
-  const normalizedCandidateId = String(candidateId || '').trim()
-  if (!normalizedCandidateId)
-    return null
-  return topicBoardSnapshot.value?.candidates.find(item => item.candidateId === normalizedCandidateId)?.payload || null
-}
-
-function isCurrentTopicBoardScope(projectId: string, workspaceId = ''): boolean {
-  const currentProjectId = String(activeProjectId.value || '').trim()
-  if (projectId !== currentProjectId)
-    return false
-
-  if (!workspaceId)
-    return true
-
-  return workspaceId === String(activeWorkspaceId.value || '').trim()
-}
-
-async function loadTopicBoards() {
-  const requestId = ++topicBoardLoadRequestId
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId) {
-    topicBoardFetching.value = false
-    topicBoardSnapshot.value = null
-    topicBoardHistory.value = []
-    return
-  }
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  topicBoardFetching.value = true
-
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectTopicBoardListResult>>(endpoint(`/projects/${projectId}/topic-boards`))
-    if (requestId !== topicBoardLoadRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
-      return
-    topicBoardSnapshot.value = response.data.latestBoard
-    topicBoardHistory.value = response.data.history
-    topicBoardError.value = ''
-  }
-  catch {
-    if (requestId !== topicBoardLoadRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
-      return
-    topicBoardSnapshot.value = null
-    topicBoardHistory.value = []
-  }
-  finally {
-    if (requestId === topicBoardLoadRequestId && isCurrentTopicBoardScope(projectId, workspaceId))
-      topicBoardFetching.value = false
-  }
-}
-
-async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard') {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId) {
-    statusLine.value = '请先选择一个项目。'
-    return
-  }
-
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId) {
-    statusLine.value = '请先选择一个空间。'
-    return
-  }
-
-  const input = buildTopicBoardInput(source)
-  if (!input.contestId || !input.trackId) {
-    statusLine.value = '请先锁定竞赛与赛道，再生成选题板。'
-    return
-  }
-
-  activeMainTabId.value = 'dashboard'
-  const requestId = ++topicBoardWriteRequestId
-  topicBoardLoading.value = true
-  topicBoardError.value = ''
-
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/generate`), {
-      method: 'POST',
-      body: {
-        input,
-      } satisfies ProjectTopicBoardGenerateRequest,
-    })
-    if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
-      return
-
-    topicBoardSnapshot.value = response.data
-    topicBoardHistory.value = [response.data, ...topicBoardHistory.value.filter(item => item.id !== response.data.id)].slice(0, 5)
-    statusLine.value = response.meta.fallbackUsed
-      ? '选题板已生成，当前为内部资料/规则兜底结果。'
-      : '选题板已生成，可继续设主推、写入草案或发送到右侧 AI。'
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '生成选题板失败，请稍后重试。')
-    if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
-      return
-    topicBoardError.value = message
-    statusLine.value = message
-  }
-  finally {
-    if (requestId === topicBoardWriteRequestId)
-      topicBoardLoading.value = false
-  }
-}
-
-async function patchTopicBoard(payload: ProjectTopicBoardPatchRequest) {
-  const requestId = ++topicBoardWriteRequestId
-  const boardId = String(topicBoardSnapshot.value?.id || '').trim()
-  const projectId = String(activeProjectId.value || '').trim()
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!boardId || !projectId)
-    return
-
-  const response = await unsafeFetch<ApiResponse<ProjectTopicBoard>>(endpoint(`/projects/${projectId}/topic-boards/${boardId}`), {
-    method: 'PATCH',
-    body: payload,
-  })
-  if (requestId !== topicBoardWriteRequestId || !isCurrentTopicBoardScope(projectId, workspaceId))
-    return
-
-  topicBoardSnapshot.value = response.data
-  topicBoardHistory.value = topicBoardHistory.value.map(item => item.id === response.data.id ? response.data : item)
-}
-
-async function updateTopicBoardCandidateStatus(candidateId: string, decisionStatus: TopicProposalDecisionStatus) {
-  const normalizedCandidateId = String(candidateId || '').trim()
-  if (!normalizedCandidateId)
-    return
-
-  topicBoardActioningCandidateId.value = normalizedCandidateId
-  try {
-    await patchTopicBoard({
-      candidateUpdates: [
-        {
-          candidateId: normalizedCandidateId,
-          decisionStatus,
-        },
-      ],
-    })
-    statusLine.value = decisionStatus === 'shortlisted'
-      ? '已加入短名单。'
-      : decisionStatus === 'rejected'
-        ? '已标记为淘汰。'
-        : '候选题状态已更新。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '更新候选题状态失败。')
-  }
-  finally {
-    topicBoardActioningCandidateId.value = ''
-  }
-}
-
-async function selectTopicBoardCandidate(candidateId: string) {
-  const normalizedCandidateId = String(candidateId || '').trim()
-  if (!normalizedCandidateId)
-    return
-
-  topicBoardActioningCandidateId.value = normalizedCandidateId
-  try {
-    await patchTopicBoard({
-      selectedCandidateId: normalizedCandidateId,
-    })
-    statusLine.value = '已更新主推题。'
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '更新主推题失败。')
-  }
-  finally {
-    topicBoardActioningCandidateId.value = ''
-  }
-}
-
-function buildTopicBoardChatPrompt(candidate: TopicProposalItem): string {
-  return [
-    `请围绕候选题《${candidate.title}》继续深挖，并按当前项目上下文输出下一步建议。`,
-    `主推理由：${candidate.reason}`,
-    candidate.innovationPoints.length > 0 ? `创新点：${candidate.innovationPoints.join('；')}` : '',
-    candidate.contestFitReasons.length > 0 ? `竞赛适配：${candidate.contestFitReasons.join('；')}` : '',
-    candidate.requiredSkills.length > 0 ? `所需技能：${candidate.requiredSkills.join('、')}` : '',
-    candidate.teamGapNotes.length > 0 ? `能力缺口：${candidate.teamGapNotes.join('；')}` : '',
-    candidate.evidenceRefs.length > 0 ? `证据摘要：${candidate.evidenceRefs.map(item => `${item.sourceLabel}-${item.title}`).join('；')}` : '',
-  ].filter(Boolean).join('\n')
-}
-
-async function sendTopicBoardCandidateToChat(candidateId: string) {
-  const candidate = findTopicBoardCandidate(candidateId)
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!candidate || !projectId || !activeWorkspaceId.value)
-    return
-
-  expandRightSidebar()
-  aiMode.value = 'dialog_ask'
-  await nextTick()
-  await loadChatSessions()
-  if (!isCurrentTopicBoardScope(projectId) || aiMode.value !== 'dialog_ask')
-    return
-  chatInput.value = buildTopicBoardChatPrompt(candidate)
-  await nextTick()
-  await sendChatMessage()
-}
-
-function hasExistingFormDraftContent(): boolean {
-  return Boolean(
-    formState.title
-    || formState.problemStatement
-    || formState.innovationPointsText
-    || formState.techRouteStepsText
-    || formState.scoringMappingText
-    || formState.risksText
-    || formState.deliverablesText
-    || formState.summary,
-  )
-}
-
-function resolveTopicBoardDraftDeliverables(): string[] {
-  const contestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
-  const contest = contestMap.value.get(contestId) || selectedContest.value
-  const trackId = String(projectSettingsBindingMap.value.get(contestId)?.trackId || selectedTrackId.value || '').trim()
-  const track = (trackId && contest?.tracks.find(item => item.id === trackId)) || selectedTrack.value || null
-
-  if (track?.deliverableTypes?.length)
-    return [...track.deliverableTypes]
-
-  return ['项目方案书', '演示材料', '答辩问题清单']
-}
-
-function buildTopicBoardDraftContent(candidate: TopicProposalItem): WorkspaceProjectCommonForm {
-  return {
-    title: candidate.title,
-    icon: '',
-    accentColor: '',
-    problemStatement: candidate.reason,
-    innovationPointsText: candidate.innovationPoints.join('\n'),
-    techRouteStepsText: candidate.techRouteSteps.join('\n'),
-    scoringMappingText: [
-      ...candidate.scoringMapping,
-      ...candidate.contestFitReasons.map(item => `适配说明 -> ${item}`),
-    ].join('\n'),
-    risksText: [...candidate.risks, ...candidate.teamGapNotes].join('\n'),
-    deliverablesText: resolveTopicBoardDraftDeliverables().join('\n'),
-    summary: [
-      candidate.reason,
-      candidate.evidenceRefs[0]?.summary || '',
-    ].filter(Boolean).join(' '),
-  }
-}
-
-function syncTopicBoardCandidateToProjectSettings(candidate: TopicProposalItem): {
-  draftContent: WorkspaceProjectCommonForm
-  syncedAdaptation: boolean
-} {
-  const draftContent = buildTopicBoardDraftContent(candidate)
-
-  Object.assign(projectSettingsCommon, cloneProjectCommonForm(draftContent))
-  projectSettingsCommonDirty.value = true
-
-  const contestId = String(projectSettingsCurrentContestId.value || selectedContestId.value || '').trim()
-  const binding = projectSettingsBindingMap.value.get(contestId)
-  let syncedAdaptation = false
-
-  if (contestId && binding) {
-    const adaptationDraft: WorkspaceProjectAdaptationForm = {
-      contestId,
-      trackId: binding.trackId,
-      problemStatement: draftContent.problemStatement,
-      innovationPointsText: draftContent.innovationPointsText,
-      techRouteStepsText: draftContent.techRouteStepsText,
-      scoringMappingText: draftContent.scoringMappingText,
-      risksText: draftContent.risksText,
-      deliverablesText: draftContent.deliverablesText,
-      summary: draftContent.summary,
-    }
-
-    projectSettingsHydrating.value = true
-    try {
-      Object.assign(projectSettingsAdaptation, cloneProjectAdaptationForm(adaptationDraft))
-    }
-    finally {
-      projectSettingsHydrating.value = false
-    }
-
-    upsertProjectSettingsAdaptationDraft(adaptationDraft)
-    markProjectSettingsAdaptationDirty(contestId)
-    syncedAdaptation = true
-  }
-
-  scheduleProjectSettingsDraftPersist()
-
-  return {
-    draftContent,
-    syncedAdaptation,
-  }
-}
-
-async function applyTopicBoardCandidateToForm(candidateId: string) {
-  const candidate = findTopicBoardCandidate(candidateId)
-  if (!candidate)
-    return
-
-  if (hasExistingFormDraftContent() && import.meta.client) {
-    const confirmed = await askTopicBoardConfirm({
-      title: '覆盖当前项目草案',
-      content: '当前项目草案已有内容，继续写入会覆盖现有字段，是否继续？',
-      okText: '继续写入',
-    })
-    if (!confirmed)
-      return
-  }
-
-  const { draftContent, syncedAdaptation } = syncTopicBoardCandidateToProjectSettings(candidate)
-
-  Object.assign(formState, {
-    source: 'form',
-    ...draftContent,
-  })
-
-  statusLine.value = syncedAdaptation
-    ? '已写入项目草案，并同步到项目设置草稿。'
-    : '已写入项目草案，并同步到项目通用设置草稿。'
-
-  if (!import.meta.client)
-    return
-
-  const shouldSave = await askTopicBoardConfirm({
-    title: '立即保存项目设置',
-    content: syncedAdaptation
-      ? '已同步到项目设置草稿，是否立即保存到项目设置？'
-      : '已同步到项目通用设置草稿，是否立即保存到项目设置？',
-    okText: '立即保存',
-  })
-  if (!shouldSave)
-    return
-
-  await saveProjectSettingsManually()
-}
-
-async function consumeTopicBoardCreateSeed() {
-  if (!import.meta.client || topicBoardCreateSeedHandled.value)
-    return
-
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || !selectedContestId.value || !selectedTrackId.value)
-    return
-
-  const storageKey = `${TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX}${projectId}`
-  const raw = window.sessionStorage.getItem(storageKey)
-  if (!raw)
-    return
-
-  topicBoardCreateSeedHandled.value = true
-  window.sessionStorage.removeItem(storageKey)
-
-  try {
-    const seed = JSON.parse(raw) as ProjectTopicBoardCreateSeed
-    syncTopicBoardDraftFromSeed(seed)
-    if (!topicBoardSnapshot.value && seed.autoGenerate !== false)
-      await generateTopicBoard(seed.source || 'project_create')
-  }
-  catch {
-    // ignore malformed seed
   }
 }
 
@@ -7362,11 +3813,7 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
   chatMissingFields.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
-  defenseSummary.value = null
   let assistantText = ''
-  const enabledPersonaIds = defensePersonas.value
-    .filter(item => item.enabled)
-    .map(item => item.id)
 
   const response = await fetch(endpoint('/ai/defense/stream'), {
     method: 'POST',
@@ -7378,8 +3825,6 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
       teamId: activeWorkspaceId.value,
       workspaceId: activeWorkspaceId.value,
       sessionId: activeChatSessionId.value,
-      personaIds: enabledPersonaIds,
-      inputMode: 'text',
       messages: toModelMessages(pendingMessages),
       context: {
         teamId: activeWorkspaceId.value,
@@ -7434,13 +3879,6 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
           activeChatSessionId.value = String(data.sessionId)
         continue
       }
-      if (eventType === 'stage') {
-        if (data.stage)
-          defenseStage.value = String(data.stage) as AiDefenseStage
-        if (Number.isFinite(Number(data.turnIndex)))
-          defenseTurnCount.value = Math.max(defenseTurnCount.value, Number(data.turnIndex || 0) - 1)
-        continue
-      }
       if (eventType === 'judge') {
         const round = data.round as AiDefenseJudgeRound | undefined
         if (round)
@@ -7451,10 +3889,6 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
         const scorecard = data.scorecard as AiDefenseScorecard | undefined
         if (scorecard)
           defenseScorecard.value = scorecard
-        continue
-      }
-      if (eventType === 'summary') {
-        statusLine.value = '答辩轮次已完成，正在准备总结...'
         continue
       }
       if (eventType === 'delta') {
@@ -7475,10 +3909,6 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
           chatMissingFields.value = result.missingFields.map(item => String(item))
         if (result.sessionId)
           activeChatSessionId.value = String(result.sessionId)
-        if (result.stage)
-          defenseStage.value = String(result.stage) as AiDefenseStage
-        if (Number.isFinite(Number(result.turnIndex)))
-          defenseTurnCount.value = Number(result.turnIndex)
         statusLine.value = '模拟答辩完成，可继续追问下一轮。'
         continue
       }
@@ -7494,12 +3924,6 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
     if (payload.event === 'error')
       throw new Error(String(toJsonPayload(payload.data).message || '模拟答辩失败。'))
   }
-
-  if (activeChatSessionId.value)
-    await loadDefenseSessionDetail(activeChatSessionId.value)
-
-  if (activeChatSessionId.value)
-    await generateDefenseSummary()
 }
 
 async function sendChatMessage() {
@@ -7534,9 +3958,7 @@ async function sendChatMessage() {
       return
     }
     activeChatSessionId.value = recreatedId
-    await loadChatSessions({
-      preferredSessionId: recreatedId,
-    })
+    await loadChatSessions(recreatedId)
   }
 
   const pendingMessages = [...chatMessages.value, { role: 'user' as const, content }]
@@ -7564,11 +3986,8 @@ async function sendChatMessage() {
   }
   finally {
     chatLoading.value = false
-    if (!streamFailed) {
-      await loadChatSessions({
-        preferredSessionId: activeChatSessionId.value,
-      })
-    }
+    if (!streamFailed)
+      await loadChatSessions(activeChatSessionId.value)
   }
 }
 
@@ -7614,7 +4033,7 @@ async function submitProject(target?: { contestId?: string, trackId?: string }) 
       summary: formState.summary.trim(),
     }
 
-    const response = await unsafeFetch<ApiResponse<Project>>(endpoint('/projects'), {
+    const response = await $fetch<ApiResponse<Project>>(endpoint('/projects'), {
       method: 'POST',
       body: payload,
     })
@@ -7638,96 +4057,10 @@ async function switchProjectFromHeader(payload: { projectId: string, workspaceId
   await navigateTo(workspaceDetailPath(payload.workspaceId, payload.projectId))
 }
 
-function switchWorkspaceFromHeader(workspaceId: string): void {
-  const normalizedWorkspaceId = String(workspaceId || '').trim()
-  if (!normalizedWorkspaceId || normalizedWorkspaceId === activeWorkspaceId.value)
-    return
-
-  activeWorkspaceId.value = normalizedWorkspaceId
-}
-
-function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
-  if (nextMode === 'defense') {
-    aiMode.value = 'defense'
-    return
-  }
-
-  aiMode.value = lastPrimaryAiMode.value || 'dialog_ask'
-}
-
-function updateWorkspaceAiMode(nextMode: WorkspaceAiMode) {
-  aiMode.value = nextMode
-}
-
 async function openFinalReviewFromHeader() {
   const opened = await ensureWorkflowCanvas()
   if (opened)
     statusLine.value = '已打开流程画布，可按流程继续推进终审。'
-}
-
-async function openWorkspaceHomeFromHeader() {
-  const workspaceId = String(activeWorkspaceId.value || '').trim()
-  if (!workspaceId)
-    return
-
-  statusLine.value = `正在打开空间首页：${currentWorkspace.value?.workspace.name || workspaceId}`
-  await navigateTo(teamDetailPath(workspaceId))
-}
-
-function openDisplayPreferencesFromHeader() {
-  openDisplayPreferencesSignal.value += 1
-  statusLine.value = '已打开设置页，可调整当前工作区显示偏好。'
-}
-
-function openAccountCenterFromHeader() {
-  accountCenterVisible.value = true
-}
-
-function onUserUpdatedFromAccountCenter(user: AuthUser) {
-  if (!me.value) {
-    return
-  }
-
-  me.value = {
-    ...me.value,
-    user: {
-      ...me.value.user,
-      ...user,
-    },
-  }
-}
-
-function onWorkspaceUpdatedFromAccountCenter(payload: { workspaceId: string, name: string }) {
-  if (!me.value)
-    return
-
-  me.value = {
-    ...me.value,
-    teams: (me.value.teams || []).map((item) => {
-      if (item.team.id !== payload.workspaceId)
-        return item
-
-      return {
-        ...item,
-        team: {
-          ...item.team,
-          name: payload.name,
-        },
-      }
-    }),
-    workspaces: (me.value.workspaces || []).map((item) => {
-      if (item.workspace.id !== payload.workspaceId)
-        return item
-
-      return {
-        ...item,
-        workspace: {
-          ...item.workspace,
-          name: payload.name,
-        },
-      }
-    }),
-  }
 }
 
 function openSettingsFromLeftSidebar() {
@@ -7740,321 +4073,18 @@ function openMemberManagementFromLeftSidebar() {
   statusLine.value = '已打开项目协作，可查看成员、席位并发起邀请。'
 }
 
-function openMeetingFromLeftSidebar() {
-  ensureWorkspaceMainTabOpen('meeting')
-  statusLine.value = '已打开项目会议总览，可查看最近会议、录制与纪要入口。'
-}
-
 async function openFlowFromLeftSidebar() {
   const opened = await ensureWorkflowCanvas()
   if (opened)
     statusLine.value = '已打开流程画布，可继续协作梳理项目流程。'
 }
 
-function clearMetaKRemoteSearchTimer(): void {
-  if (!metaKRemoteSearchTimer)
-    return
-  clearTimeout(metaKRemoteSearchTimer)
-  metaKRemoteSearchTimer = null
-}
-
-function resetMetaKRemoteState(): void {
-  metaKRemoteLoading.value = false
-  metaKRemoteLibraryItems.value = []
-}
-
-function setLeftSidebarMetaKCommand(
-  moduleId: WorkspaceLeftSidebarCommandModuleId,
-  outlineId = '',
-): void {
-  leftSidebarCollapsed.value = false
-  leftSidebarMetaKModuleId.value = moduleId
-  leftSidebarMetaKOutlineId.value = normalizeString(outlineId)
-  leftSidebarMetaKSignal.value += 1
-}
-
-function closeMetaK(): void {
-  metaKOpen.value = false
-  metaKQuery.value = ''
-  clearMetaKRemoteSearchTimer()
-  metaKRemoteRequestSequence += 1
-  resetMetaKRemoteState()
-}
-
-function openMetaK(): void {
-  metaKOpen.value = true
-}
-
-function buildMetaKRemoteLibraryItems(resources: Resource[], query: string): WorkspaceMetaKItem[] {
-  const items = resources.map((resource) => {
-    const resourceTitle = resolveMetaKResourceTitle(resource)
-    return {
-      id: buildWorkspaceMetaKItemId('library', resource.id),
-      sectionId: 'library',
-      type: 'library_resource',
-      title: resourceTitle,
-      subtitle: [normalizeString(resource.type), normalizeString(resource.summary)].filter(Boolean).join(' · '),
-      icon: resolveMetaKResourceIcon(resource),
-      badge: resource.category || '',
-      hint: '添加到项目',
-      keywords: buildWorkspaceMetaKKeywords(resource.title, resource.summary, resource.type, resource.category, resource.year),
-      source: 'remote',
-      priority: 120,
-      payload: {
-        resourceId: resource.id,
-      },
-    } satisfies WorkspaceMetaKItem
-  })
-
-  return matchAndSortWorkspaceMetaKItems(items, query).slice(0, 8)
-}
-
-async function loadMetaKRemoteLibraryItems(query: string): Promise<void> {
-  const projectId = normalizeString(activeProjectId.value)
-  const normalizedQuery = normalizeString(query)
-  if (!projectId || !normalizedQuery) {
-    resetMetaKRemoteState()
-    return
-  }
-
-  const requestId = ++metaKRemoteRequestSequence
-  metaKRemoteLoading.value = true
-
-  try {
-    const response = await unsafeFetch<ApiResponse<Resource[]>>(
-      buildProjectApiRequestUrl(
-        endpoint(`/projects/${projectId}/resources/library`),
-        {
-          q: normalizedQuery,
-          limit: 8,
-        },
-      ),
-    )
-
-    if (
-      requestId !== metaKRemoteRequestSequence
-      || !metaKOpen.value
-      || normalizeString(activeProjectId.value) !== projectId
-      || normalizeString(metaKQuery.value) !== normalizedQuery
-    ) {
-      return
-    }
-
-    metaKRemoteLibraryItems.value = buildMetaKRemoteLibraryItems(
-      Array.isArray(response.data) ? response.data : [],
-      normalizedQuery,
-    )
-  }
-  catch {
-    if (
-      requestId !== metaKRemoteRequestSequence
-      || !metaKOpen.value
-      || normalizeString(activeProjectId.value) !== projectId
-      || normalizeString(metaKQuery.value) !== normalizedQuery
-    ) {
-      return
-    }
-    metaKRemoteLibraryItems.value = []
-  }
-  finally {
-    if (
-      requestId === metaKRemoteRequestSequence
-      && metaKOpen.value
-      && normalizeString(activeProjectId.value) === projectId
-      && normalizeString(metaKQuery.value) === normalizedQuery
-    ) {
-      metaKRemoteLoading.value = false
-    }
-  }
-}
-
-function scheduleMetaKRemoteLibrarySearch(query: string): void {
-  const normalizedQuery = normalizeString(query)
-  clearMetaKRemoteSearchTimer()
-  metaKRemoteRequestSequence += 1
-
-  if (!normalizedQuery) {
-    resetMetaKRemoteState()
-    return
-  }
-
-  metaKRemoteSearchTimer = setTimeout(() => {
-    metaKRemoteSearchTimer = null
-    void loadMetaKRemoteLibraryItems(normalizedQuery)
-  }, 180)
-}
-
-async function executeMetaKCommandAction(actionId: WorkspaceMetaKActionId): Promise<void> {
-  switch (actionId) {
-    case 'open_workspace_home':
-      await openWorkspaceHomeFromHeader()
-      return
-    case 'open_workspace_settings':
-      openSettingsFromLeftSidebar()
-      return
-    case 'open_member_management':
-      openMemberManagementFromLeftSidebar()
-      return
-    case 'open_display_preferences':
-      openDisplayPreferencesFromHeader()
-      return
-    case 'open_account_center':
-      openAccountCenterFromHeader()
-      return
-    case 'open_resource_manager':
-      setLeftSidebarMetaKCommand('resource_manager')
-      statusLine.value = '已打开资源管理器。'
-      return
-    case 'open_analysis':
-      setLeftSidebarMetaKCommand('analysis')
-      statusLine.value = '已切到竞赛分析，可继续筛选竞赛与赛道。'
-      return
-    case 'open_meeting':
-      openMeetingFromLeftSidebar()
-      return
-    case 'open_issue_view':
-      expandRightSidebar()
-      updateWorkspaceAiMode('issue_discovery')
-      statusLine.value = '已切到 Issue 视图。'
-      return
-    case 'open_flow':
-      await openFlowFromLeftSidebar()
-      return
-    case 'open_final_review':
-      await openFinalReviewFromHeader()
-      return
-    case 'switch_workbench_project':
-      updateWorkbenchMode('project')
-      statusLine.value = '已切回项目工作台。'
-      return
-    case 'switch_workbench_defense':
-      updateWorkbenchMode('defense')
-      statusLine.value = '已切到答辩工作台。'
-      return
-    case 'switch_ai_dialog':
-      expandRightSidebar()
-      updateWorkspaceAiMode('dialog_ask')
-      statusLine.value = '已切到 AI 对话模式。'
-      return
-    case 'switch_ai_optimize':
-      expandRightSidebar()
-      updateWorkspaceAiMode('auto_optimize')
-      statusLine.value = '已切到 AI 自动优化模式。'
-      return
-    case 'switch_ai_issue':
-      expandRightSidebar()
-      updateWorkspaceAiMode('issue_discovery')
-      statusLine.value = '已切到 AI 寻疑发现模式。'
-      return
-    case 'create_collab_markdown':
-      await createCollabResource('markdown')
-      return
-    case 'create_collab_draw':
-      await createCollabResource('draw')
-      return
-    case 'create_meeting_audio':
-      await createProjectMeeting({ mode: 'audio' })
-      return
-    case 'create_meeting_video':
-      await createProjectMeeting({ mode: 'video' })
-  }
-}
-
-async function executeMetaKItem(item: WorkspaceMetaKItem): Promise<void> {
-  closeMetaK()
-
-  if (item.actionId) {
-    await executeMetaKCommandAction(item.actionId)
-    return
-  }
-
-  switch (item.type) {
-    case 'resource': {
-      const resourceId = normalizeString(item.payload?.resourceId)
-      if (resourceId)
-        await openProjectResourcePreview(resourceId)
-      return
-    }
-    case 'meeting': {
-      const meetingId = normalizeString(item.payload?.meetingId)
-      if (meetingId)
-        await selectProjectMeeting(meetingId)
-      return
-    }
-    case 'issue':
-      expandRightSidebar()
-      updateWorkspaceAiMode('issue_discovery')
-      statusLine.value = `已定位 Issue：${item.title}`
-      return
-    case 'contest': {
-      const contestId = normalizeString(item.payload?.contestId)
-      if (!contestId)
-        return
-      selectedContestId.value = contestId
-      setLeftSidebarMetaKCommand('analysis')
-      statusLine.value = `已切到竞赛：${item.title}`
-      return
-    }
-    case 'outline': {
-      const outlineId = normalizeString(item.payload?.outlineId)
-      const sourceResourceId = normalizeString(item.payload?.sourceResourceId)
-      setLeftSidebarMetaKCommand('resource_manager', outlineId)
-      if (sourceResourceId) {
-        await openProjectResourcePreview(sourceResourceId)
-      }
-      else {
-        statusLine.value = `已定位大纲节点：${item.title}`
-      }
-      return
-    }
-    case 'workspace': {
-      const workspaceId = normalizeString(item.payload?.workspaceId)
-      if (!workspaceId)
-        return
-      statusLine.value = `已切换到空间：${item.title}`
-      switchWorkspaceFromHeader(workspaceId)
-      return
-    }
-    case 'project': {
-      const projectId = normalizeString(item.payload?.projectId)
-      const workspaceId = normalizeString(item.payload?.workspaceId)
-      if (!projectId || !workspaceId)
-        return
-      await switchProjectFromHeader({
-        projectId,
-        workspaceId,
-      })
-      return
-    }
-    case 'command':
-      return
-    case 'library_resource': {
-      const resourceId = normalizeString(item.payload?.resourceId)
-      if (!resourceId)
-        return
-      await addResourceFromLibrary(resourceId)
-      setLeftSidebarMetaKCommand('resource_manager')
-      break
-    }
-  }
-}
-
-function onMetaKGlobalKeydown(event: KeyboardEvent): void {
-  if (!isWorkspaceMetaKHotkey(event))
-    return
-  if (isWorkspaceMetaKEditableTarget(event.target))
-    return
-
-  event.preventDefault()
-  openMetaK()
+function openDefenseFromLeftSidebar() {
+  aiMode.value = 'defense'
+  statusLine.value = '已切换到答辩模拟模式，可直接发起多评委追问。'
 }
 
 onMounted(async () => {
-  if (import.meta.client) {
-    metaKShortcutLabel.value = resolveWorkspaceMetaKShortcutLabel(window.navigator.platform)
-    document.addEventListener('keydown', onMetaKGlobalKeydown)
-  }
-
   const canonicalRedirected = await ensureCanonicalWorkspaceProjectRoute()
   if (canonicalRedirected)
     return
@@ -8071,44 +4101,39 @@ onMounted(async () => {
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
 
-  await Promise.all([
-    loadContestCatalog(),
-    loadContests(),
-    loadProjects(),
-    loadQuickSwitchProjects(),
-    loadWorkspaceDisplayPreferenceSnapshot(),
-  ])
+  await Promise.all([loadContestCatalog(), loadContests(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement()])
   if (activeWorkspaceId.value)
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
+  if (activeProjectId.value)
+    workspaceRealtime.subscribeProject(activeProjectId.value)
+  await refreshProjectResourceContext()
+  await loadProjectOutline()
+  await loadProjectSettings(selectedContestId.value)
+  await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
+  syncFallbackResourceRefreshTimer()
+  syncFormContestTrack()
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
       statusLine.value = `已定位项目：${target.title}`
   }
   await consumeJoinedProjectNotice()
+  await consumeProjectPanelQuery()
 })
 
 onBeforeUnmount(() => {
   clearProjectSettingsAutoTimers()
-  clearProjectWorkspaceViewPersistTimer()
   clearProjectOutlineGenerateTimer()
   clearPreviewStatusPolling()
   clearRealtimeProjectRefreshTimer()
-  clearMeetingRealtimeRefreshTimer()
   clearFallbackResourceRefreshTimer()
-  if (unsubscribeRightSidebarBreakpoint) {
-    unsubscribeRightSidebarBreakpoint()
-    unsubscribeRightSidebarBreakpoint = null
-  }
+  disposeRightSidebarBreakpointTracking()
   if (unsubscribeRealtimeMessages) {
     unsubscribeRealtimeMessages()
     unsubscribeRealtimeMessages = null
   }
   disposeCollabDocBinding(true)
   workspaceRealtime.disconnect()
-  if (import.meta.client)
-    document.removeEventListener('keydown', onMetaKGlobalKeydown)
-  clearMetaKRemoteSearchTimer()
 })
 
 watch(activeWorkspaceId, async (value, previous) => {
@@ -8116,7 +4141,6 @@ watch(activeWorkspaceId, async (value, previous) => {
     return
 
   workspaceRealtime.subscribeWorkspace(value)
-  workspaceDisplayPreferenceError.value = ''
 
   if (value !== routeWorkspaceId.value)
     await navigateTo(workspaceDetailPath(value), { replace: true })
@@ -8146,15 +4170,13 @@ watch(routeWorkspaceId, async (value, previous) => {
   workspaceInvitationLink.value = ''
   projectSeatQuota.value = null
   workspaceSeatLimitError.value = ''
-  workspaceDisplayPreferenceError.value = ''
 
   statusLine.value = `已切换到空间：${currentWorkspace.value?.workspace.name || value}`
-  await Promise.all([
-    loadContestCatalog(),
-    loadProjects(),
-    loadQuickSwitchProjects(),
-    loadWorkspaceDisplayPreferenceSnapshot(value),
-  ])
+  await Promise.all([loadContestCatalog(), loadProjects(), loadQuickSwitchProjects(), loadChatSessions(), loadWorkspaceMemberManagement()])
+  await refreshProjectResourceContext()
+  await loadProjectOutline()
+  await loadProjectSettings(selectedContestId.value)
+  await Promise.all([loadAiChangeRequests(), loadProjectIssues()])
   if (highlightedProjectId.value) {
     const target = projects.value.find(item => item.id === highlightedProjectId.value)
     if (target)
@@ -8166,19 +4188,11 @@ watch(activeProjectId, async (next, previous) => {
   if (next === previous)
     return
 
-  const requestId = ++workspaceBootstrapRequestId
   clearProjectSettingsAutoTimers()
   clearProjectOutlineGenerateTimer()
   clearRealtimeProjectRefreshTimer()
-  clearMeetingRealtimeRefreshTimer()
   clearFallbackResourceRefreshTimer()
-  clearProjectWorkspaceViewPersistTimer()
   projectOutlineFirstLoaded.value = false
-  topicBoardLoading.value = false
-  topicBoardFetching.value = false
-  topicBoardActioningCandidateId.value = ''
-  projectWorkspaceViewReady.value = false
-  workspaceBootstrapLoading.value = Boolean(next)
   closeProjectResourcePreview()
   if (next)
     workspaceRealtime.subscribeProject(next)
@@ -8188,82 +4202,25 @@ watch(activeProjectId, async (next, previous) => {
     flowResourceId.value = ''
     projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
-    topicBoardSnapshot.value = null
-    topicBoardHistory.value = []
-    topicBoardCreateSeedHandled.value = false
     aiChangeRequests.value = []
     projectIssueReports.value = []
     projectIssues.value = []
-    resetProjectMeetingState()
     resetWorkspaceMemberManagementState()
     chatSessions.value = []
     activeChatSessionId.value = ''
-    defensePersonas.value = []
-    selectedContestDetail.value = null
-    selectedContestDetailLoading.value = false
-    openMainTabs.value = ['dashboard']
-    activeMainTabId.value = 'dashboard'
-    resetChatState()
-    workspaceBootstrapLoading.value = false
+    resetChatStateWithGreeting()
     return
   }
-  try {
-    syncFallbackResourceRefreshTimer()
-    resetProjectSettingsState(activeProject.value)
-    const restoredViewState = await hydrateProjectWorkspaceViewState(next)
-    const selectedContestIdFromState = String(restoredViewState.state.selectedContestId || '').trim()
-    const [
-      ,
-      ,
-      draftHydrationResult,
-    ] = await Promise.all([
-      loadWorkspaceMemberManagement(),
-      loadProjectOutline(),
-      loadProjectSettings(selectedContestIdFromState),
-      loadSelectedContestDetail(selectedContestIdFromState),
-      loadTopicBoards(),
-      loadAiChangeRequests(),
-      loadProjectIssues(),
-      loadProjectMeetings({
-        fallbackToFirst: false,
-        preferredMeetingId: restoredViewState.state.activeMeetingId,
-        hydrateSelectedDetail: false,
-      }),
-      loadChatSessions({
-        preferredSessionId: restoredViewState.state.activeChatSessionId,
-        autoCreate: false,
-        fallbackToFirst: !restoredViewState.state.activeChatSessionId,
-      }),
-      loadDefensePersonas(),
-    ])
-    const restoredPreviewResourceId = normalizeString(previewResourceId.value)
-    if (restoredPreviewResourceId && resources.value.some(item => item.id === restoredPreviewResourceId))
-      await openProjectResourcePreview(restoredPreviewResourceId, { openTab: false })
-    await resolveProjectDeviceRestore(next, restoredViewState, draftHydrationResult)
-    await consumeTopicBoardCreateSeed()
-  }
-  finally {
-    if (requestId === workspaceBootstrapRequestId && activeProjectId.value === next)
-      workspaceBootstrapLoading.value = false
-  }
-})
-
-watch(metaKOpen, (next) => {
-  if (next)
-    return
-  clearMetaKRemoteSearchTimer()
-  metaKRemoteRequestSequence += 1
-  resetMetaKRemoteState()
-})
-
-watch(metaKQuery, (nextQuery) => {
-  if (!metaKOpen.value)
-    return
-  scheduleMetaKRemoteLibrarySearch(nextQuery)
-})
-
-watch([activeProjectId, selectedContestId, selectedTrackId], async () => {
-  await consumeTopicBoardCreateSeed()
+  syncFallbackResourceRefreshTimer()
+  resetProjectSettingsState(activeProject.value)
+  await Promise.all([
+    loadWorkspaceMemberManagement(),
+    loadProjectOutline(),
+    loadProjectSettings(selectedContestId.value),
+    loadAiChangeRequests(),
+    loadProjectIssues(),
+    loadChatSessions(),
+  ])
 })
 
 watch(resources, (nextResources) => {
@@ -8277,20 +4234,17 @@ watch(resources, (nextResources) => {
     if (shouldDispose)
       disposeCollabDocBinding(true)
   }
-
-  if (projectWorkspaceViewReady.value)
-    void syncProjectWorkspaceViewState()
-  if (activeMainTabId.value)
-    void syncActiveMainTabCollabBinding(activeMainTabId.value)
 }, { deep: true })
 
-async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value): Promise<void> {
-  if (!nextTabId)
+watch(activeMainTabId, async (next, previous) => {
+  if (next === previous)
     return
 
-  if (nextTabId === 'flow') {
+  if (next === 'flow') {
     const targetResourceId = String(flowResourceId.value || '').trim()
-    if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
+    if (!targetResourceId)
+      return
+    if (collabBindingResourceId.value === targetResourceId)
       return
     await openProjectCollabResource(targetResourceId, undefined, {
       openTab: false,
@@ -8299,10 +4253,10 @@ async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value)
     return
   }
 
-  if (!nextTabId.startsWith('resource:'))
+  if (!next.startsWith('resource:'))
     return
 
-  const targetResourceId = nextTabId.slice('resource:'.length) || String(previewResourceId.value || '').trim()
+  const targetResourceId = String(previewResourceId.value || '').trim()
   if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
     return
 
@@ -8314,63 +4268,7 @@ async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value)
     openTab: false,
     surface: 'preview',
   })
-}
-
-async function syncActiveMainTabMeetingSelection(nextTabId = activeMainTabId.value): Promise<void> {
-  const targetMeetingId = resolveMeetingIdFromTabId(String(nextTabId || ''))
-  if (!targetMeetingId || targetMeetingId === activeMeetingId.value)
-    return
-
-  workspaceRealtime.subscribeMeeting(targetMeetingId)
-  const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
-  activeMeetingId.value = targetMeetingId
-  if (isSwitchingMeeting) {
-    activeMeetingDetail.value = null
-    activeMeetingUtterances.value = []
-    meetingLiveCaptions.value = []
-    clearMeetingJoinSession()
-  }
-
-  await Promise.all([
-    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
-    loadProjectMeetingUtterances(targetMeetingId),
-  ])
-}
-
-watch([activeProjectId, activeMainTabId], async ([projectId, nextTabId], [previousProjectId, previousTabId]) => {
-  if (!projectId)
-    return
-  if (projectId === previousProjectId && nextTabId === previousTabId)
-    return
-  await syncActiveMainTabMeetingSelection(nextTabId)
-}, { immediate: true })
-
-watch(activeMainTabId, async (next, previous) => {
-  if (next === previous)
-    return
-  await syncActiveMainTabCollabBinding(next)
 })
-
-watch(
-  [
-    workbenchMode,
-    openMainTabs,
-    activeMainTabId,
-    previewResourceId,
-    selectedContestId,
-    selectedTrackId,
-    activeChatSessionId,
-    activeMeetingId,
-    leftSidebarCollapsed,
-    rightSidebarUserCollapsed,
-  ],
-  () => {
-    if (!activeProjectId.value || projectWorkspaceViewHydrating.value)
-      return
-    void syncProjectWorkspaceViewState()
-  },
-  { deep: true },
-)
 
 watch([leftSidebarCollapsed, rightSidebarCollapsed], ([nextLeft, nextRight], [prevLeft, prevRight]) => {
   if (nextLeft === prevLeft && nextRight === prevRight)
@@ -8384,33 +4282,15 @@ watch(aiMode, async (next, previous) => {
   if (next === previous)
     return
 
-  if (projectWorkspaceModeHydrating.value) {
-    if (next === 'defense')
-      workbenchMode.value = 'defense'
-    else
-      workbenchMode.value = 'project'
-    return
-  }
-
-  if (next === 'defense') {
-    workbenchMode.value = 'defense'
-  }
-  else {
-    workbenchMode.value = 'project'
-    lastPrimaryAiMode.value = next
-  }
-
   if (!activeWorkspaceId.value || !activeProjectId.value) {
     chatSessions.value = []
     activeChatSessionId.value = ''
-    resetChatState()
+    resetChatStateWithGreeting()
     return
   }
 
   activeChatSessionId.value = ''
-  resetChatState()
-  if (next === 'defense')
-    await loadDefensePersonas()
+  resetChatStateWithGreeting()
   await loadChatSessions()
 })
 
@@ -8420,36 +4300,19 @@ watch(() => workspaceRealtime.connected.value, () => {
 </script>
 
 <template>
-  <div
-    class="workspace-shell wl-workspace-font-scope text-slate-800 bg-white h-full min-h-0 overflow-hidden"
-    :data-workspace-font-size="workspaceEffectiveFontSizePreset"
-  >
+  <div class="workspace-shell text-slate-800 bg-white h-full min-h-0 overflow-hidden">
     <WorkspaceHeader
+      v-model="headerSearch"
       :project-name="headerProjectName"
       :workspace-id="activeWorkspaceId"
-      :user-name="me?.user.username || ''"
-      :user-email="currentUserEmail"
-      :user-avatar-url="me?.user.avatarUrl || ''"
-      :workspace-options="workspaceOptions"
-      :workspace-can-manage-members="workspaceCanManageMembers"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
-      :workbench-mode="workbenchMode"
-      :meta-k-shortcut-label="metaKShortcutLabel"
-      @update:workbench-mode="updateWorkbenchMode"
       @final-review="openFinalReviewFromHeader"
-      @open-meta-k="openMetaK"
       @quick-switch-project="switchProjectFromHeader"
-      @switch-workspace="switchWorkspaceFromHeader"
-      @open-workspace-home="openWorkspaceHomeFromHeader"
-      @open-workspace-settings="openSettingsFromLeftSidebar"
-      @open-display-preferences="openDisplayPreferencesFromHeader"
-      @open-member-management="openMemberManagementFromLeftSidebar"
-      @open-account-center="openAccountCenterFromHeader"
     />
 
     <main class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
-      <div class="workspace-side-anchor workspace-side-anchor--left">
+      <div v-if="!leftSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--left">
         <WorkspaceLeftSidebar
           v-model:natural-query="naturalQuery"
           v-model:major="major"
@@ -8459,17 +4322,13 @@ watch(() => workspaceRealtime.connected.value, () => {
           v-model:top-k="topK"
           v-model:selected-contest-id="selectedContestId"
           class="min-h-0 overflow-hidden"
-          :contests="contestSource"
+          :contests="filteredContests"
           :selected-resources="selectedResources"
           :recycle-resources="recycleResources"
           :resource-library="resourceLibrary"
           :linked-contest-resource-groups="linkedContestResourceGroups"
           :linked-contest-binding-count="projectSettingsBindings.length"
           :upload-tasks="projectUploadTasks"
-          :meetings="projectMeetings"
-          :active-meeting-id="activeMeetingId"
-          :meeting-loading="projectMeetingsLoading"
-          :meeting-mutating="meetingMutating"
           :project-members="workspaceMembers"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
@@ -8487,30 +4346,17 @@ watch(() => workspaceRealtime.connected.value, () => {
           :ai-filtering="aiFiltering"
           :is-admin-view="isAdminView"
           :active-main-tab-id="activeMainTabId"
+          :defense-active="aiMode === 'defense'"
           :current-user-id="me?.user.id || ''"
           :current-username="me?.user.username || ''"
           :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
-          :topic-board-draft="topicBoardDraft"
-          :topic-board-loading="topicBoardLoading"
-          :topic-board-current-summary="topicBoardSnapshot?.boardSummary || ''"
-          :topic-board-history-count="topicBoardHistory.length"
-          :workspace-id="activeWorkspaceId"
-          :tab-spacing-preset="workspaceEffectiveTabSpacingPreset"
-          :collapsed="leftSidebarCollapsed"
-          :command-signal="leftSidebarMetaKSignal"
-          :command-module-id="leftSidebarMetaKModuleId"
-          :command-outline-id="leftSidebarMetaKOutlineId"
           @load-contests="loadContests"
           @run-ai-filter="runAiFilter"
-          @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
-          @generate-topic-board="generateTopicBoard('workspace_sidebar')"
-          @open-meeting-panel="openMeetingFromLeftSidebar"
           @open-settings-panel="openSettingsFromLeftSidebar"
           @open-member-management-panel="openMemberManagementFromLeftSidebar"
           @open-flow-panel="openFlowFromLeftSidebar"
-          @create-meeting="createProjectMeeting"
-          @select-meeting="selectProjectMeeting"
           @create-collab-resource="createCollabResource"
+          @open-defense-mode="openDefenseFromLeftSidebar"
           @reload-issues="loadProjectIssues"
           @open-resource="openProjectResourcePreview"
           @download-project-resource="downloadProjectResource"
@@ -8527,13 +4373,32 @@ watch(() => workspaceRealtime.connected.value, () => {
           @retry-upload-task="retryUploadTask"
           @cancel-upload-task="cancelUploadTask"
           @rebind-upload-task="requestRebindUploadTask"
-          @update:collapsed="leftSidebarCollapsed = $event"
         />
+        <div class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-expanded">
+          <button
+            class="workspace-side-toggle"
+            type="button"
+            title="收起左侧栏"
+            aria-label="收起左侧栏"
+            @click="leftSidebarCollapsed = true"
+          >
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+        </div>
+      </div>
+      <div v-else class="workspace-side-handle workspace-side-handle--left workspace-side-handle--left-collapsed">
+        <button
+          class="workspace-side-toggle"
+          type="button"
+          title="展开左侧栏"
+          aria-label="展开左侧栏"
+          @click="leftSidebarCollapsed = false"
+        >
+          <span class="material-symbols-outlined">chevron_right</span>
+        </button>
       </div>
 
       <WorkspaceMainPanel
-        v-model:active-tab-id="activeMainTabId"
-        v-model:open-tabs="openMainTabs"
         v-model:selected-track-id="selectedTrackId"
         v-model:major="major"
         v-model:discipline="discipline"
@@ -8567,7 +4432,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
         :open-settings-signal="openSettingsSignal"
         :open-member-management-signal="openMemberManagementSignal"
-        :open-display-preferences-signal="openDisplayPreferencesSignal"
         :open-flow-signal="openFlowSignal"
         :open-preview-signal="openPreviewSignal"
         :close-preview-signal="closePreviewSignal"
@@ -8576,7 +4440,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-resource-id="previewResourceId"
         :closing-preview-resource-id="closingPreviewResourceId"
         :preview-resource-title="previewResourceTitle"
-        :markdown-image-upload-handler="uploadMarkdownImage"
         :preview-status="previewStatusPayload"
         :preview-status-loading="previewStatusLoading"
         :preview-mode="previewMode"
@@ -8594,16 +4457,11 @@ watch(() => workspaceRealtime.connected.value, () => {
         :collab-presence-members="collabPresenceMembers"
         :selected-resources="selectedResources"
         :mapping-rows="mappingRows"
-        :mapping-loading="selectedContestDetailLoading"
         :keyword-cloud="keywordCloud"
         :trend-bars="trendBars"
         :form-state="formState"
         :form-submitting="formSubmitting"
-        :workspace-preparing="workspacePreparing"
-        :topic-board="topicBoardSnapshot"
-        :topic-board-fetching="topicBoardFetching"
-        :topic-board-loading="topicBoardLoading"
-        :topic-board-actioning-candidate-id="topicBoardActioningCandidateId"
+        :tone-meta="toneMeta"
         :project-settings-loading="projectSettingsLoading"
         :project-settings-save-state="projectSettingsSaveState"
         :project-settings-common="projectSettingsCommon"
@@ -8611,41 +4469,16 @@ watch(() => workspaceRealtime.connected.value, () => {
         :project-settings-current-contest-id="projectSettingsCurrentContestId"
         :project-settings-adaptation="projectSettingsAdaptation"
         :project-settings-has-current-contest="projectSettingsHasCurrentContest"
-        :workspace-display-preferences="workspaceDisplayPreferenceSnapshot"
-        :workspace-display-preferences-loading="workspaceDisplayPreferenceLoading"
-        :workspace-display-preferences-saving-scope="workspaceDisplayPreferenceSavingScope"
-        :workspace-display-preferences-error="workspaceDisplayPreferenceError"
         :project-resource-shares="projectResourceShares"
         :project-resource-shares-loading="projectResourceSharesLoading"
-        :meetings="projectMeetings"
-        :active-meeting-id="activeMeetingId"
-        :active-meeting="activeMeetingDetail"
-        :meeting-utterances="activeMeetingUtterances"
-        :meeting-live-captions="meetingLiveCaptions"
-        :meeting-loading="projectMeetingsLoading"
-        :meeting-detail-loading="meetingDetailLoading"
-        :meeting-mutating="meetingMutating"
-        :meeting-join-url="meetingJoinUrl"
-        :meeting-join-token="meetingJoinToken"
-        :meeting-join-expires-at="meetingJoinExpiresAt"
-        :meeting-rtc-server-url="meetingRtcServerUrl"
-        :active-meeting-guest-share="activeMeetingGuestShare"
-        :meeting-guest-share-loading="meetingGuestShareLoading"
-        :meeting-plan-tier="currentWorkspaceMeetingPlanTier"
+        @update:active-tab-id="activeMainTabId = $event"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
-        @generate-topic-board="generateTopicBoard('workspace_dashboard')"
-        @update-topic-board-candidate-status="updateTopicBoardCandidateStatus($event.candidateId, $event.decisionStatus)"
-        @select-topic-board-candidate="selectTopicBoardCandidate"
-        @send-topic-board-candidate-to-chat="sendTopicBoardCandidateToChat"
-        @apply-topic-board-candidate-to-form="applyTopicBoardCandidateToForm"
         @update:project-settings-common="onProjectSettingsCommonChange"
         @update:project-settings-bindings="onProjectSettingsBindingsChange"
         @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
         @load-contests="loadContests"
         @save-project-settings="saveProjectSettingsManually"
-        @save-workspace-display-user-override="saveWorkspaceDisplayUserOverride"
-        @save-workspace-display-team-default="saveWorkspaceDisplayTeamDefault"
         @reload-workspace-member-management="loadWorkspaceMemberManagement"
         @create-workspace-invitation="createWorkspaceInvitation"
         @patch-workspace-member-role="patchWorkspaceMemberRole"
@@ -8656,18 +4489,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         @save-workspace-seat-limit="saveWorkspaceSeatLimit"
         @copy-project-resource-share="copyProjectResourceShare"
         @revoke-project-resource-share="revokeProjectResourceShare"
-        @create-meeting="createProjectMeeting"
-        @quick-create-meeting="submitProjectMeetingCreate"
-        @submit-meeting-create="submitProjectMeetingCreate"
-        @refresh-meetings="loadProjectMeetings"
-        @join-meeting="joinProjectMeeting"
-        @start-meeting="startProjectMeeting"
-        @end-meeting="endProjectMeeting"
-        @create-meeting-guest-share="createProjectMeetingGuestShare"
-        @regenerate-meeting-guest-share="regenerateProjectMeetingGuestShare"
-        @revoke-meeting-guest-share="revokeProjectMeetingGuestShare"
-        @select-meeting="selectProjectMeeting"
-        @open-meeting-resource="openProjectResourcePreview"
         @reconvert-preview="reconvertProjectResourcePreview"
         @download-preview-source="downloadPreviewSource"
         @activate-preview-resource="activateProjectResourceTab"
@@ -8677,82 +4498,57 @@ watch(() => workspaceRealtime.connected.value, () => {
         @update-collab-selection-status="updateCollabSelectionStatus"
       />
 
-      <div v-if="!rightSidebarCollapsed" class="workspace-side-anchor workspace-side-anchor--right">
-        <div class="workspace-side-handle workspace-side-handle--right workspace-side-handle--right-expanded">
-          <button
-            class="workspace-side-toggle"
-            type="button"
-            title="收起右侧栏"
-            aria-label="收起右侧栏"
-            @click="collapseRightSidebar"
-          >
-            <span class="material-symbols-outlined">chevron_right</span>
-          </button>
-        </div>
-        <WorkspaceRightSidebar
-          v-model:chat-input="chatInput"
-          :ai-mode="aiMode"
-          class="min-h-0 overflow-hidden"
-          :chat-sessions="chatSessions"
-          :active-chat-session-id="activeChatSessionId"
-          :chat-sessions-loading="chatSessionsLoading"
-          :chat-messages="chatMessages"
-          :chat-loading="chatLoading"
-          :workspace-preparing="workspacePreparing"
-          :current-user-name="me?.user.username || ''"
-          :current-user-avatar-url="me?.user.avatarUrl || ''"
-          :change-requests="aiChangeRequests"
-          :change-requests-loading="aiChangeRequestsLoading"
-          :change-acting-ids="aiChangeActingIds"
-          :change-second-confirm-ids="aiChangeSecondConfirmIds"
-          :issue-report="latestIssueReport"
-          :project-issues="projectIssues"
-          :issue-loading="issueCenterLoading"
-          :issue-report-submitting="issueReportSubmitting"
-          :issue-report-exporting="issueReportExporting"
-          :defense-rounds="defenseRounds"
-          :defense-scorecard="defenseScorecard"
-          :defense-personas="defensePersonas"
-          :defense-stage="defenseStage"
-          :defense-turn-count="defenseTurnCount"
-          :defense-summary="defenseSummary"
-          :defense-personas-loading="defensePersonasLoading"
-          :defense-summary-loading="defenseSummaryLoading"
-          :selected-contest="selectedContest"
-          :selected-track="selectedTrack"
-          :selected-resources="selectedResources"
-          @send-chat="sendChatMessage"
-          @update:ai-mode="updateWorkspaceAiMode"
-          @switch-chat-session="switchChatSession"
-          @create-chat-session="startNewChatSession"
-          @approve-change="approveAiChange"
-          @reject-change="rejectAiChange"
-          @import-defense-personas="importDefensePersonas"
-          @save-defense-persona="saveDefensePersona"
-          @delete-defense-persona="deleteDefensePersona"
-          @generate-defense-summary="generateDefenseSummary"
-          @start-defense-realtime="startDefenseRealtime"
-          @submit-issue-report="submitIssueReport"
-          @export-issue-report="exportIssueReport"
-        />
-      </div>
-      <div v-else class="workspace-side-handle workspace-side-handle--right workspace-side-handle--right-collapsed">
-        <button
-          class="workspace-side-toggle"
-          type="button"
-          title="展开右侧栏"
-          aria-label="展开右侧栏"
-          @click="expandRightSidebar"
+      <div
+        class="workspace-right-dock"
+        :class="{ 'workspace-right-dock--collapsed': rightSidebarCollapsed }"
+      >
+        <div
+          class="workspace-right-dock__panel"
+          :class="{ 'workspace-right-dock__panel--hidden': rightSidebarCollapsed }"
+          :aria-hidden="rightSidebarCollapsed ? 'true' : 'false'"
         >
-          <span class="material-symbols-outlined">chevron_left</span>
-        </button>
-      </div>
-      <div v-if="workspacePreparing" class="workspace-preparing-overlay" aria-live="polite">
-        <div class="workspace-preparing-overlay__panel">
-          <span class="workspace-preparing-overlay__label">正在准备工作区</span>
-          <strong class="workspace-preparing-overlay__title">WinLooooop</strong>
+          <WorkspaceRightSidebar
+            v-model:chat-input="chatInput"
+            v-model:ai-mode="aiMode"
+            class="min-h-0 overflow-hidden"
+            :chat-sessions="chatSessions"
+            :active-chat-session-id="activeChatSessionId"
+            :chat-sessions-loading="chatSessionsLoading"
+            :chat-messages="chatMessages"
+            :chat-loading="chatLoading"
+            :change-requests="aiChangeRequests"
+            :change-requests-loading="aiChangeRequestsLoading"
+            :change-acting-ids="aiChangeActingIds"
+            :change-second-confirm-ids="aiChangeSecondConfirmIds"
+            :issue-report="latestIssueReport"
+            :project-issues="projectIssues"
+            :issue-loading="issueCenterLoading"
+            :defense-rounds="defenseRounds"
+            :defense-scorecard="defenseScorecard"
+            :selected-contest="selectedContest"
+            :selected-track="selectedTrack"
+            :selected-resources="selectedResources"
+            :collapsed="rightSidebarCollapsed"
+            @collapse="collapseRightSidebar"
+            @send-chat="sendChatMessage"
+            @switch-chat-session="switchChatSession"
+            @create-chat-session="startNewChatSession"
+            @approve-change="approveAiChange"
+            @reject-change="rejectAiChange"
+          />
         </div>
       </div>
+      <button
+        data-testid="workspace-right-sidebar-expand-button"
+        class="workspace-right-dock__collapsed-toggle"
+        :class="{ 'workspace-right-dock__collapsed-toggle--visible': rightSidebarCollapsed }"
+        type="button"
+        title="展开右侧栏"
+        aria-label="展开右侧栏"
+        @click="expandRightSidebar"
+      >
+        <span class="material-symbols-outlined">left_panel_open</span>
+      </button>
     </main>
 
     <WorkspaceStatusBar
@@ -8788,85 +4584,11 @@ watch(() => workspaceRealtime.connected.value, () => {
       type="file"
       @change="handleRebindUploadInputChange"
     >
-
-    <a-modal
-      v-model:visible="topicBoardConfirmState.visible"
-      :title="topicBoardConfirmState.title"
-      width="420px"
-      :footer="false"
-      :mask-closable="false"
-      @cancel="resolveTopicBoardConfirm(false)"
-    >
-      <div class="space-y-4">
-        <p class="text-sm text-slate-600 leading-6 m-0 whitespace-pre-line">
-          {{ topicBoardConfirmState.content }}
-        </p>
-
-        <div class="flex gap-2 justify-end">
-          <a-button @click="resolveTopicBoardConfirm(false)">
-            {{ topicBoardConfirmState.cancelText }}
-          </a-button>
-          <a-button type="primary" @click="resolveTopicBoardConfirm(true)">
-            {{ topicBoardConfirmState.okText }}
-          </a-button>
-        </div>
-      </div>
-    </a-modal>
-
-    <a-modal
-      v-model:visible="deviceRestoreConfirmState.visible"
-      :title="deviceRestoreConfirmState.title"
-      width="460px"
-      :footer="false"
-      :mask-closable="false"
-      @cancel="resolveDeviceRestoreConfirm('keep')"
-    >
-      <div class="space-y-4">
-        <p class="text-sm text-slate-600 leading-6 m-0 whitespace-pre-line">
-          {{ deviceRestoreConfirmState.content }}
-        </p>
-
-        <div class="flex gap-2 justify-end">
-          <a-button @click="resolveDeviceRestoreConfirm('keep')">
-            保留本设备
-          </a-button>
-          <a-button type="primary" @click="resolveDeviceRestoreConfirm('sync')">
-            同步最新设备
-          </a-button>
-        </div>
-      </div>
-    </a-modal>
-
-    <WorkspaceMetaK
-      :visible="metaKOpen"
-      :query="metaKQuery"
-      :sections="metaKSections"
-      :shortcut-label="metaKShortcutLabel"
-      @update:query="metaKQuery = $event"
-      @close="closeMetaK"
-      @execute="executeMetaKItem"
-    />
-
-    <UserSettingsDialog
-      v-model:visible="accountCenterVisible"
-      :user-name="me?.user.username || ''"
-      :user-id="me?.user.id || ''"
-      :user-email="currentUserEmail"
-      :user-avatar-url="me?.user.avatarUrl || ''"
-      :user-subtitle="currentUserSubtitle"
-      :show-admin-badge="isAdminView"
-      :is-platform-admin-user="Boolean(me?.user.isPlatformAdmin)"
-      :workspace-options="workspaceOptions"
-      :active-workspace-id="activeWorkspaceId"
-      @user-updated="onUserUpdatedFromAccountCenter"
-      @workspace-updated="onWorkspaceUpdatedFromAccountCenter"
-    />
   </div>
 </template>
 
 <style scoped>
 .workspace-shell {
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
@@ -8897,13 +4619,13 @@ watch(() => workspaceRealtime.connected.value, () => {
   pointer-events: auto;
 }
 
-.workspace-side-handle--right-expanded {
-  left: 0;
-  transform: translateX(-50%);
+.workspace-side-handle--left-expanded {
+  right: 0;
+  transform: translateX(50%);
 }
 
-.workspace-side-handle--right-collapsed {
-  right: 0;
+.workspace-side-handle--left-collapsed {
+  left: 0;
   transform: none;
 }
 
@@ -8925,8 +4647,8 @@ watch(() => workspaceRealtime.connected.value, () => {
     border-color 0.2s ease;
 }
 
-.workspace-side-handle--right .workspace-side-toggle {
-  border-left: 1px solid transparent;
+.workspace-side-handle--left .workspace-side-toggle {
+  border-right: 1px solid transparent;
 }
 
 .workspace-side-toggle .material-symbols-outlined {
@@ -8938,14 +4660,14 @@ watch(() => workspaceRealtime.connected.value, () => {
     color 0.2s ease;
 }
 
-.workspace-side-handle--right:hover .workspace-side-toggle,
+.workspace-side-handle:hover .workspace-side-toggle,
 .workspace-side-toggle:focus-visible {
   background: #f3f6fc;
 }
 
-.workspace-side-handle--right:hover .workspace-side-toggle,
-.workspace-side-handle--right .workspace-side-toggle:focus-visible {
-  border-left-color: #d3d8e4;
+.workspace-side-handle--left:hover .workspace-side-toggle,
+.workspace-side-handle--left .workspace-side-toggle:focus-visible {
+  border-right-color: #d3d8e4;
 }
 
 .workspace-side-toggle:focus-visible {
@@ -8953,49 +4675,100 @@ watch(() => workspaceRealtime.connected.value, () => {
   outline-offset: -2px;
 }
 
-.workspace-side-handle--right:hover .material-symbols-outlined,
+.workspace-side-handle:hover .material-symbols-outlined,
 .workspace-side-toggle:focus-visible .material-symbols-outlined {
   opacity: 1;
   color: #2f6af2;
 }
 
-.workspace-preparing-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
+.workspace-right-dock {
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.14);
-  backdrop-filter: blur(2px);
+  flex-shrink: 0;
+  min-height: 0;
+  width: 352px;
+  flex-basis: 352px;
+  transition:
+    width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    flex-basis 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.workspace-right-dock--collapsed {
+  width: 0;
+  flex-basis: 0;
+}
+
+.workspace-right-dock__panel {
+  display: flex;
+  width: 352px;
+  max-width: 352px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  transform-origin: right center;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-right-dock__panel--hidden {
+  opacity: 0;
+  transform: translateX(16px);
   pointer-events: none;
 }
 
-.workspace-preparing-overlay__panel {
-  min-width: 260px;
-  padding: 18px 22px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.workspace-right-dock__collapsed-toggle {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #d7dfed;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  color: #6b7b95;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 24px rgba(31, 45, 70, 0.12);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(10px, -50%, 0) scale(0.92);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease;
+  z-index: 32;
 }
 
-.workspace-preparing-overlay__label {
-  color: #475569;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+.workspace-right-dock__collapsed-toggle--visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate3d(0, -50%, 0) scale(1);
 }
 
-.workspace-preparing-overlay__title {
-  color: #0f172a;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+.workspace-right-dock__collapsed-toggle:hover {
+  background: #f3f6fc;
+  color: #35537f;
+  border-color: #cbd7eb;
+}
+
+.workspace-right-dock__collapsed-toggle:focus-visible {
+  outline: 2px solid #cddcf7;
+  outline-offset: 1px;
+}
+
+.workspace-right-dock__collapsed-toggle .material-symbols-outlined {
+  font-size: 18px;
+  line-height: 1;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 340,
+    'opsz' 24;
 }
 </style>

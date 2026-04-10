@@ -24,7 +24,7 @@ interface RubricDimensionInput {
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
+const { contestId, rubricId, withEmbed } = useAdminContestRoute()
 
 function splitCsv(value: string): string[] {
   return value
@@ -65,31 +65,6 @@ function toDimensionInput(item: RubricDimension, index: number): RubricDimension
     deductionPoint: String(item.deductionPoint || ''),
     evidenceRequirement: String(item.evidenceRequirement || ''),
   }
-}
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const rubricId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.rubricId
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
 }
 
 const loading = ref(false)
@@ -322,178 +297,30 @@ onMounted(loadRubric)
 </script>
 
 <template>
-  <div class="space-y-4">
-    <section class="p-4 border border-slate-200 rounded-lg bg-white">
-      <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div>
-          <h1 class="text-lg text-slate-900 font-semibold">
-            编辑评分规则
-          </h1>
-          <p class="text-xs text-slate-500 mt-1">
-            rubric_id：{{ rubricId }}
-          </p>
-        </div>
+  <PageShell size="compact">
+    <PageHeader title="编辑评分规则" :meta="`rubric_id：${rubricId}`">
+      <template #actions>
         <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/rubrics`)">
           返回评分规则列表
         </NuxtLink>
-      </div>
-    </section>
+      </template>
+    </PageHeader>
 
-    <section v-if="loading" class="p-4 border border-slate-200 rounded-lg bg-white">
-      <a-skeleton :animation="true">
-        <a-skeleton-line :rows="6" />
-      </a-skeleton>
-    </section>
-
-    <section v-else class="p-4 border border-slate-200 rounded-lg bg-white space-y-3">
-      <div v-if="moduleDraft" class="text-xs text-emerald-700 p-3 border border-emerald-200 rounded bg-emerald-50">
-        <p class="font-semibold">
-          检测到 AI 草稿：{{ moduleDraft.title || '评分规则草稿' }}
-        </p>
-        <p class="mt-1">
-          更新时间：{{ draftUpdatedAt }}。应用后仍需手动保存。
-        </p>
-        <div class="mt-2 flex gap-2 items-center">
-          <a-button size="mini" type="outline" @click="applyAiDraft">
-            应用到表单
-          </a-button>
-          <a-button size="mini" status="danger" @click="clearAiDraft">
-            清除草稿
-          </a-button>
-        </div>
-      </div>
-
-      <div class="gap-2 grid md:grid-cols-4">
-        <a-select v-model="form.trackId" size="small" placeholder="请选择赛道">
-          <a-option value="">
-            请选择赛道
-          </a-option>
-          <a-option v-for="item in tracks" :key="item.id" :value="item.id">
-            {{ item.name }}
-          </a-option>
-        </a-select>
-        <a-select v-model="form.scoringMode" size="small" placeholder="评分模式">
-          <a-option value="weighted">
-            weighted
-          </a-option>
-          <a-option value="checklist">
-            checklist
-          </a-option>
-        </a-select>
-        <a-input-number v-model="form.version" size="small" :min="1" :max="999" placeholder="版本" />
-        <a-select v-model="form.status" size="small" placeholder="状态">
-          <a-option value="draft">
-            draft
-          </a-option>
-          <a-option value="published">
-            published
-          </a-option>
-          <a-option value="archived">
-            archived
-          </a-option>
-        </a-select>
-      </div>
-
-      <div class="gap-2 grid md:grid-cols-3">
-        <a-textarea
-          v-model="form.scoringPointsText"
-          :auto-size="{ minRows: 3, maxRows: 5 }"
-          placeholder="评分要点（逗号或换行分隔）"
-        />
-        <a-textarea
-          v-model="form.deductionItemsText"
-          :auto-size="{ minRows: 3, maxRows: 5 }"
-          placeholder="扣分项（逗号或换行分隔）"
-        />
-        <a-textarea
-          v-model="form.evidenceRequirementsText"
-          :auto-size="{ minRows: 3, maxRows: 5 }"
-          placeholder="佐证要求（逗号或换行分隔）"
-        />
-      </div>
-
-      <div class="p-3 border border-slate-200 rounded">
-        <div class="mb-2 flex items-center justify-between">
-          <p class="text-xs text-slate-700 font-semibold">
-            评分维度表（{{ form.scoringMode }}）
-          </p>
-          <a-button size="mini" type="outline" @click="addDimension">
-            新增维度
-          </a-button>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="text-xs min-w-[980px] w-full">
-            <thead>
-              <tr class="text-slate-600 text-left border-b border-slate-200 bg-slate-50">
-                <th class="px-2 py-2">
-                  名称
-                </th>
-                <th class="px-2 py-2">
-                  权重
-                </th>
-                <th class="px-2 py-2">
-                  说明
-                </th>
-                <th class="px-2 py-2">
-                  评分点
-                </th>
-                <th class="px-2 py-2">
-                  扣分点
-                </th>
-                <th class="px-2 py-2">
-                  佐证要求
-                </th>
-                <th class="px-2 py-2">
-                  操作
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(item, index) in dimensions" :key="`${item.key}-${index}`" class="border-b border-slate-100">
-                <td class="px-2 py-2">
-                  <a-input v-model="item.name" size="small" placeholder="维度名称" />
-                </td>
-                <td class="px-2 py-2">
-                  <a-input
-                    v-model="item.weightText"
-                    size="small"
-                    :placeholder="form.scoringMode === 'weighted' ? '必填' : '可空'"
-                  />
-                </td>
-                <td class="px-2 py-2">
-                  <a-input v-model="item.description" size="small" placeholder="说明" />
-                </td>
-                <td class="px-2 py-2">
-                  <a-input v-model="item.scoringPoint" size="small" placeholder="评分点" />
-                </td>
-                <td class="px-2 py-2">
-                  <a-input v-model="item.deductionPoint" size="small" placeholder="扣分点" />
-                </td>
-                <td class="px-2 py-2">
-                  <a-input v-model="item.evidenceRequirement" size="small" placeholder="佐证要求" />
-                </td>
-                <td class="px-2 py-2">
-                  <a-button size="mini" status="danger" @click="removeDimension(index)">
-                    删除
-                  </a-button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <a-button type="primary" size="small" :loading="saving" @click="save">
-        {{ saving ? '保存中...' : '保存' }}
-      </a-button>
-    </section>
-
-    <section v-if="errorText" class="text-sm text-rose-600 p-4 border border-rose-200 rounded-lg bg-rose-50">
-      {{ errorText }}
-    </section>
-
-    <section v-if="draftText" class="text-sm text-emerald-700 p-4 border border-emerald-200 rounded-lg bg-emerald-50">
-      {{ draftText }}
-    </section>
-  </div>
+    <AdminRubricForm
+      :form="form"
+      :dimensions="dimensions"
+      :tracks="tracks"
+      :loading="loading"
+      :saving="saving"
+      :error-text="errorText"
+      :draft-text="draftText"
+      :draft-title="moduleDraft?.title || (moduleDraft ? '评分规则草稿' : '')"
+      :draft-updated-at="draftUpdatedAt"
+      @submit="save"
+      @apply-draft="applyAiDraft"
+      @clear-draft="clearAiDraft"
+      @add-dimension="addDimension"
+      @remove-dimension="removeDimension"
+    />
+  </PageShell>
 </template>
