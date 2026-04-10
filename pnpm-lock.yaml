@@ -79,6 +79,9 @@ catalogs:
     micromark-extension-gfm:
       specifier: ^3.0.0
       version: 3.0.0
+    ogl:
+      specifier: ^1.0.11
+      version: 1.0.11
     pdfjs-dist:
       specifier: ^5.5.207
       version: 5.5.207
@@ -383,7 +386,7 @@ importers:
         specifier: 'catalog:'
         version: 3.0.0
       ogl:
-        specifier: ^1.0.11
+        specifier: 'catalog:'
         version: 1.0.11
       pdfjs-dist:
         specifier: 'catalog:'
