@@ -25,6 +25,8 @@ interface MeetingParticipantViewItem {
   role: string
   audioTrackState: string
   videoTrackState: string
+  screenShareTrackState: string
+  screenShareAudioTrackState: string
   joinedAt?: string | null
   leftAt?: string | null
 }
@@ -291,9 +293,14 @@ const participantItems = computed<MeetingParticipantViewItem[]>(() => {
     role: item.role,
     audioTrackState: item.audioTrackState,
     videoTrackState: item.videoTrackState,
+    screenShareTrackState: item.screenShareTrackState,
+    screenShareAudioTrackState: item.screenShareAudioTrackState,
     joinedAt: item.joinedAt,
     leftAt: item.leftAt,
   }))
+})
+const activeScreenShareCount = computed(() => {
+  return participantItems.value.filter(item => item.screenShareTrackState === 'active').length
 })
 const meetingSummaryHint = computed(() => {
   if (!props.activeMeeting)
@@ -303,8 +310,11 @@ const meetingSummaryHint = computed(() => {
       ? '预约会议尚未开始。启动后才会创建 RTC 房间、签发成员 token，并开放外部 guest 入会。'
       : '预约会议尚未开始。你可以先查看邀请信息，等待主持人手动启动。'
   }
-  if (props.activeMeeting.status === 'active')
-    return '会议已切到站内 Web 客户端。实时字幕在右侧滚动，录制和纪要会在结束后自动沉淀。'
+  if (props.activeMeeting.status === 'active') {
+    if (activeScreenShareCount.value > 0)
+      return `会议已切到站内 Web 客户端。当前有 ${activeScreenShareCount.value} 路屏幕共享进行中，实时字幕在右侧滚动，录制和纪要会在结束后自动沉淀。`
+    return '会议已切到站内 Web 客户端。支持会中屏幕共享与共享音频，实时字幕在右侧滚动，录制和纪要会在结束后自动沉淀。'
+  }
   if (props.activeMeeting.status === 'ended')
     return '会议已结束，可继续查看最终逐句稿、录制与纪要资源。'
   return '会议进入异常状态，请稍后刷新详情或重新发起。'

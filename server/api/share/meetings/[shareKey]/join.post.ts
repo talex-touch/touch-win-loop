@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const shareKey = normalizeString(getRouterParam(event, 'shareKey'))
-  const body = await readBody<{ displayName?: string }>(event).catch(() => ({}))
+  const body = await readBody<{ displayName?: string }>(event).catch(() => ({} as { displayName?: string }))
 
   if (!shareKey) {
     setResponseStatus(event, 400)

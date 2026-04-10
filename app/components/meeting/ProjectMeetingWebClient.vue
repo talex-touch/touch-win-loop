@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue'
-import type { ProjectMeetingMode } from '~~/shared/types/domain'
+import type { ProjectMeetingMode, ProjectMeetingTrackState } from '~~/shared/types/domain'
+import { Message } from '@arco-design/web-vue'
 
 interface MeetingCaptionItem {
   id: string
@@ -16,15 +17,20 @@ interface MeetingParticipantItem {
   id: string
   displayName: string
   role: string
-  audioTrackState: string
-  videoTrackState: string
+  audioTrackState: ProjectMeetingTrackState | string
+  videoTrackState: ProjectMeetingTrackState | string
+  screenShareTrackState: ProjectMeetingTrackState | string
+  screenShareAudioTrackState: ProjectMeetingTrackState | string
   joinedAt?: string | null
   leftAt?: string | null
 }
 
+type MediaTrackSource = 'microphone' | 'camera' | 'screen_share' | 'screen_share_audio' | 'unknown'
+
 interface MediaTrackItem {
   key: string
   kind: 'audio' | 'video'
+  source: MediaTrackSource
   label: string
   isLocal: boolean
   track: any
@@ -62,6 +68,10 @@ const connectionState = ref<'idle' | 'connecting' | 'connected' | 'error'>('idle
 const connectionError = ref('')
 const micEnabled = ref(false)
 const cameraEnabled = ref(false)
+const screenShareEnabled = ref(false)
+const screenShareAudioEnabled = ref(false)
+const screenShareHint = ref('')
+const screenShareBusy = ref(false)
 
 const videoElements = new Map<string, HTMLVideoElement>()
 const audioElements = new Map<string, HTMLAudioElement>()
@@ -108,8 +118,36 @@ function formatMs(value: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-function buildTrackKey(participantIdentity: string, publicationSid: string, kind: 'audio' | 'video'): string {
-  return `${participantIdentity}:${publicationSid}:${kind}`
+function resolveTrackSource(value: unknown): MediaTrackSource {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'microphone')
+    return 'microphone'
+  if (normalized === 'camera')
+    return 'camera'
+  if (normalized === 'screen_share')
+    return 'screen_share'
+  if (normalized === 'screen_share_audio')
+    return 'screen_share_audio'
+  return 'unknown'
+}
+
+function buildTrackLabel(baseLabel: string, source: MediaTrackSource): string {
+  if (source === 'screen_share')
+    return `${baseLabel} · 共享画面`
+  if (source === 'screen_share_audio')
+    return `${baseLabel} · 共享音频`
+  if (source === 'microphone')
+    return `${baseLabel} · 麦克风`
+  return baseLabel
+}
+
+function buildTrackKey(
+  participantIdentity: string,
+  publicationSid: string,
+  source: MediaTrackSource,
+  kind: 'audio' | 'video',
+): string {
+  return `${participantIdentity}:${publicationSid}:${source}:${kind}`
 }
 
 function clearTrackBinding(
@@ -204,28 +242,42 @@ function collectParticipantTracks(participant: any, input: { label: string, isLo
   const publications = Array.from(participant?.trackPublications?.values?.() || [])
   return publications.flatMap((publication: any) => {
     const track = publication?.track
-    const kind = String(track?.kind || publication?.kind || '').trim()
+    const kind = normalizeString(track?.kind || publication?.kind) as 'audio' | 'video'
     if (!track || (kind !== 'audio' && kind !== 'video'))
       return []
 
+    const source = resolveTrackSource(track?.source || publication?.source)
     return [{
       key: buildTrackKey(
         normalizeString(participant?.identity || publication?.participantSid || publication?.trackSid || publication?.sid || 'participant'),
         normalizeString(publication?.trackSid || publication?.sid || track?.sid || kind),
-        kind as 'audio' | 'video',
+        source,
+        kind,
       ),
-      kind: kind as 'audio' | 'video',
-      label: input.label,
+      kind,
+      source,
+      label: buildTrackLabel(input.label, source),
       isLocal: input.isLocal,
       track,
     }]
   })
 }
 
+function syncLocalState(room: any): void {
+  const participant = room?.localParticipant
+  micEnabled.value = Boolean(participant?.isMicrophoneEnabled)
+  cameraEnabled.value = props.mode === 'video' && Boolean(participant?.isCameraEnabled)
+  screenShareEnabled.value = props.mode === 'video' && Boolean(participant?.isScreenShareEnabled)
+  screenShareAudioEnabled.value = mediaTracks.value.some(
+    item => item.isLocal && item.kind === 'audio' && item.source === 'screen_share_audio',
+  )
+}
+
 function syncRoomTracks(): void {
   const room = roomRef.value
   if (!room) {
     mediaTracks.value = []
+    screenShareHint.value = ''
     releaseAllTrackBindings()
     return
   }
@@ -246,6 +298,7 @@ function syncRoomTracks(): void {
   }
 
   mediaTracks.value = nextTracks
+  syncLocalState(room)
   void nextTick(() => {
     syncTrackBindings()
   })
@@ -258,6 +311,9 @@ async function disconnectRoom(): Promise<void> {
   roomRef.value = null
   micEnabled.value = false
   cameraEnabled.value = false
+  screenShareEnabled.value = false
+  screenShareAudioEnabled.value = false
+  screenShareBusy.value = false
 
   if (!room)
     return
@@ -287,6 +343,8 @@ async function enableInitialDevices(room: any): Promise<void> {
 
   if (props.mode !== 'video') {
     cameraEnabled.value = false
+    screenShareEnabled.value = false
+    screenShareAudioEnabled.value = false
     return
   }
 
@@ -304,6 +362,7 @@ async function connectLivekitRoom(): Promise<void> {
   if (!import.meta.client || props.provider !== 'livekit' || !rtcJoinToken || !rtcServerUrl) {
     connectionState.value = 'idle'
     connectionError.value = ''
+    screenShareHint.value = ''
     await disconnectRoom()
     return
   }
@@ -311,6 +370,7 @@ async function connectLivekitRoom(): Promise<void> {
   await disconnectRoom()
   connectionState.value = 'connecting'
   connectionError.value = ''
+  screenShareHint.value = ''
 
   try {
     const livekit = await import('livekit-client')
@@ -336,6 +396,9 @@ async function connectLivekitRoom(): Promise<void> {
       .on(livekit.RoomEvent.LocalTrackUnpublished, resync)
       .on(livekit.RoomEvent.TrackMuted, resync)
       .on(livekit.RoomEvent.TrackUnmuted, resync)
+      .on(livekit.RoomEvent.MediaDevicesError, (error: Error) => {
+        connectionError.value = error?.message || '读取媒体设备失败。'
+      })
       .on(livekit.RoomEvent.Disconnected, () => {
         connectionState.value = 'idle'
         releaseAllTrackBindings()
@@ -382,6 +445,56 @@ async function toggleCamera(): Promise<void> {
   }
 }
 
+async function toggleScreenShare(): Promise<void> {
+  const room = roomRef.value
+  if (!room?.localParticipant || props.mode !== 'video' || props.guest || screenShareBusy.value)
+    return
+
+  screenShareBusy.value = true
+  connectionError.value = ''
+  try {
+    if (screenShareEnabled.value) {
+      await room.localParticipant.setScreenShareEnabled(false)
+      screenShareEnabled.value = false
+      screenShareAudioEnabled.value = false
+      screenShareHint.value = '屏幕共享已结束。'
+      return
+    }
+
+    try {
+      await room.localParticipant.setScreenShareEnabled(true, {
+        audio: true,
+        video: true,
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+        systemAudio: 'include',
+      })
+      screenShareHint.value = '已开启屏幕共享。若浏览器支持，会同时共享系统音频。'
+    }
+    catch (error) {
+      await room.localParticipant.setScreenShareEnabled(true, {
+        audio: false,
+        video: true,
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+      })
+      screenShareHint.value = '当前浏览器或授权未提供共享音频，已切换为仅共享画面。'
+      Message.warning('当前浏览器或授权未提供共享音频，已切换为仅共享画面。')
+      if (error instanceof Error)
+        connectionError.value = ''
+    }
+
+    syncRoomTracks()
+  }
+  catch (error) {
+    connectionError.value = error instanceof Error ? error.message : '开启屏幕共享失败。'
+  }
+  finally {
+    screenShareBusy.value = false
+    syncRoomTracks()
+  }
+}
+
 function setVideoElement(key: string, element: Element | ComponentPublicInstance | null): void {
   if (element instanceof HTMLVideoElement)
     videoElements.set(key, element)
@@ -398,14 +511,80 @@ function setAudioElement(key: string, element: Element | ComponentPublicInstance
   syncTrackBindings()
 }
 
+function resolveRoleLabel(value: string): string {
+  const normalized = normalizeString(value)
+  if (normalized === 'host')
+    return '主持人'
+  if (normalized === 'member')
+    return '成员'
+  if (normalized === 'guest')
+    return '来宾'
+  if (normalized === 'system')
+    return '系统'
+  if (normalized === 'unknown')
+    return '待映射'
+  return normalized || '参会人'
+}
+
+function resolveTrackStateLabel(value: ProjectMeetingTrackState | string, type: 'audio' | 'video' | 'screen' | 'screen_audio'): string | null {
+  const normalized = normalizeString(value)
+  if (normalized === 'active') {
+    if (type === 'audio')
+      return '麦克风开启'
+    if (type === 'video')
+      return '视频开启'
+    if (type === 'screen')
+      return '屏幕共享中'
+    return '共享音频中'
+  }
+  if (normalized === 'muted') {
+    if (type === 'audio')
+      return '麦克风静音'
+    if (type === 'video')
+      return '视频静默'
+    if (type === 'screen')
+      return '共享暂停'
+    return '共享音频静音'
+  }
+  if (normalized === 'ended') {
+    if (type === 'screen')
+      return '共享已结束'
+    if (type === 'screen_audio')
+      return '共享音频已结束'
+    return null
+  }
+  return null
+}
+
+function buildParticipantMeta(participant: MeetingParticipantItem): string {
+  const parts = [resolveRoleLabel(participant.role)]
+  const statuses = [
+    resolveTrackStateLabel(participant.audioTrackState, 'audio'),
+    resolveTrackStateLabel(participant.videoTrackState, 'video'),
+    resolveTrackStateLabel(participant.screenShareTrackState, 'screen'),
+    resolveTrackStateLabel(participant.screenShareAudioTrackState, 'screen_audio'),
+  ].filter(Boolean)
+  return [...parts, ...statuses].join(' · ')
+}
+
 const hasJoinSession = computed(() => Boolean(normalizeString(props.rtcJoinToken) && normalizeString(props.rtcServerUrl)))
 const isLivekit = computed(() => normalizeString(props.provider).toLowerCase() === 'livekit')
 const isMock = computed(() => normalizeString(props.provider).toLowerCase() === 'mock')
 const isUnsupported = computed(() => !isLivekit.value && !isMock.value)
-const videoTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'video'))
+const cameraTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'video' && item.source !== 'screen_share'))
+const screenShareTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'video' && item.source === 'screen_share'))
+const remoteMicrophoneTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'audio' && !item.isLocal && item.source !== 'screen_share_audio'))
+const remoteScreenShareAudioTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'audio' && !item.isLocal && item.source === 'screen_share_audio'))
 const remoteAudioTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'audio' && !item.isLocal))
-const participantCount = computed(() => props.participants.length)
+const participantCount = computed(() => {
+  if (props.participants.length > 0)
+    return props.participants.length
+  const room = roomRef.value
+  const remoteCount = Array.from(room?.remoteParticipants?.values?.() || []).length
+  return remoteCount + (room?.localParticipant ? 1 : 0)
+})
 const captionItems = computed(() => [...props.captions].slice(-18))
+const canShareScreen = computed(() => !props.guest && props.mode === 'video' && hasJoinSession.value && isLivekit.value && connectionState.value === 'connected')
 const connectionBadgeText = computed(() => {
   if (connectionState.value === 'connected')
     return '已连接'
@@ -424,6 +603,12 @@ const joinHint = computed(() => {
     return '请先点击加入会议，系统会在当前页加载站内会议客户端。'
   return ''
 })
+const audioStageStats = computed(() => [
+  { label: '参会人', value: String(participantCount.value) },
+  { label: '麦克风', value: micEnabled.value ? '已开启' : '未开启' },
+  { label: '远端音轨', value: String(remoteMicrophoneTracks.value.length) },
+  { label: '共享音频', value: String(remoteScreenShareAudioTracks.value.length) },
+])
 
 watch(
   () => [props.provider, props.meetingId, props.rtcJoinToken, props.rtcServerUrl].join('::'),
@@ -472,6 +657,18 @@ onBeforeUnmount(() => {
         >
           {{ cameraEnabled ? '关闭摄像头' : '开启摄像头' }}
         </button>
+        <button
+          v-if="mode === 'video' && !guest"
+          class="meeting-web-client__button meeting-web-client__button--share"
+          type="button"
+          :disabled="!canShareScreen || screenShareBusy"
+          @click="toggleScreenShare"
+        >
+          {{
+            screenShareBusy ? '处理中...'
+            : screenShareEnabled ? '停止共享' : '开始共享'
+          }}
+        </button>
         <a
           v-if="rtcJoinUrl"
           class="meeting-web-client__button meeting-web-client__button--ghost"
@@ -488,6 +685,10 @@ onBeforeUnmount(() => {
       {{ connectionError }}
     </div>
 
+    <div v-if="screenShareHint && isLivekit && connectionState === 'connected'" class="meeting-web-client__notice">
+      {{ screenShareHint }}
+    </div>
+
     <div v-if="isUnsupported" class="meeting-web-client__notice">
       当前 provider 为 `{{ provider || 'unknown' }}`，此轮仅正式支持 `livekit` Web 客户端。
     </div>
@@ -502,40 +703,72 @@ onBeforeUnmount(() => {
 
     <div v-else class="meeting-web-client__layout">
       <section class="meeting-web-client__stage">
-        <div v-if="mode === 'video'" class="meeting-web-client__video-grid">
-          <div
-            v-for="track in videoTracks"
-            :key="track.key"
-            class="meeting-web-client__video-tile"
-          >
-            <video
-              :ref="element => setVideoElement(track.key, element)"
-              autoplay
-              muted
-              playsinline
-              class="meeting-web-client__video"
-            />
-            <span class="meeting-web-client__video-label">
-              {{ track.label }}
-            </span>
-          </div>
-          <div v-if="videoTracks.length === 0" class="meeting-web-client__video-empty">
-            当前暂无可展示的视频流，参会人加入后会自动出现在这里。
-          </div>
-        </div>
+        <template v-if="mode === 'video'">
+          <section v-if="screenShareTracks.length > 0" class="meeting-web-client__media-section">
+            <div class="meeting-web-client__section-head">
+              <h4>共享区</h4>
+              <span>{{ screenShareTracks.length }} 路共享</span>
+            </div>
+            <div class="meeting-web-client__share-grid">
+              <div
+                v-for="track in screenShareTracks"
+                :key="track.key"
+                class="meeting-web-client__video-tile meeting-web-client__video-tile--share"
+              >
+                <video
+                  :ref="element => setVideoElement(track.key, element)"
+                  autoplay
+                  muted
+                  playsinline
+                  class="meeting-web-client__video"
+                />
+                <span class="meeting-web-client__video-badge">
+                  共享中
+                </span>
+                <span class="meeting-web-client__video-label">
+                  {{ track.label }}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section class="meeting-web-client__media-section">
+            <div class="meeting-web-client__section-head">
+              <h4>摄像头区</h4>
+              <span>{{ cameraTracks.length }} 路画面</span>
+            </div>
+            <div v-if="cameraTracks.length > 0" class="meeting-web-client__video-grid">
+              <div
+                v-for="track in cameraTracks"
+                :key="track.key"
+                class="meeting-web-client__video-tile"
+              >
+                <video
+                  :ref="element => setVideoElement(track.key, element)"
+                  autoplay
+                  muted
+                  playsinline
+                  class="meeting-web-client__video"
+                />
+                <span class="meeting-web-client__video-label">
+                  {{ track.label }}
+                </span>
+              </div>
+            </div>
+            <div v-else class="meeting-web-client__video-empty">
+              当前暂无可展示的摄像头画面，参会人加入或打开摄像头后会自动出现在这里。
+            </div>
+          </section>
+        </template>
 
         <div v-else class="meeting-web-client__audio-stage">
-          <div class="meeting-web-client__audio-kpi">
-            <span>参会人</span>
-            <strong>{{ participantCount }}</strong>
-          </div>
-          <div class="meeting-web-client__audio-kpi">
-            <span>麦克风</span>
-            <strong>{{ micEnabled ? '已开启' : '未开启' }}</strong>
-          </div>
-          <div class="meeting-web-client__audio-kpi">
-            <span>远端音轨</span>
-            <strong>{{ remoteAudioTracks.length }}</strong>
+          <div
+            v-for="item in audioStageStats"
+            :key="item.label"
+            class="meeting-web-client__audio-kpi"
+          >
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
           </div>
         </div>
 
@@ -565,12 +798,45 @@ onBeforeUnmount(() => {
                   {{ participant.displayName }}
                 </div>
                 <div class="meeting-web-client__participant-meta">
-                  {{ participant.role }} · 音频 {{ participant.audioTrackState }} · 视频 {{ participant.videoTrackState }}
+                  {{ buildParticipantMeta(participant) }}
                 </div>
               </div>
             </div>
             <div v-if="participants.length === 0" class="meeting-web-client__empty">
               暂无参会人数据。
+            </div>
+          </div>
+        </section>
+
+        <section class="meeting-web-client__panel">
+          <div class="meeting-web-client__panel-head">
+            <h4>会中状态</h4>
+            <span>{{ mode === 'audio' ? '语音' : '视频' }}</span>
+          </div>
+          <div class="meeting-web-client__status-list">
+            <div class="meeting-web-client__status-item">
+              <span>本地麦克风</span>
+              <strong>{{ micEnabled ? '已开启' : '未开启' }}</strong>
+            </div>
+            <div v-if="mode === 'video'" class="meeting-web-client__status-item">
+              <span>本地摄像头</span>
+              <strong>{{ cameraEnabled ? '已开启' : '未开启' }}</strong>
+            </div>
+            <div v-if="mode === 'video'" class="meeting-web-client__status-item">
+              <span>本地共享</span>
+              <strong>{{ screenShareEnabled ? '共享中' : '未共享' }}</strong>
+            </div>
+            <div v-if="mode === 'video'" class="meeting-web-client__status-item">
+              <span>共享音频</span>
+              <strong>{{ screenShareAudioEnabled ? '已带音频' : '未检测到' }}</strong>
+            </div>
+            <div class="meeting-web-client__status-item">
+              <span>远端共享音频</span>
+              <strong>{{ remoteScreenShareAudioTracks.length }} 路</strong>
+            </div>
+            <div class="meeting-web-client__status-item">
+              <span>远端麦克风</span>
+              <strong>{{ remoteMicrophoneTracks.length }} 路</strong>
             </div>
           </div>
         </section>
@@ -673,6 +939,11 @@ onBeforeUnmount(() => {
   color: #334155;
 }
 
+.meeting-web-client__button--share {
+  background: linear-gradient(135deg, #0f766e, #0f172a);
+  border-color: #0f766e;
+}
+
 .meeting-web-client__error,
 .meeting-web-client__notice,
 .meeting-web-client__empty,
@@ -712,6 +983,34 @@ onBeforeUnmount(() => {
   padding: 0.9rem;
 }
 
+.meeting-web-client__media-section + .meeting-web-client__media-section {
+  margin-top: 1rem;
+}
+
+.meeting-web-client__section-head,
+.meeting-web-client__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.meeting-web-client__section-head h4,
+.meeting-web-client__panel-head h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.meeting-web-client__section-head span,
+.meeting-web-client__panel-head span {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.meeting-web-client__share-grid,
 .meeting-web-client__video-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -726,6 +1025,12 @@ onBeforeUnmount(() => {
   background: radial-gradient(circle at top, #1e293b, #020617);
 }
 
+.meeting-web-client__video-tile--share {
+  min-height: 260px;
+  border: 1px solid rgba(20, 184, 166, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.12);
+}
+
 .meeting-web-client__video {
   width: 100%;
   height: 100%;
@@ -733,20 +1038,31 @@ onBeforeUnmount(() => {
   display: block;
 }
 
-.meeting-web-client__video-label {
+.meeting-web-client__video-label,
+.meeting-web-client__video-badge {
   position: absolute;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+.meeting-web-client__video-label {
   left: 0.75rem;
   bottom: 0.75rem;
-  border-radius: 999px;
   background: rgba(15, 23, 42, 0.72);
-  color: #fff;
   padding: 0.25rem 0.55rem;
-  font-size: 0.75rem;
+}
+
+.meeting-web-client__video-badge {
+  top: 0.75rem;
+  right: 0.75rem;
+  background: rgba(15, 118, 110, 0.92);
+  padding: 0.25rem 0.6rem;
 }
 
 .meeting-web-client__audio-stage {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
 }
 
@@ -762,11 +1078,10 @@ onBeforeUnmount(() => {
 
 .meeting-web-client__audio-kpi span {
   font-size: 0.78rem;
-  color: #64748b;
 }
 
 .meeting-web-client__audio-kpi strong {
-  font-size: 1.35rem;
+  font-size: 1.2rem;
   color: #0f172a;
 }
 
@@ -776,39 +1091,21 @@ onBeforeUnmount(() => {
   gap: 1rem;
 }
 
-.meeting-web-client__panel-head {
+.meeting-web-client__participant-list,
+.meeting-web-client__caption-list,
+.meeting-web-client__status-list {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 0.75rem;
 }
 
-.meeting-web-client__panel-head h4 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.meeting-web-client__panel-head span {
-  font-size: 0.75rem;
-  color: #64748b;
-}
-
-.meeting-web-client__participant-list,
-.meeting-web-client__caption-list {
-  margin-top: 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-}
-
 .meeting-web-client__participant-item,
-.meeting-web-client__caption-item {
-  border: 1px solid #e2e8f0;
+.meeting-web-client__caption-item,
+.meeting-web-client__status-item {
   border-radius: 1rem;
-  background: #fff;
-  padding: 0.85rem 0.9rem;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 0.75rem;
 }
 
 .meeting-web-client__participant-name {
@@ -818,29 +1115,47 @@ onBeforeUnmount(() => {
 }
 
 .meeting-web-client__participant-meta {
-  margin-top: 0.35rem;
+  margin-top: 0.3rem;
   font-size: 0.78rem;
+  line-height: 1.6;
   color: #64748b;
 }
 
+.meeting-web-client__status-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.meeting-web-client__status-item span {
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+.meeting-web-client__status-item strong {
+  font-size: 0.82rem;
+  color: #0f172a;
+}
+
 .meeting-web-client__caption-item--partial {
-  background: #fffbeb;
-  border-color: #fde68a;
+  border-style: dashed;
 }
 
 .meeting-web-client__caption-top {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   font-size: 0.75rem;
-  color: #64748b;
+  color: #475569;
 }
 
 .meeting-web-client__caption-item p {
   margin: 0.45rem 0 0;
-  font-size: 0.875rem;
-  color: #334155;
-  line-height: 1.6;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: #0f172a;
 }
 
 @media (max-width: 1024px) {
@@ -850,14 +1165,22 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .meeting-web-client__header,
-  .meeting-web-client__audio-stage {
-    grid-template-columns: 1fr;
+  .meeting-web-client__header {
     flex-direction: column;
   }
 
   .meeting-web-client__controls {
+    width: 100%;
     justify-content: flex-start;
+  }
+
+  .meeting-web-client__audio-stage {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .meeting-web-client__share-grid,
+  .meeting-web-client__video-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

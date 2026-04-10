@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const meetingId = normalizeString(getRouterParam(event, 'meetingId'))
-  const body = await readBody<{ regenerate?: boolean }>(event).catch(() => ({}))
+  const body = await readBody<{ regenerate?: boolean }>(event).catch(() => ({} as { regenerate?: boolean }))
 
   if (!projectId || !meetingId) {
     setResponseStatus(event, 400)
