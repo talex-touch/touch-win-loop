@@ -167,7 +167,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
 
 <template>
   <aside
-    class="border-l border-slate-200 bg-white flex shrink-0 flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
+    class="workspace-right-sidebar border-l border-slate-200 bg-white flex shrink-0 flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
     tabindex="0"
     @keydown.capture="handleModeCycleHotkey"
   >
@@ -490,7 +490,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
   min-width: 0;
   flex: 1 1 140px;
   color: #94a3b8;
-  font-size: 10px;
+  font-size: var(--wl-text-caption);
   line-height: 1.4;
 }
 
@@ -501,7 +501,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
   border-radius: 999px;
   background: linear-gradient(90deg, #eff6ff 0%, #eef2ff 100%);
   color: #1d4ed8;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
   white-space: nowrap;
 }
 
@@ -534,7 +534,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
   border-radius: 6px;
   background: #f8fafc;
   color: #395077;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
   padding: 0 24px 0 8px;
   outline: none;
 }
@@ -550,7 +550,7 @@ function handleModeCycleHotkey(event: KeyboardEvent) {
   justify-content: center;
   border-radius: 999px;
   border: 1px solid transparent;
-  font-size: 10px;
+  font-size: var(--wl-text-caption);
   line-height: 1;
   padding: 3px 7px;
 }

@@ -304,101 +304,99 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="p-4 bg-slate-100 flex min-h-screen items-center justify-center" data-testid="login-page">
-    <div class="p-6 border border-slate-200 rounded-xl bg-white max-w-sm w-full space-y-4">
-      <h1 class="text-xl text-slate-900 font-semibold">
-        登录 WinLoop
-      </h1>
-      <p class="text-xs text-slate-500">
-        {{ registrationEnabled ? '首次登录将自动注册，并初始化 Personal 空间。' : '当前已关闭自动注册，仅允许已有账号登录或绑定第三方账号。' }}
-      </p>
-      <p class="text-xs text-slate-500">
-        已有账号需合并时，请先账号密码登录，再到“个人信息”里绑定飞书或 Casdoor 账号。
-      </p>
+  <div class="wl-auth-shell" data-testid="login-page">
+    <PageShell size="auth" gap="lg">
+      <PageHeader
+        title="登录 WinLoop"
+        :description="registrationEnabled ? '首次登录将自动注册，并初始化 Personal 空间。' : '当前已关闭自动注册，仅允许已有账号登录或绑定第三方账号。'"
+        :meta="['已有账号需合并时，请先账号密码登录，再到“个人信息”里绑定飞书或 Casdoor 账号。']"
+      />
 
-      <div v-if="hasFeishuConflict" class="p-3 border border-amber-200 rounded-lg bg-amber-50 space-y-2">
-        <p class="text-xs text-amber-800 font-semibold m-0">
-          {{ feishuConflictTitle }}
-        </p>
-        <p v-if="feishuBoundUser" class="text-xs text-amber-700 m-0">
-          该飞书账号当前绑定到平台账号：<span class="font-mono">{{ feishuBoundUser }}</span>
-        </p>
-        <p class="text-xs text-amber-700 m-0">
-          处理建议：先用绑定账号密码登录；如需迁移绑定，请联系管理员先解绑再重绑。
-        </p>
-      </div>
+      <SectionCard>
+        <div v-if="hasFeishuConflict" class="wl-inline-notice mt-0">
+          <p class="m-0 font-semibold text-amber-800">
+            {{ feishuConflictTitle }}
+          </p>
+          <p v-if="feishuBoundUser" class="m-0 mt-2 text-amber-700">
+            该飞书账号当前绑定到平台账号：<span class="font-mono">{{ feishuBoundUser }}</span>
+          </p>
+          <p class="m-0 mt-2 text-amber-700">
+            处理建议：先用绑定账号密码登录；如需迁移绑定，请联系管理员先解绑再重绑。
+          </p>
+        </div>
 
-      <div v-if="hasCasdoorConflict" class="p-3 border border-amber-200 rounded-lg bg-amber-50 space-y-2">
-        <p class="text-xs text-amber-800 font-semibold m-0">
-          {{ casdoorConflictTitle }}
-        </p>
-        <p v-if="casdoorBoundUser" class="text-xs text-amber-700 m-0">
-          该 Casdoor 账号当前绑定到平台账号：<span class="font-mono">{{ casdoorBoundUser }}</span>
-        </p>
-        <p class="text-xs text-amber-700 m-0">
-          处理建议：先用绑定账号密码登录；如需迁移绑定，请联系管理员处理后再重绑。
-        </p>
-      </div>
+        <div v-if="hasCasdoorConflict" class="wl-inline-notice mt-3">
+          <p class="m-0 font-semibold text-amber-800">
+            {{ casdoorConflictTitle }}
+          </p>
+          <p v-if="casdoorBoundUser" class="m-0 mt-2 text-amber-700">
+            该 Casdoor 账号当前绑定到平台账号：<span class="font-mono">{{ casdoorBoundUser }}</span>
+          </p>
+          <p class="m-0 mt-2 text-amber-700">
+            处理建议：先用绑定账号密码登录；如需迁移绑定，请联系管理员处理后再重绑。
+          </p>
+        </div>
 
-      <div class="space-y-2">
-        <button
-          v-if="casdoorEnabled"
-          class="text-sm text-slate-800 py-2 border border-slate-300 rounded bg-white w-full disabled:opacity-60"
-          :disabled="oauthRedirectingProvider !== '' || feishuLoading"
-          @click="manualCasdoorLogin"
-        >
-          {{ oauthRedirectingProvider === 'casdoor' ? 'Casdoor 跳转中...' : '使用 Casdoor 登录' }}
-        </button>
-
-        <button
-          v-if="feishuMeta?.enabled"
-          class="text-sm text-slate-800 py-2 border border-slate-300 rounded bg-white w-full disabled:opacity-60"
-          :disabled="feishuLoading || oauthRedirectingProvider !== ''"
-          @click="manualFeishuLogin"
-        >
-          {{ feishuLoading ? '飞书登录准备中...' : (oauthRedirectingProvider === 'feishu' ? '飞书跳转中...' : '使用飞书登录') }}
-        </button>
-      </div>
-
-      <div class="space-y-3">
-        <label class="text-xs text-slate-600 font-medium block">
-          用户名
-          <input
-            v-model="username"
-            type="text"
-            data-testid="login-username-input"
-            class="text-sm mt-1 px-3 py-2 border border-slate-300 rounded w-full"
-            placeholder="请输入用户名"
-            autocomplete="username"
+        <div class="space-y-2" :class="{ 'mt-4': hasFeishuConflict || hasCasdoorConflict }">
+          <button
+            v-if="casdoorEnabled"
+            class="dense-btn w-full justify-center"
+            :disabled="oauthRedirectingProvider !== '' || feishuLoading"
+            @click="manualCasdoorLogin"
           >
-        </label>
+            {{ oauthRedirectingProvider === 'casdoor' ? 'Casdoor 跳转中...' : '使用 Casdoor 登录' }}
+          </button>
 
-        <label class="text-xs text-slate-600 font-medium block">
-          密码
-          <input
-            v-model="password"
-            type="password"
-            data-testid="login-password-input"
-            class="text-sm mt-1 px-3 py-2 border border-slate-300 rounded w-full"
-            placeholder="请输入密码"
-            autocomplete="current-password"
-            @keydown.enter="submitLogin"
+          <button
+            v-if="feishuMeta?.enabled"
+            class="dense-btn w-full justify-center"
+            :disabled="feishuLoading || oauthRedirectingProvider !== ''"
+            @click="manualFeishuLogin"
           >
-        </label>
-      </div>
+            {{ feishuLoading ? '飞书登录准备中...' : (oauthRedirectingProvider === 'feishu' ? '飞书跳转中...' : '使用飞书登录') }}
+          </button>
+        </div>
 
-      <div v-if="errorText" class="text-xs text-red-600" data-testid="login-error-text">
-        {{ errorText }}
-      </div>
+        <div class="space-y-3 mt-4">
+          <label class="text-xs text-slate-600 font-medium block">
+            用户名
+            <input
+              v-model="username"
+              type="text"
+              data-testid="login-username-input"
+              class="dense-input mt-1"
+              placeholder="请输入用户名"
+              autocomplete="username"
+            >
+          </label>
 
-      <button
-        data-testid="login-submit-button"
-        class="text-sm text-white py-2 rounded bg-slate-900 w-full disabled:opacity-60"
-        :disabled="loading"
-        @click="submitLogin"
-      >
-        {{ loading ? '登录中...' : (registrationEnabled ? '登录 / 自动注册' : '登录') }}
-      </button>
-    </div>
+          <label class="text-xs text-slate-600 font-medium block">
+            密码
+            <input
+              v-model="password"
+              type="password"
+              data-testid="login-password-input"
+              class="dense-input mt-1"
+              placeholder="请输入密码"
+              autocomplete="current-password"
+              @keydown.enter="submitLogin"
+            >
+          </label>
+        </div>
+
+        <div v-if="errorText" class="wl-inline-notice wl-inline-notice--error mt-4" data-testid="login-error-text">
+          {{ errorText }}
+        </div>
+
+        <button
+          data-testid="login-submit-button"
+          class="dense-btn w-full justify-center mt-4"
+          :disabled="loading"
+          @click="submitLogin"
+        >
+          {{ loading ? '登录中...' : (registrationEnabled ? '登录 / 自动注册' : '登录') }}
+        </button>
+      </SectionCard>
+    </PageShell>
   </div>
 </template>

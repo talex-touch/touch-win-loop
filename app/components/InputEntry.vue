@@ -9,26 +9,23 @@ function go() {
 </script>
 
 <template>
-  <div>
+  <div class="space-y-4">
     <input
       id="input"
       v-model="name"
-      placeholder="What's your name?"
+      placeholder="输入一个昵称"
       type="text"
       autocomplete="off"
-      p="x-4 y-2" m="t-5" w="250px"
-      text="center" bg="transparent"
-      border="~ rounded gray-200 dark:gray-700"
-      outline="none active:none"
+      class="dense-input max-w-[250px] text-center"
       @keydown.enter="go"
     >
     <div>
       <button
-        btn text-sm m-3
+        class="dense-btn"
         :disabled="!name"
         @click="go"
       >
-        GO
+        进入
       </button>
     </div>
   </div>

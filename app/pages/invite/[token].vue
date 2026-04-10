@@ -120,27 +120,33 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="p-4 bg-slate-100 flex min-h-screen items-center justify-center">
-    <section class="p-6 border border-slate-200 rounded-xl bg-white max-w-md w-full space-y-4">
-      <h1 class="text-xl text-slate-900 font-semibold">
-        加入项目协作
-      </h1>
+  <div class="wl-auth-shell">
+    <PageShell size="auth" gap="lg">
+      <PageHeader title="加入项目协作" description="正在验证邀请并准备跳转到对应项目台。" />
 
-      <p v-if="loading" class="text-sm text-slate-500">
-        正在验证邀请并加入项目协作...
-      </p>
+      <SectionCard>
+        <StateBlock
+          v-if="loading"
+          tone="loading"
+          description="正在验证邀请并加入项目协作..."
+        />
 
-      <template v-else>
-        <p class="text-sm text-rose-700">
-          {{ errorText || '邀请处理失败，请稍后重试。' }}
-        </p>
-        <button
-          class="text-sm text-slate-700 font-semibold px-3 py-1.5 border border-slate-300 rounded hover:bg-slate-100"
-          @click="openFallbackAction"
+        <StateBlock
+          v-else
+          tone="error"
+          :description="errorText || '邀请处理失败，请稍后重试。'"
         >
-          {{ fallbackActionLabel }}
-        </button>
-      </template>
-    </section>
-  </main>
+          <ActionBar class="mt-4">
+            <button
+              class="dense-btn"
+              type="button"
+              @click="openFallbackAction"
+            >
+              {{ fallbackActionLabel }}
+            </button>
+          </ActionBar>
+        </StateBlock>
+      </SectionCard>
+    </PageShell>
+  </div>
 </template>

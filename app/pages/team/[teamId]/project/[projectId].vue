@@ -19,7 +19,6 @@ import type {
   CollabPurpose,
   Contest,
   Project,
-  ProjectContestAdaptation,
   ProjectInvitationSummary,
   ProjectIssue,
   ProjectIssueReport,
@@ -40,7 +39,6 @@ import type {
   ResourcePreviewStatus,
   WorkspaceAiMode,
   WorkspaceMemberRole,
-  WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type {
@@ -57,11 +55,7 @@ import type {
 } from '~/types/workspace'
 import { Message } from '@arco-design/web-vue'
 import {
-  formatFileSize,
-  isProjectResourceUploadFileSupported,
   PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
-  PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
-  PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
 import {
   buildProjectSettingsCommonPatch,
@@ -69,7 +63,30 @@ import {
   createEmptyProjectCommonForm,
   createProjectCommonFormFromProject,
 } from '~/composables/project-settings'
+import {
+  normalizeQueryValue as normalizeQueryParam,
+  resolveWorkspaceOptions,
+  shouldOpenCreateDialog as isTruthyQueryFlag,
+  teamDashboardPath,
+} from '~/composables/team-ui'
 import { useCollabSession } from '~/composables/useCollabSession'
+import { useWorkspaceProjectRoute, workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
+import { useWorkspaceSidebarLayout } from '~/composables/useWorkspaceSidebarLayout'
+import {
+  clamp,
+  cloneProjectAdaptationForm,
+  cloneProjectContestBindings,
+  createEmptyProjectAdaptationForm,
+  createProjectAdaptationFormFromSnapshot,
+  defaultAssistantGreeting,
+  includesText,
+  parseFileSizeFromResource,
+  resolveApiErrorMessage,
+  resolveApiStatusCode,
+  sortByUpdatedAtDesc,
+  toTone,
+  validateUploadFiles,
+} from '~/utils/workspace-project-helpers'
 
 definePageMeta({
   layout: 'dashboard',
@@ -77,260 +94,12 @@ definePageMeta({
 
 useHead({
   title: '项目工作区',
-  link: [
-    {
-      rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
-    },
-    {
-      rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;600;700&display=swap',
-    },
-  ],
 })
 
 const { endpoint, resolveApiUrl, resolveAppUrl } = useApiEndpoint()
 const authApiFetch = useAuthApiFetch()
 const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
-
-function linesToArray(text: string): string[] {
-  return text
-    .split(/\n+/)
-    .map(item => item.trim())
-    .filter(Boolean)
-}
-
-function arrayToLines(list: string[] | undefined): string {
-  return (list || []).join('\n')
-}
-
-function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
-  return {
-    contestId,
-    trackId,
-    problemStatement: '',
-    innovationPointsText: '',
-    techRouteStepsText: '',
-    scoringMappingText: '',
-    risksText: '',
-    deliverablesText: '',
-    summary: '',
-  }
-}
-
-function createProjectAdaptationFormFromSnapshot(
-  adaptation: ProjectContestAdaptation | null,
-  project: Project | null,
-  contestId: string,
-  trackId: string,
-): WorkspaceProjectAdaptationForm {
-  if (!adaptation) {
-    return {
-      contestId,
-      trackId,
-      problemStatement: project?.problemStatement || '',
-      innovationPointsText: arrayToLines(project?.innovationPoints),
-      techRouteStepsText: arrayToLines(project?.techRouteSteps),
-      scoringMappingText: arrayToLines(project?.scoringMapping),
-      risksText: arrayToLines(project?.risks),
-      deliverablesText: arrayToLines(project?.deliverables),
-      summary: project?.summary || '',
-    }
-  }
-
-  return {
-    contestId,
-    trackId,
-    problemStatement: adaptation.problemStatement || '',
-    innovationPointsText: arrayToLines(adaptation.innovationPoints),
-    techRouteStepsText: arrayToLines(adaptation.techRouteSteps),
-    scoringMappingText: arrayToLines(adaptation.scoringMapping),
-    risksText: arrayToLines(adaptation.risks),
-    deliverablesText: arrayToLines(adaptation.deliverables),
-    summary: adaptation.summary || '',
-  }
-}
-
-function cloneProjectAdaptationForm(value: WorkspaceProjectAdaptationForm): WorkspaceProjectAdaptationForm {
-  return {
-    contestId: value.contestId,
-    trackId: value.trackId,
-    problemStatement: value.problemStatement,
-    innovationPointsText: value.innovationPointsText,
-    techRouteStepsText: value.techRouteStepsText,
-    scoringMappingText: value.scoringMappingText,
-    risksText: value.risksText,
-    deliverablesText: value.deliverablesText,
-    summary: value.summary,
-  }
-}
-
-function cloneProjectContestBindings(value: WorkspaceProjectContestBindingForm[]): WorkspaceProjectContestBindingForm[] {
-  return value.map(item => ({
-    contestId: item.contestId,
-    trackId: item.trackId,
-    sortOrder: item.sortOrder,
-  }))
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
-function defaultAssistantGreeting(): ChatMessage {
-  return {
-    role: 'assistant',
-    content: '你好，我是 Loopy。先在左侧筛选竞赛，再告诉我你想做的项目方向，我会帮你生成可落地草案。',
-  }
-}
-
-function toTone(score: number): MappingTone {
-  if (score >= 75)
-    return 'complete'
-  if (score >= 40)
-    return 'warning'
-  return 'todo'
-}
-
-function includesText(source: string, keyword: string): boolean {
-  return source.toLowerCase().includes(keyword.toLowerCase())
-}
-
-function normalizeRouteParam(value: string | string[] | undefined): string {
-  if (Array.isArray(value))
-    return String(value[0] || '').trim()
-  return String(value || '').trim()
-}
-
-function normalizeQueryParam(value: unknown): string {
-  if (Array.isArray(value))
-    return String(value[0] || '').trim()
-  if (value === null || value === undefined)
-    return ''
-  return String(value).trim()
-}
-
-function isTruthyQueryFlag(value: unknown): boolean {
-  const normalized = normalizeQueryParam(value).toLowerCase()
-  return normalized === '1' || normalized === 'true' || normalized === 'yes'
-}
-
-function teamDashboardPath(): string {
-  return '/team'
-}
-
-function teamDetailPath(teamId: string): string {
-  return `/team/${teamId}`
-}
-
-function teamProjectPath(teamId: string, projectId: string): string {
-  return `/team/${teamId}/project/${projectId}`
-}
-
-function workspaceDetailPath(workspaceId: string, projectId = ''): string {
-  const normalizedWorkspaceId = String(workspaceId || '').trim()
-  const normalizedProjectId = String(projectId || '').trim()
-  if (normalizedWorkspaceId && normalizedProjectId)
-    return teamProjectPath(normalizedWorkspaceId, normalizedProjectId)
-  return teamDetailPath(normalizedWorkspaceId)
-}
-
-async function ensureCanonicalWorkspaceProjectRoute(): Promise<boolean> {
-  if (!route.path.startsWith('/workspace/'))
-    return false
-
-  const params = route.params as Record<string, string | string[] | undefined>
-  const workspaceId = normalizeRouteParam(params.teamId || params.workspaceId)
-  const projectId = normalizeRouteParam(params.projectId)
-  if (!workspaceId || !projectId)
-    return false
-
-  await navigateTo({
-    path: workspaceDetailPath(workspaceId, projectId),
-    query: route.query,
-  }, { replace: true })
-  return true
-}
-
-function resolveApiErrorMessage(error: unknown, fallback: string): string {
-  if (error && typeof error === 'object') {
-    const maybeData = (error as { data?: { message?: string } }).data
-    const message = String(maybeData?.message || '').trim()
-    if (message)
-      return message
-  }
-
-  if (error instanceof Error && error.message.trim())
-    return error.message.trim()
-
-  return fallback
-}
-
-function parseFileSizeFromResource(resource: Resource): number {
-  const sourceType = String(resource.sourceType || resource.source || '').trim()
-  if (sourceType !== 'project_upload' && sourceType !== 'upload')
-    return 0
-
-  const metadata = resource.metadata
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
-    return 0
-
-  const rawSize = (metadata as Record<string, unknown>).fileSize
-  const size = Number(rawSize)
-  if (!Number.isFinite(size) || size <= 0)
-    return 0
-  return size
-}
-
-function validateUploadFiles(files: File[], usedBytes: number): string | null {
-  if (!files.length)
-    return '未检测到可上传文件。'
-
-  if (files.length > PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH) {
-    return `单次最多上传 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个文件。`
-  }
-
-  const invalidTypeFiles = files
-    .filter(file => !isProjectResourceUploadFileSupported(file.name))
-    .slice(0, 3)
-    .map(file => file.name)
-
-  if (invalidTypeFiles.length) {
-    return `文件格式不支持：${invalidTypeFiles.join('、')}。`
-  }
-
-  const oversizeFile = files.find(file => file.size > PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)
-  if (oversizeFile) {
-    return `文件过大：${oversizeFile.name}，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`
-  }
-
-  const incomingBytes = files.reduce((sum, file) => sum + Math.max(0, Number(file.size || 0)), 0)
-  if (usedBytes + incomingBytes > PROJECT_RESOURCE_STORAGE_LIMIT_BYTES) {
-    return `当前项目容量超限：上限 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`
-  }
-
-  return null
-}
-
-function resolveApiStatusCode(error: unknown): number {
-  if (!error || typeof error !== 'object')
-    return 0
-
-  const statusCode = Number((error as { statusCode?: number }).statusCode || 0)
-  if (Number.isFinite(statusCode) && statusCode > 0)
-    return statusCode
-
-  const responseStatus = Number((error as { response?: { status?: number } }).response?.status || 0)
-  if (Number.isFinite(responseStatus) && responseStatus > 0)
-    return responseStatus
-
-  const dataStatus = Number((error as { data?: { statusCode?: number } }).data?.statusCode || 0)
-  if (Number.isFinite(dataStatus) && dataStatus > 0)
-    return dataStatus
-
-  return 0
-}
 
 interface WorkspaceQuickSwitchProject {
   projectId: string
@@ -378,31 +147,20 @@ type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
-const RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
-
-function parseTimestamp(value: string): number {
-  const time = new Date(value).getTime()
-  if (Number.isNaN(time))
-    return 0
-  return time
-}
-
-function sortByUpdatedAtDesc(items: Project[]): Project[] {
-  return [...items].sort((a, b) => parseTimestamp(b.updatedAt) - parseTimestamp(a.updatedAt))
-}
-
-const routeWorkspaceId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  return normalizeRouteParam(params.teamId || params.workspaceId)
-})
-
-const routeProjectId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  return normalizeRouteParam(params.projectId || '')
-})
-
-const highlightedProjectId = computed(() => routeProjectId.value || normalizeQueryParam(route.query.projectId))
+const { routeWorkspaceId, routeProjectId, highlightedProjectId, ensureCanonicalWorkspaceProjectRoute } = useWorkspaceProjectRoute()
+const {
+  leftSidebarCollapsed,
+  rightSidebarUserCollapsed,
+  sidebarLayoutHydrating,
+  rightSidebarCollapsed,
+  withSidebarLayoutHydrating,
+  initializeRightSidebarBreakpointTracking,
+  disposeRightSidebarBreakpointTracking,
+  applySidebarLayoutState,
+  collapseRightSidebar,
+  expandRightSidebar,
+} = useWorkspaceSidebarLayout()
 
 const naturalQuery = ref('')
 const major = ref('')
@@ -432,11 +190,6 @@ const openMemberManagementSignal = ref(0)
 const openFlowSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
-const leftSidebarCollapsed = ref(false)
-const rightSidebarUserCollapsed = ref(false)
-const rightSidebarAutoCollapsed = ref(false)
-const rightSidebarAutoRestorePending = ref(false)
-const sidebarLayoutHydrating = ref(false)
 const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const headerSearch = ref('')
 const aiReasoning = ref('')
@@ -470,8 +223,6 @@ let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let unsubscribeRealtimeMessages: (() => void) | null = null
-let rightSidebarBreakpointMediaQuery: MediaQueryList | null = null
-let unsubscribeRightSidebarBreakpoint: (() => void) | null = null
 
 const listLoading = ref(false)
 const aiFiltering = ref(false)
@@ -511,8 +262,6 @@ const workspaceSeatLimitSaveLoading = ref(false)
 const workspaceSeatLimitError = ref('')
 const workspaceSeatLimitUpdatedSignal = ref(0)
 const projectSeatQuota = ref<ProjectSeatQuota | null>(null)
-const rightSidebarCollapsed = computed(() => rightSidebarUserCollapsed.value || rightSidebarAutoCollapsed.value)
-
 function getProjectSettingsDraftStorageKey(projectId: string): string {
   if (!import.meta.client)
     return ''
@@ -530,101 +279,6 @@ function getProjectSettingsDraftDeviceStorageKey(): string {
   if (!userId)
     return ''
   return `${PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX}.${userId}`
-}
-
-function withSidebarLayoutHydrating<T>(callback: () => T): T {
-  sidebarLayoutHydrating.value = true
-  try {
-    return callback()
-  }
-  finally {
-    sidebarLayoutHydrating.value = false
-  }
-}
-
-function applyRightSidebarAutoCollapse(nextCollapsed: boolean, nextRestorePending = rightSidebarAutoRestorePending.value): void {
-  const normalizedCollapsed = Boolean(nextCollapsed)
-  const normalizedRestorePending = Boolean(nextRestorePending)
-  if (
-    rightSidebarAutoCollapsed.value === normalizedCollapsed
-    && rightSidebarAutoRestorePending.value === normalizedRestorePending
-  ) {
-    return
-  }
-
-  withSidebarLayoutHydrating(() => {
-    rightSidebarAutoCollapsed.value = normalizedCollapsed
-    rightSidebarAutoRestorePending.value = normalizedRestorePending
-  })
-}
-
-function handleRightSidebarBreakpointChange(isWide: boolean): void {
-  if (isWide) {
-    if (rightSidebarAutoCollapsed.value || rightSidebarAutoRestorePending.value)
-      applyRightSidebarAutoCollapse(false, false)
-    return
-  }
-
-  if (rightSidebarCollapsed.value)
-    return
-
-  applyRightSidebarAutoCollapse(true, true)
-}
-
-function initializeRightSidebarBreakpointTracking(): void {
-  if (!import.meta.client)
-    return
-
-  if (unsubscribeRightSidebarBreakpoint) {
-    unsubscribeRightSidebarBreakpoint()
-    unsubscribeRightSidebarBreakpoint = null
-  }
-
-  rightSidebarBreakpointMediaQuery = window.matchMedia(RIGHT_SIDEBAR_BREAKPOINT_QUERY)
-  handleRightSidebarBreakpointChange(rightSidebarBreakpointMediaQuery.matches)
-
-  const handleChange = (event: MediaQueryListEvent) => {
-    handleRightSidebarBreakpointChange(event.matches)
-  }
-
-  if (typeof rightSidebarBreakpointMediaQuery.addEventListener === 'function') {
-    rightSidebarBreakpointMediaQuery.addEventListener('change', handleChange)
-    unsubscribeRightSidebarBreakpoint = () => {
-      rightSidebarBreakpointMediaQuery?.removeEventListener('change', handleChange)
-      rightSidebarBreakpointMediaQuery = null
-    }
-    return
-  }
-
-  rightSidebarBreakpointMediaQuery.addListener(handleChange)
-  unsubscribeRightSidebarBreakpoint = () => {
-    rightSidebarBreakpointMediaQuery?.removeListener(handleChange)
-    rightSidebarBreakpointMediaQuery = null
-  }
-}
-
-function setRightSidebarUserCollapsed(nextCollapsed: boolean, options: { suppressPersist?: boolean } = {}): void {
-  const normalizedCollapsed = Boolean(nextCollapsed)
-  const apply = () => {
-    rightSidebarUserCollapsed.value = normalizedCollapsed
-    rightSidebarAutoCollapsed.value = false
-    rightSidebarAutoRestorePending.value = false
-  }
-
-  if (options.suppressPersist) {
-    withSidebarLayoutHydrating(apply)
-    return
-  }
-
-  apply()
-}
-
-function collapseRightSidebar(): void {
-  setRightSidebarUserCollapsed(true)
-}
-
-function expandRightSidebar(): void {
-  setRightSidebarUserCollapsed(false)
 }
 
 function generateProjectSettingsDraftDeviceId(): string {
@@ -723,18 +377,6 @@ function resetChatStateWithGreeting() {
   chatMissingFields.value = []
   defenseRounds.value = []
   defenseScorecard.value = null
-}
-
-function resolveWorkspaceOptions(auth: AuthMeResult | null): WorkspaceWithQuota[] {
-  if (!auth)
-    return []
-  if (Array.isArray(auth.teams) && auth.teams.length > 0) {
-    return auth.teams.map(item => ({
-      workspace: item.team,
-      quota: item.quota,
-    }))
-  }
-  return auth.workspaces || []
 }
 
 const formState = reactive<WorkspaceFormState>({
@@ -1688,22 +1330,6 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
     adaptationDrafts,
     ui: normalizeUi(source.ui),
   }
-}
-
-function applySidebarLayoutState(value: ProjectSettingsDraftUi | null | undefined): void {
-  const nextLeftCollapsed = Boolean(value?.leftSidebarCollapsed)
-  const nextRightCollapsed = Boolean(value?.rightSidebarCollapsed)
-  if (
-    leftSidebarCollapsed.value === nextLeftCollapsed
-    && rightSidebarUserCollapsed.value === nextRightCollapsed
-  ) {
-    return
-  }
-
-  withSidebarLayoutHydrating(() => {
-    leftSidebarCollapsed.value = nextLeftCollapsed
-    rightSidebarUserCollapsed.value = nextRightCollapsed
-  })
 }
 
 function serializeProjectSettingsDraftCachePayload(payload: WorkspaceProjectSettingsDraftCache): string {
@@ -4501,10 +4127,7 @@ onBeforeUnmount(() => {
   clearPreviewStatusPolling()
   clearRealtimeProjectRefreshTimer()
   clearFallbackResourceRefreshTimer()
-  if (unsubscribeRightSidebarBreakpoint) {
-    unsubscribeRightSidebarBreakpoint()
-    unsubscribeRightSidebarBreakpoint = null
-  }
+  disposeRightSidebarBreakpointTracking()
   if (unsubscribeRealtimeMessages) {
     unsubscribeRealtimeMessages()
     unsubscribeRealtimeMessages = null
@@ -4966,7 +4589,6 @@ watch(() => workspaceRealtime.connected.value, () => {
 
 <style scoped>
 .workspace-shell {
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;

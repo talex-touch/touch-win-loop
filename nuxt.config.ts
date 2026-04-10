@@ -49,10 +49,23 @@ export default defineNuxtConfig({
     enabled: true,
   },
 
+  css: [
+    '~/assets/styles/design-tokens.css',
+    '~/assets/styles/ui-primitives.css',
+    '~/assets/styles/user-settings.css',
+    '~/assets/styles/workspace-left-sidebar.css',
+  ],
+
   app: {
     head: {
       viewport: 'width=device-width,initial-scale=1',
       link: [
+        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
+        {
+          rel: 'stylesheet',
+          href: 'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Material+Symbols+Outlined:wght@300;400;500;600;700&display=swap',
+        },
         { rel: 'icon', href: '/favicon.ico', sizes: 'any' },
         { rel: 'icon', type: 'image/svg+xml', href: '/nuxt.svg' },
         { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },

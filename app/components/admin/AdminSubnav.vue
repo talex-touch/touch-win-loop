@@ -14,22 +14,23 @@ function isActive(path: string): boolean {
     return route.path === '/admin'
   return route.path === path || route.path.startsWith(`${path}/`)
 }
+
+const tabItems = computed(() => {
+  return items.map(item => ({
+    key: item.to,
+    label: item.label,
+    to: item.to,
+  }))
+})
+
+const activeKey = computed(() => {
+  const current = items.find(item => isActive(item.to))
+  return current?.to || ''
+})
 </script>
 
 <template>
-  <nav class="p-2 border border-slate-200 rounded-lg bg-white">
-    <div class="flex flex-wrap gap-2">
-      <NuxtLink
-        v-for="item in items"
-        :key="item.to"
-        :to="item.to"
-        class="text-xs font-medium px-3 py-1.5 rounded transition-colors"
-        :class="isActive(item.to)
-          ? 'bg-slate-900 text-white'
-          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-      >
-        {{ item.label }}
-      </NuxtLink>
-    </div>
-  </nav>
+  <SectionCard compact>
+    <PillTabs :items="tabItems" :active-key="activeKey" />
+  </SectionCard>
 </template>

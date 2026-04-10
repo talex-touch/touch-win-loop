@@ -19,32 +19,7 @@ GlobalWorkerOptions.workerSrc = pdfWorkerSrc
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const route = useRoute()
-
-const contestId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.id
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const resourceId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  const value = params.resourceId
-  return Array.isArray(value) ? (value[0] || '') : (value || '')
-})
-
-const isEmbedMode = computed(() => {
-  const value = route.query.embed
-  if (Array.isArray(value))
-    return value[0] === '1'
-  return value === '1'
-})
-
-function withEmbed(path: string): string | { path: string, query: { embed: string } } {
-  if (isEmbedMode.value)
-    return { path, query: { embed: '1' } }
-  return path
-}
+const { contestId, resourceId, withEmbed } = useAdminContestRoute()
 
 function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')

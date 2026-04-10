@@ -27,22 +27,22 @@ function isActive(to: string): boolean {
     return route.path === to
   return route.path === to || route.path.startsWith(`${to}/`)
 }
+
+const tabs = computed(() => {
+  return tabItems.value.map(item => ({
+    key: item.key,
+    label: item.label,
+    to: item.to,
+  }))
+})
+
+const activeKey = computed(() => {
+  return tabItems.value.find(item => isActive(item.to))?.key || ''
+})
 </script>
 
 <template>
-  <nav class="p-2 border border-slate-200 rounded-lg bg-white">
-    <div class="flex flex-wrap gap-2">
-      <NuxtLink
-        v-for="item in tabItems"
-        :key="item.key"
-        :to="item.to"
-        class="text-xs font-medium px-3 py-1.5 rounded transition-colors"
-        :class="isActive(item.to)
-          ? 'bg-slate-900 text-white'
-          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
-      >
-        {{ item.label }}
-      </NuxtLink>
-    </div>
-  </nav>
+  <SectionCard compact>
+    <PillTabs :items="tabs" :active-key="activeKey" />
+  </SectionCard>
 </template>

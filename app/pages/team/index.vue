@@ -90,14 +90,18 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="p-6 flex min-h-[40vh] items-center justify-center">
-    <section class="text-center space-y-3">
-      <p class="text-sm text-slate-500">
-        {{ redirecting ? '正在进入当前项目台...' : '项目台入口暂不可用。' }}
-      </p>
-      <p v-if="errorText" class="text-sm text-rose-600">
-        {{ errorText }}
-      </p>
-    </section>
-  </main>
+  <PageShell size="auth" gap="lg">
+    <PageHeader title="Team 项目台" description="正在根据当前账号上下文选择默认项目台。" />
+
+    <SectionCard>
+      <StateBlock
+        :tone="redirecting ? 'loading' : (errorText ? 'error' : 'default')"
+        :description="redirecting ? '正在进入当前项目台...' : '项目台入口暂不可用。'"
+      >
+        <p v-if="errorText" class="wl-inline-notice wl-inline-notice--error mt-4">
+          {{ errorText }}
+        </p>
+      </StateBlock>
+    </SectionCard>
+  </PageShell>
 </template>

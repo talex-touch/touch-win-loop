@@ -670,7 +670,7 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
   background: #ffffff;
   padding: 4px 8px;
   color: #4b5f83;
-  font-size: 10px;
+  font-size: var(--wl-text-caption);
   line-height: 1.2;
   white-space: nowrap;
   box-shadow: 0 8px 20px rgba(32, 53, 89, 0.12);
@@ -715,12 +715,12 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
 }
 
 .workspace-upload-tray__title {
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
   font-weight: 600;
 }
 
 .workspace-upload-tray__meta {
-  font-size: 10px;
+  font-size: var(--wl-text-caption);
   color: #70819d;
 }
 
@@ -745,14 +745,14 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
 
 .workspace-upload-drawer__title {
   color: #2f466d;
-  font-size: 13px;
+  font-size: var(--wl-text-body-sm);
   font-weight: 700;
 }
 
 .workspace-upload-drawer__subtitle {
   margin-top: 2px;
   color: #8190a7;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
 }
 
 .workspace-upload-drawer__actions {
@@ -768,7 +768,7 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
   border-radius: 8px;
   background: #ffffff;
   color: #45608d;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
   cursor: pointer;
 }
 
@@ -783,7 +783,7 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
 .workspace-upload-drawer__group-title {
   margin-bottom: 8px;
   color: #51627e;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
   font-weight: 700;
 }
 
@@ -816,7 +816,7 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
   justify-content: center;
   background: #e8eefb;
   color: #446087;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
   font-weight: 700;
 }
 
@@ -849,13 +849,13 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
 .workspace-upload-task-row__status {
   flex-shrink: 0;
   color: #6f80a0;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
 }
 
 .workspace-upload-task-row__detail {
   margin-top: 2px;
   color: #8a97ab;
-  font-size: 10px;
+  font-size: var(--wl-text-caption);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -907,7 +907,7 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
   border-radius: 8px;
   background: #ffffff;
   color: #45608d;
-  font-size: 11px;
+  font-size: var(--wl-text-caption);
   cursor: pointer;
 }
 

@@ -83,19 +83,6 @@ const showLoopyFloating = computed(() => {
   return false
 })
 
-useHead({
-  link: [
-    {
-      rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap',
-    },
-    {
-      rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;600;700&display=swap',
-    },
-  ],
-})
-
 useHead(() => ({
   htmlAttrs: {
     class: {
@@ -220,10 +207,6 @@ watch(() => route.fullPath, async () => {
 </template>
 
 <style scoped>
-.dashboard-shell {
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-}
-
 .workspace-fullscreen {
   width: 100%;
   height: 100dvh;
