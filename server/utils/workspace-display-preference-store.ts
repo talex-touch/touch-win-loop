@@ -402,11 +402,9 @@ export async function getWorkspaceDisplayPreferenceSnapshot(
   workspaceId: string,
 ): Promise<WorkspaceDisplayPreferenceSnapshot> {
   const context = await resolveWorkspaceDisplayPreferenceContext(db, user, workspaceId)
-  const [userDefault, rawTeamDefault, workspaceOverride] = await Promise.all([
-    loadUserWorkspaceDisplayDefaultsRow(db, user.id),
-    loadWorkspaceDisplayDefaultsRow(db, workspaceId),
-    loadUserWorkspaceDisplayOverrideRow(db, user.id, workspaceId),
-  ])
+  const userDefault = await loadUserWorkspaceDisplayDefaultsRow(db, user.id)
+  const rawTeamDefault = await loadWorkspaceDisplayDefaultsRow(db, workspaceId)
+  const workspaceOverride = await loadUserWorkspaceDisplayOverrideRow(db, user.id, workspaceId)
 
   const teamDefault = context.workspace.type === 'team' ? rawTeamDefault : null
   const resolved = resolveEffectiveWorkspaceDisplayPreferences({

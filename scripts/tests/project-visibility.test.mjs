@@ -121,8 +121,8 @@ it('项目列表返回项目席位摘要，避免前端逐项目补请求', asyn
 
   assert.match(
     source,
-    /const \[bindings, projectSeatQuotaMap, projectMemberPreviewMap\] = await Promise\.all\(\[\s+loadProjectBindingsByIds\(db, projectIds\),\s+listProjectSeatQuotaSummaryByProjectIds\(db, projectIds\),\s+listProjectMemberPreviewByProjectIds\(db, projectIds\),\s+\]\)/,
-    'loadProjectsFromRows 未批量加载项目席位摘要，可能导致前端 N+1 请求',
+    /const bindings = await loadProjectBindingsByIds\(db, projectIds\)\s+const projectSeatQuotaMap = await listProjectSeatQuotaSummaryByProjectIds\(db, projectIds\)\s+const projectMemberPreviewMap = await listProjectMemberPreviewByProjectIds\(db, projectIds\)/,
+    'loadProjectsFromRows 未改为顺序查询，单连接场景仍可能触发 pg 并发告警',
   )
   assert.match(
     source,

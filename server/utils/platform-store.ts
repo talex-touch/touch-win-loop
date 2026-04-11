@@ -1374,11 +1374,10 @@ async function loadMappedProjectById(db: Queryable, projectId: string): Promise<
   if (!row)
     return null
 
-  const [{ collegeMap, advisorMap }, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
-    loadProjectBindingsByIds(db, [projectId]),
-    listProjectSeatQuotaSummaryByProjectIds(db, [projectId]),
-    listProjectMemberPreviewByProjectIds(db, [projectId]),
-  ])
+  const bindings = await loadProjectBindingsByIds(db, [projectId])
+  const projectSeatQuotaMap = await listProjectSeatQuotaSummaryByProjectIds(db, [projectId])
+  const projectMemberPreviewMap = await listProjectMemberPreviewByProjectIds(db, [projectId])
+  const { collegeMap, advisorMap } = bindings
   return mapProject(
     row,
     collegeMap.get(projectId) || [],
@@ -2109,11 +2108,10 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
   if (input.advisorUserIds)
     await replaceAdvisorBindings(db, projectId, input.creatorUserId, input.advisorUserIds)
 
-  const [{ collegeMap, advisorMap }, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
-    loadProjectBindingsByIds(db, [projectId]),
-    listProjectSeatQuotaSummaryByProjectIds(db, [projectId]),
-    listProjectMemberPreviewByProjectIds(db, [projectId]),
-  ])
+  const bindings = await loadProjectBindingsByIds(db, [projectId])
+  const projectSeatQuotaMap = await listProjectSeatQuotaSummaryByProjectIds(db, [projectId])
+  const projectMemberPreviewMap = await listProjectMemberPreviewByProjectIds(db, [projectId])
+  const { collegeMap, advisorMap } = bindings
 
   return mapProject(
     row,
@@ -2161,11 +2159,9 @@ export async function batchCreateProjects(
 
 async function loadProjectsFromRows(db: Queryable, rows: ProjectRow[]): Promise<Project[]> {
   const projectIds = rows.map(row => row.id)
-  const [bindings, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
-    loadProjectBindingsByIds(db, projectIds),
-    listProjectSeatQuotaSummaryByProjectIds(db, projectIds),
-    listProjectMemberPreviewByProjectIds(db, projectIds),
-  ])
+  const bindings = await loadProjectBindingsByIds(db, projectIds)
+  const projectSeatQuotaMap = await listProjectSeatQuotaSummaryByProjectIds(db, projectIds)
+  const projectMemberPreviewMap = await listProjectMemberPreviewByProjectIds(db, projectIds)
   const { collegeMap, advisorMap } = bindings
 
   return rows.map(row => mapProject(
@@ -2947,11 +2943,9 @@ export async function getProjectMemberManagementSnapshot(
   await ensureProjectSeatQuota(db, projectId, project.workspaceId)
   await refreshProjectSeatUsage(db, projectId)
 
-  const [members, invitations, seatQuota] = await Promise.all([
-    listProjectMembersByProjectId(db, projectId),
-    listProjectInvitationsByProjectId(db, projectId),
-    getProjectSeatQuotaByProjectId(db, projectId),
-  ])
+  const members = await listProjectMembersByProjectId(db, projectId)
+  const invitations = await listProjectInvitationsByProjectId(db, projectId)
+  const seatQuota = await getProjectSeatQuotaByProjectId(db, projectId)
 
   return {
     projectId,
@@ -3468,11 +3462,10 @@ export async function patchProjectBindings(
   if (!row)
     return null
 
-  const [{ collegeMap, advisorMap }, projectSeatQuotaMap, projectMemberPreviewMap] = await Promise.all([
-    loadProjectBindingsByIds(db, [projectId]),
-    listProjectSeatQuotaSummaryByProjectIds(db, [projectId]),
-    listProjectMemberPreviewByProjectIds(db, [projectId]),
-  ])
+  const bindings = await loadProjectBindingsByIds(db, [projectId])
+  const projectSeatQuotaMap = await listProjectSeatQuotaSummaryByProjectIds(db, [projectId])
+  const projectMemberPreviewMap = await listProjectMemberPreviewByProjectIds(db, [projectId])
+  const { collegeMap, advisorMap } = bindings
 
   return mapProject(
     row,

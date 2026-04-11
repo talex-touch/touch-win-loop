@@ -1416,7 +1416,7 @@ export async function bindLibraryResourceToProject(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, 'library', 'binary', $5, $6, $7, $8, $9, $10, $11, $12, $13::JSONB, 'active', $14, $14, $15, $15
+      $1, $2, $3, $4, 'library', 'binary', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::JSONB, 'active', $15, $15, $16, $16
     )
     RETURNING
       id,
@@ -1537,7 +1537,7 @@ export async function createProjectUploadedResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, 'upload', 'binary', NULL, $5, $6, $7, $8, $9, $10, '', $11::JSONB, 'active', $12, $12, $13, $13
+      $1, $2, $3, $4, 'upload', 'binary', NULL, $5, $6, $7, $8, $9, $10, $11, '', $12::JSONB, 'active', $13, $13, $14, $14
     )`,
     [
       resourceId,
@@ -1659,7 +1659,7 @@ export async function createProjectCollabResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, 'collab', $5, NULL, $6, $7, $8, $9, $10, $11, '', $12::JSONB, 'active', $13, $13, $14, $14
+      $1, $2, $3, $4, 'collab', $5, NULL, $6, $7, $8, $9, $10, $11, $12, '', $13::JSONB, 'active', $14, $14, $15, $15
     )`,
     [
       resourceId,
@@ -2160,7 +2160,7 @@ export async function duplicateProjectResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, 'binary', $6, $7, $8, $9, $10, $11, $12, $13, $14::JSONB, 'active', $15, $15, $16, $16
+      $1, $2, $3, $4, $5, 'binary', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::JSONB, 'active', $16, $16, $17, $17
     )`,
     [
       duplicatedResourceId,
