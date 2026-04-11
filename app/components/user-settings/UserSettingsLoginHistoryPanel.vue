@@ -33,17 +33,17 @@ const props = withDefaults(defineProps<{
       >
         <div class="min-w-0">
           <div class="flex flex-wrap gap-2 items-center">
-            <p class="text-sm text-slate-900 font-semibold">
+            <p class="user-settings-name">
               {{ props.formatDateTime(session.createdAt) }}
             </p>
             <span :class="props.resolveSessionStatusClass(session.status)">
               {{ props.formatSessionStatusLabel(session.status) }}
             </span>
           </div>
-          <p class="text-xs text-slate-500 mt-2">
+          <p class="user-settings-meta mt-2">
             有效至 {{ props.formatDateTime(session.expiresAt) }}
           </p>
-          <p class="text-xs text-slate-400 font-mono mt-2 break-all">
+          <p class="user-settings-meta user-settings-meta--mono mt-2 break-all">
             session: {{ session.id }}
           </p>
         </div>

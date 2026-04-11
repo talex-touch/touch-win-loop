@@ -135,7 +135,7 @@ const emit = defineEmits<{
                 修改
               </button>
             </div>
-            <p class="text-sm text-slate-500">
+            <p class="user-settings-copy">
               {{ props.canRenameCurrentWorkspace ? '当前工作空间名称可直接修改。' : '当前工作空间名称仅具备管理权限的成员可修改。' }}
             </p>
             <p v-if="props.workspaceNameError" class="user-settings-feedback user-settings-feedback--danger">
@@ -168,7 +168,7 @@ const emit = defineEmits<{
                 {{ props.workspaceTypeActionLabel }}
               </button>
             </div>
-            <p class="text-sm text-slate-500">
+            <p class="user-settings-copy">
               {{ props.workspaceTypeActionHint }}
             </p>
           </div>
@@ -189,7 +189,7 @@ const emit = defineEmits<{
             <div class="user-settings-overview-row__main">
               <div class="user-settings-overview-value-group">
                 <span class="user-settings-overview-value">{{ props.seatSummaryText }}</span>
-                <span class="text-sm text-slate-500">{{ props.quotaResetCycleText }}</span>
+                <span class="user-settings-copy">{{ props.quotaResetCycleText }}</span>
               </div>
               <div class="user-settings-overview-actions">
                 <button class="user-settings-btn user-settings-btn--compact" @click="emit('selectMembersTab')">
@@ -204,7 +204,7 @@ const emit = defineEmits<{
                 </button>
               </div>
             </div>
-            <p class="text-sm text-slate-500">
+            <p class="user-settings-copy">
               {{ props.seatDetailText }}
             </p>
           </div>
@@ -240,7 +240,7 @@ const emit = defineEmits<{
         </p>
       </div>
       <div class="user-settings-row__content user-settings-row__content--start">
-        <div class="text-sm text-slate-500">
+        <div class="user-settings-copy">
           当前账号暂无可见工作空间信息。
         </div>
       </div>

@@ -47,7 +47,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="space-y-10">
+  <div class="space-y-8">
     <section class="user-settings-panel">
       <div class="user-settings-row">
         <div class="user-settings-row__heading">
@@ -65,10 +65,10 @@ const emit = defineEmits<{
           >
             {{ props.feishuBindStatus?.linked ? '已绑定' : '未绑定' }}
           </span>
-          <p v-if="props.feishuBindStatus?.linked && props.feishuBindStatus.unionId" class="text-sm text-slate-500 break-all">
+          <p v-if="props.feishuBindStatus?.linked && props.feishuBindStatus.unionId" class="user-settings-copy break-all">
             unionId：{{ props.feishuBindStatus.unionId }}
           </p>
-          <p v-if="props.feishuBindStatus?.linked && props.feishuBindStatus.updatedAt" class="text-sm text-slate-500">
+          <p v-if="props.feishuBindStatus?.linked && props.feishuBindStatus.updatedAt" class="user-settings-copy">
             最近同步：{{ props.formatDateTime(props.feishuBindStatus.updatedAt) }}
           </p>
           <div class="flex flex-wrap gap-2 justify-end">
@@ -98,13 +98,13 @@ const emit = defineEmits<{
             {{ props.feishuBindSuccess }}
           </p>
           <div v-if="props.feishuUnbindConfirmVisible" class="user-settings-feedback user-settings-feedback--danger space-y-3">
-            <p class="text-xs text-rose-700">
+            <p class="user-settings-meta">
               解绑后将移除当前账号所有飞书身份映射。请输入 <span class="font-mono">UNBIND</span> 确认。
             </p>
             <input
               :value="props.feishuUnbindConfirmText"
               type="text"
-              class="text-sm px-3 py-2 outline-none border border-rose-300 rounded-xl w-full transition focus:border-rose-500"
+              class="user-settings-input border-rose-300 focus:border-rose-500"
               placeholder="输入 UNBIND"
               :disabled="props.feishuUnbinding"
               @input="emit('updateFeishuUnbindConfirmText', ($event.target as HTMLInputElement).value)"
@@ -139,10 +139,10 @@ const emit = defineEmits<{
           >
             {{ props.oauthBindStatus?.linked ? '已绑定' : '未绑定' }}
           </span>
-          <p v-if="props.oauthBindStatus?.linked && props.oauthBindStatus.subject" class="text-sm text-slate-500 break-all">
+          <p v-if="props.oauthBindStatus?.linked && props.oauthBindStatus.subject" class="user-settings-copy break-all">
             sub：{{ props.oauthBindStatus.subject }}
           </p>
-          <p v-if="props.oauthBindStatus?.linked && props.oauthBindStatus.updatedAt" class="text-sm text-slate-500">
+          <p v-if="props.oauthBindStatus?.linked && props.oauthBindStatus.updatedAt" class="user-settings-copy">
             最近同步：{{ props.formatDateTime(props.oauthBindStatus.updatedAt) }}
           </p>
           <div class="flex flex-wrap gap-2 justify-end">
@@ -160,7 +160,7 @@ const emit = defineEmits<{
           <p v-if="props.oauthBindError" class="user-settings-feedback user-settings-feedback--danger">
             {{ props.oauthBindError }}
           </p>
-          <p v-if="!props.oauthEnabled" class="text-sm text-slate-500">
+          <p v-if="!props.oauthEnabled" class="user-settings-copy">
             当前环境未启用第三方 OAuth 登录。
           </p>
         </div>

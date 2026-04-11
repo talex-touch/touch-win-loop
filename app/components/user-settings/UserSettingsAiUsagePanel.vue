@@ -50,7 +50,7 @@ const emit = defineEmits<{
       <section class="user-settings-card">
         <div class="flex gap-4 items-start justify-between">
           <div class="min-w-0">
-            <p class="text-sm text-slate-500 font-medium">
+            <p class="user-settings-copy">
               AI 配额
             </p>
             <div class="mt-2 flex gap-2 items-end">
@@ -59,7 +59,7 @@ const emit = defineEmits<{
               </p>
               <span class="user-settings-ai-unit">credits</span>
             </div>
-            <p class="text-sm text-slate-500 mt-2">
+            <p class="user-settings-copy mt-2">
               已用 {{ props.aiQuotaUsageText }}，剩余 {{ props.aiQuotaRemainingCount }} credits
             </p>
           </div>
@@ -99,20 +99,20 @@ const emit = defineEmits<{
       <section class="user-settings-card">
         <div class="user-settings-section-header">
           <div>
-            <p class="text-base text-slate-900 font-semibold">
+            <p class="user-settings-section-title">
               配额同步记录
             </p>
-            <p class="text-sm text-slate-500 mt-1">
+            <p class="user-settings-copy mt-1">
               当前展示最近一次配额同步时间。
             </p>
           </div>
         </div>
         <div class="user-settings-record-item">
           <div class="min-w-0">
-            <p class="text-sm text-slate-900 font-medium">
+            <p class="user-settings-name">
               最近一次同步
             </p>
-            <p class="text-sm text-slate-500 mt-1">
+            <p class="user-settings-copy mt-1">
               {{ props.quotaUpdatedAtText }}
             </p>
           </div>
@@ -122,10 +122,10 @@ const emit = defineEmits<{
       <section class="user-settings-card">
         <div class="user-settings-section-header">
           <div>
-            <p class="text-base text-slate-900 font-semibold">
+            <p class="user-settings-section-title">
               成员消耗占比
             </p>
-            <p class="text-sm text-slate-500 mt-1">
+            <p class="user-settings-copy mt-1">
               按当前工作空间累计消耗统计。
             </p>
           </div>
@@ -148,20 +148,20 @@ const emit = defineEmits<{
                     {{ props.resolveInitial(member.username) }}
                   </div>
                   <div class="min-w-0">
-                    <p class="text-sm text-slate-900 font-medium truncate">
+                    <p class="user-settings-name truncate">
                       {{ member.username }}
                     </p>
-                    <p class="text-xs text-slate-500 mt-1">
+                    <p class="user-settings-meta mt-1">
                       {{ member.calls }} 次调用 · 最近消耗：{{ member.lastUsedAt ? props.formatDateTime(member.lastUsedAt) : '暂无记录' }}
                     </p>
                   </div>
                 </div>
               </div>
               <div class="text-right">
-                <p class="text-sm text-slate-900 font-semibold">
+                <p class="user-settings-name">
                   {{ member.units }} credits
                 </p>
-                <p class="text-xs text-slate-500 mt-1">
+                <p class="user-settings-meta mt-1">
                   {{ props.resolveMemberUsagePercent(member) }}
                 </p>
               </div>
@@ -180,10 +180,10 @@ const emit = defineEmits<{
       <section class="user-settings-card">
         <div class="user-settings-section-header">
           <div>
-            <p class="text-base text-slate-900 font-semibold">
+            <p class="user-settings-section-title">
               消耗历史
             </p>
-            <p class="text-sm text-slate-500 mt-1">
+            <p class="user-settings-copy mt-1">
               当前共 {{ props.aiUsage?.total || 0 }} 条记录，累计 {{ props.aiUsage?.totalUnits || 0 }} credits。
             </p>
           </div>
@@ -201,17 +201,17 @@ const emit = defineEmits<{
           >
             <div class="flex-1 min-w-0">
               <div class="flex flex-wrap gap-2 items-center">
-                <p class="text-sm text-slate-900 font-semibold">
+                <p class="user-settings-name">
                   {{ props.formatAiRouteLabel(item.route) }}
                 </p>
                 <span class="user-settings-chip">
                   {{ item.units }} credits
                 </span>
               </div>
-              <p class="text-xs text-slate-500 mt-2">
+              <p class="user-settings-meta mt-2">
                 {{ item.username }} · {{ props.formatDateTime(item.createdAt) }}
               </p>
-              <p class="text-xs text-slate-400 font-mono mt-1 break-all">
+              <p class="user-settings-meta user-settings-meta--mono mt-1 break-all">
                 {{ item.route }}
               </p>
             </div>
@@ -230,7 +230,7 @@ const emit = defineEmits<{
           >
             上一页
           </button>
-          <span class="text-xs text-slate-500">
+          <span class="user-settings-meta">
             第 {{ props.aiUsagePage }} / {{ props.aiUsageTotalPages }} 页
           </span>
           <button

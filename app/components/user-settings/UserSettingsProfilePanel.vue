@@ -41,7 +41,7 @@ const emit = defineEmits<{
               <span v-else>{{ props.userInitial }}</span>
             </div>
             <div class="user-settings-profile-meta">
-              <p class="text-lg text-slate-900 font-semibold">
+              <p class="user-settings-name">
                 {{ props.userName }}
               </p>
               <div v-if="props.userIdentityItems.length" class="user-settings-identity-list">

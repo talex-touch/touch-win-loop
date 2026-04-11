@@ -54,10 +54,10 @@ const emit = defineEmits<{
       <section class="user-settings-card">
         <div class="user-settings-section-header">
           <div>
-            <p class="text-base text-slate-900 font-semibold">
+            <p class="user-settings-section-title">
               工作空间成员
             </p>
-            <p class="text-sm text-slate-500 mt-1">
+            <p class="user-settings-copy mt-1">
               {{ props.memberSummaryText }}
             </p>
           </div>
@@ -90,13 +90,13 @@ const emit = defineEmits<{
               {{ props.resolveInitial(member.username) }}
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-sm text-slate-900 font-medium truncate">
+              <p class="user-settings-name truncate">
                 {{ member.username }}
               </p>
-              <p class="text-xs text-slate-500 mt-1">
+              <p class="user-settings-meta mt-1">
                 加入时间 {{ props.formatDateTime(member.joinedAt) }}
               </p>
-              <p class="text-xs text-slate-500 mt-1">
+              <p class="user-settings-meta mt-1">
                 当前权限 {{ props.resolveMemberRoleLabel(member) }} · 最近更新 {{ props.formatDateTime(member.updatedAt) }}
               </p>
             </div>
@@ -139,10 +139,10 @@ const emit = defineEmits<{
       <section class="user-settings-card">
         <div class="user-settings-section-header">
           <div>
-            <p class="text-base text-slate-900 font-semibold">
+            <p class="user-settings-section-title">
               邀请记录
             </p>
-            <p class="text-sm text-slate-500 mt-1">
+            <p class="user-settings-copy mt-1">
               展示当前工作空间待接受或已过期的邀请，以及邀请人信息。
             </p>
           </div>
@@ -156,7 +156,7 @@ const emit = defineEmits<{
           >
             <div class="flex-1 min-w-0">
               <div class="flex flex-wrap gap-2 items-center">
-                <p class="text-sm text-slate-900 font-semibold">
+                <p class="user-settings-name">
                   {{ invitation.inviteeUsername || '任意账号可加入' }}
                 </p>
                 <span class="user-settings-chip">
@@ -166,10 +166,10 @@ const emit = defineEmits<{
                   {{ props.resolveInvitationStatusLabel(invitation) }}
                 </span>
               </div>
-              <p class="text-xs text-slate-500 mt-2">
+              <p class="user-settings-meta mt-2">
                 邀请人 {{ invitation.invitedByUsername }} · 创建于 {{ props.formatDateTime(invitation.createdAt) }}
               </p>
-              <p class="text-xs text-slate-500 mt-1">
+              <p class="user-settings-meta mt-1">
                 过期时间 {{ props.formatDateTime(invitation.expiresAt) }}
               </p>
             </div>

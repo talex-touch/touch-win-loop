@@ -33,7 +33,7 @@ const emit = defineEmits<{
             {{ props.feishuAuditLoading ? '加载中...' : '刷新' }}
           </button>
         </div>
-        <div v-if="!props.feishuAudits.length" class="text-sm text-slate-500 px-4 py-4 border border-slate-200 rounded-2xl border-dashed bg-slate-50 w-full">
+        <div v-if="!props.feishuAudits.length" class="user-settings-empty">
           暂无绑定/解绑记录
         </div>
         <div v-else class="w-full space-y-3">
@@ -42,8 +42,8 @@ const emit = defineEmits<{
             :key="item.id"
             class="py-4 border-b border-slate-200 flex flex-wrap gap-3 items-center justify-between last:border-b-0"
           >
-            <span class="text-sm text-slate-700 font-medium">{{ props.formatAuditAction(item.action) }}</span>
-            <span class="text-xs text-slate-500 font-mono">{{ props.formatDateTime(item.createdAt) }}</span>
+            <span class="user-settings-name">{{ props.formatAuditAction(item.action) }}</span>
+            <span class="user-settings-meta user-settings-meta--mono">{{ props.formatDateTime(item.createdAt) }}</span>
           </div>
         </div>
       </div>
