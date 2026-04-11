@@ -146,3 +146,13 @@ it('统一样式基座接管的 primitive 与 admin 资源页不再散落裸 hex
     assert.doesNotMatch(source, HEX_COLOR_RE, `${file} 仍包含裸 hex 颜色`)
   }
 })
+
+it('用户设置共享样式维持紧凑字号与密度基线', async () => {
+  const source = await readProjectFile('app/assets/styles/user-settings.css')
+
+  assert.doesNotMatch(source, /var\(--wl-text-display\)/, 'user-settings.css 不应再使用 display 级别字号')
+  assert.match(source, /\.user-settings-row__title\s*\{[\s\S]*?font-size: var\(--wl-text-body\);/, '用户设置 row title 未回调到 body 级字号')
+  assert.match(source, /\.user-settings-section-title\s*\{[\s\S]*?font-size: var\(--wl-text-body\);/, '用户设置 section title 未回调到 body 级字号')
+  assert.match(source, /\.user-settings-copy\s*\{[\s\S]*?font-size: var\(--wl-text-body-sm\);/, '用户设置说明文字未回调到 body-sm 级字号')
+  assert.match(source, /\.user-settings-meta\s*\{[\s\S]*?font-size: var\(--wl-text-caption\);/, '用户设置次级信息未回调到 caption 级字号')
+})

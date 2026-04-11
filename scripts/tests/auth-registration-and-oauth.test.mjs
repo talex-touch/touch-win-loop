@@ -52,6 +52,9 @@ it('登录页提供第三方 OAuth 入口并根据注册开关切换文案', asy
   ])
 
   assert.match(pageSource, /useLoginPage\(/, '登录页未抽离登录逻辑 composable')
+  assert.match(pageSource, /import UniverseBackground/, '登录页未恢复 UniverseBackground 背景层')
+  assert.match(pageSource, /<UniverseBackground\b/, '登录页未渲染 UniverseBackground 背景层')
+  assert.doesNotMatch(pageSource, /<PageShell size="auth"/, '登录页不应再完全复用统一 auth shell')
   assert.match(composableSource, /manualOauthLogin/, '登录页未接入第三方 OAuth 登录动作')
   assert.match(composableSource, /\/auth\/oauth\/authorize\?redirect=/, '登录页未跳转 OAuth authorize 接口')
   assert.match(composableSource, /DEFAULT_OAUTH_DISPLAY_NAME/, '登录页未提供默认 OAuth 显示名称')
