@@ -1024,9 +1024,9 @@ async function loadPreviewMetrics(db: Queryable): Promise<PreviewMetricsRow> {
        COUNT(*)::INTEGER AS total_calls_24h,
        COUNT(*) FILTER (WHERE status = 'succeeded')::INTEGER AS succeeded_calls_24h,
        COUNT(*) FILTER (WHERE status = 'failed')::INTEGER AS failed_calls_24h,
-       COALESCE(queue.queued_count, 0)::INTEGER AS queued_count,
-       COALESCE(queue.processing_count, 0)::INTEGER AS processing_count,
-       COALESCE(queue.oldest_queued_minutes, 0)::DOUBLE PRECISION AS oldest_queued_minutes
+       COALESCE(MAX(queue.queued_count), 0)::INTEGER AS queued_count,
+       COALESCE(MAX(queue.processing_count), 0)::INTEGER AS processing_count,
+       COALESCE(MAX(queue.oldest_queued_minutes), 0)::DOUBLE PRECISION AS oldest_queued_minutes
      FROM task_window, queue`,
   )
 
