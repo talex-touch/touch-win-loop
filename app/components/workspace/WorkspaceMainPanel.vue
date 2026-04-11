@@ -449,9 +449,8 @@ const WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS: Record<WorkspaceSettingsSeconda
   myDisplay: 'workspace-settings-tab-myDisplay',
   teamDefault: 'workspace-settings-tab-teamDefault',
 }
+const WORKSPACE_FONT_SIZE_PRESET_ORDER: WorkspaceFontSizePreset[] = WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(item => item.value)
 const WORKSPACE_TAB_SPACING_PRESET_ORDER: WorkspaceTabSpacingPreset[] = ['compact', 'default', 'relaxed']
-const WORKSPACE_DISPLAY_RECOMMENDED_FONT_SIZE_PRESET: WorkspaceFontSizePreset = 'md'
-const WORKSPACE_DISPLAY_RECOMMENDED_TAB_SPACING_PRESET: WorkspaceTabSpacingPreset = 'compact'
 const userWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
 const userWorkspaceDisplayTabSpacingDraft = ref<NullableWorkspaceTabSpacingPreset>('')
 const teamWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
@@ -645,6 +644,11 @@ function normalizeWorkspaceTabSpacingSliderIndex(value: WorkspaceTabSpacingPrese
   return matchedIndex >= 0 ? matchedIndex : 1
 }
 
+function normalizeWorkspaceFontSizeSliderIndex(value: WorkspaceFontSizePreset | null | undefined): number {
+  const matchedIndex = WORKSPACE_FONT_SIZE_PRESET_ORDER.findIndex(item => item === value)
+  return matchedIndex >= 0 ? matchedIndex : WORKSPACE_FONT_SIZE_PRESET_ORDER.indexOf('md')
+}
+
 function applyWorkspaceDisplayPreferenceDrafts(snapshot: WorkspaceDisplayPreferenceSnapshot): void {
   userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(snapshot.workspaceOverride?.fontSizePreset)
   userWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(snapshot.workspaceOverride?.tabSpacingPreset)
@@ -652,12 +656,52 @@ function applyWorkspaceDisplayPreferenceDrafts(snapshot: WorkspaceDisplayPrefere
   teamWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(snapshot.teamDefault?.tabSpacingPreset)
 }
 
+const workspaceDisplayRecommendedFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  if (props.workspaceDisplayPreferences.userDefault?.fontSizePreset)
+    return props.workspaceDisplayPreferences.userDefault.fontSizePreset
+  if (props.workspaceType === 'team' && props.workspaceDisplayPreferences.teamDefault?.fontSizePreset)
+    return props.workspaceDisplayPreferences.teamDefault.fontSizePreset
+  return 'md'
+})
+
+const workspaceDisplayRecommendedTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  if (props.workspaceDisplayPreferences.userDefault?.tabSpacingPreset)
+    return props.workspaceDisplayPreferences.userDefault.tabSpacingPreset
+  if (props.workspaceType === 'team' && props.workspaceDisplayPreferences.teamDefault?.tabSpacingPreset)
+    return props.workspaceDisplayPreferences.teamDefault.tabSpacingPreset
+  return 'default'
+})
+
+const workspaceDisplayRecommendedTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(workspaceDisplayRecommendedTabSpacingPreset.value)
+})
+
+const userWorkspaceDisplayPreviewFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  return userWorkspaceDisplayFontSizeDraft.value || workspaceDisplayRecommendedFontSizePreset.value
+})
+
+const userWorkspaceDisplayPreviewTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  return userWorkspaceDisplayTabSpacingDraft.value || workspaceDisplayRecommendedTabSpacingPreset.value
+})
+
+const userWorkspaceDisplayPreviewTabSpacingLabel = computed(() => {
+  return resolveWorkspaceTabSpacingPresetLabel(userWorkspaceDisplayPreviewTabSpacingPreset.value)
+})
+
+const userWorkspaceDisplaySliderValue = computed(() => {
+  return normalizeWorkspaceFontSizeSliderIndex(userWorkspaceDisplayPreviewFontSizePreset.value)
+})
+
+const userWorkspaceDisplaySliderProgress = computed(() => {
+  return resolveWorkspaceDisplaySliderProgress(userWorkspaceDisplaySliderValue.value, WORKSPACE_FONT_SIZE_PRESET_ORDER.length)
+})
+
 const userWorkspaceDisplayTabSpacingSliderValue = computed(() => {
-  return normalizeWorkspaceTabSpacingSliderIndex(userWorkspaceDisplayTabSpacingDraft.value || undefined)
+  return normalizeWorkspaceTabSpacingSliderIndex(userWorkspaceDisplayPreviewTabSpacingPreset.value)
 })
 
 const userWorkspaceDisplayTabSpacingSliderProgress = computed(() => {
-  return `${(userWorkspaceDisplayTabSpacingSliderValue.value / (WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1)) * 100}%`
+  return resolveWorkspaceDisplaySliderProgress(userWorkspaceDisplayTabSpacingSliderValue.value, WORKSPACE_TAB_SPACING_PRESET_ORDER.length)
 })
 
 const teamWorkspaceDisplayTabSpacingSliderValue = computed(() => {
@@ -665,7 +709,7 @@ const teamWorkspaceDisplayTabSpacingSliderValue = computed(() => {
 })
 
 const teamWorkspaceDisplayTabSpacingSliderProgress = computed(() => {
-  return `${(teamWorkspaceDisplayTabSpacingSliderValue.value / (WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1)) * 100}%`
+  return resolveWorkspaceDisplaySliderProgress(teamWorkspaceDisplayTabSpacingSliderValue.value, WORKSPACE_TAB_SPACING_PRESET_ORDER.length)
 })
 
 const userWorkspaceDisplaySourceSummary = computed(() => {
@@ -691,14 +735,34 @@ function updateUserWorkspaceDisplayTabSpacingDraft(value: string | number): void
   userWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_TAB_SPACING_PRESET_ORDER[index] || 'default'
 }
 
+function resolveWorkspaceDisplaySliderProgress(value: number, total: number): string {
+  const maxIndex = Math.max(1, total - 1)
+  const normalizedValue = Number.isFinite(value) ? Math.min(maxIndex, Math.max(0, value)) : 0
+  return `${(normalizedValue / maxIndex) * 100}%`
+}
+
+function updateUserWorkspaceDisplayFontSizeDraft(value: string | number): void {
+  const index = Math.max(0, Math.min(WORKSPACE_FONT_SIZE_PRESET_ORDER.length - 1, Number(value)))
+  userWorkspaceDisplayFontSizeDraft.value = WORKSPACE_FONT_SIZE_PRESET_ORDER[index] || 'md'
+}
+
 function updateTeamWorkspaceDisplayTabSpacingDraft(value: string | number): void {
   const index = Math.max(0, Math.min(WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1, Number(value)))
   teamWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_TAB_SPACING_PRESET_ORDER[index] || 'default'
 }
 
+function resolveWorkspaceDisplaySliderStopLeft(index: number, total: number): string {
+  const lastIndex = Math.max(0, total - 1)
+  if (index <= 0)
+    return '4px'
+  if (index >= lastIndex)
+    return 'calc(100% - 4px)'
+  return `${(index / lastIndex) * 100}%`
+}
+
 function restoreRecommendedWorkspaceDisplay(): void {
-  userWorkspaceDisplayFontSizeDraft.value = WORKSPACE_DISPLAY_RECOMMENDED_FONT_SIZE_PRESET
-  userWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_DISPLAY_RECOMMENDED_TAB_SPACING_PRESET
+  userWorkspaceDisplayFontSizeDraft.value = workspaceDisplayRecommendedFontSizePreset.value
+  userWorkspaceDisplayTabSpacingDraft.value = workspaceDisplayRecommendedTabSpacingPreset.value
 }
 
 function saveWorkspaceDisplayUserOverride(): void {
@@ -2164,101 +2228,170 @@ watch(activeTabId, (next) => {
               {{ props.workspaceDisplayPreferencesError }}
             </div>
 
-            <div class="gap-4 grid md:grid-cols-2">
-              <label class="text-xs text-slate-600 block space-y-1.5">
-                <span class="text-slate-700 font-semibold">字号大小</span>
-                <select
-                  :value="userWorkspaceDisplayFontSizeDraft"
-                  data-testid="workspace-display-user-font-size-select"
-                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-                  @change="userWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">
-                    跟随工作区当前生效值
-                  </option>
-                  <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`workspace-font-size-${option.value}`" :value="option.value">
-                    {{ option.label }}
-                  </option>
-                </select>
-                <div class="text-[11px] text-slate-500">
-                  当前来源：{{ userWorkspaceDisplaySourceSummary }}
-                </div>
-              </label>
-
-              <label class="text-xs text-slate-600 block space-y-1.5">
-                <span class="text-slate-700 font-semibold">标签边距</span>
-                <select
-                  :value="userWorkspaceDisplayTabSpacingDraft"
-                  data-testid="workspace-display-user-tab-spacing-select"
-                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-                  @change="userWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">
-                    跟随工作区当前生效值
-                  </option>
-                  <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`workspace-tab-spacing-${option.value}`" :value="option.value">
-                    {{ option.label }}
-                  </option>
-                </select>
-                <div class="text-[11px] text-slate-500 flex gap-2 items-center">
-                  <span data-testid="workspace-display-recommended-tag" class="text-blue-700 font-semibold px-2 py-0.5 rounded-full bg-blue-50 inline-flex items-center">
-                    推荐
-                  </span>
-                  <span class="workspace-display-slider-label__tooltip" :title="recommendedWorkspaceDisplayTagText">
-                    {{ recommendedWorkspaceDisplayTagText }}
-                  </span>
-                </div>
-              </label>
+            <div v-if="props.workspaceDisplayPreferencesLoading" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
+              正在加载显示偏好...
             </div>
 
-            <div class="px-4 py-3 border border-slate-200 rounded-2xl bg-slate-50/70 space-y-3">
-              <div class="flex gap-3 items-center justify-between">
+            <template v-else>
+              <section class="border border-slate-200 rounded-2xl bg-slate-50/70 p-4 space-y-4">
                 <div>
-                  <div class="text-xs text-slate-700 font-semibold">
-                    标签边距预览
-                  </div>
+                  <h4 class="text-sm text-slate-900 font-semibold">
+                    外观设置
+                  </h4>
                   <p class="text-[11px] text-slate-500 mt-1">
-                    紧凑档会压缩顶部标签页的横向边距和最小宽度
+                    当前生效：{{ workspaceDisplayEffectiveSummary }}
                   </p>
                 </div>
-                <button
-                  class="text-xs text-blue-700 font-semibold"
-                  type="button"
-                  @click="restoreRecommendedWorkspaceDisplay"
-                >
-                  还原为工作区推荐设置
-                </button>
-              </div>
 
-              <div class="space-y-2">
-                <div class="rounded-full bg-slate-200 h-2 overflow-hidden">
-                  <div class="rounded-full bg-blue-500 h-full transition-all" :style="{ width: userWorkspaceDisplayTabSpacingSliderProgress }" />
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between text-xs text-slate-600">
+                    <span>字体大小</span>
+                  </div>
+
+                  <div class="workspace-display-slider-shell">
+                    <div class="workspace-display-slider-track" aria-hidden="true">
+                      <div
+                        class="workspace-display-slider-track__fill"
+                        :style="{ width: userWorkspaceDisplaySliderProgress }"
+                      />
+                      <span
+                        v-for="(option, index) in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                        :key="`workspace-display-user-track-stop-${option.value}`"
+                        class="workspace-display-slider-track__stop"
+                        :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                          ? 'workspace-display-slider-track__stop--active'
+                          : ''"
+                        :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length) }"
+                      />
+                    </div>
+                    <input
+                      data-testid="workspace-display-user-font-size-select"
+                      class="workspace-display-slider"
+                      type="range"
+                      min="0"
+                      max="4"
+                      step="1"
+                      :value="userWorkspaceDisplaySliderValue"
+                      @input="updateUserWorkspaceDisplayFontSizeDraft(($event.target as HTMLInputElement).value)"
+                    >
+                  </div>
+
+                  <div class="grid grid-cols-5 gap-2">
+                    <span
+                      v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                      :key="`workspace-display-user-label-${option.value}`"
+                      class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                      :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                        ? 'text-blue-700'
+                        : 'text-slate-500'"
+                    >
+                      <span>{{ option.label }}</span>
+                      <span
+                        v-if="option.value === workspaceDisplayRecommendedFontSizePreset"
+                        class="workspace-display-slider-label__tag-wrap"
+                      >
+                        <span
+                          data-testid="workspace-display-recommended-tag"
+                          class="workspace-display-slider-label__tag"
+                          tabindex="0"
+                        >
+                          推荐
+                        </span>
+                        <span class="workspace-display-slider-label__tooltip">
+                          {{ recommendedWorkspaceDisplayTagText }}
+                        </span>
+                      </span>
+                    </span>
+                  </div>
+
+                  <span class="text-[11px] text-slate-500 block">
+                    当前来源：{{ userWorkspaceDisplaySourceSummary }}
+                  </span>
                 </div>
-                <input
-                  :value="userWorkspaceDisplayTabSpacingSliderValue"
-                  class="w-full"
-                  max="2"
-                  min="0"
-                  step="1"
-                  type="range"
-                  @input="updateUserWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
-                >
-              </div>
-            </div>
 
-            <div class="pt-1 flex flex-wrap gap-3 items-center justify-between">
-              <div class="text-[11px] text-slate-500">
-                保存后会立刻更新顶部标签条和左侧栏密度。
-              </div>
-              <button
-                class="text-xs text-white font-semibold px-3 py-2 rounded-xl bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                type="button"
-                :disabled="props.workspaceDisplayPreferencesLoading || props.workspaceDisplayPreferencesSavingScope === 'user' || !userWorkspaceDisplayChanged"
-                @click="saveWorkspaceDisplayUserOverride"
-              >
-                保存个人设置
-              </button>
-            </div>
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between text-xs text-slate-600">
+                    <span>标签边距</span>
+                    <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
+                  </div>
+
+                  <div class="workspace-display-slider-shell">
+                    <div class="workspace-display-slider-track" aria-hidden="true">
+                      <div
+                        class="workspace-display-slider-track__fill"
+                        :style="{ width: userWorkspaceDisplayTabSpacingSliderProgress }"
+                      />
+                      <span
+                        v-for="(option, index) in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                        :key="`workspace-display-user-tab-spacing-track-stop-${option.value}`"
+                        class="workspace-display-slider-track__stop"
+                        :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                          ? 'workspace-display-slider-track__stop--active'
+                          : ''"
+                        :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length) }"
+                      />
+                    </div>
+                    <input
+                      data-testid="workspace-display-user-tab-spacing-select"
+                      class="workspace-display-slider"
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="1"
+                      :value="userWorkspaceDisplayTabSpacingSliderValue"
+                      @input="updateUserWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
+                    >
+                  </div>
+
+                  <div class="grid grid-cols-3 gap-2">
+                    <span
+                      v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                      :key="`workspace-display-user-tab-spacing-label-${option.value}`"
+                      class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                      :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                        ? 'text-blue-700'
+                        : 'text-slate-500'"
+                    >
+                      <span>{{ option.label }}</span>
+                      <span
+                        v-if="option.value === workspaceDisplayRecommendedTabSpacingPreset"
+                        class="workspace-display-slider-label__tag-wrap"
+                      >
+                        <span class="workspace-display-slider-label__tag" tabindex="0">
+                          推荐
+                        </span>
+                        <span class="workspace-display-slider-label__tooltip">
+                          {{ recommendedWorkspaceDisplayTagText }}
+                        </span>
+                      </span>
+                    </span>
+                  </div>
+
+                  <span class="text-[11px] text-slate-500 block">
+                    紧凑档会压缩顶部标签页的横向边距和最小宽度，并同步压缩左侧资源列表密度。推荐：{{ workspaceDisplayRecommendedTabSpacingLabel }}。
+                  </span>
+                </div>
+
+                <div class="flex flex-wrap gap-2 justify-end">
+                  <button
+                    class="text-[11px] font-semibold px-3 py-1.5 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="props.workspaceDisplayPreferencesSavingScope === 'user'"
+                    @click="restoreRecommendedWorkspaceDisplay"
+                  >
+                    还原为工作区推荐设置
+                  </button>
+                  <button
+                    class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="props.workspaceDisplayPreferencesSavingScope === 'user' || !userWorkspaceDisplayChanged"
+                    @click="saveWorkspaceDisplayUserOverride"
+                  >
+                    {{ props.workspaceDisplayPreferencesSavingScope === 'user' ? '保存中...' : '保存个人设置' }}
+                  </button>
+                </div>
+              </section>
+            </template>
           </div>
         </section>
 
@@ -2383,6 +2516,7 @@ watch(activeTabId, (next) => {
         :preview-status="previewStatus"
         :preview-status-loading="previewStatusLoading"
         :preview-pdf-url="previewPdfUrl"
+        :current-user-id="props.currentUserId"
         :collab-revision="collabRevision"
         :collab-connected="collabConnected"
         :collab-connection-text="collabConnectionText"
@@ -2477,3 +2611,165 @@ watch(activeTabId, (next) => {
     />
   </section>
 </template>
+
+<style scoped>
+.workspace-display-slider-shell {
+  position: relative;
+  height: 22px;
+  padding: 0 10px;
+  box-sizing: border-box;
+}
+
+.workspace-display-slider-track {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  left: 10px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-border);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.workspace-display-slider-track__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wl-primary-500);
+}
+
+.workspace-display-slider-track__stop {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--wl-radius-pill);
+  background: rgb(255 255 255 / 0.82);
+  transform: translate(-50%, -50%);
+}
+
+.workspace-display-slider-track__stop--active {
+  width: 8px;
+  height: 8px;
+  background: var(--wl-surface);
+}
+
+.workspace-display-slider {
+  appearance: none;
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.workspace-display-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  border: 2px solid var(--wl-primary-500);
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-surface);
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 0.92);
+}
+
+.workspace-display-slider::-webkit-slider-runnable-track {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-track {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-progress {
+  height: 22px;
+  background: transparent;
+}
+
+.workspace-display-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--wl-primary-500);
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-surface);
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 0.92);
+}
+
+.workspace-display-slider-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.workspace-display-slider-label__tag-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.workspace-display-slider-label__tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  height: 18px;
+  border: 1px solid var(--wl-primary-100);
+  border-radius: var(--wl-radius-pill);
+  background: var(--wl-primary-050);
+  color: var(--wl-primary-500);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.workspace-display-slider-label__tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 6;
+  padding: 6px 8px;
+  border-radius: var(--wl-radius-sm);
+  background: rgb(15 23 42 / 0.92);
+  color: var(--wl-surface);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(4px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-display-slider-label__tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: rgb(15 23 42 / 0.92);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.workspace-display-slider-label__tag-wrap:hover .workspace-display-slider-label__tooltip,
+.workspace-display-slider-label__tag-wrap:focus-within .workspace-display-slider-label__tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+</style>
