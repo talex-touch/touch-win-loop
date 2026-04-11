@@ -7,10 +7,14 @@ const WORKSPACE_LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/works
 const WORKSPACE_RESOURCE_MANAGER_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourceManagerPanel.vue')
 const WORKSPACE_LEFT_RAIL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftRail.vue')
 const WORKSPACE_UPLOAD_ASIDE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceUploadAside.vue')
+const WORKSPACE_LEFT_SIDEBAR_STYLE_FILE = resolve(process.cwd(), 'app/assets/styles/workspace-left-sidebar.css')
 
 it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 panel', async () => {
-  const source = await readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8')
-  const railSource = await readFile(WORKSPACE_LEFT_RAIL_FILE, 'utf8')
+  const [source, railSource, styleSource] = await Promise.all([
+    readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
+    readFile(WORKSPACE_LEFT_RAIL_FILE, 'utf8'),
+    readFile(WORKSPACE_LEFT_SIDEBAR_STYLE_FILE, 'utf8'),
+  ])
 
   assert.match(source, /collapsed\?: boolean/, 'WorkspaceLeftSidebar 缺少 collapsed prop')
   assert.match(source, /tabSpacingPreset\?: WorkspaceTabSpacingPreset \| ''/, 'WorkspaceLeftSidebar 缺少标签边距预设入参')
@@ -27,10 +31,23 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   assert.match(source, /workspace-left-dock--collapsed/, 'WorkspaceLeftSidebar 缺少折叠宽度样式')
   assert.match(source, /flex-basis: 56px;/, 'WorkspaceLeftSidebar 缺少外层 dock 收缩过渡宽度')
   assert.match(source, /workspace-left-dock--compact/, 'WorkspaceLeftSidebar 未为紧凑标签边距提供列表压缩样式')
+  assert.match(source, /workspace-left-dock--default/, 'WorkspaceLeftSidebar 未为默认标签边距提供左栏密度类')
+  assert.match(source, /workspace-left-dock--relaxed/, 'WorkspaceLeftSidebar 未为宽松标签边距提供左栏密度类')
   assert.match(source, /workspace-left-panel--hidden/, 'WorkspaceLeftSidebar 缺少左侧 panel 收起状态类')
   assert.match(source, /width: 0;/, 'WorkspaceLeftSidebar 缺少左侧 panel 宽度收起动画')
   assert.match(source, /opacity: 0;/, 'WorkspaceLeftSidebar 缺少左侧 panel 透明度收起动画')
   assert.match(source, /transform: translateX\(-10px\);/, 'WorkspaceLeftSidebar 缺少左侧 panel 位移动画')
+  assert.match(source, /function switchModule\(moduleId: string, options: \{ allowCollapse\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 未给左栏 tab 提供可控的折叠切换入口')
+  assert.match(source, /allowCollapse && !props\.collapsed && !recyclePanelOpen\.value && activeModule\.value === moduleId[\s\S]*emit\('update:collapsed', true\)/, 'WorkspaceLeftSidebar 点击当前左栏 tab 时仍不会收起 panel')
+  assert.match(source, /function openRecycleBinPanel\(options: \{ allowCollapse\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 未给回收站入口提供折叠切换入口')
+  assert.match(source, /allowCollapse && !props\.collapsed && recyclePanelOpen\.value[\s\S]*emit\('update:collapsed', true\)/, 'WorkspaceLeftSidebar 点击当前回收站入口时仍不会收起 panel')
+  assert.match(source, /switchModule\(props\.commandModuleId, \{ allowCollapse: false \}\)/, 'WorkspaceLeftSidebar 在命令面板触发时仍可能误收起左栏')
+  assert.match(styleSource, /\.workspace-left-dock--compact \{[\s\S]*--workspace-left-tree-row-min-height:\s*32px;[\s\S]*--workspace-left-tree-indent-step:\s*12px;/, '紧凑档未压缩左栏树行高和缩进')
+  assert.match(styleSource, /\.workspace-left-dock--default \{[\s\S]*--workspace-left-tree-row-min-height:\s*36px;[\s\S]*--workspace-left-tree-indent-step:\s*14px;/, '默认档缺少左栏树密度基线')
+  assert.match(styleSource, /\.workspace-left-dock--relaxed \{[\s\S]*--workspace-left-tree-row-min-height:\s*40px;[\s\S]*--workspace-left-tree-indent-step:\s*18px;/, '宽松档未放大左栏树行高和缩进')
+  assert.match(styleSource, /min-height:\s*var\(--workspace-left-upload-row-min-height\);/, '上传行未接入左栏密度变量')
+  assert.match(styleSource, /padding:\s*var\(--workspace-left-recycle-row-padding-y\)\s+var\(--workspace-left-recycle-row-padding-x\);/, '回收站行未接入左栏密度变量')
+  assert.match(styleSource, /padding:\s*var\(--workspace-left-library-row-padding-y\)\s+var\(--workspace-left-library-row-padding-x\);/, '资料库行未接入左栏密度变量')
   assert.match(railSource, /workspace-left-rail__item--active': !props\.collapsed && item\.id === props\.activeId/, 'left rail 在折叠态仍显示顶部模块选中标识')
 })
 
@@ -54,6 +71,8 @@ it('项目资料区在 ResourceManagerPanel 内改为完整树，并支持拖拽
   assert.match(source, /buildProjectResourceTreePatchPayload/, '资源管理器未构建拖拽排序 payload')
   assert.match(source, /handleResourceDrop/, '资源管理器未处理树节点拖拽落点')
   assert.match(source, /workspace-tree-dropzone/, '资源管理器未渲染拖拽落点区域')
+  assert.match(source, /function resolveTreeDepthOffset\(depth: number\): string \{[\s\S]*--workspace-left-tree-indent-step/, '资源管理器未将树缩进接入左栏密度变量')
+  assert.doesNotMatch(source, /Math\.max\(0, row\.depth\) \* 14/, '资源管理器仍写死树缩进像素值')
 })
 
 it('左栏结构大纲不再用本地推断结果充当真实大纲', async () => {

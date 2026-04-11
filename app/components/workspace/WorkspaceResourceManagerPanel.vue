@@ -415,6 +415,10 @@ function flattenProjectResourceTree(
   return rows
 }
 
+function resolveTreeDepthOffset(depth: number): string {
+  return `calc(var(--workspace-left-tree-indent-step, 14px) * ${Math.max(0, depth)})`
+}
+
 const projectResourceTree = computed<ProjectResourceTreeNode[]>(() => {
   return buildProjectResourceTree(props.selectedResources)
 })
@@ -2222,7 +2226,7 @@ onBeforeUnmount(() => {
                         <div
                           class="workspace-tree-dropzone"
                           :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'before' }"
-                          :style="{ marginLeft: `${Math.max(0, row.depth) * 14}px` }"
+                          :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
                           @dragover="handleResourceDragOver(row.resource.id, 'before', $event)"
                           @dragleave="handleResourceDragLeave(row.resource.id, 'before')"
                           @drop="handleResourceDrop(row.resource.id, 'before', $event)"
@@ -2240,7 +2244,7 @@ onBeforeUnmount(() => {
                           @dragleave="handleResourceDragLeave(row.resource.id, 'inside')"
                           @drop="handleResourceDrop(row.resource.id, 'inside', $event)"
                         >
-                          <div class="workspace-resource-tree-row__main" :style="{ paddingLeft: `${Math.max(0, row.depth) * 14}px` }">
+                          <div class="workspace-resource-tree-row__main" :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }">
                             <button
                               class="workspace-tree-item__expander"
                               :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
@@ -2385,7 +2389,7 @@ onBeforeUnmount(() => {
                         <div
                           class="workspace-tree-dropzone"
                           :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'after' }"
-                          :style="{ marginLeft: `${Math.max(0, row.depth) * 14}px` }"
+                          :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
                           @dragover="handleResourceDragOver(row.resource.id, 'after', $event)"
                           @dragleave="handleResourceDragLeave(row.resource.id, 'after')"
                           @drop="handleResourceDrop(row.resource.id, 'after', $event)"
