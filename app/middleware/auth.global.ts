@@ -1,4 +1,5 @@
-import type { ApiResponse, AuthMeResult } from '~~/shared/types/domain'
+import type { ApiResponse, AuthSessionProbeResult } from '~~/shared/types/domain'
+import { buildAuthRequestErrorInfo, logAuthProbeDegraded, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
 const PUBLIC_PATH_PREFIXES = [
   '/login',
@@ -72,30 +73,71 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   const runtime = useRuntimeConfig()
   const { endpoint } = useApiEndpoint(runtime)
-  const authEndpoint = endpoint('/auth/me')
+  const authEndpoint = endpoint('/auth/session')
+  const authProbeUrl = import.meta.server
+    ? new URL(String(authEndpoint), useRequestURL()).toString()
+    : authEndpoint
 
-  let authenticated = false
+  let authState: 'authenticated' | 'unauthorized' | 'forbidden' | 'degraded' = 'unauthorized'
   try {
     const headers = import.meta.server ? useRequestHeaders(['cookie']) : undefined
-    const response = await fetch(authEndpoint, {
+    const response = await fetch(authProbeUrl, {
       headers,
       credentials: 'include',
     })
-    const payload = await response.json().catch(() => null) as ApiResponse<AuthMeResult> | null
-    if (!response.ok || !payload || payload.code !== 0)
-      throw new Error(String(payload?.message || '认证状态校验失败。'))
-    authenticated = true
+    const payload = await response.json().catch(() => null) as ApiResponse<AuthSessionProbeResult> | null
+    if (response.ok && payload && payload.code === 0) {
+      authState = 'authenticated'
+    }
+    else {
+      const info = buildAuthRequestErrorInfo({
+        statusCode: response.ok ? 0 : response.status,
+        message: String(payload?.message || '登录态校验失败。'),
+        traceId: String(payload?.meta?.traceId || response.headers.get('x-trace-id') || '').trim(),
+      })
+
+      if (info.isUnauthorized) {
+        authState = 'unauthorized'
+      }
+      else if (info.isForbidden) {
+        authState = 'forbidden'
+      }
+      else {
+        authState = 'degraded'
+        logAuthProbeDegraded({
+          context: 'route-middleware',
+          route: to.fullPath || targetPath,
+          statusCode: info.statusCode,
+          message: info.message,
+          traceId: info.traceId,
+        })
+      }
+    }
   }
-  catch {
-    authenticated = false
+  catch (error) {
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized) {
+      authState = 'unauthorized'
+    }
+    else if (info.isForbidden) {
+      authState = 'forbidden'
+    }
+    else {
+      authState = 'degraded'
+      logAuthProbeDegraded({
+        context: 'route-middleware',
+        route: to.fullPath || targetPath,
+        error,
+      })
+    }
   }
 
-  if (loginRoute && authenticated) {
+  if (loginRoute && authState === 'authenticated') {
     const target = sanitizeRedirectTarget(to.query.redirect)
     return navigateTo(target, { replace: true })
   }
 
-  if (!protectedRoute || authenticated)
+  if (!protectedRoute || authState !== 'unauthorized')
     return
 
   const redirectPath = to.fullPath || targetPath

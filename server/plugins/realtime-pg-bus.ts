@@ -21,6 +21,7 @@ const REALTIME_PG_BUS_STATE_KEY = Symbol.for('winloop.realtime.pg-bus.runtime.v1
 interface RealtimePgBusState {
   booted: boolean
   client: PoolClient | null
+  disposeClient: (() => void) | null
   reconnectTimer: NodeJS.Timeout | null
   reconnectStep: number
   connecting: boolean
@@ -96,6 +97,7 @@ function getRealtimePgBusState(): RealtimePgBusState {
   const created: RealtimePgBusState = {
     booted: false,
     client: null,
+    disposeClient: null,
     reconnectTimer: null,
     reconnectStep: 0,
     connecting: false,
@@ -254,9 +256,11 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
     return
 
   state.connecting = true
+  let activeClient: PoolClient | null = null
   try {
     const pool = await getPool(undefined)
     const client = await pool.connect()
+    activeClient = client
     if (state.stopped) {
       releaseClientSafely(client)
       return
@@ -268,15 +272,28 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
       void handleRealtimeNotification(normalizeString(message.payload))
     }
 
-    function cleanupClient(reason: string, error?: unknown) {
-      if (state.client !== client)
+    let disposed = false
+    function disposeClient() {
+      if (disposed)
         return
+      disposed = true
 
-      state.client = null
+      if (state.client === client)
+        state.client = null
+      if (state.disposeClient === disposeClient)
+        state.disposeClient = null
+
       client.removeListener('notification', onNotification)
       client.removeListener('error', onError)
       client.removeListener('end', onEnd)
       releaseClientSafely(client)
+    }
+
+    function cleanupClient(reason: string, error?: unknown) {
+      if (disposed)
+        return
+
+      disposeClient()
 
       if (error) {
         console.error('[realtime-pg-bus] listener disconnected:', normalizeErrorMessage(error), {
@@ -304,6 +321,7 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
     }
 
     state.client = client
+    state.disposeClient = disposeClient
     client.on('notification', onNotification)
     client.on('error', onError)
     client.on('end', onEnd)
@@ -315,6 +333,10 @@ async function bootstrapRealtimePgBus(state: RealtimePgBusState): Promise<void> 
     })
   }
   catch (error) {
+    if (state.disposeClient)
+      state.disposeClient()
+    else if (activeClient)
+      releaseClientSafely(activeClient)
     console.error('[realtime-pg-bus] bootstrap failed:', normalizeErrorMessage(error))
     captureServerException(error, {
       module: 'realtime-pg-bus',
@@ -339,17 +361,11 @@ export default defineNitroPlugin((nitroApp) => {
     state.connecting = false
     clearReconnectTimer(state)
 
-    const client = state.client
+    const disposeClient = state.disposeClient
     state.client = null
+    state.disposeClient = null
     state.booted = false
     state.reconnectStep = 0
-    if (!client)
-      return
-
-    void client.query(`UNLISTEN ${REALTIME_PG_CHANNEL}`)
-      .catch(() => undefined)
-      .finally(() => {
-        releaseClientSafely(client)
-      })
+    disposeClient?.()
   })
 })

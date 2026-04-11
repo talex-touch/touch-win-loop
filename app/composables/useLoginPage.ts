@@ -1,7 +1,9 @@
-import type { ApiResponse, AuthLoginMeta, AuthLoginResult, AuthMeResult } from '~~/shared/types/domain'
+import type { ApiResponse, AuthLoginMeta, AuthLoginResult, AuthSessionProbeResult } from '~~/shared/types/domain'
+import { logAuthProbeDegraded, resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
 type OauthRedirectingProvider = 'feishu' | 'oauth' | ''
 const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
+type SessionProbeState = 'authenticated' | 'unauthenticated' | 'degraded'
 
 export function useLoginPage() {
   const route = useRoute()
@@ -94,14 +96,27 @@ export function useLoginPage() {
     }
   }
 
-  async function checkLoggedIn(): Promise<boolean> {
+  async function checkLoggedIn(): Promise<SessionProbeState> {
     try {
-      await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
+      await authApiFetch<ApiResponse<AuthSessionProbeResult>>('/auth/session')
       await navigateTo(resolveRedirectTarget(), { replace: true })
-      return true
+      return 'authenticated'
     }
-    catch {
-      return false
+    catch (error) {
+      const info = resolveAuthRequestErrorInfo(error)
+      if (info.isUnauthorized)
+        return 'unauthenticated'
+
+      if (!info.isForbidden) {
+        logAuthProbeDegraded({
+          context: 'login-page',
+          route: route.fullPath || '/login',
+          error,
+        })
+      }
+
+      errorText.value = resolveAuthDisplayMessage(info, '登录态校验失败，请稍后重试。')
+      return 'degraded'
     }
   }
 
@@ -272,8 +287,8 @@ export function useLoginPage() {
   }
 
   onMounted(async () => {
-    const loggedIn = await checkLoggedIn()
-    if (loggedIn)
+    const sessionState = await checkLoggedIn()
+    if (sessionState === 'authenticated')
       return
 
     await loadAuthMeta()
@@ -292,7 +307,8 @@ export function useLoginPage() {
     oauthConflictCode.value = readQueryText(['oauthConflictCode', 'casdoorConflictCode'])
     oauthBoundUser.value = readQueryText(['oauthBoundUser', 'casdoorBoundUser'])
 
-    await tryFeishuAutoLogin()
+    if (sessionState === 'unauthenticated')
+      await tryFeishuAutoLogin()
   })
 
   return {
