@@ -1,0 +1,208 @@
+import assert from 'node:assert/strict'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { it } from 'vitest'
+
+const SCENE_UTILS_PATH = resolve(process.cwd(), 'shared/utils/scene-document.ts')
+
+async function loadSceneUtils() {
+  return import(pathToFileURL(SCENE_UTILS_PATH).href)
+}
+
+it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', async () => {
+  const {
+    buildDeviceMockupSceneDocument,
+    exportArchitectureModelToMermaid,
+    exportSchemaModelToDDL,
+    importArchitectureFromMetadata,
+    importFromDDL,
+    importFromMarkdownOutline,
+    importFromMermaid,
+    renderCompositionAssetToSvg,
+  } = await loadSceneUtils()
+
+  const mermaidScene = importFromMermaid('flowchart TD\nA[入口] --> B[出口]')
+  assert.equal(mermaidScene.drawMode, 'diagram')
+  assert.equal(mermaidScene.sourceType, 'mermaid')
+  assert.equal(mermaidScene.sourceModel.kind, 'graph')
+  assert.equal(mermaidScene.sceneModel.nodes.length, 2)
+  assert.equal(mermaidScene.sceneModel.edges.length, 1)
+
+  const outlineScene = importFromMarkdownOutline('# 总览\n- 平台\n  - Diagram\n  - Schema')
+  assert.equal(outlineScene.drawMode, 'diagram')
+  assert.equal(outlineScene.sourceType, 'markdown_outline')
+  assert.equal(outlineScene.sourceModel.kind, 'graph')
+  assert.ok(outlineScene.sceneModel.nodes.length >= 3)
+
+  const ddlResult = importFromDDL(`
+    CREATE TABLE users (
+      id BIGINT PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+
+    CREATE TABLE posts (
+      id BIGINT PRIMARY KEY,
+      user_id BIGINT REFERENCES users(id),
+      title TEXT NOT NULL
+    );
+  `)
+  assert.equal(ddlResult.schemaModel.kind, 'schema')
+  assert.equal(ddlResult.sceneDocument.drawMode, 'schema')
+  assert.equal(ddlResult.schemaModel.tables.length, 2)
+  assert.equal(ddlResult.sceneDocument.sceneModel.nodes.length, 2)
+  assert.ok(ddlResult.sceneDocument.sceneModel.edges.length >= 1)
+
+  const exportedDdl = exportSchemaModelToDDL(ddlResult.sceneDocument)
+  assert.match(exportedDdl, /CREATE TABLE "users"/)
+  assert.match(exportedDdl, /CREATE TABLE "posts"/)
+  assert.match(exportedDdl, /FOREIGN KEY \("user_id"\) REFERENCES "users" \("id"\)/)
+
+  const dockerComposeArchitecture = importArchitectureFromMetadata(`services:
+  web:
+    image: nginx:latest
+    depends_on:
+      - api
+  api:
+    image: node:20
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:16`)
+  assert.equal(dockerComposeArchitecture.sceneDocument.drawMode, 'architecture')
+  assert.ok(dockerComposeArchitecture.architectureModel.services.length >= 2)
+  assert.ok(dockerComposeArchitecture.architectureModel.databases.length >= 1)
+  assert.ok(dockerComposeArchitecture.architectureModel.relations.length >= 2)
+
+  const packageArchitecture = importArchitectureFromMetadata(JSON.stringify({
+    name: '@winloop/app',
+    version: '1.0.0',
+    dependencies: {
+      nuxt: '^4.0.0',
+      pg: '^8.0.0',
+    },
+  }))
+  assert.equal(packageArchitecture.architectureModel.services[0]?.label, '@winloop/app')
+  assert.ok(packageArchitecture.architectureModel.externalDependencies.length >= 2)
+
+  const workspaceArchitecture = importArchitectureFromMetadata(JSON.stringify({
+    workspaceName: 'touch-win-loop',
+    packages: ['apps/*', 'packages/*'],
+    packageManifests: [
+      {
+        name: '@winloop/web',
+        path: 'apps/web',
+        dependencies: {
+          '@winloop/api': 'workspace:*',
+          vue: '^3.5.0',
+        },
+      },
+      {
+        name: '@winloop/api',
+        path: 'apps/api',
+        dependencies: {
+          '@winloop/shared': 'workspace:*',
+          pg: '^8.16.0',
+        },
+      },
+      {
+        name: '@winloop/shared',
+        path: 'packages/shared',
+      },
+    ],
+  }))
+  assert.equal(workspaceArchitecture.architectureModel.systems[0]?.label, 'touch-win-loop')
+  assert.ok(workspaceArchitecture.architectureModel.services.some(item => item.label === '@winloop/web'))
+  assert.ok(workspaceArchitecture.architectureModel.services.some(item => item.label === '@winloop/api'))
+  assert.ok(workspaceArchitecture.architectureModel.components.some(item => item.label === '@winloop/shared'))
+  assert.ok(workspaceArchitecture.architectureModel.externalDependencies.some(item => item.label === 'vue'))
+  assert.ok(workspaceArchitecture.architectureModel.relations.some(relation => relation.label === 'contains'))
+  const webServiceId = workspaceArchitecture.architectureModel.services.find(item => item.label === '@winloop/web')?.id
+  const apiServiceId = workspaceArchitecture.architectureModel.services.find(item => item.label === '@winloop/api')?.id
+  assert.ok(workspaceArchitecture.architectureModel.relations.some(relation => relation.source === webServiceId && relation.target === apiServiceId))
+  assert.equal(workspaceArchitecture.architectureModel.metadata?.sourceKind, 'workspace-manifest')
+
+  const openApiArchitecture = importArchitectureFromMetadata(JSON.stringify({
+    openapi: '3.1.0',
+    info: { title: 'Billing API', version: '1.0.0' },
+    paths: {
+      '/health': { get: { summary: 'Health' } },
+      '/orders': { post: { summary: 'Create order' } },
+    },
+  }))
+  assert.ok(openApiArchitecture.architectureModel.interfaces?.length >= 2)
+  assert.ok(openApiArchitecture.architectureModel.relations.length >= 2)
+
+  const architectureMermaid = exportArchitectureModelToMermaid(dockerComposeArchitecture.sceneDocument, 'dependency_map')
+  assert.match(architectureMermaid, /flowchart TD/)
+  assert.match(architectureMermaid, /web -->\|\"depends_on\"\| api/)
+  assert.match(architectureMermaid, /api -->\|\"depends_on\"\| postgres/)
+
+  const architectureWithContext = importArchitectureFromMetadata({
+    systems: [{ id: 'system-platform', label: '平台系统', type: 'system' }],
+    services: [{ id: 'service-api', label: 'API 服务', type: 'service' }],
+    components: [{ id: 'component-auth', label: '认证组件', type: 'component' }],
+    databases: [{ id: 'database-main', label: '主库', type: 'database' }],
+    queues: [{ id: 'queue-jobs', label: '任务队列', type: 'queue' }],
+    externalDependencies: [{ id: 'external-openai', label: 'OpenAI', type: 'external' }],
+    interfaces: [{ id: 'interface-orders', label: 'POST /orders', type: 'interface', protocol: 'http' }],
+    relations: [
+      { source: 'system-platform', target: 'service-api', label: 'contains' },
+      { source: 'service-api', target: 'component-auth', label: 'uses' },
+      { source: 'service-api', target: 'database-main', label: 'reads' },
+      { source: 'service-api', target: 'queue-jobs', label: 'publishes' },
+      { source: 'service-api', target: 'external-openai', label: 'calls' },
+      { source: 'service-api', target: 'interface-orders', label: 'exposes', protocol: 'http' },
+    ],
+  })
+  const systemContextMermaid = exportArchitectureModelToMermaid(architectureWithContext.sceneDocument, 'system_context')
+  assert.match(systemContextMermaid, /system-platform/)
+  assert.match(systemContextMermaid, /database-main/)
+  assert.match(systemContextMermaid, /external-openai/)
+  assert.doesNotMatch(systemContextMermaid, /component-auth/)
+  assert.doesNotMatch(systemContextMermaid, /queue-jobs/)
+  assert.doesNotMatch(systemContextMermaid, /interface-orders/)
+
+  const containerMermaid = exportArchitectureModelToMermaid(architectureWithContext.sceneDocument, 'container')
+  assert.match(containerMermaid, /service-api/)
+  assert.match(containerMermaid, /database-main/)
+  assert.match(containerMermaid, /queue-jobs/)
+  assert.match(containerMermaid, /interface-orders/)
+  assert.doesNotMatch(containerMermaid, /system-platform/)
+  assert.doesNotMatch(containerMermaid, /component-auth/)
+
+  const dependencyMapMermaid = exportArchitectureModelToMermaid(architectureWithContext.sceneDocument, 'dependency_map')
+  assert.match(dependencyMapMermaid, /component-auth/)
+  assert.match(dependencyMapMermaid, /external-openai/)
+
+  const workspaceGlobsOnlyArchitecture = importArchitectureFromMetadata(`workspaceName: mono-root
+packages:
+  - apps/*
+  - packages/*`)
+  assert.ok(workspaceGlobsOnlyArchitecture.architectureModel.components.some(item => item.label === 'apps/*'))
+  assert.ok(workspaceGlobsOnlyArchitecture.warnings.some(item => item.includes('workspace globs')))
+
+  const deviceScene = buildDeviceMockupSceneDocument({
+    title: '统一图形平台',
+    subtitle: '设备边框 + 模板导出',
+    badge: 'Design',
+    templateKey: 'device-showcase',
+    deviceFramePresetKey: 'browser-window',
+  })
+  const svg = renderCompositionAssetToSvg(deviceScene)
+  assert.equal(deviceScene.drawMode, 'composition')
+  assert.match(svg, /data-device-frame="browser-window"/)
+  assert.match(svg, /统一图形平台/)
+})
+
+it('repo architecture scanner 可从当前工作区读取 manifests 并生成 architecture scene', async () => {
+  const connectorModule = await import(pathToFileURL(resolve(process.cwd(), 'server/services/scene/data-source-connectors.ts')).href)
+  const result = await connectorModule.scanRepoArchitecture({
+    rootDir: process.cwd(),
+  })
+
+  assert.equal(result.sceneDocument.drawMode, 'architecture')
+  assert.equal(result.sceneDocument.sourceType, 'repo_arch')
+  assert.ok(result.workspaceName.length > 0)
+  assert.ok(result.packageManifestCount >= 1)
+  assert.ok(Array.isArray(result.workspacePatterns))
+})

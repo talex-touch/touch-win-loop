@@ -9,6 +9,20 @@ import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { scanRepoArchitecture } from '~~/server/services/scene/data-source-connectors'
+import {
+  applySceneTemplate,
+  buildDeviceMockupSceneDocument,
+  exportArchitectureModelToMermaid,
+  exportSchemaModelToDDL,
+  importArchitectureFromMetadata,
+  importFromDDL,
+  importFromMarkdownOutline,
+  importFromMermaid,
+  relayoutSceneDocument,
+  sceneDocumentFromUnknown,
+  serializeSceneDocument,
+} from '~~/shared/utils/scene-document'
 import { runWithRetry } from '~~/server/utils/retry'
 
 export interface WorkspaceAiChangeDraft {
@@ -101,6 +115,18 @@ function toSeverity(value: unknown): ProjectIssueSeverity {
   if (text === 'critical' || text === 'high' || text === 'medium' || text === 'low')
     return text
   return 'medium'
+}
+
+function parseJsonValue(rawValue: string): unknown {
+  const normalized = String(rawValue || '').trim()
+  if (!normalized)
+    return {}
+  try {
+    return JSON.parse(normalized)
+  }
+  catch {
+    return {}
+  }
 }
 
 function extractAssistantText(payload: unknown): string {
@@ -572,7 +598,259 @@ export async function executeWorkspaceAi(input: {
       },
     )
 
-    const tools: any[] = [getWorkspaceContext, webSearch, fetchWebPage]
+    const generateSceneFromText = tool(
+      async ({ format, text }: { format: 'mermaid' | 'markdown_outline' | 'architecture', text: string }) => {
+        const sceneDocument = format === 'mermaid'
+          ? importFromMermaid(text)
+          : format === 'markdown_outline'
+            ? importFromMarkdownOutline(text)
+            : importArchitectureFromMetadata(text).sceneDocument
+        await hooks.onTool?.('generate_scene_from_text', {
+          format,
+          drawMode: sceneDocument.drawMode,
+        })
+        return serializeSceneDocument(sceneDocument)
+      },
+      {
+        name: 'generate_scene_from_text',
+        description: '把 Mermaid、Markdown 大纲或架构文本描述转成结构化 SceneDocument JSON。',
+        schema: z.object({
+          format: z.enum(['mermaid', 'markdown_outline', 'architecture']).default('mermaid'),
+          text: z.string().min(2),
+        }),
+      },
+    )
+
+    const generateSchemaFromDdl = tool(
+      async ({ ddl }: { ddl: string }) => {
+        const result = importFromDDL(ddl)
+        await hooks.onTool?.('generate_schema_from_ddl', {
+          tables: result.schemaModel.tables.length,
+          warnings: result.warnings.length,
+        })
+        return JSON.stringify(result)
+      },
+      {
+        name: 'generate_schema_from_ddl',
+        description: '把 SQL DDL 转成 SchemaModel 和对应 SceneDocument JSON。',
+        schema: z.object({
+          ddl: z.string().min(8),
+        }),
+      },
+    )
+
+    const generateArchitectureFromMetadata = tool(
+      async ({ metadata }: { metadata: string }) => {
+        const result = importArchitectureFromMetadata(metadata)
+        await hooks.onTool?.('generate_architecture_from_metadata', {
+          services: result.architectureModel.services.length,
+          relations: result.architectureModel.relations.length,
+        })
+        return JSON.stringify(result)
+      },
+      {
+        name: 'generate_architecture_from_metadata',
+        description: '把 repo/config/依赖关系文本或 JSON 元数据转成 ArchitectureModel 与 SceneDocument。',
+        schema: z.object({
+          metadata: z.string().min(2),
+        }),
+      },
+    )
+
+    const generateArchitectureFromRepo = tool(
+      async () => {
+        const result = await scanRepoArchitecture()
+        await hooks.onTool?.('generate_architecture_from_repo', {
+          workspaceName: result.workspaceName,
+          packageManifestCount: result.packageManifestCount,
+          relations: result.architectureModel.relations.length,
+        })
+        return JSON.stringify(result)
+      },
+      {
+        name: 'generate_architecture_from_repo',
+        description: '扫描当前服务端工作区的 package.json / workspace manifests，生成 ArchitectureModel 与 SceneDocument。',
+        schema: z.object({}),
+      },
+    )
+
+    const exportSchemaToDdl = tool(
+      async ({ sceneDocument }: { sceneDocument: string }) => {
+        const ddl = exportSchemaModelToDDL(parseJsonValue(sceneDocument))
+        await hooks.onTool?.('export_schema_to_ddl', {
+          length: ddl.length,
+        })
+        return ddl
+      },
+      {
+        name: 'export_schema_to_ddl',
+        description: '把 SchemaModel 或 schema SceneDocument JSON 导出成 SQL DDL 文本。',
+        schema: z.object({
+          sceneDocument: z.string().min(2),
+        }),
+      },
+    )
+
+    const exportArchitectureToMermaid = tool(
+      async ({ sceneDocument, view }: {
+        sceneDocument: string
+        view?: 'system_context' | 'container' | 'dependency_map'
+      }) => {
+        const mermaid = exportArchitectureModelToMermaid(parseJsonValue(sceneDocument), view || 'dependency_map')
+        await hooks.onTool?.('export_architecture_to_mermaid', {
+          length: mermaid.length,
+          view: view || 'dependency_map',
+        })
+        return mermaid
+      },
+      {
+        name: 'export_architecture_to_mermaid',
+        description: '把 ArchitectureModel 或 architecture SceneDocument JSON 导出成 Mermaid flowchart 文本。',
+        schema: z.object({
+          sceneDocument: z.string().min(2),
+          view: z.enum(['system_context', 'container', 'dependency_map']).optional(),
+        }),
+      },
+    )
+
+    const applyTemplateToScene = tool(
+      async (payload: {
+        sceneDocument: string
+        templateKey: string
+        title?: string
+        subtitle?: string
+        badge?: string
+        imageSrc?: string
+        deviceFramePresetKey?: string
+        themeTokens?: Record<string, string>
+      }) => {
+        const sceneDocument = applySceneTemplate({
+          sceneDocument: parseJsonValue(payload.sceneDocument),
+          templateKey: payload.templateKey,
+          title: payload.title,
+          subtitle: payload.subtitle,
+          badge: payload.badge,
+          imageSrc: payload.imageSrc,
+          deviceFramePresetKey: payload.deviceFramePresetKey,
+          themeTokens: payload.themeTokens,
+        })
+        await hooks.onTool?.('apply_template', {
+          templateKey: payload.templateKey,
+          drawMode: sceneDocument.drawMode,
+        })
+        return serializeSceneDocument(sceneDocument)
+      },
+      {
+        name: 'apply_template',
+        description: '对 SceneDocument 应用模板、主题和设备边框参数，输出新的 SceneDocument JSON。',
+        schema: z.object({
+          sceneDocument: z.string().min(2),
+          templateKey: z.string().min(2),
+          title: z.string().optional(),
+          subtitle: z.string().optional(),
+          badge: z.string().optional(),
+          imageSrc: z.string().optional(),
+          deviceFramePresetKey: z.string().optional(),
+          themeTokens: z.record(z.string(), z.string()).optional(),
+        }),
+      },
+    )
+
+    const relayoutScene = tool(
+      async ({ sceneDocument }: { sceneDocument: string }) => {
+        const nextDocument = relayoutSceneDocument(parseJsonValue(sceneDocument))
+        await hooks.onTool?.('relayout_scene', {
+          drawMode: nextDocument.drawMode,
+          nodeCount: nextDocument.sceneModel.nodes.length,
+        })
+        return serializeSceneDocument(nextDocument)
+      },
+      {
+        name: 'relayout_scene',
+        description: '对已有 SceneDocument 重新布局，保持 canonical schema 不变。',
+        schema: z.object({
+          sceneDocument: z.string().min(2),
+        }),
+      },
+    )
+
+    const generateDeviceMockup = tool(
+      async (payload: {
+        title?: string
+        subtitle?: string
+        badge?: string
+        imageSrc?: string
+        templateKey?: string
+        deviceFramePresetKey?: string
+        themeTokens?: Record<string, string>
+      }) => {
+        const sceneDocument = buildDeviceMockupSceneDocument(payload)
+        await hooks.onTool?.('generate_device_mockup', {
+          templateKey: sceneDocument.templateKey,
+          drawMode: sceneDocument.drawMode,
+        })
+        return serializeSceneDocument(sceneDocument)
+      },
+      {
+        name: 'generate_device_mockup',
+        description: '为截图生成带设备边框的 composition SceneDocument JSON。',
+        schema: z.object({
+          title: z.string().optional(),
+          subtitle: z.string().optional(),
+          badge: z.string().optional(),
+          imageSrc: z.string().optional(),
+          templateKey: z.string().optional(),
+          deviceFramePresetKey: z.string().optional(),
+          themeTokens: z.record(z.string(), z.string()).optional(),
+        }),
+      },
+    )
+
+    const exportSceneAsset = tool(
+      async ({ sceneDocument, format }: { sceneDocument: string, format: 'svg' | 'png' | 'pdf' }) => {
+        const normalizedDocument = sceneDocumentFromUnknown(parseJsonValue(sceneDocument))
+        const artboard = normalizedDocument.sceneModel.artboards?.[0]
+        const job = {
+          id: `scene-export-${Date.now()}`,
+          format,
+          status: 'succeeded',
+          width: artboard?.width || 1600,
+          height: artboard?.height || 900,
+          background: artboard?.background || '',
+          templateKey: normalizedDocument.templateKey || '',
+          drawMode: normalizedDocument.drawMode,
+        }
+        await hooks.onTool?.('export_scene_asset', job)
+        return JSON.stringify({
+          job,
+          note: '当前工具返回导出任务元数据，真正的 SVG/PNG/PDF 由后续导出插件执行。',
+        })
+      },
+      {
+        name: 'export_scene_asset',
+        description: '创建结构化导出任务描述，供后续导出插件消费，不直接返回原始 SVG/XML。',
+        schema: z.object({
+          sceneDocument: z.string().min(2),
+          format: z.enum(['svg', 'png', 'pdf']),
+        }),
+      },
+    )
+
+    const tools: any[] = [
+      getWorkspaceContext,
+      webSearch,
+      fetchWebPage,
+      generateSceneFromText,
+      generateSchemaFromDdl,
+      generateArchitectureFromMetadata,
+      generateArchitectureFromRepo,
+      exportSchemaToDdl,
+      exportArchitectureToMermaid,
+      applyTemplateToScene,
+      relayoutScene,
+      generateDeviceMockup,
+      exportSceneAsset,
+    ]
     if (input.mode === 'auto_optimize')
       tools.push(proposeChange)
     if (input.mode === 'issue_discovery')

@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import WorkspaceScenePreview from '~/components/workspace/collab/WorkspaceScenePreview.vue'
 import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
+import {
+  parseSceneDocumentString,
+  sceneDocumentHasStructuredPreview,
+  serializeSceneDocument,
+  withRuntimeSnapshot,
+} from '~~/shared/utils/scene-document'
 
 interface DrawDocumentSnapshot {
   schema?: unknown
@@ -45,6 +52,8 @@ const containerRef = ref<HTMLDivElement | null>(null)
 const mountError = ref('')
 const remoteScreenCursorSeeds = ref<Omit<ScreenCursor, 'label'>[]>([])
 const localPointerScreen = ref<{ x: number, y: number } | null>(null)
+const scenePreviewDocument = ref<ReturnType<typeof parseSceneDocumentString> | null>(null)
+const currentSceneDocument = ref(parseSceneDocumentString(props.modelValue))
 
 const CURSOR_LABEL_COLLAPSE_DISTANCE = 72
 
@@ -62,6 +71,17 @@ let hasBootstrappedIncomingModel = false
 let lastAppliedIncomingRevision = -1
 let lastSerializedModel = ''
 let pendingPointerEvent: PointerEvent | null = null
+
+function resolveScenePreview(rawValue: string): ReturnType<typeof parseSceneDocumentString> | null {
+  const sceneDocument = parseSceneDocumentString(rawValue, {
+    fallbackDrawMode: 'freeform',
+    fallbackSourceType: 'manual',
+  })
+  currentSceneDocument.value = sceneDocument
+  return !normalizeSnapshot(sceneDocument.runtimeSnapshot) && sceneDocumentHasStructuredPreview(sceneDocument)
+    ? sceneDocument
+    : null
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -98,13 +118,13 @@ function normalizeSnapshot(raw: unknown): DrawDocumentSnapshot | null {
 
 function serializeEditorSnapshot(): string {
   if (!editor || !tldrawModule)
-    return '{}'
+    return serializeSceneDocument(currentSceneDocument.value)
 
   const snapshot = tldrawModule.getSnapshot(editor.store)
   const documentSnapshot = isRecord(snapshot) && isRecord(snapshot.document)
     ? snapshot.document
     : snapshot
-  return JSON.stringify(documentSnapshot || {}, null, 2)
+  return serializeSceneDocument(withRuntimeSnapshot(currentSceneDocument.value, documentSnapshot || {}))
 }
 
 function clearEmitTimer(): void {
@@ -215,7 +235,7 @@ function bindViewportObservers(): void {
 }
 
 function syncRemoteScreenCursors(): void {
-  if (!editor || !wrapperRef.value || typeof editor.pageToScreen !== 'function') {
+  if (scenePreviewDocument.value || !editor || !wrapperRef.value || typeof editor.pageToScreen !== 'function') {
     remoteScreenCursorSeeds.value = []
     return
   }
@@ -324,10 +344,21 @@ function syncReadonlyState(): void {
 }
 
 function applyIncomingModel(rawValue: string, options: { force?: boolean } = {}): void {
+  const normalized = String(rawValue || '').trim()
+  const previewDocument = resolveScenePreview(normalized)
+  scenePreviewDocument.value = previewDocument
+
+  if (previewDocument) {
+    mountError.value = ''
+    lastSerializedModel = serializeSceneDocument(previewDocument)
+    hasBootstrappedIncomingModel = true
+    syncRemoteScreenCursors()
+    return
+  }
+
   if (!editor || !tldrawModule)
     return
 
-  const normalized = String(rawValue || '').trim()
   const incomingRevision = Math.max(0, Number(props.revision || 0))
   if (!normalized) {
     hasBootstrappedIncomingModel = true
@@ -351,7 +382,12 @@ function applyIncomingModel(rawValue: string, options: { force?: boolean } = {})
     return
   }
 
-  const snapshot = normalizeSnapshot(parsed)
+  const sceneDocument = parseSceneDocumentString(normalized, {
+    fallbackDrawMode: 'freeform',
+    fallbackSourceType: 'manual',
+  })
+  currentSceneDocument.value = sceneDocument
+  const snapshot = normalizeSnapshot(sceneDocument.runtimeSnapshot ?? parsed)
   if (!snapshot) {
     hasBootstrappedIncomingModel = true
     mountError.value = ''
@@ -375,8 +411,17 @@ function applyIncomingModel(rawValue: string, options: { force?: boolean } = {})
   }
 }
 
+function teardownTldrawCanvas(): void {
+  clearEmitTimer()
+  unlistenStore?.()
+  unlistenStore = null
+  editor = null
+  reactRoot?.unmount()
+  reactRoot = null
+}
+
 async function mountTldrawCanvas(): Promise<void> {
-  if (!containerRef.value)
+  if (!containerRef.value || reactRoot || scenePreviewDocument.value)
     return
 
   try {
@@ -426,8 +471,32 @@ async function mountTldrawCanvas(): Promise<void> {
   }
 }
 
+async function syncIncomingModel(rawValue: string): Promise<void> {
+  const previewDocument = resolveScenePreview(rawValue)
+  if (previewDocument) {
+    scenePreviewDocument.value = previewDocument
+    teardownTldrawCanvas()
+    mountError.value = ''
+    lastSerializedModel = serializeSceneDocument(previewDocument)
+    syncRemoteScreenCursors()
+    return
+  }
+
+  if (scenePreviewDocument.value) {
+    scenePreviewDocument.value = null
+    await nextTick()
+  }
+
+  if (!reactRoot) {
+    await nextTick()
+    await mountTldrawCanvas()
+  }
+
+  applyIncomingModel(rawValue)
+}
+
 watch([() => props.modelValue, () => props.revision], ([nextValue]) => {
-  applyIncomingModel(String(nextValue || ''))
+  void syncIncomingModel(String(nextValue || ''))
 })
 
 watch(() => props.remoteCursors, () => {
@@ -451,7 +520,7 @@ function handlePointerLeave(): void {
 
 onMounted(() => {
   bindViewportObservers()
-  void mountTldrawCanvas()
+  void syncIncomingModel(String(props.modelValue || ''))
 })
 
 onBeforeUnmount(() => {
@@ -461,11 +530,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   removeViewportListeners?.()
-  unlistenStore?.()
-  unlistenStore = null
-  editor = null
-  reactRoot?.unmount()
-  reactRoot = null
+  teardownTldrawCanvas()
 })
 </script>
 
@@ -478,7 +543,11 @@ onBeforeUnmount(() => {
     @pointerleave="handlePointerLeave"
     @pointercancel="handlePointerLeave"
   >
-    <div ref="containerRef" class="h-full min-h-0 w-full" />
+    <WorkspaceScenePreview
+      v-if="scenePreviewDocument"
+      :scene-document="scenePreviewDocument"
+    />
+    <div v-else ref="containerRef" class="h-full min-h-0 w-full" />
 
     <div class="pointer-events-none inset-0 absolute overflow-hidden" data-testid="collab-cursor-overlay">
       <div
