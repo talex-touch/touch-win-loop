@@ -4,7 +4,9 @@ import { resolve } from 'node:path'
 import { it } from 'vitest'
 
 const WORKSPACE_LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftSidebar.vue')
+const WORKSPACE_RESOURCE_MANAGER_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourceManagerPanel.vue')
 const WORKSPACE_LEFT_RAIL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftRail.vue')
+const WORKSPACE_UPLOAD_ASIDE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceUploadAside.vue')
 
 it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 panel', async () => {
   const source = await readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8')
@@ -29,42 +31,41 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   assert.match(source, /width: 0;/, 'WorkspaceLeftSidebar 缺少左侧 panel 宽度收起动画')
   assert.match(source, /opacity: 0;/, 'WorkspaceLeftSidebar 缺少左侧 panel 透明度收起动画')
   assert.match(source, /transform: translateX\(-10px\);/, 'WorkspaceLeftSidebar 缺少左侧 panel 位移动画')
-  assert.match(railSource, /workspace-left-rail__item--active': !collapsed && item\.id === activeId/, 'left rail 在折叠态仍显示顶部模块选中标识')
+  assert.match(railSource, /workspace-left-rail__item--active': !props\.collapsed && item\.id === props\.activeId/, 'left rail 在折叠态仍显示顶部模块选中标识')
 })
 
 it('资源管理器删除独立系统资料库分组，只保留导入入口', async () => {
-  const source = await readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8')
+  const source = await readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8')
 
-  assert.doesNotMatch(source, /type ResourceSectionId = 'projectResources' \| 'linkedContestResources' \| 'systemLibrary' \| 'outline'/, '系统资料库 section id 仍保留在左栏状态中')
-  assert.doesNotMatch(source, /sectionExpanded\.systemLibrary/, '系统资料库 section 展开状态仍保留')
-  assert.doesNotMatch(source, /visibleSystemLibraryResources/, '系统资料库独立展示列表仍保留')
   assert.match(source, /从系统资料库导入/, '资源添加菜单未保留系统资料库导入入口')
-  assert.match(source, /title="从系统资料库导入"/, '系统资料库导入弹窗标题未更新')
+  assert.match(source, /openLibraryModal/, '资源管理器未通过导入弹窗统一承接系统资料库入口')
+  assert.doesNotMatch(source, /toggleSection\('systemLibrary'\)|sectionExpanded\.systemLibrary/, '资源管理器仍保留独立系统资料库分组')
 })
 
-it('项目资料区改为 markdown 文档图片虚拟树，不再截断前 10 项', async () => {
-  const source = await readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8')
+it('项目资料区在 ResourceManagerPanel 内改为完整树，并支持拖拽排序', async () => {
+  const source = await readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8')
 
-  assert.match(source, /interface ProjectResourceTreeItem \{\s+resource: Resource\s+children: Resource\[\]\s+\}/, '左栏未定义资源树节点结构')
-  assert.match(source, /const visibleResources = computed\(\(\) => props\.selectedResources\)/, '左栏仍未使用完整资源列表')
-  assert.doesNotMatch(source, /selectedResources\.slice\(0,\s*10\)/, '左栏仍然截断前 10 个资源')
-  assert.match(source, /function resolveEmbeddedMarkdownResourceId\(resource: Resource\): string \{/, '左栏缺少 markdown 嵌入资源归属解析')
-  assert.match(source, /function isUploadedImageResource\(resource: Resource\): boolean \{/, '左栏缺少上传图片资源识别')
-  assert.match(source, /const projectResourceTreeItems = computed<ProjectResourceTreeItem\[\]>\(\(\) => \{/, '左栏未构建项目资源虚拟树')
-  assert.match(source, /if \(!embeddedMarkdownResourceId \|\| !markdownResourceIds\.has\(embeddedMarkdownResourceId\)\)\s+continue/, 'orphan 图片未保留顶层回退逻辑')
-  assert.match(source, /watch\(projectResourceTreeItems, \(items\) => \{/, '左栏未清理失效的文档展开状态')
-  assert.match(source, /v-for="treeItem in projectResourceTreeItems"/, '左栏模板未按树节点渲染项目资料')
-  assert.match(source, /v-for="child in treeItem\.children"/, '左栏模板未渲染文档图片子节点')
-  assert.match(source, /workspace-resource-tree-group__children/, '左栏未为文档图片子树提供容器')
-  assert.match(source, /workspace-tree-item__expander/, '左栏未提供文档图片展开按钮')
+  assert.match(source, /interface ProjectResourceTreeNode \{/, '资源管理器未定义树节点结构')
+  assert.match(source, /const projectResourceTree = computed<ProjectResourceTreeNode\[\]>\(\(\) => \{/, '资源管理器未构建真实项目资料树')
+  assert.match(source, /const visibleResources = computed<ProjectResourceTreeRow\[\]>\(\(\) => \{/, '资源管理器未将树拍平成可视行')
+  assert.doesNotMatch(source, /selectedResources\.slice\(0,\s*10\)/, '资源管理器仍然截断前 10 个资源')
+  assert.match(source, /createChildCollaborativeDoc/, '资源管理器未提供子协作文档创建动作')
+  assert.match(source, /openChildUpload/, '资源管理器未提供上传到指定节点动作')
+  assert.match(source, /buildProjectResourceTreePatchPayload/, '资源管理器未构建拖拽排序 payload')
+  assert.match(source, /handleResourceDrop/, '资源管理器未处理树节点拖拽落点')
+  assert.match(source, /workspace-tree-dropzone/, '资源管理器未渲染拖拽落点区域')
 })
 
 it('左栏结构大纲不再用本地推断结果充当真实大纲', async () => {
-  const source = await readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8')
+  const [sidebarSource, resourceManagerSource] = await Promise.all([
+    readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
+    readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8'),
+  ])
 
-  assert.doesNotMatch(source, /const fallbackOutlineItems = computed<OutlineItem\[\]>\(\(\) => \{/, '左栏仍保留本地推断大纲 fallback')
-  assert.doesNotMatch(source, /extractResourceOutlineChildren/, '左栏仍在从资源正文推断假大纲')
-  assert.match(source, /return uploadItems/, '左栏在无后端大纲时未回退到仅展示真实上传任务')
+  assert.doesNotMatch(sidebarSource, /workspace-left-sidebar__structural-contract|v-if="false"/, 'WorkspaceLeftSidebar 仍保留旧的占位结构契约')
+  assert.doesNotMatch(resourceManagerSource, /const fallbackOutlineItems = computed<OutlineItem\[\]>\(\(\) => \{/, '资源管理器仍保留本地推断大纲 fallback')
+  assert.doesNotMatch(resourceManagerSource, /extractResourceOutlineChildren/, '资源管理器仍在从资源正文推断假大纲')
+  assert.match(resourceManagerSource, /return uploadItems/, '资源管理器在无后端大纲时未回退到仅展示真实上传任务')
 })
 
 it('left rail 图标收窄并改成轻量 popover 名称提示', async () => {
@@ -72,6 +73,25 @@ it('left rail 图标收窄并改成轻量 popover 名称提示', async () => {
 
   assert.match(source, /font-variation-settings:\s*'FILL' 0,\s*'wght' 320,\s*'opsz' 24/, 'left rail 图标未改成轻字重')
   assert.match(source, /workspace-left-rail__popover/, 'left rail 缺少轻量 popover 名称层')
+  assert.match(source, /workspace-left-rail__footer-divider/, 'left rail 未在设置与头像菜单之间加入分割线')
+  assert.match(source, /<WorkspaceUserRailMenu/, 'left rail 底部缺少头像菜单入口')
   assert.doesNotMatch(source, /workspace-left-rail__item--active::before/, 'left rail 仍保留旧的粗高亮指示条')
   assert.doesNotMatch(source, /record_voice_over/, 'left rail 底部仍保留模拟答辩按钮')
+})
+
+it('上传入口已迁移到左侧 rail，并从左侧 aside 打开上传管理', async () => {
+  const [sidebarSource, railSource, uploadSource] = await Promise.all([
+    readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
+    readFile(WORKSPACE_LEFT_RAIL_FILE, 'utf8'),
+    readFile(WORKSPACE_UPLOAD_ASIDE_FILE, 'utf8'),
+  ])
+
+  assert.match(sidebarSource, /uploadSummary\?: ProjectUploadSummary \| null/, 'WorkspaceLeftSidebar 缺少上传摘要入参')
+  assert.match(sidebarSource, /uploadDrawerOpen\?: boolean/, 'WorkspaceLeftSidebar 缺少上传抽屉打开态入参')
+  assert.match(sidebarSource, /uploadActivityItems\?: ProjectUploadActivityItem\[\]/, 'WorkspaceLeftSidebar 缺少上传活动列表入参')
+  assert.match(sidebarSource, /@toggle-upload-drawer="emit\('toggleUploadDrawer'\)"/, 'WorkspaceLeftSidebar 未转发上传抽屉切换事件')
+  assert.match(railSource, /<WorkspaceUploadAside/, 'WorkspaceLeftRail 未挂载上传 aside 组件')
+  assert.match(uploadSource, /data-testid="workspace-left-rail-upload-button"/, '左 rail 上传入口缺少测试锚点')
+  assert.match(uploadSource, /data-testid="workspace-left-upload-drawer"/, '左侧上传抽屉缺少测试锚点')
+  assert.match(uploadSource, /workspace-upload-drawer--aside/, '上传管理未改成左侧 aside 形态')
 })

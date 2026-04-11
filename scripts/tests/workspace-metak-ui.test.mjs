@@ -6,6 +6,7 @@ import { it } from 'vitest'
 
 const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const WORKSPACE_LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftSidebar.vue')
+const WORKSPACE_RESOURCE_MANAGER_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourceManagerPanel.vue')
 const WORKSPACE_METAK_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMetaK.vue')
 const WORKSPACE_METAK_UTIL_FILE = resolve(process.cwd(), 'app/utils/workspace-metak.ts')
 
@@ -30,16 +31,20 @@ it('MetaK 面板具备快捷键、键盘导航和结果分组锚点', async () =
 })
 
 it('MetaK 可通过信号驱动左栏模块和大纲定位', async () => {
-  const [workspaceSource, sidebarSource] = await Promise.all([
+  const [workspaceSource, sidebarSource, resourceManagerSource] = await Promise.all([
     readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
     readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
+    readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8'),
   ])
 
   assert.match(sidebarSource, /commandSignal\?: number/, 'WorkspaceLeftSidebar 缺少 MetaK 命令信号入参')
   assert.match(sidebarSource, /commandModuleId\?: WorkspaceLeftPanelContentId \| ''/, 'WorkspaceLeftSidebar 缺少 MetaK 目标模块入参')
   assert.match(sidebarSource, /commandOutlineId\?: string/, 'WorkspaceLeftSidebar 缺少 MetaK 大纲定位入参')
   assert.match(sidebarSource, /watch\(\(\) => props\.commandSignal, \(next, previous\) => \{/, 'WorkspaceLeftSidebar 未监听 MetaK 命令信号')
-  assert.match(sidebarSource, /sectionExpanded\.outline = true/, 'WorkspaceLeftSidebar 未在 MetaK 定位时展开大纲 section')
+  assert.match(resourceManagerSource, /commandSignal\?: number/, 'WorkspaceResourceManagerPanel 缺少 MetaK 命令信号入参')
+  assert.match(resourceManagerSource, /commandOutlineId\?: string/, 'WorkspaceResourceManagerPanel 缺少 MetaK 大纲定位入参')
+  assert.match(resourceManagerSource, /pendingOutlineCommandId = ref\(''\)/, 'WorkspaceResourceManagerPanel 未缓存待聚焦大纲节点')
+  assert.match(resourceManagerSource, /sectionExpanded\.outline = true/, 'WorkspaceResourceManagerPanel 未在 MetaK 定位时展开大纲 section')
   assert.match(workspaceSource, /:command-signal="leftSidebarMetaKSignal"/, '项目工作区未向左栏透传 MetaK 信号')
   assert.match(workspaceSource, /:command-module-id="leftSidebarMetaKModuleId"/, '项目工作区未向左栏透传 MetaK 模块目标')
   assert.match(workspaceSource, /:command-outline-id="leftSidebarMetaKOutlineId"/, '项目工作区未向左栏透传 MetaK 大纲目标')

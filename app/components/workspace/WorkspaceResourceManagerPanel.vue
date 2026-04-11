@@ -51,6 +51,21 @@ interface ResourceAttributeField {
   value: string
 }
 
+interface ProjectResourceTreeNode {
+  resource: Resource
+  children: ProjectResourceTreeNode[]
+}
+
+interface ProjectResourceTreeRow {
+  resource: Resource
+  depth: number
+  parentResourceId: string | null
+  hasChildren: boolean
+  expanded: boolean
+}
+
+type ResourceTreeDropPosition = 'before' | 'inside' | 'after' | 'root_end'
+
 interface ShareProjectResourcePayload {
   resourceId: string
   visibility: ProjectResourceShareVisibility
@@ -67,7 +82,7 @@ interface WorkspaceLinkedContestResourceDisplayGroup extends WorkspaceLinkedCont
   categories: WorkspaceLinkedContestResourceCategoryGroup[]
 }
 
-type ResourceSectionId = 'projectResources' | 'linkedContestResources' | 'systemLibrary' | 'outline'
+type ResourceSectionId = 'projectResources' | 'linkedContestResources' | 'outline'
 
 const props = withDefaults(defineProps<{
   naturalQuery: string
@@ -106,6 +121,8 @@ const props = withDefaults(defineProps<{
   currentUsername?: string
   projectStorageLimitBytes?: number
   recyclePanelOpen?: boolean
+  commandSignal?: number
+  commandOutlineId?: string
 }>(), {
   selectedResources: () => [],
   recycleResources: () => [],
@@ -131,6 +148,8 @@ const props = withDefaults(defineProps<{
   currentUsername: '',
   projectStorageLimitBytes: 0,
   recyclePanelOpen: false,
+  commandSignal: 0,
+  commandOutlineId: '',
 })
 
 const emit = defineEmits<{
@@ -146,10 +165,11 @@ const emit = defineEmits<{
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
-  'createCollabResource': [kind: 'markdown' | 'draw']
+  'createCollabResource': [payload: { kind: 'markdown' | 'draw', parentResourceId?: string | null }]
   'openDefenseMode': []
   'reloadIssues': []
-  'addResourceFromLibrary': [resourceId: string]
+  'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
+  'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
   'openResource': [resourceId: string]
   'downloadProjectResource': [resourceId: string]
   'copyProjectResourceName': [resourceId: string]
@@ -158,7 +178,7 @@ const emit = defineEmits<{
   'removeProjectResource': [resourceId: string]
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
-  'uploadResources': [files: File[]]
+  'uploadResources': [payload: { files: File[], parentResourceId?: string | null }]
   'pauseUploadTask': [sessionId: string]
   'resumeUploadTask': [sessionId: string]
   'retryUploadTask': [sessionId: string]
@@ -264,6 +284,7 @@ const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
 const recyclePanelOpen = computed(() => props.recyclePanelOpen)
 const activeResourceId = ref('')
 const activeOutlineId = ref('')
+const pendingOutlineCommandId = ref('')
 const resourceActionOpenId = ref('')
 const projectResourceAddMenuOpen = ref(false)
 const removeTargetResourceId = ref('')
@@ -278,13 +299,18 @@ const resourceDetailTargetId = ref('')
 const resourceDetailModalVisible = ref(false)
 const libraryModalKeyword = ref('')
 const libraryModalVisible = ref(false)
+const libraryImportParentResourceId = ref<string | null>(null)
+const uploadParentResourceId = ref<string | null>(null)
 const projectResourceUploadInputRef = ref<HTMLInputElement | null>(null)
 const sidebarPanelRef = ref<HTMLElement | null>(null)
+const treeExpanded = reactive<Record<string, boolean>>({})
+const draggingResourceId = ref('')
+const dragOverResourceId = ref('')
+const dragOverPosition = ref<ResourceTreeDropPosition | ''>('')
 const linkedCategoryExpanded = reactive<Record<string, boolean>>({})
 const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   projectResources: true,
   linkedContestResources: true,
-  systemLibrary: true,
   outline: true,
 })
 
@@ -296,8 +322,7 @@ const suppressResourceSelection = computed(() => props.activeMainTabId === 'dash
 const visibleUploadTasks = computed(() => {
   return props.uploadTasks.filter(task => isProjectUploadTaskSidebarVisible(task))
 })
-const visibleResources = computed(() => props.selectedResources.slice(0, 10))
-const visibleRecycleResources = computed(() => props.recycleResources.slice(0, 20))
+const visibleRecycleResources = computed(() => props.recycleResources)
 const visibleLibraryResources = computed(() => {
   const keyword = libraryModalKeyword.value.trim().toLowerCase()
   if (!keyword)
@@ -313,6 +338,114 @@ function resolveResourceCategoryLabel(category: string): string {
   const normalized = String(category || '').trim() as ResourceCategory
   return resourceCategoryLabels[normalized] || normalized || '未分类'
 }
+
+function sortProjectResourcesByTreeOrder(left: Resource, right: Resource): number {
+  const leftSort = Math.max(0, Number(left.sortOrder || 0))
+  const rightSort = Math.max(0, Number(right.sortOrder || 0))
+  if (leftSort !== rightSort)
+    return leftSort - rightSort
+
+  const leftCreatedAt = new Date(String(left.createdAt || '')).getTime()
+  const rightCreatedAt = new Date(String(right.createdAt || '')).getTime()
+  if (Number.isFinite(leftCreatedAt) && Number.isFinite(rightCreatedAt) && leftCreatedAt !== rightCreatedAt)
+    return leftCreatedAt - rightCreatedAt
+
+  return String(left.id || '').localeCompare(String(right.id || ''))
+}
+
+function buildProjectResourceTree(resources: Resource[]): ProjectResourceTreeNode[] {
+  const nodeMap = new Map<string, ProjectResourceTreeNode>()
+  for (const resource of resources) {
+    const resourceId = String(resource.id || '').trim()
+    if (!resourceId)
+      continue
+    nodeMap.set(resourceId, {
+      resource,
+      children: [],
+    })
+  }
+
+  const roots: ProjectResourceTreeNode[] = []
+  for (const resource of resources) {
+    const resourceId = String(resource.id || '').trim()
+    if (!resourceId)
+      continue
+    const node = nodeMap.get(resourceId)
+    if (!node)
+      continue
+    const parentResourceId = String(resource.parentResourceId || '').trim()
+    if (parentResourceId && parentResourceId !== resourceId) {
+      const parentNode = nodeMap.get(parentResourceId)
+      if (parentNode) {
+        parentNode.children.push(node)
+        continue
+      }
+    }
+    roots.push(node)
+  }
+
+  const sortNodes = (nodes: ProjectResourceTreeNode[]) => {
+    nodes.sort((left, right) => sortProjectResourcesByTreeOrder(left.resource, right.resource))
+    nodes.forEach(node => sortNodes(node.children))
+  }
+
+  sortNodes(roots)
+  return roots
+}
+
+function flattenProjectResourceTree(
+  nodes: ProjectResourceTreeNode[],
+  depth = 0,
+  rows: ProjectResourceTreeRow[] = [],
+): ProjectResourceTreeRow[] {
+  for (const node of nodes) {
+    const resourceId = String(node.resource.id || '').trim()
+    const hasChildren = node.children.length > 0
+    const expanded = hasChildren ? treeExpanded[resourceId] !== false : false
+    rows.push({
+      resource: node.resource,
+      depth,
+      parentResourceId: String(node.resource.parentResourceId || '').trim() || null,
+      hasChildren,
+      expanded,
+    })
+    if (hasChildren && expanded)
+      flattenProjectResourceTree(node.children, depth + 1, rows)
+  }
+  return rows
+}
+
+const projectResourceTree = computed<ProjectResourceTreeNode[]>(() => {
+  return buildProjectResourceTree(props.selectedResources)
+})
+
+const visibleResources = computed<ProjectResourceTreeRow[]>(() => {
+  return flattenProjectResourceTree(projectResourceTree.value)
+})
+
+const projectResourceMap = computed(() => {
+  const map = new Map<string, Resource>()
+  for (const resource of props.selectedResources) {
+    const resourceId = String(resource.id || '').trim()
+    if (resourceId)
+      map.set(resourceId, resource)
+  }
+  return map
+})
+
+const projectResourceChildrenMap = computed(() => {
+  const map = new Map<string, Resource[]>()
+  const sortedResources = [...props.selectedResources].sort(sortProjectResourcesByTreeOrder)
+  for (const resource of sortedResources) {
+    const parentResourceId = String(resource.parentResourceId || '').trim() || '__root__'
+    const existing = map.get(parentResourceId)
+    if (existing)
+      existing.push(resource)
+    else
+      map.set(parentResourceId, [resource])
+  }
+  return map
+})
 
 function sortResourcesByCategory(left: Resource, right: Resource): number {
   const leftCategory = String(left.category || '').trim() as ResourceCategory
@@ -369,26 +502,6 @@ const linkedContestResourceGroups = computed<WorkspaceLinkedContestResourceDispl
     categories: buildLinkedContestResourceCategories(group.resources || []),
   }))
 })
-const linkedContestResourceIdSet = computed(() => {
-  const ids = new Set<string>()
-  for (const group of linkedContestResourceGroups.value) {
-    for (const resource of group.resources) {
-      const resourceId = String(resource.id || '').trim()
-      if (resourceId)
-        ids.add(resourceId)
-    }
-  }
-  return ids
-})
-const visibleSystemLibraryResources = computed(() => {
-  if (linkedContestResourceIdSet.value.size === 0)
-    return props.resourceLibrary
-
-  return props.resourceLibrary.filter((item) => {
-    const resourceId = String(item.id || '').trim()
-    return resourceId ? !linkedContestResourceIdSet.value.has(resourceId) : true
-  })
-})
 
 const projectResourceSkeletonRows = [1, 2, 3, 4]
 const resourceLibrarySkeletonRows = [1, 2, 3]
@@ -399,7 +512,7 @@ const recycleRetentionDays = 30
 const removeTargetResourceLabel = computed(() => {
   if (!removeTargetResourceId.value)
     return '该文件'
-  const target = visibleResources.value.find(item => item.id === removeTargetResourceId.value)
+  const target = props.selectedResources.find(item => item.id === removeTargetResourceId.value)
   return target ? resourceDisplayTitle(target) : '该文件'
 })
 
@@ -413,7 +526,7 @@ const purgeTargetResourceLabel = computed(() => {
 const shareTargetResourceLabel = computed(() => {
   if (!shareTargetResourceId.value)
     return '该文件'
-  const target = visibleResources.value.find(item => item.id === shareTargetResourceId.value)
+  const target = props.selectedResources.find(item => item.id === shareTargetResourceId.value)
   return target ? resourceDisplayTitle(target) : '该文件'
 })
 
@@ -499,65 +612,6 @@ function normalizeOutlineLabel(value: string): string {
     .trim()
 }
 
-function stripOutlineHeadingPrefix(value: string): string {
-  return normalizeOutlineLabel(value)
-    .replace(/^#{1,6}\s+/, '')
-    .replace(/^第[一二三四五六七八九十百千\d]+[章节部分篇]\s*/, '')
-    .replace(/^\d+(?:\.\d+){0,3}[、.．\s]+/, '')
-    .replace(/^[一二三四五六七八九十]+[、.．\s]+/, '')
-    .replace(/^[（(]?[一二三四五六七八九十\d]+[)）][、.．\s]*/, '')
-    .replace(/^[-*•]\s+/, '')
-    .trim()
-}
-
-function isHeadingLine(line: string): boolean {
-  if (!line)
-    return false
-
-  return /^#{1,6}\s+/.test(line)
-    || /^\d+(?:\.\d+){0,3}[、.．\s]+/.test(line)
-    || /^[一二三四五六七八九十]+[、.．\s]+/.test(line)
-    || /^第[一二三四五六七八九十百千\d]+[章节部分篇]\s*/.test(line)
-    || /^[（(]?[一二三四五六七八九十\d]+[)）][、.．\s]*/.test(line)
-    || /^[-*•]\s+/.test(line)
-}
-
-function extractResourceOutlineChildren(resource: Resource): string[] {
-  const source = [resource.summary, resource.content].map(value => String(value || '').trim()).filter(Boolean).join('\n')
-  if (!source)
-    return []
-
-  const title = normalizeOutlineLabel(resourceDisplayTitle(resource))
-  const titleKey = title.toLowerCase()
-  const dedupe = new Set<string>()
-  const result: string[] = []
-  const lines = source
-    .split(/\r?\n+/)
-    .map(item => normalizeOutlineLabel(item))
-    .filter(Boolean)
-
-  for (const line of lines) {
-    if (result.length >= 4)
-      break
-    if (line.length < 2 || line.length > 48)
-      continue
-    if (!isHeadingLine(line))
-      continue
-
-    const normalized = stripOutlineHeadingPrefix(line)
-    const dedupeKey = normalized.toLowerCase()
-    if (!normalized || normalized === title || dedupeKey === titleKey || dedupe.has(dedupeKey))
-      continue
-    if (normalized.length > 36)
-      continue
-
-    dedupe.add(dedupeKey)
-    result.push(normalized)
-  }
-
-  return result
-}
-
 function flattenProjectOutlineNodes(
   nodes: ProjectOutlineNode[],
   parentOrders: number[] = [],
@@ -586,33 +640,6 @@ function flattenProjectOutlineNodes(
   return result
 }
 
-const fallbackOutlineItems = computed<OutlineItem[]>(() => {
-  const items: OutlineItem[] = []
-
-  visibleResources.value.forEach((resource, resourceIndex) => {
-    const topIndex = resourceIndex + 1
-    const topId = `resource-${resource.id || topIndex}`
-    const topLabel = normalizeOutlineLabel(resourceDisplayTitle(resource)) || `资料 ${topIndex}`
-
-    items.push({
-      id: topId,
-      label: `${topIndex}. ${topLabel}`,
-      level: 0,
-    })
-
-    const children = extractResourceOutlineChildren(resource)
-    children.forEach((childLabel, childIndex) => {
-      items.push({
-        id: `${topId}-child-${childIndex + 1}`,
-        label: `${topIndex}.${childIndex + 1} ${childLabel}`,
-        level: 1,
-      })
-    })
-  })
-
-  return items
-})
-
 function buildUploadOutlineItems(tasks: ProjectUploadTask[]): OutlineItem[] {
   return tasks.map(task => ({
     id: `upload-outline-${task.sessionId}`,
@@ -629,7 +656,7 @@ const outlineItems = computed<OutlineItem[]>(() => {
   const backendItems = flattenProjectOutlineNodes(props.projectOutline)
   if (backendItems.length > 0)
     return [...uploadItems, ...backendItems]
-  return [...uploadItems, ...fallbackOutlineItems.value]
+  return uploadItems
 })
 
 const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
@@ -1249,11 +1276,12 @@ function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId 
     || value === 'issue_center'
 }
 
-function openLibraryModal() {
+function openLibraryModal(parentResourceId?: string | null) {
   if (props.resourceMutating || !props.hasActiveProject)
     return
 
   libraryModalKeyword.value = ''
+  libraryImportParentResourceId.value = String(parentResourceId || '').trim() || null
   libraryModalVisible.value = true
 }
 
@@ -1267,25 +1295,26 @@ function openCollaborativeDocFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('createCollabResource', 'markdown')
+  emit('createCollabResource', { kind: 'markdown', parentResourceId: null })
 }
 
 function openInfiniteCanvasFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('createCollabResource', 'draw')
+  emit('createCollabResource', { kind: 'draw', parentResourceId: null })
 }
 
 function openLibraryFromMenu() {
   projectResourceAddMenuOpen.value = false
-  openLibraryModal()
+  openLibraryModal(null)
 }
 
-function openLocalUploadFromMenu() {
+function openLocalUploadFromMenu(parentResourceId?: string | null) {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
+  uploadParentResourceId.value = String(parentResourceId || '').trim() || null
   nextTick(() => {
     projectResourceUploadInputRef.value?.click()
   })
@@ -1293,21 +1322,238 @@ function openLocalUploadFromMenu() {
 
 function handleProjectResourceUploadInputChange(event: Event) {
   const target = event.target as HTMLInputElement
-  handleResourceUpload(target.files)
+  handleResourceUpload(target.files, uploadParentResourceId.value)
   target.value = ''
+  uploadParentResourceId.value = null
 }
 
-function handleResourceUpload(files: FileList | File[] | null | undefined) {
+function handleResourceUpload(
+  files: FileList | File[] | null | undefined,
+  parentResourceId?: string | null,
+) {
   const normalizedFiles = Array.from(files || []).filter(file => file instanceof File)
   if (!normalizedFiles.length || props.resourceMutating || !props.hasActiveProject)
     return
-  emit('uploadResources', normalizedFiles)
+  emit('uploadResources', {
+    files: normalizedFiles,
+    parentResourceId: String(parentResourceId || '').trim() || null,
+  })
 }
 
 function addLibraryResource(resourceId: string) {
   if (!resourceId || props.resourceMutating || !props.hasActiveProject)
     return
-  emit('addResourceFromLibrary', resourceId)
+  emit('addResourceFromLibrary', {
+    resourceId,
+    parentResourceId: libraryImportParentResourceId.value,
+  })
+  libraryModalVisible.value = false
+  libraryImportParentResourceId.value = null
+}
+
+function toggleProjectResourceExpansion(resourceId: string) {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId)
+    return
+  treeExpanded[normalizedResourceId] = treeExpanded[normalizedResourceId] === false
+}
+
+function createChildCollaborativeDoc(resourceId: string) {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  resourceActionOpenId.value = ''
+  emit('createCollabResource', {
+    kind: 'markdown',
+    parentResourceId: normalizedResourceId,
+  })
+}
+
+function createChildInfiniteCanvas(resourceId: string) {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  resourceActionOpenId.value = ''
+  emit('createCollabResource', {
+    kind: 'draw',
+    parentResourceId: normalizedResourceId,
+  })
+}
+
+function openChildLibraryImport(resourceId: string) {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  resourceActionOpenId.value = ''
+  openLibraryModal(normalizedResourceId)
+}
+
+function openChildUpload(resourceId: string) {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  resourceActionOpenId.value = ''
+  openLocalUploadFromMenu(normalizedResourceId)
+}
+
+function collectDraggedResourceSubtreeIds(resourceId: string): Set<string> {
+  const normalizedResourceId = String(resourceId || '').trim()
+  const collected = new Set<string>()
+  if (!normalizedResourceId)
+    return collected
+
+  const queue = [normalizedResourceId]
+  while (queue.length > 0) {
+    const currentId = queue.shift()
+    if (!currentId || collected.has(currentId))
+      continue
+    collected.add(currentId)
+    const children = projectResourceChildrenMap.value.get(currentId) || []
+    for (const child of children) {
+      const childId = String(child.id || '').trim()
+      if (childId)
+        queue.push(childId)
+    }
+  }
+
+  return collected
+}
+
+function buildProjectResourceTreePatchPayload(
+  draggedResourceId: string,
+  targetResourceId: string | null,
+  position: ResourceTreeDropPosition,
+): { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> } | null {
+  const normalizedDraggedId = String(draggedResourceId || '').trim()
+  if (!normalizedDraggedId)
+    return null
+
+  const draggedResource = projectResourceMap.value.get(normalizedDraggedId)
+  if (!draggedResource)
+    return null
+
+  const draggedParentResourceId = String(draggedResource.parentResourceId || '').trim() || null
+  const draggedSubtreeIds = collectDraggedResourceSubtreeIds(normalizedDraggedId)
+  const normalizedTargetId = String(targetResourceId || '').trim()
+
+  if (normalizedTargetId && draggedSubtreeIds.has(normalizedTargetId))
+    return null
+
+  let nextParentResourceId: string | null = draggedParentResourceId
+  let nextSiblingResourceIds: string[] = []
+
+  if (position === 'root_end') {
+    nextParentResourceId = null
+    nextSiblingResourceIds = (projectResourceChildrenMap.value.get('__root__') || [])
+      .map(resource => String(resource.id || '').trim())
+      .filter(Boolean)
+      .filter(resourceId => resourceId !== normalizedDraggedId)
+    nextSiblingResourceIds.push(normalizedDraggedId)
+  }
+  else {
+    const targetResource = normalizedTargetId ? projectResourceMap.value.get(normalizedTargetId) : null
+    if (!targetResource)
+      return null
+
+    if (position === 'inside') {
+      nextParentResourceId = normalizedTargetId
+      nextSiblingResourceIds = (projectResourceChildrenMap.value.get(normalizedTargetId) || [])
+        .map(resource => String(resource.id || '').trim())
+        .filter(Boolean)
+        .filter(resourceId => resourceId !== normalizedDraggedId)
+      nextSiblingResourceIds.push(normalizedDraggedId)
+    }
+    else {
+      nextParentResourceId = String(targetResource.parentResourceId || '').trim() || null
+      nextSiblingResourceIds = (projectResourceChildrenMap.value.get(nextParentResourceId || '__root__') || [])
+        .map(resource => String(resource.id || '').trim())
+        .filter(Boolean)
+        .filter(resourceId => resourceId !== normalizedDraggedId)
+
+      const targetIndex = nextSiblingResourceIds.indexOf(normalizedTargetId)
+      if (targetIndex < 0)
+        return null
+
+      const insertIndex = position === 'before' ? targetIndex : targetIndex + 1
+      nextSiblingResourceIds.splice(insertIndex, 0, normalizedDraggedId)
+    }
+  }
+
+  const affectedParentIds = new Set<string>([
+    draggedParentResourceId || '__root__',
+    nextParentResourceId || '__root__',
+  ])
+
+  const items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> = []
+  for (const parentKey of affectedParentIds) {
+    const siblingParentResourceId = parentKey === '__root__' ? null : parentKey
+    const siblingResourceIds = parentKey === (nextParentResourceId || '__root__')
+      ? nextSiblingResourceIds
+      : (projectResourceChildrenMap.value.get(parentKey) || [])
+          .map(resource => String(resource.id || '').trim())
+          .filter(Boolean)
+          .filter(resourceId => resourceId !== normalizedDraggedId)
+
+    siblingResourceIds.forEach((resourceId, index) => {
+      items.push({
+        resourceId,
+        parentResourceId: siblingParentResourceId,
+        sortOrder: index,
+      })
+    })
+  }
+
+  return {
+    items,
+  }
+}
+
+function handleResourceDragStart(resourceId: string, event: DragEvent) {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId)
+    return
+  draggingResourceId.value = normalizedResourceId
+  dragOverResourceId.value = ''
+  dragOverPosition.value = ''
+  event.dataTransfer?.setData('text/plain', normalizedResourceId)
+  if (event.dataTransfer)
+    event.dataTransfer.effectAllowed = 'move'
+}
+
+function handleResourceDragOver(resourceId: string | null, position: ResourceTreeDropPosition, event: DragEvent) {
+  if (!draggingResourceId.value || props.resourceMutating || !props.hasActiveProject)
+    return
+  event.preventDefault()
+  dragOverResourceId.value = String(resourceId || '').trim()
+  dragOverPosition.value = position
+  if (event.dataTransfer)
+    event.dataTransfer.dropEffect = 'move'
+}
+
+function handleResourceDragLeave(resourceId: string | null, position: ResourceTreeDropPosition) {
+  if (dragOverResourceId.value !== String(resourceId || '').trim() || dragOverPosition.value !== position)
+    return
+  dragOverResourceId.value = ''
+  dragOverPosition.value = ''
+}
+
+function handleResourceDragEnd() {
+  draggingResourceId.value = ''
+  dragOverResourceId.value = ''
+  dragOverPosition.value = ''
+}
+
+function handleResourceDrop(resourceId: string | null, position: ResourceTreeDropPosition, event: DragEvent) {
+  if (!draggingResourceId.value || props.resourceMutating || !props.hasActiveProject)
+    return
+  event.preventDefault()
+  const payload = buildProjectResourceTreePatchPayload(draggingResourceId.value, resourceId, position)
+  handleResourceDragEnd()
+  if (!payload || payload.items.length === 0)
+    return
+  emit('patchProjectResourceTree', payload)
 }
 
 function toggleResourceActionMenu(resourceId: string) {
@@ -1555,7 +1801,7 @@ watch(() => props.selectedResources, (nextResources) => {
   if (stillExists)
     return
 
-  activeResourceId.value = nextResources[0]?.id || ''
+  activeResourceId.value = visibleResources.value[0]?.resource.id || nextResources[0]?.id || ''
 }, { immediate: true, deep: true })
 
 watch(suppressResourceSelection, (next) => {
@@ -1572,8 +1818,32 @@ watch(suppressResourceSelection, (next) => {
   if (stillExists)
     return
 
-  activeResourceId.value = props.selectedResources[0]?.id || ''
+  activeResourceId.value = visibleResources.value[0]?.resource.id || props.selectedResources[0]?.id || ''
 }, { immediate: true })
+
+watch(projectResourceTree, (nextTree) => {
+  const activeIds = new Set<string>()
+  const walk = (nodes: ProjectResourceTreeNode[]) => {
+    for (const node of nodes) {
+      const resourceId = String(node.resource.id || '').trim()
+      if (!resourceId)
+        continue
+      activeIds.add(resourceId)
+      if (node.children.length > 0) {
+        if (!(resourceId in treeExpanded))
+          treeExpanded[resourceId] = true
+        walk(node.children)
+      }
+    }
+  }
+
+  walk(nextTree)
+
+  for (const resourceId of Object.keys(treeExpanded)) {
+    if (!activeIds.has(resourceId))
+      delete treeExpanded[resourceId]
+  }
+}, { immediate: true, deep: true })
 
 watch(() => props.recycleResources, (nextResources) => {
   if (purgeTargetResourceId.value && !nextResources.some(item => item.id === purgeTargetResourceId.value)) {
@@ -1582,10 +1852,32 @@ watch(() => props.recycleResources, (nextResources) => {
   }
 }, { immediate: true, deep: true })
 
+watch(libraryModalVisible, (next) => {
+  if (next)
+    return
+  libraryModalKeyword.value = ''
+  libraryImportParentResourceId.value = null
+})
+
 watch(outlineItems, (nextItems) => {
   if (!nextItems.length) {
-    activeOutlineId.value = ''
+    if (!pendingOutlineCommandId.value)
+      activeOutlineId.value = ''
     return
+  }
+
+  if (pendingOutlineCommandId.value) {
+    const pendingExists = nextItems.some(item => item.id === pendingOutlineCommandId.value)
+    if (pendingExists) {
+      activeOutlineId.value = pendingOutlineCommandId.value
+      pendingOutlineCommandId.value = ''
+      return
+    }
+
+    if (props.projectOutlineLoading)
+      return
+
+    pendingOutlineCommandId.value = ''
   }
 
   const stillExists = nextItems.some(item => item.id === activeOutlineId.value)
@@ -1593,6 +1885,19 @@ watch(outlineItems, (nextItems) => {
     return
 
   activeOutlineId.value = nextItems[0]?.id || ''
+}, { immediate: true })
+
+watch(() => props.commandSignal, (next, previous) => {
+  if (next === previous)
+    return
+
+  const outlineId = String(props.commandOutlineId || '').trim()
+  if (!outlineId)
+    return
+
+  pendingOutlineCommandId.value = outlineId
+  activeOutlineId.value = outlineId
+  sectionExpanded.outline = true
 }, { immediate: true })
 
 watch(linkedContestResourceGroups, (groups) => {
@@ -1629,6 +1934,8 @@ watch(() => props.hasActiveProject, (next) => {
   if (next)
     return
   libraryModalVisible.value = false
+  libraryImportParentResourceId.value = null
+  uploadParentResourceId.value = null
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
   closeResourceDetailPanel()
@@ -1686,8 +1993,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="workspace-left-panel__feature">
-    <div class="workspace-left-panel__body no-scrollbar">
+  <div class="workspace-left-panel__feature workspace-resource-manager-panel">
+    <div class="workspace-left-panel__body workspace-resource-manager-panel__body no-scrollbar">
               <template v-if="recyclePanelOpen">
                 <section class="workspace-tree-block workspace-tree-block--recycle-panel">
                   <header class="workspace-recycle-panel__header">
@@ -1800,13 +2107,13 @@ onBeforeUnmount(() => {
                           :disabled="resourceMutating || !hasActiveProject"
                           @click.stop="openLibraryFromMenu"
                         >
-                          从系统资源库导入
+                          从系统资料库导入
                         </button>
                         <button
                           class="workspace-project-add-actions__menu-item"
                           type="button"
                           :disabled="resourceMutating || !hasActiveProject"
-                          @click.stop="openLocalUploadFromMenu"
+                          @click.stop="openLocalUploadFromMenu()"
                         >
                           从本地设备中上传
                         </button>
@@ -1908,105 +2215,192 @@ onBeforeUnmount(() => {
                     </template>
                     <template v-else>
                       <div
-                        v-for="resource in visibleResources"
-                        :key="resource.id"
-                        class="workspace-tree-item-row"
-                        :class="{
-                          'workspace-tree-item-row--active': !suppressResourceSelection && resource.id === activeResourceId,
-                          'workspace-tree-item-row--menu-open': resourceActionOpenId === resource.id,
-                        }"
-                        @contextmenu="handleResourceItemContextMenu(resource.id, $event)"
+                        v-for="row in visibleResources"
+                        :key="row.resource.id"
+                        class="workspace-resource-tree-entry"
                       >
-                        <button
-                          class="workspace-tree-item"
-                          :class="{ 'workspace-tree-item--active': !suppressResourceSelection && resource.id === activeResourceId }"
-                          :title="resourceDisplayTitle(resource)"
-                          type="button"
-                          @click="openResource(resource)"
+                        <div
+                          class="workspace-tree-dropzone"
+                          :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'before' }"
+                          :style="{ marginLeft: `${Math.max(0, row.depth) * 14}px` }"
+                          @dragover="handleResourceDragOver(row.resource.id, 'before', $event)"
+                          @dragleave="handleResourceDragLeave(row.resource.id, 'before')"
+                          @drop="handleResourceDrop(row.resource.id, 'before', $event)"
+                        />
+
+                        <div
+                          class="workspace-tree-item-row"
+                          :class="{
+                            'workspace-tree-item-row--active': !suppressResourceSelection && row.resource.id === activeResourceId,
+                            'workspace-tree-item-row--menu-open': resourceActionOpenId === row.resource.id,
+                            'workspace-tree-item-row--drop-inside': dragOverResourceId === row.resource.id && dragOverPosition === 'inside',
+                          }"
+                          @contextmenu="handleResourceItemContextMenu(row.resource.id, $event)"
+                          @dragover="handleResourceDragOver(row.resource.id, 'inside', $event)"
+                          @dragleave="handleResourceDragLeave(row.resource.id, 'inside')"
+                          @drop="handleResourceDrop(row.resource.id, 'inside', $event)"
                         >
-                          <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(resource)">
-                            {{ resourceIcon(resource) }}
-                          </span>
-                          <span class="workspace-tree-item__label">{{ resourceDisplayTitle(resource) }}</span>
-                        </button>
+                          <div class="workspace-resource-tree-row__main" :style="{ paddingLeft: `${Math.max(0, row.depth) * 14}px` }">
+                            <button
+                              class="workspace-tree-item__expander"
+                              :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
+                              type="button"
+                              :disabled="!row.hasChildren"
+                              @click.stop="toggleProjectResourceExpansion(row.resource.id)"
+                            >
+                              <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
+                                keyboard_arrow_down
+                              </span>
+                            </button>
 
-                        <div class="workspace-resource-actions">
-                          <button
-                            class="workspace-resource-actions__trigger"
-                            type="button"
-                            title="资源操作"
-                            aria-label="资源操作"
-                            :disabled="resourceMutating || !hasActiveProject"
-                            @click.stop="toggleResourceActionMenu(resource.id)"
-                          >
-                            <span class="material-symbols-outlined">more_horiz</span>
-                          </button>
-
-                          <div
-                            v-if="resourceActionOpenId === resource.id"
-                            class="workspace-resource-actions__menu"
-                            role="menu"
-                          >
                             <button
-                              class="workspace-resource-actions__menu-item"
+                              class="workspace-tree-item"
+                              :class="{ 'workspace-tree-item--active': !suppressResourceSelection && row.resource.id === activeResourceId }"
+                              :title="resourceDisplayTitle(row.resource)"
                               type="button"
-                              :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(resource)"
-                              @click.stop="requestPreviewResource(resource.id)"
+                              draggable="true"
+                              @dragstart="handleResourceDragStart(row.resource.id, $event)"
+                              @dragend="handleResourceDragEnd"
+                              @click="openResource(row.resource)"
                             >
-                              预览
-                            </button>
-                            <button
-                              class="workspace-resource-actions__menu-item"
-                              type="button"
-                              :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(resource)"
-                              @click.stop="requestShareResource(resource.id)"
-                            >
-                              分享链接
-                            </button>
-                            <button
-                              class="workspace-resource-actions__menu-item"
-                              type="button"
-                              :disabled="resourceMutating || !hasActiveProject"
-                              @click.stop="copyResourceName(resource.id)"
-                            >
-                              复制名称
-                            </button>
-                            <button
-                              class="workspace-resource-actions__menu-item"
-                              type="button"
-                              :disabled="resourceMutating || !hasActiveProject || !canDuplicateResource(resource)"
-                              @click.stop="createResourceDuplicate(resource.id)"
-                            >
-                              创建副本
-                            </button>
-                            <div class="workspace-resource-actions__divider" />
-                            <button
-                              class="workspace-resource-actions__menu-item"
-                              type="button"
-                              :disabled="resourceMutating || !hasActiveProject"
-                              @click.stop="requestViewResourceDetails(resource.id)"
-                            >
-                              文档属性
-                            </button>
-                            <button
-                              class="workspace-resource-actions__menu-item"
-                              type="button"
-                              :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(resource)"
-                              @click.stop="requestDownloadResource(resource.id)"
-                            >
-                              下载原文件
-                            </button>
-                            <div class="workspace-resource-actions__divider" />
-                            <button
-                              class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
-                              type="button"
-                              :disabled="resourceMutating || !hasActiveProject"
-                              @click.stop="requestRemoveResource(resource.id)"
-                            >
-                              删除文件
+                              <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
+                                {{ resourceIcon(row.resource) }}
+                              </span>
+                              <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
                             </button>
                           </div>
+
+                          <div class="workspace-resource-actions">
+                            <button
+                              class="workspace-resource-actions__trigger"
+                              type="button"
+                              title="资源操作"
+                              aria-label="资源操作"
+                              :disabled="resourceMutating || !hasActiveProject"
+                              @click.stop="toggleResourceActionMenu(row.resource.id)"
+                            >
+                              <span class="material-symbols-outlined">more_horiz</span>
+                            </button>
+
+                            <div
+                              v-if="resourceActionOpenId === row.resource.id"
+                              class="workspace-resource-actions__menu"
+                              role="menu"
+                            >
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="createChildCollaborativeDoc(row.resource.id)"
+                              >
+                                新建子协作文档
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="createChildInfiniteCanvas(row.resource.id)"
+                              >
+                                新建子自由画布
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="openChildUpload(row.resource.id)"
+                              >
+                                上传到此节点
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="openChildLibraryImport(row.resource.id)"
+                              >
+                                从系统资料库导入到此节点
+                              </button>
+                              <div class="workspace-resource-actions__divider" />
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(row.resource)"
+                                @click.stop="requestPreviewResource(row.resource.id)"
+                              >
+                                预览
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(row.resource)"
+                                @click.stop="requestShareResource(row.resource.id)"
+                              >
+                                分享链接
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="copyResourceName(row.resource.id)"
+                              >
+                                复制名称
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !canDuplicateResource(row.resource)"
+                                @click.stop="createResourceDuplicate(row.resource.id)"
+                              >
+                                创建副本
+                              </button>
+                              <div class="workspace-resource-actions__divider" />
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="requestViewResourceDetails(row.resource.id)"
+                              >
+                                文档属性
+                              </button>
+                              <button
+                                class="workspace-resource-actions__menu-item"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(row.resource)"
+                                @click.stop="requestDownloadResource(row.resource.id)"
+                              >
+                                下载原文件
+                              </button>
+                              <div class="workspace-resource-actions__divider" />
+                              <button
+                                class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
+                                type="button"
+                                :disabled="resourceMutating || !hasActiveProject"
+                                @click.stop="requestRemoveResource(row.resource.id)"
+                              >
+                                删除文件
+                              </button>
+                            </div>
+                          </div>
                         </div>
+
+                        <div
+                          class="workspace-tree-dropzone"
+                          :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'after' }"
+                          :style="{ marginLeft: `${Math.max(0, row.depth) * 14}px` }"
+                          @dragover="handleResourceDragOver(row.resource.id, 'after', $event)"
+                          @dragleave="handleResourceDragLeave(row.resource.id, 'after')"
+                          @drop="handleResourceDrop(row.resource.id, 'after', $event)"
+                        />
+                      </div>
+
+                      <div
+                        v-if="visibleResources.length > 0"
+                        class="workspace-tree-dropzone workspace-tree-dropzone--tail"
+                        :class="{ 'workspace-tree-dropzone--active': !dragOverResourceId && dragOverPosition === 'root_end' }"
+                        @dragover="handleResourceDragOver(null, 'root_end', $event)"
+                        @dragleave="handleResourceDragLeave(null, 'root_end')"
+                        @drop="handleResourceDrop(null, 'root_end', $event)"
+                      >
+                        拖到此处可移动到根节点末尾
                       </div>
                       <p v-if="visibleUploadTasks.length === 0 && visibleResources.length === 0" class="workspace-empty-text">
                         暂无资源
@@ -2115,67 +2509,6 @@ onBeforeUnmount(() => {
                     </template>
                     <p v-else class="workspace-empty-text">
                       {{ linkedContestBindingCount > 0 ? '当前关联比赛暂无可导入资料' : '请先在项目设置中关联比赛' }}
-                    </p>
-                  </div>
-                </section>
-
-                <section class="workspace-tree-block">
-                  <button
-                    class="workspace-tree-block__title"
-                    type="button"
-                    :aria-expanded="sectionExpanded.systemLibrary"
-                    @click="toggleSection('systemLibrary')"
-                  >
-                    <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.systemLibrary }">
-                      keyboard_arrow_down
-                    </span>
-                    <span>系统资料库</span>
-                  </button>
-
-                  <div v-show="sectionExpanded.systemLibrary" class="workspace-tree-block__content">
-                    <template v-if="resourceLibraryLoading">
-                      <div
-                        v-for="row in resourceLibrarySkeletonRows"
-                        :key="`library-skeleton-${row}`"
-                        class="workspace-library-skeleton-item"
-                        aria-hidden="true"
-                      >
-                        <div class="workspace-library-skeleton-item__left">
-                          <span class="workspace-library-skeleton-item__icon workspace-skeleton" />
-                          <div class="workspace-library-skeleton-item__content">
-                            <div class="workspace-library-skeleton-item__title workspace-skeleton" />
-                            <div class="workspace-library-skeleton-item__meta workspace-skeleton" />
-                          </div>
-                        </div>
-                        <span class="workspace-library-skeleton-item__action workspace-skeleton" />
-                      </div>
-                    </template>
-                    <template v-else-if="visibleSystemLibraryResources.length > 0">
-                      <div
-                        v-for="item in visibleSystemLibraryResources"
-                        :key="item.id"
-                        class="workspace-library-item"
-                      >
-                        <div class="workspace-library-item__content">
-                          <div class="workspace-library-item__title">
-                            {{ resourceDisplayTitle(item) }}
-                          </div>
-                          <div class="workspace-library-item__meta">
-                            {{ item.type }} · {{ item.year }}
-                          </div>
-                        </div>
-                        <button
-                          class="workspace-library-item__add"
-                          type="button"
-                          :disabled="resourceMutating || !hasActiveProject"
-                          @click="addLibraryResource(item.id)"
-                        >
-                          添加
-                        </button>
-                      </div>
-                    </template>
-                    <p v-else class="workspace-empty-text">
-                      暂无资源
                     </p>
                   </div>
                 </section>

@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import type {
   Contest,
-  ProjectUploadActivityItem,
-  ProjectUploadSummary,
   ProjectIssue,
   ProjectIssueReport,
   ProjectMemberSummary,
@@ -13,7 +11,7 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
-import type { ProjectUploadTask } from '~/types/project-upload'
+import type { ProjectUploadActivityItem, ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
@@ -30,11 +28,6 @@ interface ShareProjectResourcePayload {
   resourceId: string
   visibility: ProjectResourceShareVisibility
   duration: ProjectResourceShareDurationPreset
-}
-
-interface ProjectResourceTreeItem {
-  resource: Resource
-  children: Resource[]
 }
 
 const props = withDefaults(defineProps<{
@@ -152,9 +145,10 @@ const emit = defineEmits<{
   'openWorkspaceHome': []
   'openDisplayPreferences': []
   'openAccountCenter': []
-  'createCollabResource': [kind: 'markdown' | 'draw']
+  'createCollabResource': [payload: { kind: 'markdown' | 'draw', parentResourceId?: string | null }]
   'reloadIssues': []
-  'addResourceFromLibrary': [resourceId: string]
+  'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
+  'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
   'openResource': [resourceId: string]
   'downloadProjectResource': [resourceId: string]
   'copyProjectResourceName': [resourceId: string]
@@ -163,12 +157,7 @@ const emit = defineEmits<{
   'removeProjectResource': [resourceId: string]
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
-  'uploadResources': [files: File[]]
-  'pauseUploadTask': [sessionId: string]
-  'resumeUploadTask': [sessionId: string]
-  'retryUploadTask': [sessionId: string]
-  'cancelUploadTask': [sessionId: string]
-  'rebindUploadTask': [sessionId: string]
+  'uploadResources': [payload: { files: File[], parentResourceId?: string | null }]
 }>()
 
 const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
@@ -202,32 +191,12 @@ const modules: WorkspaceLeftModule[] = [
 
 const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
 const recyclePanelOpen = ref(false)
-const activeOutlineId = ref('')
-const sectionExpanded = reactive({
-  projectResources: true,
-  linkedContestResources: true,
-  outline: true,
-})
-const documentTreeExpanded = reactive<Record<string, boolean>>({})
 const panelContentTransitionKey = computed(() => {
   return recyclePanelOpen.value
     ? 'resource-manager:recycle'
     : activeModule.value
 })
 const panelContentTransitionName = ref<'workspace-left-panel-content-forward' | 'workspace-left-panel-content-backward'>('workspace-left-panel-content-forward')
-const visibleResources = computed(() => props.selectedResources)
-const resolvedOutlineItems = computed(() => {
-  const uploadItems = props.uploadTasks.filter(task => Boolean(task))
-  if (props.projectOutline.length > 0)
-    return props.projectOutline
-  return uploadItems
-})
-
-function resolveOutlineContractKey(item: ProjectOutlineNode | ProjectUploadTask): string {
-  if ('sessionId' in item)
-    return String(item.sessionId || '')
-  return String(item.id || '')
-}
 
 function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId {
   return value === 'resource_manager'
@@ -235,77 +204,6 @@ function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId 
     || value === 'project_config'
     || value === 'issue_center'
 }
-
-function resolveEmbeddedMarkdownResourceId(resource: Resource): string {
-  const metadata = resource.metadata as {
-    embeddedIn?: {
-      kind?: string
-      resourceId?: string
-    }
-  } | null | undefined
-  const embeddedIn = metadata?.embeddedIn
-  if (!embeddedIn || embeddedIn.kind !== 'markdown')
-    return ''
-  return String(embeddedIn.resourceId || '').trim()
-}
-
-function isUploadedImageResource(resource: Resource): boolean {
-  const type = String(resource.type || '').trim().toLowerCase()
-  const source = String(resource.source || '').trim().toLowerCase()
-  return source === 'upload' && type.startsWith('image/')
-}
-
-const projectResourceTreeItems = computed<ProjectResourceTreeItem[]>(() => {
-  const markdownResourceIds = new Set(
-    visibleResources.value
-      .filter(resource => String(resource.resourceKind || '').trim().toLowerCase() === 'markdown')
-      .map(resource => resource.id),
-  )
-  const orphanImageResources: Resource[] = []
-  const childMap = new Map<string, Resource[]>()
-
-  for (const resource of visibleResources.value) {
-    if (!isUploadedImageResource(resource))
-      continue
-    const embeddedMarkdownResourceId = resolveEmbeddedMarkdownResourceId(resource)
-    if (!embeddedMarkdownResourceId || !markdownResourceIds.has(embeddedMarkdownResourceId))
-      continue
-    const current = childMap.get(embeddedMarkdownResourceId) || []
-    current.push(resource)
-    childMap.set(embeddedMarkdownResourceId, current)
-  }
-
-  for (const resource of visibleResources.value) {
-    if (!isUploadedImageResource(resource))
-      continue
-    const embeddedMarkdownResourceId = resolveEmbeddedMarkdownResourceId(resource)
-    if (!embeddedMarkdownResourceId || !markdownResourceIds.has(embeddedMarkdownResourceId)) {
-      orphanImageResources.push(resource)
-      continue
-    }
-  }
-
-  const items: ProjectResourceTreeItem[] = []
-  for (const resource of visibleResources.value) {
-    if (isUploadedImageResource(resource) && resolveEmbeddedMarkdownResourceId(resource))
-      continue
-    items.push({
-      resource,
-      children: childMap.get(resource.id) || [],
-    })
-  }
-
-  for (const resource of orphanImageResources) {
-    if (items.some(item => item.resource.id === resource.id))
-      continue
-    items.push({
-      resource,
-      children: [],
-    })
-  }
-
-  return items
-})
 
 function syncPanelTransitionDirection(moduleId: string) {
   const moduleOrder = modules.map(item => item.id)
@@ -342,23 +240,11 @@ function openRecycleBinPanel() {
   recyclePanelOpen.value = true
 }
 
-watch(projectResourceTreeItems, (items) => {
-  const validIds = new Set(items.map(item => item.resource.id))
-  for (const key of Object.keys(documentTreeExpanded)) {
-    if (!validIds.has(key))
-      delete documentTreeExpanded[key]
-  }
-}, { immediate: true })
-
 watch(() => props.commandSignal, (next, previous) => {
   if (next === previous)
     return
   if (props.commandModuleId)
     switchModule(props.commandModuleId)
-  if (props.commandOutlineId) {
-    activeOutlineId.value = props.commandOutlineId
-    sectionExpanded.outline = true
-  }
   if (props.collapsed)
     emit('update:collapsed', false)
 })
@@ -445,6 +331,7 @@ watch(activeModule, (value) => {
             @create-collab-resource="emit('createCollabResource', $event)"
             @reload-issues="emit('reloadIssues')"
             @add-resource-from-library="emit('addResourceFromLibrary', $event)"
+            @patch-project-resource-tree="emit('patchProjectResourceTree', $event)"
             @open-resource="emit('openResource', $event)"
             @download-project-resource="emit('downloadProjectResource', $event)"
             @copy-project-resource-name="emit('copyProjectResourceName', $event)"
@@ -512,28 +399,6 @@ watch(activeModule, (value) => {
         </div>
       </Transition>
 
-      <div v-if="false" class="workspace-left-sidebar__structural-contract" aria-hidden="true">
-        <button type="button">
-          新建协作文档
-        </button>
-        <button type="button">
-          新建自由画布
-        </button>
-        <button type="button" title="从系统资料库导入">
-          从系统资料库导入
-        </button>
-        <div v-for="treeItem in projectResourceTreeItems" :key="treeItem.resource.id" class="workspace-resource-tree-group">
-          <button class="workspace-tree-item__expander" type="button" />
-          <div v-if="documentTreeExpanded[treeItem.resource.id]" class="workspace-resource-tree-group__children">
-            <div v-for="child in treeItem.children" :key="child.id">
-              {{ child.title }}
-            </div>
-          </div>
-        </div>
-        <div v-for="item in resolvedOutlineItems" :key="resolveOutlineContractKey(item) || activeOutlineId">
-          {{ item }}
-        </div>
-      </div>
     </section>
   </aside>
 </template>
@@ -573,8 +438,11 @@ watch(activeModule, (value) => {
 }
 
 .workspace-left-panel__content {
+  display: flex;
+  flex: 1 1 auto;
   height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
 .workspace-left-panel-content-forward-enter-active,
