@@ -228,6 +228,7 @@ export async function finalizeProjectResourceUploadSession(input: {
         summary: session.summary,
         category: session.category,
         accessLevel: session.accessLevel,
+        parentResourceId: session.parentResourceId,
       })
 
       const created = await createProjectPreviewDocumentWithTask(db, {

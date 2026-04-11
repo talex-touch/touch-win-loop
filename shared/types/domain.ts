@@ -330,11 +330,14 @@ export interface Resource {
   id: string
   contestId: string
   projectId?: string
+  parentResourceId?: string | null
+  sortOrder?: number
   resourceKind?: ResourceKind
   collabPurpose?: CollabPurpose
   drawMode?: DrawMode
   sceneSourceType?: SceneSourceType
   templateKey?: string
+  editorEngine?: SceneEditorEngine
   revision?: number
   documentId?: string
   title: string
@@ -378,6 +381,7 @@ export type SceneNodeShape = 'rect' | 'rounded' | 'pill' | 'diamond' | 'note' | 
 export type SceneTemplateCategory = 'diagram' | 'schema' | 'architecture' | 'composition'
 export type SceneExportFormat = 'svg' | 'png' | 'pdf'
 export type SceneExportStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
+export type SceneEditorEngine = 'vueflow' | 'tldraw_legacy'
 
 export interface SceneNode {
   id: string
@@ -556,9 +560,72 @@ export interface CompositionBlock {
   metadata?: Record<string, unknown>
 }
 
+export type DesignFrameKind = 'freeform' | 'template' | 'device_mockup' | 'diagram'
+export type DesignElementType = 'text' | 'image' | 'shape' | 'group' | 'badge' | 'caption'
+
+export interface DesignElementModel {
+  id: string
+  type: DesignElementType
+  x: number
+  y: number
+  width: number
+  height: number
+  rotation?: number
+  text?: string
+  imageSrc?: string
+  style?: Record<string, string | number | boolean | null>
+  metadata?: Record<string, unknown>
+}
+
+export interface DesignAssetModel {
+  id: string
+  type: 'image'
+  name: string
+  src: string
+  mimeType?: string
+  width?: number
+  height?: number
+  metadata?: Record<string, unknown>
+}
+
+export interface DesignPageModel {
+  id: string
+  name: string
+  background?: string
+  frameIds?: string[]
+  viewport?: {
+    x: number
+    y: number
+    zoom: number
+  }
+  metadata?: Record<string, unknown>
+}
+
+export interface DesignFrameModel {
+  id: string
+  pageId: string
+  name: string
+  kind: DesignFrameKind
+  x: number
+  y: number
+  width: number
+  height: number
+  locked?: boolean
+  templateKey?: string
+  deviceFramePresetKey?: string
+  elements?: DesignElementModel[]
+  embeddedScene?: SceneDocument
+  themeTokens?: Record<string, string>
+  metadata?: Record<string, unknown>
+}
+
 export interface CompositionModel {
   kind: 'composition'
   templateKey: string
+  pages?: DesignPageModel[]
+  currentPageId?: string
+  frames?: DesignFrameModel[]
+  assets?: DesignAssetModel[]
   slots?: Record<string, unknown>
   themeTokens?: Record<string, string>
   layoutRules?: Record<string, unknown>
@@ -578,6 +645,7 @@ export interface SceneDocument {
   drawMode: DrawMode
   sourceType: SceneSourceType
   templateKey?: string
+  editorEngine?: SceneEditorEngine
   sourceModel: SceneSourceModel
   sceneModel: SceneModel
   runtimeSnapshot?: DrawRuntimeSnapshot | null
@@ -665,6 +733,7 @@ export type ProjectResourceUploadSessionStatus
 export interface ProjectResourceUploadSession {
   id: string
   projectId: string
+  parentResourceId?: string | null
   actorUserId?: string | null
   actorUsername?: string
   actorAvatarUrl?: string | null
@@ -1219,6 +1288,12 @@ export interface AuthMeResult {
   onboarding: {
     needCreateTeam: boolean
   }
+}
+
+export interface AuthSessionProbeResult {
+  authenticated: true
+  userId: string
+  expiresAt: string
 }
 
 export interface CasdoorAuthMeta {

@@ -1,17 +1,19 @@
 import { setResponseStatus } from 'h3'
-import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { teamCanManageProject } from '~~/server/utils/project-access-store'
-import { bindLibraryResourceToProject } from '~~/server/utils/project-resource-store'
+import { patchProjectResourceTree } from '~~/server/utils/project-resource-store'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
-interface AddLibraryResourceBody {
-  resourceId?: string
-  parentResourceId?: string | null
+interface ProjectResourceTreePatchBody {
+  items?: Array<{
+    resourceId?: string
+    parentResourceId?: string | null
+    sortOrder?: number
+  }>
 }
 
 function normalizeString(value: unknown): string {
@@ -22,19 +24,30 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
   const { user } = await requireAuth(event)
-  const projectId = String(getRouterParam(event, 'id') || '').trim()
-  const body = (await readBody<AddLibraryResourceBody>(event)) || {}
-  const resourceId = String(body.resourceId || '').trim()
+  const projectId = normalizeString(getRouterParam(event, 'id'))
+  const body = await readBody<ProjectResourceTreePatchBody>(event).catch(() => null)
+  const items = Array.isArray(body?.items) ? body!.items : []
 
-  if (!projectId || !resourceId) {
+  if (!projectId) {
     setResponseStatus(event, 400)
-    return fail('缺少 projectId 或 resourceId。', {
+    return fail('缺少 projectId。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40063)
+    }, 40131)
+  }
+
+  if (items.length === 0) {
+    setResponseStatus(event, 400)
+    return fail('缺少树排序数据。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40132)
   }
 
   try {
@@ -47,26 +60,21 @@ export default defineEventHandler(async (event) => {
       if (!manageable)
         throw new Error('FORBIDDEN')
 
-      const resource = await bindLibraryResourceToProject(db, {
+      const resources = await patchProjectResourceTree(db, {
         projectId,
-        resourceId,
         actorUserId: user.id,
-        parentResourceId: normalizeString(body.parentResourceId) || undefined,
+        items: items.map(item => ({
+          resourceId: normalizeString(item.resourceId),
+          parentResourceId: normalizeString(item.parentResourceId) || null,
+          sortOrder: Number(item.sortOrder || 0),
+        })),
       })
 
       return {
-        resource,
+        resources,
         workspaceId: project.workspaceId || project.teamId,
       }
     })
-
-    await withTransaction(event, async (db) => {
-      await generateAndSaveProjectOutline(db, {
-        projectId,
-        user,
-        reason: 'library_add_success',
-      })
-    }).catch(() => undefined)
 
     await Promise.allSettled([
       emitRealtimeEvent({
@@ -81,13 +89,15 @@ export default defineEventHandler(async (event) => {
       }),
     ])
 
-    return ok(result.resource, {
+    return ok({
+      items: result.resources,
+    }, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    })
+    }, '资源树已更新。')
   }
   catch (error) {
     if (error instanceof Error && error.message === 'PROJECT_NOT_FOUND') {
@@ -98,7 +108,7 @@ export default defineEventHandler(async (event) => {
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 40463)
+      }, 404131)
     }
 
     if (error instanceof Error && error.message === 'FORBIDDEN') {
@@ -109,18 +119,7 @@ export default defineEventHandler(async (event) => {
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 40363)
-    }
-
-    if (error instanceof Error && error.message === 'RESOURCE_NOT_FOUND') {
-      setResponseStatus(event, 404)
-      return fail('资源不存在，或当前不可加入项目资料池。', {
-        startedAt,
-        provider: runtime.ai.provider,
-        model: runtime.ai.model,
-        fallbackUsed: false,
-        attempts: 1,
-      }, 40464)
+      }, 403131)
     }
 
     if (error instanceof Error && error.message === 'RESOURCE_PARENT_NOT_FOUND') {
@@ -131,7 +130,29 @@ export default defineEventHandler(async (event) => {
         model: runtime.ai.model,
         fallbackUsed: false,
         attempts: 1,
-      }, 40064)
+      }, 400131)
+    }
+
+    if (error instanceof Error && error.message === 'RESOURCE_TREE_CYCLE') {
+      setResponseStatus(event, 400)
+      return fail('资源树结构非法，不能将节点移动到自身后代下。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 400132)
+    }
+
+    if (error instanceof Error && (error.message === 'RESOURCE_NOT_FOUND' || error.message === 'RESOURCE_TREE_DUPLICATE_ITEM')) {
+      setResponseStatus(event, 400)
+      return fail('资源树排序请求包含无效节点。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 400133)
     }
 
     throw error

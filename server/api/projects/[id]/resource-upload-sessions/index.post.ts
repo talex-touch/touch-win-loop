@@ -51,6 +51,7 @@ interface UploadSessionInitFileInput {
   accessLevel?: string
   title?: string
   summary?: string
+  parentResourceId?: string | null
 }
 
 function normalizeString(value: unknown): string {
@@ -127,6 +128,7 @@ export default defineEventHandler(async (event) => {
       accessLevel: normalizeAccessLevel(item.accessLevel),
       title: normalizeString(item.title),
       summary: normalizeString(item.summary),
+      parentResourceId: normalizeString(item.parentResourceId) || null,
     }
   })
 

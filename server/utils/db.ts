@@ -10,6 +10,29 @@ export interface Queryable {
 let pool: PgPoolType | null = null
 let schemaReady = false
 let schemaPromise: Promise<void> | null = null
+let projectResourceTreeSchemaReady = false
+let projectResourceTreeSchemaPromise: Promise<void> | null = null
+
+interface MissingSchemaColumnRow extends QueryResultRow {
+  table_name: string
+  column_name: string
+}
+
+const PROJECT_RESOURCE_TREE_SCHEMA_CHECK_SQL = `
+SELECT required.table_name, required.column_name
+FROM (
+  VALUES
+    ('project_resources', 'parent_resource_id'),
+    ('project_resources', 'sort_order'),
+    ('project_resource_upload_sessions', 'parent_resource_id')
+) AS required(table_name, column_name)
+LEFT JOIN information_schema.columns cols
+  ON cols.table_schema = 'public'
+ AND cols.table_name = required.table_name
+ AND cols.column_name = required.column_name
+WHERE cols.column_name IS NULL
+ORDER BY required.table_name, required.column_name;
+`
 
 function normalizeDbError(error: unknown): Error {
   if (error instanceof Error) {
@@ -1032,6 +1055,8 @@ END $$;
 CREATE TABLE IF NOT EXISTS project_resources (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  parent_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL CHECK (source IN ('upload', 'library', 'collab')),
   resource_kind TEXT NOT NULL DEFAULT 'binary' CHECK (resource_kind IN ('binary', 'markdown', 'draw')),
   linked_contest_resource_id TEXT REFERENCES contest_resources(id) ON DELETE SET NULL,
@@ -1509,6 +1534,7 @@ CREATE TABLE IF NOT EXISTS project_resource_document_tasks (
 CREATE TABLE IF NOT EXISTS project_resource_upload_sessions (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  parent_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL,
   actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   file_name TEXT NOT NULL DEFAULT '',
   mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
@@ -2424,6 +2450,7 @@ CREATE INDEX IF NOT EXISTS idx_contest_resource_governance_tasks_contest_resourc
 CREATE INDEX IF NOT EXISTS idx_project_resource_bindings_project_created ON project_resource_bindings(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_resource_bindings_resource ON project_resource_bindings(resource_id);
 CREATE INDEX IF NOT EXISTS idx_project_resources_project_created ON project_resources(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_resources_project_parent_sort ON project_resources(project_id, parent_resource_id, sort_order ASC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_project_resources_linked_contest_resource ON project_resources(linked_contest_resource_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_resources_project_linked_unique
   ON project_resources(project_id, linked_contest_resource_id)
@@ -2801,6 +2828,32 @@ ALTER TABLE projects
 
 ALTER TABLE projects
   ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE project_resources
+  ADD COLUMN IF NOT EXISTS parent_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL;
+
+ALTER TABLE project_resources
+  ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
+
+WITH ranked_project_resources AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY project_id
+      ORDER BY created_at DESC, id DESC
+    ) - 1 AS next_sort_order
+  FROM project_resources
+  WHERE parent_resource_id IS NULL
+)
+UPDATE project_resources AS pr
+SET sort_order = ranked_project_resources.next_sort_order
+FROM ranked_project_resources
+WHERE pr.id = ranked_project_resources.id
+  AND pr.parent_resource_id IS NULL
+  AND pr.sort_order = 0;
+
+ALTER TABLE project_resource_upload_sessions
+  ADD COLUMN IF NOT EXISTS parent_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL;
 
 ALTER TABLE project_resources
   ADD COLUMN IF NOT EXISTS resource_kind TEXT NOT NULL DEFAULT 'binary';
@@ -3407,6 +3460,37 @@ CREATE INDEX IF NOT EXISTS idx_contest_audit_logs_action_created ON contest_audi
 CREATE INDEX IF NOT EXISTS idx_workspace_billing_plan ON workspace_billing(plan_id);
 `
 
+const PROJECT_RESOURCE_TREE_SCHEMA_SQL = `
+ALTER TABLE project_resources
+  ADD COLUMN IF NOT EXISTS parent_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL;
+
+ALTER TABLE project_resources
+  ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
+
+WITH ranked_project_resources AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY project_id
+      ORDER BY created_at DESC, id DESC
+    ) - 1 AS next_sort_order
+  FROM project_resources
+  WHERE parent_resource_id IS NULL
+)
+UPDATE project_resources AS pr
+SET sort_order = ranked_project_resources.next_sort_order
+FROM ranked_project_resources
+WHERE pr.id = ranked_project_resources.id
+  AND pr.parent_resource_id IS NULL
+  AND pr.sort_order = 0;
+
+ALTER TABLE project_resource_upload_sessions
+  ADD COLUMN IF NOT EXISTS parent_resource_id TEXT REFERENCES project_resources(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_resources_project_parent_sort
+  ON project_resources(project_id, parent_resource_id, sort_order ASC, created_at ASC);
+`
+
 async function ensureSchemaReady(poolRef: PgPoolType) {
   if (schemaReady)
     return
@@ -3423,6 +3507,36 @@ async function ensureSchemaReady(poolRef: PgPoolType) {
   await schemaPromise
 }
 
+async function ensureProjectResourceTreeSchemaReady(poolRef: PgPoolType) {
+  if (projectResourceTreeSchemaReady)
+    return
+
+  if (!projectResourceTreeSchemaPromise) {
+    projectResourceTreeSchemaPromise = (async () => {
+      try {
+        await poolRef.query(PROJECT_RESOURCE_TREE_SCHEMA_SQL)
+        const result = await poolRef.query<MissingSchemaColumnRow>(PROJECT_RESOURCE_TREE_SCHEMA_CHECK_SQL)
+        const missingColumns = result.rows.map(row => `${row.table_name}.${row.column_name}`)
+        if (missingColumns.length > 0) {
+          console.error('[db] project resource tree schema ensure incomplete', {
+            missingColumns,
+          })
+          throw new Error(`项目资料树 schema 未就绪，缺少字段：${missingColumns.join(', ')}`)
+        }
+        projectResourceTreeSchemaReady = true
+      }
+      catch (error) {
+        console.error('[db] project resource tree schema ensure failed', error)
+        throw error
+      }
+    })().finally(() => {
+      projectResourceTreeSchemaPromise = null
+    })
+  }
+
+  await projectResourceTreeSchemaPromise
+}
+
 export async function getPool(event?: H3Event): Promise<PgPoolType> {
   if (!pool) {
     const runtime = readRuntimeSettings(event)
@@ -3436,6 +3550,7 @@ export async function getPool(event?: H3Event): Promise<PgPoolType> {
 
   try {
     await ensureSchemaReady(pool)
+    await ensureProjectResourceTreeSchemaReady(pool)
   }
   catch (error) {
     throw normalizeDbError(error)

@@ -132,6 +132,16 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 40904)
     }
+    if (message === 'RESOURCE_PARENT_NOT_FOUND') {
+      setResponseStatus(event, 400)
+      return fail('目标父节点不存在，或已被移除，请重新选择上传位置。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 400106)
+    }
     throw error
   }
 })

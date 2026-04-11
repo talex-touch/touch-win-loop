@@ -20,10 +20,13 @@ import {
   syncMarkdownMirrorFromRichText,
   writeRichTextDocumentToFragment,
 } from '~~/shared/utils/collab-markdown-rich-text'
+import { normalizeDrawMode, normalizeSceneSourceType } from '~~/shared/utils/scene-document'
 
 interface ProjectResourceRow {
   id: string
   project_id: string
+  parent_resource_id?: string | null
+  sort_order?: number | string | null
   source: 'upload' | 'library' | 'collab'
   resource_kind?: ResourceKind | string | null
   linked_contest_resource_id: string | null
@@ -116,10 +119,24 @@ interface ObjectKeyRow {
   object_key: string
 }
 
+interface ProjectResourceTreeStateRow {
+  id: string
+  parent_resource_id: string | null
+  sort_order: number | string | null
+  status: ResourceStatus
+  created_at: string
+}
+
 export interface ProjectUploadedFileRef {
   objectKey: string
   fileName: string
   mimeType: string
+}
+
+export interface ProjectResourceTreePatchItem {
+  resourceId: string
+  parentResourceId: string | null
+  sortOrder: number
 }
 
 export interface PurgedProjectResourceRef {
@@ -206,6 +223,285 @@ function parseRevision(value: unknown): number {
   if (!Number.isFinite(parsed))
     return 0
   return Math.max(0, Math.trunc(parsed))
+}
+
+function normalizeParentResourceId(value: unknown): string | null {
+  const normalized = normalizeString(value)
+  return normalized || null
+}
+
+function parseSortOrder(value: unknown): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed))
+    return 0
+  return Math.max(0, Math.trunc(parsed))
+}
+
+function compareProjectResourceTreeRows(
+  left: Pick<ProjectResourceTreeStateRow, 'sort_order' | 'created_at' | 'id'>,
+  right: Pick<ProjectResourceTreeStateRow, 'sort_order' | 'created_at' | 'id'>,
+): number {
+  const leftSort = parseSortOrder(left.sort_order)
+  const rightSort = parseSortOrder(right.sort_order)
+  if (leftSort !== rightSort)
+    return leftSort - rightSort
+
+  const leftCreatedAt = new Date(normalizeString(left.created_at) || 0).getTime()
+  const rightCreatedAt = new Date(normalizeString(right.created_at) || 0).getTime()
+  if (leftCreatedAt !== rightCreatedAt)
+    return leftCreatedAt - rightCreatedAt
+
+  return normalizeString(left.id).localeCompare(normalizeString(right.id))
+}
+
+async function listProjectResourceTreeStateRows(
+  db: Queryable,
+  input: {
+    projectId: string
+    statuses?: ResourceStatus[]
+    forUpdate?: boolean
+  },
+): Promise<ProjectResourceTreeStateRow[]> {
+  const normalizedStatuses = Array.isArray(input.statuses)
+    ? input.statuses.filter(Boolean)
+    : []
+  const values: unknown[] = [input.projectId]
+  const filters = ['project_id = $1']
+
+  if (normalizedStatuses.length > 0) {
+    values.push(normalizedStatuses)
+    filters.push(`status = ANY($${values.length}::TEXT[])`)
+  }
+
+  const result = await db.query<ProjectResourceTreeStateRow>(
+    `SELECT
+      id,
+      parent_resource_id,
+      sort_order,
+      status,
+      created_at::TEXT
+     FROM project_resources
+     WHERE ${filters.join('\n       AND ')}
+     ORDER BY created_at ASC, id ASC
+     ${input.forUpdate ? 'FOR UPDATE' : ''}`,
+    values,
+  )
+
+  return result.rows
+}
+
+async function assertProjectResourceParentAvailable(
+  db: Queryable,
+  input: {
+    projectId: string
+    parentResourceId?: string | null
+  },
+): Promise<string | null> {
+  const parentResourceId = normalizeParentResourceId(input.parentResourceId)
+  if (!parentResourceId)
+    return null
+
+  const result = await db.query<{ id: string }>(
+    `SELECT id
+     FROM project_resources
+     WHERE project_id = $1
+       AND id = $2
+       AND status = 'active'
+     LIMIT 1`,
+    [input.projectId, parentResourceId],
+  )
+
+  if (!result.rows[0]?.id)
+    throw new Error('RESOURCE_PARENT_NOT_FOUND')
+
+  return parentResourceId
+}
+
+async function resolveNextProjectResourceSortOrder(
+  db: Queryable,
+  input: {
+    projectId: string
+    parentResourceId?: string | null
+    status?: ResourceStatus
+  },
+): Promise<number> {
+  const result = await db.query<{ next_sort_order: number | string | null }>(
+    `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
+     FROM project_resources
+     WHERE project_id = $1
+       AND status = $2
+       AND parent_resource_id IS NOT DISTINCT FROM $3`,
+    [
+      input.projectId,
+      input.status || 'active',
+      normalizeParentResourceId(input.parentResourceId),
+    ],
+  )
+
+  return parseSortOrder(result.rows[0]?.next_sort_order)
+}
+
+function collectProjectResourceSubtreeIds(
+  rows: Array<Pick<ProjectResourceTreeStateRow, 'id' | 'parent_resource_id' | 'status'>>,
+  rootId: string,
+  status?: ResourceStatus,
+): string[] {
+  const normalizedRootId = normalizeString(rootId)
+  if (!normalizedRootId)
+    return []
+
+  const childrenByParent = new Map<string, string[]>()
+  for (const row of rows) {
+    if (status && row.status !== status)
+      continue
+    const parentId = normalizeParentResourceId(row.parent_resource_id)
+    if (!parentId)
+      continue
+    const existing = childrenByParent.get(parentId)
+    if (existing)
+      existing.push(row.id)
+    else
+      childrenByParent.set(parentId, [row.id])
+  }
+
+  const visited = new Set<string>()
+  const queue = [normalizedRootId]
+  while (queue.length > 0) {
+    const currentId = queue.shift()
+    if (!currentId || visited.has(currentId))
+      continue
+    visited.add(currentId)
+    for (const childId of childrenByParent.get(currentId) || [])
+      queue.push(childId)
+  }
+
+  return [...visited]
+}
+
+function buildNormalizedProjectResourceTreeAssignments(
+  rows: ProjectResourceTreeStateRow[],
+  overrides?: Map<string, { parentResourceId: string | null, sortOrder: number }>,
+): Array<{ id: string, parentResourceId: string | null, sortOrder: number }> {
+  const nextParentById = new Map<string, string | null>()
+  const nextSortById = new Map<string, number>()
+
+  for (const row of rows) {
+    const override = overrides?.get(row.id)
+    nextParentById.set(row.id, override ? normalizeParentResourceId(override.parentResourceId) : normalizeParentResourceId(row.parent_resource_id))
+    nextSortById.set(row.id, override ? parseSortOrder(override.sortOrder) : parseSortOrder(row.sort_order))
+  }
+
+  for (const row of rows) {
+    const startId = row.id
+    let cursor = nextParentById.get(startId) || null
+    const visited = new Set<string>([startId])
+
+    while (cursor) {
+      if (visited.has(cursor))
+        throw new Error('RESOURCE_TREE_CYCLE')
+      visited.add(cursor)
+      cursor = nextParentById.get(cursor) || null
+    }
+  }
+
+  const groups = new Map<string, ProjectResourceTreeStateRow[]>()
+  for (const row of rows) {
+    const parentId = nextParentById.get(row.id) || null
+    const groupKey = parentId || '__root__'
+    const clonedRow: ProjectResourceTreeStateRow = {
+      ...row,
+      parent_resource_id: parentId,
+      sort_order: nextSortById.get(row.id) || 0,
+    }
+    const existing = groups.get(groupKey)
+    if (existing)
+      existing.push(clonedRow)
+    else
+      groups.set(groupKey, [clonedRow])
+  }
+
+  const assignments: Array<{ id: string, parentResourceId: string | null, sortOrder: number }> = []
+  for (const groupRows of groups.values()) {
+    groupRows
+      .sort(compareProjectResourceTreeRows)
+      .forEach((row, index) => {
+        assignments.push({
+          id: row.id,
+          parentResourceId: normalizeParentResourceId(row.parent_resource_id),
+          sortOrder: index,
+        })
+      })
+  }
+
+  return assignments
+}
+
+async function persistProjectResourceTreeAssignments(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    assignments: Array<{ id: string, parentResourceId: string | null, sortOrder: number }>
+  },
+): Promise<void> {
+  if (input.assignments.length === 0)
+    return
+
+  await db.query(
+    `WITH payload AS (
+      SELECT
+        id,
+        parent_resource_id,
+        sort_order
+      FROM jsonb_to_recordset($3::JSONB) AS item(
+        id TEXT,
+        parent_resource_id TEXT,
+        sort_order INTEGER
+      )
+    )
+    UPDATE project_resources AS pr
+    SET parent_resource_id = payload.parent_resource_id,
+        sort_order = payload.sort_order,
+        updated_by_user_id = $2,
+        updated_at = NOW()
+    FROM payload
+    WHERE pr.project_id = $1
+      AND pr.id = payload.id
+      AND pr.status = 'active'
+      AND (
+        pr.parent_resource_id IS DISTINCT FROM payload.parent_resource_id
+        OR pr.sort_order IS DISTINCT FROM payload.sort_order
+      )`,
+    [
+      input.projectId,
+      input.actorUserId,
+      JSON.stringify(input.assignments.map(item => ({
+        id: item.id,
+        parent_resource_id: item.parentResourceId,
+        sort_order: parseSortOrder(item.sortOrder),
+      }))),
+    ],
+  )
+}
+
+async function normalizeProjectResourceTreeAssignments(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+  },
+): Promise<void> {
+  const rows = await listProjectResourceTreeStateRows(db, {
+    projectId: input.projectId,
+    statuses: ['active'],
+    forUpdate: true,
+  })
+  const assignments = buildNormalizedProjectResourceTreeAssignments(rows)
+  await persistProjectResourceTreeAssignments(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+    assignments,
+  })
 }
 
 async function syncMarkdownResourceProjection(
@@ -558,12 +854,24 @@ function toResource(row: ProjectResourceRow): Resource {
   const previewUrl = sourceType === 'upload' && documentId
     ? signedUrls?.previewUrl
     : undefined
+  const drawMode = resourceKind === 'draw'
+    ? normalizeDrawMode(metadata.drawMode, collabPurpose === 'workflow' ? 'diagram' : 'freeform')
+    : undefined
+  const sceneSourceType = resourceKind === 'draw'
+    ? normalizeSceneSourceType(metadata.sceneSourceType, 'manual')
+    : undefined
+  const templateKey = normalizeString(metadata.templateKey) || undefined
 
   return {
     id: row.id,
     projectId: row.project_id,
+    parentResourceId: normalizeParentResourceId(row.parent_resource_id),
+    sortOrder: parseSortOrder(row.sort_order),
     resourceKind,
     collabPurpose,
+    drawMode,
+    sceneSourceType,
+    templateKey,
     documentId: documentId || undefined,
     contestId: originContestId,
     title: row.title,
@@ -652,6 +960,8 @@ export async function listProjectResources(
     `SELECT
       pr.id,
       pr.project_id,
+      pr.parent_resource_id,
+      pr.sort_order,
       pr.source,
       pr.resource_kind,
       pr.linked_contest_resource_id,
@@ -686,7 +996,7 @@ export async function listProjectResources(
        ON prc.resource_id = pr.id
      WHERE pr.project_id = $1
        AND pr.status = 'active'
-     ORDER BY pr.created_at DESC`,
+     ORDER BY pr.parent_resource_id NULLS FIRST, pr.sort_order ASC, pr.created_at ASC, pr.id ASC`,
     [projectId],
   )
 
@@ -701,6 +1011,8 @@ export async function listProjectRecycleResources(
     `SELECT
       pr.id,
       pr.project_id,
+      pr.parent_resource_id,
+      pr.sort_order,
       pr.source,
       pr.resource_kind,
       pr.linked_contest_resource_id,
@@ -733,9 +1045,13 @@ export async function listProjectRecycleResources(
        ON prd.project_resource_id = pr.id
      LEFT JOIN project_resource_collab_docs prc
        ON prc.resource_id = pr.id
+     LEFT JOIN project_resources parent
+       ON parent.id = pr.parent_resource_id
+      AND parent.project_id = pr.project_id
      WHERE pr.project_id = $1
        AND pr.status = 'archived'
-     ORDER BY pr.updated_at DESC`,
+       AND (parent.id IS NULL OR parent.status <> 'archived')
+     ORDER BY pr.updated_at DESC, pr.created_at DESC`,
     [projectId],
   )
 
@@ -753,6 +1069,8 @@ export async function getProjectResourceById(
     `SELECT
         pr.id,
         pr.project_id,
+        pr.parent_resource_id,
+        pr.sort_order,
         pr.source,
         pr.resource_kind,
         pr.linked_contest_resource_id,
@@ -979,14 +1297,21 @@ export async function bindLibraryResourceToProject(
     projectId: string
     resourceId: string
     actorUserId: string
+    parentResourceId?: string | null
   },
 ): Promise<Resource> {
   await ensureProjectExists(db, input.projectId)
+  const parentResourceId = await assertProjectResourceParentAvailable(db, {
+    projectId: input.projectId,
+    parentResourceId: input.parentResourceId,
+  })
 
   const existing = await db.query<ProjectResourceRow>(
     `SELECT
       id,
       project_id,
+      parent_resource_id,
+      sort_order,
       source,
       resource_kind,
       linked_contest_resource_id,
@@ -1015,39 +1340,12 @@ export async function bindLibraryResourceToProject(
   if (existingRow) {
     if (existingRow.status === 'active')
       return toResource(existingRow)
-
-    const now = new Date().toISOString()
-    const restored = await db.query<ProjectResourceRow>(
-      `UPDATE project_resources
-       SET status = 'active',
-           updated_by_user_id = $3,
-           updated_at = $4
-       WHERE id = $1
-         AND project_id = $2
-       RETURNING
-         id,
-         project_id,
-         source,
-         resource_kind,
-         linked_contest_resource_id,
-         title,
-         mime_type,
-         category,
-         year,
-         source_link,
-         availability,
-         summary,
-         content,
-         metadata,
-         status,
-         created_by_user_id,
-         updated_by_user_id,
-         created_at::TEXT,
-         updated_at::TEXT`,
-      [existingRow.id, input.projectId, input.actorUserId, now],
-    )
-
-    return toResource(restored.rows[0]!)
+    return restoreProjectResourceFromRecycleBin(db, {
+      projectId: input.projectId,
+      resourceId: existingRow.id,
+      actorUserId: input.actorUserId,
+      preferredParentResourceId: parentResourceId,
+    })
   }
 
   const resourceResult = await db.query<ContestResourceRow>(
@@ -1083,6 +1381,10 @@ export async function bindLibraryResourceToProject(
 
   const now = new Date().toISOString()
   const projectResourceId = randomUUID()
+  const sortOrder = await resolveNextProjectResourceSortOrder(db, {
+    projectId: input.projectId,
+    parentResourceId,
+  })
   const metadata = {
     ...parseResourceMetadata(resourceRow.metadata),
     originContestId: normalizeString(resourceRow.contest_id),
@@ -1094,6 +1396,8 @@ export async function bindLibraryResourceToProject(
     `INSERT INTO project_resources (
       id,
       project_id,
+      parent_resource_id,
+      sort_order,
       source,
       resource_kind,
       linked_contest_resource_id,
@@ -1112,11 +1416,13 @@ export async function bindLibraryResourceToProject(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, 'library', 'binary', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::JSONB, 'active', $13, $13, $14, $14
+      $1, $2, $3, $4, 'library', 'binary', $5, $6, $7, $8, $9, $10, $11, $12, $13::JSONB, 'active', $14, $14, $15, $15
     )
     RETURNING
       id,
       project_id,
+      parent_resource_id,
+      sort_order,
       source,
       resource_kind,
       linked_contest_resource_id,
@@ -1137,6 +1443,8 @@ export async function bindLibraryResourceToProject(
     [
       projectResourceId,
       input.projectId,
+      parentResourceId,
+      sortOrder,
       resourceRow.id,
       resourceRow.title,
       normalizeString((resourceRow.metadata || {}).mimeType) || 'application/octet-stream',
@@ -1170,13 +1478,22 @@ export async function createProjectUploadedResource(
     accessLevel?: ResourceAvailability
     category?: ResourceCategory
     hostMarkdownResourceId?: string
+    parentResourceId?: string | null
     metadata?: Record<string, unknown>
   },
 ): Promise<Resource> {
   await ensureProjectExists(db, input.projectId)
+  const parentResourceId = await assertProjectResourceParentAvailable(db, {
+    projectId: input.projectId,
+    parentResourceId: input.parentResourceId,
+  })
 
   const resourceId = randomUUID()
   const now = new Date().toISOString()
+  const sortOrder = await resolveNextProjectResourceSortOrder(db, {
+    projectId: input.projectId,
+    parentResourceId,
+  })
   const title = await resolveProjectUploadTitle(db, {
     projectId: input.projectId,
     fileName: input.fileName,
@@ -1200,6 +1517,8 @@ export async function createProjectUploadedResource(
     `INSERT INTO project_resources (
       id,
       project_id,
+      parent_resource_id,
+      sort_order,
       source,
       resource_kind,
       linked_contest_resource_id,
@@ -1218,11 +1537,13 @@ export async function createProjectUploadedResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, 'upload', 'binary', NULL, $3, $4, $5, $6, $7, $8, $9, '', $10::JSONB, 'active', $11, $11, $12, $12
+      $1, $2, $3, $4, 'upload', 'binary', NULL, $5, $6, $7, $8, $9, $10, '', $11::JSONB, 'active', $12, $12, $13, $13
     )`,
     [
       resourceId,
       input.projectId,
+      parentResourceId,
+      sortOrder,
       title,
       normalizeString(input.mimeType) || 'application/octet-stream',
       input.category || 'templates',
@@ -1256,6 +1577,7 @@ export async function createProjectCollabResource(
     summary?: string
     category?: ResourceCategory
     availability?: ResourceAvailability
+    parentResourceId?: string | null
     metadata?: Record<string, unknown>
   },
 ): Promise<{ resource: Resource, snapshot: ProjectCollabSnapshot }> {
@@ -1277,20 +1599,36 @@ export async function createProjectCollabResource(
   const purpose = normalizeCollabPurpose(kind, input.purpose)
   if (!purpose)
     throw new Error('INVALID_COLLAB_PURPOSE')
+  const parentResourceId = await assertProjectResourceParentAvailable(db, {
+    projectId: input.projectId,
+    parentResourceId: input.parentResourceId,
+  })
 
   const now = new Date().toISOString()
   const resourceId = randomUUID()
+  const sortOrder = await resolveNextProjectResourceSortOrder(db, {
+    projectId: input.projectId,
+    parentResourceId,
+  })
   const title = await resolveCollabResourceTitle(db, input.projectId, kind, purpose, input.title)
   const sourceLink = buildServerApiEndpoint(`/projects/${input.projectId}/resources/${resourceId}/collab`)
   const mimeType = kind === 'markdown'
     ? 'text/markdown'
     : 'application/vnd.winloop.draw+json'
+  const inputMetadata = parseResourceMetadata(input.metadata)
   const metadata = {
     resourceKind: kind,
     collabPurpose: purpose,
     collab: true,
     createdAt: now,
-    ...parseResourceMetadata(input.metadata),
+    ...inputMetadata,
+    ...(kind === 'draw'
+      ? {
+          drawMode: normalizeDrawMode(inputMetadata.drawMode, purpose === 'workflow' ? 'diagram' : 'freeform'),
+          sceneSourceType: normalizeSceneSourceType(inputMetadata.sceneSourceType, 'manual'),
+          templateKey: normalizeString(inputMetadata.templateKey) || undefined,
+        }
+      : {}),
   }
 
   const doc = new Y.Doc()
@@ -1301,6 +1639,8 @@ export async function createProjectCollabResource(
     `INSERT INTO project_resources (
       id,
       project_id,
+      parent_resource_id,
+      sort_order,
       source,
       resource_kind,
       linked_contest_resource_id,
@@ -1319,11 +1659,13 @@ export async function createProjectCollabResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, 'collab', $3, NULL, $4, $5, $6, $7, $8, $9, $10, '', $11::JSONB, 'active', $12, $12, $13, $13
+      $1, $2, $3, $4, 'collab', $5, NULL, $6, $7, $8, $9, $10, $11, '', $12::JSONB, 'active', $13, $13, $14, $14
     )`,
     [
       resourceId,
       input.projectId,
+      parentResourceId,
+      sortOrder,
       kind,
       title,
       mimeType,
@@ -1364,6 +1706,8 @@ export async function createProjectCollabResource(
     `SELECT
       pr.id,
       pr.project_id,
+      pr.parent_resource_id,
+      pr.sort_order,
       pr.source,
       pr.resource_kind,
       pr.linked_contest_resource_id,
@@ -1421,6 +1765,8 @@ export async function ensureProjectWorkflowCanvas(
     `SELECT
       pr.id,
       pr.project_id,
+      pr.parent_resource_id,
+      pr.sort_order,
       pr.source,
       pr.resource_kind,
       pr.linked_contest_resource_id,
@@ -1473,6 +1819,84 @@ export async function ensureProjectWorkflowCanvas(
     kind: 'draw',
     purpose: 'workflow',
     title: input.title,
+  })
+}
+
+export async function ensureProjectDesignCanvas(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    title?: string
+    templateKey?: string
+  },
+): Promise<{ resource: Resource, snapshot: ProjectCollabSnapshot }> {
+  const existingResult = await db.query<ProjectResourceRow>(
+    `SELECT
+      pr.id,
+      pr.project_id,
+      pr.parent_resource_id,
+      pr.sort_order,
+      pr.source,
+      pr.resource_kind,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.mime_type,
+      pr.category,
+      pr.year,
+      pr.source_link,
+      pr.availability,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.status,
+      pr.created_by_user_id,
+      pr.updated_by_user_id,
+      pr.created_at::TEXT,
+      pr.updated_at::TEXT,
+      prc.revision AS collab_revision
+     FROM project_resources pr
+     JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+      AND prc.project_id = pr.project_id
+     WHERE pr.project_id = $1
+       AND pr.status = 'active'
+       AND pr.source = 'collab'
+       AND pr.resource_kind = 'draw'
+       AND COALESCE(pr.metadata->>'collabPurpose', '') = 'freeform'
+       AND COALESCE(pr.metadata->>'drawMode', '') = 'composition'
+       AND COALESCE(pr.metadata->>'fixedTab', '') = 'design'
+     ORDER BY pr.created_at ASC
+     LIMIT 1`,
+    [input.projectId],
+  )
+
+  const existing = existingResult.rows[0]
+  if (existing) {
+    const snapshot = await getProjectCollabSnapshot(db, {
+      projectId: input.projectId,
+      resourceId: existing.id,
+    })
+    if (!snapshot)
+      throw new Error('DESIGN_CANVAS_SNAPSHOT_NOT_FOUND')
+    return {
+      resource: toResource(existing),
+      snapshot,
+    }
+  }
+
+  return createProjectCollabResource(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+    kind: 'draw',
+    purpose: 'freeform',
+    title: input.title || '设计稿',
+    metadata: {
+      fixedTab: 'design',
+      drawMode: 'composition',
+      sceneSourceType: 'image_mockup',
+      templateKey: normalizeString(input.templateKey) || 'device-showcase',
+    },
   })
 }
 
@@ -1650,6 +2074,8 @@ export async function duplicateProjectResource(
     `SELECT
       pr.id,
       pr.project_id,
+      pr.parent_resource_id,
+      pr.sort_order,
       pr.source,
       pr.resource_kind,
       pr.linked_contest_resource_id,
@@ -1693,6 +2119,8 @@ export async function duplicateProjectResource(
 
   const now = new Date().toISOString()
   const duplicatedResourceId = randomUUID()
+  const parentResourceId = normalizeParentResourceId(source.parent_resource_id)
+  const duplicatedSortOrder = parseSortOrder(source.sort_order) + 1
   const normalizedMetadata = parseResourceMetadata(source.metadata)
   const sourceType = normalizeString(source.source).toLowerCase()
   const duplicatedLinkedContestResourceId = sourceType === 'library'
@@ -1712,6 +2140,8 @@ export async function duplicateProjectResource(
     `INSERT INTO project_resources (
       id,
       project_id,
+      parent_resource_id,
+      sort_order,
       source,
       resource_kind,
       linked_contest_resource_id,
@@ -1730,11 +2160,13 @@ export async function duplicateProjectResource(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, 'binary', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::JSONB, 'active', $14, $14, $15, $15
+      $1, $2, $3, $4, $5, 'binary', $6, $7, $8, $9, $10, $11, $12, $13, $14::JSONB, 'active', $15, $15, $16, $16
     )`,
     [
       duplicatedResourceId,
       input.projectId,
+      parentResourceId,
+      duplicatedSortOrder,
       source.source,
       duplicatedLinkedContestResourceId,
       normalizeDuplicateTitle(source.title),
@@ -1878,6 +2310,11 @@ export async function duplicateProjectResource(
     ],
   )
 
+  await normalizeProjectResourceTreeAssignments(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+  })
+
   const duplicated = await getProjectResourceById(db, {
     projectId: input.projectId,
     resourceId: duplicatedResourceId,
@@ -1886,6 +2323,64 @@ export async function duplicateProjectResource(
     throw new Error('RESOURCE_DUPLICATE_FAILED')
 
   return duplicated
+}
+
+export async function patchProjectResourceTree(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    items: ProjectResourceTreePatchItem[]
+  },
+): Promise<Resource[]> {
+  await ensureProjectExists(db, input.projectId)
+
+  const normalizedItems = input.items
+    .map(item => ({
+      resourceId: normalizeString(item.resourceId),
+      parentResourceId: normalizeParentResourceId(item.parentResourceId),
+      sortOrder: parseSortOrder(item.sortOrder),
+    }))
+    .filter(item => item.resourceId)
+
+  if (normalizedItems.length === 0)
+    return listProjectResources(db, input.projectId)
+
+  const duplicateId = normalizedItems.find((item, index) => normalizedItems.findIndex(candidate => candidate.resourceId === item.resourceId) !== index)
+  if (duplicateId)
+    throw new Error('RESOURCE_TREE_DUPLICATE_ITEM')
+
+  const rows = await listProjectResourceTreeStateRows(db, {
+    projectId: input.projectId,
+    statuses: ['active'],
+    forUpdate: true,
+  })
+  const rowMap = new Map(rows.map(row => [row.id, row]))
+
+  for (const item of normalizedItems) {
+    if (!rowMap.has(item.resourceId))
+      throw new Error('RESOURCE_NOT_FOUND')
+    if (item.parentResourceId && !rowMap.has(item.parentResourceId))
+      throw new Error('RESOURCE_PARENT_NOT_FOUND')
+    if (item.parentResourceId && item.parentResourceId === item.resourceId)
+      throw new Error('RESOURCE_TREE_CYCLE')
+  }
+
+  const overrides = new Map<string, { parentResourceId: string | null, sortOrder: number }>(
+    normalizedItems.map(item => [item.resourceId, {
+      parentResourceId: item.parentResourceId,
+      sortOrder: item.sortOrder,
+    }]),
+  )
+  const assignments = buildNormalizedProjectResourceTreeAssignments(rows, overrides)
+
+  await persistProjectResourceTreeAssignments(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+    assignments,
+  })
+
+  return listProjectResources(db, input.projectId)
 }
 
 export async function patchProjectResourceMetadata(
@@ -2243,6 +2738,15 @@ export async function moveProjectResourceToRecycleBin(
     actorUserId: string
   },
 ): Promise<PurgedProjectResourceRef> {
+  const rows = await listProjectResourceTreeStateRows(db, {
+    projectId: input.projectId,
+    statuses: ['active'],
+    forUpdate: true,
+  })
+  const subtreeIds = collectProjectResourceSubtreeIds(rows, input.resourceId, 'active')
+  if (!subtreeIds.includes(input.resourceId))
+    throw new Error('RESOURCE_NOT_FOUND')
+
   const now = new Date().toISOString()
   const result = await db.query<Pick<ProjectResourceRow, 'id' | 'source' | 'metadata'>>(
     `UPDATE project_resources
@@ -2250,22 +2754,27 @@ export async function moveProjectResourceToRecycleBin(
          updated_by_user_id = $3,
          updated_at = $4
      WHERE project_id = $1
-       AND id = $2
+       AND id = ANY($2::TEXT[])
        AND status = 'active'
      RETURNING id, source, metadata`,
-    [input.projectId, input.resourceId, input.actorUserId, now],
+    [input.projectId, subtreeIds, input.actorUserId, now],
   )
 
-  const row = result.rows[0]
-  if (!row)
+  const root = result.rows.find(row => row.id === input.resourceId)
+  if (!root)
     throw new Error('RESOURCE_NOT_FOUND')
 
-  const metadata = parseResourceMetadata(row.metadata)
+  await normalizeProjectResourceTreeAssignments(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+  })
+
+  const metadata = parseResourceMetadata(root.metadata)
 
   return {
-    resourceId: row.id,
-    source: row.source,
-    objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
+    resourceId: root.id,
+    source: root.source,
+    objectKey: root.source === 'upload' ? normalizeString(metadata.objectKey) : '',
   }
 }
 
@@ -2319,28 +2828,72 @@ export async function restoreProjectResourceFromRecycleBin(
     projectId: string
     resourceId: string
     actorUserId: string
+    preferredParentResourceId?: string | null
   },
 ): Promise<Resource> {
+  const rows = await listProjectResourceTreeStateRows(db, {
+    projectId: input.projectId,
+    statuses: ['active', 'archived'],
+    forUpdate: true,
+  })
+  const rowMap = new Map(rows.map(row => [row.id, row]))
+  const root = rowMap.get(input.resourceId)
+  if (!root || root.status !== 'archived')
+    throw new Error('RESOURCE_NOT_FOUND')
+
+  const subtreeIds = collectProjectResourceSubtreeIds(rows, input.resourceId, 'archived')
+  const preferredParentResourceId = normalizeParentResourceId(input.preferredParentResourceId)
+  let restoreParentResourceId: string | null = null
+
+  if (preferredParentResourceId) {
+    const preferredParent = rowMap.get(preferredParentResourceId)
+    if (!preferredParent || preferredParent.status !== 'active')
+      throw new Error('RESOURCE_PARENT_NOT_FOUND')
+    restoreParentResourceId = preferredParentResourceId
+  }
+  else {
+    const originalParentResourceId = normalizeParentResourceId(root.parent_resource_id)
+    const originalParent = originalParentResourceId ? rowMap.get(originalParentResourceId) : null
+    if (originalParent && originalParent.status === 'active' && !subtreeIds.includes(originalParent.id))
+      restoreParentResourceId = originalParent.id
+  }
+
+  const nextRootSortOrder = await resolveNextProjectResourceSortOrder(db, {
+    projectId: input.projectId,
+    parentResourceId: restoreParentResourceId,
+  })
+
   const now = new Date().toISOString()
-  const result = await db.query<{ id: string }>(
+  await db.query(
     `UPDATE project_resources
      SET status = 'active',
          updated_by_user_id = $3,
          updated_at = $4
      WHERE project_id = $1
-       AND id = $2
-       AND status = 'archived'
-     RETURNING id`,
-    [input.projectId, input.resourceId, input.actorUserId, now],
+       AND id = ANY($2::TEXT[])
+       AND status = 'archived'`,
+    [input.projectId, subtreeIds, input.actorUserId, now],
   )
 
-  const row = result.rows[0]
-  if (!row)
-    throw new Error('RESOURCE_NOT_FOUND')
+  await db.query(
+    `UPDATE project_resources
+     SET parent_resource_id = $3,
+         sort_order = $4,
+         updated_by_user_id = $5,
+         updated_at = $6
+     WHERE project_id = $1
+       AND id = $2`,
+    [input.projectId, input.resourceId, restoreParentResourceId, nextRootSortOrder, input.actorUserId, now],
+  )
+
+  await normalizeProjectResourceTreeAssignments(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+  })
 
   const resource = await getProjectResourceById(db, {
     projectId: input.projectId,
-    resourceId: row.id,
+    resourceId: input.resourceId,
   })
   if (!resource)
     throw new Error('RESOURCE_NOT_FOUND')
@@ -2353,27 +2906,33 @@ export async function purgeProjectResourceFromRecycleBin(
     projectId: string
     resourceId: string
   },
-): Promise<PurgedProjectResourceRef> {
+): Promise<PurgedProjectResourceRef[]> {
+  const rows = await listProjectResourceTreeStateRows(db, {
+    projectId: input.projectId,
+    statuses: ['archived'],
+    forUpdate: true,
+  })
+  const subtreeIds = collectProjectResourceSubtreeIds(rows, input.resourceId, 'archived')
+  if (!subtreeIds.includes(input.resourceId))
+    throw new Error('RESOURCE_NOT_FOUND')
+
   const result = await db.query<Pick<ProjectResourceRow, 'id' | 'source' | 'metadata'>>(
     `DELETE FROM project_resources
      WHERE project_id = $1
-       AND id = $2
+       AND id = ANY($2::TEXT[])
        AND status = 'archived'
      RETURNING id, source, metadata`,
-    [input.projectId, input.resourceId],
+    [input.projectId, subtreeIds],
   )
 
-  const row = result.rows[0]
-  if (!row)
-    throw new Error('RESOURCE_NOT_FOUND')
-
-  const metadata = parseResourceMetadata(row.metadata)
-
-  return {
-    resourceId: row.id,
-    source: row.source,
-    objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
-  }
+  return result.rows.map((row) => {
+    const metadata = parseResourceMetadata(row.metadata)
+    return {
+      resourceId: row.id,
+      source: row.source,
+      objectKey: row.source === 'upload' ? normalizeString(metadata.objectKey) : '',
+    }
+  })
 }
 
 export async function purgeExpiredProjectResourcesFromRecycleBin(

@@ -175,6 +175,7 @@ export default defineEventHandler(async (event) => {
   const title = normalizeString(fields.title)
   const summary = normalizeString(fields.summary)
   const hostMarkdownResourceId = normalizeString(fields.hostMarkdownResourceId)
+  const parentResourceId = normalizeString(fields.parentResourceId)
   const files: ProjectUploadFile[] = fileParts.map((part) => {
     const fileName = normalizeString(part.filename) || 'upload.bin'
     const mimeType = normalizeString(part.type) || 'application/octet-stream'
@@ -267,6 +268,7 @@ export default defineEventHandler(async (event) => {
           category,
           accessLevel,
           hostMarkdownResourceId,
+          parentResourceId: parentResourceId || undefined,
           metadata: hostMarkdownResourceId
             ? {
                 embeddedIn: {
@@ -348,6 +350,18 @@ export default defineEventHandler(async (event) => {
   }
   catch (error) {
     await Promise.allSettled(uploadedObjectKeys.map(objectKey => storage.deleteObject(objectKey)))
+
+    if (error instanceof Error && error.message === 'RESOURCE_PARENT_NOT_FOUND') {
+      setResponseStatus(event, 400)
+      return fail('目标父节点不存在，或不在当前项目内。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40073)
+    }
+
     throw error
   }
 })

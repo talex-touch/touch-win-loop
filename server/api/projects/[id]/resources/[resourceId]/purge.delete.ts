@@ -61,7 +61,7 @@ export default defineEventHandler(async (event) => {
 
     const uploadObjectKeys = [
       ...result.expiredPurged.filter(item => item.source === 'upload' && item.objectKey).map(item => item.objectKey),
-      ...(result.purged.source === 'upload' && result.purged.objectKey ? [result.purged.objectKey] : []),
+      ...result.purged.filter(item => item.source === 'upload' && item.objectKey).map(item => item.objectKey),
     ]
 
     const deletableObjectKeys = uploadObjectKeys.length > 0
@@ -86,7 +86,7 @@ export default defineEventHandler(async (event) => {
       }),
     ])
 
-    return ok({ resourceId: result.purged.resourceId }, {
+    return ok({ resourceId, purgedCount: result.purged.length }, {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

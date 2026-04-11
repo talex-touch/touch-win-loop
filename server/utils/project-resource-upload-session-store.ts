@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 interface ProjectResourceUploadSessionRow {
   id: string
   project_id: string
+  parent_resource_id: string | null
   actor_user_id: string | null
   actor_username?: string | null
   actor_avatar_url?: string | null
@@ -105,6 +106,7 @@ function mapSession(row: ProjectResourceUploadSessionRow): ProjectResourceUpload
   return {
     id: row.id,
     projectId: row.project_id,
+    parentResourceId: normalizeString(row.parent_resource_id) || null,
     actorUserId: row.actor_user_id,
     actorUsername: normalizeString(row.actor_username) || undefined,
     actorAvatarUrl: normalizeString(row.actor_avatar_url) || null,
@@ -152,6 +154,7 @@ export async function listProjectResourceUploadSessions(
   const result = await db.query<ProjectResourceUploadSessionRow>(
     `SELECT s.id,
             s.project_id,
+            s.parent_resource_id,
             s.actor_user_id,
             u.username AS actor_username,
             u.avatar_url AS actor_avatar_url,
@@ -234,6 +237,7 @@ export async function createProjectResourceUploadSessions(
       accessLevel: ResourceAvailability
       title?: string
       summary?: string
+      parentResourceId?: string | null
     }>
   },
 ): Promise<ProjectResourceUploadSession[]> {
@@ -248,6 +252,7 @@ export async function createProjectResourceUploadSessions(
       `INSERT INTO project_resource_upload_sessions (
         id,
         project_id,
+        parent_resource_id,
         actor_user_id,
         file_name,
         mime_type,
@@ -272,12 +277,13 @@ export async function createProjectResourceUploadSessions(
         created_at,
         updated_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-        $12, $13, 0, 0, 'queued', '', '', '', '', NULL, $14, NULL, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+        $13, $14, 0, 0, 'queued', '', '', '', '', NULL, $15, NULL, NOW(), NOW()
       )
       RETURNING
         id,
         project_id,
+        parent_resource_id,
         actor_user_id,
         file_name,
         mime_type,
@@ -304,6 +310,7 @@ export async function createProjectResourceUploadSessions(
       [
         sessionId,
         normalizeString(input.projectId),
+        normalizeString(file.parentResourceId) || null,
         normalizeString(input.actorUserId),
         normalizeString(file.fileName),
         normalizeString(file.mimeType) || 'application/octet-stream',
@@ -335,6 +342,7 @@ export async function getProjectResourceUploadSessionById(
   const result = await db.query<ProjectResourceUploadSessionRow>(
     `SELECT s.id,
             s.project_id,
+            s.parent_resource_id,
             s.actor_user_id,
             u.username AS actor_username,
             u.avatar_url AS actor_avatar_url,
@@ -455,6 +463,7 @@ export async function upsertProjectResourceUploadChunk(
       RETURNING
         session.id,
         session.project_id,
+        session.parent_resource_id,
         session.actor_user_id,
         session.file_name,
         session.mime_type,
@@ -518,6 +527,7 @@ export async function updateProjectResourceUploadSessionStatus(
       RETURNING
         id,
         project_id,
+        parent_resource_id,
         actor_user_id,
         file_name,
         mime_type,
@@ -566,6 +576,7 @@ export async function markProjectResourceUploadSessionFailed(
       RETURNING
         id,
         project_id,
+        parent_resource_id,
         actor_user_id,
         file_name,
         mime_type,
@@ -624,6 +635,7 @@ export async function markProjectResourceUploadSessionCompleted(
       RETURNING
         id,
         project_id,
+        parent_resource_id,
         actor_user_id,
         file_name,
         mime_type,

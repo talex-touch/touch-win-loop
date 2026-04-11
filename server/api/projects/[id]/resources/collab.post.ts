@@ -5,7 +5,11 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { createProjectCollabResource, ensureProjectWorkflowCanvas } from '~~/server/utils/project-resource-store'
+import {
+  createProjectCollabResource,
+  ensureProjectDesignCanvas,
+  ensureProjectWorkflowCanvas,
+} from '~~/server/utils/project-resource-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
@@ -13,6 +17,11 @@ interface CreateCollabResourceBody {
   kind?: ResourceKind
   purpose?: CollabPurpose
   title?: string
+  parentResourceId?: string | null
+  drawMode?: string
+  sceneSourceType?: string
+  templateKey?: string
+  metadata?: Record<string, unknown>
 }
 
 interface ProjectWorkspaceRow {
@@ -46,6 +55,11 @@ export default defineEventHandler(async (event) => {
   const kind = normalizeCollabKind(body.kind)
   const purpose = normalizeCollabPurpose(body.purpose)
   const title = normalizeString(body.title)
+  const requestMetadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+    ? body.metadata
+    : {}
+  const requestedFixedTab = normalizeString(requestMetadata.fixedTab).toLowerCase()
+  const requestedTemplateKey = normalizeString(body.templateKey || requestMetadata.templateKey)
 
   if (!projectId) {
     setResponseStatus(event, 400)
@@ -119,12 +133,26 @@ export default defineEventHandler(async (event) => {
             actorUserId: user.id,
             title,
           })
+        : (kind === 'draw' && requestedFixedTab === 'design')
+            ? await ensureProjectDesignCanvas(db, {
+                projectId,
+                actorUserId: user.id,
+                title,
+                templateKey: requestedTemplateKey,
+              })
         : await createProjectCollabResource(db, {
             projectId,
             actorUserId: user.id,
             kind,
             purpose: purpose || undefined,
             title,
+            parentResourceId: normalizeString(body.parentResourceId) || undefined,
+            metadata: {
+              ...requestMetadata,
+              ...(normalizeString(body.drawMode) ? { drawMode: normalizeString(body.drawMode) } : {}),
+              ...(normalizeString(body.sceneSourceType) ? { sceneSourceType: normalizeString(body.sceneSourceType) } : {}),
+              ...(normalizeString(body.templateKey) ? { templateKey: normalizeString(body.templateKey) } : {}),
+            },
           })
 
       return {
@@ -194,6 +222,17 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: false,
         attempts: 1,
       }, 40091)
+    }
+
+    if (error instanceof Error && error.message === 'RESOURCE_PARENT_NOT_FOUND') {
+      setResponseStatus(event, 400)
+      return fail('目标父节点不存在，或不在当前项目内。', {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40092)
     }
 
     throw error
