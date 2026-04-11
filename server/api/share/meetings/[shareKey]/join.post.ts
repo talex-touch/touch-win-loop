@@ -1,8 +1,10 @@
 import { setResponseStatus } from 'h3'
+import { resolveMeetingRuntimeError } from '~~/server/services/meeting/meeting-runtime'
 import { joinSharedProjectMeetingSession } from '~~/server/services/meeting/project-meeting'
 import { fail, ok } from '~~/server/utils/api'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -20,18 +22,19 @@ function buildTelemetry(runtime: ReturnType<typeof readRuntimeSettings>, started
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveMeetingRuntimeSettings(event)
   const shareKey = normalizeString(getRouterParam(event, 'shareKey'))
   const body = await readBody<{ displayName?: string }>(event).catch(() => ({} as { displayName?: string }))
 
   if (!shareKey) {
     setResponseStatus(event, 400)
-    return fail('缺少 shareKey。', buildTelemetry(runtime, startedAt), 40116)
+    return fail('缺少 shareKey。', buildTelemetry(fallbackRuntime, startedAt), 40116)
   }
 
   if (!normalizeString(body?.displayName)) {
     setResponseStatus(event, 400)
-    return fail('请输入显示名后再加入会议。', buildTelemetry(runtime, startedAt), 40016)
+    return fail('请输入显示名后再加入会议。', buildTelemetry(fallbackRuntime, startedAt), 40016)
   }
 
   try {
@@ -56,6 +59,12 @@ export default defineEventHandler(async (event) => {
     if (error instanceof Error && error.message === 'MEETING_NOT_STARTED') {
       setResponseStatus(event, 409)
       return fail('会议尚未开始，请等待主持人启动。', buildTelemetry(runtime, startedAt), 40916)
+    }
+
+    const runtimeError = resolveMeetingRuntimeError(error)
+    if (runtimeError) {
+      setResponseStatus(event, runtimeError.status)
+      return fail(runtimeError.message, buildTelemetry(runtime, startedAt), 50398)
     }
 
     throw error

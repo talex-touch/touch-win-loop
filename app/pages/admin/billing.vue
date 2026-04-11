@@ -14,6 +14,7 @@ import type {
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import { BILLING_USAGE_EVENT_CODES } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
@@ -22,6 +23,7 @@ definePageMeta({
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
+const route = useRoute()
 
 type ApiRequestError = Error & {
   data?: {
@@ -537,7 +539,15 @@ onMounted(async () => {
     }
   }
   catch (error: any) {
-    errorText.value = String(error?.data?.message || '计费页面加载失败。')
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/billing') },
+      }, { replace: true })
+      return
+    }
+    errorText.value = resolveAuthDisplayMessage(error, '计费页面加载失败。')
   }
   finally {
     loading.value = false

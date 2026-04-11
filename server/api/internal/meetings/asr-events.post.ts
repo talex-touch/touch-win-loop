@@ -1,5 +1,6 @@
 import { setResponseStatus } from 'h3'
 import { getMeetingAsrGateway } from '~~/server/services/meeting/asr-gateway'
+import { resolveMeetingRuntimeError } from '~~/server/services/meeting/meeting-runtime'
 import {
   persistProjectMeetingCaption,
   resolveMaskedProjectMeetingSpeakerLabel,
@@ -7,6 +8,7 @@ import {
 import { fail, ok } from '~~/server/utils/api'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import { getProjectMeetingByMeetingId } from '~~/server/utils/project-meeting-store'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 
@@ -30,14 +32,32 @@ function normalizeString(value: unknown): string {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
-  const asr = getMeetingAsrGateway(runtime)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveMeetingRuntimeSettings(event)
+  let asr
+  try {
+    asr = getMeetingAsrGateway(runtime)
+  }
+  catch (error) {
+    const runtimeError = resolveMeetingRuntimeError(error)
+    if (runtimeError) {
+      setResponseStatus(event, runtimeError.status)
+      return fail(runtimeError.message, {
+        startedAt,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50400)
+    }
+    throw error
+  }
   if (!asr.verifyWebhook({ headers: event.node.req.headers as Record<string, unknown> })) {
     setResponseStatus(event, 401)
     return fail('invalid asr webhook signature', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40194)

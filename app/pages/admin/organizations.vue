@@ -7,6 +7,7 @@ import type {
   PlatformPermission,
   WorkspaceBillingEstimate,
 } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
@@ -31,6 +32,7 @@ interface OrgRow {
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
+const route = useRoute()
 
 type ApiRequestError = Error & {
   data?: {
@@ -204,8 +206,16 @@ onMounted(async () => {
     await loadPlans()
   }
   catch (error: any) {
+    const info = resolveAuthRequestErrorInfo(error)
     rows.value = []
-    errorText.value = String(error?.data?.message || '组织数据加载失败。')
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/organizations') },
+      }, { replace: true })
+      return
+    }
+    errorText.value = resolveAuthDisplayMessage(error, '组织数据加载失败。')
   }
   finally {
     loading.value = false

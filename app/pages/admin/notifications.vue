@@ -5,12 +5,14 @@ import type {
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import { resolveWorkspaceOptions } from '~/composables/team-ui'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
 })
 
 const authApiFetch = useAuthApiFetch()
+const route = useRoute()
 
 const loading = ref(true)
 const errorText = ref('')
@@ -37,8 +39,16 @@ async function loadContext() {
     workspaceOptions.value = resolveWorkspaceOptions(response.data)
   }
   catch (error: any) {
+    const info = resolveAuthRequestErrorInfo(error)
     workspaceOptions.value = []
-    errorText.value = String(error?.data?.message || '通知管理初始化失败。')
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/notifications') },
+      }, { replace: true })
+      return
+    }
+    errorText.value = resolveAuthDisplayMessage(error, '通知管理初始化失败。')
   }
   finally {
     loading.value = false

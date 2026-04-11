@@ -8,6 +8,7 @@ import {
   teamDetailPath,
 } from '~/composables/team-ui'
 import { readActiveWorkspacePreference, writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
 useHead({
   title: '项目台跳转中',
@@ -68,8 +69,8 @@ async function redirectToActiveTeamDashboard() {
     }, { replace: true })
   }
   catch (error: any) {
-    const statusCode = Number(error?.statusCode || error?.response?.status)
-    if (statusCode === 401) {
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized) {
       await navigateTo({
         path: '/login',
         query: { redirect: route.fullPath || teamDashboardPath() },
@@ -77,7 +78,7 @@ async function redirectToActiveTeamDashboard() {
       return
     }
 
-    errorText.value = String(error?.data?.message || '项目台入口初始化失败，请稍后重试。')
+    errorText.value = resolveAuthDisplayMessage(error, '项目台入口初始化失败，请稍后重试。')
   }
   finally {
     redirecting.value = false

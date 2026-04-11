@@ -13,6 +13,7 @@ import type {
   FeishuIntegrationConfig,
   PlatformPermission,
 } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
@@ -36,16 +37,23 @@ interface SourceViewsPayload {
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
+const route = useRoute()
 
 type ApiRequestError = Error & {
+  statusCode?: number
   data?: {
     message?: string
+    meta?: ApiResponse<null>['meta']
   }
 }
 
-function createApiRequestError(message: string): ApiRequestError {
+function createApiRequestError(message: string, statusCode = 0, payload: ApiResponse<unknown> | null = null): ApiRequestError {
   const error = new Error(message) as ApiRequestError
-  error.data = { message }
+  error.statusCode = statusCode
+  error.data = {
+    message,
+    ...(payload?.meta ? { meta: payload.meta } : {}),
+  }
   return error
 }
 
@@ -73,7 +81,7 @@ async function requestApi<T>(
   })
   const payload = await response.json().catch(() => null) as ApiResponse<T> | null
   if (!response.ok || !payload || payload.code !== 0)
-    throw createApiRequestError(String(payload?.message || fallbackMessage))
+    throw createApiRequestError(String(payload?.message || fallbackMessage), response.status, payload)
   return payload.data
 }
 
@@ -451,8 +459,16 @@ async function loadPermissions() {
     permissions.value = data.user.platformPermissions || []
   }
   catch (error: any) {
+    const info = resolveAuthRequestErrorInfo(error)
     permissions.value = []
-    setError(String(error?.data?.message || '权限加载失败，请先登录。'))
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/integrations/feishu') },
+      }, { replace: true })
+      return
+    }
+    setError(resolveAuthDisplayMessage(error, '权限加载失败，请稍后重试。'))
   }
   finally {
     loadingPermissions.value = false

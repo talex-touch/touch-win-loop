@@ -5,12 +5,14 @@ import type {
   FeishuIntegrationConfig,
   PlatformPermission,
 } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
 })
 
 const authApiFetch = useAuthApiFetch()
+const route = useRoute()
 
 type BuildValueSource = 'env' | 'runtime' | 'fallback' | 'missing'
 
@@ -94,8 +96,16 @@ async function loadPermissions() {
     await loadBuildInfo()
   }
   catch (error: any) {
+    const info = resolveAuthRequestErrorInfo(error)
     permissions.value = []
-    errorText.value = String(error?.data?.message || '权限加载失败，请先登录。')
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin') },
+      }, { replace: true })
+      return
+    }
+    errorText.value = resolveAuthDisplayMessage(error, '权限加载失败，请稍后重试。')
   }
   finally {
     loading.value = false

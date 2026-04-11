@@ -5,6 +5,7 @@ import {
   persistCasdoorOAuthRedirect,
 } from '~~/server/services/casdoor/security'
 import { fail } from '~~/server/utils/api'
+import { warnIfPublicBaseHostMismatch } from '~~/server/utils/api-url'
 import { withClient } from '~~/server/utils/db'
 import { readCasdoorIntegrationConfig } from '~~/server/utils/feishu-integration-store'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
@@ -41,6 +42,11 @@ export default defineEventHandler(async (event) => {
   const state = issueCasdoorOAuthState(event)
   const redirectTarget = sanitizeRedirectTarget(getQuery(event).redirect)
   persistCasdoorOAuthRedirect(event, redirectTarget)
+  warnIfPublicBaseHostMismatch({
+    event,
+    publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
+    context: 'auth.casdoor.authorize',
+  })
 
   try {
     const authorizeUrl = await buildCasdoorAuthorizeUrl({

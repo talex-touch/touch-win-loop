@@ -329,7 +329,7 @@ export async function createProjectMeeting(
       input.workspaceId,
       normalizeString(input.title),
       input.mode,
-      normalizeString(input.provider) || 'mock',
+      normalizeString(input.provider),
       normalizeString(input.providerRoomId),
       normalizeString(input.providerRoomName),
       status,
@@ -426,7 +426,7 @@ export async function findProjectMeetingByProviderRoom(
        )
      ORDER BY started_at DESC
      LIMIT 1`,
-    [normalizeString(input.provider) || 'mock', roomId, roomName],
+    [normalizeString(input.provider), roomId, roomName],
   )
 
   const row = result.rows[0]

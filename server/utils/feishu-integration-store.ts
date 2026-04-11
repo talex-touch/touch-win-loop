@@ -47,6 +47,7 @@ import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEnc
 const FEISHU_CONFIG_META_KEY = 'feishu_integration_config.v1'
 const CASDOOR_CONFIG_META_KEY = 'casdoor_integration_config.v1'
 const DEFAULT_WEBSDK_SCRIPT_URL = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js'
+const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 
 interface AuthIdentityRow {
   id: string
@@ -238,7 +239,12 @@ export interface FeishuIntegrationConfigInternal {
 
 export interface CasdoorIntegrationConfigInternal {
   enabled: boolean
+  displayName: string
+  protocolMode: 'oidc_discovery' | 'oauth2_manual'
   issuer: string
+  authorizeEndpoint: string
+  tokenEndpoint: string
+  userinfoEndpoint: string
   clientId: string
   clientSecret: string
   scope: string
@@ -446,7 +452,12 @@ function normalizeCasdoorConfigInternal(raw: unknown): CasdoorIntegrationConfigI
   const source = parseJsonObject(raw)
   return {
     enabled: hasOwn(source, 'enabled') ? toBoolean(source.enabled, false) : false,
+    displayName: hasOwn(source, 'displayName') ? toText(source.displayName) : DEFAULT_OAUTH_DISPLAY_NAME,
+    protocolMode: hasOwn(source, 'protocolMode') && toText(source.protocolMode) === 'oauth2_manual' ? 'oauth2_manual' : 'oidc_discovery',
     issuer: hasOwn(source, 'issuer') ? toText(source.issuer) : '',
+    authorizeEndpoint: hasOwn(source, 'authorizeEndpoint') ? toText(source.authorizeEndpoint) : '',
+    tokenEndpoint: hasOwn(source, 'tokenEndpoint') ? toText(source.tokenEndpoint) : '',
+    userinfoEndpoint: hasOwn(source, 'userinfoEndpoint') ? toText(source.userinfoEndpoint) : '',
     clientId: hasOwn(source, 'clientId') ? toText(source.clientId) : '',
     clientSecret: hasOwn(source, 'clientSecret') ? decryptConfigSecretSafe(source.clientSecret) : '',
     scope: hasOwn(source, 'scope') ? toText(source.scope) : 'openid profile email',
@@ -730,7 +741,12 @@ export function toPublicFeishuIntegrationConfig(config: FeishuIntegrationConfigI
 export function toPublicCasdoorIntegrationConfig(config: CasdoorIntegrationConfigInternal): CasdoorIntegrationConfig {
   return {
     enabled: config.enabled,
+    displayName: config.displayName || DEFAULT_OAUTH_DISPLAY_NAME,
+    protocolMode: config.protocolMode === 'oauth2_manual' ? 'oauth2_manual' : 'oidc_discovery',
     issuer: config.issuer,
+    authorizeEndpoint: config.authorizeEndpoint,
+    tokenEndpoint: config.tokenEndpoint,
+    userinfoEndpoint: config.userinfoEndpoint,
     clientId: config.clientId,
     clientSecretConfigured: Boolean(config.clientSecret),
     scope: config.scope || 'openid profile email',

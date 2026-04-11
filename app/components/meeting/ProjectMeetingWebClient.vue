@@ -49,7 +49,7 @@ const props = withDefaults(defineProps<{
   captions?: MeetingCaptionItem[]
   guest?: boolean
 }>(), {
-  provider: 'mock',
+  provider: '',
   mode: 'video',
   meetingId: '',
   title: '',
@@ -569,8 +569,8 @@ function buildParticipantMeta(participant: MeetingParticipantItem): string {
 
 const hasJoinSession = computed(() => Boolean(normalizeString(props.rtcJoinToken) && normalizeString(props.rtcServerUrl)))
 const isLivekit = computed(() => normalizeString(props.provider).toLowerCase() === 'livekit')
-const isMock = computed(() => normalizeString(props.provider).toLowerCase() === 'mock')
-const isUnsupported = computed(() => !isLivekit.value && !isMock.value)
+const isConfigured = computed(() => Boolean(normalizeString(props.provider)))
+const isUnsupported = computed(() => isConfigured.value && !isLivekit.value)
 const cameraTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'video' && item.source !== 'screen_share'))
 const screenShareTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'video' && item.source === 'screen_share'))
 const remoteMicrophoneTracks = computed(() => mediaTracks.value.filter(item => item.kind === 'audio' && !item.isLocal && item.source !== 'screen_share_audio'))
@@ -595,10 +595,10 @@ const connectionBadgeText = computed(() => {
   return '待加入'
 })
 const joinHint = computed(() => {
+  if (!isConfigured.value)
+    return '会议服务未配置，请联系管理员在后台完成 LiveKit / ASR 配置。'
   if (isUnsupported.value)
     return '当前 RTC provider 暂未适配站内 Web 客户端。'
-  if (isMock.value)
-    return '当前为 mock 会议环境，仅展示占位客户端。'
   if (!hasJoinSession.value)
     return '请先点击加入会议，系统会在当前页加载站内会议客户端。'
   return ''
@@ -693,8 +693,8 @@ onBeforeUnmount(() => {
       当前 provider 为 `{{ provider || 'unknown' }}`，此轮仅正式支持 `livekit` Web 客户端。
     </div>
 
-    <div v-else-if="isMock" class="meeting-web-client__notice">
-      mock 模式下仅保留客户端壳，便于本地联调会议详情、字幕与分享链路。
+    <div v-else-if="!isConfigured" class="meeting-web-client__notice">
+      会议服务尚未配置。请先在后台完成 LiveKit / ASR 参数配置，再创建或启动会议。
     </div>
 
     <div v-else-if="!hasJoinSession" class="meeting-web-client__notice">

@@ -6,6 +6,7 @@ import type {
   ContestStatus,
   PlatformPermission,
 } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
@@ -226,7 +227,15 @@ async function bootstrapListPage() {
     await loadPermissions()
   }
   catch (error: any) {
-    permissionErrorText.value = String(error?.data?.message || '权限加载失败。')
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/contests') },
+      }, { replace: true })
+      return
+    }
+    permissionErrorText.value = resolveAuthDisplayMessage(error, '权限加载失败，请稍后重试。')
     permissions.value = []
     isPlatformAdmin.value = false
     permissionLoaded.value = true

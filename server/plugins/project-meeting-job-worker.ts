@@ -3,7 +3,7 @@ import { summarizeMeetingByAi } from '~~/server/services/meeting/meeting-summary
 import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
 import { generateAndSaveProjectOutline } from '~~/server/services/project-outline-generator'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import { findUserById } from '~~/server/utils/platform-store'
 import {
   claimNextQueuedProjectMeetingJob,
@@ -66,7 +66,7 @@ async function emitMeetingStateChanged(projectId: string, workspaceId: string, m
 }
 
 async function processSingleMeetingJob(): Promise<'none' | 'success' | 'failure'> {
-  const runtime = readRuntimeSettings()
+  const { runtime } = await readEffectiveMeetingRuntimeSettings()
   const claimed = await withTransaction(undefined, async (db) => {
     return claimNextQueuedProjectMeetingJob(db, {
       maxAttempts: runtime.meeting.worker.maxAttempts,
@@ -269,7 +269,7 @@ async function processSingleMeetingJob(): Promise<'none' | 'success' | 'failure'
 }
 
 async function tickMeetingWorker(): Promise<void> {
-  const runtime = readRuntimeSettings()
+  const { runtime } = await readEffectiveMeetingRuntimeSettings()
   const batchSize = Math.max(1, runtime.meeting.worker.batchSize)
   for (let index = 0; index < batchSize; index += 1) {
     const result = await processSingleMeetingJob()
@@ -278,8 +278,8 @@ async function tickMeetingWorker(): Promise<void> {
   }
 }
 
-export default defineNitroPlugin((nitroApp) => {
-  const runtime = readRuntimeSettings()
+export default defineNitroPlugin(async (nitroApp) => {
+  const { runtime } = await readEffectiveMeetingRuntimeSettings()
   const state = getWorkerRuntimeState()
   if (state.booted)
     return

@@ -1,9 +1,11 @@
 import { setResponseStatus } from 'h3'
+import { resolveMeetingRuntimeError } from '~~/server/services/meeting/meeting-runtime'
 import { endProjectMeetingSession } from '~~/server/services/meeting/project-meeting'
 import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
 import { fail, ok } from '~~/server/utils/api'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import {
   enqueueProjectMeetingJob,
   findProjectMeetingByProviderRoom,
@@ -39,14 +41,32 @@ function normalizeString(value: unknown): string {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
-  const rtc = getRtcProviderGateway(runtime)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveMeetingRuntimeSettings(event)
+  let rtc
+  try {
+    rtc = getRtcProviderGateway(runtime)
+  }
+  catch (error) {
+    const runtimeError = resolveMeetingRuntimeError(error)
+    if (runtimeError) {
+      setResponseStatus(event, runtimeError.status)
+      return fail(runtimeError.message, {
+        startedAt,
+        provider: fallbackRuntime.ai.provider,
+        model: fallbackRuntime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50399)
+    }
+    throw error
+  }
   if (!rtc.verifyWebhook({ headers: event.node.req.headers as Record<string, unknown> })) {
     setResponseStatus(event, 401)
     return fail('invalid meeting webhook signature', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40193)

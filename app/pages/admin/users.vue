@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ApiResponse, AuthMeResult, PlatformRole } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'admin',
@@ -17,6 +18,7 @@ interface UserAdminRow {
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 const authApiFetch = useAuthApiFetch()
+const route = useRoute()
 
 const loading = ref(true)
 const canAssign = ref(false)
@@ -214,7 +216,15 @@ onMounted(async () => {
       await loadUsers()
   }
   catch (error: any) {
-    errorText.value = String(error?.data?.message || '用户信息加载失败。')
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/admin/users') },
+      }, { replace: true })
+      return
+    }
+    errorText.value = resolveAuthDisplayMessage(error, '用户信息加载失败。')
   }
   finally {
     loading.value = false

@@ -273,7 +273,7 @@ export default defineEventHandler(async (event) => {
         })
         executedResult = {
           changeType: change.changeType,
-          resourceId: purged.resourceId,
+          resourceId,
         }
       }
       else {

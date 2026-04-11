@@ -165,6 +165,10 @@ const {
           </div>
         </section>
       </div>
+
+      <div class="pt-6">
+        <LoginFooterBar />
+      </div>
     </div>
   </div>
 </template>

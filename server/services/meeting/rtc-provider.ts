@@ -155,90 +155,6 @@ async function postJson<T>(url: string, body: Record<string, unknown>, token: st
   return await response.json() as T
 }
 
-function createMockGateway(runtime: RuntimeSettings): RtcProviderGateway {
-  const signingSecret = runtime.meeting.rtc.apiSecret || 'winloop-meeting-mock'
-  return {
-    provider: 'mock',
-    async createRoom(input) {
-      const roomName = `${runtime.meeting.rtc.roomPrefix}-${input.projectId.slice(0, 8)}-${input.meetingId.slice(0, 8)}`
-      return {
-        roomId: roomName,
-        roomName,
-        metadata: {
-          mocked: true,
-        },
-      }
-    },
-    async issueJoinToken(input) {
-      const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
-      const token = signJwt({
-        room: input.roomName,
-        name: input.participantName,
-        metadata: normalizeRecord(input.metadata),
-        provider: 'mock',
-      }, {
-        keyId: 'mock',
-        subject: input.participantIdentity,
-        secret: signingSecret,
-        expiresInSeconds: 2 * 60 * 60,
-      })
-
-      return {
-        token,
-        expiresAt,
-        participantIdentity: input.participantIdentity,
-        joinUrl: buildJoinUrl(runtime, {
-          roomName: input.roomName,
-          token,
-          participantIdentity: input.participantIdentity,
-          participantName: input.participantName,
-        }) || undefined,
-      }
-    },
-    async subscribeOrEgressAudio(input) {
-      return {
-        subscriptionId: `mock-audio-${input.meetingId}`,
-        metadata: {
-          roomName: input.roomName,
-        },
-      }
-    },
-    async startRecording(input) {
-      return {
-        recordingId: `mock-recording-${input.meetingId}`,
-        metadata: {
-          roomName: input.roomName,
-        },
-      }
-    },
-    async resolveRecordingArtifact(input) {
-      const payload = {
-        ...normalizeRecord(input.meetingMetadata),
-        ...normalizeRecord(input.eventPayload),
-      }
-      const artifact = normalizeRecord(payload.recordingArtifact)
-      if (Object.keys(artifact).length === 0)
-        return null
-      return {
-        fileName: normalizeString(artifact.fileName) || 'meeting-recording.txt',
-        mimeType: normalizeString(artifact.mimeType) || 'text/plain',
-        downloadUrl: normalizeString(artifact.downloadUrl) || undefined,
-        base64Content: normalizeString(artifact.base64Content) || undefined,
-        textContent: normalizeString(artifact.textContent) || undefined,
-        metadata: normalizeRecord(artifact.metadata),
-      }
-    },
-    verifyWebhook(input) {
-      const configured = normalizeString(runtime.meeting.rtc.webhookSecret)
-      if (!configured)
-        return true
-      const bearer = readHeader(input.headers, 'authorization').replace(/^Bearer\s+/i, '')
-      const direct = readHeader(input.headers, 'x-winloop-meeting-secret')
-      return bearer === configured || direct === configured
-    },
-  }
-}
-
 function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
   const serverUrl = normalizeString(runtime.meeting.rtc.serverUrl).replace(/\/+$/g, '')
   const apiKey = normalizeString(runtime.meeting.rtc.apiKey)
@@ -246,7 +162,7 @@ function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
 
   function assertLiveKitConfig(): void {
     if (!serverUrl || !apiKey || !apiSecret)
-      throw new Error('LIVEKIT_CONFIG_MISSING')
+      throw new Error('MEETING_RTC_CONFIG_MISSING')
   }
 
   function createAccessToken(
@@ -269,6 +185,8 @@ function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
       expiresInSeconds: input.expiresInSeconds || 2 * 60 * 60,
     })
   }
+
+  assertLiveKitConfig()
 
   return {
     provider: 'livekit',
@@ -375,19 +293,20 @@ function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
   }
 }
 
-export function buildMeetingParticipantIdentity(userId: string): string {
+export function buildMeetingParticipantIdentity(userId: string, runtime = readRuntimeSettings()): string {
   const normalizedUserId = normalizeString(userId)
   if (!normalizedUserId)
     return `member:${randomUUID().slice(0, 12)}`
 
-  const runtime = readRuntimeSettings()
   const secret = normalizeString(runtime.meeting.rtc.apiSecret || runtime.meeting.rtc.webhookSecret || 'winloop-meeting-identity')
   return `member:${createHmac('sha256', secret).update(normalizedUserId).digest('hex').slice(0, 24)}`
 }
 
 export function getRtcProviderGateway(runtime = readRuntimeSettings()): RtcProviderGateway {
   const provider = normalizeString(runtime.meeting.rtc.provider).toLowerCase()
+  if (!provider)
+    throw new Error('MEETING_RTC_CONFIG_MISSING')
   if (provider === 'livekit')
     return createLiveKitGateway(runtime)
-  return createMockGateway(runtime)
+  throw new Error('MEETING_RTC_PROVIDER_UNSUPPORTED')
 }

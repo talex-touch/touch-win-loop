@@ -18,11 +18,12 @@ import type {
 import { randomUUID } from 'node:crypto'
 import { getMeetingAsrGateway } from '~~/server/services/meeting/asr-gateway'
 import { createMeetingGuestToken, verifyMeetingGuestToken } from '~~/server/services/meeting/meeting-guest-token'
+import { assertMeetingRuntimeReady } from '~~/server/services/meeting/meeting-runtime'
 import {
   buildMeetingParticipantIdentity,
   getRtcProviderGateway,
 } from '~~/server/services/meeting/rtc-provider'
-import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import { getProjectMemberManagementSnapshot } from '~~/server/utils/platform-store'
 import {
   createProjectMeetingGuestShare,
@@ -85,6 +86,13 @@ function normalizeDisplayName(value: unknown, fallback = 'Guest'): string {
   if (!normalized)
     return fallback
   return normalized.slice(0, 60)
+}
+
+async function resolveMeetingRuntime(runtime?: RuntimeSettings): Promise<RuntimeSettings> {
+  if (runtime)
+    return runtime
+  const resolved = await readEffectiveMeetingRuntimeSettings()
+  return resolved.runtime
 }
 
 function buildRtcParticipantAlias(role: 'host' | 'member' | 'guest'): string {
@@ -267,7 +275,7 @@ async function provisionProjectMeetingSession(
     mode: input.mode,
   })
 
-  const hostParticipantIdentity = buildMeetingParticipantIdentity(input.user.id)
+  const hostParticipantIdentity = buildMeetingParticipantIdentity(input.user.id, input.runtime)
   const join = await rtc.issueJoinToken({
     roomName: room.roomName,
     participantIdentity: hostParticipantIdentity,
@@ -444,7 +452,7 @@ export async function createProjectMeetingRecord(
   joinExpiresAt?: string
   joinUrl?: string
 }> {
-  const runtime = input.runtime || readRuntimeSettings()
+  const runtime = await resolveMeetingRuntime(input.runtime)
   const memberIds = await assertProjectMemberAccess(db, input.projectId, input.user)
   const title = normalizeString(input.title) || buildDefaultProjectMeetingTitle()
   const mode: ProjectMeetingMode = input.mode === 'audio' ? 'audio' : 'video'
@@ -453,6 +461,7 @@ export async function createProjectMeetingRecord(
     scheduledEndAt: input.scheduledEndAt,
   })
   await validateMeetingDurationLimit(db, input.workspaceId, schedule.durationMinutes)
+  assertMeetingRuntimeReady(runtime)
 
   const meetingId = randomUUID()
   await createProjectMeeting(db, {
@@ -532,7 +541,7 @@ export async function buildProjectMeetingJoinSession(
     runtime?: RuntimeSettings
   },
 ): Promise<ProjectMeetingSessionPayload> {
-  const runtime = input.runtime || readRuntimeSettings()
+  const runtime = await resolveMeetingRuntime(input.runtime)
   await assertProjectMemberAccess(db, input.projectId, input.user)
   const meeting = await buildMeetingDetailOrThrow(db, input.projectId, input.meetingId)
   if (meeting.status !== 'active')
@@ -541,7 +550,7 @@ export async function buildProjectMeetingJoinSession(
     throw new Error('MEETING_NOT_STARTED')
 
   const rtc = getRtcProviderGateway(runtime)
-  const participantIdentity = buildMeetingParticipantIdentity(input.user.id)
+  const participantIdentity = buildMeetingParticipantIdentity(input.user.id, runtime)
   const join = await rtc.issueJoinToken({
     roomName: meeting.providerRoomName,
     participantIdentity,
@@ -579,7 +588,7 @@ export async function endProjectMeetingSession(
     runtime?: RuntimeSettings
   },
 ): Promise<ProjectMeetingDetail> {
-  const runtime = input.runtime || readRuntimeSettings()
+  const runtime = await resolveMeetingRuntime(input.runtime)
   const meeting = await buildMeetingDetailOrThrow(db, input.projectId, input.meetingId)
   if (input.user)
     assertMeetingHost(meeting, input.user)
@@ -642,7 +651,7 @@ export async function startProjectMeetingSession(
     runtime?: RuntimeSettings
   },
 ): Promise<ProjectMeetingSessionPayload> {
-  const runtime = input.runtime || readRuntimeSettings()
+  const runtime = await resolveMeetingRuntime(input.runtime)
   await assertProjectMemberAccess(db, input.projectId, input.user)
   const meeting = await buildMeetingDetailOrThrow(db, input.projectId, input.meetingId)
   assertMeetingHost(meeting, input.user)
@@ -1005,7 +1014,7 @@ export async function joinSharedProjectMeetingSession(
     runtime?: RuntimeSettings
   },
 ): Promise<ProjectMeetingGuestJoinSession> {
-  const runtime = input.runtime || readRuntimeSettings()
+  const runtime = await resolveMeetingRuntime(input.runtime)
   const { share, meeting } = await validateActiveGuestShare(
     db,
     await getProjectMeetingGuestShareByShareKey(db, input.shareKey),
@@ -1045,6 +1054,7 @@ export async function joinSharedProjectMeetingSession(
     shareId: share.id,
     guestDisplayName,
     providerIdentity,
+    runtime,
   })
   const refreshed = await buildMeetingDetailOrThrow(db, meeting.projectId, meeting.id)
   const utterances = (await listProjectMeetingUtterances(db, {
@@ -1067,8 +1077,10 @@ export async function joinSharedProjectMeetingSession(
 export async function resolveValidatedMeetingGuestToken(
   db: Queryable,
   token: string,
+  runtime?: RuntimeSettings,
 ): Promise<ValidatedMeetingGuestToken | null> {
-  const parsed = verifyMeetingGuestToken(token)
+  const resolvedRuntime = await resolveMeetingRuntime(runtime)
+  const parsed = verifyMeetingGuestToken(token, resolvedRuntime)
   if (!parsed)
     return null
 

@@ -1,4 +1,3 @@
-import type { H3Event } from 'h3'
 import { createError, sendRedirect, setResponseStatus } from 'h3'
 import { buildFeishuAuthorizeUrl } from '~~/server/services/feishu/client'
 import {
@@ -6,6 +5,7 @@ import {
   persistFeishuOAuthRedirect,
 } from '~~/server/services/feishu/security'
 import { fail } from '~~/server/utils/api'
+import { resolveServerRequestOrigin, warnIfPublicBaseHostMismatch } from '~~/server/utils/api-url'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readFeishuIntegrationConfig } from '~~/server/utils/feishu-integration-store'
@@ -20,32 +20,6 @@ function sanitizeRedirectTarget(value: unknown): string {
   if (redirect.startsWith('/login'))
     return '/dashboard'
   return redirect
-}
-
-function getFirstHeaderValue(rawValue: string | string[] | undefined): string {
-  const first = Array.isArray(rawValue) ? (rawValue[0] || '') : (rawValue || '')
-  return String(first).split(',')[0]?.trim() || ''
-}
-
-function resolveRequestOrigin(event: H3Event): string {
-  const req = event.node?.req
-  const forwardedProto = getFirstHeaderValue(req.headers['x-forwarded-proto'])
-  const forwardedHost = getFirstHeaderValue(req.headers['x-forwarded-host'])
-  const host = forwardedHost || getFirstHeaderValue(req.headers.host)
-  if (!host)
-    return ''
-
-  const socket = req.socket as { encrypted?: boolean } | undefined
-  const protocol = forwardedProto
-    ? forwardedProto.toLowerCase()
-    : (socket?.encrypted ? 'https' : 'http')
-  const normalizedProtocol = protocol === 'https' ? 'https' : 'http'
-  try {
-    return new URL(`${normalizedProtocol}://${host}`).origin
-  }
-  catch {
-    return ''
-  }
 }
 
 function resolveRuntimeOAuthRedirectUri(runtime: ReturnType<typeof readRuntimeSettings>): string {
@@ -81,6 +55,11 @@ export default defineEventHandler(async (event) => {
   const state = issueFeishuOAuthState(event)
   const redirectTarget = sanitizeRedirectTarget(getQuery(event).redirect)
   persistFeishuOAuthRedirect(event, redirectTarget)
+  warnIfPublicBaseHostMismatch({
+    event,
+    publicBaseUrl: runtime.onlyOffice.sourceBaseURL,
+    context: 'auth.feishu.authorize',
+  })
 
   let authorizeUrl = ''
   try {
@@ -88,7 +67,7 @@ export default defineEventHandler(async (event) => {
       config,
       state,
       redirectUri: resolveRuntimeOAuthRedirectUri(runtime) || undefined,
-      requestOrigin: resolveRequestOrigin(event),
+      requestOrigin: resolveServerRequestOrigin(event),
     })
   }
   catch (error) {

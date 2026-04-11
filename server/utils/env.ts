@@ -352,7 +352,7 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
     },
     meeting: {
       rtc: {
-        provider: String(runtime.meeting?.rtc?.provider ?? 'mock'),
+        provider: String(runtime.meeting?.rtc?.provider ?? ''),
         serverUrl: trimTrailingSlash(String(runtime.meeting?.rtc?.serverUrl ?? '')),
         apiKey: String(runtime.meeting?.rtc?.apiKey ?? ''),
         apiSecret: String(runtime.meeting?.rtc?.apiSecret ?? ''),
@@ -361,7 +361,7 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
         roomPrefix: String(runtime.meeting?.rtc?.roomPrefix ?? 'winloop'),
       },
       asr: {
-        provider: String(runtime.meeting?.asr?.provider ?? 'mock'),
+        provider: String(runtime.meeting?.asr?.provider ?? ''),
         serviceUrl: trimTrailingSlash(String(runtime.meeting?.asr?.serviceUrl ?? '')),
         apiKey: String(runtime.meeting?.asr?.apiKey ?? ''),
         webhookSecret: String(runtime.meeting?.asr?.webhookSecret ?? ''),

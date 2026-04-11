@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ApiResponse, Project } from '~~/shared/types/domain'
 import { projectWorkspacePath, teamDashboardPath } from '~/composables/team-ui'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
@@ -33,14 +34,15 @@ async function loadProject() {
     await navigateTo(projectWorkspacePath(teamId, project.id), { replace: true })
   }
   catch (error: any) {
-    if (Number(error?.statusCode || error?.response?.status) === 401) {
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized) {
       await navigateTo({
         path: '/login',
         query: { redirect: route.fullPath || `/projects/${projectId.value}` },
       })
       return
     }
-    errorText.value = '项目不存在或加载失败。'
+    errorText.value = resolveAuthDisplayMessage(error, '项目不存在或加载失败。')
   }
   finally {
     loading.value = false

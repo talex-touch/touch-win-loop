@@ -1,11 +1,13 @@
 import type { ProjectMeetingMode } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
+import { resolveMeetingRuntimeError } from '~~/server/services/meeting/meeting-runtime'
 import { createProjectMeetingSession } from '~~/server/services/meeting/project-meeting'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { createAiChatSession } from '~~/server/utils/chat-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import { upsertProjectDefenseSessionState } from '~~/server/utils/project-defense-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
@@ -26,7 +28,8 @@ function normalizeMode(value: unknown): ProjectMeetingMode {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveMeetingRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const body = await readBody<CreateDefenseRealtimeBody>(event).catch(() => ({} as CreateDefenseRealtimeBody))
@@ -35,8 +38,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 projectId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40105)
@@ -132,9 +135,10 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 40404)
     }
-    if (error instanceof Error && error.message === 'LIVEKIT_CONFIG_MISSING') {
-      setResponseStatus(event, 503)
-      return fail('RTC 服务未完成配置，请先补齐会议服务参数。', {
+    const runtimeError = resolveMeetingRuntimeError(error)
+    if (runtimeError) {
+      setResponseStatus(event, runtimeError.status)
+      return fail(runtimeError.message, {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

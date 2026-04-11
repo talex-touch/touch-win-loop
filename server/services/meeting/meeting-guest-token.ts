@@ -1,3 +1,4 @@
+import type { RuntimeSettings } from '~~/server/utils/env'
 import { Buffer } from 'node:buffer'
 import { createHmac } from 'node:crypto'
 import { readRuntimeSettings } from '~~/server/utils/env'
@@ -29,8 +30,7 @@ function fromBase64Url(value: string): Buffer {
   return Buffer.from(padded, 'base64')
 }
 
-function getSecret(): string {
-  const runtime = readRuntimeSettings()
+function getSecret(runtime = readRuntimeSettings()): string {
   return normalizeString(runtime.meeting.rtc.apiSecret)
     || normalizeString(runtime.onlyOffice.jwtSecret)
     || 'winloop-meeting-guest'
@@ -51,6 +51,7 @@ export function createMeetingGuestToken(input: {
   guestDisplayName: string
   providerIdentity: string
   ttlSeconds?: number
+  runtime?: RuntimeSettings
 }): { token: string, expiresAt: string } {
   const ttlSeconds = normalizeTtlSeconds(input.ttlSeconds)
   const exp = Math.floor(Date.now() / 1000) + ttlSeconds
@@ -63,20 +64,20 @@ export function createMeetingGuestToken(input: {
     exp,
   }
   const payloadBase64 = toBase64Url(JSON.stringify(payload))
-  const signature = signPayload(payloadBase64, getSecret())
+  const signature = signPayload(payloadBase64, getSecret(input.runtime))
   return {
     token: `${payloadBase64}.${signature}`,
     expiresAt: new Date(exp * 1000).toISOString(),
   }
 }
 
-export function verifyMeetingGuestToken(token: string): MeetingGuestTokenPayload | null {
+export function verifyMeetingGuestToken(token: string, runtime = readRuntimeSettings()): MeetingGuestTokenPayload | null {
   const normalized = normalizeString(token)
   const [payloadPart, signaturePart] = normalized.split('.')
   if (!payloadPart || !signaturePart)
     return null
 
-  const expectedSignature = signPayload(payloadPart, getSecret())
+  const expectedSignature = signPayload(payloadPart, getSecret(runtime))
   if (expectedSignature !== signaturePart)
     return null
 

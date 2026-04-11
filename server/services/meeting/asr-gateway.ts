@@ -43,37 +43,14 @@ function readHeader(headers: Headers | Record<string, unknown>, name: string): s
   return normalizeString(value)
 }
 
-function createMockMeetingAsrGateway(runtime: RuntimeSettings): MeetingAsrGateway {
-  return {
-    provider: 'mock',
-    async startSession(input) {
-      return {
-        sessionId: `mock-asr-${input.meetingId}-${Date.now()}`,
-        metadata: {
-          roomName: input.roomName,
-        },
-      }
-    },
-    async pushAudioFrame() {},
-    async finishSession() {},
-    verifyWebhook(input) {
-      const configured = normalizeString(runtime.meeting.asr.webhookSecret)
-      if (!configured)
-        return true
-      const bearer = readHeader(input.headers, 'authorization').replace(/^Bearer\s+/i, '')
-      const direct = readHeader(input.headers, 'x-winloop-asr-secret')
-      return bearer === configured || direct === configured
-    },
-  }
-}
-
 function createHttpMeetingAsrGateway(runtime: RuntimeSettings): MeetingAsrGateway {
   const serviceUrl = normalizeString(runtime.meeting.asr.serviceUrl).replace(/\/+$/g, '')
   const apiKey = normalizeString(runtime.meeting.asr.apiKey)
 
+  if (!serviceUrl)
+    throw new Error('MEETING_ASR_SERVICE_URL_MISSING')
+
   async function post(path: string, body: Record<string, unknown>): Promise<void> {
-    if (!serviceUrl)
-      throw new Error('MEETING_ASR_SERVICE_URL_MISSING')
     const response = await fetch(`${serviceUrl}${path}`, {
       method: 'POST',
       headers: {
@@ -118,7 +95,9 @@ function createHttpMeetingAsrGateway(runtime: RuntimeSettings): MeetingAsrGatewa
 
 export function getMeetingAsrGateway(runtime = readRuntimeSettings()): MeetingAsrGateway {
   const provider = normalizeString(runtime.meeting.asr.provider).toLowerCase()
-  if (provider === 'mock' || !provider)
-    return createMockMeetingAsrGateway(runtime)
-  return createHttpMeetingAsrGateway(runtime)
+  if (!provider)
+    throw new Error('MEETING_ASR_CONFIG_MISSING')
+  if (provider === 'http')
+    return createHttpMeetingAsrGateway(runtime)
+  throw new Error('MEETING_ASR_PROVIDER_UNSUPPORTED')
 }

@@ -1,10 +1,12 @@
 import { setResponseStatus } from 'h3'
+import { resolveMeetingRuntimeError } from '~~/server/services/meeting/meeting-runtime'
 import { buildProjectMeetingJoinSession } from '~~/server/services/meeting/project-meeting'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { getAiChatSessionById } from '~~/server/utils/chat-store'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
 import { getProjectDefenseSessionState } from '~~/server/utils/project-defense-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 
@@ -14,7 +16,8 @@ function normalizeString(value: unknown): string {
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+  const fallbackRuntime = readRuntimeSettings(event)
+  const { runtime } = await readEffectiveMeetingRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const projectId = normalizeString(getRouterParam(event, 'id'))
   const sessionId = normalizeString(getRouterParam(event, 'sessionId'))
@@ -23,8 +26,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 400)
     return fail('缺少 projectId 或 sessionId。', {
       startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
+      provider: fallbackRuntime.ai.provider,
+      model: fallbackRuntime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40106)
@@ -108,6 +111,18 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 40905)
     }
+    const runtimeError = resolveMeetingRuntimeError(error)
+    if (runtimeError) {
+      setResponseStatus(event, runtimeError.status)
+      return fail(runtimeError.message, {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50397)
+    }
+
     throw error
   }
 })

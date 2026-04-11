@@ -2,6 +2,7 @@
 import type { ApiResponse, AuthMeResult, WorkspaceWithQuota } from '~~/shared/types/domain'
 import { resolveWorkspaceOptions } from '~/composables/team-ui'
 import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'dashboard',
@@ -164,8 +165,16 @@ async function loadAuthContext() {
     await syncLoopyWorkspace(nextWorkspaceId)
   }
   catch (error: any) {
+    const info = resolveAuthRequestErrorInfo(error)
     workspaceOptions.value = []
-    errorText.value = String(error?.data?.message || '对话初始化失败，请稍后重试。')
+    if (info.isUnauthorized) {
+      await navigateTo({
+        path: '/login',
+        query: { redirect: resolveLoginRedirectTarget(route, '/dashboard') },
+      }, { replace: true })
+      return
+    }
+    errorText.value = resolveAuthDisplayMessage(error, '对话初始化失败，请稍后重试。')
     await syncLoopyWorkspace('')
   }
   finally {
