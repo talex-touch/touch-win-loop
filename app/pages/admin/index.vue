@@ -225,6 +225,45 @@ onMounted(loadPermissions)
 
         <NuxtLink
           v-if="canManageContest"
+          to="/admin/releases/queue"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            发布审批
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            飞书同步草稿、初审、随机二审、版本替换发布
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canManageContest"
+          to="/admin/policies"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            政策库
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            政策项查看、版本审阅与替换发布
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canManageContest"
+          to="/admin/docs"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            文档中心
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            管理员查看飞书同步、审批、发布替换操作教程
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
+          v-if="canManageContest"
           to="/admin/operations"
           class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
         >
