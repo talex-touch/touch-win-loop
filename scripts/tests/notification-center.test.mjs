@@ -83,6 +83,8 @@ it('前端已接入共享通知中心抽屉与铃铛入口', async () => {
   assert.match(drawerSource, /v-model:visible="drawerVisible"/, '通知抽屉未通过共享状态受控打开')
   assert.match(drawerSource, /全部已读/, '通知抽屉未提供全部已读入口')
   assert.match(bellSource, /variant\?: 'default' \| 'rail'/, '通知铃铛未支持 rail 变体')
+  assert.match(bellSource, /const \{ drawerVisible, initialized, unreadCount \} = center/, '通知铃铛未复用共享抽屉打开态')
+  assert.match(bellSource, /notification-bell-button--rail-active/, '左 rail 通知按钮缺少打开态样式')
   assert.match(bellSource, /emit\('open'\)/, '通知铃铛未暴露打开事件')
   assert.match(bellSource, /pointer-events: auto;/, '左 rail 通知标签仍不可点击')
   assert.match(bellSource, /<NotificationDrawer :workspace-id="props\.workspaceId" \/>/, '铃铛入口未挂载通知抽屉')

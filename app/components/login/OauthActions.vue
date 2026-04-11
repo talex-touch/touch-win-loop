@@ -1,22 +1,24 @@
 <script setup lang="ts">
 const props = withDefaults(defineProps<{
-  casdoorEnabled?: boolean
+  oauthEnabled?: boolean
+  oauthDisplayName?: string
   feishuEnabled?: boolean
   feishuLoading?: boolean
-  oauthRedirectingProvider?: 'feishu' | 'casdoor' | ''
+  oauthRedirectingProvider?: 'feishu' | 'oauth' | ''
 }>(), {
-  casdoorEnabled: false,
+  oauthEnabled: false,
+  oauthDisplayName: '第三方 OAuth',
   feishuEnabled: false,
   feishuLoading: false,
   oauthRedirectingProvider: '',
 })
 
 defineEmits<{
-  casdoorLogin: []
+  oauthLogin: []
   feishuLogin: []
 }>()
 
-const hasOauthActions = computed(() => props.casdoorEnabled || props.feishuEnabled)
+const hasOauthActions = computed(() => props.oauthEnabled || props.feishuEnabled)
 </script>
 
 <template>
@@ -37,13 +39,13 @@ const hasOauthActions = computed(() => props.casdoorEnabled || props.feishuEnabl
       </button>
 
       <button
-        v-if="props.casdoorEnabled"
+        v-if="props.oauthEnabled"
         type="button"
         class="login-oauth-actions__button"
         :disabled="props.oauthRedirectingProvider !== '' || props.feishuLoading"
-        @click="$emit('casdoorLogin')"
+        @click="$emit('oauthLogin')"
       >
-        {{ props.oauthRedirectingProvider === 'casdoor' ? 'Casdoor 跳转中...' : '使用 Casdoor 登录' }}
+        {{ props.oauthRedirectingProvider === 'oauth' ? `${props.oauthDisplayName} 跳转中...` : `使用 ${props.oauthDisplayName} 登录` }}
       </button>
     </div>
   </div>

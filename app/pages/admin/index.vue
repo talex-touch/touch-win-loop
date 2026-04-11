@@ -276,6 +276,19 @@ onMounted(loadPermissions)
         </NuxtLink>
 
         <NuxtLink
+          v-if="canManageRuntimeSettings"
+          to="/admin/meeting-providers"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            会议服务
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            LiveKit / ASR / worker 参数、后台密钥与链路健康状态
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
           v-if="canManageContest"
           to="/admin/resource-preview-worker"
           class="p-3 border border-slate-200 bg-white hover:bg-slate-50"

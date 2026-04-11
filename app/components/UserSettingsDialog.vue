@@ -11,12 +11,12 @@ import {
   USER_AVATAR_UPLOAD_MAX_FILE_SIZE_BYTES,
   USER_AVATAR_UPLOAD_TYPES_LABEL,
 } from '~~/shared/constants/user-avatar-upload'
+import { formatDateTime } from '~/composables/team-ui'
 import { useUserAiUsage } from '~/composables/useUserAiUsage'
 import { useUserAuthBindings } from '~/composables/useUserAuthBindings'
 import { useUserSessionHistory } from '~/composables/useUserSessionHistory'
 import { useUserWorkspaceMembership } from '~/composables/useUserWorkspaceMembership'
 import { useUserWorkspaceOverview } from '~/composables/useUserWorkspaceOverview'
-import { formatDateTime } from '~/composables/team-ui'
 
 type UserSettingsTabId = 'profile' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
 // Legacy compatibility anchor for workspace header tests:
@@ -87,7 +87,7 @@ const defaultTabMeta: UserSettingsTabMeta = {
 
 const tabItems: UserSettingsTabMeta[] = [
   defaultTabMeta,
-  { id: 'bindings', groupId: 'profile', label: '账号绑定', icon: 'link', description: '管理飞书和 Casdoor 身份绑定。' },
+  { id: 'bindings', groupId: 'profile', label: '账号绑定', icon: 'link', description: '管理飞书和第三方 OAuth 身份绑定。' },
   { id: 'loginHistory', groupId: 'profile', label: '登录历史', icon: 'schedule', description: '查看个人账号近期登录与会话状态。' },
   { id: 'audits', groupId: 'profile', label: '操作记录', icon: 'history', description: '查看最近的绑定与解绑操作。' },
   { id: 'overview', groupId: 'workspace', label: '工作空间概览', icon: 'dashboard', description: '查看当前工作空间的核心信息。' },
@@ -317,20 +317,21 @@ const {
   feishuBindSuccess,
   feishuBindStatus,
   feishuAudits,
-  casdoorEnabled,
-  casdoorBindLoading,
-  casdoorBindRedirecting,
-  casdoorBindError,
-  casdoorBindStatus,
+  oauthEnabled,
+  oauthDisplayName,
+  oauthBindLoading,
+  oauthBindRedirecting,
+  oauthBindError,
+  oauthBindStatus,
   formatAuditAction,
   readFeishuBindErrorFromRoute,
-  readCasdoorBindErrorFromRoute,
+  readOauthBindErrorFromRoute,
   loadAuthMeta,
   loadFeishuBindStatus,
-  loadCasdoorBindStatus,
+  loadOauthBindStatus,
   loadFeishuAudits,
   startFeishuBind,
-  startCasdoorBind,
+  startOauthBind,
   openFeishuUnbindConfirm,
   cancelFeishuUnbindConfirm,
   unbindFeishu,
@@ -473,7 +474,7 @@ async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAi
     await Promise.allSettled([
       loadAuthMeta(),
       loadFeishuBindStatus(),
-      loadCasdoorBindStatus(),
+      loadOauthBindStatus(),
     ])
     return
   }
@@ -507,7 +508,7 @@ async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAi
     await Promise.allSettled([
       loadAuthMeta(),
       loadFeishuBindStatus(),
-      loadCasdoorBindStatus(),
+      loadOauthBindStatus(),
     ])
     return
   }
@@ -560,7 +561,7 @@ watch(
     void Promise.allSettled([
       loadAuthMeta(),
       loadFeishuBindStatus(),
-      loadCasdoorBindStatus(),
+      loadOauthBindStatus(),
       loadFeishuAudits(),
       loadAuthSessions(),
     ])
@@ -574,7 +575,7 @@ watch(
     if (!props.visible)
       return
     feishuBindError.value = readFeishuBindErrorFromRoute()
-    casdoorBindError.value = readCasdoorBindErrorFromRoute()
+    oauthBindError.value = readOauthBindErrorFromRoute()
   },
 )
 
@@ -718,11 +719,12 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
       :feishu-bind-success="feishuBindSuccess"
       :feishu-unbind-confirm-visible="feishuUnbindConfirmVisible"
       :feishu-unbind-confirm-text="feishuUnbindConfirmText"
-      :casdoor-bind-status="casdoorBindStatus"
-      :casdoor-bind-loading="casdoorBindLoading"
-      :casdoor-bind-redirecting="casdoorBindRedirecting"
-      :casdoor-bind-error="casdoorBindError"
-      :casdoor-enabled="casdoorEnabled"
+      :oauth-bind-status="oauthBindStatus"
+      :oauth-bind-loading="oauthBindLoading"
+      :oauth-bind-redirecting="oauthBindRedirecting"
+      :oauth-bind-error="oauthBindError"
+      :oauth-enabled="oauthEnabled"
+      :oauth-display-name="oauthDisplayName"
       :format-date-time="formatDateTime"
       @load-feishu-bind-status="loadFeishuBindStatus"
       @start-feishu-bind="startFeishuBind"
@@ -730,8 +732,8 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
       @update-feishu-unbind-confirm-text="feishuUnbindConfirmText = $event"
       @cancel-feishu-unbind-confirm="cancelFeishuUnbindConfirm"
       @unbind-feishu="unbindFeishu"
-      @load-casdoor-bind-status="loadCasdoorBindStatus"
-      @start-casdoor-bind="startCasdoorBind"
+      @load-oauth-bind-status="loadOauthBindStatus"
+      @start-oauth-bind="startOauthBind"
     />
 
     <UserSettingsLoginHistoryPanel

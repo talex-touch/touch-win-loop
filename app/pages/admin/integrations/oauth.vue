@@ -2,6 +2,8 @@
 definePageMeta({
   layout: 'admin',
 })
-
-await navigateTo('/admin/integrations/oauth', { replace: true })
 </script>
+
+<template>
+  <AdminOauthIntegrationConfigPage />
+</template>

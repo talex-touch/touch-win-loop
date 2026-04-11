@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
   const canAssign = await checkPlatformPermission(event, user, 'role.assign')
   if (!canAssign) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权查看 Casdoor 集成配置。', {
+    return fail('当前用户无权查看 OAuth / OIDC 集成配置。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

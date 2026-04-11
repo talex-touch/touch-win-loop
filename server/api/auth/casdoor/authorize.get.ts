@@ -1,5 +1,5 @@
 import { createError, sendRedirect, setResponseStatus } from 'h3'
-import { buildCasdoorAuthorizeUrl } from '~~/server/services/casdoor/client'
+import { buildCasdoorAuthorizeUrl, isCasdoorAuthEnabled } from '~~/server/services/casdoor/client'
 import {
   issueCasdoorOAuthState,
   persistCasdoorOAuthRedirect,
@@ -27,9 +27,9 @@ export default defineEventHandler(async (event) => {
     return readCasdoorIntegrationConfig(db)
   })
 
-  if (!config.enabled || !config.clientId || !config.issuer || !config.clientSecret || !config.redirectUri) {
+  if (!config.enabled || !isCasdoorAuthEnabled(config)) {
     setResponseStatus(event, 400)
-    return fail('Casdoor 登录尚未启用或配置不完整。', {
+    return fail('第三方 OAuth 登录尚未启用或配置不完整。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -43,7 +43,7 @@ export default defineEventHandler(async (event) => {
   persistCasdoorOAuthRedirect(event, redirectTarget)
 
   try {
-    const authorizeUrl = buildCasdoorAuthorizeUrl({
+    const authorizeUrl = await buildCasdoorAuthorizeUrl({
       config,
       state,
     })

@@ -85,9 +85,17 @@ const normalizedPath = computed(() => route.path.replace(/\/+$/, '') || '/')
 const isDirectoryRoute = computed(() => normalizedPath.value === '/admin/integrations')
 
 function isCasdoorConfigReady(config: CasdoorIntegrationConfig): boolean {
+  const hasProviderConfig = config.protocolMode === 'oauth2_manual'
+    ? Boolean(
+        config.authorizeEndpoint.trim()
+        && config.tokenEndpoint.trim()
+        && config.userinfoEndpoint.trim(),
+      )
+    : Boolean(config.issuer.trim())
+
   return Boolean(
     config.enabled
-    && config.issuer.trim()
+    && hasProviderConfig
     && config.clientId.trim()
     && config.clientSecretConfigured
     && config.redirectUri.trim(),
@@ -107,12 +115,12 @@ const integrationCards = computed<IntegrationCard[]>(() => {
   return [
     {
       key: 'casdoor',
-      name: 'Casdoor',
-      summary: '统一登录、账号绑定、单点登录参数托管',
+      name: 'OAuth / OIDC',
+      summary: '第三方单点登录、账号绑定、OIDC 参数托管',
       status: casdoorStatus,
       tone: casdoorTone,
       clickAction: 'navigate',
-      path: '/admin/integrations/casdoor',
+      path: '/admin/integrations/oauth',
     },
     {
       key: 'feishu',
@@ -197,7 +205,7 @@ async function loadCasdoorStatus() {
 
   loadingCasdoorStatus.value = true
   try {
-    const data = await requestApi<CasdoorIntegrationConfig>(endpoint('/admin/integrations/casdoor/config'), {}, 'Casdoor 状态加载失败。')
+    const data = await requestApi<CasdoorIntegrationConfig>(endpoint('/admin/integrations/oauth/config'), {}, 'OAuth / OIDC 状态加载失败。')
     casdoorEnabled.value = isCasdoorConfigReady(data)
   }
   catch {

@@ -16,19 +16,20 @@ const {
   errorText,
   feishuLoading,
   feishuMeta,
-  casdoorEnabled,
+  oauthEnabled,
+  oauthDisplayName,
   registrationEnabled,
   registrationHint,
   oauthRedirectingProvider,
   hasFeishuConflict,
-  hasCasdoorConflict,
+  hasOauthConflict,
   feishuConflictTitle,
-  casdoorConflictTitle,
+  oauthConflictTitle,
   feishuBoundUser,
-  casdoorBoundUser,
+  oauthBoundUser,
   submitLogin,
   manualFeishuLogin,
-  manualCasdoorLogin,
+  manualOauthLogin,
 } = useLoginPage()
 </script>
 
@@ -72,20 +73,21 @@ const {
               />
 
               <LoginConflictNotice
-                v-if="hasCasdoorConflict"
-                :title="casdoorConflictTitle"
-                provider-name="Casdoor 账号"
-                :bound-user="casdoorBoundUser"
+                v-if="hasOauthConflict"
+                :title="oauthConflictTitle"
+                :provider-name="`${oauthDisplayName} 账号`"
+                :bound-user="oauthBoundUser"
                 suggestion="处理建议：先用绑定账号密码登录；如需迁移绑定，请联系管理员处理后再重绑。"
               />
             </div>
 
             <LoginOauthActions
-              :casdoor-enabled="casdoorEnabled"
+              :oauth-enabled="oauthEnabled"
+              :oauth-display-name="oauthDisplayName"
               :feishu-enabled="Boolean(feishuMeta?.enabled)"
               :feishu-loading="feishuLoading"
               :oauth-redirecting-provider="oauthRedirectingProvider"
-              @casdoor-login="manualCasdoorLogin"
+              @oauth-login="manualOauthLogin"
               @feishu-login="manualFeishuLogin"
             />
 

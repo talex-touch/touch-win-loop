@@ -1,6 +1,7 @@
 import type { ApiResponse, AuthLoginMeta, AuthLoginResult, AuthMeResult } from '~~/shared/types/domain'
 
-type OauthRedirectingProvider = 'feishu' | 'casdoor' | ''
+type OauthRedirectingProvider = 'feishu' | 'oauth' | ''
+const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 
 export function useLoginPage() {
   const route = useRoute()
@@ -17,18 +18,20 @@ export function useLoginPage() {
   const oauthRedirectingProvider = ref<OauthRedirectingProvider>('')
   const feishuConflictCode = ref('')
   const feishuBoundUser = ref('')
-  const casdoorConflictCode = ref('')
-  const casdoorBoundUser = ref('')
+  const oauthConflictCode = ref('')
+  const oauthBoundUser = ref('')
 
   const feishuMeta = computed(() => authMeta.value?.feishu || null)
-  const casdoorEnabled = computed(() => Boolean(authMeta.value?.casdoor?.enabled))
+  const oauthMeta = computed(() => authMeta.value?.oauth || authMeta.value?.casdoor || null)
+  const oauthEnabled = computed(() => Boolean(oauthMeta.value?.enabled))
+  const oauthDisplayName = computed(() => String(oauthMeta.value?.displayName || '').trim() || DEFAULT_OAUTH_DISPLAY_NAME)
   const registrationEnabled = computed(() => authMeta.value?.registrationEnabled !== false)
   const registrationHint = computed(() => registrationEnabled.value
     ? '首次登录将自动注册，并初始化 Personal 空间。'
     : '当前已关闭自动注册，仅允许已有账号登录或绑定第三方账号。')
 
   const hasFeishuConflict = computed(() => Boolean(feishuConflictCode.value))
-  const hasCasdoorConflict = computed(() => Boolean(casdoorConflictCode.value))
+  const hasOauthConflict = computed(() => Boolean(oauthConflictCode.value))
 
   const feishuConflictTitle = computed(() => {
     if (feishuConflictCode.value === 'FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER')
@@ -38,12 +41,12 @@ export function useLoginPage() {
     return '飞书账号绑定冲突'
   })
 
-  const casdoorConflictTitle = computed(() => {
-    if (casdoorConflictCode.value === 'CASDOOR_IDENTITY_ALREADY_BOUND_OTHER_USER')
-      return 'Casdoor 账号已绑定其他平台账号'
-    if (casdoorConflictCode.value === 'CASDOOR_USER_ALREADY_BOUND_OTHER_IDENTITY')
-      return '当前平台账号已绑定其他 Casdoor 身份'
-    return 'Casdoor 账号绑定冲突'
+  const oauthConflictTitle = computed(() => {
+    if (oauthConflictCode.value === 'CASDOOR_IDENTITY_ALREADY_BOUND_OTHER_USER')
+      return `${oauthDisplayName.value} 账号已绑定其他平台账号`
+    if (oauthConflictCode.value === 'CASDOOR_USER_ALREADY_BOUND_OTHER_IDENTITY')
+      return `当前平台账号已绑定其他 ${oauthDisplayName.value} 身份`
+    return `${oauthDisplayName.value} 账号绑定冲突`
   })
 
   function resolveRedirectTarget(): string {
@@ -58,9 +61,15 @@ export function useLoginPage() {
     return redirect
   }
 
-  function readQueryText(name: string): string {
-    const raw = route.query[name]
-    return Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim()
+  function readQueryText(name: string | string[]): string {
+    const names = Array.isArray(name) ? name : [name]
+    for (const item of names) {
+      const raw = route.query[item]
+      const value = Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim()
+      if (value)
+        return value
+    }
+    return ''
   }
 
   function isFeishuContainer(): boolean {
@@ -138,10 +147,10 @@ export function useLoginPage() {
     window.location.href = url
   }
 
-  async function startCasdoorOAuthRedirect() {
+  async function startOauthRedirect() {
     const redirectTarget = resolveRedirectTarget()
-    const url = endpoint(`/auth/casdoor/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
-    oauthRedirectingProvider.value = 'casdoor'
+    const url = endpoint(`/auth/oauth/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
+    oauthRedirectingProvider.value = 'oauth'
     window.location.href = url
   }
 
@@ -218,14 +227,15 @@ export function useLoginPage() {
     await startFeishuOAuthRedirect()
   }
 
-  async function manualCasdoorLogin() {
+  async function manualOauthLogin() {
     errorText.value = ''
     const meta = await loadAuthMeta()
-    if (!meta?.casdoor?.enabled) {
-      errorText.value = 'Casdoor 登录尚未启用。'
+    const oauthEnabled = Boolean(meta?.oauth?.enabled || meta?.casdoor?.enabled)
+    if (!oauthEnabled) {
+      errorText.value = `${oauthDisplayName.value} 登录尚未启用。`
       return
     }
-    await startCasdoorOAuthRedirect()
+    await startOauthRedirect()
   }
 
   async function tryFeishuAutoLogin() {
@@ -268,10 +278,10 @@ export function useLoginPage() {
 
     await loadAuthMeta()
 
-    const casdoorError = readQueryText('casdoorError')
+    const oauthError = readQueryText(['oauthError', 'casdoorError'])
     const feishuError = readQueryText('feishuError')
-    if (casdoorError) {
-      errorText.value = casdoorError
+    if (oauthError) {
+      errorText.value = oauthError
     }
     else if (feishuError) {
       errorText.value = feishuError
@@ -279,8 +289,8 @@ export function useLoginPage() {
 
     feishuConflictCode.value = readQueryText('feishuConflictCode')
     feishuBoundUser.value = readQueryText('feishuBoundUser')
-    casdoorConflictCode.value = readQueryText('casdoorConflictCode')
-    casdoorBoundUser.value = readQueryText('casdoorBoundUser')
+    oauthConflictCode.value = readQueryText(['oauthConflictCode', 'casdoorConflictCode'])
+    oauthBoundUser.value = readQueryText(['oauthBoundUser', 'casdoorBoundUser'])
 
     await tryFeishuAutoLogin()
   })
@@ -292,18 +302,19 @@ export function useLoginPage() {
     errorText,
     feishuLoading,
     feishuMeta,
-    casdoorEnabled,
+    oauthEnabled,
+    oauthDisplayName,
     registrationEnabled,
     registrationHint,
     oauthRedirectingProvider,
     hasFeishuConflict,
-    hasCasdoorConflict,
+    hasOauthConflict,
     feishuConflictTitle,
-    casdoorConflictTitle,
+    oauthConflictTitle,
     feishuBoundUser,
-    casdoorBoundUser,
+    oauthBoundUser,
     submitLogin,
     manualFeishuLogin,
-    manualCasdoorLogin,
+    manualOauthLogin,
   }
 }

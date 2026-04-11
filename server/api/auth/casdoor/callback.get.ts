@@ -24,11 +24,11 @@ function buildFailedRedirect(input: {
   boundUserHint?: string
 }): string {
   const searchParams = new URLSearchParams()
-  searchParams.set('casdoorError', String(input.message || '').slice(0, 120))
+  searchParams.set('oauthError', String(input.message || '').slice(0, 120))
   if (input.code)
-    searchParams.set('casdoorConflictCode', String(input.code || '').slice(0, 80))
+    searchParams.set('oauthConflictCode', String(input.code || '').slice(0, 80))
   if (input.boundUserHint)
-    searchParams.set('casdoorBoundUser', String(input.boundUserHint || '').slice(0, 60))
+    searchParams.set('oauthBoundUser', String(input.boundUserHint || '').slice(0, 60))
   return `/login?${searchParams.toString()}`
 }
 
@@ -41,11 +41,11 @@ function buildBindErrorRedirect(input: {
   const target = sanitizeRedirectTarget(input.targetPath) || '/dashboard'
   const separator = target.includes('?') ? '&' : '?'
   const searchParams = new URLSearchParams()
-  searchParams.set('casdoorBindError', String(input.message || '').slice(0, 120))
+  searchParams.set('oauthBindError', String(input.message || '').slice(0, 120))
   if (input.code)
-    searchParams.set('casdoorConflictCode', String(input.code || '').slice(0, 80))
+    searchParams.set('oauthConflictCode', String(input.code || '').slice(0, 80))
   if (input.boundUserHint)
-    searchParams.set('casdoorBoundUser', String(input.boundUserHint || '').slice(0, 60))
+    searchParams.set('oauthBoundUser', String(input.boundUserHint || '').slice(0, 60))
   return `${target}${separator}${searchParams.toString()}`
 }
 
@@ -64,12 +64,12 @@ export default defineEventHandler(async (event) => {
 
   if (!code || !state) {
     clearCasdoorOAuthState(event)
-    return sendRedirect(event, buildFailedRedirect({ message: '缺少 Casdoor 登录参数。' }), 302)
+    return sendRedirect(event, buildFailedRedirect({ message: '缺少 OAuth 登录参数。' }), 302)
   }
 
   if (!verifyCasdoorOAuthState(event, state)) {
     clearCasdoorOAuthState(event)
-    return sendRedirect(event, buildFailedRedirect({ message: 'Casdoor 登录状态校验失败，请重试。' }), 302)
+    return sendRedirect(event, buildFailedRedirect({ message: 'OAuth 登录状态校验失败，请重试。' }), 302)
   }
 
   try {

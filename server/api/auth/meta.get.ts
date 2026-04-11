@@ -16,12 +16,16 @@ export default defineEventHandler(async (event) => {
     }),
   ])
 
+  const oauthMeta = {
+    enabled: isCasdoorAuthEnabled(casdoorConfig),
+    displayName: casdoorConfig.displayName || '第三方 OAuth',
+  }
+
   return ok<AuthLoginMeta>({
     registrationEnabled: runtime.auth.registrationEnabled,
     feishu: feishuMeta,
-    casdoor: {
-      enabled: isCasdoorAuthEnabled(casdoorConfig),
-    },
+    oauth: oauthMeta,
+    casdoor: oauthMeta,
   }, {
     startedAt,
     provider: runtime.ai.provider,

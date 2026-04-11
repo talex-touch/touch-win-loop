@@ -1,12 +1,14 @@
 import type {
   ApiResponse,
   AuthLoginMeta,
-  CasdoorAuthBindStatus,
   FeishuAuthAuditItem,
   FeishuAuthBindStatus,
   FeishuAuthUnbindResult,
   FeishuIntegrationConfig,
+  OAuthAuthBindStatus,
 } from '~~/shared/types/domain'
+
+const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 
 function formatAuditAction(action: FeishuAuthAuditItem['action']): string {
   if (action === 'auth.feishu.bind.self')
@@ -30,11 +32,12 @@ export function useUserAuthBindings(options: {
   const feishuBindStatus = ref<FeishuAuthBindStatus | null>(null)
   const feishuMeta = ref<FeishuIntegrationConfig | null>(null)
   const feishuAudits = ref<FeishuAuthAuditItem[]>([])
-  const casdoorEnabled = ref(false)
-  const casdoorBindLoading = ref(false)
-  const casdoorBindRedirecting = ref(false)
-  const casdoorBindError = ref('')
-  const casdoorBindStatus = ref<CasdoorAuthBindStatus | null>(null)
+  const oauthEnabled = ref(false)
+  const oauthDisplayName = ref(DEFAULT_OAUTH_DISPLAY_NAME)
+  const oauthBindLoading = ref(false)
+  const oauthBindRedirecting = ref(false)
+  const oauthBindError = ref('')
+  const oauthBindStatus = ref<OAuthAuthBindStatus | null>(null)
 
   function readRouteQueryText(name: string): string {
     if (import.meta.client) {
@@ -55,9 +58,9 @@ export function useUserAuthBindings(options: {
     return `${bindError}（关联账号：${boundUser}）`
   }
 
-  function readCasdoorBindErrorFromRoute(): string {
-    const bindError = readRouteQueryText('casdoorBindError')
-    const boundUser = readRouteQueryText('casdoorBoundUser')
+  function readOauthBindErrorFromRoute(): string {
+    const bindError = readRouteQueryText('oauthBindError') || readRouteQueryText('casdoorBindError')
+    const boundUser = readRouteQueryText('oauthBoundUser') || readRouteQueryText('casdoorBoundUser')
     if (!bindError)
       return ''
     if (!boundUser)
@@ -85,13 +88,13 @@ export function useUserAuthBindings(options: {
     window.history.replaceState({}, '', next)
   }
 
-  function clearCasdoorBindQueryParamsFromUrl() {
+  function clearOauthBindQueryParamsFromUrl() {
     if (!import.meta.client)
       return
 
     const url = new URL(window.location.href)
     let changed = false
-    for (const key of ['casdoorBindError', 'casdoorConflictCode', 'casdoorBoundUser']) {
+    for (const key of ['oauthBindError', 'oauthConflictCode', 'oauthBoundUser', 'casdoorBindError', 'casdoorConflictCode', 'casdoorBoundUser']) {
       if (!url.searchParams.has(key))
         continue
       url.searchParams.delete(key)
@@ -109,11 +112,14 @@ export function useUserAuthBindings(options: {
     try {
       const response = await options.authApiFetch<ApiResponse<AuthLoginMeta>>('/auth/meta')
       feishuMeta.value = response.data.feishu
-      casdoorEnabled.value = Boolean(response.data.casdoor?.enabled)
+      const oauthMeta = response.data.oauth || response.data.casdoor
+      oauthEnabled.value = Boolean(oauthMeta?.enabled)
+      oauthDisplayName.value = String(oauthMeta?.displayName || '').trim() || DEFAULT_OAUTH_DISPLAY_NAME
     }
     catch {
       feishuMeta.value = null
-      casdoorEnabled.value = false
+      oauthEnabled.value = false
+      oauthDisplayName.value = DEFAULT_OAUTH_DISPLAY_NAME
     }
   }
 
@@ -133,19 +139,19 @@ export function useUserAuthBindings(options: {
     }
   }
 
-  async function loadCasdoorBindStatus() {
-    casdoorBindLoading.value = true
-    casdoorBindError.value = ''
+  async function loadOauthBindStatus() {
+    oauthBindLoading.value = true
+    oauthBindError.value = ''
     try {
-      const response = await options.authApiFetch<ApiResponse<CasdoorAuthBindStatus>>('/auth/casdoor/bind-status')
-      casdoorBindStatus.value = response.data
+      const response = await options.authApiFetch<ApiResponse<OAuthAuthBindStatus>>('/auth/oauth/bind-status')
+      oauthBindStatus.value = response.data
     }
     catch (error: any) {
-      casdoorBindStatus.value = null
-      casdoorBindError.value = String(error?.data?.message || 'Casdoor 绑定状态加载失败。')
+      oauthBindStatus.value = null
+      oauthBindError.value = String(error?.data?.message || `${oauthDisplayName.value} 绑定状态加载失败。`)
     }
     finally {
-      casdoorBindLoading.value = false
+      oauthBindLoading.value = false
     }
   }
 
@@ -182,22 +188,22 @@ export function useUserAuthBindings(options: {
     window.location.href = options.endpoint(`/auth/feishu/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
   }
 
-  async function startCasdoorBind() {
-    if (!import.meta.client || casdoorBindRedirecting.value)
+  async function startOauthBind() {
+    if (!import.meta.client || oauthBindRedirecting.value)
       return
 
-    casdoorBindError.value = ''
-    if (!casdoorEnabled.value)
+    oauthBindError.value = ''
+    if (!oauthEnabled.value)
       await loadAuthMeta()
 
-    if (!casdoorEnabled.value) {
-      casdoorBindError.value = 'Casdoor 登录尚未启用，请联系管理员。'
+    if (!oauthEnabled.value) {
+      oauthBindError.value = `${oauthDisplayName.value} 登录尚未启用，请联系管理员。`
       return
     }
 
-    casdoorBindRedirecting.value = true
+    oauthBindRedirecting.value = true
     const redirectTarget = options.route.fullPath && options.route.fullPath.startsWith('/') ? options.route.fullPath : '/dashboard'
-    window.location.href = options.endpoint(`/auth/casdoor/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
+    window.location.href = options.endpoint(`/auth/oauth/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
   }
 
   function openFeishuUnbindConfirm() {
@@ -258,11 +264,11 @@ export function useUserAuthBindings(options: {
   function resetAuthBindingState() {
     feishuBindError.value = readFeishuBindErrorFromRoute()
     feishuBindSuccess.value = ''
-    casdoorBindError.value = readCasdoorBindErrorFromRoute()
+    oauthBindError.value = readOauthBindErrorFromRoute()
     feishuUnbindConfirmVisible.value = false
     feishuUnbindConfirmText.value = ''
     clearFeishuBindQueryParamsFromUrl()
-    clearCasdoorBindQueryParamsFromUrl()
+    clearOauthBindQueryParamsFromUrl()
   }
 
   return {
@@ -277,20 +283,21 @@ export function useUserAuthBindings(options: {
     feishuBindStatus,
     feishuMeta,
     feishuAudits,
-    casdoorEnabled,
-    casdoorBindLoading,
-    casdoorBindRedirecting,
-    casdoorBindError,
-    casdoorBindStatus,
+    oauthEnabled,
+    oauthDisplayName,
+    oauthBindLoading,
+    oauthBindRedirecting,
+    oauthBindError,
+    oauthBindStatus,
     formatAuditAction,
     readFeishuBindErrorFromRoute,
-    readCasdoorBindErrorFromRoute,
+    readOauthBindErrorFromRoute,
     loadAuthMeta,
     loadFeishuBindStatus,
-    loadCasdoorBindStatus,
+    loadOauthBindStatus,
     loadFeishuAudits,
     startFeishuBind,
-    startCasdoorBind,
+    startOauthBind,
     openFeishuUnbindConfirm,
     cancelFeishuUnbindConfirm,
     unbindFeishu,

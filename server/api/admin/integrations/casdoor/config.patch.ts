@@ -16,7 +16,12 @@ type SecretMode = 'keep' | 'replace' | 'clear'
 
 interface PatchCasdoorConfigBody {
   enabled?: boolean
+  displayName?: string
+  protocolMode?: 'oidc_discovery' | 'oauth2_manual'
   issuer?: string
+  authorizeEndpoint?: string
+  tokenEndpoint?: string
+  userinfoEndpoint?: string
   clientId?: string
   clientSecret?: string
   clientSecretMode?: SecretMode
@@ -35,6 +40,10 @@ function toText(raw: unknown): string {
   return String(raw || '').trim()
 }
 
+function toProtocolMode(raw: unknown): 'oidc_discovery' | 'oauth2_manual' {
+  return toText(raw) === 'oauth2_manual' ? 'oauth2_manual' : 'oidc_discovery'
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const runtime = readRuntimeSettings(event)
@@ -44,7 +53,7 @@ export default defineEventHandler(async (event) => {
   const canAssign = await checkPlatformPermission(event, user, 'role.assign')
   if (!canAssign) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权修改 Casdoor 集成配置。', {
+    return fail('当前用户无权修改 OAuth / OIDC 集成配置。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -56,7 +65,7 @@ export default defineEventHandler(async (event) => {
   const clientSecretMode = toMode(body.clientSecretMode)
   if (clientSecretMode === 'replace' && !hasConfigMasterKey(event)) {
     setResponseStatus(event, 400)
-    return fail('缺少 WINLOOP_CONFIG_MASTER_KEY，无法替换 Casdoor client secret。', {
+    return fail('缺少 WINLOOP_CONFIG_MASTER_KEY，无法替换 OAuth client secret。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -75,8 +84,18 @@ export default defineEventHandler(async (event) => {
 
     if (body.enabled !== undefined)
       next.enabled = Boolean(body.enabled)
+    if (body.displayName !== undefined)
+      next.displayName = toText(body.displayName) || '第三方 OAuth'
+    if (body.protocolMode !== undefined)
+      next.protocolMode = toProtocolMode(body.protocolMode)
     if (body.issuer !== undefined)
       next.issuer = toText(body.issuer)
+    if (body.authorizeEndpoint !== undefined)
+      next.authorizeEndpoint = toText(body.authorizeEndpoint)
+    if (body.tokenEndpoint !== undefined)
+      next.tokenEndpoint = toText(body.tokenEndpoint)
+    if (body.userinfoEndpoint !== undefined)
+      next.userinfoEndpoint = toText(body.userinfoEndpoint)
     if (body.clientId !== undefined)
       next.clientId = toText(body.clientId)
     if (body.scope !== undefined)

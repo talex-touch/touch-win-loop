@@ -10,11 +10,12 @@ const props = withDefaults(defineProps<{
   feishuBindSuccess?: string
   feishuUnbindConfirmVisible?: boolean
   feishuUnbindConfirmText?: string
-  casdoorBindStatus?: CasdoorAuthBindStatus | null
-  casdoorBindLoading?: boolean
-  casdoorBindRedirecting?: boolean
-  casdoorBindError?: string
-  casdoorEnabled?: boolean
+  oauthBindStatus?: CasdoorAuthBindStatus | null
+  oauthBindLoading?: boolean
+  oauthBindRedirecting?: boolean
+  oauthBindError?: string
+  oauthEnabled?: boolean
+  oauthDisplayName?: string
   formatDateTime: (value: string) => string
 }>(), {
   feishuBindStatus: null,
@@ -25,11 +26,12 @@ const props = withDefaults(defineProps<{
   feishuBindSuccess: '',
   feishuUnbindConfirmVisible: false,
   feishuUnbindConfirmText: '',
-  casdoorBindStatus: null,
-  casdoorBindLoading: false,
-  casdoorBindRedirecting: false,
-  casdoorBindError: '',
-  casdoorEnabled: false,
+  oauthBindStatus: null,
+  oauthBindLoading: false,
+  oauthBindRedirecting: false,
+  oauthBindError: '',
+  oauthEnabled: false,
+  oauthDisplayName: '第三方 OAuth',
 })
 
 const emit = defineEmits<{
@@ -39,8 +41,8 @@ const emit = defineEmits<{
   updateFeishuUnbindConfirmText: [value: string]
   cancelFeishuUnbindConfirm: []
   unbindFeishu: []
-  loadCasdoorBindStatus: []
-  startCasdoorBind: []
+  loadOauthBindStatus: []
+  startOauthBind: []
 }>()
 </script>
 
@@ -124,42 +126,42 @@ const emit = defineEmits<{
       <div class="user-settings-row">
         <div class="user-settings-row__heading">
           <p class="user-settings-row__title">
-            Casdoor 账号
+            {{ props.oauthDisplayName }} 账号
           </p>
           <p class="user-settings-row__desc">
-            绑定后可复用 Casdoor OAuth 身份登录当前平台。
+            绑定后可复用该第三方 OAuth 身份登录当前平台。
           </p>
         </div>
         <div class="user-settings-row__content">
           <span
             class="text-xs font-medium px-2.5 py-1 border rounded-full inline-flex"
-            :class="props.casdoorBindStatus?.linked ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-white text-slate-600'"
+            :class="props.oauthBindStatus?.linked ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-300 bg-white text-slate-600'"
           >
-            {{ props.casdoorBindStatus?.linked ? '已绑定' : '未绑定' }}
+            {{ props.oauthBindStatus?.linked ? '已绑定' : '未绑定' }}
           </span>
-          <p v-if="props.casdoorBindStatus?.linked && props.casdoorBindStatus.subject" class="text-sm text-slate-500 break-all">
-            sub：{{ props.casdoorBindStatus.subject }}
+          <p v-if="props.oauthBindStatus?.linked && props.oauthBindStatus.subject" class="text-sm text-slate-500 break-all">
+            sub：{{ props.oauthBindStatus.subject }}
           </p>
-          <p v-if="props.casdoorBindStatus?.linked && props.casdoorBindStatus.updatedAt" class="text-sm text-slate-500">
-            最近同步：{{ props.formatDateTime(props.casdoorBindStatus.updatedAt) }}
+          <p v-if="props.oauthBindStatus?.linked && props.oauthBindStatus.updatedAt" class="text-sm text-slate-500">
+            最近同步：{{ props.formatDateTime(props.oauthBindStatus.updatedAt) }}
           </p>
           <div class="flex flex-wrap gap-2 justify-end">
-            <button class="user-settings-btn" :disabled="props.casdoorBindLoading || props.casdoorBindRedirecting" @click="emit('loadCasdoorBindStatus')">
-              {{ props.casdoorBindLoading ? '刷新中...' : '刷新状态' }}
+            <button class="user-settings-btn" :disabled="props.oauthBindLoading || props.oauthBindRedirecting" @click="emit('loadOauthBindStatus')">
+              {{ props.oauthBindLoading ? '刷新中...' : '刷新状态' }}
             </button>
             <button
               class="user-settings-btn user-settings-btn--primary"
-              :disabled="props.casdoorBindLoading || props.casdoorBindRedirecting"
-              @click="emit('startCasdoorBind')"
+              :disabled="props.oauthBindLoading || props.oauthBindRedirecting"
+              @click="emit('startOauthBind')"
             >
-              {{ props.casdoorBindRedirecting ? '跳转中...' : (props.casdoorBindStatus?.linked ? '重新绑定 Casdoor' : '绑定 Casdoor') }}
+              {{ props.oauthBindRedirecting ? '跳转中...' : (props.oauthBindStatus?.linked ? `重新绑定 ${props.oauthDisplayName}` : `绑定 ${props.oauthDisplayName}`) }}
             </button>
           </div>
-          <p v-if="props.casdoorBindError" class="user-settings-feedback user-settings-feedback--danger">
-            {{ props.casdoorBindError }}
+          <p v-if="props.oauthBindError" class="user-settings-feedback user-settings-feedback--danger">
+            {{ props.oauthBindError }}
           </p>
-          <p v-if="!props.casdoorEnabled" class="text-sm text-slate-500">
-            当前环境未启用 Casdoor OAuth。
+          <p v-if="!props.oauthEnabled" class="text-sm text-slate-500">
+            当前环境未启用第三方 OAuth 登录。
           </p>
         </div>
       </div>

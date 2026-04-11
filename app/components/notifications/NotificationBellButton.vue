@@ -16,7 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const center = useNotificationCenter()
-const { initialized, unreadCount } = center
+const { drawerVisible, initialized, unreadCount } = center
 
 watch(() => props.workspaceId, (value) => {
   center.setWorkspaceId(value)
@@ -25,6 +25,7 @@ watch(() => props.workspaceId, (value) => {
 }, { immediate: true })
 
 const isRailVariant = computed(() => props.variant === 'rail')
+const isRailActive = computed(() => isRailVariant.value && drawerVisible.value)
 
 function openDrawer() {
   emit('open')
@@ -40,11 +41,12 @@ function openDrawer() {
       class="notification-bell-button"
       :class="[
         isRailVariant
-          ? 'notification-bell-button--rail'
+          ? ['notification-bell-button--rail', isRailActive ? 'notification-bell-button--rail-active' : '']
           : 'border border-slate-200 rounded-xl bg-white shadow-sm hover:bg-slate-50',
         !isRailVariant && props.compact ? 'h-8 w-8' : '',
         !isRailVariant && !props.compact ? 'h-10 w-10' : '',
       ]"
+      :aria-pressed="isRailActive ? 'true' : 'false'"
       @click="openDrawer"
     >
       <span
@@ -95,6 +97,18 @@ function openDrawer() {
 .notification-bell-button--rail:focus-visible {
   background: #f4f7fc;
   color: #3a557f;
+}
+
+.notification-bell-button--rail-active {
+  background: #eef4ff;
+  color: #1e3a74;
+  box-shadow: inset 0 0 0 1px #d7e3f8;
+}
+
+.notification-bell-button--rail-active:hover,
+.notification-bell-button--rail-active:focus-visible {
+  background: #eef4ff;
+  color: #1e3a74;
 }
 
 .notification-bell-button--rail:focus-visible {
