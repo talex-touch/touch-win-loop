@@ -7,6 +7,7 @@ const WORKSPACE_DETAIL_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/pr
 const RIGHT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceRightSidebar.vue')
 const WORKSPACE_HEADER_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceHeader.vue')
 const WORKSPACE_AI_TOGGLE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceAiToggleButton.vue')
+const WORKSPACE_SIDEBAR_LAYOUT_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceSidebarLayout.ts')
 
 it('右栏采用三段式布局，底部输入区不再进入滚动容器', async () => {
   const source = await readFile(RIGHT_SIDEBAR_FILE, 'utf8')
@@ -34,26 +35,34 @@ it('右栏内容区与底部元信息支持紧凑显示和换行', async () => {
 })
 
 it('项目页将右栏手动收起态与断点自动收起态分离', async () => {
-  const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
+  const [workspaceSource, layoutSource] = await Promise.all([
+    readFile(WORKSPACE_DETAIL_FILE, 'utf8'),
+    readFile(WORKSPACE_SIDEBAR_LAYOUT_FILE, 'utf8'),
+  ])
 
-  assert.match(source, /const rightSidebarUserCollapsed = ref\(false\)/, '项目页缺少右栏手动收起状态')
-  assert.match(source, /const rightSidebarAutoCollapsed = ref\(false\)/, '项目页缺少右栏自动收起状态')
-  assert.match(source, /const rightSidebarAutoRestorePending = ref\(false\)/, '项目页缺少右栏自动恢复状态')
-  assert.match(source, /const rightSidebarCollapsed = computed\(\(\) => rightSidebarUserCollapsed\.value \|\| rightSidebarAutoCollapsed\.value\)/, '项目页未合成右栏最终收起态')
-  assert.match(source, /RIGHT_SIDEBAR_BREAKPOINT_QUERY = '\(min-width: 1280px\)'/, '项目页未固定右栏窄屏断点')
-  assert.match(source, /window\.matchMedia\(RIGHT_SIDEBAR_BREAKPOINT_QUERY\)/, '项目页未监听右栏断点变化')
+  assert.match(workspaceSource, /useWorkspaceSidebarLayout\(\)/, '项目页未接入统一的侧栏布局 composable')
+  assert.match(layoutSource, /const rightSidebarUserCollapsed = ref\(false\)/, '侧栏布局 composable 缺少右栏手动收起状态')
+  assert.match(layoutSource, /const rightSidebarAutoCollapsed = ref\(false\)/, '侧栏布局 composable 缺少右栏自动收起状态')
+  assert.match(layoutSource, /const rightSidebarAutoRestorePending = ref\(false\)/, '侧栏布局 composable 缺少右栏自动恢复状态')
+  assert.match(layoutSource, /const rightSidebarCollapsed = computed\(\(\) => rightSidebarUserCollapsed\.value \|\| rightSidebarAutoCollapsed\.value\)/, '侧栏布局 composable 未合成右栏最终收起态')
+  assert.match(layoutSource, /DEFAULT_RIGHT_SIDEBAR_BREAKPOINT_QUERY = '\(min-width: 1280px\)'/, '侧栏布局 composable 未固定右栏窄屏断点')
+  assert.match(layoutSource, /window\.matchMedia\(breakpointQuery\)/, '侧栏布局 composable 未监听右栏断点变化')
 })
 
 it('项目草稿只持久化右栏手动收起态，断点自动收起不入草稿', async () => {
-  const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
+  const [workspaceSource, layoutSource] = await Promise.all([
+    readFile(WORKSPACE_DETAIL_FILE, 'utf8'),
+    readFile(WORKSPACE_SIDEBAR_LAYOUT_FILE, 'utf8'),
+  ])
 
   assert.match(
-    source,
+    workspaceSource,
     /ui:\s*\{\s*leftSidebarCollapsed: leftSidebarCollapsed\.value,\s*rightSidebarCollapsed: rightSidebarUserCollapsed\.value,\s*\}/,
     '项目草稿仍在持久化右栏自动收起态',
   )
-  assert.match(source, /function collapseRightSidebar\(\): void \{\s+setRightSidebarUserCollapsed\(true\)/, '右栏收起按钮未走手动状态入口')
-  assert.match(source, /function expandRightSidebar\(\): void \{\s+setRightSidebarUserCollapsed\(false\)/, '右栏展开按钮未走手动状态入口')
+  assert.match(workspaceSource, /setRightSidebarUserCollapsed\(normalized\.rightSidebarCollapsed, \{ suppressPersist: true \}\)/, '项目页恢复视图状态时未抑制右栏手动态持久化')
+  assert.match(layoutSource, /function collapseRightSidebar\(\): void \{\s+setRightSidebarUserCollapsed\(true\)/, '右栏收起入口未走手动状态 setter')
+  assert.match(layoutSource, /function expandRightSidebar\(\): void \{\s+setRightSidebarUserCollapsed\(false\)/, '右栏展开入口未走手动状态 setter')
 })
 
 it('项目页通过头部 AI 按钮切换右栏展开收起，并清理旧 hover handle 与浮动按钮', async () => {

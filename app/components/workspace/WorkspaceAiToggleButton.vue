@@ -21,7 +21,7 @@ const buttonLabel = computed(() => {
     :class="{ 'workspace-ai-toggle--active': !props.collapsed }"
     type="button"
     :aria-label="buttonLabel"
-    :aria-pressed="(!props.collapsed).toString()"
+    :aria-pressed="!props.collapsed"
     :title="buttonLabel"
     @click="emit('toggle')"
   >

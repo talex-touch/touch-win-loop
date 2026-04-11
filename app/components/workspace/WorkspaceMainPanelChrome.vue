@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import type { WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
+import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
+
 interface WorkspaceMainPanelTabItem {
   id: string
   title: string
@@ -19,6 +22,7 @@ const props = withDefaults(defineProps<{
   canCloseOtherTabs?: boolean
   canCloseAllTabs?: boolean
   breadcrumbItems?: string[]
+  collabPresenceUsers?: WorkspaceCollabPresenceUser[]
 }>(), {
   openTabs: () => [],
   activeTabId: '',
@@ -32,6 +36,7 @@ const props = withDefaults(defineProps<{
   canCloseOtherTabs: false,
   canCloseAllTabs: false,
   breadcrumbItems: () => [],
+  collabPresenceUsers: () => [],
 })
 
 const emit = defineEmits<{
@@ -48,13 +53,13 @@ const emit = defineEmits<{
   drop: [payload: { tabId: string, event: DragEvent }]
   dragEnd: []
   openDashboard: []
+  openDesign: []
 }>()
 </script>
 
 <template>
-  <div>
+  <div class="flex w-full min-w-0 flex-col">
     <WorkspaceTabStrip
-      v-if="props.openTabs.length > 0"
       :open-tabs="props.openTabs"
       :active-tab-id="props.activeTabId"
       :drag-over-tab-id="props.dragOverTabId"
@@ -79,26 +84,44 @@ const emit = defineEmits<{
       @drop="emit('drop', $event)"
       @drag-end="emit('dragEnd')"
     />
-    <div v-else class="border-b border-slate-200 bg-white flex shrink-0 h-10 items-center relative">
-      <div class="px-3 flex w-full items-center justify-between">
-        <span class="text-[11px] text-slate-500 font-medium">WinLoop</span>
-        <button
-          class="text-[11px] font-semibold px-2.5 py-1 border border-slate-200 rounded bg-white hover:bg-slate-50"
-          type="button"
-          @click="emit('openDashboard')"
-        >
-          打开仪表盘
-        </button>
-      </div>
-    </div>
 
-    <div class="text-[11px] text-slate-400 px-4 py-2 border-b border-slate-200 bg-white flex gap-2 items-center">
-      <template v-for="(item, index) in props.breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
-        <span :class="index === props.breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
-          {{ item }}
-        </span>
-        <span v-if="index < props.breadcrumbItems.length - 1" class="material-symbols-outlined text-[12px]">chevron_right</span>
-      </template>
+    <div class="text-[11px] text-slate-400 px-4 py-2 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-3">
+      <div class="workspace-main-breadcrumb__scroll flex min-w-0 items-center gap-2 overflow-x-auto overflow-y-hidden">
+        <template v-for="(item, index) in props.breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
+          <span class="truncate" :class="index === props.breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
+            {{ item }}
+          </span>
+          <span v-if="index < props.breadcrumbItems.length - 1" class="material-symbols-outlined text-[12px]">chevron_right</span>
+        </template>
+      </div>
+
+      <div class="flex shrink-0 items-center gap-2">
+        <button
+          class="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+          type="button"
+          @click="emit('openDesign')"
+        >
+          <span class="material-symbols-outlined text-[14px]">palette</span>
+          <span>打开设计</span>
+        </button>
+
+        <CollabPresenceAvatarStack
+          v-if="props.collabPresenceUsers.length > 0"
+          :users="props.collabPresenceUsers"
+          appearance="flat"
+          size="sm"
+        />
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.workspace-main-breadcrumb__scroll {
+  scrollbar-width: none;
+}
+
+.workspace-main-breadcrumb__scroll::-webkit-scrollbar {
+  display: none;
+}
+</style>

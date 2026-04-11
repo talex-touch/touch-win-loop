@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import type { ApiResponse, AuthMeResult, Invitation } from '~~/shared/types/domain'
+import type { ApiResponse, AuthSessionProbeResult, Invitation } from '~~/shared/types/domain'
 import { normalizeRouteParam, projectWorkspacePath, teamDashboardPath, teamDetailPath } from '~/composables/team-ui'
 import { writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
+import { logAuthProbeDegraded, resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
 definePageMeta({
   layout: false,
@@ -25,20 +26,40 @@ const fallbackActionLabel = computed(() => {
 
 async function detectAuthenticatedSession(): Promise<boolean> {
   try {
-    await authApiFetch<ApiResponse<AuthMeResult>>('/auth/me')
+    await authApiFetch<ApiResponse<AuthSessionProbeResult>>('/auth/session')
     hasAuthenticatedSession.value = true
     return true
   }
-  catch {
-    hasAuthenticatedSession.value = false
+  catch (error) {
+    const info = resolveAuthRequestErrorInfo(error)
+    if (info.isUnauthorized) {
+      hasAuthenticatedSession.value = false
+      return false
+    }
+
+    hasAuthenticatedSession.value = info.isForbidden
+    if (!info.isForbidden) {
+      logAuthProbeDegraded({
+        context: 'invite-page',
+        route: route.fullPath || '/invite',
+        error,
+      })
+    }
+    errorText.value = resolveAuthDisplayMessage(error, '登录态校验失败，请稍后重试。')
     return false
   }
 }
 
 async function ensureLoggedIn(): Promise<boolean> {
+  errorText.value = ''
   const hasSession = await detectAuthenticatedSession()
   if (hasSession)
     return true
+
+  if (errorText.value) {
+    loading.value = false
+    return false
+  }
 
   await navigateTo({
     path: '/login',

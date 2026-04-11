@@ -9,6 +9,7 @@ import type {
   ProjectInvitationSummary,
   ProjectMemberRole,
   ProjectMemberSummary,
+  ProjectResourceCommentAnchor,
   ProjectResourceCommentImageNodeAnchor,
   ProjectResourceCommentTextSelectionAnchor,
   ProjectResourceCommentThread,
@@ -16,9 +17,17 @@ import type {
   Resource,
   ResourcePreviewStatus,
   Track,
+  WorkspaceDisplayPreferenceSnapshot,
+  WorkspaceFontSizePreset,
+  WorkspaceTabSpacingPreset,
   WorkspaceType,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
+import type {
+  NullableWorkspaceFontSizePreset,
+  NullableWorkspaceTabSpacingPreset,
+  WorkspaceDisplayPreferencePatchPayload,
+} from '~/composables/useWorkspaceDisplayPreferences'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -34,6 +43,16 @@ import {
   normalizeWorkspaceCollabPresenceActivityState,
   resolveWorkspaceCollabPresenceColor,
 } from '~/components/workspace/collab/presence'
+import {
+  defaultWorkspaceDisplayPreferenceSnapshot,
+  normalizeWorkspaceFontSizeDraft,
+  normalizeWorkspaceTabSpacingDraft,
+  resolveWorkspaceDisplayPreferenceSourceLabel,
+  resolveWorkspaceFontSizePresetLabel,
+  resolveWorkspaceTabSpacingPresetLabel,
+  WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
+  WORKSPACE_TAB_SPACING_PRESET_OPTIONS,
+} from '~/composables/useWorkspaceDisplayPreferences'
 import {
   formatDateTime,
   formatEtaSeconds,
@@ -66,10 +85,13 @@ const props = withDefaults(defineProps<{
   openMemberManagementSignal?: number
   openDisplayPreferencesSignal?: number
   openFlowSignal?: number
+  openDesignSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
   flowResourceId?: string
   flowResourceTitle?: string
+  designResourceId?: string
+  designResourceTitle?: string
   previewResourceId?: string
   closingPreviewResourceId?: string
   previewResourceTitle?: string
@@ -80,6 +102,7 @@ const props = withDefaults(defineProps<{
   previewSourceDownloadUrl?: string
   currentUserId?: string
   currentUserName?: string
+  collabResourceId?: string
   collabMarkdownDoc?: YDoc | null
   collabMarkdownAwareness?: Awareness | null
   collabDrawValue?: string
@@ -92,6 +115,9 @@ const props = withDefaults(defineProps<{
   imageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
   commentThreads?: ProjectResourceCommentThread[]
   activeCommentThreadId?: string
+  commentDraftAnchor?: ProjectResourceCommentAnchor | null
+  commentLoading?: boolean
+  commentMutating?: boolean
   mappingRows?: WorkspaceMappingRow[]
   mappingLoading?: boolean
   keywordCloud?: WorkspaceKeyword[]
@@ -101,6 +127,7 @@ const props = withDefaults(defineProps<{
   workspacePreparing?: boolean
   topicBoardFetching?: boolean
   activeProject?: Project | null
+  activeProjectId?: string
   workspaceName?: string
   workspaceType?: WorkspaceType | ''
   workspaceMembers?: ProjectMemberSummary[]
@@ -117,6 +144,7 @@ const props = withDefaults(defineProps<{
   workspaceSupportsSeatAdd?: boolean
   workspaceInvitationSubmitting?: boolean
   workspaceInvitationLink?: string
+  workspaceInvitationError?: string
   workspaceSeatLimitSaveLoading?: boolean
   workspaceSeatLimitError?: string
   workspaceSeatLimitUpdatedSignal?: number
@@ -127,6 +155,10 @@ const props = withDefaults(defineProps<{
   projectSettingsCurrentContestId?: string
   projectSettingsAdaptation?: WorkspaceProjectAdaptationForm
   projectSettingsHasCurrentContest?: boolean
+  workspaceDisplayPreferences?: WorkspaceDisplayPreferenceSnapshot
+  workspaceDisplayPreferencesLoading?: boolean
+  workspaceDisplayPreferencesSavingScope?: '' | 'user' | 'team'
+  workspaceDisplayPreferencesError?: string
   projectResourceShares?: ProjectResourceShare[]
   projectResourceSharesLoading?: boolean
   toneMeta: Record<MappingTone, WorkspaceStatusToneMeta>
@@ -146,10 +178,13 @@ const props = withDefaults(defineProps<{
   openMemberManagementSignal: 0,
   openDisplayPreferencesSignal: 0,
   openFlowSignal: 0,
+  openDesignSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
   flowResourceId: '',
   flowResourceTitle: '',
+  designResourceId: '',
+  designResourceTitle: '',
   previewResourceId: '',
   closingPreviewResourceId: '',
   previewResourceTitle: '',
@@ -160,6 +195,7 @@ const props = withDefaults(defineProps<{
   previewSourceDownloadUrl: '',
   currentUserId: '',
   currentUserName: '',
+  collabResourceId: '',
   collabMarkdownDoc: null,
   collabMarkdownAwareness: null,
   collabDrawValue: '{}',
@@ -172,6 +208,9 @@ const props = withDefaults(defineProps<{
   imageUploadHandler: null,
   commentThreads: () => [],
   activeCommentThreadId: '',
+  commentDraftAnchor: null,
+  commentLoading: false,
+  commentMutating: false,
   mappingRows: () => [],
   mappingLoading: false,
   keywordCloud: () => [],
@@ -191,6 +230,7 @@ const props = withDefaults(defineProps<{
   workspacePreparing: false,
   topicBoardFetching: false,
   activeProject: null,
+  activeProjectId: '',
   workspaceName: '',
   workspaceType: '',
   workspaceMembers: () => [],
@@ -207,6 +247,7 @@ const props = withDefaults(defineProps<{
   workspaceSupportsSeatAdd: false,
   workspaceInvitationSubmitting: false,
   workspaceInvitationLink: '',
+  workspaceInvitationError: '',
   workspaceSeatLimitSaveLoading: false,
   workspaceSeatLimitError: '',
   workspaceSeatLimitUpdatedSignal: 0,
@@ -238,6 +279,10 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   projectSettingsHasCurrentContest: false,
+  workspaceDisplayPreferences: () => defaultWorkspaceDisplayPreferenceSnapshot(),
+  workspaceDisplayPreferencesLoading: false,
+  workspaceDisplayPreferencesSavingScope: '',
+  workspaceDisplayPreferencesError: '',
   projectResourceShares: () => [],
   projectResourceSharesLoading: false,
 })
@@ -257,12 +302,15 @@ const emit = defineEmits<{
   'update:projectSettingsBindings': [value: WorkspaceProjectContestBindingForm[]]
   'update:projectSettingsAdaptation': [value: WorkspaceProjectAdaptationForm]
   'saveProjectSettings': []
+  'saveWorkspaceDisplayUserOverride': [value: WorkspaceDisplayPreferencePatchPayload]
+  'saveWorkspaceDisplayTeamDefault': [value: WorkspaceDisplayPreferencePatchPayload]
   'reloadWorkspaceMemberManagement': []
   'createWorkspaceInvitation': [value: { inviteeUsername: string, projectRole: ProjectMemberRole, expiresInDays: number }]
   'patchWorkspaceMemberRole': [value: { userId: string, role: 'manager' | 'editor' | 'viewer' }]
   'removeWorkspaceMember': [userId: string]
   'revokeWorkspaceInvitation': [invitationId: string]
   'copyWorkspaceInvitationLink': []
+  'prepareWorkspaceInvitation': []
   'openWorkspaceSeatModal': []
   'saveWorkspaceSeatLimit': [seatLimit: number]
   'copyProjectResourceShare': [shareId: string]
@@ -295,11 +343,16 @@ const emit = defineEmits<{
   'markdownRequestImageAction': [value: {
     resourceId?: string | null
     src: string
-    mode: 'delete_node' | 'delete_and_recycle'
+    mode: 'open_resource' | 'delete_node' | 'delete_and_recycle'
   }]
+  'markdownCancelCommentDraft': []
+  'markdownReplyCommentThread': [value: { threadId: string, body: string }]
+  'markdownResolveCommentThread': [threadId: string]
+  'markdownReopenCommentThread': [threadId: string]
+  'markdownCreateCommentThread': [body: string]
 }>()
 
-type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'settings'
+type WorkspaceFixedTabId = 'dashboard' | 'members' | 'flow' | 'design' | 'settings'
 type WorkspaceResourceTabId = `resource:${string}`
 type WorkspaceMainTabId = WorkspaceFixedTabId | WorkspaceResourceTabId
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
@@ -358,6 +411,13 @@ const fixedTabs: WorkspaceMainTab[] = [
     closeable: true,
   },
   {
+    id: 'design',
+    kind: 'fixed',
+    title: '设计',
+    icon: 'palette',
+    closeable: true,
+  },
+  {
     id: 'settings',
     kind: 'fixed',
     title: '项目设置',
@@ -369,10 +429,37 @@ const fixedTabs: WorkspaceMainTab[] = [
 const openTabs = ref<WorkspaceMainTab[]>(fixedTabs.filter(tab => tab.id === 'dashboard'))
 const activeTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const hasOpenTabs = computed(() => openTabs.value.length > 0)
-const settingsSecondaryTab = ref<'project' | 'myDisplay'>('project')
+type WorkspaceSettingsSecondaryTabId = 'project' | 'myDisplay' | 'teamDefault'
+
+interface WorkspaceSettingsSecondaryTabItem {
+  id: WorkspaceSettingsSecondaryTabId
+  label: string
+  icon: string
+  description: string
+}
+
+const settingsSecondaryTab = ref<WorkspaceSettingsSecondaryTabId>('project')
+const workspaceSettingsSecondaryTabs: WorkspaceSettingsSecondaryTabItem[] = [
+  { id: 'project', label: '项目设置', icon: 'settings', description: '维护项目基础信息、竞赛绑定与资源共享。' },
+  { id: 'myDisplay', label: '个人设置', icon: 'tune', description: '为当前工作区保存个人字号与标签边距偏好。' },
+  { id: 'teamDefault', label: '团队默认', icon: 'groups', description: '配置新成员进入当前工作区时的默认显示方案。' },
+]
+const WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS: Record<WorkspaceSettingsSecondaryTabId, string> = {
+  project: 'workspace-settings-tab-project',
+  myDisplay: 'workspace-settings-tab-myDisplay',
+  teamDefault: 'workspace-settings-tab-teamDefault',
+}
+const WORKSPACE_TAB_SPACING_PRESET_ORDER: WorkspaceTabSpacingPreset[] = ['compact', 'default', 'relaxed']
+const WORKSPACE_DISPLAY_RECOMMENDED_FONT_SIZE_PRESET: WorkspaceFontSizePreset = 'md'
+const WORKSPACE_DISPLAY_RECOMMENDED_TAB_SPACING_PRESET: WorkspaceTabSpacingPreset = 'compact'
+const userWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
+const userWorkspaceDisplayTabSpacingDraft = ref<NullableWorkspaceTabSpacingPreset>('')
+const teamWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
+const teamWorkspaceDisplayTabSpacingDraft = ref<NullableWorkspaceTabSpacingPreset>('')
 const resourcePreviewTabRef = ref<{
   applyDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
   scrollToCommentThread: (threadId: string) => void
+  scrollToHeadingAnchor: (anchorId: string) => boolean
 } | null>(null)
 const draggingTabId = ref<WorkspaceMainTabId | ''>('')
 const dragOverTabId = ref<WorkspaceMainTabId | ''>('')
@@ -380,8 +467,36 @@ const tabContextMenuVisible = ref(false)
 const tabContextMenuTabId = ref<WorkspaceMainTabId | ''>('')
 const tabContextMenuPosition = reactive({ x: 0, y: 0 })
 
-const hasActiveProject = computed(() => Boolean(props.activeProject?.id))
 const markdownImageUploadHandler = computed(() => props.markdownImageUploadHandler || props.imageUploadHandler)
+const visibleWorkspaceSettingsSecondaryTabs = computed(() => {
+  return workspaceSettingsSecondaryTabs.filter((item) => {
+    if (item.id === 'teamDefault')
+      return props.workspaceDisplayPreferences.canManageTeamDefault
+    return true
+  })
+})
+const recommendedWorkspaceDisplayTagText = computed(() => {
+  return '项目工作区推荐'
+})
+const workspaceMainTabLayoutStyle = computed<Record<string, string>>(() => {
+  const preset = props.workspaceDisplayPreferences.effective.tabSpacingPreset || 'default'
+  if (preset === 'compact') {
+    return {
+      '--workspace-main-tab-min-width': '148px',
+      '--workspace-main-tab-horizontal-padding': '6px',
+    }
+  }
+  if (preset === 'relaxed') {
+    return {
+      '--workspace-main-tab-min-width': '188px',
+      '--workspace-main-tab-horizontal-padding': '12px',
+    }
+  }
+  return {
+    '--workspace-main-tab-min-width': '170px',
+    '--workspace-main-tab-horizontal-padding': '8px',
+  }
+})
 
 const projectSettingsContestOptions = computed<Contest[]>(() => {
   const dedupe = new Map<string, Contest>()
@@ -521,8 +636,83 @@ function normalizeWorkspaceMainTabIds(
   return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
 }
 
-function selectSettingsSecondaryTab(tabId: 'project' | 'myDisplay'): void {
+function selectSettingsSecondaryTab(tabId: WorkspaceSettingsSecondaryTabId): void {
   settingsSecondaryTab.value = tabId
+}
+
+function normalizeWorkspaceTabSpacingSliderIndex(value: WorkspaceTabSpacingPreset | null | undefined): number {
+  const matchedIndex = WORKSPACE_TAB_SPACING_PRESET_ORDER.findIndex(item => item === value)
+  return matchedIndex >= 0 ? matchedIndex : 1
+}
+
+function applyWorkspaceDisplayPreferenceDrafts(snapshot: WorkspaceDisplayPreferenceSnapshot): void {
+  userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(snapshot.workspaceOverride?.fontSizePreset)
+  userWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(snapshot.workspaceOverride?.tabSpacingPreset)
+  teamWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(snapshot.teamDefault?.fontSizePreset)
+  teamWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(snapshot.teamDefault?.tabSpacingPreset)
+}
+
+const userWorkspaceDisplayTabSpacingSliderValue = computed(() => {
+  return normalizeWorkspaceTabSpacingSliderIndex(userWorkspaceDisplayTabSpacingDraft.value || undefined)
+})
+
+const userWorkspaceDisplayTabSpacingSliderProgress = computed(() => {
+  return `${(userWorkspaceDisplayTabSpacingSliderValue.value / (WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1)) * 100}%`
+})
+
+const teamWorkspaceDisplayTabSpacingSliderValue = computed(() => {
+  return normalizeWorkspaceTabSpacingSliderIndex(teamWorkspaceDisplayTabSpacingDraft.value || undefined)
+})
+
+const teamWorkspaceDisplayTabSpacingSliderProgress = computed(() => {
+  return `${(teamWorkspaceDisplayTabSpacingSliderValue.value / (WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1)) * 100}%`
+})
+
+const userWorkspaceDisplaySourceSummary = computed(() => {
+  return `${resolveWorkspaceDisplayPreferenceSourceLabel(props.workspaceDisplayPreferences.sources.fontSizePreset)} / ${resolveWorkspaceDisplayPreferenceSourceLabel(props.workspaceDisplayPreferences.sources.tabSpacingPreset)}`
+})
+
+const workspaceDisplayEffectiveSummary = computed(() => {
+  return `${resolveWorkspaceFontSizePresetLabel(props.workspaceDisplayPreferences.effective.fontSizePreset)} / ${resolveWorkspaceTabSpacingPresetLabel(props.workspaceDisplayPreferences.effective.tabSpacingPreset)}`
+})
+
+const userWorkspaceDisplayChanged = computed(() => {
+  return userWorkspaceDisplayFontSizeDraft.value !== normalizeWorkspaceFontSizeDraft(props.workspaceDisplayPreferences.workspaceOverride?.fontSizePreset)
+    || userWorkspaceDisplayTabSpacingDraft.value !== normalizeWorkspaceTabSpacingDraft(props.workspaceDisplayPreferences.workspaceOverride?.tabSpacingPreset)
+})
+
+const teamWorkspaceDisplayChanged = computed(() => {
+  return teamWorkspaceDisplayFontSizeDraft.value !== normalizeWorkspaceFontSizeDraft(props.workspaceDisplayPreferences.teamDefault?.fontSizePreset)
+    || teamWorkspaceDisplayTabSpacingDraft.value !== normalizeWorkspaceTabSpacingDraft(props.workspaceDisplayPreferences.teamDefault?.tabSpacingPreset)
+})
+
+function updateUserWorkspaceDisplayTabSpacingDraft(value: string | number): void {
+  const index = Math.max(0, Math.min(WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1, Number(value)))
+  userWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_TAB_SPACING_PRESET_ORDER[index] || 'default'
+}
+
+function updateTeamWorkspaceDisplayTabSpacingDraft(value: string | number): void {
+  const index = Math.max(0, Math.min(WORKSPACE_TAB_SPACING_PRESET_ORDER.length - 1, Number(value)))
+  teamWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_TAB_SPACING_PRESET_ORDER[index] || 'default'
+}
+
+function restoreRecommendedWorkspaceDisplay(): void {
+  userWorkspaceDisplayFontSizeDraft.value = WORKSPACE_DISPLAY_RECOMMENDED_FONT_SIZE_PRESET
+  userWorkspaceDisplayTabSpacingDraft.value = WORKSPACE_DISPLAY_RECOMMENDED_TAB_SPACING_PRESET
+}
+
+function saveWorkspaceDisplayUserOverride(): void {
+  emit('saveWorkspaceDisplayUserOverride', {
+    fontSizePreset: userWorkspaceDisplayFontSizeDraft.value || null,
+    tabSpacingPreset: userWorkspaceDisplayTabSpacingDraft.value || null,
+  })
+}
+
+function saveWorkspaceDisplayTeamDefault(): void {
+  emit('saveWorkspaceDisplayTeamDefault', {
+    fontSizePreset: teamWorkspaceDisplayFontSizeDraft.value || null,
+    tabSpacingPreset: teamWorkspaceDisplayTabSpacingDraft.value || null,
+  })
 }
 
 function createResourceTabId(resourceId: string): WorkspaceResourceTabId {
@@ -614,10 +804,16 @@ const activeResourceTab = computed(() => {
 
 const hasFlowResource = computed(() => Boolean(String(props.flowResourceId || '').trim()))
 const flowPanelTitle = computed(() => String(props.flowResourceTitle || '').trim() || '流程画布')
+const hasDesignResource = computed(() => Boolean(String(props.designResourceId || '').trim()))
+const designPanelTitle = computed(() => String(props.designResourceTitle || '').trim() || '设计稿')
 
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
     const title = activeResourceTab.value.title
+    if (activeResourceTab.value.previewMode === 'markdown')
+      return ['项目资料', title]
+    if (activeResourceTab.value.previewMode === 'draw')
+      return ['竞赛分析', title]
     if (props.selectedContest?.name)
       return ['竞赛分析', props.selectedContest.name, title]
     return ['竞赛分析', title]
@@ -634,16 +830,11 @@ const breadcrumbItems = computed(() => {
   if (activeTabId.value === 'members')
     return ['竞赛分析', '项目协作']
 
-  if (activeTabId.value === 'flow') {
-    if (props.selectedContest?.name) {
-      return [
-        '竞赛分析',
-        props.selectedContest.name,
-        '流程画布',
-      ]
-    }
+  if (activeTabId.value === 'design')
+    return ['竞赛分析', '设计']
+
+  if (activeTabId.value === 'flow')
     return ['竞赛分析', '流程画布']
-  }
 
   if (activeTabId.value === 'dashboard') {
     if (props.selectedContest?.name) {
@@ -780,7 +971,10 @@ function closeTabsByIds(
   options: { emitClosePreview?: boolean, emitActivate?: boolean } = {},
 ) {
   const existingTabIds = new Set(openTabs.value.map(tab => tab.id))
-  const closingIds = [...new Set(tabIds)].filter(tabId => existingTabIds.has(tabId))
+  const closingIds = normalizeWorkspaceMainTabIds(
+    [...new Set(tabIds)].filter(tabId => existingTabIds.has(tabId)),
+    { allowEmpty: true },
+  )
   if (closingIds.length === 0)
     return
 
@@ -1419,6 +1613,14 @@ const collabPresenceUsers = computed<WorkspaceCollabPresenceUser[]>(() => {
   })
 })
 
+const showBreadcrumbPresence = computed(() => {
+  if (collabPresenceUsers.value.length === 0)
+    return false
+  if (activeTabId.value === 'flow' || activeTabId.value === 'design')
+    return true
+  return Boolean(activeResourceTab.value && (activePreviewMode.value === 'markdown' || activePreviewMode.value === 'draw'))
+})
+
 const collabPresenceCursors = computed<WorkspaceCollabCursorUser[]>(() => {
   const merged = new Map<string, WorkspaceCollabCursorUser & { updatedAtMs: number }>()
   const currentUserId = String(props.currentUserId || '').trim()
@@ -1519,6 +1721,7 @@ const canSubmitWorkspaceSeatLimit = computed(() => {
 function openWorkspaceInviteModal(): void {
   if (!props.workspaceCanManageMembers)
     return
+  emit('prepareWorkspaceInvitation')
   workspaceInviteModalVisible.value = true
 }
 
@@ -1601,6 +1804,9 @@ defineExpose({
   scrollToMarkdownCommentThread(threadId: string) {
     resourcePreviewTabRef.value?.scrollToCommentThread(threadId)
   },
+  scrollToMarkdownHeadingAnchor(anchorId: string) {
+    return resourcePreviewTabRef.value?.scrollToHeadingAnchor(anchorId) || false
+  },
 })
 
 function workspaceMemberRoleSummary(member: ProjectMemberSummary): string {
@@ -1673,10 +1879,17 @@ watch(() => props.workspaceInvitationLink, (next, previous) => {
   workspaceInviteForm.inviteeUsername = ''
 })
 
+watch(() => props.workspaceDisplayPreferences, (snapshot) => {
+  applyWorkspaceDisplayPreferenceDrafts(snapshot)
+  if (settingsSecondaryTab.value === 'teamDefault' && !snapshot.canManageTeamDefault)
+    settingsSecondaryTab.value = 'project'
+}, { deep: true, immediate: true })
+
 watch(() => props.openSettingsSignal, (next, previous) => {
   if (next === previous)
     return
   ensureFixedTabOpen('settings', true)
+  selectSettingsSecondaryTab('project')
 })
 
 watch(() => props.openDisplayPreferencesSignal, (next, previous) => {
@@ -1696,6 +1909,12 @@ watch(() => props.openFlowSignal, (next, previous) => {
   if (next === previous)
     return
   ensureFixedTabOpen('flow', true)
+})
+
+watch(() => props.openDesignSignal, (next, previous) => {
+  if (next === previous)
+    return
+  ensureFixedTabOpen('design', true)
 })
 
 watch(() => props.openPreviewSignal, (next, previous) => {
@@ -1751,8 +1970,13 @@ watch(activeTabId, (next) => {
 
 <template>
   <section class="workspace-main-panel bg-slate-50 flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
-    <div v-if="hasOpenTabs" class="workspace-main-tab-strip-shell border-b border-slate-200 bg-white flex shrink-0 items-center relative">
+    <div
+      v-if="hasOpenTabs"
+      class="workspace-main-tab-strip-shell border-b border-slate-200 bg-white flex shrink-0 min-w-0 w-full items-center relative"
+      :style="workspaceMainTabLayoutStyle"
+    >
       <WorkspaceMainPanelChrome
+        class="flex-1 min-w-0"
         :open-tabs="openTabs"
         :active-tab-id="activeTabId"
         :drag-over-tab-id="dragOverTabId"
@@ -1765,6 +1989,7 @@ watch(activeTabId, (next) => {
         :can-close-other-tabs="openTabs.length > 1"
         :can-close-all-tabs="openTabs.length > 0"
         :breadcrumb-items="breadcrumbItems"
+        :collab-presence-users="showBreadcrumbPresence ? collabPresenceUsers : []"
         @activate-tab="activateTab($event as WorkspaceMainTabId)"
         @close-tab="closeTab($event as WorkspaceMainTabId)"
         @open-tab-context-menu="openTabContextMenu($event.tabId as WorkspaceMainTabId, $event.event)"
@@ -1778,38 +2003,9 @@ watch(activeTabId, (next) => {
         @drop="onTabDrop($event.tabId as WorkspaceMainTabId, $event.event)"
         @drag-end="onTabDragEnd"
         @open-dashboard="ensureFixedTabOpen('dashboard', true)"
+        @open-design="ensureFixedTabOpen('design', true)"
       />
     </div>
-
-    <!--
-      Split render contract kept in subcomponents during panel slimming:
-      <ProjectBasicSettingsEditor
-      return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
-      <div v-if="hasOpenTabs" class="workspace-main-tab-strip-shell border-b border-slate-200 bg-white flex shrink-0 items-center relative">
-      workspace-main-tab-scroll
-      workspace-main-breadcrumb__scroll
-      workspace-main-tab-list
-      breadcrumbItems
-      workspace-main-tab--active::after
-      workspace-main-tab-strip-height
-      scrollbar-width: none;
-      class="workspace-tab-context-menu__item workspace-tab-context-menu__item--danger"
-      @click="closeAllTabs"
-      workspace-tab-context-menu__divider
-      workspace-tab-context-menu__icon
-      width: 176px;
-      border-radius: 12px;
-      workspace-main-empty-state
-      workspace-main-empty-state__watermark" aria-hidden="true"><span>WIN</span><span>LOOP</span>
-      .workspace-main-empty-state__button:hover { background: #2563eb; border-color: #2563eb; color: #ffffff; }
-      workspace-main-empty-state__button
-      打开默认仪表盘
-      title: '查看核心指标要求'
-      等待赛道评分规则返回。
-      暂无赛道评分规则，待竞赛详情返回后展示真实指标要求。
-      {{ row.scoreLabel }}
-      {{ row.supportingNote }}
-    -->
 
     <div
       class="flex-1 h-0 min-h-0"
@@ -1841,6 +2037,7 @@ watch(activeTabId, (next) => {
 
       <WorkspaceFlowTab
         v-else-if="activeTabId === 'flow'"
+        :project-id="props.activeProjectId"
         :has-flow-resource="hasFlowResource"
         :flow-panel-title="flowPanelTitle"
         :flow-resource-id="props.flowResourceId"
@@ -1885,46 +2082,297 @@ watch(activeTabId, (next) => {
         @open-workspace-invite-modal="openWorkspaceInviteModal"
         @reload-workspace-member-management="emit('reloadWorkspaceMemberManagement')"
         @open-workspace-seat-modal="openWorkspaceSeatModal"
-        @update-workspace-member-role-draft="workspaceMemberRoleDraftMap[$event.userId] = $event.role"
+        @update-workspace-member-role-draft="workspaceMemberRoleDraftMap[$event.userId] = toPatchableWorkspaceRole($event.role)"
         @submit-workspace-member-role="submitWorkspaceMemberRole"
         @remove-workspace-member="removeWorkspaceMember"
         @revoke-workspace-invitation="revokeWorkspaceInvitation"
       />
 
-      <WorkspaceProjectSettingsTab
-        v-else-if="activeTabId === 'settings'"
-        :active-project="activeProject"
-        :contests="projectSettingsContestOptions"
-        :project-settings-loading="projectSettingsLoading"
-        :project-settings-save-state="projectSettingsSaveState"
-        :project-settings-common="projectSettingsCommon"
-        :project-settings-bindings="projectSettingsBindings"
-        :project-settings-current-contest-id="projectSettingsCurrentContestId"
-        :project-settings-adaptation="projectSettingsAdaptation"
-        :project-settings-has-current-contest="projectSettingsHasCurrentContest"
-        :project-resource-shares="projectResourceShares"
-        :project-resource-shares-loading="projectResourceSharesLoading"
-        :project-settings-save-label="projectSettingsSaveLabel"
-        :project-settings-save-badge-class="projectSettingsSaveBadgeClass"
-        :project-settings-contest-name="projectSettingsContestName"
-        :contest-tracks-by-contest-id="contestTracksByContestId"
-        :share-visibility-label="shareVisibilityLabel"
-        :share-status-label="shareStatusLabel"
-        :share-status-badge-class="shareStatusBadgeClass"
-        :get-share-status="getShareStatus"
-        :format-date-time="formatDateTime"
-        @emit-project-settings-common="emitProjectSettingsCommon"
-        @update-project-settings-common-field="updateProjectSettingsCommonField($event.field, $event.value)"
-        @save-project-settings="emit('saveProjectSettings')"
-        @add-project-settings-binding="onAddProjectSettingsBinding"
-        @update-project-settings-binding-contest="updateProjectSettingsBindingContest($event.index, $event.contestId)"
-        @update-project-settings-binding-track="updateProjectSettingsBindingTrack($event.index, $event.trackId)"
-        @use-binding-as-current-contest="useBindingAsCurrentContest($event.contestId, $event.trackId)"
-        @remove-project-settings-binding="removeProjectSettingsBinding"
-        @update-project-settings-adaptation-field="updateProjectSettingsAdaptationField($event.field, $event.value)"
-        @copy-project-resource-share="emit('copyProjectResourceShare', $event)"
-        @revoke-project-resource-share="emit('revokeProjectResourceShare', $event)"
+      <WorkspaceDesignPanel
+        v-else-if="activeTabId === 'design'"
+        class="h-full min-h-0 w-full"
+        :design-resource-id="props.designResourceId"
+        :bound-resource-id="props.collabResourceId"
+        :design-panel-title="designPanelTitle"
+        :has-design-resource="hasDesignResource"
+        :collab-revision="collabRevision"
+        :collab-connected="collabConnected"
+        :collab-connection-text="collabConnectionText"
+        :model-value="props.collabDrawValue"
+        :collab-draw-error="collabDrawError"
+        @update:model-value="onCollabDrawModelUpdate"
       />
+
+      <section
+        v-else-if="activeTabId === 'settings'"
+        class="mx-auto max-w-5xl space-y-4"
+      >
+        <section class="border border-slate-200 rounded-2xl bg-white overflow-hidden">
+          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 class="text-sm text-slate-800 font-bold">
+                设置
+              </h2>
+              <p class="text-xs text-slate-500 mt-1">
+                项目配置与显示偏好统一在这里维护。
+              </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="item in visibleWorkspaceSettingsSecondaryTabs"
+                :key="item.id"
+                :data-testid="WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS[item.id]"
+                class="text-xs font-semibold px-3 py-1.5 border rounded-full inline-flex gap-2 transition-colors items-center"
+                :class="settingsSecondaryTab === item.id
+                  ? 'border-blue-200 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+                type="button"
+                @click="selectSettingsSecondaryTab(item.id)"
+              >
+                <span class="material-symbols-outlined text-[15px]">{{ item.icon }}</span>
+                <span>{{ item.label }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="text-xs text-slate-500 p-4 border-b border-slate-100 bg-white">
+            {{ visibleWorkspaceSettingsSecondaryTabs.find(item => item.id === settingsSecondaryTab)?.description }}
+          </div>
+        </section>
+
+        <section
+          v-if="settingsSecondaryTab === 'myDisplay'"
+          data-testid="user-settings-display-preferences-tab"
+          class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
+        >
+          <div class="px-4 py-4 border-b border-slate-200 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 class="text-sm text-slate-800 font-semibold">
+                我的显示偏好
+              </h3>
+              <p class="text-xs text-slate-500 mt-1">
+                保存后仅影响当前工作区，不会覆盖团队默认。
+              </p>
+            </div>
+            <div class="text-xs text-slate-500">
+              当前生效：{{ workspaceDisplayEffectiveSummary }}
+            </div>
+          </div>
+
+          <div class="p-4 space-y-4" data-testid="user-settings-display-preferences-panel">
+            <div v-if="props.workspaceDisplayPreferencesError" class="text-xs text-rose-600 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50">
+              {{ props.workspaceDisplayPreferencesError }}
+            </div>
+
+            <div class="gap-4 grid md:grid-cols-2">
+              <label class="text-xs text-slate-600 block space-y-1.5">
+                <span class="text-slate-700 font-semibold">字号大小</span>
+                <select
+                  :value="userWorkspaceDisplayFontSizeDraft"
+                  data-testid="workspace-display-user-font-size-select"
+                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+                  @change="userWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">
+                    跟随工作区当前生效值
+                  </option>
+                  <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`workspace-font-size-${option.value}`" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+                <div class="text-[11px] text-slate-500">
+                  当前来源：{{ userWorkspaceDisplaySourceSummary }}
+                </div>
+              </label>
+
+              <label class="text-xs text-slate-600 block space-y-1.5">
+                <span class="text-slate-700 font-semibold">标签边距</span>
+                <select
+                  :value="userWorkspaceDisplayTabSpacingDraft"
+                  data-testid="workspace-display-user-tab-spacing-select"
+                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+                  @change="userWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">
+                    跟随工作区当前生效值
+                  </option>
+                  <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`workspace-tab-spacing-${option.value}`" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+                <div class="text-[11px] text-slate-500 flex gap-2 items-center">
+                  <span data-testid="workspace-display-recommended-tag" class="text-blue-700 font-semibold px-2 py-0.5 rounded-full bg-blue-50 inline-flex items-center">
+                    推荐
+                  </span>
+                  <span class="workspace-display-slider-label__tooltip" :title="recommendedWorkspaceDisplayTagText">
+                    {{ recommendedWorkspaceDisplayTagText }}
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            <div class="px-4 py-3 border border-slate-200 rounded-2xl bg-slate-50/70 space-y-3">
+              <div class="flex gap-3 items-center justify-between">
+                <div>
+                  <div class="text-xs text-slate-700 font-semibold">
+                    标签边距预览
+                  </div>
+                  <p class="text-[11px] text-slate-500 mt-1">
+                    紧凑档会压缩顶部标签页的横向边距和最小宽度
+                  </p>
+                </div>
+                <button
+                  class="text-xs text-blue-700 font-semibold"
+                  type="button"
+                  @click="restoreRecommendedWorkspaceDisplay"
+                >
+                  还原为工作区推荐设置
+                </button>
+              </div>
+
+              <div class="space-y-2">
+                <div class="rounded-full bg-slate-200 h-2 overflow-hidden">
+                  <div class="rounded-full bg-blue-500 h-full transition-all" :style="{ width: userWorkspaceDisplayTabSpacingSliderProgress }" />
+                </div>
+                <input
+                  :value="userWorkspaceDisplayTabSpacingSliderValue"
+                  class="w-full"
+                  max="2"
+                  min="0"
+                  step="1"
+                  type="range"
+                  @input="updateUserWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
+                >
+              </div>
+            </div>
+
+            <div class="pt-1 flex flex-wrap gap-3 items-center justify-between">
+              <div class="text-[11px] text-slate-500">
+                保存后会立刻更新顶部标签条和左侧栏密度。
+              </div>
+              <button
+                class="text-xs text-white font-semibold px-3 py-2 rounded-xl bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                type="button"
+                :disabled="props.workspaceDisplayPreferencesLoading || props.workspaceDisplayPreferencesSavingScope === 'user' || !userWorkspaceDisplayChanged"
+                @click="saveWorkspaceDisplayUserOverride"
+              >
+                保存个人设置
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section
+          v-else-if="settingsSecondaryTab === 'teamDefault'"
+          class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
+        >
+          <div class="px-4 py-4 border-b border-slate-200">
+            <h3 class="text-sm text-slate-800 font-semibold">
+              团队默认显示偏好
+            </h3>
+            <p class="text-xs text-slate-500 mt-1">
+              新成员首次进入当前工作区时，将优先继承这里的默认设置。
+            </p>
+          </div>
+
+          <div class="p-4 space-y-4">
+            <div class="gap-4 grid md:grid-cols-2">
+              <label class="text-xs text-slate-600 block space-y-1.5">
+                <span class="text-slate-700 font-semibold">默认字号</span>
+                <select
+                  :value="teamWorkspaceDisplayFontSizeDraft"
+                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+                  @change="teamWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">
+                    跟随系统默认
+                  </option>
+                  <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`team-font-size-${option.value}`" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="text-xs text-slate-600 block space-y-1.5">
+                <span class="text-slate-700 font-semibold">默认标签边距</span>
+                <select
+                  :value="teamWorkspaceDisplayTabSpacingDraft"
+                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+                  @change="teamWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">
+                    跟随系统默认
+                  </option>
+                  <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`team-tab-spacing-${option.value}`" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <div class="space-y-2">
+              <div class="rounded-full bg-slate-200 h-2 overflow-hidden">
+                <div class="rounded-full bg-blue-500 h-full transition-all" :style="{ width: teamWorkspaceDisplayTabSpacingSliderProgress }" />
+              </div>
+              <input
+                :value="teamWorkspaceDisplayTabSpacingSliderValue"
+                class="w-full"
+                max="2"
+                min="0"
+                step="1"
+                type="range"
+                @input="updateTeamWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
+              >
+            </div>
+
+            <div class="flex justify-end">
+              <button
+                class="text-xs text-white font-semibold px-3 py-2 rounded-xl bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                type="button"
+                :disabled="props.workspaceDisplayPreferencesLoading || props.workspaceDisplayPreferencesSavingScope === 'team' || !teamWorkspaceDisplayChanged"
+                @click="saveWorkspaceDisplayTeamDefault"
+              >
+                保存团队默认
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <WorkspaceProjectSettingsTab
+          v-else
+          :active-project="activeProject"
+          :contests="projectSettingsContestOptions"
+          :project-settings-loading="projectSettingsLoading"
+          :project-settings-save-state="projectSettingsSaveState"
+          :project-settings-common="projectSettingsCommon"
+          :project-settings-bindings="projectSettingsBindings"
+          :project-settings-current-contest-id="projectSettingsCurrentContestId"
+          :project-settings-adaptation="projectSettingsAdaptation"
+          :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+          :project-resource-shares="projectResourceShares"
+          :project-resource-shares-loading="projectResourceSharesLoading"
+          :project-settings-save-label="projectSettingsSaveLabel"
+          :project-settings-save-badge-class="projectSettingsSaveBadgeClass"
+          :project-settings-contest-name="projectSettingsContestName"
+          :contest-tracks-by-contest-id="contestTracksByContestId"
+          :share-visibility-label="shareVisibilityLabel"
+          :share-status-label="shareStatusLabel"
+          :share-status-badge-class="shareStatusBadgeClass"
+          :get-share-status="getShareStatus"
+          :format-date-time="formatDateTime"
+          @emit-project-settings-common="emitProjectSettingsCommon"
+          @update-project-settings-common-field="updateProjectSettingsCommonField($event.field, $event.value)"
+          @save-project-settings="emit('saveProjectSettings')"
+          @add-project-settings-binding="onAddProjectSettingsBinding"
+          @update-project-settings-binding-contest="updateProjectSettingsBindingContest($event.index, $event.contestId)"
+          @update-project-settings-binding-track="updateProjectSettingsBindingTrack($event.index, $event.trackId)"
+          @use-binding-as-current-contest="useBindingAsCurrentContest($event.contestId, $event.trackId)"
+          @remove-project-settings-binding="removeProjectSettingsBinding"
+          @update-project-settings-adaptation-field="updateProjectSettingsAdaptationField($event.field, $event.value)"
+          @copy-project-resource-share="emit('copyProjectResourceShare', $event)"
+          @revoke-project-resource-share="emit('revokeProjectResourceShare', $event)"
+        />
+      </section>
 
       <WorkspaceResourcePreviewTab
         v-else-if="activeResourceTab"
@@ -1946,6 +2394,9 @@ watch(activeTabId, (next) => {
         :image-upload-handler="markdownImageUploadHandler"
         :comment-threads="commentThreads"
         :active-comment-thread-id="activeCommentThreadId"
+        :comment-draft-anchor="activePreviewMode === 'markdown' ? props.commentDraftAnchor : null"
+        :comment-loading="activePreviewMode === 'markdown' ? props.commentLoading : false"
+        :comment-mutating="activePreviewMode === 'markdown' ? props.commentMutating : false"
         :collab-draw-value="collabDrawValue"
         :collab-draw-error="collabDrawError"
         :preview-status-label="previewStatusLabel"
@@ -1962,9 +2413,14 @@ watch(activeTabId, (next) => {
         @markdown-open-comment-thread="emit('markdownOpenCommentThread', $event)"
         @markdown-trigger-document-assist="emit('markdownTriggerDocumentAssist', $event)"
         @markdown-request-image-action="emit('markdownRequestImageAction', $event)"
+        @markdown-cancel-comment-draft="emit('markdownCancelCommentDraft')"
+        @markdown-reply-comment-thread="emit('markdownReplyCommentThread', $event)"
+        @markdown-resolve-comment-thread="emit('markdownResolveCommentThread', $event)"
+        @markdown-reopen-comment-thread="emit('markdownReopenCommentThread', $event)"
+        @markdown-create-comment-thread="emit('markdownCreateCommentThread', $event)"
       />
 
-      <WorkspaceMainPanelEmptyState v-else />
+      <WorkspaceMainPanelEmptyState v-else @open-dashboard="ensureFixedTabOpen('dashboard', true)" />
     </div>
 
     <WorkspaceInviteModal
@@ -1973,6 +2429,7 @@ watch(activeTabId, (next) => {
       :workspace-invitation-submitting="workspaceInvitationSubmitting"
       :workspace-invite-project-label="workspaceInviteProjectLabel"
       :workspace-invitation-link="workspaceInvitationLink"
+      :workspace-invitation-error="workspaceInvitationError"
       :workspace-invite-unavailable-message="workspaceInviteUnavailableMessage"
       :can-submit-workspace-invitation="canSubmitWorkspaceInvitation"
       :invitee-username="workspaceInviteForm.inviteeUsername"

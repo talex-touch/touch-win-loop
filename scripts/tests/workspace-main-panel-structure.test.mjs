@@ -57,7 +57,7 @@ it('WorkspaceMainPanel 已将标签条、成员、设置、预览视图拆成独
   assert.match(tabStripSource, /<WorkspaceTabContextMenu\b/, 'WorkspaceTabStrip 未接入 tab context menu 子组件')
   assert.match(tabContextMenuSource, /\.workspace-tab-context-menu/, 'WorkspaceTabContextMenu 缺少自身样式承载')
   assert.match(mainPanelChromeSource, /<WorkspaceTabStrip\b/, 'WorkspaceMainPanelChrome 未接入 WorkspaceTabStrip')
-  assert.match(mainPanelEmptyStateSource, /当前没有打开的标签页/, 'WorkspaceMainPanelEmptyState 缺少空态文案')
+  assert.match(mainPanelEmptyStateSource, /从默认仪表盘继续当前项目/, 'WorkspaceMainPanelEmptyState 缺少当前空态文案')
   assert.match(membersTabSource, /data-testid="project-member-list"/, 'WorkspaceMembersTab 缺少成员列表承载')
   assert.match(dashboardTabSource, /关联比赛提交区/, 'WorkspaceDashboardTab 缺少 dashboard 视图承载')
   assert.match(flowTabSource, /暂未初始化流程画布/, 'WorkspaceFlowTab 缺少流程画布空态')

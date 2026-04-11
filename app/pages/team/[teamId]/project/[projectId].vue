@@ -28,7 +28,6 @@ import type {
   Contest,
   ContestDetailPayload,
   Project,
-  ProjectContestAdaptation,
   ProjectInvitationSummary,
   ProjectIssue,
   ProjectIssueReport,
@@ -113,12 +112,33 @@ import {
 } from '~/composables/project-settings'
 import { useCollabSession } from '~/composables/useCollabSession'
 import {
+  normalizeQueryValue as normalizeQueryParam,
+  teamDashboardPath,
+  teamDetailPath,
+} from '~/composables/team-ui'
+import { useWorkspaceProjectRoute, workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
+import { useWorkspaceSidebarLayout } from '~/composables/useWorkspaceSidebarLayout'
+import {
   defaultWorkspaceDisplayPreferenceSnapshot,
   useWorkspaceDisplayPreferenceApi,
 } from '~/composables/useWorkspaceDisplayPreferences'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 import {
   isCollabMarkdownHeadingAnchorHashForResource,
 } from '~/utils/collab-markdown-navigation'
+import {
+  arrayToLines,
+  clamp,
+  createEmptyProjectAdaptationForm,
+  createProjectAdaptationFormFromSnapshot,
+  linesToArray,
+  parseFileSizeFromResource,
+  resolveApiErrorMessage,
+  resolveApiStatusCode,
+  sortByUpdatedAtDesc,
+  validateUploadFiles,
+  cloneProjectAdaptationForm,
+} from '~/utils/workspace-project-helpers'
 import {
   buildWorkspaceMetaKSections,
   matchAndSortWorkspaceMetaKItems,
@@ -199,17 +219,6 @@ interface MarkdownDocumentAssistRequestState {
   selectionRange: AiWorkspaceDocumentSelectionRange | null
   action: AiWorkspaceDocumentAction | ''
   trigger: AiWorkspaceDocumentTrigger
-}
-
-function linesToArray(text: string): string[] {
-  return text
-    .split(/\n+/)
-    .map(item => item.trim())
-    .filter(Boolean)
-}
-
-function arrayToLines(list: string[] | undefined): string {
-  return (list || []).join('\n')
 }
 
 const topicBoardConfirmState = reactive<TopicBoardConfirmState>({
@@ -304,66 +313,6 @@ function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
     candidateCount: 3,
   }
 }
-function createEmptyProjectAdaptationForm(contestId = '', trackId = ''): WorkspaceProjectAdaptationForm {
-  return {
-    contestId,
-    trackId,
-    problemStatement: '',
-    innovationPointsText: '',
-    techRouteStepsText: '',
-    scoringMappingText: '',
-    risksText: '',
-    deliverablesText: '',
-    summary: '',
-  }
-}
-
-function createProjectAdaptationFormFromSnapshot(
-  adaptation: ProjectContestAdaptation | null,
-  project: Project | null,
-  contestId: string,
-  trackId: string,
-): WorkspaceProjectAdaptationForm {
-  if (!adaptation) {
-    return {
-      contestId,
-      trackId,
-      problemStatement: project?.problemStatement || '',
-      innovationPointsText: arrayToLines(project?.innovationPoints),
-      techRouteStepsText: arrayToLines(project?.techRouteSteps),
-      scoringMappingText: arrayToLines(project?.scoringMapping),
-      risksText: arrayToLines(project?.risks),
-      deliverablesText: arrayToLines(project?.deliverables),
-      summary: project?.summary || '',
-    }
-  }
-
-  return {
-    contestId,
-    trackId,
-    problemStatement: adaptation.problemStatement || '',
-    innovationPointsText: arrayToLines(adaptation.innovationPoints),
-    techRouteStepsText: arrayToLines(adaptation.techRouteSteps),
-    scoringMappingText: arrayToLines(adaptation.scoringMapping),
-    risksText: arrayToLines(adaptation.risks),
-    deliverablesText: arrayToLines(adaptation.deliverables),
-    summary: adaptation.summary || '',
-  }
-}
-
-function cloneProjectAdaptationForm(value: WorkspaceProjectAdaptationForm): WorkspaceProjectAdaptationForm {
-  return {
-    contestId: value.contestId,
-    trackId: value.trackId,
-    problemStatement: value.problemStatement,
-    innovationPointsText: value.innovationPointsText,
-    techRouteStepsText: value.techRouteStepsText,
-    scoringMappingText: value.scoringMappingText,
-    risksText: value.risksText,
-    deliverablesText: value.deliverablesText,
-    summary: value.summary,
-  }
-}
 
 function cloneProjectContestBindings(value: WorkspaceProjectContestBindingForm[]): WorkspaceProjectContestBindingForm[] {
   return value.map(item => ({
@@ -371,24 +320,6 @@ function cloneProjectContestBindings(value: WorkspaceProjectContestBindingForm[]
     trackId: item.trackId,
     sortOrder: item.sortOrder,
   }))
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
-function normalizeRouteParam(value: string | string[] | undefined): string {
-  if (Array.isArray(value))
-    return String(value[0] || '').trim()
-  return String(value || '').trim()
-}
-
-function normalizeQueryParam(value: unknown): string {
-  if (Array.isArray(value))
-    return String(value[0] || '').trim()
-  if (value === null || value === undefined)
-    return ''
-  return String(value).trim()
 }
 
 function normalizeString(value: unknown): string {
@@ -476,122 +407,6 @@ function resolveMetaKResourceIcon(resource: Resource): string {
 function isTruthyQueryFlag(value: unknown): boolean {
   const normalized = normalizeQueryParam(value).toLowerCase()
   return normalized === '1' || normalized === 'true' || normalized === 'yes'
-}
-
-function teamDashboardPath(): string {
-  return '/team'
-}
-
-function teamDetailPath(teamId: string): string {
-  return `/team/${teamId}`
-}
-
-function teamProjectPath(teamId: string, projectId: string): string {
-  return `/team/${teamId}/project/${projectId}`
-}
-
-function workspaceDetailPath(workspaceId: string, projectId = ''): string {
-  const normalizedWorkspaceId = String(workspaceId || '').trim()
-  const normalizedProjectId = String(projectId || '').trim()
-  if (normalizedWorkspaceId && normalizedProjectId)
-    return teamProjectPath(normalizedWorkspaceId, normalizedProjectId)
-  return teamDetailPath(normalizedWorkspaceId)
-}
-
-async function ensureCanonicalWorkspaceProjectRoute(): Promise<boolean> {
-  if (!route.path.startsWith('/workspace/'))
-    return false
-
-  const params = route.params as Record<string, string | string[] | undefined>
-  const workspaceId = normalizeRouteParam(params.teamId || params.workspaceId)
-  const projectId = normalizeRouteParam(params.projectId)
-  if (!workspaceId || !projectId)
-    return false
-
-  await navigateTo({
-    path: workspaceDetailPath(workspaceId, projectId),
-    query: route.query,
-  }, { replace: true })
-  return true
-}
-
-function resolveApiErrorMessage(error: unknown, fallback: string): string {
-  if (error && typeof error === 'object') {
-    const maybeData = (error as { data?: { message?: string } }).data
-    const message = String(maybeData?.message || '').trim()
-    if (message)
-      return message
-  }
-
-  if (error instanceof Error && error.message.trim())
-    return error.message.trim()
-
-  return fallback
-}
-
-function parseFileSizeFromResource(resource: Resource): number {
-  const sourceType = String(resource.sourceType || resource.source || '').trim()
-  if (sourceType !== 'project_upload' && sourceType !== 'upload')
-    return 0
-
-  const metadata = resource.metadata
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
-    return 0
-
-  const rawSize = (metadata as Record<string, unknown>).fileSize
-  const size = Number(rawSize)
-  if (!Number.isFinite(size) || size <= 0)
-    return 0
-  return size
-}
-
-function validateUploadFiles(files: File[], usedBytes: number): string | null {
-  if (!files.length)
-    return '未检测到可上传文件。'
-
-  if (files.length > PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH) {
-    return `单次最多上传 ${PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH} 个文件。`
-  }
-
-  const invalidTypeFiles = files
-    .filter(file => !isProjectResourceUploadFileSupported(file.name))
-    .slice(0, 3)
-    .map(file => file.name)
-
-  if (invalidTypeFiles.length) {
-    return `文件格式不支持：${invalidTypeFiles.join('、')}。`
-  }
-
-  const oversizeFile = files.find(file => file.size > PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)
-  if (oversizeFile) {
-    return `文件过大：${oversizeFile.name}，单文件上限 ${formatFileSize(PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES)}。`
-  }
-
-  const incomingBytes = files.reduce((sum, file) => sum + Math.max(0, Number(file.size || 0)), 0)
-  if (usedBytes + incomingBytes > PROJECT_RESOURCE_STORAGE_LIMIT_BYTES) {
-    return `当前项目容量超限：上限 ${formatFileSize(PROJECT_RESOURCE_STORAGE_LIMIT_BYTES)}。`
-  }
-
-  return null
-}
-
-function resolveApiStatusCode(error: unknown): number {
-  if (!error || typeof error !== 'object')
-    return 0
-
-  const statusCode = Number((error as { statusCode?: number }).statusCode || 0)
-  if (Number.isFinite(statusCode) && statusCode > 0)
-    return statusCode
-
-  const responseStatus = Number((error as { response?: { status?: number } }).response?.status || 0)
-  if (Number.isFinite(responseStatus) && responseStatus > 0)
-    return responseStatus
-
-  const dataStatus = Number((error as { data?: { statusCode?: number } }).data?.statusCode || 0)
-  if (Number.isFinite(dataStatus) && dataStatus > 0)
-    return dataStatus
-
-  return 0
 }
 
 function toIssueReportMarkdownFileName(title: string): string {
@@ -711,7 +526,6 @@ type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
 const PROJECT_VIEW_STATE_QUERY_KEYS = ['wb', 'tab', 'tabs', 'res', 'contest', 'track', 'session', 'meeting', 'ls', 'rs', 'panel'] as const
-const RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
 const METAK_SECTION_DEFINITIONS: WorkspaceMetaKSectionDefinition[] = [
   { id: 'actions', title: '快捷命令', maxItems: 8 },
@@ -724,28 +538,7 @@ const METAK_SECTION_DEFINITIONS: WorkspaceMetaKSectionDefinition[] = [
   { id: 'projects', title: '项目切换', maxItems: 6 },
 ]
 
-function parseTimestamp(value: string): number {
-  const time = new Date(value).getTime()
-  if (Number.isNaN(time))
-    return 0
-  return time
-}
-
-function sortByUpdatedAtDesc(items: Project[]): Project[] {
-  return [...items].sort((a, b) => parseTimestamp(b.updatedAt) - parseTimestamp(a.updatedAt))
-}
-
-const routeWorkspaceId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  return normalizeRouteParam(params.teamId || params.workspaceId)
-})
-
-const routeProjectId = computed(() => {
-  const params = route.params as Record<string, string | string[] | undefined>
-  return normalizeRouteParam(params.projectId || '')
-})
-
-const highlightedProjectId = computed(() => routeProjectId.value || normalizeQueryParam(route.query.projectId))
+const { routeWorkspaceId, routeProjectId, highlightedProjectId, ensureCanonicalWorkspaceProjectRoute } = useWorkspaceProjectRoute()
 
 const naturalQuery = ref('')
 const major = ref('')
@@ -794,14 +587,21 @@ const openDesignSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
 const accountCenterVisible = ref(false)
-const leftSidebarCollapsed = ref(false)
 const leftSidebarMetaKSignal = ref(0)
 const leftSidebarMetaKModuleId = ref<WorkspaceLeftSidebarCommandModuleId | ''>('')
 const leftSidebarMetaKOutlineId = ref('')
-const rightSidebarUserCollapsed = ref(false)
-const rightSidebarAutoCollapsed = ref(false)
-const rightSidebarAutoRestorePending = ref(false)
-const sidebarLayoutHydrating = ref(false)
+const {
+  leftSidebarCollapsed,
+  rightSidebarUserCollapsed,
+  sidebarLayoutHydrating,
+  rightSidebarCollapsed,
+  initializeRightSidebarBreakpointTracking,
+  disposeRightSidebarBreakpointTracking,
+  setRightSidebarUserCollapsed,
+  applySidebarLayoutState,
+  collapseRightSidebar,
+  expandRightSidebar,
+} = useWorkspaceSidebarLayout()
 const openMainTabs = ref<WorkspaceMainTabId[]>(['dashboard'])
 const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
 const metaKOpen = ref(false)
@@ -877,8 +677,6 @@ let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let metaKRemoteSearchTimer: ReturnType<typeof setTimeout> | null = null
 let metaKRemoteRequestSequence = 0
 let unsubscribeRealtimeMessages: (() => void) | null = null
-let rightSidebarBreakpointMediaQuery: MediaQueryList | null = null
-let unsubscribeRightSidebarBreakpoint: (() => void) | null = null
 
 const listLoading = ref(false)
 const aiFiltering = ref(false)
@@ -930,11 +728,11 @@ const defenseSummaryLoading = ref(false)
 const defenseStage = ref<AiDefenseStage | undefined>(undefined)
 const defenseTurnCount = ref(0)
 const workspaceInvitationLink = ref('')
+const workspaceInvitationError = ref('')
 const workspaceSeatLimitSaveLoading = ref(false)
 const workspaceSeatLimitError = ref('')
 const workspaceSeatLimitUpdatedSignal = ref(0)
 const projectSeatQuota = ref<ProjectSeatQuota | null>(null)
-const rightSidebarCollapsed = computed(() => rightSidebarUserCollapsed.value || rightSidebarAutoCollapsed.value)
 const projectWorkspaceViewHydrating = ref(false)
 const projectWorkspaceModeHydrating = ref(false)
 const projectWorkspaceViewReady = ref(false)
@@ -970,101 +768,6 @@ function getWorkspaceDeviceStorageKey(): string {
   if (!userId)
     return ''
   return `${PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX}.${userId}`
-}
-
-function withSidebarLayoutHydrating<T>(callback: () => T): T {
-  sidebarLayoutHydrating.value = true
-  try {
-    return callback()
-  }
-  finally {
-    sidebarLayoutHydrating.value = false
-  }
-}
-
-function applyRightSidebarAutoCollapse(nextCollapsed: boolean, nextRestorePending = rightSidebarAutoRestorePending.value): void {
-  const normalizedCollapsed = Boolean(nextCollapsed)
-  const normalizedRestorePending = Boolean(nextRestorePending)
-  if (
-    rightSidebarAutoCollapsed.value === normalizedCollapsed
-    && rightSidebarAutoRestorePending.value === normalizedRestorePending
-  ) {
-    return
-  }
-
-  withSidebarLayoutHydrating(() => {
-    rightSidebarAutoCollapsed.value = normalizedCollapsed
-    rightSidebarAutoRestorePending.value = normalizedRestorePending
-  })
-}
-
-function handleRightSidebarBreakpointChange(isWide: boolean): void {
-  if (isWide) {
-    if (rightSidebarAutoCollapsed.value || rightSidebarAutoRestorePending.value)
-      applyRightSidebarAutoCollapse(false, false)
-    return
-  }
-
-  if (rightSidebarCollapsed.value)
-    return
-
-  applyRightSidebarAutoCollapse(true, true)
-}
-
-function initializeRightSidebarBreakpointTracking(): void {
-  if (!import.meta.client)
-    return
-
-  if (unsubscribeRightSidebarBreakpoint) {
-    unsubscribeRightSidebarBreakpoint()
-    unsubscribeRightSidebarBreakpoint = null
-  }
-
-  rightSidebarBreakpointMediaQuery = window.matchMedia(RIGHT_SIDEBAR_BREAKPOINT_QUERY)
-  handleRightSidebarBreakpointChange(rightSidebarBreakpointMediaQuery.matches)
-
-  const handleChange = (event: MediaQueryListEvent) => {
-    handleRightSidebarBreakpointChange(event.matches)
-  }
-
-  if (typeof rightSidebarBreakpointMediaQuery.addEventListener === 'function') {
-    rightSidebarBreakpointMediaQuery.addEventListener('change', handleChange)
-    unsubscribeRightSidebarBreakpoint = () => {
-      rightSidebarBreakpointMediaQuery?.removeEventListener('change', handleChange)
-      rightSidebarBreakpointMediaQuery = null
-    }
-    return
-  }
-
-  rightSidebarBreakpointMediaQuery.addListener(handleChange)
-  unsubscribeRightSidebarBreakpoint = () => {
-    rightSidebarBreakpointMediaQuery?.removeListener(handleChange)
-    rightSidebarBreakpointMediaQuery = null
-  }
-}
-
-function setRightSidebarUserCollapsed(nextCollapsed: boolean, options: { suppressPersist?: boolean } = {}): void {
-  const normalizedCollapsed = Boolean(nextCollapsed)
-  const apply = () => {
-    rightSidebarUserCollapsed.value = normalizedCollapsed
-    rightSidebarAutoCollapsed.value = false
-    rightSidebarAutoRestorePending.value = false
-  }
-
-  if (options.suppressPersist) {
-    withSidebarLayoutHydrating(apply)
-    return
-  }
-
-  apply()
-}
-
-function collapseRightSidebar(): void {
-  setRightSidebarUserCollapsed(true)
-}
-
-function expandRightSidebar(): void {
-  setRightSidebarUserCollapsed(false)
 }
 
 function toggleRightSidebar(): void {
@@ -2627,6 +2330,7 @@ function resetWorkspaceMemberManagementState(): void {
   workspaceMemberRoleUpdatingUserId.value = ''
   workspaceMemberRemovingUserId.value = ''
   workspaceInvitationRevokingId.value = ''
+  workspaceInvitationError.value = ''
   projectSeatQuota.value = null
 }
 
@@ -3970,22 +3674,6 @@ function normalizeProjectSettingsDraftCachePayload(input: unknown): WorkspacePro
   }
 }
 
-function applySidebarLayoutState(value: ProjectSettingsDraftUi | null | undefined): void {
-  const nextLeftCollapsed = Boolean(value?.leftSidebarCollapsed)
-  const nextRightCollapsed = Boolean(value?.rightSidebarCollapsed)
-  if (
-    leftSidebarCollapsed.value === nextLeftCollapsed
-    && rightSidebarUserCollapsed.value === nextRightCollapsed
-  ) {
-    return
-  }
-
-  withSidebarLayoutHydrating(() => {
-    leftSidebarCollapsed.value = nextLeftCollapsed
-    rightSidebarUserCollapsed.value = nextRightCollapsed
-  })
-}
-
 function serializeProjectSettingsDraftCachePayload(payload: WorkspaceProjectSettingsDraftCache): string {
   const adaptationEntries = Object.keys(payload.adaptationDrafts || {})
     .sort((left, right) => left.localeCompare(right))
@@ -4840,7 +4528,13 @@ async function loadAuthContext(): Promise<boolean> {
 
     return true
   }
-  catch {
+  catch (error) {
+    const info = resolveAuthRequestErrorInfo(error)
+    if (!info.isUnauthorized) {
+      statusLine.value = resolveAuthDisplayMessage(error, '登录态校验失败，请稍后重试。')
+      return false
+    }
+
     await navigateTo({
       path: '/login',
       query: { redirect: route.fullPath || teamDashboardPath() },
@@ -5559,6 +5253,7 @@ async function createWorkspaceInvitation(payload: ProjectInvitationCreatePayload
   }
 
   workspaceInvitationSubmitting.value = true
+  workspaceInvitationError.value = ''
   try {
     const response = await unsafeFetch<ApiResponse<{ token: string, snapshot: ProjectMemberManagementSnapshot }>>(endpoint(`/projects/${projectId}/invitations`), {
       method: 'POST',
@@ -5572,10 +5267,12 @@ async function createWorkspaceInvitation(payload: ProjectInvitationCreatePayload
     const token = String(response.data.token || '').trim()
     workspaceInvitationLink.value = resolveWorkspaceInvitationUrl(token)
     applyWorkspaceMemberManagementSnapshot(response.data.snapshot)
+    workspaceInvitationError.value = ''
     statusLine.value = '项目邀请已生成，可复制邀请链接发送给协作者。'
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '创建项目邀请失败，请稍后重试。')
+    workspaceInvitationError.value = resolveApiErrorMessage(error, '创建项目邀请失败，请稍后重试。')
+    statusLine.value = workspaceInvitationError.value
   }
   finally {
     workspaceInvitationSubmitting.value = false
@@ -5715,8 +5412,13 @@ async function copyWorkspaceInvitationLink() {
   }
 }
 
-async function addResourceFromLibrary(resourceId: string) {
-  const targetResourceId = String(resourceId || '').trim()
+async function addResourceFromLibrary(resourceInput: string | { resourceId: string, parentResourceId?: string | null }) {
+  const targetResourceId = typeof resourceInput === 'string'
+    ? String(resourceInput || '').trim()
+    : String(resourceInput.resourceId || '').trim()
+  const parentResourceId = typeof resourceInput === 'string'
+    ? ''
+    : String(resourceInput.parentResourceId || '').trim()
   if (!activeProjectId.value || !targetResourceId)
     return
 
@@ -5726,6 +5428,7 @@ async function addResourceFromLibrary(resourceId: string) {
       method: 'POST',
       body: {
         resourceId: targetResourceId,
+        parentResourceId: parentResourceId || undefined,
       },
     })
     await refreshProjectResourceContext()
@@ -5740,8 +5443,12 @@ async function addResourceFromLibrary(resourceId: string) {
   }
 }
 
-async function createCollabResource(kind: 'markdown' | 'draw') {
+async function createCollabResource(resourceInput: 'markdown' | 'draw' | { kind: 'markdown' | 'draw', parentResourceId?: string | null }) {
   const projectId = String(activeProjectId.value || '').trim()
+  const kind = typeof resourceInput === 'string' ? resourceInput : resourceInput.kind
+  const parentResourceId = typeof resourceInput === 'string'
+    ? ''
+    : String(resourceInput.parentResourceId || '').trim()
   if (!projectId)
     return
 
@@ -5752,6 +5459,7 @@ async function createCollabResource(kind: 'markdown' | 'draw') {
       method: 'POST',
       body: {
         kind,
+        parentResourceId: parentResourceId || undefined,
       },
     })
 
@@ -5875,12 +5583,45 @@ async function duplicateProjectResource(resourceId: string) {
   }
 }
 
-async function uploadResourcesToProject(files: File[]) {
+async function patchProjectResourceTree(payload: {
+  items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }>
+}) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId || !Array.isArray(payload.items) || payload.items.length === 0)
+    return
+
+  resourceMutating.value = true
+  try {
+    await unsafeFetch(endpoint(`/projects/${projectId}/resources/tree`), {
+      method: 'PATCH',
+      body: {
+        items: payload.items,
+      },
+    })
+    await refreshProjectResourceContext()
+    await generateProjectOutline('resource_tree_patch_success', true)
+    statusLine.value = '项目资料树已更新。'
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '更新项目资料树失败，请稍后重试。')
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
+async function uploadResourcesToProject(resourceInput: File[] | { files: File[], parentResourceId?: string | null }) {
+  const files = Array.isArray(resourceInput) ? resourceInput : resourceInput.files
+  const parentResourceId = Array.isArray(resourceInput)
+    ? ''
+    : String(resourceInput.parentResourceId || '').trim()
   if (!activeProjectId.value)
     return
 
   try {
-    await projectUploadManager.enqueueFiles(files)
+    await projectUploadManager.enqueueFiles(files, {
+      parentResourceId: parentResourceId || undefined,
+    })
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '上传资源失败，请稍后重试。')
@@ -6268,7 +6009,7 @@ function findMarkdownResourceByAnchorHash(hash: string): Resource | null {
     return null
 
   return resources.value.find((resource) => {
-    return resource.kind === 'markdown' && isCollabMarkdownHeadingAnchorHashForResource(normalizedHash, resource.id)
+    return resource.resourceKind === 'markdown' && isCollabMarkdownHeadingAnchorHashForResource(normalizedHash, resource.id)
   }) || null
 }
 
@@ -6615,10 +6356,6 @@ function openMarkdownComments(options: {
   draftAnchor?: ProjectResourceCommentAnchor | null
   threadId?: string
 } = {}): void {
-  rightSidebarView.value = 'comments'
-  if (rightSidebarCollapsed.value)
-    expandRightSidebar()
-
   if (options.draftAnchor) {
     markdownCommentDraftAnchor.value = options.draftAnchor
     activeMarkdownCommentThreadId.value = ''
@@ -7088,8 +6825,17 @@ function applyDocumentAssistToMarkdown(): void {
 async function handleMarkdownImageAction(payload: {
   resourceId?: string | null
   src: string
-  mode: 'delete_node' | 'delete_and_recycle'
+  mode: 'open_resource' | 'delete_node' | 'delete_and_recycle'
 }): Promise<void> {
+  if (payload.mode === 'open_resource') {
+    const resourceId = normalizeString(payload.resourceId)
+    if (!resourceId)
+      return
+    await openProjectResourcePreview(resourceId)
+    statusLine.value = '已在项目资料中打开图片资源。'
+    return
+  }
+
   if (payload.mode !== 'delete_and_recycle')
     return
 
@@ -8977,10 +8723,7 @@ onBeforeUnmount(() => {
   clearRealtimeProjectRefreshTimer()
   clearMeetingRealtimeRefreshTimer()
   clearFallbackResourceRefreshTimer()
-  if (unsubscribeRightSidebarBreakpoint) {
-    unsubscribeRightSidebarBreakpoint()
-    unsubscribeRightSidebarBreakpoint = null
-  }
+  disposeRightSidebarBreakpointTracking()
   if (unsubscribeRealtimeMessages) {
     unsubscribeRealtimeMessages()
     unsubscribeRealtimeMessages = null
@@ -9025,6 +8768,7 @@ watch(routeWorkspaceId, async (value, previous) => {
     activeWorkspaceId.value = value
   workspaceRealtime.subscribeWorkspace(value)
   workspaceInvitationLink.value = ''
+  workspaceInvitationError.value = ''
   projectSeatQuota.value = null
   workspaceSeatLimitError.value = ''
   workspaceDisplayPreferenceError.value = ''
@@ -9078,6 +8822,7 @@ watch(activeProjectId, async (next, previous) => {
     projectIssues.value = []
     resetProjectMeetingState()
     resetWorkspaceMemberManagementState()
+    workspaceInvitationLink.value = ''
     chatSessions.value = []
     activeChatSessionId.value = ''
     defensePersonas.value = []
@@ -9203,6 +8948,9 @@ watch(activeMarkdownResourceId, async (nextResourceId, previousResourceId) => {
       rightSidebarView.value = 'ai'
     return
   }
+
+  if (rightSidebarView.value === 'comments')
+    rightSidebarView.value = 'ai'
 
   await loadMarkdownCommentThreads()
   startMarkdownCommentPolling()
@@ -9486,6 +9234,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           @share-project-resource="shareProjectResource"
           @duplicate-project-resource="duplicateProjectResource"
           @add-resource-from-library="addResourceFromLibrary"
+          @patch-project-resource-tree="patchProjectResourceTree"
           @remove-project-resource="removeProjectResource"
           @restore-project-resource="restoreProjectResource"
           @purge-project-resource="purgeProjectResource"
@@ -9535,6 +9284,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :workspace-supports-seat-add="workspaceSupportsSeatAdd"
         :workspace-invitation-submitting="workspaceInvitationSubmitting"
         :workspace-invitation-link="workspaceInvitationLink"
+        :workspace-invitation-error="workspaceInvitationError"
         :workspace-seat-limit-save-loading="workspaceSeatLimitSaveLoading"
         :workspace-seat-limit-error="workspaceSeatLimitError"
         :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
@@ -9571,6 +9321,9 @@ watch(() => workspaceRealtime.connected.value, () => {
         :collab-presence-members="collabPresenceMembers"
         :comment-threads="markdownCommentThreads"
         :active-comment-thread-id="activeMarkdownCommentThreadId"
+        :comment-draft-anchor="markdownCommentDraftAnchor"
+        :comment-loading="markdownCommentLoading"
+        :comment-mutating="markdownCommentMutating"
         :selected-resources="selectedResources"
         :mapping-rows="mappingRows"
         :mapping-loading="selectedContestDetailLoading"
@@ -9628,6 +9381,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         @save-workspace-display-team-default="saveWorkspaceDisplayTeamDefault"
         @reload-workspace-member-management="loadWorkspaceMemberManagement"
         @create-workspace-invitation="createWorkspaceInvitation"
+        @prepare-workspace-invitation="workspaceInvitationError = ''"
         @patch-workspace-member-role="patchWorkspaceMemberRole"
         @remove-workspace-member="removeWorkspaceMember"
         @revoke-workspace-invitation="revokeWorkspaceInvitation"
@@ -9661,6 +9415,11 @@ watch(() => workspaceRealtime.connected.value, () => {
         @markdown-open-comment-thread="handleMarkdownOpenCommentThread"
         @markdown-trigger-document-assist="handleMarkdownTriggerDocumentAssist"
         @markdown-request-image-action="handleMarkdownImageAction"
+        @markdown-cancel-comment-draft="cancelMarkdownCommentDraft"
+        @markdown-reply-comment-thread="replyMarkdownCommentThread"
+        @markdown-resolve-comment-thread="resolveMarkdownCommentThread"
+        @markdown-reopen-comment-thread="reopenMarkdownCommentThread"
+        @markdown-create-comment-thread="createMarkdownCommentThread"
       />
 
       <div
@@ -9710,6 +9469,7 @@ watch(() => workspaceRealtime.connected.value, () => {
             :comment-draft-anchor="markdownCommentDraftAnchor"
             :comment-loading="markdownCommentLoading"
             :comment-mutating="markdownCommentMutating"
+            :show-comment-tab="!isMarkdownWorkspaceTabActive"
             :document-resource-title="activeMarkdownResourceTitle"
             :document-selection-text="documentAssistRequestState.selectionText"
             :document-selection-range="documentAssistRequestState.selectionRange"

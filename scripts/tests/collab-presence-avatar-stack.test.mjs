@@ -5,6 +5,7 @@ import { it } from 'vitest'
 
 const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const WORKSPACE_MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
+const WORKSPACE_MAIN_PANEL_CHROME_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanelChrome.vue')
 const AVATAR_STACK_FILE = resolve(process.cwd(), 'app/components/workspace/collab/CollabPresenceAvatarStack.vue')
 const TLDRAW_CANVAS_FILE = resolve(process.cwd(), 'app/components/workspace/collab/WorkspaceTldrawCanvas.client.vue')
 const PRESENCE_HELPER_FILE = resolve(process.cwd(), 'app/components/workspace/collab/presence.ts')
@@ -18,6 +19,7 @@ const REALTIME_PG_BUS_FILE = resolve(process.cwd(), 'server/plugins/realtime-pg-
 it('draw 协作头像栈挂到 breadcrumb 行，并复用用户级聚合数据', async () => {
   const projectPageSource = await readFile(PROJECT_PAGE_FILE, 'utf8')
   const panelSource = await readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8')
+  const chromeSource = await readFile(WORKSPACE_MAIN_PANEL_CHROME_FILE, 'utf8')
   const canvasSource = await readFile(TLDRAW_CANVAS_FILE, 'utf8')
   const avatarStackSource = await readFile(AVATAR_STACK_FILE, 'utf8')
   const presenceHelperSource = await readFile(PRESENCE_HELPER_FILE, 'utf8')
@@ -25,13 +27,14 @@ it('draw 协作头像栈挂到 breadcrumb 行，并复用用户级聚合数据',
   assert.match(projectPageSource, /:current-user-id="me\?\.user\.id \|\| ''"/, '项目页未向主面板透传当前用户 ID')
   assert.match(projectPageSource, /:current-user-name="me\?\.user\.username \|\| ''"/, '项目页未向主面板透传当前用户名')
   assert.match(projectPageSource, /:collab-markdown-awareness="collabMarkdownAwareness"/, '项目页未向主面板透传 markdown Awareness')
-  assert.match(panelSource, /import CollabPresenceAvatarStack from/, '主面板未接入头像栈组件')
+  assert.match(chromeSource, /import CollabPresenceAvatarStack from/, '主面板 chrome 未接入头像栈组件')
   assert.doesNotMatch(panelSource, /import CollabPresenceDock from/, '主面板仍然保留 markdown 底部成员栏组件')
   assert.match(panelSource, /const collabPresenceUsers = computed<WorkspaceCollabPresenceUser\[\]>\(\(\) => \{/, '主面板未聚合用户级在线成员数据')
   assert.match(panelSource, /const showBreadcrumbPresence = computed\(\(\) => \{/, '主面板未声明 breadcrumb 协作头像显示条件')
-  assert.equal((panelSource.match(/<CollabPresenceAvatarStack/g) || []).length, 1, '主面板头像栈应仅保留 breadcrumb 一处入口')
-  assert.match(panelSource, /class="text-\[10px\] text-slate-400 px-3 py-1\.5 border-b border-slate-200 bg-white flex gap-2 items-center justify-between"/, 'breadcrumb 行未压缩高度与间距')
-  assert.match(panelSource, /<div v-if="showBreadcrumbPresence" class="shrink-0">\s*<CollabPresenceAvatarStack[\s\S]*:users="collabPresenceUsers"[\s\S]*appearance="flat"[\s\S]*size="sm"/, 'breadcrumb 右侧未挂载紧凑协作头像栈')
+  assert.match(panelSource, /:collab-presence-users="showBreadcrumbPresence \? collabPresenceUsers : \[\]"/, '主面板未向 chrome 透传 breadcrumb 协作头像数据')
+  assert.equal((chromeSource.match(/<CollabPresenceAvatarStack/g) || []).length, 1, '主面板 chrome 头像栈应仅保留 breadcrumb 一处入口')
+  assert.match(chromeSource, /class="text-\[11px\] text-slate-400 px-4 py-2 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-3"/, 'breadcrumb 行未压缩高度与间距')
+  assert.match(chromeSource, /<CollabPresenceAvatarStack[\s\S]*v-if="props\.collabPresenceUsers\.length > 0"[\s\S]*:users="props\.collabPresenceUsers"[\s\S]*appearance="flat"[\s\S]*size="sm"/, 'breadcrumb 右侧未挂载紧凑协作头像栈')
   assert.doesNotMatch(panelSource, /:presence-users="collabPresenceUsers"/g, '流程画布与自由画布仍把头像栈数据下发给画布 overlay')
   assert.doesNotMatch(panelSource, /<CollabPresenceDock\s+:users="collabPresenceUsers"\s*\/>/, 'markdown 底部成员栏仍然存在')
   assert.doesNotMatch(panelSource, /v-if="hasFlowResource" class="grid grid-cols-1 h-full md:grid-cols-\[1fr,220px\]"/, '流程画布仍保留旧双列在线成员布局')
@@ -76,7 +79,7 @@ it('draw 协作画布展示不同用户的实时彩色鼠标', async () => {
   const presenceHelperSource = await readFile(PRESENCE_HELPER_FILE, 'utf8')
 
   assert.match(projectPageSource, /collabSession\.updatePresenceCursor\(value\.cursorX, value\.cursorY\)/, '项目页未把画布鼠标事件回传到协作会话')
-  assert.equal((panelSource.match(/:remote-cursors="collabPresenceCursors"/g) || []).length, 2, '流程画布与自由画布未同时接入远端鼠标数据')
+  assert.equal((panelSource.match(/:collab-presence-cursors="collabPresenceCursors"/g) || []).length, 2, '流程画布与自由画布未同时接入远端鼠标数据')
   assert.equal((panelSource.match(/@update-collab-cursor="onCollabCursorUpdate"/g) || []).length, 2, '主面板未接收画布鼠标更新事件')
   assert.match(panelSource, /const collabPresenceCursors = computed<WorkspaceCollabCursorUser\[\]>\(\(\) => \{/, '主面板未按用户聚合远端鼠标数据')
 
@@ -117,6 +120,16 @@ it('presence 通路支持 activityState，并在前端按可见性同步', async
   assert.match(hubSource, /activityState \|\| currentPresence\?\.activityState \|\| 'active'/, 'Realtime hub 未在 presence 更新时保留活动状态')
   assert.match(eventsSource, /activityState: 'active' \| 'background'/, 'Realtime 事件 payload 未扩展 activityState')
   assert.match(pgBusSource, /activityState: normalizeString\(member\.activityState\) === 'background' \? 'background' : 'active'/, 'PG 总线未透传 activityState')
+})
+
+it('realtime PG 总线关闭时不会再对 listener client 并发追加 UNLISTEN 查询', async () => {
+  const source = await readFile(REALTIME_PG_BUS_FILE, 'utf8')
+
+  assert.match(source, /disposeClient: \(\(\) => void\) \| null/, 'PG 总线状态未记录 listener client 清理函数')
+  assert.match(source, /function disposeClient\(\) \{/, 'PG 总线未抽离 listener client 清理逻辑')
+  assert.match(source, /state\.disposeClient = disposeClient/, 'PG 总线未缓存 listener client 清理函数')
+  assert.match(source, /disposeClient\?\.\(\)/, 'Nitro close 时未复用 listener client 清理函数')
+  assert.doesNotMatch(source, /client\.query\(`UNLISTEN \$\{REALTIME_PG_CHANNEL\}`\)/, 'Nitro close 时仍在对 listener client 追加 UNLISTEN 查询')
 })
 
 it('markdown 协同 presence 通路支持 awareness 快照转发', async () => {

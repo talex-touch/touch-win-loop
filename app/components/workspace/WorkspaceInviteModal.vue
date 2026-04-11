@@ -7,6 +7,7 @@ const props = withDefaults(defineProps<{
   workspaceInvitationSubmitting?: boolean
   workspaceInviteProjectLabel?: string
   workspaceInvitationLink?: string
+  workspaceInvitationError?: string
   workspaceInviteUnavailableMessage?: string
   canSubmitWorkspaceInvitation?: boolean
   inviteeUsername?: string
@@ -20,6 +21,7 @@ const props = withDefaults(defineProps<{
   workspaceInvitationSubmitting: false,
   workspaceInviteProjectLabel: '',
   workspaceInvitationLink: '',
+  workspaceInvitationError: '',
   workspaceInviteUnavailableMessage: '',
   canSubmitWorkspaceInvitation: false,
   inviteeUsername: '',
@@ -143,6 +145,14 @@ const modelVisible = computed({
           >
             复制邀请链接
           </button>
+        </div>
+
+        <div v-if="props.workspaceInvitationSubmitting" class="text-[11px] text-blue-700 px-2.5 py-2 border border-blue-200 rounded bg-blue-50">
+          正在生成邀请链接，请稍候...
+        </div>
+
+        <div v-else-if="props.workspaceInvitationError" class="text-[11px] text-rose-700 px-2.5 py-2 border border-rose-200 rounded bg-rose-50">
+          {{ props.workspaceInvitationError }}
         </div>
 
         <div class="flex gap-2 justify-end">

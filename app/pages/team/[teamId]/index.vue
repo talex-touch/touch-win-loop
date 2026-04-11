@@ -38,6 +38,7 @@ import {
   teamDetailPath,
 } from '~/composables/team-ui'
 import { writeActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
 definePageMeta({
   layout: 'dashboard',
@@ -946,14 +947,15 @@ async function loadWorkspaceDashboard() {
     ])
   }
   catch (error: any) {
-    const statusCode = Number(error?.statusCode || error?.response?.status)
+    const info = resolveAuthRequestErrorInfo(error)
+    const responseMessage = String(error?.response?._data?.message || '').trim()
     console.error('[team-dashboard] loadWorkspaceDashboard failed', {
       workspaceId,
-      statusCode,
+      statusCode: info.statusCode,
       error,
     })
 
-    if (statusCode === 401) {
+    if (info.isUnauthorized) {
       await navigateTo({
         path: '/login',
         query: { redirect: route.fullPath || teamDashboardPath() },
@@ -961,11 +963,9 @@ async function loadWorkspaceDashboard() {
       return
     }
 
-    errorText.value = String(
-      error?.data?.message
-      || error?.response?._data?.message
-      || error?.message
-      || (statusCode > 0 ? `项目台加载失败（HTTP ${statusCode}）。` : '项目台加载失败，请稍后重试。'),
+    errorText.value = responseMessage || resolveAuthDisplayMessage(
+      error,
+      info.statusCode > 0 ? `项目台加载失败（HTTP ${info.statusCode}）。` : '项目台加载失败，请稍后重试。',
     )
     projects.value = []
     contests.value = []
