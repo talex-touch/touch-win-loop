@@ -1774,7 +1774,7 @@ export type WorkspaceMeetingTabId = `meeting:${string}`
 export type WorkspaceMeetingCreateTabId = 'meeting-create:audio' | 'meeting-create:video'
 export type WorkspaceResourceTabId = `resource:${string}`
 export type WorkspaceOpenTabState = WorkspaceFixedTabId | WorkspaceMeetingTabId | WorkspaceMeetingCreateTabId | WorkspaceResourceTabId
-export type ProjectWorkbenchMode = 'project' | 'defense'
+export type ProjectWorkbenchMode = 'project' | 'defense' | 'final_review'
 
 export interface ProjectWorkspaceViewState {
   workbenchMode: ProjectWorkbenchMode

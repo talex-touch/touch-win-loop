@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import WorkspaceAiToggleButton from '~/components/workspace/WorkspaceAiToggleButton.vue'
 
-type WorkspaceWorkbenchMode = 'project' | 'defense'
+type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
 
 interface WorkspaceQuickSwitchProject {
   projectId: string
@@ -30,7 +30,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'update:workbenchMode', value: WorkspaceWorkbenchMode): void
   (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
-  (event: 'finalReview'): void
   (event: 'openMetaK'): void
   (event: 'toggleAiSidebar'): void
 }>()
@@ -76,11 +75,6 @@ function switchProject(item: WorkspaceQuickSwitchProject) {
 function goWorkspaceList() {
   closeQuickSwitch()
   navigateTo('/team')
-}
-
-function openFinalReview() {
-  closeQuickSwitch()
-  emit('finalReview')
 }
 
 function openMetaK() {
@@ -260,14 +254,17 @@ onBeforeUnmount(() => {
         >
           答辩工作台
         </button>
+        <button
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"
+          :class="workbenchMode === 'final_review'
+            ? 'bg-[#2563eb] text-white shadow-sm'
+            : 'text-slate-500 hover:text-blue-700'"
+          type="button"
+          @click="selectWorkbench('final_review')"
+        >
+          终审工作台
+        </button>
       </div>
-      <button
-        class="text-xs text-white font-semibold px-3 py-1.5 rounded bg-slate-900 hover:opacity-90"
-        type="button"
-        @click="openFinalReview"
-      >
-        终审
-      </button>
       <WorkspaceAiToggleButton
         :collapsed="props.aiCollapsed"
         @toggle="emit('toggleAiSidebar')"

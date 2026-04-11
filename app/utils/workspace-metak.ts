@@ -25,6 +25,7 @@ export type WorkspaceMetaKActionId
     | 'open_final_review'
     | 'switch_workbench_project'
     | 'switch_workbench_defense'
+    | 'switch_workbench_final_review'
     | 'switch_ai_dialog'
     | 'switch_ai_optimize'
     | 'switch_ai_issue'

@@ -1163,6 +1163,13 @@ function normalizeWorkspaceMainTabId(
   return tabIds[0] || ''
 }
 
+function normalizeProjectWorkbenchMode(value: unknown): WorkspaceWorkbenchMode {
+  const normalized = normalizeString(value)
+  if (normalized === 'defense' || normalized === 'final_review')
+    return normalized
+  return 'project'
+}
+
 function createDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewState {
   return {
     workbenchMode: 'project',
@@ -1202,7 +1209,7 @@ function normalizeProjectWorkspaceViewState(
   const normalizedMainTabs = normalizeWorkspaceMainTabIds(mainTabs, { allowEmpty: allowEmptyMainTabs })
 
   return {
-    workbenchMode: source.workbenchMode === 'defense' ? 'defense' : 'project',
+    workbenchMode: normalizeProjectWorkbenchMode(source.workbenchMode),
     mainTabs: normalizedMainTabs,
     activeMainTabId: normalizeWorkspaceMainTabId(source.activeMainTabId, normalizedMainTabs, {
       fallbackTabId: allowEmptyMainTabs ? '' : 'dashboard',
@@ -1314,7 +1321,7 @@ function parseProjectWorkspaceViewStateFromQuery(): {
   return {
     hasManagedQuery,
     state: {
-      workbenchMode: normalizeString(route.query.wb) === 'defense' ? 'defense' : 'project',
+      workbenchMode: normalizeProjectWorkbenchMode(route.query.wb),
       mainTabs: hasManagedTabsQuery ? tabs : undefined,
       activeMainTabId: isWorkspaceMainTabId(activeMainTabId) ? activeMainTabId : '',
       previewResourceId,
@@ -1332,7 +1339,7 @@ function buildProjectWorkspaceQueryFromState(state: ProjectWorkspaceViewState): 
   const normalized = normalizeProjectWorkspaceViewState(state)
   const query: Record<string, string> = {}
 
-  if (normalized.workbenchMode === 'defense')
+  if (normalized.workbenchMode !== 'project')
     query.wb = normalized.workbenchMode
   if (normalized.mainTabs.length === 0)
     query.tabs = ''
@@ -1481,6 +1488,14 @@ function applyProjectWorkspaceViewState(state: ProjectWorkspaceViewState): void 
     if (normalized.workbenchMode === 'defense') {
       aiMode.value = 'defense'
       workbenchMode.value = 'defense'
+    }
+    else if (normalized.workbenchMode === 'final_review') {
+      const nextPrimaryMode = aiMode.value !== 'defense'
+        ? aiMode.value as WorkspacePrimaryAiMode
+        : (lastPrimaryAiMode.value || 'dialog_ask')
+      aiMode.value = nextPrimaryMode
+      lastPrimaryAiMode.value = nextPrimaryMode
+      workbenchMode.value = 'final_review'
     }
     else {
       const nextPrimaryMode = aiMode.value !== 'defense'
@@ -2226,6 +2241,20 @@ const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
       actionId: 'switch_workbench_defense',
       badge: workbenchMode.value === 'defense' ? '当前' : '',
       keywords: buildWorkspaceMetaKKeywords('答辩工作台', 'defense', '答辩'),
+    },
+    {
+      id: 'metak-command-switch-workbench-final-review',
+      sectionId: 'actions',
+      type: 'command',
+      title: '切换到终审工作台',
+      subtitle: '进入终审流程工作台，继续推进复核链路。',
+      icon: 'task_alt',
+      source: 'local',
+      priority: 310,
+      defaultVisible: true,
+      actionId: 'switch_workbench_final_review',
+      badge: workbenchMode.value === 'final_review' ? '当前' : '',
+      keywords: buildWorkspaceMetaKKeywords('终审工作台', '终审', 'final review', '复核'),
     },
     {
       id: 'metak-command-switch-ai-dialog',
@@ -8478,12 +8507,26 @@ function switchWorkspaceFromHeader(workspaceId: string): void {
   activeWorkspaceId.value = normalizedWorkspaceId
 }
 
-function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
+async function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
   if (nextMode === 'defense') {
+    workbenchMode.value = 'defense'
     aiMode.value = 'defense'
     return
   }
 
+  if (nextMode === 'final_review') {
+    const nextPrimaryMode = aiMode.value !== 'defense'
+      ? aiMode.value as WorkspacePrimaryAiMode
+      : (lastPrimaryAiMode.value || 'dialog_ask')
+    aiMode.value = nextPrimaryMode
+    lastPrimaryAiMode.value = nextPrimaryMode
+    const opened = await openFinalReviewFromHeader()
+    if (opened)
+      workbenchMode.value = 'final_review'
+    return
+  }
+
+  workbenchMode.value = 'project'
   aiMode.value = lastPrimaryAiMode.value || 'dialog_ask'
 }
 
@@ -8492,10 +8535,11 @@ function updateWorkspaceAiMode(nextMode: WorkspaceAiMode) {
   aiMode.value = nextMode
 }
 
-async function openFinalReviewFromHeader() {
+async function openFinalReviewFromHeader(): Promise<boolean> {
   const opened = await ensureWorkflowCanvas()
   if (opened)
     statusLine.value = '已打开流程画布，可按流程继续推进终审。'
+  return opened
 }
 
 async function openWorkspaceHomeFromHeader() {
@@ -8754,15 +8798,18 @@ async function executeMetaKCommandAction(actionId: WorkspaceMetaKActionId): Prom
       await openFlowFromLeftSidebar()
       return
     case 'open_final_review':
-      await openFinalReviewFromHeader()
+      await updateWorkbenchMode('final_review')
       return
     case 'switch_workbench_project':
-      updateWorkbenchMode('project')
+      await updateWorkbenchMode('project')
       statusLine.value = '已切回项目工作台。'
       return
     case 'switch_workbench_defense':
-      updateWorkbenchMode('defense')
+      await updateWorkbenchMode('defense')
       statusLine.value = '已切到答辩工作台。'
+      return
+    case 'switch_workbench_final_review':
+      await updateWorkbenchMode('final_review')
       return
     case 'switch_ai_dialog':
       expandRightSidebar()
@@ -9305,7 +9352,7 @@ watch(aiMode, async (next, previous) => {
   if (projectWorkspaceModeHydrating.value) {
     if (next === 'defense')
       workbenchMode.value = 'defense'
-    else
+    else if (workbenchMode.value !== 'final_review')
       workbenchMode.value = 'project'
     return
   }
@@ -9314,7 +9361,8 @@ watch(aiMode, async (next, previous) => {
     workbenchMode.value = 'defense'
   }
   else {
-    workbenchMode.value = 'project'
+    if (workbenchMode.value !== 'final_review')
+      workbenchMode.value = 'project'
     lastPrimaryAiMode.value = next
   }
 
@@ -9350,7 +9398,6 @@ watch(() => workspaceRealtime.connected.value, () => {
       :meta-k-shortcut-label="metaKShortcutLabel"
       :ai-collapsed="rightSidebarCollapsed"
       @update:workbench-mode="updateWorkbenchMode"
-      @final-review="openFinalReviewFromHeader"
       @open-meta-k="openMetaK"
       @quick-switch-project="switchProjectFromHeader"
       @toggle-ai-sidebar="toggleRightSidebar"
