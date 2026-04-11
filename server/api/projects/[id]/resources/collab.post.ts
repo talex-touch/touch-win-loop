@@ -21,6 +21,7 @@ interface CreateCollabResourceBody {
   drawMode?: string
   sceneSourceType?: string
   templateKey?: string
+  editorEngine?: string
   metadata?: Record<string, unknown>
 }
 
@@ -152,6 +153,7 @@ export default defineEventHandler(async (event) => {
               ...(normalizeString(body.drawMode) ? { drawMode: normalizeString(body.drawMode) } : {}),
               ...(normalizeString(body.sceneSourceType) ? { sceneSourceType: normalizeString(body.sceneSourceType) } : {}),
               ...(normalizeString(body.templateKey) ? { templateKey: normalizeString(body.templateKey) } : {}),
+              ...(normalizeString(body.editorEngine) ? { editorEngine: normalizeString(body.editorEngine) } : {}),
             },
           })
 

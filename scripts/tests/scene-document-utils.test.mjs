@@ -11,6 +11,8 @@ async function loadSceneUtils() {
 
 it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', async () => {
   const {
+    appendDesignFrameToSceneDocument,
+    appendDesignPageToSceneDocument,
     buildDeviceMockupSceneDocument,
     exportArchitectureModelToMermaid,
     exportSchemaModelToDDL,
@@ -18,6 +20,7 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
     importFromDDL,
     importFromMarkdownOutline,
     importFromMermaid,
+    parseSceneDocumentString,
     renderCompositionAssetToSvg,
   } = await loadSceneUtils()
 
@@ -27,6 +30,10 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
   assert.equal(mermaidScene.sourceModel.kind, 'graph')
   assert.equal(mermaidScene.sceneModel.nodes.length, 2)
   assert.equal(mermaidScene.sceneModel.edges.length, 1)
+
+  const hintedMermaidScene = importFromMermaid('%% diagramType: architecture\nflowchart TD\napi[API] --> db[(DB)]')
+  assert.equal(hintedMermaidScene.sourceModel.kind, 'graph')
+  assert.equal(hintedMermaidScene.sourceModel.diagramType, 'architecture')
 
   const outlineScene = importFromMarkdownOutline('# 总览\n- 平台\n  - Diagram\n  - Schema')
   assert.equal(outlineScene.drawMode, 'diagram')
@@ -190,8 +197,57 @@ packages:
   })
   const svg = renderCompositionAssetToSvg(deviceScene)
   assert.equal(deviceScene.drawMode, 'composition')
+  assert.equal(deviceScene.editorEngine, 'vueflow')
+  assert.equal(deviceScene.sourceModel.kind, 'composition')
+  assert.equal(deviceScene.sourceModel.pages?.length, 1)
+  assert.equal(deviceScene.sourceModel.frames?.length, 1)
   assert.match(svg, /data-device-frame="browser-window"/)
   assert.match(svg, /统一图形平台/)
+
+  const expandedPageScene = appendDesignPageToSceneDocument(deviceScene, {
+    name: 'Page 2',
+  })
+  assert.equal(expandedPageScene.sourceModel.kind, 'composition')
+  assert.equal(expandedPageScene.sourceModel.pages?.length, 2)
+
+  const expandedFrameScene = appendDesignFrameToSceneDocument(expandedPageScene, {
+    pageId: expandedPageScene.sourceModel.currentPageId,
+    kind: 'diagram',
+    name: '依赖图 Frame',
+    embeddedScene: mermaidScene,
+  })
+  assert.ok(expandedFrameScene.sourceModel.frames?.some(frame => frame.kind === 'diagram'))
+  const diagramFrameId = expandedFrameScene.sourceModel.frames?.find(frame => frame.kind === 'diagram')?.id || ''
+  const frameSvg = renderCompositionAssetToSvg(expandedFrameScene, {
+    frameId: diagramFrameId,
+  })
+  assert.match(frameSvg, /data-frame-id=/)
+
+  const migratedComposition = parseSceneDocumentString(JSON.stringify({
+    drawMode: 'composition',
+    sourceType: 'image_mockup',
+    sourceModel: {
+      kind: 'composition',
+      templateKey: 'device-showcase',
+      slots: {
+        title: '旧版标题',
+        subtitle: '旧版副标题',
+        badge: 'Legacy',
+        imageSrc: 'data:image/png;base64,legacy',
+      },
+      themeTokens: {
+        background: '#111827',
+        accent: '#38bdf8',
+      },
+    },
+  }), {
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'image_mockup',
+  })
+  assert.equal(migratedComposition.sourceModel.kind, 'composition')
+  assert.equal(migratedComposition.sourceModel.pages?.length, 1)
+  assert.equal(migratedComposition.sourceModel.frames?.length, 1)
+  assert.equal(migratedComposition.sourceModel.frames?.[0]?.kind, 'device_mockup')
 })
 
 it('repo architecture scanner 可从当前工作区读取 manifests 并生成 architecture scene', async () => {

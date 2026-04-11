@@ -1437,13 +1437,7 @@ export function applySceneTemplate(input: {
       frames,
       themeTokens: nextThemeTokens,
     }
-    return relayoutSceneDocument({
-      ...base,
-      drawMode: 'composition',
-      sourceModel: nextComposition,
-      templateKey: nextComposition.templateKey,
-      sceneModel: buildCompositionSceneModel(nextComposition),
-    })
+    return finalizeCompositionSceneDocument(base, nextComposition)
   }
 
   return {
@@ -1752,24 +1746,45 @@ function upsertGraphNode(map: Map<string, GraphSourceNode>, token: string, fallb
   return parsed
 }
 
+function parseMermaidDiagramTypeHint(line: string): GraphSourceModel['diagramType'] | null {
+  const match = normalizeString(line).match(/^%%\s*diagramType\s*:\s*(flowchart|mindmap|relationship|architecture)\s*$/i)
+  if (!match?.[1])
+    return null
+  return match[1].toLowerCase() as GraphSourceModel['diagramType']
+}
+
 export function importFromMermaid(sourceText: string): SceneDocument {
   const graphNodes = new Map<string, GraphSourceNode>()
   const graphEdges: GraphSourceEdge[] = []
   let diagramType: GraphSourceModel['diagramType'] = 'flowchart'
-  const lines = String(sourceText || '')
+  let hasDiagramTypeHint = false
+  const lines: string[] = []
+
+  for (const rawLine of String(sourceText || '')
     .replace(/\r/g, '')
     .split('\n')
-    .flatMap(line => line.split(';'))
-    .map(line => line.replace(/%%.*$/g, '').trim())
-    .filter(Boolean)
+    .flatMap(line => line.split(';'))) {
+    const hintedDiagramType = parseMermaidDiagramTypeHint(rawLine)
+    if (hintedDiagramType) {
+      diagramType = hintedDiagramType
+      hasDiagramTypeHint = true
+      continue
+    }
+
+    const normalizedLine = rawLine.replace(/%%.*$/g, '').trim()
+    if (normalizedLine)
+      lines.push(normalizedLine)
+  }
 
   for (const [index, line] of lines.entries()) {
     if (/^(graph|flowchart)\b/i.test(line)) {
-      diagramType = 'flowchart'
+      if (!hasDiagramTypeHint)
+        diagramType = 'flowchart'
       continue
     }
     if (/^mindmap\b/i.test(line)) {
-      diagramType = 'mindmap'
+      if (!hasDiagramTypeHint)
+        diagramType = 'mindmap'
       continue
     }
     if (/^(subgraph|end|classDef|class|style|linkStyle)\b/i.test(line))
@@ -2466,6 +2481,335 @@ function buildArchitectureFromDockerCompose(payload: Record<string, unknown>): A
   }
 }
 
+function resolveCompositionDocumentState(
+  document: SceneDocument | CompositionModel | unknown,
+): { base: SceneDocument, composition: CompositionModel } {
+  if (isRecord(document) && normalizeString(document.kind) === 'composition') {
+    const templateKey = normalizeString(document.templateKey) || 'device-showcase'
+    return {
+      base: createEmptySceneDocument({
+        drawMode: 'composition',
+        sourceType: 'image_mockup',
+        templateKey,
+        editorEngine: 'vueflow',
+      }),
+      composition: normalizeCompositionModel(document, templateKey),
+    }
+  }
+
+  const base = sceneDocumentFromUnknown(document, {
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'image_mockup',
+  })
+
+  if (base.sourceModel.kind === 'composition') {
+    return {
+      base: {
+        ...base,
+        drawMode: 'composition',
+        sourceType: normalizeSceneSourceType(base.sourceType, 'image_mockup'),
+        editorEngine: 'vueflow',
+      },
+      composition: normalizeCompositionModel(base.sourceModel, base.templateKey || 'device-showcase'),
+    }
+  }
+
+  const templateKey = normalizeString(base.templateKey) || 'device-showcase'
+  return {
+    base: {
+      ...createEmptySceneDocument({
+        drawMode: 'composition',
+        sourceType: 'image_mockup',
+        templateKey,
+        editorEngine: 'vueflow',
+      }),
+      metadata: normalizeRecord(base.metadata),
+    },
+    composition: defaultCompositionModel(templateKey),
+  }
+}
+
+function deriveLegacySlotsFromFrame(frame: DesignFrameModel | undefined): Record<string, unknown> {
+  if (!frame)
+    return {}
+
+  const elements = ensureArray(frame.elements)
+  const title = elements.find(element => element.id === 'title') || elements.find(element => element.type === 'text')
+  const subtitle = elements.find(element => element.id === 'subtitle') || elements.find(element => element.type === 'caption')
+  const badge = elements.find(element => element.id === 'badge') || elements.find(element => element.type === 'badge')
+  const image = elements.find(element => element.id === 'hero-image') || elements.find(element => element.type === 'image')
+
+  return {
+    ...(normalizeString(title?.text) ? { title: normalizeString(title?.text) } : {}),
+    ...(normalizeString(subtitle?.text) ? { subtitle: normalizeString(subtitle?.text) } : {}),
+    ...(normalizeString(badge?.text) ? { badge: normalizeString(badge?.text) } : {}),
+    ...(normalizeString(image?.imageSrc) ? { imageSrc: normalizeString(image?.imageSrc) } : {}),
+  }
+}
+
+function syncCompositionFrameIds(composition: CompositionModel): CompositionModel {
+  const rawPages = ensureArray(composition.pages)
+  const pages = (rawPages.length > 0 ? rawPages : [createDefaultDesignPage({
+    id: DEFAULT_COMPOSITION_PAGE_ID,
+  })]).map((page, index) => {
+    return createDefaultDesignPage({
+      ...page,
+      id: sanitizeIdentifier(page.id, `page-${index + 1}`),
+      name: normalizeString(page.name) || `Page ${index + 1}`,
+      background: normalizeString(page.background) || '#0b1220',
+      frameIds: [],
+      viewport: {
+        x: toFiniteNumber(page.viewport?.x, 0),
+        y: toFiniteNumber(page.viewport?.y, 0),
+        zoom: toFiniteNumber(page.viewport?.zoom, 1) || 1,
+      },
+      metadata: normalizeRecord(page.metadata),
+    })
+  })
+  const fallbackPageId = pages[0]?.id || DEFAULT_COMPOSITION_PAGE_ID
+  const pageIds = new Set(pages.map(page => page.id))
+  const frames = ensureArray(composition.frames).map((frame, index) => {
+    const pageId = pageIds.has(normalizeString(frame.pageId)) ? normalizeString(frame.pageId) : fallbackPageId
+    return normalizeDesignFrameModel({
+      ...frame,
+      pageId,
+    }, index, fallbackPageId)
+  })
+  const frameIdsByPage = new Map<string, string[]>()
+  pages.forEach((page) => {
+    frameIdsByPage.set(page.id, [])
+  })
+  frames.forEach((frame) => {
+    const bucket = frameIdsByPage.get(frame.pageId) || []
+    if (!bucket.includes(frame.id))
+      bucket.push(frame.id)
+    frameIdsByPage.set(frame.pageId, bucket)
+  })
+  const normalizedPages = pages.map(page => ({
+    ...page,
+    frameIds: frameIdsByPage.get(page.id) || [],
+  }))
+  const currentPageId = normalizedPages.some(page => page.id === normalizeString(composition.currentPageId))
+    ? normalizeString(composition.currentPageId)
+    : normalizedPages[0]?.id || DEFAULT_COMPOSITION_PAGE_ID
+
+  return {
+    ...composition,
+    pages: normalizedPages,
+    currentPageId,
+    frames,
+  }
+}
+
+function finalizeCompositionSceneDocument(base: SceneDocument, composition: CompositionModel): SceneDocument {
+  const syncedComposition = syncCompositionFrameIds(composition)
+  const currentPageId = normalizeString(syncedComposition.currentPageId) || syncedComposition.pages?.[0]?.id || DEFAULT_COMPOSITION_PAGE_ID
+  const currentPageFrames = ensureArray(syncedComposition.frames).filter(frame => normalizeString(frame.pageId) === currentPageId)
+  const preferredFrame = currentPageFrames.find(frame => frame.kind === 'device_mockup' || frame.kind === 'template') || currentPageFrames[0]
+  const nextComposition: CompositionModel = {
+    ...syncedComposition,
+    templateKey: normalizeString(preferredFrame?.templateKey) || syncedComposition.templateKey,
+    deviceFramePresetKey: normalizeString(preferredFrame?.deviceFramePresetKey) || syncedComposition.deviceFramePresetKey,
+    slots: preferredFrame
+      ? {
+          ...normalizeRecord(syncedComposition.slots),
+          ...deriveLegacySlotsFromFrame(preferredFrame),
+        }
+      : normalizeRecord(syncedComposition.slots),
+    themeTokens: normalizeThemeTokens(
+      syncedComposition.themeTokens,
+      defaultCompositionModel(normalizeString(syncedComposition.templateKey) || 'device-showcase').themeTokens,
+    ),
+  }
+
+  return relayoutSceneDocument({
+    ...base,
+    drawMode: 'composition',
+    sourceType: normalizeSceneSourceType(base.sourceType, 'image_mockup'),
+    templateKey: nextComposition.templateKey,
+    editorEngine: 'vueflow',
+    sourceModel: nextComposition,
+  })
+}
+
+function resolveDesignFrameDefaultName(kind: DesignFrameKind, index: number): string {
+  if (kind === 'diagram')
+    return `图表 Frame ${index}`
+  if (kind === 'device_mockup')
+    return `设备 Frame ${index}`
+  if (kind === 'template')
+    return `模板 Frame ${index}`
+  return `自由 Frame ${index}`
+}
+
+function resolveDefaultFrameSize(kind: DesignFrameKind, aspectRatio = '16:9'): { width: number, height: number } {
+  if (kind === 'diagram')
+    return { width: 1080, height: 720 }
+  if (kind === 'freeform')
+    return { width: 960, height: 640 }
+
+  const size = resolveAspectRatioSize(aspectRatio)
+  return {
+    width: Math.round(size.width * 0.78),
+    height: Math.round(size.height * 0.78),
+  }
+}
+
+function createDesignFrameFromInput(
+  input: Partial<DesignFrameModel> & {
+    aspectRatio?: string
+    slots?: Record<string, unknown>
+    title?: string
+    subtitle?: string
+    badge?: string
+    imageSrc?: string
+  },
+  composition: CompositionModel,
+  fallbackPageId: string,
+): DesignFrameModel {
+  const pageId = sanitizeIdentifier(input.pageId, fallbackPageId)
+  const kind = (normalizeString(input.kind) as DesignFrameKind) || 'freeform'
+  const pageFrameCount = ensureArray(composition.frames).filter(frame => normalizeString(frame.pageId) === pageId).length
+  const frameIndex = pageFrameCount + 1
+  const aspectRatio = normalizeString(input.aspectRatio) || composition.aspectRatio || '16:9'
+  const defaultSize = resolveDefaultFrameSize(kind, aspectRatio)
+  const themeTokens = {
+    ...normalizeThemeTokens(composition.themeTokens, defaultCompositionThemeTokens()),
+    ...normalizeThemeTokens(input.themeTokens),
+  }
+  const x = toFiniteNumber(input.x, 120 + pageFrameCount * 56)
+  const y = toFiniteNumber(input.y, 120 + pageFrameCount * 48)
+  const slots = {
+    ...normalizeRecord(input.slots),
+    ...(normalizeString(input.title) ? { title: normalizeString(input.title) } : {}),
+    ...(normalizeString(input.subtitle) ? { subtitle: normalizeString(input.subtitle) } : {}),
+    ...(normalizeString(input.badge) ? { badge: normalizeString(input.badge) } : {}),
+    ...(normalizeString(input.imageSrc) ? { imageSrc: normalizeString(input.imageSrc) } : {}),
+  }
+
+  if (kind === 'template' || kind === 'device_mockup') {
+    const legacyFrame = createLegacyCompositionFrame({
+      id: normalizeString(input.id) || `frame-${Date.now()}`,
+      pageId,
+      name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
+      kind,
+      templateKey: normalizeString(input.templateKey) || composition.templateKey,
+      deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || composition.deviceFramePresetKey,
+      aspectRatio,
+      slots,
+      themeTokens,
+      metadata: normalizeRecord(input.metadata),
+    })
+
+    return normalizeDesignFrameModel({
+      ...legacyFrame,
+      x,
+      y,
+      width: toPositiveNumber(input.width, legacyFrame.width),
+      height: toPositiveNumber(input.height, legacyFrame.height),
+      locked: typeof input.locked === 'boolean' ? input.locked : legacyFrame.locked,
+      elements: ensureArray(input.elements).length > 0 ? ensureArray(input.elements) : legacyFrame.elements,
+      metadata: {
+        ...normalizeRecord(legacyFrame.metadata),
+        ...normalizeRecord(input.metadata),
+      },
+    }, frameIndex - 1, pageId)
+  }
+
+  if (kind === 'diagram') {
+    const embeddedScene = input.embeddedScene
+      ? relayoutSceneDocument(sceneDocumentFromUnknown(input.embeddedScene, {
+          fallbackDrawMode: 'diagram',
+          fallbackSourceType: 'manual',
+        }))
+      : relayoutSceneDocument(createEmptySceneDocument({
+          drawMode: 'diagram',
+          sourceType: 'manual',
+          editorEngine: 'vueflow',
+        }))
+
+    return normalizeDesignFrameModel({
+      id: normalizeString(input.id) || `frame-${Date.now()}`,
+      pageId,
+      name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
+      kind,
+      x,
+      y,
+      width: toPositiveNumber(input.width, defaultSize.width),
+      height: toPositiveNumber(input.height, defaultSize.height),
+      locked: Boolean(input.locked),
+      elements: ensureArray(input.elements),
+      embeddedScene,
+      themeTokens,
+      metadata: normalizeRecord(input.metadata),
+    }, frameIndex - 1, pageId)
+  }
+
+  const defaultElements = ensureArray(input.elements).length > 0
+    ? ensureArray(input.elements)
+    : [
+        createDesignElement({
+          id: 'title',
+          type: 'text',
+          x: 56,
+          y: 64,
+          width: 520,
+          height: 80,
+          text: normalizeString(input.title) || '新建设计 Frame',
+          style: {
+            fontSize: 38,
+            fontWeight: 700,
+            color: 'text',
+          },
+        }, 'title'),
+        createDesignElement({
+          id: 'subtitle',
+          type: 'caption',
+          x: 56,
+          y: 132,
+          width: 520,
+          height: 64,
+          text: normalizeString(input.subtitle) || '在右侧属性面板继续编辑文字、图片和形状。',
+          style: {
+            fontSize: 20,
+            fontWeight: 500,
+            color: 'muted',
+          },
+        }, 'subtitle'),
+        createDesignElement({
+          id: 'panel',
+          type: 'shape',
+          x: 560,
+          y: 92,
+          width: 280,
+          height: 280,
+          style: {
+            fill: 'rgba(148, 163, 184, 0.18)',
+          },
+          metadata: {
+            shapeKind: 'rect',
+          },
+        }, 'panel'),
+      ]
+
+  return normalizeDesignFrameModel({
+    id: normalizeString(input.id) || `frame-${Date.now()}`,
+    pageId,
+    name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
+    kind: 'freeform',
+    x,
+    y,
+    width: toPositiveNumber(input.width, defaultSize.width),
+    height: toPositiveNumber(input.height, defaultSize.height),
+    locked: Boolean(input.locked),
+    templateKey: normalizeString(input.templateKey) || undefined,
+    deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || undefined,
+    elements: defaultElements,
+    themeTokens,
+    metadata: normalizeRecord(input.metadata),
+  }, frameIndex - 1, pageId)
+}
+
 function buildArchitectureFromPackageManifest(payload: Record<string, unknown>): ArchitectureImportResult | null {
   const packageName = normalizeString(payload.name)
   const dependencies = normalizePackageDependencyMap(payload)
@@ -2919,122 +3263,326 @@ export function buildDeviceMockupSceneDocument(input: {
 } = {}): SceneDocument {
   const templateKey = normalizeString(input.templateKey) || 'device-showcase'
   const template = resolveSceneTemplateManifest(templateKey)
-  const compositionModel: CompositionModel = {
-    ...defaultCompositionModel(templateKey),
-    templateKey,
-    deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || defaultCompositionModel(templateKey).deviceFramePresetKey,
-    aspectRatio: normalizeString(input.aspectRatio) || '16:9',
-    slots: {
-      title: normalizeString(input.title) || '设计标题',
-      subtitle: normalizeString(input.subtitle) || '补充一段简洁说明，后续可由 AI 自动填充。',
-      badge: normalizeString(input.badge) || '设备展示',
-      imageSrc: normalizeString(input.imageSrc) || '',
-    },
-    themeTokens: {
-      ...normalizeThemeTokens(template?.themeTokens, defaultCompositionModel(templateKey).themeTokens),
-      ...normalizeThemeTokens(input.themeTokens),
-    },
-    metadata: {},
+  const themeTokens = {
+    ...normalizeThemeTokens(template?.themeTokens, defaultCompositionModel(templateKey).themeTokens),
+    ...normalizeThemeTokens(input.themeTokens),
   }
-
-  return relayoutSceneDocument({
-    ...createEmptySceneDocument({
-      drawMode: 'composition',
-      sourceType: 'image_mockup',
-      templateKey,
-    }),
+  const slots = {
+    title: normalizeString(input.title) || '设计标题',
+    subtitle: normalizeString(input.subtitle) || '补充一段简洁说明，后续可由 AI 自动填充。',
+    badge: normalizeString(input.badge) || '设备展示',
+    imageSrc: normalizeString(input.imageSrc) || '',
+  }
+  const base = createEmptySceneDocument({
     drawMode: 'composition',
     sourceType: 'image_mockup',
     templateKey,
-    sourceModel: compositionModel,
+    editorEngine: 'vueflow',
+  })
+  const composition = defaultCompositionModel(templateKey)
+  const page = createDefaultDesignPage({
+    id: DEFAULT_COMPOSITION_PAGE_ID,
+    name: 'Page 1',
+    background: normalizeString(themeTokens.background) || '#0b1220',
+  })
+  const frame = createDesignFrameFromInput({
+    id: DEFAULT_COMPOSITION_FRAME_ID,
+    pageId: page.id,
+    name: '设备展示',
+    kind: 'device_mockup',
+    templateKey,
+    deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || composition.deviceFramePresetKey,
+    aspectRatio: normalizeString(input.aspectRatio) || composition.aspectRatio,
+    slots,
+    themeTokens,
+  }, {
+    ...composition,
+    pages: [page],
+    frames: [],
+  }, page.id)
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    templateKey,
+    currentPageId: page.id,
+    pages: [{
+      ...page,
+      frameIds: [frame.id],
+    }],
+    frames: [frame],
+    slots,
+    themeTokens,
+    aspectRatio: normalizeString(input.aspectRatio) || composition.aspectRatio,
+    deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || composition.deviceFramePresetKey,
+    assets: normalizeString(input.imageSrc)
+      ? [{
+          id: 'asset-1',
+          type: 'image',
+          name: 'mockup-image',
+          src: normalizeString(input.imageSrc),
+          metadata: {
+            source: 'device_mockup',
+          },
+        }]
+      : [],
   })
 }
 
-export function renderCompositionAssetToSvg(document: SceneDocument | CompositionModel | unknown): string {
-  const sceneDocument = isRecord(document) && normalizeString(document.kind) === 'composition'
-    ? relayoutSceneDocument({
-        ...createEmptySceneDocument({
-          drawMode: 'composition',
-          sourceType: 'image_mockup',
-          templateKey: normalizeString(document.templateKey) || 'device-showcase',
-        }),
-        drawMode: 'composition',
-        sourceType: 'image_mockup',
-        templateKey: normalizeString(document.templateKey) || 'device-showcase',
-        sourceModel: normalizeCompositionModel(document, normalizeString(document.templateKey) || 'device-showcase'),
+export function appendDesignPageToSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  input: Partial<DesignPageModel> & { makeCurrent?: boolean } = {},
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const pageIndex = ensureArray(composition.pages).length + 1
+  const currentPage = resolveCompositionCurrentPage(composition)
+  const page = createDefaultDesignPage({
+    id: sanitizeIdentifier(input.id, `page-${pageIndex}`),
+    name: normalizeString(input.name) || `Page ${pageIndex}`,
+    background: normalizeString(input.background) || normalizeString(currentPage.background) || '#0b1220',
+    viewport: {
+      x: toFiniteNumber(input.viewport?.x, 0),
+      y: toFiniteNumber(input.viewport?.y, 0),
+      zoom: toFiniteNumber(input.viewport?.zoom, 1) || 1,
+    },
+    metadata: normalizeRecord(input.metadata),
+  })
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    pages: [...ensureArray(composition.pages), page],
+    currentPageId: input.makeCurrent === false ? composition.currentPageId : page.id,
+  })
+}
+
+export function updateDesignPageInSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  pageId: string,
+  patch: Partial<DesignPageModel> = {},
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  if (!ensureArray(composition.pages).some(page => normalizeString(page.id) === normalizeString(pageId)))
+    return finalizeCompositionSceneDocument(base, composition)
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    pages: ensureArray(composition.pages).map((page) => {
+      if (normalizeString(page.id) !== normalizeString(pageId))
+        return page
+      return createDefaultDesignPage({
+        ...page,
+        name: normalizeString(patch.name) || page.name,
+        background: normalizeString(patch.background) || page.background,
+        viewport: {
+          x: toFiniteNumber(patch.viewport?.x, page.viewport?.x || 0),
+          y: toFiniteNumber(patch.viewport?.y, page.viewport?.y || 0),
+          zoom: toFiniteNumber(patch.viewport?.zoom, page.viewport?.zoom || 1) || 1,
+        },
+        metadata: {
+          ...normalizeRecord(page.metadata),
+          ...normalizeRecord(patch.metadata),
+        },
       })
-    : sceneDocumentFromUnknown(document, {
-        fallbackDrawMode: 'composition',
-        fallbackSourceType: 'image_mockup',
-      })
+    }),
+  })
+}
+
+export function removeDesignPageFromSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  pageId: string,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const pages = ensureArray(composition.pages)
+  if (pages.length <= 1)
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const nextPages = pages.filter(page => normalizeString(page.id) !== normalizeString(pageId))
+  const nextFrames = ensureArray(composition.frames).filter(frame => normalizeString(frame.pageId) !== normalizeString(pageId))
+  const nextCurrentPageId = normalizeString(composition.currentPageId) === normalizeString(pageId)
+    ? nextPages[0]?.id || DEFAULT_COMPOSITION_PAGE_ID
+    : composition.currentPageId
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    pages: nextPages,
+    frames: nextFrames,
+    currentPageId: nextCurrentPageId,
+  })
+}
+
+export function setCurrentDesignPageInSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  pageId: string,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  if (!ensureArray(composition.pages).some(page => normalizeString(page.id) === normalizeString(pageId)))
+    return finalizeCompositionSceneDocument(base, composition)
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: normalizeString(pageId),
+  })
+}
+
+export function appendDesignFrameToSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  input: Partial<DesignFrameModel> & {
+    aspectRatio?: string
+    slots?: Record<string, unknown>
+    title?: string
+    subtitle?: string
+    badge?: string
+    imageSrc?: string
+  } = {},
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const pageId = ensureArray(composition.pages).some(page => page.id === normalizeString(input.pageId))
+    ? normalizeString(input.pageId)
+    : resolveCompositionCurrentPage(composition).id
+  const frame = createDesignFrameFromInput({
+    ...input,
+    pageId,
+  }, composition, pageId)
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: pageId,
+    frames: [...ensureArray(composition.frames), frame],
+  })
+}
+
+export function updateDesignFrameInSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  frameId: string,
+  patch: Partial<DesignFrameModel> & {
+    aspectRatio?: string
+    slots?: Record<string, unknown>
+    title?: string
+    subtitle?: string
+    badge?: string
+    imageSrc?: string
+  } = {},
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const target = ensureArray(composition.frames).find(frame => normalizeString(frame.id) === normalizeString(frameId))
+  if (!target)
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const pageId = ensureArray(composition.pages).some(page => page.id === normalizeString(patch.pageId))
+    ? normalizeString(patch.pageId)
+    : target.pageId
+  const framesWithoutTarget = ensureArray(composition.frames).filter(frame => normalizeString(frame.id) !== normalizeString(frameId))
+  const nextFrame = createDesignFrameFromInput({
+    ...target,
+    ...patch,
+    id: target.id,
+    pageId,
+    elements: patch.elements !== undefined ? patch.elements : target.elements,
+    embeddedScene: patch.embeddedScene !== undefined ? patch.embeddedScene : target.embeddedScene,
+    themeTokens: patch.themeTokens
+      ? {
+          ...normalizeThemeTokens(target.themeTokens),
+          ...normalizeThemeTokens(patch.themeTokens),
+        }
+      : target.themeTokens,
+    metadata: patch.metadata
+      ? {
+          ...normalizeRecord(target.metadata),
+          ...normalizeRecord(patch.metadata),
+        }
+      : target.metadata,
+  }, {
+    ...composition,
+    frames: framesWithoutTarget,
+  }, pageId)
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: pageId,
+    frames: [...framesWithoutTarget, nextFrame],
+  })
+}
+
+export function removeDesignFrameFromSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  frameId: string,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    frames: ensureArray(composition.frames).filter(frame => normalizeString(frame.id) !== normalizeString(frameId)),
+  })
+}
+
+function renderCompositionBackdrop(width: number, height: number, background: string, accent: string, gradientId: string): string {
+  return `
+  <defs>
+    <linearGradient id="${gradientId}" x1="0" y1="0" x2="${width}" y2="${height}" gradientUnits="userSpaceOnUse">
+      <stop stop-color="${escapeXml(background)}" />
+      <stop offset="1" stop-color="${escapeXml(accent)}" stop-opacity="0.18" />
+    </linearGradient>
+  </defs>
+  <rect width="${width}" height="${height}" fill="url(#${gradientId})" />
+  <circle cx="${Math.round(width * 0.18)}" cy="${Math.round(height * 0.22)}" r="${Math.round(Math.min(width, height) * 0.1)}" fill="${escapeXml(accent)}" fill-opacity="0.1" />
+  <circle cx="${Math.round(width * 0.82)}" cy="${Math.round(height * 0.78)}" r="${Math.round(Math.min(width, height) * 0.08)}" fill="#ffffff" fill-opacity="0.05" />
+`.trim()
+}
+
+export function renderCompositionAssetToSvg(
+  document: SceneDocument | CompositionModel | unknown,
+  options: {
+    pageId?: string
+    frameId?: string
+    padding?: number
+  } = {},
+): string {
+  const state = resolveCompositionDocumentState(document)
+  const sceneDocument = finalizeCompositionSceneDocument(state.base, state.composition)
   const composition = sceneDocument.sourceModel.kind === 'composition'
     ? sceneDocument.sourceModel
     : defaultCompositionModel(sceneDocument.templateKey || 'device-showcase')
-  const artboard = sceneDocument.sceneModel.artboards?.[0] || createDefaultArtboard()
-  const width = artboard.width
-  const height = artboard.height
-  const preset = resolveDeviceFramePreset(composition.deviceFramePresetKey || 'iphone-16-pro')
-  const slots = normalizeRecord(composition.slots)
-  const themeTokens = normalizeThemeTokens(composition.themeTokens, defaultCompositionModel(composition.templateKey).themeTokens)
-  const titleLines = splitTextLines(normalizeString(slots.title) || '设计标题', 18, 3)
-  const subtitleLines = splitTextLines(normalizeString(slots.subtitle), 28, 3)
-  const badge = normalizeString(slots.badge)
-  const imageSrc = normalizeString(slots.imageSrc)
-  const frameScale = Math.min((width * 0.36) / preset.width, (height * 0.72) / preset.height)
-  const frameWidth = Math.round(preset.width * frameScale)
-  const frameHeight = Math.round(preset.height * frameScale)
-  const frameX = width - frameWidth - 120
-  const frameY = Math.round((height - frameHeight) / 2)
-  const screenX = frameX + Math.round(preset.framePadding * frameScale)
-  const screenY = frameY + Math.round((preset.deviceFamily === 'browser' ? 54 : preset.framePadding) * frameScale)
-  const screenWidth = frameWidth - Math.round(preset.framePadding * frameScale * 2)
-  const screenHeight = preset.deviceFamily === 'browser'
-    ? frameHeight - Math.round(74 * frameScale)
-    : frameHeight - Math.round(preset.framePadding * frameScale * 2)
-  const clipId = `screen-clip-${sanitizeIdentifier(preset.key, 'frame')}`
-
-  const titleMarkup = titleLines.map((line, index) => {
-    return `<text x="104" y="${152 + index * 62}" fill="${escapeXml(themeTokens.text || '#e2e8f0')}" font-size="${index === 0 ? 54 : 50}" font-weight="700">${escapeXml(line)}</text>`
-  }).join('')
-  const subtitleMarkup = subtitleLines.map((line, index) => {
-    return `<text x="108" y="${312 + index * 34}" fill="${escapeXml(themeTokens.muted || '#94a3b8')}" font-size="24" font-weight="500">${escapeXml(line)}</text>`
-  }).join('')
-  const badgeMarkup = badge
-    ? `<g><rect x="104" y="80" rx="20" ry="20" width="${Math.max(112, badge.length * 16 + 28)}" height="38" fill="${escapeXml(themeTokens.accent || '#38bdf8')}" fill-opacity="0.16" stroke="${escapeXml(themeTokens.accent || '#38bdf8')}" /><text x="122" y="105" fill="${escapeXml(themeTokens.accent || '#38bdf8')}" font-size="18" font-weight="700">${escapeXml(badge)}</text></g>`
-    : ''
-  const browserChrome = preset.deviceFamily === 'browser'
-    ? `<rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="54" rx="28" ry="28" fill="#e2e8f0" />
-       <circle cx="${frameX + 28}" cy="${frameY + 27}" r="6" fill="#fb7185" />
-       <circle cx="${frameX + 48}" cy="${frameY + 27}" r="6" fill="#f59e0b" />
-       <circle cx="${frameX + 68}" cy="${frameY + 27}" r="6" fill="#10b981" />`
-    : ''
-  const imageMarkup = imageSrc
-    ? `<image href="${escapeXml(imageSrc)}" x="${screenX}" y="${screenY}" width="${screenWidth}" height="${screenHeight}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`
-    : `<rect x="${screenX}" y="${screenY}" width="${screenWidth}" height="${screenHeight}" rx="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" ry="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" fill="#cbd5e1" />
-       <text x="${screenX + 28}" y="${screenY + 44}" fill="#475569" font-size="20" font-weight="600">上传截图后这里会实时预览</text>`
+  const pageIdFromFrame = ensureArray(composition.frames).find(frame => normalizeString(frame.id) === normalizeString(options.frameId))?.pageId
+  const currentPage = resolveCompositionCurrentPage(composition)
+  const page = ensureArray(composition.pages).find((entry) => {
+    return normalizeString(entry.id) === normalizeString(pageIdFromFrame || options.pageId || currentPage.id)
+  }) || currentPage
+  const pageFrames = resolveCompositionFramesForPage(composition, page.id)
+  const singleFrame = ensureArray(pageFrames).find(frame => normalizeString(frame.id) === normalizeString(options.frameId)) || null
+  const exportFrames = singleFrame ? [singleFrame] : pageFrames
+  const padding = singleFrame ? 0 : Math.max(48, Math.round(toFiniteNumber(options.padding, 80)))
+  const minX = Math.min(...exportFrames.map(frame => frame.x))
+  const minY = Math.min(...exportFrames.map(frame => frame.y))
+  const maxX = Math.max(...exportFrames.map(frame => frame.x + frame.width))
+  const maxY = Math.max(...exportFrames.map(frame => frame.y + frame.height))
+  const width = singleFrame
+    ? Math.round(singleFrame.width)
+    : Math.max(DEFAULT_ARTBOARD_WIDTH, Math.round(maxX - minX + padding * 2))
+  const height = singleFrame
+    ? Math.round(singleFrame.height)
+    : Math.max(DEFAULT_ARTBOARD_HEIGHT, Math.round(maxY - minY + padding * 2))
+  const offsetX = singleFrame ? -singleFrame.x : padding - minX
+  const offsetY = singleFrame ? -singleFrame.y : padding - minY
+  const themeTokens = singleFrame
+    ? resolveFrameThemeTokens(composition, singleFrame)
+    : normalizeThemeTokens(composition.themeTokens, defaultCompositionModel(composition.templateKey).themeTokens)
+  const background = resolveThemeColorToken(
+    singleFrame ? themeTokens.background : page.background,
+    themeTokens,
+    themeTokens.background || '#0b1220',
+  )
+  const accent = resolveThemeColorToken(themeTokens.accent, themeTokens, '#38bdf8')
+  const deviceFrameKey = normalizeString(
+    singleFrame?.deviceFramePresetKey
+    || exportFrames.find(frame => frame.kind === 'device_mockup')?.deviceFramePresetKey
+    || composition.deviceFramePresetKey,
+  ) || 'iphone-16-pro'
+  const gradientId = sanitizeIdentifier(`${page.id}-${singleFrame?.id || 'page'}-bg`, 'composition-bg')
+  const label = singleFrame ? singleFrame.name : `${page.name} · ${exportFrames.length} Frame`
+  const frameMarkup = exportFrames.map(frame => renderDesignFrameMarkup(frame, composition, offsetX, offsetY)).join('')
 
   return `
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" data-template-key="${escapeXml(composition.templateKey)}" data-device-frame="${escapeXml(preset.key)}">
-  <defs>
-    <linearGradient id="bg-gradient" x1="0" y1="0" x2="${width}" y2="${height}" gradientUnits="userSpaceOnUse">
-      <stop stop-color="${escapeXml(themeTokens.background || '#0f172a')}" />
-      <stop offset="1" stop-color="${escapeXml(themeTokens.accent || '#38bdf8')}" stop-opacity="0.28" />
-    </linearGradient>
-    <clipPath id="${clipId}">
-      <rect x="${screenX}" y="${screenY}" width="${screenWidth}" height="${screenHeight}" rx="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" ry="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" />
-    </clipPath>
-  </defs>
-  <rect width="${width}" height="${height}" fill="url(#bg-gradient)" />
-  <circle cx="${Math.round(width * 0.18)}" cy="${Math.round(height * 0.28)}" r="${Math.round(width * 0.12)}" fill="${escapeXml(themeTokens.accent || '#38bdf8')}" fill-opacity="0.12" />
-  <circle cx="${Math.round(width * 0.58)}" cy="${Math.round(height * 0.82)}" r="${Math.round(width * 0.1)}" fill="#ffffff" fill-opacity="0.06" />
-  ${badgeMarkup}
-  ${titleMarkup}
-  ${subtitleMarkup}
-  <g filter="drop-shadow(0 36px 96px rgba(2, 6, 23, 0.32))">
-    <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${Math.max(24, Math.round(preset.bezelRadius * frameScale))}" ry="${Math.max(24, Math.round(preset.bezelRadius * frameScale))}" fill="${escapeXml(preset.background)}" />
-    ${browserChrome}
-    ${imageMarkup}
-  </g>
-  <text x="108" y="${height - 68}" fill="${escapeXml(themeTokens.muted || '#94a3b8')}" font-size="18" font-weight="500">Canonical SceneDocument · ${escapeXml(composition.templateKey)} · ${escapeXml(preset.title)}</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" data-template-key="${escapeXml(composition.templateKey)}" data-device-frame="${escapeXml(deviceFrameKey)}" data-page-id="${escapeXml(page.id)}"${singleFrame ? ` data-frame-id="${escapeXml(singleFrame.id)}"` : ''}>
+  ${renderCompositionBackdrop(width, height, background, accent, gradientId)}
+  ${frameMarkup}
+  <text x="${singleFrame ? 24 : 40}" y="${height - 28}" fill="${escapeXml(themeTokens.muted || '#94a3b8')}" font-size="${singleFrame ? 14 : 18}" font-weight="500">${escapeXml(label)}</text>
 </svg>`.trim()
 }

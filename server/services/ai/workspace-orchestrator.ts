@@ -12,6 +12,8 @@ import { createChatModel } from '~~/server/services/ai/llm-client'
 import { scanRepoArchitecture } from '~~/server/services/scene/data-source-connectors'
 import {
   applySceneTemplate,
+  appendDesignFrameToSceneDocument,
+  appendDesignPageToSceneDocument,
   buildDeviceMockupSceneDocument,
   exportArchitectureModelToMermaid,
   exportSchemaModelToDDL,
@@ -806,6 +808,232 @@ export async function executeWorkspaceAi(input: {
       },
     )
 
+    const generateDesignPage = tool(
+      async (payload: {
+        sceneDocument?: string
+        name?: string
+        background?: string
+      }) => {
+        const baseDocument = toText(payload.sceneDocument)
+          ? parseJsonValue(payload.sceneDocument)
+          : buildDeviceMockupSceneDocument({
+              templateKey: 'device-showcase',
+            })
+        const sceneDocument = appendDesignPageToSceneDocument(baseDocument, {
+          name: payload.name,
+          background: payload.background,
+          makeCurrent: true,
+        })
+        await hooks.onTool?.('generate_design_page', {
+          pageCount: sceneDocument.sourceModel.kind === 'composition' ? sceneDocument.sourceModel.pages?.length || 0 : 0,
+        })
+        return serializeSceneDocument(sceneDocument)
+      },
+      {
+        name: 'generate_design_page',
+        description: '向设计文档追加一个新的 Page，并返回新的 SceneDocument JSON。',
+        schema: z.object({
+          sceneDocument: z.string().optional(),
+          name: z.string().optional(),
+          background: z.string().optional(),
+        }),
+      },
+    )
+
+    const generateDesignFrame = tool(
+      async (payload: {
+        sceneDocument?: string
+        pageId?: string
+        kind?: 'freeform' | 'template' | 'device_mockup' | 'diagram'
+        name?: string
+        title?: string
+        subtitle?: string
+        badge?: string
+        imageSrc?: string
+        templateKey?: string
+        deviceFramePresetKey?: string
+        themeTokens?: Record<string, string>
+      }) => {
+        const baseDocument = toText(payload.sceneDocument)
+          ? parseJsonValue(payload.sceneDocument)
+          : buildDeviceMockupSceneDocument({
+              templateKey: payload.templateKey || 'device-showcase',
+            })
+        const sceneDocument = appendDesignFrameToSceneDocument(baseDocument, {
+          pageId: payload.pageId,
+          kind: payload.kind || 'freeform',
+          name: payload.name,
+          title: payload.title,
+          subtitle: payload.subtitle,
+          badge: payload.badge,
+          imageSrc: payload.imageSrc,
+          templateKey: payload.templateKey,
+          deviceFramePresetKey: payload.deviceFramePresetKey,
+          themeTokens: payload.themeTokens,
+        })
+        await hooks.onTool?.('generate_design_frame', {
+          kind: payload.kind || 'freeform',
+          frameCount: sceneDocument.sourceModel.kind === 'composition' ? sceneDocument.sourceModel.frames?.length || 0 : 0,
+        })
+        return serializeSceneDocument(sceneDocument)
+      },
+      {
+        name: 'generate_design_frame',
+        description: '向设计文档追加一个 freeform/template/device_mockup/diagram Frame，返回新的 SceneDocument JSON。',
+        schema: z.object({
+          sceneDocument: z.string().optional(),
+          pageId: z.string().optional(),
+          kind: z.enum(['freeform', 'template', 'device_mockup', 'diagram']).optional(),
+          name: z.string().optional(),
+          title: z.string().optional(),
+          subtitle: z.string().optional(),
+          badge: z.string().optional(),
+          imageSrc: z.string().optional(),
+          templateKey: z.string().optional(),
+          deviceFramePresetKey: z.string().optional(),
+          themeTokens: z.record(z.string(), z.string()).optional(),
+        }),
+      },
+    )
+
+    const generateDiagramFrame = tool(
+      async (payload: {
+        sceneDocument?: string
+        pageId?: string
+        name?: string
+        importFormat: 'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
+        sourceText: string
+      }) => {
+        const embeddedScene = payload.importFormat === 'mermaid'
+          ? importFromMermaid(payload.sourceText)
+          : payload.importFormat === 'markdown_outline'
+            ? importFromMarkdownOutline(payload.sourceText)
+            : payload.importFormat === 'ddl'
+              ? importFromDDL(payload.sourceText).sceneDocument
+              : importArchitectureFromMetadata(payload.sourceText).sceneDocument
+        const baseDocument = toText(payload.sceneDocument)
+          ? parseJsonValue(payload.sceneDocument)
+          : buildDeviceMockupSceneDocument({
+              templateKey: 'device-showcase',
+            })
+        const sceneDocument = appendDesignFrameToSceneDocument(baseDocument, {
+          pageId: payload.pageId,
+          kind: 'diagram',
+          name: payload.name,
+          embeddedScene,
+        })
+        await hooks.onTool?.('generate_diagram_frame', {
+          importFormat: payload.importFormat,
+          drawMode: embeddedScene.drawMode,
+        })
+        return serializeSceneDocument(sceneDocument)
+      },
+      {
+        name: 'generate_diagram_frame',
+        description: '把 Mermaid / Markdown / DDL / Architecture 元数据导入为新的 Diagram Frame，并返回新的 SceneDocument JSON。',
+        schema: z.object({
+          sceneDocument: z.string().optional(),
+          pageId: z.string().optional(),
+          name: z.string().optional(),
+          importFormat: z.enum(['mermaid', 'markdown_outline', 'ddl', 'architecture']),
+          sourceText: z.string().min(2),
+        }),
+      },
+    )
+
+    const generateDeviceMockupFrame = tool(
+      async (payload: {
+        sceneDocument?: string
+        pageId?: string
+        name?: string
+        title?: string
+        subtitle?: string
+        badge?: string
+        imageSrc?: string
+        templateKey?: string
+        deviceFramePresetKey?: string
+        themeTokens?: Record<string, string>
+      }) => {
+        const baseDocument = toText(payload.sceneDocument)
+          ? parseJsonValue(payload.sceneDocument)
+          : buildDeviceMockupSceneDocument({
+              templateKey: payload.templateKey || 'device-showcase',
+            })
+        const sceneDocument = appendDesignFrameToSceneDocument(baseDocument, {
+          pageId: payload.pageId,
+          kind: 'device_mockup',
+          name: payload.name,
+          title: payload.title,
+          subtitle: payload.subtitle,
+          badge: payload.badge,
+          imageSrc: payload.imageSrc,
+          templateKey: payload.templateKey,
+          deviceFramePresetKey: payload.deviceFramePresetKey,
+          themeTokens: payload.themeTokens,
+        })
+        await hooks.onTool?.('generate_device_mockup_frame', {
+          pageId: payload.pageId || '',
+          templateKey: payload.templateKey || '',
+        })
+        return serializeSceneDocument(sceneDocument)
+      },
+      {
+        name: 'generate_device_mockup_frame',
+        description: '向设计文档追加一个设备边框 Frame，并返回新的 SceneDocument JSON。',
+        schema: z.object({
+          sceneDocument: z.string().optional(),
+          pageId: z.string().optional(),
+          name: z.string().optional(),
+          title: z.string().optional(),
+          subtitle: z.string().optional(),
+          badge: z.string().optional(),
+          imageSrc: z.string().optional(),
+          templateKey: z.string().optional(),
+          deviceFramePresetKey: z.string().optional(),
+          themeTokens: z.record(z.string(), z.string()).optional(),
+        }),
+      },
+    )
+
+    const exportDesignAsset = tool(
+      async ({ sceneDocument, format, pageId, frameId }: {
+        sceneDocument: string
+        format: 'svg' | 'png' | 'pdf'
+        pageId?: string
+        frameId?: string
+      }) => {
+        const normalizedDocument = sceneDocumentFromUnknown(parseJsonValue(sceneDocument))
+        const artboard = normalizedDocument.sceneModel.artboards?.[0]
+        const job = {
+          id: `design-export-${Date.now()}`,
+          format,
+          status: 'succeeded',
+          width: artboard?.width || 1600,
+          height: artboard?.height || 900,
+          background: artboard?.background || '',
+          templateKey: normalizedDocument.templateKey || '',
+          drawMode: normalizedDocument.drawMode,
+          pageId: pageId || '',
+          frameId: frameId || '',
+        }
+        await hooks.onTool?.('export_design_asset', job)
+        return JSON.stringify({
+          job,
+          note: '当前工具返回设计导出任务元数据，真正导出仍由前端或后续导出插件执行。',
+        })
+      },
+      {
+        name: 'export_design_asset',
+        description: '为 design document 的 page/frame 创建结构化导出任务描述，不直接返回原始 SVG/XML。',
+        schema: z.object({
+          sceneDocument: z.string().min(2),
+          format: z.enum(['svg', 'png', 'pdf']),
+          pageId: z.string().optional(),
+          frameId: z.string().optional(),
+        }),
+      },
+    )
+
     const exportSceneAsset = tool(
       async ({ sceneDocument, format }: { sceneDocument: string, format: 'svg' | 'png' | 'pdf' }) => {
         const normalizedDocument = sceneDocumentFromUnknown(parseJsonValue(sceneDocument))
@@ -849,6 +1077,11 @@ export async function executeWorkspaceAi(input: {
       applyTemplateToScene,
       relayoutScene,
       generateDeviceMockup,
+      generateDesignPage,
+      generateDesignFrame,
+      generateDiagramFrame,
+      generateDeviceMockupFrame,
+      exportDesignAsset,
       exportSceneAsset,
     ]
     if (input.mode === 'auto_optimize')

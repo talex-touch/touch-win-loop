@@ -188,6 +188,13 @@ function parseCollabKind(value: unknown): Extract<ResourceKind, 'markdown' | 'dr
   return null
 }
 
+function normalizeSceneEditorEngine(value: unknown, fallback: 'vueflow' | 'tldraw_legacy'): 'vueflow' | 'tldraw_legacy' {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'vueflow' || normalized === 'tldraw_legacy')
+    return normalized
+  return fallback
+}
+
 function parseCollabPurpose(value: unknown): CollabPurpose | null {
   const normalized = normalizeString(value).toLowerCase()
   if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
@@ -869,6 +876,9 @@ function toResource(row: ProjectResourceRow): Resource {
     ? normalizeSceneSourceType(metadata.sceneSourceType, 'manual')
     : undefined
   const templateKey = normalizeString(metadata.templateKey) || undefined
+  const editorEngine = resourceKind === 'draw'
+    ? normalizeSceneEditorEngine(metadata.editorEngine, drawMode === 'freeform' ? 'tldraw_legacy' : 'vueflow')
+    : undefined
 
   return {
     id: row.id,
@@ -880,6 +890,7 @@ function toResource(row: ProjectResourceRow): Resource {
     drawMode,
     sceneSourceType,
     templateKey,
+    editorEngine,
     documentId: documentId || undefined,
     contestId: originContestId,
     title: row.title,
@@ -1639,6 +1650,12 @@ export async function createProjectCollabResource(
           drawMode: normalizeDrawMode(inputMetadata.drawMode, purpose === 'workflow' ? 'diagram' : 'freeform'),
           sceneSourceType: normalizeSceneSourceType(inputMetadata.sceneSourceType, 'manual'),
           templateKey: normalizeString(inputMetadata.templateKey) || undefined,
+          editorEngine: normalizeSceneEditorEngine(
+            inputMetadata.editorEngine,
+            normalizeDrawMode(inputMetadata.drawMode, purpose === 'workflow' ? 'diagram' : 'freeform') === 'freeform'
+              ? 'tldraw_legacy'
+              : 'vueflow',
+          ),
         }
       : {}),
   }
@@ -1908,6 +1925,7 @@ export async function ensureProjectDesignCanvas(
       drawMode: 'composition',
       sceneSourceType: 'image_mockup',
       templateKey: normalizeString(input.templateKey) || 'device-showcase',
+      editorEngine: 'vueflow',
     },
   })
 }

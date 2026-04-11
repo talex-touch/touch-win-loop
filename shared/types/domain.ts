@@ -1718,8 +1718,18 @@ export interface ProjectMeetingDetail extends ProjectMeeting {
   recentJobs: ProjectMeetingJob[]
 }
 
+export interface ProjectMeetingRuntimeHealth {
+  ready: boolean
+  rtcProvider: string
+  asrProvider: string
+  rtcIssues: string[]
+  asrIssues: string[]
+  issues: string[]
+}
+
 export interface ProjectMeetingListPayload {
   items: ProjectMeeting[]
+  runtimeHealth: ProjectMeetingRuntimeHealth
 }
 
 export interface ProjectMeetingGuestShare {
