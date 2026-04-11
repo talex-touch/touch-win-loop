@@ -36,6 +36,7 @@ const props = withDefaults(defineProps<{
   previewStatus?: WorkspacePreviewStatusPayload | null
   previewStatusLoading?: boolean
   previewPdfUrl?: string
+  currentUserId?: string
   collabRevision?: number
   collabConnected?: boolean
   collabConnectionText?: string
@@ -62,6 +63,7 @@ const props = withDefaults(defineProps<{
   previewStatus: null,
   previewStatusLoading: false,
   previewPdfUrl: '',
+  currentUserId: '',
   collabRevision: 0,
   collabConnected: false,
   collabConnectionText: '',
@@ -185,6 +187,7 @@ defineExpose({
               :comment-draft-anchor="props.commentDraftAnchor"
               :comment-loading="props.commentLoading"
               :comment-mutating="props.commentMutating"
+              :current-user-id="props.currentUserId"
               @select-comment-thread="emit('markdownOpenCommentThread', $event)"
               @create-comment-thread="emit('markdownCreateCommentThread', $event)"
               @reply-comment-thread="emit('markdownReplyCommentThread', $event)"
