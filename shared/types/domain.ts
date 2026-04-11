@@ -16,6 +16,7 @@ export type PlatformPermission = 'contest.read_internal' | 'contest.write' | 'co
 export type ContestStatus = 'draft' | 'published' | 'archived'
 export type ContestVisibility = 'internal' | 'public'
 export type ResourceStatus = 'active' | 'invalid' | 'pending_verify' | 'archived'
+export type PolicyLibraryItemStatus = 'active' | 'archived'
 export type BillingCycle = 'monthly' | 'quarterly' | 'yearly'
 export type DocumentParseStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
 export type DocumentTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
@@ -804,6 +805,212 @@ export interface ContestAuditLog {
   createdAt: string
 }
 
+export interface PolicyLibraryItem {
+  id: string
+  meetingName: string
+  summary: string
+  conferenceDate: string
+  importance: string
+  officialMaterial: string
+  officialMaterialLink: string
+  wechatMaterial: string
+  wechatMaterialLink: string
+  weiboMaterial: string
+  weiboMaterialLink: string
+  douyinMaterial: string
+  douyinMaterialLink: string
+  xiaohongshuMaterial: string
+  xiaohongshuMaterialLink: string
+  metadata?: Record<string, unknown>
+  status: PolicyLibraryItemStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export type ReleaseScopeKind = 'contest' | 'policy_library'
+export type ReleaseVersionStatus
+  = 'pending_first_review'
+    | 'pending_second_review'
+    | 'approved'
+    | 'rejected'
+    | 'published'
+    | 'superseded'
+
+export type ReleaseReviewAction
+  = 'sync_generated'
+    | 'first_review_approved'
+    | 'second_review_claimed'
+    | 'second_review_approved'
+    | 'rejected'
+    | 'published'
+
+export interface ContestReleaseContestSnapshot {
+  liveId?: string | null
+  externalId: string
+  name: string
+  level: ContestLevel
+  organizer?: string
+  coOrganizer?: string
+  officialUrl?: string
+  summary?: string
+  participantRequirements?: string
+  teamRule?: string
+  currentSeason?: string
+  disciplines?: string[]
+  aliases?: string[]
+  keywords?: string[]
+  recommendedFor?: string[]
+  faq?: string
+  faqItems?: ContestFaqItem[]
+  hotScore?: number
+  visibility?: ContestVisibility
+}
+
+export interface ContestReleaseTrackSnapshot {
+  liveId?: string | null
+  externalId: string
+  contestExternalId: string
+  name: string
+  summary?: string
+  coverImageUrl?: string
+  location?: string
+  organizer?: string
+  undertaker?: string
+  participantRequirements?: string
+  teamRule?: string
+  awardRatio?: string
+  suitableMajors?: string[]
+  deliverableTypes?: string[]
+  sortOrder?: number
+  evidenceRequirements?: string[]
+  scoringPoints?: string[]
+  deductionItems?: string[]
+}
+
+export interface ContestReleaseTimelineSnapshot {
+  externalId: string
+  year: number
+  nodeType: TimelineNodeType
+  startAt: string | null
+  endAt: string | null
+  note: string
+  sourceLink: string
+}
+
+export interface ContestReleaseTrackTimelineSnapshot {
+  externalId: string
+  trackExternalId: string
+  trackLiveId?: string | null
+  year: number
+  nodeType: TimelineNodeType
+  startAt: string | null
+  endAt: string | null
+  note: string
+  sourceLink: string
+}
+
+export interface ContestReleaseResourceSnapshot {
+  liveId?: string | null
+  externalId: string
+  contestExternalId: string
+  trackExternalId?: string
+  trackLiveId?: string | null
+  title: string
+  category: ResourceCategory
+  url: string
+  year?: number
+  summary?: string
+  content?: string
+  sourceType?: string
+  accessLevel?: ResourceAvailability
+  status?: ResourceStatus
+  metadata?: Record<string, unknown>
+}
+
+export interface ContestReleaseSnapshot {
+  contestExternalId: string
+  contest?: ContestReleaseContestSnapshot | null
+  tracks: ContestReleaseTrackSnapshot[]
+  timelines: ContestReleaseTimelineSnapshot[]
+  trackTimelines: ContestReleaseTrackTimelineSnapshot[]
+  resources: ContestReleaseResourceSnapshot[]
+}
+
+export interface PolicyLibraryItemSnapshot {
+  liveId?: string | null
+  externalId: string
+  meetingName: string
+  summary?: string
+  conferenceDate?: string
+  importance?: string
+  officialMaterial?: string
+  officialMaterialLink?: string
+  wechatMaterial?: string
+  wechatMaterialLink?: string
+  weiboMaterial?: string
+  weiboMaterialLink?: string
+  douyinMaterial?: string
+  douyinMaterialLink?: string
+  xiaohongshuMaterial?: string
+  xiaohongshuMaterialLink?: string
+  metadata?: Record<string, unknown>
+  status?: PolicyLibraryItemStatus
+}
+
+export interface PolicyLibraryReleaseSnapshot {
+  items: PolicyLibraryItemSnapshot[]
+}
+
+export interface ReleaseDiffSummary {
+  createdCount: number
+  updatedCount: number
+  removedCount: number
+  changedExternalIds: string[]
+}
+
+export interface ReleaseVersion {
+  id: string
+  scopeKind: ReleaseScopeKind
+  scopeId: string
+  liveEntityId?: string | null
+  scopeTitle: string
+  versionNumber: number
+  status: ReleaseVersionStatus
+  snapshot: Record<string, unknown>
+  diffSummary: ReleaseDiffSummary
+  syncItemId?: string | null
+  syncRunId?: string | null
+  firstReviewByUserId?: string | null
+  firstReviewAt?: string | null
+  secondReviewClaimedByUserId?: string | null
+  secondReviewClaimedAt?: string | null
+  secondReviewByUserId?: string | null
+  secondReviewAt?: string | null
+  rejectedByUserId?: string | null
+  rejectedAt?: string | null
+  rejectReason?: string | null
+  publishedByUserId?: string | null
+  publishedAt?: string | null
+  createdByUserId?: string | null
+  updatedByUserId?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ReleaseReviewLog {
+  id: string
+  releaseVersionId: string
+  actorUserId?: string | null
+  action: ReleaseReviewAction
+  payload: Record<string, unknown>
+  createdAt: string
+}
+
+export interface ReleaseVersionDetail {
+  version: ReleaseVersion
+  logs: ReleaseReviewLog[]
+}
+
 export interface ContestFilterInput {
   discipline?: string
   level?: ContestLevel | ''
@@ -1016,11 +1223,24 @@ export interface AuthMeResult {
 
 export interface CasdoorAuthMeta {
   enabled: boolean
+  displayName: string
 }
+
+export interface OAuthAuthMeta {
+  enabled: boolean
+  displayName: string
+}
+
+export type OAuthProtocolMode = 'oidc_discovery' | 'oauth2_manual'
 
 export interface CasdoorIntegrationConfig {
   enabled: boolean
+  displayName: string
+  protocolMode: OAuthProtocolMode
   issuer: string
+  authorizeEndpoint: string
+  tokenEndpoint: string
+  userinfoEndpoint: string
   clientId: string
   clientSecretConfigured: boolean
   scope: string
@@ -1032,6 +1252,7 @@ export interface CasdoorIntegrationConfig {
 export interface AuthLoginMeta {
   registrationEnabled: boolean
   feishu: FeishuIntegrationConfig
+  oauth: OAuthAuthMeta
   casdoor: CasdoorAuthMeta
 }
 
@@ -2379,7 +2600,7 @@ export interface PlatformRoleAssignment {
   updatedAt: string
 }
 
-export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource'
+export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
 export type FeishuSyncRunMode = 'full' | 'delta'
@@ -2821,6 +3042,8 @@ export interface CasdoorAuthBindStatus {
   email?: string
   updatedAt?: string
 }
+
+export type OAuthAuthBindStatus = CasdoorAuthBindStatus
 
 export interface FeishuAdminGroupReconcileResult {
   synchronizedAt: string

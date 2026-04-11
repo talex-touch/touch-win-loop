@@ -2,6 +2,11 @@ import type { H3Event } from 'h3'
 import type { FeishuBitableRecord } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  ContestReleaseContestSnapshot,
+  ContestReleaseResourceSnapshot,
+  ContestReleaseTimelineSnapshot,
+  ContestReleaseTrackSnapshot,
+  ContestReleaseTrackTimelineSnapshot,
   ContestLevel,
   FeishuBitableSourceConfig,
   FeishuBitableSyncItemEntityType,
@@ -19,6 +24,7 @@ import type {
   ResourceStatus,
   ScopeType,
   TimelineNodeType,
+  PolicyLibraryItemSnapshot,
 } from '~~/shared/types/domain'
 import { createHash } from 'node:crypto'
 import jsonata from 'jsonata'
@@ -31,28 +37,19 @@ import {
   listFeishuBitableViews,
 } from '~~/server/services/feishu/client'
 import {
-  createAdminContest,
-  createAdminResource,
-  createAdminRubric,
-  createAdminTrack,
-  createAdminTrackTimeline,
-  patchAdminContest,
-  patchAdminResource,
-  patchAdminRubric,
-  patchAdminTrack,
-  patchAdminTrackTimeline,
-  syncContestDerivedTimelineNodes,
-} from '~~/server/utils/contest-store'
+  buildContestDerivedTimelineExternalId,
+  buildTrackDerivedTimelineExternalId,
+  listReleaseVersions,
+  upsertContestReleaseDraft,
+  upsertPolicyLibraryReleaseDraft,
+} from '~~/server/utils/release-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   completeFeishuBitableSyncItemRun,
   createFeishuBitableSyncItemRun,
-  enqueueFeishuPostSyncTask,
   getFeishuBitableSyncById,
   getFeishuBitableSyncItemById,
-  getFeishuExternalRef,
   readFeishuIntegrationConfig,
-  upsertFeishuExternalRef,
   upsertFeishuSyncIssue,
 } from '~~/server/utils/feishu-integration-store'
 
@@ -108,6 +105,7 @@ interface CreateRecordResolverOptions {
 interface ApplyRecordResult {
   status: 'created' | 'updated' | 'skipped'
   externalId: string
+  entityId?: string
   reasonCode?: string
   message?: string
   payload?: Record<string, unknown>
@@ -148,27 +146,27 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'level',
     'disciplines',
     'keywords',
-    'registrationWindow',
-    'submissionDeadline',
+    'timelineText',
+    'recommendedFor',
   ],
   track: [
     'externalId',
     'contestExternalId',
     'name',
-    'summary',
     'coverImageUrl',
     'location',
     'organizer',
     'undertaker',
+    'summary',
     'participantRequirements',
     'teamRule',
-    'awardRatio',
+    'timelineText',
     'suitableMajors',
-    'deliverableTypes',
-    'sortOrder',
+    'awardRatio',
     'evidenceRequirements',
     'scoringPoints',
     'deductionItems',
+    'deliverableTypes',
   ],
   track_timeline: [
     'externalId',
@@ -186,13 +184,28 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'contestExternalId',
     'trackExternalId',
     'title',
-    'name',
-    'summary',
-    'content',
     'category',
-    'url',
-    'sourceType',
-    'year',
+    'attachment',
+    'attachmentSummary',
+    'contestRelationInfo',
+    'trackRelationInfo',
+  ],
+  policy: [
+    'externalId',
+    'meetingName',
+    'summary',
+    'conferenceDate',
+    'importance',
+    'officialMaterial',
+    'officialMaterialLink',
+    'wechatMaterial',
+    'wechatMaterialLink',
+    'weiboMaterial',
+    'weiboMaterialLink',
+    'douyinMaterial',
+    'douyinMaterialLink',
+    'xiaohongshuMaterial',
+    'xiaohongshuMaterialLink',
   ],
 }
 
@@ -200,12 +213,14 @@ const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> 
   contest: ['name', 'officialUrl'],
   track: ['contestExternalId', 'name'],
   track_timeline: ['contestExternalId', 'trackExternalId', 'nodeType'],
-  resource: ['contestExternalId', 'title', 'url'],
+  resource: ['contestExternalId', 'title', 'attachment'],
+  policy: ['meetingName'],
 }
 
 const ARRAY_PREVIEW_FIELDS = new Set([
   'disciplines',
   'keywords',
+  'recommendedFor',
   'suitableMajors',
   'deliverableTypes',
   'evidenceRequirements',
@@ -250,7 +265,7 @@ function toStringArray(raw: unknown): string[] {
 }
 
 function isEntityType(raw: unknown): raw is FeishuBitableSyncItemEntityType {
-  return raw === 'contest' || raw === 'track' || raw === 'track_timeline' || raw === 'resource'
+  return raw === 'contest' || raw === 'track' || raw === 'track_timeline' || raw === 'resource' || raw === 'policy'
 }
 
 function resolvePreviewOverrideString(
@@ -871,35 +886,76 @@ async function resolveContestIdByExternal(
     options: NormalizedOptions
     resolver: RecordValueResolver
   },
-): Promise<{ contestId: string | null, contestExternalId: string }> {
-  const staticContestId = String(input.options.contestId || '').trim()
-  if (staticContestId) {
+): Promise<{ contestId: string | null, contestExternalId: string, scopeTitle: string }> {
+  const mappedContestExternalId = await input.resolver.getSpecialText('contestExternalId')
+  if (mappedContestExternalId) {
+    const result = await db.query<{ scope_title: string, live_entity_id: string }>(
+      `SELECT scope_title, live_entity_id
+       FROM release_versions
+       WHERE scope_kind = 'contest'
+         AND scope_id = $1
+       ORDER BY
+         CASE
+           WHEN status = 'published' THEN 0
+           WHEN status = 'approved' THEN 1
+           WHEN status = 'pending_second_review' THEN 2
+           WHEN status = 'pending_first_review' THEN 3
+           ELSE 4
+         END,
+         version_number DESC
+       LIMIT 1`,
+      [mappedContestExternalId],
+    )
     return {
-      contestId: staticContestId,
-      contestExternalId: '',
+      contestId: normalizeText(result.rows[0]?.live_entity_id) || null,
+      contestExternalId: mappedContestExternalId,
+      scopeTitle: normalizeText(result.rows[0]?.scope_title) || mappedContestExternalId,
     }
   }
 
-  const contestExternalId = await input.resolver.getSpecialText('contestExternalId')
-  if (!contestExternalId) {
+  const staticContestId = normalizeText(input.options.contestId)
+  if (!staticContestId) {
     return {
       contestId: null,
       contestExternalId: '',
+      scopeTitle: '',
     }
   }
 
-  const contestRef = await getFeishuExternalRef(db, {
-    scope: 'contest',
-    externalId: contestExternalId,
-  })
+  const releaseResult = await db.query<{ scope_id: string, scope_title: string }>(
+    `SELECT scope_id, scope_title
+     FROM release_versions
+     WHERE scope_kind = 'contest'
+       AND live_entity_id = $1
+     ORDER BY
+       CASE
+         WHEN status = 'published' THEN 0
+         WHEN status = 'approved' THEN 1
+         WHEN status = 'pending_second_review' THEN 2
+         WHEN status = 'pending_first_review' THEN 3
+         ELSE 4
+       END,
+       version_number DESC
+     LIMIT 1`,
+    [staticContestId],
+  )
+  if (releaseResult.rows[0]?.scope_id) {
+    return {
+      contestId: staticContestId,
+      contestExternalId: releaseResult.rows[0].scope_id,
+      scopeTitle: normalizeText(releaseResult.rows[0].scope_title) || releaseResult.rows[0].scope_id,
+    }
+  }
+
   return {
-    contestId: contestRef?.entityId || null,
-    contestExternalId,
+    contestId: staticContestId,
+    contestExternalId: '',
+    scopeTitle: staticContestId,
   }
 }
 
 async function resolveTrackIdByExternal(
-  db: Queryable,
+  _db: Queryable,
   input: {
     resolver: RecordValueResolver
   },
@@ -912,14 +968,125 @@ async function resolveTrackIdByExternal(
     }
   }
 
-  const trackRef = await getFeishuExternalRef(db, {
-    scope: 'track',
-    externalId: trackExternalId,
-  })
   return {
-    trackId: trackRef?.entityId || null,
+    trackId: null,
     trackExternalId,
   }
+}
+
+function formatTimelineDateToIso(
+  value: string,
+  mode: 'start' | 'end',
+): string | null {
+  const normalized = toText(value)
+    .replace(/[年/.]/g, '-')
+    .replace(/月/g, '-')
+    .replace(/日/g, '')
+    .replace(/\s+/g, '')
+  if (!normalized)
+    return null
+
+  const matched = normalized.match(/^(?<year>\d{4})-(?<month>\d{1,2})-(?<day>\d{1,2})$/)
+  if (!matched?.groups)
+    return null
+
+  const year = Number(matched.groups.year)
+  const month = Number(matched.groups.month)
+  const day = Number(matched.groups.day)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day))
+    return null
+
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day)
+    return null
+
+  const time = mode === 'start' ? '00:00:00' : '23:59:59'
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${time}+08:00`
+}
+
+function parseTimelineNodeTypeFromLabel(value: string): TimelineNodeType {
+  return mapTimelineNodeType(value) || 'other'
+}
+
+function parseTimelineTextLines(raw: string): Array<{
+  rawLine: string
+  nodeType: TimelineNodeType
+  startAt: string | null
+  endAt: string | null
+  year: number
+}> {
+  const lines = toText(raw)
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+
+  const result: Array<{
+    rawLine: string
+    nodeType: TimelineNodeType
+    startAt: string | null
+    endAt: string | null
+    year: number
+  }> = []
+
+  for (const line of lines) {
+    const colonIndex = line.search(/[:：]/)
+    const label = colonIndex >= 0 ? line.slice(0, colonIndex).trim() : ''
+    const body = colonIndex >= 0 ? line.slice(colonIndex + 1).trim() : line
+    const nodeType = label ? parseTimelineNodeTypeFromLabel(label) : 'registration'
+    const tokens = body.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/g) || []
+    const first = tokens[0] || ''
+    const second = tokens[1] || ''
+    const firstStart = first ? formatTimelineDateToIso(first, 'start') : null
+    const firstEnd = first ? formatTimelineDateToIso(first, 'end') : null
+    const secondEnd = second ? formatTimelineDateToIso(second, 'end') : null
+    const inferredYear = first ? Number(first.replace(/[./]/g, '-').slice(0, 4)) : new Date().getFullYear()
+    const startAt = second ? firstStart : (nodeType === 'registration' ? firstStart : null)
+    const endAt = second ? secondEnd : firstEnd
+
+    if (!startAt && !endAt)
+      continue
+
+    result.push({
+      rawLine: line,
+      nodeType,
+      startAt,
+      endAt,
+      year: Number.isFinite(inferredYear) ? inferredYear : new Date().getFullYear(),
+    })
+  }
+
+  return result
+}
+
+function buildContestReleaseTimelines(
+  contestExternalId: string,
+  timelineText: string,
+): ContestReleaseTimelineSnapshot[] {
+  return parseTimelineTextLines(timelineText).map(item => ({
+    externalId: buildContestDerivedTimelineExternalId(contestExternalId, item.rawLine),
+    year: item.year,
+    nodeType: item.nodeType,
+    startAt: item.startAt,
+    endAt: item.endAt,
+    note: item.rawLine,
+    sourceLink: '',
+  }))
+}
+
+function buildTrackReleaseTimelines(
+  trackExternalId: string,
+  timelineText: string,
+): ContestReleaseTrackTimelineSnapshot[] {
+  return parseTimelineTextLines(timelineText).map(item => ({
+    externalId: buildTrackDerivedTimelineExternalId(trackExternalId, item.rawLine),
+    trackExternalId,
+    year: item.year,
+    nodeType: item.nodeType,
+    startAt: item.startAt,
+    endAt: item.endAt,
+    note: item.rawLine,
+    sourceLink: '',
+  }))
 }
 
 function buildSummaryBase(records: FeishuBitableRecord[]): SyncSummary {
@@ -1225,6 +1392,7 @@ async function applyContestRecord(
   input: {
     actorUserId: string
     syncItemId: string
+    runId?: string
     record: FeishuBitableRecord
     externalId: string
     mapping: NormalizedMapping
@@ -1240,8 +1408,10 @@ async function applyContestRecord(
     levelText,
     disciplines,
     keywords,
+    timelineTextRaw,
     registrationWindow,
     submissionDeadline,
+    recommendedFor,
   ] = await Promise.all([
     input.resolver.getText('name'),
     input.resolver.getText('officialUrl'),
@@ -1249,15 +1419,17 @@ async function applyContestRecord(
     input.resolver.getText('level'),
     input.resolver.getStringArray('disciplines'),
     input.resolver.getStringArray('keywords'),
+    input.resolver.getText('timelineText'),
     input.resolver.getText('registrationWindow'),
     input.resolver.getText('submissionDeadline'),
+    input.resolver.getStringArray('recommendedFor'),
   ])
   if (!name || !officialUrl) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'MISSING_REQUIRED_FIELD',
-      message: '赛事记录缺少必要字段（name 或 officialUrl）。',
+      message: '竞赛记录缺少必要字段（name 或 officialUrl）。',
       payload: {
         hasName: Boolean(name),
         hasOfficialUrl: Boolean(officialUrl),
@@ -1265,138 +1437,50 @@ async function applyContestRecord(
     }
   }
 
-  const existingRef = await getFeishuExternalRef(db, {
-    scope: 'contest',
+  const timelineText = toText(timelineTextRaw)
+    || [registrationWindow ? `报名: ${registrationWindow}` : '', submissionDeadline ? `截止: ${submissionDeadline}` : '']
+      .filter(Boolean)
+      .join('\n')
+  const contestSnapshot: ContestReleaseContestSnapshot = {
     externalId: input.externalId,
-  })
-
-  if (existingRef) {
-    if (!input.dryRun) {
-      await patchAdminContest(db, {
-        actorUserId: input.actorUserId,
-        contestId: existingRef.entityId,
-        bypassSourceOfTruthGuard: true,
-        patch: {
-          name,
-          level: mapContestLevel(levelText),
-          officialUrl,
-          summary,
-          disciplines,
-          keywords,
-          visibility: input.options.defaultVisibility,
-        },
-      })
-      await syncContestDerivedTimelineNodes(db, {
-        actorUserId: input.actorUserId,
-        contestId: existingRef.entityId,
-        officialUrl,
-        registrationWindow,
-        submissionDeadline,
-      })
-      await upsertFeishuExternalRef(db, {
-        syncItemId: input.syncItemId,
-        scope: 'contest',
-        externalId: input.externalId,
-        entityId: existingRef.entityId,
-      })
-    }
-    return {
-      status: 'updated',
-      externalId: input.externalId,
-    }
+    name,
+    level: mapContestLevel(levelText),
+    officialUrl,
+    summary,
+    disciplines,
+    keywords,
+    recommendedFor,
+    visibility: input.options.defaultVisibility,
   }
+  const timelines = buildContestReleaseTimelines(input.externalId, timelineText)
 
-  if (!input.dryRun) {
-    const created = await createAdminContest(db, {
+  if (!input.dryRun && input.runId) {
+    const draft = await upsertContestReleaseDraft(db, {
       actorUserId: input.actorUserId,
-      name,
-      level: mapContestLevel(levelText),
-      officialUrl,
-      summary,
-      disciplines,
-      keywords,
-      visibility: input.options.defaultVisibility,
-    })
-    await syncContestDerivedTimelineNodes(db, {
-      actorUserId: input.actorUserId,
-      contestId: created.id,
-      officialUrl,
-      registrationWindow,
-      submissionDeadline,
-    })
-    await upsertFeishuExternalRef(db, {
       syncItemId: input.syncItemId,
-      scope: 'contest',
-      externalId: input.externalId,
-      entityId: created.id,
+      syncRunId: input.runId,
+      contestExternalId: input.externalId,
+      scopeTitle: name,
+      entityType: 'contest',
+      contest: contestSnapshot,
+      timelines,
     })
+    return {
+      status: draft.existed ? 'updated' : 'created',
+      externalId: input.externalId,
+      entityId: draft.version.id,
+    }
   }
+
+  const previewItems = await listReleaseVersions(db, {
+    scopeKind: 'contest',
+    scopeId: input.externalId,
+    limit: 1,
+  })
   return {
-    status: 'created',
+    status: previewItems.length > 0 ? 'updated' : 'created',
     externalId: input.externalId,
   }
-}
-
-async function syncTrackRubric(
-  db: Queryable,
-  input: {
-    actorUserId: string
-    contestId: string
-    trackId: string
-    rubricId?: string | null
-    mapping: NormalizedMapping
-    resolver: RecordValueResolver
-    dryRun: boolean
-  },
-): Promise<string | null> {
-  const rubricKeys = ['evidenceRequirements', 'scoringPoints', 'deductionItems']
-  const hasAnyRubricConfig = rubricKeys.some(key => hasMappingValue(input.mapping, key))
-  if (!hasAnyRubricConfig)
-    return input.rubricId || null
-
-  const evidenceRequirements = hasMappingValue(input.mapping, 'evidenceRequirements')
-    ? await input.resolver.getStringArray('evidenceRequirements')
-    : undefined
-  const scoringPoints = hasMappingValue(input.mapping, 'scoringPoints')
-    ? await input.resolver.getStringArray('scoringPoints')
-    : undefined
-  const deductionItems = hasMappingValue(input.mapping, 'deductionItems')
-    ? await input.resolver.getStringArray('deductionItems')
-    : undefined
-
-  if (input.dryRun)
-    return input.rubricId || null
-
-  if (input.rubricId) {
-    const rubric = await patchAdminRubric(db, {
-      actorUserId: input.actorUserId,
-      contestId: input.contestId,
-      rubricId: input.rubricId,
-      patch: {
-        scoringPoints,
-        deductionItems,
-        evidenceRequirements,
-      },
-    })
-    return rubric?.id || input.rubricId
-  }
-
-  const rubric = await createAdminRubric(db, {
-    actorUserId: input.actorUserId,
-    contestId: input.contestId,
-    trackId: input.trackId,
-    dimensions: [{
-      key: 'overall',
-      name: '综合评估',
-      weight: 100,
-      description: '赛道同步自动创建的默认维度。',
-    }],
-    scoringPoints,
-    deductionItems,
-    evidenceRequirements,
-    status: 'draft',
-  })
-  return rubric.id
 }
 
 async function applyTrackRecord(
@@ -1404,6 +1488,7 @@ async function applyTrackRecord(
   input: {
     actorUserId: string
     syncItemId: string
+    runId?: string
     record: FeishuBitableRecord
     externalId: string
     mapping: NormalizedMapping
@@ -1416,19 +1501,49 @@ async function applyTrackRecord(
     options: input.options,
     resolver: input.resolver,
   })
-  if (!contestLink.contestId) {
+  if (!contestLink.contestExternalId) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'CONTEST_REF_NOT_FOUND',
-      message: '赛道记录未找到关联赛事（contestExternalId 未映射或未完成绑定）。',
-      payload: {
-        contestExternalId: contestLink.contestExternalId,
-      },
+      message: '赛道记录未找到关联竞赛编号。',
+      payload: {},
     }
   }
 
-  const name = await input.resolver.getText('name')
+  const [
+    name,
+    summary,
+    coverImageUrl,
+    location,
+    organizer,
+    undertaker,
+    participantRequirements,
+    teamRule,
+    timelineText,
+    suitableMajors,
+    awardRatio,
+    evidenceRequirements,
+    scoringPoints,
+    deductionItems,
+    deliverableTypes,
+  ] = await Promise.all([
+    input.resolver.getText('name'),
+    input.resolver.getText('summary'),
+    input.resolver.getText('coverImageUrl'),
+    input.resolver.getText('location'),
+    input.resolver.getText('organizer'),
+    input.resolver.getText('undertaker'),
+    input.resolver.getText('participantRequirements'),
+    input.resolver.getText('teamRule'),
+    input.resolver.getText('timelineText'),
+    input.resolver.getStringArray('suitableMajors'),
+    input.resolver.getText('awardRatio'),
+    input.resolver.getStringArray('evidenceRequirements'),
+    input.resolver.getStringArray('scoringPoints'),
+    input.resolver.getStringArray('deductionItems'),
+    input.resolver.getStringArray('deliverableTypes'),
+  ])
   if (!name) {
     return {
       status: 'skipped',
@@ -1441,96 +1556,55 @@ async function applyTrackRecord(
     }
   }
 
-  const existingRef = await getFeishuExternalRef(db, {
-    scope: 'track',
+  const trackSnapshot: ContestReleaseTrackSnapshot = {
     externalId: input.externalId,
-  })
-
-  if (existingRef) {
-    if (!input.dryRun) {
-      const updatedTrack = await patchAdminTrack(db, {
-        actorUserId: input.actorUserId,
-        contestId: contestLink.contestId,
-        trackId: existingRef.entityId,
-        bypassSourceOfTruthGuard: true,
-        patch: {
-          name,
-          summary: await input.resolver.getText('summary'),
-          coverImageUrl: await input.resolver.getText('coverImageUrl'),
-          location: await input.resolver.getText('location'),
-          organizer: await input.resolver.getText('organizer'),
-          undertaker: await input.resolver.getText('undertaker'),
-          participantRequirements: await input.resolver.getText('participantRequirements'),
-          teamRule: await input.resolver.getText('teamRule'),
-          awardRatio: await input.resolver.getText('awardRatio'),
-          suitableMajors: await input.resolver.getStringArray('suitableMajors'),
-          deliverableTypes: await input.resolver.getStringArray('deliverableTypes'),
-          sortOrder: Number(await input.resolver.getText('sortOrder') || 0),
-        },
-      })
-      await syncTrackRubric(db, {
-        actorUserId: input.actorUserId,
-        contestId: contestLink.contestId,
-        trackId: existingRef.entityId,
-        rubricId: updatedTrack?.rubricId || null,
-        mapping: input.mapping,
-        resolver: input.resolver,
-        dryRun: input.dryRun,
-      })
-      await upsertFeishuExternalRef(db, {
-        syncItemId: input.syncItemId,
-        scope: 'track',
-        externalId: input.externalId,
-        entityId: existingRef.entityId,
-        metadata: {
-          contestId: contestLink.contestId,
-        },
-      })
-    }
-    return {
-      status: 'updated',
-      externalId: input.externalId,
-    }
+    contestExternalId: contestLink.contestExternalId,
+    name,
+    summary,
+    coverImageUrl,
+    location,
+    organizer,
+    undertaker,
+    participantRequirements,
+    teamRule,
+    awardRatio,
+    suitableMajors,
+    deliverableTypes,
+    evidenceRequirements,
+    scoringPoints,
+    deductionItems,
   }
+  const trackTimelines = buildTrackReleaseTimelines(input.externalId, timelineText)
 
-  if (!input.dryRun) {
-    const created = await createAdminTrack(db, {
+  if (!input.dryRun && input.runId) {
+    const draft = await upsertContestReleaseDraft(db, {
       actorUserId: input.actorUserId,
-      contestId: contestLink.contestId,
-      name,
-      summary: await input.resolver.getText('summary'),
-      coverImageUrl: await input.resolver.getText('coverImageUrl'),
-      location: await input.resolver.getText('location'),
-      organizer: await input.resolver.getText('organizer'),
-      undertaker: await input.resolver.getText('undertaker'),
-      participantRequirements: await input.resolver.getText('participantRequirements'),
-      teamRule: await input.resolver.getText('teamRule'),
-      awardRatio: await input.resolver.getText('awardRatio'),
-      suitableMajors: await input.resolver.getStringArray('suitableMajors'),
-      deliverableTypes: await input.resolver.getStringArray('deliverableTypes'),
-      sortOrder: Number(await input.resolver.getText('sortOrder') || 0),
-    })
-    await syncTrackRubric(db, {
-      actorUserId: input.actorUserId,
-      contestId: contestLink.contestId,
-      trackId: created.id,
-      rubricId: created.rubricId || null,
-      mapping: input.mapping,
-      resolver: input.resolver,
-      dryRun: input.dryRun,
-    })
-    await upsertFeishuExternalRef(db, {
       syncItemId: input.syncItemId,
-      scope: 'track',
-      externalId: input.externalId,
-      entityId: created.id,
-      metadata: {
-        contestId: contestLink.contestId,
-      },
+      syncRunId: input.runId,
+      contestExternalId: contestLink.contestExternalId,
+      scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
+      entityType: 'track',
+      track: trackSnapshot,
+      trackTimelines,
     })
+    return {
+      status: draft.existed ? 'updated' : 'created',
+      externalId: input.externalId,
+      entityId: draft.version.id,
+    }
   }
+
+  const previewItems = await listReleaseVersions(db, {
+    scopeKind: 'contest',
+    scopeId: contestLink.contestExternalId,
+    limit: 1,
+  })
+  const currentSnapshot = previewItems[0]?.snapshot
+  const currentTracks = Array.isArray(parseJsonObject(currentSnapshot).tracks)
+    ? parseJsonObject(currentSnapshot).tracks as ContestReleaseTrackSnapshot[]
+    : []
   return {
-    status: 'created',
+    status: currentTracks.some(item => item.externalId === input.externalId) ? 'updated' : 'created',
     externalId: input.externalId,
   }
 }
@@ -1540,6 +1614,7 @@ async function applyTrackTimelineRecord(
   input: {
     actorUserId: string
     syncItemId: string
+    runId?: string
     record: FeishuBitableRecord
     externalId: string
     mapping: NormalizedMapping
@@ -1552,30 +1627,26 @@ async function applyTrackTimelineRecord(
     options: input.options,
     resolver: input.resolver,
   })
-  if (!contestLink.contestId) {
+  if (!contestLink.contestExternalId) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'CONTEST_REF_NOT_FOUND',
-      message: '赛道时间线记录未找到关联赛事（contestExternalId 未映射或未完成绑定）。',
-      payload: {
-        contestExternalId: contestLink.contestExternalId,
-      },
+      message: '赛道时间线记录未找到关联竞赛编号。',
+      payload: {},
     }
   }
 
   const trackLink = await resolveTrackIdByExternal(db, {
     resolver: input.resolver,
   })
-  if (!trackLink.trackId) {
+  if (!trackLink.trackExternalId) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'TRACK_REF_NOT_FOUND',
-      message: '赛道时间线记录未找到关联赛道（trackExternalId 未映射或未完成绑定）。',
-      payload: {
-        trackExternalId: trackLink.trackExternalId,
-      },
+      message: '赛道时间线记录缺少 trackExternalId。',
+      payload: {},
     }
   }
 
@@ -1599,67 +1670,34 @@ async function applyTrackTimelineRecord(
     startAt,
     endAt,
   })
-
-  const existingRef = await getFeishuExternalRef(db, {
-    scope: 'track_timeline',
+  const note = await input.resolver.getText('note')
+  const sourceLink = await input.resolver.getText('sourceLink')
+  const timelineSnapshot: ContestReleaseTrackTimelineSnapshot = {
     externalId: input.externalId,
-  })
-
-  if (existingRef) {
-    if (!input.dryRun) {
-      await patchAdminTrackTimeline(db, {
-        actorUserId: input.actorUserId,
-        contestId: contestLink.contestId,
-        trackTimelineId: existingRef.entityId,
-        patch: {
-          trackId: trackLink.trackId,
-          year,
-          nodeType,
-          startAt,
-          endAt,
-          note: await input.resolver.getText('note'),
-          sourceLink: await input.resolver.getText('sourceLink'),
-        },
-      })
-      await upsertFeishuExternalRef(db, {
-        syncItemId: input.syncItemId,
-        scope: 'track_timeline',
-        externalId: input.externalId,
-        entityId: existingRef.entityId,
-        metadata: {
-          contestId: contestLink.contestId,
-          trackId: trackLink.trackId,
-        },
-      })
-    }
-    return {
-      status: 'updated',
-      externalId: input.externalId,
-    }
+    trackExternalId: trackLink.trackExternalId,
+    year,
+    nodeType,
+    startAt,
+    endAt,
+    note,
+    sourceLink,
   }
 
-  if (!input.dryRun) {
-    const created = await createAdminTrackTimeline(db, {
+  if (!input.dryRun && input.runId) {
+    const draft = await upsertContestReleaseDraft(db, {
       actorUserId: input.actorUserId,
-      contestId: contestLink.contestId,
-      trackId: trackLink.trackId,
-      year,
-      nodeType,
-      startAt,
-      endAt,
-      note: await input.resolver.getText('note'),
-      sourceLink: await input.resolver.getText('sourceLink'),
-    })
-    await upsertFeishuExternalRef(db, {
       syncItemId: input.syncItemId,
-      scope: 'track_timeline',
-      externalId: input.externalId,
-      entityId: created.id,
-      metadata: {
-        contestId: contestLink.contestId,
-        trackId: trackLink.trackId,
-      },
+      syncRunId: input.runId,
+      contestExternalId: contestLink.contestExternalId,
+      scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
+      entityType: 'track_timeline',
+      trackTimelines: [timelineSnapshot],
     })
+    return {
+      status: draft.existed ? 'updated' : 'created',
+      externalId: input.externalId,
+      entityId: draft.version.id,
+    }
   }
 
   return {
@@ -1673,6 +1711,7 @@ async function applyResourceRecord(
   input: {
     actorUserId: string
     syncItemId: string
+    runId?: string
     record: FeishuBitableRecord
     externalId: string
     mapping: NormalizedMapping
@@ -1685,128 +1724,182 @@ async function applyResourceRecord(
     options: input.options,
     resolver: input.resolver,
   })
-  if (!contestLink.contestId) {
+  if (!contestLink.contestExternalId) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'CONTEST_REF_NOT_FOUND',
-      message: '资源记录未找到关联赛事（contestExternalId 未映射或未完成绑定）。',
-      payload: {
-        contestExternalId: contestLink.contestExternalId,
-      },
+      message: '资料记录未找到关联竞赛编号。',
+      payload: {},
     }
   }
 
-  const title = await input.resolver.getText('title') || await input.resolver.getText('name')
-  if (!title) {
+  const [
+    title,
+    categoryText,
+    attachment,
+    attachmentSummary,
+    contestRelationInfo,
+    trackRelationInfo,
+  ] = await Promise.all([
+    input.resolver.getText('title'),
+    input.resolver.getText('category'),
+    input.resolver.getText('attachment'),
+    input.resolver.getText('attachmentSummary'),
+    input.resolver.getText('contestRelationInfo'),
+    input.resolver.getText('trackRelationInfo'),
+  ])
+  if (!title || !attachment) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'MISSING_REQUIRED_FIELD',
-      message: '资源记录缺少必要字段 title/name。',
+      message: '资料记录缺少必要字段（title 或 attachment）。',
       payload: {
-        hasTitle: false,
+        hasTitle: Boolean(title),
+        hasAttachment: Boolean(attachment),
       },
     }
   }
 
-  const category = mapResourceCategory(
-    await input.resolver.getText('category'),
-    input.options.defaultResourceCategory,
-  )
   const trackLink = await resolveTrackIdByExternal(db, {
     resolver: input.resolver,
   })
-  if (trackLink.trackExternalId && !trackLink.trackId) {
+  const resourceSnapshot: ContestReleaseResourceSnapshot = {
+    externalId: input.externalId,
+    contestExternalId: contestLink.contestExternalId,
+    trackExternalId: trackLink.trackExternalId || '',
+    title,
+    category: mapResourceCategory(categoryText, input.options.defaultResourceCategory),
+    url: attachment,
+    year: new Date().getFullYear(),
+    summary: attachmentSummary,
+    content: '',
+    sourceType: 'feishu_bitable',
+    accessLevel: input.options.defaultResourceAccessLevel,
+    status: input.options.defaultStatus,
+    metadata: {
+      contestRelationInfo,
+      trackRelationInfo,
+      source: 'feishu_bitable',
+      recordId: input.record.recordId,
+    },
+  }
+
+  if (!input.dryRun && input.runId) {
+    const draft = await upsertContestReleaseDraft(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      syncRunId: input.runId,
+      contestExternalId: contestLink.contestExternalId,
+      scopeTitle: contestLink.scopeTitle || contestLink.contestExternalId,
+      entityType: 'resource',
+      resource: resourceSnapshot,
+    })
+    return {
+      status: draft.existed ? 'updated' : 'created',
+      externalId: input.externalId,
+      entityId: draft.version.id,
+    }
+  }
+
+  return {
+    status: 'created',
+    externalId: input.externalId,
+  }
+}
+
+async function applyPolicyRecord(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    runId?: string
+    record: FeishuBitableRecord
+    externalId: string
+    mapping: NormalizedMapping
+    options: NormalizedOptions
+    resolver: RecordValueResolver
+    dryRun: boolean
+  },
+): Promise<ApplyRecordResult> {
+  const [
+    meetingName,
+    summary,
+    conferenceDate,
+    importance,
+    officialMaterial,
+    officialMaterialLink,
+    wechatMaterial,
+    wechatMaterialLink,
+    weiboMaterial,
+    weiboMaterialLink,
+    douyinMaterial,
+    douyinMaterialLink,
+    xiaohongshuMaterial,
+    xiaohongshuMaterialLink,
+  ] = await Promise.all([
+    input.resolver.getText('meetingName'),
+    input.resolver.getText('summary'),
+    input.resolver.getText('conferenceDate'),
+    input.resolver.getText('importance'),
+    input.resolver.getText('officialMaterial'),
+    input.resolver.getText('officialMaterialLink'),
+    input.resolver.getText('wechatMaterial'),
+    input.resolver.getText('wechatMaterialLink'),
+    input.resolver.getText('weiboMaterial'),
+    input.resolver.getText('weiboMaterialLink'),
+    input.resolver.getText('douyinMaterial'),
+    input.resolver.getText('douyinMaterialLink'),
+    input.resolver.getText('xiaohongshuMaterial'),
+    input.resolver.getText('xiaohongshuMaterialLink'),
+  ])
+  if (!meetingName) {
     return {
       status: 'skipped',
       externalId: input.externalId,
-      reasonCode: 'TRACK_REF_NOT_FOUND',
-      message: '资源记录存在 trackExternalId，但未找到对应赛道绑定。',
+      reasonCode: 'MISSING_REQUIRED_FIELD',
+      message: '政策记录缺少必要字段 meetingName。',
       payload: {
-        trackExternalId: trackLink.trackExternalId,
+        hasMeetingName: false,
       },
     }
   }
 
-  const year = Number(await input.resolver.getText('year') || new Date().getFullYear())
-
-  const existingRef = await getFeishuExternalRef(db, {
-    scope: 'resource',
+  const policyItem: PolicyLibraryItemSnapshot = {
     externalId: input.externalId,
-  })
-
-  if (existingRef) {
-    if (!input.dryRun) {
-      await patchAdminResource(db, {
-        actorUserId: input.actorUserId,
-        contestId: contestLink.contestId,
-        resourceId: existingRef.entityId,
-        bypassSourceOfTruthGuard: true,
-        patch: {
-          category,
-          title,
-          year,
-          url: await input.resolver.getText('url'),
-          sourceType: await input.resolver.getText('sourceType') || 'feishu_bitable',
-          summary: await input.resolver.getText('summary'),
-          content: await input.resolver.getText('content'),
-          status: input.options.defaultStatus,
-          metadata: {
-            trackId: trackLink.trackId || '',
-            source: 'feishu_bitable',
-            recordId: input.record.recordId,
-          },
-          accessLevel: input.options.defaultResourceAccessLevel,
-        },
-      })
-      await upsertFeishuExternalRef(db, {
-        syncItemId: input.syncItemId,
-        scope: 'resource',
-        externalId: input.externalId,
-        entityId: existingRef.entityId,
-        metadata: {
-          contestId: contestLink.contestId,
-          trackId: trackLink.trackId || '',
-        },
-      })
-    }
-    return {
-      status: 'updated',
-      externalId: input.externalId,
-    }
+    meetingName,
+    summary,
+    conferenceDate,
+    importance,
+    officialMaterial,
+    officialMaterialLink,
+    wechatMaterial,
+    wechatMaterialLink,
+    weiboMaterial,
+    weiboMaterialLink,
+    douyinMaterial,
+    douyinMaterialLink,
+    xiaohongshuMaterial,
+    xiaohongshuMaterialLink,
+    status: 'active',
   }
 
-  if (!input.dryRun) {
-    const created = await createAdminResource(db, {
+  if (!input.dryRun && input.runId) {
+    const draft = await upsertPolicyLibraryReleaseDraft(db, {
       actorUserId: input.actorUserId,
-      contestId: contestLink.contestId,
-      category,
-      title,
-      year,
-      url: await input.resolver.getText('url'),
-      sourceType: await input.resolver.getText('sourceType') || 'feishu_bitable',
-      summary: await input.resolver.getText('summary'),
-      content: await input.resolver.getText('content'),
-      status: input.options.defaultStatus,
-      metadata: {
-        trackId: trackLink.trackId || '',
-        source: 'feishu_bitable',
-        recordId: input.record.recordId,
-      },
-      accessLevel: input.options.defaultResourceAccessLevel,
-    })
-    await upsertFeishuExternalRef(db, {
       syncItemId: input.syncItemId,
-      scope: 'resource',
-      externalId: input.externalId,
-      entityId: created.id,
-      metadata: {
-        contestId: contestLink.contestId,
-        trackId: trackLink.trackId || '',
-      },
+      syncRunId: input.runId,
+      scopeTitle: '政策库',
+      item: policyItem,
     })
+    return {
+      status: draft.existed ? 'updated' : 'created',
+      externalId: input.externalId,
+      entityId: draft.version.id,
+    }
   }
+
   return {
     status: 'created',
     externalId: input.externalId,
@@ -1818,6 +1911,7 @@ async function applySingleRecord(
   input: {
     actorUserId: string
     syncItemId: string
+    runId?: string
     entityType: FeishuBitableSyncItemEntityType
     record: FeishuBitableRecord
     mapping: NormalizedMapping
@@ -1842,6 +1936,7 @@ async function applySingleRecord(
     return applyContestRecord(db, {
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
+      runId: input.runId,
       record: input.record,
       externalId,
       mapping: input.mapping,
@@ -1855,6 +1950,7 @@ async function applySingleRecord(
     return applyTrackRecord(db, {
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
+      runId: input.runId,
       record: input.record,
       externalId,
       mapping: input.mapping,
@@ -1868,6 +1964,7 @@ async function applySingleRecord(
     return applyTrackTimelineRecord(db, {
       actorUserId: input.actorUserId,
       syncItemId: input.syncItemId,
+      runId: input.runId,
       record: input.record,
       externalId,
       mapping: input.mapping,
@@ -1877,9 +1974,24 @@ async function applySingleRecord(
     })
   }
 
-  return applyResourceRecord(db, {
+  if (input.entityType === 'resource') {
+    return applyResourceRecord(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      runId: input.runId,
+      record: input.record,
+      externalId,
+      mapping: input.mapping,
+      options: input.options,
+      resolver,
+      dryRun: input.dryRun,
+    })
+  }
+
+  return applyPolicyRecord(db, {
     actorUserId: input.actorUserId,
     syncItemId: input.syncItemId,
+    runId: input.runId,
     record: input.record,
     externalId,
     mapping: input.mapping,
@@ -1952,6 +2064,7 @@ async function executeRecords(
       const result = await applySingleRecord(db, {
         actorUserId: input.actorUserId,
         syncItemId: input.syncItemId,
+        runId: input.runId,
         entityType: input.entityType,
         record,
         mapping: input.mapping,
@@ -1965,62 +2078,6 @@ async function executeRecords(
         summary.updatedCount += 1
       else
         summary.skippedCount += 1
-
-      if (!input.dryRun && (result.status === 'created' || result.status === 'updated')) {
-        const ref = await getFeishuExternalRef(db, {
-          scope: input.entityType,
-          externalId: result.externalId,
-        })
-        if (ref?.entityId && input.runId) {
-          const sourceHash = buildPostSyncSourceHash({
-            scope: input.entityType,
-            externalId: result.externalId,
-            record,
-          })
-          await enqueueFeishuPostSyncTask(db, {
-            syncItemId: input.syncItemId,
-            runId: input.runId,
-            scope: input.entityType,
-            entityId: ref.entityId,
-            externalId: result.externalId,
-            taskType: 'embedding_upsert',
-            sourceHash,
-            payload: {
-              recordId: record.recordId,
-              externalId: result.externalId,
-              recordFields: record.fields || {},
-            },
-          })
-          await enqueueFeishuPostSyncTask(db, {
-            syncItemId: input.syncItemId,
-            runId: input.runId,
-            scope: input.entityType,
-            entityId: ref.entityId,
-            externalId: result.externalId,
-            taskType: 'search_index_refresh',
-            sourceHash,
-            payload: {
-              recordId: record.recordId,
-              externalId: result.externalId,
-            },
-          })
-          await enqueueFeishuPostSyncTask(db, {
-            syncItemId: input.syncItemId,
-            runId: input.runId,
-            scope: input.entityType,
-            entityId: ref.entityId,
-            externalId: result.externalId,
-            taskType: 'entity_analysis',
-            sourceHash,
-            payload: {
-              recordId: record.recordId,
-              externalId: result.externalId,
-              entityId: ref.entityId,
-              recordFields: record.fields || {},
-            },
-          })
-        }
-      }
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         await upsertFeishuSyncIssue(db, {
@@ -2039,14 +2096,10 @@ async function executeRecords(
       }
 
       if (!input.dryRun && input.writeback.enabled && input.runId) {
-        const ref = await getFeishuExternalRef(db, {
-          scope: input.entityType,
-          externalId: result.externalId,
-        })
         const writebackFields = buildWritebackFields({
           config: input.writeback,
           result,
-          entityId: ref?.entityId || '',
+          entityId: result.entityId || '',
           runId: input.runId,
           triggerSource: input.triggerSource,
         })
