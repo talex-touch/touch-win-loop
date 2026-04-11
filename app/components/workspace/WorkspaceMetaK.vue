@@ -164,50 +164,44 @@ watch(flatItems, () => {
     <Transition name="workspace-metak-fade">
       <div
         v-if="visible"
-        class="workspace-metak px-4 py-6 flex items-start inset-0 justify-center fixed z-[90] sm:py-10"
+        class="workspace-metak px-4 py-4 flex items-center inset-0 justify-center fixed z-[90] sm:py-6"
         data-testid="workspace-metak"
       >
         <button
-          class="border-none bg-slate-950/18 inset-0 absolute backdrop-blur-[2px]"
+          class="border-none bg-slate-950/10 inset-0 absolute"
           type="button"
           aria-label="关闭 MetaK"
           @click="emit('close')"
         />
 
         <section
-          class="workspace-metak__panel border border-slate-200/90 rounded-[28px] bg-white flex flex-col max-h-[min(80vh,720px)] max-w-[760px] w-full shadow-[0_28px_90px_rgba(15,23,42,0.18)] relative overflow-hidden"
+          class="workspace-metak__panel border border-slate-200/90 rounded-[16px] bg-white flex flex-col max-h-[min(60vh,520px)] max-w-[640px] w-full relative overflow-hidden"
           @keydown="onKeydown"
         >
-          <header class="px-4 py-4 border-b border-slate-100 sm:px-5">
-            <div class="flex gap-3 items-center">
-              <div class="text-blue-600 rounded-2xl bg-blue-50 flex shrink-0 h-11 w-11 items-center justify-center">
-                <span class="material-symbols-outlined text-[22px]">search</span>
+          <header class="px-4 py-2.5 border-b border-slate-100 sm:px-5">
+            <div class="flex gap-1.5 items-center">
+              <div class="text-blue-600 rounded-md bg-blue-50 flex shrink-0 h-[30px] w-[30px] items-center justify-center">
+                <span class="material-symbols-outlined text-[17px]">search</span>
               </div>
               <div class="flex-1 min-w-0">
-                <label for="workspace-metak-search-input" class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold block uppercase">
-                  MetaK
-                </label>
                 <input
                   id="workspace-metak-search-input"
                   ref="inputRef"
                   :value="query"
-                  class="text-[15px] text-slate-900 font-medium mt-1 px-0 py-0 outline-none border-none bg-transparent w-full placeholder:text-slate-400"
+                  class="text-[12px] text-slate-900 font-medium leading-5 px-0 py-0 outline-none border-none bg-transparent w-full placeholder:text-slate-400"
                   data-testid="workspace-metak-search-input"
                   placeholder="搜索命令、资源、会议、竞赛或系统资料库"
                   type="text"
                   @input="onInput"
                 >
               </div>
-              <div class="text-[11px] text-slate-500 font-semibold px-2.5 py-1 border border-slate-200 rounded-2xl bg-slate-50 hidden sm:block">
+              <div class="text-[9px] text-slate-500 font-semibold px-1.5 py-0.5 border border-slate-200 rounded-md bg-slate-50 hidden sm:block leading-none">
                 {{ shortcutLabel }}
               </div>
             </div>
-            <p class="text-[11px] text-slate-500 leading-5 mt-3">
-              支持快捷命令、项目资源、会议、Issue、竞赛、空间切换，以及系统资料库补充结果。
-            </p>
           </header>
 
-          <div class="px-2 py-2 flex-1 min-h-0 overflow-y-auto sm:px-3">
+          <div class="px-2 py-0.5 flex-1 min-h-0 overflow-y-auto sm:px-3">
             <template v-if="sections.length > 0">
               <section
                 v-for="section in sections"
@@ -229,37 +223,36 @@ watch(flatItems, () => {
                     :class="{ 'workspace-metak__item--active': activeItemId === item.id }"
                     data-testid="workspace-metak-item"
                     type="button"
-                    @mouseenter="activateItem(item.id)"
                     @focus="activateItem(item.id)"
                     @click="selectItem(item)"
                   >
                     <span class="workspace-metak__item-icon">
-                      <span class="material-symbols-outlined text-[18px]">{{ item.icon }}</span>
+                      <span class="material-symbols-outlined text-[16px]">{{ item.icon }}</span>
                     </span>
                     <span class="flex-1 min-w-0">
-                      <span class="flex gap-2 items-center">
-                        <span class="text-sm font-semibold truncate">{{ item.title }}</span>
+                      <span class="flex gap-1.5 items-center">
+                        <span class="text-[13px] font-semibold leading-5 truncate">{{ item.title }}</span>
                         <span
                           v-if="item.badge"
-                          class="text-[10px] text-slate-500 font-semibold px-2 py-0.5 rounded-full bg-slate-100"
+                          class="text-[9px] text-slate-500 font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 leading-none"
                         >
                           {{ item.badge }}
                         </span>
                       </span>
                       <span
                         v-if="item.subtitle"
-                        class="text-[11px] text-slate-500 leading-5 mt-1 block truncate"
+                        class="text-[10px] text-slate-500 leading-4 mt-0.5 block truncate"
                       >
                         {{ item.subtitle }}
                       </span>
                     </span>
                     <span class="text-right shrink-0">
-                      <span class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold block uppercase">
+                      <span class="text-[9px] text-slate-400 tracking-[0.12em] font-semibold block uppercase leading-none">
                         {{ metaTypeLabel(item) }}
                       </span>
                       <span
                         v-if="item.hint"
-                        class="text-[11px] text-slate-500 leading-5 mt-1 block"
+                        class="text-[10px] text-slate-500 leading-4 mt-0.5 block"
                       >
                         {{ item.hint }}
                       </span>
@@ -271,24 +264,21 @@ watch(flatItems, () => {
 
             <div
               v-else
-              class="px-6 py-10 text-center flex flex-col min-h-[220px] items-center justify-center"
+              class="px-6 py-5 text-center flex flex-col min-h-[128px] items-center justify-center"
               data-testid="workspace-metak-empty"
             >
-              <div class="text-slate-400 rounded-2xl bg-slate-100 flex h-12 w-12 items-center justify-center">
-                <span class="material-symbols-outlined text-[24px]">search_off</span>
+              <div class="text-slate-400 rounded-xl bg-slate-100 flex h-10 w-10 items-center justify-center">
+                <span class="material-symbols-outlined text-[20px]">search_off</span>
               </div>
-              <p class="text-sm text-slate-800 font-semibold mt-4">
+              <p class="text-[13px] text-slate-800 font-semibold mt-3">
                 没有匹配结果
               </p>
-              <p class="text-[12px] text-slate-500 leading-6 mt-2 max-w-md">
+              <p class="text-[11px] text-slate-500 leading-5 mt-1.5 max-w-md">
                 试试更短的关键词，或者直接搜索命令名、资源标题、会议名称、竞赛名称。
               </p>
             </div>
           </div>
 
-          <footer class="text-[11px] text-slate-500 px-4 py-3 border-t border-slate-100 sm:px-5">
-            ↑ ↓ 切换结果，Enter 执行，Esc 关闭
-          </footer>
         </section>
       </div>
     </Transition>
@@ -297,18 +287,18 @@ watch(flatItems, () => {
 
 <style scoped>
 .workspace-metak__section + .workspace-metak__section {
-  margin-top: 0.5rem;
+  margin-top: 0.125rem;
 }
 
 .workspace-metak__section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.625rem 0.75rem 0.5rem;
-  font-size: 0.6875rem;
+  gap: 0.5rem;
+  padding: 0.3125rem 0.75rem 0.1875rem;
+  font-size: 0.625rem;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   color: rgb(100 116 139);
   text-transform: uppercase;
 }
@@ -317,35 +307,32 @@ watch(flatItems, () => {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 0.875rem;
+  gap: 0.625rem;
   border: 1px solid transparent;
-  border-radius: 1.125rem;
+  border-radius: 0.75rem;
   background: transparent;
-  padding: 0.75rem 0.875rem;
+  padding: 0.4375rem 0.625rem;
   text-align: left;
   transition:
     border-color 140ms ease,
-    background-color 140ms ease,
-    transform 140ms ease;
+    background-color 140ms ease;
 }
 
-.workspace-metak__item:hover,
 .workspace-metak__item:focus-visible,
 .workspace-metak__item--active {
   border-color: rgb(191 219 254);
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.92) 0%, rgba(248, 250, 252, 0.96) 100%);
-  transform: translateY(-1px);
+  background: rgb(248 250 252);
   outline: none;
 }
 
 .workspace-metak__item-icon {
   display: inline-flex;
-  height: 2.5rem;
-  width: 2.5rem;
+  height: 1.75rem;
+  width: 1.75rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 1rem;
+  border-radius: 0.5rem;
   background: rgb(248 250 252);
   color: rgb(71 85 105);
   transition:
@@ -353,7 +340,6 @@ watch(flatItems, () => {
     color 140ms ease;
 }
 
-.workspace-metak__item:hover .workspace-metak__item-icon,
 .workspace-metak__item:focus-visible .workspace-metak__item-icon,
 .workspace-metak__item--active .workspace-metak__item-icon {
   background: rgb(219 234 254);
