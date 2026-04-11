@@ -227,6 +227,16 @@
   display: flex;
   align-items: center;
   min-width: 0;
+  width: 100%;
+  transition: background-color 0.2s ease;
+}
+
+.workspace-tree-item-row:hover {
+  background: #f3f6fb;
+}
+
+.workspace-tree-item-row--active {
+  background: #edf3ff;
 }
 
 .workspace-tree-item-row--drop-inside {
@@ -235,6 +245,8 @@
 
 .workspace-resource-tree-entry {
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .workspace-resource-tree-row__main {
@@ -270,6 +282,8 @@
 
 .workspace-tree-dropzone {
   height: 6px;
+  margin-top: -3px;
+  margin-bottom: -3px;
   margin-right: 8px;
   border-radius: 999px;
   transition: background-color 0.16s ease;
@@ -306,11 +320,11 @@
 }
 
 .workspace-tree-item:hover {
-  background: #f3f6fb;
+  background: transparent;
 }
 
 .workspace-tree-item--active {
-  background: #edf3ff;
+  background: transparent;
   color: #2f4368;
 }
 
