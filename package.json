@@ -67,6 +67,7 @@
     "ogl": "catalog:",
     "pdfjs-dist": "catalog:",
     "pg": "catalog:",
+    "pinyin-pro": "^3.28.1",
     "react": "catalog:",
     "react-dom": "catalog:",
     "tldraw": "catalog:",
