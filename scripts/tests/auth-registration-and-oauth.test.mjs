@@ -16,8 +16,6 @@ const ADMIN_OAUTH_CONFIG_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/i
 const LOGIN_PAGE_FILE = resolve(process.cwd(), 'app/pages/login.vue')
 const LOGIN_PAGE_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useLoginPage.ts')
 const USER_AUTH_BINDINGS_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useUserAuthBindings.ts')
-const LOGIN_TEXT_ICON_FILE = resolve(process.cwd(), 'app/components/login/TextIcon.vue')
-const LOGIN_FOOTER_FILE = resolve(process.cwd(), 'app/components/login/FooterBar.vue')
 const NUXT_CONFIG_FILE = resolve(process.cwd(), 'nuxt.config.ts')
 const RUNTIME_SETTINGS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/runtime-settings.vue')
 const USER_SETTINGS_DIALOG_FILE = resolve(process.cwd(), 'app/components/UserSettingsDialog.vue')
@@ -55,25 +53,25 @@ it('登录页提供第三方 OAuth 入口并根据注册开关切换文案', asy
   assert.match(pageSource, /import UniverseBackground/, '登录页未恢复 UniverseBackground 背景层')
   assert.match(pageSource, /<UniverseBackground\b/, '登录页未渲染 UniverseBackground 背景层')
   assert.doesNotMatch(pageSource, /<PageShell size="auth"/, '登录页不应再完全复用统一 auth shell')
+  assert.match(pageSource, /登录 WinLoop/, '登录页未恢复独立标题')
+  assert.match(pageSource, /已有关联账号需合并|已有账号需合并时/, '登录页未恢复账号合并提示')
   assert.match(composableSource, /manualOauthLogin/, '登录页未接入第三方 OAuth 登录动作')
   assert.match(composableSource, /\/auth\/oauth\/authorize\?redirect=/, '登录页未跳转 OAuth authorize 接口')
   assert.match(composableSource, /DEFAULT_OAUTH_DISPLAY_NAME/, '登录页未提供默认 OAuth 显示名称')
   assert.match(composableSource, /registrationEnabled\.value\s*\?\s*'首次登录将自动注册/, '登录页未按注册开关切换提示文案')
 })
 
-it('登录页品牌字标与底部信息拆分为独立组件', async () => {
-  const [pageSource, textIconSource, footerSource] = await Promise.all([
-    readFile(LOGIN_PAGE_FILE, 'utf8'),
-    readFile(LOGIN_TEXT_ICON_FILE, 'utf8'),
-    readFile(LOGIN_FOOTER_FILE, 'utf8'),
-  ])
+it('登录页保持独立玻璃卡片布局并内联表单入口', async () => {
+  const pageSource = await readFile(LOGIN_PAGE_FILE, 'utf8')
 
-  assert.match(pageSource, /<LoginTextIcon/, '登录页未使用独立 TextIcon 组件')
-  assert.match(pageSource, /<LoginFooterBar/, '登录页未使用独立底部信息组件')
-  assert.match(textIconSource, /WinLoop/, 'TextIcon 组件未展示 WinLoop 字标')
-  assert.match(footerSource, /Powered by SayBang\./, '登录页底部未展示 Powered by SayBang.')
-  assert.match(footerSource, /隐私政策/, '登录页底部未展示隐私政策')
-  assert.match(footerSource, /使用协议/, '登录页底部未展示使用协议')
+  assert.match(pageSource, /rounded-\[32px\]/, '登录页未保持独立玻璃卡片布局')
+  assert.match(pageSource, /data-testid="login-username-input"/, '登录页未内联用户名输入框')
+  assert.match(pageSource, /data-testid="login-password-input"/, '登录页未内联密码输入框')
+  assert.match(pageSource, /data-testid="login-submit-button"/, '登录页未内联登录提交按钮')
+  assert.doesNotMatch(pageSource, /<LoginTextIcon/, '登录页不应继续依赖 TextIcon 组件')
+  assert.doesNotMatch(pageSource, /<LoginFooterBar/, '登录页不应继续依赖底部 FooterBar 组件')
+  assert.doesNotMatch(pageSource, /<LoginOauthActions/, '登录页不应继续依赖独立 OAuth 动作组件')
+  assert.doesNotMatch(pageSource, /<LoginCredentialForm/, '登录页不应继续依赖独立凭证表单组件')
 })
 
 it('后台运行设置页支持切换 auth.registrationEnabled', async () => {
