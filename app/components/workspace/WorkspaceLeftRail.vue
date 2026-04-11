@@ -1,5 +1,9 @@
 <script setup lang="ts">
+import type { WorkspaceWithQuota } from '~~/shared/types/domain'
+import type { ProjectUploadActivityItem, ProjectUploadSummary } from '~/types/project-upload'
 import NotificationBellButton from '~/components/notifications/NotificationBellButton.vue'
+import WorkspaceUploadAside from '~/components/workspace/WorkspaceUploadAside.vue'
+import WorkspaceUserRailMenu from '~/components/workspace/WorkspaceUserRailMenu.vue'
 
 interface WorkspaceLeftRailItem {
   id: string
@@ -7,13 +11,23 @@ interface WorkspaceLeftRailItem {
   icon: string
 }
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   items?: WorkspaceLeftRailItem[]
   activeId?: string
   workspaceId?: string
   collapsed?: boolean
   recycleActive?: boolean
   memberManagementActive?: boolean
+  userName?: string
+  userEmail?: string
+  userAvatarUrl?: string
+  workspaceOptions?: WorkspaceWithQuota[]
+  workspaceCanManageMembers?: boolean
+  hasActiveProject?: boolean
+  uploadSummary?: ProjectUploadSummary | null
+  uploadDrawerOpen?: boolean
+  uploadActivityItems?: ProjectUploadActivityItem[]
+  uploadHistoryLoaded?: boolean
 }>(), {
   items: () => [],
   activeId: '',
@@ -21,14 +35,37 @@ withDefaults(defineProps<{
   collapsed: false,
   recycleActive: false,
   memberManagementActive: false,
+  userName: '',
+  userEmail: '',
+  userAvatarUrl: '',
+  workspaceOptions: () => [],
+  workspaceCanManageMembers: false,
+  hasActiveProject: false,
+  uploadSummary: null,
+  uploadDrawerOpen: false,
+  uploadActivityItems: () => [],
+  uploadHistoryLoaded: false,
 })
 
 const emit = defineEmits<{
   select: [id: string]
+  toggleUploadDrawer: []
   openRecycleBin: []
   openMemberManagement: []
   openSettings: []
   openNotifications: []
+  switchWorkspace: [workspaceId: string]
+  openWorkspaceHome: []
+  openDisplayPreferences: []
+  openAccountCenter: []
+  pauseUploadTask: [sessionId: string]
+  resumeUploadTask: [sessionId: string]
+  retryUploadTask: [sessionId: string]
+  cancelUploadTask: [sessionId: string]
+  rebindUploadTask: [sessionId: string]
+  pauseAllUploadTasks: []
+  resumeAllUploadTasks: []
+  clearCompletedUploadTasks: []
 }>()
 </script>
 
@@ -36,11 +73,11 @@ const emit = defineEmits<{
   <div class="workspace-left-rail">
     <nav class="workspace-left-rail__menu" aria-label="工作区左侧导航">
       <button
-        v-for="item in items"
+        v-for="item in props.items"
         :key="item.id"
         :aria-label="item.title"
         class="workspace-left-rail__item"
-        :class="{ 'workspace-left-rail__item--active': !collapsed && item.id === activeId }"
+        :class="{ 'workspace-left-rail__item--active': !props.collapsed && item.id === props.activeId }"
         type="button"
         @click="emit('select', item.id)"
       >
@@ -52,9 +89,26 @@ const emit = defineEmits<{
     </nav>
 
     <div class="workspace-left-rail__footer">
+      <WorkspaceUploadAside
+        :has-active-project="props.hasActiveProject"
+        :upload-summary="props.uploadSummary"
+        :upload-drawer-open="props.uploadDrawerOpen"
+        :upload-activity-items="props.uploadActivityItems"
+        :upload-history-loaded="props.uploadHistoryLoaded"
+        @toggle-upload-drawer="emit('toggleUploadDrawer')"
+        @pause-upload-task="emit('pauseUploadTask', $event)"
+        @resume-upload-task="emit('resumeUploadTask', $event)"
+        @retry-upload-task="emit('retryUploadTask', $event)"
+        @cancel-upload-task="emit('cancelUploadTask', $event)"
+        @rebind-upload-task="emit('rebindUploadTask', $event)"
+        @pause-all-upload-tasks="emit('pauseAllUploadTasks')"
+        @resume-all-upload-tasks="emit('resumeAllUploadTasks')"
+        @clear-completed-upload-tasks="emit('clearCompletedUploadTasks')"
+      />
+
       <button
         class="workspace-left-rail__shortcut"
-        :class="{ 'workspace-left-rail__shortcut--active': recycleActive }"
+        :class="{ 'workspace-left-rail__shortcut--active': props.recycleActive }"
         aria-label="打开项目回收站"
         type="button"
         @click="emit('openRecycleBin')"
@@ -66,7 +120,7 @@ const emit = defineEmits<{
       <button
         data-testid="workspace-left-rail-member-management-button"
         class="workspace-left-rail__members"
-        :class="{ 'workspace-left-rail__members--active': memberManagementActive }"
+        :class="{ 'workspace-left-rail__members--active': props.memberManagementActive }"
         aria-label="项目协作"
         type="button"
         @click="emit('openMemberManagement')"
@@ -78,7 +132,7 @@ const emit = defineEmits<{
       <NotificationBellButton
         data-testid="workspace-left-rail-notification-button"
         variant="rail"
-        :workspace-id="workspaceId"
+        :workspace-id="props.workspaceId"
         @open="emit('openNotifications')"
       />
 
@@ -91,6 +145,23 @@ const emit = defineEmits<{
         <span class="material-symbols-outlined workspace-left-rail__icon">settings</span>
         <span class="workspace-left-rail__popover" aria-hidden="true">打开设置面板</span>
       </button>
+
+      <div class="workspace-left-rail__footer-divider" aria-hidden="true" />
+
+      <WorkspaceUserRailMenu
+        :workspace-id="props.workspaceId"
+        :user-name="props.userName"
+        :user-email="props.userEmail"
+        :user-avatar-url="props.userAvatarUrl"
+        :workspace-options="props.workspaceOptions"
+        :workspace-can-manage-members="props.workspaceCanManageMembers"
+        @switch-workspace="emit('switchWorkspace', $event)"
+        @open-workspace-home="emit('openWorkspaceHome')"
+        @open-workspace-settings="emit('openSettings')"
+        @open-display-preferences="emit('openDisplayPreferences')"
+        @open-member-management="emit('openMemberManagement')"
+        @open-account-center="emit('openAccountCenter')"
+      />
     </div>
   </div>
 </template>
@@ -122,6 +193,14 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   padding: 0 0 12px;
+}
+
+.workspace-left-rail__footer-divider {
+  width: 26px;
+  height: 1px;
+  background: #dce4ef;
+  margin: 4px 0 2px;
+  border-radius: 999px;
 }
 
 .workspace-left-rail__item {

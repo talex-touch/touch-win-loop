@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import type { WorkspaceWithQuota } from '~~/shared/types/domain'
+import WorkspaceAiToggleButton from '~/components/workspace/WorkspaceAiToggleButton.vue'
 
 type WorkspaceWorkbenchMode = 'project' | 'defense'
-type UserActionEvent = 'openWorkspaceHome' | 'openWorkspaceSettings' | 'openDisplayPreferences' | 'openMemberManagement' | 'openAccountCenter'
 
 interface WorkspaceQuickSwitchProject {
   projectId: string
@@ -14,92 +13,33 @@ interface WorkspaceQuickSwitchProject {
 
 const props = withDefaults(defineProps<{
   projectName?: string
-  workspaceId?: string
-  userName?: string
-  userEmail?: string
-  userAvatarUrl?: string
-  workspaceOptions?: WorkspaceWithQuota[]
-  workspaceCanManageMembers?: boolean
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
   workbenchMode?: WorkspaceWorkbenchMode
   metaKShortcutLabel?: string
+  aiCollapsed?: boolean
 }>(), {
   projectName: '未命名项目',
-  workspaceId: '',
-  userName: '',
-  userEmail: '',
-  userAvatarUrl: '',
-  workspaceOptions: () => [],
-  workspaceCanManageMembers: false,
   myProjects: () => [],
   recentProjects: () => [],
   workbenchMode: 'project',
   metaKShortcutLabel: '⌘K',
+  aiCollapsed: false,
 })
 
 const emit = defineEmits<{
   (event: 'update:workbenchMode', value: WorkspaceWorkbenchMode): void
   (event: 'quickSwitchProject', value: { projectId: string, workspaceId: string }): void
-  (event: 'switchWorkspace', value: string): void
   (event: 'finalReview'): void
   (event: 'openMetaK'): void
-  (event: 'openWorkspaceHome'): void
-  (event: 'openWorkspaceSettings'): void
-  (event: 'openDisplayPreferences'): void
-  (event: 'openMemberManagement'): void
-  (event: 'openAccountCenter'): void
+  (event: 'toggleAiSidebar'): void
 }>()
 
 const quickSwitchOpen = ref(false)
 const quickSwitchRef = ref<HTMLElement | null>(null)
-const userPopoverRef = ref<HTMLElement | null>(null)
-const userPopoverVisible = ref(false)
-
-let userPopoverCloseTimer: ReturnType<typeof setTimeout> | null = null
 
 const hasQuickSwitchOptions = computed(() => {
   return props.myProjects.length > 0 || props.recentProjects.length > 0
-})
-const normalizedUserName = computed(() => String(props.userName || '').trim() || '当前用户')
-const normalizedUserEmail = computed(() => String(props.userEmail || '').trim())
-const currentWorkspace = computed(() => {
-  const normalizedWorkspaceId = String(props.workspaceId || '').trim()
-  if (normalizedWorkspaceId) {
-    const matched = props.workspaceOptions.find(item => item.workspace.id === normalizedWorkspaceId)
-    if (matched)
-      return matched
-  }
-  return props.workspaceOptions[0] || null
-})
-const currentWorkspaceName = computed(() => {
-  return String(currentWorkspace.value?.workspace.name || '').trim() || '未连接空间'
-})
-const orderedWorkspaceOptions = computed(() => {
-  const currentId = String(props.workspaceId || '').trim()
-  const current: WorkspaceWithQuota[] = []
-  const otherTeams: WorkspaceWithQuota[] = []
-  const personal: WorkspaceWithQuota[] = []
-  const seen = new Set<string>()
-
-  for (const item of props.workspaceOptions) {
-    const workspaceId = String(item.workspace.id || '').trim()
-    if (!workspaceId || seen.has(workspaceId))
-      continue
-    seen.add(workspaceId)
-
-    if (workspaceId === currentId) {
-      current.push(item)
-      continue
-    }
-
-    if (item.workspace.type === 'team')
-      otherTeams.push(item)
-    else
-      personal.push(item)
-  }
-
-  return [...current, ...otherTeams, ...personal]
 })
 
 function formatShortTime(value: string): string {
@@ -114,60 +54,10 @@ function formatShortTime(value: string): string {
   return `${month}-${day} ${hour}:${minute}`
 }
 
-function workspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type']): string {
-  if (type === 'personal')
-    return '个人空间'
-  return 'Team 空间'
-}
-
-function clearUserPopoverCloseTimer(): void {
-  if (!userPopoverCloseTimer)
-    return
-
-  clearTimeout(userPopoverCloseTimer)
-  userPopoverCloseTimer = null
-}
-
-function openUserPopover(): void {
-  clearUserPopoverCloseTimer()
-  closeQuickSwitch()
-  userPopoverVisible.value = true
-}
-
-function closeUserPopover(): void {
-  clearUserPopoverCloseTimer()
-  userPopoverVisible.value = false
-}
-
-function scheduleUserPopoverClose(): void {
-  clearUserPopoverCloseTimer()
-  userPopoverCloseTimer = setTimeout(() => {
-    userPopoverVisible.value = false
-  }, 120)
-}
-
-function handleUserPopoverFocusOut(event: FocusEvent): void {
-  const nextTarget = event.relatedTarget as Node | null
-  const container = userPopoverRef.value
-  if (container && nextTarget && container.contains(nextTarget))
-    return
-  scheduleUserPopoverClose()
-}
-
-function toggleUserPopover(): void {
-  if (userPopoverVisible.value) {
-    closeUserPopover()
-    return
-  }
-  openUserPopover()
-}
-
 function toggleQuickSwitch() {
   if (!hasQuickSwitchOptions.value)
     return
 
-  if (!quickSwitchOpen.value)
-    closeUserPopover()
   quickSwitchOpen.value = !quickSwitchOpen.value
 }
 
@@ -183,58 +73,18 @@ function switchProject(item: WorkspaceQuickSwitchProject) {
   closeQuickSwitch()
 }
 
-function selectWorkspace(item: WorkspaceWithQuota): void {
-  const workspaceId = String(item.workspace.id || '').trim()
-  if (!workspaceId) {
-    closeUserPopover()
-    return
-  }
-  if (workspaceId === String(props.workspaceId || '').trim()) {
-    closeUserPopover()
-    return
-  }
-  closeUserPopover()
-  emit('switchWorkspace', workspaceId)
-}
-
-function triggerUserAction(
-  eventName: UserActionEvent,
-): void {
-  closeUserPopover()
-  switch (eventName) {
-    case 'openWorkspaceHome':
-      emit('openWorkspaceHome')
-      break
-    case 'openWorkspaceSettings':
-      emit('openWorkspaceSettings')
-      break
-    case 'openDisplayPreferences':
-      emit('openDisplayPreferences')
-      break
-    case 'openMemberManagement':
-      emit('openMemberManagement')
-      break
-    case 'openAccountCenter':
-      emit('openAccountCenter')
-      break
-  }
-}
-
 function goWorkspaceList() {
   closeQuickSwitch()
-  closeUserPopover()
   navigateTo('/team')
 }
 
 function openFinalReview() {
   closeQuickSwitch()
-  closeUserPopover()
   emit('finalReview')
 }
 
 function openMetaK() {
   closeQuickSwitch()
-  closeUserPopover()
   emit('openMetaK')
 }
 
@@ -254,19 +104,12 @@ function handleGlobalPointerDown(event: Event) {
     if (!quickSwitchContainer || !quickSwitchContainer.contains(target))
       closeQuickSwitch()
   }
-
-  if (userPopoverVisible.value) {
-    const userPopoverContainer = userPopoverRef.value
-    if (!userPopoverContainer || !userPopoverContainer.contains(target))
-      closeUserPopover()
-  }
 }
 
 function handleGlobalEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape')
     return
   closeQuickSwitch()
-  closeUserPopover()
 }
 
 onMounted(() => {
@@ -277,7 +120,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  clearUserPopoverCloseTimer()
   if (!import.meta.client)
     return
   document.removeEventListener('pointerdown', handleGlobalPointerDown)
@@ -375,19 +217,18 @@ onBeforeUnmount(() => {
     <div class="shrink-0 max-w-[42vw] w-[28rem]">
       <button
         type="button"
-        class="group px-3 text-left border border-slate-200 rounded-2xl bg-slate-50/90 h-10 w-full transition-all focus:outline-none hover:border-slate-300 hover:bg-white focus:ring-2 focus:ring-blue-500/25 hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+        class="px-1.5 text-left border border-slate-200 rounded-lg bg-white h-7 w-full focus:outline-none focus:ring-2 focus:ring-blue-500/20"
         data-testid="workspace-header-metak-trigger"
         @click="openMetaK"
       >
-        <span class="flex gap-3 min-w-0 items-center">
-          <span class="text-blue-600 rounded-xl bg-blue-50 inline-flex shrink-0 h-8 w-8 transition-colors items-center justify-center group-hover:bg-blue-100">
-            <span class="material-symbols-outlined text-[18px]">search</span>
+        <span class="flex gap-1.5 min-w-0 items-center">
+          <span class="text-blue-600 rounded-md bg-blue-50 inline-flex shrink-0 h-[22px] w-[22px] items-center justify-center">
+            <span class="material-symbols-outlined text-[14px]">search</span>
           </span>
-          <span class="flex-1 min-w-0">
-            <span class="text-[10px] text-slate-400 tracking-[0.14em] font-semibold block uppercase">MetaK</span>
-            <span class="text-xs text-slate-500 block truncate">搜索命令、资源、会议或项目</span>
+          <span class="text-[11px] text-slate-500 flex-1 min-w-0 block truncate leading-none">
+            搜索命令、资源、会议或项目
           </span>
-          <span class="text-[10px] text-slate-400 font-semibold px-2 py-1 border border-slate-200 rounded-xl bg-white shrink-0">
+          <span class="text-[9px] text-slate-400 leading-none font-semibold px-1.5 py-0.5 border border-slate-200 rounded-md bg-slate-50 shrink-0">
             {{ metaKShortcutLabel }}
           </span>
         </span>
@@ -427,150 +268,10 @@ onBeforeUnmount(() => {
       >
         终审
       </button>
-
-      <div
-        ref="userPopoverRef"
-        class="relative"
-        @mouseenter="openUserPopover"
-        @mouseleave="scheduleUserPopoverClose"
-        @focusin="openUserPopover"
-        @focusout="handleUserPopoverFocusOut"
-      >
-        <button
-          type="button"
-          class="p-0.5 rounded-full flex transition-colors items-center justify-center focus:outline-none hover:bg-slate-100 focus:ring-2 focus:ring-blue-500/30"
-          :aria-expanded="userPopoverVisible ? 'true' : 'false'"
-          aria-haspopup="menu"
-          data-testid="workspace-header-user-trigger"
-          title="打开空间与账号菜单"
-          @click.stop="toggleUserPopover"
-        >
-          <UnifiedAvatar
-            :name="normalizedUserName"
-            :src="props.userAvatarUrl"
-            :size="32"
-          />
-        </button>
-
-        <div
-          v-if="userPopoverVisible"
-          class="mt-2 p-3 border border-slate-200 rounded-2xl bg-white w-80 shadow-[0_18px_48px_rgba(15,23,42,0.16)] right-0 top-full absolute z-30"
-          data-testid="workspace-header-user-popover"
-        >
-          <section class="pb-3 border-b border-slate-100">
-            <div class="flex gap-3 items-start">
-              <UnifiedAvatar
-                :name="normalizedUserName"
-                :src="props.userAvatarUrl"
-                :size="40"
-              />
-              <div class="flex-1 min-w-0">
-                <div class="text-sm text-slate-900 font-semibold truncate">
-                  {{ normalizedUserName }}
-                </div>
-                <div v-if="normalizedUserEmail" class="text-[11px] text-slate-500 mt-0.5 truncate">
-                  {{ normalizedUserEmail }}
-                </div>
-                <div class="text-[11px] text-slate-500 mt-1.5">
-                  当前空间
-                </div>
-                <div class="mt-1 flex gap-2 items-center">
-                  <span class="text-xs text-slate-700 font-medium truncate">
-                    {{ currentWorkspaceName }}
-                  </span>
-                  <span
-                    v-if="currentWorkspace"
-                    class="text-[10px] text-slate-500 px-2 py-0.5 rounded-full bg-slate-100 shrink-0"
-                  >
-                    {{ workspaceTypeLabel(currentWorkspace.workspace.type) }}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="py-3 border-b border-slate-100">
-            <div class="text-[11px] text-slate-500 font-medium px-1 pb-2">
-              快速切换空间
-            </div>
-            <div v-if="orderedWorkspaceOptions.length > 0" class="space-y-1">
-              <button
-                v-for="item in orderedWorkspaceOptions"
-                :key="item.workspace.id"
-                class="px-2.5 py-2 text-left rounded-xl w-full transition-colors"
-                :class="item.workspace.id === props.workspaceId
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-slate-700 hover:bg-slate-50'"
-                data-testid="workspace-header-user-workspace-item"
-                type="button"
-                @click="selectWorkspace(item)"
-              >
-                <div class="flex gap-2 items-center justify-between">
-                  <span class="text-xs font-semibold truncate">{{ item.workspace.name }}</span>
-                  <span class="text-[10px] px-2 py-0.5 border border-slate-200 rounded-full bg-white/80 shrink-0">
-                    {{ workspaceTypeLabel(item.workspace.type) }}
-                  </span>
-                </div>
-                <div class="text-[11px] mt-1" :class="item.workspace.id === props.workspaceId ? 'text-blue-600/80' : 'text-slate-500'">
-                  {{ item.workspace.id === props.workspaceId ? '当前空间' : '切换后将沿用当前工作区跳转逻辑' }}
-                </div>
-              </button>
-            </div>
-            <div v-else class="text-[11px] text-slate-400 px-1 py-2">
-              暂无可切换空间
-            </div>
-          </section>
-
-          <section class="pt-3 space-y-1">
-            <button
-              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
-              data-testid="workspace-header-user-action-workspace-home"
-              type="button"
-              @click="triggerUserAction('openWorkspaceHome')"
-            >
-              <span class="material-symbols-outlined text-[18px]">home</span>
-              <span>打开空间首页</span>
-            </button>
-            <button
-              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
-              data-testid="workspace-header-user-action-settings"
-              type="button"
-              @click="triggerUserAction('openWorkspaceSettings')"
-            >
-              <span class="material-symbols-outlined text-[18px]">tune</span>
-              <span>项目设置</span>
-            </button>
-            <button
-              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
-              data-testid="workspace-header-user-action-display-preferences"
-              type="button"
-              @click="triggerUserAction('openDisplayPreferences')"
-            >
-              <span class="material-symbols-outlined text-[18px]">format_size</span>
-              <span>显示偏好</span>
-            </button>
-            <button
-              v-if="props.workspaceCanManageMembers"
-              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
-              data-testid="workspace-header-user-action-member-management"
-              type="button"
-              @click="triggerUserAction('openMemberManagement')"
-            >
-              <span class="material-symbols-outlined text-[18px]">group</span>
-              <span>成员管理</span>
-            </button>
-            <button
-              class="text-xs text-slate-700 px-2.5 py-2 rounded-xl flex gap-2 w-full transition-colors items-center hover:bg-slate-50"
-              data-testid="workspace-header-user-action-account-center"
-              type="button"
-              @click="triggerUserAction('openAccountCenter')"
-            >
-              <span class="material-symbols-outlined text-[18px]">manage_accounts</span>
-              <span>账号中心</span>
-            </button>
-          </section>
-        </div>
-      </div>
+      <WorkspaceAiToggleButton
+        :collapsed="props.aiCollapsed"
+        @toggle="emit('toggleAiSidebar')"
+      />
     </div>
   </header>
 </template>

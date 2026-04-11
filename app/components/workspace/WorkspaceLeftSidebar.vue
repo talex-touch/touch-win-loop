@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type {
   Contest,
+  ProjectUploadActivityItem,
+  ProjectUploadSummary,
   ProjectIssue,
   ProjectIssueReport,
   ProjectMemberSummary,
@@ -9,6 +11,7 @@ import type {
   ProjectResourceShareVisibility,
   Resource,
   WorkspaceTabSpacingPreset,
+  WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
@@ -49,6 +52,10 @@ const props = withDefaults(defineProps<{
   linkedContestResourceGroups?: WorkspaceLinkedContestResourceGroup[]
   linkedContestBindingCount?: number
   uploadTasks?: ProjectUploadTask[]
+  uploadSummary?: ProjectUploadSummary | null
+  uploadDrawerOpen?: boolean
+  uploadActivityItems?: ProjectUploadActivityItem[]
+  uploadHistoryLoaded?: boolean
   projectMembers?: ProjectMemberSummary[]
   projectOutline?: ProjectOutlineNode[]
   issueReports?: ProjectIssueReport[]
@@ -65,8 +72,12 @@ const props = withDefaults(defineProps<{
   listLoading: boolean
   aiFiltering: boolean
   isAdminView?: boolean
+  workspaceId?: string
+  userEmail?: string
+  userAvatarUrl?: string
+  workspaceOptions?: WorkspaceWithQuota[]
+  workspaceCanManageMembers?: boolean
   activeMainTabId?: string
-  defenseActive?: boolean
   currentUserId?: string
   currentUsername?: string
   projectStorageLimitBytes?: number
@@ -82,6 +93,10 @@ const props = withDefaults(defineProps<{
   linkedContestResourceGroups: () => [],
   linkedContestBindingCount: 0,
   uploadTasks: () => [],
+  uploadSummary: null,
+  uploadDrawerOpen: false,
+  uploadActivityItems: () => [],
+  uploadHistoryLoaded: false,
   projectMembers: () => [],
   projectOutline: () => [],
   issueReports: () => [],
@@ -94,8 +109,12 @@ const props = withDefaults(defineProps<{
   hasActiveProject: false,
   normalizedInfo: '',
   isAdminView: false,
+  workspaceId: '',
+  userEmail: '',
+  userAvatarUrl: '',
+  workspaceOptions: () => [],
+  workspaceCanManageMembers: false,
   activeMainTabId: '',
-  defenseActive: false,
   currentUserId: '',
   currentUsername: '',
   projectStorageLimitBytes: 0,
@@ -117,11 +136,23 @@ const emit = defineEmits<{
   'update:selectedContestId': [value: string]
   'loadContests': []
   'runAiFilter': []
+  'toggleUploadDrawer': []
+  'pauseUploadTask': [sessionId: string]
+  'resumeUploadTask': [sessionId: string]
+  'retryUploadTask': [sessionId: string]
+  'cancelUploadTask': [sessionId: string]
+  'rebindUploadTask': [sessionId: string]
+  'pauseAllUploadTasks': []
+  'resumeAllUploadTasks': []
+  'clearCompletedUploadTasks': []
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
+  'switchWorkspace': [workspaceId: string]
+  'openWorkspaceHome': []
+  'openDisplayPreferences': []
+  'openAccountCenter': []
   'createCollabResource': [kind: 'markdown' | 'draw']
-  'openDefenseMode': []
   'reloadIssues': []
   'addResourceFromLibrary': [resourceId: string]
   'openResource': [resourceId: string]
@@ -307,10 +338,6 @@ function openMemberManagementPanel() {
   emit('openMemberManagementPanel')
 }
 
-function openDefenseMode() {
-  emit('openDefenseMode')
-}
-
 function openRecycleBinPanel() {
   recyclePanelOpen.value = true
 }
@@ -363,15 +390,37 @@ watch(activeModule, (value) => {
     <WorkspaceLeftRail
       :items="modules"
       :active-id="activeModule"
+      :workspace-id="props.workspaceId"
       :collapsed="props.collapsed"
       :recycle-active="recyclePanelOpen"
-      :defense-active="props.defenseActive"
+      :user-name="props.currentUsername"
+      :user-email="props.userEmail"
+      :user-avatar-url="props.userAvatarUrl"
+      :workspace-options="props.workspaceOptions"
+      :workspace-can-manage-members="props.workspaceCanManageMembers"
+      :has-active-project="props.hasActiveProject"
+      :upload-summary="props.uploadSummary"
+      :upload-drawer-open="props.uploadDrawerOpen"
+      :upload-activity-items="props.uploadActivityItems"
+      :upload-history-loaded="props.uploadHistoryLoaded"
       :member-management-active="props.activeMainTabId === 'members'"
       @select="switchModule"
-      @open-defense="openDefenseMode"
+      @toggle-upload-drawer="emit('toggleUploadDrawer')"
       @open-recycle-bin="openRecycleBinPanel"
       @open-member-management="openMemberManagementPanel"
       @open-settings="openSettingsPanel"
+      @switch-workspace="emit('switchWorkspace', $event)"
+      @open-workspace-home="emit('openWorkspaceHome')"
+      @open-display-preferences="emit('openDisplayPreferences')"
+      @open-account-center="emit('openAccountCenter')"
+      @pause-upload-task="emit('pauseUploadTask', $event)"
+      @resume-upload-task="emit('resumeUploadTask', $event)"
+      @retry-upload-task="emit('retryUploadTask', $event)"
+      @cancel-upload-task="emit('cancelUploadTask', $event)"
+      @rebind-upload-task="emit('rebindUploadTask', $event)"
+      @pause-all-upload-tasks="emit('pauseAllUploadTasks')"
+      @resume-all-upload-tasks="emit('resumeAllUploadTasks')"
+      @clear-completed-upload-tasks="emit('clearCompletedUploadTasks')"
     />
 
     <section
@@ -464,7 +513,15 @@ watch(activeModule, (value) => {
       </Transition>
 
       <div v-if="false" class="workspace-left-sidebar__structural-contract" aria-hidden="true">
-        <button type="button" title="从系统资料库导入">从系统资料库导入</button>
+        <button type="button">
+          新建协作文档
+        </button>
+        <button type="button">
+          新建自由画布
+        </button>
+        <button type="button" title="从系统资料库导入">
+          从系统资料库导入
+        </button>
         <div v-for="treeItem in projectResourceTreeItems" :key="treeItem.resource.id" class="workspace-resource-tree-group">
           <button class="workspace-tree-item__expander" type="button" />
           <div v-if="documentTreeExpanded[treeItem.resource.id]" class="workspace-resource-tree-group__children">
@@ -502,7 +559,10 @@ watch(activeModule, (value) => {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  transition: width 0.22s ease, opacity 0.22s ease, transform 0.22s ease;
+  transition:
+    width 0.22s ease,
+    opacity 0.22s ease,
+    transform 0.22s ease;
 }
 
 .workspace-left-panel--hidden {
@@ -521,7 +581,9 @@ watch(activeModule, (value) => {
 .workspace-left-panel-content-forward-leave-active,
 .workspace-left-panel-content-backward-enter-active,
 .workspace-left-panel-content-backward-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .workspace-left-panel-content-forward-enter-from,

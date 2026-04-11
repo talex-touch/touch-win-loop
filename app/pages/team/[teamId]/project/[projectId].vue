@@ -104,6 +104,7 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
 import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
+import { syncMarkdownMirrorFromRichText } from '~~/shared/utils/collab-markdown-rich-text'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
@@ -111,16 +112,17 @@ import {
   createProjectCommonFormFromProject,
 } from '~/composables/project-settings'
 import { useCollabSession } from '~/composables/useCollabSession'
-import { syncMarkdownMirrorFromRichText } from '~~/shared/utils/collab-markdown-rich-text'
 import {
   defaultWorkspaceDisplayPreferenceSnapshot,
   useWorkspaceDisplayPreferenceApi,
 } from '~/composables/useWorkspaceDisplayPreferences'
 import {
+  isCollabMarkdownHeadingAnchorHashForResource,
+} from '~/utils/collab-markdown-navigation'
+import {
   buildWorkspaceMetaKSections,
   matchAndSortWorkspaceMetaKItems,
   resolveWorkspaceMetaKShortcutLabel,
-
 } from '~/utils/workspace-metak'
 
 definePageMeta({
@@ -788,6 +790,7 @@ const openSettingsSignal = ref(0)
 const openMemberManagementSignal = ref(0)
 const openDisplayPreferencesSignal = ref(0)
 const openFlowSignal = ref(0)
+const openDesignSignal = ref(0)
 const openPreviewSignal = ref(0)
 const closePreviewSignal = ref(0)
 const accountCenterVisible = ref(false)
@@ -808,12 +811,14 @@ const aiReasoning = ref('')
 const normalizedInfo = ref('')
 const statusLine = ref('')
 const flowResourceId = ref('')
+const designResourceId = ref('')
 const previewResourceId = ref('')
 const collabBindingResourceId = ref('')
 const closingPreviewResourceId = ref('')
 const workspaceMainPanelRef = ref<{
   applyMarkdownDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
   scrollToMarkdownCommentThread: (threadId: string) => void
+  scrollToMarkdownHeadingAnchor: (anchorId: string) => boolean
 } | null>(null)
 const previewStatusLoading = ref(false)
 const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
@@ -1062,6 +1067,14 @@ function expandRightSidebar(): void {
   setRightSidebarUserCollapsed(false)
 }
 
+function toggleRightSidebar(): void {
+  if (rightSidebarCollapsed.value) {
+    expandRightSidebar()
+    return
+  }
+  collapseRightSidebar()
+}
+
 function createResourceTabId(resourceId: string): WorkspaceMainTabId {
   return `resource:${resourceId}` as WorkspaceMainTabId
 }
@@ -1110,7 +1123,7 @@ function ensureMeetingCreateTabOpen(mode: ProjectMeetingMode, options: { activat
 }
 
 function isWorkspaceMainTabId(value: string): value is WorkspaceMainTabId {
-  return ['dashboard', 'meeting', 'members', 'flow', 'settings'].includes(value)
+  return ['dashboard', 'meeting', 'members', 'flow', 'design', 'settings'].includes(value)
     || (value.startsWith('meeting:') && value.length > 'meeting:'.length)
     || value === 'meeting-create:audio'
     || value === 'meeting-create:video'
@@ -1446,6 +1459,7 @@ async function replaceProjectWorkspaceRouteQueryIfNeeded(state: ProjectWorkspace
   await navigateTo({
     path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
     query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
+    hash: route.hash || undefined,
   }, { replace: true })
 }
 
@@ -2027,7 +2041,8 @@ const activeMarkdownResourceTitle = computed(() => {
   const derivedTitle = normalizeString(markdownDerivedTitleMap.value[resourceId])
   if (derivedTitle)
     return derivedTitle
-  return normalizeString(previewResource.value?.title) || '协作文档'
+  const currentPreviewResource = selectedResources.value.find(item => item.id === resourceId) || null
+  return normalizeString(currentPreviewResource?.title) || '协作文档'
 })
 const projectOutlineItems = computed(() => projectOutlineSnapshot.value?.items || [])
 const projectOutlineFlatItems = computed(() => flattenProjectOutlineNodes(projectOutlineItems.value))
@@ -2035,15 +2050,6 @@ const projectOutlineFirstLoadLoading = computed(() => {
   return projectOutlineLoading.value && !projectOutlineFirstLoaded.value
 })
 const latestIssueReport = computed(() => projectIssueReports.value[0] || null)
-const activeCommentThread = computed(() => {
-  const threadId = normalizeString(activeMarkdownCommentThreadId.value)
-  if (!threadId)
-    return null
-  return markdownCommentThreads.value.find(item => item.id === threadId) || null
-})
-const documentAssistHasSelection = computed(() => {
-  return Boolean(documentAssistRequestState.selectionText || documentAssistRequestState.selectionRange)
-})
 const metaKResourceTitleMap = computed(() => {
   return new Map(selectedResources.value.map(resource => [resource.id, resolveMetaKResourceTitle(resource)]))
 })
@@ -2530,6 +2536,12 @@ const flowResource = computed(() => {
     return null
   return resources.value.find(item => item.id === targetId) || null
 })
+const designResource = computed(() => {
+  const targetId = String(designResourceId.value || '').trim()
+  if (!targetId)
+    return null
+  return resources.value.find(item => item.id === targetId) || null
+})
 const previewResourceTitle = computed(() => {
   const currentPreviewResource = previewResource.value
   const resourceId = String(currentPreviewResource?.id || '').trim()
@@ -2548,6 +2560,12 @@ const flowResourceTitle = computed(() => {
   if (title)
     return title
   return '流程画布'
+})
+const designResourceTitle = computed(() => {
+  const title = String(designResource.value?.title || '').trim()
+  if (title)
+    return title
+  return '设计稿'
 })
 function resolveResourceSourceDownloadUrl(resource: Resource | null | undefined): string {
   const rawUrl = String(resource?.sourceDownloadUrl || resource?.sourceLink || '').trim()
@@ -2630,9 +2648,23 @@ function isWorkflowCanvasResource(resource: Resource | null | undefined): resour
     && resolveCollabPurpose(resource) === 'workflow'
 }
 
+function isDesignCanvasResource(resource: Resource | null | undefined): resource is Resource {
+  if (!isCollabResource(resource) || resource.resourceKind !== 'draw')
+    return false
+
+  if (String(resource.drawMode || '').trim().toLowerCase() !== 'composition')
+    return false
+
+  const fixedTab = String(resource.metadata?.fixedTab || '').trim().toLowerCase()
+  return fixedTab === 'design'
+}
+
 function resolveCollabResourceLabel(resource: Resource | null | undefined): string {
   if (!isCollabResource(resource))
     return '协作内容'
+
+  if (isDesignCanvasResource(resource))
+    return '设计稿'
 
   const purpose = resolveCollabPurpose(resource)
   if (purpose === 'workflow')
@@ -6021,7 +6053,7 @@ interface OpenPreviewOptions {
 }
 
 interface OpenCollabOptions extends OpenPreviewOptions {
-  surface?: 'preview' | 'flow'
+  surface?: 'preview' | 'flow' | 'design'
 }
 
 async function bindCollabResource(
@@ -6068,6 +6100,13 @@ async function openProjectCollabResource(
     return
   }
 
+  if (options.surface === 'design') {
+    designResourceId.value = targetResourceId
+    if (options.openTab !== false)
+      openDesignSignal.value += 1
+    return
+  }
+
   previewMode.value = targetSnapshot.kind
   previewResourceId.value = targetResourceId
   closingPreviewResourceId.value = ''
@@ -6098,6 +6137,40 @@ async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<b
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, '打开流程画布失败，请稍后重试。')
+    return false
+  }
+}
+
+async function ensureDesignCanvas(options: OpenPreviewOptions = {}): Promise<boolean> {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId)
+    return false
+
+  try {
+    const response = await unsafeFetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
+      method: 'POST',
+      body: {
+        kind: 'draw',
+        purpose: 'freeform',
+        title: '设计稿',
+        drawMode: 'composition',
+        sceneSourceType: 'image_mockup',
+        templateKey: 'device-showcase',
+        metadata: {
+          fixedTab: 'design',
+        },
+      },
+    })
+
+    await refreshProjectResourceContext()
+    await openProjectCollabResource(response.data.resource.id, response.data.snapshot || null, {
+      openTab: options.openTab,
+      surface: 'design',
+    })
+    return true
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '打开设计稿失败，请稍后重试。')
     return false
   }
 }
@@ -6158,6 +6231,39 @@ async function openProjectResourcePreview(resourceId: string, options: OpenPrevi
   const currentStatus = ((previewStatusPayload.value as any)?.status || '') as ResourcePreviewStatus | ''
   if (currentStatus !== 'succeeded' && currentStatus !== 'failed')
     startPreviewStatusPolling(targetResourceId)
+}
+
+function findMarkdownResourceByAnchorHash(hash: string): Resource | null {
+  const normalizedHash = String(hash || '').trim()
+  if (!normalizedHash)
+    return null
+
+  return resources.value.find((resource) => {
+    return resource.kind === 'markdown' && isCollabMarkdownHeadingAnchorHashForResource(normalizedHash, resource.id)
+  }) || null
+}
+
+async function resolveMarkdownAnchorNavigation(hash = route.hash): Promise<void> {
+  const normalizedHash = String(hash || '').trim()
+  if (!normalizedHash)
+    return
+
+  const targetMarkdownResource = findMarkdownResourceByAnchorHash(normalizedHash)
+  if (!targetMarkdownResource)
+    return
+
+  const targetTabId = createResourceTabId(targetMarkdownResource.id)
+  if (previewResourceId.value !== targetMarkdownResource.id || activeMainTabId.value !== targetTabId)
+    await openProjectResourcePreview(targetMarkdownResource.id)
+
+  const anchorId = normalizedHash.replace(/^#/, '')
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await nextTick()
+    const handled = workspaceMainPanelRef.value?.scrollToMarkdownHeadingAnchor(anchorId)
+    if (handled)
+      return
+    await new Promise(resolve => setTimeout(resolve, 48))
+  }
 }
 
 async function activateProjectResourceTab(resourceId: string): Promise<void> {
@@ -8914,6 +9020,7 @@ watch(activeProjectId, async (next, previous) => {
   if (!next) {
     disposeCollabDocBinding(true)
     flowResourceId.value = ''
+    designResourceId.value = ''
     projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
     topicBoardSnapshot.value = null
@@ -8999,9 +9106,20 @@ watch(resources, (nextResources) => {
   if (workflowResource && !flowResourceId.value)
     flowResourceId.value = workflowResource.id
 
+  const nextDesignResource = nextResources.find(item => isDesignCanvasResource(item)) || null
+  if (nextDesignResource && designResourceId.value !== nextDesignResource.id)
+    designResourceId.value = nextDesignResource.id
+
   if (flowResourceId.value && !nextResources.some(item => item.id === flowResourceId.value)) {
     const shouldDispose = collabBindingResourceId.value === flowResourceId.value && activeMainTabId.value === 'flow'
     flowResourceId.value = ''
+    if (shouldDispose)
+      disposeCollabDocBinding(true)
+  }
+
+  if (designResourceId.value && !nextResources.some(item => item.id === designResourceId.value)) {
+    const shouldDispose = collabBindingResourceId.value === designResourceId.value && activeMainTabId.value === 'design'
+    designResourceId.value = ''
     if (shouldDispose)
       disposeCollabDocBinding(true)
   }
@@ -9043,6 +9161,12 @@ watch(activeMarkdownResourceId, async (nextResourceId, previousResourceId) => {
   startMarkdownCommentPolling()
 }, { immediate: true })
 
+watch(resources, () => {
+  if (!route.hash)
+    return
+  void resolveMarkdownAnchorNavigation(route.hash)
+}, { deep: true })
+
 watch(activeMarkdownResourceTitle, (nextTitle) => {
   if (!documentAssistRequestState.resourceId)
     return
@@ -9055,6 +9179,12 @@ watch(collabMarkdownDoc, () => {
   documentAssistRequestState.markdown = getActiveMarkdownMirror()
 }, { deep: true })
 
+watch(() => route.hash, (nextHash, previousHash) => {
+  if (!nextHash || nextHash === previousHash)
+    return
+  void resolveMarkdownAnchorNavigation(nextHash)
+}, { immediate: true })
+
 async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value): Promise<void> {
   if (!nextTabId)
     return
@@ -9066,6 +9196,23 @@ async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value)
     await openProjectCollabResource(targetResourceId, undefined, {
       openTab: false,
       surface: 'flow',
+    })
+    return
+  }
+
+  if (nextTabId === 'design') {
+    let targetResourceId = String(designResourceId.value || '').trim()
+    if (!targetResourceId) {
+      const opened = await ensureDesignCanvas({ openTab: false })
+      if (!opened)
+        return
+      targetResourceId = String(designResourceId.value || '').trim()
+    }
+    if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
+      return
+    await openProjectCollabResource(targetResourceId, undefined, {
+      openTab: false,
+      surface: 'design',
     })
     return
   }
@@ -9197,26 +9344,16 @@ watch(() => workspaceRealtime.connected.value, () => {
   >
     <WorkspaceHeader
       :project-name="headerProjectName"
-      :workspace-id="activeWorkspaceId"
-      :user-name="me?.user.username || ''"
-      :user-email="currentUserEmail"
-      :user-avatar-url="me?.user.avatarUrl || ''"
-      :workspace-options="workspaceOptions"
-      :workspace-can-manage-members="workspaceCanManageMembers"
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
       :workbench-mode="workbenchMode"
       :meta-k-shortcut-label="metaKShortcutLabel"
+      :ai-collapsed="rightSidebarCollapsed"
       @update:workbench-mode="updateWorkbenchMode"
       @final-review="openFinalReviewFromHeader"
       @open-meta-k="openMetaK"
       @quick-switch-project="switchProjectFromHeader"
-      @switch-workspace="switchWorkspaceFromHeader"
-      @open-workspace-home="openWorkspaceHomeFromHeader"
-      @open-workspace-settings="openSettingsFromLeftSidebar"
-      @open-display-preferences="openDisplayPreferencesFromHeader"
-      @open-member-management="openMemberManagementFromLeftSidebar"
-      @open-account-center="openAccountCenterFromHeader"
+      @toggle-ai-sidebar="toggleRightSidebar"
     />
 
     <main class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
@@ -9237,6 +9374,10 @@ watch(() => workspaceRealtime.connected.value, () => {
           :linked-contest-resource-groups="linkedContestResourceGroups"
           :linked-contest-binding-count="projectSettingsBindings.length"
           :upload-tasks="projectUploadTasks"
+          :upload-summary="projectUploadSummary"
+          :upload-drawer-open="uploadDrawerOpen"
+          :upload-activity-items="projectUploadActivityItems"
+          :upload-history-loaded="projectUploadHistoryLoaded"
           :meetings="projectMeetings"
           :active-meeting-id="activeMeetingId"
           :meeting-loading="projectMeetingsLoading"
@@ -9258,6 +9399,10 @@ watch(() => workspaceRealtime.connected.value, () => {
           :ai-filtering="aiFiltering"
           :is-admin-view="isAdminView"
           :active-main-tab-id="activeMainTabId"
+          :user-email="currentUserEmail"
+          :user-avatar-url="me?.user.avatarUrl || ''"
+          :workspace-options="workspaceOptions"
+          :workspace-can-manage-members="workspaceCanManageMembers"
           :current-user-id="me?.user.id || ''"
           :current-username="me?.user.username || ''"
           :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
@@ -9279,6 +9424,11 @@ watch(() => workspaceRealtime.connected.value, () => {
           @open-settings-panel="openSettingsFromLeftSidebar"
           @open-member-management-panel="openMemberManagementFromLeftSidebar"
           @open-flow-panel="openFlowFromLeftSidebar"
+          @switch-workspace="switchWorkspaceFromHeader"
+          @open-workspace-home="openWorkspaceHomeFromHeader"
+          @open-display-preferences="openDisplayPreferencesFromHeader"
+          @open-account-center="openAccountCenterFromHeader"
+          @toggle-upload-drawer="openUploadDrawer"
           @create-meeting="createProjectMeeting"
           @select-meeting="selectProjectMeeting"
           @create-collab-resource="createCollabResource"
@@ -9298,6 +9448,9 @@ watch(() => workspaceRealtime.connected.value, () => {
           @retry-upload-task="retryUploadTask"
           @cancel-upload-task="cancelUploadTask"
           @rebind-upload-task="requestRebindUploadTask"
+          @pause-all-upload-tasks="pauseAllUploadTasks"
+          @resume-all-upload-tasks="resumeAllUploadTasks"
+          @clear-completed-upload-tasks="clearCompletedUploadTasks"
           @update:collapsed="leftSidebarCollapsed = $event"
         />
       </div>
@@ -9318,6 +9471,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :selected-track="selectedTrack"
         :contests="contestSource"
         :active-project="activeProject"
+        :active-project-id="activeProjectId"
         :workspace-name="currentWorkspace?.workspace.name || ''"
         :workspace-type="currentWorkspace?.workspace.type || ''"
         :workspace-members="workspaceMembers"
@@ -9341,10 +9495,13 @@ watch(() => workspaceRealtime.connected.value, () => {
         :open-member-management-signal="openMemberManagementSignal"
         :open-display-preferences-signal="openDisplayPreferencesSignal"
         :open-flow-signal="openFlowSignal"
+        :open-design-signal="openDesignSignal"
         :open-preview-signal="openPreviewSignal"
         :close-preview-signal="closePreviewSignal"
         :flow-resource-id="flowResourceId"
         :flow-resource-title="flowResourceTitle"
+        :design-resource-id="designResourceId"
+        :design-resource-title="designResourceTitle"
         :preview-resource-id="previewResourceId"
         :closing-preview-resource-id="closingPreviewResourceId"
         :preview-resource-title="previewResourceTitle"
@@ -9356,6 +9513,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-source-download-url="previewSourceDownloadUrl"
         :current-user-id="me?.user.id || ''"
         :current-user-name="me?.user.username || ''"
+        :collab-resource-id="collabBindingResourceId"
         :collab-markdown-doc="collabMarkdownDoc"
         :collab-markdown-awareness="collabMarkdownAwareness"
         :collab-draw-value="collabDrawValue"
@@ -9538,17 +9696,6 @@ watch(() => workspaceRealtime.connected.value, () => {
           />
         </div>
       </div>
-      <button
-        data-testid="workspace-right-sidebar-expand-button"
-        class="workspace-right-dock__collapsed-toggle"
-        :class="{ 'workspace-right-dock__collapsed-toggle--visible': rightSidebarCollapsed }"
-        type="button"
-        title="展开右侧栏"
-        aria-label="展开右侧栏"
-        @click="expandRightSidebar"
-      >
-        <span class="material-symbols-outlined">left_panel_open</span>
-      </button>
       <div v-if="workspacePreparing" class="workspace-preparing-overlay" aria-live="polite">
         <div class="workspace-preparing-overlay__panel">
           <span class="workspace-preparing-overlay__label">正在准备工作区</span>
@@ -9569,20 +9716,6 @@ watch(() => workspaceRealtime.connected.value, () => {
       :column="statusCursor.column"
       :selection-length="statusCursor.selectionLength"
       :has-active-project="Boolean(activeProjectId)"
-      :upload-summary="projectUploadSummary"
-      :upload-drawer-open="uploadDrawerOpen"
-      :upload-tasks="projectUploadTasks"
-      :upload-activity-items="projectUploadActivityItems"
-      :upload-history-loaded="projectUploadHistoryLoaded"
-      @toggle-upload-drawer="openUploadDrawer"
-      @pause-upload-task="pauseUploadTask"
-      @resume-upload-task="resumeUploadTask"
-      @retry-upload-task="retryUploadTask"
-      @cancel-upload-task="cancelUploadTask"
-      @rebind-upload-task="requestRebindUploadTask"
-      @pause-all-upload-tasks="pauseAllUploadTasks"
-      @resume-all-upload-tasks="resumeAllUploadTasks"
-      @clear-completed-upload-tasks="clearCompletedUploadTasks"
     />
     <input
       ref="rebindUploadInputRef"
@@ -9709,10 +9842,10 @@ watch(() => workspaceRealtime.connected.value, () => {
 }
 
 .workspace-right-dock--collapsed {
-  flex-basis: 4.25rem;
-  width: 4.25rem;
-  min-width: 4.25rem;
-  max-width: 4.25rem;
+  flex-basis: 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
 }
 
 .workspace-right-dock__panel {
@@ -9733,61 +9866,6 @@ watch(() => workspaceRealtime.connected.value, () => {
   visibility: hidden;
   pointer-events: none;
   transform: translateX(18px) scale(0.985);
-}
-
-.workspace-right-dock__collapsed-toggle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 2.75rem;
-  height: 2.75rem;
-  padding: 0;
-  border: 1px solid #d9e1ef;
-  border-radius: 0.9rem;
-  background: rgba(255, 255, 255, 0.96);
-  color: #60738f;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, -50%) scale(0.88);
-  transition:
-    opacity 0.18s ease,
-    transform 0.22s ease,
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-.workspace-right-dock__collapsed-toggle--visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translate(-50%, -50%) scale(1);
-}
-
-.workspace-right-dock__collapsed-toggle:hover {
-  background: #f8fbff;
-  border-color: #c9d7eb;
-  color: #2f4d78;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
-}
-
-.workspace-right-dock__collapsed-toggle:focus-visible {
-  outline: 2px solid #cddcf7;
-  outline-offset: 2px;
-}
-
-.workspace-right-dock__collapsed-toggle .material-symbols-outlined {
-  font-size: 20px;
-  line-height: 1;
-  font-variation-settings:
-    'FILL' 0,
-    'wght' 320,
-    'opsz' 24;
 }
 
 .workspace-preparing-overlay {
