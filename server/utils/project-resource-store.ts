@@ -844,6 +844,8 @@ function toResource(row: ProjectResourceRow): Resource {
         resourceId: row.id,
       })
     : null
+  const resolvedMimeType = normalizeString(row.mime_type) || normalizeString(metadata.mimeType) || 'application/octet-stream'
+  const resolvedFileName = normalizeString(metadata.fileName) || normalizeString(row.title)
   const collabSourceLink = sourceType === 'collab'
     ? buildServerApiEndpoint(`/projects/${row.project_id}/resources/${row.id}/collab`)
     : ''
@@ -851,6 +853,12 @@ function toResource(row: ProjectResourceRow): Resource {
     ? signedUrls?.sourceDownloadUrl
     : undefined
   const previewStatus = normalizeString(row.preview_status) as Resource['previewStatus']
+  const isDirectPreviewImage = sourceType === 'upload'
+    && Boolean(documentId)
+    && isImageUploadInput(resolvedFileName, resolvedMimeType)
+  const normalizedPreviewStatus = isDirectPreviewImage
+    ? 'succeeded'
+    : previewStatus
   const previewUrl = sourceType === 'upload' && documentId
     ? signedUrls?.previewUrl
     : undefined
@@ -886,10 +894,14 @@ function toResource(row: ProjectResourceRow): Resource {
     sourceDownloadUrlExpiresAt: signedUrls?.sourceDownloadUrlExpiresAt,
     previewUrl,
     previewUrlExpiresAt: previewUrl ? signedUrls?.previewUrlExpiresAt : undefined,
-    previewStatus: previewStatus || undefined,
-    previewProgressPercent: Number.isFinite(Number(row.preview_progress_percent)) ? Number(row.preview_progress_percent) : undefined,
-    previewEtaSeconds: Number.isFinite(Number(row.preview_eta_seconds)) ? Number(row.preview_eta_seconds) : undefined,
-    previewError: normalizeString(row.preview_error) || undefined,
+    previewStatus: normalizedPreviewStatus || undefined,
+    previewProgressPercent: isDirectPreviewImage
+      ? 100
+      : (Number.isFinite(Number(row.preview_progress_percent)) ? Number(row.preview_progress_percent) : undefined),
+    previewEtaSeconds: isDirectPreviewImage
+      ? 0
+      : (Number.isFinite(Number(row.preview_eta_seconds)) ? Number(row.preview_eta_seconds) : undefined),
+    previewError: isDirectPreviewImage ? undefined : (normalizeString(row.preview_error) || undefined),
     availability: row.availability,
     sourceType,
     source: sourceType,

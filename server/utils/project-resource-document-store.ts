@@ -164,6 +164,30 @@ function isPdfByNameOrMime(fileName: string, mimeType: string): boolean {
   return normalizeString(mimeType).toLowerCase().includes('pdf')
 }
 
+const IMAGE_PREVIEW_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.bmp',
+  '.webp',
+  '.svg',
+  '.avif',
+  '.heic',
+  '.heif',
+])
+
+function isImageByNameOrMime(fileName: string, mimeType: string): boolean {
+  const normalizedMime = normalizeString(mimeType).toLowerCase()
+  if (normalizedMime.startsWith('image/'))
+    return true
+
+  const normalizedName = normalizeString(fileName).toLowerCase()
+  const dotIndex = normalizedName.lastIndexOf('.')
+  const extension = dotIndex >= 0 ? normalizedName.slice(dotIndex) : ''
+  return IMAGE_PREVIEW_EXTENSIONS.has(extension)
+}
+
 const ONLYOFFICE_EXTENSIONS = new Set([
   '.doc',
   '.docx',
@@ -190,7 +214,7 @@ export function isOnlyOfficeConvertible(fileName: string, mimeType: string): boo
 }
 
 function mapDocument(row: ProjectResourceDocumentRow): ProjectResourceDocument {
-  return {
+  const document: ProjectResourceDocument = {
     id: row.id,
     projectId: row.project_id,
     projectResourceId: row.project_resource_id,
@@ -224,6 +248,27 @@ function mapDocument(row: ProjectResourceDocumentRow): ProjectResourceDocument {
     totalAttemptDurationMs: Math.max(0, toNumber(row.total_attempt_duration_ms, 0)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+
+  if (!isImageByNameOrMime(document.sourceFileName || document.fileName, document.sourceMimeType || document.mimeType))
+    return document
+
+  return {
+    ...document,
+    previewObjectKey: normalizeString(document.previewObjectKey) || normalizeString(document.sourceObjectKey) || normalizeString(document.objectKey),
+    previewStorageProvider: normalizeString(document.previewStorageProvider || document.sourceStorageProvider || document.storageProvider) || 'local',
+    previewFileName: normalizeString(document.previewFileName || document.sourceFileName || document.fileName) || 'image',
+    previewMimeType: normalizeString(document.previewMimeType).startsWith('image/')
+      ? normalizeString(document.previewMimeType)
+      : (normalizeString(document.sourceMimeType || document.mimeType) || 'application/octet-stream'),
+    previewFileSize: document.previewFileSize > 0
+      ? document.previewFileSize
+      : Math.max(0, document.sourceFileSize || document.fileSize),
+    previewStatus: 'succeeded',
+    previewStage: 'succeeded',
+    previewProgressPercent: 100,
+    previewEtaSeconds: 0,
+    previewError: '',
   }
 }
 
@@ -268,22 +313,27 @@ export async function createProjectPreviewDocumentWithTask(
   const sourceStorageProvider = normalizeString(input.sourceStorageProvider) || 'local'
 
   const isPdf = isPdfByNameOrMime(sourceFileName, sourceMimeType)
+  const isImage = isImageByNameOrMime(sourceFileName, sourceMimeType)
   const canConvert = isOnlyOfficeConvertible(sourceFileName, sourceMimeType)
 
-  const previewStatus: ProjectPreviewStatus = isPdf
+  const previewStatus: ProjectPreviewStatus = isPdf || isImage
     ? 'succeeded'
     : canConvert
       ? 'queued'
       : 'failed'
   const previewStage: ProjectPreviewStage = previewStatus
   const previewProgressPercent = previewStatus === 'succeeded' || previewStatus === 'failed' ? 100 : 0
-  const previewError = canConvert || isPdf ? '' : 'UNSUPPORTED_CONVERSION_TYPE'
+  const previewError = canConvert || isPdf || isImage ? '' : 'UNSUPPORTED_CONVERSION_TYPE'
 
-  const previewObjectKey = isPdf ? sourceObjectKey : ''
-  const previewStorageProvider = isPdf ? sourceStorageProvider : sourceStorageProvider
-  const previewFileName = isPdf ? sourceFileName : ''
-  const previewMimeType = isPdf ? 'application/pdf' : 'application/pdf'
-  const previewFileSize = isPdf ? sourceFileSize : 0
+  const previewObjectKey = isPdf || isImage ? sourceObjectKey : ''
+  const previewStorageProvider = isPdf || isImage ? sourceStorageProvider : sourceStorageProvider
+  const previewFileName = isPdf || isImage ? sourceFileName : ''
+  const previewMimeType = isPdf
+    ? 'application/pdf'
+    : isImage
+      ? sourceMimeType
+      : 'application/pdf'
+  const previewFileSize = isPdf || isImage ? sourceFileSize : 0
 
   await db.query(
     `INSERT INTO project_resource_documents (
@@ -889,7 +939,7 @@ export async function enqueueProjectDocumentReconvert(
   if (!document)
     throw new Error('DOCUMENT_NOT_FOUND')
 
-  if (isPdfByNameOrMime(document.sourceFileName, document.sourceMimeType)) {
+  if (isPdfByNameOrMime(document.sourceFileName, document.sourceMimeType) || isImageByNameOrMime(document.sourceFileName, document.sourceMimeType)) {
     await setProjectDocumentPreviewState(db, {
       documentId: document.id,
       status: 'succeeded',
