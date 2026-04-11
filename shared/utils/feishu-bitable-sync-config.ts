@@ -14,13 +14,15 @@ const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]
   track: ['赛道', '方向', 'track'],
   track_timeline: ['赛道时间线', '赛道节点', '赛道日程', 'tracktimeline', 'track_timeline'],
   resource: ['资料', '资源', '素材', '文档', 'resource', 'material'],
+  policy: ['政策', '会议', '大会', 'policy', 'notice'],
 }
 
 const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
   contest: ['externalId', 'name', 'officialUrl'],
   track: ['externalId', 'contestExternalId', 'name'],
   track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
-  resource: ['externalId', 'contestExternalId', 'title', 'url'],
+  resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
+  policy: ['externalId', 'meetingName'],
 }
 
 function buildDefaultWriteback(): FeishuBitableWritebackConfig {
@@ -50,13 +52,13 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         externalIdField: '',
         fieldMap: {
           name: '',
-          officialUrl: '',
-          summary: '',
           level: '',
           disciplines: '',
+          officialUrl: '',
+          summary: '',
           keywords: '',
-          registrationWindow: '',
-          submissionDeadline: '',
+          timelineText: '',
+          recommendedFor: '',
         },
       },
       options: {},
@@ -71,20 +73,20 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         contestExternalIdField: '',
         fieldMap: {
           name: '',
-          summary: '',
           coverImageUrl: '',
           location: '',
           organizer: '',
           undertaker: '',
+          summary: '',
           participantRequirements: '',
           teamRule: '',
-          awardRatio: '',
+          timelineText: '',
           suitableMajors: '',
-          deliverableTypes: '',
-          sortOrder: '',
+          awardRatio: '',
           evidenceRequirements: '',
           scoringPoints: '',
           deductionItems: '',
+          deliverableTypes: '',
         },
       },
       options: {
@@ -114,6 +116,32 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
     }
   }
 
+  if (entityType === 'policy') {
+    return {
+      mapping: {
+        externalIdField: '',
+        fieldMap: {
+          meetingName: '',
+          summary: '',
+          conferenceDate: '',
+          importance: '',
+          officialMaterial: '',
+          officialMaterialLink: '',
+          wechatMaterial: '',
+          wechatMaterialLink: '',
+          weiboMaterial: '',
+          weiboMaterialLink: '',
+          douyinMaterial: '',
+          douyinMaterialLink: '',
+          xiaohongshuMaterial: '',
+          xiaohongshuMaterialLink: '',
+        },
+      },
+      options: {},
+      writeback: buildDefaultWriteback(),
+    }
+  }
+
   return {
     mapping: {
       externalIdField: '',
@@ -121,13 +149,11 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
       trackExternalIdField: '',
       fieldMap: {
         title: '',
-        name: '',
-        summary: '',
-        content: '',
         category: '',
-        url: '',
-        sourceType: '',
-        year: '',
+        attachment: '',
+        attachmentSummary: '',
+        contestRelationInfo: '',
+        trackRelationInfo: '',
       },
     },
     options: {
@@ -166,7 +192,7 @@ export function suggestSyncItemEntityType(input: {
   if (!sourceText)
     return null
 
-  for (const entityType of ['track_timeline', 'track', 'resource', 'contest'] as const) {
+  for (const entityType of ['track_timeline', 'track', 'policy', 'resource', 'contest'] as const) {
     const hints = ENTITY_TYPE_SOURCE_HINTS[entityType]
     if (hints.some(hint => sourceText.includes(normalizeSourceHintText(hint))))
       return entityType
@@ -188,7 +214,9 @@ export function buildSuggestedSyncItemName(
       ? '赛道同步'
       : entityType === 'track_timeline'
         ? '赛道时间线同步'
-        : '资料同步'
+        : entityType === 'policy'
+          ? '政策同步'
+          : '资料同步'
 
   if (normalizedTableName && normalizedViewName)
     return `${normalizedTableName} / ${normalizedViewName} · ${entityLabel}`

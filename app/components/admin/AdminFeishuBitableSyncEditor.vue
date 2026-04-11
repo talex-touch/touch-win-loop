@@ -133,33 +133,33 @@ async function requestApi<T>(
 const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> = {
   contest: [
     { key: 'externalId', label: 'externalId（主键）' },
-    { key: 'name', label: 'name（名称）' },
-    { key: 'officialUrl', label: 'officialUrl（官网）' },
-    { key: 'summary', label: 'summary（简介）' },
+    { key: 'name', label: 'name（竞赛名称）' },
     { key: 'level', label: 'level（级别）' },
-    { key: 'disciplines', label: 'disciplines（学科）' },
+    { key: 'disciplines', label: 'disciplines（学科门类）' },
+    { key: 'officialUrl', label: 'officialUrl（官网地址）' },
+    { key: 'summary', label: 'summary（竞赛简介）' },
     { key: 'keywords', label: 'keywords（关键词）' },
-    { key: 'registrationWindow', label: 'registrationWindow（报名时间）' },
-    { key: 'submissionDeadline', label: 'submissionDeadline（截止时间）' },
+    { key: 'timelineText', label: 'timelineText（时间节点）' },
+    { key: 'recommendedFor', label: 'recommendedFor（适配人群）' },
   ],
   track: [
     { key: 'externalId', label: 'externalId（主键）' },
-    { key: 'contestExternalId', label: 'contestExternalId（赛事外部 ID）' },
-    { key: 'name', label: 'name（赛道名）' },
-    { key: 'summary', label: 'summary（简介）' },
+    { key: 'contestExternalId', label: 'contestExternalId（对应竞赛）' },
+    { key: 'name', label: 'name（赛道名称）' },
     { key: 'coverImageUrl', label: 'coverImageUrl（封面）' },
     { key: 'location', label: 'location（具体位置）' },
     { key: 'organizer', label: 'organizer（主办方）' },
     { key: 'undertaker', label: 'undertaker（承办方）' },
+    { key: 'summary', label: 'summary（赛道简介）' },
     { key: 'participantRequirements', label: 'participantRequirements（参赛对象）' },
     { key: 'teamRule', label: 'teamRule（组队规则）' },
+    { key: 'timelineText', label: 'timelineText（时间节点）' },
+    { key: 'suitableMajors', label: 'suitableMajors（相关专业）' },
     { key: 'awardRatio', label: 'awardRatio（获奖比例）' },
-    { key: 'suitableMajors', label: 'suitableMajors（适用专业）' },
-    { key: 'deliverableTypes', label: 'deliverableTypes（交付物类型）' },
-    { key: 'sortOrder', label: 'sortOrder（排序）' },
     { key: 'evidenceRequirements', label: 'evidenceRequirements（必备项）' },
     { key: 'scoringPoints', label: 'scoringPoints（加分项）' },
     { key: 'deductionItems', label: 'deductionItems（扣分项）' },
+    { key: 'deliverableTypes', label: 'deliverableTypes（提交内容）' },
   ],
   track_timeline: [
     { key: 'externalId', label: 'externalId（主键）' },
@@ -174,16 +174,31 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
   ],
   resource: [
     { key: 'externalId', label: 'externalId（主键）' },
-    { key: 'contestExternalId', label: 'contestExternalId（赛事外部 ID）' },
-    { key: 'trackExternalId', label: 'trackExternalId（赛道外部 ID）' },
-    { key: 'title', label: 'title（标题）' },
-    { key: 'name', label: 'name（别名标题）' },
-    { key: 'summary', label: 'summary（摘要）' },
-    { key: 'content', label: 'content（正文）' },
-    { key: 'category', label: 'category（分类）' },
-    { key: 'url', label: 'url（链接）' },
-    { key: 'sourceType', label: 'sourceType（来源类型）' },
-    { key: 'year', label: 'year（年份）' },
+    { key: 'contestExternalId', label: 'contestExternalId（竞赛关联信息）' },
+    { key: 'trackExternalId', label: 'trackExternalId（赛道关联信息）' },
+    { key: 'title', label: 'title（资料标题）' },
+    { key: 'category', label: 'category（资料类别）' },
+    { key: 'attachment', label: 'attachment（附件）' },
+    { key: 'attachmentSummary', label: 'attachmentSummary（附件摘要）' },
+    { key: 'contestRelationInfo', label: 'contestRelationInfo（竞赛关联信息文本）' },
+    { key: 'trackRelationInfo', label: 'trackRelationInfo（赛道关联信息文本）' },
+  ],
+  policy: [
+    { key: 'externalId', label: 'externalId（主键）' },
+    { key: 'meetingName', label: 'meetingName（会议名称）' },
+    { key: 'summary', label: 'summary（大会简介）' },
+    { key: 'conferenceDate', label: 'conferenceDate（大会日期）' },
+    { key: 'importance', label: 'importance（重要程度）' },
+    { key: 'officialMaterial', label: 'officialMaterial（官网资料）' },
+    { key: 'officialMaterialLink', label: 'officialMaterialLink（官网资料链接）' },
+    { key: 'wechatMaterial', label: 'wechatMaterial（微信公众号资料）' },
+    { key: 'wechatMaterialLink', label: 'wechatMaterialLink（微信公众号链接）' },
+    { key: 'weiboMaterial', label: 'weiboMaterial（微博资料）' },
+    { key: 'weiboMaterialLink', label: 'weiboMaterialLink（微博资料链接）' },
+    { key: 'douyinMaterial', label: 'douyinMaterial（抖音资料）' },
+    { key: 'douyinMaterialLink', label: 'douyinMaterialLink（抖音资料链接）' },
+    { key: 'xiaohongshuMaterial', label: 'xiaohongshuMaterial（小红书资料）' },
+    { key: 'xiaohongshuMaterialLink', label: 'xiaohongshuMaterialLink（小红书资料链接）' },
   ],
 }
 
@@ -193,11 +208,12 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   trackExternalId: ['track_external_id', 'trackid', '赛道外部id', '赛道id', '所属赛道id'],
   name: ['name', '名称', '名字', '竞赛名称', '赛事名称', '赛道名称'],
   title: ['title', '标题', '资料标题', '资源标题'],
-  summary: ['summary', '简介', '描述', '说明', '概述'],
-  content: ['content', '正文', '内容', '详情', '全文'],
+  summary: ['summary', '简介', '描述', '说明', '概述', '竞赛简介', '赛道简介', '大会简介'],
   officialUrl: ['officialurl', 'official_url', '官网', '官网链接', '赛事链接', '竞赛链接', '报名链接', 'url'],
-  disciplines: ['disciplines', '学科', '专业', '所属学科'],
+  disciplines: ['disciplines', '学科', '专业', '所属学科', '学科门类'],
   keywords: ['keywords', '关键字', '关键词', '标签'],
+  timelineText: ['timelinetext', 'timeline_text', '时间节点', '时间线', '日程', '时间安排'],
+  recommendedFor: ['recommendedfor', 'recommended_for', '适配人群', '适合人群', '面向人群'],
   registrationWindow: ['registrationwindow', 'registration_window', '报名时间', '报名窗口'],
   submissionDeadline: ['submissiondeadline', 'submission_deadline', '截止时间', '提交截止时间', '提交时间'],
   coverImageUrl: ['coverimageurl', 'cover_image_url', '封面', '封面图', '封面图片', '图片链接'],
@@ -207,8 +223,8 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   participantRequirements: ['participantrequirements', 'participant_requirements', '参赛对象', '适用对象', '参赛要求'],
   teamRule: ['teamrule', 'team_rule', '组队规则', '组队要求'],
   awardRatio: ['awardratio', 'award_ratio', '获奖比例'],
-  suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业'],
-  deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物'],
+  suitableMajors: ['suitablemajors', '适合专业', '适用专业', '推荐专业', '相关专业'],
+  deliverableTypes: ['deliverabletypes', '交付物', '成果类型', '提交物', '提交内容'],
   sortOrder: ['sortorder', '排序', '序号', 'sort', 'order'],
   evidenceRequirements: ['evidencerequirements', 'evidence_requirements', '必备项', '必备材料', '必须项'],
   scoringPoints: ['scoringpoints', 'scoring_points', '加分项', '亮点', '加分点'],
@@ -218,17 +234,33 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   endAt: ['endat', 'end_at', '结束时间', '结束日期', '截止时间'],
   note: ['note', '备注', '说明'],
   sourceLink: ['sourcelink', 'source_link', '来源链接', '来源地址'],
-  category: ['category', '分类', '资料分类'],
-  url: ['url', '链接', '资料链接', '资源链接', '下载链接'],
-  sourceType: ['sourcetype', '来源类型', '资源类型'],
+  category: ['category', '分类', '资料分类', '资料类别'],
+  attachment: ['attachment', '附件', '附件链接', '资料附件', '资源附件', '下载链接'],
+  attachmentSummary: ['attachmentsummary', 'attachment_summary', '附件摘要', '摘要'],
+  contestRelationInfo: ['contestrelationinfo', 'contest_relation_info', '竞赛关联信息', '竞赛关联'],
+  trackRelationInfo: ['trackrelationinfo', 'track_relation_info', '赛道关联信息', '赛道关联'],
   year: ['year', '年份', '年度'],
+  meetingName: ['meetingname', 'meeting_name', '会议名称', '大会名称'],
+  conferenceDate: ['conferencedate', 'conference_date', '大会日期', '会议日期'],
+  importance: ['importance', '重要程度', '重要级别'],
+  officialMaterial: ['officialmaterial', 'official_material', '官网资料'],
+  officialMaterialLink: ['officialmateriallink', 'official_material_link', '官网资料链接', '官网链接'],
+  wechatMaterial: ['wechatmaterial', 'wechat_material', '微信公众号资料', '公众号资料'],
+  wechatMaterialLink: ['wechatmateriallink', 'wechat_material_link', '微信公众号链接', '公众号链接'],
+  weiboMaterial: ['weibomaterial', 'weibo_material', '微博资料'],
+  weiboMaterialLink: ['weibomateriallink', 'weibo_material_link', '微博资料链接', '微博链接'],
+  douyinMaterial: ['douyinmaterial', 'douyin_material', '抖音资料'],
+  douyinMaterialLink: ['douyinmateriallink', 'douyin_material_link', '抖音资料链接', '抖音链接'],
+  xiaohongshuMaterial: ['xiaohongshumaterial', 'xiaohongshu_material', '小红书资料'],
+  xiaohongshuMaterialLink: ['xiaohongshumateriallink', 'xiaohongshu_material_link', '小红书资料链接', '小红书链接'],
 }
 
 const ENTITY_TYPE_OPTIONS: SelectOption<FeishuBitableSyncItemEntityType>[] = [
   { value: 'contest', label: '竞赛' },
   { value: 'track', label: '赛道' },
-  { value: 'track_timeline', label: '赛道时间线' },
   { value: 'resource', label: '资料' },
+  { value: 'policy', label: '政策' },
+  { value: 'track_timeline', label: '赛道时间线（兼容）' },
 ]
 
 const SCHEDULE_MODE_OPTIONS: SelectOption<FeishuTaskScheduleMode>[] = [
@@ -289,7 +321,8 @@ const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, strin
   contest: ['externalId', 'name', 'officialUrl'],
   track: ['externalId', 'contestExternalId', 'name'],
   track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
-  resource: ['externalId', 'contestExternalId', 'title', 'url'],
+  resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
+  policy: ['externalId', 'meetingName'],
 }
 
 const savingItem = ref(false)
@@ -725,12 +758,14 @@ function previewRowStatusColor(status: string): string {
 
 function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string[] {
   if (entityType === 'track')
-    return ['externalId', 'contestExternalId', 'name']
+    return ['externalId', 'contestExternalId', 'name', 'timelineText']
   if (entityType === 'track_timeline')
     return ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType', 'year']
   if (entityType === 'resource')
-    return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'url']
-  return ['externalId', 'name', 'officialUrl', 'registrationWindow', 'submissionDeadline']
+    return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'attachment']
+  if (entityType === 'policy')
+    return ['externalId', 'meetingName', 'conferenceDate', 'importance']
+  return ['externalId', 'name', 'officialUrl', 'timelineText', 'recommendedFor']
 }
 
 function isRequiredMappingField(entityType: FeishuBitableSyncItemEntityType, targetKey: string): boolean {
@@ -2059,7 +2094,7 @@ watch(() => props.selectedItemId, (value) => {
           先选同步项，再进详细配置。常用表单会自动带推荐模板，JSON 只放在高级模式里兜底。
         </p>
         <p class="text-[11px] text-slate-500 m-0 mt-1">
-          完整教程已整理到仓库文档 `docs/feishu-bitable-sync-guide.md`，适合第一次接手配置的管理员按步骤照着做。
+          完整教程已经放到后台 <NuxtLink to="/admin/docs" class="text-blue-600 hover:underline">文档中心</NuxtLink>，适合第一次接手配置和审批发布的管理员按步骤照着做。
         </p>
       </div>
       <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
@@ -2535,7 +2570,7 @@ watch(() => props.selectedItemId, (value) => {
                       模拟同步结果
                     </p>
                     <p class="text-[10px] text-slate-500 m-0 mt-1">
-                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl / registrationWindow / submissionDeadline`，赛道库的 `contestExternalId / name` 是否都落对。
+                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl / timelineText`、赛道库的 `contestExternalId / name / timelineText`、资料库的 `title / attachment`、政策库的 `meetingName / conferenceDate` 是否都落对。
                     </p>
                   </div>
                   <div class="border border-slate-200 rounded overflow-auto">
@@ -2723,7 +2758,7 @@ watch(() => props.selectedItemId, (value) => {
                 基础映射
               </h3>
               <p class="text-[11px] text-slate-500 m-0 mt-1">
-                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId`；竞赛库重点看 `name / officialUrl / registrationWindow / submissionDeadline`。
+                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId / timelineText`；竞赛库重点看 `name / officialUrl / timelineText`；资料库重点看 `title / attachment`；政策库重点看 `meetingName / conferenceDate`。
               </p>
             </div>
             <div class="flex gap-2">
