@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   AuthUser,
+  WorkspaceDisplayPreferences,
   WorkspaceMemberRole,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
@@ -17,10 +18,15 @@ import { useUserAuthBindings } from '~/composables/useUserAuthBindings'
 import { useUserSessionHistory } from '~/composables/useUserSessionHistory'
 import { useUserWorkspaceMembership } from '~/composables/useUserWorkspaceMembership'
 import { useUserWorkspaceOverview } from '~/composables/useUserWorkspaceOverview'
+import {
+  normalizeWorkspaceFontSizeDraft,
+  normalizeWorkspaceTabSpacingDraft,
+  useWorkspaceDisplayPreferenceApi,
+  WORKSPACE_FONT_SIZE_PRESET_OPTIONS,
+  WORKSPACE_TAB_SPACING_PRESET_OPTIONS,
+} from '~/composables/useWorkspaceDisplayPreferences'
 
-type UserSettingsTabId = 'profile' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
-// Legacy compatibility anchor for workspace header tests:
-// type UserSettingsTabId = 'profile' | 'displayPreferences'
+type UserSettingsTabId = 'profile' | 'displayPreferences' | 'overview' | 'ai' | 'members' | 'bindings' | 'loginHistory' | 'audits'
 type UserSettingsNavGroupId = 'profile' | 'workspace'
 
 interface UserSettingsTabMeta {
@@ -65,11 +71,22 @@ const route = useRoute()
 const authApiFetch = useAuthApiFetch()
 const runtime = useRuntimeConfig()
 const { endpoint, resolveAppUrl } = useApiEndpoint(runtime)
+const {
+  loadUserDefaults,
+  patchUserDefaults,
+} = useWorkspaceDisplayPreferenceApi()
 
 const activeTab = ref<UserSettingsTabId>('profile')
 const loggingOut = ref(false)
 const logoutConfirmVisible = ref(false)
 const actionError = ref('')
+const userWorkspaceDisplayPreferences = ref<WorkspaceDisplayPreferences | null>(null)
+const userWorkspaceDisplayLoading = ref(false)
+const userWorkspaceDisplaySaving = ref(false)
+const userWorkspaceDisplayError = ref('')
+const userWorkspaceDisplaySuccess = ref('')
+const userWorkspaceDisplayFontSizeDraft = ref<ReturnType<typeof normalizeWorkspaceFontSizeDraft>>('')
+const userWorkspaceDisplayTabSpacingDraft = ref<ReturnType<typeof normalizeWorkspaceTabSpacingDraft>>('')
 const avatarFileInputRef = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
 const profileEditorDialogVisible = ref(false)
@@ -87,6 +104,7 @@ const defaultTabMeta: UserSettingsTabMeta = {
 
 const tabItems: UserSettingsTabMeta[] = [
   defaultTabMeta,
+  { id: 'displayPreferences', groupId: 'profile', label: '显示偏好', icon: 'format_size', description: '管理个人全局默认字号与标签边距。' },
   { id: 'bindings', groupId: 'profile', label: '账号绑定', icon: 'link', description: '管理飞书和第三方 OAuth 身份绑定。' },
   { id: 'loginHistory', groupId: 'profile', label: '登录历史', icon: 'schedule', description: '查看个人账号近期登录与会话状态。' },
   { id: 'audits', groupId: 'profile', label: '操作记录', icon: 'history', description: '查看最近的绑定与解绑操作。' },
@@ -177,6 +195,48 @@ const userIdentityItems = computed(() => {
 })
 
 const userInitial = computed(() => resolveInitial(props.userName))
+
+function syncUserWorkspaceDisplayPreferenceDrafts(preferences: WorkspaceDisplayPreferences | null): void {
+  userWorkspaceDisplayPreferences.value = preferences
+  userWorkspaceDisplayFontSizeDraft.value = normalizeWorkspaceFontSizeDraft(preferences?.fontSizePreset)
+  userWorkspaceDisplayTabSpacingDraft.value = normalizeWorkspaceTabSpacingDraft(preferences?.tabSpacingPreset)
+}
+
+async function loadUserWorkspaceDisplayPreferences(): Promise<void> {
+  userWorkspaceDisplayLoading.value = true
+  userWorkspaceDisplayError.value = ''
+  userWorkspaceDisplaySuccess.value = ''
+  try {
+    const preferences = await loadUserDefaults()
+    syncUserWorkspaceDisplayPreferenceDrafts(preferences)
+  }
+  catch (error: any) {
+    userWorkspaceDisplayError.value = String(error?.message || '个人显示偏好加载失败，请稍后重试。')
+  }
+  finally {
+    userWorkspaceDisplayLoading.value = false
+  }
+}
+
+async function saveUserWorkspaceDisplayPreferences(): Promise<void> {
+  userWorkspaceDisplaySaving.value = true
+  userWorkspaceDisplayError.value = ''
+  userWorkspaceDisplaySuccess.value = ''
+  try {
+    const preferences = await patchUserDefaults({
+      fontSizePreset: userWorkspaceDisplayFontSizeDraft.value || null,
+      tabSpacingPreset: userWorkspaceDisplayTabSpacingDraft.value || null,
+    })
+    syncUserWorkspaceDisplayPreferenceDrafts(preferences)
+    userWorkspaceDisplaySuccess.value = '显示偏好已保存。'
+  }
+  catch (error: any) {
+    userWorkspaceDisplayError.value = String(error?.message || '个人显示偏好保存失败，请稍后重试。')
+  }
+  finally {
+    userWorkspaceDisplaySaving.value = false
+  }
+}
 
 function resolveWorkspaceInvitationUrl(token: string): string {
   const normalizedToken = String(token || '').trim()
@@ -457,6 +517,13 @@ function closeDialog() {
 function resetDialogState() {
   activeTab.value = 'profile'
   actionError.value = ''
+  userWorkspaceDisplayPreferences.value = null
+  userWorkspaceDisplayLoading.value = false
+  userWorkspaceDisplaySaving.value = false
+  userWorkspaceDisplayError.value = ''
+  userWorkspaceDisplaySuccess.value = ''
+  userWorkspaceDisplayFontSizeDraft.value = ''
+  userWorkspaceDisplayTabSpacingDraft.value = ''
   avatarUploading.value = false
   logoutConfirmVisible.value = false
   profileEditorDialogVisible.value = false
@@ -475,6 +542,13 @@ async function refreshActiveTabData(tabId: UserSettingsTabId, options: { resetAi
       loadAuthMeta(),
       loadFeishuBindStatus(),
       loadOauthBindStatus(),
+    ])
+    return
+  }
+
+  if (tabId === 'displayPreferences') {
+    await Promise.allSettled([
+      loadUserWorkspaceDisplayPreferences(),
     ])
     return
   }
@@ -625,6 +699,87 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
       @open-logout-confirm="openLogoutConfirm"
       @open-profile-editor-dialog="openProfileEditorDialog"
     />
+
+    <section
+      v-else-if="activeTab === 'displayPreferences'"
+      data-testid="user-settings-display-preferences-panel"
+      class="user-settings-display-preferences-tab space-y-4"
+    >
+      <div class="p-5 border border-slate-200 rounded-2xl bg-white">
+        <div class="flex gap-3 items-start justify-between">
+          <div>
+            <div class="text-sm text-slate-800 font-semibold">
+              个人全局显示偏好
+            </div>
+            <p class="text-xs text-slate-500 mt-1">
+              系统默认固定为 md / 默认边距
+            </p>
+          </div>
+          <button
+            class="text-xs text-slate-500 font-semibold"
+            type="button"
+            :disabled="userWorkspaceDisplayLoading"
+            @click="loadUserWorkspaceDisplayPreferences"
+          >
+            刷新
+          </button>
+        </div>
+
+        <div class="mt-4 gap-4 grid md:grid-cols-2">
+          <label class="text-xs text-slate-600 block space-y-1.5">
+            <span class="text-slate-700 font-semibold">默认字号</span>
+            <select
+              :value="userWorkspaceDisplayFontSizeDraft"
+              data-testid="user-settings-display-font-size-select"
+              class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+              @change="userWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">
+                跟随系统默认
+              </option>
+              <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`user-settings-font-size-${option.value}`" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+
+          <label class="text-xs text-slate-600 block space-y-1.5">
+            <span class="text-slate-700 font-semibold">默认标签边距</span>
+            <select
+              :value="userWorkspaceDisplayTabSpacingDraft"
+              data-testid="user-settings-display-tab-spacing-select"
+              class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+              @change="userWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">
+                跟随系统默认
+              </option>
+              <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`user-settings-tab-spacing-${option.value}`" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+        </div>
+
+        <p v-if="userWorkspaceDisplayError" class="user-settings-feedback user-settings-feedback--danger mt-4">
+          {{ userWorkspaceDisplayError }}
+        </p>
+        <p v-else-if="userWorkspaceDisplaySuccess" class="user-settings-feedback mt-4">
+          {{ userWorkspaceDisplaySuccess }}
+        </p>
+
+        <div class="mt-4 flex justify-end">
+          <button
+            class="text-xs text-white font-semibold px-4 py-2 rounded-xl bg-slate-900 inline-flex transition-colors items-center hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            type="button"
+            :disabled="userWorkspaceDisplayLoading || userWorkspaceDisplaySaving"
+            @click="saveUserWorkspaceDisplayPreferences"
+          >
+            保存显示偏好
+          </button>
+        </div>
+      </div>
+    </section>
 
     <UserSettingsWorkspaceOverviewPanel
       v-else-if="activeTab === 'overview'"

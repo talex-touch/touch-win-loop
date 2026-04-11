@@ -522,6 +522,15 @@ type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
+type FinalReviewChecklistStatus = 'pass' | 'warning' | 'missing'
+
+interface FinalReviewChecklistItem {
+  id: string
+  title: string
+  description: string
+  status: FinalReviewChecklistStatus
+  blocker?: boolean
+}
 
 const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
 const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
@@ -708,6 +717,12 @@ const chatDraft = ref<ProjectPayload | null>(null)
 const aiMode = ref<WorkspaceAiMode>('dialog_ask')
 const workbenchMode = ref<WorkspaceWorkbenchMode>('project')
 const lastPrimaryAiMode = ref<WorkspacePrimaryAiMode>('dialog_ask')
+const finalReviewMaterialsOpen = ref(false)
+const finalReviewAssistantOpen = ref(false)
+const preFinalReviewLeftCollapsed = ref(false)
+const preFinalReviewRightCollapsed = ref(false)
+const preFinalReviewActiveMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
+const preFinalReviewOpenTabs = ref<WorkspaceMainTabId[]>(['dashboard'])
 const aiChangeRequests = ref<AiProjectChangeRequest[]>([])
 const aiChangeRequestsLoading = ref(false)
 const aiChangeActingIds = ref<string[]>([])
@@ -733,6 +748,11 @@ const workspaceSeatLimitSaveLoading = ref(false)
 const workspaceSeatLimitError = ref('')
 const workspaceSeatLimitUpdatedSignal = ref(0)
 const projectSeatQuota = ref<ProjectSeatQuota | null>(null)
+const headerAiCollapsed = computed(() => {
+  return workbenchMode.value === 'final_review'
+    ? !finalReviewAssistantOpen.value
+    : rightSidebarCollapsed.value
+})
 const projectWorkspaceViewHydrating = ref(false)
 const projectWorkspaceModeHydrating = ref(false)
 const projectWorkspaceViewReady = ref(false)
@@ -770,7 +790,61 @@ function getWorkspaceDeviceStorageKey(): string {
   return `${PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX}.${userId}`
 }
 
+function rememberPreFinalReviewWorkbenchState(options: {
+  leftSidebarCollapsed?: boolean
+  rightSidebarCollapsed?: boolean
+  activeMainTabId?: WorkspaceMainTabId | ''
+  openMainTabs?: WorkspaceMainTabId[]
+} = {}): void {
+  preFinalReviewLeftCollapsed.value = options.leftSidebarCollapsed ?? leftSidebarCollapsed.value
+  preFinalReviewRightCollapsed.value = options.rightSidebarCollapsed ?? rightSidebarUserCollapsed.value
+  preFinalReviewOpenTabs.value = normalizeWorkspaceMainTabIds(
+    options.openMainTabs ?? openMainTabs.value,
+    { allowEmpty: true },
+  )
+  preFinalReviewActiveMainTabId.value = normalizeWorkspaceMainTabId(
+    options.activeMainTabId ?? activeMainTabId.value,
+    preFinalReviewOpenTabs.value,
+    {
+      fallbackTabId: preFinalReviewOpenTabs.value[0] || '',
+    },
+  )
+}
+
+function restorePreFinalReviewWorkbenchState(options: { suppressPersist?: boolean } = {}): void {
+  openMainTabs.value = normalizeWorkspaceMainTabIds(preFinalReviewOpenTabs.value, { allowEmpty: true })
+  activeMainTabId.value = normalizeWorkspaceMainTabId(
+    preFinalReviewActiveMainTabId.value,
+    openMainTabs.value,
+    {
+      fallbackTabId: openMainTabs.value[0] || '',
+    },
+  )
+  leftSidebarCollapsed.value = preFinalReviewLeftCollapsed.value
+  setRightSidebarUserCollapsed(preFinalReviewRightCollapsed.value, {
+    suppressPersist: options.suppressPersist,
+  })
+}
+
+function closeFinalReviewDrawers(): void {
+  finalReviewMaterialsOpen.value = false
+  finalReviewAssistantOpen.value = false
+}
+
+function toggleFinalReviewMaterialsDrawer(): void {
+  finalReviewMaterialsOpen.value = !finalReviewMaterialsOpen.value
+}
+
+function toggleFinalReviewAssistantDrawer(): void {
+  finalReviewAssistantOpen.value = !finalReviewAssistantOpen.value
+}
+
 function toggleRightSidebar(): void {
+  if (workbenchMode.value === 'final_review') {
+    toggleFinalReviewAssistantDrawer()
+    return
+  }
+
   if (rightSidebarCollapsed.value) {
     expandRightSidebar()
     return
@@ -1189,21 +1263,23 @@ function applyProjectWorkspaceViewState(state: ProjectWorkspaceViewState): void 
   try {
     projectWorkspaceModeHydrating.value = true
     if (normalized.workbenchMode === 'defense') {
-      aiMode.value = 'defense'
+      closeFinalReviewDrawers()
       workbenchMode.value = 'defense'
+      aiMode.value = 'defense'
     }
     else if (normalized.workbenchMode === 'final_review') {
       const nextPrimaryMode = aiMode.value !== 'defense'
         ? aiMode.value as WorkspacePrimaryAiMode
         : (lastPrimaryAiMode.value || 'dialog_ask')
-      aiMode.value = nextPrimaryMode
       lastPrimaryAiMode.value = nextPrimaryMode
       workbenchMode.value = 'final_review'
+      aiMode.value = 'dialog_ask'
     }
     else {
       const nextPrimaryMode = aiMode.value !== 'defense'
         ? aiMode.value as WorkspacePrimaryAiMode
         : (lastPrimaryAiMode.value || 'dialog_ask')
+      closeFinalReviewDrawers()
       aiMode.value = nextPrimaryMode
       lastPrimaryAiMode.value = nextPrimaryMode
       workbenchMode.value = 'project'
@@ -1219,6 +1295,16 @@ function applyProjectWorkspaceViewState(state: ProjectWorkspaceViewState): void 
     activeMeetingId.value = nextMeetingId
     leftSidebarCollapsed.value = normalized.leftSidebarCollapsed
     setRightSidebarUserCollapsed(normalized.rightSidebarCollapsed, { suppressPersist: true })
+
+    if (normalized.workbenchMode === 'final_review') {
+      rememberPreFinalReviewWorkbenchState({
+        leftSidebarCollapsed: normalized.leftSidebarCollapsed,
+        rightSidebarCollapsed: normalized.rightSidebarCollapsed,
+        activeMainTabId: normalized.activeMainTabId,
+        openMainTabs: normalized.mainTabs,
+      })
+      closeFinalReviewDrawers()
+    }
 
     if (meetingChanged) {
       activeMeetingDetail.value = null
@@ -1768,6 +1854,129 @@ const projectOutlineFirstLoadLoading = computed(() => {
   return projectOutlineLoading.value && !projectOutlineFirstLoaded.value
 })
 const latestIssueReport = computed(() => projectIssueReports.value[0] || null)
+const finalReviewActiveShares = computed(() => {
+  return projectResourceShares.value.filter(item => !String(item.revokedAt || '').trim())
+})
+const finalReviewOpenIssues = computed(() => {
+  const severityRank: Record<ProjectIssue['severity'], number> = {
+    critical: 0,
+    high: 1,
+    medium: 2,
+    low: 3,
+  }
+  return projectIssues.value
+    .filter(item => (item.severity === 'critical' || item.severity === 'high') && item.status !== 'resolved' && item.status !== 'ignored')
+    .sort((left, right) => {
+      const rankDiff = severityRank[left.severity] - severityRank[right.severity]
+      if (rankDiff !== 0)
+        return rankDiff
+      return parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt)
+    })
+})
+const finalReviewUnresolvedIssueCount = computed(() => {
+  return projectIssues.value.filter(item => item.status !== 'resolved' && item.status !== 'ignored').length
+})
+const finalReviewEvidenceGaps = computed(() => {
+  const used = new Set<string>()
+  return mappingRows.value.reduce<string[]>((list, row) => {
+    const note = normalizeString(row.supportingNote)
+    if (!note || used.has(note))
+      return list
+    used.add(note)
+    list.push(note)
+    return list
+  }, [])
+})
+const finalReviewChecklistItems = computed<FinalReviewChecklistItem[]>(() => {
+  const hasContestAndTrack = Boolean(selectedContest.value) && Boolean(selectedTrack.value)
+  const hasMappingRows = mappingRows.value.length > 0
+  const hasResources = selectedResources.value.length > 0
+  const hasCoreDraftFields = Boolean(
+    normalizeString(formState.title)
+    && normalizeString(formState.problemStatement)
+    && normalizeString(formState.summary),
+  )
+  const hasIssueReport = Boolean(latestIssueReport.value)
+  const hasOpenCriticalIssue = projectIssues.value.some(item => item.severity === 'critical' && item.status === 'open')
+  const hasActiveShare = finalReviewActiveShares.value.length > 0
+
+  return [
+    {
+      id: 'contest-track',
+      title: '已选择竞赛与赛道',
+      description: hasContestAndTrack
+        ? `${selectedContest.value?.name || '当前竞赛'} / ${selectedTrack.value?.name || '当前赛道'}`
+        : '需要先明确终审提交对应的竞赛和赛道。',
+      status: hasContestAndTrack ? 'pass' : 'missing',
+      blocker: true,
+    },
+    {
+      id: 'mapping',
+      title: '已生成指标对标',
+      description: hasMappingRows
+        ? `当前已有 ${mappingRows.value.length} 条指标对标结果。`
+        : '需要至少完成一轮 rubric 对标，明确评审维度与证据要求。',
+      status: hasMappingRows ? 'pass' : 'missing',
+      blocker: true,
+    },
+    {
+      id: 'resources',
+      title: '已关联项目资料',
+      description: hasResources
+        ? `当前已关联 ${selectedResources.value.length} 份项目资料。`
+        : '终审材料还没有挂到项目工作区，无法形成证据链。',
+      status: hasResources ? 'pass' : 'missing',
+      blocker: true,
+    },
+    {
+      id: 'draft-fields',
+      title: '已补齐核心草案字段',
+      description: hasCoreDraftFields
+        ? '标题、问题定义和摘要都已具备。'
+        : '标题、问题定义和摘要至少有一项仍为空。',
+      status: hasCoreDraftFields ? 'pass' : 'missing',
+      blocker: true,
+    },
+    {
+      id: 'issue-report',
+      title: '已生成终审问题报告',
+      description: hasIssueReport
+        ? `当前使用的问题报告：${latestIssueReport.value?.title || '终审问题报告'}`
+        : '建议先产出一轮终审问题报告，再进入风险收敛。',
+      status: hasIssueReport ? 'pass' : 'missing',
+      blocker: true,
+    },
+    {
+      id: 'critical-issues',
+      title: '高危问题已清空',
+      description: hasOpenCriticalIssue
+        ? '仍存在 open 状态的 critical issue，需要优先清空。'
+        : '当前不存在 open 状态的 critical issue。',
+      status: hasOpenCriticalIssue ? 'warning' : 'pass',
+      blocker: true,
+    },
+    {
+      id: 'share-link',
+      title: '已生成评审共享链接',
+      description: hasActiveShare
+        ? `当前已有 ${finalReviewActiveShares.value.length} 条可用共享链接。`
+        : '暂无评审共享链接，建议在送审前补齐。',
+      status: hasActiveShare ? 'pass' : 'warning',
+      blocker: false,
+    },
+  ]
+})
+const finalReviewReadinessPercent = computed(() => {
+  const weights: Record<FinalReviewChecklistStatus, number> = {
+    pass: 1,
+    warning: 0.55,
+    missing: 0,
+  }
+  if (finalReviewChecklistItems.value.length === 0)
+    return 0
+  const total = finalReviewChecklistItems.value.reduce((sum, item) => sum + weights[item.status], 0)
+  return Math.round((total / finalReviewChecklistItems.value.length) * 100)
+})
 const metaKResourceTitleMap = computed(() => {
   return new Map(selectedResources.value.map(resource => [resource.id, resolveMetaKResourceTitle(resource)]))
 })
@@ -7135,6 +7344,8 @@ function buildSessionTitleByMode(): string {
   const contestName = selectedContest.value?.name || '未选择竞赛'
   const trackName = selectedTrack.value?.name || '未选择赛道'
 
+  if (workbenchMode.value === 'final_review')
+    return `终审助手 · ${contestName} · ${trackName}`
   if (aiMode.value === 'auto_optimize')
     return `Loopy 自动优化 · ${contestName} · ${trackName}`
   if (aiMode.value === 'issue_discovery')
@@ -7251,6 +7462,8 @@ async function switchChatSession(sessionId: string) {
 
 async function startNewChatSession() {
   let modeTitle = '新建 Loopy 对话'
+  if (workbenchMode.value === 'final_review')
+    modeTitle = '新建终审助手会话'
   if (aiMode.value === 'defense')
     modeTitle = '新建 Loopy 答辩会话'
   else if (aiMode.value === 'auto_optimize')
@@ -8255,6 +8468,9 @@ function switchWorkspaceFromHeader(workspaceId: string): void {
 
 async function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
   if (nextMode === 'defense') {
+    if (workbenchMode.value === 'final_review')
+      restorePreFinalReviewWorkbenchState()
+    closeFinalReviewDrawers()
     workbenchMode.value = 'defense'
     aiMode.value = 'defense'
     return
@@ -8264,28 +8480,68 @@ async function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
     const nextPrimaryMode = aiMode.value !== 'defense'
       ? aiMode.value as WorkspacePrimaryAiMode
       : (lastPrimaryAiMode.value || 'dialog_ask')
-    aiMode.value = nextPrimaryMode
+    if (workbenchMode.value !== 'final_review') {
+      rememberPreFinalReviewWorkbenchState()
+    }
     lastPrimaryAiMode.value = nextPrimaryMode
-    const opened = await openFinalReviewFromHeader()
-    if (opened)
-      workbenchMode.value = 'final_review'
+    closeFinalReviewDrawers()
+    workbenchMode.value = 'final_review'
+    aiMode.value = 'dialog_ask'
+    statusLine.value = '已切到终审工作台，当前进入终审驾驶舱。'
     return
   }
 
-  workbenchMode.value = 'project'
+  if (workbenchMode.value === 'final_review')
+    restorePreFinalReviewWorkbenchState()
+  closeFinalReviewDrawers()
   aiMode.value = lastPrimaryAiMode.value || 'dialog_ask'
+  workbenchMode.value = 'project'
 }
 
 function updateWorkspaceAiMode(nextMode: WorkspaceAiMode) {
   rightSidebarView.value = 'ai'
+  if (workbenchMode.value === 'final_review' && nextMode !== 'defense') {
+    lastPrimaryAiMode.value = nextMode as WorkspacePrimaryAiMode
+    aiMode.value = 'dialog_ask'
+    return
+  }
   aiMode.value = nextMode
 }
 
-async function openFinalReviewFromHeader(): Promise<boolean> {
+async function openFinalReviewFlowFromWorkbench(): Promise<void> {
+  await updateWorkbenchMode('project')
   const opened = await ensureWorkflowCanvas()
   if (opened)
-    statusLine.value = '已打开流程画布，可按流程继续推进终审。'
-  return opened
+    statusLine.value = '已打开终审流程，当前回到项目工作台查看流程画布。'
+}
+
+async function openProjectSettingsFromFinalReview(): Promise<void> {
+  await updateWorkbenchMode('project')
+  openSettingsSignal.value += 1
+  statusLine.value = '已打开项目设置，可继续补齐终审底座。'
+}
+
+async function openDashboardFromFinalReview(): Promise<void> {
+  await updateWorkbenchMode('project')
+  ensureWorkspaceMainTabOpen('dashboard')
+  statusLine.value = '已打开仪表盘对标视图。'
+}
+
+function openMaterialsDrawerFromFinalReview(): void {
+  finalReviewMaterialsOpen.value = true
+}
+
+async function openResourceFromFinalReview(resourceId: string): Promise<void> {
+  const normalizedResourceId = normalizeString(resourceId)
+  if (!normalizedResourceId)
+    return
+
+  await updateWorkbenchMode('project')
+  await openProjectResourcePreview(normalizedResourceId)
+}
+
+async function switchToDefenseWorkbenchFromFinalReview(): Promise<void> {
+  await updateWorkbenchMode('defense')
 }
 
 async function openWorkspaceHomeFromHeader() {
@@ -9109,9 +9365,10 @@ watch(aiMode, async (next, previous) => {
     workbenchMode.value = 'defense'
   }
   else {
-    if (workbenchMode.value !== 'final_review')
+    if (workbenchMode.value !== 'final_review') {
       workbenchMode.value = 'project'
-    lastPrimaryAiMode.value = next
+      lastPrimaryAiMode.value = next
+    }
   }
 
   if (!activeWorkspaceId.value || !activeProjectId.value) {
@@ -9144,14 +9401,14 @@ watch(() => workspaceRealtime.connected.value, () => {
       :recent-projects="recentQuickSwitchProjects"
       :workbench-mode="workbenchMode"
       :meta-k-shortcut-label="metaKShortcutLabel"
-      :ai-collapsed="rightSidebarCollapsed"
+      :ai-collapsed="headerAiCollapsed"
       @update:workbench-mode="updateWorkbenchMode"
       @open-meta-k="openMetaK"
       @quick-switch-project="switchProjectFromHeader"
       @toggle-ai-sidebar="toggleRightSidebar"
     />
 
-    <main class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
+    <main v-if="workbenchMode !== 'final_review'" class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
       <div class="workspace-side-anchor workspace-side-anchor--left">
         <WorkspaceLeftSidebar
           v-model:natural-query="naturalQuery"
@@ -9511,6 +9768,91 @@ watch(() => workspaceRealtime.connected.value, () => {
       </div>
     </main>
 
+    <main
+      v-else
+      data-testid="workspace-final-review-layout"
+      class="workspace-final-review-shell flex flex-1 min-h-0 overflow-hidden"
+    >
+      <button
+        data-testid="workspace-final-review-materials-trigger"
+        class="workspace-final-review-edge workspace-final-review-edge--left"
+        :class="{ 'workspace-final-review-edge--active': finalReviewMaterialsOpen }"
+        type="button"
+        title="打开终审资料抽屉"
+        @click="toggleFinalReviewMaterialsDrawer"
+      >
+        <span class="material-symbols-outlined workspace-final-review-edge__icon">folder_open</span>
+        <span class="workspace-final-review-edge__label">资料</span>
+      </button>
+
+      <section class="workspace-final-review-stage">
+        <WorkspaceFinalReviewWorkbench
+          :contest-name="selectedContest?.name || ''"
+          :track-name="selectedTrack?.name || ''"
+          :readiness-percent="finalReviewReadinessPercent"
+          :resource-count="selectedResources.length"
+          :active-share-count="finalReviewActiveShares.length"
+          :unresolved-issue-count="finalReviewUnresolvedIssueCount"
+          :checklist-items="finalReviewChecklistItems"
+          :risk-summary="latestIssueReport?.summary || ''"
+          :open-issues="finalReviewOpenIssues"
+          :evidence-gaps="finalReviewEvidenceGaps"
+          :resources="selectedResources"
+          :shares="finalReviewActiveShares"
+          :draft-title="formState.title"
+          :draft-problem-statement="formState.problemStatement"
+          :draft-summary="formState.summary"
+          @open-final-review-flow="openFinalReviewFlowFromWorkbench"
+          @open-project-settings="openProjectSettingsFromFinalReview"
+          @open-dashboard="openDashboardFromFinalReview"
+          @open-materials="openMaterialsDrawerFromFinalReview"
+          @switch-defense="switchToDefenseWorkbenchFromFinalReview"
+        />
+      </section>
+
+      <button
+        data-testid="workspace-final-review-assistant-trigger"
+        class="workspace-final-review-edge workspace-final-review-edge--right"
+        :class="{ 'workspace-final-review-edge--active': finalReviewAssistantOpen }"
+        type="button"
+        title="打开终审助手抽屉"
+        @click="toggleRightSidebar"
+      >
+        <span class="material-symbols-outlined workspace-final-review-edge__icon">auto_awesome</span>
+        <span class="workspace-final-review-edge__label">助手</span>
+      </button>
+
+      <WorkspaceFinalReviewMaterialsDrawer
+        :open="finalReviewMaterialsOpen"
+        :resources="selectedResources"
+        :shares="finalReviewActiveShares"
+        :resources-loading="resourcesLoading"
+        :shares-loading="projectResourceSharesLoading"
+        @close="finalReviewMaterialsOpen = false"
+        @open-resource="openResourceFromFinalReview"
+      />
+
+      <WorkspaceFinalReviewSidebar
+        v-model:chat-input="chatInput"
+        :open="finalReviewAssistantOpen"
+        :chat-messages="chatMessages"
+        :chat-loading="chatLoading"
+        :current-user-name="me?.user.username || ''"
+        :current-user-avatar-url="me?.user.avatarUrl || ''"
+        :risk-summary="latestIssueReport?.summary || ''"
+        :open-issues="finalReviewOpenIssues"
+        @close="finalReviewAssistantOpen = false"
+        @send-chat="sendChatMessage"
+      />
+
+      <div v-if="workspacePreparing" class="workspace-preparing-overlay" aria-live="polite">
+        <div class="workspace-preparing-overlay__panel">
+          <span class="workspace-preparing-overlay__label">正在准备工作区</span>
+          <strong class="workspace-preparing-overlay__title">WinLooooop</strong>
+        </div>
+      </div>
+    </main>
+
     <WorkspaceStatusBar
       :status-line="statusLine"
       :loading="resourcesLoading"
@@ -9622,6 +9964,84 @@ watch(() => workspaceRealtime.connected.value, () => {
   position: relative;
 }
 
+.workspace-final-review-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.14), transparent 26%),
+    linear-gradient(180deg, #f8fbff 0%, #f4f8ff 100%);
+}
+
+.workspace-final-review-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 68px;
+}
+
+.workspace-final-review-edge {
+  position: absolute;
+  top: 50%;
+  z-index: 18;
+  width: 42px;
+  min-height: 112px;
+  border: 1px solid rgba(205, 217, 235, 0.96);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #3b5479;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transform: translateY(-50%);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.workspace-final-review-edge:hover {
+  border-color: #b6c9e7;
+  background: rgba(255, 255, 255, 0.98);
+  color: #24497f;
+}
+
+.workspace-final-review-edge--active {
+  border-color: #8fb1e8;
+  background: #eef4ff;
+  color: #1d4ed8;
+}
+
+.workspace-final-review-edge--left {
+  left: 12px;
+}
+
+.workspace-final-review-edge--right {
+  right: 12px;
+}
+
+.workspace-final-review-edge__icon {
+  font-size: 20px;
+  line-height: 1;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 320,
+    'opsz' 24;
+}
+
+.workspace-final-review-edge__label {
+  color: currentColor;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+}
+
 .workspace-side-anchor {
   position: relative;
   display: flex;
@@ -9713,5 +10133,11 @@ watch(() => workspaceRealtime.connected.value, () => {
   font-size: 24px;
   font-weight: 800;
   letter-spacing: 0.06em;
+}
+
+@media (max-width: 960px) {
+  .workspace-final-review-stage {
+    padding: 18px 58px;
+  }
 }
 </style>

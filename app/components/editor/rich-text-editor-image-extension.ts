@@ -9,7 +9,7 @@ type ImageNodePositionResolver = ImageNodeViewContext['getPos']
 export interface RichTextEditorImageNodeActionPayload {
   resourceId?: string | null
   src: string
-  mode: 'delete_node' | 'delete_and_recycle'
+  mode: 'open_resource' | 'delete_node' | 'delete_and_recycle'
 }
 
 export interface RichTextEditorImageNodeCommentThread {
@@ -176,12 +176,13 @@ function createImageNodeView(options: RichTextEditorImageExtensionOptions, { edi
   commentBadge.className = 'rich-text-editor__image-comment-badge'
 
   const editMetaButton = createIconButton('编辑图片说明', 'edit', 'rich-text-editor__image-action-button')
+  const resetWidthButton = createIconButton('恢复原始宽度', 'width_normal', 'rich-text-editor__image-action-button')
   const openButton = createIconButton('打开资源', 'open_in_new', 'rich-text-editor__image-action-button')
   const commentButton = createIconButton('添加评论', 'add_comment', 'rich-text-editor__image-action-button')
   const deleteButton = createIconButton('删除图片', 'delete', 'rich-text-editor__image-action-button')
   const recycleButton = createIconButton('删除并回收资源', 'delete_forever', 'rich-text-editor__image-action-button rich-text-editor__image-action-button--danger')
 
-  actionBar.append(editMetaButton, openButton, commentButton, deleteButton, recycleButton)
+  actionBar.append(editMetaButton, resetWidthButton, openButton, commentButton, deleteButton, recycleButton)
 
   const metadataEditor = document.createElement('div')
   metadataEditor.className = 'rich-text-editor__image-meta-editor'
@@ -278,6 +279,7 @@ function createImageNodeView(options: RichTextEditorImageExtensionOptions, { edi
     commentBadge.classList.toggle('rich-text-editor__image-comment-badge--active', hasActiveComment)
     actionBar.hidden = !selected || !src || uploadStatus === 'uploading'
     metadataEditor.hidden = !selected || !metadataEditorVisible || !src || uploadStatus === 'uploading'
+    resetWidthButton.hidden = !width
     recycleButton.hidden = !resourceId
     commentButton.hidden = typeof options.onCreateCommentFromImage !== 'function'
     leftHandle.hidden = !selected || !src || uploadStatus === 'uploading'
@@ -327,6 +329,17 @@ function createImageNodeView(options: RichTextEditorImageExtensionOptions, { edi
     const src = normalizeString(currentNode.attrs?.src)
     if (!src)
       return
+
+    const resourceId = normalizeString(currentNode.attrs?.resourceId)
+    if (resourceId) {
+      options.onRequestImageAction?.({
+        resourceId,
+        src,
+        mode: 'open_resource',
+      })
+      return
+    }
+
     window.open(src, '_blank', 'noopener,noreferrer')
   }
 
@@ -399,6 +412,14 @@ function createImageNodeView(options: RichTextEditorImageExtensionOptions, { edi
     openMetadataEditor()
   })
 
+  resetWidthButton.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    updateImageNodeAttributes(editor, getPos, {
+      width: null,
+    })
+  })
+
   openButton.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
@@ -436,6 +457,24 @@ function createImageNodeView(options: RichTextEditorImageExtensionOptions, { edi
     event.stopPropagation()
     saveMetadata()
   })
+
+  const handleMetadataKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeMetadataEditor()
+      return
+    }
+
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      event.stopPropagation()
+      saveMetadata()
+    }
+  }
+
+  altInput.addEventListener('keydown', handleMetadataKeydown)
+  titleInput.addEventListener('keydown', handleMetadataKeydown)
 
   image.addEventListener('load', () => {
     loadError = false

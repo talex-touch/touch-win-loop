@@ -24,6 +24,18 @@ import { createLowlight } from 'lowlight'
 export type CollabMarkdownHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 
 export const COLLAB_MARKDOWN_HEADING_LEVELS = [1, 2, 3, 4, 5, 6] as const
+export const COLLAB_MARKDOWN_CODE_LANGUAGES = [
+  'plaintext',
+  'bash',
+  'json',
+  'javascript',
+  'typescript',
+  'html',
+  'css',
+  'markdown',
+  'sql',
+] as const
+export type CollabMarkdownCodeLanguage = typeof COLLAB_MARKDOWN_CODE_LANGUAGES[number]
 
 let cachedCollabMarkdownSchema: ReturnType<typeof getSchema> | null = null
 const lowlight = createLowlight()

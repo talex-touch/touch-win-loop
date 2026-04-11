@@ -28,7 +28,7 @@ interface TeamLastProjectPreferenceRow {
   updated_at: string
 }
 
-const WORKSPACE_FIXED_TAB_IDS: WorkspaceFixedTabId[] = ['dashboard', 'meeting', 'members', 'flow', 'settings']
+const WORKSPACE_FIXED_TAB_IDS: WorkspaceFixedTabId[] = ['dashboard', 'meeting', 'members', 'flow', 'design', 'settings']
 const WORKSPACE_FIXED_TAB_ID_SET = new Set<string>(WORKSPACE_FIXED_TAB_IDS)
 const DEVICE_STALE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 

@@ -60,6 +60,7 @@ const props = withDefaults(defineProps<{
   commentDraftAnchor?: ProjectResourceCommentAnchor | null
   commentLoading?: boolean
   commentMutating?: boolean
+  showCommentTab?: boolean
   documentResourceTitle?: string
   documentSelectionText?: string
   documentSelectionRange?: AiWorkspaceDocumentSelectionRange | null
@@ -104,6 +105,7 @@ const props = withDefaults(defineProps<{
   commentDraftAnchor: null,
   commentLoading: false,
   commentMutating: false,
+  showCommentTab: true,
   documentResourceTitle: '',
   documentSelectionText: '',
   documentSelectionRange: null,
@@ -203,14 +205,12 @@ const issueReportStatusLabel = computed(() => {
 const commentDraftText = ref('')
 const commentReplyDraftMap = reactive<Record<string, string>>({})
 
-const showCommentsView = computed(() => props.sidebarView === 'comments')
+const showCommentsView = computed(() => props.showCommentTab && props.sidebarView === 'comments')
 const showDocumentAssistView = computed(() => props.sidebarView === 'ai' && props.aiMode === 'document_assist')
 const markdownSidebarEnabled = computed(() => {
   return Boolean(
-    props.documentResourceTitle
-    || props.commentDraftAnchor
-    || props.commentThreads.length > 0
-    || props.aiMode === 'document_assist',
+    props.aiMode === 'document_assist'
+    || (props.showCommentTab && (props.commentDraftAnchor || props.commentThreads.length > 0)),
   )
 })
 const activeCommentThread = computed(() => {
@@ -238,9 +238,9 @@ const canApplyDocumentAssist = computed(() => {
   return Boolean(String(props.documentAssistResult || '').trim()) && !props.documentAssistRunning
 })
 
-watch(() => props.commentDraftAnchor, (nextAnchor) => {
-  if (nextAnchor)
-    emit('update:sidebarView', 'comments')
+watch(() => props.showCommentTab, (nextValue) => {
+  if (!nextValue && props.sidebarView === 'comments')
+    emit('update:sidebarView', 'ai')
 })
 
 watch(() => props.documentAssistAction, (nextAction) => {
@@ -261,6 +261,8 @@ function requestShowAiView(): void {
 }
 
 function requestShowCommentsView(): void {
+  if (!props.showCommentTab)
+    return
   emit('update:sidebarView', 'comments')
 }
 
@@ -467,41 +469,20 @@ function requestExportIssueReport() {
     :tabindex="props.collapsed ? -1 : 0"
     @keydown.capture="handleModeCycleHotkey"
   >
-    <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/70 shrink-0 space-y-2">
-      <div class="flex items-center justify-between gap-3">
-        <div class="workspace-right-sidebar__header-main">
-          <button
-            data-testid="workspace-right-sidebar-collapse-button"
-            class="workspace-right-sidebar__collapse-button"
-            type="button"
-            aria-label="收起右侧栏"
-            title="收起右侧栏"
-            @click="emit('collapse')"
-          >
-            <span class="material-symbols-outlined">right_panel_close</span>
-          </button>
-          <div class="text-xs text-slate-800 font-semibold">
-            <template v-if="showCommentsView">
-              文档评论（{{ props.commentThreads.length }}）
-            </template>
-            <template v-else-if="showDocumentAssistView">
-              文档增强
-            </template>
-            <template v-else>
-              Loopy 会话（{{ chatSessions.length }}）
-            </template>
-          </div>
-        </div>
-        <button
-          v-if="!showCommentsView && !showDocumentAssistView"
-          class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
-          @click="emit('createChatSession')"
-        >
-          新建
-        </button>
+    <div class="px-3.5 py-2.5 border-b border-slate-200 bg-slate-50/72 shrink-0 space-y-2">
+      <div
+        v-if="showCommentsView || showDocumentAssistView"
+        class="workspace-right-sidebar__context-chip"
+      >
+        <template v-if="showCommentsView">
+          文档评论（{{ props.commentThreads.length }}）
+        </template>
+        <template v-else-if="showDocumentAssistView">
+          文档增强
+        </template>
       </div>
 
-      <div v-if="markdownSidebarEnabled" class="flex gap-1 rounded-lg bg-white border border-slate-200 p-1">
+      <div v-if="markdownSidebarEnabled && props.showCommentTab" class="flex gap-1 rounded-lg bg-white border border-slate-200 p-1">
         <button
           class="workspace-right-sidebar__switch-pill"
           :class="{ 'workspace-right-sidebar__switch-pill--active': !showCommentsView }"
@@ -558,20 +539,20 @@ function requestExportIssueReport() {
           <div class="rounded bg-slate-100 h-7 animate-pulse" />
         </div>
         <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400 leading-5">
-          暂无会话，点击“新建”开始 Loopy 对话。
+          暂无会话，直接发送问题即可开始对话。
         </div>
-        <div v-else class="pr-1 max-h-32 overflow-y-auto space-y-1">
+        <div v-else class="workspace-right-sidebar__session-list">
           <button
             v-for="session in chatSessions"
             :key="session.id"
-            class="px-2 py-1.5 text-left border rounded w-full"
+            class="workspace-right-sidebar__session-button"
             :class="session.id === activeChatSessionId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'"
             @click="emit('switchChatSession', session.id)"
           >
-            <div class="text-[11px] text-slate-700 font-semibold truncate">
-              {{ session.title || 'Loopy 对话' }}
+            <div class="text-[10px] text-slate-700 font-semibold truncate">
+              {{ session.title || '未命名会话' }}
             </div>
-            <div class="text-[10px] text-slate-500 mt-1">
+            <div class="text-[10px] text-slate-500 mt-0.5">
               消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}
             </div>
           </button>
@@ -580,7 +561,7 @@ function requestExportIssueReport() {
     </div>
 
     <div class="flex flex-1 flex-col h-0 min-h-0 overflow-hidden">
-      <div class="no-scrollbar p-4 flex-1 h-0 min-h-0 overflow-y-auto">
+      <div class="no-scrollbar px-3.5 py-3 flex-1 h-0 min-h-0 overflow-y-auto">
         <template v-if="showCommentsView">
           <div class="space-y-3">
             <div v-if="props.commentLoading && props.commentThreads.length === 0" class="space-y-2" aria-hidden="true">
@@ -609,6 +590,10 @@ function requestExportIssueReport() {
                     <div class="text-[10px] text-slate-500 mt-1">
                       {{ thread.createdByUsername || thread.createdByUserId }} · {{ thread.updatedAt || thread.createdAt }}
                     </div>
+                    <div class="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+                      <span class="material-symbols-outlined text-[12px]" aria-hidden="true">place</span>
+                      <span class="truncate">{{ summarizeCommentAnchor(thread.anchor) }}</span>
+                    </div>
                   </div>
                   <span
                     class="shrink-0 text-[10px] px-2 py-0.5 rounded-full"
@@ -635,6 +620,13 @@ function requestExportIssueReport() {
               </div>
 
               <div class="mt-3 flex flex-wrap gap-2">
+                <button
+                  class="text-[11px] font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white text-slate-700 hover:bg-slate-100"
+                  type="button"
+                  @click="selectCommentThread(thread.id)"
+                >
+                  定位正文
+                </button>
                 <button
                   v-if="thread.status !== 'resolved'"
                   class="text-[11px] font-semibold px-2.5 py-1 border border-emerald-200 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
@@ -766,7 +758,7 @@ function requestExportIssueReport() {
           </div>
 
           <div v-if="showDialogAskEmpty" class="text-[11px] text-slate-500 leading-5 p-3 border border-slate-200 rounded border-dashed">
-            当前会话还没有消息，点击“新建”或直接发送问题开始 Loopy 对话。
+            当前会话还没有消息，直接发送问题开始对话。
           </div>
 
           <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">
@@ -1132,8 +1124,17 @@ function requestExportIssueReport() {
             v-else-if="activeCommentThread"
             class="space-y-3"
           >
-            <div class="text-[11px] text-slate-600">
-              回复线程：{{ activeCommentThread.summaryText || summarizeCommentAnchor(activeCommentThread.anchor) }}
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-[11px] text-slate-600 min-w-0">
+                回复线程：{{ activeCommentThread.summaryText || summarizeCommentAnchor(activeCommentThread.anchor) }}
+              </div>
+              <button
+                class="shrink-0 text-[11px] font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white text-slate-700 hover:bg-slate-100"
+                type="button"
+                @click="selectCommentThread(activeCommentThread.id)"
+              >
+                定位正文
+              </button>
             </div>
             <textarea
               v-model="commentReplyDraftMap[activeCommentThread.id]"
@@ -1203,19 +1204,22 @@ function requestExportIssueReport() {
             </div>
           </div>
 
-          <div class="relative">
+          <div class="workspace-chat-composer__input-shell">
             <textarea
               :value="chatInput"
-              class="text-xs p-2.5 pr-10 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+              class="workspace-chat-composer__textarea"
               :placeholder="inputPlaceholder"
               @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
             />
             <button
-              class="text-white p-1.5 rounded-md bg-blue-600 bottom-2 right-2 absolute hover:bg-blue-500 disabled:opacity-60"
+              class="workspace-chat-composer__send"
               :disabled="chatLoading"
               @click="emit('sendChat')"
             >
-              <span class="material-symbols-outlined text-sm">{{ chatLoading ? 'hourglass_top' : 'send' }}</span>
+              <span class="workspace-chat-composer__send-spark" aria-hidden="true" />
+              <span class="workspace-chat-composer__send-icon material-symbols-outlined">
+                {{ chatLoading ? 'hourglass_top' : 'send' }}
+              </span>
             </button>
           </div>
 
@@ -1285,50 +1289,40 @@ function requestExportIssueReport() {
   color: #1d4ed8;
 }
 
-.workspace-right-sidebar__header-main {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.workspace-right-sidebar__collapse-button {
-  width: 30px;
-  height: 30px;
-  border: 1px solid #d7dfed;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.96);
-  color: #6b7b95;
+.workspace-right-sidebar__context-chip {
   display: inline-flex;
+  width: fit-content;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  cursor: pointer;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid #dce5f1;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #516277;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.workspace-right-sidebar__session-list {
+  max-height: 108px;
+  padding-right: 2px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-right-sidebar__session-button {
+  width: 100%;
+  padding: 8px 9px;
+  text-align: left;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
   transition:
-    background-color 0.18s ease,
-    color 0.18s ease,
     border-color 0.18s ease,
+    background-color 0.18s ease,
     box-shadow 0.18s ease;
-}
-
-.workspace-right-sidebar__collapse-button:hover {
-  background: #f3f6fc;
-  color: #35537f;
-  border-color: #cbd7eb;
-}
-
-.workspace-right-sidebar__collapse-button:focus-visible {
-  outline: 2px solid #cddcf7;
-  outline-offset: 1px;
-}
-
-.workspace-right-sidebar__collapse-button .material-symbols-outlined {
-  font-size: 18px;
-  line-height: 1;
-  font-variation-settings:
-    'FILL' 0,
-    'wght' 340,
-    'opsz' 24;
 }
 
 .workspace-chat-messages {
@@ -1340,11 +1334,41 @@ function requestExportIssueReport() {
 .workspace-chat-composer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
-  padding: 12px 16px 16px;
+  padding: 10px 12px 12px;
   border-top: 1px solid #e2e8f0;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, #ffffff 18px);
+}
+
+.workspace-chat-composer__input-shell {
+  position: relative;
+  padding: 2px;
+  border-radius: 17px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.92)) padding-box,
+    linear-gradient(140deg, rgba(166, 184, 216, 0.58), rgba(226, 232, 240, 0.72)) border-box;
+}
+
+.workspace-chat-composer__textarea {
+  width: 100%;
+  height: 86px;
+  resize: none;
+  border: none;
+  border-radius: 15px;
+  background: linear-gradient(180deg, #f8fbff 0%, #f5f8fd 100%);
+  color: #334155;
+  font-size: 12px;
+  padding: 12px 56px 12px 12px;
+  outline: none;
+}
+
+.workspace-chat-composer__textarea::placeholder {
+  color: #94a3b8;
+}
+
+.workspace-chat-composer__textarea:focus {
+  box-shadow: inset 0 0 0 1px #86aefb;
 }
 
 .workspace-chat-composer__meta {
@@ -1352,7 +1376,7 @@ function requestExportIssueReport() {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 12px;
+  gap: 6px 10px;
 }
 
 .workspace-chat-composer__meta-text {
@@ -1360,11 +1384,11 @@ function requestExportIssueReport() {
   flex: 1 1 140px;
   color: #94a3b8;
   font-size: 10px;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
 .workspace-ai-marquee {
-  margin-bottom: 10px;
+  margin-bottom: 2px;
   overflow: hidden;
   border: 1px solid #c7d2fe;
   border-radius: 999px;
@@ -1397,8 +1421,8 @@ function requestExportIssueReport() {
 }
 
 .workspace-mode-select {
-  min-width: 124px;
-  height: 26px;
+  min-width: 118px;
+  height: 24px;
   border: 1px solid #d9e1ef;
   border-radius: 6px;
   background: #f8fafc;
@@ -1406,6 +1430,83 @@ function requestExportIssueReport() {
   font-size: 11px;
   padding: 0 24px 0 8px;
   outline: none;
+}
+
+.workspace-chat-composer__send {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #d3ddf0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1d4ed8 0%, #255eea 36%, #4f46e5 100%);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.2);
+  transition:
+    opacity 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    filter 0.18s ease;
+}
+
+.workspace-chat-composer__send:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.workspace-chat-composer__send:not(:disabled):hover {
+  border-color: #c7d6f2;
+  box-shadow: 0 16px 30px rgba(59, 130, 246, 0.24);
+  filter: saturate(1.04);
+}
+
+.workspace-chat-composer__send:focus-visible {
+  outline: 2px solid #cddcf7;
+  outline-offset: 2px;
+}
+
+.workspace-chat-composer__send-spark {
+  position: absolute;
+  inset: -18%;
+  background:
+    radial-gradient(circle at 28% 28%, rgba(255, 217, 125, 0.96) 0%, rgba(255, 217, 125, 0) 34%),
+    radial-gradient(circle at 74% 24%, rgba(129, 214, 255, 0.92) 0%, rgba(129, 214, 255, 0) 34%),
+    radial-gradient(circle at 68% 76%, rgba(176, 132, 255, 0.9) 0%, rgba(176, 132, 255, 0) 32%),
+    conic-gradient(from 0deg, rgba(255, 208, 91, 0.2), rgba(96, 165, 250, 0.48), rgba(129, 140, 248, 0.32), rgba(255, 208, 91, 0.2));
+  filter: blur(8px);
+  opacity: 0.95;
+  animation: workspace-ai-send-spark 4.8s linear infinite;
+  z-index: 0;
+}
+
+.workspace-chat-composer__send-icon {
+  position: relative;
+  z-index: 1;
+  font-size: 18px;
+  line-height: 1;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 360,
+    'opsz' 20;
+}
+
+@keyframes workspace-ai-send-spark {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.05);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
 }
 
 .workspace-mode-select:focus {

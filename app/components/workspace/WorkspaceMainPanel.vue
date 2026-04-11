@@ -481,19 +481,46 @@ const workspaceMainTabLayoutStyle = computed<Record<string, string>>(() => {
   const preset = props.workspaceDisplayPreferences.effective.tabSpacingPreset || 'default'
   if (preset === 'compact') {
     return {
-      '--workspace-main-tab-min-width': '148px',
-      '--workspace-main-tab-horizontal-padding': '6px',
+      '--workspace-main-tab-min-width': '124px',
+      '--workspace-main-tab-padding-x': '5px',
+      '--workspace-main-tab-gap': '2px',
+      '--workspace-main-tab-trigger-gap': '5px',
+      '--workspace-main-tab-close-padding': '1px',
+      '--workspace-main-tab-strip-height': '36px',
+      '--workspace-main-tab-label-size': '11px',
+      '--workspace-main-tab-icon-size': '16px',
+      '--workspace-main-tab-close-icon-size': '13px',
+      '--workspace-main-breadcrumb-padding-x': '12px',
+      '--workspace-main-breadcrumb-padding-y': '4px',
     }
   }
   if (preset === 'relaxed') {
     return {
-      '--workspace-main-tab-min-width': '188px',
-      '--workspace-main-tab-horizontal-padding': '12px',
+      '--workspace-main-tab-min-width': '174px',
+      '--workspace-main-tab-padding-x': '10px',
+      '--workspace-main-tab-gap': '4px',
+      '--workspace-main-tab-trigger-gap': '8px',
+      '--workspace-main-tab-close-padding': '4px',
+      '--workspace-main-tab-strip-height': '42px',
+      '--workspace-main-tab-label-size': '12px',
+      '--workspace-main-tab-icon-size': '18px',
+      '--workspace-main-tab-close-icon-size': '14px',
+      '--workspace-main-breadcrumb-padding-x': '12px',
+      '--workspace-main-breadcrumb-padding-y': '6px',
     }
   }
   return {
-    '--workspace-main-tab-min-width': '170px',
-    '--workspace-main-tab-horizontal-padding': '8px',
+    '--workspace-main-tab-min-width': '156px',
+    '--workspace-main-tab-padding-x': '7px',
+    '--workspace-main-tab-gap': '4px',
+    '--workspace-main-tab-trigger-gap': '7px',
+    '--workspace-main-tab-close-padding': '3px',
+    '--workspace-main-tab-strip-height': '40px',
+    '--workspace-main-tab-label-size': '12px',
+    '--workspace-main-tab-icon-size': '17px',
+    '--workspace-main-tab-close-icon-size': '14px',
+    '--workspace-main-breadcrumb-padding-x': '12px',
+    '--workspace-main-breadcrumb-padding-y': '6px',
   }
 })
 

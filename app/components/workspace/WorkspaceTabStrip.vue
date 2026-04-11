@@ -56,12 +56,12 @@ const emit = defineEmits<{
           <TransitionGroup
             tag="div"
             class="workspace-main-tab-list"
-            name="workspace-main-tab-transition"
+            name="workspace-main-tab-list"
           >
             <div
               v-for="tab in props.openTabs"
               :key="tab.id"
-              class="workspace-main-tab border-r border-slate-200 flex gap-1 items-center"
+              class="workspace-main-tab border-r border-slate-200 flex h-full shrink-0 items-center"
               :class="[
                 tab.id === props.activeTabId ? 'workspace-main-tab--active bg-slate-50' : 'bg-white',
                 props.dragOverTabId === tab.id ? 'ring-1 ring-inset ring-blue-300' : '',
@@ -75,23 +75,23 @@ const emit = defineEmits<{
               @dragend="emit('dragEnd')"
             >
               <button
-                class="flex flex-1 gap-2 h-full min-w-0 items-center"
+                class="workspace-main-tab__trigger flex flex-1 h-full min-w-0 items-center"
                 type="button"
                 @click.stop="emit('activateTab', tab.id)"
               >
-                <span class="material-symbols-outlined text-sm" :class="tab.id === props.activeTabId ? 'text-blue-500' : 'text-slate-400'">{{ tab.icon }}</span>
-                <span class="text-xs truncate" :class="tab.id === props.activeTabId ? 'text-slate-800 font-medium' : 'text-slate-500 hover:text-slate-700'">
+                <span class="workspace-main-tab__icon material-symbols-outlined" :class="tab.id === props.activeTabId ? 'text-blue-500' : 'text-slate-400'">{{ tab.icon }}</span>
+                <span class="workspace-main-tab__label truncate" :class="tab.id === props.activeTabId ? 'text-slate-800 font-medium' : 'text-slate-500 hover:text-slate-700'">
                   {{ tab.title }}
                 </span>
               </button>
 
               <button
                 v-if="tab.closeable"
-                class="text-slate-400 rounded flex h-6 w-6 transition items-center justify-center hover:text-slate-600 hover:bg-slate-100"
+                class="workspace-main-tab__close text-slate-400 rounded flex h-6 w-6 items-center justify-center hover:text-slate-600 hover:bg-slate-100"
                 type="button"
                 @click.stop="emit('closeTab', tab.id)"
               >
-                <span class="material-symbols-outlined text-sm">close</span>
+                <span class="workspace-main-tab__close-icon material-symbols-outlined">close</span>
               </button>
             </div>
           </TransitionGroup>
@@ -140,22 +140,79 @@ const emit = defineEmits<{
 
 .workspace-main-tab {
   position: relative;
-  min-width: var(--workspace-main-tab-min-width, 170px);
+  min-width: var(--workspace-main-tab-min-width, 156px);
   height: 100%;
-  padding: 0 var(--workspace-main-tab-horizontal-padding, 8px);
+  padding-right: var(--workspace-main-tab-padding-x, 7px);
+  padding-left: var(--workspace-main-tab-padding-x, 7px);
+  gap: var(--workspace-main-tab-gap, 4px);
   transition:
-    background-color 0.2s ease,
-    box-shadow 0.2s ease;
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.workspace-main-tab::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  height: 2px;
+  border-radius: 999px 999px 0 0;
+  background: var(--wl-primary-500);
+  opacity: 0;
+  transform: scaleX(0.55);
+  transform-origin: center;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .workspace-main-tab--active::after {
-  content: '';
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 0;
-  height: 2px;
-  border-radius: 999px;
-  background: #2563eb;
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.workspace-main-tab__trigger {
+  gap: var(--workspace-main-tab-trigger-gap, 7px);
+  font-size: var(--workspace-main-tab-label-size, 12px);
+  line-height: 1;
+  transition: color 0.18s ease;
+}
+
+.workspace-main-tab__icon {
+  font-size: var(--workspace-main-tab-icon-size, 17px);
+  transition: color 0.18s ease;
+}
+
+.workspace-main-tab__label {
+  transition: color 0.18s ease;
+}
+
+.workspace-main-tab__close {
+  padding: var(--workspace-main-tab-close-padding, 3px);
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.workspace-main-tab__close-icon {
+  font-size: var(--workspace-main-tab-close-icon-size, 14px);
+}
+
+.workspace-main-tab-list-enter-active,
+.workspace-main-tab-list-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-main-tab-list-move {
+  transition: transform 0.22s ease;
+}
+
+.workspace-main-tab-list-enter-from,
+.workspace-main-tab-list-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 </style>

@@ -218,9 +218,14 @@ function syncPanelTransitionDirection(moduleId: string) {
     : 'workspace-left-panel-content-backward'
 }
 
-function switchModule(moduleId: string) {
+function switchModule(moduleId: string, options: { allowCollapse?: boolean } = {}) {
   if (!isWorkspaceLeftModuleId(moduleId))
     return
+  const allowCollapse = options.allowCollapse !== false
+  if (allowCollapse && !props.collapsed && !recyclePanelOpen.value && activeModule.value === moduleId) {
+    emit('update:collapsed', true)
+    return
+  }
   syncPanelTransitionDirection(moduleId)
   recyclePanelOpen.value = false
   activeModule.value = moduleId
@@ -236,15 +241,22 @@ function openMemberManagementPanel() {
   emit('openMemberManagementPanel')
 }
 
-function openRecycleBinPanel() {
+function openRecycleBinPanel(options: { allowCollapse?: boolean } = {}) {
+  const allowCollapse = options.allowCollapse !== false
+  if (allowCollapse && !props.collapsed && recyclePanelOpen.value) {
+    emit('update:collapsed', true)
+    return
+  }
   recyclePanelOpen.value = true
+  if (props.collapsed)
+    emit('update:collapsed', false)
 }
 
 watch(() => props.commandSignal, (next, previous) => {
   if (next === previous)
     return
   if (props.commandModuleId)
-    switchModule(props.commandModuleId)
+    switchModule(props.commandModuleId, { allowCollapse: false })
   if (props.collapsed)
     emit('update:collapsed', false)
 })
@@ -271,6 +283,8 @@ watch(activeModule, (value) => {
     :class="{
       'workspace-left-dock--collapsed': props.collapsed,
       'workspace-left-dock--compact': props.tabSpacingPreset === 'compact',
+      'workspace-left-dock--default': !props.tabSpacingPreset || props.tabSpacingPreset === 'default',
+      'workspace-left-dock--relaxed': props.tabSpacingPreset === 'relaxed',
     }"
   >
     <WorkspaceLeftRail
@@ -414,10 +428,6 @@ watch(activeModule, (value) => {
 
 .workspace-left-dock--collapsed {
   flex-basis: 56px;
-}
-
-.workspace-left-dock--compact {
-  --workspace-left-sidebar-item-gap: 6px;
 }
 
 .workspace-left-panel {

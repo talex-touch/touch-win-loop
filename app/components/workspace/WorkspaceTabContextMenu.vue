@@ -40,6 +40,7 @@ const emit = defineEmits<{
       :disabled="!props.canCloseSelf"
       @click="emit('closeSelf')"
     >
+      <span class="material-symbols-outlined workspace-tab-context-menu__icon">close</span>
       关闭标签页
     </button>
     <button
@@ -47,6 +48,7 @@ const emit = defineEmits<{
       :disabled="!props.canCloseLeft"
       @click="emit('closeLeft')"
     >
+      <span class="material-symbols-outlined workspace-tab-context-menu__icon">keyboard_double_arrow_left</span>
       关闭左侧标签页
     </button>
     <button
@@ -54,6 +56,7 @@ const emit = defineEmits<{
       :disabled="!props.canCloseRight"
       @click="emit('closeRight')"
     >
+      <span class="material-symbols-outlined workspace-tab-context-menu__icon">keyboard_double_arrow_right</span>
       关闭右侧标签页
     </button>
     <button
@@ -61,13 +64,16 @@ const emit = defineEmits<{
       :disabled="!props.canCloseOthers"
       @click="emit('closeOthers')"
     >
+      <span class="material-symbols-outlined workspace-tab-context-menu__icon">tab_close_right</span>
       关闭其他标签页
     </button>
+    <div class="workspace-tab-context-menu__divider" aria-hidden="true" />
     <button
       class="workspace-tab-context-menu__item workspace-tab-context-menu__item--danger"
       :disabled="!props.canCloseAll"
       @click="emit('closeAll')"
     >
+      <span class="material-symbols-outlined workspace-tab-context-menu__icon">tab_close</span>
       关闭全部标签页
     </button>
   </div>
@@ -77,15 +83,18 @@ const emit = defineEmits<{
 .workspace-tab-context-menu {
   position: fixed;
   z-index: 40;
-  min-width: 168px;
+  width: 176px;
   overflow: hidden;
   border: 1px solid var(--wl-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--wl-surface);
   box-shadow: var(--wl-shadow-card);
 }
 
 .workspace-tab-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 9px 12px;
   border: 0;
@@ -115,5 +124,16 @@ const emit = defineEmits<{
 .workspace-tab-context-menu__item--danger:hover:enabled {
   background: var(--wl-danger-050);
   color: var(--wl-danger-700);
+}
+
+.workspace-tab-context-menu__divider {
+  height: 1px;
+  margin: 4px 10px;
+  background: var(--wl-border);
+}
+
+.workspace-tab-context-menu__icon {
+  font-size: 16px;
+  line-height: 1;
 }
 </style>

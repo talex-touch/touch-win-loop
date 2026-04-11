@@ -85,8 +85,8 @@ const emit = defineEmits<{
       @drag-end="emit('dragEnd')"
     />
 
-    <div class="text-[11px] text-slate-400 px-4 py-2 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-3">
-      <div class="workspace-main-breadcrumb__scroll flex min-w-0 items-center gap-2 overflow-x-auto overflow-y-hidden">
+    <div class="workspace-main-breadcrumb text-slate-400 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-2">
+      <div class="workspace-main-breadcrumb__scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden">
         <template v-for="(item, index) in props.breadcrumbItems" :key="`breadcrumb-${index}-${item}`">
           <span class="truncate" :class="index === props.breadcrumbItems.length - 1 ? 'text-slate-600 font-medium' : ''">
             {{ item }}
@@ -123,5 +123,13 @@ const emit = defineEmits<{
 
 .workspace-main-breadcrumb__scroll::-webkit-scrollbar {
   display: none;
+}
+
+.workspace-main-breadcrumb {
+  padding-right: var(--workspace-main-breadcrumb-padding-x, 12px);
+  padding-left: var(--workspace-main-breadcrumb-padding-x, 12px);
+  padding-top: var(--workspace-main-breadcrumb-padding-y, 6px);
+  padding-bottom: var(--workspace-main-breadcrumb-padding-y, 6px);
+  font-size: var(--wl-text-caption);
 }
 </style>

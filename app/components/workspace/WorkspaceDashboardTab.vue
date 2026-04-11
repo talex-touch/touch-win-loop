@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   selectedTrackId?: string
   selectedContestId?: string
   mappingRows?: WorkspaceMappingRow[]
+  mappingLoading?: boolean
   keywordCloud?: WorkspaceKeyword[]
   trendBars?: number[]
   linkedContestEntries?: WorkspaceDashboardContestEntry[]
@@ -26,6 +27,8 @@ const props = withDefaults(defineProps<{
   materialCoverage?: number
   formState?: WorkspaceFormState
   formSubmitting?: boolean
+  workspacePreparing?: boolean
+  topicBoardFetching?: boolean
   toneMeta: Record<MappingTone, WorkspaceStatusToneMeta>
 }>(), {
   selectedContest: null,
@@ -33,6 +36,7 @@ const props = withDefaults(defineProps<{
   selectedTrackId: '',
   selectedContestId: '',
   mappingRows: () => [],
+  mappingLoading: false,
   keywordCloud: () => [],
   trendBars: () => [],
   linkedContestEntries: () => [],
@@ -50,6 +54,8 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   formSubmitting: false,
+  workspacePreparing: false,
+  topicBoardFetching: false,
 })
 
 const emit = defineEmits<{
@@ -77,7 +83,7 @@ const dashboardGuide = computed(() => {
     },
     {
       id: 'mapping',
-      title: '完成核心指标对标',
+      title: '查看核心指标要求',
       done: props.mappingRows.length > 0,
       doneText: `已生成 ${props.mappingRows.length} 条映射指标`,
       todoText: '尚未生成映射指标。',
@@ -91,6 +97,26 @@ const dashboardGuide = computed(() => {
     },
   ]
 })
+
+function resolveMappingScoreBarClass(score: number): string {
+  if (score >= 80)
+    return 'bg-emerald-500'
+  if (score >= 60)
+    return 'bg-blue-500'
+  if (score >= 40)
+    return 'bg-amber-400'
+  return 'bg-rose-400'
+}
+
+function resolveMappingScoreTextClass(score: number): string {
+  if (score >= 80)
+    return 'text-emerald-700 bg-emerald-50'
+  if (score >= 60)
+    return 'text-blue-700 bg-blue-50'
+  if (score >= 40)
+    return 'text-amber-700 bg-amber-50'
+  return 'text-rose-700 bg-rose-50'
+}
 </script>
 
 <template>
@@ -180,45 +206,62 @@ const dashboardGuide = computed(() => {
             </tr>
           </thead>
           <tbody class="divide-slate-200 divide-y">
-            <tr
-              v-for="row in props.mappingRows"
-              :key="row.id"
-              class="transition-colors hover:bg-blue-50/40"
-            >
-              <td class="px-4 py-3.5">
-                <div class="text-slate-900 font-medium">
-                  {{ row.metric }}
-                </div>
-                <div class="text-[10px] text-slate-400 mt-1">
-                  {{ row.hint }}
-                </div>
-              </td>
-              <td class="px-4 py-3.5 text-center">
-                <span class="rounded-full bg-slate-100 h-1.5 w-20 inline-block overflow-hidden">
-                  <span
-                    class="h-full block"
-                    :class="props.toneMeta[row.tone].barClass"
-                    :style="{ width: `${row.score}%` }"
-                  />
-                </span>
-              </td>
-              <td class="px-4 py-3.5">
-                <div class="text-slate-700">
-                  {{ row.ability }}
-                </div>
-                <div class="text-[10px] text-blue-600 font-medium mt-1">
-                  <span v-for="tag in row.tags" :key="`${row.id}-${tag}`" class="mr-2">{{ tag }}</span>
-                </div>
-              </td>
-              <td class="px-4 py-3.5">
-                <span
-                  class="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                  :class="props.toneMeta[row.tone].badgeClass"
-                >
-                  {{ props.toneMeta[row.tone].label }}
-                </span>
+            <tr v-if="props.workspacePreparing || props.mappingLoading || props.topicBoardFetching">
+              <td colspan="4" class="text-xs text-slate-500 px-4 py-6">
+                等待赛道评分规则返回。
               </td>
             </tr>
+            <tr v-else-if="props.mappingRows.length === 0">
+              <td colspan="4" class="text-xs text-slate-500 px-4 py-6">
+                暂无赛道评分规则，待竞赛详情返回后展示真实指标要求。
+              </td>
+            </tr>
+            <template v-else>
+              <tr
+                v-for="row in props.mappingRows"
+                :key="row.id"
+                class="transition-colors hover:bg-blue-50/40"
+              >
+                <td class="px-4 py-3.5">
+                  <div class="text-slate-900 font-medium">
+                    {{ row.metric }}
+                  </div>
+                  <div class="text-[10px] text-slate-400 mt-1">
+                    {{ row.hint }}
+                  </div>
+                </td>
+                <td class="px-4 py-3.5 text-center">
+                  <div class="flex flex-col gap-1 items-center">
+                    <span class="rounded-full bg-slate-100 h-1.5 w-20 inline-block overflow-hidden">
+                      <span
+                        class="h-full block"
+                        :class="resolveMappingScoreBarClass(row.score)"
+                        :style="{ width: `${row.score}%` }"
+                      />
+                    </span>
+                    <span class="text-[10px] text-slate-600 font-semibold">
+                      {{ row.scoreLabel }}
+                    </span>
+                  </div>
+                </td>
+                <td class="px-4 py-3.5">
+                  <div class="text-slate-700">
+                    {{ row.ability }}
+                  </div>
+                  <div class="text-[10px] text-blue-600 font-medium mt-1">
+                    <span v-for="tag in row.tags" :key="`${row.id}-${tag}`" class="mr-2">{{ tag }}</span>
+                  </div>
+                </td>
+                <td class="px-4 py-3.5">
+                  <span
+                    class="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                    :class="resolveMappingScoreTextClass(row.score)"
+                  >
+                    {{ row.supportingNote }}
+                  </span>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -237,7 +280,7 @@ const dashboardGuide = computed(() => {
             class="text-[10px] px-2 py-1 rounded"
             :class="word.active ? 'bg-blue-50 text-blue-600 font-bold' : 'bg-slate-50 text-slate-600'"
           >
-            {{ word.label }} ({{ word.count }})
+            {{ word.label }}
           </span>
         </div>
       </div>

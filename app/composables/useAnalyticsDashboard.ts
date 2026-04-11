@@ -13,6 +13,7 @@ import type {
   AnalyticsTrendAnalysisPayload,
 } from '~~/shared/types/analytics'
 import type { ApiResponse, AuthMeResult, Contest, Project } from '~~/shared/types/domain'
+import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo, resolveLoginRedirectTarget } from '~/utils/auth-request'
 
 interface AnalyticsOption<T extends string> {
   value: T
@@ -447,10 +448,18 @@ export function useAnalyticsDashboard() {
       await normalizeFilterSelection()
     }
     catch (error: any) {
+      const info = resolveAuthRequestErrorInfo(error)
       workspaceCatalog.value = []
       projectCatalog.value = []
       contestCatalog.value = []
-      optionsError.value = String(error?.data?.message || '分析筛选项加载失败，请稍后重试。')
+      if (info.isUnauthorized) {
+        await navigateTo({
+          path: '/login',
+          query: { redirect: resolveLoginRedirectTarget(route, '/analytics') },
+        }, { replace: true })
+        return
+      }
+      optionsError.value = resolveAuthDisplayMessage(error, '分析筛选项加载失败，请稍后重试。')
     }
     finally {
       optionsLoading.value = false

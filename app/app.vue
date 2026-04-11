@@ -70,4 +70,48 @@ body.wl-scroll-lock #__nuxt {
   max-height: 100%;
   overflow: hidden;
 }
+
+.wl-workspace-font-scope {
+  --wl-ws-font-scale: 1;
+  --wl-ws-text-11: calc(11px * var(--wl-ws-font-scale));
+  --wl-ws-text-12: calc(12px * var(--wl-ws-font-scale));
+  --wl-ws-text-13: calc(13px * var(--wl-ws-font-scale));
+}
+
+.wl-workspace-font-scope[data-workspace-font-size='xs'] {
+  --wl-ws-font-scale: 0.9;
+}
+
+.wl-workspace-font-scope[data-workspace-font-size='sm'] {
+  --wl-ws-font-scale: 0.96;
+}
+
+.wl-workspace-font-scope[data-workspace-font-size='md'] {
+  --wl-ws-font-scale: 1;
+}
+
+.wl-workspace-font-scope[data-workspace-font-size='lg'] {
+  --wl-ws-font-scale: 1.08;
+}
+
+.wl-workspace-font-scope[data-workspace-font-size='xl'] {
+  --wl-ws-font-scale: 1.16;
+}
+
+.wl-workspace-font-scope :is(.text-\[11px\], .text-xs):not(.material-symbols-outlined) {
+  font-size: var(--wl-ws-text-11);
+  line-height: calc(var(--wl-ws-text-11) * 1.45);
+}
+
+.wl-workspace-font-scope .workspace-tree-item__label {
+  font-size: var(--wl-ws-text-12);
+}
+
+.wl-workspace-font-scope .workspace-upload-tray__title {
+  font-size: var(--wl-ws-text-12);
+}
+
+.wl-workspace-font-scope .meeting-btn {
+  font-size: var(--wl-ws-text-13);
+}
 </style>

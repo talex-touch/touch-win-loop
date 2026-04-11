@@ -16,7 +16,7 @@ import type {
   WorkspaceCollabSelectionSummary,
 } from '~/components/workspace/collab/presence'
 import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import Collaboration from '@tiptap/extension-collaboration'
 import Dropcursor from '@tiptap/extension-dropcursor'
@@ -32,6 +32,7 @@ import {
 import * as Y from 'yjs'
 import {
   COLLAB_MARKDOWN_HEADING_LEVELS,
+  COLLAB_MARKDOWN_CODE_LANGUAGES,
   createCollabMarkdownBaseExtensions,
 } from '~~/shared/utils/collab-rich-text-schema'
 import { buildRichTextEditorCommands } from '~/components/editor/rich-text-editor-commands'
@@ -39,6 +40,12 @@ import {
   createRichTextEditorImageExtension,
   type RichTextEditorImageNodeActionPayload,
 } from '~/components/editor/rich-text-editor-image-extension'
+import {
+  attachCollabMarkdownHeadingAnchors,
+  buildCollabMarkdownHeadingSectionRanges,
+  resolveCollabMarkdownCollapsedHeadingAncestors,
+  type CollabMarkdownHeadingItem,
+} from '~/utils/collab-markdown-navigation'
 
 interface RichTextEditorCurrentUser {
   id: string
@@ -69,11 +76,27 @@ interface RichTextEditorOutlineItem {
   pos: number
   level: CollabMarkdownHeadingLevel
   text: string
+  nodeSize: number
+  occurrence: number
+  anchorId: string
 }
 
 interface SlashCommandRange {
   from: number
   to: number
+}
+
+interface RichTextEditorSearchMatch {
+  from: number
+  to: number
+}
+
+interface RichTextEditorCodeBlockState {
+  pos: number
+  text: string
+  language: string
+  top: number
+  left: number
 }
 
 const props = withDefaults(defineProps<{
@@ -85,6 +108,7 @@ const props = withDefaults(defineProps<{
   headingLevels?: CollabMarkdownHeadingLevel[]
   showToolbar?: boolean
   contentMaxWidth?: number | string
+  resourceId?: string | null
   enableSlashMenu?: boolean
   uiFontSizePreset?: WorkspaceFontSizePreset
   enableComments?: boolean
@@ -100,6 +124,7 @@ const props = withDefaults(defineProps<{
   headingLevels: () => [...COLLAB_MARKDOWN_HEADING_LEVELS],
   showToolbar: true,
   contentMaxWidth: '1040px',
+  resourceId: null,
   enableSlashMenu: false,
   uiFontSizePreset: 'md',
   enableComments: false,
@@ -126,10 +151,19 @@ const linkDraft = ref('https://')
 const linkInputVisible = ref(false)
 const linkInputRef = ref<HTMLInputElement | null>(null)
 const imageInputRef = ref<HTMLInputElement | null>(null)
+const outlineSearchInputRef = ref<HTMLInputElement | null>(null)
 const pendingImageInsertPosition = ref<number | null>(null)
 const outlineItems = ref<RichTextEditorOutlineItem[]>([])
 const activeOutlineHeadingPos = ref<number | null>(null)
 const lastPrimaryHeadingTitle = ref('')
+const outlineSearchQuery = ref('')
+const outlineSearchMatches = ref<RichTextEditorSearchMatch[]>([])
+const activeOutlineSearchMatchIndex = ref(0)
+const copiedHeadingAnchorId = ref('')
+const collapsedHeadingPositions = ref<number[]>([])
+const outlineCollapsed = ref(false)
+const activeCodeBlockState = shallowRef<RichTextEditorCodeBlockState | null>(null)
+const codeBlockCopyFeedback = ref(false)
 const slashMenuState = reactive({
   visible: false,
   query: '',
@@ -149,6 +183,10 @@ const headingMenuState = reactive({
   top: 0,
   left: 0,
 })
+const editorChromePluginKey = new PluginKey('rich-text-editor-navigation')
+const searchDecorationPluginKey = new PluginKey('rich-text-editor-search')
+let copiedHeadingAnchorTimer: ReturnType<typeof setTimeout> | null = null
+let codeBlockCopyTimer: ReturnType<typeof setTimeout> | null = null
 
 const normalizedHeadingLevels = computed<CollabMarkdownHeadingLevel[]>(() => {
   const dedupe = new Set<CollabMarkdownHeadingLevel>()
@@ -269,6 +307,48 @@ const headingMenuStyle = computed(() => {
   }
 })
 
+const codeBlockToolbarStyle = computed(() => {
+  if (!activeCodeBlockState.value) {
+    return {
+      top: '0px',
+      left: '0px',
+    }
+  }
+
+  return {
+    top: `${activeCodeBlockState.value.top}px`,
+    left: `${activeCodeBlockState.value.left}px`,
+  }
+})
+
+const codeBlockLanguageOptions = computed(() => {
+  const currentLanguage = normalizeString(activeCodeBlockState.value?.language)
+  const options: Array<{ value: string, label: string }> = COLLAB_MARKDOWN_CODE_LANGUAGES.map((language) => {
+    if (language === 'plaintext')
+      return { value: language, label: '纯文本' }
+    if (language === 'javascript')
+      return { value: language, label: 'JavaScript' }
+    if (language === 'typescript')
+      return { value: language, label: 'TypeScript' }
+    return { value: language, label: language.toUpperCase() }
+  })
+
+  if (currentLanguage && !options.some(item => item.value === currentLanguage))
+    options.unshift({ value: currentLanguage, label: currentLanguage })
+
+  return options
+})
+
+const outlineSearchResultLabel = computed(() => {
+  if (!outlineSearchQuery.value)
+    return '搜索正文'
+
+  if (outlineSearchMatches.value.length === 0)
+    return '0 个结果'
+
+  return `${activeOutlineSearchMatchIndex.value + 1}/${outlineSearchMatches.value.length}`
+})
+
 let removeAwarenessListener: (() => void) | null = null
 let removeWindowResizeListener: (() => void) | null = null
 const commentDecorationPluginKey = new PluginKey('rich-text-editor-comments')
@@ -284,6 +364,49 @@ function normalizeOptionalString(value: unknown): string | null {
 
 function normalizeSearchValue(value: unknown): string {
   return normalizeString(value).toLowerCase()
+}
+
+function copyTextWithFallback(text: string): boolean {
+  if (!import.meta.client || !text)
+    return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '-9999px'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  }
+  catch {
+    copied = false
+  }
+
+  document.body.removeChild(textarea)
+  return copied
+}
+
+async function writeTextToClipboard(text: string): Promise<boolean> {
+  if (!text)
+    return false
+
+  if (import.meta.client && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+    catch {
+      // ignore clipboard permission errors and fallback to execCommand
+    }
+  }
+
+  return copyTextWithFallback(text)
 }
 
 function normalizePreviewText(value: string): string {
@@ -310,6 +433,19 @@ function createImageUploadId(file: File): string {
 function normalizeOutlineText(value: string, level: CollabMarkdownHeadingLevel): string {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim()
   return normalized || `H${level}`
+}
+
+function normalizeRouteHash(hash: string): string {
+  const normalized = normalizeString(hash).replace(/^#/, '')
+  if (!normalized)
+    return ''
+
+  try {
+    return decodeURIComponent(normalized)
+  }
+  catch {
+    return normalized
+  }
 }
 
 function resolveSelectionToolbarMetrics() {
@@ -656,13 +792,12 @@ function defaultSelectionChangePayload(): RichTextEditorSelectionChangePayload {
   }
 }
 
-function collectOutlineItems(): RichTextEditorOutlineItem[] {
-  const instance = editor.value
-  if (!instance)
+function collectOutlineItemsFromDoc(doc: any): RichTextEditorOutlineItem[] {
+  if (!doc)
     return []
 
-  const items: RichTextEditorOutlineItem[] = []
-  instance.state.doc.descendants((node, pos) => {
+  const items: CollabMarkdownHeadingItem[] = []
+  doc.descendants((node: any, pos: number) => {
     if (node.type.name !== 'heading')
       return true
 
@@ -674,11 +809,19 @@ function collectOutlineItems(): RichTextEditorOutlineItem[] {
       pos,
       level: level as CollabMarkdownHeadingLevel,
       text: normalizeOutlineText(String(node.textContent || ''), level as CollabMarkdownHeadingLevel),
+      nodeSize: Math.max(0, Number(node.nodeSize || 0)),
     })
     return true
   })
 
-  return items
+  return attachCollabMarkdownHeadingAnchors(items, normalizeString(props.resourceId))
+}
+
+function collectOutlineItems(): RichTextEditorOutlineItem[] {
+  const instance = editor.value
+  if (!instance)
+    return []
+  return collectOutlineItemsFromDoc(instance.state.doc)
 }
 
 function syncOutlineHeadingMarkers(): void {
@@ -688,9 +831,216 @@ function syncOutlineHeadingMarkers(): void {
 
   for (const item of outlineItems.value) {
     const headingDom = instance.view.nodeDOM(item.pos)
-    if (headingDom instanceof HTMLElement)
+    if (headingDom instanceof HTMLElement) {
       headingDom.dataset.outlineHeadingPos = String(item.pos)
+      if (item.anchorId)
+        headingDom.id = item.anchorId
+      else
+        headingDom.removeAttribute('id')
+      headingDom.dataset.headingAnchor = item.anchorId
+      headingDom.dataset.headingLevel = String(item.level)
+      headingDom.classList.toggle('rich-text-editor__heading--collapsed', collapsedHeadingPositions.value.includes(item.pos))
+    }
   }
+}
+
+function buildHeadingSectionRanges() {
+  const instance = editor.value
+  if (!instance)
+    return []
+  return buildCollabMarkdownHeadingSectionRanges(outlineItems.value, instance.state.doc.content.size)
+}
+
+function expandCollapsedHeadingsForPosition(position: number): boolean {
+  const currentPositions = new Set(collapsedHeadingPositions.value)
+  if (currentPositions.size === 0)
+    return false
+
+  const ancestors = resolveCollabMarkdownCollapsedHeadingAncestors(buildHeadingSectionRanges(), position)
+    .filter(pos => currentPositions.has(pos))
+
+  if (ancestors.length === 0)
+    return false
+
+  collapsedHeadingPositions.value = collapsedHeadingPositions.value.filter(pos => !ancestors.includes(pos))
+  return true
+}
+
+function toggleCollapsedHeading(position: number): void {
+  const normalizedPosition = Math.max(0, Math.trunc(Number(position) || 0))
+  const currentPositions = new Set(collapsedHeadingPositions.value)
+  if (currentPositions.has(normalizedPosition))
+    currentPositions.delete(normalizedPosition)
+  else
+    currentPositions.add(normalizedPosition)
+  collapsedHeadingPositions.value = [...currentPositions].sort((left, right) => left - right)
+}
+
+function createHeadingFoldToggle(headingPos: number, collapsed: boolean): HTMLElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'rich-text-editor__heading-fold-toggle'
+  button.dataset.headingPos = String(headingPos)
+  button.setAttribute('aria-label', collapsed ? '展开章节' : '折叠章节')
+  button.title = collapsed ? '展开章节' : '折叠章节'
+  button.setAttribute('data-testid', 'rich-text-editor-heading-fold-toggle')
+
+  const icon = document.createElement('span')
+  icon.className = 'material-symbols-outlined'
+  icon.setAttribute('aria-hidden', 'true')
+  icon.textContent = collapsed ? 'chevron_right' : 'expand_more'
+  button.append(icon)
+
+  button.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+  })
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    toggleCollapsedHeading(headingPos)
+  })
+
+  return button
+}
+
+function buildSearchMatches(doc: any, query: string): RichTextEditorSearchMatch[] {
+  const normalizedQuery = normalizeSearchValue(query)
+  if (!normalizedQuery)
+    return []
+
+  const matches: RichTextEditorSearchMatch[] = []
+  doc.descendants((node: any, pos: number) => {
+    if (!node?.isText || !node.text)
+      return true
+
+    const content = String(node.text || '')
+    const lowerContent = content.toLowerCase()
+    let startIndex = 0
+    while (startIndex < lowerContent.length) {
+      const matchedIndex = lowerContent.indexOf(normalizedQuery, startIndex)
+      if (matchedIndex < 0)
+        break
+
+      matches.push({
+        from: pos + matchedIndex,
+        to: pos + matchedIndex + normalizedQuery.length,
+      })
+      startIndex = matchedIndex + normalizedQuery.length
+    }
+    return true
+  })
+
+  return matches
+}
+
+function syncOutlineSearchMatches(): void {
+  const instance = editor.value
+  if (!instance) {
+    outlineSearchMatches.value = []
+    activeOutlineSearchMatchIndex.value = 0
+    return
+  }
+
+  const matches = buildSearchMatches(instance.state.doc, outlineSearchQuery.value)
+  outlineSearchMatches.value = matches
+  if (matches.length === 0) {
+    activeOutlineSearchMatchIndex.value = 0
+    return
+  }
+
+  activeOutlineSearchMatchIndex.value = Math.max(0, Math.min(activeOutlineSearchMatchIndex.value, matches.length - 1))
+}
+
+function refreshSearchDecorations(): void {
+  const instance = editor.value
+  if (!instance)
+    return
+  instance.view.dispatch(instance.state.tr.setMeta(searchDecorationPluginKey, Date.now()))
+}
+
+function createSearchExtension() {
+  return Extension.create({
+    name: 'workspace-document-search',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: searchDecorationPluginKey,
+          props: {
+            decorations(state) {
+              const matches = buildSearchMatches(state.doc, outlineSearchQuery.value)
+              if (matches.length === 0)
+                return DecorationSet.empty
+
+              const decorations = matches.map((match, index) => {
+                return Decoration.inline(match.from, match.to, {
+                  class: index === activeOutlineSearchMatchIndex.value
+                    ? 'rich-text-editor__search-match rich-text-editor__search-match--active'
+                    : 'rich-text-editor__search-match',
+                })
+              })
+              return decorations.length > 0 ? DecorationSet.create(state.doc, decorations) : DecorationSet.empty
+            },
+          },
+        }),
+      ]
+    },
+  })
+}
+
+function refreshEditorChromeDecorations(): void {
+  const instance = editor.value
+  if (!instance)
+    return
+  instance.view.dispatch(instance.state.tr.setMeta(editorChromePluginKey, Date.now()))
+}
+
+function createEditorChromeExtension() {
+  return Extension.create({
+    name: 'workspace-editor-chrome',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: editorChromePluginKey,
+          props: {
+            decorations(state) {
+              const headingItems = collectOutlineItemsFromDoc(state.doc)
+              if (headingItems.length === 0)
+                return DecorationSet.empty
+
+              const collapsedHeadingSet = new Set(collapsedHeadingPositions.value)
+              const decorations: Decoration[] = []
+
+              for (const item of headingItems) {
+                decorations.push(Decoration.widget(item.pos + 1, () => {
+                  return createHeadingFoldToggle(item.pos, collapsedHeadingSet.has(item.pos))
+                }, {
+                  side: -1,
+                }))
+              }
+
+              const collapsedRanges = buildCollabMarkdownHeadingSectionRanges(headingItems, state.doc.content.size)
+                .filter(range => collapsedHeadingSet.has(range.headingPos))
+                .sort((left, right) => left.from - right.from)
+
+              if (collapsedRanges.length > 0) {
+                state.doc.forEach((node, offset) => {
+                  const position = Math.max(0, offset)
+                  const hidden = collapsedRanges.some(range => position >= range.from && position < range.to)
+                  if (!hidden)
+                    return
+
+                  decorations.push(Decoration.node(position, position + node.nodeSize, {
+                    class: 'rich-text-editor__fold-hidden',
+                  }))
+                })
+              }
+
+              return decorations.length > 0 ? DecorationSet.create(state.doc, decorations) : DecorationSet.empty
+            },
+          },
+        }),
+      ]
+    },
+  })
 }
 
 function resolveActiveOutlineHeading(): number | null {
@@ -734,6 +1084,15 @@ function scrollToOutlineHeading(item: RichTextEditorOutlineItem): void {
   if (!instance || !scroller)
     return
 
+  const expanded = expandCollapsedHeadingsForPosition(item.pos)
+  if (expanded) {
+    nextTick(() => {
+      syncOutlineHeadingMarkers()
+      scrollToOutlineHeading(item)
+    })
+    return
+  }
+
   const selectionPosition = Math.min(item.pos + 1, instance.state.doc.content.size)
   instance.chain().focus().setTextSelection(selectionPosition).run()
 
@@ -747,6 +1106,225 @@ function scrollToOutlineHeading(item: RichTextEditorOutlineItem): void {
     }
     activeOutlineHeadingPos.value = item.pos
   })
+}
+
+function focusOutlineSearchInput(): void {
+  nextTick(() => {
+    outlineSearchInputRef.value?.focus()
+    outlineSearchInputRef.value?.select()
+  })
+}
+
+function clearOutlineSearch(): void {
+  outlineSearchQuery.value = ''
+  outlineSearchMatches.value = []
+  activeOutlineSearchMatchIndex.value = 0
+}
+
+function scrollToDocumentPosition(position: number, behavior: ScrollBehavior = 'smooth'): void {
+  const instance = editor.value
+  const scroller = editorScrollRef.value
+  if (!instance || !scroller)
+    return
+
+  const targetPosition = Math.max(0, Math.min(position, instance.state.doc.content.size))
+  instance.chain().focus().setTextSelection(targetPosition).run()
+  nextTick(() => {
+    const coords = instance.view.coordsAtPos(targetPosition)
+    const scrollerRect = scroller.getBoundingClientRect()
+    scroller.scrollTo({
+      top: Math.max(0, scroller.scrollTop + coords.top - scrollerRect.top - 120),
+      behavior,
+    })
+  })
+}
+
+function jumpToOutlineSearchMatch(index: number, behavior: ScrollBehavior = 'smooth'): void {
+  const matches = outlineSearchMatches.value
+  if (matches.length === 0)
+    return
+
+  const nextIndex = (index + matches.length) % matches.length
+  activeOutlineSearchMatchIndex.value = nextIndex
+  refreshSearchDecorations()
+
+  const match = matches[nextIndex]
+  if (!match)
+    return
+
+  const expanded = expandCollapsedHeadingsForPosition(match.from)
+  if (expanded) {
+    nextTick(() => {
+      syncOutlineHeadingMarkers()
+      jumpToOutlineSearchMatch(nextIndex, behavior)
+    })
+    return
+  }
+
+  scrollToDocumentPosition(match.from, behavior)
+}
+
+function jumpToNextOutlineSearchMatch(): void {
+  if (outlineSearchMatches.value.length === 0)
+    return
+  jumpToOutlineSearchMatch(activeOutlineSearchMatchIndex.value + 1)
+}
+
+function jumpToPreviousOutlineSearchMatch(): void {
+  if (outlineSearchMatches.value.length === 0)
+    return
+  jumpToOutlineSearchMatch(activeOutlineSearchMatchIndex.value - 1)
+}
+
+function onOutlineSearchKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    if (event.shiftKey)
+      jumpToPreviousOutlineSearchMatch()
+    else
+      jumpToNextOutlineSearchMatch()
+    return
+  }
+
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    clearOutlineSearch()
+    editor.value?.commands.focus()
+  }
+}
+
+function findOutlineItemByAnchorId(anchorId: string): RichTextEditorOutlineItem | null {
+  const normalizedAnchorId = normalizeRouteHash(anchorId)
+  if (!normalizedAnchorId)
+    return null
+  return outlineItems.value.find(item => item.anchorId === normalizedAnchorId) || null
+}
+
+async function copyHeadingAnchor(item: RichTextEditorOutlineItem): Promise<void> {
+  if (!import.meta.client || !item.anchorId)
+    return
+
+  const targetUrl = new URL(window.location.href)
+  targetUrl.hash = item.anchorId
+  const copied = await writeTextToClipboard(targetUrl.toString())
+  if (!copied)
+    return
+
+  copiedHeadingAnchorId.value = item.anchorId
+  if (copiedHeadingAnchorTimer)
+    clearTimeout(copiedHeadingAnchorTimer)
+  copiedHeadingAnchorTimer = setTimeout(() => {
+    copiedHeadingAnchorId.value = ''
+    copiedHeadingAnchorTimer = null
+  }, 1600)
+}
+
+function scrollToHeadingAnchor(anchorId: string): boolean {
+  const item = findOutlineItemByAnchorId(anchorId)
+  if (!item)
+    return false
+  scrollToOutlineHeading(item)
+  return true
+}
+
+function resolveActiveCodeBlock(): { pos: number, node: any } | null {
+  const instance = editor.value
+  if (!instance)
+    return null
+
+  const { selection } = instance.state
+  if (selection instanceof NodeSelection && selection.node?.type?.name === 'codeBlock') {
+    return {
+      pos: selection.from,
+      node: selection.node,
+    }
+  }
+
+  for (let depth = selection.$from.depth; depth > 0; depth -= 1) {
+    const node = selection.$from.node(depth)
+    if (node.type.name !== 'codeBlock')
+      continue
+
+    return {
+      pos: selection.$from.before(depth),
+      node,
+    }
+  }
+
+  return null
+}
+
+function syncActiveCodeBlockState(): void {
+  const instance = editor.value
+  const scroller = editorScrollRef.value
+  if (!instance || !scroller) {
+    activeCodeBlockState.value = null
+    return
+  }
+
+  const activeCodeBlock = resolveActiveCodeBlock()
+  if (!activeCodeBlock) {
+    activeCodeBlockState.value = null
+    return
+  }
+
+  const codeBlockDom = instance.view.nodeDOM(activeCodeBlock.pos)
+  if (!(codeBlockDom instanceof HTMLElement)) {
+    activeCodeBlockState.value = null
+    return
+  }
+
+  const scrollerRect = scroller.getBoundingClientRect()
+  const codeBlockRect = codeBlockDom.getBoundingClientRect()
+  activeCodeBlockState.value = {
+    pos: activeCodeBlock.pos,
+    text: String(activeCodeBlock.node.textContent || ''),
+    language: normalizeString(activeCodeBlock.node.attrs?.language) || 'plaintext',
+    top: scroller.scrollTop + codeBlockRect.top - scrollerRect.top + 8,
+    left: Math.max(0, scroller.scrollLeft + codeBlockRect.right - scrollerRect.left - 188),
+  }
+}
+
+function updateActiveCodeBlockLanguage(language: string): void {
+  const instance = editor.value
+  const activeCodeBlock = activeCodeBlockState.value
+  const normalizedLanguage = normalizeString(language)
+  if (!instance || !activeCodeBlock || !normalizedLanguage)
+    return
+
+  const node = instance.state.doc.nodeAt(activeCodeBlock.pos)
+  if (!node || node.type.name !== 'codeBlock')
+    return
+
+  instance.view.dispatch(instance.state.tr.setNodeMarkup(activeCodeBlock.pos, undefined, {
+    ...node.attrs,
+    language: normalizedLanguage,
+  }))
+}
+
+function onCodeBlockLanguageChange(event: Event): void {
+  const target = event.target
+  if (!(target instanceof HTMLSelectElement))
+    return
+  updateActiveCodeBlockLanguage(target.value)
+}
+
+async function copyActiveCodeBlockText(): Promise<void> {
+  const activeCodeBlock = activeCodeBlockState.value
+  if (!activeCodeBlock?.text)
+    return
+
+  const copied = await writeTextToClipboard(activeCodeBlock.text)
+  if (!copied)
+    return
+
+  codeBlockCopyFeedback.value = true
+  if (codeBlockCopyTimer)
+    clearTimeout(codeBlockCopyTimer)
+  codeBlockCopyTimer = setTimeout(() => {
+    codeBlockCopyFeedback.value = false
+    codeBlockCopyTimer = null
+  }, 1400)
 }
 
 function closeLinkEditor(nextValue = 'https://'): void {
@@ -1000,6 +1578,9 @@ function resolveSelectionToolbarTrigger() {
   if (selection.empty)
     return null
 
+  if (resolveActiveCodeBlock())
+    return null
+
   const selectedText = String(instance.state.doc.textBetween(selection.from, selection.to, '\n', '\n') || '')
   if (!selectedText)
     return null
@@ -1048,6 +1629,8 @@ function syncDerivedState(): void {
   syncSlashMenu()
   syncSelectionToolbar()
   syncOutlineState()
+  syncOutlineSearchMatches()
+  syncActiveCodeBlockState()
 }
 
 function destroyEditor(): void {
@@ -1056,6 +1639,14 @@ function destroyEditor(): void {
   closeSelectionToolbar()
   removeAwarenessListener?.()
   removeAwarenessListener = null
+  if (copiedHeadingAnchorTimer) {
+    clearTimeout(copiedHeadingAnchorTimer)
+    copiedHeadingAnchorTimer = null
+  }
+  if (codeBlockCopyTimer) {
+    clearTimeout(codeBlockCopyTimer)
+    codeBlockCopyTimer = null
+  }
   if (!editor.value)
     return
   editor.value.destroy()
@@ -1063,6 +1654,11 @@ function destroyEditor(): void {
   outlineItems.value = []
   activeOutlineHeadingPos.value = null
   lastPrimaryHeadingTitle.value = ''
+  outlineSearchMatches.value = []
+  activeOutlineSearchMatchIndex.value = 0
+  copiedHeadingAnchorId.value = ''
+  activeCodeBlockState.value = null
+  codeBlockCopyFeedback.value = false
 }
 
 function bindAwarenessListener(awareness: Awareness | null): void {
@@ -1331,6 +1927,14 @@ function scrollToCommentThread(threadId: string): void {
     const matched = findImageNodeByCommentAnchor(thread.anchor)
     if (!matched)
       return
+    const expanded = expandCollapsedHeadingsForPosition(matched.pos)
+    if (expanded) {
+      nextTick(() => {
+        syncOutlineHeadingMarkers()
+        scrollToCommentThread(threadId)
+      })
+      return
+    }
     instance.chain().focus().setNodeSelection(matched.pos).run()
     nextTick(() => {
       const targetNode = instance.view.nodeDOM(matched.pos)
@@ -1347,6 +1951,15 @@ function scrollToCommentThread(threadId: string): void {
   const selection = resolveCommentThreadSelection(thread, instance.state)
   if (!selection)
     return
+
+  const expanded = expandCollapsedHeadingsForPosition(selection.from)
+  if (expanded) {
+    nextTick(() => {
+      syncOutlineHeadingMarkers()
+      scrollToCommentThread(threadId)
+    })
+    return
+  }
 
   instance.chain().focus().setTextSelection(selection.from).run()
   nextTick(() => {
@@ -1567,6 +2180,12 @@ function isToolbarItemActive(item: RichTextEditorCommand): boolean {
 }
 
 function handleEditorKeyDown(_view: unknown, event: KeyboardEvent): boolean {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+    event.preventDefault()
+    focusOutlineSearchInput()
+    return true
+  }
+
   if (headingMenuState.visible && event.key === 'Escape') {
     event.preventDefault()
     closeHeadingMenu()
@@ -1673,6 +2292,8 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
     Placeholder.configure({
       placeholder: props.placeholder,
     }),
+    createEditorChromeExtension(),
+    createSearchExtension(),
     Gapcursor,
     Dropcursor.configure({
       color: '#2f6af2',
@@ -1720,6 +2341,7 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
 
 function onEditorScroll(): void {
   syncOutlineActiveHeading()
+  syncActiveCodeBlockState()
   if (selectionToolbarState.visible)
     syncSelectionToolbar()
   if (slashMenuState.visible)
@@ -1730,6 +2352,7 @@ function onEditorScroll(): void {
 
 function handleViewportResize(): void {
   syncOutlineActiveHeading()
+  syncActiveCodeBlockState()
   if (selectionToolbarState.visible)
     syncSelectionToolbar()
   if (slashMenuState.visible)
@@ -1741,6 +2364,7 @@ function handleViewportResize(): void {
 defineExpose({
   applyDocumentAssistResult,
   scrollToCommentThread,
+  scrollToHeadingAnchor,
 })
 
 watch(slashMenuItems, (items) => {
@@ -1781,6 +2405,10 @@ watch(() => props.placeholder, () => {
   createEditor(props.doc, props.awareness)
 })
 
+watch(() => props.resourceId, () => {
+  syncOutlineState()
+})
+
 watch(() => props.enableComments, () => {
   if (!props.doc)
     return
@@ -1789,6 +2417,20 @@ watch(() => props.enableComments, () => {
 
 watch(() => props.currentUser, () => {
   syncLocalAwarenessUser()
+}, { deep: true })
+
+watch(outlineSearchQuery, () => {
+  syncOutlineSearchMatches()
+  refreshSearchDecorations()
+})
+
+watch(collapsedHeadingPositions, () => {
+  refreshEditorChromeDecorations()
+  nextTick(() => {
+    syncOutlineHeadingMarkers()
+    syncOutlineActiveHeading()
+    syncActiveCodeBlockState()
+  })
 }, { deep: true })
 
 watch(() => props.commentThreads, () => {
@@ -1868,32 +2510,130 @@ onBeforeUnmount(() => {
     </form>
 
     <div class="rich-text-editor__surface">
-      <aside class="rich-text-editor__outline" data-testid="rich-text-editor-outline">
+      <aside
+        class="rich-text-editor__outline"
+        :class="{ 'rich-text-editor__outline--collapsed': outlineCollapsed }"
+        data-testid="rich-text-editor-outline"
+      >
         <div class="rich-text-editor__outline-header">
-          <span class="rich-text-editor__outline-header-icon material-symbols-outlined" aria-hidden="true">
-            toc
-          </span>
-          <span>大纲</span>
-        </div>
-
-        <nav v-if="outlineItems.length > 0" class="rich-text-editor__outline-list" aria-label="文档大纲">
           <button
-            v-for="item in outlineItems"
-            :key="`${item.pos}-${item.level}`"
-            class="rich-text-editor__outline-item"
-            :class="{ 'rich-text-editor__outline-item--active': activeOutlineHeadingPos === item.pos }"
             type="button"
-            :style="{ paddingLeft: `${(item.level - 1) * 14}px` }"
-            @click="scrollToOutlineHeading(item)"
+            class="rich-text-editor__outline-collapse"
+            :aria-label="outlineCollapsed ? '展开大纲' : '收起大纲'"
+            :title="outlineCollapsed ? '展开大纲' : '收起大纲'"
+            data-testid="rich-text-editor-outline-collapse"
+            @click="outlineCollapsed = !outlineCollapsed"
           >
-            <span class="rich-text-editor__outline-item-label">
-              {{ item.text }}
+            <span class="material-symbols-outlined" aria-hidden="true">
+              {{ outlineCollapsed ? 'chevron_right' : 'chevron_left' }}
             </span>
           </button>
-        </nav>
+          <template v-if="!outlineCollapsed">
+            <button
+              type="button"
+              class="rich-text-editor__outline-title"
+              aria-label="收起大纲"
+              title="收起大纲"
+              @click="outlineCollapsed = true"
+            >
+              <span class="rich-text-editor__outline-header-icon material-symbols-outlined" aria-hidden="true">
+                toc
+              </span>
+              <span>大纲</span>
+            </button>
+          </template>
+        </div>
 
-        <div v-else class="rich-text-editor__outline-empty">
-          添加标题后，这里会自动生成目录。
+        <div v-if="!outlineCollapsed" class="rich-text-editor__outline-body">
+          <div class="rich-text-editor__outline-search">
+          <label class="sr-only" for="rich-text-editor-outline-search-input">文内搜索</label>
+          <div class="rich-text-editor__outline-search-input-wrap">
+            <span class="rich-text-editor__outline-search-icon material-symbols-outlined" aria-hidden="true">
+              search
+            </span>
+            <input
+              id="rich-text-editor-outline-search-input"
+              ref="outlineSearchInputRef"
+              v-model="outlineSearchQuery"
+              class="rich-text-editor__outline-search-input"
+              type="search"
+              inputmode="search"
+              placeholder="搜索正文"
+              data-testid="rich-text-editor-search-input"
+              @keydown="onOutlineSearchKeydown"
+            >
+            <button
+              v-if="outlineSearchQuery"
+              type="button"
+              class="rich-text-editor__outline-search-clear"
+              aria-label="清空搜索"
+              @click="clearOutlineSearch()"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">close</span>
+            </button>
+          </div>
+
+          <div class="rich-text-editor__outline-search-meta">
+            <span class="rich-text-editor__outline-search-count">{{ outlineSearchResultLabel }}</span>
+            <div class="rich-text-editor__outline-search-actions">
+              <button
+                type="button"
+                class="rich-text-editor__outline-search-action"
+                aria-label="上一条结果"
+                :disabled="outlineSearchMatches.length === 0"
+                @click="jumpToPreviousOutlineSearchMatch()"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span>
+              </button>
+              <button
+                type="button"
+                class="rich-text-editor__outline-search-action"
+                aria-label="下一条结果"
+                :disabled="outlineSearchMatches.length === 0"
+                @click="jumpToNextOutlineSearchMatch()"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
+              </button>
+            </div>
+          </div>
+          </div>
+
+          <nav v-if="outlineItems.length > 0" class="rich-text-editor__outline-list" aria-label="文档大纲">
+            <div
+              v-for="item in outlineItems"
+              :key="`${item.pos}-${item.level}`"
+              class="rich-text-editor__outline-row"
+              :class="{ 'rich-text-editor__outline-row--active': activeOutlineHeadingPos === item.pos }"
+            >
+              <button
+                class="rich-text-editor__outline-item"
+                type="button"
+                :style="{ paddingLeft: `${(item.level - 1) * 14}px` }"
+                @click="scrollToOutlineHeading(item)"
+              >
+                <span class="rich-text-editor__outline-item-label">
+                  {{ item.text }}
+                </span>
+              </button>
+              <button
+                v-if="item.anchorId"
+                type="button"
+                class="rich-text-editor__outline-anchor-button"
+                :class="{ 'rich-text-editor__outline-anchor-button--copied': copiedHeadingAnchorId === item.anchorId }"
+                :aria-label="`复制 ${item.text} 的标题链接`"
+                :title="copiedHeadingAnchorId === item.anchorId ? '已复制标题链接' : '复制标题链接'"
+                @click.stop="copyHeadingAnchor(item)"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">
+                  {{ copiedHeadingAnchorId === item.anchorId ? 'check' : 'link' }}
+                </span>
+              </button>
+            </div>
+          </nav>
+
+          <div v-else class="rich-text-editor__outline-empty">
+            添加标题后，这里会自动生成目录。
+          </div>
         </div>
       </aside>
 
@@ -1903,6 +2643,42 @@ onBeforeUnmount(() => {
         @scroll.passive="onEditorScroll"
       >
         <div class="rich-text-editor__canvas">
+          <div
+            v-if="activeCodeBlockState"
+            class="rich-text-editor__code-block-toolbar"
+            :style="codeBlockToolbarStyle"
+            data-testid="rich-text-editor-code-block-toolbar"
+          >
+            <label class="sr-only" for="rich-text-editor-code-block-language">代码块语言</label>
+            <select
+              id="rich-text-editor-code-block-language"
+              class="rich-text-editor__code-block-language"
+              :value="activeCodeBlockState.language"
+              :disabled="!editable"
+              @change="onCodeBlockLanguageChange"
+            >
+              <option
+                v-for="option in codeBlockLanguageOptions"
+                :key="`code-language-${option.value}`"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+
+            <button
+              type="button"
+              class="rich-text-editor__code-block-copy"
+              :aria-label="codeBlockCopyFeedback ? '代码已复制' : '复制代码'"
+              :title="codeBlockCopyFeedback ? '代码已复制' : '复制代码'"
+              @click="copyActiveCodeBlockText()"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">
+                {{ codeBlockCopyFeedback ? 'check' : 'content_copy' }}
+              </span>
+            </button>
+          </div>
+
           <EditorContent v-if="editor" :editor="editor" />
           <div v-else class="rich-text-editor__empty">
             文档正在初始化...
@@ -2047,6 +2823,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .rich-text-editor {
   display: flex;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   flex: 1;
   flex-direction: column;
@@ -2150,34 +2928,63 @@ onBeforeUnmount(() => {
 
 .rich-text-editor__surface {
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
+  height: 100%;
   min-height: 0;
   min-width: 0;
+  align-items: stretch;
   background: #fff;
 }
 
 .rich-text-editor__outline {
-  position: sticky;
-  top: 0;
   display: flex;
   width: 220px;
   min-width: 220px;
   flex-direction: column;
-  align-self: flex-start;
+  align-self: stretch;
   height: 100%;
+  min-height: 0;
   padding: 20px 12px 24px 16px;
   border-right: 1px solid #e6ebf2;
   background: #fff;
+  overflow: hidden;
+  transition:
+    width 0.18s ease,
+    min-width 0.18s ease,
+    padding 0.18s ease;
+}
+
+.rich-text-editor__outline--collapsed {
+  width: 52px;
+  min-width: 52px;
+  padding-inline: 8px;
 }
 
 .rich-text-editor__outline-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   color: #475569;
   font-size: 13px;
   font-weight: 700;
+}
+
+.rich-text-editor__outline-collapse {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+}
+
+.rich-text-editor__outline-collapse:hover {
+  background: #f8fafc;
+  color: #0f172a;
 }
 
 .rich-text-editor__outline-header-icon {
@@ -2185,14 +2992,133 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
-.rich-text-editor__outline-list {
+.rich-text-editor__outline-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.rich-text-editor__outline-title:hover {
+  color: #0f172a;
+}
+
+.rich-text-editor__outline-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.rich-text-editor__outline-search {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.rich-text-editor__outline-search-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.rich-text-editor__outline-search-icon {
+  color: #94a3b8;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.rich-text-editor__outline-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  font-size: 12px;
+  outline: none;
+}
+
+.rich-text-editor__outline-search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.rich-text-editor__outline-search-clear,
+.rich-text-editor__outline-search-action {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+}
+
+.rich-text-editor__outline-search-clear:hover,
+.rich-text-editor__outline-search-action:hover:enabled {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.rich-text-editor__outline-search-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.rich-text-editor__outline-search-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rich-text-editor__outline-search-count {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.rich-text-editor__outline-search-actions {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
 }
 
+.rich-text-editor__outline-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.rich-text-editor__outline-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+}
+
+.rich-text-editor__outline-row--active {
+  background: #f8fafc;
+}
+
 .rich-text-editor__outline-item {
-  width: 100%;
+  flex: 1;
   min-height: 28px;
   padding-top: 5px;
   padding-right: 10px;
@@ -2207,8 +3133,7 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__outline-item:hover,
-.rich-text-editor__outline-item--active {
-  background: #f8fafc;
+.rich-text-editor__outline-row--active .rich-text-editor__outline-item {
   color: #0f172a;
 }
 
@@ -2217,6 +3142,25 @@ onBeforeUnmount(() => {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.rich-text-editor__outline-anchor-button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+}
+
+.rich-text-editor__outline-anchor-button:hover,
+.rich-text-editor__outline-anchor-button--copied {
+  background: #eef4ff;
+  color: #1d4ed8;
 }
 
 .rich-text-editor__outline-empty {
@@ -2234,6 +3178,7 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__canvas {
+  position: relative;
   box-sizing: border-box;
   width: 100%;
   min-height: 100%;
@@ -2336,12 +3281,36 @@ onBeforeUnmount(() => {
 
 .rich-text-editor__canvas :deep(.tiptap pre) {
   margin: 0;
-  padding: 16px 18px;
+  padding: 48px 18px 16px;
   border: 1px solid #0f172a;
   border-radius: 14px;
   background: #0f172a;
   color: #e2e8f0;
   overflow-x: auto;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__heading-fold-toggle) {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  margin-left: -28px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  vertical-align: middle;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__heading-fold-toggle:hover) {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__fold-hidden) {
+  display: none;
 }
 
 .rich-text-editor__canvas :deep(.tiptap pre code) {
@@ -2388,6 +3357,15 @@ onBeforeUnmount(() => {
 .rich-text-editor__canvas :deep(.tiptap .hljs-regexp),
 .rich-text-editor__canvas :deep(.tiptap .hljs-link) {
   color: #fbbf24;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__search-match) {
+  border-radius: 4px;
+  background: rgba(250, 204, 21, 0.2);
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__search-match--active) {
+  background: rgba(250, 204, 21, 0.36);
 }
 
 .rich-text-editor__canvas :deep(.tiptap hr) {
@@ -2690,6 +3668,47 @@ onBeforeUnmount(() => {
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.rich-text-editor__code-block-toolbar {
+  position: absolute;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.rich-text-editor__code-block-language {
+  height: 28px;
+  min-width: 108px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #e2e8f0;
+  font-size: 12px;
+  outline: none;
+}
+
+.rich-text-editor__code-block-copy {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #cbd5e1;
+}
+
+.rich-text-editor__code-block-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .rich-text-editor__selection-toolbar {

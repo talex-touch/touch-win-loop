@@ -1,4 +1,35 @@
 .workspace-left-dock {
+  --workspace-left-section-padding-x: 12px;
+  --workspace-left-section-title-action-size: 22px;
+  --workspace-left-section-title-row-padding-right: 8px;
+  --workspace-left-tree-row-min-height: 36px;
+  --workspace-left-tree-row-padding-left: 10px;
+  --workspace-left-tree-row-padding-right: 34px;
+  --workspace-left-tree-gap: 8px;
+  --workspace-left-tree-expander-size: 20px;
+  --workspace-left-tree-expander-margin-left: 4px;
+  --workspace-left-tree-indent-step: 14px;
+  --workspace-left-tree-dropzone-height: 6px;
+  --workspace-left-tree-dropzone-offset-y: 3px;
+  --workspace-left-tree-tail-margin-x: 12px;
+  --workspace-left-tree-tail-padding-y: 6px;
+  --workspace-left-tree-tail-padding-x: 8px;
+  --workspace-left-resource-action-size: 22px;
+  --workspace-left-resource-action-right: 8px;
+  --workspace-left-upload-row-min-height: 48px;
+  --workspace-left-upload-row-padding-y: 6px;
+  --workspace-left-upload-row-padding-x: 12px;
+  --workspace-left-upload-action-height: 22px;
+  --workspace-left-upload-action-padding-x: 7px;
+  --workspace-left-recycle-row-padding-y: 6px;
+  --workspace-left-recycle-row-padding-x: 12px;
+  --workspace-left-recycle-action-height: 22px;
+  --workspace-left-recycle-action-min-width: 52px;
+  --workspace-left-recycle-action-padding-x: 7px;
+  --workspace-left-library-row-padding-y: 6px;
+  --workspace-left-library-row-padding-x: 12px;
+  --workspace-left-library-action-height: 26px;
+  --workspace-left-library-action-min-width: 48px;
   border-right: 1px solid #d3d8e4;
   background: #ffffff;
   display: flex;
@@ -6,6 +37,108 @@
   min-height: 0;
   overflow: hidden;
   width: 100%;
+}
+
+.workspace-left-dock--compact {
+  --workspace-left-section-padding-x: 10px;
+  --workspace-left-section-title-action-size: 20px;
+  --workspace-left-section-title-row-padding-right: 6px;
+  --workspace-left-tree-row-min-height: 32px;
+  --workspace-left-tree-row-padding-left: 8px;
+  --workspace-left-tree-row-padding-right: 30px;
+  --workspace-left-tree-gap: 7px;
+  --workspace-left-tree-expander-size: 18px;
+  --workspace-left-tree-expander-margin-left: 2px;
+  --workspace-left-tree-indent-step: 12px;
+  --workspace-left-tree-dropzone-height: 5px;
+  --workspace-left-tree-dropzone-offset-y: 2px;
+  --workspace-left-tree-tail-margin-x: 10px;
+  --workspace-left-tree-tail-padding-y: 5px;
+  --workspace-left-tree-tail-padding-x: 7px;
+  --workspace-left-resource-action-size: 20px;
+  --workspace-left-resource-action-right: 6px;
+  --workspace-left-upload-row-min-height: 42px;
+  --workspace-left-upload-row-padding-y: 5px;
+  --workspace-left-upload-row-padding-x: 10px;
+  --workspace-left-upload-action-height: 20px;
+  --workspace-left-upload-action-padding-x: 6px;
+  --workspace-left-recycle-row-padding-y: 5px;
+  --workspace-left-recycle-row-padding-x: 10px;
+  --workspace-left-recycle-action-height: 20px;
+  --workspace-left-recycle-action-min-width: 48px;
+  --workspace-left-recycle-action-padding-x: 6px;
+  --workspace-left-library-row-padding-y: 5px;
+  --workspace-left-library-row-padding-x: 10px;
+  --workspace-left-library-action-height: 24px;
+  --workspace-left-library-action-min-width: 44px;
+}
+
+.workspace-left-dock--default {
+  --workspace-left-section-padding-x: 12px;
+  --workspace-left-section-title-action-size: 22px;
+  --workspace-left-section-title-row-padding-right: 8px;
+  --workspace-left-tree-row-min-height: 36px;
+  --workspace-left-tree-row-padding-left: 10px;
+  --workspace-left-tree-row-padding-right: 34px;
+  --workspace-left-tree-gap: 8px;
+  --workspace-left-tree-expander-size: 20px;
+  --workspace-left-tree-expander-margin-left: 4px;
+  --workspace-left-tree-indent-step: 14px;
+  --workspace-left-tree-dropzone-height: 6px;
+  --workspace-left-tree-dropzone-offset-y: 3px;
+  --workspace-left-tree-tail-margin-x: 12px;
+  --workspace-left-tree-tail-padding-y: 6px;
+  --workspace-left-tree-tail-padding-x: 8px;
+  --workspace-left-resource-action-size: 22px;
+  --workspace-left-resource-action-right: 8px;
+  --workspace-left-upload-row-min-height: 48px;
+  --workspace-left-upload-row-padding-y: 6px;
+  --workspace-left-upload-row-padding-x: 12px;
+  --workspace-left-upload-action-height: 22px;
+  --workspace-left-upload-action-padding-x: 7px;
+  --workspace-left-recycle-row-padding-y: 6px;
+  --workspace-left-recycle-row-padding-x: 12px;
+  --workspace-left-recycle-action-height: 22px;
+  --workspace-left-recycle-action-min-width: 52px;
+  --workspace-left-recycle-action-padding-x: 7px;
+  --workspace-left-library-row-padding-y: 6px;
+  --workspace-left-library-row-padding-x: 12px;
+  --workspace-left-library-action-height: 26px;
+  --workspace-left-library-action-min-width: 48px;
+}
+
+.workspace-left-dock--relaxed {
+  --workspace-left-section-padding-x: 14px;
+  --workspace-left-section-title-action-size: 24px;
+  --workspace-left-section-title-row-padding-right: 10px;
+  --workspace-left-tree-row-min-height: 40px;
+  --workspace-left-tree-row-padding-left: 12px;
+  --workspace-left-tree-row-padding-right: 38px;
+  --workspace-left-tree-gap: 9px;
+  --workspace-left-tree-expander-size: 22px;
+  --workspace-left-tree-expander-margin-left: 5px;
+  --workspace-left-tree-indent-step: 18px;
+  --workspace-left-tree-dropzone-height: 7px;
+  --workspace-left-tree-dropzone-offset-y: 3px;
+  --workspace-left-tree-tail-margin-x: 14px;
+  --workspace-left-tree-tail-padding-y: 7px;
+  --workspace-left-tree-tail-padding-x: 10px;
+  --workspace-left-resource-action-size: 24px;
+  --workspace-left-resource-action-right: 10px;
+  --workspace-left-upload-row-min-height: 52px;
+  --workspace-left-upload-row-padding-y: 7px;
+  --workspace-left-upload-row-padding-x: 14px;
+  --workspace-left-upload-action-height: 24px;
+  --workspace-left-upload-action-padding-x: 8px;
+  --workspace-left-recycle-row-padding-y: 7px;
+  --workspace-left-recycle-row-padding-x: 14px;
+  --workspace-left-recycle-action-height: 24px;
+  --workspace-left-recycle-action-min-width: 56px;
+  --workspace-left-recycle-action-padding-x: 8px;
+  --workspace-left-library-row-padding-y: 7px;
+  --workspace-left-library-row-padding-x: 14px;
+  --workspace-left-library-action-height: 28px;
+  --workspace-left-library-action-min-width: 52px;
 }
 
 @media (min-width: 1280px) {
@@ -87,7 +220,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-right: 8px;
+  padding-right: var(--workspace-left-section-title-row-padding-right);
 }
 
 .workspace-project-add-actions {
@@ -109,7 +242,7 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #7888a2;
-  padding: 2px 12px;
+  padding: 2px var(--workspace-left-section-padding-x);
   text-transform: uppercase;
   text-align: left;
   cursor: pointer;
@@ -132,8 +265,8 @@
   border: 1px solid #d3dbe8;
   background: #ffffff;
   color: #43629c;
-  width: 22px;
-  height: 22px;
+  width: var(--workspace-left-section-title-action-size);
+  height: var(--workspace-left-section-title-action-size);
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
@@ -257,9 +390,9 @@
 }
 
 .workspace-tree-item__expander {
-  width: 20px;
-  height: 20px;
-  margin-left: 4px;
+  width: var(--workspace-left-tree-expander-size);
+  height: var(--workspace-left-tree-expander-size);
+  margin-left: var(--workspace-left-tree-expander-margin-left);
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -281,9 +414,9 @@
 }
 
 .workspace-tree-dropzone {
-  height: 6px;
-  margin-top: -3px;
-  margin-bottom: -3px;
+  height: var(--workspace-left-tree-dropzone-height);
+  margin-top: calc(var(--workspace-left-tree-dropzone-offset-y) * -1);
+  margin-bottom: calc(var(--workspace-left-tree-dropzone-offset-y) * -1);
   margin-right: 8px;
   border-radius: 999px;
   transition: background-color 0.16s ease;
@@ -294,9 +427,9 @@
 }
 
 .workspace-tree-dropzone--tail {
-  margin: 4px 12px 0;
+  margin: 4px var(--workspace-left-tree-tail-margin-x) 0;
   height: auto;
-  padding: 6px 8px;
+  padding: var(--workspace-left-tree-tail-padding-y) var(--workspace-left-tree-tail-padding-x);
   border: 1px dashed #d6deec;
   color: #6e7f9b;
   font-size: 10px;
@@ -309,9 +442,9 @@
   background: transparent;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 0 34px 0 10px;
+  gap: var(--workspace-left-tree-gap);
+  min-height: var(--workspace-left-tree-row-min-height);
+  padding: 0 var(--workspace-left-tree-row-padding-right) 0 var(--workspace-left-tree-row-padding-left);
   color: #4f5f7f;
   cursor: pointer;
   text-align: left;
@@ -405,11 +538,11 @@
 }
 
 .workspace-upload-task-item {
-  min-height: 48px;
+  min-height: var(--workspace-left-upload-row-min-height);
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: var(--workspace-left-upload-row-padding-y) var(--workspace-left-upload-row-padding-x);
   border-radius: 0;
   background: #f8fbff;
 }
@@ -450,8 +583,8 @@
 }
 
 .workspace-upload-task-item__action {
-  height: 22px;
-  padding: 0 7px;
+  height: var(--workspace-left-upload-action-height);
+  padding: 0 var(--workspace-left-upload-action-padding-x);
   border: 1px solid #d7e2f0;
   border-radius: 6px;
   background: #ffffff;
@@ -557,14 +690,14 @@
 .workspace-resource-actions {
   position: absolute;
   top: 50%;
-  right: 8px;
+  right: var(--workspace-left-resource-action-right);
   transform: translateY(-50%);
   z-index: 10;
 }
 
 .workspace-resource-actions__trigger {
-  width: 22px;
-  height: 22px;
+  width: var(--workspace-left-resource-action-size);
+  height: var(--workspace-left-resource-action-size);
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -654,7 +787,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: var(--workspace-left-recycle-row-padding-y) var(--workspace-left-recycle-row-padding-x);
 }
 
 .workspace-recycle-item:hover {
@@ -691,9 +824,9 @@
   border-radius: 6px;
   background: #ffffff;
   color: #4a5f84;
-  height: 22px;
-  min-width: 52px;
-  padding: 0 7px;
+  height: var(--workspace-left-recycle-action-height);
+  min-width: var(--workspace-left-recycle-action-min-width);
+  padding: 0 var(--workspace-left-recycle-action-padding-x);
   font-size: 10px;
   cursor: pointer;
 }
@@ -955,7 +1088,7 @@
 }
 
 .workspace-linked-library-group__header {
-  padding: 2px 12px 6px;
+  padding: 2px var(--workspace-left-section-padding-x) 6px;
 }
 
 .workspace-linked-library-group__title {
@@ -982,7 +1115,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 12px 3px;
+  padding: 0 var(--workspace-left-section-padding-x) 3px;
   cursor: pointer;
   text-align: left;
 }
@@ -1021,7 +1154,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 6px 12px;
+  padding: var(--workspace-left-library-row-padding-y) var(--workspace-left-library-row-padding-x);
 }
 
 .workspace-library-item:hover {
@@ -1053,8 +1186,8 @@
   background: #ffffff;
   color: #3f5f9f;
   border-radius: 7px;
-  height: 26px;
-  min-width: 48px;
+  height: var(--workspace-left-library-action-height);
+  min-width: var(--workspace-left-library-action-min-width);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;

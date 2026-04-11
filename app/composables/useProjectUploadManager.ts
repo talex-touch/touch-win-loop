@@ -27,6 +27,10 @@ interface UseProjectUploadManagerInput {
   onRequireRefresh?: () => Promise<void> | void
 }
 
+interface ProjectUploadEnqueueOptions {
+  parentResourceId?: string | null
+}
+
 type AbortReason = 'pause' | 'cancel' | 'switch'
 type DrawerOpenSource = ProjectUploadDrawerState['source']
 
@@ -592,7 +596,10 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     }
   }
 
-  async function initializeUploadSessions(files: File[]): Promise<ProjectUploadTask[]> {
+  async function initializeUploadSessions(
+    files: File[],
+    options?: ProjectUploadEnqueueOptions,
+  ): Promise<ProjectUploadTask[]> {
     const projectId = getProjectId()
     const response = await fetch(String(input.endpoint(`/projects/${projectId}/resource-upload-sessions`)), {
       method: 'POST',
@@ -610,6 +617,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
           accessLevel: 'public',
           title: '',
           summary: '',
+          parentResourceId: normalizeString(options?.parentResourceId) || null,
         })),
       }),
     })
@@ -658,7 +666,10 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     void pumpQueue()
   }
 
-  async function enqueueFiles(files: File[]): Promise<void> {
+  async function enqueueFiles(
+    files: File[],
+    options?: ProjectUploadEnqueueOptions,
+  ): Promise<void> {
     const projectId = getProjectId()
     if (!projectId)
       return
@@ -686,7 +697,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       return
     }
 
-    const createdTasks = await initializeUploadSessions(pendingFiles)
+    const createdTasks = await initializeUploadSessions(pendingFiles, options)
     createdTasks.forEach((task) => {
       replaceTask(task)
     })
