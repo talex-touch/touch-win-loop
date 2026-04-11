@@ -1742,6 +1742,45 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                 </h4>
                 <div class="mt-3 overflow-hidden rounded-[20px] border border-slate-800 bg-slate-950" v-html="renderCompositionAssetToSvg(draftDocument, { frameId: diagramEditorFrame.id })" />
               </div>
+              <div v-if="diagramEditorGraph && diagramEditorScene" class="rounded-[24px] border border-slate-800 bg-slate-900/80 p-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Diagram Canvas
+                    </h4>
+                    <p class="mt-1 text-xs leading-5 text-slate-500">
+                      点击节点或边会聚焦 inspector；拖拽连线会直接创建 graph edge。
+                    </p>
+                  </div>
+                  <button
+                    class="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-slate-900"
+                    type="button"
+                    @click="addDiagramGraphNode"
+                  >
+                    Add Node
+                  </button>
+                </div>
+                <div class="mt-3 h-[320px] overflow-hidden rounded-[20px] border border-slate-800 bg-slate-950">
+                  <ClientOnly>
+                    <WorkspaceDesignDiagramEditor
+                      :graph="diagramEditorGraph"
+                      :scene="diagramEditorScene"
+                      :selected-node-id="diagramSelectedNodeId"
+                      :selected-edge-id="diagramSelectedEdgeId"
+                      @select-node="selectDiagramNode"
+                      @select-edge="selectDiagramEdge"
+                      @connect-edge="connectDiagramGraphEdge"
+                      @create-node="addDiagramGraphNode"
+                      @add-child="addDiagramChildNode"
+                      @duplicate-node="duplicateDiagramGraphNode"
+                      @delete-node="removeDiagramGraphNode"
+                      @reverse-edge="reverseDiagramGraphEdge"
+                      @delete-edge="removeDiagramGraphEdge"
+                      @clear-selection="clearDiagramSelection"
+                    />
+                  </ClientOnly>
+                </div>
+              </div>
               <div class="rounded-[24px] border border-slate-800 bg-slate-900/80 p-4">
                 <h4 class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
                   Embedded Scene
