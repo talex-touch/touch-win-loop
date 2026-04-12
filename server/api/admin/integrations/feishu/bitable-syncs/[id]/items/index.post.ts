@@ -26,7 +26,7 @@ interface CreateItemBody {
   schedule?: Partial<FeishuTaskScheduleConfig>
 }
 
-const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'track_timeline', 'resource']
+const ENTITY_TYPES: FeishuBitableSyncItemEntityType[] = ['contest', 'track', 'track_timeline', 'resource', 'policy']
 
 function toText(raw: unknown): string {
   return String(raw || '').trim()
@@ -51,6 +51,7 @@ export default defineEventHandler(async (event) => {
     }, 40456)
   }
 
+  const rawEntityType = toText(body.entityType)
   const entityType = ENTITY_TYPES.includes(body.entityType as FeishuBitableSyncItemEntityType)
     ? body.entityType as FeishuBitableSyncItemEntityType
     : null
@@ -58,15 +59,48 @@ export default defineEventHandler(async (event) => {
   const viewId = toText(body.viewId || body.source?.viewId)
   const name = toText(body.name || body.source?.tableName || body.source?.viewName || '同步项')
 
-  if (!syncId || !entityType || !tableId) {
+  if (!syncId) {
     setResponseStatus(event, 400)
-    return fail('syncId、entityType、tableId 为必填项。', {
+    return fail('syncId 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 40156)
+  }
+
+  if (!rawEntityType) {
+    setResponseStatus(event, 400)
+    return fail('entityType 不能为空。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40157)
+  }
+
+  if (!entityType) {
+    setResponseStatus(event, 400)
+    return fail(`entityType 不支持：${rawEntityType}。`, {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40158)
+  }
+
+  if (!tableId) {
+    setResponseStatus(event, 400)
+    return fail('tableId 不能为空。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40159)
   }
 
   let item: FeishuBitableSyncItem
@@ -96,7 +130,7 @@ export default defineEventHandler(async (event) => {
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
-    }, 40157)
+    }, 40160)
   }
 
   return ok<FeishuBitableSyncItem>(item, {

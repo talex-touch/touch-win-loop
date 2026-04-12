@@ -38,6 +38,8 @@ describe('飞书多维表格版本草稿链路', () => {
     const componentSource = await readSource('app/components/admin/AdminFeishuBitableSyncEditor.vue')
     const configSource = await readSource('shared/utils/feishu-bitable-sync-config.ts')
     const serviceSource = await readSource('server/services/feishu/bitable-sync.ts')
+    const createApiSource = await readSource('server/api/admin/integrations/feishu/bitable-syncs/[id]/items/index.post.ts')
+    const patchApiSource = await readSource('server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId].patch.ts')
 
     assert.match(componentSource, /attachment（附件）/, '资料映射缺少附件字段')
     assert.match(componentSource, /attachmentSummary（附件摘要）/, '资料映射缺少附件摘要字段')
@@ -50,6 +52,9 @@ describe('飞书多维表格版本草稿链路', () => {
     assert.match(serviceSource, /attachmentSummary[\s\S]*contestRelationInfo[\s\S]*trackRelationInfo/, '资料同步未使用新的资料字段集')
     assert.match(serviceSource, /async function applyPolicyRecord\(/, '服务端未接入政策同步')
     assert.match(serviceSource, /upsertPolicyLibraryReleaseDraft/, '政策同步未写入版本草稿')
+    assert.match(createApiSource, /'policy'/, '新增同步项接口未接受 policy 实体类型')
+    assert.match(patchApiSource, /'policy'/, '更新同步项接口未接受 policy 实体类型')
+    assert.match(createApiSource, /entityType 不支持：\$\{rawEntityType\}。/, '新增同步项接口未返回可定位的 entityType 错误')
   })
 
   it('服务端预检与执行都已经围绕 release draft，而不是直接写 live 数据', async () => {
