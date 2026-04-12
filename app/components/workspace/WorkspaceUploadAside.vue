@@ -235,10 +235,11 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
     </button>
 
     <transition name="workspace-upload-aside-panel">
-      <section
+      <aside
         v-if="props.uploadDrawerOpen"
         data-testid="workspace-left-upload-drawer"
         class="workspace-upload-drawer workspace-upload-drawer--aside"
+        aria-label="上传管理"
       >
         <div class="workspace-upload-drawer__header">
           <div>
@@ -478,14 +479,13 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
             <span v-else>最近 7 天暂无上传记录</span>
           </div>
         </div>
-      </section>
+      </aside>
     </transition>
   </div>
 </template>
 
 <style scoped>
 .workspace-upload-aside {
-  position: relative;
   display: flex;
   justify-content: center;
   width: 100%;
@@ -585,25 +585,31 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
 
 .workspace-upload-drawer {
   padding: 12px 16px;
-  background: #fcfdff;
+  background: linear-gradient(180deg, #fcfdff 0%, #f7fbff 100%);
   z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .workspace-upload-drawer--aside {
   position: absolute;
-  left: calc(100% + 14px);
+  top: 0;
   bottom: 0;
+  left: 100%;
   width: min(420px, calc(100vw - 108px));
-  max-height: min(72vh, 720px);
   border: 1px solid #dde6f3;
-  border-radius: 18px;
-  box-shadow: 0 18px 38px rgba(29, 43, 66, 0.12);
+  border-left-color: #e7edf7;
+  border-radius: 0 20px 20px 0;
+  box-shadow: 18px 0 38px rgba(29, 43, 66, 0.12);
   overflow: hidden;
 }
 
 .workspace-upload-drawer__body {
-  max-height: calc(min(72vh, 720px) - 82px);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  margin-top: 12px;
   padding-right: 2px;
 }
 
@@ -806,6 +812,6 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
 .workspace-upload-aside-panel-enter-from,
 .workspace-upload-aside-panel-leave-to {
   opacity: 0;
-  transform: translateX(-12px) scale(0.985);
+  transform: translateX(-18px);
 }
 </style>
