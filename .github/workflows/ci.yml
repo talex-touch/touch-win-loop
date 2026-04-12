@@ -63,9 +63,6 @@ jobs:
   build_and_smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs:
-      - lint
-      - typecheck
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
