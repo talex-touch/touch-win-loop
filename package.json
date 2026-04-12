@@ -12,6 +12,7 @@
     "start": "node --import ./.output/server/sentry.server.config.mjs .output/server/index.mjs",
     "start:generate": "npx serve .output/public",
     "lint": "eslint .",
+    "sentry:doctor": "node ./scripts/sentry-doctor.mjs",
     "typecheck": "nuxt typecheck",
     "test:project-visibility": "vitest run ./scripts/tests/project-visibility.test.mjs",
     "ci:smoke": "node ./scripts/ci-smoke.mjs",

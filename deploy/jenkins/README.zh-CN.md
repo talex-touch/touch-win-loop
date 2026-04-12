@@ -230,7 +230,92 @@ Actions 会按分支调用不同 Job：
 - `CI` 必须是 required check
 - `WinLoop Image Publish` 必须是 required check
 
-## 7）手工兜底
+## 7）Sentry staging 验收
+
+在对外宣称 “Sentry 接入完成” 之前，至少完成一次 staging 验收。建议按下面顺序执行：
+
+1. 先做仓库侧自检：
+
+```bash
+pnpm run sentry:doctor --mode production
+pnpm run build
+pnpm run ci:smoke
+```
+
+2. 若构建日志仍出现以下 warning：
+
+```text
+[sentry] Source map upload disabled because required build-time env is missing: ...
+```
+
+先检查 GitHub Actions 可见范围内是否已经提供：
+
+- `SENTRY_AUTH_TOKEN`
+- `WINLOOP_SENTRY_ORG`
+- `WINLOOP_SENTRY_PROJECT`
+
+如果这些 secret 已经存在，但日志仍提示 `SENTRY_AUTH_TOKEN` 缺失，再检查 workflow 是否仍在使用无效写法 `id=sentry_auth_token,env=SENTRY_AUTH_TOKEN`。当前仓库已改为 `docker/build-push-action@v7` 官方支持的 `secrets` 传法。
+
+3. 浏览器异常验收：
+
+- 打开 staging 任意前端页面，在浏览器控制台执行：
+
+```js
+setTimeout(() => {
+  throw new Error('winloop sentry browser smoke')
+}, 0)
+```
+
+- 在 Sentry 中确认：
+  - issue 已入库
+  - `environment=staging`
+  - `release` 与镜像 build version 对齐
+  - 前端堆栈可反解，不再是压缩产物位置
+
+4. Nitro 500 验收：
+
+- 直接调用 staging 内部验证接口：
+
+```bash
+curl -X POST "https://<staging-host>/api/admin/sentry/smoke" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <your-session-cookie>" \
+  --data '{"target":"nitro"}' \
+  -i
+```
+
+- 该接口仅在 `WINLOOP_SENTRY_ENVIRONMENT=staging` 且当前用户具备 `contest.read_internal` 时可用。
+- 记录响应头里的 `x-trace-id`，在 Sentry 中按该 trace/message 搜索对应事件。
+- 预期 HTTP 状态为 `500`；如果返回 `404`，说明当前环境并非 `staging`；如果返回 `412`，说明服务端 Sentry SDK 还没初始化。
+- 在 Sentry 中确认：
+  - 服务端异常已入库
+  - 同一条请求链路可与前端 trace 串联
+
+5. 后台任务 / worker 验收：
+
+- 直接调用 staging 内部验证接口：
+
+```bash
+curl -X POST "https://<staging-host>/api/admin/sentry/smoke" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <your-session-cookie>" \
+  --data '{"target":"worker"}'
+```
+
+- 返回体会携带 `traceId`，可用它在 Sentry 中定位对应 worker 事件。
+- 返回体里的 `release` / `environment` 应与 staging 当前配置一致。
+- 该路径内部只附加 `module`、`taskId`、`traceId` 和 build 信息，不带 cookie、token、Authorization、secret。
+- 预期 HTTP 状态为 `200`；如果返回 `404`，说明当前环境并非 `staging`；如果返回 `412`，说明服务端 Sentry SDK 还没初始化。
+- 在 Sentry 中确认：
+  - worker 异常已入库
+  - 事件上下文未出现敏感字段明文
+
+6. 运维收尾：
+
+- 配置 production 高优先级未处理异常告警
+- 根据业务预期补 ignore / discard 规则，过滤业务性 4xx 噪音
+
+## 8）手工兜底
 
 自动链路和手工链路统一走同一脚本：
 

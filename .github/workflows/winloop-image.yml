@@ -145,8 +145,6 @@ jobs:
       - name: Build and push image
         if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
         id: build
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -163,7 +161,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           secrets: |
-            id=sentry_auth_token,env=SENTRY_AUTH_TOKEN
+            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Output image digest
         if: github.event_name == 'workflow_dispatch' || steps.ci_gate.outputs.should_publish == 'true'
