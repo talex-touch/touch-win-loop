@@ -46,6 +46,11 @@ import {
   listPolicyLibraryItems,
   patchPolicyLibraryItem,
 } from '~~/server/utils/policy-store'
+import {
+  sanitizeContestReleaseResourceMetadata,
+  sanitizeContestReleaseResourceSnapshot,
+  sanitizeContestReleaseSnapshot,
+} from '~~/server/utils/release-resource-metadata'
 
 interface ReleaseVersionRow {
   id: string
@@ -185,7 +190,7 @@ function mapReleaseReviewLog(row: ReleaseReviewLogRow): ReleaseReviewLog {
 
 function toContestSnapshot(raw: unknown, contestExternalId: string): ContestReleaseSnapshot {
   const source = parseJsonObject(raw)
-  return {
+  return sanitizeContestReleaseSnapshot({
     contestExternalId: normalizeText(source.contestExternalId || contestExternalId) || contestExternalId,
     contest: source.contest && typeof source.contest === 'object'
       ? source.contest as ContestReleaseContestSnapshot
@@ -194,7 +199,7 @@ function toContestSnapshot(raw: unknown, contestExternalId: string): ContestRele
     timelines: Array.isArray(source.timelines) ? source.timelines as ContestReleaseTimelineSnapshot[] : [],
     trackTimelines: Array.isArray(source.trackTimelines) ? source.trackTimelines as ContestReleaseTrackTimelineSnapshot[] : [],
     resources: Array.isArray(source.resources) ? source.resources as ContestReleaseResourceSnapshot[] : [],
-  }
+  })
 }
 
 function toPolicySnapshot(raw: unknown): PolicyLibraryReleaseSnapshot {
@@ -824,7 +829,7 @@ async function buildContestLiveBaseSnapshot(
     .filter(item => resourceRefById.has(item.id))
     .map((item) => {
       const ref = resourceRefById.get(item.id)!
-      const metadata = parseJsonObject(item.metadata)
+      const metadata = sanitizeContestReleaseResourceMetadata(item.metadata)
       const trackId = normalizeText(metadata.trackId)
       return {
         liveId: item.id,
@@ -1147,14 +1152,15 @@ export async function upsertContestReleaseDraft(
   }
 
   if (input.entityType === 'resource' && input.resource) {
-    const resourceResult = upsertSnapshotItem(current.resources, input.resource)
+    const resourceResult = upsertSnapshotItem(current.resources, sanitizeContestReleaseResourceSnapshot(input.resource))
     current.resources = resourceResult.items
     existed = resourceResult.existed
   }
 
   current.tracks.sort((left, right) => normalizeInteger(left.sortOrder) - normalizeInteger(right.sortOrder))
 
-  const diffSummary = computeContestDiffSummary(base, current)
+  const sanitizedCurrent = sanitizeContestReleaseSnapshot(current)
+  const diffSummary = computeContestDiffSummary(base, sanitizedCurrent)
   await db.query(
     `UPDATE release_versions
      SET scope_title = $2,
@@ -1166,7 +1172,7 @@ export async function upsertContestReleaseDraft(
     [
       version.id,
       nextScopeTitle,
-      JSON.stringify(current),
+      JSON.stringify(sanitizedCurrent),
       JSON.stringify(diffSummary),
       input.actorUserId,
     ],
@@ -1845,7 +1851,7 @@ async function publishContestRelease(
     const existingRef = resourceRefByExternalId.get(resource.externalId)
     const trackId = resource.trackExternalId ? (trackIdByExternalId.get(resource.trackExternalId) || '') : ''
     const metadata = {
-      ...parseJsonObject(resource.metadata),
+      ...sanitizeContestReleaseResourceMetadata(resource.metadata),
       trackId,
       source: 'feishu_bitable',
       releaseVersionId: input.version.id,

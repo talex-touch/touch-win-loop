@@ -187,8 +187,6 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'category',
     'attachment',
     'attachmentSummary',
-    'contestRelationInfo',
-    'trackRelationInfo',
   ],
   policy: [
     'externalId',
@@ -1739,15 +1737,11 @@ async function applyResourceRecord(
     categoryText,
     attachment,
     attachmentSummary,
-    contestRelationInfo,
-    trackRelationInfo,
   ] = await Promise.all([
     input.resolver.getText('title'),
     input.resolver.getText('category'),
     input.resolver.getText('attachment'),
     input.resolver.getText('attachmentSummary'),
-    input.resolver.getText('contestRelationInfo'),
-    input.resolver.getText('trackRelationInfo'),
   ])
   if (!title || !attachment) {
     return {
@@ -1779,8 +1773,6 @@ async function applyResourceRecord(
     accessLevel: input.options.defaultResourceAccessLevel,
     status: input.options.defaultStatus,
     metadata: {
-      contestRelationInfo,
-      trackRelationInfo,
       source: 'feishu_bitable',
       recordId: input.record.recordId,
     },
