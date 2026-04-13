@@ -152,8 +152,6 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         category: '',
         attachment: '',
         attachmentSummary: '',
-        contestRelationInfo: '',
-        trackRelationInfo: '',
       },
     },
     options: {

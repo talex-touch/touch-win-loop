@@ -180,8 +180,6 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'category', label: 'category（资料类别）' },
     { key: 'attachment', label: 'attachment（附件）' },
     { key: 'attachmentSummary', label: 'attachmentSummary（附件摘要）' },
-    { key: 'contestRelationInfo', label: 'contestRelationInfo（竞赛关联信息文本）' },
-    { key: 'trackRelationInfo', label: 'trackRelationInfo（赛道关联信息文本）' },
   ],
   policy: [
     { key: 'externalId', label: 'externalId（主键）' },
@@ -237,8 +235,6 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   category: ['category', '分类', '资料分类', '资料类别'],
   attachment: ['attachment', '附件', '附件链接', '资料附件', '资源附件', '下载链接'],
   attachmentSummary: ['attachmentsummary', 'attachment_summary', '附件摘要', '摘要'],
-  contestRelationInfo: ['contestrelationinfo', 'contest_relation_info', '竞赛关联信息', '竞赛关联'],
-  trackRelationInfo: ['trackrelationinfo', 'track_relation_info', '赛道关联信息', '赛道关联'],
   year: ['year', '年份', '年度'],
   meetingName: ['meetingname', 'meeting_name', '会议名称', '大会名称'],
   conferenceDate: ['conferencedate', 'conference_date', '大会日期', '会议日期'],

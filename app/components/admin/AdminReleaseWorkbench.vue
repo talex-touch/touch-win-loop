@@ -361,8 +361,6 @@ function resourceSummary(item: ContestReleaseResourceSnapshot): string {
     item.category,
     item.url,
     item.summary || '',
-    String(item.metadata?.contestRelationInfo || '').trim(),
-    String(item.metadata?.trackRelationInfo || '').trim(),
   ].filter(Boolean).join(' / ')
 }
 

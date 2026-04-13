@@ -61,7 +61,7 @@ const syncSteps = [
   '先到“飞书多维同步”配置主库和同步项。',
   '每个同步项先看字段概览，再补齐字段映射。',
   '竞赛库、赛道库的时间节点统一映射到 `timelineText`。',
-  '资料库重点映射 `attachment / attachmentSummary / contestRelationInfo / trackRelationInfo`。',
+  '资料库重点映射 `contestExternalId / trackExternalId / attachment / attachmentSummary`。',
   '政策库使用 `policy` 实体类型，映射会议名称、简介、日期和各平台资料链接。',
   '先点“预检”，确认模拟同步结果正确，再手动执行一次。',
 ]
