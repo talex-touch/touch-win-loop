@@ -16,6 +16,8 @@ describe('feishu-bitable-sync-config', () => {
     const contest = buildDefaultSyncItemConfig('contest')
     const track = buildDefaultSyncItemConfig('track')
     const resource = buildDefaultSyncItemConfig('resource')
+    const policy = buildDefaultSyncItemConfig('policy')
+    const persona = buildDefaultSyncItemConfig('persona')
 
     assert.equal(contest.mapping.externalIdField, '')
     assert.deepEqual(contest.options, {})
@@ -26,6 +28,13 @@ describe('feishu-bitable-sync-config', () => {
     assert.equal(resource.writeback.values.success, '已同步')
     assert.equal(resource.writeback.values.failed, '失败')
     assert.equal(resource.writeback.values.skipped, '跳过')
+    assert.equal(policy.mapping.externalIdField, '')
+    assert.equal(policy.mapping.fieldMap.meetingName, '')
+    assert.equal(persona.mapping.contestExternalIdField, '')
+    assert.equal(persona.mapping.trackExternalIdField, '')
+    assert.equal(persona.mapping.fieldMap.judgeType, '')
+    assert.equal(persona.mapping.fieldMap.systemPrompt, '')
+    assert.deepEqual(persona.options, {})
   })
 
   it('能按来源名称猜测 entityType 并生成推荐同步项名称', async () => {
@@ -38,12 +47,18 @@ describe('feishu-bitable-sync-config', () => {
     assert.equal(suggestSyncItemEntityType({ tableName: '赛道库' }), 'track')
     assert.equal(suggestSyncItemEntityType({ tableName: '竞赛主表' }), 'contest')
     assert.equal(suggestSyncItemEntityType({ tableName: '资料中心', viewName: '公开资源' }), 'resource')
+    assert.equal(suggestSyncItemEntityType({ tableName: '答辩评委人设库' }), 'persona')
+    assert.equal(suggestSyncItemEntityType({ tableName: '大会政策库' }), 'policy')
     assert.equal(suggestSyncItemEntityType({ tableName: '未命名子表' }), null)
 
     assert.equal(buildSuggestedSyncItemName('track', '赛道库', '启用视图'), '赛道库 / 启用视图 · 赛道同步')
     assert.equal(buildSuggestedSyncItemName('contest', '竞赛库', ''), '竞赛库 · 竞赛同步')
+    assert.equal(buildSuggestedSyncItemName('persona', '评委人设库', '启用视图'), '评委人设库 / 启用视图 · 人设同步')
+    assert.equal(buildSuggestedSyncItemName('policy', '政策库', ''), '政策库 · 政策同步')
     assert.deepEqual(listRequiredSyncItemFieldKeys('contest'), ['externalId', 'name', 'officialUrl'])
     assert.deepEqual(listRequiredSyncItemFieldKeys('track'), ['externalId', 'contestExternalId', 'name'])
+    assert.deepEqual(listRequiredSyncItemFieldKeys('policy'), ['externalId', 'meetingName'])
+    assert.deepEqual(listRequiredSyncItemFieldKeys('persona'), ['externalId', 'contestExternalId', 'judgeType', 'name', 'systemPrompt'])
   })
 
   it('只把真正空配置判定为空，避免覆盖已有配置', async () => {
