@@ -2,6 +2,7 @@ import type { H3Event } from 'h3'
 import type { FeishuBitableRecord } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type {
+  AiDefensePersonaJudgeType,
   ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
   ContestReleaseTimelineSnapshot,
@@ -22,6 +23,7 @@ import type {
   ResourceAvailability,
   ResourceCategory,
   ResourceStatus,
+  RubricDimension,
   ScopeType,
   TimelineNodeType,
   PolicyLibraryItemSnapshot,
@@ -43,6 +45,10 @@ import {
   upsertContestReleaseDraft,
   upsertPolicyLibraryReleaseDraft,
 } from '~~/server/utils/release-store'
+import {
+  getDefensePersonaPresetByExternalId,
+  upsertDefensePersonaPreset,
+} from '~~/server/utils/defense-persona-preset-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import {
   completeFeishuBitableSyncItemRun,
@@ -50,6 +56,7 @@ import {
   getFeishuBitableSyncById,
   getFeishuBitableSyncItemById,
   readFeishuIntegrationConfig,
+  upsertFeishuExternalRef,
   upsertFeishuSyncIssue,
 } from '~~/server/utils/feishu-integration-store'
 
@@ -205,6 +212,19 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
     'xiaohongshuMaterial',
     'xiaohongshuMaterialLink',
   ],
+  persona: [
+    'externalId',
+    'contestExternalId',
+    'trackExternalId',
+    'judgeType',
+    'name',
+    'summary',
+    'systemPrompt',
+    'focusAreas',
+    'scoringRubric',
+    'sortOrder',
+    'enabled',
+  ],
 }
 
 const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> = {
@@ -212,7 +232,8 @@ const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> 
   track: ['contestExternalId', 'name'],
   track_timeline: ['contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['contestExternalId', 'title', 'attachment'],
-  policy: ['meetingName'],
+  policy: ['externalId', 'meetingName'],
+  persona: ['externalId', 'contestExternalId', 'judgeType', 'name', 'systemPrompt'],
 }
 
 const ARRAY_PREVIEW_FIELDS = new Set([
@@ -224,6 +245,7 @@ const ARRAY_PREVIEW_FIELDS = new Set([
   'evidenceRequirements',
   'scoringPoints',
   'deductionItems',
+  'focusAreas',
 ])
 
 function parseJsonObject(raw: unknown): Record<string, unknown> {
@@ -263,7 +285,7 @@ function toStringArray(raw: unknown): string[] {
 }
 
 function isEntityType(raw: unknown): raw is FeishuBitableSyncItemEntityType {
-  return raw === 'contest' || raw === 'track' || raw === 'track_timeline' || raw === 'resource' || raw === 'policy'
+  return raw === 'contest' || raw === 'track' || raw === 'track_timeline' || raw === 'resource' || raw === 'policy' || raw === 'persona'
 }
 
 function resolvePreviewOverrideString(
@@ -524,6 +546,92 @@ function inferTimelineYear(input: {
     .find(value => Number.isInteger(value) && value >= 2000 && value <= 2100)
 
   return fromDate || new Date().getFullYear()
+}
+
+function normalizeBooleanLike(raw: unknown, fallback = true): boolean {
+  if (typeof raw === 'boolean')
+    return raw
+  if (typeof raw === 'number')
+    return raw !== 0
+
+  const value = toText(raw).toLowerCase()
+  if (!value)
+    return fallback
+  if (['true', '1', 'yes', 'y', 'enabled', 'on', '启用', '是', '开启'].includes(value))
+    return true
+  if (['false', '0', 'no', 'n', 'disabled', 'off', '停用', '否', '关闭'].includes(value))
+    return false
+  return fallback
+}
+
+function normalizePersonaJudgeType(raw: unknown): AiDefensePersonaJudgeType | null {
+  const value = toText(raw).toLowerCase()
+  if (!value)
+    return null
+  if (value === 'technical' || value.includes('技术'))
+    return 'technical'
+  if (value === 'business' || value.includes('业务') || value.includes('商业'))
+    return 'business'
+  if (value === 'expression' || value.includes('表达') || value.includes('答辩'))
+    return 'expression'
+  if (value === 'custom' || value.includes('自定义'))
+    return 'custom'
+  return null
+}
+
+function normalizeLooseStringArray(raw: unknown): string[] {
+  const arrayValues = toStringArray(raw)
+  if (arrayValues.length > 1)
+    return [...new Set(arrayValues)]
+
+  const single = arrayValues[0] || toText(raw)
+  if (!single)
+    return []
+  return [...new Set(single.split(/[|,，、;；\n]/g).map(item => item.trim()).filter(Boolean))]
+}
+
+function normalizeLooseRubricDimensions(raw: unknown): RubricDimension[] {
+  const source = Array.isArray(raw)
+    ? raw
+    : (() => {
+        const text = toText(raw)
+        if (!text)
+          return []
+        try {
+          const parsed = JSON.parse(text)
+          return Array.isArray(parsed) ? parsed : []
+        }
+        catch {
+          return []
+        }
+      })()
+
+  if (!Array.isArray(source))
+    return []
+
+  const next: RubricDimension[] = []
+  for (const item of source) {
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+      continue
+    const record = item as Record<string, unknown>
+    const key = toText(record.key)
+    const name = toText(record.name)
+    const description = toText(record.description)
+    if (!key || !name || !description)
+      continue
+
+    const weight = Number(record.weight)
+    next.push({
+      key,
+      name,
+      description,
+      weight: Number.isFinite(weight) ? weight : undefined,
+      scoringPoint: toText(record.scoringPoint),
+      deductionPoint: toText(record.deductionPoint),
+      evidenceRequirement: toText(record.evidenceRequirement),
+    })
+  }
+  return next
 }
 
 function normalizeFieldMap(raw: unknown): Record<string, string> {
@@ -1226,6 +1334,12 @@ function buildReasonDiagnostic(
 }
 
 function hasMappingValue(mapping: NormalizedMapping, key: string): boolean {
+  if (key === 'externalId')
+    return Boolean(mapping.externalIdField || mapping.computedMap.externalId || Object.prototype.hasOwnProperty.call(mapping.defaults, 'externalId'))
+  if (key === 'contestExternalId')
+    return Boolean(mapping.contestExternalIdField || mapping.computedMap.contestExternalId || Object.prototype.hasOwnProperty.call(mapping.defaults, 'contestExternalId'))
+  if (key === 'trackExternalId')
+    return Boolean(mapping.trackExternalIdField || mapping.computedMap.trackExternalId || Object.prototype.hasOwnProperty.call(mapping.defaults, 'trackExternalId'))
   if (mapping.fieldMap[key])
     return true
   if (mapping.computedMap[key])
@@ -1815,6 +1929,7 @@ async function applyPolicyRecord(
     dryRun: boolean
   },
 ): Promise<ApplyRecordResult> {
+  const explicitExternalId = await input.resolver.getSpecialText('externalId')
   const [
     meetingName,
     summary,
@@ -1846,14 +1961,15 @@ async function applyPolicyRecord(
     input.resolver.getText('xiaohongshuMaterial'),
     input.resolver.getText('xiaohongshuMaterialLink'),
   ])
-  if (!meetingName) {
+  if (!explicitExternalId || !meetingName) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'MISSING_REQUIRED_FIELD',
-      message: '政策记录缺少必要字段 meetingName。',
+      message: '政策记录缺少必要字段（externalId 或 meetingName）。',
       payload: {
-        hasMeetingName: false,
+        hasExternalId: Boolean(explicitExternalId),
+        hasMeetingName: Boolean(meetingName),
       },
     }
   }
@@ -1894,6 +2010,109 @@ async function applyPolicyRecord(
 
   return {
     status: 'created',
+    externalId: input.externalId,
+  }
+}
+
+async function applyPersonaRecord(
+  db: Queryable,
+  input: {
+    actorUserId: string
+    syncItemId: string
+    runId?: string
+    record: FeishuBitableRecord
+    externalId: string
+    mapping: NormalizedMapping
+    options: NormalizedOptions
+    resolver: RecordValueResolver
+    dryRun: boolean
+  },
+): Promise<ApplyRecordResult> {
+  const explicitExternalId = await input.resolver.getSpecialText('externalId')
+  const contestExternalId = await input.resolver.getSpecialText('contestExternalId')
+  const trackExternalId = await input.resolver.getSpecialText('trackExternalId')
+  const judgeType = normalizePersonaJudgeType(await input.resolver.getText('judgeType'))
+  const [
+    name,
+    summary,
+    systemPrompt,
+    focusAreasRaw,
+    scoringRubricRaw,
+    sortOrderRaw,
+    enabledRaw,
+  ] = await Promise.all([
+    input.resolver.getText('name'),
+    input.resolver.getText('summary'),
+    input.resolver.getText('systemPrompt'),
+    input.resolver.getValue('focusAreas'),
+    input.resolver.getValue('scoringRubric'),
+    input.resolver.getValue('sortOrder'),
+    input.resolver.getValue('enabled'),
+  ])
+
+  if (!explicitExternalId || !contestExternalId || !judgeType || !name || !systemPrompt) {
+    return {
+      status: 'skipped',
+      externalId: input.externalId,
+      reasonCode: 'MISSING_REQUIRED_FIELD',
+      message: '人设记录缺少必要字段（externalId / contestExternalId / judgeType / name / systemPrompt）。',
+      payload: {
+        hasExternalId: Boolean(explicitExternalId),
+        hasContestExternalId: Boolean(contestExternalId),
+        hasJudgeType: Boolean(judgeType),
+        hasName: Boolean(name),
+        hasSystemPrompt: Boolean(systemPrompt),
+      },
+    }
+  }
+
+  const focusAreas = normalizeLooseStringArray(focusAreasRaw)
+  const scoringRubric = normalizeLooseRubricDimensions(scoringRubricRaw)
+  const sortOrder = Math.max(0, Math.trunc(Number(sortOrderRaw || 0) || 0))
+  const enabled = normalizeBooleanLike(enabledRaw, true)
+
+  if (!input.dryRun) {
+    const saved = await upsertDefensePersonaPreset(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      externalId: input.externalId,
+      contestExternalId,
+      trackExternalId,
+      judgeType,
+      name,
+      summary,
+      systemPrompt,
+      focusAreas,
+      scoringRubric,
+      enabled,
+      sortOrder,
+      metadata: {
+        source: 'feishu_bitable',
+        recordId: input.record.recordId,
+      },
+    })
+    await upsertFeishuExternalRef(db, {
+      syncItemId: input.syncItemId,
+      scope: 'persona',
+      externalId: input.externalId,
+      entityId: saved.preset.id,
+      metadata: {
+        contestExternalId,
+        trackExternalId,
+      },
+    })
+    return {
+      status: saved.existed ? 'updated' : 'created',
+      externalId: input.externalId,
+      entityId: saved.preset.id,
+    }
+  }
+
+  const existing = await getDefensePersonaPresetByExternalId(db, {
+    externalId: input.externalId,
+  })
+  return {
+    status: existing ? 'updated' : 'created',
     externalId: input.externalId,
   }
 }
@@ -1980,7 +2199,21 @@ async function applySingleRecord(
     })
   }
 
-  return applyPolicyRecord(db, {
+  if (input.entityType === 'policy') {
+    return applyPolicyRecord(db, {
+      actorUserId: input.actorUserId,
+      syncItemId: input.syncItemId,
+      runId: input.runId,
+      record: input.record,
+      externalId,
+      mapping: input.mapping,
+      options: input.options,
+      resolver,
+      dryRun: input.dryRun,
+    })
+  }
+
+  return applyPersonaRecord(db, {
     actorUserId: input.actorUserId,
     syncItemId: input.syncItemId,
     runId: input.runId,

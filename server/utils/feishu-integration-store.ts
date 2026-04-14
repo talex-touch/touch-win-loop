@@ -2625,6 +2625,38 @@ export async function getFeishuExternalRef(
   }
 }
 
+export async function getFeishuExternalRefByEntityId(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    entityId: string
+  },
+): Promise<{ id: string, externalId: string, metadata: Record<string, unknown> } | null> {
+  const result = await db.query<{
+    id: string
+    external_id: string
+    metadata: Record<string, unknown>
+  }>(
+    `SELECT id, external_id, metadata
+     FROM feishu_external_refs
+     WHERE provider = 'feishu_bitable'
+       AND scope = $1
+       AND entity_id = $2
+     LIMIT 1`,
+    [input.scope, input.entityId],
+  )
+
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  return {
+    id: row.id,
+    externalId: toText(row.external_id),
+    metadata: parseJsonObject(row.metadata),
+  }
+}
+
 export async function upsertFeishuExternalRef(
   db: Queryable,
   input: {

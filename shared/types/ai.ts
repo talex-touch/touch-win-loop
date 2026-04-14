@@ -9,6 +9,7 @@ export {
   AiDefenseInputMode,
   AiDefenseJudgeRound,
   AiDefensePersona,
+  AiDefensePersonaPreset,
   AiDefensePersonaJudgeType,
   AiDefenseRequest,
   AiDefenseResult,

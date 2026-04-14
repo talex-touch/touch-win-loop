@@ -2,8 +2,15 @@ import { setResponseStatus } from 'h3'
 import { buildContestDefensePersonaDrafts } from '~~/server/services/ai/defense-context'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
+import {
+  buildDefensePersonaImportDraftsFromPresets,
+  listDefensePersonaPresetsByContestExternalId,
+  pickDefensePersonaPresetsForImport,
+} from '~~/server/utils/defense-persona-preset-store'
+import type { Queryable } from '~~/server/utils/db'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { getFeishuExternalRefByEntityId } from '~~/server/utils/feishu-integration-store'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import {
   createProjectDefensePersona,
@@ -19,6 +26,48 @@ interface ImportDefensePersonaBody {
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+async function loadPersonaImportDrafts(input: {
+  db: Queryable
+  contestId: string
+  trackId: string
+  includeInternal: boolean
+}) {
+  const contestRef = await getFeishuExternalRefByEntityId(input.db, {
+    scope: 'contest',
+    entityId: input.contestId,
+  })
+  const contestExternalId = normalizeString(contestRef?.externalId)
+  const trackExternalId = input.trackId
+    ? normalizeString((await getFeishuExternalRefByEntityId(input.db, {
+        scope: 'track',
+        entityId: input.trackId,
+      }))?.externalId)
+    : ''
+
+  if (contestExternalId) {
+    const presetCandidates = await listDefensePersonaPresetsByContestExternalId(input.db, {
+      contestExternalId,
+    })
+    const matchedPresets = pickDefensePersonaPresetsForImport({
+      presets: presetCandidates,
+      trackExternalId,
+    })
+    if (matchedPresets.length > 0) {
+      return buildDefensePersonaImportDraftsFromPresets({
+        presets: matchedPresets,
+        sourceContestId: input.contestId,
+        sourceTrackId: input.trackId || null,
+      })
+    }
+  }
+
+  return buildContestDefensePersonaDrafts(input.db, {
+    contestId: input.contestId,
+    trackId: input.trackId,
+    includeInternal: input.includeInternal,
+  })
 }
 
 export default defineEventHandler(async (event) => {
@@ -52,7 +101,8 @@ export default defineEventHandler(async (event) => {
       if (!access)
         throw new Error('FORBIDDEN')
 
-      const drafts = await buildContestDefensePersonaDrafts(db, {
+      const drafts = await loadPersonaImportDrafts({
+        db,
         contestId,
         trackId,
         includeInternal,
@@ -85,7 +135,7 @@ export default defineEventHandler(async (event) => {
               systemPrompt: draft.systemPrompt,
               focusAreas: draft.focusAreas,
               scoringRubric: draft.scoringRubric,
-              enabled: true,
+              enabled: draft.enabled,
               sortOrder: draft.sortOrder,
               isCustomized: false,
               sourceContestId: draft.sourceContestId,
@@ -109,7 +159,7 @@ export default defineEventHandler(async (event) => {
           systemPrompt: draft.systemPrompt,
           focusAreas: draft.focusAreas,
           scoringRubric: draft.scoringRubric,
-          enabled: true,
+          enabled: draft.enabled,
           sortOrder: draft.sortOrder,
           isCustomized: false,
           actorUserId: user.id,

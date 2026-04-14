@@ -1982,7 +1982,7 @@ export interface ProjectSettingsDraft {
   lastOpenedAt: string
 }
 
-export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'design' | 'settings'
+export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings'
 export type WorkspaceMeetingTabId = `meeting:${string}`
 export type WorkspaceMeetingCreateTabId = 'meeting-create:audio' | 'meeting-create:video'
 export type WorkspaceResourceTabId = `resource:${string}`
@@ -2404,6 +2404,27 @@ export interface AiDefensePersona {
   updatedAt: string
 }
 
+export interface AiDefensePersonaPreset {
+  id: string
+  externalId: string
+  contestExternalId: string
+  trackExternalId?: string | null
+  syncItemId?: string | null
+  judgeType: AiDefensePersonaJudgeType
+  name: string
+  summary: string
+  systemPrompt: string
+  focusAreas: string[]
+  scoringRubric: RubricDimension[]
+  enabled: boolean
+  sortOrder: number
+  metadata?: Record<string, unknown>
+  createdByUserId: string
+  updatedByUserId: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface AiDefenseJudgeRound {
   judge: string
   judgeType: AiDefensePersonaJudgeType
@@ -2813,7 +2834,7 @@ export interface PlatformRoleAssignment {
   updatedAt: string
 }
 
-export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy'
+export type FeishuBitableSyncItemEntityType = 'contest' | 'track' | 'track_timeline' | 'resource' | 'policy' | 'persona'
 export type FeishuBitableSyncRunStatus = 'running' | 'success' | 'partial_success' | 'failed'
 export type FeishuBitableSyncRunTriggerSource = 'manual' | 'event' | 'scheduled'
 export type FeishuSyncRunMode = 'full' | 'delta'
