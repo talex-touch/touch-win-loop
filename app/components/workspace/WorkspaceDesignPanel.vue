@@ -11,6 +11,8 @@ import type {
   GraphSourceModel,
   GraphSourceNode,
   SceneDocument,
+  WorkspaceFontSizePreset,
+  WorkspaceTabSpacingPreset,
 } from "~~/shared/types/domain";
 import type { WorkspaceCollabCursorUser } from "~/components/workspace/collab/presence";
 import type { ContextMenuItem } from "~/components/ui/context-menu";
@@ -102,6 +104,8 @@ const props = withDefaults(
     collabConnectionText?: string;
     collabDrawError?: string;
     collabPresenceCursors?: WorkspaceCollabCursorUser[];
+    fontSizePreset?: WorkspaceFontSizePreset | "";
+    tabSpacingPreset?: WorkspaceTabSpacingPreset | "";
   }>(),
   {
     modelValue: "",
@@ -114,6 +118,8 @@ const props = withDefaults(
     collabConnectionText: "",
     collabDrawError: "",
     collabPresenceCursors: () => [],
+    fontSizePreset: "",
+    tabSpacingPreset: "",
   },
 );
 
@@ -174,6 +180,166 @@ const toolSwitchHint = ref("");
 let toolSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
 
 const TOOL_SWITCH_HINT_DURATION = 1600;
+
+const resolvedDesignPanelFontSizePreset = computed<WorkspaceFontSizePreset>(
+  () => props.fontSizePreset || "md",
+);
+const resolvedDesignPanelTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(
+  () => props.tabSpacingPreset || "default",
+);
+const layerTreeMenuFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
+  return props.fontSizePreset || "sm";
+});
+const layerTreeMenuSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
+  return props.tabSpacingPreset || "compact";
+});
+const layerTreeMetricsStyle = computed<Record<string, string>>(() => {
+  const style: Record<string, string> = {};
+
+  if (resolvedDesignPanelTabSpacingPreset.value === "compact") {
+    Object.assign(style, {
+      "--wl-design-layer-indent-base": "8px",
+      "--wl-design-layer-indent-step": "12px",
+      "--wl-design-layer-row-gap": "5px",
+      "--wl-design-layer-row-radius": "3px",
+      "--wl-design-layer-row-padding-y": "3.5px",
+      "--wl-design-layer-row-padding-right": "4px",
+      "--wl-design-layer-toggle-size": "21px",
+      "--wl-design-layer-action-size": "19px",
+      "--wl-design-layer-action-gap": "2px",
+    });
+  }
+  else if (resolvedDesignPanelTabSpacingPreset.value === "relaxed") {
+    Object.assign(style, {
+      "--wl-design-layer-indent-base": "11px",
+      "--wl-design-layer-indent-step": "15px",
+      "--wl-design-layer-row-gap": "7px",
+      "--wl-design-layer-row-radius": "5px",
+      "--wl-design-layer-row-padding-y": "5.75px",
+      "--wl-design-layer-row-padding-right": "5px",
+      "--wl-design-layer-toggle-size": "25px",
+      "--wl-design-layer-action-size": "23px",
+      "--wl-design-layer-action-gap": "3px",
+    });
+  }
+  else {
+    Object.assign(style, {
+      "--wl-design-layer-indent-base": "9px",
+      "--wl-design-layer-indent-step": "13px",
+      "--wl-design-layer-row-gap": "6px",
+      "--wl-design-layer-row-radius": "4px",
+      "--wl-design-layer-row-padding-y": "4.6px",
+      "--wl-design-layer-row-padding-right": "4px",
+      "--wl-design-layer-toggle-size": "23px",
+      "--wl-design-layer-action-size": "21px",
+      "--wl-design-layer-action-gap": "2px",
+    });
+  }
+
+  if (resolvedDesignPanelFontSizePreset.value === "xs") {
+    Object.assign(style, {
+      "--wl-design-layer-label-size": "10.5px",
+      "--wl-design-layer-label-line-height": "18px",
+      "--wl-design-layer-meta-size": "9px",
+      "--wl-design-layer-meta-line-height": "15px",
+      "--wl-design-layer-icon-size": "14px",
+      "--wl-design-layer-chevron-icon-size": "13px",
+      "--wl-design-layer-action-icon-size": "14px",
+    });
+  }
+  else if (resolvedDesignPanelFontSizePreset.value === "sm") {
+    Object.assign(style, {
+      "--wl-design-layer-label-size": "11px",
+      "--wl-design-layer-label-line-height": "18px",
+      "--wl-design-layer-meta-size": "9.25px",
+      "--wl-design-layer-meta-line-height": "15px",
+      "--wl-design-layer-icon-size": "14.5px",
+      "--wl-design-layer-chevron-icon-size": "13.5px",
+      "--wl-design-layer-action-icon-size": "14.5px",
+    });
+  }
+  else if (resolvedDesignPanelFontSizePreset.value === "lg") {
+    Object.assign(style, {
+      "--wl-design-layer-label-size": "12.5px",
+      "--wl-design-layer-label-line-height": "21px",
+      "--wl-design-layer-meta-size": "10px",
+      "--wl-design-layer-meta-line-height": "16px",
+      "--wl-design-layer-icon-size": "16px",
+      "--wl-design-layer-chevron-icon-size": "14.5px",
+      "--wl-design-layer-action-icon-size": "16px",
+    });
+  }
+  else if (resolvedDesignPanelFontSizePreset.value === "xl") {
+    Object.assign(style, {
+      "--wl-design-layer-label-size": "13px",
+      "--wl-design-layer-label-line-height": "22px",
+      "--wl-design-layer-meta-size": "10.5px",
+      "--wl-design-layer-meta-line-height": "17px",
+      "--wl-design-layer-icon-size": "16.5px",
+      "--wl-design-layer-chevron-icon-size": "15px",
+      "--wl-design-layer-action-icon-size": "16.5px",
+    });
+  }
+  else {
+    Object.assign(style, {
+      "--wl-design-layer-label-size": "11.5px",
+      "--wl-design-layer-label-line-height": "19px",
+      "--wl-design-layer-meta-size": "9.5px",
+      "--wl-design-layer-meta-line-height": "15px",
+      "--wl-design-layer-icon-size": "15px",
+      "--wl-design-layer-chevron-icon-size": "14px",
+      "--wl-design-layer-action-icon-size": "15px",
+    });
+  }
+
+  return style;
+});
+
+function resolveLayerTreeGuideMetrics(): {
+  indentBase: number;
+  indentStep: number;
+  toggleSize: number;
+} {
+  if (resolvedDesignPanelTabSpacingPreset.value === "compact") {
+    return {
+      indentBase: 8,
+      indentStep: 12,
+      toggleSize: 21,
+    };
+  }
+  if (resolvedDesignPanelTabSpacingPreset.value === "relaxed") {
+    return {
+      indentBase: 11,
+      indentStep: 15,
+      toggleSize: 25,
+    };
+  }
+  return {
+    indentBase: 9,
+    indentStep: 13,
+    toggleSize: 23,
+  };
+}
+
+function resolveLayerTreeRowPaddingLeft(depth: number): string {
+  const { indentBase, indentStep } = resolveLayerTreeGuideMetrics();
+  return `${indentBase + depth * indentStep}px`;
+}
+
+function resolveLayerTreeGuideLeft(depth: number): string {
+  const { indentBase, indentStep, toggleSize } = resolveLayerTreeGuideMetrics();
+  return `${indentBase + depth * indentStep + Math.round(toggleSize / 2)}px`;
+}
+
+function resolveLayerTreeConnectorStyle(depth: number): Record<string, string> {
+  const { indentBase, indentStep, toggleSize } = resolveLayerTreeGuideMetrics();
+  const left = indentBase + (depth - 1) * indentStep + Math.round(toggleSize / 2);
+  const width = Math.max(indentStep - Math.round(toggleSize / 2), 7);
+  return {
+    left: `${left}px`,
+    width: `${width}px`,
+  };
+}
 
 function normalizeString(value: unknown): string {
   return String(value || "").trim();
@@ -882,10 +1048,8 @@ function flattenDesignLayerTreeRows(
   nodes: DesignLayerTreeNode[],
   depth = 0,
 ): SidebarLayerTreeRow[] {
-  return nodes.flatMap((node) => {
-    if (node.type === "page_root_group" || node.type === "frame_children_group")
-      return flattenDesignLayerTreeRows(node.children || [], depth);
-
+  const visibleNodes = normalizeLayerTreeNodes(nodes);
+  return visibleNodes.flatMap((node) => {
     const currentRow: SidebarLayerTreeRow = {
       node,
       depth,
@@ -990,9 +1154,6 @@ const frameSidebarTreeRows = computed<SidebarLayerTreeRow[]>(() => {
   const [pageTree] = designLayerTree.tree.value;
   return flattenDesignLayerTreeRows(pageTree?.children || []);
 });
-const currentPageElementCount = computed(() => {
-  return designEditorState.allPageElements.value.length;
-});
 const selectedLayerTreeAncestorNodeIds = computed(() => {
   const nextIds = new Set<string>();
 
@@ -1019,6 +1180,101 @@ const selectedLayerTreeAncestorNodeIds = computed(() => {
 
   return nextIds;
 });
+const activeLayerTreePathNodeIds = computed<string[]>(() => {
+  const activeElement = currentPageElementMap.value.get(
+    normalizeString(selectedElementId.value),
+  );
+  if (activeElement) {
+    const pathNodeIds: string[] = [];
+    const frameId = normalizeString(activeElement.frameId);
+    if (frameId) pathNodeIds.push(`frame:${frameId}`);
+
+    const ancestorElementNodeIds: string[] = [];
+    const visitedAncestorIds = new Set<string>();
+    let cursorParentId = normalizeString(activeElement.parentId);
+    while (cursorParentId && !visitedAncestorIds.has(cursorParentId)) {
+      visitedAncestorIds.add(cursorParentId);
+      ancestorElementNodeIds.push(`element:${cursorParentId}`);
+      const parentElement = currentPageElementMap.value.get(cursorParentId);
+      if (!parentElement) break;
+      cursorParentId = normalizeString(parentElement.parentId);
+    }
+
+    pathNodeIds.push(...ancestorElementNodeIds.reverse());
+    pathNodeIds.push(`element:${normalizeString(activeElement.id)}`);
+    return pathNodeIds;
+  }
+
+  const frameId = normalizeString(selectedFrameId.value);
+  if (frameId) return [`frame:${frameId}`];
+  return [];
+});
+const activeLayerTreeGuideState = computed(() => {
+  const rows = frameSidebarTreeRows.value;
+  const rowIndexByNodeId = new Map(
+    rows.map((row, index) => [normalizeString(row.node.id), index]),
+  );
+  const verticalDepthsByNodeId = new Map<string, number[]>();
+  const connectorDepthByNodeId = new Map<string, number>();
+
+  for (
+    let index = 0;
+    index < activeLayerTreePathNodeIds.value.length - 1;
+    index += 1
+  ) {
+    const parentNodeId = normalizeString(activeLayerTreePathNodeIds.value[index]);
+    const childNodeId = normalizeString(
+      activeLayerTreePathNodeIds.value[index + 1],
+    );
+    const parentRowIndex = rowIndexByNodeId.get(parentNodeId);
+    const childRowIndex = rowIndexByNodeId.get(childNodeId);
+    if (
+      typeof parentRowIndex !== "number"
+      || typeof childRowIndex !== "number"
+      || childRowIndex <= parentRowIndex
+    )
+      continue;
+
+    const parentRow = rows[parentRowIndex];
+    const childRow = rows[childRowIndex];
+    if (!parentRow || !childRow) continue;
+
+    connectorDepthByNodeId.set(childNodeId, childRow.depth);
+
+    for (
+      let rowIndex = parentRowIndex + 1;
+      rowIndex < childRowIndex;
+      rowIndex += 1
+    ) {
+      const row = rows[rowIndex];
+      if (!row) continue;
+      const currentDepths = verticalDepthsByNodeId.get(row.node.id) || [];
+      if (!currentDepths.includes(parentRow.depth)) {
+        verticalDepthsByNodeId.set(row.node.id, [
+          ...currentDepths,
+          parentRow.depth,
+        ]);
+      }
+    }
+  }
+
+  return {
+    verticalDepthsByNodeId,
+    connectorDepthByNodeId,
+  };
+});
+
+function resolveActiveLayerTreeGuideDepths(nodeId: string): number[] {
+  return activeLayerTreeGuideState.value.verticalDepthsByNodeId.get(
+    normalizeString(nodeId),
+  ) || [];
+}
+
+function resolveActiveLayerTreeConnectorDepth(nodeId: string): number {
+  return activeLayerTreeGuideState.value.connectorDepthByNodeId.get(
+    normalizeString(nodeId),
+  ) ?? -1;
+}
 const canExportSingleFrame = computed(
   () => selectedFrames.value.length === 1 && Boolean(selectedFrame.value),
 );
@@ -2180,31 +2436,41 @@ function resolveLayerTreeNodeIcon(node: DesignLayerTreeNode): string {
 function resolveLayerTreeNodeClass(node: DesignLayerTreeNode): string {
   if (node.type === "frame" && node.frameId) {
     if (isPrimarySelectedFrame(node.frameId))
-      return "border-slate-300 bg-white/88 text-slate-950";
+      return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--primary";
     if (isFrameSelected(node.frameId))
-      return "border-sky-300 bg-sky-50/82 text-sky-950";
+      return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--selected";
     if (isLayerTreeNodeAncestor(node.id))
-      return "border-slate-200 bg-slate-100/86 text-slate-800";
-    return "border-slate-200 bg-white/56 text-slate-700 hover:border-slate-300 hover:bg-white/78";
+      return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--ancestor";
+    return "workspace-design-layer-tree__row--frame workspace-design-layer-tree__row--idle";
   }
 
   if (node.type === "element" && node.elementId) {
     if (isPrimarySelectedElement(node.elementId))
-      return "border-slate-300 bg-white/88 text-slate-950";
+      return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--primary";
     if (isElementSelected(node.elementId))
-      return "border-sky-300 bg-sky-50/82 text-sky-950";
+      return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--selected";
     if (isLayerTreeNodeAncestor(node.id))
-      return "border-slate-200 bg-slate-100/86 text-slate-800";
-    return "border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-white/76 hover:text-slate-900";
+      return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--ancestor";
+    return "workspace-design-layer-tree__row--element workspace-design-layer-tree__row--idle";
   }
 
-  return "border-transparent bg-transparent text-slate-500";
+  return "workspace-design-layer-tree__row--idle";
 }
 
 function resolveLayerTreeFrameMeta(frameId?: string): string {
   const frame = currentPageFrameMap.value.get(normalizeString(frameId));
   if (!frame) return "";
   return `${frame.kind} · ${Math.round(frame.width)} × ${Math.round(frame.height)}`;
+}
+
+function normalizeLayerTreeNodes(
+  nodes: DesignLayerTreeNode[],
+): DesignLayerTreeNode[] {
+  return nodes.flatMap((node) => {
+    if (node.type === "page_root_group" || node.type === "frame_children_group")
+      return normalizeLayerTreeNodes(node.children || []);
+    return [node];
+  });
 }
 
 function handleLayerTreeNodeSelection(
@@ -2234,6 +2500,259 @@ function handleLayerTreeNodeSelection(
     primaryElementId: node.elementId,
     editingFrameId,
   });
+}
+
+function canMoveFrame(frameId: string, direction: -1 | 1): boolean {
+  const normalizedFrameId = normalizeString(frameId);
+  const frame = currentPageFrameMap.value.get(normalizedFrameId);
+  if (!frame) return false;
+  const pageFrames = currentPageFrames.value.filter(
+    item => normalizeString(item.pageId) === normalizeString(frame.pageId),
+  );
+  const currentIndex = pageFrames.findIndex(item => item.id === normalizedFrameId);
+  const nextIndex = currentIndex + direction;
+  return currentIndex >= 0 && nextIndex >= 0 && nextIndex < pageFrames.length;
+}
+
+function toggleElementHiddenById(elementId: string): void {
+  const normalizedElementId = normalizeString(elementId);
+  const element = currentPageElementMap.value.get(normalizedElementId);
+  if (!element) return;
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  commitDocument(
+    updateDesignElementInSceneDocument(draftDocument.value, normalizedElementId, {
+      hidden: !element.hidden,
+    }),
+  );
+  replaceSelectionState(selectionSnapshot);
+}
+
+function toggleFrameLockedById(frameId: string): void {
+  const normalizedFrameId = normalizeString(frameId);
+  const frame = currentPageFrameMap.value.get(normalizedFrameId);
+  if (!frame) return;
+
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  mutateCompositionDocument((composition) => {
+    return {
+      ...composition,
+      frames: (composition.frames || []).map((item) => {
+        if (normalizeString(item.id) !== normalizedFrameId) return item;
+        return {
+          ...item,
+          locked: !frame.locked,
+        };
+      }),
+    };
+  });
+  replaceSelectionState(selectionSnapshot);
+}
+
+function toggleElementLockedById(elementId: string): void {
+  const normalizedElementId = normalizeString(elementId);
+  const element = currentPageElementMap.value.get(normalizedElementId);
+  if (!element) return;
+
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  commitDocument(
+    updateDesignElementInSceneDocument(draftDocument.value, normalizedElementId, {
+      locked: !element.locked,
+    }),
+  );
+  replaceSelectionState(selectionSnapshot);
+}
+
+function toggleLayerTreeNodeLocked(node: DesignLayerTreeNode): void {
+  if (node.type === "frame" && node.frameId) {
+    toggleFrameLockedById(node.frameId);
+    return;
+  }
+  if (node.type === "element" && node.elementId)
+    toggleElementLockedById(node.elementId);
+}
+
+function selectLayerTreeParent(node: DesignLayerTreeNode): void {
+  const element = currentPageElementMap.value.get(normalizeString(node.elementId));
+  if (!element) return;
+  const parentElementId = normalizeString(element.parentId);
+  if (parentElementId && currentPageElementMap.value.has(parentElementId)) {
+    setSelectedElements([parentElementId], {
+      primaryElementId: parentElementId,
+      editingFrameId: normalizeString(element.frameId),
+    });
+    return;
+  }
+  const frameId = normalizeString(element.frameId);
+  if (frameId) {
+    setSelectedFrames([frameId], {
+      primaryFrameId: frameId,
+    });
+  }
+}
+
+function buildLayerTreeMenuItems(node: DesignLayerTreeNode): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [];
+
+  if (node.children?.length) {
+    items.push({
+      key: "toggle-expand",
+      label: isLayerTreeNodeExpanded(node.id) ? "折叠" : "展开",
+      icon: isLayerTreeNodeExpanded(node.id) ? "unfold_less" : "unfold_more",
+    });
+  }
+
+  if (node.type === "frame" && node.frameId) {
+    items.push(
+      {
+        key: "move-up",
+        label: "上移",
+        icon: "keyboard_arrow_up",
+        disabled: !canMoveFrame(node.frameId, -1),
+      },
+      {
+        key: "move-down",
+        label: "下移",
+        icon: "keyboard_arrow_down",
+        disabled: !canMoveFrame(node.frameId, 1),
+      },
+      {
+        key: "duplicate",
+        label: "复制",
+        icon: "content_copy",
+        separatorBefore: items.length > 0,
+      },
+    );
+    if (frame?.kind === "diagram") {
+      items.push({
+        key: "open-diagram",
+        label: "打开 Diagram 编辑态",
+        icon: "schema",
+      });
+    }
+    items.push({
+      key: "delete",
+      label: "删除",
+      icon: "delete",
+      tone: "danger",
+      separatorBefore: true,
+    });
+    return items;
+  }
+
+  if (node.type === "element" && node.elementId) {
+    const element = currentPageElementMap.value.get(normalizeString(node.elementId));
+    if (normalizeString(element?.parentId) || normalizeString(element?.frameId)) {
+      items.push({
+        key: "select-parent",
+        label: "选择父级",
+        icon: "arrow_upward",
+        separatorBefore: items.length > 0,
+      });
+    }
+    items.push(
+      {
+        key: "duplicate",
+        label: "复制",
+        icon: "content_copy",
+        separatorBefore: items.length > 0,
+      },
+      {
+        key: "delete",
+        label: "删除",
+        icon: "delete",
+        tone: "danger",
+        separatorBefore: true,
+      },
+    );
+  }
+
+  return items;
+}
+
+function openLayerTreeMenu(node: DesignLayerTreeNode, event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  layerTreeMenuNodeId.value = node.id;
+  layerTreeMenuItems.value = buildLayerTreeMenuItems(node);
+  layerTreeMenuAnchorEl.value = event.currentTarget as HTMLElement | null;
+  layerTreeMenuVisible.value = true;
+}
+
+function handleLayerTreeMenuSelect(key: string): void {
+  const row = frameSidebarTreeRows.value.find(
+    item => item.node.id === layerTreeMenuNodeId.value,
+  );
+  const node = row?.node || null;
+  closeLayerTreeMenu();
+  if (!node) return;
+
+  if (key === "toggle-expand") {
+    toggleLayerTreeNodeExpanded(node.id);
+    return;
+  }
+
+  if (node.type === "frame" && node.frameId) {
+    if (key === "move-up") {
+      moveFrame(node.frameId, -1);
+      return;
+    }
+    if (key === "move-down") {
+      moveFrame(node.frameId, 1);
+      return;
+    }
+    if (key === "toggle-lock") {
+      toggleFrameLockedById(node.frameId);
+      return;
+    }
+    if (key === "duplicate") {
+      setSelectedFrames([node.frameId], {
+        primaryFrameId: node.frameId,
+      });
+      duplicateSelectedFrame();
+      return;
+    }
+    if (key === "open-diagram") {
+      openFrameEditor(node.frameId);
+      return;
+    }
+    if (key === "delete") {
+      setSelectedFrames([node.frameId], {
+        primaryFrameId: node.frameId,
+      });
+      removeSelectedFrame();
+    }
+    return;
+  }
+
+  if (node.type !== "element" || !node.elementId) return;
+
+  if (key === "select-parent") {
+    selectLayerTreeParent(node);
+    return;
+  }
+  if (key === "toggle-lock") {
+    toggleElementLockedById(node.elementId);
+    return;
+  }
+  if (key === "toggle-visibility") {
+    toggleElementHiddenById(node.elementId);
+    return;
+  }
+  if (key === "duplicate") {
+    setSelectedElements([node.elementId], {
+      primaryElementId: node.elementId,
+      editingFrameId: normalizeString(node.frameId),
+    });
+    duplicateSelectedElement();
+    return;
+  }
+  if (key === "delete") {
+    setSelectedElements([node.elementId], {
+      primaryElementId: node.elementId,
+      editingFrameId: normalizeString(node.frameId),
+    });
+    removeSelectedElement();
+  }
 }
 
 function handleFrameListSelection(frameId: string, event?: MouseEvent): void {
@@ -3810,6 +4329,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
     @keyup.capture="handlePanelKeyup"
   >
     <WLDesignLayout
+      :gap="0"
       :collapsed-left-width="36"
       :collapsed-right-width="36"
       :left-collapsed="sidebarCollapsed"
@@ -3821,6 +4341,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
           class="workspace-design-floating-panel workspace-design-glass-panel workspace-design-sidebar-panel self-start max-h-[min(72vh,820px)] w-full"
           :data-collapsed="sidebarCollapsed ? 'true' : 'false'"
           :scrollable="!sidebarCollapsed"
+          :padding="activeSidebarTab === 'frames' ? 'sm' : 'md'"
           :title="''"
         >
           <template v-if="!sidebarCollapsed" #header-title>
@@ -4037,30 +4558,15 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
           </template>
 
           <template v-if="!sidebarCollapsed">
-            <div class="mb-3 flex flex-wrap gap-2">
+            <div
+              v-if="activeSidebarTab !== 'frames'"
+              class="mb-3 flex flex-wrap gap-2"
+            >
               <template v-if="activeSidebarTab === 'pages'">
                 <span
                   class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
                 >
                   {{ pages.length }} pages
-                </span>
-              </template>
-
-              <template v-else-if="activeSidebarTab === 'frames'">
-                <span
-                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
-                >
-                  {{ currentPage?.name || "未命名 Page" }}
-                </span>
-                <span
-                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
-                >
-                  {{ currentPageFrames.length }} frames
-                </span>
-                <span
-                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
-                >
-                  {{ currentPageElementCount }} elements
                 </span>
               </template>
 
@@ -4144,7 +4650,8 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
 
             <div
               v-else-if="activeSidebarTab === 'frames'"
-              class="space-y-1.5"
+              class="workspace-design-layer-tree space-y-0.5"
+              :style="layerTreeMetricsStyle"
               data-testid="workspace-design-sidebar-frames"
             >
               <div
@@ -4156,81 +4663,122 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
 
               <template v-for="row in frameSidebarTreeRows" :key="row.node.id">
                 <div
-                  v-if="row.node.type === 'page_root_group'"
-                  class="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400"
-                >
-                  {{ row.node.label }}
-                </div>
-
-                <div
-                  v-else
-                  class="group flex items-center gap-2 rounded-[12px] border pr-2 transition-colors"
+                  class="workspace-design-layer-tree__row group flex items-center transition-colors"
                   :class="resolveLayerTreeNodeClass(row.node)"
-                  :style="{ paddingLeft: `${10 + row.depth * 14}px` }"
+                  :style="{ paddingLeft: resolveLayerTreeRowPaddingLeft(row.depth) }"
                 >
+                  <template
+                    v-for="guideDepth in resolveActiveLayerTreeGuideDepths(row.node.id)"
+                    :key="`${row.node.id}-guide-${guideDepth}`"
+                  >
+                    <span
+                      class="workspace-design-layer-tree__guide-line"
+                      :style="{ left: resolveLayerTreeGuideLeft(guideDepth) }"
+                      aria-hidden="true"
+                    />
+                  </template>
+                  <span
+                    v-if="resolveActiveLayerTreeConnectorDepth(row.node.id) >= 0"
+                    class="workspace-design-layer-tree__connector"
+                    :style="
+                      resolveLayerTreeConnectorStyle(
+                        resolveActiveLayerTreeConnectorDepth(row.node.id),
+                      )
+                    "
+                    aria-hidden="true"
+                  />
                   <button
-                    class="flex min-w-0 flex-1 items-center gap-2 py-2 text-left"
+                    v-if="row.node.children?.length"
+                    class="workspace-design-layer-tree__toggle flex shrink-0 items-center justify-center text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                    type="button"
+                    :title="isLayerTreeNodeExpanded(row.node.id) ? '折叠' : '展开'"
+                    @click.stop="toggleLayerTreeNodeExpanded(row.node.id)"
+                  >
+                    <span class="material-symbols-outlined workspace-design-layer-tree__toggle-icon leading-none">
+                      {{
+                        isLayerTreeNodeExpanded(row.node.id)
+                          ? "keyboard_arrow_down"
+                          : "keyboard_arrow_right"
+                      }}
+                    </span>
+                  </button>
+                  <span
+                    v-else
+                    class="workspace-design-layer-tree__toggle-placeholder shrink-0"
+                    aria-hidden="true"
+                  />
+                  <button
+                    class="workspace-design-layer-tree__body flex min-w-0 flex-1 items-center text-left"
                     type="button"
                     @click="handleLayerTreeNodeSelection(row.node, $event)"
                   >
                     <span
-                      class="material-symbols-outlined shrink-0 text-[15px] leading-none"
+                      class="material-symbols-outlined workspace-design-layer-tree__node-icon shrink-0 leading-none"
+                      :class="isLayerTreeNodeAncestor(row.node.id) ? 'text-slate-700' : ''"
                     >
                       {{ resolveLayerTreeNodeIcon(row.node) }}
                     </span>
                     <div class="min-w-0 flex-1">
-                      <p class="truncate text-[12px] font-semibold leading-5">
+                      <p class="workspace-design-layer-tree__label truncate font-semibold">
                         {{ row.node.label }}
                       </p>
                       <p
                         v-if="row.node.type === 'frame' && row.node.frameId"
-                        class="truncate text-[10px] leading-4 text-slate-500"
+                        class="workspace-design-layer-tree__meta truncate text-slate-500"
                       >
                         {{ resolveLayerTreeFrameMeta(row.node.frameId) }}
                       </p>
                     </div>
                   </button>
 
-                  <div
-                    v-if="row.node.type === 'frame' && row.node.frameId"
-                    class="flex shrink-0 gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
-                  >
+                  <div class="workspace-design-layer-tree__actions flex shrink-0 items-center">
                     <button
-                      class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900"
+                      v-if="row.node.type === 'element' && row.node.elementId"
+                      class="workspace-design-layer-tree__action flex shrink-0 items-center justify-center text-slate-400"
+                      :class="row.node.hidden ? 'workspace-design-layer-tree__action--active' : ''"
                       type="button"
-                      title="上移 Frame"
-                      @click.stop="moveFrame(row.node.frameId, -1)"
+                      :title="row.node.hidden ? '显示元素' : '隐藏元素'"
+                      :aria-label="row.node.hidden ? '显示元素' : '隐藏元素'"
+                      :aria-pressed="row.node.hidden ? 'true' : 'false'"
+                      @click.stop="toggleElementHiddenById(row.node.elementId)"
                     >
-                      ↑
+                      <span class="material-symbols-outlined workspace-design-layer-tree__action-icon leading-none">
+                        {{ row.node.hidden ? "visibility_off" : "visibility" }}
+                      </span>
                     </button>
                     <button
-                      class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900"
+                      v-if="
+                        (row.node.type === 'frame' && row.node.frameId)
+                        || (row.node.type === 'element' && row.node.elementId)
+                      "
+                      class="workspace-design-layer-tree__action flex shrink-0 items-center justify-center text-slate-400"
+                      :class="row.node.locked ? 'workspace-design-layer-tree__action--active' : ''"
                       type="button"
-                      title="下移 Frame"
-                      @click.stop="moveFrame(row.node.frameId, 1)"
+                      :title="row.node.locked ? '解锁图层' : '锁定图层'"
+                      :aria-label="row.node.locked ? '解锁图层' : '锁定图层'"
+                      :aria-pressed="row.node.locked ? 'true' : 'false'"
+                      @click.stop="toggleLayerTreeNodeLocked(row.node)"
                     >
-                      ↓
+                      <span class="material-symbols-outlined workspace-design-layer-tree__action-icon leading-none">
+                        {{ row.node.locked ? "lock" : "lock_open" }}
+                      </span>
                     </button>
-                  </div>
-
-                  <div
-                    v-else-if="row.node.locked || row.node.hidden"
-                    class="flex shrink-0 items-center gap-1 text-slate-400"
-                  >
-                    <span
-                      v-if="row.node.hidden"
-                      class="material-symbols-outlined text-[13px] leading-none"
-                      title="已隐藏"
+                    <button
+                      class="workspace-design-layer-tree__menu-trigger flex shrink-0 items-center justify-center text-slate-400"
+                      :class="
+                        layerTreeMenuNodeId === row.node.id
+                          ? 'workspace-design-layer-tree__menu-trigger--active'
+                          : ''
+                      "
+                      type="button"
+                      title="更多操作"
+                      aria-label="更多操作"
+                      @click.stop="openLayerTreeMenu(row.node, $event)"
                     >
-                      visibility_off
-                    </span>
-                    <span
-                      v-if="row.node.locked"
-                      class="material-symbols-outlined text-[13px] leading-none"
-                      title="已锁定"
-                    >
-                      lock
-                    </span>
+                      <span class="material-symbols-outlined workspace-design-layer-tree__action-icon leading-none">
+                        more_horiz
+                      </span>
+                    </button>
                   </div>
                 </div>
               </template>
@@ -5694,10 +6242,208 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
         </div>
       </template>
     </WLDesignLayout>
+
+    <UiContextMenu
+      :visible="layerTreeMenuVisible"
+      :items="layerTreeMenuItems"
+      :anchor-el="layerTreeMenuAnchorEl"
+      :font-size-preset="layerTreeMenuFontSizePreset"
+      :spacing-preset="layerTreeMenuSpacingPreset"
+      test-id="workspace-design-layer-tree-menu"
+      @select="handleLayerTreeMenuSelect"
+      @close="closeLayerTreeMenu"
+    />
   </div>
 </template>
 
 <style scoped>
+.workspace-design-layer-tree {
+  --wl-design-layer-indent-base: 9px;
+  --wl-design-layer-indent-step: 13px;
+  --wl-design-layer-row-gap: 6px;
+  --wl-design-layer-row-radius: 4px;
+  --wl-design-layer-row-padding-y: 4.6px;
+  --wl-design-layer-row-padding-right: 4px;
+  --wl-design-layer-toggle-size: 23px;
+  --wl-design-layer-action-size: 21px;
+  --wl-design-layer-action-gap: 2px;
+  --wl-design-layer-label-size: 11.5px;
+  --wl-design-layer-label-line-height: 19px;
+  --wl-design-layer-meta-size: 9.5px;
+  --wl-design-layer-meta-line-height: 15px;
+  --wl-design-layer-icon-size: 15px;
+  --wl-design-layer-chevron-icon-size: 14px;
+  --wl-design-layer-action-icon-size: 15px;
+  --wl-design-layer-guide-color: rgba(148, 163, 184, 0.34);
+  --wl-design-layer-guide-active-color: rgba(100, 116, 139, 0.52);
+}
+
+.workspace-design-layer-tree__row {
+  position: relative;
+  gap: var(--wl-design-layer-row-gap);
+  padding-right: var(--wl-design-layer-row-padding-right);
+  border-radius: var(--wl-design-layer-row-radius);
+  background: transparent;
+  color: #475569;
+}
+
+.workspace-design-layer-tree__guide-line,
+.workspace-design-layer-tree__connector {
+  position: absolute;
+  pointer-events: none;
+}
+
+.workspace-design-layer-tree__guide-line {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--wl-design-layer-guide-color);
+}
+
+.workspace-design-layer-tree__connector {
+  top: 0;
+  bottom: 0;
+}
+
+.workspace-design-layer-tree__connector::before,
+.workspace-design-layer-tree__connector::after {
+  content: "";
+  position: absolute;
+  background: var(--wl-design-layer-guide-color);
+}
+
+.workspace-design-layer-tree__connector::before {
+  left: 0;
+  top: 0;
+  bottom: 50%;
+  width: 1px;
+}
+
+.workspace-design-layer-tree__connector::after {
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
+.workspace-design-layer-tree__row--frame {
+  color: #334155;
+}
+
+.workspace-design-layer-tree__row--element {
+  color: #475569;
+}
+
+.workspace-design-layer-tree__row--idle:hover,
+.workspace-design-layer-tree__row--idle:focus-within {
+  background: rgba(15, 23, 42, 0.045);
+  color: #0f172a;
+}
+
+.workspace-design-layer-tree__row--ancestor {
+  background: rgba(148, 163, 184, 0.12);
+  color: #334155;
+}
+
+.workspace-design-layer-tree__row--ancestor .workspace-design-layer-tree__guide-line,
+.workspace-design-layer-tree__row--ancestor .workspace-design-layer-tree__connector::before,
+.workspace-design-layer-tree__row--ancestor .workspace-design-layer-tree__connector::after,
+.workspace-design-layer-tree__row--selected .workspace-design-layer-tree__guide-line,
+.workspace-design-layer-tree__row--selected .workspace-design-layer-tree__connector::before,
+.workspace-design-layer-tree__row--selected .workspace-design-layer-tree__connector::after,
+.workspace-design-layer-tree__row--primary .workspace-design-layer-tree__guide-line,
+.workspace-design-layer-tree__row--primary .workspace-design-layer-tree__connector::before,
+.workspace-design-layer-tree__row--primary .workspace-design-layer-tree__connector::after {
+  background: var(--wl-design-layer-guide-active-color);
+}
+
+.workspace-design-layer-tree__row--selected {
+  background: rgba(14, 165, 233, 0.1);
+  color: #082f49;
+}
+
+.workspace-design-layer-tree__row--primary {
+  background: rgba(15, 23, 42, 0.08);
+  color: #020617;
+}
+
+.workspace-design-layer-tree__toggle,
+.workspace-design-layer-tree__toggle-placeholder {
+  width: var(--wl-design-layer-toggle-size);
+  height: var(--wl-design-layer-toggle-size);
+}
+
+.workspace-design-layer-tree__toggle {
+  border-radius: 4px;
+}
+
+.workspace-design-layer-tree__toggle-icon {
+  font-size: var(--wl-design-layer-chevron-icon-size);
+}
+
+.workspace-design-layer-tree__body {
+  gap: var(--wl-design-layer-row-gap);
+  padding-top: var(--wl-design-layer-row-padding-y);
+  padding-bottom: var(--wl-design-layer-row-padding-y);
+}
+
+.workspace-design-layer-tree__node-icon {
+  font-size: var(--wl-design-layer-icon-size);
+}
+
+.workspace-design-layer-tree__label {
+  font-size: var(--wl-design-layer-label-size);
+  line-height: var(--wl-design-layer-label-line-height);
+}
+
+.workspace-design-layer-tree__meta {
+  font-size: var(--wl-design-layer-meta-size);
+  line-height: var(--wl-design-layer-meta-line-height);
+}
+
+.workspace-design-layer-tree__actions {
+  gap: var(--wl-design-layer-action-gap);
+}
+
+.workspace-design-layer-tree__action,
+.workspace-design-layer-tree__menu-trigger {
+  width: var(--wl-design-layer-action-size);
+  height: var(--wl-design-layer-action-size);
+  border-radius: 4px;
+  opacity: 0;
+  transform: translateX(3px);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.workspace-design-layer-tree__action-icon {
+  font-size: var(--wl-design-layer-action-icon-size);
+}
+
+.workspace-design-layer-tree__row:hover .workspace-design-layer-tree__action,
+.workspace-design-layer-tree__row:hover .workspace-design-layer-tree__menu-trigger,
+.workspace-design-layer-tree__row:focus-within .workspace-design-layer-tree__action,
+.workspace-design-layer-tree__row:focus-within .workspace-design-layer-tree__menu-trigger,
+.workspace-design-layer-tree__action--active,
+.workspace-design-layer-tree__menu-trigger--active {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.workspace-design-layer-tree__action:hover,
+.workspace-design-layer-tree__menu-trigger:hover,
+.workspace-design-layer-tree__action:focus-visible,
+.workspace-design-layer-tree__menu-trigger:focus-visible,
+.workspace-design-layer-tree__action--active,
+.workspace-design-layer-tree__menu-trigger--active {
+  background: rgba(15, 23, 42, 0.07);
+  color: #0f172a;
+}
+
 .workspace-design-panel .workspace-design-floating-panel :deep(.rounded-full) {
   border-radius: 9px !important;
 }

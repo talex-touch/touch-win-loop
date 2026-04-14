@@ -31,7 +31,6 @@ export function useWorkspaceProjectResources() {
   const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
 
   const flowResourceId = ref('')
-  const designResourceId = ref('')
   const previewResourceId = ref('')
   const collabBindingResourceId = ref('')
   const closingPreviewResourceId = ref('')
@@ -55,7 +54,6 @@ export function useWorkspaceProjectResources() {
     projectResourceShares,
     projectOutlineSnapshot,
     flowResourceId,
-    designResourceId,
     previewResourceId,
     collabBindingResourceId,
     closingPreviewResourceId,

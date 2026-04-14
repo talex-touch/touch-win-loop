@@ -17,7 +17,8 @@ it('设计画布已接入协作光标且缩放不再写回共享视口', async (
   ])
 
   const designPanelTag = mainPanelSource.match(/<WorkspaceDesignPanel[\s\S]*?\/>/)?.[0] || ''
-  assert.match(designPanelTag, /v-else-if="activeTabId === 'design'"/)
+  assert.match(designPanelTag, /v-else-if="isActiveDesignResource"/)
+  assert.match(designPanelTag, /:design-resource-id="activeDesignResourceId"/)
   assert.match(designPanelTag, /:collab-presence-cursors="collabPresenceCursors"/)
   assert.match(designPanelTag, /@update-collab-cursor="onCollabCursorUpdate"/)
 

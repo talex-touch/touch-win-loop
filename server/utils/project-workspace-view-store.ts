@@ -28,7 +28,9 @@ interface TeamLastProjectPreferenceRow {
   updated_at: string
 }
 
-const WORKSPACE_FIXED_TAB_IDS: WorkspaceFixedTabId[] = ['dashboard', 'meeting', 'members', 'flow', 'design', 'settings']
+type WorkspaceOpenTabStateLike = WorkspaceOpenTabState | 'design'
+
+const WORKSPACE_FIXED_TAB_IDS: WorkspaceFixedTabId[] = ['dashboard', 'meeting', 'members', 'flow', 'settings']
 const WORKSPACE_FIXED_TAB_ID_SET = new Set<string>(WORKSPACE_FIXED_TAB_IDS)
 const DEVICE_STALE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -36,7 +38,12 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
-function isWorkspaceOpenTabState(value: string): value is WorkspaceOpenTabState {
+function isWorkspaceOpenTabState(
+  value: string,
+  options: { preserveLegacyDesignTab?: boolean } = {},
+): value is WorkspaceOpenTabStateLike {
+  if (options.preserveLegacyDesignTab && value === 'design')
+    return true
   if (WORKSPACE_FIXED_TAB_ID_SET.has(value))
     return true
   if (value.startsWith('meeting:') && value.length > 'meeting:'.length)
@@ -55,15 +62,18 @@ function normalizeBoolean(value: unknown): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes'
 }
 
-function normalizeWorkspaceOpenTabs(value: unknown): WorkspaceOpenTabState[] {
+function normalizeWorkspaceOpenTabs(
+  value: unknown,
+  options: { preserveLegacyDesignTab?: boolean } = {},
+): WorkspaceOpenTabStateLike[] {
   if (!Array.isArray(value))
     return ['dashboard']
 
-  const normalized: WorkspaceOpenTabState[] = []
+  const normalized: WorkspaceOpenTabStateLike[] = []
   const used = new Set<string>()
   for (const item of value) {
     const tabId = normalizeString(item)
-    if (!isWorkspaceOpenTabState(tabId) || used.has(tabId))
+    if (!isWorkspaceOpenTabState(tabId, options) || used.has(tabId))
       continue
     normalized.push(tabId)
     used.add(tabId)
@@ -86,15 +96,19 @@ function serializeProjectWorkspaceViewState(value: unknown): string {
 }
 
 export function normalizeProjectWorkspaceViewStatePayload(value: unknown): ProjectWorkspaceViewState {
+  return normalizeProjectWorkspaceViewStatePayloadWithOptions(value)
+}
+
+function normalizeProjectWorkspaceViewStatePayloadWithOptions(
+  value: unknown,
+  options: { preserveLegacyDesignTab?: boolean } = {},
+): ProjectWorkspaceViewState {
   const source = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
 
-  const mainTabs = normalizeWorkspaceOpenTabs(source.mainTabs)
+  const mainTabs = normalizeWorkspaceOpenTabs(source.mainTabs, options)
   const requestedActiveTabId = normalizeString(source.activeMainTabId)
-  const activeMainTabId = isWorkspaceOpenTabState(requestedActiveTabId) && mainTabs.includes(requestedActiveTabId)
-    ? requestedActiveTabId
-    : mainTabs[0] || 'dashboard'
 
   const requestedWorkbenchMode = normalizeString(source.workbenchMode)
   const workbenchMode = requestedWorkbenchMode === 'defense' ? 'defense' : 'project'
@@ -105,9 +119,22 @@ export function normalizeProjectWorkspaceViewStatePayload(value: unknown): Proje
   const selectedContestId = normalizeString(source.selectedContestId)
   const selectedTrackId = normalizeString(source.selectedTrackId)
 
+  if (previewResourceId) {
+    const previewTabId = `resource:${previewResourceId}` as WorkspaceOpenTabStateLike
+    if (!mainTabs.includes(previewTabId))
+      mainTabs.push(previewTabId)
+  }
+
+  if (isWorkspaceOpenTabState(requestedActiveTabId, options) && !mainTabs.includes(requestedActiveTabId))
+    mainTabs.push(requestedActiveTabId)
+
+  const activeMainTabId = (isWorkspaceOpenTabState(requestedActiveTabId, options) && mainTabs.includes(requestedActiveTabId)
+    ? requestedActiveTabId as WorkspaceOpenTabState
+    : mainTabs[0] || 'dashboard') as WorkspaceOpenTabState
+
   return {
     workbenchMode,
-    mainTabs,
+    mainTabs: mainTabs as WorkspaceOpenTabState[],
     activeMainTabId,
     previewResourceId,
     selectedContestId,
@@ -122,7 +149,9 @@ export function normalizeProjectWorkspaceViewStatePayload(value: unknown): Proje
 function mapProjectWorkspaceViewState(row: ProjectWorkspaceViewStateRow): ProjectWorkspaceViewPreference {
   return {
     projectId: row.project_id,
-    payload: normalizeProjectWorkspaceViewStatePayload(row.payload),
+    payload: normalizeProjectWorkspaceViewStatePayloadWithOptions(row.payload, {
+      preserveLegacyDesignTab: true,
+    }),
     revision: Math.max(1, Number(row.revision || 1)),
     deviceId: normalizeString(row.device_id),
     updatedAt: normalizeString(row.updated_at),

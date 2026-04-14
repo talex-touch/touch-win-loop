@@ -18,6 +18,7 @@ import { onBeforeUnmount, reactive, ref } from 'vue'
 import { normalizeQueryValue as normalizeQueryParam } from '~/composables/team-ui'
 import { useApiEndpoint } from '~/composables/useApiEndpoint'
 import { workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
+import { isDesignCanvasResource } from '~/utils/workspace-left-sidebar-helpers'
 
 export interface TopicBoardConfirmOptions {
   title: string
@@ -69,6 +70,7 @@ export interface HydratedProjectWorkspaceViewStateResult {
   state: ProjectWorkspaceViewState
   bundle: ProjectWorkspaceViewDeviceStatePayload | null
   hasManagedQuery: boolean
+  legacyDesignUnavailable: boolean
 }
 
 interface UseWorkspaceProjectViewStateOptions {
@@ -108,6 +110,109 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+function parseTimestamp(value: unknown): number {
+  const timestamp = Date.parse(normalizeString(value))
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function listRawWorkspaceTabIds(value: unknown): string[] {
+  if (!Array.isArray(value))
+    return []
+  return value
+    .map(item => normalizeString(item))
+    .filter(Boolean)
+    .slice(0, 8)
+}
+
+function resolveLegacyDesignResourceId(
+  resources: Resource[],
+  preferredResourceId: unknown,
+): string {
+  const preferredId = normalizeString(preferredResourceId)
+  if (preferredId) {
+    const preferredResource = resources.find(item => normalizeString(item.id) === preferredId) || null
+    if (isDesignCanvasResource(preferredResource))
+      return preferredId
+  }
+
+  return [...resources]
+    .filter(resource => isDesignCanvasResource(resource))
+    .sort((left, right) => {
+      const leftCreatedAt = parseTimestamp(left.createdAt)
+      const rightCreatedAt = parseTimestamp(right.createdAt)
+      if (leftCreatedAt !== rightCreatedAt)
+        return leftCreatedAt - rightCreatedAt
+      return normalizeString(left.id).localeCompare(normalizeString(right.id))
+    })[0]?.id || ''
+}
+
+function migrateLegacyDesignWorkspaceState(
+  value: Partial<ProjectWorkspaceViewState> | Record<string, unknown> | null | undefined,
+  resources: Resource[],
+): {
+  state: Partial<ProjectWorkspaceViewState>
+  legacyDesignUnavailable: boolean
+} {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...value }
+    : {}
+  const rawTabIds = listRawWorkspaceTabIds(source.mainTabs)
+  const requestedActiveTabId = normalizeString(source.activeMainTabId).toLowerCase()
+  const hasLegacyDesignTab = rawTabIds.includes('design')
+  const requestedActiveLegacyDesign = requestedActiveTabId === 'design'
+
+  if (!hasLegacyDesignTab && !requestedActiveLegacyDesign) {
+    return {
+      state: source as Partial<ProjectWorkspaceViewState>,
+      legacyDesignUnavailable: false,
+    }
+  }
+
+  const mappedDesignResourceId = resolveLegacyDesignResourceId(resources, source.previewResourceId)
+  const nextTabIds = rawTabIds.filter(tabId => tabId !== 'design' && isWorkspaceMainTabId(tabId))
+
+  if (hasLegacyDesignTab && mappedDesignResourceId) {
+    nextTabIds.push(createResourceTabId(mappedDesignResourceId))
+  }
+
+  const nextState: Partial<ProjectWorkspaceViewState> = {
+    ...(source as Partial<ProjectWorkspaceViewState>),
+    mainTabs: normalizeWorkspaceMainTabIds(nextTabIds as WorkspaceOpenTabState[], {
+      allowEmpty: true,
+    }),
+  }
+
+  if (!requestedActiveLegacyDesign) {
+    return {
+      state: nextState,
+      legacyDesignUnavailable: false,
+    }
+  }
+
+  if (mappedDesignResourceId) {
+    nextState.activeMainTabId = createResourceTabId(mappedDesignResourceId)
+    nextState.previewResourceId = mappedDesignResourceId
+    return {
+      state: nextState,
+      legacyDesignUnavailable: false,
+    }
+  }
+
+  nextState.activeMainTabId = 'dashboard'
+  nextState.previewResourceId = ''
+  nextState.mainTabs = normalizeWorkspaceMainTabIds([
+    'dashboard',
+    ...nextTabIds as WorkspaceOpenTabState[],
+  ], {
+    allowEmpty: true,
+  })
+
+  return {
+    state: nextState,
+    legacyDesignUnavailable: true,
+  }
+}
+
 export function createResourceTabId(resourceId: string): WorkspaceMainTabId {
   return `resource:${resourceId}` as WorkspaceMainTabId
 }
@@ -125,7 +230,7 @@ export function resolveMeetingIdFromTabId(tabId: string): string {
 }
 
 export function isWorkspaceMainTabId(value: string): value is WorkspaceMainTabId {
-  return ['dashboard', 'meeting', 'members', 'flow', 'design', 'settings'].includes(value)
+  return ['dashboard', 'meeting', 'members', 'flow', 'settings'].includes(value)
     || (value.startsWith('meeting:') && value.length > 'meeting:'.length)
     || value === 'meeting-create:audio'
     || value === 'meeting-create:video'
@@ -428,23 +533,36 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
   function parseProjectWorkspaceViewStateFromQuery(): {
     hasManagedQuery: boolean
     state: Partial<ProjectWorkspaceViewState>
+    legacyDesignUnavailable: boolean
   } {
     const hasManagedQuery = PROJECT_VIEW_STATE_QUERY_KEYS.some(key => key in route.query)
     const hasManagedTabsQuery = ['tabs', 'tab', 'res', 'panel'].some(key => key in route.query)
-    const tabs = normalizeQueryParam(route.query.tabs)
+    const tabItems = normalizeQueryParam(route.query.tabs)
       .split(',')
       .map(item => item.trim())
       .filter(Boolean)
-      .filter(isWorkspaceMainTabId)
       .slice(0, 8)
 
     const panel = normalizeQueryParam(route.query.panel).toLowerCase()
-    let legacyTabId: WorkspaceMainTabId | '' = ''
-    if (panel === 'members' || panel === 'settings' || panel === 'meeting' || panel === 'flow' || panel === 'design')
-      legacyTabId = panel as WorkspaceMainTabId
+    let legacyTabId = ''
+    if (panel === 'members' || panel === 'settings' || panel === 'meeting' || panel === 'flow')
+      legacyTabId = panel
+    else if (panel === 'design')
+      legacyTabId = 'design'
 
-    const activeMainTabId = normalizeString(route.query.tab) || legacyTabId
-    const previewResourceId = normalizeString(route.query.res)
+    const rawActiveMainTabId = normalizeString(route.query.tab) || legacyTabId
+    const rawPreviewResourceId = normalizeString(route.query.res)
+    const migrated = migrateLegacyDesignWorkspaceState({
+      mainTabs: hasManagedTabsQuery ? tabItems : undefined,
+      activeMainTabId: rawActiveMainTabId,
+      previewResourceId: rawPreviewResourceId,
+    }, options.resources.value)
+    const activeMainTabId = normalizeString(migrated.state.activeMainTabId)
+    const previewResourceId = normalizeString(migrated.state.previewResourceId)
+    const tabs = normalizeWorkspaceMainTabIds(
+      (migrated.state.mainTabs as WorkspaceOpenTabState[] | undefined) || [],
+      { allowEmpty: true },
+    )
     const activeMeetingId = normalizeString(route.query.meeting)
       || resolveMeetingIdFromTabId(activeMainTabId)
 
@@ -457,9 +575,10 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
 
     return {
       hasManagedQuery,
+      legacyDesignUnavailable: migrated.legacyDesignUnavailable,
       state: {
         workbenchMode: normalizeProjectWorkbenchMode(route.query.wb),
-        mainTabs: hasManagedTabsQuery ? tabs : undefined,
+        mainTabs: hasManagedTabsQuery ? normalizeWorkspaceMainTabIds(tabs, { allowEmpty: true }) : undefined,
         activeMainTabId: isWorkspaceMainTabId(activeMainTabId) ? activeMainTabId : '',
         previewResourceId,
         selectedContestId: normalizeString(route.query.contest),
@@ -686,6 +805,7 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
         state: createDefaultProjectWorkspaceViewState(),
         bundle: null,
         hasManagedQuery: false,
+        legacyDesignUnavailable: false,
       }
     }
 
@@ -694,28 +814,37 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
     let bundle: ProjectWorkspaceViewDeviceStatePayload | null = null
     let currentState: ProjectWorkspaceViewState | null = null
     let latestOtherState: ProjectWorkspaceViewState | null = null
+    let currentStateLegacyDesignUnavailable = false
+    let latestOtherStateLegacyDesignUnavailable = false
 
     try {
       bundle = await fetchProjectWorkspaceViewPreference(normalizedProjectId)
-      currentState = bundle?.current?.payload
-        ? normalizeProjectWorkspaceViewState(bundle.current.payload)
-        : null
-      latestOtherState = bundle?.latestOther?.payload
-        ? normalizeProjectWorkspaceViewState(bundle.latestOther.payload)
-        : null
+      if (bundle?.current?.payload) {
+        const migratedCurrentState = migrateLegacyDesignWorkspaceState(bundle.current.payload, options.resources.value)
+        currentStateLegacyDesignUnavailable = migratedCurrentState.legacyDesignUnavailable
+        currentState = normalizeProjectWorkspaceViewState(migratedCurrentState.state)
+      }
+      if (bundle?.latestOther?.payload) {
+        const migratedLatestOtherState = migrateLegacyDesignWorkspaceState(bundle.latestOther.payload, options.resources.value)
+        latestOtherStateLegacyDesignUnavailable = migratedLatestOtherState.legacyDesignUnavailable
+        latestOtherState = normalizeProjectWorkspaceViewState(migratedLatestOtherState.state)
+      }
     }
     catch {
       bundle = null
     }
 
+    let legacyDesignUnavailable = queryResult.legacyDesignUnavailable
     if (queryResult.hasManagedQuery) {
       nextState = normalizeProjectWorkspaceViewState(queryResult.state)
     }
     else if (currentState) {
       nextState = currentState
+      legacyDesignUnavailable = currentStateLegacyDesignUnavailable
     }
     else if (bundle?.resolution.isNewDevice && latestOtherState) {
       nextState = latestOtherState
+      legacyDesignUnavailable = latestOtherStateLegacyDesignUnavailable
     }
 
     nextState = sanitizeViewState(nextState)
@@ -730,6 +859,7 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
       state: nextState,
       bundle,
       hasManagedQuery: queryResult.hasManagedQuery,
+      legacyDesignUnavailable,
     }
   }
 
@@ -807,7 +937,6 @@ export function useWorkspaceProjectShell() {
   const openMemberManagementSignal = ref(0)
   const openDisplayPreferencesSignal = ref(0)
   const openFlowSignal = ref(0)
-  const openDesignSignal = ref(0)
   const openPreviewSignal = ref(0)
   const closePreviewSignal = ref(0)
   const accountCenterVisible = ref(false)
@@ -887,7 +1016,6 @@ export function useWorkspaceProjectShell() {
     openMemberManagementSignal,
     openDisplayPreferencesSignal,
     openFlowSignal,
-    openDesignSignal,
     openPreviewSignal,
     closePreviewSignal,
     accountCenterVisible,

@@ -29,9 +29,10 @@ it('协作资源模型暴露 collabPurpose 顶层字段，并在服务端实现 
   assert.match(domainLegacySource, /export type CollabPurpose = 'workflow' \| 'freeform' \| 'design' \| 'notes'/)
   assert.match(domainLegacySource, /collabPurpose\?: CollabPurpose/)
   assert.match(storeSource, /export async function ensureProjectWorkflowCanvas\(/)
-  assert.match(storeSource, /export async function ensureProjectDesignCanvas\(/)
+  assert.match(storeSource, /function parseCollabPurpose\(value: unknown\): CollabPurpose \| null \{[\s\S]*normalized === 'design'/)
   assert.match(storeSource, /collabPurpose: purpose/)
   assert.match(storeSource, /COALESCE\(pr\.metadata->>'collabPurpose', ''\) = 'workflow'/)
+  assert.match(storeSource, /purpose === 'workflow'[\s\S]*'diagram'[\s\S]*purpose === 'design'[\s\S]*'composition'/)
   assert.match(apiSource, /purpose\?: CollabPurpose/)
   assert.match(apiSource, /purpose === 'workflow'\s*\?\s*await ensureProjectWorkflowCanvas/)
 })
@@ -57,6 +58,23 @@ it('项目页从流程入口打开 workflow 画布，并通过资源状态 compo
   assert.doesNotMatch(panelSource, /<div v-else-if="activeTabId === 'flow'"[\s\S]*flowPanelTitle/)
   assert.doesNotMatch(panelSource, /<template v-else-if="activePreviewMode === 'draw'">[\s\S]*rev \{\{ Math\.max\(0, Number\(collabRevision \|\| 0\)\) \}\}/)
   assert.doesNotMatch(panelSource, /赛题确认/)
+})
+
+it('项目页把 design 资源作为独立 resource tab 打开，并通过创建接口生成多实例 design 文件', async () => {
+  const pageSource = await readFile(PROJECT_PAGE_FILE, 'utf8')
+  const apiSource = await readFile(COLLAB_API_FILE, 'utf8')
+  const storeSource = await readFile(RESOURCE_STORE_FILE, 'utf8')
+
+  assert.match(pageSource, /purpose,\s*\.\.\.\(purpose === 'design'/)
+  assert.match(pageSource, /title:\s*'设计稿'/)
+  assert.match(pageSource, /drawMode:\s*'composition'/)
+  assert.doesNotMatch(pageSource, /fixedTab:\s*'design'/)
+  assert.doesNotMatch(apiSource, /purpose === 'design'\s*\?\s*await ensureProjectDesignCanvas/)
+  assert.match(apiSource, /purpose === 'design'[\s\S]*drawMode: normalizeString\(body\.drawMode \|\| requestMetadata\.drawMode\) \|\| 'composition'/)
+  assert.match(storeSource, /purpose === 'workflow'[\s\S]*'diagram'[\s\S]*purpose === 'design'[\s\S]*'composition'/)
+  assert.match(pageSource, /async function resolveProjectResourceOpenTarget\(/)
+  assert.doesNotMatch(pageSource, /isLegacyDesignDraftAliasResource\(targetResource\)/)
+  assert.match(pageSource, /if \(target\.surface === 'preview' \|\| target\.surface === 'design'\) \{[\s\S]*surface: target\.surface/)
 })
 
 it('左侧资源入口与资源命名统一为妙想文档 / 原型白板 / 设计画布 / 流程画布', async () => {

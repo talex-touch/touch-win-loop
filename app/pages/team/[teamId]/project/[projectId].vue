@@ -186,7 +186,6 @@ const {
   openMemberManagementSignal,
   openDisplayPreferencesSignal,
   openFlowSignal,
-  openDesignSignal,
   openPreviewSignal,
   closePreviewSignal,
   accountCenterVisible,
@@ -214,6 +213,7 @@ interface HydratedProjectWorkspaceViewStateResult {
     }
   } | null
   hasManagedQuery: boolean
+  legacyDesignUnavailable: boolean
 }
 
 type DeviceRestoreChoice = 'sync' | 'keep'
@@ -513,7 +513,6 @@ const {
   projectResourceShares,
   projectOutlineSnapshot,
   flowResourceId,
-  designResourceId,
   previewResourceId,
   collabBindingResourceId,
   closingPreviewResourceId,
@@ -577,8 +576,8 @@ const {
   finalReviewAssistantOpen,
   preFinalReviewLeftCollapsed,
   preFinalReviewRightCollapsed,
-  preFinalReviewActiveMainTabId,
-  preFinalReviewOpenTabs,
+  preFinalReviewActiveMainTabId: preFinalReviewActiveMainTabId as typeof activeMainTabId,
+  preFinalReviewOpenTabs: preFinalReviewOpenTabs as typeof openMainTabs,
 })
 const workspaceMainPanelRef = ref<{
   applyMarkdownDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
@@ -2332,12 +2331,6 @@ const flowResource = computed(() => {
     return null
   return resources.value.find(item => item.id === targetId) || null
 })
-const designResource = computed(() => {
-  const targetId = String(designResourceId.value || '').trim()
-  if (!targetId)
-    return null
-  return resources.value.find(item => item.id === targetId) || null
-})
 const previewResourceTitle = computed(() => {
   const currentPreviewResource = previewResource.value
   const resourceId = String(currentPreviewResource?.id || '').trim()
@@ -2356,12 +2349,6 @@ const flowResourceTitle = computed(() => {
   if (title)
     return title
   return '流程画布'
-})
-const designResourceTitle = computed(() => {
-  const title = String(designResource.value?.title || '').trim()
-  if (title)
-    return title
-  return '设计稿'
 })
 function resolveResourceSourceDownloadUrl(resource: Resource | null | undefined): string {
   const rawUrl = String(resource?.sourceDownloadUrl || resource?.sourceLink || '').trim()
@@ -4918,6 +4905,15 @@ async function createCollabResource(
       body: {
         kind,
         purpose,
+        ...(purpose === 'design'
+          ? {
+              title: '设计稿',
+              drawMode: 'composition',
+              sceneSourceType: 'image_mockup',
+              templateKey: 'device-showcase',
+              editorEngine: 'vueflow',
+            }
+          : {}),
         parentResourceId: parentResourceId || undefined,
       },
     })
@@ -4928,11 +4924,7 @@ async function createCollabResource(
     const snapshot = response.data?.snapshot
     if (createdResource?.id) {
       await openProjectCollabResource(createdResource.id, snapshot || null, {
-        surface: purpose === 'workflow'
-          ? 'flow'
-          : purpose === 'design'
-            ? 'design'
-            : 'preview',
+        surface: purpose === 'design' ? 'design' : 'preview',
       })
       statusLine.value = `已创建${resourceLabel}，协作模式已打开。`
       return
@@ -5289,6 +5281,13 @@ interface OpenCollabOptions extends OpenPreviewOptions {
   surface?: 'preview' | 'flow' | 'design'
 }
 
+type ProjectResourceOpenSurface = NonNullable<OpenCollabOptions['surface']> | 'binary'
+
+interface ProjectResourceOpenTarget {
+  resourceId: string
+  surface: ProjectResourceOpenSurface
+}
+
 async function bindCollabResource(
   resourceId: string,
   snapshot?: CollabSnapshotPayload | null,
@@ -5333,25 +5332,9 @@ async function openProjectCollabResource(
     return
   }
 
-  if (options.surface === 'design') {
-    const targetSnapshot = await bindCollabResource(targetResourceId, snapshot)
-    if (!targetSnapshot)
-      return
-
-    clearPreviewStatusPolling()
-    previewStatusPayload.value = null
-    previewStatusLoading.value = false
-    collabPreviewLoading.value = false
-    collabPreviewError.value = ''
-    designResourceId.value = targetResourceId
-    if (options.openTab !== false)
-      openDesignSignal.value += 1
-    return
-  }
-
   const requestId = Number(options.requestId || ++projectResourcePreviewRequestId)
   const targetResource = resources.value.find(item => item.id === targetResourceId) || null
-  const targetPreviewMode = targetResource?.resourceKind === 'draw'
+  const targetPreviewMode = options.surface === 'design' || targetResource?.resourceKind === 'draw'
     ? 'draw'
     : 'markdown'
   const targetTabId = createResourceTabId(targetResourceId)
@@ -5440,39 +5423,35 @@ async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<b
   }
 }
 
-async function ensureDesignCanvas(options: OpenPreviewOptions = {}): Promise<boolean> {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId)
-    return false
+function removeProjectResourceOpenTab(resourceId: string): void {
+  const targetResourceId = normalizeString(resourceId)
+  if (!targetResourceId)
+    return
+  const targetTabId = createResourceTabId(targetResourceId)
+  if (!openMainTabs.value.includes(targetTabId))
+    return
+  openMainTabs.value = openMainTabs.value.filter(tabId => tabId !== targetTabId)
+}
 
-  try {
-    const response = await unsafeFetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
-      method: 'POST',
-      body: {
-        kind: 'draw',
-        purpose: 'freeform',
-        title: '设计稿',
-        drawMode: 'composition',
-        sceneSourceType: 'image_mockup',
-        templateKey: 'device-showcase',
-        metadata: {
-          fixedTab: 'design',
-        },
-      },
-    })
+async function resolveProjectResourceOpenTarget(resourceId: string): Promise<ProjectResourceOpenTarget | null> {
+  const targetResourceId = normalizeString(resourceId)
+  if (!targetResourceId)
+    return null
 
-    await refreshProjectCriticalResourceContext()
-    void refreshProjectDeferredResourceContext()
-    await openProjectCollabResource(response.data.resource.id, response.data.snapshot || null, {
-      openTab: options.openTab,
-      surface: 'design',
-    })
-    return true
-  }
-  catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '打开设计稿失败，请稍后重试。')
-    return false
-  }
+  const targetResource = resources.value.find(item => item.id === targetResourceId) || null
+  if (!targetResource)
+    return { resourceId: targetResourceId, surface: 'binary' }
+
+  if (isWorkflowCanvasResource(targetResource))
+    return { resourceId: targetResourceId, surface: 'flow' }
+
+  if (isDesignCanvasResource(targetResource))
+    return { resourceId: targetResourceId, surface: 'design' }
+
+  if (isCollabResource(targetResource))
+    return { resourceId: targetResourceId, surface: 'preview' }
+
+  return { resourceId: targetResourceId, surface: 'binary' }
 }
 
 async function fetchResourcePreviewStatus(
@@ -5545,28 +5524,39 @@ function startPreviewStatusPolling(resourceId: string, requestId = projectResour
 }
 
 async function openProjectResourcePreview(resourceId: string, options: OpenPreviewOptions = {}) {
-  const targetResource = resources.value.find(item => item.id === resourceId) || null
-  if (isCollabResource(targetResource)) {
-    await openProjectCollabResource(resourceId, undefined, {
+  const targetResourceId = String(resourceId || '').trim()
+  if (!activeProjectId.value || !targetResourceId)
+    return
+
+  const target = await resolveProjectResourceOpenTarget(targetResourceId)
+  if (!target)
+    return
+
+  if (target.surface === 'flow') {
+    await openProjectCollabResource(target.resourceId, undefined, {
       ...options,
-      surface: isWorkflowCanvasResource(targetResource)
-        ? 'flow'
-        : isDesignCanvasResource(targetResource)
-          ? 'design'
-          : 'preview',
+      openTab: true,
+      surface: target.surface,
+    })
+    removeProjectResourceOpenTab(targetResourceId)
+    return
+  }
+
+  if (target.surface === 'preview' || target.surface === 'design') {
+    await openProjectCollabResource(target.resourceId, undefined, {
+      ...options,
+      surface: target.surface,
     })
     return
   }
 
-  const targetResourceId = String(resourceId || '').trim()
   const requestId = Number(options.requestId || ++projectResourcePreviewRequestId)
-  const targetTabId = createResourceTabId(targetResourceId)
-  if (!activeProjectId.value || !targetResourceId)
-    return
+  const resolvedResourceId = target.resourceId
+  const targetTabId = createResourceTabId(resolvedResourceId)
 
   if (
     options.forceReload !== true
-    && previewResourceId.value === targetResourceId
+    && previewResourceId.value === resolvedResourceId
     && activeMainTabId.value === targetTabId
     && previewMode.value === 'binary'
     && !previewStatusLoading.value
@@ -5579,23 +5569,23 @@ async function openProjectResourcePreview(resourceId: string, options: OpenPrevi
   clearPreviewStatusPolling()
   disposeCollabDocBinding(true)
   previewMode.value = 'binary'
-  previewResourceId.value = targetResourceId
+  previewResourceId.value = resolvedResourceId
   closingPreviewResourceId.value = ''
   if (options.openTab !== false)
     openPreviewSignal.value += 1
   previewStatusPayload.value = null
 
-  await fetchResourcePreviewStatus(targetResourceId, false, { requestId })
+  await fetchResourcePreviewStatus(resolvedResourceId, false, { requestId })
   if (
     requestId !== projectResourcePreviewRequestId
-    || previewResourceId.value !== targetResourceId
+    || previewResourceId.value !== resolvedResourceId
   ) {
     return
   }
 
   const currentStatus = ((previewStatusPayload.value as any)?.status || '') as ResourcePreviewStatus | ''
   if (currentStatus !== 'succeeded' && currentStatus !== 'failed')
-    startPreviewStatusPolling(targetResourceId, requestId)
+    startPreviewStatusPolling(resolvedResourceId, requestId)
 }
 
 function findMarkdownResourceByAnchorHash(hash: string): Resource | null {
@@ -5635,8 +5625,24 @@ async function activateProjectResourceTab(resourceId: string): Promise<void> {
   const targetResourceId = String(resourceId || '').trim()
   if (!targetResourceId)
     return
-  const targetTabId = createResourceTabId(targetResourceId)
-  previewResourceId.value = targetResourceId
+
+  const target = await resolveProjectResourceOpenTarget(targetResourceId)
+  if (!target)
+    return
+
+  if (target.surface === 'flow') {
+    if (activeMainTabId.value === 'flow')
+      return
+    await openProjectCollabResource(target.resourceId, undefined, {
+      openTab: true,
+      surface: target.surface,
+    })
+    removeProjectResourceOpenTab(targetResourceId)
+    return
+  }
+
+  const targetTabId = createResourceTabId(target.resourceId)
+  previewResourceId.value = target.resourceId
   closingPreviewResourceId.value = ''
 
   if (activeMainTabId.value === targetTabId)
@@ -8241,7 +8247,6 @@ watch(activeProjectId, async (next, previous) => {
     resourceLibraryLoading.value = false
     projectResourceSharesLoading.value = false
     flowResourceId.value = ''
-    designResourceId.value = ''
     projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
     topicBoardSnapshot.value = null
@@ -8278,6 +8283,8 @@ watch(activeProjectId, async (next, previous) => {
     const restoredViewState = await hydrateProjectWorkspaceViewState(next)
     if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
       return
+    if (restoredViewState.legacyDesignUnavailable)
+      statusLine.value = '旧设计入口已不可用，已返回项目仪表盘。'
 
     const selectedContestIdFromState = String(restoredViewState.state.selectedContestId || '').trim()
     emitWorkspaceBootstrapTrace('bootstrap:shell-ready', next, requestId, {
@@ -8351,20 +8358,9 @@ watch(resources, (nextResources) => {
   if (workflowResource && !flowResourceId.value)
     flowResourceId.value = workflowResource.id
 
-  const nextDesignResource = nextResources.find(item => isDesignCanvasResource(item)) || null
-  if (nextDesignResource && designResourceId.value !== nextDesignResource.id)
-    designResourceId.value = nextDesignResource.id
-
   if (flowResourceId.value && !nextResources.some(item => item.id === flowResourceId.value)) {
     const shouldDispose = collabBindingResourceId.value === flowResourceId.value && activeMainTabId.value === 'flow'
     flowResourceId.value = ''
-    if (shouldDispose)
-      disposeCollabDocBinding(true)
-  }
-
-  if (designResourceId.value && !nextResources.some(item => item.id === designResourceId.value)) {
-    const shouldDispose = collabBindingResourceId.value === designResourceId.value && activeMainTabId.value === 'design'
-    designResourceId.value = ''
     if (shouldDispose)
       disposeCollabDocBinding(true)
   }
@@ -8465,23 +8461,6 @@ async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value)
     return
   }
 
-  if (nextTabId === 'design') {
-    let targetResourceId = String(designResourceId.value || '').trim()
-    if (!targetResourceId) {
-      const opened = await ensureDesignCanvas({ openTab: false })
-      if (!opened)
-        return
-      targetResourceId = String(designResourceId.value || '').trim()
-    }
-    if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
-      return
-    await openProjectCollabResource(targetResourceId, undefined, {
-      openTab: false,
-      surface: 'design',
-    })
-    return
-  }
-
   if (!nextTabId.startsWith('resource:'))
     return
 
@@ -8489,13 +8468,13 @@ async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value)
   if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
     return
 
-  const targetResource = resources.value.find(item => item.id === targetResourceId) || null
-  if (!isCollabResource(targetResource))
+  const target = await resolveProjectResourceOpenTarget(targetResourceId)
+  if (!target || (target.surface !== 'preview' && target.surface !== 'design'))
     return
 
-  await openProjectCollabResource(targetResourceId, undefined, {
+  await openProjectCollabResource(target.resourceId, undefined, {
     openTab: false,
-    surface: 'preview',
+    surface: target.surface,
   })
 }
 
@@ -8589,14 +8568,6 @@ async function loadActiveWorkspaceCriticalTabData(
     const workflowResource = resources.value.find(item => isWorkflowCanvasResource(item)) || null
     if (workflowResource && flowResourceId.value !== workflowResource.id)
       flowResourceId.value = workflowResource.id
-    await syncActiveMainTabCollabBinding(tabId)
-    return result
-  }
-
-  if (tabId === 'design') {
-    const designResource = resources.value.find(item => isDesignCanvasResource(item)) || null
-    if (designResource && designResourceId.value !== designResource.id)
-      designResourceId.value = designResource.id
     await syncActiveMainTabCollabBinding(tabId)
     return result
   }
@@ -8986,13 +8957,10 @@ watch(() => workspaceRealtime.connected.value, () => {
         :open-member-management-signal="openMemberManagementSignal"
         :open-display-preferences-signal="openDisplayPreferencesSignal"
         :open-flow-signal="openFlowSignal"
-        :open-design-signal="openDesignSignal"
         :open-preview-signal="openPreviewSignal"
         :close-preview-signal="closePreviewSignal"
         :flow-resource-id="flowResourceId"
         :flow-resource-title="flowResourceTitle"
-        :design-resource-id="designResourceId"
-        :design-resource-title="designResourceTitle"
         :preview-resource-id="previewResourceId"
         :closing-preview-resource-id="closingPreviewResourceId"
         :preview-resource-title="previewResourceTitle"

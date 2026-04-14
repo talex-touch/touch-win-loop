@@ -148,7 +148,9 @@ it('项目卡展示图标徽标、底部摘要区、快捷操作区与稳定 dis
   assert.match(teamSource, /endpoint\(`\/projects\/\$\{projectId\}\/members\/\$\{normalizedUserId\}`\)/, '成员管理弹窗未命中成员移除接口路径')
   assert.match(teamSource, /method: 'DELETE'/, '成员管理弹窗未使用 DELETE 方法移除成员')
   assert.match(workspaceShellSource, /const panel = normalizeQueryParam\(route\.query\.panel\)\.toLowerCase\(\)/, '项目工作区未消费 panel query')
-  assert.match(workspaceShellSource, /if \(panel === 'members' \|\| panel === 'settings' \|\| panel === 'meeting' \|\| panel === 'flow' \|\| panel === 'design'\)\s+legacyTabId = panel as WorkspaceMainTabId/, '项目工作区未兼容 legacy panel query')
+  assert.match(workspaceShellSource, /if \(panel === 'members' \|\| panel === 'settings' \|\| panel === 'meeting' \|\| panel === 'flow'\)\s+legacyTabId = panel/, '项目工作区未兼容标准 legacy panel query')
+  assert.match(workspaceShellSource, /else if \(panel === 'design'\)\s+legacyTabId = 'design'/, '项目工作区未保留 legacy design panel 迁移入口')
+  assert.match(workspaceShellSource, /migrateLegacyDesignWorkspaceState\(/, '项目工作区未执行 legacy design 链接迁移')
 })
 
 it('平台首页改成纯 Loopy 问答页，侧边导航同步切换品牌', async () => {

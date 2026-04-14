@@ -198,7 +198,7 @@ function normalizeSceneEditorEngine(value: unknown, fallback: 'vueflow' | 'tldra
 
 function parseCollabPurpose(value: unknown): CollabPurpose | null {
   const normalized = normalizeString(value).toLowerCase()
-  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'design' || normalized === 'notes')
     return normalized
   return null
 }
@@ -217,6 +217,23 @@ function normalizeCollabPurpose(
   if (kind === 'markdown')
     return parsed === 'notes' ? parsed : null
   return parsed === 'workflow' || parsed === 'freeform' || parsed === 'design' ? parsed : null
+}
+
+function hasLegacyDesignCanvasMetadata(metadata: Record<string, unknown>): boolean {
+  return normalizeString(metadata.fixedTab).toLowerCase() === 'design'
+    || normalizeString(metadata.drawMode).toLowerCase() === 'composition'
+}
+
+function resolveStoredCollabPurpose(
+  kind: Extract<ResourceKind, 'markdown' | 'draw'>,
+  metadata: Record<string, unknown>,
+): CollabPurpose {
+  const parsed = parseCollabPurpose(metadata.collabPurpose)
+  if (parsed)
+    return parsed
+  if (kind === 'draw' && hasLegacyDesignCanvasMetadata(metadata))
+    return 'design'
+  return resolveDefaultCollabPurpose(kind)
 }
 
 function parseResourceKind(value: unknown): ResourceKind | null {
@@ -834,9 +851,8 @@ function toResource(row: ProjectResourceRow): Resource {
   const persistedKind = parseResourceKind(row.resource_kind)
   const metadataKind = parseResourceKind(metadata.resourceKind)
   const collabKind = parseCollabKind(row.resource_kind) || parseCollabKind(metadata.resourceKind) || 'markdown'
-  const inferredCollabPurpose = resolveDefaultCollabPurpose(collabKind)
   const collabPurpose = sourceType === 'collab'
-    ? (parseCollabPurpose(metadata.collabPurpose) || inferredCollabPurpose)
+    ? resolveStoredCollabPurpose(collabKind, metadata)
     : undefined
   const resourceKind: ResourceKind = persistedKind
     || metadataKind
@@ -872,7 +888,9 @@ function toResource(row: ProjectResourceRow): Resource {
         metadata.drawMode,
         collabPurpose === 'workflow'
           ? 'diagram'
-          : 'freeform',
+          : collabPurpose === 'design'
+            ? 'composition'
+            : 'freeform',
       )
     : undefined
   const sceneSourceType = resourceKind === 'draw'
@@ -1645,6 +1663,16 @@ export async function createProjectCollabResource(
     ? 'text/markdown'
     : 'application/vnd.winloop.draw+json'
   const inputMetadata = parseResourceMetadata(input.metadata)
+  const defaultDrawMode = kind === 'draw'
+    ? normalizeDrawMode(
+        inputMetadata.drawMode,
+        purpose === 'workflow'
+          ? 'diagram'
+          : purpose === 'design'
+            ? 'composition'
+            : 'freeform',
+      )
+    : undefined
   const metadata = {
     resourceKind: kind,
     collabPurpose: purpose,
@@ -1653,25 +1681,15 @@ export async function createProjectCollabResource(
     ...inputMetadata,
     ...(kind === 'draw'
       ? {
-          drawMode: normalizeDrawMode(
-            inputMetadata.drawMode,
-            purpose === 'workflow'
-              ? 'diagram'
-              : 'freeform',
-          ),
+          drawMode: defaultDrawMode,
           sceneSourceType: normalizeSceneSourceType(
             inputMetadata.sceneSourceType,
-            'manual',
+            purpose === 'design' ? 'image_mockup' : 'manual',
           ),
           templateKey: normalizeString(inputMetadata.templateKey) || undefined,
           editorEngine: normalizeSceneEditorEngine(
             inputMetadata.editorEngine,
-            normalizeDrawMode(
-              inputMetadata.drawMode,
-              purpose === 'workflow'
-                ? 'diagram'
-                : 'freeform',
-            ) === 'freeform'
+            defaultDrawMode === 'freeform'
               ? 'tldraw_legacy'
               : 'vueflow',
           ),
@@ -1879,64 +1897,6 @@ export async function ensureProjectDesignCanvas(
     templateKey?: string
   },
 ): Promise<{ resource: Resource, snapshot: ProjectCollabSnapshot }> {
-  const existingResult = await db.query<ProjectResourceRow>(
-    `SELECT
-      pr.id,
-      pr.project_id,
-      pr.parent_resource_id,
-      pr.sort_order,
-      pr.source,
-      pr.resource_kind,
-      pr.linked_contest_resource_id,
-      pr.title,
-      pr.mime_type,
-      pr.category,
-      pr.year,
-      pr.source_link,
-      pr.availability,
-      pr.summary,
-      pr.content,
-      pr.metadata,
-      pr.status,
-      pr.created_by_user_id,
-      pr.updated_by_user_id,
-      pr.created_at::TEXT,
-      pr.updated_at::TEXT,
-      prc.revision AS collab_revision
-     FROM project_resources pr
-     JOIN project_resource_collab_docs prc
-       ON prc.resource_id = pr.id
-      AND prc.project_id = pr.project_id
-     WHERE pr.project_id = $1
-       AND pr.status = 'active'
-       AND pr.source = 'collab'
-       AND pr.resource_kind = 'draw'
-       AND (
-         COALESCE(pr.metadata->>'collabPurpose', '') = 'design'
-         OR (
-           COALESCE(pr.metadata->>'drawMode', '') = 'composition'
-           AND COALESCE(pr.metadata->>'fixedTab', '') = 'design'
-         )
-       )
-     ORDER BY pr.created_at ASC
-     LIMIT 1`,
-    [input.projectId],
-  )
-
-  const existing = existingResult.rows[0]
-  if (existing) {
-    const snapshot = await getProjectCollabSnapshot(db, {
-      projectId: input.projectId,
-      resourceId: existing.id,
-    })
-    if (!snapshot)
-      throw new Error('DESIGN_CANVAS_SNAPSHOT_NOT_FOUND')
-    return {
-      resource: toResource(existing),
-      snapshot,
-    }
-  }
-
   return createProjectCollabResource(db, {
     projectId: input.projectId,
     actorUserId: input.actorUserId,
@@ -1944,7 +1904,6 @@ export async function ensureProjectDesignCanvas(
     purpose: 'design',
     title: input.title,
     metadata: {
-      fixedTab: 'design',
       drawMode: 'composition',
       sceneSourceType: 'image_mockup',
       templateKey: normalizeString(input.templateKey) || 'device-showcase',

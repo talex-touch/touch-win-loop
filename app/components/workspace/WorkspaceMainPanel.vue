@@ -109,13 +109,10 @@ const props = withDefaults(defineProps<{
   openMemberManagementSignal?: number
   openDisplayPreferencesSignal?: number
   openFlowSignal?: number
-  openDesignSignal?: number
   openPreviewSignal?: number
   closePreviewSignal?: number
   flowResourceId?: string
   flowResourceTitle?: string
-  designResourceId?: string
-  designResourceTitle?: string
   previewResourceId?: string
   closingPreviewResourceId?: string
   previewResourceTitle?: string
@@ -223,13 +220,10 @@ const props = withDefaults(defineProps<{
   openMemberManagementSignal: 0,
   openDisplayPreferencesSignal: 0,
   openFlowSignal: 0,
-  openDesignSignal: 0,
   openPreviewSignal: 0,
   closePreviewSignal: 0,
   flowResourceId: '',
   flowResourceTitle: '',
-  designResourceId: '',
-  designResourceTitle: '',
   previewResourceId: '',
   closingPreviewResourceId: '',
   previewResourceTitle: '',
@@ -499,13 +493,6 @@ const fixedTabs: WorkspaceMainTab[] = [
     kind: 'fixed',
     title: '流程画布',
     icon: 'flowsheet',
-    closeable: true,
-  },
-  {
-    id: 'design',
-    kind: 'fixed',
-    title: '设计',
-    icon: 'palette',
     closeable: true,
   },
   {
@@ -1083,6 +1070,8 @@ function resolveResourceTabIcon(mode: WorkspacePreviewMode, purpose: CollabPurpo
     return 'edit_note'
   if (mode === 'draw' && purpose === 'workflow')
     return 'flowsheet'
+  if (mode === 'draw' && purpose === 'design')
+    return 'palette'
   if (mode === 'draw')
     return 'draw'
   return 'description'
@@ -1132,8 +1121,13 @@ const activeResource = computed(() => {
 
 const hasFlowResource = computed(() => Boolean(String(props.flowResourceId || '').trim()))
 const flowPanelTitle = computed(() => String(props.flowResourceTitle || '').trim() || '流程画布')
-const hasDesignResource = computed(() => Boolean(String(props.designResourceId || '').trim()))
-const designPanelTitle = computed(() => String(props.designResourceTitle || '').trim() || '设计稿')
+const activeDesignResourceId = computed(() => {
+  return activeResourceTab.value?.previewMode === 'draw' && resolveCollabPurpose(activeResource.value) === 'design'
+    ? String(activeResourceTab.value.resourceId || '').trim()
+    : ''
+})
+const isActiveDesignResource = computed(() => Boolean(activeDesignResourceId.value))
+const activeDesignPanelTitle = computed(() => String(activeResourceTab.value?.title || '').trim() || '设计稿')
 
 const breadcrumbItems = computed(() => {
   if (activeResourceTab.value) {
@@ -1168,9 +1162,6 @@ const breadcrumbItems = computed(() => {
 
   if (activeTabId.value === 'members')
     return ['竞赛分析', '项目协作']
-
-  if (activeTabId.value === 'design')
-    return ['竞赛分析', '设计']
 
   if (activeTabId.value === 'flow')
     return ['竞赛分析', '流程画布']
@@ -2163,12 +2154,6 @@ watch(() => props.openFlowSignal, (next, previous) => {
   ensureFixedTabOpen('flow', true)
 })
 
-watch(() => props.openDesignSignal, (next, previous) => {
-  if (next === previous)
-    return
-  ensureFixedTabOpen('design', true)
-})
-
 watch(() => props.openPreviewSignal, (next, previous) => {
   if (next === previous)
     return
@@ -2347,23 +2332,6 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :collab-draw-value="collabDrawValue"
         :collab-draw-error="collabDrawError"
         @update-collab-draw-value="onCollabDrawModelUpdate"
-        @update-collab-cursor="onCollabCursorUpdate"
-      />
-
-      <WorkspaceDesignPanel
-        v-else-if="activeTabId === 'design'"
-        class="h-full min-h-0 w-full"
-        :design-resource-id="props.designResourceId"
-        :bound-resource-id="props.collabResourceId"
-        :design-panel-title="designPanelTitle"
-        :has-design-resource="hasDesignResource"
-        :collab-revision="collabRevision"
-        :collab-connected="collabConnected"
-        :collab-connection-text="collabConnectionText"
-        :collab-presence-cursors="collabPresenceCursors"
-        :model-value="props.collabDrawValue"
-        :collab-draw-error="collabDrawError"
-        @update:model-value="onCollabDrawModelUpdate"
         @update-collab-cursor="onCollabCursorUpdate"
       />
 
@@ -2742,6 +2710,25 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
           @revoke-project-resource-share="emit('revokeProjectResourceShare', $event)"
         />
       </section>
+
+      <WorkspaceDesignPanel
+        v-else-if="isActiveDesignResource"
+        class="h-full min-h-0 w-full"
+        :design-resource-id="activeDesignResourceId"
+        :bound-resource-id="props.collabResourceId"
+        :design-panel-title="activeDesignPanelTitle"
+        :has-design-resource="isActiveDesignResource"
+        :collab-revision="collabRevision"
+        :collab-connected="collabConnected"
+        :collab-connection-text="collabConnectionText"
+        :collab-presence-cursors="collabPresenceCursors"
+        :model-value="props.collabDrawValue"
+        :collab-draw-error="collabDrawError"
+        :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+        :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
+        @update:model-value="onCollabDrawModelUpdate"
+        @update-collab-cursor="onCollabCursorUpdate"
+      />
 
       <WorkspaceResourcePreviewTab
         v-else-if="activeResourceTab"

@@ -64,13 +64,14 @@ it('统一 scene 平台基础骨架已接入共享类型与设计画布资源页
   assert.match(domainLegacySource, /export type SceneEditorEngine = 'vueflow' \| 'tldraw_legacy'/)
   assert.match(domainLegacySource, /export interface DesignPageModel \{/)
   assert.match(domainLegacySource, /export interface DesignFrameModel \{/)
-  assert.match(domainLegacySource, /export type WorkspaceFixedTabId = 'dashboard' \| 'meeting' \| 'members' \| 'flow' \| 'design' \| 'settings'/)
+  assert.match(domainLegacySource, /export type WorkspaceFixedTabId = 'dashboard' \| 'meeting' \| 'members' \| 'flow' \| 'settings'/)
 
   assert.match(mainPanelSource, /<WorkspaceDesignPanel/)
-  assert.match(mainPanelSource, /openDesignSignal/)
-  assert.match(mainPanelSource, /designPanelTitle/)
+  assert.match(mainPanelSource, /isActiveDesignResource/)
+  assert.match(mainPanelSource, /activeDesignPanelTitle/)
   assert.match(mainPanelSource, /migrateLegacyOpenTabsFromProps/)
-  assert.match(mainPanelSource, /id: 'design'/)
+  assert.doesNotMatch(mainPanelSource, /openDesignSignal/)
+  assert.doesNotMatch(mainPanelSource, /id: 'design'/)
   assert.doesNotMatch(chromeSource, /openDesign/)
   assert.doesNotMatch(chromeSource, /打开设计/)
 
@@ -201,7 +202,8 @@ it('统一 scene 平台基础骨架已接入共享类型与设计画布资源页
   assert.match(flowTabSource, /workspace manifests/)
   assert.match(flowTabSource, /OpenAPI/)
 
-  assert.match(viewStoreSource, /'dashboard', 'meeting', 'members', 'flow', 'design', 'settings'/)
+  assert.match(viewStoreSource, /'dashboard', 'meeting', 'members', 'flow', 'settings'/)
+  assert.match(viewStoreSource, /preserveLegacyDesignTab: true/)
 
   await assert.rejects(readFile(LEGACY_DESIGN_FLOATING_TOOLBAR_FILE, 'utf8'))
   await assert.rejects(readFile(LEGACY_DESIGN_SIDEBAR_PANEL_FILE, 'utf8'))
@@ -248,6 +250,7 @@ it('画布兼容层和 AI scene 工具已接入 SceneDocument', async () => {
   assert.match(collabPostSource, /templateKey\?: string/)
   assert.match(collabPostSource, /editorEngine\?: string/)
   assert.match(collabPostSource, /purpose 仅支持 workflow \/ freeform \/ design \/ notes/)
-  assert.match(collabPostSource, /ensureProjectDesignCanvas/)
+  assert.doesNotMatch(collabPostSource, /ensureProjectDesignCanvas/)
+  assert.match(collabPostSource, /purpose === 'design'[\s\S]*drawMode: normalizeString\(body\.drawMode \|\| requestMetadata\.drawMode\) \|\| 'composition'/)
   assert.match(collabPostSource, /metadata:\s*\{/)
 })

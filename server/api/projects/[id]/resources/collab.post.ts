@@ -7,7 +7,6 @@ import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import {
   createProjectCollabResource,
-  ensureProjectDesignCanvas,
   ensureProjectWorkflowCanvas,
 } from '~~/server/utils/project-resource-store'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
@@ -132,13 +131,6 @@ export default defineEventHandler(async (event) => {
             actorUserId: user.id,
             title,
           })
-        : purpose === 'design'
-            ? await ensureProjectDesignCanvas(db, {
-                projectId,
-                actorUserId: user.id,
-                title,
-                templateKey: normalizeString(body.templateKey || requestMetadata.templateKey),
-              })
         : await createProjectCollabResource(db, {
             projectId,
             actorUserId: user.id,
@@ -152,6 +144,14 @@ export default defineEventHandler(async (event) => {
               ...(normalizeString(body.sceneSourceType) ? { sceneSourceType: normalizeString(body.sceneSourceType) } : {}),
               ...(normalizeString(body.templateKey) ? { templateKey: normalizeString(body.templateKey) } : {}),
               ...(normalizeString(body.editorEngine) ? { editorEngine: normalizeString(body.editorEngine) } : {}),
+              ...(purpose === 'design'
+                ? {
+                    drawMode: normalizeString(body.drawMode || requestMetadata.drawMode) || 'composition',
+                    sceneSourceType: normalizeString(body.sceneSourceType || requestMetadata.sceneSourceType) || 'image_mockup',
+                    templateKey: normalizeString(body.templateKey || requestMetadata.templateKey) || 'device-showcase',
+                    editorEngine: normalizeString(body.editorEngine || requestMetadata.editorEngine) || 'vueflow',
+                  }
+                : {}),
             },
           })
 

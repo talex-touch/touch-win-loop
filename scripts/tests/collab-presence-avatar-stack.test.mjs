@@ -31,9 +31,11 @@ it('draw 协作头像栈挂到 breadcrumb 行，并复用用户级聚合数据',
   assert.doesNotMatch(panelSource, /import CollabPresenceDock from/, '主面板仍然保留 markdown 底部成员栏组件')
   assert.match(panelSource, /const collabPresenceUsers = computed<WorkspaceCollabPresenceUser\[\]>\(\(\) => \{/, '主面板未聚合用户级在线成员数据')
   assert.match(panelSource, /const showBreadcrumbPresence = computed\(\(\) => \{/, '主面板未声明 breadcrumb 协作头像显示条件')
+  assert.match(panelSource, /if \(activeTabId\.value === 'flow'\)/, '主面板未在流程固定页签显示 breadcrumb 协作头像')
+  assert.match(panelSource, /return Boolean\(activeResourceTab\.value && \(activePreviewMode\.value === 'markdown' \|\| activePreviewMode\.value === 'draw'\)\)/, '资源页签未统一复用 breadcrumb 协作头像显示条件')
   assert.match(panelSource, /:collab-presence-users="showBreadcrumbPresence \? collabPresenceUsers : \[\]"/, '主面板未向 chrome 透传 breadcrumb 协作头像数据')
   assert.equal((chromeSource.match(/<CollabPresenceAvatarStack/g) || []).length, 1, '主面板 chrome 头像栈应仅保留 breadcrumb 一处入口')
-  assert.match(chromeSource, /class="text-\[11px\] text-slate-400 px-4 py-2 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-3"/, 'breadcrumb 行未压缩高度与间距')
+  assert.match(chromeSource, /class="workspace-main-breadcrumb text-slate-400 border-b border-slate-200 bg-white flex w-full min-w-0 items-center justify-between gap-2"/, 'breadcrumb 行未保留当前紧凑布局根节点')
   assert.match(chromeSource, /<CollabPresenceAvatarStack[\s\S]*v-if="props\.collabPresenceUsers\.length > 0"[\s\S]*:users="props\.collabPresenceUsers"[\s\S]*appearance="flat"[\s\S]*size="sm"/, 'breadcrumb 右侧未挂载紧凑协作头像栈')
   assert.doesNotMatch(panelSource, /:presence-users="collabPresenceUsers"/g, '流程画布与自由画布仍把头像栈数据下发给画布 overlay')
   assert.doesNotMatch(panelSource, /<CollabPresenceDock\s+:users="collabPresenceUsers"\s*\/>/, 'markdown 底部成员栏仍然存在')
@@ -79,8 +81,8 @@ it('draw 协作画布展示不同用户的实时彩色鼠标', async () => {
   const presenceHelperSource = await readFile(PRESENCE_HELPER_FILE, 'utf8')
 
   assert.match(projectPageSource, /collabSession\.updatePresenceCursor\(value\.cursorX, value\.cursorY\)/, '项目页未把画布鼠标事件回传到协作会话')
-  assert.equal((panelSource.match(/:collab-presence-cursors="collabPresenceCursors"/g) || []).length, 2, '流程画布与自由画布未同时接入远端鼠标数据')
-  assert.equal((panelSource.match(/@update-collab-cursor="onCollabCursorUpdate"/g) || []).length, 2, '主面板未接收画布鼠标更新事件')
+  assert.equal((panelSource.match(/:collab-presence-cursors="collabPresenceCursors"/g) || []).length, 3, '流程、设计与自由画布未同时接入远端鼠标数据')
+  assert.equal((panelSource.match(/@update-collab-cursor="onCollabCursorUpdate"/g) || []).length, 3, '主面板未接收流程、设计与自由画布的鼠标更新事件')
   assert.match(panelSource, /const collabPresenceCursors = computed<WorkspaceCollabCursorUser\[\]>\(\(\) => \{/, '主面板未按用户聚合远端鼠标数据')
 
   assert.match(canvasSource, /import type \{ WorkspaceCollabCursorUser(?:, WorkspaceCollabPresenceUser)? \}/, '画布组件未声明远端鼠标类型')
