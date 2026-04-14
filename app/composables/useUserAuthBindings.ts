@@ -6,7 +6,7 @@ import type {
   FeishuAuthUnbindResult,
   FeishuIntegrationConfig,
   OAuthAuthBindStatus,
-} from '~~/shared/types/domain'
+} from '~~/shared/types/domain-legacy'
 
 const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 
@@ -27,17 +27,42 @@ export function useUserAuthBindings(options: {
   const feishuUnbindConfirmVisible = ref(false)
   const feishuUnbindConfirmText = ref('')
   const feishuAuditLoading = ref(false)
-  const feishuBindError = ref('')
+  const feishuBindRequestError = ref('')
+  const feishuBindRouteError = ref('')
   const feishuBindSuccess = ref('')
   const feishuBindStatus = ref<FeishuAuthBindStatus | null>(null)
   const feishuMeta = ref<FeishuIntegrationConfig | null>(null)
   const feishuAudits = ref<FeishuAuthAuditItem[]>([])
+  const feishuConflictCode = ref('')
+  const feishuBoundUser = ref('')
   const oauthEnabled = ref(false)
   const oauthDisplayName = ref(DEFAULT_OAUTH_DISPLAY_NAME)
   const oauthBindLoading = ref(false)
   const oauthBindRedirecting = ref(false)
-  const oauthBindError = ref('')
+  const oauthBindRequestError = ref('')
+  const oauthBindRouteError = ref('')
   const oauthBindStatus = ref<OAuthAuthBindStatus | null>(null)
+  const oauthConflictCode = ref('')
+  const oauthBoundUser = ref('')
+
+  const feishuBindError = computed(() => String(feishuBindRequestError.value || feishuBindRouteError.value || '').trim())
+  const oauthBindError = computed(() => String(oauthBindRequestError.value || oauthBindRouteError.value || '').trim())
+  const hasFeishuConflict = computed(() => Boolean(feishuConflictCode.value))
+  const hasOauthConflict = computed(() => Boolean(oauthConflictCode.value))
+  const feishuConflictTitle = computed(() => {
+    if (feishuConflictCode.value === 'FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER')
+      return '飞书账号已绑定其他平台账号'
+    if (feishuConflictCode.value === 'FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY')
+      return '当前平台账号已绑定其他飞书账号'
+    return '飞书账号绑定冲突'
+  })
+  const oauthConflictTitle = computed(() => {
+    if (oauthConflictCode.value === 'CASDOOR_IDENTITY_ALREADY_BOUND_OTHER_USER')
+      return `${oauthDisplayName.value} 账号已绑定其他平台账号`
+    if (oauthConflictCode.value === 'CASDOOR_USER_ALREADY_BOUND_OTHER_IDENTITY')
+      return `当前平台账号已绑定其他 ${oauthDisplayName.value} 身份`
+    return `${oauthDisplayName.value} 账号绑定冲突`
+  })
 
   function readRouteQueryText(name: string): string {
     if (import.meta.client) {
@@ -108,6 +133,41 @@ export function useUserAuthBindings(options: {
     window.history.replaceState({}, '', next)
   }
 
+  function resolveCurrentRedirectTarget(fallback = '/dashboard'): string {
+    if (import.meta.client) {
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      if (currentPath.startsWith('/') && !currentPath.startsWith('//'))
+        return currentPath
+    }
+
+    const routeTarget = String(options.route.fullPath || options.route.path || '').trim()
+    if (routeTarget.startsWith('/') && !routeTarget.startsWith('//'))
+      return routeTarget
+
+    return fallback
+  }
+
+  function clearFeishuBindingFeedback(options: { includeRoute?: boolean } = {}) {
+    feishuBindRequestError.value = ''
+    feishuBindSuccess.value = ''
+    if (!options.includeRoute)
+      return
+
+    feishuBindRouteError.value = ''
+    feishuConflictCode.value = ''
+    feishuBoundUser.value = ''
+  }
+
+  function clearOauthBindingFeedback(options: { includeRoute?: boolean } = {}) {
+    oauthBindRequestError.value = ''
+    if (!options.includeRoute)
+      return
+
+    oauthBindRouteError.value = ''
+    oauthConflictCode.value = ''
+    oauthBoundUser.value = ''
+  }
+
   async function loadAuthMeta() {
     try {
       const response = await options.authApiFetch<ApiResponse<AuthLoginMeta>>('/auth/meta')
@@ -125,14 +185,14 @@ export function useUserAuthBindings(options: {
 
   async function loadFeishuBindStatus() {
     feishuBindLoading.value = true
-    feishuBindError.value = ''
+    feishuBindRequestError.value = ''
     try {
       const response = await options.authApiFetch<ApiResponse<FeishuAuthBindStatus>>('/auth/feishu/bind-status')
       feishuBindStatus.value = response.data
     }
     catch (error: any) {
       feishuBindStatus.value = null
-      feishuBindError.value = String(error?.data?.message || '飞书绑定状态加载失败。')
+      feishuBindRequestError.value = String(error?.data?.message || '飞书绑定状态加载失败。')
     }
     finally {
       feishuBindLoading.value = false
@@ -141,14 +201,14 @@ export function useUserAuthBindings(options: {
 
   async function loadOauthBindStatus() {
     oauthBindLoading.value = true
-    oauthBindError.value = ''
+    oauthBindRequestError.value = ''
     try {
       const response = await options.authApiFetch<ApiResponse<OAuthAuthBindStatus>>('/auth/oauth/bind-status')
       oauthBindStatus.value = response.data
     }
     catch (error: any) {
       oauthBindStatus.value = null
-      oauthBindError.value = String(error?.data?.message || `${oauthDisplayName.value} 绑定状态加载失败。`)
+      oauthBindRequestError.value = String(error?.data?.message || `${oauthDisplayName.value} 绑定状态加载失败。`)
     }
     finally {
       oauthBindLoading.value = false
@@ -173,18 +233,17 @@ export function useUserAuthBindings(options: {
     if (!import.meta.client || feishuBindRedirecting.value)
       return
 
-    feishuBindError.value = ''
-    feishuBindSuccess.value = ''
+    clearFeishuBindingFeedback({ includeRoute: true })
     if (!feishuMeta.value)
       await loadAuthMeta()
 
     if (!feishuMeta.value?.enabled) {
-      feishuBindError.value = '飞书登录尚未启用，请联系管理员。'
+      feishuBindRequestError.value = '飞书登录尚未启用，请联系管理员。'
       return
     }
 
     feishuBindRedirecting.value = true
-    const redirectTarget = options.route.fullPath && options.route.fullPath.startsWith('/') ? options.route.fullPath : '/dashboard'
+    const redirectTarget = resolveCurrentRedirectTarget('/dashboard')
     window.location.href = options.endpoint(`/auth/feishu/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
   }
 
@@ -192,23 +251,22 @@ export function useUserAuthBindings(options: {
     if (!import.meta.client || oauthBindRedirecting.value)
       return
 
-    oauthBindError.value = ''
+    clearOauthBindingFeedback({ includeRoute: true })
     if (!oauthEnabled.value)
       await loadAuthMeta()
 
     if (!oauthEnabled.value) {
-      oauthBindError.value = `${oauthDisplayName.value} 登录尚未启用，请联系管理员。`
+      oauthBindRequestError.value = `${oauthDisplayName.value} 登录尚未启用，请联系管理员。`
       return
     }
 
     oauthBindRedirecting.value = true
-    const redirectTarget = options.route.fullPath && options.route.fullPath.startsWith('/') ? options.route.fullPath : '/dashboard'
+    const redirectTarget = resolveCurrentRedirectTarget('/dashboard')
     window.location.href = options.endpoint(`/auth/oauth/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
   }
 
   function openFeishuUnbindConfirm() {
-    feishuBindError.value = ''
-    feishuBindSuccess.value = ''
+    clearFeishuBindingFeedback()
     feishuUnbindConfirmVisible.value = true
     feishuUnbindConfirmText.value = ''
   }
@@ -225,19 +283,18 @@ export function useUserAuthBindings(options: {
       return
 
     if (!feishuBindStatus.value?.linked) {
-      feishuBindError.value = '当前账号未绑定飞书。'
+      feishuBindRequestError.value = '当前账号未绑定飞书。'
       return
     }
 
     const normalized = String(feishuUnbindConfirmText.value || '').trim().toUpperCase()
     if (normalized !== 'UNBIND') {
-      feishuBindError.value = '请输入确认口令 UNBIND 后再解绑。'
+      feishuBindRequestError.value = '请输入确认口令 UNBIND 后再解绑。'
       return
     }
 
     feishuUnbinding.value = true
-    feishuBindError.value = ''
-    feishuBindSuccess.value = ''
+    clearFeishuBindingFeedback()
     try {
       const response = await options.authApiFetch<ApiResponse<FeishuAuthUnbindResult>>('/auth/feishu/unbind', {
         method: 'POST',
@@ -254,7 +311,7 @@ export function useUserAuthBindings(options: {
       await loadFeishuAudits()
     }
     catch (error: any) {
-      feishuBindError.value = String(error?.data?.message || '解绑飞书失败，请稍后重试。')
+      feishuBindRequestError.value = String(error?.data?.message || '解绑飞书失败，请稍后重试。')
     }
     finally {
       feishuUnbinding.value = false
@@ -262,9 +319,15 @@ export function useUserAuthBindings(options: {
   }
 
   function resetAuthBindingState() {
-    feishuBindError.value = readFeishuBindErrorFromRoute()
+    feishuBindRequestError.value = ''
+    feishuBindRouteError.value = readFeishuBindErrorFromRoute()
+    feishuConflictCode.value = readRouteQueryText('feishuConflictCode')
+    feishuBoundUser.value = readRouteQueryText('feishuBoundUser')
     feishuBindSuccess.value = ''
-    oauthBindError.value = readOauthBindErrorFromRoute()
+    oauthBindRequestError.value = ''
+    oauthBindRouteError.value = readOauthBindErrorFromRoute()
+    oauthConflictCode.value = readRouteQueryText('oauthConflictCode') || readRouteQueryText('casdoorConflictCode')
+    oauthBoundUser.value = readRouteQueryText('oauthBoundUser') || readRouteQueryText('casdoorBoundUser')
     feishuUnbindConfirmVisible.value = false
     feishuUnbindConfirmText.value = ''
     clearFeishuBindQueryParamsFromUrl()
@@ -283,12 +346,20 @@ export function useUserAuthBindings(options: {
     feishuBindStatus,
     feishuMeta,
     feishuAudits,
+    hasFeishuConflict,
+    feishuConflictTitle,
+    feishuConflictCode,
+    feishuBoundUser,
     oauthEnabled,
     oauthDisplayName,
     oauthBindLoading,
     oauthBindRedirecting,
     oauthBindError,
     oauthBindStatus,
+    hasOauthConflict,
+    oauthConflictTitle,
+    oauthConflictCode,
+    oauthBoundUser,
     formatAuditAction,
     readFeishuBindErrorFromRoute,
     readOauthBindErrorFromRoute,

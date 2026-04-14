@@ -11,6 +11,8 @@ import {
 const AUTH_SESSION_FILE = resolve(process.cwd(), 'server/api/auth/session.get.ts')
 const AUTH_ME_FILE = resolve(process.cwd(), 'server/api/auth/me.get.ts')
 const AUTH_MIDDLEWARE_FILE = resolve(process.cwd(), 'app/middleware/auth.global.ts')
+const AUTH_BIND_MIDDLEWARE_FILE = resolve(process.cwd(), 'app/middleware/auth-bind.ts')
+const AUTH_BIND_PAGE_FILE = resolve(process.cwd(), 'app/pages/auth/bind.vue')
 const LOGIN_PAGE_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useLoginPage.ts')
 const INVITE_PAGE_FILE = resolve(process.cwd(), 'app/pages/invite/[token].vue')
 const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
@@ -80,8 +82,10 @@ it('auth me 与 session probe 都会记录 traceId 关联非 401 失败', async 
 })
 
 it('前端守卫与登录页已改为使用轻量 session probe', async () => {
-  const [middlewareSource, loginSource, inviteSource] = await Promise.all([
+  const [middlewareSource, bindMiddlewareSource, bindPageSource, loginSource, inviteSource] = await Promise.all([
     readFile(AUTH_MIDDLEWARE_FILE, 'utf8'),
+    readFile(AUTH_BIND_MIDDLEWARE_FILE, 'utf8'),
+    readFile(AUTH_BIND_PAGE_FILE, 'utf8'),
     readFile(LOGIN_PAGE_COMPOSABLE_FILE, 'utf8'),
     readFile(INVITE_PAGE_FILE, 'utf8'),
   ])
@@ -93,9 +97,16 @@ it('前端守卫与登录页已改为使用轻量 session probe', async () => {
   assert.match(middlewareSource, /authState !== 'unauthorized'/, '路由守卫未收敛为仅 401 才跳登录')
   assert.match(middlewareSource, /logAuthProbeDegraded/, '路由守卫未记录 session probe 降级日志')
 
+  assert.match(bindMiddlewareSource, /endpoint\('\/auth\/session'\)/, '账号绑定 middleware 未改用 /auth/session')
+  assert.match(bindMiddlewareSource, /fetch\(authProbeUrl, \{/, '账号绑定 middleware 未使用绝对化后的 session probe URL')
+  assert.match(bindMiddlewareSource, /path:\s*'\/login'/, '账号绑定 middleware 未在 401 时跳转登录页')
+  assert.match(bindPageSource, /middleware:\s*'auth-bind'/, '账号绑定页未挂载专用 middleware')
+
   assert.match(loginSource, /authApiFetch<ApiResponse<AuthSessionProbeResult>>\('\/auth\/session'\)/, '登录页未改用 /auth/session')
   assert.match(loginSource, /if \(sessionState === 'unauthenticated'\)\s+await tryFeishuAutoLogin\(\)/, '登录页未限制为仅 401 才自动发起飞书登录')
   assert.doesNotMatch(loginSource, /authApiFetch<ApiResponse<AuthMeResult>>\('\/auth\/me'\)/, '登录页不应继续使用 /auth/me 探测登录态')
+  assert.doesNotMatch(loginSource, /startFeishuOAuthRedirect/, '登录页不应在飞书自动登录失败后继续跳飞书 OAuth')
+  assert.match(loginSource, /飞书自动登录未完成，请改用账号密码登录。/, '登录页缺少飞书自动登录失败回退文案')
 
   assert.match(inviteSource, /authApiFetch<ApiResponse<AuthSessionProbeResult>>\('\/auth\/session'\)/, '邀请页未改用 /auth/session 检测登录态')
 })

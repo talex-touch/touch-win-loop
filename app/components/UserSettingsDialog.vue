@@ -105,7 +105,7 @@ const defaultTabMeta: UserSettingsTabMeta = {
 const tabItems: UserSettingsTabMeta[] = [
   defaultTabMeta,
   { id: 'displayPreferences', groupId: 'profile', label: '显示偏好', icon: 'format_size', description: '管理个人全局默认字号与标签边距。' },
-  { id: 'bindings', groupId: 'profile', label: '账号绑定', icon: 'link', description: '管理飞书和第三方 OAuth 身份绑定。' },
+  { id: 'bindings', groupId: 'profile', label: '账号绑定', icon: 'link', description: '查看绑定摘要并跳转到独立绑定页。' },
   { id: 'loginHistory', groupId: 'profile', label: '登录历史', icon: 'schedule', description: '查看个人账号近期登录与会话状态。' },
   { id: 'audits', groupId: 'profile', label: '操作记录', icon: 'history', description: '查看最近的绑定与解绑操作。' },
   { id: 'overview', groupId: 'workspace', label: '工作空间概览', icon: 'dashboard', description: '查看当前工作空间的核心信息。' },
@@ -155,7 +155,7 @@ function resolvePrimaryRole(roles: WorkspaceMemberRole[] | null | undefined): Wo
   return rolePriority.find(role => normalizedRoles.includes(role)) || ''
 }
 
-function formatWorkspaceRoleLabel(role: WorkspaceMemberRole | ''): string {
+function formatWorkspaceRoleLabel(role: string | null | undefined): string {
   if (role === 'owner')
     return '所有者'
   if (role === 'admin')
@@ -368,33 +368,20 @@ const {
 
 const {
   feishuBindLoading,
-  feishuBindRedirecting,
-  feishuUnbinding,
-  feishuUnbindConfirmVisible,
-  feishuUnbindConfirmText,
   feishuAuditLoading,
   feishuBindError,
-  feishuBindSuccess,
   feishuBindStatus,
-  feishuAudits,
   oauthEnabled,
   oauthDisplayName,
   oauthBindLoading,
-  oauthBindRedirecting,
   oauthBindError,
   oauthBindStatus,
+  feishuAudits,
   formatAuditAction,
-  readFeishuBindErrorFromRoute,
-  readOauthBindErrorFromRoute,
   loadAuthMeta,
   loadFeishuBindStatus,
   loadOauthBindStatus,
   loadFeishuAudits,
-  startFeishuBind,
-  startOauthBind,
-  openFeishuUnbindConfirm,
-  cancelFeishuUnbindConfirm,
-  unbindFeishu,
   resetAuthBindingState,
 } = useUserAuthBindings({
   authApiFetch,
@@ -512,6 +499,11 @@ function closeDialog() {
   logoutConfirmVisible.value = false
   profileEditorDialogVisible.value = false
   visibleModel.value = false
+}
+
+function openAuthBindPage() {
+  visibleModel.value = false
+  void navigateTo('/auth/bind')
 }
 
 function resetDialogState() {
@@ -648,8 +640,7 @@ watch(
   () => {
     if (!props.visible)
       return
-    feishuBindError.value = readFeishuBindErrorFromRoute()
-    oauthBindError.value = readOauthBindErrorFromRoute()
+    resetAuthBindingState()
   },
 )
 
@@ -868,27 +859,14 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
       v-else-if="activeTab === 'bindings'"
       :feishu-bind-status="feishuBindStatus"
       :feishu-bind-loading="feishuBindLoading"
-      :feishu-bind-redirecting="feishuBindRedirecting"
-      :feishu-unbinding="feishuUnbinding"
       :feishu-bind-error="feishuBindError"
-      :feishu-bind-success="feishuBindSuccess"
-      :feishu-unbind-confirm-visible="feishuUnbindConfirmVisible"
-      :feishu-unbind-confirm-text="feishuUnbindConfirmText"
       :oauth-bind-status="oauthBindStatus"
       :oauth-bind-loading="oauthBindLoading"
-      :oauth-bind-redirecting="oauthBindRedirecting"
       :oauth-bind-error="oauthBindError"
       :oauth-enabled="oauthEnabled"
       :oauth-display-name="oauthDisplayName"
       :format-date-time="formatDateTime"
-      @load-feishu-bind-status="loadFeishuBindStatus"
-      @start-feishu-bind="startFeishuBind"
-      @open-feishu-unbind-confirm="openFeishuUnbindConfirm"
-      @update-feishu-unbind-confirm-text="feishuUnbindConfirmText = $event"
-      @cancel-feishu-unbind-confirm="cancelFeishuUnbindConfirm"
-      @unbind-feishu="unbindFeishu"
-      @load-oauth-bind-status="loadOauthBindStatus"
-      @start-oauth-bind="startOauthBind"
+      @open-bind-page="openAuthBindPage"
     />
 
     <UserSettingsLoginHistoryPanel

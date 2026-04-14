@@ -1,7 +1,7 @@
 import type { ApiResponse, AuthLoginMeta, AuthLoginResult, AuthSessionProbeResult } from '~~/shared/types/domain'
 import { logAuthProbeDegraded, resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 
-type OauthRedirectingProvider = 'feishu' | 'oauth' | ''
+type OauthRedirectingProvider = 'oauth' | ''
 const DEFAULT_OAUTH_DISPLAY_NAME = '第三方 OAuth'
 type SessionProbeState = 'authenticated' | 'unauthenticated' | 'degraded'
 
@@ -18,38 +18,11 @@ export function useLoginPage() {
   const feishuLoading = ref(false)
   const authMeta = ref<AuthLoginMeta | null>(null)
   const oauthRedirectingProvider = ref<OauthRedirectingProvider>('')
-  const feishuConflictCode = ref('')
-  const feishuBoundUser = ref('')
-  const oauthConflictCode = ref('')
-  const oauthBoundUser = ref('')
 
   const feishuMeta = computed(() => authMeta.value?.feishu || null)
   const oauthMeta = computed(() => authMeta.value?.oauth || authMeta.value?.casdoor || null)
   const oauthEnabled = computed(() => Boolean(oauthMeta.value?.enabled))
   const oauthDisplayName = computed(() => String(oauthMeta.value?.displayName || '').trim() || DEFAULT_OAUTH_DISPLAY_NAME)
-  const registrationEnabled = computed(() => authMeta.value?.registrationEnabled !== false)
-  const registrationHint = computed(() => registrationEnabled.value
-    ? '首次登录将自动注册，并初始化 Personal 空间。'
-    : '当前已关闭自动注册，仅允许已有账号登录或绑定第三方账号。')
-
-  const hasFeishuConflict = computed(() => Boolean(feishuConflictCode.value))
-  const hasOauthConflict = computed(() => Boolean(oauthConflictCode.value))
-
-  const feishuConflictTitle = computed(() => {
-    if (feishuConflictCode.value === 'FEISHU_IDENTITY_ALREADY_BOUND_OTHER_USER')
-      return '飞书账号已绑定其他平台账号'
-    if (feishuConflictCode.value === 'FEISHU_USER_ALREADY_BOUND_OTHER_IDENTITY')
-      return '当前平台账号已绑定其他飞书账号'
-    return '飞书账号绑定冲突'
-  })
-
-  const oauthConflictTitle = computed(() => {
-    if (oauthConflictCode.value === 'CASDOOR_IDENTITY_ALREADY_BOUND_OTHER_USER')
-      return `${oauthDisplayName.value} 账号已绑定其他平台账号`
-    if (oauthConflictCode.value === 'CASDOOR_USER_ALREADY_BOUND_OTHER_IDENTITY')
-      return `当前平台账号已绑定其他 ${oauthDisplayName.value} 身份`
-    return `${oauthDisplayName.value} 账号绑定冲突`
-  })
 
   function resolveRedirectTarget(): string {
     const raw = route.query.redirect
@@ -155,13 +128,6 @@ export function useLoginPage() {
     }
   }
 
-  async function startFeishuOAuthRedirect() {
-    const redirectTarget = resolveRedirectTarget()
-    const url = endpoint(`/auth/feishu/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
-    oauthRedirectingProvider.value = 'feishu'
-    window.location.href = url
-  }
-
   async function startOauthRedirect() {
     const redirectTarget = resolveRedirectTarget()
     const url = endpoint(`/auth/oauth/authorize?redirect=${encodeURIComponent(redirectTarget)}`)
@@ -225,21 +191,11 @@ export function useLoginPage() {
     return true
   }
 
-  function logFeishuAutoLoginFallback(reason: string, error?: unknown) {
-    console.warn('[feishu-auto-login] fallback to standard oauth', {
+  function logFeishuAutoLoginFailure(reason: string, error?: unknown) {
+    console.warn('[feishu-auto-login] fallback to credential login', {
       reason,
       error,
     })
-  }
-
-  async function manualFeishuLogin() {
-    errorText.value = ''
-    const meta = await loadAuthMeta()
-    if (!meta?.feishu?.enabled) {
-      errorText.value = '飞书登录尚未启用。'
-      return
-    }
-    await startFeishuOAuthRedirect()
   }
 
   async function manualOauthLogin() {
@@ -273,13 +229,13 @@ export function useLoginPage() {
       const authCode = await requestAuthCodeBySdk(meta.feishu.appId)
       const success = await loginByFeishuCode(authCode)
       if (!success) {
-        logFeishuAutoLoginFallback('empty_auth_code')
-        await startFeishuOAuthRedirect()
+        logFeishuAutoLoginFailure('empty_auth_code')
+        errorText.value = '飞书自动登录未完成，请改用账号密码登录。'
       }
     }
     catch (error) {
-      logFeishuAutoLoginFallback('sdk_failed', error)
-      await startFeishuOAuthRedirect()
+      logFeishuAutoLoginFailure('sdk_failed', error)
+      errorText.value = String((error as any)?.data?.message || (error as Error)?.message || '飞书自动登录失败，请改用账号密码登录。')
     }
     finally {
       feishuLoading.value = false
@@ -302,11 +258,6 @@ export function useLoginPage() {
       errorText.value = feishuError
     }
 
-    feishuConflictCode.value = readQueryText('feishuConflictCode')
-    feishuBoundUser.value = readQueryText('feishuBoundUser')
-    oauthConflictCode.value = readQueryText(['oauthConflictCode', 'casdoorConflictCode'])
-    oauthBoundUser.value = readQueryText(['oauthBoundUser', 'casdoorBoundUser'])
-
     if (sessionState === 'unauthenticated')
       await tryFeishuAutoLogin()
   })
@@ -320,17 +271,8 @@ export function useLoginPage() {
     feishuMeta,
     oauthEnabled,
     oauthDisplayName,
-    registrationEnabled,
-    registrationHint,
     oauthRedirectingProvider,
-    hasFeishuConflict,
-    hasOauthConflict,
-    feishuConflictTitle,
-    oauthConflictTitle,
-    feishuBoundUser,
-    oauthBoundUser,
     submitLogin,
-    manualFeishuLogin,
     manualOauthLogin,
   }
 }

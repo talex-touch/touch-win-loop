@@ -28,13 +28,20 @@ const isRailVariant = computed(() => props.variant === 'rail')
 const isRailActive = computed(() => isRailVariant.value && drawerVisible.value)
 
 function openDrawer() {
+  if (drawerVisible.value) {
+    center.closeDrawer()
+    return
+  }
   emit('open')
   void center.openDrawer()
 }
 </script>
 
 <template>
-  <div class="inline-flex relative">
+  <div
+    class="notification-bell-button-shell"
+    :class="{ 'notification-bell-button-shell--rail': isRailVariant }"
+  >
     <button
       type="button"
       aria-label="打开通知中心"
@@ -67,11 +74,21 @@ function openDrawer() {
       </span>
     </button>
 
-    <NotificationDrawer :workspace-id="props.workspaceId" />
+    <NotificationDrawer :workspace-id="props.workspaceId" :variant="props.variant" />
   </div>
 </template>
 
 <style scoped>
+.notification-bell-button-shell {
+  display: inline-flex;
+}
+
+.notification-bell-button-shell--rail {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
 .notification-bell-button {
   position: relative;
   display: inline-flex;

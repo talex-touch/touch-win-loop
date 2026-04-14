@@ -41,6 +41,8 @@ it('用户设置弹窗已拆成 shell + panel + composable 结构', async () => 
   assert.match(dialogSource, /<UserSettingsBindingsPanel\b/, '用户设置弹窗未复用绑定 panel')
   assert.match(dialogSource, /<UserSettingsLoginHistoryPanel\b/, '用户设置弹窗未复用登录历史 panel')
   assert.match(dialogSource, /<UserSettingsAuditPanel\b/, '用户设置弹窗未复用审计 panel')
+  assert.match(dialogSource, /openAuthBindPage/, '用户设置弹窗未提供独立绑定页跳转动作')
+  assert.match(dialogSource, /navigateTo\('\/auth\/bind'\)/, '用户设置弹窗未跳转到独立绑定页')
 
   assert.doesNotMatch(dialogSource, /class="user-settings-member-list"/, '用户设置弹窗仍内联成员列表')
   assert.doesNotMatch(dialogSource, /class="user-settings-record-list"/, '用户设置弹窗仍内联邀请/记录列表')
@@ -49,6 +51,7 @@ it('用户设置弹窗已拆成 shell + panel + composable 结构', async () => 
   assert.doesNotMatch(dialogSource, /function loadWorkspaceAiUsage\(/, '用户设置弹窗仍内联 AI usage 拉取逻辑')
   assert.doesNotMatch(dialogSource, /function loadFeishuBindStatus\(/, '用户设置弹窗仍内联绑定状态拉取逻辑')
   assert.doesNotMatch(dialogSource, /function loadAuthSessions\(/, '用户设置弹窗仍内联登录历史拉取逻辑')
+  assert.doesNotMatch(dialogSource, /startFeishuBind,/, '用户设置弹窗不应再直接持有飞书绑定跳转动作')
 
   assert.match(overviewSource, /export function useUserWorkspaceOverview\(/, '缺少 workspace overview composable')
   assert.match(aiUsageSource, /export function useUserAiUsage\(/, '缺少 AI usage composable')

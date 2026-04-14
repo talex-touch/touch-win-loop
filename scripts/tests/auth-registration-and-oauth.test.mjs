@@ -15,10 +15,14 @@ const ADMIN_OAUTH_CONFIG_GET_FILE = resolve(process.cwd(), 'server/api/admin/int
 const ADMIN_OAUTH_CONFIG_PATCH_FILE = resolve(process.cwd(), 'server/api/admin/integrations/oauth/config.patch.ts')
 const LOGIN_PAGE_FILE = resolve(process.cwd(), 'app/pages/login.vue')
 const LOGIN_PAGE_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useLoginPage.ts')
+const AUTH_LAYOUT_FILE = resolve(process.cwd(), 'app/layouts/auth.vue')
+const AUTH_BIND_MIDDLEWARE_FILE = resolve(process.cwd(), 'app/middleware/auth-bind.ts')
+const AUTH_BIND_PAGE_FILE = resolve(process.cwd(), 'app/pages/auth/bind.vue')
 const USER_AUTH_BINDINGS_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useUserAuthBindings.ts')
 const NUXT_CONFIG_FILE = resolve(process.cwd(), 'nuxt.config.ts')
 const RUNTIME_SETTINGS_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/runtime-settings.vue')
 const USER_SETTINGS_DIALOG_FILE = resolve(process.cwd(), 'app/components/UserSettingsDialog.vue')
+const USER_SETTINGS_BINDINGS_PANEL_FILE = resolve(process.cwd(), 'app/components/user-settings/UserSettingsBindingsPanel.vue')
 const USER_SETTINGS_WORKSPACE_OVERVIEW_PANEL_FILE = resolve(process.cwd(), 'app/components/user-settings/UserSettingsWorkspaceOverviewPanel.vue')
 const ADMIN_OAUTH_PAGE_COMPONENT_FILE = resolve(process.cwd(), 'app/components/admin/OauthIntegrationConfigPage.vue')
 const DASHBOARD_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/dashboard/DashboardSidebar.vue')
@@ -50,25 +54,40 @@ it('登录页提供第三方 OAuth 入口并根据注册开关切换文案', asy
   ])
 
   assert.match(pageSource, /useLoginPage\(/, '登录页未抽离登录逻辑 composable')
-  assert.match(pageSource, /import UniverseBackground/, '登录页未恢复 UniverseBackground 背景层')
-  assert.match(pageSource, /<UniverseBackground\b/, '登录页未渲染 UniverseBackground 背景层')
-  assert.doesNotMatch(pageSource, /<PageShell size="auth"/, '登录页不应再完全复用统一 auth shell')
-  assert.match(pageSource, /登录 WinLoop/, '登录页未恢复独立标题')
-  assert.match(pageSource, /已有关联账号需合并|已有账号需合并时/, '登录页未恢复账号合并提示')
+  assert.match(pageSource, /layout:\s*'auth'/, '登录页未切换到 auth layout')
+  assert.match(pageSource, /<MagicCard\b/, '登录页未改用 MagicCard 组件')
+  assert.match(pageSource, /<WinLoopTextLogo\b/, '登录页 header 未改用 Text Logo 组件')
+  assert.doesNotMatch(pageSource, /已有关联账号需合并|已有账号需合并时/, '登录页不应继续展示账号合并提示')
+  assert.doesNotMatch(pageSource, /使用飞书登录/, '登录页不应继续展示飞书登录按钮')
+  assert.doesNotMatch(pageSource, /registrationHint/, '登录页不应继续渲染自动注册提示')
+  assert.doesNotMatch(pageSource, /Account Access/, '登录页 header 不应继续展示辅助标题')
   assert.match(composableSource, /manualOauthLogin/, '登录页未接入第三方 OAuth 登录动作')
   assert.match(composableSource, /\/auth\/oauth\/authorize\?redirect=/, '登录页未跳转 OAuth authorize 接口')
   assert.match(composableSource, /DEFAULT_OAUTH_DISPLAY_NAME/, '登录页未提供默认 OAuth 显示名称')
-  assert.match(composableSource, /registrationEnabled\.value\s*\?\s*'首次登录将自动注册/, '登录页未按注册开关切换提示文案')
+  assert.doesNotMatch(composableSource, /首次登录会自动注册本地账号。/, '登录页不应继续暴露自动注册提示文案')
+  assert.doesNotMatch(composableSource, /manualFeishuLogin/, '登录页不应继续暴露手动飞书登录动作')
+  assert.doesNotMatch(composableSource, /startFeishuOAuthRedirect/, '登录页不应继续走手动飞书 OAuth 跳转')
+  assert.match(composableSource, /飞书自动登录未完成，请改用账号密码登录。/, '登录页未在飞书自动登录失败后回退到账号密码登录')
 })
 
-it('登录页保持独立玻璃卡片布局并内联表单入口', async () => {
-  const pageSource = await readFile(LOGIN_PAGE_FILE, 'utf8')
+it('登录页通过 auth layout 承载背景与 footer，并保留表单入口', async () => {
+  const [layoutSource, pageSource] = await Promise.all([
+    readFile(AUTH_LAYOUT_FILE, 'utf8'),
+    readFile(LOGIN_PAGE_FILE, 'utf8'),
+  ])
 
-  assert.match(pageSource, /rounded-\[32px\]/, '登录页未保持独立玻璃卡片布局')
+  assert.match(layoutSource, /import UniverseBackground/, 'auth layout 未接入 UniverseBackground')
+  assert.match(layoutSource, /<UniverseBackground\b/, 'auth layout 未渲染 UniverseBackground')
+  assert.match(layoutSource, /<LoginFooterBar\b/, 'auth layout 未承载底部 FooterBar')
+  assert.match(pageSource, /<MagicCard\b/, '登录页未渲染 MagicCard 容器')
+  assert.match(pageSource, /<WinLoopTextLogo\b/, '登录页未渲染 Text Logo 组件')
   assert.match(pageSource, /data-testid="login-username-input"/, '登录页未内联用户名输入框')
   assert.match(pageSource, /data-testid="login-password-input"/, '登录页未内联密码输入框')
   assert.match(pageSource, /data-testid="login-submit-button"/, '登录页未内联登录提交按钮')
-  assert.match(pageSource, /<LoginFooterBar/, '登录页未恢复底部 FooterBar 组件')
+  assert.match(pageSource, /\{\{ loading \? '登录中\.\.\.' : '登录' \}\}/, '登录页提交按钮不应继续暴露自动注册文案')
+  assert.doesNotMatch(pageSource, /<LoginFooterBar/, '登录页不应再直接内联 FooterBar')
+  assert.doesNotMatch(pageSource, /<UniverseBackground/, '登录页不应再直接内联 UniverseBackground')
+  assert.match(pageSource, /scale-\[0\.64\] sm:scale-\[0\.72\]/, '登录页未按卡片尺寸调整 Text Logo 比例')
   assert.doesNotMatch(pageSource, /<LoginTextIcon/, '登录页不应继续依赖 TextIcon 组件')
   assert.doesNotMatch(pageSource, /<LoginOauthActions/, '登录页不应继续依赖独立 OAuth 动作组件')
   assert.doesNotMatch(pageSource, /<LoginCredentialForm/, '登录页不应继续依赖独立凭证表单组件')
@@ -82,15 +101,35 @@ it('后台运行设置页支持切换 auth.registrationEnabled', async () => {
   assert.match(source, /authRegistration/, '运行设置页未展示 authRegistration 配置来源')
 })
 
-it('共享个人设置弹框提供第三方 OAuth 绑定状态与绑定入口', async () => {
-  const [dialogSource, bindingsSource] = await Promise.all([
-    readFile(USER_SETTINGS_DIALOG_FILE, 'utf8'),
-    readFile(USER_AUTH_BINDINGS_COMPOSABLE_FILE, 'utf8'),
+it('账号绑定已拆到独立 auth 页面，并通过专用 middleware 守卫', async () => {
+  const [middlewareSource, pageSource] = await Promise.all([
+    readFile(AUTH_BIND_MIDDLEWARE_FILE, 'utf8'),
+    readFile(AUTH_BIND_PAGE_FILE, 'utf8'),
   ])
 
-  assert.match(dialogSource, /第三方 OAuth 身份绑定/, '共享个人设置弹框缺少第三方 OAuth 绑定说明')
-  assert.match(bindingsSource, /startOauthBind/, '共享个人设置弹框未接入 OAuth 绑定动作')
-  assert.match(bindingsSource, /\/auth\/oauth\/bind-status/, '共享个人设置弹框未读取 OAuth 绑定状态')
+  assert.match(middlewareSource, /endpoint\('\/auth\/session'\)/, '账号绑定 middleware 未使用 /auth/session 探测登录态')
+  assert.match(middlewareSource, /path:\s*'\/login'/, '账号绑定 middleware 未在未登录时跳转到 /login')
+  assert.match(middlewareSource, /redirect:\s*to\.fullPath \|\| '\/auth\/bind'/, '账号绑定 middleware 未保留回跳地址')
+  assert.match(pageSource, /layout:\s*'auth'/, '账号绑定页未接入 auth layout')
+  assert.match(pageSource, /middleware:\s*'auth-bind'/, '账号绑定页未挂载专用 middleware')
+  assert.match(pageSource, /<AuthConflictNotice\b/, '账号绑定页未展示绑定冲突提示组件')
+  assert.match(pageSource, /<AuthBindingCard\b/, '账号绑定页未复用绑定状态卡片组件')
+})
+
+it('共享个人设置弹框提供绑定摘要并跳转到独立绑定页', async () => {
+  const [dialogSource, bindingsSource, panelSource] = await Promise.all([
+    readFile(USER_SETTINGS_DIALOG_FILE, 'utf8'),
+    readFile(USER_AUTH_BINDINGS_COMPOSABLE_FILE, 'utf8'),
+    readFile(USER_SETTINGS_BINDINGS_PANEL_FILE, 'utf8'),
+  ])
+
+  assert.match(dialogSource, /openAuthBindPage/, '共享个人设置弹框缺少独立绑定页跳转动作')
+  assert.match(dialogSource, /navigateTo\('\/auth\/bind'\)/, '共享个人设置弹框未跳转到独立绑定页')
+  assert.match(panelSource, /前往绑定页/, '账号绑定摘要 panel 缺少前往绑定页入口')
+  assert.doesNotMatch(panelSource, /解绑飞书/, '账号绑定摘要 panel 不应继续承载解绑动作')
+  assert.doesNotMatch(panelSource, /绑定飞书/, '账号绑定摘要 panel 不应继续承载直接绑定动作')
+  assert.match(bindingsSource, /startOauthBind/, '绑定 composable 仍需保留 OAuth 绑定动作供独立绑定页使用')
+  assert.match(bindingsSource, /\/auth\/oauth\/bind-status/, '绑定 composable 未读取 OAuth 绑定状态')
 })
 
 it('共享个人设置弹框按个人信息与工作空间分组，并展示头像上传与空间改名入口', async () => {
