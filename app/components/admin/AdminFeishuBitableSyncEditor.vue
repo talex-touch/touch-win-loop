@@ -182,7 +182,7 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'attachmentSummary', label: 'attachmentSummary（附件摘要）' },
   ],
   policy: [
-    { key: 'externalId', label: 'externalId（主键）' },
+    { key: 'externalId', label: 'externalId（会议编号）' },
     { key: 'meetingName', label: 'meetingName（会议名称）' },
     { key: 'summary', label: 'summary（大会简介）' },
     { key: 'conferenceDate', label: 'conferenceDate（大会日期）' },
@@ -198,13 +198,26 @@ const MAPPING_OPTIONS: Record<FeishuBitableSyncItemEntityType, MappingOption[]> 
     { key: 'xiaohongshuMaterial', label: 'xiaohongshuMaterial（小红书资料）' },
     { key: 'xiaohongshuMaterialLink', label: 'xiaohongshuMaterialLink（小红书资料链接）' },
   ],
+  persona: [
+    { key: 'externalId', label: 'externalId（人设编号）' },
+    { key: 'contestExternalId', label: 'contestExternalId（所属竞赛编号）' },
+    { key: 'trackExternalId', label: 'trackExternalId（所属赛道编号）' },
+    { key: 'judgeType', label: 'judgeType（评委类型）' },
+    { key: 'name', label: 'name（人设名称）' },
+    { key: 'summary', label: 'summary（人设简介）' },
+    { key: 'systemPrompt', label: 'systemPrompt（系统提示词）' },
+    { key: 'focusAreas', label: 'focusAreas（关注点）' },
+    { key: 'scoringRubric', label: 'scoringRubric（评分规则）' },
+    { key: 'sortOrder', label: 'sortOrder（排序）' },
+    { key: 'enabled', label: 'enabled（启用状态）' },
+  ],
 }
 
 const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
-  externalId: ['external_id', 'externalid', 'id', 'record_id', '业务id', '外部id', '外部编号', '唯一标识', '编号', '主键', '赛事编号', '竞赛编号', '赛道编号', '资料编号'],
-  contestExternalId: ['contest_external_id', 'contestid', '赛事外部id', '赛事id', '竞赛外部id', '竞赛id', '所属赛事id', '所属竞赛id'],
-  trackExternalId: ['track_external_id', 'trackid', '赛道外部id', '赛道id', '所属赛道id'],
-  name: ['name', '名称', '名字', '竞赛名称', '赛事名称', '赛道名称'],
+  externalId: ['external_id', 'externalid', 'id', 'record_id', '业务id', '外部id', '外部编号', '唯一标识', '编号', '主键', '赛事编号', '竞赛编号', '赛道编号', '资料编号', '会议编号', '大会编号', '人设编号', '评委编号'],
+  contestExternalId: ['contest_external_id', 'contestid', '赛事外部id', '赛事id', '竞赛外部id', '竞赛id', '所属赛事id', '所属竞赛id', '所属竞赛编号'],
+  trackExternalId: ['track_external_id', 'trackid', '赛道外部id', '赛道id', '所属赛道id', '所属赛道编号'],
+  name: ['name', '名称', '名字', '竞赛名称', '赛事名称', '赛道名称', '人设名称', '评委名称'],
   title: ['title', '标题', '资料标题', '资源标题'],
   summary: ['summary', '简介', '描述', '说明', '概述', '竞赛简介', '赛道简介', '大会简介'],
   officialUrl: ['officialurl', 'official_url', '官网', '官网链接', '赛事链接', '竞赛链接', '报名链接', 'url'],
@@ -249,12 +262,18 @@ const MAPPING_GUESS_ALIASES: Record<string, string[]> = {
   douyinMaterialLink: ['douyinmateriallink', 'douyin_material_link', '抖音资料链接', '抖音链接'],
   xiaohongshuMaterial: ['xiaohongshumaterial', 'xiaohongshu_material', '小红书资料'],
   xiaohongshuMaterialLink: ['xiaohongshumateriallink', 'xiaohongshu_material_link', '小红书资料链接', '小红书链接'],
+  judgeType: ['judgetype', 'judge_type', '评委类型', '角色类型', '人设类型'],
+  systemPrompt: ['systemprompt', 'system_prompt', '系统提示词', '提示词', '人设提示词', 'prompt'],
+  focusAreas: ['focusareas', 'focus_areas', '关注点', '重点关注', '关注维度'],
+  scoringRubric: ['scoringrubric', 'scoring_rubric', '评分规则', '评分rubric', '打分维度', '评分维度'],
+  enabled: ['enabled', 'is_enabled', '启用', '是否启用', '状态'],
 }
 
 const ENTITY_TYPE_OPTIONS: SelectOption<FeishuBitableSyncItemEntityType>[] = [
   { value: 'contest', label: '竞赛' },
   { value: 'track', label: '赛道' },
   { value: 'resource', label: '资料' },
+  { value: 'persona', label: '人设' },
   { value: 'policy', label: '政策' },
   { value: 'track_timeline', label: '赛道时间线（兼容）' },
 ]
@@ -319,6 +338,7 @@ const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, strin
   track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
   policy: ['externalId', 'meetingName'],
+  persona: ['externalId', 'contestExternalId', 'judgeType', 'name', 'systemPrompt'],
 }
 
 const savingItem = ref(false)
@@ -761,6 +781,8 @@ function previewFocusFields(entityType: FeishuBitableSyncItemEntityType): string
     return ['externalId', 'contestExternalId', 'trackExternalId', 'title', 'attachment']
   if (entityType === 'policy')
     return ['externalId', 'meetingName', 'conferenceDate', 'importance']
+  if (entityType === 'persona')
+    return ['externalId', 'contestExternalId', 'judgeType', 'name', 'systemPrompt']
   return ['externalId', 'name', 'officialUrl', 'timelineText', 'recommendedFor']
 }
 
@@ -2195,7 +2217,7 @@ watch(() => props.selectedItemId, (value) => {
                 映射配置
               </p>
               <p class="m-0 mt-1">
-                决定飞书哪一列映射到平台哪个字段。`externalIdField` 是主键；`contestExternalIdField / trackExternalIdField` 只在需要关联实体时才要填。
+                决定飞书哪一列映射到平台哪个字段。`externalIdField` 是主键；`contestExternalIdField / trackExternalIdField` 只在需要关联实体时才要填。政策库这里的 `externalId` 应映射会议编号，不再用会议名称顶主键。
               </p>
             </div>
             <div class="text-[11px] text-slate-600 p-3 border border-slate-200 rounded bg-white">
@@ -2566,7 +2588,7 @@ watch(() => props.selectedItemId, (value) => {
                       模拟同步结果
                     </p>
                     <p class="text-[10px] text-slate-500 m-0 mt-1">
-                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl / timelineText`、赛道库的 `contestExternalId / name / timelineText`、资料库的 `title / attachment`、政策库的 `meetingName / conferenceDate` 是否都落对。
+                      下面展示按当前草稿配置解析出的平台字段和值。重点看竞赛库的 `name / officialUrl / timelineText`、赛道库的 `contestExternalId / name / timelineText`、资料库的 `title / attachment`、政策库的 `externalId / meetingName / conferenceDate`、人设库的 `contestExternalId / judgeType / name / systemPrompt` 是否都落对。
                     </p>
                   </div>
                   <div class="border border-slate-200 rounded overflow-auto">
@@ -2723,7 +2745,7 @@ watch(() => props.selectedItemId, (value) => {
                 字段概览
               </h3>
               <p class="text-[11px] text-slate-500 m-0 mt-1">
-                系统会优先按字段名猜测映射关系；你只需要重点确认 externalId 和关联字段是否正确。
+                系统会优先按字段名猜测映射关系；你只需要重点确认 externalId 和关联字段是否正确。政策要核对“会议编号”，人设要核对“竞赛编号 / 评委类型 / 系统提示词”。
               </p>
             </div>
             <a-button size="mini" :loading="loadingFieldInspection" :disabled="!canRefreshFieldInspection" @click="inspectFields">
@@ -2754,7 +2776,7 @@ watch(() => props.selectedItemId, (value) => {
                 基础映射
               </h3>
               <p class="text-[11px] text-slate-500 m-0 mt-1">
-                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId / timelineText`；竞赛库重点看 `name / officialUrl / timelineText`；资料库重点看 `title / attachment`；政策库重点看 `meetingName / conferenceDate`。
+                每个目标字段都可以单独配置来源列和 transform。`externalId` 是平台主键来源；赛道重点看 `contestExternalId / timelineText`；竞赛库重点看 `name / officialUrl / timelineText`；资料库重点看 `title / attachment`；政策库重点看 `externalId / meetingName / conferenceDate`；人设库重点看 `contestExternalId / judgeType / name / systemPrompt`。
               </p>
             </div>
             <div class="flex gap-2">
@@ -2973,7 +2995,7 @@ watch(() => props.selectedItemId, (value) => {
             推荐模板说明
           </p>
           <p class="m-0 mt-1">
-            `contest` 默认关注 `externalId + 名称/官网/简介`；`track` 额外带 `contestExternalId`；`resource` 会再补 `trackExternalId` 和资料默认值。
+            `contest` 默认关注 `externalId + 名称/官网/简介`；`track` 额外带 `contestExternalId`；`resource` 会再补 `trackExternalId` 和资料默认值；`policy` 重点确认 `会议编号 + 会议名称`；`persona` 重点确认 `竞赛编号 + 评委类型 + 系统提示词`。
           </p>
         </div>
         <div class="gap-3 grid md:grid-cols-2">

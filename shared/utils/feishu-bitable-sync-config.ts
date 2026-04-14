@@ -15,6 +15,7 @@ const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]
   track_timeline: ['赛道时间线', '赛道节点', '赛道日程', 'tracktimeline', 'track_timeline'],
   resource: ['资料', '资源', '素材', '文档', 'resource', 'material'],
   policy: ['政策', '会议', '大会', 'policy', 'notice'],
+  persona: ['人设', '评委', '答辩', 'persona', 'judge'],
 }
 
 const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, string[]> = {
@@ -23,6 +24,7 @@ const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, strin
   track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
   policy: ['externalId', 'meetingName'],
+  persona: ['externalId', 'contestExternalId', 'judgeType', 'name', 'systemPrompt'],
 }
 
 function buildDefaultWriteback(): FeishuBitableWritebackConfig {
@@ -142,6 +144,28 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
     }
   }
 
+  if (entityType === 'persona') {
+    return {
+      mapping: {
+        externalIdField: '',
+        contestExternalIdField: '',
+        trackExternalIdField: '',
+        fieldMap: {
+          judgeType: '',
+          name: '',
+          summary: '',
+          systemPrompt: '',
+          focusAreas: '',
+          scoringRubric: '',
+          sortOrder: '',
+          enabled: '',
+        },
+      },
+      options: {},
+      writeback: buildDefaultWriteback(),
+    }
+  }
+
   return {
     mapping: {
       externalIdField: '',
@@ -190,7 +214,7 @@ export function suggestSyncItemEntityType(input: {
   if (!sourceText)
     return null
 
-  for (const entityType of ['track_timeline', 'track', 'policy', 'resource', 'contest'] as const) {
+  for (const entityType of ['persona', 'track_timeline', 'track', 'policy', 'resource', 'contest'] as const) {
     const hints = ENTITY_TYPE_SOURCE_HINTS[entityType]
     if (hints.some(hint => sourceText.includes(normalizeSourceHintText(hint))))
       return entityType
@@ -214,7 +238,9 @@ export function buildSuggestedSyncItemName(
         ? '赛道时间线同步'
         : entityType === 'policy'
           ? '政策同步'
-          : '资料同步'
+          : entityType === 'persona'
+            ? '人设同步'
+            : '资料同步'
 
   if (normalizedTableName && normalizedViewName)
     return `${normalizedTableName} / ${normalizedViewName} · ${entityLabel}`
