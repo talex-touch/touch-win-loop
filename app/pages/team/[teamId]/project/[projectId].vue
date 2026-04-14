@@ -4968,6 +4968,50 @@ async function removeProjectResource(resourceId: string) {
   }
 }
 
+async function removeProjectResources(resourceIds: string[]) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const normalizedResourceIds = [...new Set(resourceIds.map(item => String(item || '').trim()).filter(Boolean))]
+  if (!projectId || normalizedResourceIds.length === 0)
+    return
+
+  resourceMutating.value = true
+  try {
+    const results = await Promise.allSettled(
+      normalizedResourceIds.map(resourceId => unsafeFetch(endpoint(`/projects/${projectId}/resources/${resourceId}`), {
+        method: 'DELETE',
+      })),
+    )
+    const succeededIds = results.flatMap((result, index) => result.status === 'fulfilled' ? [normalizedResourceIds[index]] : [])
+    const failedCount = normalizedResourceIds.length - succeededIds.length
+
+    if (succeededIds.length > 0) {
+      if (previewResourceId.value && succeededIds.includes(previewResourceId.value))
+        closeProjectResourcePreview()
+      await refreshProjectResourceContext()
+      await generateProjectOutline('resource_delete_success', true)
+    }
+
+    if (failedCount === 0) {
+      statusLine.value = `已将 ${succeededIds.length} 个资源移入项目回收站，结构大纲已刷新。`
+      return
+    }
+
+    if (succeededIds.length > 0) {
+      statusLine.value = `已将 ${succeededIds.length} 个资源移入项目回收站，另有 ${failedCount} 个删除失败。`
+      return
+    }
+
+    const firstRejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    statusLine.value = resolveApiErrorMessage(
+      firstRejected?.reason,
+      '批量删除资源失败，请稍后重试。',
+    )
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
 async function restoreProjectResource(resourceId: string) {
   const targetResourceId = String(resourceId || '').trim()
   if (!activeProjectId.value || !targetResourceId)
@@ -8900,6 +8944,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           @add-resource-from-library="addResourceFromLibrary"
           @patch-project-resource-tree="patchProjectResourceTree"
           @remove-project-resource="removeProjectResource"
+          @remove-project-resources="removeProjectResources"
           @restore-project-resource="restoreProjectResource"
           @purge-project-resource="purgeProjectResource"
           @upload-resources="uploadResourcesToProject"

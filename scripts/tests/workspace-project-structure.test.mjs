@@ -56,6 +56,8 @@ it('项目工作区入口已将 route、侧栏布局、领域状态机与纯 hel
   assert.match(pageSource, /const \{[\s\S]*topicBoardDraft,[\s\S]*chatMessages,[\s\S]*resetChatState,[\s\S]*\} = useWorkspaceProjectAi\(\)/, '项目工作区未复用 AI 状态 composable')
   assert.match(pageSource, /const \{[\s\S]*projectSettingsLoading,[\s\S]*projectSettingsDraftServerRevision,[\s\S]*\} = useWorkspaceProjectSettings\(\)/, '项目工作区未复用 settings 状态 composable')
   assert.match(pageSource, /const \{[\s\S]*initializeRightSidebarBreakpointTracking,[\s\S]*collapseRightSidebar,[\s\S]*expandRightSidebar,[\s\S]*\} = useWorkspaceSidebarLayout\(\)/, '项目工作区未复用侧栏布局状态机')
+  assert.match(pageSource, /async function removeProjectResources\(resourceIds: string\[\]\)/, '项目工作区缺少批量删除资源处理')
+  assert.match(pageSource, /@remove-project-resources="removeProjectResources"/, '项目工作区未接入左栏批量删除事件')
   assert.doesNotMatch(pageSource, /function normalizeRouteParam\(/, '项目工作区仍内联 normalizeRouteParam')
   assert.doesNotMatch(pageSource, /function normalizeQueryParam\(/, '项目工作区仍内联 normalizeQueryParam')
   assert.doesNotMatch(pageSource, /function teamDashboardPath\(/, '项目工作区仍内联 teamDashboardPath')

@@ -191,6 +191,7 @@ const emit = defineEmits<{
   'shareProjectResource': [payload: ShareProjectResourcePayload]
   'duplicateProjectResource': [resourceId: string]
   'removeProjectResource': [resourceId: string]
+  'removeProjectResources': [resourceIds: string[]]
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
   'uploadResources': [payload: { files: File[], parentResourceId?: string | null }]
@@ -302,9 +303,11 @@ const activeResourceId = ref('')
 const activeOutlineId = ref('')
 const pendingOutlineCommandId = ref('')
 const resourceActionOpenId = ref('')
+const projectResourceBatchEditMode = ref(false)
+const projectResourceBatchSelectedIds = ref<string[]>([])
 const projectResourceBatchMenuOpen = ref(false)
 const projectResourceAddMenuOpen = ref(false)
-const removeTargetResourceId = ref('')
+const removeTargetResourceIds = ref<string[]>([])
 const removeResourceModalVisible = ref(false)
 const purgeTargetResourceId = ref('')
 const purgeResourceModalVisible = ref(false)
@@ -317,6 +320,7 @@ const resourceDetailModalVisible = ref(false)
 const libraryModalKeyword = ref('')
 const libraryModalVisible = ref(false)
 const libraryImportParentResourceId = ref<string | null>(null)
+const libraryListRef = ref<HTMLElement | null>(null)
 const uploadParentResourceId = ref<string | null>(null)
 const projectResourceUploadInputRef = ref<HTMLInputElement | null>(null)
 const sidebarPanelRef = ref<HTMLElement | null>(null)
@@ -433,7 +437,7 @@ function flattenProjectResourceTree(
 }
 
 function resolveTreeDepthOffset(depth: number): string {
-  return `calc(var(--workspace-left-tree-indent-step, 14px) * ${Math.max(0, depth)})`
+  return `calc(var(--workspace-left-tree-root-offset, 0px) + var(--workspace-left-tree-indent-step, 14px) * ${Math.max(0, depth)})`
 }
 
 const projectResourceTree = computed<ProjectResourceTreeNode[]>(() => {
@@ -530,11 +534,35 @@ const projectOutlineSkeletonRows = [1, 2, 3, 4, 5]
 
 const recycleRetentionDays = 30
 
+const projectResourceIds = computed(() => {
+  return props.selectedResources
+    .map(resource => String(resource.id || '').trim())
+    .filter(Boolean)
+})
+
+const projectResourceBatchSelectedIdSet = computed(() => new Set(projectResourceBatchSelectedIds.value))
+
+const projectResourceBatchSelectedCount = computed(() => projectResourceBatchSelectedIds.value.length)
+
+const projectResourceBatchAllSelected = computed(() => {
+  return projectResourceIds.value.length > 0 && projectResourceBatchSelectedIds.value.length === projectResourceIds.value.length
+})
+
+const removeTargetResourceCount = computed(() => removeTargetResourceIds.value.length)
+
 const removeTargetResourceLabel = computed(() => {
-  if (!removeTargetResourceId.value)
+  if (removeTargetResourceIds.value.length > 1)
+    return `已选 ${removeTargetResourceIds.value.length} 个文件`
+  if (!removeTargetResourceIds.value.length)
     return '该文件'
-  const target = props.selectedResources.find(item => item.id === removeTargetResourceId.value)
+  const target = props.selectedResources.find(item => item.id === removeTargetResourceIds.value[0])
   return target ? resourceDisplayTitle(target) : '该文件'
+})
+
+const removeResourceModalMessage = computed(() => {
+  if (removeTargetResourceIds.value.length > 1)
+    return `确认删除已选的 ${removeTargetResourceIds.value.length} 个资源吗？`
+  return `确认删除资源「${removeTargetResourceLabel.value}」吗？`
 })
 
 const purgeTargetResourceLabel = computed(() => {
@@ -773,6 +801,71 @@ function switchModule(moduleId: string) {
   projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
   activeModule.value = moduleId
+}
+
+function enterProjectResourceBatchEditMode() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceBatchEditMode.value = true
+  projectResourceBatchMenuOpen.value = false
+  projectResourceAddMenuOpen.value = false
+  resourceActionOpenId.value = ''
+}
+
+function exitProjectResourceBatchEditMode(options: { keepSelection?: boolean } = {}) {
+  projectResourceBatchEditMode.value = false
+  projectResourceBatchMenuOpen.value = false
+  resourceActionOpenId.value = ''
+  if (!options.keepSelection)
+    projectResourceBatchSelectedIds.value = []
+}
+
+function isProjectResourceBatchSelected(resourceId: string): boolean {
+  const normalizedResourceId = String(resourceId || '').trim()
+  return normalizedResourceId ? projectResourceBatchSelectedIdSet.value.has(normalizedResourceId) : false
+}
+
+function setProjectResourceBatchSelection(resourceId: string, selected: boolean) {
+  if (!projectResourceBatchEditMode.value)
+    return
+
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId)
+    return
+
+  if (selected) {
+    if (!projectResourceBatchSelectedIdSet.value.has(normalizedResourceId))
+      projectResourceBatchSelectedIds.value = [...projectResourceBatchSelectedIds.value, normalizedResourceId]
+    return
+  }
+
+  projectResourceBatchSelectedIds.value = projectResourceBatchSelectedIds.value.filter(item => item !== normalizedResourceId)
+}
+
+function toggleProjectResourceBatchSelection(resourceId: string) {
+  setProjectResourceBatchSelection(resourceId, !isProjectResourceBatchSelected(resourceId))
+}
+
+function toggleProjectResourceBatchSelectAll() {
+  if (!projectResourceBatchEditMode.value)
+    return
+
+  if (projectResourceBatchAllSelected.value) {
+    projectResourceBatchSelectedIds.value = []
+    return
+  }
+
+  projectResourceBatchSelectedIds.value = [...projectResourceIds.value]
+}
+
+function clearProjectResourceBatchSelection() {
+  projectResourceBatchSelectedIds.value = []
+}
+
+function resetLibraryListScroll() {
+  nextTick(() => {
+    libraryListRef.value?.scrollTo({ top: 0 })
+  })
 }
 
 function selectResource(resourceId: string) {
@@ -1343,9 +1436,16 @@ function buildProjectResourceBatchMenuItems(): ContextMenuItem[] {
   const empty = props.selectedResources.length === 0
   return [
     {
+      key: projectResourceBatchEditMode.value ? 'exitBatchEdit' : 'enterBatchEdit',
+      label: projectResourceBatchEditMode.value ? '退出批量编辑' : '进入批量编辑',
+      icon: projectResourceBatchEditMode.value ? 'close' : 'check_box',
+      disabled,
+    },
+    {
       key: 'uploadLocal',
       label: '批量上传文件',
       icon: 'upload_file',
+      separatorBefore: true,
       disabled,
     },
     {
@@ -1385,6 +1485,12 @@ function requestProjectResourceBatchMenu(anchorEl: HTMLElement | null): void {
     onSelect: (key) => {
       try {
         switch (key) {
+          case 'enterBatchEdit':
+            enterProjectResourceBatchEditMode()
+            return
+          case 'exitBatchEdit':
+            exitProjectResourceBatchEditMode()
+            return
           case 'uploadLocal':
             openLocalUploadFromMenu()
             return
@@ -1459,6 +1565,28 @@ function requestProjectResourceBatchMenuByKeyboard(event: KeyboardEvent): void {
     return
   event.preventDefault()
   requestProjectResourceBatchMenu(event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
+}
+
+function handleProjectResourcePrimaryAction(resource: Resource) {
+  if (projectResourceBatchEditMode.value) {
+    toggleProjectResourceBatchSelection(String(resource.id || ''))
+    return
+  }
+
+  openResource(resource)
+}
+
+function requestBatchRemoveResources() {
+  if (
+    props.resourceMutating
+    || !props.hasActiveProject
+    || projectResourceBatchSelectedIds.value.length === 0
+  ) {
+    return
+  }
+
+  removeTargetResourceIds.value = [...projectResourceBatchSelectedIds.value]
+  removeResourceModalVisible.value = true
 }
 
 function buildResourceActionMenuItems(resource: Resource): ContextMenuItem[] {
@@ -1549,7 +1677,7 @@ function requestResourceActionMenu(resourceId: string, optionsOverrides: {
   restoreFocusEl?: HTMLElement | null
 } = {}): void {
   const normalizedResourceId = String(resourceId || '').trim()
-  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+  if (!normalizedResourceId || projectResourceBatchEditMode.value || props.resourceMutating || !props.hasActiveProject)
     return
 
   const resource = props.selectedResources.find(item => item.id === normalizedResourceId)
@@ -1738,7 +1866,7 @@ function buildProjectResourceTreePatchPayload(
 }
 
 function handleResourceDragStart(resourceId: string, event: DragEvent) {
-  if (props.resourceMutating || !props.hasActiveProject)
+  if (projectResourceBatchEditMode.value || props.resourceMutating || !props.hasActiveProject)
     return
   const normalizedResourceId = String(resourceId || '').trim()
   if (!normalizedResourceId)
@@ -1752,7 +1880,7 @@ function handleResourceDragStart(resourceId: string, event: DragEvent) {
 }
 
 function handleResourceDragOver(resourceId: string | null, position: ResourceTreeDropPosition, event: DragEvent) {
-  if (!draggingResourceId.value || props.resourceMutating || !props.hasActiveProject)
+  if (projectResourceBatchEditMode.value || !draggingResourceId.value || props.resourceMutating || !props.hasActiveProject)
     return
   event.preventDefault()
   dragOverResourceId.value = String(resourceId || '').trim()
@@ -1775,7 +1903,7 @@ function handleResourceDragEnd() {
 }
 
 function handleResourceDrop(resourceId: string | null, position: ResourceTreeDropPosition, event: DragEvent) {
-  if (!draggingResourceId.value || props.resourceMutating || !props.hasActiveProject)
+  if (projectResourceBatchEditMode.value || !draggingResourceId.value || props.resourceMutating || !props.hasActiveProject)
     return
   event.preventDefault()
   const payload = buildProjectResourceTreePatchPayload(draggingResourceId.value, resourceId, position)
@@ -1793,6 +1921,10 @@ function toggleResourceActionMenu(resourceId: string, anchorEl: HTMLElement | nu
 }
 
 function handleResourceItemContextMenu(resourceId: string, event: MouseEvent) {
+  if (projectResourceBatchEditMode.value) {
+    event.preventDefault()
+    return
+  }
   event.preventDefault()
   requestResourceActionMenu(resourceId, {
     anchorPoint: {
@@ -1809,7 +1941,7 @@ function requestRemoveResource(resourceId: string) {
     return
 
   resourceActionOpenId.value = ''
-  removeTargetResourceId.value = targetResourceId
+  removeTargetResourceIds.value = [targetResourceId]
   removeResourceModalVisible.value = true
 }
 
@@ -1907,20 +2039,24 @@ function closeRemoveResourceModal() {
   if (props.resourceMutating)
     return
   removeResourceModalVisible.value = false
-  removeTargetResourceId.value = ''
+  removeTargetResourceIds.value = []
 }
 
 function confirmRemoveResource() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
 
-  const targetResourceId = String(removeTargetResourceId.value || '').trim()
-  if (!targetResourceId)
+  const targetResourceIds = [...new Set(removeTargetResourceIds.value.map(item => String(item || '').trim()).filter(Boolean))]
+  if (targetResourceIds.length === 0)
     return
 
   removeResourceModalVisible.value = false
-  removeTargetResourceId.value = ''
-  emit('removeProjectResource', targetResourceId)
+  removeTargetResourceIds.value = []
+  if (targetResourceIds.length === 1) {
+    emit('removeProjectResource', targetResourceIds[0])
+    return
+  }
+  emit('removeProjectResources', targetResourceIds)
 }
 
 function restoreRecycleResource(resourceId: string) {
@@ -2008,10 +2144,20 @@ function closeResourceActionMenuByEscape(event: KeyboardEvent) {
 }
 
 watch(() => props.selectedResources, (nextResources) => {
+  const nextResourceIds = new Set(
+    nextResources
+      .map(item => String(item.id || '').trim())
+      .filter(Boolean),
+  )
   if (resourceActionOpenId.value && !nextResources.some(item => item.id === resourceActionOpenId.value))
     resourceActionOpenId.value = ''
-  if (removeTargetResourceId.value && !nextResources.some(item => item.id === removeTargetResourceId.value)) {
-    removeTargetResourceId.value = ''
+  if (projectResourceBatchSelectedIds.value.length > 0) {
+    projectResourceBatchSelectedIds.value = projectResourceBatchSelectedIds.value.filter(item => nextResourceIds.has(item))
+  }
+  if (removeTargetResourceIds.value.length > 0) {
+    removeTargetResourceIds.value = removeTargetResourceIds.value.filter(item => nextResourceIds.has(item))
+  }
+  if (removeResourceModalVisible.value && removeTargetResourceIds.value.length === 0) {
     removeResourceModalVisible.value = false
   }
   if (resourceDetailTargetId.value && !nextResources.some(item => item.id === resourceDetailTargetId.value))
@@ -2085,10 +2231,19 @@ watch(() => props.recycleResources, (nextResources) => {
 }, { immediate: true, deep: true })
 
 watch(libraryModalVisible, (next) => {
-  if (next)
+  if (next) {
+    resetLibraryListScroll()
     return
+  }
   libraryModalKeyword.value = ''
   libraryImportParentResourceId.value = null
+  resetLibraryListScroll()
+})
+
+watch(libraryModalKeyword, () => {
+  if (!libraryModalVisible.value)
+    return
+  resetLibraryListScroll()
 })
 
 watch(outlineItems, (nextItems) => {
@@ -2168,13 +2323,15 @@ watch(() => props.hasActiveProject, (next) => {
   libraryModalVisible.value = false
   libraryImportParentResourceId.value = null
   uploadParentResourceId.value = null
+  projectResourceBatchEditMode.value = false
+  projectResourceBatchSelectedIds.value = []
   projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
   closeResourceDetailPanel()
   shareTargetResourceId.value = ''
   shareResourceModalVisible.value = false
-  removeTargetResourceId.value = ''
+  removeTargetResourceIds.value = []
   removeResourceModalVisible.value = false
   purgeTargetResourceId.value = ''
   purgeResourceModalVisible.value = false
@@ -2279,7 +2436,7 @@ onBeforeUnmount(() => {
 
             <template v-else>
                 <section class="workspace-tree-block">
-                  <div class="workspace-tree-block__title-row">
+                  <div class="workspace-tree-block__title-row workspace-tree-block__title-row--sticky">
                     <button
                       class="workspace-tree-block__title"
                       type="button"
@@ -2302,6 +2459,7 @@ onBeforeUnmount(() => {
                       >
                       <button
                         class="workspace-tree-block__title-action"
+                        :class="{ 'workspace-tree-block__title-action--active': projectResourceBatchEditMode }"
                         type="button"
                         title="批量管理"
                         aria-label="批量管理"
@@ -2327,6 +2485,46 @@ onBeforeUnmount(() => {
                         @keydown="requestProjectResourceAddMenuByKeyboard"
                       >
                         <span class="material-symbols-outlined">add</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="projectResourceBatchEditMode && sectionExpanded.projectResources" class="workspace-resource-batch-toolbar">
+                    <div class="workspace-resource-batch-toolbar__summary">
+                      批量编辑中，已选 {{ projectResourceBatchSelectedCount }} 项
+                    </div>
+                    <div class="workspace-resource-batch-toolbar__actions">
+                      <button
+                        class="workspace-resource-batch-toolbar__action"
+                        type="button"
+                        :disabled="resourceMutating || selectedResources.length === 0"
+                        @click="toggleProjectResourceBatchSelectAll"
+                      >
+                        {{ projectResourceBatchAllSelected ? '取消全选' : '全选全部' }}
+                      </button>
+                      <button
+                        class="workspace-resource-batch-toolbar__action"
+                        type="button"
+                        :disabled="resourceMutating || projectResourceBatchSelectedCount === 0"
+                        @click="clearProjectResourceBatchSelection"
+                      >
+                        清空选择
+                      </button>
+                      <button
+                        class="workspace-resource-batch-toolbar__action workspace-resource-batch-toolbar__action--danger"
+                        type="button"
+                        :disabled="resourceMutating || projectResourceBatchSelectedCount === 0"
+                        @click="requestBatchRemoveResources"
+                      >
+                        批量删除
+                      </button>
+                      <button
+                        class="workspace-resource-batch-toolbar__action"
+                        type="button"
+                        :disabled="resourceMutating"
+                        @click="exitProjectResourceBatchEditMode()"
+                      >
+                        完成
                       </button>
                     </div>
                   </div>
@@ -2430,6 +2628,7 @@ onBeforeUnmount(() => {
                         class="workspace-resource-tree-entry"
                       >
                         <div
+                          v-if="!projectResourceBatchEditMode"
                           class="workspace-tree-dropzone"
                           :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'before' }"
                           :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
@@ -2441,7 +2640,8 @@ onBeforeUnmount(() => {
                         <div
                           class="workspace-tree-item-row"
                           :class="{
-                            'workspace-tree-item-row--active': !suppressResourceSelection && row.resource.id === activeResourceId,
+                            'workspace-tree-item-row--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId,
+                            'workspace-tree-item-row--batch-selected': projectResourceBatchEditMode && isProjectResourceBatchSelected(row.resource.id),
                             'workspace-tree-item-row--menu-open': resourceActionOpenId === row.resource.id,
                             'workspace-tree-item-row--drop-inside': dragOverResourceId === row.resource.id && dragOverPosition === 'inside',
                           }"
@@ -2450,7 +2650,20 @@ onBeforeUnmount(() => {
                           @dragleave="handleResourceDragLeave(row.resource.id, 'inside')"
                           @drop="handleResourceDrop(row.resource.id, 'inside', $event)"
                         >
-                          <div class="workspace-resource-tree-row__main" :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }">
+                          <div
+                            class="workspace-resource-tree-row__main"
+                            :class="{ 'workspace-resource-tree-row__main--with-actions': !projectResourceBatchEditMode }"
+                            :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }"
+                          >
+                            <label v-if="projectResourceBatchEditMode" class="workspace-tree-item__checkbox" :title="`选择 ${resourceDisplayTitle(row.resource)}`">
+                              <input
+                                class="workspace-tree-item__checkbox-input"
+                                type="checkbox"
+                                :checked="isProjectResourceBatchSelected(row.resource.id)"
+                                @click.stop
+                                @change="setProjectResourceBatchSelection(row.resource.id, ($event.target as HTMLInputElement).checked)"
+                              >
+                            </label>
                             <button
                               class="workspace-tree-item__expander"
                               :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
@@ -2465,17 +2678,17 @@ onBeforeUnmount(() => {
 
                             <button
                               class="workspace-tree-item"
-                              :class="{ 'workspace-tree-item--active': !suppressResourceSelection && row.resource.id === activeResourceId }"
+                              :class="{ 'workspace-tree-item--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId }"
                               :title="resourceDisplayTitle(row.resource)"
                               type="button"
                               aria-haspopup="menu"
                               :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
                               data-context-menu-scope="resource"
                               :data-context-resource-id="row.resource.id"
-                              draggable="true"
+                              :draggable="!projectResourceBatchEditMode"
                               @dragstart="handleResourceDragStart(row.resource.id, $event)"
                               @dragend="handleResourceDragEnd"
-                              @click="openResource(row.resource)"
+                              @click="handleProjectResourcePrimaryAction(row.resource)"
                               @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
                             >
                               <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
@@ -2485,7 +2698,7 @@ onBeforeUnmount(() => {
                             </button>
                           </div>
 
-                          <div class="workspace-resource-actions">
+                          <div v-if="!projectResourceBatchEditMode" class="workspace-resource-actions">
                             <button
                               class="workspace-resource-actions__trigger"
                               type="button"
@@ -2503,6 +2716,7 @@ onBeforeUnmount(() => {
                         </div>
 
                         <div
+                          v-if="!projectResourceBatchEditMode"
                           class="workspace-tree-dropzone"
                           :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'after' }"
                           :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
@@ -2512,16 +2726,6 @@ onBeforeUnmount(() => {
                         />
                       </div>
 
-                      <div
-                        v-if="visibleResources.length > 0"
-                        class="workspace-tree-dropzone workspace-tree-dropzone--tail"
-                        :class="{ 'workspace-tree-dropzone--active': !dragOverResourceId && dragOverPosition === 'root_end' }"
-                        @dragover="handleResourceDragOver(null, 'root_end', $event)"
-                        @dragleave="handleResourceDragLeave(null, 'root_end')"
-                        @drop="handleResourceDrop(null, 'root_end', $event)"
-                      >
-                        拖到此处可移动到根节点末尾
-                      </div>
                       <p v-if="visibleUploadTasks.length === 0 && visibleResources.length === 0" class="workspace-empty-text">
                         暂无资源
                       </p>
@@ -2531,7 +2735,7 @@ onBeforeUnmount(() => {
 
                 <section class="workspace-tree-block">
                   <button
-                    class="workspace-tree-block__title"
+                    class="workspace-tree-block__title workspace-tree-block__title--sticky"
                     type="button"
                     :aria-expanded="sectionExpanded.linkedContestResources"
                     @click="toggleSection('linkedContestResources')"
@@ -2727,7 +2931,7 @@ onBeforeUnmount(() => {
                       type="text"
                     >
 
-                    <div class="workspace-library-list no-scrollbar">
+                    <div ref="libraryListRef" class="workspace-library-list no-scrollbar">
                       <div
                         v-for="item in visibleLibraryResources"
                         :key="item.id"
@@ -2843,7 +3047,7 @@ onBeforeUnmount(() => {
                 >
                   <div class="workspace-delete-modal">
                     <p>
-                      确认删除资源「{{ removeTargetResourceLabel }}」吗？
+                      {{ removeResourceModalMessage }}
                     </p>
                     <p class="workspace-delete-modal__hint">
                       删除后文件将移入项目回收站，30 天后自动清理；你也可在回收站手动彻底删除。
@@ -2864,7 +3068,7 @@ onBeforeUnmount(() => {
                         :disabled="resourceMutating"
                         @click="confirmRemoveResource"
                       >
-                        {{ resourceMutating ? '删除中...' : '确认删除' }}
+                        {{ resourceMutating ? '删除中...' : removeTargetResourceCount > 1 ? '确认批量删除' : '确认删除' }}
                       </button>
                     </div>
                   </div>

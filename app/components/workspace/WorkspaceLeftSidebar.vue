@@ -172,6 +172,7 @@ const emit = defineEmits<{
   'shareProjectResource': [payload: ShareProjectResourcePayload]
   'duplicateProjectResource': [resourceId: string]
   'removeProjectResource': [resourceId: string]
+  'removeProjectResources': [resourceIds: string[]]
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
   'uploadResources': [payload: { files: File[], parentResourceId?: string | null }]
@@ -411,6 +412,7 @@ watch(activeModule, (value) => {
             @share-project-resource="emit('shareProjectResource', $event)"
             @duplicate-project-resource="emit('duplicateProjectResource', $event)"
             @remove-project-resource="emit('removeProjectResource', $event)"
+            @remove-project-resources="emit('removeProjectResources', $event)"
             @restore-project-resource="emit('restoreProjectResource', $event)"
             @purge-project-resource="emit('purgeProjectResource', $event)"
             @upload-resources="emit('uploadResources', $event)"
