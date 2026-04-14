@@ -1,13 +1,36 @@
 <script setup lang="ts">
 import type { DesignElementModel, DesignFrameModel } from '~~/shared/types/domain'
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { resolveDeviceFramePreset } from '~~/shared/utils/scene-document'
+
+const MIN_FRAME_WIDTH = 280
+const MIN_FRAME_HEIGHT = 180
+
+type ResizeDirection = 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+type ResizePatch = Partial<{ x: number, y: number, width: number, height: number }>
+type ResizeSession = {
+  direction: ResizeDirection
+  startClientX: number
+  startClientY: number
+  startFrame: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+}
 
 const props = withDefaults(defineProps<{
   frame: DesignFrameModel
   selected?: boolean
+  disabled?: boolean
+  onResizePreview?: (patch: ResizePatch) => void
+  onResizeCommit?: (patch: ResizePatch) => void
 }>(), {
   selected: false,
+  disabled: false,
+  onResizePreview: undefined,
+  onResizeCommit: undefined,
 })
 
 function normalizeString(value: unknown): string {
@@ -47,6 +70,99 @@ const diagramStats = computed(() => {
     nodeCount: embeddedScene?.sceneModel?.nodes?.length || 0,
     edgeCount: embeddedScene?.sceneModel?.edges?.length || 0,
   }
+})
+
+const resizeSession = ref<ResizeSession | null>(null)
+
+function normalizeResizePatch(frame: { x: number, y: number, width: number, height: number }): ResizePatch {
+  return {
+    x: Math.round(frame.x),
+    y: Math.round(frame.y),
+    width: Math.max(MIN_FRAME_WIDTH, Math.round(frame.width)),
+    height: Math.max(MIN_FRAME_HEIGHT, Math.round(frame.height)),
+  }
+}
+
+function resolveFrame() {
+  return {
+    x: Math.round(props.frame.x),
+    y: Math.round(props.frame.y),
+    width: Math.max(MIN_FRAME_WIDTH, Math.round(props.frame.width)),
+    height: Math.max(MIN_FRAME_HEIGHT, Math.round(props.frame.height)),
+  }
+}
+
+function applyResizeDelta(session: ResizeSession, clientX: number, clientY: number): ResizePatch {
+  const deltaX = clientX - session.startClientX
+  const deltaY = clientY - session.startClientY
+  let { x, y, width, height } = session.startFrame
+
+  if (session.direction.includes('e'))
+    width += deltaX
+  if (session.direction.includes('s'))
+    height += deltaY
+  if (session.direction.includes('w')) {
+    x += deltaX
+    width -= deltaX
+  }
+  if (session.direction.includes('n')) {
+    y += deltaY
+    height -= deltaY
+  }
+
+  if (width < MIN_FRAME_WIDTH) {
+    if (session.direction.includes('w'))
+      x -= MIN_FRAME_WIDTH - width
+    width = MIN_FRAME_WIDTH
+  }
+  if (height < MIN_FRAME_HEIGHT) {
+    if (session.direction.includes('n'))
+      y -= MIN_FRAME_HEIGHT - height
+    height = MIN_FRAME_HEIGHT
+  }
+
+  return normalizeResizePatch({ x, y, width, height })
+}
+
+function stopResize(): void {
+  window.removeEventListener('pointermove', handlePointerMove)
+  window.removeEventListener('pointerup', handlePointerUp)
+  window.removeEventListener('pointercancel', handlePointerUp)
+  resizeSession.value = null
+}
+
+function handlePointerMove(event: PointerEvent): void {
+  if (!resizeSession.value)
+    return
+  props.onResizePreview?.(applyResizeDelta(resizeSession.value, event.clientX, event.clientY))
+}
+
+function handlePointerUp(event: PointerEvent): void {
+  if (resizeSession.value)
+    props.onResizeCommit?.(applyResizeDelta(resizeSession.value, event.clientX, event.clientY))
+  stopResize()
+}
+
+function startResize(direction: ResizeDirection, event: PointerEvent): void {
+  if (props.disabled)
+    return
+
+  event.preventDefault()
+  event.stopPropagation()
+  resizeSession.value = {
+    direction,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startFrame: resolveFrame(),
+  }
+  window.addEventListener('pointermove', handlePointerMove)
+  window.addEventListener('pointerup', handlePointerUp)
+  window.addEventListener('pointercancel', handlePointerUp)
+}
+
+onBeforeUnmount(() => {
+  if (resizeSession.value)
+    stopResize()
 })
 </script>
 
@@ -187,6 +303,49 @@ const diagramStats = computed(() => {
           </div>
         </div>
       </div>
+    </template>
+
+    <template v-if="selected && !disabled">
+      <button
+        class="absolute -left-1.5 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-w-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('w', $event)"
+      />
+      <button
+        class="absolute -right-1.5 top-1/2 z-20 h-3.5 w-3.5 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-e-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('e', $event)"
+      />
+      <button
+        class="absolute left-1/2 -top-1.5 z-20 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-n-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('n', $event)"
+      />
+      <button
+        class="absolute bottom-[-0.375rem] left-1/2 z-20 h-3.5 w-3.5 -translate-x-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-s-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('s', $event)"
+      />
+      <button
+        class="absolute -left-1.5 -top-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-nw-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('nw', $event)"
+      />
+      <button
+        class="absolute -right-1.5 -top-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-ne-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('ne', $event)"
+      />
+      <button
+        class="absolute -bottom-1.5 -left-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-sw-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('sw', $event)"
+      />
+      <button
+        class="absolute -bottom-1.5 -right-1.5 z-20 h-3.5 w-3.5 rounded-full border border-white bg-sky-500 shadow-sm cursor-se-resize"
+        type="button"
+        @pointerdown.stop.prevent="startResize('se', $event)"
+      />
     </template>
   </article>
 </template>

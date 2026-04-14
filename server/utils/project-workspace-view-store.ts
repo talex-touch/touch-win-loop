@@ -41,6 +41,8 @@ function isWorkspaceOpenTabState(value: string): value is WorkspaceOpenTabState 
     return true
   if (value.startsWith('meeting:') && value.length > 'meeting:'.length)
     return true
+  if (value === 'meeting-create:audio' || value === 'meeting-create:video')
+    return true
   return value.startsWith('resource:') && value.length > 'resource:'.length
 }
 

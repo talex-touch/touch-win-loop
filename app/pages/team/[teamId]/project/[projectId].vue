@@ -24,28 +24,18 @@ import type {
   AuthMeResult,
   AuthUser,
   ChatMessage,
-  CollabPurpose,
   Contest,
   ContestDetailPayload,
   Project,
   ProjectInvitationSummary,
   ProjectIssue,
   ProjectIssueReport,
-  ProjectMeeting,
   ProjectMeetingDetail,
-  ProjectMeetingGuestShare,
-  ProjectMeetingMode,
-  ProjectMeetingUtterance,
   ProjectMemberManagementSnapshot,
   ProjectMemberRole,
   ProjectMemberSummary,
   ProjectOutlineNode,
   ProjectOutlineSnapshot,
-  ProjectPayload,
-  ProjectResourceCommentAnchor,
-  ProjectResourceCommentImageNodeAnchor,
-  ProjectResourceCommentTextSelectionAnchor,
-  ProjectResourceCommentThread,
   ProjectResourceShare,
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
@@ -61,28 +51,24 @@ import type {
   ProjectTopicBoardListResult,
   ProjectTopicBoardPatchRequest,
   ProjectWorkbenchMode,
-  ProjectWorkspaceViewDeviceStatePayload,
   ProjectWorkspaceViewPreference,
   ProjectWorkspaceViewState,
   Resource,
   ResourcePreviewStatus,
-  TeamLastProjectPreference,
   TopicProposalDecisionStatus,
   TopicProposalItem,
   WorkspaceAiMode,
-  WorkspaceDisplayPreferenceSnapshot,
   WorkspaceFontSizePreset,
-  WorkspaceMeetingCreateTabId,
   WorkspaceMemberRole,
   WorkspaceOpenTabState,
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
 import type {
   MappingTone,
-  WorkspaceFormState,
   WorkspaceKeyword,
   WorkspaceLinkedContestResourceGroup,
   WorkspaceMappingRow,
@@ -91,7 +77,6 @@ import type {
   WorkspaceProjectContestBindingForm,
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
-  WorkspaceTopicBoardDraft,
 } from '~/types/workspace'
 import type { WorkspaceMetaKActionId, WorkspaceMetaKItem, WorkspaceMetaKSection, WorkspaceMetaKSectionDefinition } from '~/utils/workspace-metak'
 import { Message } from '@arco-design/web-vue'
@@ -100,35 +85,66 @@ import {
   isProjectResourceUploadFileSupported,
   PROJECT_RESOURCE_STORAGE_LIMIT_BYTES,
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
-  PROJECT_RESOURCE_UPLOAD_MAX_FILES_PER_BATCH,
 } from '~~/shared/constants/project-resource-upload'
 import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import { syncMarkdownMirrorFromRichText } from '~~/shared/utils/collab-markdown-rich-text'
+import {
+  COLLAB_FREEFORM_RESOURCE_LABEL,
+  COLLAB_NOTES_RESOURCE_LABEL,
+  resolveCollabResourceDisplayLabel,
+} from '~~/shared/utils/collab-resource'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
   createEmptyProjectCommonForm,
   createProjectCommonFormFromProject,
 } from '~/composables/project-settings'
-import { useCollabSession } from '~/composables/useCollabSession'
 import {
   normalizeQueryValue as normalizeQueryParam,
   teamDashboardPath,
   teamDetailPath,
 } from '~/composables/team-ui'
-import { useWorkspaceProjectRoute, workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
-import { useWorkspaceSidebarLayout } from '~/composables/useWorkspaceSidebarLayout'
+import { useCollabSession } from '~/composables/useCollabSession'
 import {
   defaultWorkspaceDisplayPreferenceSnapshot,
   useWorkspaceDisplayPreferenceApi,
 } from '~/composables/useWorkspaceDisplayPreferences'
+import { useWorkspaceProjectAi } from '~/composables/useWorkspaceProjectAi'
+import { useWorkspaceProjectComments } from '~/composables/useWorkspaceProjectComments'
+import { useWorkspaceProjectMeetings } from '~/composables/useWorkspaceProjectMeetings'
+import { useWorkspaceProjectResources } from '~/composables/useWorkspaceProjectResources'
+import { useWorkspaceProjectRoute, workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
+import { useWorkspaceProjectSettings, useWorkspaceProjectSettingsStorage } from '~/composables/useWorkspaceProjectSettings'
+import {
+  createMeetingCreateTabId,
+  createResourceTabId,
+  isProjectWorkspaceViewStateEqual,
+  normalizeProjectWorkspaceViewState,
+  resolveMeetingIdFromTabId,
+  sanitizeProjectWorkspaceViewState,
+  useWorkspaceProjectShell,
+  useWorkspaceProjectViewState,
+  useWorkspaceProjectWorkbench,
+} from '~/composables/useWorkspaceProjectShell'
+import { useWorkspaceSidebarLayout } from '~/composables/useWorkspaceSidebarLayout'
 import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/auth-request'
 import {
   isCollabMarkdownHeadingAnchorHashForResource,
 } from '~/utils/collab-markdown-navigation'
 import {
-  arrayToLines,
+  isDesignCanvasResource,
+  resolveCollabPurpose,
+  resolveCollabResourceIcon,
+  resolveCollabResourceLabel,
+} from '~/utils/workspace-left-sidebar-helpers'
+import {
+  buildWorkspaceMetaKSections,
+  matchAndSortWorkspaceMetaKItems,
+  resolveWorkspaceMetaKShortcutLabel,
+} from '~/utils/workspace-metak'
+import {
   clamp,
+  cloneProjectAdaptationForm,
   createEmptyProjectAdaptationForm,
   createProjectAdaptationFormFromSnapshot,
   linesToArray,
@@ -137,13 +153,8 @@ import {
   resolveApiStatusCode,
   sortByUpdatedAtDesc,
   validateUploadFiles,
-  cloneProjectAdaptationForm,
 } from '~/utils/workspace-project-helpers'
-import {
-  buildWorkspaceMetaKSections,
-  matchAndSortWorkspaceMetaKItems,
-  resolveWorkspaceMetaKShortcutLabel,
-} from '~/utils/workspace-metak'
+import { formatWorkspaceShortcutLabel } from '~/utils/workspace-shortcuts'
 
 definePageMeta({
   layout: 'dashboard',
@@ -152,10 +163,6 @@ definePageMeta({
 useHead({
   title: '项目工作区',
   link: [
-    {
-      rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
-    },
     {
       rel: 'stylesheet',
       href: 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;600;700&display=swap',
@@ -172,33 +179,44 @@ const {
   patchWorkspaceUserOverride: patchWorkspaceDisplayUserOverrideByApi,
   patchWorkspaceTeamDefault: patchWorkspaceDisplayTeamDefaultByApi,
 } = useWorkspaceDisplayPreferenceApi()
-
-interface TopicBoardConfirmOptions {
-  title: string
-  content: string
-  okText?: string
-  cancelText?: string
-}
-
-interface TopicBoardConfirmState extends Required<TopicBoardConfirmOptions> {
-  visible: boolean
-  resolver: ((value: boolean) => void) | null
-}
-
-type DeviceRestoreChoice = 'sync' | 'keep'
-
-interface DeviceRestoreConfirmState {
-  visible: boolean
-  title: string
-  content: string
-  resolver: ((value: DeviceRestoreChoice) => void) | null
-}
+const {
+  topicBoardConfirmState,
+  deviceRestoreConfirmState,
+  openSettingsSignal,
+  openMemberManagementSignal,
+  openDisplayPreferencesSignal,
+  openFlowSignal,
+  openDesignSignal,
+  openPreviewSignal,
+  closePreviewSignal,
+  accountCenterVisible,
+  leftSidebarMetaKSignal,
+  leftSidebarMetaKModuleId,
+  leftSidebarMetaKOutlineId,
+  metaKOpen,
+  metaKQuery,
+  metaKShortcutLabel,
+  statusLine,
+  resolveTopicBoardConfirm,
+  askTopicBoardConfirm,
+  resolveDeviceRestoreConfirm,
+  askDeviceRestoreConfirm,
+} = useWorkspaceProjectShell()
 
 interface HydratedProjectWorkspaceViewStateResult {
   state: ProjectWorkspaceViewState
-  bundle: ProjectWorkspaceViewDeviceStatePayload | null
+  bundle: {
+    current?: ProjectWorkspaceViewPreference | null
+    latestOther?: ProjectWorkspaceViewPreference | null
+    resolution: {
+      isNewDevice: boolean
+      isStaleDevice: boolean
+    }
+  } | null
   hasManagedQuery: boolean
 }
+
+type DeviceRestoreChoice = 'sync' | 'keep'
 
 interface ProjectSettingsDraftHydrationResult {
   bundle: ProjectSettingsDraftDevicePayload | null
@@ -221,97 +239,11 @@ interface MarkdownDocumentAssistRequestState {
   trigger: AiWorkspaceDocumentTrigger
 }
 
-const topicBoardConfirmState = reactive<TopicBoardConfirmState>({
-  visible: false,
-  title: '',
-  content: '',
-  okText: '确认',
-  cancelText: '取消',
-  resolver: null,
-})
-
-const deviceRestoreConfirmState = reactive<DeviceRestoreConfirmState>({
-  visible: false,
-  title: '',
-  content: '',
-  resolver: null,
-})
-
-function resolveTopicBoardConfirm(result: boolean) {
-  const resolver = topicBoardConfirmState.resolver
-  topicBoardConfirmState.visible = false
-  topicBoardConfirmState.title = ''
-  topicBoardConfirmState.content = ''
-  topicBoardConfirmState.okText = '确认'
-  topicBoardConfirmState.cancelText = '取消'
-  topicBoardConfirmState.resolver = null
-  resolver?.(result)
-}
-
-function askTopicBoardConfirm(options: TopicBoardConfirmOptions): Promise<boolean> {
-  if (!import.meta.client)
-    return Promise.resolve(true)
-
-  if (topicBoardConfirmState.resolver)
-    resolveTopicBoardConfirm(false)
-
-  topicBoardConfirmState.visible = true
-  topicBoardConfirmState.title = options.title
-  topicBoardConfirmState.content = options.content
-  topicBoardConfirmState.okText = options.okText || '确认'
-  topicBoardConfirmState.cancelText = options.cancelText || '取消'
-
-  return new Promise((resolve) => {
-    topicBoardConfirmState.resolver = resolve
-  })
-}
-
-function resolveDeviceRestoreConfirm(result: DeviceRestoreChoice) {
-  const resolver = deviceRestoreConfirmState.resolver
-  deviceRestoreConfirmState.visible = false
-  deviceRestoreConfirmState.title = ''
-  deviceRestoreConfirmState.content = ''
-  deviceRestoreConfirmState.resolver = null
-  resolver?.(result)
-}
-
-function askDeviceRestoreConfirm(title: string, content: string): Promise<DeviceRestoreChoice> {
-  if (!import.meta.client)
-    return Promise.resolve('keep')
-
-  if (deviceRestoreConfirmState.resolver)
-    resolveDeviceRestoreConfirm('keep')
-
-  deviceRestoreConfirmState.visible = true
-  deviceRestoreConfirmState.title = title
-  deviceRestoreConfirmState.content = content
-
-  return new Promise<DeviceRestoreChoice>((resolve) => {
-    deviceRestoreConfirmState.resolver = resolve
-  })
-}
-
-onBeforeUnmount(() => {
-  if (topicBoardConfirmState.resolver)
-    resolveTopicBoardConfirm(false)
-})
-
 function splitTopicBoardTags(text: string): string[] {
   return String(text || '')
     .split(/[\n,，、]+/)
     .map(item => item.trim())
     .filter(Boolean)
-}
-
-function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
-  return {
-    discipline: '',
-    topicType: '',
-    expectedDifficulty: '',
-    keywordsText: '',
-    teamSkillTagsText: '',
-    candidateCount: 3,
-  }
 }
 
 function cloneProjectContestBindings(value: WorkspaceProjectContestBindingForm[]): WorkspaceProjectContestBindingForm[] {
@@ -384,18 +316,14 @@ function resolveMetaKResourceTitle(resource: Resource): string {
   const title = normalizeString(resource.title)
   if (title)
     return title
-  if (resource.resourceKind === 'markdown')
-    return '协作文档'
-  if (resource.resourceKind === 'draw')
-    return resource.collabPurpose === 'workflow' ? '流程画布' : '自由画布'
+  if (isCollabResource(resource))
+    return resolveCollabResourceLabel(resource)
   return '未命名资源'
 }
 
 function resolveMetaKResourceIcon(resource: Resource): string {
-  if (resource.resourceKind === 'markdown')
-    return 'edit_note'
-  if (resource.resourceKind === 'draw')
-    return resource.collabPurpose === 'workflow' ? 'flowsheet' : 'draw'
+  if (isCollabResource(resource))
+    return resolveCollabResourceIcon(resource)
   const typeText = normalizeString(resource.type).toLowerCase()
   if (typeText.includes('pdf'))
     return 'picture_as_pdf'
@@ -471,35 +399,6 @@ interface ProjectMemberRolePatchPayload {
   role: 'manager' | 'editor' | 'viewer'
 }
 
-interface WorkspaceMeetingCaptionItem {
-  id: string
-  text: string
-  speakerName: string
-  speakerLabel: string
-  startedAtMs: number
-  endedAtMs: number
-  final: boolean
-}
-
-interface ProjectMeetingJoinSessionPayload {
-  meeting: ProjectMeetingDetail
-  rtcJoinToken?: string
-  rtcJoinExpiresAt?: string
-  rtcServerUrl?: string
-  rtcJoinUrl?: string
-  joinToken?: string
-  joinExpiresAt?: string
-  joinUrl?: string
-}
-
-interface ProjectMeetingCreatePayload {
-  mode: ProjectMeetingMode
-  title?: string
-  invitedUserIds: string[]
-  scheduledStartAt: string
-  scheduledEndAt: string
-}
-
 interface DefenseRealtimeSessionPayload {
   sessionId: string
   meetingId: string
@@ -516,9 +415,6 @@ interface DefenseRealtimeSessionPayload {
 
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
 type WorkspaceMainTabId = WorkspaceOpenTabState
-type WorkspaceMeetingTabId = `meeting:${string}`
-type WorkspaceMeetingCreateLocalTabId = WorkspaceMeetingCreateTabId
-type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
@@ -532,9 +428,6 @@ interface FinalReviewChecklistItem {
   blocker?: boolean
 }
 
-const PROJECT_SETTINGS_DRAFT_PREFIX = 'workspace.projectSettingsDraft'
-const PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX = 'workspace.projectSettingsDraftDevice'
-const PROJECT_VIEW_STATE_QUERY_KEYS = ['wb', 'tab', 'tabs', 'res', 'contest', 'track', 'session', 'meeting', 'ls', 'rs', 'panel'] as const
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
 const METAK_SECTION_DEFINITIONS: WorkspaceMetaKSectionDefinition[] = [
   { id: 'actions', title: '快捷命令', maxItems: 8 },
@@ -548,38 +441,94 @@ const METAK_SECTION_DEFINITIONS: WorkspaceMetaKSectionDefinition[] = [
 ]
 
 const { routeWorkspaceId, routeProjectId, highlightedProjectId, ensureCanonicalWorkspaceProjectRoute } = useWorkspaceProjectRoute()
-
-const naturalQuery = ref('')
-const major = ref('')
-const discipline = ref('')
-const level = ref('')
-const trackType = ref('')
-const topK = ref(6)
-const topicBoardDraft = reactive<WorkspaceTopicBoardDraft>(createEmptyTopicBoardDraft())
-const topicBoardLoading = ref(false)
-const topicBoardFetching = ref(false)
-const topicBoardError = ref('')
-const topicBoardSnapshot = ref<ProjectTopicBoard | null>(null)
-const topicBoardHistory = ref<ProjectTopicBoard[]>([])
-const topicBoardActioningCandidateId = ref('')
-const topicBoardCreateSeedHandled = ref(false)
+const {
+  naturalQuery,
+  major,
+  discipline,
+  level,
+  trackType,
+  topK,
+  topicBoardDraft,
+  topicBoardLoading,
+  topicBoardFetching,
+  topicBoardError,
+  topicBoardSnapshot,
+  topicBoardHistory,
+  topicBoardActioningCandidateId,
+  topicBoardCreateSeedHandled,
+  contests,
+  contestCatalog,
+  aiReasoning,
+  normalizedInfo,
+  chatMessages,
+  chatSessions,
+  activeChatSessionId,
+  chatInput,
+  chatMissingFields,
+  chatDraft,
+  aiMode,
+  workbenchMode,
+  lastPrimaryAiMode,
+  finalReviewMaterialsOpen,
+  finalReviewAssistantOpen,
+  preFinalReviewLeftCollapsed,
+  preFinalReviewRightCollapsed,
+  preFinalReviewActiveMainTabId,
+  preFinalReviewOpenTabs,
+  aiFiltering,
+  chatLoading,
+  chatSessionsLoading,
+  formSubmitting,
+  aiChangeRequests,
+  aiChangeRequestsLoading,
+  aiChangeActingIds,
+  aiChangeSecondConfirmIds,
+  projectIssueReports,
+  projectIssues,
+  issueCenterLoading,
+  issueReportSubmitting,
+  issueReportExporting,
+  metaKRemoteLoading,
+  defenseRounds,
+  defenseScorecard,
+  defensePersonas,
+  defensePersonasLoading,
+  defenseSummary,
+  defenseSummaryLoading,
+  defenseStage,
+  defenseTurnCount,
+  formState,
+  resetChatState,
+} = useWorkspaceProjectAi()
 let topicBoardLoadRequestId = 0
 let topicBoardWriteRequestId = 0
-
-const contests = ref<Contest[]>([])
-const contestCatalog = ref<Contest[]>([])
-const resources = ref<Resource[]>([])
-const recycleResources = ref<Resource[]>([])
-const resourceLibrary = ref<Resource[]>([])
-const projectResourceShares = ref<ProjectResourceShare[]>([])
-const projectMeetings = ref<ProjectMeeting[]>([])
-const activeMeetingId = ref('')
-const activeMeetingDetail = ref<ProjectMeetingDetail | null>(null)
-const activeMeetingUtterances = ref<ProjectMeetingUtterance[]>([])
-const meetingLiveCaptions = ref<WorkspaceMeetingCaptionItem[]>([])
+let projectResourcePreviewRequestId = 0
+const {
+  resources,
+  recycleResources,
+  resourceLibrary,
+  projectResourceShares,
+  projectOutlineSnapshot,
+  flowResourceId,
+  designResourceId,
+  previewResourceId,
+  collabBindingResourceId,
+  closingPreviewResourceId,
+  previewStatusLoading,
+  previewStatusPayload,
+  previewMode,
+  markdownDerivedTitleMap,
+  resourcesLoading,
+  resourceLibraryLoading,
+  projectOutlineLoading,
+  projectOutlineFirstLoaded,
+  projectResourceSharesLoading,
+  resourceMutating,
+} = useWorkspaceProjectResources()
+const collabPreviewLoading = ref(false)
+const collabPreviewError = ref('')
 const workspaceMembers = ref<ProjectMemberSummary[]>([])
 const workspaceInvitations = ref<ProjectInvitationSummary[]>([])
-const projectOutlineSnapshot = ref<ProjectOutlineSnapshot | null>(null)
 const selectedContestDetail = ref<ContestDetailPayload | null>(null)
 const projects = ref<Project[]>([])
 const allProjects = ref<Project[]>([])
@@ -587,18 +536,6 @@ const me = ref<AuthMeResult | null>(null)
 const activeWorkspaceId = ref('')
 const selectedContestId = ref('')
 const selectedTrackId = ref('')
-
-const openSettingsSignal = ref(0)
-const openMemberManagementSignal = ref(0)
-const openDisplayPreferencesSignal = ref(0)
-const openFlowSignal = ref(0)
-const openDesignSignal = ref(0)
-const openPreviewSignal = ref(0)
-const closePreviewSignal = ref(0)
-const accountCenterVisible = ref(false)
-const leftSidebarMetaKSignal = ref(0)
-const leftSidebarMetaKModuleId = ref<WorkspaceLeftSidebarCommandModuleId | ''>('')
-const leftSidebarMetaKOutlineId = ref('')
 const {
   leftSidebarCollapsed,
   rightSidebarUserCollapsed,
@@ -611,34 +548,44 @@ const {
   collapseRightSidebar,
   expandRightSidebar,
 } = useWorkspaceSidebarLayout()
-const openMainTabs = ref<WorkspaceMainTabId[]>(['dashboard'])
-const activeMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
-const metaKOpen = ref(false)
-const metaKQuery = ref('')
-const metaKShortcutLabel = ref('⌘K')
-const aiReasoning = ref('')
-const normalizedInfo = ref('')
-const statusLine = ref('')
-const flowResourceId = ref('')
-const designResourceId = ref('')
-const previewResourceId = ref('')
-const collabBindingResourceId = ref('')
-const closingPreviewResourceId = ref('')
+const openMainTabs = ref<WorkspaceMainTabId[]>([])
+const activeMainTabId = ref<WorkspaceMainTabId | ''>('')
+const {
+  rememberPreFinalReviewWorkbenchState,
+  restorePreFinalReviewWorkbenchState,
+  closeFinalReviewDrawers,
+  toggleFinalReviewMaterialsDrawer,
+  toggleRightSidebar,
+  ensureWorkspaceMainTabOpen,
+  ensureMeetingDetailTabOpen,
+  ensureMeetingCreateTabOpen,
+} = useWorkspaceProjectWorkbench({
+  openMainTabs,
+  activeMainTabId,
+  leftSidebarCollapsed,
+  rightSidebarCollapsed,
+  setRightSidebarUserCollapsed,
+  collapseRightSidebar,
+  expandRightSidebar,
+  workbenchMode,
+  aiMode,
+  lastPrimaryAiMode,
+  finalReviewMaterialsOpen,
+  finalReviewAssistantOpen,
+  preFinalReviewLeftCollapsed,
+  preFinalReviewRightCollapsed,
+  preFinalReviewActiveMainTabId,
+  preFinalReviewOpenTabs,
+})
 const workspaceMainPanelRef = ref<{
   applyMarkdownDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
   scrollToMarkdownCommentThread: (threadId: string) => void
   scrollToMarkdownHeadingAnchor: (anchorId: string) => boolean
+  saveCurrentPanel: () => { handled: boolean, reason?: string }
+  canCloseCurrentTab: () => boolean
+  closeCurrentTab: () => { handled: boolean, reason?: string }
 } | null>(null)
-const previewStatusLoading = ref(false)
-const previewStatusPayload = ref<ResourcePreviewStatusPayload | null>(null)
-const previewMode = ref<WorkspacePreviewMode>('binary')
 const rightSidebarView = ref<WorkspaceRightSidebarView>('ai')
-const markdownDerivedTitleMap = ref<Record<string, string>>({})
-const markdownCommentThreads = ref<ProjectResourceCommentThread[]>([])
-const activeMarkdownCommentThreadId = ref('')
-const markdownCommentDraftAnchor = ref<ProjectResourceCommentAnchor | null>(null)
-const markdownCommentLoading = ref(false)
-const markdownCommentMutating = ref(false)
 const documentAssistRequestState = reactive<MarkdownDocumentAssistRequestState>({
   resourceId: '',
   resourceTitle: '',
@@ -650,98 +597,141 @@ const documentAssistRequestState = reactive<MarkdownDocumentAssistRequestState>(
 })
 const documentAssistResult = ref('')
 const documentAssistRunning = ref(false)
-const projectSettingsLoading = ref(false)
 const selectedContestDetailLoading = ref(false)
-const projectSettingsSaveState = ref<WorkspaceProjectSaveState>('idle')
-const workspaceDisplayPreferenceSnapshot = ref<WorkspaceDisplayPreferenceSnapshot>(defaultWorkspaceDisplayPreferenceSnapshot())
-const workspaceDisplayPreferenceLoading = ref(false)
-const workspaceDisplayPreferenceSavingScope = ref<'' | 'user' | 'team'>('')
-const workspaceDisplayPreferenceError = ref('')
-const meetingJoinUrl = ref('')
-const meetingJoinToken = ref('')
-const meetingJoinExpiresAt = ref('')
-const meetingRtcServerUrl = ref('')
-const activeMeetingGuestShare = ref<ProjectMeetingGuestShare | null>(null)
-const projectSettingsCommon = reactive<WorkspaceProjectCommonForm>(createEmptyProjectCommonForm())
-const projectSettingsBindings = ref<WorkspaceProjectContestBindingForm[]>([])
-const projectSettingsCurrentContestId = ref('')
-const projectSettingsAdaptation = reactive<WorkspaceProjectAdaptationForm>(createEmptyProjectAdaptationForm())
-const projectSettingsAdaptationDrafts = ref<Record<string, WorkspaceProjectAdaptationForm>>({})
-const projectSettingsHydrating = ref(false)
-const projectSettingsCommonDirty = ref(false)
-const projectSettingsBindingsDirty = ref(false)
-const projectSettingsDirtyAdaptationContestIds = ref<string[]>([])
-const projectSettingsDraftServerRevision = ref<number | null>(null)
-const workspaceDeviceId = ref('')
+const {
+  projectSettingsLoading,
+  projectSettingsSaveState,
+  workspaceDisplayPreferenceSnapshot,
+  workspaceDisplayPreferenceLoading,
+  workspaceDisplayPreferenceSavingScope,
+  workspaceDisplayPreferenceError,
+  projectSettingsCommon,
+  projectSettingsBindings,
+  projectSettingsCurrentContestId,
+  projectSettingsAdaptation,
+  projectSettingsAdaptationDrafts,
+  projectSettingsHydrating,
+  projectSettingsCommonDirty,
+  projectSettingsBindingsDirty,
+  projectSettingsDirtyAdaptationContestIds,
+  projectSettingsDraftServerRevision,
+  workspaceDeviceId,
+} = useWorkspaceProjectSettings()
+const {
+  ensureWorkspaceDeviceId,
+  resetProjectSettingsDraftServerState,
+  readProjectSettingsDraftCache,
+  writeProjectSettingsDraftCache,
+  clearProjectSettingsDraftCache,
+} = useWorkspaceProjectSettingsStorage({
+  currentUserId: computed(() => String(me.value?.user.id || '').trim()),
+  workspaceDeviceId,
+  projectSettingsDraftServerRevision,
+  normalizeDraftCachePayload: normalizeProjectSettingsDraftCachePayload,
+})
+const {
+  projectMeetings,
+  meetingRuntimeHealth,
+  activeMeetingId,
+  activeMeetingDetail,
+  activeMeetingUtterances,
+  meetingLiveCaptions,
+  projectMeetingsLoading,
+  meetingDetailLoading,
+  meetingGuestShareLoading,
+  meetingMutating,
+  meetingJoinUrl,
+  meetingJoinToken,
+  meetingJoinExpiresAt,
+  meetingRtcServerUrl,
+  activeMeetingGuestShare,
+  clearMeetingRealtimeRefreshTimer,
+  clearMeetingJoinSession,
+  resetProjectMeetingState,
+  applyProjectMeetingSession,
+  loadProjectMeetingUtterances,
+  loadProjectMeetingDetail,
+  selectProjectMeeting,
+  loadProjectMeetings,
+  createProjectMeeting,
+  submitProjectMeetingCreate,
+  joinProjectMeeting,
+  startProjectMeeting,
+  endProjectMeeting,
+  createProjectMeetingGuestShare,
+  regenerateProjectMeetingGuestShare,
+  revokeProjectMeetingGuestShare,
+  handleMeetingRealtimeEnvelope,
+} = useWorkspaceProjectMeetings({
+  activeProjectId: computed(() => {
+    if (!highlightedProjectId.value)
+      return ''
+    const matched = projects.value.find(item => item.id === highlightedProjectId.value)
+    return matched?.id || ''
+  }),
+  currentUserId: computed(() => String(me.value?.user.id || '').trim()),
+  openMainTabs,
+  ensureMeetingDetailTabOpen,
+  ensureMeetingCreateTabOpen,
+  createMeetingCreateTabId,
+  subscribeMeeting: meetingId => workspaceRealtime.subscribeMeeting(meetingId),
+  onStatusLine: (message) => {
+    statusLine.value = message
+  },
+})
+const {
+  applyProjectWorkspaceViewState,
+  projectWorkspaceViewHydrating,
+  projectWorkspaceModeHydrating,
+  projectWorkspaceViewReady,
+  clearProjectWorkspaceViewPersistTimer,
+  hydrateProjectWorkspaceViewState,
+  syncProjectWorkspaceViewState,
+} = useWorkspaceProjectViewState({
+  activeWorkspaceId,
+  routeWorkspaceId,
+  routeProjectId,
+  highlightedProjectId,
+  resources,
+  openMainTabs,
+  activeMainTabId,
+  previewResourceId,
+  selectedContestId,
+  selectedTrackId,
+  activeChatSessionId,
+  activeMeetingId,
+  activeMeetingDetail,
+  activeMeetingUtterances,
+  meetingLiveCaptions,
+  leftSidebarCollapsed,
+  rightSidebarUserCollapsed,
+  setRightSidebarUserCollapsed,
+  workbenchMode,
+  aiMode,
+  lastPrimaryAiMode,
+  rememberPreFinalReviewWorkbenchState,
+  closeFinalReviewDrawers,
+  clearMeetingJoinSession,
+  ensureWorkspaceDeviceId,
+})
 
 let projectSettingsDraftTimer: ReturnType<typeof setTimeout> | null = null
 let projectSettingsDraftPersistSeq = 0
-let projectWorkspaceViewPersistTimer: ReturnType<typeof setTimeout> | null = null
 let projectOutlineGenerateTimer: ReturnType<typeof setTimeout> | null = null
 let previewStatusPollTimer: ReturnType<typeof setInterval> | null = null
-let markdownCommentPollTimer: ReturnType<typeof setInterval> | null = null
 let realtimeProjectRefreshTimer: ReturnType<typeof setTimeout> | null = null
-let meetingRealtimeRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let metaKRemoteSearchTimer: ReturnType<typeof setTimeout> | null = null
 let metaKRemoteRequestSequence = 0
 let unsubscribeRealtimeMessages: (() => void) | null = null
 
 const listLoading = ref(false)
-const aiFiltering = ref(false)
-const chatLoading = ref(false)
-const chatSessionsLoading = ref(false)
-const formSubmitting = ref(false)
-const resourcesLoading = ref(false)
-const resourceLibraryLoading = ref(false)
-const projectOutlineLoading = ref(false)
-const projectOutlineFirstLoaded = ref(false)
-const projectResourceSharesLoading = ref(false)
-const projectMeetingsLoading = ref(false)
-const meetingDetailLoading = ref(false)
-const meetingGuestShareLoading = ref(false)
 const workspaceMemberManagementLoading = ref(false)
 const workspaceInvitationSubmitting = ref(false)
 const workspaceMemberRoleUpdatingUserId = ref('')
 const workspaceMemberRemovingUserId = ref('')
 const workspaceInvitationRevokingId = ref('')
-const resourceMutating = ref(false)
-const meetingMutating = ref(false)
-
-const chatMessages = ref<ChatMessage[]>([])
-const chatSessions = ref<AiChatSession[]>([])
-const activeChatSessionId = ref('')
-const chatInput = ref('')
-const chatMissingFields = ref<string[]>([])
-const chatDraft = ref<ProjectPayload | null>(null)
-const aiMode = ref<WorkspaceAiMode>('dialog_ask')
-const workbenchMode = ref<WorkspaceWorkbenchMode>('project')
-const lastPrimaryAiMode = ref<WorkspacePrimaryAiMode>('dialog_ask')
-const finalReviewMaterialsOpen = ref(false)
-const finalReviewAssistantOpen = ref(false)
-const preFinalReviewLeftCollapsed = ref(false)
-const preFinalReviewRightCollapsed = ref(false)
-const preFinalReviewActiveMainTabId = ref<WorkspaceMainTabId | ''>('dashboard')
-const preFinalReviewOpenTabs = ref<WorkspaceMainTabId[]>(['dashboard'])
-const aiChangeRequests = ref<AiProjectChangeRequest[]>([])
-const aiChangeRequestsLoading = ref(false)
-const aiChangeActingIds = ref<string[]>([])
-const aiChangeSecondConfirmIds = ref<string[]>([])
-const projectIssueReports = ref<ProjectIssueReport[]>([])
-const projectIssues = ref<ProjectIssue[]>([])
-const issueCenterLoading = ref(false)
-const issueReportSubmitting = ref(false)
-const issueReportExporting = ref(false)
-const metaKRemoteLoading = ref(false)
 const metaKRemoteLibraryItems = ref<WorkspaceMetaKItem[]>([])
-const defenseRounds = ref<AiDefenseJudgeRound[]>([])
-const defenseScorecard = ref<AiDefenseScorecard | null>(null)
-const defensePersonas = ref<AiDefensePersona[]>([])
-const defensePersonasLoading = ref(false)
-const defenseSummary = ref<AiDefenseSummary | null>(null)
-const defenseSummaryLoading = ref(false)
-const defenseStage = ref<AiDefenseStage | undefined>(undefined)
-const defenseTurnCount = ref(0)
 const workspaceInvitationLink = ref('')
 const workspaceInvitationError = ref('')
 const workspaceSeatLimitSaveLoading = ref(false)
@@ -753,779 +743,575 @@ const headerAiCollapsed = computed(() => {
     ? !finalReviewAssistantOpen.value
     : rightSidebarCollapsed.value
 })
-const projectWorkspaceViewHydrating = ref(false)
-const projectWorkspaceModeHydrating = ref(false)
-const projectWorkspaceViewReady = ref(false)
 const workspaceBootstrapLoading = ref(false)
 
 let workspaceBootstrapRequestId = 0
 
-function getProjectSettingsDraftStorageKey(projectId: string): string {
-  if (!import.meta.client)
-    return ''
-  const normalizedProjectId = String(projectId || '').trim()
-  const userId = String(me.value?.user.id || '').trim()
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!normalizedProjectId || !userId || !deviceId)
-    return ''
-  return `${PROJECT_SETTINGS_DRAFT_PREFIX}.${userId}.${deviceId}.${normalizedProjectId}`
+type WorkspaceEditableMenuAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'
+
+interface WorkspaceTextControlContext {
+  kind: 'text-control'
+  field: HTMLInputElement | HTMLTextAreaElement
+  canWrite: boolean
+  hasSelection: boolean
+  hasContent: boolean
 }
 
-function getLegacyProjectSettingsDraftStorageKey(projectId: string): string {
-  if (!import.meta.client)
-    return ''
-  const normalizedProjectId = String(projectId || '').trim()
-  const userId = String(me.value?.user.id || '').trim()
-  if (!normalizedProjectId || !userId)
-    return ''
-  return `${PROJECT_SETTINGS_DRAFT_PREFIX}.${userId}.${normalizedProjectId}`
+interface WorkspaceRichTextContext {
+  kind: 'rich-text'
+  editorEl: HTMLElement
+  canWrite: boolean
+  hasSelection: boolean
+  hasContent: boolean
 }
 
-function getWorkspaceDeviceStorageKey(): string {
-  if (!import.meta.client)
-    return ''
-  const userId = String(me.value?.user.id || '').trim()
-  if (!userId)
-    return ''
-  return `${PROJECT_SETTINGS_DRAFT_DEVICE_PREFIX}.${userId}`
+type WorkspaceEditableContext = WorkspaceTextControlContext | WorkspaceRichTextContext
+
+const workspaceShellRef = ref<HTMLElement | null>(null)
+const workspacePlatform = ref('')
+const workspaceContextMenu = reactive<{
+  visible: boolean
+  items: ContextMenuItem[]
+  anchorPoint: { x: number, y: number } | null
+  anchorEl: HTMLElement | null
+  source: string
+  restoreFocusEl: HTMLElement | null
+}>({
+  visible: false,
+  items: [],
+  anchorPoint: null,
+  anchorEl: null,
+  source: '',
+  restoreFocusEl: null,
+})
+
+let workspaceContextMenuSelectHandler: ContextMenuRequest['onSelect'] | null = null
+let workspaceContextMenuCloseHandler: ContextMenuRequest['onClose'] | null = null
+
+function formatWorkspaceCommandShortcut(key: string, modifiers: Array<'mod' | 'shift' | 'alt'> = ['mod']): string {
+  return formatWorkspaceShortcutLabel({
+    key,
+    modifiers,
+  }, workspacePlatform.value)
 }
 
-function rememberPreFinalReviewWorkbenchState(options: {
-  leftSidebarCollapsed?: boolean
-  rightSidebarCollapsed?: boolean
-  activeMainTabId?: WorkspaceMainTabId | ''
-  openMainTabs?: WorkspaceMainTabId[]
-} = {}): void {
-  preFinalReviewLeftCollapsed.value = options.leftSidebarCollapsed ?? leftSidebarCollapsed.value
-  preFinalReviewRightCollapsed.value = options.rightSidebarCollapsed ?? rightSidebarUserCollapsed.value
-  preFinalReviewOpenTabs.value = normalizeWorkspaceMainTabIds(
-    options.openMainTabs ?? openMainTabs.value,
-    { allowEmpty: true },
-  )
-  preFinalReviewActiveMainTabId.value = normalizeWorkspaceMainTabId(
-    options.activeMainTabId ?? activeMainTabId.value,
-    preFinalReviewOpenTabs.value,
-    {
-      fallbackTabId: preFinalReviewOpenTabs.value[0] || '',
-    },
-  )
-}
-
-function restorePreFinalReviewWorkbenchState(options: { suppressPersist?: boolean } = {}): void {
-  openMainTabs.value = normalizeWorkspaceMainTabIds(preFinalReviewOpenTabs.value, { allowEmpty: true })
-  activeMainTabId.value = normalizeWorkspaceMainTabId(
-    preFinalReviewActiveMainTabId.value,
-    openMainTabs.value,
-    {
-      fallbackTabId: openMainTabs.value[0] || '',
-    },
-  )
-  leftSidebarCollapsed.value = preFinalReviewLeftCollapsed.value
-  setRightSidebarUserCollapsed(preFinalReviewRightCollapsed.value, {
-    suppressPersist: options.suppressPersist,
-  })
-}
-
-function closeFinalReviewDrawers(): void {
-  finalReviewMaterialsOpen.value = false
-  finalReviewAssistantOpen.value = false
-}
-
-function toggleFinalReviewMaterialsDrawer(): void {
-  finalReviewMaterialsOpen.value = !finalReviewMaterialsOpen.value
-}
-
-function toggleFinalReviewAssistantDrawer(): void {
-  finalReviewAssistantOpen.value = !finalReviewAssistantOpen.value
-}
-
-function toggleRightSidebar(): void {
-  if (workbenchMode.value === 'final_review') {
-    toggleFinalReviewAssistantDrawer()
-    return
-  }
-
-  if (rightSidebarCollapsed.value) {
-    expandRightSidebar()
-    return
-  }
-  collapseRightSidebar()
-}
-
-function createResourceTabId(resourceId: string): WorkspaceMainTabId {
-  return `resource:${resourceId}` as WorkspaceMainTabId
-}
-
-function createMeetingTabId(meetingId: string): WorkspaceMeetingTabId {
-  return `meeting:${meetingId}` as WorkspaceMeetingTabId
-}
-
-function createMeetingCreateTabId(mode: ProjectMeetingMode): WorkspaceMeetingCreateLocalTabId {
-  return `meeting-create:${mode}` as WorkspaceMeetingCreateLocalTabId
-}
-
-function resolveMeetingIdFromTabId(tabId: string): string {
-  return tabId.startsWith('meeting:') ? tabId.slice('meeting:'.length) : ''
-}
-
-function ensureWorkspaceMainTabOpen(tabId: WorkspaceMainTabId, options: { activate?: boolean } = {}): void {
-  const normalizedTabId = normalizeString(tabId) as WorkspaceMainTabId
-  if (!isWorkspaceMainTabId(normalizedTabId))
-    return
-
-  if (!openMainTabs.value.includes(normalizedTabId)) {
-    openMainTabs.value = normalizeWorkspaceMainTabIds([...openMainTabs.value, normalizedTabId], {
-      allowEmpty: true,
-    })
-  }
-
-  if (options.activate !== false)
-    activeMainTabId.value = normalizedTabId
-}
-
-function ensureMeetingDetailTabOpen(meetingId: string, options: { activate?: boolean } = {}): WorkspaceMeetingTabId | '' {
-  const normalizedMeetingId = normalizeString(meetingId)
-  if (!normalizedMeetingId)
-    return ''
-
-  const tabId = createMeetingTabId(normalizedMeetingId)
-  ensureWorkspaceMainTabOpen(tabId, options)
-  return tabId
-}
-
-function ensureMeetingCreateTabOpen(mode: ProjectMeetingMode, options: { activate?: boolean } = {}): WorkspaceMeetingCreateLocalTabId {
-  const tabId = createMeetingCreateTabId(mode)
-  ensureWorkspaceMainTabOpen(tabId, options)
-  return tabId
-}
-
-function isWorkspaceMainTabId(value: string): value is WorkspaceMainTabId {
-  return ['dashboard', 'meeting', 'members', 'flow', 'design', 'settings'].includes(value)
-    || (value.startsWith('meeting:') && value.length > 'meeting:'.length)
-    || value === 'meeting-create:audio'
-    || value === 'meeting-create:video'
-    || (value.startsWith('resource:') && value.length > 'resource:'.length)
-}
-
-function normalizeWorkspaceMainTabIds(
-  value: WorkspaceOpenTabState[] | undefined,
-  options: { allowEmpty?: boolean } = {},
-): WorkspaceMainTabId[] {
-  const normalized: WorkspaceMainTabId[] = []
-  const used = new Set<string>()
-
-  for (const item of value || []) {
-    const tabId = normalizeString(item)
-    if (!isWorkspaceMainTabId(tabId) || used.has(tabId))
-      continue
-    normalized.push(tabId)
-    used.add(tabId)
-    if (normalized.length >= 8)
-      break
-  }
-
-  return normalized.length > 0 || options.allowEmpty ? normalized : ['dashboard']
-}
-
-function normalizeWorkspaceMainTabId(
-  value: unknown,
-  tabIds: WorkspaceMainTabId[],
-  options: { fallbackTabId?: WorkspaceMainTabId | '' } = {},
-): WorkspaceMainTabId | '' {
-  const normalized = normalizeString(value)
-  if (normalized && isWorkspaceMainTabId(normalized) && tabIds.includes(normalized))
-    return normalized
-  if (options.fallbackTabId && tabIds.includes(options.fallbackTabId))
-    return options.fallbackTabId
-  return tabIds[0] || ''
-}
-
-function normalizeProjectWorkbenchMode(value: unknown): WorkspaceWorkbenchMode {
-  const normalized = normalizeString(value)
-  if (normalized === 'defense' || normalized === 'final_review')
-    return normalized
-  return 'project'
-}
-
-function createDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewState {
-  return {
-    workbenchMode: 'project',
-    mainTabs: ['dashboard'],
-    activeMainTabId: 'dashboard',
-    previewResourceId: '',
-    selectedContestId: '',
-    selectedTrackId: '',
-    activeChatSessionId: '',
-    activeMeetingId: '',
-    leftSidebarCollapsed: false,
-    rightSidebarCollapsed: false,
-  }
-}
-
-function normalizeProjectWorkspaceViewState(
-  value: Partial<ProjectWorkspaceViewState> | null | undefined,
-): ProjectWorkspaceViewState {
-  const source = value || {}
-  const allowEmptyMainTabs = Array.isArray(source.mainTabs)
-  const mainTabs = normalizeWorkspaceMainTabIds(source.mainTabs, { allowEmpty: allowEmptyMainTabs })
-  let previewResourceId = normalizeString(source.previewResourceId)
-  let activeMeetingId = normalizeString(source.activeMeetingId)
-
-  const requestedActiveTabId = normalizeString(source.activeMainTabId)
-  if (!previewResourceId && requestedActiveTabId.startsWith('resource:'))
-    previewResourceId = requestedActiveTabId.slice('resource:'.length)
-  if (!activeMeetingId && requestedActiveTabId.startsWith('meeting:'))
-    activeMeetingId = resolveMeetingIdFromTabId(requestedActiveTabId)
-
-  if (previewResourceId) {
-    const previewTabId = createResourceTabId(previewResourceId)
-    if (!mainTabs.includes(previewTabId))
-      mainTabs.push(previewTabId)
-  }
-
-  const normalizedMainTabs = normalizeWorkspaceMainTabIds(mainTabs, { allowEmpty: allowEmptyMainTabs })
-
-  return {
-    workbenchMode: normalizeProjectWorkbenchMode(source.workbenchMode),
-    mainTabs: normalizedMainTabs,
-    activeMainTabId: normalizeWorkspaceMainTabId(source.activeMainTabId, normalizedMainTabs, {
-      fallbackTabId: allowEmptyMainTabs ? '' : 'dashboard',
-    }),
-    previewResourceId,
-    selectedContestId: normalizeString(source.selectedContestId),
-    selectedTrackId: normalizeString(source.selectedTrackId),
-    activeChatSessionId: normalizeString(source.activeChatSessionId),
-    activeMeetingId,
-    leftSidebarCollapsed: Boolean(source.leftSidebarCollapsed),
-    rightSidebarCollapsed: Boolean(source.rightSidebarCollapsed),
-  }
-}
-
-function isProjectWorkspaceViewStateEqual(
-  left: ProjectWorkspaceViewState,
-  right: ProjectWorkspaceViewState,
-): boolean {
-  return (
-    left.workbenchMode === right.workbenchMode
-    && left.activeMainTabId === right.activeMainTabId
-    && left.previewResourceId === right.previewResourceId
-    && left.selectedContestId === right.selectedContestId
-    && left.selectedTrackId === right.selectedTrackId
-    && left.activeChatSessionId === right.activeChatSessionId
-    && left.activeMeetingId === right.activeMeetingId
-    && left.leftSidebarCollapsed === right.leftSidebarCollapsed
-    && left.rightSidebarCollapsed === right.rightSidebarCollapsed
-    && left.mainTabs.length === right.mainTabs.length
-    && left.mainTabs.every((item, index) => item === right.mainTabs[index])
-  )
-}
-
-function buildProjectWorkspaceViewStateFromRefs(): ProjectWorkspaceViewState {
-  return normalizeProjectWorkspaceViewState({
-    workbenchMode: workbenchMode.value,
-    mainTabs: openMainTabs.value,
-    activeMainTabId: activeMainTabId.value,
-    previewResourceId: previewResourceId.value,
-    selectedContestId: selectedContestId.value,
-    selectedTrackId: selectedTrackId.value,
-    activeChatSessionId: activeChatSessionId.value,
-    activeMeetingId: activeMeetingId.value,
-    leftSidebarCollapsed: leftSidebarCollapsed.value,
-    rightSidebarCollapsed: rightSidebarUserCollapsed.value,
-  })
-}
-
-function sanitizeProjectWorkspaceViewState(
-  value: ProjectWorkspaceViewState,
-): ProjectWorkspaceViewState {
-  const nextState = normalizeProjectWorkspaceViewState(value)
-  const validResourceIdSet = new Set(resources.value.map(item => String(item.id || '').trim()).filter(Boolean))
-
-  const nextTabs = nextState.mainTabs.filter((tabId) => {
-    if (!tabId.startsWith('resource:'))
-      return true
-    return validResourceIdSet.has(tabId.slice('resource:'.length))
-  })
-
-  nextState.mainTabs = normalizeWorkspaceMainTabIds(nextTabs, { allowEmpty: true })
-
-  if (nextState.previewResourceId && !validResourceIdSet.has(nextState.previewResourceId))
-    nextState.previewResourceId = ''
-  if (!nextState.activeMeetingId && nextState.activeMainTabId.startsWith('meeting:'))
-    nextState.activeMeetingId = resolveMeetingIdFromTabId(nextState.activeMainTabId)
-
-  if (nextState.activeMainTabId.startsWith('resource:')) {
-    const resourceId = nextState.activeMainTabId.slice('resource:'.length)
-    if (!validResourceIdSet.has(resourceId))
-      nextState.activeMainTabId = 'dashboard'
-  }
-
-  nextState.activeMainTabId = normalizeWorkspaceMainTabId(nextState.activeMainTabId, nextState.mainTabs)
-
-  return nextState
-}
-
-function parseProjectWorkspaceViewStateFromQuery(): {
-  hasManagedQuery: boolean
-  state: Partial<ProjectWorkspaceViewState>
-} {
-  const hasManagedQuery = PROJECT_VIEW_STATE_QUERY_KEYS.some(key => key in route.query)
-  const hasManagedTabsQuery = ['tabs', 'tab', 'res', 'panel'].some(key => key in route.query)
-  const tabs = normalizeQueryParam(route.query.tabs)
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .filter(isWorkspaceMainTabId)
-    .slice(0, 8)
-
-  const panel = normalizeQueryParam(route.query.panel).toLowerCase()
-  let legacyTabId: WorkspaceMainTabId | '' = ''
-  if (panel === 'members' || panel === 'settings' || panel === 'meeting')
-    legacyTabId = panel as WorkspaceMainTabId
-
-  const activeMainTabId = normalizeString(route.query.tab) || legacyTabId
-  const previewResourceId = normalizeString(route.query.res)
-  const activeMeetingId = normalizeString(route.query.meeting)
-    || resolveMeetingIdFromTabId(activeMainTabId)
-
-  if (!previewResourceId && isWorkspaceMainTabId(activeMainTabId) && activeMainTabId.startsWith('resource:'))
-    tabs.push(activeMainTabId)
-  if (previewResourceId)
-    tabs.push(createResourceTabId(previewResourceId))
-  if (isWorkspaceMainTabId(activeMainTabId))
-    tabs.push(activeMainTabId)
-
-  return {
-    hasManagedQuery,
-    state: {
-      workbenchMode: normalizeProjectWorkbenchMode(route.query.wb),
-      mainTabs: hasManagedTabsQuery ? tabs : undefined,
-      activeMainTabId: isWorkspaceMainTabId(activeMainTabId) ? activeMainTabId : '',
-      previewResourceId,
-      selectedContestId: normalizeString(route.query.contest),
-      selectedTrackId: normalizeString(route.query.track),
-      activeChatSessionId: normalizeString(route.query.session),
-      activeMeetingId,
-      leftSidebarCollapsed: isTruthyQueryFlag(route.query.ls),
-      rightSidebarCollapsed: isTruthyQueryFlag(route.query.rs),
-    },
-  }
-}
-
-function buildProjectWorkspaceQueryFromState(state: ProjectWorkspaceViewState): Record<string, string> {
-  const normalized = normalizeProjectWorkspaceViewState(state)
-  const query: Record<string, string> = {}
-
-  if (normalized.workbenchMode !== 'project')
-    query.wb = normalized.workbenchMode
-  if (normalized.mainTabs.length === 0)
-    query.tabs = ''
-  else if (normalized.mainTabs.length > 1 || normalized.mainTabs[0] !== 'dashboard')
-    query.tabs = normalized.mainTabs.join(',')
-  if (normalized.activeMainTabId && (normalized.activeMainTabId !== 'dashboard' || normalized.mainTabs.length > 1))
-    query.tab = normalized.activeMainTabId
-  if (normalized.previewResourceId)
-    query.res = normalized.previewResourceId
-  if (normalized.selectedContestId)
-    query.contest = normalized.selectedContestId
-  if (normalized.selectedTrackId)
-    query.track = normalized.selectedTrackId
-  if (normalized.activeChatSessionId)
-    query.session = normalized.activeChatSessionId
-  if (normalized.activeMeetingId)
-    query.meeting = normalized.activeMeetingId
-  if (normalized.leftSidebarCollapsed)
-    query.ls = '1'
-  if (normalized.rightSidebarCollapsed)
-    query.rs = '1'
-
-  return query
-}
-
-function buildProjectWorkspaceRouteQuery(state: ProjectWorkspaceViewState): Record<string, string> {
-  const nextQuery: Record<string, string> = {}
-
-  for (const [key, value] of Object.entries(route.query)) {
-    if ((PROJECT_VIEW_STATE_QUERY_KEYS as readonly string[]).includes(key))
-      continue
-    const normalized = normalizeQueryParam(value)
-    if (normalized)
-      nextQuery[key] = normalized
-  }
-
-  return {
-    ...nextQuery,
-    ...buildProjectWorkspaceQueryFromState(state),
-  }
-}
-
-function areRouteQueryRecordsEqual(
-  left: Record<string, string>,
-  right: Record<string, string>,
-): boolean {
-  const leftKeys = Object.keys(left).sort()
-  const rightKeys = Object.keys(right).sort()
-  if (leftKeys.length !== rightKeys.length)
+function isWorkspaceSupportedTextField(element: HTMLElement): element is HTMLInputElement | HTMLTextAreaElement {
+  if (element instanceof HTMLTextAreaElement)
+    return true
+  if (!(element instanceof HTMLInputElement))
     return false
-  return leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
+
+  const normalizedType = String(element.type || 'text').trim().toLowerCase()
+  return ['', 'text', 'search', 'tel', 'url', 'email', 'password'].includes(normalizedType)
 }
 
-async function fetchProjectWorkspaceViewPreference(projectId: string): Promise<ProjectWorkspaceViewDeviceStatePayload | null> {
-  const normalizedProjectId = normalizeString(projectId)
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!normalizedProjectId || !deviceId)
+function normalizeWorkspaceEventElement(target: EventTarget | null): HTMLElement | null {
+  if (target instanceof HTMLElement)
+    return target
+  if (target instanceof Node)
+    return target.parentElement
+  return null
+}
+
+function resolveWorkspaceEditableContext(target: EventTarget | null): WorkspaceEditableContext | null {
+  if (!import.meta.client)
     return null
 
-  const response = await unsafeFetch<ApiResponse<ProjectWorkspaceViewDeviceStatePayload>>(
-    endpoint(`/projects/${normalizedProjectId}/view-state`),
-    {
-      query: {
-        deviceId,
-      },
-    },
-  )
-  return response.data || null
-}
+  const sourceElement = normalizeWorkspaceEventElement(target)
+  if (!sourceElement)
+    return null
 
-async function persistProjectWorkspaceViewPreference(
-  projectId: string,
-  state: ProjectWorkspaceViewState,
-): Promise<void> {
-  const normalizedProjectId = normalizeString(projectId)
-  const deviceId = ensureWorkspaceDeviceId()
-  if (!normalizedProjectId || !deviceId)
-    return
-
-  await unsafeFetch<ApiResponse<ProjectWorkspaceViewPreference>>(
-    endpoint(`/projects/${normalizedProjectId}/view-state`),
-    {
-      method: 'PUT',
-      body: {
-        payload: state,
-        deviceId,
-      },
-    },
-  )
-}
-
-async function persistTeamLastProjectPreference(
-  workspaceId: string,
-  projectId: string,
-): Promise<void> {
-  const normalizedWorkspaceId = normalizeString(workspaceId)
-  const normalizedProjectId = normalizeString(projectId)
-  if (!normalizedWorkspaceId || !normalizedProjectId)
-    return
-
-  await unsafeFetch<ApiResponse<TeamLastProjectPreference>>(
-    endpoint(`/teams/${normalizedWorkspaceId}/last-project`),
-    {
-      method: 'PUT',
-      body: {
-        projectId: normalizedProjectId,
-      },
-    },
-  )
-}
-
-async function replaceProjectWorkspaceRouteQueryIfNeeded(state: ProjectWorkspaceViewState): Promise<void> {
-  const currentQuery: Record<string, string> = {}
-  for (const [key, value] of Object.entries(route.query)) {
-    const normalized = normalizeQueryParam(value)
-    if (normalized)
-      currentQuery[key] = normalized
-  }
-
-  const nextQuery = buildProjectWorkspaceRouteQuery(state)
-  if (areRouteQueryRecordsEqual(currentQuery, nextQuery))
-    return
-
-  await navigateTo({
-    path: workspaceDetailPath(routeWorkspaceId.value, routeProjectId.value),
-    query: Object.keys(nextQuery).length > 0 ? nextQuery : undefined,
-    hash: route.hash || undefined,
-  }, { replace: true })
-}
-
-function clearProjectWorkspaceViewPersistTimer(): void {
-  if (!projectWorkspaceViewPersistTimer)
-    return
-  clearTimeout(projectWorkspaceViewPersistTimer)
-  projectWorkspaceViewPersistTimer = null
-}
-
-function applyProjectWorkspaceViewState(state: ProjectWorkspaceViewState): void {
-  const normalized = sanitizeProjectWorkspaceViewState(state)
-  const nextMeetingId = normalizeString(normalized.activeMeetingId)
-  const meetingChanged = nextMeetingId !== normalizeString(activeMeetingId.value)
-
-  projectWorkspaceViewHydrating.value = true
-  try {
-    projectWorkspaceModeHydrating.value = true
-    if (normalized.workbenchMode === 'defense') {
-      closeFinalReviewDrawers()
-      workbenchMode.value = 'defense'
-      aiMode.value = 'defense'
-    }
-    else if (normalized.workbenchMode === 'final_review') {
-      const nextPrimaryMode = aiMode.value !== 'defense'
-        ? aiMode.value as WorkspacePrimaryAiMode
-        : (lastPrimaryAiMode.value || 'dialog_ask')
-      lastPrimaryAiMode.value = nextPrimaryMode
-      workbenchMode.value = 'final_review'
-      aiMode.value = 'dialog_ask'
-    }
-    else {
-      const nextPrimaryMode = aiMode.value !== 'defense'
-        ? aiMode.value as WorkspacePrimaryAiMode
-        : (lastPrimaryAiMode.value || 'dialog_ask')
-      closeFinalReviewDrawers()
-      aiMode.value = nextPrimaryMode
-      lastPrimaryAiMode.value = nextPrimaryMode
-      workbenchMode.value = 'project'
-    }
-    projectWorkspaceModeHydrating.value = false
-
-    openMainTabs.value = [...normalized.mainTabs]
-    activeMainTabId.value = normalized.activeMainTabId
-    previewResourceId.value = normalized.previewResourceId
-    selectedContestId.value = normalized.selectedContestId
-    selectedTrackId.value = normalized.selectedTrackId
-    activeChatSessionId.value = normalized.activeChatSessionId
-    activeMeetingId.value = nextMeetingId
-    leftSidebarCollapsed.value = normalized.leftSidebarCollapsed
-    setRightSidebarUserCollapsed(normalized.rightSidebarCollapsed, { suppressPersist: true })
-
-    if (normalized.workbenchMode === 'final_review') {
-      rememberPreFinalReviewWorkbenchState({
-        leftSidebarCollapsed: normalized.leftSidebarCollapsed,
-        rightSidebarCollapsed: normalized.rightSidebarCollapsed,
-        activeMainTabId: normalized.activeMainTabId,
-        openMainTabs: normalized.mainTabs,
-      })
-      closeFinalReviewDrawers()
-    }
-
-    if (meetingChanged) {
-      activeMeetingDetail.value = null
-      activeMeetingUtterances.value = []
-      meetingLiveCaptions.value = []
-      clearMeetingJoinSession()
-    }
-  }
-  finally {
-    projectWorkspaceModeHydrating.value = false
-    projectWorkspaceViewHydrating.value = false
-  }
-}
-
-async function hydrateProjectWorkspaceViewState(projectId: string): Promise<HydratedProjectWorkspaceViewStateResult> {
-  const normalizedProjectId = normalizeString(projectId)
-  if (!normalizedProjectId) {
+  const textField = sourceElement.closest('textarea, input')
+  if (textField instanceof HTMLElement && isWorkspaceSupportedTextField(textField)) {
+    const selectionStart = Number.isFinite(textField.selectionStart) ? Number(textField.selectionStart) : 0
+    const selectionEnd = Number.isFinite(textField.selectionEnd) ? Number(textField.selectionEnd) : selectionStart
     return {
-      state: createDefaultProjectWorkspaceViewState(),
-      bundle: null,
-      hasManagedQuery: false,
+      kind: 'text-control',
+      field: textField,
+      canWrite: !textField.disabled && !textField.readOnly,
+      hasSelection: selectionEnd > selectionStart,
+      hasContent: textField.value.length > 0,
     }
   }
 
-  const queryResult = parseProjectWorkspaceViewStateFromQuery()
-  let nextState = createDefaultProjectWorkspaceViewState()
-  let bundle: ProjectWorkspaceViewDeviceStatePayload | null = null
-  let currentState: ProjectWorkspaceViewState | null = null
-  let latestOtherState: ProjectWorkspaceViewState | null = null
+  const richTextRoot = sourceElement.closest('.ProseMirror, .tiptap, [contenteditable="true"]')
+  if (!(richTextRoot instanceof HTMLElement))
+    return null
 
-  try {
-    bundle = await fetchProjectWorkspaceViewPreference(normalizedProjectId)
-    currentState = bundle?.current?.payload
-      ? normalizeProjectWorkspaceViewState(bundle.current.payload)
-      : null
-    latestOtherState = bundle?.latestOther?.payload
-      ? normalizeProjectWorkspaceViewState(bundle.latestOther.payload)
-      : null
-  }
-  catch {
-    bundle = null
-  }
-
-  if (queryResult.hasManagedQuery) {
-    nextState = normalizeProjectWorkspaceViewState(queryResult.state)
-  }
-  else if (currentState) {
-    nextState = currentState
-  }
-  else if (bundle?.resolution.isNewDevice && latestOtherState) {
-    nextState = latestOtherState
-  }
-
-  nextState = sanitizeProjectWorkspaceViewState(nextState)
-  applyProjectWorkspaceViewState(nextState)
-  projectWorkspaceViewReady.value = true
-  await replaceProjectWorkspaceRouteQueryIfNeeded(nextState)
-
-  if (queryResult.hasManagedQuery)
-    scheduleProjectWorkspaceViewPersist()
+  const selection = window.getSelection()
+  const hasSelection = Boolean(
+    selection
+    && selection.rangeCount > 0
+    && selection.anchorNode
+    && selection.focusNode
+    && richTextRoot.contains(selection.anchorNode)
+    && richTextRoot.contains(selection.focusNode)
+    && !selection.isCollapsed,
+  )
 
   return {
-    state: nextState,
-    bundle,
-    hasManagedQuery: queryResult.hasManagedQuery,
+    kind: 'rich-text',
+    editorEl: richTextRoot,
+    canWrite: richTextRoot.isContentEditable || richTextRoot.matches('.ProseMirror, .tiptap'),
+    hasSelection,
+    hasContent: Boolean(richTextRoot.textContent?.trim()),
   }
 }
 
-function scheduleProjectWorkspaceViewPersist(): void {
-  if (!projectWorkspaceViewReady.value || projectWorkspaceViewHydrating.value)
-    return
-
-  const workspaceId = normalizeString(activeWorkspaceId.value)
-  const projectId = normalizeString(highlightedProjectId.value || routeProjectId.value)
-  if (!workspaceId || !projectId)
-    return
-
-  const state = sanitizeProjectWorkspaceViewState(buildProjectWorkspaceViewStateFromRefs())
-  clearProjectWorkspaceViewPersistTimer()
-  projectWorkspaceViewPersistTimer = setTimeout(() => {
-    projectWorkspaceViewPersistTimer = null
-    void persistProjectWorkspaceViewPreference(projectId, state).catch(() => {})
-    void persistTeamLastProjectPreference(workspaceId, projectId).catch(() => {})
-  }, 300)
+function buildEditableContextMenuItems(context: WorkspaceEditableContext): ContextMenuItem[] {
+  return [
+    {
+      key: 'undo',
+      label: '撤销',
+      icon: 'undo',
+      shortcutLabel: formatWorkspaceCommandShortcut('Z'),
+      disabled: !context.canWrite,
+    },
+    {
+      key: 'redo',
+      label: '重做',
+      icon: 'redo',
+      shortcutLabel: formatWorkspaceCommandShortcut('Z', ['mod', 'shift']),
+      disabled: !context.canWrite,
+    },
+    {
+      key: 'cut',
+      label: '剪切',
+      icon: 'content_cut',
+      shortcutLabel: formatWorkspaceCommandShortcut('X'),
+      separatorBefore: true,
+      disabled: !context.canWrite || !context.hasSelection,
+    },
+    {
+      key: 'copy',
+      label: '复制',
+      icon: 'content_copy',
+      shortcutLabel: formatWorkspaceCommandShortcut('C'),
+      disabled: !context.hasSelection,
+    },
+    {
+      key: 'paste',
+      label: '粘贴',
+      icon: 'content_paste',
+      shortcutLabel: formatWorkspaceCommandShortcut('V'),
+      disabled: !context.canWrite,
+    },
+    {
+      key: 'selectAll',
+      label: '全选',
+      icon: 'select_all',
+      shortcutLabel: formatWorkspaceCommandShortcut('A'),
+      separatorBefore: true,
+      disabled: !context.hasContent,
+    },
+  ]
 }
 
-async function syncProjectWorkspaceViewState(): Promise<void> {
-  if (!projectWorkspaceViewReady.value || projectWorkspaceViewHydrating.value)
+function focusWorkspaceElement(element: HTMLElement | null): void {
+  if (!element || !element.isConnected)
     return
 
-  const normalizedProjectId = normalizeString(highlightedProjectId.value || routeProjectId.value)
-  if (!normalizedProjectId)
+  nextTick(() => {
+    if (typeof element.focus === 'function')
+      element.focus({ preventScroll: true })
+  })
+}
+
+function closeWorkspaceContextMenu(options: { restoreFocus?: boolean, invokeCloseHandler?: boolean } = {}): void {
+  const restoreFocus = options.restoreFocus !== false
+  const invokeCloseHandler = options.invokeCloseHandler !== false
+  const restoreFocusEl = workspaceContextMenu.restoreFocusEl
+  const closeHandler = workspaceContextMenuCloseHandler
+
+  workspaceContextMenu.visible = false
+  workspaceContextMenu.items = []
+  workspaceContextMenu.anchorPoint = null
+  workspaceContextMenu.anchorEl = null
+  workspaceContextMenu.source = ''
+  workspaceContextMenu.restoreFocusEl = null
+  workspaceContextMenuSelectHandler = null
+  workspaceContextMenuCloseHandler = null
+
+  if (invokeCloseHandler)
+    closeHandler?.()
+  if (restoreFocus)
+    focusWorkspaceElement(restoreFocusEl)
+}
+
+function openWorkspaceContextMenu(request: ContextMenuRequest): void {
+  if (!request.items.length)
     return
 
-  const currentState = buildProjectWorkspaceViewStateFromRefs()
-  const normalizedState = sanitizeProjectWorkspaceViewState(currentState)
-  if (!isProjectWorkspaceViewStateEqual(currentState, normalizedState)) {
-    applyProjectWorkspaceViewState(normalizedState)
+  closeWorkspaceContextMenu({
+    restoreFocus: false,
+  })
+
+  workspaceContextMenu.visible = true
+  workspaceContextMenu.items = request.items
+  workspaceContextMenu.anchorPoint = request.anchorPoint || null
+  workspaceContextMenu.anchorEl = request.anchorEl || null
+  workspaceContextMenu.source = String(request.source || '').trim()
+  workspaceContextMenu.restoreFocusEl = request.restoreFocusEl || request.anchorEl || null
+  workspaceContextMenuSelectHandler = request.onSelect || null
+  workspaceContextMenuCloseHandler = request.onClose || null
+}
+
+function normalizeWorkspaceCommandReason(reason: string, fallback: string): string {
+  const normalized = String(reason || '').trim().replace(/[。！]+$/g, '')
+  return normalized || fallback
+}
+
+function executeWorkspaceSaveCommand(): void {
+  const panel = workspaceMainPanelRef.value
+  if (!panel) {
+    statusLine.value = '当前面板没有可保存内容'
     return
   }
 
-  await replaceProjectWorkspaceRouteQueryIfNeeded(normalizedState)
-  scheduleProjectWorkspaceViewPersist()
+  const result = panel.saveCurrentPanel()
+  if (result.handled)
+    return
+
+  statusLine.value = normalizeWorkspaceCommandReason(result.reason || '', '当前面板没有可保存内容')
 }
 
-function generateWorkspaceDeviceId(): string {
-  if (import.meta.client && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
-    return crypto.randomUUID()
-  return `draft-device-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+function executeWorkspaceCloseTabCommand(): void {
+  const panel = workspaceMainPanelRef.value
+  if (!panel) {
+    statusLine.value = '当前标签不可关闭'
+    return
+  }
+
+  const result = panel.closeCurrentTab()
+  if (result.handled)
+    return
+
+  statusLine.value = normalizeWorkspaceCommandReason(result.reason || '', '当前标签不可关闭')
 }
 
-function ensureWorkspaceDeviceId(): string {
+function buildBlankWorkspaceContextMenuItems(): ContextMenuItem[] {
+  return [
+    {
+      key: 'openCommandPalette',
+      label: '搜索/命令面板',
+      icon: 'search',
+      shortcutLabel: formatWorkspaceCommandShortcut('K'),
+    },
+    {
+      key: 'saveCurrentPanel',
+      label: '保存当前面板',
+      icon: 'save',
+      shortcutLabel: formatWorkspaceCommandShortcut('S'),
+      disabled: !workspaceMainPanelRef.value,
+    },
+    {
+      key: 'closeCurrentTab',
+      label: '关闭当前标签',
+      icon: 'close',
+      shortcutLabel: formatWorkspaceCommandShortcut('W'),
+      disabled: !workspaceMainPanelRef.value?.canCloseCurrentTab(),
+    },
+  ]
+}
+
+function openBlankWorkspaceContextMenu(options: {
+  anchorPoint?: { x: number, y: number } | null
+  anchorEl?: HTMLElement | null
+  restoreFocusEl?: HTMLElement | null
+} = {}): void {
+  openWorkspaceContextMenu({
+    source: 'workspace-blank',
+    items: buildBlankWorkspaceContextMenuItems(),
+    anchorPoint: options.anchorPoint || null,
+    anchorEl: options.anchorEl || null,
+    restoreFocusEl: options.restoreFocusEl || options.anchorEl || null,
+    onSelect: (key) => {
+      switch (key) {
+        case 'openCommandPalette':
+          openMetaK()
+          return
+        case 'saveCurrentPanel':
+          executeWorkspaceSaveCommand()
+          return
+        case 'closeCurrentTab':
+          executeWorkspaceCloseTabCommand()
+      }
+    },
+  })
+}
+
+function focusWorkspaceRichEditor(editorEl: HTMLElement): void {
+  if (editorEl.matches('.tiptap')) {
+    const nestedEditor = editorEl.querySelector<HTMLElement>('.ProseMirror, [contenteditable="true"]')
+    if (nestedEditor) {
+      nestedEditor.focus({ preventScroll: true })
+      return
+    }
+  }
+  editorEl.focus({ preventScroll: true })
+}
+
+function dispatchWorkspaceTextFieldInput(field: HTMLInputElement | HTMLTextAreaElement): void {
+  field.dispatchEvent(new Event('input', { bubbles: true }))
+  field.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+function resolveWorkspaceTextFieldSelection(field: HTMLInputElement | HTMLTextAreaElement): {
+  start: number
+  end: number
+  text: string
+} {
+  const start = Math.max(0, Number(field.selectionStart) || 0)
+  const end = Math.max(start, Number(field.selectionEnd) || start)
+  return {
+    start,
+    end,
+    text: field.value.slice(start, end),
+  }
+}
+
+async function writeWorkspaceClipboardText(
+  text: string,
+  fallback?: () => boolean,
+): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  }
+  catch {
+  }
+
+  return fallback ? fallback() : false
+}
+
+async function readWorkspaceClipboardText(): Promise<string> {
+  if (!navigator.clipboard?.readText)
+    throw new Error('clipboard-unavailable')
+  return navigator.clipboard.readText()
+}
+
+function executeWorkspaceRichTextCommand(command: string, editorEl: HTMLElement): boolean {
+  focusWorkspaceRichEditor(editorEl)
+  return document.execCommand(command)
+}
+
+async function executeEditableContextMenuAction(
+  key: string,
+  context: WorkspaceEditableContext,
+): Promise<void> {
+  const action = key as WorkspaceEditableMenuAction
+  if (context.kind === 'text-control') {
+    const field = context.field
+    const selection = resolveWorkspaceTextFieldSelection(field)
+
+    field.focus({ preventScroll: true })
+
+    switch (action) {
+      case 'undo':
+        document.execCommand('undo')
+        return
+      case 'redo':
+        document.execCommand('redo')
+        return
+      case 'cut': {
+        const copied = await writeWorkspaceClipboardText(selection.text, () => {
+          try {
+            field.setSelectionRange(selection.start, selection.end)
+          }
+          catch {
+          }
+          return document.execCommand('copy')
+        })
+        if (!copied) {
+          statusLine.value = '剪切失败，当前环境不支持访问剪贴板'
+          return
+        }
+        field.setRangeText('', selection.start, selection.end, 'start')
+        dispatchWorkspaceTextFieldInput(field)
+        return
+      }
+      case 'copy': {
+        const copied = await writeWorkspaceClipboardText(selection.text, () => {
+          try {
+            field.setSelectionRange(selection.start, selection.end)
+          }
+          catch {
+          }
+          return document.execCommand('copy')
+        })
+        if (!copied)
+          statusLine.value = '复制失败，当前环境不支持访问剪贴板'
+        return
+      }
+      case 'paste': {
+        try {
+          const text = await readWorkspaceClipboardText()
+          field.setRangeText(text, selection.start, selection.end, 'end')
+          dispatchWorkspaceTextFieldInput(field)
+        }
+        catch {
+          statusLine.value = '粘贴失败，当前环境不支持读取剪贴板'
+        }
+        return
+      }
+      case 'selectAll':
+        field.select()
+        return
+    }
+  }
+
+  const editorEl = context.editorEl
+  switch (action) {
+    case 'undo':
+      executeWorkspaceRichTextCommand('undo', editorEl)
+      return
+    case 'redo':
+      executeWorkspaceRichTextCommand('redo', editorEl)
+      return
+    case 'cut':
+      if (!executeWorkspaceRichTextCommand('cut', editorEl))
+        statusLine.value = '剪切失败，当前环境不支持访问剪贴板'
+      return
+    case 'copy':
+      if (!executeWorkspaceRichTextCommand('copy', editorEl))
+        statusLine.value = '复制失败，当前环境不支持访问剪贴板'
+      return
+    case 'paste':
+      if (!executeWorkspaceRichTextCommand('paste', editorEl))
+        statusLine.value = '粘贴失败，当前环境不支持读取剪贴板'
+      return
+    case 'selectAll':
+      executeWorkspaceRichTextCommand('selectAll', editorEl)
+  }
+}
+
+function hasBlockingWorkspaceDialogOpen(): boolean {
   if (!import.meta.client)
-    return ''
-  if (workspaceDeviceId.value)
-    return workspaceDeviceId.value
-
-  const key = getWorkspaceDeviceStorageKey()
-  if (!key)
-    return ''
-
-  try {
-    const cached = String(localStorage.getItem(key) || '').trim()
-    if (cached) {
-      workspaceDeviceId.value = cached
-      return cached
-    }
-
-    const created = generateWorkspaceDeviceId()
-    localStorage.setItem(key, created)
-    workspaceDeviceId.value = created
-    return created
-  }
-  catch {
-    const fallback = generateWorkspaceDeviceId()
-    workspaceDeviceId.value = fallback
-    return fallback
-  }
+    return false
+  if (metaKOpen.value || topicBoardConfirmState.visible || deviceRestoreConfirmState.visible || accountCenterVisible.value)
+    return true
+  return Boolean(document.querySelector('.arco-modal-container .arco-modal'))
 }
 
-function resetProjectSettingsDraftServerState() {
-  projectSettingsDraftServerRevision.value = null
+async function handleWorkspaceContextMenuSelect(key: string): Promise<void> {
+  const selectHandler = workspaceContextMenuSelectHandler
+  closeWorkspaceContextMenu({
+    invokeCloseHandler: false,
+  })
+  await selectHandler?.(key)
 }
 
-function readProjectSettingsDraftCache(projectId: string): WorkspaceProjectSettingsDraftCache | null {
-  const key = getProjectSettingsDraftStorageKey(projectId)
-  if (!key)
-    return null
-
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) {
-      const legacyKey = getLegacyProjectSettingsDraftStorageKey(projectId)
-      const legacyRaw = legacyKey ? localStorage.getItem(legacyKey) : ''
-      if (!legacyRaw)
-        return null
-
-      const legacyParsed = JSON.parse(legacyRaw) as unknown
-      const legacyNormalized = normalizeProjectSettingsDraftCachePayload(legacyParsed)
-      if (!legacyNormalized)
-        return null
-
-      localStorage.setItem(key, JSON.stringify(legacyNormalized))
-      localStorage.removeItem(legacyKey)
-      return legacyNormalized
-    }
-
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object')
-      return null
-
-    return normalizeProjectSettingsDraftCachePayload(parsed)
-  }
-  catch {
-    return null
-  }
+function isWorkspaceContextMenuHotkey(event: KeyboardEvent): boolean {
+  return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')
 }
 
-function writeProjectSettingsDraftCache(projectId: string, payload: WorkspaceProjectSettingsDraftCache): boolean {
-  const key = getProjectSettingsDraftStorageKey(projectId)
-  if (!key)
+function handleWorkspaceKeyboardContextMenu(event: KeyboardEvent): boolean {
+  if (!import.meta.client || !isWorkspaceContextMenuHotkey(event))
     return false
 
-  try {
-    const normalized = normalizeProjectSettingsDraftCachePayload(payload)
-    if (!normalized)
-      return false
-    localStorage.setItem(key, JSON.stringify(normalized))
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  if (!activeElement)
+    return false
+
+  const editableContext = resolveWorkspaceEditableContext(activeElement)
+  if (editableContext) {
+    event.preventDefault()
+    openWorkspaceContextMenu({
+      source: 'workspace-editable',
+      items: buildEditableContextMenuItems(editableContext),
+      anchorEl: activeElement,
+      restoreFocusEl: activeElement,
+      onSelect: key => executeEditableContextMenuAction(key, editableContext),
+    })
     return true
   }
-  catch {
+
+  if (!workspaceShellRef.value?.contains(activeElement))
     return false
-  }
+  if (activeElement.closest('[data-context-menu-scope]'))
+    return false
+
+  event.preventDefault()
+  openBlankWorkspaceContextMenu({
+    anchorEl: activeElement,
+    restoreFocusEl: activeElement,
+  })
+  return true
 }
 
-function clearProjectSettingsDraftCache(projectId: string): void {
-  const key = getProjectSettingsDraftStorageKey(projectId)
-  const legacyKey = getLegacyProjectSettingsDraftStorageKey(projectId)
-  if (!key && !legacyKey)
+function handleWorkspaceGlobalKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && workspaceContextMenu.visible) {
+    event.preventDefault()
+    event.stopPropagation()
+    closeWorkspaceContextMenu()
+    return
+  }
+
+  if (event.isComposing || event.defaultPrevented)
     return
 
-  try {
-    if (key)
-      localStorage.removeItem(key)
-    if (legacyKey)
-      localStorage.removeItem(legacyKey)
+  if (handleWorkspaceKeyboardContextMenu(event))
+    return
+
+  if (isWorkspaceMetaKHotkey(event)) {
+    if (isWorkspaceMetaKEditableTarget(event.target) || hasBlockingWorkspaceDialogOpen())
+      return
+
+    event.preventDefault()
+    openMetaK()
+    return
   }
-  catch {
-    // ignore local cache cleanup errors
+
+  const normalizedKey = event.key.toLowerCase()
+  if (!(event.metaKey || event.ctrlKey) || event.altKey)
+    return
+
+  if (normalizedKey === 's' && !event.shiftKey) {
+    event.preventDefault()
+    if (hasBlockingWorkspaceDialogOpen())
+      return
+    executeWorkspaceSaveCommand()
+    return
+  }
+
+  if (normalizedKey === 'w' && !event.shiftKey) {
+    event.preventDefault()
+    if (hasBlockingWorkspaceDialogOpen())
+      return
+    executeWorkspaceCloseTabCommand()
   }
 }
 
-function resetChatState() {
-  chatMessages.value = []
-  chatDraft.value = null
-  chatMissingFields.value = []
-  defenseRounds.value = []
-  defenseScorecard.value = null
-  defenseSummary.value = null
-  defenseStage.value = undefined
-  defenseTurnCount.value = 0
+function handleWorkspaceShellContextMenu(event: MouseEvent): void {
+  if (event.defaultPrevented)
+    return
+
+  const editableContext = resolveWorkspaceEditableContext(event.target)
+  if (editableContext) {
+    event.preventDefault()
+    openWorkspaceContextMenu({
+      source: 'workspace-editable',
+      items: buildEditableContextMenuItems(editableContext),
+      anchorPoint: {
+        x: event.clientX,
+        y: event.clientY,
+      },
+      restoreFocusEl: normalizeWorkspaceEventElement(event.target),
+      onSelect: key => executeEditableContextMenuAction(key, editableContext),
+    })
+    return
+  }
+
+  event.preventDefault()
+  openBlankWorkspaceContextMenu({
+    anchorPoint: {
+      x: event.clientX,
+      y: event.clientY,
+    },
+    restoreFocusEl: normalizeWorkspaceEventElement(event.target),
+  })
 }
 
 function resolveWorkspaceOptions(auth: AuthMeResult | null): WorkspaceWithQuota[] {
@@ -1539,18 +1325,6 @@ function resolveWorkspaceOptions(auth: AuthMeResult | null): WorkspaceWithQuota[
   }
   return auth.workspaces || []
 }
-
-const formState = reactive<WorkspaceFormState>({
-  source: 'form',
-  title: '',
-  problemStatement: '',
-  innovationPointsText: '',
-  techRouteStepsText: '',
-  scoringMappingText: '',
-  risksText: '',
-  deliverablesText: '',
-  summary: '',
-})
 
 const contestSource = computed(() => {
   return contestCatalog.value.length > 0 ? contestCatalog.value : contests.value
@@ -1663,14 +1437,6 @@ const currentProjectMember = computed(() => {
 })
 const currentProjectMemberRole = computed<ProjectMemberRole | ''>(() => {
   return currentProjectMember.value?.role || ''
-})
-const currentUserMeetingHostId = computed(() => String(me.value?.user.id || '').trim())
-const activeMeetingIsHost = computed(() => {
-  return Boolean(
-    currentUserMeetingHostId.value
-    && activeMeetingDetail.value
-    && normalizeString(activeMeetingDetail.value.startedByUserId) === currentUserMeetingHostId.value,
-  )
 })
 const workspaceCanManageMembers = computed(() => {
   if (me.value?.user.isPlatformAdmin)
@@ -1846,7 +1612,40 @@ const activeMarkdownResourceTitle = computed(() => {
   if (derivedTitle)
     return derivedTitle
   const currentPreviewResource = selectedResources.value.find(item => item.id === resourceId) || null
-  return normalizeString(currentPreviewResource?.title) || '协作文档'
+  return normalizeString(currentPreviewResource?.title) || COLLAB_NOTES_RESOURCE_LABEL
+})
+const {
+  markdownCommentThreads,
+  activeMarkdownCommentThreadId,
+  markdownCommentDraftAnchor,
+  markdownCommentLoading,
+  markdownCommentMutating,
+  clearMarkdownCommentPolling,
+  loadMarkdownCommentThreads,
+  startMarkdownCommentPolling,
+  handleMarkdownCreateCommentFromSelection,
+  handleMarkdownCreateCommentFromImage,
+  handleMarkdownOpenCommentThread,
+  cancelMarkdownCommentDraft,
+  createMarkdownCommentThread,
+  replyMarkdownCommentThread,
+  resolveMarkdownCommentThread,
+  reopenMarkdownCommentThread,
+} = useWorkspaceProjectComments({
+  activeProjectId,
+  activeMarkdownResourceId,
+  currentUserId: computed(() => normalizeString(me.value?.user.id)),
+  currentUsername: computed(() => normalizeString(me.value?.user.username)),
+  currentUserAvatarUrl: computed(() => me.value?.user.avatarUrl || null),
+  onStatusLine: (message) => {
+    statusLine.value = message
+  },
+  onOpenCommentsPanel: () => {
+    rightSidebarView.value = 'comments'
+    if (rightSidebarCollapsed.value)
+      expandRightSidebar()
+  },
+  onScrollToThread: threadId => workspaceMainPanelRef.value?.scrollToMarkdownCommentThread(threadId),
 })
 const projectOutlineItems = computed(() => projectOutlineSnapshot.value?.items || [])
 const projectOutlineFlatItems = computed(() => flattenProjectOutlineNodes(projectOutlineItems.value))
@@ -1876,6 +1675,8 @@ const finalReviewOpenIssues = computed(() => {
 const finalReviewUnresolvedIssueCount = computed(() => {
   return projectIssues.value.filter(item => item.status !== 'resolved' && item.status !== 'ignored').length
 })
+
+/* eslint-disable ts/no-use-before-define */
 const finalReviewEvidenceGaps = computed(() => {
   const used = new Set<string>()
   return mappingRows.value.reduce<string[]>((list, row) => {
@@ -1887,6 +1688,7 @@ const finalReviewEvidenceGaps = computed(() => {
     return list
   }, [])
 })
+
 const finalReviewChecklistItems = computed<FinalReviewChecklistItem[]>(() => {
   const hasContestAndTrack = Boolean(selectedContest.value) && Boolean(selectedTrack.value)
   const hasMappingRows = mappingRows.value.length > 0
@@ -1966,6 +1768,7 @@ const finalReviewChecklistItems = computed<FinalReviewChecklistItem[]>(() => {
     },
   ]
 })
+/* eslint-enable ts/no-use-before-define */
 const finalReviewReadinessPercent = computed(() => {
   const weights: Record<FinalReviewChecklistStatus, number> = {
     pass: 1,
@@ -2214,27 +2017,27 @@ const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
       id: 'metak-command-create-collab-markdown',
       sectionId: 'actions',
       type: 'command',
-      title: '新建协作文档',
-      subtitle: '创建 markdown 协作文档并直接打开。',
+      title: `新建${COLLAB_NOTES_RESOURCE_LABEL}`,
+      subtitle: `创建 markdown ${COLLAB_NOTES_RESOURCE_LABEL}并直接打开。`,
       icon: 'edit_document',
       source: 'local',
       priority: 290,
       defaultVisible: true,
       actionId: 'create_collab_markdown',
-      keywords: buildWorkspaceMetaKKeywords('协作文档', 'markdown', 'notes'),
+      keywords: buildWorkspaceMetaKKeywords(COLLAB_NOTES_RESOURCE_LABEL, '协作文档', 'markdown', 'notes'),
     },
     {
       id: 'metak-command-create-collab-draw',
       sectionId: 'actions',
       type: 'command',
-      title: '新建自由画布',
-      subtitle: '创建自由画布并直接打开。',
+      title: `新建${COLLAB_FREEFORM_RESOURCE_LABEL}`,
+      subtitle: `创建${COLLAB_FREEFORM_RESOURCE_LABEL}并直接打开。`,
       icon: 'draw',
       source: 'local',
       priority: 285,
       defaultVisible: true,
       actionId: 'create_collab_draw',
-      keywords: buildWorkspaceMetaKKeywords('自由画布', 'draw', 'canvas'),
+      keywords: buildWorkspaceMetaKKeywords(COLLAB_FREEFORM_RESOURCE_LABEL, '自由画布', 'draw', 'canvas'),
     },
     {
       id: 'metak-command-create-meeting-audio',
@@ -2574,46 +2377,10 @@ function isCollabResource(resource: Resource | null | undefined): resource is Re
   return String(resource.source || '').trim().toLowerCase() === 'collab'
 }
 
-function resolveCollabPurpose(resource: Resource | null | undefined): CollabPurpose | '' {
-  if (!isCollabResource(resource))
-    return ''
-
-  const normalized = String(resource.collabPurpose || '').trim().toLowerCase()
-  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
-    return normalized
-  return resource.resourceKind === 'markdown' ? 'notes' : 'freeform'
-}
-
 function isWorkflowCanvasResource(resource: Resource | null | undefined): resource is Resource {
   return isCollabResource(resource)
     && resource.resourceKind === 'draw'
     && resolveCollabPurpose(resource) === 'workflow'
-}
-
-function isDesignCanvasResource(resource: Resource | null | undefined): resource is Resource {
-  if (!isCollabResource(resource) || resource.resourceKind !== 'draw')
-    return false
-
-  if (String(resource.drawMode || '').trim().toLowerCase() !== 'composition')
-    return false
-
-  const fixedTab = String(resource.metadata?.fixedTab || '').trim().toLowerCase()
-  return fixedTab === 'design'
-}
-
-function resolveCollabResourceLabel(resource: Resource | null | undefined): string {
-  if (!isCollabResource(resource))
-    return '协作内容'
-
-  if (isDesignCanvasResource(resource))
-    return '设计稿'
-
-  const purpose = resolveCollabPurpose(resource)
-  if (purpose === 'workflow')
-    return '流程画布'
-  if (purpose === 'freeform')
-    return '自由画布'
-  return '协作文档'
 }
 
 function disposeCollabDocBinding(leaveRoom = true): void {
@@ -2673,613 +2440,6 @@ function syncFallbackResourceRefreshTimer(): void {
   startFallbackResourceRefreshTimer()
 }
 
-function clearMeetingRealtimeRefreshTimer(): void {
-  if (!meetingRealtimeRefreshTimer)
-    return
-  clearTimeout(meetingRealtimeRefreshTimer)
-  meetingRealtimeRefreshTimer = null
-}
-
-function clearMeetingJoinSession(): void {
-  meetingJoinUrl.value = ''
-  meetingJoinToken.value = ''
-  meetingJoinExpiresAt.value = ''
-  meetingRtcServerUrl.value = ''
-}
-
-function resetProjectMeetingState(): void {
-  clearMeetingRealtimeRefreshTimer()
-  projectMeetings.value = []
-  activeMeetingId.value = ''
-  activeMeetingDetail.value = null
-  activeMeetingUtterances.value = []
-  meetingLiveCaptions.value = []
-  activeMeetingGuestShare.value = null
-  clearMeetingJoinSession()
-}
-
-function buildMeetingCaptionKey(item: Pick<WorkspaceMeetingCaptionItem, 'speakerLabel' | 'startedAtMs'>): string {
-  return `${String(item.speakerLabel || '').trim()}::${Math.max(0, Math.trunc(Number(item.startedAtMs || 0)))}`
-}
-
-function trimMeetingLiveCaptions(items: WorkspaceMeetingCaptionItem[]): WorkspaceMeetingCaptionItem[] {
-  return [...items]
-    .sort((left, right) => left.startedAtMs - right.startedAtMs)
-    .slice(-20)
-}
-
-function buildMeetingCaptionItem(
-  payload: Record<string, unknown>,
-  final: boolean,
-): WorkspaceMeetingCaptionItem | null {
-  const rawText = normalizeString(payload.text)
-  if (!rawText)
-    return null
-
-  const startedAtMs = Math.max(0, Math.trunc(Number(payload.startedAtMs || 0)))
-  const endedAtMs = Math.max(startedAtMs, Math.trunc(Number(payload.endedAtMs || payload.startedAtMs || 0)))
-  const speakerName = normalizeString(payload.speakerName) || normalizeString(payload.speakerLabel) || 'Speaker'
-  const speakerLabel = normalizeString(payload.speakerLabel) || speakerName
-  const participantIdentity = normalizeString(payload.participantIdentity)
-  const utteranceId = normalizeString(payload.utteranceId)
-  const id = utteranceId
-    || (final
-      ? `final:${speakerLabel}:${startedAtMs}:${endedAtMs}`
-      : `partial:${participantIdentity || speakerLabel}:${startedAtMs}`)
-
-  return {
-    id,
-    text: rawText,
-    speakerName,
-    speakerLabel,
-    startedAtMs,
-    endedAtMs,
-    final,
-  }
-}
-
-function upsertMeetingLiveCaption(item: WorkspaceMeetingCaptionItem): void {
-  if (item.final) {
-    const targetKey = buildMeetingCaptionKey(item)
-    meetingLiveCaptions.value = trimMeetingLiveCaptions(
-      meetingLiveCaptions.value.filter(existing => buildMeetingCaptionKey(existing) !== targetKey),
-    )
-    return
-  }
-
-  const targetKey = buildMeetingCaptionKey(item)
-  const nextItems = meetingLiveCaptions.value.filter(existing => buildMeetingCaptionKey(existing) !== targetKey)
-  nextItems.push(item)
-  meetingLiveCaptions.value = trimMeetingLiveCaptions(nextItems)
-}
-
-function upsertProjectMeetingInList(meeting: ProjectMeeting): void {
-  const normalizedMeetingId = normalizeString(meeting.id)
-  if (!normalizedMeetingId)
-    return
-
-  const nextItems = [...projectMeetings.value]
-  const existingIndex = nextItems.findIndex(item => item.id === normalizedMeetingId)
-  if (existingIndex >= 0)
-    nextItems.splice(existingIndex, 1, meeting)
-  else
-    nextItems.unshift(meeting)
-
-  projectMeetings.value = nextItems
-    .sort((left, right) => {
-      const startedDiff = parseTimestamp(right.startedAt) - parseTimestamp(left.startedAt)
-      if (startedDiff !== 0)
-        return startedDiff
-      return parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt)
-    })
-    .slice(0, 12)
-}
-
-function applyProjectMeetingSession(
-  meeting: ProjectMeetingDetail | null,
-  options: {
-    joinUrl?: string
-    joinToken?: string
-    joinExpiresAt?: string
-    rtcServerUrl?: string
-    resetCaptions?: boolean
-    preserveJoinSession?: boolean
-  } = {},
-): void {
-  if (!meeting) {
-    activeMeetingId.value = ''
-    activeMeetingDetail.value = null
-    activeMeetingUtterances.value = []
-    if (options.resetCaptions !== false)
-      meetingLiveCaptions.value = []
-    activeMeetingGuestShare.value = null
-    clearMeetingJoinSession()
-    return
-  }
-
-  activeMeetingId.value = meeting.id
-  activeMeetingDetail.value = meeting
-  upsertProjectMeetingInList(meeting)
-  if (!options.preserveJoinSession) {
-    meetingJoinUrl.value = normalizeString(options.joinUrl)
-    meetingJoinToken.value = normalizeString(options.joinToken)
-    meetingJoinExpiresAt.value = normalizeString(options.joinExpiresAt)
-    meetingRtcServerUrl.value = normalizeString(options.rtcServerUrl)
-  }
-  if (options.resetCaptions)
-    meetingLiveCaptions.value = []
-  syncMeetingGuestShareState(meeting)
-}
-
-async function loadProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || !activeMeetingIsHost.value) {
-    activeMeetingGuestShare.value = null
-    return
-  }
-
-  meetingGuestShareLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare | null>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-    )
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = response.data || null
-  }
-  catch {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = null
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
-function syncMeetingGuestShareState(meeting: ProjectMeetingDetail | null): void {
-  if (!meeting) {
-    activeMeetingGuestShare.value = null
-    return
-  }
-  const currentUserId = currentUserMeetingHostId.value
-  if (!currentUserId || normalizeString(meeting.startedByUserId) !== currentUserId || meeting.status === 'ended' || meeting.status === 'failed') {
-    activeMeetingGuestShare.value = null
-    return
-  }
-  void loadProjectMeetingGuestShare(meeting.id)
-}
-
-async function loadProjectMeetingUtterances(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId) {
-    activeMeetingUtterances.value = []
-    return
-  }
-
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingUtterance[]>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/utterances`),
-    )
-    if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
-      return
-    activeMeetingUtterances.value = Array.isArray(response.data) ? response.data : []
-  }
-  catch {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      activeMeetingUtterances.value = []
-  }
-}
-
-async function loadProjectMeetingDetail(
-  meetingId: string,
-  options: {
-    resetCaptions?: boolean
-    preserveJoinSession?: boolean
-  } = {},
-): Promise<ProjectMeetingDetail | null> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId) {
-    applyProjectMeetingSession(null)
-    return null
-  }
-
-  meetingDetailLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}`),
-    )
-    if (activeProjectId.value !== projectId || activeMeetingId.value !== targetMeetingId)
-      return response.data || null
-
-    applyProjectMeetingSession(response.data, {
-      resetCaptions: options.resetCaptions,
-      preserveJoinSession: options.preserveJoinSession !== false,
-    })
-    return response.data
-  }
-  catch (error) {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId) {
-      activeMeetingDetail.value = null
-      activeMeetingUtterances.value = []
-      activeMeetingGuestShare.value = null
-      clearMeetingJoinSession()
-    }
-    statusLine.value = resolveApiErrorMessage(error, '加载会议详情失败，请稍后重试。')
-    return null
-  }
-  finally {
-    if (activeProjectId.value === projectId && activeMeetingId.value === targetMeetingId)
-      meetingDetailLoading.value = false
-    else if (!activeProjectId.value)
-      meetingDetailLoading.value = false
-  }
-}
-
-async function selectProjectMeeting(meetingId: string): Promise<void> {
-  const targetMeetingId = normalizeString(meetingId)
-  if (!targetMeetingId)
-    return
-
-  ensureMeetingDetailTabOpen(targetMeetingId)
-  workspaceRealtime.subscribeMeeting(targetMeetingId)
-  const isSwitchingMeeting = activeMeetingId.value !== targetMeetingId
-  activeMeetingId.value = targetMeetingId
-  if (isSwitchingMeeting) {
-    activeMeetingDetail.value = null
-    activeMeetingUtterances.value = []
-    meetingLiveCaptions.value = []
-    clearMeetingJoinSession()
-  }
-
-  await Promise.all([
-    loadProjectMeetingDetail(targetMeetingId, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
-    loadProjectMeetingUtterances(targetMeetingId),
-  ])
-}
-
-async function loadProjectMeetings(
-  options: {
-    fallbackToFirst?: boolean
-    preferredMeetingId?: string
-    hydrateSelectedDetail?: boolean
-  } = {},
-): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId) {
-    resetProjectMeetingState()
-    return
-  }
-
-  projectMeetingsLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<{ items: ProjectMeeting[] }>>(
-      endpoint(`/projects/${projectId}/meetings`),
-    )
-    if (activeProjectId.value !== projectId)
-      return
-
-    const items = Array.isArray(response.data?.items) ? response.data.items : []
-    projectMeetings.value = items
-
-    const preferredMeetingId = normalizeString(options.preferredMeetingId || activeMeetingId.value)
-    const preferredMeeting = preferredMeetingId
-      ? items.find(item => item.id === preferredMeetingId) || null
-      : null
-    if (preferredMeeting) {
-      workspaceRealtime.subscribeMeeting(preferredMeeting.id)
-      const isSwitchingMeeting = activeMeetingId.value !== preferredMeeting.id
-      activeMeetingId.value = preferredMeeting.id
-      if (isSwitchingMeeting) {
-        activeMeetingDetail.value = null
-        activeMeetingUtterances.value = []
-        meetingLiveCaptions.value = []
-        clearMeetingJoinSession()
-      }
-
-      if (options.hydrateSelectedDetail === false)
-        return
-
-      await Promise.all([
-        loadProjectMeetingDetail(preferredMeeting.id, { resetCaptions: isSwitchingMeeting, preserveJoinSession: false }),
-        loadProjectMeetingUtterances(preferredMeeting.id),
-      ])
-      return
-    }
-
-    const selectedMeetingStillExists = Boolean(
-      activeMeetingId.value && items.some(item => item.id === activeMeetingId.value),
-    )
-    if (selectedMeetingStillExists)
-      return
-
-    if (options.fallbackToFirst !== false && items[0]?.id) {
-      await selectProjectMeeting(items[0].id)
-      return
-    }
-
-    applyProjectMeetingSession(null)
-  }
-  catch {
-    if (activeProjectId.value === projectId)
-      projectMeetings.value = []
-  }
-  finally {
-    if (activeProjectId.value === projectId || !activeProjectId.value)
-      projectMeetingsLoading.value = false
-  }
-}
-
-function scheduleMeetingRealtimeRefresh(options: {
-  meetingId?: string
-  refreshUtterances?: boolean
-} = {}): void {
-  const targetMeetingId = normalizeString(options.meetingId || activeMeetingId.value)
-  clearMeetingRealtimeRefreshTimer()
-  meetingRealtimeRefreshTimer = setTimeout(() => {
-    meetingRealtimeRefreshTimer = null
-    void loadProjectMeetings({ fallbackToFirst: false })
-    if (targetMeetingId && targetMeetingId === activeMeetingId.value) {
-      void loadProjectMeetingDetail(targetMeetingId)
-      if (options.refreshUtterances)
-        void loadProjectMeetingUtterances(targetMeetingId)
-    }
-  }, 250)
-}
-
-async function createProjectMeeting(payload: { mode: ProjectMeetingMode }): Promise<void> {
-  ensureMeetingCreateTabOpen(payload.mode)
-  statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议创建页已打开。`
-}
-
-async function submitProjectMeetingCreate(payload: ProjectMeetingCreatePayload): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
-      endpoint(`/projects/${projectId}/meetings`),
-      {
-        method: 'POST',
-        body: payload,
-      },
-    )
-
-    const targetMeeting = response.data.meeting
-    activeMeetingUtterances.value = []
-    applyProjectMeetingSession(targetMeeting, {
-      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
-      joinToken: response.data.rtcJoinToken || response.data.joinToken,
-      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
-      rtcServerUrl: response.data.rtcServerUrl,
-      resetCaptions: true,
-    })
-    ensureMeetingDetailTabOpen(targetMeeting.id)
-    workspaceRealtime.subscribeMeeting(targetMeeting.id)
-    openMainTabs.value = normalizeWorkspaceMainTabIds(
-      openMainTabs.value.filter(tabId => tabId !== createMeetingCreateTabId(payload.mode)),
-      { allowEmpty: true },
-    )
-    if (targetMeeting.status !== 'scheduled')
-      await loadProjectMeetingUtterances(targetMeeting.id)
-    statusLine.value = `${payload.mode === 'audio' ? '语音' : '视频'}会议已创建。`
-    Message.success('会议已创建。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '创建会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function joinProjectMeeting(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    ensureMeetingDetailTabOpen(targetMeetingId)
-    workspaceRealtime.subscribeMeeting(targetMeetingId)
-    activeMeetingId.value = targetMeetingId
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/join`),
-      {
-        method: 'POST',
-      },
-    )
-    applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
-      joinToken: response.data.rtcJoinToken || response.data.joinToken,
-      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
-      rtcServerUrl: response.data.rtcServerUrl,
-      resetCaptions: false,
-    })
-    if (response.data.meeting)
-      await loadProjectMeetingUtterances(targetMeetingId)
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '加入会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function startProjectMeeting(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingJoinSessionPayload>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/start`),
-      {
-        method: 'POST',
-      },
-    )
-    applyProjectMeetingSession(response.data.meeting, {
-      joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
-      joinToken: response.data.rtcJoinToken || response.data.joinToken,
-      joinExpiresAt: response.data.rtcJoinExpiresAt || response.data.joinExpiresAt,
-      rtcServerUrl: response.data.rtcServerUrl,
-      resetCaptions: true,
-    })
-    ensureMeetingDetailTabOpen(targetMeetingId)
-    workspaceRealtime.subscribeMeeting(targetMeetingId)
-    await loadProjectMeetingUtterances(targetMeetingId)
-    statusLine.value = '会议已启动。'
-    Message.success('会议已启动。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '启动会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function endProjectMeeting(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingMutating.value)
-    return
-
-  meetingMutating.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingDetail>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/end`),
-      {
-        method: 'POST',
-      },
-    )
-
-    upsertProjectMeetingInList(response.data)
-    if (activeMeetingId.value === targetMeetingId) {
-      applyProjectMeetingSession(response.data, {
-        resetCaptions: false,
-      })
-      clearMeetingJoinSession()
-      activeMeetingGuestShare.value = null
-      await loadProjectMeetingUtterances(targetMeetingId)
-    }
-
-    statusLine.value = '会议已结束，系统正在整理录制与纪要。'
-    Message.success('会议已结束。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '结束会议失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingMutating.value = false
-  }
-}
-
-async function createProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
-    return
-
-  meetingGuestShareLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-      {
-        method: 'POST',
-      },
-    )
-    if (activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = response.data
-    statusLine.value = '外部分享链接已生成。'
-    Message.success('外部分享链接已生成。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '生成外部分享链接失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
-async function regenerateProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
-    return
-
-  meetingGuestShareLoading.value = true
-  try {
-    const response = await unsafeFetch<ApiResponse<ProjectMeetingGuestShare>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-      {
-        method: 'POST',
-        body: {
-          regenerate: true,
-        },
-      },
-    )
-    if (activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = response.data
-    statusLine.value = '外部分享链接已重新生成，旧链接已失效。'
-    Message.success('外部分享链接已重新生成。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '重新生成外部分享链接失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
-async function revokeProjectMeetingGuestShare(meetingId: string): Promise<void> {
-  const projectId = String(activeProjectId.value || '').trim()
-  const targetMeetingId = normalizeString(meetingId)
-  if (!projectId || !targetMeetingId || meetingGuestShareLoading.value)
-    return
-
-  meetingGuestShareLoading.value = true
-  try {
-    await unsafeFetch<ApiResponse<ProjectMeetingGuestShare | null>>(
-      endpoint(`/projects/${projectId}/meetings/${targetMeetingId}/guest-share`),
-      {
-        method: 'DELETE',
-      },
-    )
-    if (activeMeetingId.value === targetMeetingId)
-      activeMeetingGuestShare.value = null
-    statusLine.value = '外部分享链接已撤销。'
-    Message.success('外部分享链接已撤销。')
-  }
-  catch (error) {
-    const message = resolveApiErrorMessage(error, '撤销外部分享链接失败，请稍后重试。')
-    statusLine.value = message
-    Message.error(message)
-  }
-  finally {
-    meetingGuestShareLoading.value = false
-  }
-}
-
 function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
   const messageType = String(message.type || '').trim()
   if (!messageType)
@@ -3328,33 +2488,7 @@ function handleRealtimeEnvelope(message: WorkspaceRealtimeEnvelope): void {
     const payload = message.payload && typeof message.payload === 'object'
       ? message.payload as Record<string, unknown>
       : {}
-    const meetingId = normalizeString(payload.meetingId)
-
-    if (messageType === 'meeting.caption.partial' || messageType === 'meeting.caption.final') {
-      if (meetingId && activeMeetingId.value && meetingId !== activeMeetingId.value)
-        return
-
-      const caption = buildMeetingCaptionItem(payload, messageType === 'meeting.caption.final')
-      if (!caption)
-        return
-
-      upsertMeetingLiveCaption(caption)
-      if (messageType === 'meeting.caption.final' && meetingId)
-        scheduleMeetingRealtimeRefresh({ meetingId, refreshUtterances: true })
-      return
-    }
-
-    if (messageType === 'meeting.summary.ready') {
-      statusLine.value = '会议纪要已就绪，资源区会自动补齐录制与纪要。'
-      scheduleMeetingRealtimeRefresh({
-        meetingId: meetingId || activeMeetingId.value,
-      })
-      return
-    }
-
-    scheduleMeetingRealtimeRefresh({
-      meetingId: meetingId || activeMeetingId.value,
-    })
+    handleMeetingRealtimeEnvelope(messageType, payload)
     return
   }
 
@@ -3485,6 +2619,17 @@ const workspacePreparing = computed(() => {
     && workspaceBootstrapLoading.value
     && !hasWorkspaceBootstrapData.value
 })
+const workspaceShellLoading = computed(() => {
+  if (!me.value)
+    return true
+  if (!activeWorkspaceId.value)
+    return true
+  if (!highlightedProjectId.value)
+    return false
+  if (workspaceBootstrapLoading.value)
+    return true
+  return !projectWorkspaceViewReady.value
+})
 
 const collabSelectionStatus = ref({
   line: 1,
@@ -3565,8 +2710,8 @@ function resetProjectSettingsState(project: Project | null) {
   projectSettingsHydrating.value = true
   try {
     applySidebarLayoutState({
-      leftSidebarCollapsed: false,
-      rightSidebarCollapsed: false,
+      leftSidebarCollapsed: true,
+      rightSidebarCollapsed: true,
     })
     Object.assign(projectSettingsCommon, createProjectCommonFormFromProject(project))
     projectSettingsBindings.value = []
@@ -4385,7 +3530,7 @@ async function clearProjectSettingsDraftOnServer(projectId: string): Promise<'cl
 function resolveWorkspaceViewPreferenceState(record: ProjectWorkspaceViewPreference | null | undefined): ProjectWorkspaceViewState | null {
   if (!record?.payload)
     return null
-  return sanitizeProjectWorkspaceViewState(normalizeProjectWorkspaceViewState(record.payload))
+  return sanitizeProjectWorkspaceViewState(normalizeProjectWorkspaceViewState(record.payload), resources.value)
 }
 
 function buildDeviceRestorePromptContent(options: { view: boolean, draft: boolean }): string {
@@ -5652,9 +4797,17 @@ async function addResourceFromLibrary(resourceInput: string | { resourceId: stri
   }
 }
 
-async function createCollabResource(resourceInput: 'markdown' | 'draw' | { kind: 'markdown' | 'draw', parentResourceId?: string | null }) {
+async function createCollabResource(
+  resourceInput:
+    | 'markdown'
+    | 'draw'
+    | { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design', parentResourceId?: string | null },
+) {
   const projectId = String(activeProjectId.value || '').trim()
   const kind = typeof resourceInput === 'string' ? resourceInput : resourceInput.kind
+  const purpose = typeof resourceInput === 'string'
+    ? (kind === 'draw' ? 'freeform' : 'notes')
+    : (resourceInput.purpose || (kind === 'draw' ? 'freeform' : 'notes'))
   const parentResourceId = typeof resourceInput === 'string'
     ? ''
     : String(resourceInput.parentResourceId || '').trim()
@@ -5662,12 +4815,13 @@ async function createCollabResource(resourceInput: 'markdown' | 'draw' | { kind:
     return
 
   resourceMutating.value = true
-  const resourceLabel = kind === 'draw' ? '自由画布' : '协作文档'
+  const resourceLabel = resolveCollabResourceDisplayLabel(purpose, kind)
   try {
     const response = await unsafeFetch<ApiResponse<{ resource: Resource, snapshot: CollabSnapshotPayload }>>(endpoint(`/projects/${projectId}/resources/collab`), {
       method: 'POST',
       body: {
         kind,
+        purpose,
         parentResourceId: parentResourceId || undefined,
       },
     })
@@ -5678,11 +4832,13 @@ async function createCollabResource(resourceInput: 'markdown' | 'draw' | { kind:
     const snapshot = response.data?.snapshot
     if (createdResource?.id) {
       await openProjectCollabResource(createdResource.id, snapshot || null, {
-        surface: 'preview',
+        surface: purpose === 'workflow'
+          ? 'flow'
+          : purpose === 'design'
+            ? 'design'
+            : 'preview',
       })
-      statusLine.value = kind === 'draw'
-        ? '已创建自由画布，协作模式已打开。'
-        : '已创建协作文档，协作模式已打开。'
+      statusLine.value = `已创建${resourceLabel}，协作模式已打开。`
       return
     }
 
@@ -6029,6 +5185,8 @@ async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPa
 
 interface OpenPreviewOptions {
   openTab?: boolean
+  requestId?: number
+  forceReload?: boolean
 }
 
 interface OpenCollabOptions extends OpenPreviewOptions {
@@ -6065,14 +5223,14 @@ async function openProjectCollabResource(
   if (!projectId || !targetResourceId)
     return
 
-  const targetSnapshot = await bindCollabResource(targetResourceId, snapshot)
-  if (!targetSnapshot)
-    return
-
-  clearPreviewStatusPolling()
-  previewStatusPayload.value = null
-  previewStatusLoading.value = false
   if (options.surface === 'flow') {
+    const targetSnapshot = await bindCollabResource(targetResourceId, snapshot)
+    if (!targetSnapshot)
+      return
+
+    clearPreviewStatusPolling()
+    previewStatusPayload.value = null
+    previewStatusLoading.value = false
     flowResourceId.value = targetResourceId
     if (options.openTab !== false)
       openFlowSignal.value += 1
@@ -6080,17 +5238,82 @@ async function openProjectCollabResource(
   }
 
   if (options.surface === 'design') {
+    const targetSnapshot = await bindCollabResource(targetResourceId, snapshot)
+    if (!targetSnapshot)
+      return
+
+    clearPreviewStatusPolling()
+    previewStatusPayload.value = null
+    previewStatusLoading.value = false
+    collabPreviewLoading.value = false
+    collabPreviewError.value = ''
     designResourceId.value = targetResourceId
     if (options.openTab !== false)
       openDesignSignal.value += 1
     return
   }
 
-  previewMode.value = targetSnapshot.kind
+  const requestId = Number(options.requestId || ++projectResourcePreviewRequestId)
+  const targetResource = resources.value.find(item => item.id === targetResourceId) || null
+  const targetPreviewMode = targetResource?.resourceKind === 'draw'
+    ? 'draw'
+    : 'markdown'
+  const targetTabId = createResourceTabId(targetResourceId)
+
+  if (
+    options.forceReload !== true
+    && previewResourceId.value === targetResourceId
+    && activeMainTabId.value === targetTabId
+    && collabBindingResourceId.value === targetResourceId
+    && !collabPreviewLoading.value
+  ) {
+    return
+  }
+
+  clearPreviewStatusPolling()
+  previewStatusPayload.value = null
+  previewStatusLoading.value = false
+  collabPreviewError.value = ''
+  collabPreviewLoading.value = true
+  disposeCollabDocBinding(true)
+  previewMode.value = targetPreviewMode
   previewResourceId.value = targetResourceId
   closingPreviewResourceId.value = ''
   if (options.openTab !== false)
     openPreviewSignal.value += 1
+
+  try {
+    const targetSnapshot = snapshot || await fetchCollabSnapshot(targetResourceId)
+    if (
+      requestId !== projectResourcePreviewRequestId
+      || previewResourceId.value !== targetResourceId
+    ) {
+      return
+    }
+
+    if (!targetSnapshot) {
+      collabPreviewError.value = 'WinLoop 暂时无法加载该资料，请重试。'
+      return
+    }
+
+    await bindCollabResource(targetResourceId, targetSnapshot)
+    if (
+      requestId !== projectResourcePreviewRequestId
+      || previewResourceId.value !== targetResourceId
+    ) {
+      return
+    }
+
+    previewMode.value = targetSnapshot.kind
+  }
+  finally {
+    if (
+      requestId === projectResourcePreviewRequestId
+      && previewResourceId.value === targetResourceId
+    ) {
+      collabPreviewLoading.value = false
+    }
+  }
 }
 
 async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<boolean> {
@@ -6154,9 +5377,14 @@ async function ensureDesignCanvas(options: OpenPreviewOptions = {}): Promise<boo
   }
 }
 
-async function fetchResourcePreviewStatus(resourceId: string, silent = false) {
+async function fetchResourcePreviewStatus(
+  resourceId: string,
+  silent = false,
+  options: { requestId?: number } = {},
+) {
   const projectId = String(activeProjectId.value || '').trim()
   const targetResourceId = String(resourceId || '').trim()
+  const requestId = Number(options.requestId || 0)
   if (!projectId || !targetResourceId)
     return
 
@@ -6165,39 +5393,92 @@ async function fetchResourcePreviewStatus(resourceId: string, silent = false) {
 
   try {
     const response = await unsafeFetch<ApiResponse<ResourcePreviewStatusPayload>>(endpoint(`/projects/${projectId}/resources/${targetResourceId}/preview-status`))
+
+    if (
+      (requestId && requestId !== projectResourcePreviewRequestId)
+      || previewResourceId.value !== targetResourceId
+      || previewMode.value !== 'binary'
+    ) {
+      return
+    }
+
     previewStatusPayload.value = response.data
 
     if (response.data.status === 'succeeded' || response.data.status === 'failed')
       clearPreviewStatusPolling()
   }
   catch (error) {
+    if (
+      (requestId && requestId !== projectResourcePreviewRequestId)
+      || previewResourceId.value !== targetResourceId
+      || previewMode.value !== 'binary'
+    ) {
+      return
+    }
+
     if (!silent)
       statusLine.value = resolveApiErrorMessage(error, '获取预览状态失败。')
   }
   finally {
-    if (!silent)
+    if (
+      !silent
+      && (!requestId || requestId === projectResourcePreviewRequestId)
+      && previewResourceId.value === targetResourceId
+      && previewMode.value === 'binary'
+    ) {
       previewStatusLoading.value = false
+    }
   }
 }
 
-function startPreviewStatusPolling(resourceId: string) {
+function startPreviewStatusPolling(resourceId: string, requestId = projectResourcePreviewRequestId) {
   clearPreviewStatusPolling()
   previewStatusPollTimer = setInterval(() => {
-    void fetchResourcePreviewStatus(resourceId, true)
+    if (
+      requestId !== projectResourcePreviewRequestId
+      || previewResourceId.value !== resourceId
+      || previewMode.value !== 'binary'
+    ) {
+      clearPreviewStatusPolling()
+      return
+    }
+    void fetchResourcePreviewStatus(resourceId, true, { requestId })
   }, 2000)
 }
 
 async function openProjectResourcePreview(resourceId: string, options: OpenPreviewOptions = {}) {
   const targetResource = resources.value.find(item => item.id === resourceId) || null
   if (isCollabResource(targetResource)) {
-    await openProjectCollabResource(resourceId, undefined, options)
+    await openProjectCollabResource(resourceId, undefined, {
+      ...options,
+      surface: isWorkflowCanvasResource(targetResource)
+        ? 'flow'
+        : isDesignCanvasResource(targetResource)
+          ? 'design'
+          : 'preview',
+    })
     return
   }
 
   const targetResourceId = String(resourceId || '').trim()
+  const requestId = Number(options.requestId || ++projectResourcePreviewRequestId)
+  const targetTabId = createResourceTabId(targetResourceId)
   if (!activeProjectId.value || !targetResourceId)
     return
 
+  if (
+    options.forceReload !== true
+    && previewResourceId.value === targetResourceId
+    && activeMainTabId.value === targetTabId
+    && previewMode.value === 'binary'
+    && !previewStatusLoading.value
+  ) {
+    return
+  }
+
+  collabPreviewLoading.value = false
+  collabPreviewError.value = ''
+  clearPreviewStatusPolling()
   disposeCollabDocBinding(true)
   previewMode.value = 'binary'
   previewResourceId.value = targetResourceId
@@ -6206,10 +5487,17 @@ async function openProjectResourcePreview(resourceId: string, options: OpenPrevi
     openPreviewSignal.value += 1
   previewStatusPayload.value = null
 
-  await fetchResourcePreviewStatus(targetResourceId)
+  await fetchResourcePreviewStatus(targetResourceId, false, { requestId })
+  if (
+    requestId !== projectResourcePreviewRequestId
+    || previewResourceId.value !== targetResourceId
+  ) {
+    return
+  }
+
   const currentStatus = ((previewStatusPayload.value as any)?.status || '') as ResourcePreviewStatus | ''
   if (currentStatus !== 'succeeded' && currentStatus !== 'failed')
-    startPreviewStatusPolling(targetResourceId)
+    startPreviewStatusPolling(targetResourceId, requestId)
 }
 
 function findMarkdownResourceByAnchorHash(hash: string): Resource | null {
@@ -6249,7 +5537,14 @@ async function activateProjectResourceTab(resourceId: string): Promise<void> {
   const targetResourceId = String(resourceId || '').trim()
   if (!targetResourceId)
     return
-  await openProjectResourcePreview(targetResourceId, { openTab: false })
+  const targetTabId = createResourceTabId(targetResourceId)
+  previewResourceId.value = targetResourceId
+  closingPreviewResourceId.value = ''
+
+  if (activeMainTabId.value === targetTabId)
+    return
+
+  activeMainTabId.value = targetTabId
 }
 
 function closeProjectResourcePreview(resourceId = previewResourceId.value) {
@@ -6261,9 +5556,12 @@ function closeProjectResourcePreview(resourceId = previewResourceId.value) {
   const preserveFlowBinding = targetResourceId === String(flowResourceId.value || '').trim()
     && activeMainTabId.value === 'flow'
 
+  projectResourcePreviewRequestId += 1
   closingPreviewResourceId.value = targetResourceId
   if (!preserveFlowBinding)
     disposeCollabDocBinding(true)
+  collabPreviewLoading.value = false
+  collabPreviewError.value = ''
   previewMode.value = 'binary'
   previewStatusPayload.value = null
   previewStatusLoading.value = false
@@ -6489,94 +5787,6 @@ async function requestProjectApi<T>(path: string, query: Record<string, string |
   return payload.data
 }
 
-function clearMarkdownCommentPolling(): void {
-  if (!markdownCommentPollTimer)
-    return
-  clearInterval(markdownCommentPollTimer)
-  markdownCommentPollTimer = null
-}
-
-function summarizeCommentAnchor(anchor: ProjectResourceCommentAnchor): string {
-  if (anchor.type === 'image_node')
-    return normalizeString(anchor.title) || normalizeString(anchor.alt) || '图片评论'
-  return normalizeString(anchor.selectedTextPreview) || normalizeString(anchor.headingText) || '文本评论'
-}
-
-function replaceMarkdownCommentThread(nextThread: ProjectResourceCommentThread, options: { removeThreadId?: string } = {}): void {
-  const removeThreadId = normalizeString(options.removeThreadId)
-  const nextThreads = markdownCommentThreads.value
-    .filter(thread => thread.id !== nextThread.id && thread.id !== removeThreadId)
-  nextThreads.unshift(nextThread)
-  markdownCommentThreads.value = nextThreads
-  activeMarkdownCommentThreadId.value = nextThread.id
-}
-
-function removeMarkdownCommentThread(threadId: string): void {
-  const normalizedThreadId = normalizeString(threadId)
-  if (!normalizedThreadId)
-    return
-  markdownCommentThreads.value = markdownCommentThreads.value.filter(thread => thread.id !== normalizedThreadId)
-  if (activeMarkdownCommentThreadId.value === normalizedThreadId)
-    activeMarkdownCommentThreadId.value = ''
-}
-
-function buildOptimisticCommentMessage(threadId: string, body: string) {
-  const now = new Date().toISOString()
-  return {
-    id: `temp-comment-message-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    projectId: normalizeString(activeProjectId.value),
-    resourceId: activeMarkdownResourceId.value,
-    threadId,
-    body,
-    createdByUserId: normalizeString(me.value?.user.id),
-    createdByUsername: normalizeString(me.value?.user.username) || '我',
-    createdByAvatarUrl: me.value?.user.avatarUrl || null,
-    createdAt: now,
-    updatedAt: now,
-  }
-}
-
-function buildOptimisticCommentThread(anchor: ProjectResourceCommentAnchor, body: string): ProjectResourceCommentThread {
-  const now = new Date().toISOString()
-  const threadId = `temp-comment-thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  return {
-    id: threadId,
-    projectId: normalizeString(activeProjectId.value),
-    resourceId: activeMarkdownResourceId.value,
-    status: 'open',
-    anchorType: anchor.type,
-    anchor,
-    summaryText: summarizeCommentAnchor(anchor),
-    createdByUserId: normalizeString(me.value?.user.id),
-    createdByUsername: normalizeString(me.value?.user.username) || '我',
-    createdByAvatarUrl: me.value?.user.avatarUrl || null,
-    resolvedByUserId: null,
-    resolvedByUsername: null,
-    resolvedAt: null,
-    createdAt: now,
-    updatedAt: now,
-    messages: [
-      buildOptimisticCommentMessage(threadId, body),
-    ],
-  }
-}
-
-function openMarkdownComments(options: {
-  draftAnchor?: ProjectResourceCommentAnchor | null
-  threadId?: string
-} = {}): void {
-  if (options.draftAnchor) {
-    markdownCommentDraftAnchor.value = options.draftAnchor
-    activeMarkdownCommentThreadId.value = ''
-  }
-
-  const threadId = normalizeString(options.threadId)
-  if (threadId) {
-    markdownCommentDraftAnchor.value = null
-    activeMarkdownCommentThreadId.value = threadId
-  }
-}
-
 function openDocumentAssistSidebar(): void {
   rightSidebarView.value = 'ai'
   if (rightSidebarCollapsed.value)
@@ -6597,226 +5807,29 @@ function getActiveMarkdownMirror(): string {
   return normalizeString(previewResource.value?.content)
 }
 
-async function loadMarkdownCommentThreads(options: { silent?: boolean } = {}): Promise<void> {
-  const projectId = normalizeString(activeProjectId.value)
-  const resourceId = activeMarkdownResourceId.value
-
-  if (!projectId || !resourceId) {
-    markdownCommentThreads.value = []
-    activeMarkdownCommentThreadId.value = ''
-    markdownCommentDraftAnchor.value = null
-    return
-  }
-
-  if (!options.silent)
-    markdownCommentLoading.value = true
-
-  try {
-    const payload = await requestProjectApi<{ threads: ProjectResourceCommentThread[] }>(
-      endpoint(`/projects/${projectId}/resources/${resourceId}/comments`),
-      {},
-      '评论列表加载失败。',
-    )
-    markdownCommentThreads.value = Array.isArray(payload.threads) ? payload.threads : []
-    if (!markdownCommentThreads.value.some(thread => thread.id === activeMarkdownCommentThreadId.value))
-      activeMarkdownCommentThreadId.value = ''
-  }
-  catch (error) {
-    if (!options.silent)
-      statusLine.value = resolveApiErrorMessage(error, '评论列表加载失败。')
-  }
-  finally {
-    if (!options.silent)
-      markdownCommentLoading.value = false
-  }
-}
-
-function startMarkdownCommentPolling(): void {
-  clearMarkdownCommentPolling()
-  const projectId = normalizeString(activeProjectId.value)
-  const resourceId = activeMarkdownResourceId.value
-  if (!projectId || !resourceId)
-    return
-
-  markdownCommentPollTimer = setInterval(() => {
-    void loadMarkdownCommentThreads({ silent: true })
-  }, 15000)
-}
-
 function handleMarkdownPrimaryHeadingChange(title: string): void {
   const resourceId = activeMarkdownResourceId.value
   const normalizedTitle = normalizeString(title)
-  if (!resourceId || !normalizedTitle)
+  if (!resourceId)
     return
+
+  if (!normalizedTitle) {
+    if (!Object.prototype.hasOwnProperty.call(markdownDerivedTitleMap.value, resourceId))
+      return
+
+    const nextTitleMap = { ...markdownDerivedTitleMap.value }
+    delete nextTitleMap[resourceId]
+    markdownDerivedTitleMap.value = nextTitleMap
+    return
+  }
+
+  if (markdownDerivedTitleMap.value[resourceId] === normalizedTitle)
+    return
+
   markdownDerivedTitleMap.value = {
     ...markdownDerivedTitleMap.value,
     [resourceId]: normalizedTitle,
   }
-}
-
-function handleMarkdownCreateCommentFromSelection(anchor: ProjectResourceCommentTextSelectionAnchor): void {
-  openMarkdownComments({ draftAnchor: anchor })
-}
-
-function handleMarkdownCreateCommentFromImage(anchor: ProjectResourceCommentImageNodeAnchor): void {
-  openMarkdownComments({ draftAnchor: anchor })
-}
-
-function handleMarkdownOpenCommentThread(threadId: string): void {
-  openMarkdownComments({ threadId })
-  nextTick(() => {
-    workspaceMainPanelRef.value?.scrollToMarkdownCommentThread(threadId)
-  })
-}
-
-function cancelMarkdownCommentDraft(): void {
-  markdownCommentDraftAnchor.value = null
-}
-
-async function createMarkdownCommentThread(body: string): Promise<void> {
-  const anchor = markdownCommentDraftAnchor.value
-  const projectId = normalizeString(activeProjectId.value)
-  const resourceId = activeMarkdownResourceId.value
-  const normalizedBody = normalizeString(body)
-  if (!anchor || !projectId || !resourceId || !normalizedBody || markdownCommentMutating.value)
-    return
-
-  const optimisticThread = buildOptimisticCommentThread(anchor, normalizedBody)
-  markdownCommentMutating.value = true
-  markdownCommentDraftAnchor.value = null
-  replaceMarkdownCommentThread(optimisticThread)
-
-  try {
-    const response = await authApiFetch<ApiResponse<{ thread: ProjectResourceCommentThread }>>(
-      `/projects/${projectId}/resources/${resourceId}/comments`,
-      {
-        method: 'POST',
-        body: {
-          anchor,
-          body: normalizedBody,
-        },
-      },
-    )
-
-    const thread = response.data?.thread
-    if (!thread?.id)
-      throw new Error('COMMENT_THREAD_CREATE_INVALID')
-
-    replaceMarkdownCommentThread(thread, {
-      removeThreadId: optimisticThread.id,
-    })
-    statusLine.value = '评论已创建。'
-  }
-  catch (error) {
-    removeMarkdownCommentThread(optimisticThread.id)
-    markdownCommentDraftAnchor.value = anchor
-    statusLine.value = resolveApiErrorMessage(error, '创建评论失败，请稍后重试。')
-  }
-  finally {
-    markdownCommentMutating.value = false
-  }
-}
-
-async function replyMarkdownCommentThread(payload: { threadId: string, body: string }): Promise<void> {
-  const projectId = normalizeString(activeProjectId.value)
-  const resourceId = activeMarkdownResourceId.value
-  const threadId = normalizeString(payload.threadId)
-  const body = normalizeString(payload.body)
-  if (!projectId || !resourceId || !threadId || !body || markdownCommentMutating.value)
-    return
-
-  const thread = markdownCommentThreads.value.find(item => item.id === threadId)
-  if (!thread)
-    return
-
-  const optimisticMessage = buildOptimisticCommentMessage(threadId, body)
-  markdownCommentMutating.value = true
-  markdownCommentThreads.value = markdownCommentThreads.value.map((item) => {
-    if (item.id !== threadId)
-      return item
-    return {
-      ...item,
-      status: 'open',
-      updatedAt: optimisticMessage.updatedAt,
-      messages: [...item.messages, optimisticMessage],
-    }
-  })
-
-  try {
-    const response = await authApiFetch<ApiResponse<{ thread: ProjectResourceCommentThread }>>(
-      `/projects/${projectId}/resources/${resourceId}/comments/${threadId}/messages`,
-      {
-        method: 'POST',
-        body: {
-          body,
-        },
-      },
-    )
-
-    const nextThread = response.data?.thread
-    if (!nextThread?.id)
-      throw new Error('COMMENT_THREAD_REPLY_INVALID')
-    replaceMarkdownCommentThread(nextThread)
-    statusLine.value = '回复已发送。'
-  }
-  catch (error) {
-    await loadMarkdownCommentThreads({ silent: true })
-    statusLine.value = resolveApiErrorMessage(error, '回复评论失败，请稍后重试。')
-  }
-  finally {
-    markdownCommentMutating.value = false
-  }
-}
-
-async function updateMarkdownCommentThreadState(threadId: string, nextStatus: 'resolved' | 'open'): Promise<void> {
-  const projectId = normalizeString(activeProjectId.value)
-  const resourceId = activeMarkdownResourceId.value
-  const normalizedThreadId = normalizeString(threadId)
-  if (!projectId || !resourceId || !normalizedThreadId || markdownCommentMutating.value)
-    return
-
-  const previousThreads = markdownCommentThreads.value
-  markdownCommentMutating.value = true
-  markdownCommentThreads.value = markdownCommentThreads.value.map((thread) => {
-    if (thread.id !== normalizedThreadId)
-      return thread
-    return {
-      ...thread,
-      status: nextStatus === 'resolved' ? 'resolved' : 'open',
-      resolvedAt: nextStatus === 'resolved' ? new Date().toISOString() : null,
-      resolvedByUserId: nextStatus === 'resolved' ? normalizeString(me.value?.user.id) : null,
-      resolvedByUsername: nextStatus === 'resolved' ? normalizeString(me.value?.user.username) || null : null,
-    }
-  })
-
-  try {
-    const response = await authApiFetch<ApiResponse<{ thread: ProjectResourceCommentThread }>>(
-      `/projects/${projectId}/resources/${resourceId}/comments/${normalizedThreadId}/${nextStatus === 'resolved' ? 'resolve' : 'reopen'}`,
-      {
-        method: 'POST',
-      },
-    )
-    const thread = response.data?.thread
-    if (!thread?.id)
-      throw new Error('COMMENT_THREAD_STATE_INVALID')
-    replaceMarkdownCommentThread(thread)
-    statusLine.value = nextStatus === 'resolved' ? '评论线程已解决。' : '评论线程已重新打开。'
-  }
-  catch (error) {
-    markdownCommentThreads.value = previousThreads
-    statusLine.value = resolveApiErrorMessage(error, nextStatus === 'resolved' ? '解决评论失败。' : '重新打开评论失败。')
-  }
-  finally {
-    markdownCommentMutating.value = false
-  }
-}
-
-async function resolveMarkdownCommentThread(threadId: string): Promise<void> {
-  await updateMarkdownCommentThreadState(threadId, 'resolved')
-}
-
-async function reopenMarkdownCommentThread(threadId: string): Promise<void> {
-  await updateMarkdownCommentThreadState(threadId, 'open')
 }
 
 function buildDocumentAssistUserPrompt(action: AiWorkspaceDocumentAction): string {
@@ -8661,6 +7674,9 @@ function closeMetaK(): void {
 }
 
 function openMetaK(): void {
+  closeWorkspaceContextMenu({
+    restoreFocus: false,
+  })
   metaKOpen.value = true
 }
 
@@ -8921,20 +7937,11 @@ async function executeMetaKItem(item: WorkspaceMetaKItem): Promise<void> {
   }
 }
 
-function onMetaKGlobalKeydown(event: KeyboardEvent): void {
-  if (!isWorkspaceMetaKHotkey(event))
-    return
-  if (isWorkspaceMetaKEditableTarget(event.target))
-    return
-
-  event.preventDefault()
-  openMetaK()
-}
-
 onMounted(async () => {
   if (import.meta.client) {
+    workspacePlatform.value = window.navigator.platform
     metaKShortcutLabel.value = resolveWorkspaceMetaKShortcutLabel(window.navigator.platform)
-    document.addEventListener('keydown', onMetaKGlobalKeydown)
+    document.addEventListener('keydown', handleWorkspaceGlobalKeydown)
   }
 
   const canonicalRedirected = await ensureCanonicalWorkspaceProjectRoute()
@@ -8986,8 +7993,11 @@ onBeforeUnmount(() => {
   }
   disposeCollabDocBinding(true)
   workspaceRealtime.disconnect()
+  closeWorkspaceContextMenu({
+    restoreFocus: false,
+  })
   if (import.meta.client)
-    document.removeEventListener('keydown', onMetaKGlobalKeydown)
+    document.removeEventListener('keydown', handleWorkspaceGlobalKeydown)
   clearMetaKRemoteSearchTimer()
 })
 
@@ -9084,8 +8094,8 @@ watch(activeProjectId, async (next, previous) => {
     defensePersonas.value = []
     selectedContestDetail.value = null
     selectedContestDetailLoading.value = false
-    openMainTabs.value = ['dashboard']
-    activeMainTabId.value = 'dashboard'
+    openMainTabs.value = []
+    activeMainTabId.value = ''
     resetChatState()
     workspaceBootstrapLoading.value = false
     return
@@ -9170,6 +8180,23 @@ watch(resources, (nextResources) => {
     designResourceId.value = ''
     if (shouldDispose)
       disposeCollabDocBinding(true)
+  }
+
+  const visibleResourceIds = new Set(nextResources.map(resource => resource.id))
+  const nextOpenTabs = openMainTabs.value.filter((tabId) => {
+    if (!tabId.startsWith('resource:'))
+      return true
+    return visibleResourceIds.has(tabId.slice('resource:'.length))
+  })
+  const tabStateChanged = nextOpenTabs.length !== openMainTabs.value.length
+    || nextOpenTabs.some((tabId, index) => tabId !== openMainTabs.value[index])
+  const previewResourceMissing = Boolean(previewResourceId.value && !visibleResourceIds.has(previewResourceId.value))
+  if (previewResourceMissing)
+    closeProjectResourcePreview(previewResourceId.value)
+  if (tabStateChanged) {
+    openMainTabs.value = nextOpenTabs
+    if (!openMainTabs.value.includes(activeMainTabId.value as typeof openMainTabs.value[number]))
+      activeMainTabId.value = openMainTabs.value[0] || ''
   }
 
   if (projectWorkspaceViewReady.value)
@@ -9392,8 +8419,11 @@ watch(() => workspaceRealtime.connected.value, () => {
 
 <template>
   <div
+    ref="workspaceShellRef"
     class="workspace-shell wl-workspace-font-scope text-slate-800 bg-white h-full min-h-0 overflow-hidden"
     :data-workspace-font-size="workspaceEffectiveFontSizePreset"
+    :aria-busy="workspaceShellLoading ? 'true' : 'false'"
+    @contextmenu="handleWorkspaceShellContextMenu"
   >
     <WorkspaceHeader
       :project-name="headerProjectName"
@@ -9434,6 +8464,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           :active-meeting-id="activeMeetingId"
           :meeting-loading="projectMeetingsLoading"
           :meeting-mutating="meetingMutating"
+          :meeting-runtime-health="meetingRuntimeHealth"
           :project-members="workspaceMembers"
           :project-outline="projectOutlineItems"
           :issue-reports="projectIssueReports"
@@ -9505,6 +8536,7 @@ watch(() => workspaceRealtime.connected.value, () => {
           @resume-all-upload-tasks="resumeAllUploadTasks"
           @clear-completed-upload-tasks="clearCompletedUploadTasks"
           @update:collapsed="leftSidebarCollapsed = $event"
+          @request-context-menu="openWorkspaceContextMenu($event)"
         />
       </div>
 
@@ -9567,6 +8599,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :preview-source-download-url="previewSourceDownloadUrl"
         :current-user-id="me?.user.id || ''"
         :current-user-name="me?.user.username || ''"
+        :current-user-avatar-url="me?.user.avatarUrl || ''"
         :collab-resource-id="collabBindingResourceId"
         :collab-markdown-doc="collabMarkdownDoc"
         :collab-markdown-awareness="collabMarkdownAwareness"
@@ -9575,6 +8608,8 @@ watch(() => workspaceRealtime.connected.value, () => {
         :collab-revision="collabRevision"
         :collab-connected="collabConnected"
         :collab-status-text="collabStatusText"
+        :collab-preview-loading="collabPreviewLoading"
+        :collab-preview-error="collabPreviewError"
         :collab-presence-members="collabPresenceMembers"
         :comment-threads="markdownCommentThreads"
         :active-comment-thread-id="activeMarkdownCommentThreadId"
@@ -9621,6 +8656,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :active-meeting-guest-share="activeMeetingGuestShare"
         :meeting-guest-share-loading="meetingGuestShareLoading"
         :meeting-plan-tier="currentWorkspaceMeetingPlanTier"
+        :meeting-runtime-health="meetingRuntimeHealth"
         :tone-meta="toneMeta"
         @update:form-state="Object.assign(formState, $event)"
         @submit-project-for-contest="submitProject"
@@ -9677,6 +8713,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         @markdown-resolve-comment-thread="resolveMarkdownCommentThread"
         @markdown-reopen-comment-thread="reopenMarkdownCommentThread"
         @markdown-create-comment-thread="createMarkdownCommentThread"
+        @request-context-menu="openWorkspaceContextMenu($event)"
       />
 
       <div
@@ -9760,12 +8797,6 @@ watch(() => workspaceRealtime.connected.value, () => {
           />
         </div>
       </div>
-      <div v-if="workspacePreparing" class="workspace-preparing-overlay" aria-live="polite">
-        <div class="workspace-preparing-overlay__panel">
-          <span class="workspace-preparing-overlay__label">正在准备工作区</span>
-          <strong class="workspace-preparing-overlay__title">WinLooooop</strong>
-        </div>
-      </div>
     </main>
 
     <main
@@ -9845,12 +8876,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         @send-chat="sendChatMessage"
       />
 
-      <div v-if="workspacePreparing" class="workspace-preparing-overlay" aria-live="polite">
-        <div class="workspace-preparing-overlay__panel">
-          <span class="workspace-preparing-overlay__label">正在准备工作区</span>
-          <strong class="workspace-preparing-overlay__title">WinLooooop</strong>
-        </div>
-      </div>
     </main>
 
     <WorkspaceStatusBar
@@ -9866,6 +8891,11 @@ watch(() => workspaceRealtime.connected.value, () => {
       :selection-length="statusCursor.selectionLength"
       :has-active-project="Boolean(activeProjectId)"
     />
+
+    <Transition name="workspace-shell-loading-overlay">
+      <WorkspaceShellLoadingOverlay v-if="workspaceShellLoading" />
+    </Transition>
+
     <input
       ref="rebindUploadInputRef"
       class="hidden"
@@ -9931,6 +8961,17 @@ watch(() => workspaceRealtime.connected.value, () => {
       @execute="executeMetaKItem"
     />
 
+    <UiContextMenu
+      :visible="workspaceContextMenu.visible"
+      :items="workspaceContextMenu.items"
+      :anchor-point="workspaceContextMenu.anchorPoint"
+      :anchor-el="workspaceContextMenu.anchorEl"
+      :font-size-preset="workspaceEffectiveFontSizePreset"
+      :spacing-preset="workspaceEffectiveTabSpacingPreset"
+      @select="handleWorkspaceContextMenuSelect"
+      @close="closeWorkspaceContextMenu()"
+    />
+
     <UserSettingsDialog
       v-model:visible="accountCenterVisible"
       :user-name="me?.user.username || ''"
@@ -9950,9 +8991,10 @@ watch(() => workspaceRealtime.connected.value, () => {
 
 <style scoped>
 .workspace-shell {
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  position: relative;
+  isolation: isolate;
   height: 100%;
   min-height: 0;
   max-height: 100%;
@@ -10095,44 +9137,26 @@ watch(() => workspaceRealtime.connected.value, () => {
   transform: translateX(18px) scale(0.985);
 }
 
-.workspace-preparing-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.14);
-  backdrop-filter: blur(2px);
-  pointer-events: none;
+:deep(.workspace-shell-loading-overlay-enter-active),
+:deep(.workspace-shell-loading-overlay-leave-active) {
+  transition:
+    opacity 0.26s ease,
+    backdrop-filter 0.18s ease,
+    -webkit-backdrop-filter 0.18s ease;
 }
 
-.workspace-preparing-overlay__panel {
-  min-width: 260px;
-  padding: 18px 22px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: center;
+:deep(.workspace-shell-loading-overlay-enter-from),
+:deep(.workspace-shell-loading-overlay-leave-to) {
+  opacity: 0;
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
 }
 
-.workspace-preparing-overlay__label {
-  color: #475569;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.workspace-preparing-overlay__title {
-  color: #0f172a;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+:deep(.workspace-shell-loading-overlay-enter-to),
+:deep(.workspace-shell-loading-overlay-leave-from) {
+  opacity: 1;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 @media (max-width: 960px) {
