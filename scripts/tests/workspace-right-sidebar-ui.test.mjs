@@ -24,14 +24,18 @@ it('右栏采用三段式布局，底部输入区不再进入滚动容器', asyn
   assert.doesNotMatch(source, /pb-36/, '右栏滚动区仍依赖底部补白占位')
 })
 
-it('右栏内容区与底部元信息支持紧凑显示和换行', async () => {
+it('右栏输入框将模式切换内嵌到底部工具带，并移除冗余资料提示', async () => {
   const source = await readFile(RIGHT_SIDEBAR_FILE, 'utf8')
 
   assert.match(source, /workspace-chat-scroll-content/, '右栏缺少统一的滚动内容容器')
   assert.match(source, /workspace-chat-messages/, '右栏缺少独立消息列表容器')
-  assert.match(source, /workspace-chat-composer__meta/, '右栏底部缺少独立元信息容器')
+  assert.match(source, /workspace-chat-composer__toolbar/, '右栏输入框内缺少模式工具带')
+  assert.match(source, /workspace-chat-composer__mode-pill/, '右栏输入框内缺少模式胶囊')
+  assert.match(source, /workspace-mode-select--embedded/, '右栏模式选择未内嵌到输入框内部')
   assert.match(source, /workspace-chat-composer__send-spark/, '右栏发送按钮缺少炫彩 spark 背景层')
   assert.doesNotMatch(source, /workspace-right-sidebar-collapse-button/, '右栏仍保留内部收起按钮')
+  assert.doesNotMatch(source, /已关联资料：/, '右栏底部仍保留资料关联提示')
+  assert.doesNotMatch(source, /Shift\+Tab/, '右栏底部仍保留 Shift+Tab 提示')
   assert.match(source, /flex-wrap:\s*wrap/, '右栏底部元信息未允许换行')
   assert.match(source, /leading-5/, '右栏空态或提示卡未统一紧凑行高')
 })

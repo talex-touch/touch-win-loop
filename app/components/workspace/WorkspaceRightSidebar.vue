@@ -345,21 +345,6 @@ function handleModeSelectChange(event: Event) {
     selectMode(value as WorkspacePrimarySidebarAiMode)
 }
 
-function cyclePrimaryMode() {
-  const currentIndex = PRIMARY_MODES.findIndex(item => item.value === props.aiMode)
-  const nextIndex = currentIndex < 0
-    ? 0
-    : (currentIndex + 1) % PRIMARY_MODES.length
-  emit('update:aiMode', PRIMARY_MODES[nextIndex]!.value)
-}
-
-function handleModeCycleHotkey(event: KeyboardEvent) {
-  if (event.key !== 'Tab' || !event.shiftKey)
-    return
-  event.preventDefault()
-  cyclePrimaryMode()
-}
-
 function defenseStageLabel(stage: AiDefenseStage | undefined): string {
   if (stage === 'opening')
     return '开场'
@@ -468,7 +453,6 @@ function requestExportIssueReport() {
   <aside
     class="border-l border-slate-200 bg-white flex flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
     :tabindex="props.collapsed ? -1 : 0"
-    @keydown.capture="handleModeCycleHotkey"
   >
     <div class="px-3.5 py-2.5 border-b border-slate-200 bg-slate-50/72 shrink-0 space-y-2">
       <div
@@ -1212,6 +1196,37 @@ function requestExportIssueReport() {
               :placeholder="inputPlaceholder"
               @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
             />
+            <div class="workspace-chat-composer__toolbar">
+              <label
+                class="workspace-chat-composer__mode-pill"
+                :class="{ 'workspace-chat-composer__mode-pill--disabled': aiMode === 'defense' }"
+              >
+                <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
+                  auto_awesome
+                </span>
+                <select
+                  data-testid="workspace-right-sidebar-mode-select"
+                  class="workspace-mode-select workspace-mode-select--embedded"
+                  :value="modeSelectValue()"
+                  :disabled="aiMode === 'defense'"
+                  @change="handleModeSelectChange"
+                >
+                  <option v-if="aiMode === 'defense'" value="" disabled>
+                    答辩工作台（顶部切换）
+                  </option>
+                  <option
+                    v-for="mode in PRIMARY_MODES"
+                    :key="mode.value"
+                    :value="mode.value"
+                  >
+                    {{ mode.label }}
+                  </option>
+                </select>
+                <span class="workspace-chat-composer__mode-chevron material-symbols-outlined" aria-hidden="true">
+                  expand_more
+                </span>
+              </label>
+            </div>
             <button
               class="workspace-chat-composer__send"
               :disabled="chatLoading"
@@ -1222,30 +1237,6 @@ function requestExportIssueReport() {
                 {{ chatLoading ? 'hourglass_top' : 'send' }}
               </span>
             </button>
-          </div>
-
-          <div class="workspace-chat-composer__meta">
-            <div class="workspace-chat-composer__meta-text">
-              已关联资料：{{ selectedResources.length }} · Shift+Tab 切换模式
-            </div>
-            <select
-              data-testid="workspace-right-sidebar-mode-select"
-              class="workspace-mode-select shrink-0"
-              :value="modeSelectValue()"
-              :disabled="aiMode === 'defense'"
-              @change="handleModeSelectChange"
-            >
-              <option v-if="aiMode === 'defense'" value="" disabled>
-                答辩工作台（顶部切换）
-              </option>
-              <option
-                v-for="mode in PRIMARY_MODES"
-                :key="mode.value"
-                :value="mode.value"
-              >
-                {{ mode.label }}
-              </option>
-            </select>
           </div>
         </template>
       </div>
@@ -1335,57 +1326,107 @@ function requestExportIssueReport() {
 .workspace-chat-composer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   flex-shrink: 0;
-  padding: 10px 12px 12px;
+  padding: 12px;
   border-top: 1px solid #e2e8f0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, #ffffff 18px);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92) 0%, #ffffff 22px);
 }
 
 .workspace-chat-composer__input-shell {
   position: relative;
   padding: 2px;
-  border-radius: 17px;
+  overflow: hidden;
+  border-radius: 22px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.92)) padding-box,
-    linear-gradient(140deg, rgba(166, 184, 216, 0.58), rgba(226, 232, 240, 0.72)) border-box;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.94)) padding-box,
+    linear-gradient(128deg, rgba(129, 140, 248, 0.78), rgba(96, 165, 250, 0.38) 48%, rgba(251, 191, 36, 0.82)) border-box;
+  box-shadow:
+    0 18px 38px rgba(15, 23, 42, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.7) inset;
+}
+
+.workspace-chat-composer__input-shell:focus-within {
+  box-shadow:
+    0 22px 42px rgba(37, 99, 235, 0.12),
+    0 0 0 1px rgba(129, 140, 248, 0.22);
 }
 
 .workspace-chat-composer__textarea {
   width: 100%;
-  height: 86px;
+  height: 116px;
   resize: none;
   border: none;
-  border-radius: 15px;
-  background: linear-gradient(180deg, #f8fbff 0%, #f5f8fd 100%);
-  color: #334155;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at left top, rgba(255, 255, 255, 0.86), transparent 52%),
+    linear-gradient(180deg, #f8fbff 0%, #f4f7fd 100%);
+  color: #0f172a;
   font-size: 12px;
-  padding: 12px 56px 12px 12px;
+  line-height: 1.55;
+  padding: 15px 70px 58px 15px;
   outline: none;
 }
 
 .workspace-chat-composer__textarea::placeholder {
-  color: #94a3b8;
+  color: #8ea0ba;
 }
 
 .workspace-chat-composer__textarea:focus {
-  box-shadow: inset 0 0 0 1px #86aefb;
+  box-shadow: inset 0 0 0 1px rgba(134, 174, 251, 0.34);
 }
 
-.workspace-chat-composer__meta {
+.workspace-chat-composer__toolbar {
+  position: absolute;
+  right: 70px;
+  bottom: 11px;
+  left: 12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px 10px;
+  gap: 8px;
+  pointer-events: none;
 }
 
-.workspace-chat-composer__meta-text {
-  min-width: 0;
-  flex: 1 1 140px;
-  color: #94a3b8;
-  font-size: 10px;
-  line-height: 1.35;
+.workspace-chat-composer__mode-pill {
+  position: relative;
+  display: inline-flex;
+  min-width: 134px;
+  max-width: 100%;
+  height: 34px;
+  align-items: center;
+  border: 1px solid rgba(165, 180, 252, 0.28);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(243, 246, 255, 0.92));
+  box-shadow:
+    0 10px 20px rgba(99, 102, 241, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  pointer-events: auto;
+}
+
+.workspace-chat-composer__mode-pill--disabled {
+  opacity: 0.72;
+}
+
+.workspace-chat-composer__mode-icon,
+.workspace-chat-composer__mode-chevron {
+  position: absolute;
+  top: 50%;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.workspace-chat-composer__mode-icon {
+  left: 12px;
+  color: #6d5ef1;
+  font-size: 16px;
+}
+
+.workspace-chat-composer__mode-chevron {
+  right: 10px;
+  color: #6b7a90;
+  font-size: 15px;
 }
 
 .workspace-ai-marquee {
@@ -1433,15 +1474,29 @@ function requestExportIssueReport() {
   outline: none;
 }
 
+.workspace-mode-select--embedded {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #23314f;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 28px 0 34px;
+  appearance: none;
+}
+
 .workspace-chat-composer__send {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
-  width: 38px;
-  height: 38px;
-  border: 1px solid #d3ddf0;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #1d4ed8 0%, #255eea 36%, #4f46e5 100%);
+  right: 12px;
+  bottom: 12px;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #4f46e5 0%, #2563eb 48%, #f59e0b 100%);
   color: #ffffff;
   display: inline-flex;
   align-items: center;
@@ -1449,12 +1504,15 @@ function requestExportIssueReport() {
   cursor: pointer;
   overflow: hidden;
   isolation: isolate;
-  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.2);
+  box-shadow:
+    0 16px 30px rgba(79, 70, 229, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
   transition:
     opacity 0.18s ease,
     border-color 0.18s ease,
     box-shadow 0.18s ease,
-    filter 0.18s ease;
+    filter 0.18s ease,
+    transform 0.18s ease;
 }
 
 .workspace-chat-composer__send:disabled {
@@ -1463,9 +1521,10 @@ function requestExportIssueReport() {
 }
 
 .workspace-chat-composer__send:not(:disabled):hover {
-  border-color: #c7d6f2;
-  box-shadow: 0 16px 30px rgba(59, 130, 246, 0.24);
-  filter: saturate(1.04);
+  border-color: rgba(255, 255, 255, 0.56);
+  box-shadow: 0 18px 34px rgba(79, 70, 229, 0.28);
+  filter: saturate(1.06);
+  transform: translateY(-1px);
 }
 
 .workspace-chat-composer__send:focus-visible {
@@ -1513,6 +1572,11 @@ function requestExportIssueReport() {
 .workspace-mode-select:focus {
   border-color: #86aefb;
   box-shadow: 0 0 0 1px #86aefb;
+}
+
+.workspace-mode-select--embedded:focus {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .workspace-mode-select:disabled {
