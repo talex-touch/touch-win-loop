@@ -217,6 +217,22 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(stageSource, /historyMergeKey:\s*["']element-drag["']/);
   assert.match(stageSource, /deepSelectionEnabled/);
   assert.match(stageSource, /overlayCapturesCanvasPointer/);
+  assert.match(
+    stageSource,
+    /props\.activeTool === 'rectangle' \|\| props\.activeTool === 'ellipse' \|\| props\.activeTool === 'arrow' \|\| props\.activeTool === 'text'/,
+  );
+  assert.match(
+    stageSource,
+    /shapeKind: props\.activeTool === 'ellipse' \? 'ellipse' : props\.activeTool === 'arrow' \? 'arrow' : 'rectangle'/,
+  );
+  assert.match(
+    stageSource,
+    /<g v-else-if="resolveElementPresentationForOverlay\(item\)\.shapeKind === 'arrow'">/,
+  );
+  assert.match(stageSource, /const selectedTransformTarget = computed\(/);
+  assert.match(stageSource, /const selectedTransformBoxStyle = computed/);
+  assert.match(stageSource, /v-if="selectedTransformBoxStyle"/);
+  assert.match(stageSource, /v-for="handle in resizeHandleDefinitions"/);
   assert.match(stageSource, /pointer-events-auto/);
   assert.match(stageSource, /pointer-events-none/);
   assert.doesNotMatch(stageSource, /Design Overlay ·/);
@@ -230,6 +246,12 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(canvasSource, /const CANVAS_RESTING_CONTROL_HIT_HEIGHT = 28/);
   assert.match(canvasSource, /const CANVAS_COLLAPSED_CONTROL_HIT_HEIGHT = 24/);
   assert.match(canvasSource, /const CANVAS_MINIMAP_HEIGHT = 136/);
+  assert.match(canvasSource, /function emitFrameEditing\(frameId: string\): void/);
+  assert.match(canvasSource, /function handleNodeDoubleClick\(payload: \{ node\?: \{ id\?: string \} \}\): void/);
+  assert.match(
+    canvasSource,
+    /if \(frame && canDesignFrameCreateElements\(frame\)\) emitFrameEditing\(frameId\);/,
+  );
   assert.match(
     canvasSource,
     /const CANVAS_RESTING_MINIMAP_HEIGHT = Math\.round/,

@@ -164,6 +164,44 @@ function sortProjectSessions(items: ProjectResourceUploadSession[]): ProjectReso
   })
 }
 
+function areProjectSessionsEqual(
+  left: ProjectResourceUploadSession,
+  right: ProjectResourceUploadSession,
+): boolean {
+  return left.id === right.id
+    && left.projectId === right.projectId
+    && left.fileName === right.fileName
+    && left.fileSize === right.fileSize
+    && left.mimeType === right.mimeType
+    && left.lastModified === right.lastModified
+    && left.chunkSize === right.chunkSize
+    && left.status === right.status
+    && left.uploadedBytes === right.uploadedBytes
+    && left.uploadedChunkCount === right.uploadedChunkCount
+    && left.chunkCount === right.chunkCount
+    && left.errorMessage === right.errorMessage
+    && left.previewStatus === right.previewStatus
+    && left.resourceId === right.resourceId
+    && left.actorUserId === right.actorUserId
+    && left.actorUsername === right.actorUsername
+    && left.actorAvatarUrl === right.actorAvatarUrl
+    && left.createdAt === right.createdAt
+    && left.updatedAt === right.updatedAt
+    && left.completedAt === right.completedAt
+}
+
+function areProjectSessionListsEqual(
+  left: readonly ProjectResourceUploadSession[],
+  right: readonly ProjectResourceUploadSession[],
+): boolean {
+  if (left.length !== right.length)
+    return false
+  return left.every((session, index) => {
+    const rightSession = right[index]
+    return Boolean(rightSession) && areProjectSessionsEqual(session, rightSession)
+  })
+}
+
 function sortActivityItems(items: ProjectUploadActivityItem[]): ProjectUploadActivityItem[] {
   return [...items].sort((left, right) => {
     const leftPriority = left.isOwnedByCurrentUser ? 0 : 1
@@ -264,10 +302,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       autoCollapseTimer = null
       if (!shouldAutoCollapseDrawer())
         return
-      drawerState.value = {
-        open: false,
-        source: 'manual',
-      }
+      setDrawerState(false, 'manual')
       scheduleProjectSessionPoll()
     }, 1500)
   }
@@ -293,9 +328,22 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
   }
 
   function applyProjectSessions(sessions: ProjectResourceUploadSession[]): void {
-    projectSessions.value = sortProjectSessions(
+    const nextSessions = sortProjectSessions(
       sessions.filter(session => session.projectId === getProjectId()),
     )
+    if (areProjectSessionListsEqual(projectSessions.value, nextSessions))
+      return
+    projectSessions.value = nextSessions
+  }
+
+  function setDrawerState(open: boolean, source: DrawerOpenSource): void {
+    const nextState: ProjectUploadDrawerState = {
+      open,
+      source: open ? source : 'manual',
+    }
+    if (drawerState.value.open === nextState.open && drawerState.value.source === nextState.source)
+      return
+    drawerState.value = nextState
   }
 
   function upsertProjectSessions(nextSessions: ProjectResourceUploadSession[]): void {
@@ -703,10 +751,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     })
     persistTasks()
     input.onStatusLine?.(`已加入上传队列：${createdTasks.length} 个文件。`)
-    drawerState.value = {
-      open: true,
-      source: 'auto',
-    }
+    setDrawerState(true, 'auto')
     syncAutoCollapseState()
     void refreshProjectSessions()
     void pumpQueue()
@@ -932,10 +977,7 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
       return
     if (task.needsFileRebind && !task.sourceFile) {
       input.onStatusLine?.('请重新选择原文件后继续上传。')
-      drawerState.value = {
-        open: true,
-        source: 'manual',
-      }
+      setDrawerState(true, 'manual')
       scheduleProjectSessionPoll()
       return
     }
@@ -1047,33 +1089,21 @@ export function useProjectUploadManager(input: UseProjectUploadManagerInput) {
     clearCompletedTasks,
     rebindTaskFile,
     openDrawer: (source: DrawerOpenSource = 'manual') => {
-      drawerState.value = {
-        open: true,
-        source,
-      }
+      setDrawerState(true, source)
       scheduleProjectSessionPoll()
     },
     closeDrawer: () => {
-      drawerState.value = {
-        open: false,
-        source: 'manual',
-      }
+      setDrawerState(false, 'manual')
       clearAutoCollapseTimer()
       scheduleProjectSessionPoll()
     },
     toggleDrawer: () => {
-      drawerState.value = {
-        open: !drawerState.value.open,
-        source: 'manual',
-      }
+      setDrawerState(!drawerState.value.open, 'manual')
       clearAutoCollapseTimer()
       scheduleProjectSessionPoll()
     },
     setDrawerOpen: (value: boolean, source: DrawerOpenSource = 'manual') => {
-      drawerState.value = {
-        open: value,
-        source: value ? source : 'manual',
-      }
+      setDrawerState(value, source)
       if (!value)
         clearAutoCollapseTimer()
       scheduleProjectSessionPoll()

@@ -4,8 +4,8 @@ import { computed, ref } from 'vue'
 const DEFAULT_RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 
 export function useWorkspaceSidebarLayout(breakpointQuery = DEFAULT_RIGHT_SIDEBAR_BREAKPOINT_QUERY) {
-  const leftSidebarCollapsed = ref(false)
-  const rightSidebarUserCollapsed = ref(false)
+  const leftSidebarCollapsed = ref(true)
+  const rightSidebarUserCollapsed = ref(true)
   const rightSidebarAutoCollapsed = ref(false)
   const rightSidebarAutoRestorePending = ref(false)
   const sidebarLayoutHydrating = ref(false)

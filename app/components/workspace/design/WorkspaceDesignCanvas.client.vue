@@ -1607,8 +1607,8 @@ onBeforeUnmount(() => {
         当前 Page 还没有 Frame
       </h3>
       <p class="max-w-sm text-sm leading-6 text-slate-500">
-        在顶部工具栏插入 `freeform`、`template`、`device_mockup` 或 `diagram`
-        Frame。
+        在顶部工具栏插入 `freeform`、`template`、`device_artboard`、
+        `device_mockup` 或 `diagram` Frame。
       </p>
     </div>
   </div>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { ContextMenuAnchorPoint } from '~/components/ui/context-menu'
+
 interface WorkspaceTabItem {
   id: string
   title: string
@@ -35,7 +37,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   activateTab: [tabId: string]
   closeTab: [tabId: string]
-  openTabContextMenu: [payload: { tabId: string, event: MouseEvent }]
+  openTabContextMenu: [payload: {
+    tabId: string
+    anchorPoint?: ContextMenuAnchorPoint
+    anchorEl?: HTMLElement | null
+    restoreFocusEl?: HTMLElement | null
+  }]
   closeTabContextMenu: []
   closeTabsToLeft: []
   closeTabsToRight: []
@@ -46,6 +53,34 @@ const emit = defineEmits<{
   drop: [payload: { tabId: string, event: DragEvent }]
   dragEnd: []
 }>()
+
+function requestTabContextMenuFromPointer(tabId: string, event: MouseEvent): void {
+  event.preventDefault()
+  emit('openTabContextMenu', {
+    tabId,
+    anchorPoint: {
+      x: event.clientX,
+      y: event.clientY,
+    },
+    restoreFocusEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
+}
+
+function isKeyboardContextMenuEvent(event: KeyboardEvent): boolean {
+  return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')
+}
+
+function requestTabContextMenuFromKeyboard(tabId: string, event: KeyboardEvent): void {
+  if (!isKeyboardContextMenuEvent(event))
+    return
+
+  event.preventDefault()
+  emit('openTabContextMenu', {
+    tabId,
+    anchorEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+    restoreFocusEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
+}
 </script>
 
 <template>
@@ -61,14 +96,15 @@ const emit = defineEmits<{
             <div
               v-for="tab in props.openTabs"
               :key="tab.id"
-              class="workspace-main-tab border-r border-slate-200 flex h-full shrink-0 items-center"
+              class="workspace-main-tab border-r border-slate-200 flex shrink-0 h-full items-center"
+              :data-context-tab-id="tab.id"
               :class="[
                 tab.id === props.activeTabId ? 'workspace-main-tab--active bg-slate-50' : 'bg-white',
                 props.dragOverTabId === tab.id ? 'ring-1 ring-inset ring-blue-300' : '',
               ]"
               draggable="true"
               @click="emit('activateTab', tab.id)"
-              @contextmenu="emit('openTabContextMenu', { tabId: tab.id, event: $event })"
+              @contextmenu="requestTabContextMenuFromPointer(tab.id, $event)"
               @dragstart="emit('dragStart', tab.id)"
               @dragover="emit('dragOver', { tabId: tab.id, event: $event })"
               @drop="emit('drop', { tabId: tab.id, event: $event })"
@@ -77,7 +113,11 @@ const emit = defineEmits<{
               <button
                 class="workspace-main-tab__trigger flex flex-1 h-full min-w-0 items-center"
                 type="button"
+                aria-haspopup="menu"
+                :aria-expanded="props.tabContextMenuVisible && props.contextTabId === tab.id ? 'true' : 'false'"
+                data-context-menu-scope="tab"
                 @click.stop="emit('activateTab', tab.id)"
+                @keydown="requestTabContextMenuFromKeyboard(tab.id, $event)"
               >
                 <span class="workspace-main-tab__icon material-symbols-outlined" :class="tab.id === props.activeTabId ? 'text-blue-500' : 'text-slate-400'">{{ tab.icon }}</span>
                 <span class="workspace-main-tab__label truncate" :class="tab.id === props.activeTabId ? 'text-slate-800 font-medium' : 'text-slate-500 hover:text-slate-700'">
@@ -96,25 +136,8 @@ const emit = defineEmits<{
             </div>
           </TransitionGroup>
         </div>
-
-        <div class="bg-white flex-1 h-full min-w-0" aria-hidden="true" />
       </div>
     </template>
-
-    <WorkspaceTabContextMenu
-      :visible="props.tabContextMenuVisible"
-      :position="props.tabContextMenuPosition"
-      :can-close-self="props.canCloseContextTab"
-      :can-close-left="props.canCloseTabsToLeft"
-      :can-close-right="props.canCloseTabsToRight"
-      :can-close-others="props.canCloseOtherTabs"
-      :can-close-all="props.canCloseAllTabs"
-      @close-self="props.contextTabId && emit('closeTab', props.contextTabId)"
-      @close-left="emit('closeTabsToLeft')"
-      @close-right="emit('closeTabsToRight')"
-      @close-others="emit('closeOtherTabs')"
-      @close-all="emit('closeAllTabs')"
-    />
   </div>
 </template>
 

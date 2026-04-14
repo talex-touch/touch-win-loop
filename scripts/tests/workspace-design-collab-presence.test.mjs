@@ -16,8 +16,10 @@ it('设计画布已接入协作光标且缩放不再写回共享视口', async (
     readFile(DESIGN_CANVAS_FILE, 'utf8'),
   ])
 
-  assert.match(mainPanelSource, /<WorkspaceDesignPanel[\s\S]*:collab-presence-cursors="collabPresenceCursors"/)
-  assert.match(mainPanelSource, /<WorkspaceDesignPanel[\s\S]*@update-collab-cursor="onCollabCursorUpdate"/)
+  const designPanelTag = mainPanelSource.match(/<WorkspaceDesignPanel[\s\S]*?\/>/)?.[0] || ''
+  assert.match(designPanelTag, /v-else-if="activeTabId === 'design'"/)
+  assert.match(designPanelTag, /:collab-presence-cursors="collabPresenceCursors"/)
+  assert.match(designPanelTag, /@update-collab-cursor="onCollabCursorUpdate"/)
 
   assert.match(designPanelSource, /collabPresenceCursors\?: WorkspaceCollabCursorUser\[\]/)
   assert.match(designPanelSource, /updateCollabCursor: \[value: \{ cursorX\?: number, cursorY\?: number \}\]/)

@@ -3,6 +3,7 @@ import { it } from 'vitest'
 import * as Y from 'yjs'
 import {
   ensureMarkdownCollabDocShape,
+  extractPrimaryHeadingFromMarkdown,
   parseMarkdownToRichTextDocument,
   readMarkdownFromRichText,
   serializeRichTextDocumentToMarkdown,
@@ -60,6 +61,13 @@ it('markdown 标题支持 H1-H6 round-trip', () => {
   assert.match(output, /^#### 四级标题$/m)
   assert.match(output, /^##### 五级标题$/m)
   assert.match(output, /^###### 六级标题$/m)
+})
+
+it('markdown 只会从文档首个有效 H1 派生标题', () => {
+  assert.equal(extractPrimaryHeadingFromMarkdown('# 文档标题\n\n## 小节'), '文档标题')
+  assert.equal(extractPrimaryHeadingFromMarkdown('正文先出现\n\n# 小节标题'), '')
+  assert.equal(extractPrimaryHeadingFromMarkdown('## 二级标题\n\n# 后续 H1'), '')
+  assert.equal(extractPrimaryHeadingFromMarkdown('\n\n# 顶部标题\n\n正文'), '顶部标题')
 })
 
 it('gFM 任务列表、代码块、分割线与表格在 round-trip 后结构不丢失', () => {

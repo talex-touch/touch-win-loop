@@ -120,7 +120,7 @@ function resolveMappingScoreTextClass(score: number): string {
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl space-y-4">
+  <div class="w-full space-y-4">
     <div class="border border-slate-200 rounded-lg bg-white shadow-sm overflow-hidden">
       <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex gap-3 items-center">
         <span class="material-symbols-outlined text-xl text-blue-600">space_dashboard</span>

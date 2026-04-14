@@ -22,6 +22,8 @@ const props = withDefaults(defineProps<{
   commentLoading?: boolean
   commentMutating?: boolean
   currentUserId?: string
+  currentUserName?: string
+  currentUserAvatarUrl?: string
 }>(), {
   commentThreads: () => [],
   activeCommentThreadId: '',
@@ -29,6 +31,8 @@ const props = withDefaults(defineProps<{
   commentLoading: false,
   commentMutating: false,
   currentUserId: '',
+  currentUserName: '',
+  currentUserAvatarUrl: '',
 })
 
 const emit = defineEmits<{
@@ -38,15 +42,17 @@ const emit = defineEmits<{
   resolveCommentThread: [threadId: string]
   reopenCommentThread: [threadId: string]
   cancelCommentDraft: []
+  toggleCollapsed: []
 }>()
 
 const commentDraftText = ref('')
 const commentReplyDraftMap = reactive<Record<string, string>>({})
 const commentFilterMenuVisible = ref(false)
 const selectedCommentFilters = ref<WorkspaceDocumentCommentFilterKey[]>(['all'])
+const commentThreadCardRefMap = new Map<string, HTMLElement>()
 
 const activeCommentThread = computed(() => {
-  const threadId = String(props.activeCommentThreadId || '').trim()
+  const threadId = normalizeString(props.activeCommentThreadId)
   if (!threadId)
     return null
   return props.commentThreads.find(item => item.id === threadId) || null
@@ -54,23 +60,37 @@ const activeCommentThread = computed(() => {
 
 const filteredCommentThreads = computed(() => {
   const activeFilters = selectedCommentFilters.value.filter(item => item !== 'all')
-  if (activeFilters.length === 0)
-    return props.commentThreads
-
   const currentUserId = normalizeString(props.currentUserId)
-  return props.commentThreads.filter((thread) => {
-    return activeFilters.some((filterKey) => {
-      if (filterKey === 'resolved')
-        return thread.status === 'resolved'
-      if (filterKey === 'mine')
-        return Boolean(currentUserId) && normalizeString(thread.createdByUserId) === currentUserId
-      return true
-    })
-  })
+  const filteredThreads = activeFilters.length === 0
+    ? [...props.commentThreads]
+    : props.commentThreads.filter((thread) => {
+        return activeFilters.some((filterKey) => {
+          if (filterKey === 'resolved')
+            return thread.status === 'resolved'
+          if (filterKey === 'mine')
+            return Boolean(currentUserId) && normalizeString(thread.createdByUserId) === currentUserId
+          return true
+        })
+      })
+
+  const activeThread = activeCommentThread.value
+  if (activeThread && !filteredThreads.some(thread => thread.id === activeThread.id))
+    filteredThreads.unshift(activeThread)
+
+  return filteredThreads
 })
 
 const hasActiveCommentFilters = computed(() => {
   return !selectedCommentFilters.value.includes('all')
+})
+
+const currentUserDisplayName = computed(() => {
+  return normalizeString(props.currentUserName) || normalizeString(props.currentUserId) || '我'
+})
+
+const currentUserDisplayAvatarUrl = computed(() => {
+  const avatarUrl = normalizeString(props.currentUserAvatarUrl)
+  return avatarUrl || null
 })
 
 function normalizeString(value: unknown): string {
@@ -178,7 +198,7 @@ function handleThreadKeydown(event: KeyboardEvent, threadId: string): void {
 }
 
 function submitCommentDraft(): void {
-  const body = String(commentDraftText.value || '').trim()
+  const body = normalizeString(commentDraftText.value)
   if (!body)
     return
   commentDraftText.value = ''
@@ -186,12 +206,44 @@ function submitCommentDraft(): void {
 }
 
 function submitCommentReply(threadId: string): void {
-  const body = String(commentReplyDraftMap[threadId] || '').trim()
+  const body = normalizeString(commentReplyDraftMap[threadId])
   if (!body)
     return
   commentReplyDraftMap[threadId] = ''
   emit('replyCommentThread', { threadId, body })
 }
+
+function setCommentThreadCardRef(threadId: string, element: HTMLElement | null): void {
+  if (!element) {
+    commentThreadCardRefMap.delete(threadId)
+    return
+  }
+  commentThreadCardRefMap.set(threadId, element)
+}
+
+function bindCommentThreadCardRef(threadId: string) {
+  return (element: unknown) => {
+    setCommentThreadCardRef(threadId, element instanceof HTMLElement ? element : null)
+  }
+}
+
+function scrollToCommentThread(threadId: string): void {
+  const normalizedThreadId = normalizeString(threadId)
+  if (!normalizedThreadId)
+    return
+
+  nextTick(() => {
+    const target = commentThreadCardRefMap.get(normalizedThreadId)
+    target?.scrollIntoView({
+      block: 'nearest',
+      behavior: 'smooth',
+    })
+  })
+}
+
+defineExpose({
+  scrollToCommentThread,
+})
 </script>
 
 <template>
@@ -204,48 +256,60 @@ function submitCommentReply(threadId: string): void {
         <div class="flex items-center gap-2 text-[11px] text-slate-700 font-semibold">
           <span class="material-symbols-outlined text-[15px]" aria-hidden="true">comment</span>
           <span>评论</span>
-          <span class="text-slate-400 font-medium">({{ filteredCommentThreads.length }})</span>
+          <span class="text-slate-400 font-medium">({{ filteredCommentThreads.length + (props.commentDraftAnchor ? 1 : 0) }})</span>
         </div>
 
-        <a-trigger
-          trigger="click"
-          position="bl"
-          :popup-visible="commentFilterMenuVisible"
-          @popup-visible-change="commentFilterMenuVisible = $event"
-        >
-          <button
-            data-testid="workspace-document-comments-filter-trigger"
-            class="rounded-full border flex h-7 w-7 items-center justify-center transition-colors"
-            :class="hasActiveCommentFilters ? 'border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700'"
-            type="button"
-            title="筛选评论"
-            aria-label="筛选评论"
-            @click.stop
+        <div class="flex items-center gap-1.5">
+          <a-trigger
+            trigger="click"
+            position="bl"
+            :popup-visible="commentFilterMenuVisible"
+            @popup-visible-change="commentFilterMenuVisible = $event"
           >
-            <span class="material-symbols-outlined text-[16px]" aria-hidden="true">filter_list</span>
-          </button>
-
-          <template #content>
-            <div
-              data-testid="workspace-document-comments-filter-menu"
-              class="w-40 rounded-2xl border border-slate-200 bg-white p-2"
+            <button
+              data-testid="workspace-document-comments-filter-trigger"
+              class="rounded-full border flex h-7 w-7 items-center justify-center transition-colors"
+              :class="hasActiveCommentFilters ? 'border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700'"
+              type="button"
+              title="筛选评论"
+              aria-label="筛选评论"
+              @click.stop
             >
-              <label
-                v-for="option in COMMENT_FILTER_OPTIONS"
-                :key="option.key"
-                class="rounded-xl flex cursor-pointer items-center gap-2 px-2.5 py-2 text-[11px] text-slate-700 transition-colors hover:bg-slate-50"
+              <span class="material-symbols-outlined text-[16px]" aria-hidden="true">filter_list</span>
+            </button>
+
+            <template #content>
+              <div
+                data-testid="workspace-document-comments-filter-menu"
+                class="w-40 rounded-2xl border border-slate-200 bg-white p-2"
               >
-                <input
-                  class="rounded border-slate-300"
-                  type="checkbox"
-                  :checked="isCommentFilterSelected(option.key)"
-                  @change="toggleCommentFilter(option.key)"
+                <label
+                  v-for="option in COMMENT_FILTER_OPTIONS"
+                  :key="option.key"
+                  class="rounded-xl flex cursor-pointer items-center gap-2 px-2.5 py-2 text-[11px] text-slate-700 transition-colors hover:bg-slate-50"
                 >
-                <span>{{ option.label }}</span>
-              </label>
-            </div>
-          </template>
-        </a-trigger>
+                  <input
+                    class="rounded border-slate-300"
+                    type="checkbox"
+                    :checked="isCommentFilterSelected(option.key)"
+                    @change="toggleCommentFilter(option.key)"
+                  >
+                  <span>{{ option.label }}</span>
+                </label>
+              </div>
+            </template>
+          </a-trigger>
+
+          <button
+            class="rounded-full border border-slate-200 bg-white text-slate-500 flex h-7 w-7 items-center justify-center transition-colors hover:bg-slate-100 hover:text-slate-700"
+            type="button"
+            title="收起评论"
+            aria-label="收起评论"
+            @click="emit('toggleCollapsed')"
+          >
+            <span class="material-symbols-outlined text-[16px]" aria-hidden="true">right_panel_close</span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -255,13 +319,79 @@ function submitCommentReply(threadId: string): void {
           <div class="rounded bg-slate-100 h-16 animate-pulse" />
           <div class="rounded bg-slate-100 h-16 animate-pulse" />
         </div>
-        <div v-else-if="filteredCommentThreads.length === 0 && !props.commentDraftAnchor" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+
+        <article
+          v-if="props.commentDraftAnchor"
+          data-testid="workspace-document-comment-draft-card"
+          class="rounded-2xl border border-blue-200 bg-blue-50/40 p-3"
+        >
+          <div class="flex items-start gap-3">
+            <UnifiedAvatar
+              :name="currentUserDisplayName"
+              :src="currentUserDisplayAvatarUrl"
+              :size="28"
+            />
+
+            <div class="min-w-0 flex-1 space-y-3">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="text-[11px] text-slate-800 font-semibold truncate">
+                    新评论
+                  </div>
+                  <div class="mt-1 flex items-center gap-1.5 text-[10px] text-slate-500">
+                    <span class="truncate">{{ currentUserDisplayName }}</span>
+                    <span class="text-slate-300">·</span>
+                    <span>待发送</span>
+                  </div>
+                </div>
+                <span class="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] text-blue-600 font-medium">
+                  草稿
+                </span>
+              </div>
+
+              <div class="rounded-xl border border-blue-100 bg-white px-2.5 py-2 text-[11px] leading-5 text-slate-600">
+                将锚定到：{{ summarizeCommentAnchor(props.commentDraftAnchor) }}
+              </div>
+
+              <textarea
+                v-model="commentDraftText"
+                class="h-24 w-full resize-none rounded-xl border border-slate-200 bg-white p-2.5 text-xs leading-5 placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                placeholder="输入评论内容"
+              />
+
+              <div class="flex items-center justify-between gap-2">
+                <button
+                  class="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                  type="button"
+                  @click="emit('cancelCommentDraft')"
+                >
+                  取消
+                </button>
+                <button
+                  class="rounded-full border border-blue-600 bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
+                  :disabled="props.commentMutating || !commentDraftText.trim()"
+                  type="button"
+                  @click="submitCommentDraft"
+                >
+                  {{ props.commentMutating ? '创建中...' : '发送评论' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <div
+          v-if="filteredCommentThreads.length === 0 && !props.commentDraftAnchor && !props.commentLoading"
+          class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed"
+        >
           {{ hasActiveCommentFilters ? '当前筛选条件下没有评论线程。' : '当前文档还没有评论线程。' }}
         </div>
+
         <article
           v-for="thread in filteredCommentThreads"
           :key="thread.id"
-          class="rounded-xl border bg-white p-3 transition-colors cursor-pointer"
+          :ref="bindCommentThreadCardRef(thread.id)"
+          class="rounded-2xl border bg-white p-3 transition-colors cursor-pointer"
           :class="thread.id === props.activeCommentThreadId ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/40'"
           data-testid="workspace-document-comment-card"
           role="button"
@@ -308,31 +438,40 @@ function submitCommentReply(threadId: string): void {
                   </div>
                 </div>
 
-                <button
-                  v-if="thread.status !== 'resolved'"
-                  class="rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 flex h-7 w-7 shrink-0 items-center justify-center transition-colors hover:bg-emerald-100 disabled:opacity-60"
-                  :disabled="props.commentMutating"
-                  type="button"
-                  title="解决评论"
-                  aria-label="解决评论"
-                  @click.stop="emit('resolveCommentThread', thread.id)"
-                >
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <span
+                    v-if="thread.status === 'resolved'"
+                    class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700"
+                  >
+                    已解决
+                  </span>
+
+                  <button
+                    v-if="thread.status !== 'resolved'"
+                    class="rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 flex h-7 w-7 items-center justify-center transition-colors hover:bg-emerald-100 disabled:opacity-60"
+                    :disabled="props.commentMutating"
+                    type="button"
+                    title="解决评论"
+                    aria-label="解决评论"
+                    @click.stop="emit('resolveCommentThread', thread.id)"
+                  >
                     <span class="material-symbols-outlined text-[16px]" aria-hidden="true">check_circle</span>
-                </button>
-                <button
-                  v-else
-                  class="rounded-full border border-slate-300 bg-white text-slate-600 flex h-7 w-7 shrink-0 items-center justify-center transition-colors hover:bg-slate-100 disabled:opacity-60"
-                  :disabled="props.commentMutating"
-                  type="button"
-                  title="重新打开评论"
-                  aria-label="重新打开评论"
-                  @click.stop="emit('reopenCommentThread', thread.id)"
-                >
-                  <span class="material-symbols-outlined text-[16px]" aria-hidden="true">history</span>
-                </button>
+                  </button>
+                  <button
+                    v-else
+                    class="rounded-full border border-slate-300 bg-white text-slate-600 flex h-7 w-7 items-center justify-center transition-colors hover:bg-slate-100 disabled:opacity-60"
+                    :disabled="props.commentMutating"
+                    type="button"
+                    title="重新打开评论"
+                    aria-label="重新打开评论"
+                    @click.stop="emit('reopenCommentThread', thread.id)"
+                  >
+                    <span class="material-symbols-outlined text-[16px]" aria-hidden="true">history</span>
+                  </button>
+                </div>
               </div>
 
-              <div v-if="thread.id === props.activeCommentThreadId" class="mt-3 space-y-2">
+              <div v-if="thread.id === props.activeCommentThreadId" class="mt-3 space-y-2.5">
                 <div
                   v-for="message in thread.messages"
                   :key="message.id"
@@ -369,75 +508,51 @@ function submitCommentReply(threadId: string): void {
                           </template>
                         </a-trigger>
                       </div>
-                      <div class="mt-1 whitespace-pre-wrap text-[11px] leading-5 text-slate-700">
+                      <div class="mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-700">
                         {{ message.body }}
                       </div>
                     </div>
                   </div>
                 </div>
+
+                <div class="rounded-xl border border-slate-200 bg-white px-2.5 py-2.5">
+                  <div class="flex items-start gap-2">
+                    <UnifiedAvatar
+                      :name="currentUserDisplayName"
+                      :src="currentUserDisplayAvatarUrl"
+                      :size="22"
+                    />
+                    <div class="min-w-0 flex-1 space-y-2">
+                      <div class="text-[10px] text-slate-500">
+                        {{ thread.status === 'resolved' ? '回复后会重新打开线程' : '回复此线程' }}
+                      </div>
+                      <textarea
+                        v-model="commentReplyDraftMap[thread.id]"
+                        class="h-20 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs leading-5 placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                        placeholder="输入回复内容"
+                        @click.stop
+                      />
+                      <div class="flex items-center justify-end gap-2">
+                        <button
+                          class="rounded-full border border-blue-600 bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
+                          :disabled="props.commentMutating || !String(commentReplyDraftMap[thread.id] || '').trim()"
+                          type="button"
+                          @click.stop="submitCommentReply(thread.id)"
+                        >
+                          {{ props.commentMutating ? '发送中...' : '发送回复' }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
+
               <div v-else class="mt-3 line-clamp-2 text-[11px] leading-5 text-slate-600">
                 {{ resolveThreadPreviewBody(thread) }}
               </div>
             </div>
           </div>
         </article>
-      </div>
-    </div>
-
-    <div class="border-t border-slate-200 bg-white px-3.5 py-3 shrink-0">
-      <div
-        v-if="props.commentDraftAnchor"
-        class="space-y-3"
-      >
-        <div class="text-[11px] text-slate-600">
-          新线程将锚定到：{{ summarizeCommentAnchor(props.commentDraftAnchor) }}
-        </div>
-        <textarea
-          v-model="commentDraftText"
-          class="h-24 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-          placeholder="输入评论内容"
-        />
-        <div class="flex items-center justify-between gap-2">
-          <button
-            class="rounded border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold hover:bg-slate-100"
-            type="button"
-            @click="emit('cancelCommentDraft')"
-          >
-            取消
-          </button>
-          <button
-            class="rounded border border-blue-600 bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
-            :disabled="props.commentMutating || !commentDraftText.trim()"
-            type="button"
-            @click="submitCommentDraft"
-          >
-            {{ props.commentMutating ? '创建中...' : '创建评论' }}
-          </button>
-        </div>
-      </div>
-
-      <div
-        v-else-if="activeCommentThread"
-        class="space-y-3"
-      >
-        <textarea
-          v-model="commentReplyDraftMap[activeCommentThread.id]"
-          class="h-24 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-          placeholder="输入回复内容"
-        />
-        <button
-          class="rounded border border-blue-600 bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
-          :disabled="props.commentMutating || !String(commentReplyDraftMap[activeCommentThread.id] || '').trim()"
-          type="button"
-          @click="submitCommentReply(activeCommentThread.id)"
-        >
-          {{ props.commentMutating ? '发送中...' : '发送回复' }}
-        </button>
-      </div>
-
-      <div v-else class="text-[11px] text-slate-500">
-        选择一个评论线程后，可直接在这里回复。
       </div>
     </div>
   </aside>

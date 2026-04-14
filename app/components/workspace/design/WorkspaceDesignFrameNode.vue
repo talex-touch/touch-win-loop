@@ -59,10 +59,14 @@ const subtitleText = computed(() => normalizeString(findElement('caption', 'subt
 const badgeText = computed(() => normalizeString(findElement('badge', 'badge')?.text))
 const imageSrc = computed(() => normalizeString(findElement('image', 'hero-image')?.imageSrc))
 const devicePreset = computed(() => {
-  if (props.frame.kind !== 'device_mockup')
+  if (props.frame.kind !== 'device_mockup' && props.frame.kind !== 'device_artboard')
     return null
   return resolveDeviceFramePreset(props.frame.deviceFramePresetKey || 'iphone-16-pro')
 })
+const isDeviceArtboard = computed(() => props.frame.kind === 'device_artboard')
+const isDeviceMockup = computed(() => props.frame.kind === 'device_mockup')
+const deviceAspectRatio = computed(() => `${devicePreset.value?.screenWidth || 390} / ${devicePreset.value?.screenHeight || 844}`)
+const deviceShellMode = computed(() => normalizeString(props.frame.metadata?.device?.shellMode) || (isDeviceArtboard.value ? 'none' : 'builtin'))
 const diagramStats = computed(() => {
   const embeddedScene = props.frame.embeddedScene
   return {
@@ -199,36 +203,102 @@ onBeforeUnmount(() => {
       </span>
     </div>
 
-    <template v-if="frame.kind === 'device_mockup'">
-      <div class="absolute inset-y-0 left-0 w-[46%] px-6 pb-6 pt-16">
-        <h3 class="text-2xl font-semibold leading-tight" :style="{ color: themeTokens.text }">
+    <template v-if="isDeviceMockup || isDeviceArtboard">
+      <div
+        v-if="isDeviceMockup"
+        class="absolute inset-y-0 left-0 w-[46%] px-6 pb-6 pt-16"
+      >
+        <h3
+          class="text-2xl font-semibold leading-tight"
+          :style="{ color: themeTokens.text }"
+        >
           {{ titleText }}
         </h3>
-        <p v-if="subtitleText" class="mt-3 text-sm leading-6" :style="{ color: themeTokens.muted }">
+        <p
+          v-if="subtitleText"
+          class="mt-3 text-sm leading-6"
+          :style="{ color: themeTokens.muted }"
+        >
           {{ subtitleText }}
         </p>
       </div>
 
-      <div class="absolute inset-y-0 right-0 flex w-[52%] items-center justify-center px-8 py-10">
+      <div
+        class="absolute inset-y-0 flex items-center justify-center px-8 py-10"
+        :class="isDeviceMockup ? 'right-0 w-[52%]' : 'inset-x-0'"
+      >
         <div
           class="relative overflow-hidden border border-white/10 shadow-[0_28px_72px_rgba(15,23,42,0.28)]"
-          :class="devicePreset?.deviceFamily === 'browser' ? 'rounded-[22px]' : 'rounded-[34px]'"
-          :style="{ backgroundColor: devicePreset?.background || '#020617', width: devicePreset?.deviceFamily === 'browser' ? '92%' : '68%', aspectRatio: `${devicePreset?.width || 390} / ${devicePreset?.height || 844}` }"
+          :class="[
+            devicePreset?.deviceFamily === 'browser'
+              ? 'rounded-[22px]'
+              : isDeviceArtboard
+                ? 'rounded-[30px]'
+                : 'rounded-[34px]',
+          ]"
+          :style="{
+            backgroundColor:
+              deviceShellMode === 'none'
+                ? 'rgba(255,255,255,0.08)'
+                : devicePreset?.background || '#020617',
+            width: isDeviceArtboard
+              ? '78%'
+              : devicePreset?.deviceFamily === 'browser'
+                ? '92%'
+                : '68%',
+            aspectRatio: deviceAspectRatio,
+            padding:
+              deviceShellMode === 'none'
+                ? '0px'
+                : devicePreset?.deviceFamily === 'browser'
+                  ? '12px 12px 12px'
+                  : '16px',
+          }"
         >
           <div
-            v-if="devicePreset?.deviceFamily === 'browser'"
+            v-if="deviceShellMode !== 'none' && devicePreset?.deviceFamily === 'browser'"
             class="flex h-10 items-center gap-2 border-b border-slate-200/70 bg-slate-100 px-4"
           >
             <span class="h-2.5 w-2.5 rounded-full bg-rose-400" />
             <span class="h-2.5 w-2.5 rounded-full bg-amber-400" />
             <span class="h-2.5 w-2.5 rounded-full bg-emerald-400" />
           </div>
-          <div class="absolute inset-x-3 bottom-3 top-3 overflow-hidden rounded-[26px] bg-slate-100" :class="devicePreset?.deviceFamily === 'browser' ? 'top-14 rounded-[18px]' : ''">
-            <img v-if="imageSrc" :src="imageSrc" alt="" class="h-full w-full object-cover">
-            <div v-else class="flex h-full items-center justify-center text-center text-sm font-medium text-slate-500">
-              上传截图
+          <div
+            class="overflow-hidden bg-slate-100"
+            :class="[
+              deviceShellMode === 'none'
+                ? 'rounded-[30px]'
+                : devicePreset?.deviceFamily === 'browser'
+                  ? 'rounded-[18px]'
+                  : 'rounded-[26px]',
+            ]"
+            :style="{
+              aspectRatio: deviceAspectRatio,
+              minHeight: isDeviceArtboard ? '82%' : undefined,
+              marginTop:
+                deviceShellMode !== 'none' &&
+                devicePreset?.deviceFamily === 'browser'
+                  ? '12px'
+                  : '0px',
+            }"
+          >
+            <img
+              v-if="imageSrc"
+              :src="imageSrc"
+              alt=""
+              class="h-full w-full object-cover"
+            >
+            <div
+              v-else
+              class="flex h-full min-h-[220px] items-center justify-center text-center text-sm font-medium text-slate-500"
+            >
+              {{ isDeviceArtboard ? '设备画板实时预览' : '上传截图' }}
             </div>
           </div>
+          <div
+            v-if="deviceShellMode !== 'none' && devicePreset?.deviceFamily !== 'browser'"
+            class="absolute left-1/2 top-2.5 h-5 w-24 -translate-x-1/2 rounded-full bg-slate-950/90"
+          />
         </div>
       </div>
     </template>

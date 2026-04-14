@@ -4,16 +4,26 @@ import type {
   ArchitectureModel,
   ArchitectureRelationModel,
   CompositionModel,
+  DesignAssetDeviceShellMetadata,
   DesignAssetModel,
+  DesignAssetMetadata,
+  DesignConstraintHorizontal,
+  DesignConstraintVertical,
   DesignElementModel,
+  DesignElementStyle,
+  DesignFrameDeviceMetadata,
   DesignFrameKind,
+  DesignFrameLayoutPadding,
   DesignFrameModel,
   DesignPageModel,
   DesignTemplateManifest,
+  DeviceScaleMode,
   DeviceFramePreset,
+  DeviceShellMode,
   DrawMode,
   DrawRuntimeSnapshot,
   GraphSourceEdge,
+  GraphSourceGroup,
   GraphSourceModel,
   GraphSourceNode,
   SceneArtboard,
@@ -39,7 +49,68 @@ const DEFAULT_ARTBOARD_WIDTH = 1600
 const DEFAULT_ARTBOARD_HEIGHT = 900
 const DEFAULT_COMPOSITION_PAGE_ID = 'page-1'
 const DEFAULT_COMPOSITION_FRAME_ID = 'frame-1'
+const DESIGN_ELEMENT_SUPPORTED_STYLE_KEYS = new Set([
+  'fill',
+  'stroke',
+  'strokeWidth',
+  'opacity',
+  'borderRadius',
+  'shadow',
+  'fontSize',
+  'fontWeight',
+  'color',
+  'textAlign',
+  'strokeLineCap',
+  'strokeLineJoin',
+])
 type ArchitectureMermaidView = 'system_context' | 'container' | 'dependency_map'
+type DesignRect = { x: number, y: number, width: number, height: number }
+type ResolvedDesignFrameLayout = {
+  mode: 'absolute' | 'auto'
+  direction: 'horizontal' | 'vertical'
+  gap: number
+  padding: DesignFrameLayoutPadding
+  alignPrimary: 'start' | 'center' | 'end' | 'space-between'
+  alignCross: 'start' | 'center' | 'end' | 'stretch'
+}
+type ResolvedDesignFrameGrid = {
+  columns: number
+  rows: number
+  margin: number
+  gutter: number
+  visible: boolean
+}
+type ResolvedDesignFrameExport = {
+  includePageOverlays: boolean
+  scale: number
+  format: 'svg' | 'png' | 'pdf'
+}
+type ResolvedDesignFrameDevice = {
+  shellMode: DeviceShellMode
+  shellAssetId: string
+  mockupSourceFrameId: string
+  screenScaleMode: DeviceScaleMode
+  showSafeArea: boolean
+}
+type ResolvedDeviceShellViewportRect = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+type ResolvedDesignAssetDeviceShell = {
+  presetKeys: string[]
+  viewportRect: ResolvedDeviceShellViewportRect
+  cornerRadius: number
+  maskPath: string
+  source: 'builtin' | 'uploaded'
+}
+type ResolvedDesignElementConstraints = {
+  horizontal: DesignConstraintHorizontal
+  vertical: DesignConstraintVertical
+  referenceWidth: number
+  referenceHeight: number
+} | null
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -67,6 +138,11 @@ function toFiniteNumber(value: unknown, fallback = 0): number {
 function toPositiveNumber(value: unknown, fallback: number): number {
   const parsed = toFiniteNumber(value, fallback)
   return parsed > 0 ? parsed : fallback
+}
+
+function toNonNegativeNumber(value: unknown, fallback: number): number {
+  const parsed = toFiniteNumber(value, fallback)
+  return parsed >= 0 ? parsed : fallback
 }
 
 function sanitizeIdentifier(value: unknown, fallback: string): string {
@@ -223,27 +299,335 @@ function createDefaultDesignPage(input: Partial<DesignPageModel> = {}): DesignPa
       y: toFiniteNumber(input.viewport?.y, 0),
       zoom: toFiniteNumber(input.viewport?.zoom, 1) || 1,
     },
-    metadata: normalizeRecord(input.metadata),
+    metadata: normalizeDesignPageMetadata(input.metadata),
   }
 }
 
+function normalizeDesignElementContainerRole(value: unknown): 'page_root' | 'frame_child' | undefined {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'page_root' || normalized === 'frame_child')
+    return normalized
+  return undefined
+}
+
+function normalizeDesignElementTextAutoSize(value: unknown): 'fixed' | 'auto_width' | 'auto_height' | undefined {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'fixed' || normalized === 'auto_width' || normalized === 'auto_height')
+    return normalized
+  return undefined
+}
+
+function normalizeDesignElementLayoutSizing(value: unknown): 'fixed' | 'hug' | 'fill' | undefined {
+  const normalized = normalizeString(value).toLowerCase()
+  if (normalized === 'fixed' || normalized === 'hug' || normalized === 'fill')
+    return normalized
+  return undefined
+}
+
+function normalizeDesignPageMetadata(value: unknown): DesignPageModel['metadata'] {
+  const source = normalizeRecord(value)
+  const metadata: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(source)) {
+    if (key === 'clipToPage')
+      continue
+    metadata[key] = entry
+  }
+  if (typeof source.clipToPage === 'boolean')
+    metadata.clipToPage = source.clipToPage
+  return Object.keys(metadata).length > 0 ? metadata as DesignPageModel['metadata'] : undefined
+}
+
+function normalizeDesignElementConstraints(value: unknown): ResolvedDesignElementConstraints {
+  const source = normalizeRecord(value)
+  const horizontal = normalizeString(source.horizontal).toLowerCase()
+  const vertical = normalizeString(source.vertical).toLowerCase()
+  const normalizedHorizontal: DesignConstraintHorizontal = horizontal === 'center' || horizontal === 'right' || horizontal === 'scale'
+    ? horizontal
+    : 'left'
+  const normalizedVertical: DesignConstraintVertical = vertical === 'center' || vertical === 'bottom' || vertical === 'scale'
+    ? vertical
+    : 'top'
+  const referenceWidth = toPositiveNumber(source.referenceWidth, 0)
+  const referenceHeight = toPositiveNumber(source.referenceHeight, 0)
+  if (!referenceWidth && !referenceHeight && horizontal === '' && vertical === '')
+    return null
+  return {
+    horizontal: normalizedHorizontal,
+    vertical: normalizedVertical,
+    referenceWidth,
+    referenceHeight,
+  }
+}
+
+function normalizeDesignFrameLayoutPadding(value: unknown): DesignFrameLayoutPadding {
+  const source = normalizeRecord(value)
+  const uniform = toNonNegativeNumber(source.all, Number.NaN)
+  const fallback = Number.isFinite(uniform) ? uniform : 24
+  return {
+    top: toNonNegativeNumber(source.top, fallback),
+    right: toNonNegativeNumber(source.right, fallback),
+    bottom: toNonNegativeNumber(source.bottom, fallback),
+    left: toNonNegativeNumber(source.left, fallback),
+  }
+}
+
+export function resolveDesignFrameLayoutMetadata(value: unknown): ResolvedDesignFrameLayout {
+  const source = normalizeRecord(value)
+  const mode = normalizeString(source.mode).toLowerCase() === 'auto' ? 'auto' : 'absolute'
+  const direction = normalizeString(source.direction).toLowerCase() === 'vertical' ? 'vertical' : 'horizontal'
+  const alignPrimary = normalizeString(source.alignPrimary).toLowerCase()
+  const alignCross = normalizeString(source.alignCross).toLowerCase()
+  return {
+    mode,
+    direction,
+    gap: toNonNegativeNumber(source.gap, 24),
+    padding: normalizeDesignFrameLayoutPadding(source.padding),
+    alignPrimary: alignPrimary === 'center' || alignPrimary === 'end' || alignPrimary === 'space-between'
+      ? alignPrimary
+      : 'start',
+    alignCross: alignCross === 'center' || alignCross === 'end' || alignCross === 'stretch'
+      ? alignCross
+      : 'start',
+  }
+}
+
+export function resolveDesignFrameGridMetadata(value: unknown): ResolvedDesignFrameGrid {
+  const source = normalizeRecord(value)
+  return {
+    columns: Math.max(1, Math.round(toPositiveNumber(source.columns, 12))),
+    rows: Math.max(1, Math.round(toPositiveNumber(source.rows, 8))),
+    margin: toNonNegativeNumber(source.margin, 24),
+    gutter: toNonNegativeNumber(source.gutter, 16),
+    visible: Boolean(source.visible),
+  }
+}
+
+export function resolveDesignFrameExportMetadata(value: unknown, fallbackIncludePageOverlays = true): ResolvedDesignFrameExport {
+  const source = normalizeRecord(value)
+  const format = normalizeString(source.format).toLowerCase()
+  return {
+    includePageOverlays: typeof source.includePageOverlays === 'boolean'
+      ? source.includePageOverlays
+      : fallbackIncludePageOverlays,
+    scale: Math.max(1, toFiniteNumber(source.scale, 1)),
+    format: format === 'svg' || format === 'pdf' ? format : 'png',
+  }
+}
+
+function normalizeDesignAssetDeviceShellMetadata(value: unknown): DesignAssetDeviceShellMetadata | undefined {
+  const source = normalizeRecord(value)
+  const viewportRect = normalizeRecord(source.viewportRect)
+  const presetKeys = ensureArray(source.presetKeys).map(item => normalizeString(item)).filter(Boolean)
+  const result: DesignAssetDeviceShellMetadata = {}
+  if (presetKeys.length > 0)
+    result.presetKeys = presetKeys
+  if (Object.keys(viewportRect).length > 0) {
+    result.viewportRect = {
+      x: toNonNegativeNumber(viewportRect.x, 0),
+      y: toNonNegativeNumber(viewportRect.y, 0),
+      width: toPositiveNumber(viewportRect.width, 0),
+      height: toPositiveNumber(viewportRect.height, 0),
+    }
+  }
+  const cornerRadius = toNonNegativeNumber(source.cornerRadius, Number.NaN)
+  if (Number.isFinite(cornerRadius))
+    result.cornerRadius = cornerRadius
+  const maskPath = normalizeString(source.maskPath)
+  if (maskPath)
+    result.maskPath = maskPath
+  const assetSource = normalizeString(source.source).toLowerCase()
+  if (assetSource === 'builtin' || assetSource === 'uploaded')
+    result.source = assetSource
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+function normalizeDesignAssetMetadata(value: unknown): DesignAssetMetadata | undefined {
+  const source = normalizeRecord(value)
+  const metadata: DesignAssetMetadata = {}
+  for (const [key, entry] of Object.entries(source)) {
+    if (key === 'role' || key === 'deviceShell')
+      continue
+    metadata[key] = entry
+  }
+  const role = normalizeString(source.role).toLowerCase()
+  if (role === 'image' || role === 'device_shell')
+    metadata.role = role
+  const deviceShell = normalizeDesignAssetDeviceShellMetadata(source.deviceShell)
+  if (deviceShell)
+    metadata.deviceShell = deviceShell
+  return Object.keys(metadata).length > 0 ? metadata : undefined
+}
+
+function resolveDesignAssetDeviceShellMetadata(value: unknown): ResolvedDesignAssetDeviceShell | null {
+  const metadata = normalizeDesignAssetDeviceShellMetadata(value)
+  const viewportRect = normalizeRecord(metadata?.viewportRect)
+  const width = toPositiveNumber(viewportRect.width, 0)
+  const height = toPositiveNumber(viewportRect.height, 0)
+  if (!width || !height)
+    return null
+  return {
+    presetKeys: ensureArray(metadata?.presetKeys).map(item => normalizeString(item)).filter(Boolean),
+    viewportRect: {
+      x: toNonNegativeNumber(viewportRect.x, 0),
+      y: toNonNegativeNumber(viewportRect.y, 0),
+      width,
+      height,
+    },
+    cornerRadius: Math.max(0, toNonNegativeNumber(metadata?.cornerRadius, 0)),
+    maskPath: normalizeString(metadata?.maskPath),
+    source: metadata?.source === 'builtin' ? 'builtin' : 'uploaded',
+  }
+}
+
+function resolveDesignFrameDeviceMetadata(value: unknown, kind: DesignFrameKind): ResolvedDesignFrameDevice {
+  const source = normalizeRecord(value)
+  const shellMode = normalizeString(source.shellMode).toLowerCase()
+  const screenScaleMode = normalizeString(source.screenScaleMode).toLowerCase()
+  const defaultShellMode: DeviceShellMode = kind === 'device_mockup' ? 'builtin' : 'none'
+  return {
+    shellMode: shellMode === 'builtin' || shellMode === 'external' || shellMode === 'none'
+      ? shellMode
+      : defaultShellMode,
+    shellAssetId: normalizeString(source.shellAssetId),
+    mockupSourceFrameId: normalizeString(source.mockupSourceFrameId),
+    screenScaleMode: screenScaleMode === 'fill' ? 'fill' : 'fit',
+    showSafeArea: typeof source.showSafeArea === 'boolean'
+      ? source.showSafeArea
+      : kind === 'device_artboard',
+  }
+}
+
+function normalizeDesignElementMetadata(
+  value: unknown,
+  frameId?: string,
+): DesignElementModel['metadata'] {
+  const source = normalizeRecord(value)
+  const metadata: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(source)) {
+    if (key === 'containerRole' || key === 'textAutoSize' || key === 'isEditingDraft' || key === 'constraints' || key === 'layoutSizing')
+      continue
+    metadata[key] = entry
+  }
+
+  metadata.containerRole = normalizeDesignElementContainerRole(source.containerRole) || (normalizeString(frameId) ? 'frame_child' : 'page_root')
+  const textAutoSize = normalizeDesignElementTextAutoSize(source.textAutoSize)
+  if (textAutoSize)
+    metadata.textAutoSize = textAutoSize
+  const constraints = normalizeDesignElementConstraints(source.constraints)
+  if (constraints)
+    metadata.constraints = constraints
+  const layoutSizing = normalizeDesignElementLayoutSizing(source.layoutSizing)
+  if (layoutSizing)
+    metadata.layoutSizing = layoutSizing
+
+  return Object.keys(metadata).length > 0 ? metadata as DesignElementModel['metadata'] : undefined
+}
+
+function normalizeDesignElementStyle(value: unknown): DesignElementModel['style'] {
+  const source = normalizeRecord(value)
+  const style: Record<string, string | number | boolean | null> = {}
+  for (const [key, entry] of Object.entries(source)) {
+    const normalizedKey = normalizeString(key)
+    if (!normalizedKey || !DESIGN_ELEMENT_SUPPORTED_STYLE_KEYS.has(normalizedKey))
+      continue
+    if (
+      entry === null
+      || typeof entry === 'string'
+      || typeof entry === 'number'
+      || typeof entry === 'boolean'
+    ) {
+      style[normalizedKey] = entry
+    }
+  }
+  return Object.keys(style).length > 0 ? style as DesignElementModel['style'] : undefined
+}
+
+function normalizeDesignFrameMetadata(
+  value: unknown,
+  kind: DesignFrameKind,
+): DesignFrameModel['metadata'] {
+  const source = normalizeRecord(value)
+  const metadata: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(source)) {
+    if (key === 'clipContent' || key === 'exportWithVisiblePageOverlays' || key === 'layout' || key === 'grid' || key === 'export' || key === 'device')
+      continue
+    metadata[key] = entry
+  }
+
+  const clipFallback = kind === 'freeform' || kind === 'template' || kind === 'device_mockup' || kind === 'device_artboard'
+  const includePageOverlays = typeof source.exportWithVisiblePageOverlays === 'boolean'
+    ? source.exportWithVisiblePageOverlays
+    : true
+  metadata.clipContent = typeof source.clipContent === 'boolean'
+    ? source.clipContent
+    : clipFallback
+  metadata.exportWithVisiblePageOverlays = includePageOverlays
+  metadata.layout = resolveDesignFrameLayoutMetadata(source.layout)
+  metadata.grid = resolveDesignFrameGridMetadata(source.grid)
+  metadata.export = resolveDesignFrameExportMetadata(source.export, includePageOverlays)
+  metadata.device = resolveDesignFrameDeviceMetadata(source.device, kind)
+  return metadata as DesignFrameModel['metadata']
+}
+
+export function canDesignFrameContainElements(frame: DesignFrameModel | null | undefined): boolean {
+  return Boolean(frame && (frame.kind === 'freeform' || frame.kind === 'template' || frame.kind === 'device_mockup' || frame.kind === 'device_artboard'))
+}
+
+export function canDesignFrameCreateElements(frame: DesignFrameModel | null | undefined): boolean {
+  return canDesignFrameContainElements(frame)
+}
+
+export function isDesignFrameClipContentEnabled(frame: DesignFrameModel | null | undefined): boolean {
+  if (!frame || !canDesignFrameContainElements(frame))
+    return false
+  return normalizeDesignFrameMetadata(frame.metadata, frame.kind)?.clipContent !== false
+}
+
+export function isDesignPageClipContentEnabled(page: DesignPageModel | null | undefined): boolean {
+  return Boolean(page && normalizeDesignPageMetadata(page.metadata)?.clipToPage)
+}
+
+function resolveFrameExportsVisiblePageOverlays(frame: DesignFrameModel | null | undefined): boolean {
+  if (!frame)
+    return false
+  const metadata = normalizeDesignFrameMetadata(frame.metadata, frame.kind)
+  return resolveDesignFrameExportMetadata(metadata.export, metadata.exportWithVisiblePageOverlays !== false).includePageOverlays
+}
+
 function createDesignElement(input: Partial<DesignElementModel> = {}, fallbackId = 'element-1'): DesignElementModel {
+  const points = ensureArray(input.points).map((point) => {
+    const source = normalizeRecord(point)
+    return {
+      x: toFiniteNumber(source.x, 0),
+      y: toFiniteNumber(source.y, 0),
+    }
+  })
   return {
     id: sanitizeIdentifier(input.id, fallbackId),
     type: (normalizeString(input.type) as DesignElementModel['type']) || 'text',
+    pageId: sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID),
+    frameId: normalizeString(input.frameId) || undefined,
+    parentId: normalizeString(input.parentId) || undefined,
     x: toFiniteNumber(input.x, 0),
     y: toFiniteNumber(input.y, 0),
     width: toPositiveNumber(input.width, 120),
     height: toPositiveNumber(input.height, 40),
     rotation: toFiniteNumber(input.rotation, 0),
+    zIndex: Math.max(0, Math.trunc(toFiniteNumber(input.zIndex, 0))),
+    locked: Boolean(input.locked),
+    hidden: Boolean(input.hidden),
     text: normalizeString(input.text) || undefined,
     imageSrc: normalizeString(input.imageSrc) || undefined,
-    style: normalizeRecord(input.style) as DesignElementModel['style'],
-    metadata: normalizeRecord(input.metadata),
+    shapeKind: normalizeString(input.shapeKind) as DesignElementModel['shapeKind'] || undefined,
+    points: points.length > 0 ? points : undefined,
+    style: normalizeDesignElementStyle(input.style),
+    metadata: normalizeDesignElementMetadata(input.metadata, normalizeString(input.frameId) || undefined),
   }
 }
 
 function createLegacyCompositionElements(input: {
+  pageId?: string
+  frameId?: string
   title?: string
   subtitle?: string
   badge?: string
@@ -255,6 +639,8 @@ function createLegacyCompositionElements(input: {
     elements.push(createDesignElement({
       id: 'badge',
       type: 'badge',
+      pageId: sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID),
+      frameId: normalizeString(input.frameId) || undefined,
       x: 104,
       y: 80,
       width: Math.max(112, badge.length * 16 + 28),
@@ -269,6 +655,8 @@ function createLegacyCompositionElements(input: {
   elements.push(createDesignElement({
     id: 'title',
     type: 'text',
+    pageId: sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID),
+    frameId: normalizeString(input.frameId) || undefined,
     x: 104,
     y: 140,
     width: 760,
@@ -283,6 +671,8 @@ function createLegacyCompositionElements(input: {
   elements.push(createDesignElement({
     id: 'subtitle',
     type: 'caption',
+    pageId: sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID),
+    frameId: normalizeString(input.frameId) || undefined,
     x: 108,
     y: 308,
     width: 640,
@@ -297,6 +687,8 @@ function createLegacyCompositionElements(input: {
   elements.push(createDesignElement({
     id: 'hero-image',
     type: 'image',
+    pageId: sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID),
+    frameId: normalizeString(input.frameId) || undefined,
     x: 960,
     y: 128,
     width: 520,
@@ -322,9 +714,11 @@ function createLegacyCompositionFrame(input: {
   const size = resolveAspectRatioSize(aspectRatio)
   const slots = normalizeRecord(input.slots)
   const themeTokens = normalizeThemeTokens(input.themeTokens, defaultCompositionThemeTokens())
+  const pageId = sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID)
+  const frameId = sanitizeIdentifier(input.id, DEFAULT_COMPOSITION_FRAME_ID)
   return {
-    id: sanitizeIdentifier(input.id, DEFAULT_COMPOSITION_FRAME_ID),
-    pageId: sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID),
+    id: frameId,
+    pageId,
     name: normalizeString(input.name) || '封面 Frame',
     kind: (normalizeString(input.kind) as DesignFrameKind) || 'device_mockup',
     x: 120,
@@ -335,13 +729,15 @@ function createLegacyCompositionFrame(input: {
     templateKey: normalizeString(input.templateKey) || 'device-showcase',
     deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || 'iphone-16-pro',
     elements: createLegacyCompositionElements({
+      pageId,
+      frameId,
       title: slots.title,
       subtitle: slots.subtitle,
       badge: slots.badge,
       imageSrc: slots.imageSrc,
     }),
     themeTokens,
-    metadata: normalizeRecord(input.metadata),
+    metadata: normalizeDesignFrameMetadata(input.metadata, (normalizeString(input.kind) as DesignFrameKind) || 'device_mockup'),
   }
 }
 
@@ -349,21 +745,13 @@ function defaultCompositionModel(templateKey = 'device-showcase'): CompositionMo
   const page = createDefaultDesignPage({
     id: DEFAULT_COMPOSITION_PAGE_ID,
   })
-  const frame = createLegacyCompositionFrame({
-    id: DEFAULT_COMPOSITION_FRAME_ID,
-    pageId: page.id,
-    templateKey,
-    deviceFramePresetKey: 'iphone-16-pro',
-    slots: {},
-    themeTokens: defaultCompositionThemeTokens(),
-  })
-  page.frameIds = [frame.id]
   return {
     kind: 'composition',
     templateKey,
     pages: [page],
     currentPageId: page.id,
-    frames: [frame],
+    frames: [],
+    elements: [],
     assets: [],
     slots: {},
     themeTokens: defaultCompositionThemeTokens(),
@@ -453,6 +841,16 @@ function normalizeGraphSourceEdge(value: unknown, index: number): GraphSourceEdg
   }
 }
 
+function normalizeGraphSourceGroup(value: unknown, index: number): GraphSourceGroup {
+  const source = normalizeRecord(value)
+  return {
+    id: sanitizeIdentifier(source.id, `group-${index + 1}`),
+    label: normalizeString(source.label) || `Group ${index + 1}`,
+    childNodeIds: ensureArray(source.childNodeIds).map(id => sanitizeIdentifier(id, '')).filter(Boolean),
+    metadata: normalizeRecord(source.metadata),
+  }
+}
+
 function normalizeGraphSourceModel(value: unknown): GraphSourceModel {
   const source = normalizeRecord(value)
   return {
@@ -460,17 +858,43 @@ function normalizeGraphSourceModel(value: unknown): GraphSourceModel {
     diagramType: normalizeString(source.diagramType) as GraphSourceModel['diagramType'] || 'flowchart',
     nodes: ensureArray(source.nodes).map(normalizeGraphSourceNode),
     edges: ensureArray(source.edges).map(normalizeGraphSourceEdge),
-    groups: ensureArray(source.groups).map((entry, index) => {
-      const item = normalizeRecord(entry)
-      return {
-        id: sanitizeIdentifier(item.id, `group-${index + 1}`),
-        label: normalizeString(item.label) || `Group ${index + 1}`,
-        childNodeIds: ensureArray(item.childNodeIds).map(id => sanitizeIdentifier(id, '')),
-        metadata: normalizeRecord(item.metadata),
-      }
-    }),
+    groups: ensureArray(source.groups).map(normalizeGraphSourceGroup),
     sourceText: normalizeString(source.sourceText) || undefined,
     metadata: normalizeRecord(source.metadata),
+  }
+}
+
+function resolveGraphNodeManualPosition(node: GraphSourceNode): { x: number, y: number } | null {
+  const metadata = normalizeRecord(node.metadata)
+  const manualPosition = normalizeRecord(metadata.manualPosition)
+  const x = toFiniteNumber(manualPosition.x, Number.NaN)
+  const y = toFiniteNumber(manualPosition.y, Number.NaN)
+  if (!Number.isFinite(x) || !Number.isFinite(y))
+    return null
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+  }
+}
+
+function resolveGraphGroupLayoutKind(group: GraphSourceGroup): 'container' | 'swimlane' {
+  const metadata = normalizeRecord(group.metadata)
+  return normalizeString(metadata.layoutKind).toLowerCase() === 'swimlane' ? 'swimlane' : 'container'
+}
+
+function resolveGraphGroupManualFrame(group: GraphSourceGroup): { x: number, y: number, width: number, height: number } | null {
+  const metadata = normalizeRecord(group.metadata)
+  const manualPosition = normalizeRecord(metadata.manualPosition)
+  const size = normalizeRecord(metadata.size)
+  const x = toFiniteNumber(manualPosition.x, Number.NaN)
+  const y = toFiniteNumber(manualPosition.y, Number.NaN)
+  if (!Number.isFinite(x) || !Number.isFinite(y))
+    return null
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.max(260, Math.round(toFiniteNumber(size.width, 320))),
+    height: Math.max(180, Math.round(toFiniteNumber(size.height, 220))),
   }
 }
 
@@ -620,18 +1044,20 @@ function normalizeDesignAssetModel(value: unknown, index: number): DesignAssetMo
     mimeType: normalizeString(source.mimeType) || undefined,
     width: toPositiveNumber(source.width, 0) || undefined,
     height: toPositiveNumber(source.height, 0) || undefined,
-    metadata: normalizeRecord(source.metadata),
+    metadata: normalizeDesignAssetMetadata(source.metadata),
   }
 }
 
 function normalizeDesignFrameModel(value: unknown, index: number, fallbackPageId: string): DesignFrameModel {
   const source = normalizeRecord(value)
   const pageId = sanitizeIdentifier(source.pageId, fallbackPageId)
+  const frameId = sanitizeIdentifier(source.id, `frame-${index + 1}`)
+  const kind = (normalizeString(source.kind) as DesignFrameKind) || 'freeform'
   return {
-    id: sanitizeIdentifier(source.id, `frame-${index + 1}`),
+    id: frameId,
     pageId,
     name: normalizeString(source.name) || `Frame ${index + 1}`,
-    kind: (normalizeString(source.kind) as DesignFrameKind) || 'freeform',
+    kind,
     x: toFiniteNumber(source.x, 120),
     y: toFiniteNumber(source.y, 120),
     width: toPositiveNumber(source.width, DEFAULT_ARTBOARD_WIDTH),
@@ -639,7 +1065,15 @@ function normalizeDesignFrameModel(value: unknown, index: number, fallbackPageId
     locked: Boolean(source.locked),
     templateKey: normalizeString(source.templateKey) || undefined,
     deviceFramePresetKey: normalizeString(source.deviceFramePresetKey) || undefined,
-    elements: ensureArray(source.elements).map((entry, elementIndex) => createDesignElement(normalizeRecord(entry), `frame-${index + 1}-element-${elementIndex + 1}`)),
+    elements: ensureArray(source.elements).map((entry, elementIndex) => {
+      const element = normalizeRecord(entry)
+      return createDesignElement({
+        ...element,
+        pageId: pageId || normalizeString(element.pageId) || DEFAULT_COMPOSITION_PAGE_ID,
+        frameId: frameId || normalizeString(element.frameId) || undefined,
+        zIndex: toFiniteNumber(element.zIndex, elementIndex),
+      }, `frame-${index + 1}-element-${elementIndex + 1}`)
+    }),
     embeddedScene: source.embeddedScene
       ? sceneDocumentFromUnknown(source.embeddedScene, {
           fallbackDrawMode: 'diagram',
@@ -647,7 +1081,49 @@ function normalizeDesignFrameModel(value: unknown, index: number, fallbackPageId
         })
       : undefined,
     themeTokens: normalizeThemeTokens(source.themeTokens),
-    metadata: normalizeRecord(source.metadata),
+    metadata: normalizeDesignFrameMetadata(source.metadata, kind),
+  }
+}
+
+function normalizeCompositionElementModel(
+  value: unknown,
+  index: number,
+  options: {
+    fallbackPageId: string
+    fallbackFrameId?: string
+  },
+): DesignElementModel {
+  const source = normalizeRecord(value)
+  const fallbackFrameId = normalizeString(options.fallbackFrameId)
+  return createDesignElement({
+    ...source,
+    pageId: sanitizeIdentifier(source.pageId, options.fallbackPageId),
+    frameId: fallbackFrameId || normalizeString(source.frameId) || undefined,
+    zIndex: toFiniteNumber(source.zIndex, index),
+  }, `element-${index + 1}`)
+}
+
+function syncCompositionFrameLegacyElements(composition: CompositionModel): CompositionModel {
+  const elementBucketByFrameId = new Map<string, DesignElementModel[]>()
+  ensureArray(composition.elements).forEach((element) => {
+    const frameId = normalizeString(element.frameId)
+    if (!frameId)
+      return
+    const bucket = elementBucketByFrameId.get(frameId) || []
+    bucket.push(createDesignElement(element, element.id))
+    elementBucketByFrameId.set(frameId, bucket)
+  })
+
+  return {
+    ...composition,
+    frames: ensureArray(composition.frames).map((frame) => {
+      return {
+        ...frame,
+        elements: (elementBucketByFrameId.get(frame.id) || [])
+          .sort((left, right) => left.zIndex - right.zIndex)
+          .map(element => createDesignElement(element, element.id)),
+      }
+    }),
   }
 }
 
@@ -697,12 +1173,28 @@ function normalizeCompositionModel(value: unknown, templateKey = ''): Compositio
     }
   })
   const currentPageId = normalizeString(source.currentPageId) || normalizedPageModels[0]?.id || DEFAULT_COMPOSITION_PAGE_ID
-  return {
+  const normalizedElements = ensureArray(source.elements).map((entry, index) => {
+    return normalizeCompositionElementModel(entry, index, {
+      fallbackPageId: normalizedPageModels[0]?.id || DEFAULT_COMPOSITION_PAGE_ID,
+    })
+  })
+  const migratedLegacyFrameElements = normalizedFrames.flatMap((frame) => {
+    return ensureArray(frame.elements).map((element, index) => {
+      return createDesignElement({
+        ...element,
+        pageId: normalizeString(element.pageId) || frame.pageId,
+        frameId: frame.id,
+        zIndex: toFiniteNumber(element.zIndex, index),
+      }, `${frame.id}-element-${index + 1}`)
+    })
+  })
+  const composition: CompositionModel = {
     kind: 'composition',
     templateKey: normalizedTemplateKey,
     pages: normalizedPageModels,
     currentPageId,
     frames: normalizedFrames,
+    elements: normalizedElements.length > 0 ? normalizedElements : migratedLegacyFrameElements,
     assets,
     slots: legacySlots,
     themeTokens: normalizeThemeTokens(source.themeTokens, defaultCompositionModel(templateKey).themeTokens),
@@ -724,6 +1216,8 @@ function normalizeCompositionModel(value: unknown, templateKey = ''): Compositio
     }),
     metadata: normalizeRecord(source.metadata),
   }
+
+  return syncCompositionFrameLegacyElements(composition)
 }
 
 function normalizeSourceModel(value: unknown, drawMode: DrawMode, templateKey = ''): SceneSourceModel {
@@ -918,40 +1412,319 @@ export function extractRuntimeSnapshot(value: SceneDocument | unknown): DrawRunt
 
 export const DEVICE_FRAME_PRESETS: DeviceFramePreset[] = [
   {
-    key: 'iphone-16-pro',
-    title: 'iPhone 16 Pro',
+    key: 'iphone-17-pro',
+    title: 'iPhone 17 & 17 Pro',
+    group: 'iPhone',
+    platform: 'ios',
     deviceFamily: 'phone',
-    width: 390,
-    height: 844,
+    screenWidth: 402,
+    screenHeight: 874,
     framePadding: 18,
     bezelRadius: 54,
     screenRadius: 42,
     background: '#020617',
     shadow: '0 36px 96px rgba(2, 6, 23, 0.32)',
+    builtinShellKey: 'iphone-generic-shell',
   },
   {
-    key: 'ipad-air',
-    title: 'iPad Air',
+    key: 'iphone-17-pro-max',
+    title: 'iPhone 17 Pro Max',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 440,
+    screenHeight: 956,
+    framePadding: 18,
+    bezelRadius: 58,
+    screenRadius: 44,
+    background: '#020617',
+    shadow: '0 38px 98px rgba(2, 6, 23, 0.34)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'iphone-16',
+    title: 'iPhone 16',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 393,
+    screenHeight: 852,
+    framePadding: 18,
+    bezelRadius: 54,
+    screenRadius: 42,
+    background: '#020617',
+    shadow: '0 36px 96px rgba(2, 6, 23, 0.32)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'iphone-16-pro',
+    title: 'iPhone 16 Pro',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 390,
+    screenHeight: 844,
+    framePadding: 18,
+    bezelRadius: 54,
+    screenRadius: 42,
+    background: '#020617',
+    shadow: '0 36px 96px rgba(2, 6, 23, 0.32)',
+    builtinShellKey: 'iphone-16-pro-shell',
+  },
+  {
+    key: 'iphone-16-pro-max',
+    title: 'iPhone 16 Pro Max',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 440,
+    screenHeight: 956,
+    framePadding: 18,
+    bezelRadius: 58,
+    screenRadius: 44,
+    background: '#020617',
+    shadow: '0 38px 98px rgba(2, 6, 23, 0.34)',
+    builtinShellKey: 'iphone-16-pro-max-shell',
+  },
+  {
+    key: 'iphone-16-plus',
+    title: 'iPhone 16 Plus',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 430,
+    screenHeight: 932,
+    framePadding: 18,
+    bezelRadius: 58,
+    screenRadius: 44,
+    background: '#020617',
+    shadow: '0 38px 98px rgba(2, 6, 23, 0.34)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'iphone-14-15-pro-max',
+    title: 'iPhone 14 & 15 Pro Max',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 430,
+    screenHeight: 932,
+    framePadding: 18,
+    bezelRadius: 58,
+    screenRadius: 44,
+    background: '#020617',
+    shadow: '0 38px 98px rgba(2, 6, 23, 0.34)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'iphone-14-15-pro',
+    title: 'iPhone 14 & 15 Pro',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 393,
+    screenHeight: 852,
+    framePadding: 18,
+    bezelRadius: 54,
+    screenRadius: 42,
+    background: '#020617',
+    shadow: '0 36px 96px rgba(2, 6, 23, 0.32)',
+    builtinShellKey: 'iphone-14-15-pro-shell',
+  },
+  {
+    key: 'iphone-13-14',
+    title: 'iPhone 13 & 14',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 390,
+    screenHeight: 844,
+    framePadding: 18,
+    bezelRadius: 54,
+    screenRadius: 42,
+    background: '#020617',
+    shadow: '0 36px 96px rgba(2, 6, 23, 0.32)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'iphone-14-plus',
+    title: 'iPhone 14 Plus',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 428,
+    screenHeight: 926,
+    framePadding: 18,
+    bezelRadius: 58,
+    screenRadius: 44,
+    background: '#020617',
+    shadow: '0 38px 98px rgba(2, 6, 23, 0.34)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'iphone-13-mini',
+    title: 'iPhone 13 mini',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 375,
+    screenHeight: 812,
+    framePadding: 18,
+    bezelRadius: 48,
+    screenRadius: 38,
+    background: '#020617',
+    shadow: '0 34px 92px rgba(2, 6, 23, 0.3)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'iphone-se',
+    title: 'iPhone SE',
+    group: 'iPhone',
+    platform: 'ios',
+    deviceFamily: 'phone',
+    screenWidth: 320,
+    screenHeight: 568,
+    framePadding: 16,
+    bezelRadius: 38,
+    screenRadius: 22,
+    background: '#020617',
+    shadow: '0 28px 74px rgba(2, 6, 23, 0.28)',
+    builtinShellKey: 'iphone-generic-shell',
+  },
+  {
+    key: 'android-phone',
+    title: '安卓手机',
+    group: 'Android Phone',
+    platform: 'android',
+    deviceFamily: 'phone',
+    screenWidth: 360,
+    screenHeight: 780,
+    framePadding: 16,
+    bezelRadius: 42,
+    screenRadius: 30,
+    background: '#111827',
+    shadow: '0 32px 84px rgba(15, 23, 42, 0.3)',
+    builtinShellKey: 'android-phone-shell',
+  },
+  {
+    key: 'ipad-mini-7-9',
+    title: 'iPad Mini 7.9',
+    group: 'iPad',
+    platform: 'ipados',
     deviceFamily: 'tablet',
-    width: 820,
-    height: 1180,
+    screenWidth: 768,
+    screenHeight: 1024,
+    framePadding: 24,
+    bezelRadius: 42,
+    screenRadius: 24,
+    background: '#111827',
+    shadow: '0 32px 88px rgba(15, 23, 42, 0.24)',
+    builtinShellKey: 'ipad-generic-shell',
+  },
+  {
+    key: 'ipad-pro-10-5',
+    title: 'iPad Pro 10.5',
+    group: 'iPad',
+    platform: 'ipados',
+    deviceFamily: 'tablet',
+    screenWidth: 834,
+    screenHeight: 1112,
+    framePadding: 24,
+    bezelRadius: 44,
+    screenRadius: 26,
+    background: '#111827',
+    shadow: '0 32px 88px rgba(15, 23, 42, 0.24)',
+    builtinShellKey: 'ipad-generic-shell',
+  },
+  {
+    key: 'ipad-pro-11',
+    title: 'iPad Pro 11',
+    group: 'iPad',
+    platform: 'ipados',
+    deviceFamily: 'tablet',
+    screenWidth: 834,
+    screenHeight: 1194,
+    framePadding: 26,
+    bezelRadius: 46,
+    screenRadius: 28,
+    background: '#111827',
+    shadow: '0 32px 88px rgba(15, 23, 42, 0.24)',
+    builtinShellKey: 'ipad-pro-11-shell',
+  },
+  {
+    key: 'ipad-pro-12-9',
+    title: 'iPad Pro 12.9',
+    group: 'iPad',
+    platform: 'ipados',
+    deviceFamily: 'tablet',
+    screenWidth: 1024,
+    screenHeight: 1366,
     framePadding: 28,
     bezelRadius: 48,
     screenRadius: 30,
     background: '#111827',
     shadow: '0 32px 88px rgba(15, 23, 42, 0.24)',
+    builtinShellKey: 'ipad-generic-shell',
+  },
+  {
+    key: 'ipad-air',
+    title: 'iPad Air',
+    group: 'iPad',
+    platform: 'ipados',
+    deviceFamily: 'tablet',
+    screenWidth: 820,
+    screenHeight: 1180,
+    framePadding: 28,
+    bezelRadius: 48,
+    screenRadius: 30,
+    background: '#111827',
+    shadow: '0 32px 88px rgba(15, 23, 42, 0.24)',
+    builtinShellKey: 'ipad-generic-shell',
+  },
+  {
+    key: 'surface-pro-3',
+    title: 'Surface Pro 3',
+    group: 'Surface/Desktop',
+    platform: 'windows',
+    deviceFamily: 'desktop',
+    screenWidth: 1440,
+    screenHeight: 960,
+    framePadding: 0,
+    bezelRadius: 24,
+    screenRadius: 16,
+    background: '#e2e8f0',
+    shadow: '0 30px 80px rgba(15, 23, 42, 0.18)',
+    builtinShellKey: 'desktop-generic-shell',
+  },
+  {
+    key: 'surface-pro-4',
+    title: 'Surface Pro 4',
+    group: 'Surface/Desktop',
+    platform: 'windows',
+    deviceFamily: 'desktop',
+    screenWidth: 1368,
+    screenHeight: 912,
+    framePadding: 0,
+    bezelRadius: 24,
+    screenRadius: 16,
+    background: '#e2e8f0',
+    shadow: '0 30px 80px rgba(15, 23, 42, 0.18)',
+    builtinShellKey: 'desktop-generic-shell',
   },
   {
     key: 'browser-window',
     title: 'Browser Window',
+    group: 'Surface/Desktop',
+    platform: 'web',
     deviceFamily: 'browser',
-    width: 1440,
-    height: 960,
+    screenWidth: 1440,
+    screenHeight: 960,
     framePadding: 0,
     bezelRadius: 28,
     screenRadius: 28,
     background: '#e2e8f0',
     shadow: '0 30px 80px rgba(15, 23, 42, 0.18)',
+    builtinShellKey: 'browser-window-shell',
   },
 ]
 
@@ -1048,7 +1821,9 @@ export const SYSTEM_SCENE_TEMPLATE_SUMMARIES: SceneTemplateSummary[] = SYSTEM_SC
 
 export function resolveDeviceFramePreset(key: string): DeviceFramePreset {
   const normalizedKey = normalizeString(key)
-  return DEVICE_FRAME_PRESETS.find(preset => preset.key === normalizedKey) || DEVICE_FRAME_PRESETS[0]!
+  return DEVICE_FRAME_PRESETS.find(preset => preset.key === normalizedKey)
+    || DEVICE_FRAME_PRESETS.find(preset => preset.key === 'iphone-16-pro')
+    || DEVICE_FRAME_PRESETS[0]!
 }
 
 export function resolveSceneTemplateManifest(templateKey: string): DesignTemplateManifest | null {
@@ -1111,12 +1886,13 @@ function buildGraphSceneModel(sourceModel: GraphSourceModel): SceneModel {
     const rowIndex = Math.max(0, siblings.indexOf(node.id))
     const width = sourceModel.diagramType === 'mindmap' ? 200 : 180
     const height = sourceModel.diagramType === 'mindmap' ? 72 : 64
+    const manualPosition = resolveGraphNodeManualPosition(node)
     return {
       id: node.id,
       type: node.type || 'node',
       label: node.label,
-      x: 96 + depth * 260,
-      y: 96 + rowIndex * (height + 56),
+      x: manualPosition?.x ?? (96 + depth * 260),
+      y: manualPosition?.y ?? (96 + rowIndex * (height + 56)),
       width,
       height,
       shape: sourceModel.diagramType === 'mindmap' ? 'pill' : 'rounded',
@@ -1125,10 +1901,56 @@ function buildGraphSceneModel(sourceModel: GraphSourceModel): SceneModel {
     }
   })
 
+  const positionedNodeMap = new Map(positionedNodes.map(node => [node.id, node]))
+  const groupNodes: SceneNode[] = (sourceModel.groups || []).map((group, groupIndex) => {
+    const memberIds = new Set<string>([
+      ...(group.childNodeIds || []),
+      ...nodes.filter(node => node.parentId === group.id).map(node => node.id),
+    ])
+    const memberNodes = [...memberIds]
+      .map(nodeId => positionedNodeMap.get(nodeId))
+      .filter((node): node is SceneNode => Boolean(node))
+    const layoutKind = resolveGraphGroupLayoutKind(group)
+    const manualFrame = resolveGraphGroupManualFrame(group)
+    const paddingX = 28
+    const headerHeight = layoutKind === 'swimlane' ? 52 : 44
+    const paddingBottom = 28
+    const defaultX = 56 + groupIndex * 40
+    const defaultY = 56 + groupIndex * 24
+
+    const minX = memberNodes.length > 0 ? Math.min(...memberNodes.map(node => node.x)) : (manualFrame?.x ?? defaultX)
+    const minY = memberNodes.length > 0 ? Math.min(...memberNodes.map(node => node.y)) : (manualFrame?.y ?? defaultY)
+    const maxX = memberNodes.length > 0
+      ? Math.max(...memberNodes.map(node => node.x + node.width))
+      : (manualFrame?.x ?? defaultX) + (manualFrame?.width ?? 320)
+    const maxY = memberNodes.length > 0
+      ? Math.max(...memberNodes.map(node => node.y + node.height))
+      : (manualFrame?.y ?? defaultY) + (manualFrame?.height ?? 220)
+
+    return {
+      id: group.id,
+      type: 'group',
+      label: group.label,
+      x: manualFrame?.x ?? Math.max(24, minX - paddingX),
+      y: manualFrame?.y ?? Math.max(24, minY - headerHeight - 16),
+      width: Math.max(manualFrame?.width ?? 0, 260, maxX - minX + paddingX * 2),
+      height: Math.max(manualFrame?.height ?? 0, 180, maxY - minY + headerHeight + paddingBottom),
+      shape: layoutKind === 'swimlane' ? 'rect' : 'rounded',
+      metadata: {
+        ...group.metadata,
+        layoutKind,
+        childNodeIds: [...memberIds],
+      },
+    }
+  })
+
   const maxDepth = Math.max(0, ...[...layerOrder.keys()])
   const maxRows = Math.max(1, ...[...layerOrder.values()].map(bucket => bucket.length))
+  const allNodes = [...groupNodes, ...positionedNodes]
+  const maxNodeRight = Math.max(0, ...allNodes.map(node => node.x + node.width))
+  const maxNodeBottom = Math.max(0, ...allNodes.map(node => node.y + node.height))
   return {
-    nodes: positionedNodes,
+    nodes: allNodes,
     edges: sourceModel.edges.map((edge, index) => ({
       id: edge.id || `edge-${index + 1}`,
       source: edge.source,
@@ -1138,8 +1960,8 @@ function buildGraphSceneModel(sourceModel: GraphSourceModel): SceneModel {
       metadata: edge.metadata,
     })),
     artboards: [createDefaultArtboard(
-      Math.max(DEFAULT_ARTBOARD_WIDTH, 320 + (maxDepth + 1) * 260),
-      Math.max(DEFAULT_ARTBOARD_HEIGHT, 280 + maxRows * 140),
+      Math.max(DEFAULT_ARTBOARD_WIDTH, 320 + (maxDepth + 1) * 260, maxNodeRight + 160),
+      Math.max(DEFAULT_ARTBOARD_HEIGHT, 280 + maxRows * 140, maxNodeBottom + 160),
     )],
     layout: {
       engine: 'fallback-graph-layout',
@@ -1509,6 +2331,447 @@ function resolveCompositionFramesForPage(composition: CompositionModel, pageId: 
   })]
 }
 
+function sortDesignElements(elements: DesignElementModel[]): DesignElementModel[] {
+  return [...elements].sort((left, right) => {
+    const zIndexDelta = left.zIndex - right.zIndex
+    if (zIndexDelta !== 0)
+      return zIndexDelta
+    return normalizeString(left.id).localeCompare(normalizeString(right.id))
+  })
+}
+
+function cloneSortedDesignElements(elements: DesignElementModel[]): DesignElementModel[] {
+  return sortDesignElements(elements).map(element => createDesignElement(element, element.id))
+}
+
+export function resolveCompositionElementsForPage(composition: CompositionModel, pageId: string): DesignElementModel[] {
+  return cloneSortedDesignElements(ensureArray(composition.elements)
+    .filter(element => normalizeString(element.pageId) === normalizeString(pageId) && !normalizeString(element.frameId))
+  )
+}
+
+export function resolveCompositionElementsForFrame(composition: CompositionModel, frameId: string): DesignElementModel[] {
+  return cloneSortedDesignElements(ensureArray(composition.elements)
+    .filter(element => normalizeString(element.frameId) === normalizeString(frameId))
+  )
+}
+
+function resolveDesignElementStyleRecord(element: DesignElementModel): DesignElementStyle {
+  return (normalizeDesignElementStyle(element.style) || {}) as DesignElementStyle
+}
+
+function resolveDesignElementLayoutSizing(element: DesignElementModel): 'fixed' | 'hug' | 'fill' {
+  return normalizeDesignElementLayoutSizing(normalizeRecord(element.metadata).layoutSizing) || 'fixed'
+}
+
+function resolveDesignElementIntrinsicSize(element: DesignElementModel): { width: number, height: number } {
+  if (element.type === 'text' || element.type === 'caption' || element.type === 'badge') {
+    const style = resolveDesignElementStyleRecord(element)
+    const fontSize = Math.max(12, toFiniteNumber(style.fontSize, element.type === 'caption' ? 24 : element.type === 'badge' ? 18 : 52))
+    const lineHeight = Math.round(fontSize * 1.18)
+    const text = normalizeString(element.text) || '文本'
+    const badgePaddingX = element.type === 'badge' ? 28 : 0
+    const badgePaddingY = element.type === 'badge' ? 12 : 0
+    return {
+      width: Math.max(48, Math.round(text.length * fontSize * 0.62) + badgePaddingX),
+      height: Math.max(fontSize + 8, lineHeight + badgePaddingY),
+    }
+  }
+
+  return {
+    width: Math.max(1, element.width),
+    height: Math.max(1, element.height),
+  }
+}
+
+function resolveDesignElementConstraintsForFrame(
+  element: DesignElementModel,
+  frame: DesignFrameModel,
+): ResolvedDesignElementConstraints {
+  const constraints = normalizeDesignElementConstraints(normalizeRecord(element.metadata).constraints)
+  if (!constraints)
+    return null
+  return {
+    horizontal: constraints.horizontal,
+    vertical: constraints.vertical,
+    referenceWidth: constraints.referenceWidth > 0 ? constraints.referenceWidth : frame.width,
+    referenceHeight: constraints.referenceHeight > 0 ? constraints.referenceHeight : frame.height,
+  }
+}
+
+function applyDesignElementConstraints(
+  element: DesignElementModel,
+  frame: DesignFrameModel,
+): DesignElementModel {
+  const constraints = resolveDesignElementConstraintsForFrame(element, frame)
+  if (!constraints)
+    return createDesignElement(element, element.id)
+
+  let nextX = element.x
+  let nextY = element.y
+  let nextWidth = element.width
+  let nextHeight = element.height
+
+  if (constraints.referenceWidth > 0) {
+    if (constraints.horizontal === 'scale') {
+      const ratio = frame.width / constraints.referenceWidth
+      nextX = element.x * ratio
+      nextWidth = element.width * ratio
+    }
+    else if (constraints.horizontal === 'right') {
+      const rightInset = constraints.referenceWidth - (element.x + element.width)
+      nextX = frame.width - element.width - rightInset
+    }
+    else if (constraints.horizontal === 'center') {
+      const centerOffset = element.x + element.width / 2 - constraints.referenceWidth / 2
+      nextX = frame.width / 2 + centerOffset - element.width / 2
+    }
+  }
+
+  if (constraints.referenceHeight > 0) {
+    if (constraints.vertical === 'scale') {
+      const ratio = frame.height / constraints.referenceHeight
+      nextY = element.y * ratio
+      nextHeight = element.height * ratio
+    }
+    else if (constraints.vertical === 'bottom') {
+      const bottomInset = constraints.referenceHeight - (element.y + element.height)
+      nextY = frame.height - element.height - bottomInset
+    }
+    else if (constraints.vertical === 'center') {
+      const centerOffset = element.y + element.height / 2 - constraints.referenceHeight / 2
+      nextY = frame.height / 2 + centerOffset - element.height / 2
+    }
+  }
+
+  return createDesignElement({
+    ...element,
+    x: Math.round(nextX),
+    y: Math.round(nextY),
+    width: Math.max(1, Math.round(nextWidth)),
+    height: Math.max(1, Math.round(nextHeight)),
+  }, element.id)
+}
+
+function resolveAutoLayoutFrameElements(
+  frame: DesignFrameModel,
+  elements: DesignElementModel[],
+): DesignElementModel[] {
+  const layout = resolveDesignFrameLayoutMetadata(normalizeRecord(frame.metadata).layout)
+  if (layout.mode !== 'auto' || elements.length === 0)
+    return elements.map(element => applyDesignElementConstraints(element, frame))
+
+  const contentWidth = Math.max(1, frame.width - layout.padding.left - layout.padding.right)
+  const contentHeight = Math.max(1, frame.height - layout.padding.top - layout.padding.bottom)
+  const items = sortDesignElements(elements).map((element) => {
+    const sizing = resolveDesignElementLayoutSizing(element)
+    const intrinsic = resolveDesignElementIntrinsicSize(element)
+    return {
+      element,
+      sizing,
+      baseWidth: sizing === 'hug' ? intrinsic.width : Math.max(1, element.width),
+      baseHeight: sizing === 'hug' ? intrinsic.height : Math.max(1, element.height),
+    }
+  })
+
+  const mainAxis = layout.direction === 'horizontal' ? 'width' : 'height'
+  const crossAxis = layout.direction === 'horizontal' ? 'height' : 'width'
+  const availableMain = layout.direction === 'horizontal' ? contentWidth : contentHeight
+  const availableCross = layout.direction === 'horizontal' ? contentHeight : contentWidth
+  const fillCount = items.filter(item => item.sizing === 'fill').length
+  const gap = items.length > 1 ? layout.gap : 0
+  const fixedMainSize = items.reduce((total, item) => {
+    if (item.sizing === 'fill')
+      return total
+    return total + (mainAxis === 'width' ? item.baseWidth : item.baseHeight)
+  }, 0)
+  const remainingMain = Math.max(0, availableMain - fixedMainSize - gap * Math.max(0, items.length - 1))
+  const fillMainSize = fillCount > 0 ? Math.max(1, remainingMain / fillCount) : 0
+  const resolvedMainSizes = items.map((item) => {
+    const nextSize = item.sizing === 'fill'
+      ? fillMainSize
+      : mainAxis === 'width'
+        ? item.baseWidth
+        : item.baseHeight
+    return Math.max(1, Math.round(nextSize))
+  })
+  const totalMain = resolvedMainSizes.reduce((total, size) => total + size, 0)
+  const dynamicGap = layout.alignPrimary === 'space-between' && items.length > 1
+    ? Math.max(gap, Math.round((availableMain - totalMain) / (items.length - 1)))
+    : gap
+  const occupiedMain = totalMain + dynamicGap * Math.max(0, items.length - 1)
+  const startMain = layout.alignPrimary === 'center'
+    ? Math.round((availableMain - occupiedMain) / 2)
+    : layout.alignPrimary === 'end'
+      ? Math.round(availableMain - occupiedMain)
+      : 0
+
+  let cursor = startMain
+  return items.map((item, index) => {
+    const mainSize = resolvedMainSizes[index] || 1
+    const nextWidth = layout.direction === 'horizontal'
+      ? mainSize
+      : layout.alignCross === 'stretch'
+        ? availableCross
+        : item.sizing === 'fill'
+          ? availableCross
+          : item.baseWidth
+    const nextHeight = layout.direction === 'vertical'
+      ? mainSize
+      : layout.alignCross === 'stretch'
+        ? availableCross
+        : item.sizing === 'fill'
+          ? availableCross
+          : item.baseHeight
+    const crossSize = crossAxis === 'width' ? nextWidth : nextHeight
+    const crossOffset = layout.alignCross === 'center'
+      ? Math.round((availableCross - crossSize) / 2)
+      : layout.alignCross === 'end'
+        ? Math.round(availableCross - crossSize)
+        : 0
+    const nextElement = createDesignElement({
+      ...item.element,
+      x: layout.direction === 'horizontal'
+        ? Math.round(layout.padding.left + cursor)
+        : Math.round(layout.padding.left + crossOffset),
+      y: layout.direction === 'vertical'
+        ? Math.round(layout.padding.top + cursor)
+        : Math.round(layout.padding.top + crossOffset),
+      width: Math.max(1, Math.round(nextWidth)),
+      height: Math.max(1, Math.round(nextHeight)),
+    }, item.element.id)
+    cursor += mainSize + dynamicGap
+    return nextElement
+  })
+}
+
+export function resolveDisplayCompositionElementsForPage(
+  composition: CompositionModel,
+  pageId: string,
+): DesignElementModel[] {
+  return resolveCompositionElementsForPage(composition, pageId)
+}
+
+export function resolveDisplayCompositionElementsForFrame(
+  composition: CompositionModel,
+  frame: DesignFrameModel,
+): DesignElementModel[] {
+  return resolveAutoLayoutFrameElements(frame, resolveCompositionElementsForFrame(composition, frame.id))
+}
+
+export function resolveDesignElementAbsoluteRect(element: DesignElementModel, frame?: DesignFrameModel | null): DesignRect {
+  const offsetX = frame ? frame.x : 0
+  const offsetY = frame ? frame.y : 0
+  if (element.type === 'path' && Array.isArray(element.points) && element.points.length > 0) {
+    const xs = element.points.map(point => toFiniteNumber(point.x, 0))
+    const ys = element.points.map(point => toFiniteNumber(point.y, 0))
+    const minX = Math.min(...xs)
+    const minY = Math.min(...ys)
+    const maxX = Math.max(...xs)
+    const maxY = Math.max(...ys)
+    const strokeWidth = Math.max(1, toFiniteNumber(normalizeRecord(element.style).strokeWidth, 3))
+    const padding = strokeWidth / 2
+    return {
+      x: offsetX + minX - padding,
+      y: offsetY + minY - padding,
+      width: Math.max(1, maxX - minX + padding * 2),
+      height: Math.max(1, maxY - minY + padding * 2),
+    }
+  }
+  return {
+    x: offsetX + element.x,
+    y: offsetY + element.y,
+    width: Math.max(1, element.width),
+    height: Math.max(1, element.height),
+  }
+}
+
+function resolveRectIntersection(source: DesignRect, target: DesignRect): DesignRect | null {
+  const x = Math.max(source.x, target.x)
+  const y = Math.max(source.y, target.y)
+  const right = Math.min(source.x + source.width, target.x + target.width)
+  const bottom = Math.min(source.y + source.height, target.y + target.height)
+  if (right <= x || bottom <= y)
+    return null
+  return {
+    x,
+    y,
+    width: right - x,
+    height: bottom - y,
+  }
+}
+
+function rectIntersects(source: DesignRect, target: DesignRect): boolean {
+  return Boolean(resolveRectIntersection(source, target))
+}
+
+function resolveRectUnion(source: DesignRect, target: DesignRect): DesignRect {
+  const minX = Math.min(source.x, target.x)
+  const minY = Math.min(source.y, target.y)
+  const maxX = Math.max(source.x + source.width, target.x + target.width)
+  const maxY = Math.max(source.y + source.height, target.y + target.height)
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  }
+}
+
+function resolveFrameRect(frame: DesignFrameModel): DesignRect {
+  return {
+    x: frame.x,
+    y: frame.y,
+    width: frame.width,
+    height: frame.height,
+  }
+}
+
+function resolveFrameExportRect(composition: CompositionModel, frame: DesignFrameModel): DesignRect {
+  const frameRect = resolveFrameRect(frame)
+  if (frame.kind !== 'device_artboard' || resolveFrameDeviceConfig(frame).shellMode === 'none')
+    return frameRect
+
+  const preset = resolveDeviceFramePreset(frame.deviceFramePresetKey || composition.deviceFramePresetKey || 'iphone-16-pro')
+  const shellTarget = resolveDeviceShellTarget(composition, frame, preset)
+  const scaleX = frame.width / Math.max(1, shellTarget.metrics.screenWidth)
+  const scaleY = frame.height / Math.max(1, shellTarget.metrics.screenHeight)
+  return {
+    x: frame.x - shellTarget.metrics.screenX * scaleX,
+    y: frame.y - shellTarget.metrics.screenY * scaleY,
+    width: shellTarget.metrics.width * scaleX,
+    height: shellTarget.metrics.height * scaleY,
+  }
+}
+
+export function rewriteDesignElementZIndices(elements: DesignElementModel[]): DesignElementModel[] {
+  return cloneSortedDesignElements(elements).map((element, index) => createDesignElement({
+    ...element,
+    zIndex: index,
+  }, element.id))
+}
+
+export function moveDesignElementBetweenContainers(
+  document: SceneDocument | CompositionModel | unknown,
+  elementId: string,
+  target: {
+    pageId: string
+    frameId?: string | null
+    x?: number
+    y?: number
+    zIndex?: number
+    parentId?: string | null
+  },
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const pageId = normalizeString(target.pageId)
+  const rawFrameId = normalizeString(target.frameId)
+  const nextFrameId = rawFrameId || undefined
+  const targetFrame = nextFrameId
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === nextFrameId) || null
+    : null
+  if (nextFrameId && !canDesignFrameContainElements(targetFrame))
+    return finalizeCompositionSceneDocument(base, composition)
+  if (!ensureArray(composition.pages).some(page => normalizeString(page.id) === pageId))
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const elements = ensureArray(composition.elements)
+  const currentElement = elements.find(element => normalizeString(element.id) === normalizeString(elementId))
+  if (!currentElement)
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const currentFrame = normalizeString(currentElement.frameId)
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === normalizeString(currentElement.frameId)) || null
+    : null
+  const absoluteRect = resolveDesignElementAbsoluteRect(currentElement, currentFrame)
+  const nextX = target.x !== undefined
+    ? toFiniteNumber(target.x, currentElement.x)
+    : absoluteRect.x - (targetFrame ? targetFrame.x : 0)
+  const nextY = target.y !== undefined
+    ? toFiniteNumber(target.y, currentElement.y)
+    : absoluteRect.y - (targetFrame ? targetFrame.y : 0)
+  const siblingElements = elements.filter((element) => {
+    if (normalizeString(element.id) === normalizeString(elementId))
+      return false
+    return normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(nextFrameId)
+      && normalizeString(element.parentId) === normalizeString(target.parentId)
+  })
+  const normalizedSiblings = rewriteDesignElementZIndices(siblingElements)
+  const desiredZIndex = Math.max(0, Math.trunc(toFiniteNumber(target.zIndex, normalizedSiblings.length)))
+  const nextElement = createDesignElement({
+    ...currentElement,
+    pageId,
+    frameId: nextFrameId,
+    parentId: normalizeString(target.parentId) || undefined,
+    x: nextX,
+    y: nextY,
+    zIndex: desiredZIndex,
+    metadata: {
+      ...normalizeRecord(currentElement.metadata),
+      containerRole: nextFrameId ? 'frame_child' : 'page_root',
+    },
+  }, currentElement.id)
+  const before = normalizedSiblings.slice(0, desiredZIndex)
+  const after = normalizedSiblings.slice(desiredZIndex)
+  const nextContainerElements = rewriteDesignElementZIndices([...before, nextElement, ...after])
+  const sameContainer = normalizeString(currentElement.pageId) === pageId
+    && normalizeString(currentElement.frameId) === normalizeString(nextFrameId)
+    && normalizeString(currentElement.parentId) === normalizeString(target.parentId)
+  const unaffectedElements = elements.filter((element) => {
+    const normalizedElementId = normalizeString(element.id)
+    if (normalizedElementId === normalizeString(elementId))
+      return false
+    const isSourceSibling = normalizeString(element.pageId) === normalizeString(currentElement.pageId)
+      && normalizeString(element.frameId) === normalizeString(currentElement.frameId)
+      && normalizeString(element.parentId) === normalizeString(currentElement.parentId)
+    const isTargetSibling = normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(nextFrameId)
+      && normalizeString(element.parentId) === normalizeString(target.parentId)
+    return !isSourceSibling && !isTargetSibling
+  })
+  const nextElements = [
+    ...unaffectedElements,
+    ...(!sameContainer
+      ? rewriteDesignElementZIndices(elements.filter((element) => {
+          const normalizedElementId = normalizeString(element.id)
+          if (normalizedElementId === normalizeString(elementId))
+            return false
+          return normalizeString(element.pageId) === normalizeString(currentElement.pageId)
+            && normalizeString(element.frameId) === normalizeString(currentElement.frameId)
+            && normalizeString(element.parentId) === normalizeString(currentElement.parentId)
+        }))
+      : []),
+    ...nextContainerElements,
+  ]
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: pageId,
+    elements: nextElements,
+  })
+}
+
+function resolveFrameVisiblePageOverlayElements(composition: CompositionModel, frame: DesignFrameModel): DesignElementModel[] {
+  if (!resolveFrameExportsVisiblePageOverlays(frame))
+    return []
+  const frameRect = resolveFrameExportRect(composition, frame)
+  return resolveCompositionElementsForPage(composition, frame.pageId).filter((element) => {
+    const rect = resolveDesignElementAbsoluteRect(element)
+    return rectIntersects(rect, frameRect)
+  })
+}
+
+function resolveSingleFrameExportBounds(composition: CompositionModel, frame: DesignFrameModel): DesignRect {
+  const frameRect = resolveFrameExportRect(composition, frame)
+  if (!canDesignFrameContainElements(frame) || isDesignFrameClipContentEnabled(frame))
+    return frameRect
+
+  return resolveDisplayCompositionElementsForFrame(composition, frame)
+    .filter(element => !element.hidden)
+    .map(element => resolveDesignElementAbsoluteRect(element, frame))
+    .reduce((bounds, elementRect) => resolveRectUnion(bounds, elementRect), frameRect)
+}
+
 function resolveFrameThemeTokens(composition: CompositionModel, frame: DesignFrameModel): Record<string, string> {
   return {
     ...defaultCompositionThemeTokens(),
@@ -1524,6 +2787,87 @@ function resolveThemeColorToken(value: unknown, themeTokens: Record<string, stri
   if (themeTokens[normalized])
     return themeTokens[normalized]!
   return normalized
+}
+
+export function resolveDesignElementPresentation(
+  element: DesignElementModel,
+  themeTokens: Record<string, string>,
+  offsetX = 0,
+  offsetY = 0,
+) {
+  const style = resolveDesignElementStyleRecord(element)
+  const x = element.x + offsetX
+  const y = element.y + offsetY
+  const width = Math.max(1, element.width)
+  const height = Math.max(1, element.height)
+  const opacity = Math.min(1, Math.max(0, toFiniteNumber(style.opacity, 1)))
+  const rotation = toFiniteNumber(element.rotation, 0)
+  const borderRadius = Math.max(0, Math.round(toNonNegativeNumber(
+    style.borderRadius,
+    element.type === 'badge' ? 20 : element.type === 'image' ? 24 : 28,
+  )))
+  const fill = resolveThemeColorToken(
+    style.fill,
+    themeTokens,
+    element.type === 'badge'
+      ? themeTokens.accent || '#38bdf8'
+      : element.type === 'shape'
+        ? 'rgba(148, 163, 184, 0.24)'
+        : 'transparent',
+  )
+  const stroke = resolveThemeColorToken(
+    style.stroke || style.color,
+    themeTokens,
+    element.type === 'shape' || element.type === 'path'
+      ? fill
+      : themeTokens.text || '#0f172a',
+  )
+  const strokeWidth = Math.max(0, toFiniteNumber(style.strokeWidth, element.type === 'path' ? 3 : 2))
+  const shadow = normalizeString(style.shadow)
+  const fontSize = Math.max(12, toFiniteNumber(style.fontSize, element.type === 'caption' ? 24 : element.type === 'badge' ? 18 : 52))
+  const fontWeight = Math.max(400, toFiniteNumber(style.fontWeight, element.type === 'caption' ? 500 : element.type === 'badge' ? 700 : 700))
+  const color = resolveThemeColorToken(
+    style.color,
+    themeTokens,
+    element.type === 'caption'
+      ? themeTokens.muted || '#94a3b8'
+      : element.type === 'badge'
+        ? fill
+        : themeTokens.text || '#e2e8f0',
+  )
+  const textAlign = normalizeString(style.textAlign).toLowerCase() === 'center'
+    ? 'center'
+    : normalizeString(style.textAlign).toLowerCase() === 'right'
+      ? 'right'
+      : 'left'
+  const lineHeight = Math.round(fontSize * 1.18)
+  const textLines = element.type === 'text' || element.type === 'caption'
+    ? splitTextLines(element.text || '', Math.max(8, Math.round(width / Math.max(1, fontSize * 0.72))), 4)
+    : element.type === 'badge'
+      ? [normalizeString(element.text) || '']
+      : []
+  return {
+    x,
+    y,
+    width,
+    height,
+    opacity,
+    rotation,
+    borderRadius,
+    fill,
+    stroke,
+    strokeWidth,
+    shadow,
+    fontSize,
+    fontWeight,
+    color,
+    textAlign,
+    lineHeight,
+    textLines,
+    shapeKind: normalizeString(element.shapeKind || normalizeRecord(element.metadata).shapeKind).toLowerCase() || 'rectangle',
+    strokeLineCap: normalizeString(style.strokeLineCap) || 'round',
+    strokeLineJoin: normalizeString(style.strokeLineJoin) || 'round',
+  }
 }
 
 function renderEmbeddedSceneMarkup(sceneDocument: SceneDocument | undefined, width: number, height: number): string {
@@ -1558,7 +2902,21 @@ function renderEmbeddedSceneMarkup(sceneDocument: SceneDocument | undefined, wid
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#94a3b8" stroke-width="2" />`
   }).join('')
 
-  const nodeMarkup = nodes.map((node) => {
+  const backgroundNodeMarkup = nodes
+    .filter(node => node.type === 'group')
+    .map((node) => {
+      const x = offsetX + node.x * safeScale
+      const y = offsetY + node.y * safeScale
+      const nodeWidth = node.width * safeScale
+      const nodeHeight = node.height * safeScale
+      const layoutKind = normalizeString(normalizeRecord(node.metadata).layoutKind).toLowerCase()
+      return `<g>
+        <rect x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${layoutKind === 'swimlane' ? 18 : 24}" ry="${layoutKind === 'swimlane' ? 18 : 24}" fill="#e0f2fe" fill-opacity="0.22" stroke="#38bdf8" stroke-dasharray="${layoutKind === 'swimlane' ? '10 6' : '0'}" />
+        <text x="${x + 18}" y="${y + Math.min(nodeHeight - 16, 28)}" fill="#0f172a" font-size="${Math.max(12, Math.round(16 * safeScale))}" font-weight="700">${escapeXml(node.label)}</text>
+      </g>`
+    }).join('')
+
+  const nodeMarkup = nodes.filter(node => node.type !== 'group').map((node) => {
     const x = offsetX + node.x * safeScale
     const y = offsetY + node.y * safeScale
     const nodeWidth = node.width * safeScale
@@ -1569,53 +2927,422 @@ function renderEmbeddedSceneMarkup(sceneDocument: SceneDocument | undefined, wid
     </g>`
   }).join('')
 
-  return `<g>${edgeMarkup}${nodeMarkup}</g>`
+  return `<g>${backgroundNodeMarkup}${edgeMarkup}${nodeMarkup}</g>`
 }
 
-function renderDesignElementMarkup(element: DesignElementModel, themeTokens: Record<string, string>): string {
-  const x = element.x
-  const y = element.y
-  const width = element.width
-  const height = element.height
-  const style = normalizeRecord(element.style)
+function renderDesignElementMarkup(
+  element: DesignElementModel,
+  themeTokens: Record<string, string>,
+  offsetX = 0,
+  offsetY = 0,
+): string {
+  if (element.hidden)
+    return ''
+
+  const presentation = resolveDesignElementPresentation(element, themeTokens, offsetX, offsetY)
+  const transform = presentation.rotation
+    ? ` transform="rotate(${presentation.rotation} ${presentation.x + presentation.width / 2} ${presentation.y + presentation.height / 2})"`
+    : ''
+  const opacityAttr = presentation.opacity < 1 ? ` opacity="${presentation.opacity}"` : ''
+  const shadowStyleAttr = presentation.shadow
+    ? ` style="filter: drop-shadow(${escapeXml(presentation.shadow)})"`
+    : ''
 
   if (element.type === 'badge') {
-    const fill = resolveThemeColorToken(style.fill, themeTokens, themeTokens.accent || '#38bdf8')
     return `<g>
-      <rect x="${x}" y="${y}" width="${width}" height="${height}" rx="20" ry="20" fill="${escapeXml(fill)}" fill-opacity="0.16" stroke="${escapeXml(fill)}" />
-      <text x="${x + 18}" y="${y + Math.min(height - 10, 25)}" fill="${escapeXml(fill)}" font-size="18" font-weight="700">${escapeXml(element.text || '')}</text>
+      <rect x="${presentation.x}" y="${presentation.y}" width="${presentation.width}" height="${presentation.height}" rx="${presentation.borderRadius}" ry="${presentation.borderRadius}" fill="${escapeXml(presentation.fill)}" fill-opacity="0.16" stroke="${escapeXml(presentation.fill)}"${opacityAttr}${transform}${shadowStyleAttr} />
+      <text x="${presentation.x + 18}" y="${presentation.y + Math.min(presentation.height - 10, 25)}" fill="${escapeXml(presentation.color)}" font-size="${presentation.fontSize}" font-weight="${presentation.fontWeight}"${opacityAttr}>${escapeXml(element.text || '')}</text>
     </g>`
   }
 
   if (element.type === 'shape') {
-    const fill = resolveThemeColorToken(style.fill, themeTokens, 'rgba(148, 163, 184, 0.24)')
-    const shapeKind = normalizeString(normalizeRecord(element.metadata).shapeKind).toLowerCase()
-    if (shapeKind === 'circle' || shapeKind === 'ellipse') {
-      return `<ellipse cx="${x + width / 2}" cy="${y + height / 2}" rx="${width / 2}" ry="${height / 2}" fill="${escapeXml(fill)}" />`
+    if (presentation.shapeKind === 'ellipse' || presentation.shapeKind === 'circle') {
+      return `<ellipse cx="${presentation.x + presentation.width / 2}" cy="${presentation.y + presentation.height / 2}" rx="${presentation.width / 2}" ry="${presentation.height / 2}" fill="${escapeXml(presentation.fill)}" stroke="${escapeXml(presentation.stroke)}" stroke-width="${presentation.strokeWidth}"${opacityAttr}${transform}${shadowStyleAttr} />`
     }
-    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="28" ry="28" fill="${escapeXml(fill)}" />`
+    if (presentation.shapeKind === 'arrow') {
+      const x1 = presentation.x
+      const y1 = presentation.y + presentation.height / 2
+      const x2 = presentation.x + presentation.width
+      const y2 = presentation.y + presentation.height / 2
+      const arrowSize = Math.max(12, Math.min(32, presentation.height * 0.35))
+      return `<g>
+        <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${escapeXml(presentation.stroke)}" stroke-width="${presentation.strokeWidth}" stroke-linecap="round"${opacityAttr}${transform}${shadowStyleAttr} />
+        <path d="M ${x2 - arrowSize} ${y2 - arrowSize * 0.7} L ${x2} ${y2} L ${x2 - arrowSize} ${y2 + arrowSize * 0.7}" fill="none" stroke="${escapeXml(presentation.stroke)}" stroke-width="${presentation.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${opacityAttr}${transform}${shadowStyleAttr} />
+      </g>`
+    }
+    return `<rect x="${presentation.x}" y="${presentation.y}" width="${presentation.width}" height="${presentation.height}" rx="${presentation.borderRadius}" ry="${presentation.borderRadius}" fill="${escapeXml(presentation.fill)}" stroke="${escapeXml(presentation.stroke)}" stroke-width="${presentation.strokeWidth}"${opacityAttr}${transform}${shadowStyleAttr} />`
   }
 
   if (element.type === 'image') {
     if (normalizeString(element.imageSrc)) {
-      return `<image href="${escapeXml(element.imageSrc)}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" />`
+      return `<image href="${escapeXml(element.imageSrc)}" x="${presentation.x}" y="${presentation.y}" width="${presentation.width}" height="${presentation.height}" preserveAspectRatio="xMidYMid slice"${opacityAttr}${transform}${shadowStyleAttr} />`
     }
-    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="24" ry="24" fill="#cbd5e1" />
-      <text x="${x + 20}" y="${y + 42}" fill="#475569" font-size="18" font-weight="600">待上传图片</text>`
+    return `<rect x="${presentation.x}" y="${presentation.y}" width="${presentation.width}" height="${presentation.height}" rx="${presentation.borderRadius}" ry="${presentation.borderRadius}" fill="#cbd5e1"${opacityAttr}${transform}${shadowStyleAttr} />
+      <text x="${presentation.x + 20}" y="${presentation.y + 42}" fill="#475569" font-size="18" font-weight="600"${opacityAttr}>待上传图片</text>`
   }
 
   if (element.type === 'text' || element.type === 'caption') {
-    const fontSize = Math.max(12, toFiniteNumber(style.fontSize, element.type === 'caption' ? 24 : 52))
-    const fontWeight = Math.max(400, toFiniteNumber(style.fontWeight, element.type === 'caption' ? 500 : 700))
-    const lineHeight = Math.round(fontSize * 1.18)
-    const lines = splitTextLines(element.text || '', Math.max(8, Math.round(width / Math.max(1, fontSize * 0.72))), 4)
-    const color = resolveThemeColorToken(style.color, themeTokens, element.type === 'caption' ? themeTokens.muted || '#94a3b8' : themeTokens.text || '#e2e8f0')
-    return lines.map((line, index) => {
-      return `<text x="${x}" y="${y + fontSize + index * lineHeight}" fill="${escapeXml(color)}" font-size="${fontSize}" font-weight="${fontWeight}">${escapeXml(line)}</text>`
+    const textAnchor = presentation.textAlign === 'center'
+      ? 'middle'
+      : presentation.textAlign === 'right'
+        ? 'end'
+        : 'start'
+    const anchorX = textAnchor === 'middle'
+      ? presentation.x + presentation.width / 2
+      : textAnchor === 'end'
+        ? presentation.x + presentation.width
+        : presentation.x
+    return presentation.textLines.map((line, index) => {
+      return `<text x="${anchorX}" y="${presentation.y + presentation.fontSize + index * presentation.lineHeight}" text-anchor="${textAnchor}" fill="${escapeXml(presentation.color)}" font-size="${presentation.fontSize}" font-weight="${presentation.fontWeight}"${opacityAttr}${transform}${shadowStyleAttr}>${escapeXml(line)}</text>`
     }).join('')
   }
 
+  if (element.type === 'path') {
+    const points = ensureArray(element.points)
+    if (points.length < 2)
+      return ''
+    const path = points
+      .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x + offsetX} ${point.y + offsetY}`)
+      .join(' ')
+    return `<path d="${path}" fill="none" stroke="${escapeXml(presentation.stroke)}" stroke-width="${presentation.strokeWidth}" stroke-linecap="${escapeXml(presentation.strokeLineCap)}" stroke-linejoin="${escapeXml(presentation.strokeLineJoin)}"${opacityAttr}${shadowStyleAttr} />`
+  }
+
   return ''
+}
+
+type DeviceShellMetrics = {
+  width: number
+  height: number
+  screenX: number
+  screenY: number
+  screenWidth: number
+  screenHeight: number
+  cornerRadius: number
+}
+
+function resolveFrameDeviceConfig(frame: DesignFrameModel): ResolvedDesignFrameDevice {
+  return resolveDesignFrameDeviceMetadata(frame.metadata?.device, frame.kind)
+}
+
+function resolveCompositionFrameById(composition: CompositionModel, frameId: string): DesignFrameModel | null {
+  const normalizedFrameId = normalizeString(frameId)
+  if (!normalizedFrameId)
+    return null
+  return ensureArray(composition.frames).find(frame => normalizeString(frame.id) === normalizedFrameId) || null
+}
+
+function resolveCompositionAssetById(composition: CompositionModel, assetId: string): DesignAssetModel | null {
+  const normalizedAssetId = normalizeString(assetId)
+  if (!normalizedAssetId)
+    return null
+  return ensureArray(composition.assets).find(asset => normalizeString(asset.id) === normalizedAssetId) || null
+}
+
+function resolveBuiltinShellKey(preset: DeviceFramePreset): string {
+  const explicitKey = normalizeString(preset.builtinShellKey)
+  if (explicitKey)
+    return explicitKey
+  if (preset.deviceFamily === 'browser')
+    return 'browser-window-shell'
+  if (preset.deviceFamily === 'desktop')
+    return 'desktop-generic-shell'
+  if (preset.platform === 'android')
+    return 'android-phone-shell'
+  if (preset.deviceFamily === 'tablet')
+    return 'ipad-generic-shell'
+  return 'iphone-generic-shell'
+}
+
+function measureBuiltinDeviceShellMetrics(preset: DeviceFramePreset): DeviceShellMetrics {
+  if (preset.deviceFamily === 'browser') {
+    return {
+      width: preset.screenWidth,
+      height: preset.screenHeight + 74,
+      screenX: 0,
+      screenY: 54,
+      screenWidth: preset.screenWidth,
+      screenHeight: preset.screenHeight,
+      cornerRadius: preset.screenRadius,
+    }
+  }
+
+  if (preset.deviceFamily === 'desktop') {
+    return {
+      width: preset.screenWidth + 70,
+      height: preset.screenHeight + 110,
+      screenX: 35,
+      screenY: 24,
+      screenWidth: preset.screenWidth,
+      screenHeight: preset.screenHeight,
+      cornerRadius: preset.screenRadius,
+    }
+  }
+
+  return {
+    width: preset.screenWidth + preset.framePadding * 2,
+    height: preset.screenHeight + preset.framePadding * 2,
+    screenX: preset.framePadding,
+    screenY: preset.framePadding,
+    screenWidth: preset.screenWidth,
+    screenHeight: preset.screenHeight,
+    cornerRadius: preset.screenRadius,
+  }
+}
+
+function resolveAssetShellMetrics(asset: DesignAssetModel | null | undefined): DeviceShellMetrics | null {
+  if (!asset)
+    return null
+  const metadata = resolveDesignAssetDeviceShellMetadata(asset.metadata?.deviceShell)
+  if (!metadata)
+    return null
+  const width = Math.max(
+    toPositiveNumber(asset.width, 0),
+    metadata.viewportRect.x + metadata.viewportRect.width,
+  )
+  const height = Math.max(
+    toPositiveNumber(asset.height, 0),
+    metadata.viewportRect.y + metadata.viewportRect.height,
+  )
+  if (!width || !height)
+    return null
+  return {
+    width,
+    height,
+    screenX: metadata.viewportRect.x,
+    screenY: metadata.viewportRect.y,
+    screenWidth: metadata.viewportRect.width,
+    screenHeight: metadata.viewportRect.height,
+    cornerRadius: metadata.cornerRadius,
+  }
+}
+
+function resolveDeviceShellTarget(
+  composition: CompositionModel,
+  frame: DesignFrameModel,
+  preset: DeviceFramePreset,
+): {
+  kind: 'none' | 'builtin' | 'external'
+  metrics: DeviceShellMetrics
+  asset?: DesignAssetModel | null
+  shellKey?: string
+} {
+  const deviceConfig = resolveFrameDeviceConfig(frame)
+  const fallbackMetrics = measureBuiltinDeviceShellMetrics(preset)
+
+  if (deviceConfig.shellMode === 'none') {
+    return {
+      kind: 'none',
+      metrics: fallbackMetrics,
+    }
+  }
+
+  if (deviceConfig.shellMode === 'external') {
+    const asset = resolveCompositionAssetById(composition, deviceConfig.shellAssetId)
+    const assetMetrics = resolveAssetShellMetrics(asset)
+    const shellMetadata = resolveDesignAssetDeviceShellMetadata(asset?.metadata?.deviceShell)
+    const presetKeys = shellMetadata?.presetKeys || []
+    const matchesPreset = presetKeys.length === 0 || presetKeys.includes(preset.key)
+    if (asset && assetMetrics && matchesPreset) {
+      return {
+        kind: 'external',
+        metrics: assetMetrics,
+        asset,
+      }
+    }
+  }
+
+  return {
+    kind: 'builtin',
+    metrics: fallbackMetrics,
+    shellKey: resolveBuiltinShellKey(preset),
+  }
+}
+
+function renderDeviceSafeAreaMarkup(screenRect: DesignRect): string {
+  const insetX = Math.max(8, Math.round(screenRect.width * 0.045))
+  const insetTop = Math.max(14, Math.round(screenRect.height * 0.06))
+  const insetBottom = Math.max(14, Math.round(screenRect.height * 0.04))
+  const width = Math.max(1, screenRect.width - insetX * 2)
+  const height = Math.max(1, screenRect.height - insetTop - insetBottom)
+  return `<rect x="${screenRect.x + insetX}" y="${screenRect.y + insetTop}" width="${width}" height="${height}" rx="${Math.max(12, Math.round(Math.min(width, height) * 0.04))}" ry="${Math.max(12, Math.round(Math.min(width, height) * 0.04))}" fill="none" stroke="rgba(56,189,248,0.55)" stroke-width="2" stroke-dasharray="10 8" />`
+}
+
+function renderImageIntoScreenMarkup(imageSrc: string, screenRect: DesignRect, clipId: string, screenScaleMode: DeviceScaleMode): string {
+  return `<image href="${escapeXml(imageSrc)}" x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" preserveAspectRatio="${screenScaleMode === 'fill' ? 'xMidYMid slice' : 'xMidYMid meet'}" clip-path="url(#${clipId})" />`
+}
+
+function renderFrameContentIntoScreenMarkup(
+  composition: CompositionModel,
+  sourceFrame: DesignFrameModel,
+  screenRect: DesignRect,
+  clipId: string,
+  screenScaleMode: DeviceScaleMode,
+  showSafeArea: boolean,
+): string {
+  const themeTokens = resolveFrameThemeTokens(composition, sourceFrame)
+  const elements = resolveDisplayCompositionElementsForFrame(composition, sourceFrame)
+    .filter(element => !element.hidden)
+  const scaleX = screenRect.width / Math.max(1, sourceFrame.width)
+  const scaleY = screenRect.height / Math.max(1, sourceFrame.height)
+  const contentScale = screenScaleMode === 'fill'
+    ? Math.max(scaleX, scaleY)
+    : Math.min(scaleX, scaleY)
+  const contentWidth = sourceFrame.width * contentScale
+  const contentHeight = sourceFrame.height * contentScale
+  const translateX = screenRect.x + (screenRect.width - contentWidth) / 2
+  const translateY = screenRect.y + (screenRect.height - contentHeight) / 2
+  const elementMarkup = elements
+    .map(element => renderDesignElementMarkup(element, themeTokens))
+    .join('')
+  const safeAreaMarkup = showSafeArea ? renderDeviceSafeAreaMarkup(screenRect) : ''
+  return `<g clip-path="url(#${clipId})">
+    <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" fill="${escapeXml(themeTokens.background || '#ffffff')}" />
+    <g transform="translate(${translateX} ${translateY}) scale(${contentScale})">${elementMarkup}</g>
+  </g>${safeAreaMarkup}`
+}
+
+function renderDevicePlaceholderMarkup(screenRect: DesignRect, clipId: string): string {
+  return `<g clip-path="url(#${clipId})">
+    <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" fill="#e2e8f0" />
+    <text x="${screenRect.x + 18}" y="${screenRect.y + 38}" fill="#475569" font-size="16" font-weight="600">上传截图或绑定设备画板</text>
+  </g>`
+}
+
+function renderScreenContentMarkup(
+  composition: CompositionModel,
+  targetFrame: DesignFrameModel,
+  screenRect: DesignRect,
+  clipId: string,
+): string {
+  const deviceConfig = resolveFrameDeviceConfig(targetFrame)
+  const linkedFrame = resolveCompositionFrameById(composition, deviceConfig.mockupSourceFrameId)
+  if (linkedFrame?.kind === 'device_artboard') {
+    return renderFrameContentIntoScreenMarkup(
+      composition,
+      linkedFrame,
+      screenRect,
+      clipId,
+      deviceConfig.screenScaleMode,
+      deviceConfig.showSafeArea,
+    )
+  }
+
+  if (targetFrame.kind === 'device_artboard') {
+    return renderFrameContentIntoScreenMarkup(
+      composition,
+      targetFrame,
+      screenRect,
+      clipId,
+      deviceConfig.screenScaleMode,
+      deviceConfig.showSafeArea,
+    )
+  }
+
+  const frameElements = resolveDisplayCompositionElementsForFrame(composition, targetFrame)
+  const imageElement = frameElements.find(element => element.id === 'hero-image' || element.type === 'image')
+  const imageSrc = normalizeString(imageElement?.imageSrc)
+  if (imageSrc)
+    return renderImageIntoScreenMarkup(imageSrc, screenRect, clipId, deviceConfig.screenScaleMode)
+
+  return renderDevicePlaceholderMarkup(screenRect, clipId)
+}
+
+function renderBuiltinShellMarkup(
+  preset: DeviceFramePreset,
+  shellKey: string,
+  outerRect: DesignRect,
+  screenRect: DesignRect,
+): string {
+  const outerRadius = Math.max(16, Math.round(Math.min(outerRect.width, outerRect.height) * 0.06))
+  const screenRadius = Math.max(12, Math.round(Math.min(screenRect.width, screenRect.height) * 0.04))
+  const cameraDotX = outerRect.x + outerRect.width / 2
+  const cameraDotY = outerRect.y + Math.max(14, Math.round(outerRect.height * 0.025))
+
+  if (preset.deviceFamily === 'browser') {
+    const chromeHeight = Math.max(48, Math.round(screenRect.y - outerRect.y))
+    return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+      <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
+      <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${chromeHeight}" rx="${outerRadius}" ry="${outerRadius}" fill="#e2e8f0" />
+      <circle cx="${outerRect.x + 28}" cy="${outerRect.y + chromeHeight / 2}" r="6" fill="#fb7185" />
+      <circle cx="${outerRect.x + 48}" cy="${outerRect.y + chromeHeight / 2}" r="6" fill="#f59e0b" />
+      <circle cx="${outerRect.x + 68}" cy="${outerRect.y + chromeHeight / 2}" r="6" fill="#10b981" />
+      <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
+    </g>`
+  }
+
+  if (preset.deviceFamily === 'desktop') {
+    const standWidth = Math.max(64, Math.round(outerRect.width * 0.22))
+    const standHeight = Math.max(24, Math.round(outerRect.height * 0.08))
+    const baseWidth = Math.max(120, Math.round(outerRect.width * 0.32))
+    const baseHeight = Math.max(12, Math.round(outerRect.height * 0.03))
+    const standX = outerRect.x + (outerRect.width - standWidth) / 2
+    const standY = outerRect.y + outerRect.height + 8
+    const baseX = outerRect.x + (outerRect.width - baseWidth) / 2
+    const baseY = standY + standHeight
+    return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+      <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
+      <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
+      <rect x="${standX}" y="${standY}" width="${standWidth}" height="${standHeight}" rx="${Math.round(standHeight / 2)}" ry="${Math.round(standHeight / 2)}" fill="#94a3b8" />
+      <rect x="${baseX}" y="${baseY}" width="${baseWidth}" height="${baseHeight}" rx="${Math.round(baseHeight / 2)}" ry="${Math.round(baseHeight / 2)}" fill="#cbd5e1" />
+    </g>`
+  }
+
+  const islandWidth = Math.max(64, Math.round(screenRect.width * (shellKey === 'iphone-16-pro-shell' || shellKey === 'iphone-16-pro-max-shell' ? 0.28 : 0.34)))
+  const islandHeight = Math.max(18, Math.round(screenRect.height * 0.035))
+  const islandX = screenRect.x + (screenRect.width - islandWidth) / 2
+  const islandY = outerRect.y + Math.max(10, Math.round((screenRect.y - outerRect.y) * 0.5))
+  const speakerWidth = Math.max(44, Math.round(screenRect.width * 0.18))
+  const speakerHeight = Math.max(6, Math.round(screenRect.height * 0.008))
+  const speakerX = screenRect.x + (screenRect.width - speakerWidth) / 2
+  const speakerY = outerRect.y + Math.max(12, Math.round((screenRect.y - outerRect.y) * 0.58))
+
+  return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+    <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
+    <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
+    ${shellKey === 'android-phone-shell'
+      ? `<rect x="${speakerX}" y="${speakerY}" width="${speakerWidth}" height="${speakerHeight}" rx="${Math.round(speakerHeight / 2)}" ry="${Math.round(speakerHeight / 2)}" fill="#475569" opacity="0.72" />`
+      : `<rect x="${islandX}" y="${islandY}" width="${islandWidth}" height="${islandHeight}" rx="${Math.round(islandHeight / 2)}" ry="${Math.round(islandHeight / 2)}" fill="#020617" />`
+    }
+    ${(shellKey === 'ipad-pro-11-shell' || shellKey === 'ipad-generic-shell')
+      ? `<circle cx="${cameraDotX}" cy="${cameraDotY}" r="${Math.max(5, Math.round(Math.min(outerRect.width, outerRect.height) * 0.008))}" fill="#334155" opacity="0.74" />`
+      : ''
+    }
+  </g>`
+}
+
+function renderDeviceSurfaceMarkup(
+  composition: CompositionModel,
+  frame: DesignFrameModel,
+  preset: DeviceFramePreset,
+  outerRect: DesignRect,
+): string {
+  const shellTarget = resolveDeviceShellTarget(composition, frame, preset)
+  const scaleX = outerRect.width / Math.max(1, shellTarget.metrics.width)
+  const scaleY = outerRect.height / Math.max(1, shellTarget.metrics.height)
+  const screenRect: DesignRect = {
+    x: outerRect.x + shellTarget.metrics.screenX * scaleX,
+    y: outerRect.y + shellTarget.metrics.screenY * scaleY,
+    width: shellTarget.metrics.screenWidth * scaleX,
+    height: shellTarget.metrics.screenHeight * scaleY,
+  }
+  const clipId = `device-screen-${sanitizeIdentifier(frame.id, 'frame')}-${Math.round(outerRect.x)}-${Math.round(outerRect.y)}`
+  const shellMarkup = shellTarget.kind === 'external' && shellTarget.asset
+    ? `<image href="${escapeXml(shellTarget.asset.src)}" x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" preserveAspectRatio="none" />`
+    : shellTarget.kind === 'builtin'
+      ? renderBuiltinShellMarkup(preset, shellTarget.shellKey || resolveBuiltinShellKey(preset), outerRect, screenRect)
+      : ''
+  const screenContentMarkup = renderScreenContentMarkup(composition, frame, screenRect, clipId)
+  const clipRadius = shellTarget.kind === 'external'
+    ? Math.max(0, Math.round(shellTarget.metrics.cornerRadius * Math.min(scaleX, scaleY)))
+    : Math.max(12, Math.round(preset.screenRadius * Math.min(scaleX, scaleY)))
+
+  return `<defs>
+    <clipPath id="${clipId}">
+      <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${clipRadius}" ry="${clipRadius}" />
+    </clipPath>
+  </defs>
+  ${shellMarkup}
+  ${screenContentMarkup}`
 }
 
 function renderDesignFrameMarkup(frame: DesignFrameModel, composition: CompositionModel, offsetX: number, offsetY: number): string {
@@ -1626,6 +3353,9 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
   const frameHeight = frame.height
   const frameLabel = `<text x="${frameX + 20}" y="${frameY + 28}" fill="#94a3b8" font-size="14" font-weight="600">${escapeXml(frame.name)}</text>`
   const backgroundFill = escapeXml(themeTokens.background || '#0f172a')
+  const frameElements = resolveDisplayCompositionElementsForFrame(composition, frame)
+  const preset = resolveDeviceFramePreset(frame.deviceFramePresetKey || composition.deviceFramePresetKey || 'iphone-16-pro')
+  const frameDeviceConfig = resolveFrameDeviceConfig(frame)
 
   if (frame.kind === 'diagram') {
     return `<g>
@@ -1637,54 +3367,97 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
     </g>`
   }
 
-  if (frame.kind === 'device_mockup') {
-    const preset = resolveDeviceFramePreset(frame.deviceFramePresetKey || composition.deviceFramePresetKey || 'iphone-16-pro')
-    const imageElement = ensureArray(frame.elements).find(element => element.type === 'image')
-    const textMarkup = ensureArray(frame.elements)
-      .filter(element => element.type !== 'image')
-      .map(element => renderDesignElementMarkup(element, themeTokens))
-      .join('')
-    const frameScale = Math.min((frameWidth * 0.34) / preset.width, (frameHeight * 0.72) / preset.height)
-    const mockupWidth = Math.round(preset.width * frameScale)
-    const mockupHeight = Math.round(preset.height * frameScale)
-    const mockupX = frameX + frameWidth - mockupWidth - 72
-    const mockupY = frameY + Math.round((frameHeight - mockupHeight) / 2)
-    const screenX = mockupX + Math.round(preset.framePadding * frameScale)
-    const screenY = mockupY + Math.round((preset.deviceFamily === 'browser' ? 54 : preset.framePadding) * frameScale)
-    const screenWidth = mockupWidth - Math.round(preset.framePadding * frameScale * 2)
-    const screenHeight = preset.deviceFamily === 'browser'
-      ? mockupHeight - Math.round(74 * frameScale)
-      : mockupHeight - Math.round(preset.framePadding * frameScale * 2)
-    const clipId = `frame-clip-${sanitizeIdentifier(frame.id, 'frame')}`
-    const browserChrome = preset.deviceFamily === 'browser'
-      ? `<rect x="${mockupX}" y="${mockupY}" width="${mockupWidth}" height="54" rx="28" ry="28" fill="#e2e8f0" />
-         <circle cx="${mockupX + 28}" cy="${mockupY + 27}" r="6" fill="#fb7185" />
-         <circle cx="${mockupX + 48}" cy="${mockupY + 27}" r="6" fill="#f59e0b" />
-         <circle cx="${mockupX + 68}" cy="${mockupY + 27}" r="6" fill="#10b981" />`
-      : ''
-    const imageMarkup = imageElement?.imageSrc
-      ? `<image href="${escapeXml(imageElement.imageSrc)}" x="${screenX}" y="${screenY}" width="${screenWidth}" height="${screenHeight}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`
-      : `<rect x="${screenX}" y="${screenY}" width="${screenWidth}" height="${screenHeight}" rx="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" ry="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" fill="#cbd5e1" />
-         <text x="${screenX + 18}" y="${screenY + 36}" fill="#475569" font-size="16" font-weight="600">上传截图</text>`
-
+  if (frame.kind === 'device_artboard') {
+    const shellMetrics = measureBuiltinDeviceShellMetrics(preset)
+    const shouldRenderShell = frameDeviceConfig.shellMode !== 'none'
+    const frameScaleX = frameWidth / Math.max(1, preset.screenWidth)
+    const frameScaleY = frameHeight / Math.max(1, preset.screenHeight)
+    const outerRect: DesignRect = shouldRenderShell
+      ? {
+          x: frameX - shellMetrics.screenX * frameScaleX,
+          y: frameY - shellMetrics.screenY * frameScaleY,
+          width: shellMetrics.width * frameScaleX,
+          height: shellMetrics.height * frameScaleY,
+        }
+      : {
+          x: frameX,
+          y: frameY,
+          width: frameWidth,
+          height: frameHeight,
+        }
+    const shellMarkup = shouldRenderShell
+      ? renderDeviceSurfaceMarkup(composition, frame, preset, outerRect)
+      : `<defs>
+          <clipPath id="device-artboard-${sanitizeIdentifier(frame.id, 'frame')}">
+            <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${Math.max(12, Math.round(Math.min(frameWidth, frameHeight) * 0.04))}" ry="${Math.max(12, Math.round(Math.min(frameWidth, frameHeight) * 0.04))}" />
+          </clipPath>
+        </defs>
+        ${renderFrameContentIntoScreenMarkup(
+          composition,
+          frame,
+          {
+            x: frameX,
+            y: frameY,
+            width: frameWidth,
+            height: frameHeight,
+          },
+          `device-artboard-${sanitizeIdentifier(frame.id, 'frame')}`,
+          frameDeviceConfig.screenScaleMode,
+          frameDeviceConfig.showSafeArea,
+        )}`
     return `<g>
-      <defs>
-        <clipPath id="${clipId}">
-          <rect x="${screenX}" y="${screenY}" width="${screenWidth}" height="${screenHeight}" rx="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" ry="${Math.max(18, Math.round(preset.screenRadius * frameScale))}" />
-        </clipPath>
-      </defs>
-      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" />
       ${frameLabel}
-      ${textMarkup}
-      <g filter="drop-shadow(0 24px 64px rgba(2, 6, 23, 0.28))">
-        <rect x="${mockupX}" y="${mockupY}" width="${mockupWidth}" height="${mockupHeight}" rx="${Math.max(24, Math.round(preset.bezelRadius * frameScale))}" ry="${Math.max(24, Math.round(preset.bezelRadius * frameScale))}" fill="${escapeXml(preset.background)}" />
-        ${browserChrome}
-        ${imageMarkup}
-      </g>
+      ${shellMarkup}
     </g>`
   }
 
-  const elementMarkup = ensureArray(frame.elements).map(element => renderDesignElementMarkup(element, themeTokens)).join('')
+  if (frame.kind === 'device_mockup') {
+    const textMarkup = frameElements
+      .filter(element => element.type !== 'image')
+      .map(element => renderDesignElementMarkup(element, themeTokens, frameX, frameY))
+      .join('')
+    const shellMetrics = measureBuiltinDeviceShellMetrics(preset)
+    const frameScale = Math.min((frameWidth * 0.34) / shellMetrics.width, (frameHeight * 0.72) / shellMetrics.height)
+    const mockupWidth = Math.round(shellMetrics.width * frameScale)
+    const mockupHeight = Math.round(shellMetrics.height * frameScale)
+    const mockupX = frameX + frameWidth - mockupWidth - 72
+    const mockupY = frameY + Math.round((frameHeight - mockupHeight) / 2)
+    return `<g>
+      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" />
+      ${frameLabel}
+      ${textMarkup}
+      ${renderDeviceSurfaceMarkup(composition, frame, preset, {
+        x: mockupX,
+        y: mockupY,
+        width: mockupWidth,
+        height: mockupHeight,
+      })}
+    </g>`
+  }
+
+  if (frame.kind === 'freeform' || frame.kind === 'template') {
+    const clipId = `frame-freeform-clip-${sanitizeIdentifier(frame.id, 'frame')}`
+    const overlayMarkup = frameElements
+      .map(element => renderDesignElementMarkup(element, themeTokens, frameX, frameY))
+      .join('')
+    const overlayGroup = isDesignFrameClipContentEnabled(frame)
+      ? `<defs>
+          <clipPath id="${clipId}">
+            <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" />
+          </clipPath>
+        </defs>
+        <g clip-path="url(#${clipId})">${overlayMarkup}</g>`
+      : overlayMarkup
+    return `<g>
+      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" stroke="${frame.kind === 'freeform' ? '#334155' : '#cbd5e1'}" />
+      ${frameLabel}
+      ${overlayGroup}
+    </g>`
+  }
+
+  const elementMarkup = frameElements
+    .map(element => renderDesignElementMarkup(element, themeTokens, frameX, frameY))
+    .join('')
   return `<g>
     <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" />
     ${frameLabel}
@@ -1753,8 +3526,22 @@ function parseMermaidDiagramTypeHint(line: string): GraphSourceModel['diagramTyp
   return match[1].toLowerCase() as GraphSourceModel['diagramType']
 }
 
+function parseMermaidGroupHint(line: string): GraphSourceGroup | null {
+  const match = normalizeString(line).match(/^%%\s*group\s*:\s*(\{.+\})\s*$/i)
+  if (!match?.[1])
+    return null
+
+  try {
+    return normalizeGraphSourceGroup(JSON.parse(match[1]), 0)
+  }
+  catch {
+    return null
+  }
+}
+
 export function importFromMermaid(sourceText: string): SceneDocument {
   const graphNodes = new Map<string, GraphSourceNode>()
+  const graphGroups = new Map<string, GraphSourceGroup>()
   const graphEdges: GraphSourceEdge[] = []
   let diagramType: GraphSourceModel['diagramType'] = 'flowchart'
   let hasDiagramTypeHint = false
@@ -1768,6 +3555,12 @@ export function importFromMermaid(sourceText: string): SceneDocument {
     if (hintedDiagramType) {
       diagramType = hintedDiagramType
       hasDiagramTypeHint = true
+      continue
+    }
+
+    const hintedGroup = parseMermaidGroupHint(rawLine)
+    if (hintedGroup) {
+      graphGroups.set(hintedGroup.id, hintedGroup)
       continue
     }
 
@@ -1816,12 +3609,30 @@ export function importFromMermaid(sourceText: string): SceneDocument {
     graphNodes.set(node.id, node)
   }
 
+  const parentGroupByNodeId = new Map<string, string>()
+  for (const group of graphGroups.values()) {
+    for (const childNodeId of group.childNodeIds || []) {
+      if (!parentGroupByNodeId.has(childNodeId))
+        parentGroupByNodeId.set(childNodeId, group.id)
+    }
+  }
+
+  const normalizedGraphNodes = [...graphNodes.values()].map((node) => {
+    const parentGroupId = parentGroupByNodeId.get(node.id)
+    if (!parentGroupId)
+      return node
+    return {
+      ...node,
+      parentId: node.parentId || parentGroupId,
+    }
+  })
+
   const sourceModel: GraphSourceModel = {
     kind: 'graph',
     diagramType,
-    nodes: [...graphNodes.values()],
+    nodes: normalizedGraphNodes,
     edges: graphEdges,
-    groups: [],
+    groups: [...graphGroups.values()],
     sourceText: normalizeString(sourceText),
     metadata: {},
   }
@@ -2529,11 +4340,11 @@ function resolveCompositionDocumentState(
   }
 }
 
-function deriveLegacySlotsFromFrame(frame: DesignFrameModel | undefined): Record<string, unknown> {
+function deriveLegacySlotsFromFrame(composition: CompositionModel, frame: DesignFrameModel | undefined): Record<string, unknown> {
   if (!frame)
     return {}
 
-  const elements = ensureArray(frame.elements)
+  const elements = resolveCompositionElementsForFrame(composition, frame.id)
   const title = elements.find(element => element.id === 'title') || elements.find(element => element.type === 'text')
   const subtitle = elements.find(element => element.id === 'subtitle') || elements.find(element => element.type === 'caption')
   const badge = elements.find(element => element.id === 'badge') || elements.find(element => element.type === 'badge')
@@ -2592,13 +4403,26 @@ function syncCompositionFrameIds(composition: CompositionModel): CompositionMode
   const currentPageId = normalizedPages.some(page => page.id === normalizeString(composition.currentPageId))
     ? normalizeString(composition.currentPageId)
     : normalizedPages[0]?.id || DEFAULT_COMPOSITION_PAGE_ID
+  const frameIdSet = new Set(frames.map(frame => frame.id))
+  const elements = ensureArray(composition.elements).map((element, index) => {
+    const normalizedFrameId = normalizeString(element.frameId)
+    const frame = normalizedFrameId ? frames.find(item => item.id === normalizedFrameId) : null
+    const pageId = frame?.pageId || (pageIds.has(normalizeString(element.pageId)) ? normalizeString(element.pageId) : fallbackPageId)
+    return createDesignElement({
+      ...element,
+      pageId,
+      frameId: normalizedFrameId && frameIdSet.has(normalizedFrameId) ? normalizedFrameId : undefined,
+      zIndex: toFiniteNumber(element.zIndex, index),
+    }, element.id || `element-${index + 1}`)
+  })
 
-  return {
+  return syncCompositionFrameLegacyElements({
     ...composition,
     pages: normalizedPages,
     currentPageId,
     frames,
-  }
+    elements,
+  })
 }
 
 function finalizeCompositionSceneDocument(base: SceneDocument, composition: CompositionModel): SceneDocument {
@@ -2613,7 +4437,7 @@ function finalizeCompositionSceneDocument(base: SceneDocument, composition: Comp
     slots: preferredFrame
       ? {
           ...normalizeRecord(syncedComposition.slots),
-          ...deriveLegacySlotsFromFrame(preferredFrame),
+          ...deriveLegacySlotsFromFrame(syncedComposition, preferredFrame),
         }
       : normalizeRecord(syncedComposition.slots),
     themeTokens: normalizeThemeTokens(
@@ -2635,6 +4459,8 @@ function finalizeCompositionSceneDocument(base: SceneDocument, composition: Comp
 function resolveDesignFrameDefaultName(kind: DesignFrameKind, index: number): string {
   if (kind === 'diagram')
     return `图表 Frame ${index}`
+  if (kind === 'device_artboard')
+    return `设备画板 ${index}`
   if (kind === 'device_mockup')
     return `设备 Frame ${index}`
   if (kind === 'template')
@@ -2642,11 +4468,22 @@ function resolveDesignFrameDefaultName(kind: DesignFrameKind, index: number): st
   return `自由 Frame ${index}`
 }
 
-function resolveDefaultFrameSize(kind: DesignFrameKind, aspectRatio = '16:9'): { width: number, height: number } {
+function resolveDefaultFrameSize(
+  kind: DesignFrameKind,
+  aspectRatio = '16:9',
+  deviceFramePresetKey = '',
+): { width: number, height: number } {
   if (kind === 'diagram')
     return { width: 1080, height: 720 }
   if (kind === 'freeform')
     return { width: 960, height: 640 }
+  if (kind === 'device_artboard') {
+    const preset = resolveDeviceFramePreset(deviceFramePresetKey)
+    return {
+      width: preset.screenWidth,
+      height: preset.screenHeight,
+    }
+  }
 
   const size = resolveAspectRatioSize(aspectRatio)
   return {
@@ -2669,14 +4506,25 @@ function createDesignFrameFromInput(
 ): DesignFrameModel {
   const pageId = sanitizeIdentifier(input.pageId, fallbackPageId)
   const kind = (normalizeString(input.kind) as DesignFrameKind) || 'freeform'
+  const frameId = normalizeString(input.id) || `frame-${Date.now()}`
   const pageFrameCount = ensureArray(composition.frames).filter(frame => normalizeString(frame.pageId) === pageId).length
   const frameIndex = pageFrameCount + 1
   const aspectRatio = normalizeString(input.aspectRatio) || composition.aspectRatio || '16:9'
-  const defaultSize = resolveDefaultFrameSize(kind, aspectRatio)
-  const themeTokens = {
+  const deviceFramePresetKey = normalizeString(input.deviceFramePresetKey) || composition.deviceFramePresetKey || 'iphone-16-pro'
+  const defaultSize = resolveDefaultFrameSize(kind, aspectRatio, deviceFramePresetKey)
+  const themeTokensBase = {
     ...normalizeThemeTokens(composition.themeTokens, defaultCompositionThemeTokens()),
     ...normalizeThemeTokens(input.themeTokens),
   }
+  const themeTokens = kind === 'device_artboard'
+    ? {
+        ...themeTokensBase,
+        background: normalizeString(themeTokensBase.background) || '#ffffff',
+        surface: normalizeString(themeTokensBase.surface) || '#ffffff',
+        text: normalizeString(themeTokensBase.text) || '#0f172a',
+        muted: normalizeString(themeTokensBase.muted) || '#64748b',
+      }
+    : themeTokensBase
   const x = toFiniteNumber(input.x, 120 + pageFrameCount * 56)
   const y = toFiniteNumber(input.y, 120 + pageFrameCount * 48)
   const slots = {
@@ -2689,12 +4537,12 @@ function createDesignFrameFromInput(
 
   if (kind === 'template' || kind === 'device_mockup') {
     const legacyFrame = createLegacyCompositionFrame({
-      id: normalizeString(input.id) || `frame-${Date.now()}`,
+      id: frameId,
       pageId,
       name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
       kind,
       templateKey: normalizeString(input.templateKey) || composition.templateKey,
-      deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || composition.deviceFramePresetKey,
+      deviceFramePresetKey,
       aspectRatio,
       slots,
       themeTokens,
@@ -2716,6 +4564,34 @@ function createDesignFrameFromInput(
     }, frameIndex - 1, pageId)
   }
 
+  if (kind === 'device_artboard') {
+    const hasExplicitElements = input.elements !== undefined
+    const defaultElements = hasExplicitElements
+      ? ensureArray(input.elements).map((element, index) => createDesignElement({
+          ...element,
+          pageId: normalizeString(element.pageId) || pageId,
+          frameId,
+          zIndex: toFiniteNumber(element.zIndex, index),
+        }, `${frameId}-element-${index + 1}`))
+      : []
+
+    return normalizeDesignFrameModel({
+      id: frameId,
+      pageId,
+      name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
+      kind,
+      x,
+      y,
+      width: toPositiveNumber(input.width, defaultSize.width),
+      height: toPositiveNumber(input.height, defaultSize.height),
+      locked: Boolean(input.locked),
+      deviceFramePresetKey,
+      elements: defaultElements,
+      themeTokens,
+      metadata: normalizeRecord(input.metadata),
+    }, frameIndex - 1, pageId)
+  }
+
   if (kind === 'diagram') {
     const embeddedScene = input.embeddedScene
       ? relayoutSceneDocument(sceneDocumentFromUnknown(input.embeddedScene, {
@@ -2729,7 +4605,7 @@ function createDesignFrameFromInput(
         }))
 
     return normalizeDesignFrameModel({
-      id: normalizeString(input.id) || `frame-${Date.now()}`,
+      id: frameId,
       pageId,
       name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
       kind,
@@ -2745,55 +4621,18 @@ function createDesignFrameFromInput(
     }, frameIndex - 1, pageId)
   }
 
-  const defaultElements = ensureArray(input.elements).length > 0
-    ? ensureArray(input.elements)
-    : [
-        createDesignElement({
-          id: 'title',
-          type: 'text',
-          x: 56,
-          y: 64,
-          width: 520,
-          height: 80,
-          text: normalizeString(input.title) || '新建设计 Frame',
-          style: {
-            fontSize: 38,
-            fontWeight: 700,
-            color: 'text',
-          },
-        }, 'title'),
-        createDesignElement({
-          id: 'subtitle',
-          type: 'caption',
-          x: 56,
-          y: 132,
-          width: 520,
-          height: 64,
-          text: normalizeString(input.subtitle) || '在右侧属性面板继续编辑文字、图片和形状。',
-          style: {
-            fontSize: 20,
-            fontWeight: 500,
-            color: 'muted',
-          },
-        }, 'subtitle'),
-        createDesignElement({
-          id: 'panel',
-          type: 'shape',
-          x: 560,
-          y: 92,
-          width: 280,
-          height: 280,
-          style: {
-            fill: 'rgba(148, 163, 184, 0.18)',
-          },
-          metadata: {
-            shapeKind: 'rect',
-          },
-        }, 'panel'),
-      ]
+  const hasExplicitElements = input.elements !== undefined
+  const defaultElements = hasExplicitElements
+    ? ensureArray(input.elements).map((element, index) => createDesignElement({
+        ...element,
+        pageId: normalizeString(element.pageId) || pageId,
+        frameId,
+        zIndex: toFiniteNumber(element.zIndex, index),
+      }, `${frameId}-element-${index + 1}`))
+    : []
 
   return normalizeDesignFrameModel({
-    id: normalizeString(input.id) || `frame-${Date.now()}`,
+    id: frameId,
     pageId,
     name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
     kind: 'freeform',
@@ -3310,6 +5149,7 @@ export function buildDeviceMockupSceneDocument(input: {
       frameIds: [frame.id],
     }],
     frames: [frame],
+    elements: ensureArray(frame.elements),
     slots,
     themeTokens,
     aspectRatio: normalizeString(input.aspectRatio) || composition.aspectRatio,
@@ -3405,6 +5245,7 @@ export function removeDesignPageFromSceneDocument(
     ...composition,
     pages: nextPages,
     frames: nextFrames,
+    elements: ensureArray(composition.elements).filter(element => normalizeString(element.pageId) !== normalizeString(pageId)),
     currentPageId: nextCurrentPageId,
   })
 }
@@ -3447,6 +5288,7 @@ export function appendDesignFrameToSceneDocument(
     ...composition,
     currentPageId: pageId,
     frames: [...ensureArray(composition.frames), frame],
+    elements: [...ensureArray(composition.elements), ...ensureArray(frame.elements)],
   })
 }
 
@@ -3494,11 +5336,22 @@ export function updateDesignFrameInSceneDocument(
     ...composition,
     frames: framesWithoutTarget,
   }, pageId)
+  const nextElements = [
+    ...ensureArray(composition.elements).filter(element => normalizeString(element.frameId) !== normalizeString(frameId)),
+    ...ensureArray(patch.elements !== undefined ? nextFrame.elements : resolveCompositionElementsForFrame(composition, frameId))
+      .map((element, index) => createDesignElement({
+        ...element,
+        pageId,
+        frameId: nextFrame.id,
+        zIndex: toFiniteNumber(element.zIndex, index),
+      }, element.id || `${nextFrame.id}-element-${index + 1}`)),
+  ]
 
   return finalizeCompositionSceneDocument(base, {
     ...composition,
     currentPageId: pageId,
     frames: [...framesWithoutTarget, nextFrame],
+    elements: nextElements,
   })
 }
 
@@ -3510,6 +5363,160 @@ export function removeDesignFrameFromSceneDocument(
   return finalizeCompositionSceneDocument(base, {
     ...composition,
     frames: ensureArray(composition.frames).filter(frame => normalizeString(frame.id) !== normalizeString(frameId)),
+    elements: ensureArray(composition.elements).filter(element => normalizeString(element.frameId) !== normalizeString(frameId)),
+  })
+}
+
+export function appendDesignElementToSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  input: Partial<DesignElementModel>,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const pageId = ensureArray(composition.pages).some(page => page.id === normalizeString(input.pageId))
+    ? normalizeString(input.pageId)
+    : resolveCompositionCurrentPage(composition).id
+  const requestedFrameId = normalizeString(input.frameId)
+  const targetFrame = requestedFrameId
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === requestedFrameId) || null
+    : null
+  const frameId = canDesignFrameContainElements(targetFrame) ? requestedFrameId : undefined
+  const siblingElements = ensureArray(composition.elements).filter((element) => {
+    return normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(frameId)
+      && normalizeString(element.parentId) === normalizeString(input.parentId)
+  })
+  const nextElement = createDesignElement({
+    ...input,
+    pageId,
+    frameId,
+    zIndex: toFiniteNumber(input.zIndex, siblingElements.length),
+    metadata: {
+      ...normalizeRecord(input.metadata),
+      containerRole: frameId ? 'frame_child' : 'page_root',
+    },
+  }, normalizeString(input.id) || `element-${Date.now()}`)
+  const unaffected = ensureArray(composition.elements).filter((element) => {
+    return !(normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(frameId)
+      && normalizeString(element.parentId) === normalizeString(input.parentId))
+  })
+  const normalizedContainerElements = rewriteDesignElementZIndices([...siblingElements, nextElement])
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: pageId,
+    elements: [...unaffected, ...normalizedContainerElements],
+  })
+}
+
+export function updateDesignElementInSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  elementId: string,
+  patch: Partial<DesignElementModel>,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const elements = ensureArray(composition.elements)
+  const target = elements.find(element => normalizeString(element.id) === normalizeString(elementId))
+  if (!target)
+    return finalizeCompositionSceneDocument(base, composition)
+  const pageId = ensureArray(composition.pages).some(page => page.id === normalizeString(patch.pageId))
+    ? normalizeString(patch.pageId)
+    : target.pageId
+  const requestedFrameId = patch.frameId !== undefined ? normalizeString(patch.frameId) : normalizeString(target.frameId)
+  const targetFrame = requestedFrameId
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === requestedFrameId) || null
+    : null
+  const frameId = canDesignFrameContainElements(targetFrame) ? requestedFrameId : undefined
+  const parentId = patch.parentId !== undefined ? normalizeString(patch.parentId) || undefined : target.parentId
+  const sameContainer = normalizeString(target.pageId) === pageId
+    && normalizeString(target.frameId) === normalizeString(frameId)
+    && normalizeString(target.parentId) === normalizeString(parentId)
+  const updatedElement = createDesignElement({
+    ...target,
+    ...patch,
+    id: target.id,
+    pageId,
+    frameId,
+    parentId,
+    metadata: {
+      ...normalizeRecord(target.metadata),
+      ...normalizeRecord(patch.metadata),
+      containerRole: frameId ? 'frame_child' : 'page_root',
+    },
+  }, target.id)
+  const desiredZIndex = Math.max(0, Math.trunc(toFiniteNumber(
+    patch.zIndex,
+    sameContainer ? target.zIndex : ensureArray(composition.elements).length,
+  )))
+  const unaffectedElements = elements.filter((element) => {
+    if (normalizeString(element.id) === normalizeString(elementId))
+      return false
+    const isSourceSibling = normalizeString(element.pageId) === normalizeString(target.pageId)
+      && normalizeString(element.frameId) === normalizeString(target.frameId)
+      && normalizeString(element.parentId) === normalizeString(target.parentId)
+    const isTargetSibling = normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(frameId)
+      && normalizeString(element.parentId) === normalizeString(parentId)
+    return !isSourceSibling && !isTargetSibling
+  })
+  const targetSiblings = elements.filter((element) => {
+    if (normalizeString(element.id) === normalizeString(elementId))
+      return false
+    return normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(frameId)
+      && normalizeString(element.parentId) === normalizeString(parentId)
+  })
+  const normalizedTargetSiblings = rewriteDesignElementZIndices(targetSiblings)
+  const insertIndex = Math.min(desiredZIndex, normalizedTargetSiblings.length)
+  const nextTargetContainerElements = rewriteDesignElementZIndices([
+    ...normalizedTargetSiblings.slice(0, insertIndex),
+    {
+      ...updatedElement,
+      zIndex: insertIndex,
+    },
+    ...normalizedTargetSiblings.slice(insertIndex),
+  ])
+  const sourceContainerElements = sameContainer
+    ? []
+    : rewriteDesignElementZIndices(elements.filter((element) => {
+        if (normalizeString(element.id) === normalizeString(elementId))
+          return false
+        return normalizeString(element.pageId) === normalizeString(target.pageId)
+          && normalizeString(element.frameId) === normalizeString(target.frameId)
+          && normalizeString(element.parentId) === normalizeString(target.parentId)
+      }))
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: pageId,
+    elements: [
+      ...unaffectedElements,
+      ...sourceContainerElements,
+      ...nextTargetContainerElements,
+    ],
+  })
+}
+
+export function removeDesignElementFromSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  elementId: string,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const target = ensureArray(composition.elements).find(element => normalizeString(element.id) === normalizeString(elementId))
+  if (!target)
+    return finalizeCompositionSceneDocument(base, composition)
+  const remainingElements = ensureArray(composition.elements).filter(element => normalizeString(element.id) !== normalizeString(elementId))
+  const sourceContainerElements = rewriteDesignElementZIndices(remainingElements.filter((element) => {
+    return normalizeString(element.pageId) === normalizeString(target.pageId)
+      && normalizeString(element.frameId) === normalizeString(target.frameId)
+      && normalizeString(element.parentId) === normalizeString(target.parentId)
+  }))
+  const unaffected = remainingElements.filter((element) => {
+    return !(normalizeString(element.pageId) === normalizeString(target.pageId)
+      && normalizeString(element.frameId) === normalizeString(target.frameId)
+      && normalizeString(element.parentId) === normalizeString(target.parentId))
+  })
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    elements: [...unaffected, ...sourceContainerElements],
   })
 }
 
@@ -3549,18 +5556,17 @@ export function renderCompositionAssetToSvg(
   const singleFrame = ensureArray(pageFrames).find(frame => normalizeString(frame.id) === normalizeString(options.frameId)) || null
   const exportFrames = singleFrame ? [singleFrame] : pageFrames
   const padding = singleFrame ? 0 : Math.max(48, Math.round(toFiniteNumber(options.padding, 80)))
-  const minX = Math.min(...exportFrames.map(frame => frame.x))
-  const minY = Math.min(...exportFrames.map(frame => frame.y))
-  const maxX = Math.max(...exportFrames.map(frame => frame.x + frame.width))
-  const maxY = Math.max(...exportFrames.map(frame => frame.y + frame.height))
+  const exportBounds = singleFrame
+    ? resolveSingleFrameExportBounds(composition, singleFrame)
+    : exportFrames.map(frame => resolveFrameExportRect(composition, frame)).reduce((bounds, frameRect) => resolveRectUnion(bounds, frameRect))
   const width = singleFrame
-    ? Math.round(singleFrame.width)
-    : Math.max(DEFAULT_ARTBOARD_WIDTH, Math.round(maxX - minX + padding * 2))
+    ? Math.round(exportBounds.width)
+    : Math.max(DEFAULT_ARTBOARD_WIDTH, Math.round(exportBounds.width + padding * 2))
   const height = singleFrame
-    ? Math.round(singleFrame.height)
-    : Math.max(DEFAULT_ARTBOARD_HEIGHT, Math.round(maxY - minY + padding * 2))
-  const offsetX = singleFrame ? -singleFrame.x : padding - minX
-  const offsetY = singleFrame ? -singleFrame.y : padding - minY
+    ? Math.round(exportBounds.height)
+    : Math.max(DEFAULT_ARTBOARD_HEIGHT, Math.round(exportBounds.height + padding * 2))
+  const offsetX = singleFrame ? -exportBounds.x : padding - exportBounds.x
+  const offsetY = singleFrame ? -exportBounds.y : padding - exportBounds.y
   const themeTokens = singleFrame
     ? resolveFrameThemeTokens(composition, singleFrame)
     : normalizeThemeTokens(composition.themeTokens, defaultCompositionModel(composition.templateKey).themeTokens)
@@ -3576,13 +5582,24 @@ export function renderCompositionAssetToSvg(
     || composition.deviceFramePresetKey,
   ) || 'iphone-16-pro'
   const gradientId = sanitizeIdentifier(`${page.id}-${singleFrame?.id || 'page'}-bg`, 'composition-bg')
+  const pageClipId = sanitizeIdentifier(`${page.id}-page-clip`, 'page-clip')
   const label = singleFrame ? singleFrame.name : `${page.name} · ${exportFrames.length} Frame`
+  const pageElements = singleFrame
+    ? resolveFrameVisiblePageOverlayElements(composition, singleFrame)
+    : resolveDisplayCompositionElementsForPage(composition, page.id)
+  const pageElementMarkup = pageElements
+    .map(element => renderDesignElementMarkup(element, themeTokens, offsetX, offsetY))
+    .join('')
   const frameMarkup = exportFrames.map(frame => renderDesignFrameMarkup(frame, composition, offsetX, offsetY)).join('')
+  const shouldClipPage = !singleFrame && isDesignPageClipContentEnabled(page)
+  const clippedMarkup = shouldClipPage
+    ? `<defs><clipPath id="${pageClipId}"><rect x="0" y="0" width="${width}" height="${height}" rx="24" ry="24" /></clipPath></defs><g clip-path="url(#${pageClipId})">${pageElementMarkup}${frameMarkup}</g>`
+    : `${pageElementMarkup}${frameMarkup}`
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" data-template-key="${escapeXml(composition.templateKey)}" data-device-frame="${escapeXml(deviceFrameKey)}" data-page-id="${escapeXml(page.id)}"${singleFrame ? ` data-frame-id="${escapeXml(singleFrame.id)}"` : ''}>
   ${renderCompositionBackdrop(width, height, background, accent, gradientId)}
-  ${frameMarkup}
+  ${clippedMarkup}
   <text x="${singleFrame ? 24 : 40}" y="${height - 28}" fill="${escapeXml(themeTokens.muted || '#94a3b8')}" font-size="${singleFrame ? 14 : 18}" font-weight="500">${escapeXml(label)}</text>
 </svg>`.trim()
 }

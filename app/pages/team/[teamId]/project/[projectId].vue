@@ -503,6 +503,9 @@ const {
 let topicBoardLoadRequestId = 0
 let topicBoardWriteRequestId = 0
 let projectResourcePreviewRequestId = 0
+let chatMessagesRequestId = 0
+let chatSessionsRequestId = 0
+let defenseSessionDetailRequestId = 0
 const {
   resources,
   recycleResources,
@@ -744,8 +747,33 @@ const headerAiCollapsed = computed(() => {
     : rightSidebarCollapsed.value
 })
 const workspaceBootstrapLoading = ref(false)
+const workspaceCriticalLoading = workspaceBootstrapLoading
+const workspaceBackgroundLoading = ref(false)
+const activeTabReady = ref(false)
 
 let workspaceBootstrapRequestId = 0
+const workspaceBootstrapStartedAt = ref(0)
+
+type WorkspaceBootstrapMark = 'bootstrap:start' | 'bootstrap:shell-ready' | 'bootstrap:active-tab-ready' | 'bootstrap:overlay-hidden' | 'bootstrap:background-complete'
+type WorkspaceBootstrapDeferredTaskId
+  = 'resource-library'
+    | 'resource-recycle'
+    | 'resource-shares'
+    | 'members'
+    | 'outline'
+    | 'settings'
+    | 'contest-detail'
+    | 'topic-boards'
+    | 'ai-changes'
+    | 'issues'
+    | 'meetings'
+    | 'chat-sessions'
+    | 'defense-personas'
+
+interface WorkspaceActiveTabLoadResult {
+  deferredTaskIds: Set<WorkspaceBootstrapDeferredTaskId>
+  draftHydrationResult: ProjectSettingsDraftHydrationResult | null
+}
 
 type WorkspaceEditableMenuAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll'
 
@@ -1521,6 +1549,35 @@ const activeProject = computed(() => {
 })
 
 const activeProjectId = computed(() => activeProject.value?.id || '')
+
+function beginWorkspaceBootstrapTrace(projectId: string, requestId: number): void {
+  workspaceBootstrapStartedAt.value = Date.now()
+  emitWorkspaceBootstrapTrace('bootstrap:start', projectId, requestId)
+}
+
+function isCurrentWorkspaceBootstrapRequest(projectId: string, requestId: number): boolean {
+  return workspaceBootstrapRequestId === requestId && activeProjectId.value === projectId
+}
+
+function emitWorkspaceBootstrapTrace(
+  mark: WorkspaceBootstrapMark,
+  projectId = String(activeProjectId.value || '').trim(),
+  requestId = workspaceBootstrapRequestId,
+  extra: Record<string, unknown> = {},
+): void {
+  if (!projectId || requestId <= 0 || workspaceBootstrapStartedAt.value <= 0)
+    return
+
+  const elapsedMs = Math.max(0, Date.now() - workspaceBootstrapStartedAt.value)
+  console.warn('[workspace-bootstrap]', {
+    mark,
+    projectId,
+    requestId,
+    elapsedMs,
+    ...extra,
+  })
+}
+
 const currentCollabUserId = computed(() => String(me.value?.user.id || '').trim())
 const currentCollabUsername = computed(() => String(me.value?.user.username || '').trim())
 const collabSession = useCollabSession({
@@ -1639,11 +1696,6 @@ const {
   currentUserAvatarUrl: computed(() => me.value?.user.avatarUrl || null),
   onStatusLine: (message) => {
     statusLine.value = message
-  },
-  onOpenCommentsPanel: () => {
-    rightSidebarView.value = 'comments'
-    if (rightSidebarCollapsed.value)
-      expandRightSidebar()
   },
   onScrollToThread: threadId => workspaceMainPanelRef.value?.scrollToMarkdownCommentThread(threadId),
 })
@@ -2616,7 +2668,7 @@ const hasWorkspaceBootstrapData = computed(() => {
 })
 const workspacePreparing = computed(() => {
   return Boolean(activeProjectId.value)
-    && workspaceBootstrapLoading.value
+    && (workspaceCriticalLoading.value || workspaceBackgroundLoading.value)
     && !hasWorkspaceBootstrapData.value
 })
 const workspaceShellLoading = computed(() => {
@@ -2626,9 +2678,11 @@ const workspaceShellLoading = computed(() => {
     return true
   if (!highlightedProjectId.value)
     return false
-  if (workspaceBootstrapLoading.value)
+  if (workspaceCriticalLoading.value)
     return true
-  return !projectWorkspaceViewReady.value
+  if (!projectWorkspaceViewReady.value)
+    return true
+  return !activeTabReady.value
 })
 
 const collabSelectionStatus = ref({
@@ -4090,90 +4144,132 @@ async function loadContests() {
 }
 
 async function loadProjectResources() {
+  const projectId = String(activeProjectId.value || '').trim()
   resourcesLoading.value = true
-  if (!activeProjectId.value) {
+  if (!projectId) {
     resources.value = []
     resourcesLoading.value = false
     return
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources`))
-    resources.value = response.data
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${projectId}/resources`))
+    if (activeProjectId.value === projectId)
+      resources.value = response.data
   }
   catch {
-    resources.value = []
+    if (activeProjectId.value === projectId)
+      resources.value = []
   }
   finally {
-    resourcesLoading.value = false
+    if (activeProjectId.value === projectId || !activeProjectId.value)
+      resourcesLoading.value = false
   }
 }
 
 async function loadProjectResourceLibrary() {
+  const projectId = String(activeProjectId.value || '').trim()
   resourceLibraryLoading.value = true
-  if (!activeProjectId.value) {
+  if (!projectId) {
     resourceLibrary.value = []
     resourceLibraryLoading.value = false
     return
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/library`))
-    resourceLibrary.value = response.data
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${projectId}/resources/library`))
+    if (activeProjectId.value === projectId)
+      resourceLibrary.value = response.data
   }
   catch {
-    resourceLibrary.value = []
+    if (activeProjectId.value === projectId)
+      resourceLibrary.value = []
   }
   finally {
-    resourceLibraryLoading.value = false
+    if (activeProjectId.value === projectId || !activeProjectId.value)
+      resourceLibraryLoading.value = false
   }
 }
 
 async function loadProjectRecycleResources() {
-  if (!activeProjectId.value) {
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!projectId) {
     recycleResources.value = []
     return
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${activeProjectId.value}/resources/recycle`))
-    recycleResources.value = response.data
+    const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${projectId}/resources/recycle`))
+    if (activeProjectId.value === projectId)
+      recycleResources.value = response.data
   }
   catch {
-    recycleResources.value = []
+    if (activeProjectId.value === projectId)
+      recycleResources.value = []
   }
 }
 
 async function loadProjectResourceShares() {
+  const projectId = String(activeProjectId.value || '').trim()
   projectResourceSharesLoading.value = true
-  if (!activeProjectId.value) {
+  if (!projectId) {
     projectResourceShares.value = []
     projectResourceSharesLoading.value = false
     return
   }
 
   try {
-    const response = await unsafeFetch<ApiResponse<ProjectResourceShare[]>>(endpoint(`/projects/${activeProjectId.value}/resources/shares`))
-    projectResourceShares.value = response.data.map(item => ({
-      ...item,
-      shareUrl: resolveProjectResourceShareUrl(String(item.shareUrl || '').trim()),
-    }))
+    const response = await unsafeFetch<ApiResponse<ProjectResourceShare[]>>(endpoint(`/projects/${projectId}/resources/shares`))
+    if (activeProjectId.value === projectId) {
+      projectResourceShares.value = response.data.map(item => ({
+        ...item,
+        shareUrl: resolveProjectResourceShareUrl(String(item.shareUrl || '').trim()),
+      }))
+    }
   }
   catch {
-    projectResourceShares.value = []
+    if (activeProjectId.value === projectId)
+      projectResourceShares.value = []
   }
   finally {
-    projectResourceSharesLoading.value = false
+    if (activeProjectId.value === projectId || !activeProjectId.value)
+      projectResourceSharesLoading.value = false
   }
 }
 
-async function refreshProjectResourceContext() {
-  await Promise.all([
-    loadProjectResources(),
-    loadProjectResourceLibrary(),
-    loadProjectRecycleResources(),
-    loadProjectResourceShares(),
-  ])
+async function refreshProjectCriticalResourceContext() {
+  await loadProjectResources()
+}
+
+async function refreshProjectDeferredResourceContext(options: {
+  includeLibrary?: boolean
+  includeRecycle?: boolean
+  includeShares?: boolean
+} = {}) {
+  const {
+    includeLibrary = true,
+    includeRecycle = true,
+    includeShares = true,
+  } = options
+  const tasks: Promise<unknown>[] = []
+
+  if (includeLibrary)
+    tasks.push(loadProjectResourceLibrary())
+  if (includeRecycle)
+    tasks.push(loadProjectRecycleResources())
+  if (includeShares)
+    tasks.push(loadProjectResourceShares())
+
+  await Promise.all(tasks)
+}
+
+async function refreshProjectResourceContext(options: {
+  includeLibrary?: boolean
+  includeRecycle?: boolean
+  includeShares?: boolean
+} = {}) {
+  await refreshProjectCriticalResourceContext()
+  await refreshProjectDeferredResourceContext(options)
 }
 
 function buildProjectOutlineContextPayload() {
@@ -5330,7 +5426,8 @@ async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<b
       },
     })
 
-    await refreshProjectResourceContext()
+    await refreshProjectCriticalResourceContext()
+    void refreshProjectDeferredResourceContext()
     await openProjectCollabResource(response.data.resource.id, response.data.snapshot || null, {
       openTab: options.openTab,
       surface: 'flow',
@@ -5364,7 +5461,8 @@ async function ensureDesignCanvas(options: OpenPreviewOptions = {}): Promise<boo
       },
     })
 
-    await refreshProjectResourceContext()
+    await refreshProjectCriticalResourceContext()
+    void refreshProjectDeferredResourceContext()
     await openProjectCollabResource(response.data.resource.id, response.data.snapshot || null, {
       openTab: options.openTab,
       surface: 'design',
@@ -6090,21 +6188,33 @@ async function handleMarkdownImageAction(payload: {
 
 async function loadChatMessages(sessionId: string) {
   const projectId = String(activeProjectId.value || '').trim()
-  if (!activeWorkspaceId.value || !projectId || !sessionId) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const mode = aiMode.value
+  const requestId = ++chatMessagesRequestId
+  if (!workspaceId || !projectId || !sessionId) {
     resetChatState()
     return
   }
 
   try {
     const data = await requestProjectApi<{ session: AiChatSession, messages: AiChatMessage[] }>(
-      endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions/${sessionId}/messages`),
+      endpoint(`/teams/${workspaceId}/chat/sessions/${sessionId}/messages`),
       {
         projectId,
-        mode: aiMode.value,
+        mode,
         limit: 200,
       },
       '会话消息加载失败。',
     )
+    if (
+      requestId !== chatMessagesRequestId
+      || activeProjectId.value !== projectId
+      || String(activeWorkspaceId.value || '').trim() !== workspaceId
+      || aiMode.value !== mode
+      || activeChatSessionId.value !== sessionId
+    ) {
+      return
+    }
 
     const restoredMessages = data.messages.map(item => ({
       role: item.role,
@@ -6120,11 +6230,19 @@ async function loadChatMessages(sessionId: string) {
     defenseTurnCount.value = 0
     chatMessages.value = restoredMessages
 
-    if (aiMode.value === 'defense')
+    if (mode === 'defense')
       await loadDefenseSessionDetail(sessionId)
   }
   catch {
-    resetChatState()
+    if (
+      requestId === chatMessagesRequestId
+      && activeProjectId.value === projectId
+      && String(activeWorkspaceId.value || '').trim() === workspaceId
+      && aiMode.value === mode
+      && activeChatSessionId.value === sessionId
+    ) {
+      resetChatState()
+    }
   }
 }
 
@@ -6140,18 +6258,22 @@ async function loadDefensePersonas() {
     const response = await unsafeFetch<ApiResponse<{ items: AiDefensePersona[] }>>(
       endpoint(`/projects/${projectId}/defense/personas`),
     )
-    defensePersonas.value = response.data.items
+    if (activeProjectId.value === projectId)
+      defensePersonas.value = response.data.items
   }
   catch {
-    defensePersonas.value = []
+    if (activeProjectId.value === projectId)
+      defensePersonas.value = []
   }
   finally {
-    defensePersonasLoading.value = false
+    if (activeProjectId.value === projectId || !activeProjectId.value)
+      defensePersonasLoading.value = false
   }
 }
 
 async function loadDefenseSessionDetail(sessionId: string) {
   const projectId = String(activeProjectId.value || '').trim()
+  const requestId = ++defenseSessionDetailRequestId
   if (!projectId || !sessionId) {
     defenseRounds.value = []
     defenseSummary.value = null
@@ -6164,6 +6286,13 @@ async function loadDefenseSessionDetail(sessionId: string) {
     const response = await unsafeFetch<ApiResponse<AiDefenseSessionDetail>>(
       endpoint(`/projects/${projectId}/defense/sessions/${sessionId}`),
     )
+    if (
+      requestId !== defenseSessionDetailRequestId
+      || activeProjectId.value !== projectId
+      || activeChatSessionId.value !== sessionId
+    ) {
+      return
+    }
     const detail = response.data
     defensePersonas.value = detail.personas || []
     defenseSummary.value = detail.latestSummary || null
@@ -6190,11 +6319,17 @@ async function loadDefenseSessionDetail(sessionId: string) {
     }
   }
   catch {
-    defenseRounds.value = []
-    defenseScorecard.value = null
-    defenseSummary.value = null
-    defenseStage.value = undefined
-    defenseTurnCount.value = 0
+    if (
+      requestId === defenseSessionDetailRequestId
+      && activeProjectId.value === projectId
+      && activeChatSessionId.value === sessionId
+    ) {
+      defenseRounds.value = []
+      defenseScorecard.value = null
+      defenseSummary.value = null
+      defenseStage.value = undefined
+      defenseTurnCount.value = 0
+    }
   }
 }
 
@@ -6404,7 +6539,10 @@ async function loadChatSessions(options: {
   fallbackToFirst?: boolean
 } = {}) {
   const projectId = String(activeProjectId.value || '').trim()
-  if (!activeWorkspaceId.value || !projectId) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const mode = aiMode.value
+  const requestId = ++chatSessionsRequestId
+  if (!workspaceId || !projectId) {
     chatSessions.value = []
     activeChatSessionId.value = ''
     resetChatState()
@@ -6414,14 +6552,22 @@ async function loadChatSessions(options: {
   chatSessionsLoading.value = true
   try {
     const data = await requestProjectApi<AiChatSession[]>(
-      endpoint(`/teams/${activeWorkspaceId.value}/chat/sessions`),
+      endpoint(`/teams/${workspaceId}/chat/sessions`),
       {
         projectId,
-        mode: aiMode.value,
+        mode,
         limit: 30,
       },
       '会话列表加载失败。',
     )
+    if (
+      requestId !== chatSessionsRequestId
+      || activeProjectId.value !== projectId
+      || String(activeWorkspaceId.value || '').trim() !== workspaceId
+      || aiMode.value !== mode
+    ) {
+      return
+    }
     chatSessions.value = data
 
     const preferredSessionId = normalizeString(options.preferredSessionId)
@@ -6456,12 +6602,20 @@ async function loadChatSessions(options: {
     await loadChatMessages(nextSession.id)
   }
   catch {
-    chatSessions.value = []
-    activeChatSessionId.value = ''
-    resetChatState()
+    if (
+      requestId === chatSessionsRequestId
+      && activeProjectId.value === projectId
+      && String(activeWorkspaceId.value || '').trim() === workspaceId
+      && aiMode.value === mode
+    ) {
+      chatSessions.value = []
+      activeChatSessionId.value = ''
+      resetChatState()
+    }
   }
   finally {
-    chatSessionsLoading.value = false
+    if (requestId === chatSessionsRequestId)
+      chatSessionsLoading.value = false
   }
 }
 
@@ -8069,13 +8223,23 @@ watch(activeProjectId, async (next, previous) => {
   topicBoardFetching.value = false
   topicBoardActioningCandidateId.value = ''
   projectWorkspaceViewReady.value = false
+  activeTabReady.value = false
   workspaceBootstrapLoading.value = Boolean(next)
+  workspaceBackgroundLoading.value = Boolean(next)
   closeProjectResourcePreview()
-  if (next)
+  if (next) {
     workspaceRealtime.subscribeProject(next)
-  await refreshProjectResourceContext()
+    beginWorkspaceBootstrapTrace(next, requestId)
+  }
   if (!next) {
     disposeCollabDocBinding(true)
+    resources.value = []
+    resourceLibrary.value = []
+    recycleResources.value = []
+    projectResourceShares.value = []
+    resourcesLoading.value = false
+    resourceLibraryLoading.value = false
+    projectResourceSharesLoading.value = false
     flowResourceId.value = ''
     designResourceId.value = ''
     projectOutlineSnapshot.value = null
@@ -8097,47 +8261,70 @@ watch(activeProjectId, async (next, previous) => {
     openMainTabs.value = []
     activeMainTabId.value = ''
     resetChatState()
+    activeTabReady.value = false
+    workspaceBackgroundLoading.value = false
     workspaceBootstrapLoading.value = false
+    workspaceBootstrapStartedAt.value = 0
     return
   }
+
   try {
     syncFallbackResourceRefreshTimer()
     resetProjectSettingsState(activeProject.value)
+    await refreshProjectCriticalResourceContext()
+    if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
+      return
+
     const restoredViewState = await hydrateProjectWorkspaceViewState(next)
+    if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
+      return
+
     const selectedContestIdFromState = String(restoredViewState.state.selectedContestId || '').trim()
-    const [
-      ,
-      ,
-      draftHydrationResult,
-    ] = await Promise.all([
-      loadWorkspaceMemberManagement(),
-      loadProjectOutline(),
-      loadProjectSettings(selectedContestIdFromState),
-      loadSelectedContestDetail(selectedContestIdFromState),
-      loadTopicBoards(),
-      loadAiChangeRequests(),
-      loadProjectIssues(),
-      loadProjectMeetings({
-        fallbackToFirst: false,
-        preferredMeetingId: restoredViewState.state.activeMeetingId,
-        hydrateSelectedDetail: false,
-      }),
-      loadChatSessions({
-        preferredSessionId: restoredViewState.state.activeChatSessionId,
-        autoCreate: false,
-        fallbackToFirst: !restoredViewState.state.activeChatSessionId,
-      }),
-      loadDefensePersonas(),
-    ])
-    const restoredPreviewResourceId = normalizeString(previewResourceId.value)
-    if (restoredPreviewResourceId && resources.value.some(item => item.id === restoredPreviewResourceId))
-      await openProjectResourcePreview(restoredPreviewResourceId, { openTab: false })
-    await resolveProjectDeviceRestore(next, restoredViewState, draftHydrationResult)
-    await consumeTopicBoardCreateSeed()
+    emitWorkspaceBootstrapTrace('bootstrap:shell-ready', next, requestId, {
+      activeTabId: normalizeString(activeMainTabId.value),
+    })
+
+    const activeTabLoadResult = await loadActiveWorkspaceCriticalTabData(
+      next,
+      restoredViewState,
+      selectedContestIdFromState,
+    )
+    if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
+      return
+
+    activeTabReady.value = true
+    emitWorkspaceBootstrapTrace('bootstrap:active-tab-ready', next, requestId, {
+      activeTabId: normalizeString(activeMainTabId.value),
+    })
+
+    if (activeTabLoadResult.draftHydrationResult)
+      await resolveProjectDeviceRestore(next, restoredViewState, activeTabLoadResult.draftHydrationResult)
+    if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
+      return
+
+    workspaceBootstrapLoading.value = false
+    await nextTick()
+    if (!workspaceShellLoading.value) {
+      emitWorkspaceBootstrapTrace('bootstrap:overlay-hidden', next, requestId, {
+        activeTabId: normalizeString(activeMainTabId.value),
+      })
+    }
+
+    void runWorkspaceBackgroundBootstrap(
+      next,
+      requestId,
+      restoredViewState,
+      selectedContestIdFromState,
+      activeTabLoadResult.deferredTaskIds,
+    )
   }
-  finally {
-    if (requestId === workspaceBootstrapRequestId && activeProjectId.value === next)
-      workspaceBootstrapLoading.value = false
+  catch (error) {
+    if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
+      return
+    activeTabReady.value = true
+    workspaceBackgroundLoading.value = false
+    workspaceBootstrapLoading.value = false
+    statusLine.value = resolveApiErrorMessage(error, '工作区加载失败，请稍后重试。')
   }
 })
 
@@ -8201,7 +8388,7 @@ watch(resources, (nextResources) => {
 
   if (projectWorkspaceViewReady.value)
     void syncProjectWorkspaceViewState()
-  if (activeMainTabId.value)
+  if (activeMainTabId.value && !workspaceCriticalLoading.value)
     void syncActiveMainTabCollabBinding(activeMainTabId.value)
 }, { deep: true })
 
@@ -8333,8 +8520,224 @@ async function syncActiveMainTabMeetingSelection(nextTabId = activeMainTabId.val
   ])
 }
 
+async function loadActiveWorkspaceCriticalTabData(
+  projectId: string,
+  restoredViewState: HydratedProjectWorkspaceViewStateResult,
+  selectedContestIdFromState: string,
+): Promise<WorkspaceActiveTabLoadResult> {
+  const tabId = normalizeString(activeMainTabId.value)
+  const result: WorkspaceActiveTabLoadResult = {
+    deferredTaskIds: new Set<WorkspaceBootstrapDeferredTaskId>(),
+    draftHydrationResult: null,
+  }
+
+  if (!projectId || !tabId || activeProjectId.value !== projectId || tabId === 'dashboard')
+    return result
+
+  if (tabId === 'members') {
+    result.deferredTaskIds.add('members')
+    await loadWorkspaceMemberManagement()
+    return result
+  }
+
+  if (tabId === 'settings') {
+    result.deferredTaskIds.add('settings')
+    result.deferredTaskIds.add('resource-shares')
+    const [draftHydrationResult] = await Promise.all([
+      loadProjectSettings(selectedContestIdFromState),
+      loadProjectResourceShares(),
+    ])
+    result.draftHydrationResult = draftHydrationResult
+    return result
+  }
+
+  if (tabId === 'meeting') {
+    result.deferredTaskIds.add('meetings')
+    await loadProjectMeetings({
+      fallbackToFirst: false,
+      preferredMeetingId: restoredViewState.state.activeMeetingId,
+      hydrateSelectedDetail: false,
+    })
+    return result
+  }
+
+  if (tabId.startsWith('meeting-create:')) {
+    result.deferredTaskIds.add('members')
+    result.deferredTaskIds.add('meetings')
+    await Promise.all([
+      loadWorkspaceMemberManagement(),
+      loadProjectMeetings({
+        fallbackToFirst: false,
+        preferredMeetingId: restoredViewState.state.activeMeetingId,
+        hydrateSelectedDetail: false,
+      }),
+    ])
+    return result
+  }
+
+  if (tabId.startsWith('meeting:')) {
+    result.deferredTaskIds.add('meetings')
+    await loadProjectMeetings({
+      fallbackToFirst: false,
+      preferredMeetingId: resolveMeetingIdFromTabId(tabId),
+      hydrateSelectedDetail: true,
+    })
+    return result
+  }
+
+  if (tabId === 'flow') {
+    const workflowResource = resources.value.find(item => isWorkflowCanvasResource(item)) || null
+    if (workflowResource && flowResourceId.value !== workflowResource.id)
+      flowResourceId.value = workflowResource.id
+    await syncActiveMainTabCollabBinding(tabId)
+    return result
+  }
+
+  if (tabId === 'design') {
+    const designResource = resources.value.find(item => isDesignCanvasResource(item)) || null
+    if (designResource && designResourceId.value !== designResource.id)
+      designResourceId.value = designResource.id
+    await syncActiveMainTabCollabBinding(tabId)
+    return result
+  }
+
+  if (tabId.startsWith('resource:')) {
+    const resourceId = tabId.slice('resource:'.length) || normalizeString(previewResourceId.value)
+    if (resourceId)
+      await openProjectResourcePreview(resourceId, { openTab: false })
+  }
+
+  return result
+}
+
+function buildWorkspaceBackgroundBootstrapTasks(
+  restoredViewState: HydratedProjectWorkspaceViewStateResult,
+  selectedContestIdFromState: string,
+  skippedTaskIds: Set<WorkspaceBootstrapDeferredTaskId>,
+) {
+  const tasks: Array<{
+    id: WorkspaceBootstrapDeferredTaskId
+    run: () => Promise<unknown>
+  }> = [
+    {
+      id: 'resource-library',
+      run: () => loadProjectResourceLibrary(),
+    },
+    {
+      id: 'resource-recycle',
+      run: () => loadProjectRecycleResources(),
+    },
+    {
+      id: 'resource-shares',
+      run: () => loadProjectResourceShares(),
+    },
+    {
+      id: 'members',
+      run: () => loadWorkspaceMemberManagement(),
+    },
+    {
+      id: 'outline',
+      run: () => loadProjectOutline(),
+    },
+    {
+      id: 'settings',
+      run: () => loadProjectSettings(selectedContestIdFromState),
+    },
+    {
+      id: 'contest-detail',
+      run: () => loadSelectedContestDetail(selectedContestIdFromState),
+    },
+    {
+      id: 'topic-boards',
+      run: () => loadTopicBoards(),
+    },
+    {
+      id: 'ai-changes',
+      run: () => loadAiChangeRequests(),
+    },
+    {
+      id: 'issues',
+      run: () => loadProjectIssues(),
+    },
+    {
+      id: 'meetings',
+      run: () => loadProjectMeetings({
+        fallbackToFirst: false,
+        preferredMeetingId: restoredViewState.state.activeMeetingId,
+        hydrateSelectedDetail: false,
+      }),
+    },
+    {
+      id: 'chat-sessions',
+      run: () => loadChatSessions({
+        preferredSessionId: restoredViewState.state.activeChatSessionId,
+        autoCreate: false,
+        fallbackToFirst: !restoredViewState.state.activeChatSessionId,
+      }),
+    },
+    {
+      id: 'defense-personas',
+      run: () => loadDefensePersonas(),
+    },
+  ]
+
+  return tasks.filter(task => !skippedTaskIds.has(task.id))
+}
+
+async function runWorkspaceBackgroundBootstrap(
+  projectId: string,
+  requestId: number,
+  restoredViewState: HydratedProjectWorkspaceViewStateResult,
+  selectedContestIdFromState: string,
+  skippedTaskIds: Set<WorkspaceBootstrapDeferredTaskId>,
+): Promise<void> {
+  const tasks = buildWorkspaceBackgroundBootstrapTasks(
+    restoredViewState,
+    selectedContestIdFromState,
+    skippedTaskIds,
+  )
+  let draftHydrationResult: ProjectSettingsDraftHydrationResult | null = null
+
+  if (tasks.length === 0) {
+    if (!isCurrentWorkspaceBootstrapRequest(projectId, requestId))
+      return
+    await consumeTopicBoardCreateSeed()
+    if (isCurrentWorkspaceBootstrapRequest(projectId, requestId)) {
+      workspaceBackgroundLoading.value = false
+      emitWorkspaceBootstrapTrace('bootstrap:background-complete', projectId, requestId)
+    }
+    return
+  }
+
+  try {
+    await Promise.allSettled(tasks.map(async (task) => {
+      const taskResult = await task.run()
+      if (task.id === 'settings')
+        draftHydrationResult = (taskResult || null) as ProjectSettingsDraftHydrationResult | null
+    }))
+
+    if (!isCurrentWorkspaceBootstrapRequest(projectId, requestId))
+      return
+
+    if (draftHydrationResult)
+      await resolveProjectDeviceRestore(projectId, restoredViewState, draftHydrationResult)
+    if (!isCurrentWorkspaceBootstrapRequest(projectId, requestId))
+      return
+
+    await consumeTopicBoardCreateSeed()
+    if (isCurrentWorkspaceBootstrapRequest(projectId, requestId))
+      emitWorkspaceBootstrapTrace('bootstrap:background-complete', projectId, requestId)
+  }
+  finally {
+    if (isCurrentWorkspaceBootstrapRequest(projectId, requestId))
+      workspaceBackgroundLoading.value = false
+  }
+}
+
 watch([activeProjectId, activeMainTabId], async ([projectId, nextTabId], [previousProjectId, previousTabId]) => {
   if (!projectId)
+    return
+  if (workspaceCriticalLoading.value)
     return
   if (projectId === previousProjectId && nextTabId === previousTabId)
     return
@@ -8343,6 +8746,8 @@ watch([activeProjectId, activeMainTabId], async ([projectId, nextTabId], [previo
 
 watch(activeMainTabId, async (next, previous) => {
   if (next === previous)
+    return
+  if (workspaceCriticalLoading.value)
     return
   await syncActiveMainTabCollabBinding(next)
 })

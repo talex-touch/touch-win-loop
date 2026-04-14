@@ -42,7 +42,7 @@ function normalizeCollabKind(rawKind: unknown): Extract<ResourceKind, 'markdown'
 
 function normalizeCollabPurpose(rawPurpose: unknown): CollabPurpose | null {
   const normalized = normalizeString(rawPurpose).toLowerCase()
-  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'design' || normalized === 'notes')
     return normalized
   return null
 }
@@ -59,8 +59,6 @@ export default defineEventHandler(async (event) => {
   const requestMetadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
     ? body.metadata
     : {}
-  const requestedFixedTab = normalizeString(requestMetadata.fixedTab).toLowerCase()
-  const requestedTemplateKey = normalizeString(body.templateKey || requestMetadata.templateKey)
 
   if (!projectId) {
     setResponseStatus(event, 400)
@@ -86,7 +84,7 @@ export default defineEventHandler(async (event) => {
 
   if (body.purpose !== undefined && !purpose) {
     setResponseStatus(event, 400)
-    return fail('purpose 仅支持 workflow / freeform / notes。', {
+    return fail('purpose 仅支持 workflow / freeform / design / notes。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -98,10 +96,10 @@ export default defineEventHandler(async (event) => {
   if (
     purpose
     && ((purpose === 'notes' && kind !== 'markdown')
-      || ((purpose === 'workflow' || purpose === 'freeform') && kind !== 'draw'))
+      || ((purpose === 'workflow' || purpose === 'freeform' || purpose === 'design') && kind !== 'draw'))
   ) {
     setResponseStatus(event, 400)
-    return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow 或 freeform。', {
+    return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow / freeform / design。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -134,12 +132,12 @@ export default defineEventHandler(async (event) => {
             actorUserId: user.id,
             title,
           })
-        : (kind === 'draw' && requestedFixedTab === 'design')
+        : purpose === 'design'
             ? await ensureProjectDesignCanvas(db, {
                 projectId,
                 actorUserId: user.id,
                 title,
-                templateKey: requestedTemplateKey,
+                templateKey: normalizeString(body.templateKey || requestMetadata.templateKey),
               })
         : await createProjectCollabResource(db, {
             projectId,
@@ -217,7 +215,7 @@ export default defineEventHandler(async (event) => {
 
     if (error instanceof Error && error.message === 'INVALID_COLLAB_PURPOSE') {
       setResponseStatus(event, 400)
-      return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow 或 freeform。', {
+      return fail('协作用途与资源形态不匹配。markdown 仅支持 notes，draw 仅支持 workflow / freeform / design。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

@@ -597,7 +597,7 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
   top: 0;
   bottom: 0;
   left: 100%;
-  width: min(420px, calc(100vw - 108px));
+  width: min(var(--workspace-left-panel-width, 304px), calc(100vw - 108px));
   border: 1px solid #dde6f3;
   border-left-color: #e7edf7;
   border-radius: 0 20px 20px 0;

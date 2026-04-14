@@ -1,6 +1,6 @@
 <script setup lang="ts">
+import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type {
-  CollabPurpose,
   Contest,
   ProjectIssue,
   ProjectIssueReport,
@@ -15,10 +15,25 @@ import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
 import {
+  COLLAB_DESIGN_RESOURCE_LABEL,
+  COLLAB_FREEFORM_RESOURCE_LABEL,
+  COLLAB_NOTES_RESOURCE_LABEL,
+} from '~~/shared/utils/collab-resource'
+import {
   isProjectUploadTaskSidebarVisible,
   resolveProjectUploadTaskStatusText,
   resolveProjectUploadTaskTone,
 } from '~/utils/project-upload'
+import {
+  canDuplicateResource,
+  hasDownloadableSource,
+  hasPreviewableSource,
+  isCollabResource,
+  resourceDisplayTitle,
+  resourceIcon,
+  resourceIconClass,
+  resourceSourceLabel,
+} from '~/utils/workspace-left-sidebar-helpers'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
 
@@ -165,7 +180,7 @@ const emit = defineEmits<{
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
-  'createCollabResource': [payload: { kind: 'markdown' | 'draw', parentResourceId?: string | null }]
+  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design', parentResourceId?: string | null }]
   'openDefenseMode': []
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
@@ -184,6 +199,7 @@ const emit = defineEmits<{
   'retryUploadTask': [sessionId: string]
   'cancelUploadTask': [sessionId: string]
   'rebindUploadTask': [sessionId: string]
+  requestContextMenu: [payload: ContextMenuRequest]
 }>()
 
 const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
@@ -286,6 +302,7 @@ const activeResourceId = ref('')
 const activeOutlineId = ref('')
 const pendingOutlineCommandId = ref('')
 const resourceActionOpenId = ref('')
+const projectResourceBatchMenuOpen = ref(false)
 const projectResourceAddMenuOpen = ref(false)
 const removeTargetResourceId = ref('')
 const removeResourceModalVisible = ref(false)
@@ -753,6 +770,7 @@ function issueSeverityClass(value: string): string {
 function switchModule(moduleId: string) {
   if (!isWorkspaceLeftModuleId(moduleId))
     return
+  projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
   activeModule.value = moduleId
 }
@@ -887,164 +905,6 @@ function metadataFileSize(resource: Resource): number {
   if (!Number.isFinite(fileSize) || fileSize <= 0)
     return 0
   return Math.max(0, Math.floor(fileSize))
-}
-
-function extractExtension(text: string): string {
-  const value = String(text || '').trim().toLowerCase()
-  const dotIndex = value.lastIndexOf('.')
-  if (dotIndex < 0 || dotIndex === value.length - 1)
-    return ''
-  return value.slice(dotIndex + 1)
-}
-
-function resolveResourceExtension(resource: Resource): string {
-  const fileName = metadataFileName(resource)
-  const title = String(resource.title || '').trim()
-  const sourceLink = String(resource.sourceLink || '').trim()
-  return extractExtension(fileName) || extractExtension(title) || extractExtension(sourceLink)
-}
-
-function normalizeResourceType(resource: Resource): string {
-  return String(resource.type || '').trim().toLowerCase()
-}
-
-function isCollabResource(resource: Resource): boolean {
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  const kind = String(resource.resourceKind || '').trim().toLowerCase()
-  return source === 'collab' || kind === 'markdown' || kind === 'draw'
-}
-
-function resolveCollabPurpose(resource: Resource | null | undefined): CollabPurpose | '' {
-  const normalized = String(resource?.collabPurpose || '').trim().toLowerCase()
-  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
-    return normalized
-  if (resource?.resourceKind === 'markdown')
-    return 'notes'
-  if (resource?.resourceKind === 'draw')
-    return 'freeform'
-  return ''
-}
-
-function resourceIcon(resource: Resource): string {
-  const kind = String(resource.resourceKind || '').trim().toLowerCase()
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  const purpose = resolveCollabPurpose(resource)
-  if (kind === 'draw' && purpose === 'workflow')
-    return 'flowsheet'
-  if (kind === 'draw')
-    return 'draw'
-  if (kind === 'markdown')
-    return 'edit_note'
-  if (source === 'collab')
-    return 'edit_note'
-
-  const extension = resolveResourceExtension(resource)
-  const mimeType = metadataMimeType(resource)
-  if (extension === 'pdf' || mimeType.includes('pdf'))
-    return 'picture_as_pdf'
-  if (extension === 'doc' || extension === 'docx')
-    return 'description'
-  if (extension === 'xls' || extension === 'xlsx' || extension === 'csv')
-    return 'table_chart'
-  if (extension === 'ppt' || extension === 'pptx')
-    return 'slideshow'
-  if (extension === 'md' || extension === 'markdown' || extension === 'txt' || extension === 'json')
-    return 'article'
-  if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'webp')
-    return 'image'
-
-  const type = normalizeResourceType(resource)
-  if (type.includes('pdf'))
-    return 'picture_as_pdf'
-  if (type.includes('tab') || type.includes('excel') || type.includes('sheet'))
-    return 'table_chart'
-  if (type.includes('doc') || type.includes('md') || type.includes('markdown'))
-    return 'article'
-  return 'draft'
-}
-
-function resourceIconClass(resource: Resource): string {
-  const kind = String(resource.resourceKind || '').trim().toLowerCase()
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  if (kind === 'draw' || kind === 'markdown' || source === 'collab')
-    return 'workspace-icon--collab'
-
-  const extension = resolveResourceExtension(resource)
-  const mimeType = metadataMimeType(resource)
-  if (extension === 'pdf' || mimeType.includes('pdf'))
-    return 'workspace-icon--pdf'
-  if (extension === 'doc' || extension === 'docx')
-    return 'workspace-icon--doc'
-  if (extension === 'xls' || extension === 'xlsx' || extension === 'csv')
-    return 'workspace-icon--table'
-  if (extension === 'ppt' || extension === 'pptx')
-    return 'workspace-icon--slide'
-  if (extension === 'md' || extension === 'markdown' || extension === 'txt' || extension === 'json')
-    return 'workspace-icon--text'
-  if (extension === 'jpg' || extension === 'jpeg' || extension === 'png' || extension === 'webp')
-    return 'workspace-icon--image'
-
-  const type = normalizeResourceType(resource)
-  if (type.includes('pdf'))
-    return 'workspace-icon--pdf'
-  if (type.includes('tab') || type.includes('excel') || type.includes('sheet'))
-    return 'workspace-icon--table'
-  return 'workspace-icon--doc'
-}
-
-function resourceDisplayTitle(resource: Resource): string {
-  const title = String(resource.title || '').trim()
-  if (title)
-    return title
-
-  const type = String(resource.type || 'doc').trim().toLowerCase()
-  if (type)
-    return `未命名文档.${type}`
-
-  return '未命名文档'
-}
-
-function hasDownloadableSource(resource: Resource): boolean {
-  const sourceDownloadUrl = String(resource.sourceDownloadUrl || '').trim()
-  const sourceLink = String(resource.sourceLink || '').trim()
-  return Boolean(sourceDownloadUrl || sourceLink)
-}
-
-function hasPreviewableSource(resource: Resource): boolean {
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  const kind = String(resource.resourceKind || '').trim().toLowerCase()
-  if (source === 'collab' || kind === 'markdown' || kind === 'draw')
-    return true
-  if (source === 'upload' || source === 'project_upload')
-    return true
-  if (String(resource.documentId || '').trim())
-    return true
-  if (String(resource.previewUrl || '').trim())
-    return true
-  return false
-}
-
-function canDuplicateResource(resource: Resource): boolean {
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  const kind = String(resource.resourceKind || '').trim().toLowerCase()
-  return source !== 'collab' && kind !== 'markdown' && kind !== 'draw'
-}
-
-function resourceSourceLabel(resource: Resource): string {
-  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  if (source === 'collab') {
-    const purpose = resolveCollabPurpose(resource)
-    if (purpose === 'workflow')
-      return '流程画布'
-    if (purpose === 'freeform')
-      return '自由画布'
-    return '协作文档'
-  }
-  if (source === 'upload' || source === 'project_upload')
-    return '项目上传'
-  if (source === 'library')
-    return '系统资料库'
-  return source || '-'
 }
 
 function resourceAvailabilityLabel(resource: Resource): string {
@@ -1289,24 +1149,25 @@ function openLibraryModal(parentResourceId?: string | null) {
   libraryModalVisible.value = true
 }
 
-function toggleProjectResourceAddMenu() {
-  if (props.resourceMutating || !props.hasActiveProject)
-    return
-  projectResourceAddMenuOpen.value = !projectResourceAddMenuOpen.value
-}
-
 function openCollaborativeDocFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('createCollabResource', { kind: 'markdown', parentResourceId: null })
+  emit('createCollabResource', { kind: 'markdown', purpose: 'notes', parentResourceId: null })
 }
 
 function openInfiniteCanvasFromMenu() {
   if (props.resourceMutating || !props.hasActiveProject)
     return
   projectResourceAddMenuOpen.value = false
-  emit('createCollabResource', { kind: 'draw', parentResourceId: null })
+  emit('createCollabResource', { kind: 'draw', purpose: 'freeform', parentResourceId: null })
+}
+
+function openDesignCanvasFromMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = false
+  emit('createCollabResource', { kind: 'draw', purpose: 'design', parentResourceId: null })
 }
 
 function openLibraryFromMenu() {
@@ -1362,6 +1223,22 @@ function toggleProjectResourceExpansion(resourceId: string) {
   treeExpanded[normalizedResourceId] = treeExpanded[normalizedResourceId] === false
 }
 
+function setProjectResourceTreeExpansion(expanded: boolean) {
+  const walk = (nodes: ProjectResourceTreeNode[]) => {
+    for (const node of nodes) {
+      const resourceId = String(node.resource.id || '').trim()
+      if (!resourceId)
+        continue
+      if (node.children.length > 0) {
+        treeExpanded[resourceId] = expanded
+        walk(node.children)
+      }
+    }
+  }
+
+  walk(projectResourceTree.value)
+}
+
 function createChildCollaborativeDoc(resourceId: string) {
   const normalizedResourceId = String(resourceId || '').trim()
   if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
@@ -1369,6 +1246,7 @@ function createChildCollaborativeDoc(resourceId: string) {
   resourceActionOpenId.value = ''
   emit('createCollabResource', {
     kind: 'markdown',
+    purpose: 'notes',
     parentResourceId: normalizedResourceId,
   })
 }
@@ -1380,6 +1258,19 @@ function createChildInfiniteCanvas(resourceId: string) {
   resourceActionOpenId.value = ''
   emit('createCollabResource', {
     kind: 'draw',
+    purpose: 'freeform',
+    parentResourceId: normalizedResourceId,
+  })
+}
+
+function createChildDesignCanvas(resourceId: string) {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  resourceActionOpenId.value = ''
+  emit('createCollabResource', {
+    kind: 'draw',
+    purpose: 'design',
     parentResourceId: normalizedResourceId,
   })
 }
@@ -1398,6 +1289,340 @@ function openChildUpload(resourceId: string) {
     return
   resourceActionOpenId.value = ''
   openLocalUploadFromMenu(normalizedResourceId)
+}
+
+function closeInlineMenuMarkers(): void {
+  resourceActionOpenId.value = ''
+  projectResourceBatchMenuOpen.value = false
+  projectResourceAddMenuOpen.value = false
+}
+
+function isKeyboardContextMenuEvent(event: KeyboardEvent): boolean {
+  return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')
+}
+
+function buildProjectResourceAddMenuItems(): ContextMenuItem[] {
+  const disabled = props.resourceMutating || !props.hasActiveProject
+  return [
+    {
+      key: 'createMarkdown',
+      label: `新建${COLLAB_NOTES_RESOURCE_LABEL}`,
+      icon: 'edit_note',
+      disabled,
+    },
+    {
+      key: 'createCanvas',
+      label: `新建${COLLAB_FREEFORM_RESOURCE_LABEL}`,
+      icon: 'draw',
+      disabled,
+    },
+    {
+      key: 'createDesignCanvas',
+      label: `新建${COLLAB_DESIGN_RESOURCE_LABEL}`,
+      icon: 'palette',
+      disabled,
+    },
+    {
+      key: 'importLibrary',
+      label: '从系统资料库导入',
+      icon: 'library_add',
+      separatorBefore: true,
+      disabled,
+    },
+    {
+      key: 'uploadLocal',
+      label: '从本地设备中上传',
+      icon: 'upload_file',
+      disabled,
+    },
+  ]
+}
+
+function buildProjectResourceBatchMenuItems(): ContextMenuItem[] {
+  const disabled = props.resourceMutating || !props.hasActiveProject
+  const empty = props.selectedResources.length === 0
+  return [
+    {
+      key: 'uploadLocal',
+      label: '批量上传文件',
+      icon: 'upload_file',
+      disabled,
+    },
+    {
+      key: 'importLibrary',
+      label: '批量导入资料库',
+      icon: 'library_add',
+      disabled,
+    },
+    {
+      key: 'expandAll',
+      label: '全部展开',
+      icon: 'unfold_more',
+      separatorBefore: true,
+      disabled: empty,
+    },
+    {
+      key: 'collapseAll',
+      label: '全部折叠',
+      icon: 'unfold_less',
+      disabled: empty,
+    },
+  ]
+}
+
+function requestProjectResourceBatchMenu(anchorEl: HTMLElement | null): void {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+
+  projectResourceBatchMenuOpen.value = true
+  projectResourceAddMenuOpen.value = false
+  resourceActionOpenId.value = ''
+  emit('requestContextMenu', {
+    source: 'workspace-resource-batch',
+    items: buildProjectResourceBatchMenuItems(),
+    anchorEl,
+    restoreFocusEl: anchorEl,
+    onSelect: (key) => {
+      try {
+        switch (key) {
+          case 'uploadLocal':
+            openLocalUploadFromMenu()
+            return
+          case 'importLibrary':
+            openLibraryFromMenu()
+            return
+          case 'expandAll':
+            sectionExpanded.projectResources = true
+            setProjectResourceTreeExpansion(true)
+            return
+          case 'collapseAll':
+            sectionExpanded.projectResources = true
+            setProjectResourceTreeExpansion(false)
+        }
+      }
+      finally {
+        closeInlineMenuMarkers()
+      }
+    },
+    onClose: closeInlineMenuMarkers,
+  })
+}
+
+function requestProjectResourceAddMenu(anchorEl: HTMLElement | null): void {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+
+  projectResourceBatchMenuOpen.value = false
+  projectResourceAddMenuOpen.value = true
+  resourceActionOpenId.value = ''
+  emit('requestContextMenu', {
+    source: 'workspace-resource-add',
+    items: buildProjectResourceAddMenuItems(),
+    anchorEl,
+    restoreFocusEl: anchorEl,
+    onSelect: (key) => {
+      try {
+        switch (key) {
+          case 'createMarkdown':
+            openCollaborativeDocFromMenu()
+            return
+          case 'createCanvas':
+            openInfiniteCanvasFromMenu()
+            return
+          case 'createDesignCanvas':
+            openDesignCanvasFromMenu()
+            return
+          case 'importLibrary':
+            openLibraryFromMenu()
+            return
+          case 'uploadLocal':
+            openLocalUploadFromMenu()
+        }
+      }
+      finally {
+        closeInlineMenuMarkers()
+      }
+    },
+    onClose: closeInlineMenuMarkers,
+  })
+}
+
+function requestProjectResourceAddMenuByKeyboard(event: KeyboardEvent): void {
+  if (!isKeyboardContextMenuEvent(event))
+    return
+  event.preventDefault()
+  requestProjectResourceAddMenu(event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
+}
+
+function requestProjectResourceBatchMenuByKeyboard(event: KeyboardEvent): void {
+  if (!isKeyboardContextMenuEvent(event))
+    return
+  event.preventDefault()
+  requestProjectResourceBatchMenu(event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
+}
+
+function buildResourceActionMenuItems(resource: Resource): ContextMenuItem[] {
+  const disabled = props.resourceMutating || !props.hasActiveProject
+  return [
+    {
+      key: 'createMarkdownChild',
+      label: `新建子${COLLAB_NOTES_RESOURCE_LABEL}`,
+      icon: 'edit_note',
+      disabled,
+    },
+    {
+      key: 'createCanvasChild',
+      label: `新建子${COLLAB_FREEFORM_RESOURCE_LABEL}`,
+      icon: 'draw',
+      disabled,
+    },
+    {
+      key: 'createDesignCanvasChild',
+      label: `新建子${COLLAB_DESIGN_RESOURCE_LABEL}`,
+      icon: 'palette',
+      disabled,
+    },
+    {
+      key: 'uploadChild',
+      label: '上传到此节点',
+      icon: 'upload_file',
+      disabled,
+    },
+    {
+      key: 'importLibraryChild',
+      label: '从系统资料库导入到此节点',
+      icon: 'library_add',
+      disabled,
+    },
+    {
+      key: 'preview',
+      label: '预览',
+      icon: 'preview',
+      separatorBefore: true,
+      disabled: disabled || !hasPreviewableSource(resource),
+    },
+    {
+      key: 'share',
+      label: '分享链接',
+      icon: 'link',
+      disabled: disabled || !hasDownloadableSource(resource),
+    },
+    {
+      key: 'copyName',
+      label: '复制名称',
+      icon: 'content_copy',
+      disabled,
+    },
+    {
+      key: 'duplicate',
+      label: '创建副本',
+      icon: 'file_copy',
+      disabled: disabled || !canDuplicateResource(resource),
+    },
+    {
+      key: 'details',
+      label: '文档属性',
+      icon: 'info',
+      separatorBefore: true,
+      disabled,
+    },
+    {
+      key: 'download',
+      label: '下载原文件',
+      icon: 'download',
+      disabled: disabled || !hasDownloadableSource(resource),
+    },
+    {
+      key: 'remove',
+      label: '删除文件',
+      icon: 'delete',
+      tone: 'danger',
+      separatorBefore: true,
+      disabled,
+    },
+  ]
+}
+
+function requestResourceActionMenu(resourceId: string, optionsOverrides: {
+  anchorPoint?: { x: number, y: number }
+  anchorEl?: HTMLElement | null
+  restoreFocusEl?: HTMLElement | null
+} = {}): void {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  const resource = props.selectedResources.find(item => item.id === normalizedResourceId)
+  if (!resource)
+    return
+
+  activeResourceId.value = normalizedResourceId
+  resourceActionOpenId.value = normalizedResourceId
+  projectResourceBatchMenuOpen.value = false
+  projectResourceAddMenuOpen.value = false
+
+  emit('requestContextMenu', {
+    source: 'workspace-resource-item',
+    items: buildResourceActionMenuItems(resource),
+    anchorPoint: optionsOverrides.anchorPoint || null,
+    anchorEl: optionsOverrides.anchorEl || null,
+    restoreFocusEl: optionsOverrides.restoreFocusEl || optionsOverrides.anchorEl || null,
+    onSelect: (key) => {
+      try {
+        switch (key) {
+          case 'createMarkdownChild':
+            createChildCollaborativeDoc(normalizedResourceId)
+            return
+          case 'createCanvasChild':
+            createChildInfiniteCanvas(normalizedResourceId)
+            return
+          case 'createDesignCanvasChild':
+            createChildDesignCanvas(normalizedResourceId)
+            return
+          case 'uploadChild':
+            openChildUpload(normalizedResourceId)
+            return
+          case 'importLibraryChild':
+            openChildLibraryImport(normalizedResourceId)
+            return
+          case 'preview':
+            requestPreviewResource(normalizedResourceId)
+            return
+          case 'share':
+            requestShareResource(normalizedResourceId)
+            return
+          case 'copyName':
+            copyResourceName(normalizedResourceId)
+            return
+          case 'duplicate':
+            createResourceDuplicate(normalizedResourceId)
+            return
+          case 'details':
+            requestViewResourceDetails(normalizedResourceId)
+            return
+          case 'download':
+            requestDownloadResource(normalizedResourceId)
+            return
+          case 'remove':
+            requestRemoveResource(normalizedResourceId)
+        }
+      }
+      finally {
+        closeInlineMenuMarkers()
+      }
+    },
+    onClose: closeInlineMenuMarkers,
+  })
+}
+
+function requestResourceActionMenuByKeyboard(resourceId: string, event: KeyboardEvent): void {
+  if (!isKeyboardContextMenuEvent(event))
+    return
+  event.preventDefault()
+  requestResourceActionMenu(resourceId, {
+    anchorEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+    restoreFocusEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
 }
 
 function collectDraggedResourceSubtreeIds(resourceId: string): Set<string> {
@@ -1560,22 +1785,22 @@ function handleResourceDrop(resourceId: string | null, position: ResourceTreeDro
   emit('patchProjectResourceTree', payload)
 }
 
-function toggleResourceActionMenu(resourceId: string) {
-  if (!resourceId || props.resourceMutating || !props.hasActiveProject)
-    return
-  if (resourceActionOpenId.value === resourceId) {
-    resourceActionOpenId.value = ''
-    return
-  }
-  resourceActionOpenId.value = resourceId
+function toggleResourceActionMenu(resourceId: string, anchorEl: HTMLElement | null = null) {
+  requestResourceActionMenu(resourceId, {
+    anchorEl,
+    restoreFocusEl: anchorEl,
+  })
 }
 
 function handleResourceItemContextMenu(resourceId: string, event: MouseEvent) {
   event.preventDefault()
-  if (!resourceId || props.resourceMutating || !props.hasActiveProject)
-    return
-  activeResourceId.value = resourceId
-  resourceActionOpenId.value = resourceId
+  requestResourceActionMenu(resourceId, {
+    anchorPoint: {
+      x: event.clientX,
+      y: event.clientY,
+    },
+    restoreFocusEl: event.currentTarget instanceof HTMLElement ? event.currentTarget : null,
+  })
 }
 
 function requestRemoveResource(resourceId: string) {
@@ -1756,12 +1981,13 @@ function recycleHint(resource: Resource): string {
 }
 
 function closeResourceActionMenuByOutside(event: PointerEvent) {
-  if (!resourceActionOpenId.value && !projectResourceAddMenuOpen.value)
+  if (!resourceActionOpenId.value && !projectResourceBatchMenuOpen.value && !projectResourceAddMenuOpen.value)
     return
 
   const target = event.target as HTMLElement | null
   if (
-    target?.closest('.workspace-resource-actions')
+    target?.closest('.wl-context-menu')
+    || target?.closest('.workspace-resource-actions')
     || target?.closest('.workspace-recycle-item__actions')
     || target?.closest('.workspace-project-add-actions')
   ) {
@@ -1769,6 +1995,7 @@ function closeResourceActionMenuByOutside(event: PointerEvent) {
   }
 
   resourceActionOpenId.value = ''
+  projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
 }
 
@@ -1776,6 +2003,7 @@ function closeResourceActionMenuByEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape')
     return
   resourceActionOpenId.value = ''
+  projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
 }
 
@@ -1940,6 +2168,7 @@ watch(() => props.hasActiveProject, (next) => {
   libraryModalVisible.value = false
   libraryImportParentResourceId.value = null
   uploadParentResourceId.value = null
+  projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
   closeResourceDetailPanel()
@@ -1954,6 +2183,7 @@ watch(() => props.hasActiveProject, (next) => {
 watch(() => sectionExpanded.projectResources, (expanded) => {
   if (expanded)
     return
+  projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
   shareTargetResourceId.value = ''
@@ -1963,6 +2193,7 @@ watch(() => sectionExpanded.projectResources, (expanded) => {
 watch(() => props.resourceMutating, (next) => {
   if (!next)
     return
+  projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
   resourceActionOpenId.value = ''
 })
@@ -1972,10 +2203,7 @@ onMounted(() => {
     return
 
   const saved = localStorage.getItem(LEFT_MODULE_STORAGE_KEY)
-  if (!saved)
-    return
-
-  if (isWorkspaceLeftModuleId(saved))
+  if (saved && isWorkspaceLeftModuleId(saved))
     activeModule.value = saved
 
   document.addEventListener('pointerdown', closeResourceActionMenuByOutside)
@@ -2075,53 +2303,31 @@ onBeforeUnmount(() => {
                       <button
                         class="workspace-tree-block__title-action"
                         type="button"
+                        title="批量管理"
+                        aria-label="批量管理"
+                        aria-haspopup="menu"
+                        :aria-expanded="projectResourceBatchMenuOpen"
+                        data-context-menu-scope="resource-batch"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click.stop="requestProjectResourceBatchMenu($event.currentTarget as HTMLElement | null)"
+                        @keydown="requestProjectResourceBatchMenuByKeyboard"
+                      >
+                        <span class="material-symbols-outlined">checklist</span>
+                      </button>
+                      <button
+                        class="workspace-tree-block__title-action"
+                        type="button"
                         title="添加资源"
                         aria-label="添加资源"
+                        aria-haspopup="menu"
                         :aria-expanded="projectResourceAddMenuOpen"
+                        data-context-menu-scope="resource-add"
                         :disabled="resourceMutating || !hasActiveProject"
-                        @click.stop="toggleProjectResourceAddMenu"
+                        @click.stop="requestProjectResourceAddMenu($event.currentTarget as HTMLElement | null)"
+                        @keydown="requestProjectResourceAddMenuByKeyboard"
                       >
                         <span class="material-symbols-outlined">add</span>
                       </button>
-                      <div
-                        v-if="projectResourceAddMenuOpen"
-                        class="workspace-project-add-actions__menu"
-                        role="menu"
-                      >
-                        <button
-                          class="workspace-project-add-actions__menu-item"
-                          type="button"
-                          :disabled="resourceMutating || !hasActiveProject"
-                          @click.stop="openCollaborativeDocFromMenu"
-                        >
-                          新建协作文档
-                        </button>
-                        <button
-                          class="workspace-project-add-actions__menu-item"
-                          type="button"
-                          :disabled="resourceMutating || !hasActiveProject"
-                          @click.stop="openInfiniteCanvasFromMenu"
-                        >
-                          新建自由画布
-                        </button>
-                        <div class="workspace-project-add-actions__divider" />
-                        <button
-                          class="workspace-project-add-actions__menu-item"
-                          type="button"
-                          :disabled="resourceMutating || !hasActiveProject"
-                          @click.stop="openLibraryFromMenu"
-                        >
-                          从系统资料库导入
-                        </button>
-                        <button
-                          class="workspace-project-add-actions__menu-item"
-                          type="button"
-                          :disabled="resourceMutating || !hasActiveProject"
-                          @click.stop="openLocalUploadFromMenu()"
-                        >
-                          从本地设备中上传
-                        </button>
-                      </div>
                     </div>
                   </div>
 
@@ -2262,10 +2468,15 @@ onBeforeUnmount(() => {
                               :class="{ 'workspace-tree-item--active': !suppressResourceSelection && row.resource.id === activeResourceId }"
                               :title="resourceDisplayTitle(row.resource)"
                               type="button"
+                              aria-haspopup="menu"
+                              :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
+                              data-context-menu-scope="resource"
+                              :data-context-resource-id="row.resource.id"
                               draggable="true"
                               @dragstart="handleResourceDragStart(row.resource.id, $event)"
                               @dragend="handleResourceDragEnd"
                               @click="openResource(row.resource)"
+                              @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
                             >
                               <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
                                 {{ resourceIcon(row.resource) }}
@@ -2280,109 +2491,14 @@ onBeforeUnmount(() => {
                               type="button"
                               title="资源操作"
                               aria-label="资源操作"
+                              aria-haspopup="menu"
+                              :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
                               :disabled="resourceMutating || !hasActiveProject"
-                              @click.stop="toggleResourceActionMenu(row.resource.id)"
+                              @click.stop="toggleResourceActionMenu(row.resource.id, $event.currentTarget as HTMLElement | null)"
+                              @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
                             >
                               <span class="material-symbols-outlined">more_horiz</span>
                             </button>
-
-                            <div
-                              v-if="resourceActionOpenId === row.resource.id"
-                              class="workspace-resource-actions__menu"
-                              role="menu"
-                            >
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click.stop="createChildCollaborativeDoc(row.resource.id)"
-                              >
-                                新建子协作文档
-                              </button>
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click.stop="createChildInfiniteCanvas(row.resource.id)"
-                              >
-                                新建子自由画布
-                              </button>
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click.stop="openChildUpload(row.resource.id)"
-                              >
-                                上传到此节点
-                              </button>
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click.stop="openChildLibraryImport(row.resource.id)"
-                              >
-                                从系统资料库导入到此节点
-                              </button>
-                              <div class="workspace-resource-actions__divider" />
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject || !hasPreviewableSource(row.resource)"
-                                @click.stop="requestPreviewResource(row.resource.id)"
-                              >
-                                预览
-                              </button>
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(row.resource)"
-                                @click.stop="requestShareResource(row.resource.id)"
-                              >
-                                分享链接
-                              </button>
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click.stop="copyResourceName(row.resource.id)"
-                              >
-                                复制名称
-                              </button>
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject || !canDuplicateResource(row.resource)"
-                                @click.stop="createResourceDuplicate(row.resource.id)"
-                              >
-                                创建副本
-                              </button>
-                              <div class="workspace-resource-actions__divider" />
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click.stop="requestViewResourceDetails(row.resource.id)"
-                              >
-                                文档属性
-                              </button>
-                              <button
-                                class="workspace-resource-actions__menu-item"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject || !hasDownloadableSource(row.resource)"
-                                @click.stop="requestDownloadResource(row.resource.id)"
-                              >
-                                下载原文件
-                              </button>
-                              <div class="workspace-resource-actions__divider" />
-                              <button
-                                class="workspace-resource-actions__menu-item workspace-resource-actions__menu-item--danger"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click.stop="requestRemoveResource(row.resource.id)"
-                              >
-                                删除文件
-                              </button>
-                            </div>
                           </div>
                         </div>
 

@@ -2360,9 +2360,11 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :collab-revision="collabRevision"
         :collab-connected="collabConnected"
         :collab-connection-text="collabConnectionText"
+        :collab-presence-cursors="collabPresenceCursors"
         :model-value="props.collabDrawValue"
         :collab-draw-error="collabDrawError"
         @update:model-value="onCollabDrawModelUpdate"
+        @update-collab-cursor="onCollabCursorUpdate"
       />
 
       <WorkspaceMembersTab

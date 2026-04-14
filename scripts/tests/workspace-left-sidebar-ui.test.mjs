@@ -33,7 +33,7 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   assert.doesNotMatch(source, /\.workspace-left-panel-content-backward-enter-from,[\s\S]*translateX\(/, 'WorkspaceLeftSidebar 左栏反向切换仍保留横向位移')
   assert.match(source, /:class="\{ 'workspace-left-panel--hidden': props\.collapsed \}"/, 'WorkspaceLeftSidebar 未改成 class 驱动的左侧 panel 折叠动画')
   assert.match(source, /workspace-left-dock--collapsed/, 'WorkspaceLeftSidebar 缺少折叠宽度样式')
-  assert.match(source, /flex-basis: 56px;/, 'WorkspaceLeftSidebar 缺少外层 dock 收缩过渡宽度')
+  assert.match(source, /workspace-left-dock--collapsed[\s\S]*flex-basis:\s*var\(--workspace-left-rail-width\);/, 'WorkspaceLeftSidebar 缺少外层 dock 收缩过渡宽度')
   assert.match(source, /workspace-left-dock--compact/, 'WorkspaceLeftSidebar 未为紧凑标签边距提供列表压缩样式')
   assert.match(source, /workspace-left-dock--default/, 'WorkspaceLeftSidebar 未为默认标签边距提供左栏密度类')
   assert.match(source, /workspace-left-dock--relaxed/, 'WorkspaceLeftSidebar 未为宽松标签边距提供左栏密度类')
@@ -42,10 +42,16 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   assert.match(source, /opacity: 0;/, 'WorkspaceLeftSidebar 缺少左侧 panel 透明度收起动画')
   assert.match(source, /transform: translateX\(-10px\);/, 'WorkspaceLeftSidebar 缺少左侧 panel 位移动画')
   assert.match(source, /function switchModule\(moduleId: string, options: \{ allowCollapse\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 未给左栏 tab 提供可控的折叠切换入口')
+  assert.match(source, /const notificationCenter = useNotificationCenter\(\)/, 'WorkspaceLeftSidebar 未接入通知中心状态，无法在左 rail 切换时回收通知 aside')
+  assert.match(source, /function closeRailOverlays\(options: \{ keepNotifications\?: boolean, keepUpload\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 缺少左 rail overlay 统一回收入口')
   assert.match(source, /allowCollapse && !props\.collapsed && !recyclePanelOpen\.value && activeModule\.value === moduleId[\s\S]*emit\('update:collapsed', true\)/, 'WorkspaceLeftSidebar 点击当前左栏 tab 时仍不会收起 panel')
+  assert.match(source, /switchModule\(moduleId: string, options: \{ allowCollapse\?: boolean \} = \{\}\) \{[\s\S]*closeRailOverlays\(\)/, 'WorkspaceLeftSidebar 切换模块时未回收通知或上传 aside')
   assert.match(source, /function openRecycleBinPanel\(options: \{ allowCollapse\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 未给回收站入口提供折叠切换入口')
   assert.match(source, /allowCollapse && !props\.collapsed && recyclePanelOpen\.value[\s\S]*emit\('update:collapsed', true\)/, 'WorkspaceLeftSidebar 点击当前回收站入口时仍不会收起 panel')
   assert.match(source, /switchModule\(props\.commandModuleId, \{ allowCollapse: false \}\)/, 'WorkspaceLeftSidebar 在命令面板触发时仍可能误收起左栏')
+  assert.match(source, /@open-notifications="handleOpenNotifications"/, 'WorkspaceLeftSidebar 未在通知入口打开时协调其他 rail aside')
+  assert.match(source, /@toggle-upload-drawer="handleToggleUploadDrawer"/, 'WorkspaceLeftSidebar 未在上传入口切换时回收通知 aside')
+  assert.match(source, /--workspace-left-panel-width:\s*calc\(var\(--workspace-left-dock-width\) - var\(--workspace-left-rail-width\)\);/, 'WorkspaceLeftSidebar 未暴露左栏面板宽度变量供 rail aside 复用')
   assert.match(styleSource, /\.workspace-left-dock--compact \{[\s\S]*--workspace-left-tree-row-min-height:\s*32px;[\s\S]*--workspace-left-tree-indent-step:\s*12px;/, '紧凑档未压缩左栏树行高和缩进')
   assert.match(styleSource, /\.workspace-left-dock--default \{[\s\S]*--workspace-left-tree-row-min-height:\s*36px;[\s\S]*--workspace-left-tree-indent-step:\s*14px;/, '默认档缺少左栏树密度基线')
   assert.match(styleSource, /\.workspace-left-dock--relaxed \{[\s\S]*--workspace-left-tree-row-min-height:\s*40px;[\s\S]*--workspace-left-tree-indent-step:\s*18px;/, '宽松档未放大左栏树行高和缩进')
@@ -56,11 +62,19 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
 })
 
 it('资源管理器删除独立系统资料库分组，只保留导入入口', async () => {
-  const source = await readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8')
+  const [source, styleSource] = await Promise.all([
+    readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8'),
+    readFile(WORKSPACE_LEFT_SIDEBAR_STYLE_FILE, 'utf8'),
+  ])
 
   assert.match(source, /从系统资料库导入/, '资源添加菜单未保留系统资料库导入入口')
   assert.match(source, /openLibraryModal/, '资源管理器未通过导入弹窗统一承接系统资料库入口')
+  assert.match(source, /title="批量管理"/, '资源管理器缺少批量管理入口')
+  assert.match(source, /requestProjectResourceBatchMenu/, '资源管理器未提供批量管理菜单入口')
+  assert.match(source, /label: '批量上传文件'/, '资源管理器批量管理菜单缺少上传入口')
+  assert.match(source, /label: '全部展开'/, '资源管理器批量管理菜单缺少展开入口')
   assert.doesNotMatch(source, /toggleSection\('systemLibrary'\)|sectionExpanded\.systemLibrary/, '资源管理器仍保留独立系统资料库分组')
+  assert.match(styleSource, /\.workspace-project-add-actions \{[\s\S]*display:\s*inline-flex;[\s\S]*gap:\s*6px;/, '资源管理器头部操作区未为批量管理入口预留并排布局')
 })
 
 it('项目资料区在 ResourceManagerPanel 内改为完整树，并支持拖拽排序', async () => {
@@ -112,13 +126,14 @@ it('上传入口已迁移到左侧 rail，并从左侧 aside 打开上传管理'
   assert.match(sidebarSource, /uploadSummary\?: ProjectUploadSummary \| null/, 'WorkspaceLeftSidebar 缺少上传摘要入参')
   assert.match(sidebarSource, /uploadDrawerOpen\?: boolean/, 'WorkspaceLeftSidebar 缺少上传抽屉打开态入参')
   assert.match(sidebarSource, /uploadActivityItems\?: ProjectUploadActivityItem\[\]/, 'WorkspaceLeftSidebar 缺少上传活动列表入参')
-  assert.match(sidebarSource, /@toggle-upload-drawer="emit\('toggleUploadDrawer'\)"/, 'WorkspaceLeftSidebar 未转发上传抽屉切换事件')
+  assert.match(sidebarSource, /@toggle-upload-drawer="handleToggleUploadDrawer"/, 'WorkspaceLeftSidebar 未通过统一 overlay 协调逻辑处理上传抽屉切换')
   assert.match(railSource, /<WorkspaceUploadAside/, 'WorkspaceLeftRail 未挂载上传 aside 组件')
   assert.match(uploadSource, /data-testid="workspace-left-rail-upload-button"/, '左 rail 上传入口缺少测试锚点')
   assert.match(uploadSource, /data-testid="workspace-left-upload-drawer"/, '左侧上传抽屉缺少测试锚点')
   assert.match(uploadSource, /<aside[\s\S]*class="workspace-upload-drawer workspace-upload-drawer--aside"/, '上传管理未使用 aside 语义容器')
   assert.match(uploadSource, /workspace-upload-drawer--aside/, '上传管理未改成左侧 aside 形态')
   assert.match(uploadSource, /\.workspace-upload-drawer--aside \{[\s\S]*top:\s*0;[\s\S]*bottom:\s*0;[\s\S]*left:\s*100%;/, '上传管理未贴左 rail 展开成真正侧边 aside')
+  assert.match(uploadSource, /width:\s*min\(var\(--workspace-left-panel-width,\s*304px\),\s*calc\(100vw - 108px\)\);/, '上传管理 aside 宽度未跟随左栏面板')
   assert.match(uploadSource, /\.workspace-upload-drawer--aside \{[\s\S]*border-radius:\s*0 20px 20px 0;/, '上传管理 aside 缺少贴边抽屉圆角')
   assert.doesNotMatch(uploadSource, /max-height:\s*min\(72vh,\s*720px\)/, '上传管理仍在使用浮层卡片高度限制')
 })

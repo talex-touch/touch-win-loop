@@ -74,7 +74,7 @@ const workspaceCanAddSeat = computed(() => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl space-y-4">
+  <div class="w-full space-y-4">
     <section class="p-4 border border-slate-200 rounded-lg bg-white" data-testid="project-collab-panel">
       <div class="mb-3 flex flex-wrap gap-3 items-start justify-between">
         <div class="flex gap-3 items-center">

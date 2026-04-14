@@ -20,6 +20,7 @@ import type {
   Track,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
+import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
 import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
 
 type WorkspacePrimarySidebarAiMode = Exclude<WorkspaceAiMode, 'defense' | 'document_assist'>
@@ -524,7 +525,7 @@ function requestExportIssueReport() {
               当前文档
             </div>
             <div class="text-[11px] text-slate-800 font-semibold mt-1">
-              {{ props.documentResourceTitle || '未命名协作文档' }}
+              {{ props.documentResourceTitle || `未命名${COLLAB_NOTES_RESOURCE_LABEL}` }}
             </div>
             <div class="text-[10px] text-slate-500 mt-2 leading-5 whitespace-pre-wrap">
               {{ documentAssistSelectionLabel }}

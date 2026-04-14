@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { it } from 'vitest'
 
 const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const COMMENTS_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceProjectComments.ts')
 const RIGHT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceRightSidebar.vue')
 const RESOURCE_PREVIEW_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourcePreviewTab.vue')
 const COMMENTS_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceDocumentCommentsPanel.vue')
@@ -12,31 +13,38 @@ const RESOURCE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-resourc
 const IMAGE_EXTENSION_FILE = resolve(process.cwd(), 'app/components/editor/rich-text-editor-image-extension.ts')
 
 it('评论与文档 AI 仍走现有状态链路，并保持 markdown 评论展示在文档内部右侧', async () => {
-  const [projectSource, sidebarSource, previewSource, commentsPanelSource] = await Promise.all([
+  const [projectSource, commentsComposableSource, sidebarSource, previewSource, commentsPanelSource] = await Promise.all([
     readFile(PROJECT_PAGE_FILE, 'utf8'),
+    readFile(COMMENTS_COMPOSABLE_FILE, 'utf8'),
     readFile(RIGHT_SIDEBAR_FILE, 'utf8'),
     readFile(RESOURCE_PREVIEW_TAB_FILE, 'utf8'),
     readFile(COMMENTS_PANEL_FILE, 'utf8'),
   ])
 
-  assert.match(projectSource, /async function createMarkdownCommentThread\(/, '项目页缺少评论线程创建入口')
-  assert.match(projectSource, /async function replyMarkdownCommentThread\(/, '项目页缺少评论回复入口')
-  assert.match(projectSource, /async function resolveMarkdownCommentThread\(/, '项目页缺少评论解决入口')
-  assert.match(projectSource, /async function reopenMarkdownCommentThread\(/, '项目页缺少评论重开入口')
+  assert.match(projectSource, /useWorkspaceProjectComments\(/, '项目页未接入 markdown 评论状态 composable')
+  assert.match(projectSource, /createMarkdownCommentThread,[\s\S]*replyMarkdownCommentThread,[\s\S]*resolveMarkdownCommentThread,[\s\S]*reopenMarkdownCommentThread,/, '项目页未复用评论线程操作能力')
+  assert.match(commentsComposableSource, /async function createMarkdownCommentThread\(/, '评论 composable 缺少评论线程创建入口')
+  assert.match(commentsComposableSource, /async function replyMarkdownCommentThread\(/, '评论 composable 缺少评论回复入口')
+  assert.match(commentsComposableSource, /async function resolveMarkdownCommentThread\(/, '评论 composable 缺少评论解决入口')
+  assert.match(commentsComposableSource, /async function reopenMarkdownCommentThread\(/, '评论 composable 缺少评论重开入口')
   assert.match(projectSource, /function applyDocumentAssistToMarkdown\(\)/, '项目页缺少文档 AI 结果写回入口')
   assert.match(projectSource, /const applied = workspaceMainPanelRef\.value\?\.applyMarkdownDocumentAssistResult\(/, '文档 AI 结果未先经过主编辑器确认写回')
   assert.match(projectSource, /if \(applied\) \{\s+statusLine\.value = 'AI 结果已应用到文档。'/, '文档 AI 写回成功后未更新状态提示')
-  assert.doesNotMatch(projectSource, /function openMarkdownComments[\s\S]*rightSidebarView\.value = 'comments'/, 'markdown 评论仍在把全局右栏切到 comments')
+  assert.doesNotMatch(projectSource, /onOpenCommentsPanel:\s*\(\)\s*=>\s*\{[\s\S]*rightSidebarView\.value = 'comments'/, 'markdown 评论仍在把全局右栏切到 comments')
 
   assert.match(sidebarSource, /showCommentTab\?: boolean/, '右栏缺少 markdown 评论 tab 开关')
   assert.match(sidebarSource, /const showCommentsView = computed\(\(\) => props\.showCommentTab && props\.sidebarView === 'comments'\)/, '右栏评论视图判断未受开关控制')
   assert.match(sidebarSource, /const showDocumentAssistView = computed\(\(\) => props\.sidebarView === 'ai' && props\.aiMode === 'document_assist'\)/, '右栏 document_assist 视图判断缺失')
   assert.match(sidebarSource, /v-if="markdownSidebarEnabled && props\.showCommentTab"/, '右栏 markdown 切换按钮未按评论 tab 开关收敛')
   assert.match(previewSource, /<WorkspaceDocumentCommentsPanel\b/, 'markdown 资源预览未接入文档内评论面板')
+  assert.match(previewSource, /markdownCommentsCollapsed = ref\(false\)/, 'markdown 资源预览缺少评论面板收起状态')
+  assert.match(previewSource, /syncMarkdownCommentThreadFocus\(threadId: string\)/, 'markdown 资源预览未统一正文与评论线程滚动')
   assert.match(commentsPanelSource, /@click="selectCommentThread\(thread\.id\)"/, '文档内评论卡片默认点击未接入正文定位')
   assert.match(commentsPanelSource, /<UnifiedAvatar/, '文档内评论面板未展示头像')
   assert.match(commentsPanelSource, /formatRelativeUpdatedAt/, '文档内评论面板未展示相对时间')
   assert.match(commentsPanelSource, /a-trigger trigger="hover" position="bottom"/, '文档内评论面板缺少 hover 精确时间提示')
+  assert.match(commentsPanelSource, /data-testid="workspace-document-comment-draft-card"/, '文档内评论面板缺少内联草稿线程卡片')
+  assert.match(commentsPanelSource, /v-model="commentReplyDraftMap\[thread\.id\]"/, '文档内评论面板未提供内联回复输入')
   assert.doesNotMatch(commentsPanelSource, /当前线程/, '文档内评论面板仍展示“当前线程”')
   assert.doesNotMatch(commentsPanelSource, /定位正文/, '文档内评论面板仍保留定位正文按钮')
 })

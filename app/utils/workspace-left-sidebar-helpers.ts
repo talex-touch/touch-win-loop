@@ -11,6 +11,10 @@ import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import { formatFileSize } from '~~/shared/constants/project-resource-upload'
 import {
+  COLLAB_GENERIC_RESOURCE_LABEL,
+  resolveCollabResourceDisplayLabel,
+} from '~~/shared/utils/collab-resource'
+import {
   isProjectUploadTaskSidebarVisible,
   resolveProjectUploadTaskStatusText,
   resolveProjectUploadTaskTone,
@@ -134,13 +138,50 @@ function extractExtension(text: string): string {
 
 export function resolveCollabPurpose(resource: Resource | null | undefined): CollabPurpose | '' {
   const normalized = String(resource?.collabPurpose || '').trim().toLowerCase()
-  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'notes')
+  if (normalized === 'workflow' || normalized === 'freeform' || normalized === 'design' || normalized === 'notes')
     return normalized
+  if (resource?.resourceKind === 'draw') {
+    const drawMode = String(resource.drawMode || '').trim().toLowerCase()
+    const fixedTab = String(resource.metadata?.fixedTab || '').trim().toLowerCase()
+    if (drawMode === 'composition' || fixedTab === 'design')
+      return 'design'
+  }
   if (resource?.resourceKind === 'markdown')
     return 'notes'
   if (resource?.resourceKind === 'draw')
     return 'freeform'
   return ''
+}
+
+export function isDesignCanvasResource(resource: Resource | null | undefined): boolean {
+  return resolveCollabPurpose(resource) === 'design'
+}
+
+export function resolveCollabResourceLabel(resource: Resource | null | undefined): string {
+  if (!isCollabResource(resource))
+    return COLLAB_GENERIC_RESOURCE_LABEL
+
+  const kind = resource?.resourceKind === 'markdown' || resource?.resourceKind === 'draw'
+    ? resource.resourceKind
+    : ''
+  return resolveCollabResourceDisplayLabel(resolveCollabPurpose(resource), kind)
+}
+
+export function resolveCollabResourceIcon(resource: Resource | null | undefined): string {
+  const purpose = resolveCollabPurpose(resource)
+  if (purpose === 'workflow')
+    return 'flowsheet'
+  if (purpose === 'design')
+    return 'palette'
+  if (purpose === 'freeform')
+    return 'draw'
+  return 'edit_note'
+}
+
+export function resolveCollabResourceIconClass(resource: Resource | null | undefined): string {
+  if (!isCollabResource(resource))
+    return 'workspace-icon--doc'
+  return 'workspace-icon--collab'
 }
 
 function resolveResourceExtension(resource: Resource): string {
@@ -175,15 +216,8 @@ export function isCollabResource(resource: Resource): boolean {
 export function resourceIcon(resource: Resource): string {
   const kind = String(resource.resourceKind || '').trim().toLowerCase()
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  const purpose = resolveCollabPurpose(resource)
-  if (kind === 'draw' && purpose === 'workflow')
-    return 'flowsheet'
-  if (kind === 'draw')
-    return 'draw'
-  if (kind === 'markdown')
-    return 'edit_note'
-  if (source === 'collab')
-    return 'edit_note'
+  if (kind === 'draw' || kind === 'markdown' || source === 'collab')
+    return resolveCollabResourceIcon(resource)
 
   const extension = resolveResourceExtension(resource)
   const mimeType = metadataMimeType(resource)
@@ -214,7 +248,7 @@ export function resourceIconClass(resource: Resource): string {
   const kind = String(resource.resourceKind || '').trim().toLowerCase()
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
   if (kind === 'draw' || kind === 'markdown' || source === 'collab')
-    return 'workspace-icon--collab'
+    return resolveCollabResourceIconClass(resource)
 
   const extension = resolveResourceExtension(resource)
   const mimeType = metadataMimeType(resource)
@@ -267,14 +301,8 @@ export function canDuplicateResource(resource: Resource): boolean {
 
 export function resourceSourceLabel(resource: Resource): string {
   const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
-  if (source === 'collab') {
-    const purpose = resolveCollabPurpose(resource)
-    if (purpose === 'workflow')
-      return '流程画布'
-    if (purpose === 'freeform')
-      return '自由画布'
-    return '协作文档'
-  }
+  if (source === 'collab' || resource.resourceKind === 'markdown' || resource.resourceKind === 'draw')
+    return resolveCollabResourceLabel(resource)
   if (source === 'upload' || source === 'project_upload')
     return '项目上传'
   if (source === 'library')

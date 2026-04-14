@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
+import type { ContextMenuAnchorPoint } from '~/components/ui/context-menu'
 import CollabPresenceAvatarStack from '~/components/workspace/collab/CollabPresenceAvatarStack.vue'
 
 interface WorkspaceMainPanelTabItem {
@@ -42,7 +43,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   activateTab: [tabId: string]
   closeTab: [tabId: string]
-  openTabContextMenu: [payload: { tabId: string, event: MouseEvent }]
+  openTabContextMenu: [payload: {
+    tabId: string
+    anchorPoint?: ContextMenuAnchorPoint
+    anchorEl?: HTMLElement | null
+    restoreFocusEl?: HTMLElement | null
+  }]
   closeTabContextMenu: []
   closeTabsToLeft: []
   closeTabsToRight: []
@@ -53,7 +59,6 @@ const emit = defineEmits<{
   drop: [payload: { tabId: string, event: DragEvent }]
   dragEnd: []
   openDashboard: []
-  openDesign: []
 }>()
 </script>
 
@@ -96,15 +101,6 @@ const emit = defineEmits<{
       </div>
 
       <div class="flex shrink-0 items-center gap-2">
-        <button
-          class="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-          type="button"
-          @click="emit('openDesign')"
-        >
-          <span class="material-symbols-outlined text-[14px]">palette</span>
-          <span>打开设计</span>
-        </button>
-
         <CollabPresenceAvatarStack
           v-if="props.collabPresenceUsers.length > 0"
           :users="props.collabPresenceUsers"

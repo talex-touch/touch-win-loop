@@ -55,7 +55,7 @@ function centerY(node: SceneNode): number {
 <template>
   <div class="bg-slate-50 h-full min-h-0 w-full overflow-auto">
     <div v-if="isComposition" class="flex min-h-full items-center justify-center p-6">
-      <div class="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" v-html="svgMarkup" />
+      <div class="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" v-html="svgMarkup" />
     </div>
 
     <div v-else-if="normalizedDocument.sceneModel.nodes.length > 0" class="h-full min-h-full p-4">
@@ -90,7 +90,32 @@ function centerY(node: SceneNode): number {
           </text>
         </g>
 
-        <g v-for="node in normalizedDocument.sceneModel.nodes" :key="node.id">
+        <g v-for="node in normalizedDocument.sceneModel.nodes.filter(item => item.type === 'group')" :key="node.id">
+          <rect
+            :x="node.x"
+            :y="node.y"
+            :width="node.width"
+            :height="node.height"
+            :rx="node.shape === 'rect' ? 18 : 24"
+            :ry="node.shape === 'rect' ? 18 : 24"
+            fill="#e0f2fe"
+            fill-opacity="0.45"
+            :stroke="node.metadata?.layoutKind === 'swimlane' ? '#0284c7' : '#38bdf8'"
+            :stroke-dasharray="node.metadata?.layoutKind === 'swimlane' ? '10 6' : '0'"
+            stroke-width="3"
+          />
+          <text
+            :x="node.x + 18"
+            :y="node.y + 30"
+            fill="#0f172a"
+            font-size="18"
+            font-weight="700"
+          >
+            {{ node.label }}
+          </text>
+        </g>
+
+        <g v-for="node in normalizedDocument.sceneModel.nodes.filter(item => item.type !== 'group')" :key="node.id">
           <rect
             :x="node.x"
             :y="node.y"

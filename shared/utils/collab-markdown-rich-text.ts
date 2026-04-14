@@ -887,18 +887,37 @@ export function serializeRichTextBlocksToMarkdown(blocks: MarkdownRichTextBlock[
   return serializeRichTextDocumentToMarkdown(blocksToDocument(blocks))
 }
 
+function isMeaningfulTopLevelBlock(block: JSONContent | null | undefined): boolean {
+  if (!block || typeof block !== 'object')
+    return false
+
+  if (block.type === 'paragraph' || block.type === 'heading' || block.type === 'blockquote' || block.type === 'codeBlock')
+    return Boolean(normalizeBlockText(plainTextFromPmNode(block)))
+
+  if (block.type === 'horizontalRule' || block.type === 'image' || block.type === 'table')
+    return true
+
+  if (block.type === 'bulletList' || block.type === 'orderedList' || block.type === 'taskList')
+    return Boolean(normalizeBlockText(plainTextFromPmNode(block)))
+
+  return Boolean(normalizeBlockText(plainTextFromPmNode(block)))
+}
+
 export function extractPrimaryHeadingFromRichTextDocument(documentNode: JSONContent | null | undefined): string {
   const normalized = normalizeDocument(documentNode)
   for (const block of normalized.content || []) {
-    if (block?.type !== 'heading')
-      continue
-    const level = normalizeHeadingLevel(block.attrs?.level)
-    if (level !== 1)
+    if (!isMeaningfulTopLevelBlock(block))
       continue
 
+    if (block?.type !== 'heading')
+      return ''
+
+    const level = normalizeHeadingLevel(block.attrs?.level)
+    if (level !== 1)
+      return ''
+
     const text = normalizeBlockText(plainTextFromPmNode(block))
-    if (text)
-      return text
+    return text || ''
   }
 
   return ''

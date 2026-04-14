@@ -1,4 +1,5 @@
 import { pinyin } from 'pinyin-pro'
+import { formatWorkspaceShortcutLabel, isWorkspaceMacLikePlatform } from '~/utils/workspace-shortcuts'
 
 export type WorkspaceMetaKItemType
   = | 'command'
@@ -152,13 +153,14 @@ function buildWorkspaceMetaKHaystack(item: WorkspaceMetaKItem): {
   }
 }
 
-export function isWorkspaceMetaKMacLikePlatform(platform?: string): boolean {
-  return /mac|iphone|ipad|ipod/i.test(String(platform || '').trim())
+export function resolveWorkspaceMetaKShortcutLabel(platform?: string): string {
+  return formatWorkspaceShortcutLabel({
+    key: 'K',
+    modifiers: ['mod'],
+  }, platform)
 }
 
-export function resolveWorkspaceMetaKShortcutLabel(platform?: string): string {
-  return isWorkspaceMetaKMacLikePlatform(platform) ? '⌘K' : 'Ctrl+K'
-}
+export { isWorkspaceMacLikePlatform as isWorkspaceMetaKMacLikePlatform }
 
 export function scoreWorkspaceMetaKItem(item: WorkspaceMetaKItem, query: string): number {
   const normalizedQuery = normalizeWorkspaceMetaKText(query)

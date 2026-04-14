@@ -1,57 +1,140 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { it } from 'vitest'
 
-const DOMAIN_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
+const DOMAIN_BARREL_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
+const DOMAIN_LEGACY_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
 const RESOURCE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-resource-store.ts')
 const COLLAB_API_FILE = resolve(process.cwd(), 'server/api/projects/[id]/resources/collab.post.ts')
+const COLLAB_RESOURCE_LABEL_FILE = resolve(process.cwd(), 'shared/utils/collab-resource.ts')
 const PROJECT_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 const MAIN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanel.vue')
-const LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftSidebar.vue')
+const FLOW_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFlowTab.vue')
+const RESOURCE_MANAGER_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourceManagerPanel.vue')
+const SIDEBAR_HELPERS_FILE = resolve(process.cwd(), 'app/utils/workspace-left-sidebar-helpers.ts')
+
+async function loadWorkspaceSidebarHelpers() {
+  return import(pathToFileURL(SIDEBAR_HELPERS_FILE).href)
+}
 
 it('协作资源模型暴露 collabPurpose 顶层字段，并在服务端实现 workflow 唯一画布', async () => {
-  const domainSource = await readFile(DOMAIN_FILE, 'utf8')
+  const domainBarrelSource = await readFile(DOMAIN_BARREL_FILE, 'utf8')
+  const domainLegacySource = await readFile(DOMAIN_LEGACY_FILE, 'utf8')
   const storeSource = await readFile(RESOURCE_STORE_FILE, 'utf8')
   const apiSource = await readFile(COLLAB_API_FILE, 'utf8')
 
-  assert.match(domainSource, /export type CollabPurpose = 'workflow' \| 'freeform' \| 'notes'/, '共享类型未定义协作用途枚举')
-  assert.match(domainSource, /collabPurpose\?: CollabPurpose/, 'Resource 未暴露顶层 collabPurpose 字段')
-
-  assert.match(storeSource, /export async function ensureProjectWorkflowCanvas\(/, '资源存储层未提供唯一主流程画布 helper')
-  assert.match(storeSource, /collabPurpose: purpose/, '协作资源创建时未写入 collabPurpose 元数据')
-  assert.match(storeSource, /COALESCE\(pr\.metadata->>'collabPurpose', ''\) = 'workflow'/, 'workflow 画布复用逻辑未按 collabPurpose 查询')
-
-  assert.match(apiSource, /purpose\?: CollabPurpose/, '协作资源创建接口未接收 purpose 参数')
-  assert.match(apiSource, /purpose === 'workflow'\s*\?\s*await ensureProjectWorkflowCanvas/, 'workflow 入口未复用唯一流程画布 helper')
+  assert.match(domainBarrelSource, /export \* from '\.\/resource'/)
+  assert.match(domainLegacySource, /export type CollabPurpose = 'workflow' \| 'freeform' \| 'design' \| 'notes'/)
+  assert.match(domainLegacySource, /collabPurpose\?: CollabPurpose/)
+  assert.match(storeSource, /export async function ensureProjectWorkflowCanvas\(/)
+  assert.match(storeSource, /export async function ensureProjectDesignCanvas\(/)
+  assert.match(storeSource, /collabPurpose: purpose/)
+  assert.match(storeSource, /COALESCE\(pr\.metadata->>'collabPurpose', ''\) = 'workflow'/)
+  assert.match(apiSource, /purpose\?: CollabPurpose/)
+  assert.match(apiSource, /purpose === 'workflow'\s*\?\s*await ensureProjectWorkflowCanvas/)
 })
 
-it('项目页从流程入口打开 workflow 画布，而不是继续依赖静态流程 checklist', async () => {
+it('项目页从流程入口打开 workflow 画布，并通过资源状态 composable 维护绑定', async () => {
   const pageSource = await readFile(PROJECT_PAGE_FILE, 'utf8')
   const panelSource = await readFile(MAIN_PANEL_FILE, 'utf8')
+  const flowTabSource = await readFile(FLOW_TAB_FILE, 'utf8')
 
-  assert.match(pageSource, /purpose:\s*'workflow'/, '项目页打开流程入口时未声明 workflow 用途')
-  assert.match(pageSource, /statusLine\.value = '已打开流程画布，可继续协作梳理项目流程。'/, '流程入口成功文案未切换到流程画布')
-  assert.match(pageSource, /const flowResourceId = ref\(''\)/, '项目页未维护独立的流程画布资源状态')
-
-  assert.match(panelSource, /title: '流程画布'/, '固定 flow tab 标题未切换为流程画布')
-  assert.match(panelSource, /v-else-if="activeTabId === 'flow'"/, '主面板缺少 flow tab 渲染分支')
-  assert.match(panelSource, /<WorkspaceTldrawCanvas[\s\S]*workspace-flow-/, 'flow tab 未渲染真实画布引擎')
-  assert.match(panelSource, /if \(activeTabId\.value === 'flow'\)\s+return \['竞赛分析', '流程画布'\]/, '流程画布 breadcrumb 仍然挂在当前竞赛名下')
-  assert.match(panelSource, /if \(activeResourceTab\.value\.previewMode === 'draw'\)\s+return \['竞赛分析', title\]/, '自由画布 breadcrumb 仍然错误绑定到竞赛语义')
-  assert.doesNotMatch(panelSource, /<div v-else-if="activeTabId === 'flow'"[\s\S]*flowPanelTitle/, '流程画布仍保留顶部副标题栏')
-  assert.doesNotMatch(panelSource, /<template v-else-if="activePreviewMode === 'draw'">[\s\S]*rev \{\{ Math\.max\(0, Number\(collabRevision \|\| 0\)\) \}\}/, '自由画布内部仍保留 rev 信息栏')
-  assert.doesNotMatch(panelSource, /赛题确认/, 'flow tab 仍残留旧的静态 checklist 内容')
+  assert.match(pageSource, /purpose:\s*'workflow'/)
+  assert.match(pageSource, /statusLine\.value = '已打开流程画布，可继续协作梳理项目流程。'/)
+  assert.match(pageSource, /useWorkspaceProjectResources\(\)/)
+  assert.match(pageSource, /flowResourceId,/)
+  assert.match(pageSource, /previewResourceId,/)
+  assert.match(panelSource, /title: '流程画布'/)
+  assert.match(panelSource, /v-else-if="activeTabId === 'flow'"/)
+  assert.match(panelSource, /<WorkspaceFlowTab/)
+  assert.match(panelSource, /:flow-resource-id="props\.flowResourceId"/)
+  assert.match(flowTabSource, /WorkspaceTldrawCanvas/)
+  assert.match(flowTabSource, /workspace-flow-/)
+  assert.match(panelSource, /if \(activeTabId\.value === 'flow'\)\s+return \['竞赛分析', '流程画布'\]/)
+  assert.match(panelSource, /return \[resolveCollabResourceLabel\(activeResource\.value\), title\]/)
+  assert.doesNotMatch(panelSource, /<div v-else-if="activeTabId === 'flow'"[\s\S]*flowPanelTitle/)
+  assert.doesNotMatch(panelSource, /<template v-else-if="activePreviewMode === 'draw'">[\s\S]*rev \{\{ Math\.max\(0, Number\(collabRevision \|\| 0\)\) \}\}/)
+  assert.doesNotMatch(panelSource, /赛题确认/)
 })
 
-it('左侧资源入口与资源命名统一为协作文档 / 自由画布 / 流程画布', async () => {
-  const leftSidebarSource = await readFile(LEFT_SIDEBAR_FILE, 'utf8')
-  const storeSource = await readFile(RESOURCE_STORE_FILE, 'utf8')
+it('左侧资源入口与资源命名统一为妙想文档 / 原型白板 / 设计画布 / 流程画布', async () => {
+  const resourceManagerSource = await readFile(RESOURCE_MANAGER_PANEL_FILE, 'utf8')
+  const collabLabelSource = await readFile(COLLAB_RESOURCE_LABEL_FILE, 'utf8')
 
-  assert.match(leftSidebarSource, /新建协作文档/, '左侧菜单缺少协作文档入口')
-  assert.match(leftSidebarSource, /新建自由画布/, '左侧菜单缺少自由画布入口')
-  assert.doesNotMatch(leftSidebarSource, /新建无边画布/, '左侧菜单仍保留无边画布旧称')
+  assert.match(resourceManagerSource, /label: `新建\$\{COLLAB_NOTES_RESOURCE_LABEL\}`[\s\S]*?icon: 'edit_note'/)
+  assert.match(resourceManagerSource, /label: `新建\$\{COLLAB_FREEFORM_RESOURCE_LABEL\}`[\s\S]*?icon: 'draw'/)
+  assert.match(resourceManagerSource, /label: `新建\$\{COLLAB_DESIGN_RESOURCE_LABEL\}`[\s\S]*?icon: 'palette'/)
+  assert.match(collabLabelSource, /COLLAB_WORKFLOW_RESOURCE_LABEL = '流程画布'/)
+  assert.match(collabLabelSource, /COLLAB_FREEFORM_RESOURCE_LABEL = '原型白板'/)
+  assert.match(collabLabelSource, /COLLAB_DESIGN_RESOURCE_LABEL = '设计画布'/)
+  assert.match(collabLabelSource, /COLLAB_NOTES_RESOURCE_LABEL = '妙想文档'/)
+})
 
-  assert.match(storeSource, /return '流程画布'/, 'workflow 资源默认命名未收敛到流程画布')
-  assert.match(storeSource, /return '自由画布'/, 'freeform 资源默认命名未收敛到自由画布')
+it('资源语义解析层可把新旧 design 资源都统一识别为设计画布', async () => {
+  const {
+    isDesignCanvasResource,
+    resolveCollabPurpose,
+    resolveCollabResourceIcon,
+    resolveCollabResourceIconClass,
+    resolveCollabResourceLabel,
+  } = await loadWorkspaceSidebarHelpers()
+
+  const explicitDesign = {
+    source: 'collab',
+    resourceKind: 'draw',
+    collabPurpose: 'design',
+    drawMode: 'freeform',
+    metadata: {},
+  }
+  const legacyComposition = {
+    source: 'collab',
+    resourceKind: 'draw',
+    drawMode: 'composition',
+    metadata: {},
+  }
+  const legacyFixedTab = {
+    source: 'collab',
+    resourceKind: 'draw',
+    metadata: {
+      fixedTab: 'design',
+    },
+  }
+  const workflowCanvas = {
+    source: 'collab',
+    resourceKind: 'draw',
+    collabPurpose: 'workflow',
+    metadata: {},
+  }
+  const freeformCanvas = {
+    source: 'collab',
+    resourceKind: 'draw',
+    collabPurpose: 'freeform',
+    metadata: {},
+  }
+  const notesDocument = {
+    source: 'collab',
+    resourceKind: 'markdown',
+    metadata: {},
+  }
+
+  assert.equal(resolveCollabPurpose(explicitDesign), 'design')
+  assert.equal(resolveCollabPurpose(legacyComposition), 'design')
+  assert.equal(resolveCollabPurpose(legacyFixedTab), 'design')
+  assert.ok(isDesignCanvasResource(explicitDesign))
+  assert.ok(isDesignCanvasResource(legacyComposition))
+  assert.ok(isDesignCanvasResource(legacyFixedTab))
+  assert.equal(resolveCollabResourceLabel(explicitDesign), '设计画布')
+  assert.equal(resolveCollabResourceIcon(explicitDesign), 'palette')
+  assert.equal(resolveCollabResourceIconClass(explicitDesign), 'workspace-icon--collab')
+  assert.equal(resolveCollabPurpose(workflowCanvas), 'workflow')
+  assert.equal(resolveCollabResourceLabel(workflowCanvas), '流程画布')
+  assert.equal(resolveCollabResourceIcon(workflowCanvas), 'flowsheet')
+  assert.equal(resolveCollabPurpose(freeformCanvas), 'freeform')
+  assert.equal(resolveCollabResourceLabel(freeformCanvas), '原型白板')
+  assert.equal(resolveCollabResourceIcon(freeformCanvas), 'draw')
+  assert.equal(resolveCollabPurpose(notesDocument), 'notes')
+  assert.equal(resolveCollabResourceLabel(notesDocument), '妙想文档')
+  assert.equal(resolveCollabResourceIcon(notesDocument), 'edit_note')
 })

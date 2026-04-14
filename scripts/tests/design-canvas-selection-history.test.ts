@@ -1,10 +1,17 @@
 import { computed, nextTick, ref } from 'vue'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   createEmptyDesignCanvasSelectionState,
   useDesignCanvasSelection,
 } from '../../app/composables/useDesignCanvasSelection'
 import { useDesignHistory } from '../../app/composables/useDesignHistory'
+
+const DESIGN_PANEL_FILE = resolve(
+  process.cwd(),
+  'app/components/workspace/WorkspaceDesignPanel.vue',
+)
 
 function makeFrame(id: string) {
   return {
@@ -139,5 +146,20 @@ describe('useDesignHistory', () => {
     history.record('scene-e')
     expect(history.present.value).toBe('scene-e')
     expect(history.future.value).toEqual([])
+  })
+})
+
+describe('WorkspaceDesignPanel', () => {
+  it('新建元素后会立即选中新元素并保留当前 editingFrameId', async () => {
+    const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
+
+    expect(source).toMatch(/function createDesignElementFromStage\(\s*payload: Partial<DesignElementModel>,\s*\): void/)
+    expect(source).toMatch(/const previousElementIds = new Set\(/)
+    expect(source).toMatch(/const nextDocument = appendDesignElementToSceneDocument\(/)
+    expect(source).toMatch(/const createdElement =/)
+    expect(source).toMatch(/commitDocument\(nextDocument\);/)
+    expect(source).toMatch(/setSelectedElements\(\[createdElement\.id\], \{/)
+    expect(source).toMatch(/primaryElementId:\s*createdElement\.id/)
+    expect(source).toMatch(/editingFrameId:\s*selectionState\.value\.editingFrameId \|\| normalizeString\(createdElement\.frameId\)/)
   })
 })

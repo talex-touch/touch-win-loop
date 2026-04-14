@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import type {
+  DesignAssetModel,
   DesignElementModel,
+  DesignFrameDeviceMetadata,
   DesignFrameKind,
   DesignFrameModel,
   DesignPageModel,
+  DeviceFramePreset,
 } from "~~/shared/types/domain";
-import { computed, reactive } from "vue";
+import { computed, reactive, ref } from "vue";
 import {
   resolveDesignFrameExportMetadata,
   resolveDesignFrameGridMetadata,
@@ -20,7 +23,11 @@ const props = withDefaults(
     elementFrame?: DesignFrameModel | null;
     selectedFrameCount?: number;
     selectedElementCount?: number;
-    deviceFramePresets?: Array<{ key: string; title: string }>;
+    deviceFramePresets?: DeviceFramePreset[];
+    deviceArtboardOptions?: DeviceArtboardOption[];
+    deviceShellAssets?: DesignAssetModel[];
+    framePreviewMarkup?: string;
+    frameShellPreviewMarkup?: string;
     designResourceId?: string;
     collabDrawError?: string;
     canOpenDiagramEditor?: boolean;
@@ -39,6 +46,10 @@ const props = withDefaults(
     selectedFrameCount: 0,
     selectedElementCount: 0,
     deviceFramePresets: () => [],
+    deviceArtboardOptions: () => [],
+    deviceShellAssets: () => [],
+    framePreviewMarkup: "",
+    frameShellPreviewMarkup: "",
     designResourceId: "",
     collabDrawError: "",
     canOpenDiagramEditor: false,
@@ -85,6 +96,12 @@ const selectionCommandRows = [
 ] as const;
 
 type InspectorSectionScope = "element" | "frame" | "page";
+type DeviceArtboardOption = {
+  id: string;
+  name: string;
+  presetKey?: string;
+  pageId?: string;
+};
 
 const sectionOpenState = reactive<Record<string, boolean>>({});
 
@@ -218,10 +235,106 @@ const frameSupportsLayout = computed(() =>
 const frameSupportsVisualTokens = computed(() =>
   Boolean(props.frame && props.frame.kind !== "diagram"),
 );
+const isDeviceArtboard = computed(
+  () => props.frame?.kind === "device_artboard",
+);
+const isDeviceMockup = computed(() => props.frame?.kind === "device_mockup");
+const isDeviceFrame = computed(
+  () => isDeviceArtboard.value || isDeviceMockup.value,
+);
+const devicePresetSearch = ref("");
+const devicePreviewMode = ref<"screen" | "shell">("screen");
+const frameDeviceMetadata = computed(() => {
+  const source = props.frame?.metadata?.device || {};
+  const shellMode = source.shellMode;
+  const screenScaleMode = source.screenScaleMode;
+  return {
+    shellMode:
+      shellMode === "none" ||
+      shellMode === "builtin" ||
+      shellMode === "external"
+        ? shellMode
+        : isDeviceArtboard.value
+          ? "none"
+          : "builtin",
+    shellAssetId: String(source.shellAssetId || "").trim() || undefined,
+    mockupSourceFrameId:
+      String(source.mockupSourceFrameId || "").trim() || undefined,
+    screenScaleMode: screenScaleMode === "fill" ? "fill" : "fit",
+    showSafeArea: Boolean(source.showSafeArea),
+  } satisfies Required<
+    Pick<
+      DesignFrameDeviceMetadata,
+      "shellMode" | "screenScaleMode" | "showSafeArea"
+    >
+  > &
+    Pick<
+      DesignFrameDeviceMetadata,
+      "shellAssetId" | "mockupSourceFrameId"
+    >;
+});
+const frameDevicePreset = computed(() => {
+  if (!props.frame) return props.deviceFramePresets[0] || null;
+  return (
+    props.deviceFramePresets.find(
+      (preset) => preset.key === props.frame?.deviceFramePresetKey,
+    ) ||
+    props.deviceFramePresets[0] ||
+    null
+  );
+});
+const filteredDeviceFramePresets = computed(() => {
+  const query = devicePresetSearch.value.trim().toLowerCase();
+  if (!query) return props.deviceFramePresets;
+  return props.deviceFramePresets.filter((preset) =>
+    [
+      preset.title,
+      preset.group,
+      preset.platform,
+      preset.key,
+      `${preset.screenWidth}x${preset.screenHeight}`,
+    ].some((token) => String(token || "").toLowerCase().includes(query)),
+  );
+});
+const groupedDeviceFramePresets = computed(() => {
+  const groups = new Map<string, DeviceFramePreset[]>();
+  filteredDeviceFramePresets.value.forEach((preset) => {
+    const bucket = groups.get(preset.group) || [];
+    bucket.push(preset);
+    groups.set(preset.group, bucket);
+  });
+  return Array.from(groups.entries()).map(([group, items]) => ({
+    group,
+    items,
+  }));
+});
+const framePresetBound = computed(() =>
+  Boolean(isDeviceArtboard.value && props.frame?.deviceFramePresetKey),
+);
+const selectedShellAsset = computed(() => {
+  const shellAssetId = frameDeviceMetadata.value.shellAssetId;
+  if (!shellAssetId) return null;
+  return (
+    props.deviceShellAssets.find((asset) => asset.id === shellAssetId) || null
+  );
+});
+const activeFramePreviewMarkup = computed(() => {
+  if (!isDeviceFrame.value) return "";
+  if (isDeviceArtboard.value) {
+    return devicePreviewMode.value === "shell"
+      ? props.frameShellPreviewMarkup
+      : props.framePreviewMarkup;
+  }
+  return props.framePreviewMarkup || props.frameShellPreviewMarkup;
+});
 
 function toFiniteNumber(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeString(value: unknown): string {
+  return String(value || "").trim();
 }
 
 function updatePageMetadata(patch: Record<string, unknown>): void {
@@ -294,6 +407,109 @@ function updateFrameExport(patch: Record<string, unknown>): void {
       ...patch,
     },
   });
+}
+
+function updateFrameDeviceMetadata(
+  patch: Partial<DesignFrameDeviceMetadata>,
+): void {
+  updateFrameMetadata({
+    device: {
+      ...(props.frame?.metadata?.device || {}),
+      ...patch,
+    },
+  });
+}
+
+function handleFrameKindChange(nextKind: DesignFrameKind): void {
+  if (!props.frame) return;
+  const patch: Partial<DesignFrameModel> = {
+    kind: nextKind,
+  };
+  if (nextKind === "device_artboard") {
+    const preset = frameDevicePreset.value || props.deviceFramePresets[0] || null;
+    if (preset) {
+      patch.deviceFramePresetKey = preset.key;
+      patch.width = preset.screenWidth;
+      patch.height = preset.screenHeight;
+    }
+    patch.metadata = {
+      ...(props.frame.metadata || {}),
+      device: {
+        ...(props.frame.metadata?.device || {}),
+        shellMode: "none",
+      },
+    };
+  } else if (nextKind === "device_mockup") {
+    patch.deviceFramePresetKey =
+      props.frame.deviceFramePresetKey || props.deviceFramePresets[0]?.key || "";
+    patch.metadata = {
+      ...(props.frame.metadata || {}),
+      device: {
+        ...(props.frame.metadata?.device || {}),
+        shellMode:
+          frameDeviceMetadata.value.shellMode === "none"
+            ? "builtin"
+            : frameDeviceMetadata.value.shellMode,
+      },
+    };
+  }
+  emit("updateFrame", patch);
+}
+
+function handleDevicePresetChange(nextKey: string): void {
+  if (!props.frame) return;
+  const preset = props.deviceFramePresets.find((item) => item.key === nextKey);
+  if (!preset) return;
+  emit("updateFrame", {
+    deviceFramePresetKey: preset.key,
+    ...(isDeviceArtboard.value
+      ? {
+          width: preset.screenWidth,
+          height: preset.screenHeight,
+        }
+      : {}),
+  });
+}
+
+function bindCurrentDevicePreset(): void {
+  if (!props.frame || !isDeviceArtboard.value || !frameDevicePreset.value) return;
+  emit("updateFrame", {
+    deviceFramePresetKey: frameDevicePreset.value.key,
+    width: frameDevicePreset.value.screenWidth,
+    height: frameDevicePreset.value.screenHeight,
+  });
+}
+
+function clearDevicePresetBinding(): void {
+  if (!props.frame || !isDeviceArtboard.value) return;
+  emit("updateFrame", {
+    deviceFramePresetKey: "",
+  });
+}
+
+function setFrameShellEnabled(enabled: boolean): void {
+  updateFrameDeviceMetadata({
+    shellMode: enabled
+      ? frameDeviceMetadata.value.shellMode === "external"
+        ? "external"
+        : "builtin"
+      : "none",
+  });
+}
+
+function isDeviceShellAssetValid(
+  asset?: DesignAssetModel | null,
+): boolean {
+  const viewportRect = asset?.metadata?.deviceShell?.viewportRect;
+  const cornerRadius = Number(asset?.metadata?.deviceShell?.cornerRadius ?? -1);
+  return Boolean(
+    asset &&
+      viewportRect &&
+      Number(viewportRect.width) > 0 &&
+      Number(viewportRect.height) > 0 &&
+      Number.isFinite(cornerRadius) &&
+      cornerRadius >= 0,
+  );
 }
 
 function updateElementStyle(
@@ -1245,6 +1461,7 @@ function updateElementConstraints(
                 class="workspace-design-inspector__compact-input"
                 type="number"
                 min="280"
+                :disabled="framePresetBound"
                 @change="
                   emit('updateFrame', {
                     width: Math.max(
@@ -1265,6 +1482,7 @@ function updateElementConstraints(
                 class="workspace-design-inspector__compact-input"
                 type="number"
                 min="180"
+                :disabled="framePresetBound"
                 @change="
                   emit('updateFrame', {
                     height: Math.max(
@@ -1305,44 +1523,149 @@ function updateElementConstraints(
                 :value="props.frame.kind"
                 class="workspace-design-inspector__compact-input"
                 @change="
-                  emit('updateFrame', {
-                    kind: ($event.target as HTMLSelectElement)
-                      .value as DesignFrameKind,
-                  })
+                  handleFrameKindChange(
+                    ($event.target as HTMLSelectElement).value as
+                      DesignFrameKind,
+                  )
                 "
               >
                 <option value="freeform">freeform</option>
                 <option value="template">template</option>
+                <option value="device_artboard">device_artboard</option>
                 <option value="device_mockup">device_mockup</option>
                 <option value="diagram">diagram</option>
               </select>
             </label>
-            <label
-              v-if="props.frame.kind === 'device_mockup'"
-              class="workspace-design-inspector__compact-field workspace-design-inspector__compact-field--span-two workspace-design-inspector__compact-field--select"
+          </div>
+
+          <div
+            v-if="framePresetBound"
+            class="workspace-design-inspector__subsection-note"
+          >
+            当前预设尺寸已绑定。解除绑定前，设备画板宽高会跟随预设尺寸。
+          </div>
+
+          <div
+            v-if="isDeviceFrame"
+            class="workspace-design-inspector__subsection"
+          >
+            <div class="workspace-design-inspector__group-header">
+              <div>
+                <h5 class="workspace-design-inspector__subsection-title">
+                  设备预设
+                </h5>
+                <p class="workspace-design-inspector__group-description">
+                  通过分组和搜索统一管理真实设备尺寸库。
+                </p>
+              </div>
+            </div>
+
+            <div
+              class="workspace-design-inspector__field-grid workspace-design-inspector__field-grid--two"
             >
-              <span class="workspace-design-inspector__compact-label"
-                >设备边框</span
-              >
-              <select
-                :value="props.frame.deviceFramePresetKey || ''"
-                class="workspace-design-inspector__compact-input"
-                @change="
-                  emit('updateFrame', {
-                    deviceFramePresetKey: ($event.target as HTMLSelectElement)
-                      .value,
-                  })
-                "
-              >
-                <option
-                  v-for="preset in props.deviceFramePresets"
-                  :key="preset.key"
-                  :value="preset.key"
+              <label class="workspace-design-inspector__field">
+                <span class="workspace-design-inspector__label">搜索预设</span>
+                <input
+                  :value="devicePresetSearch"
+                  class="workspace-design-inspector__input"
+                  type="text"
+                  placeholder="iPhone 16 Pro / Android / iPad"
+                  @input="
+                    devicePresetSearch = (
+                      $event.target as HTMLInputElement
+                    ).value
+                  "
+                />
+              </label>
+              <label class="workspace-design-inspector__field">
+                <span class="workspace-design-inspector__label">当前预设</span>
+                <select
+                  :value="frameDevicePreset?.key || ''"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    handleDevicePresetChange(
+                      ($event.target as HTMLSelectElement).value,
+                    )
+                  "
                 >
-                  {{ preset.title }}
-                </option>
-              </select>
-            </label>
+                  <option
+                    v-if="!groupedDeviceFramePresets.length"
+                    value=""
+                    disabled
+                  >
+                    未找到匹配预设
+                  </option>
+                  <optgroup
+                    v-for="group in groupedDeviceFramePresets"
+                    :key="group.group"
+                    :label="group.group"
+                  >
+                    <option
+                      v-for="preset in group.items"
+                      :key="preset.key"
+                      :value="preset.key"
+                    >
+                      {{
+                        `${preset.title} · ${preset.screenWidth}×${preset.screenHeight}`
+                      }}
+                    </option>
+                  </optgroup>
+                </select>
+              </label>
+            </div>
+
+            <div
+              v-if="frameDevicePreset"
+              class="workspace-design-inspector__meta-list"
+            >
+              <div class="workspace-design-inspector__meta-row">
+                <span class="workspace-design-inspector__meta-key">分组</span>
+                <span class="workspace-design-inspector__meta-value">{{
+                  frameDevicePreset.group
+                }}</span>
+              </div>
+              <div class="workspace-design-inspector__meta-row">
+                <span class="workspace-design-inspector__meta-key">平台</span>
+                <span class="workspace-design-inspector__meta-value">{{
+                  frameDevicePreset.platform
+                }}</span>
+              </div>
+              <div class="workspace-design-inspector__meta-row">
+                <span class="workspace-design-inspector__meta-key">屏幕</span>
+                <span class="workspace-design-inspector__meta-value">{{
+                  `${frameDevicePreset.screenWidth} × ${frameDevicePreset.screenHeight}`
+                }}</span>
+              </div>
+            </div>
+
+            <div
+              v-if="isDeviceArtboard"
+              class="workspace-design-inspector__compact-actions"
+            >
+              <span class="workspace-design-inspector__status-pill">
+                {{
+                  framePresetBound
+                    ? "当前尺寸跟随预设"
+                    : "已解除绑定，可手动输入自定义尺寸"
+                }}
+              </span>
+              <button
+                v-if="framePresetBound"
+                class="workspace-design-inspector__command-button"
+                type="button"
+                @click="clearDevicePresetBinding"
+              >
+                解除绑定
+              </button>
+              <button
+                v-else
+                class="workspace-design-inspector__command-button"
+                type="button"
+                @click="bindCurrentDevicePreset"
+              >
+                重新绑定当前预设
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1896,6 +2219,82 @@ function updateElementConstraints(
       </div>
 
       <div
+        v-if="isDeviceFrame"
+        class="workspace-design-inspector__group"
+        :data-collapsed="
+          isSectionOpen('frame', 'preview', true) ? 'false' : 'true'
+        "
+      >
+        <div class="workspace-design-inspector__group-header">
+          <div>
+            <h4 class="workspace-design-inspector__group-title">实时预览</h4>
+            <p class="workspace-design-inspector__group-description">
+              右栏预览直接复用导出链路，避免预览和导出走两套实现。
+            </p>
+          </div>
+          <button
+            class="workspace-design-inspector__section-toggle"
+            type="button"
+            :title="getSectionToggleLabel('frame', 'preview', '实时预览', true)"
+            :aria-label="
+              getSectionToggleLabel('frame', 'preview', '实时预览', true)
+            "
+            @click="toggleSection('frame', 'preview', true)"
+          >
+            <span class="material-symbols-outlined text-[18px]">
+              {{
+                isSectionOpen("frame", "preview", true)
+                  ? "expand_less"
+                  : "expand_more"
+              }}
+            </span>
+          </button>
+        </div>
+        <div
+          v-if="isSectionOpen('frame', 'preview', true)"
+          class="workspace-design-inspector__group-body"
+        >
+          <div
+            v-if="isDeviceArtboard"
+            class="workspace-design-inspector__segmented"
+          >
+            <button
+              class="workspace-design-inspector__segmented-button"
+              :class="
+                devicePreviewMode === 'screen'
+                  ? 'workspace-design-inspector__segmented-button--active'
+                  : ''
+              "
+              type="button"
+              @click="devicePreviewMode = 'screen'"
+            >
+              裸屏预览
+            </button>
+            <button
+              class="workspace-design-inspector__segmented-button"
+              :class="
+                devicePreviewMode === 'shell'
+                  ? 'workspace-design-inspector__segmented-button--active'
+                  : ''
+              "
+              type="button"
+              @click="devicePreviewMode = 'shell'"
+            >
+              带壳预览
+            </button>
+          </div>
+          <div
+            v-if="activeFramePreviewMarkup"
+            class="workspace-design-inspector__preview-frame"
+            v-html="activeFramePreviewMarkup"
+          />
+          <p v-else class="workspace-design-inspector__subsection-note">
+            当前设备对象还没有可渲染的实时预览。
+          </p>
+        </div>
+      </div>
+
+      <div
         class="workspace-design-inspector__group"
         :data-collapsed="
           isSectionOpen('frame', 'export', true) ? 'false' : 'true'
@@ -1984,6 +2383,179 @@ function updateElementConstraints(
             />
             <span>导出时继承 page overlays</span>
           </label>
+
+          <div
+            v-if="isDeviceFrame"
+            class="workspace-design-inspector__subsection"
+          >
+            <div class="workspace-design-inspector__group-header">
+              <div>
+                <h5 class="workspace-design-inspector__subsection-title">
+                  设备导出
+                </h5>
+                <p class="workspace-design-inspector__group-description">
+                  支持裸屏、内置壳、外部壳和联动画板导出。
+                </p>
+              </div>
+            </div>
+
+            <label class="workspace-design-inspector__check">
+              <input
+                :checked="frameDeviceMetadata.shellMode !== 'none'"
+                type="checkbox"
+                @change="
+                  setFrameShellEnabled(
+                    ($event.target as HTMLInputElement).checked,
+                  )
+                "
+              />
+              <span>是否带壳</span>
+            </label>
+
+            <div
+              class="workspace-design-inspector__field-grid workspace-design-inspector__field-grid--two"
+            >
+              <label class="workspace-design-inspector__field">
+                <span class="workspace-design-inspector__label">壳来源</span>
+                <select
+                  :value="
+                    frameDeviceMetadata.shellMode === 'external'
+                      ? 'external'
+                      : 'builtin'
+                  "
+                  class="workspace-design-inspector__input"
+                  :disabled="frameDeviceMetadata.shellMode === 'none'"
+                  @change="
+                    updateFrameDeviceMetadata({
+                      shellMode: ($event.target as HTMLSelectElement)
+                        .value as 'builtin' | 'external',
+                    })
+                  "
+                >
+                  <option value="builtin">内置壳</option>
+                  <option value="external">外部壳</option>
+                </select>
+              </label>
+
+              <label class="workspace-design-inspector__field">
+                <span class="workspace-design-inspector__label">屏幕缩放</span>
+                <select
+                  :value="frameDeviceMetadata.screenScaleMode"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    updateFrameDeviceMetadata({
+                      screenScaleMode: ($event.target as HTMLSelectElement)
+                        .value as 'fit' | 'fill',
+                    })
+                  "
+                >
+                  <option value="fit">fit</option>
+                  <option value="fill">fill</option>
+                </select>
+              </label>
+
+              <label
+                v-if="frameDeviceMetadata.shellMode === 'external'"
+                class="workspace-design-inspector__field workspace-design-inspector__field--span-two"
+              >
+                <span class="workspace-design-inspector__label"
+                  >外部壳资源</span
+                >
+                <select
+                  :value="frameDeviceMetadata.shellAssetId || ''"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    updateFrameDeviceMetadata({
+                      shellAssetId:
+                        normalizeString(
+                          ($event.target as HTMLSelectElement).value,
+                        ) || undefined,
+                    })
+                  "
+                >
+                  <option value="">未指定</option>
+                  <option
+                    v-for="asset in props.deviceShellAssets"
+                    :key="asset.id"
+                    :value="asset.id"
+                    :disabled="!isDeviceShellAssetValid(asset)"
+                  >
+                    {{
+                      `${asset.name}${isDeviceShellAssetValid(asset) ? '' : ' · viewport 未完成'}`
+                    }}
+                  </option>
+                </select>
+              </label>
+
+              <label
+                v-if="isDeviceMockup"
+                class="workspace-design-inspector__field workspace-design-inspector__field--span-two"
+              >
+                <span class="workspace-design-inspector__label">联动源画板</span>
+                <select
+                  :value="frameDeviceMetadata.mockupSourceFrameId || ''"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    updateFrameDeviceMetadata({
+                      mockupSourceFrameId:
+                        normalizeString(
+                          ($event.target as HTMLSelectElement).value,
+                        ) || undefined,
+                    })
+                  "
+                >
+                  <option value="">未绑定，回退到上传图片</option>
+                  <option
+                    v-for="option in props.deviceArtboardOptions"
+                    :key="option.id"
+                    :value="option.id"
+                  >
+                    {{ option.name }}
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <label class="workspace-design-inspector__check">
+              <input
+                :checked="frameDeviceMetadata.showSafeArea"
+                type="checkbox"
+                @change="
+                  updateFrameDeviceMetadata({
+                    showSafeArea: ($event.target as HTMLInputElement).checked,
+                  })
+                "
+              />
+              <span>显示 Safe Area</span>
+            </label>
+
+            <div
+              v-if="selectedShellAsset || frameDeviceMetadata.mockupSourceFrameId"
+              class="workspace-design-inspector__meta-list"
+            >
+              <div
+                v-if="selectedShellAsset"
+                class="workspace-design-inspector__meta-row"
+              >
+                <span class="workspace-design-inspector__meta-key">当前外部壳</span>
+                <span class="workspace-design-inspector__meta-value">{{
+                  selectedShellAsset.name
+                }}</span>
+              </div>
+              <div
+                v-if="frameDeviceMetadata.mockupSourceFrameId"
+                class="workspace-design-inspector__meta-row"
+              >
+                <span class="workspace-design-inspector__meta-key">联动画板</span>
+                <span class="workspace-design-inspector__meta-value">{{
+                  props.deviceArtboardOptions.find(
+                    (option) =>
+                      option.id === frameDeviceMetadata.mockupSourceFrameId,
+                  )?.name || frameDeviceMetadata.mockupSourceFrameId
+                }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2542,6 +3114,18 @@ function updateElementConstraints(
   gap: 8px;
 }
 
+.workspace-design-inspector__status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(241, 245, 249, 0.9);
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .workspace-design-inspector__group {
   margin-top: 14px;
   padding-top: 14px;
@@ -2641,6 +3225,49 @@ function updateElementConstraints(
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.workspace-design-inspector__segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(226, 232, 240, 0.96);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.workspace-design-inspector__segmented-button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.workspace-design-inspector__segmented-button--active {
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.workspace-design-inspector__preview-frame {
+  overflow: hidden;
+  border: 1px solid rgba(226, 232, 240, 0.96);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  min-height: 220px;
+}
+
+.workspace-design-inspector__preview-frame :deep(svg) {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 .workspace-design-inspector__field-grid {

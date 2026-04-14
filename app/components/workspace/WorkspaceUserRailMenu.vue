@@ -28,10 +28,22 @@ const emit = defineEmits<{
   openAccountCenter: []
 }>()
 
+const userMenuRootRef = ref<HTMLElement | null>(null)
+const userTriggerRef = ref<HTMLButtonElement | null>(null)
 const userPopoverRef = ref<HTMLElement | null>(null)
 const userPopoverVisible = ref(false)
+const userPopoverPosition = reactive({
+  top: 0,
+  left: 0,
+})
+
+const USER_POPOVER_GAP = 12
+const USER_POPOVER_WIDTH = 320
+const USER_POPOVER_FALLBACK_HEIGHT = 420
+const USER_POPOVER_VIEWPORT_PADDING = 16
 
 let userPopoverCloseTimer: ReturnType<typeof setTimeout> | null = null
+let userPopoverLayoutFrame: number | null = null
 
 const normalizedUserName = computed(() => String(props.userName || '').trim() || '当前用户')
 const normalizedUserEmail = computed(() => String(props.userEmail || '').trim())
@@ -73,6 +85,10 @@ const orderedWorkspaceOptions = computed(() => {
 
   return [...current, ...otherTeams, ...personal]
 })
+const userPopoverStyle = computed(() => ({
+  top: `${userPopoverPosition.top}px`,
+  left: `${userPopoverPosition.left}px`,
+}))
 
 function workspaceTypeLabel(type: WorkspaceWithQuota['workspace']['type']): string {
   if (type === 'personal')
@@ -86,6 +102,60 @@ function clearUserPopoverCloseTimer(): void {
 
   clearTimeout(userPopoverCloseTimer)
   userPopoverCloseTimer = null
+}
+
+function clearUserPopoverLayoutFrame(): void {
+  if (userPopoverLayoutFrame === null || !import.meta.client)
+    return
+
+  cancelAnimationFrame(userPopoverLayoutFrame)
+  userPopoverLayoutFrame = null
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function resolveUserPopoverDimensions(): { width: number, height: number } {
+  const rect = userPopoverRef.value?.getBoundingClientRect()
+  return {
+    width: rect?.width || USER_POPOVER_WIDTH,
+    height: rect?.height || USER_POPOVER_FALLBACK_HEIGHT,
+  }
+}
+
+function syncUserPopoverPosition(): void {
+  if (!import.meta.client || !userPopoverVisible.value)
+    return
+
+  const trigger = userTriggerRef.value
+  if (!trigger)
+    return
+
+  const triggerRect = trigger.getBoundingClientRect()
+  const { width, height } = resolveUserPopoverDimensions()
+  const maxLeft = Math.max(USER_POPOVER_VIEWPORT_PADDING, window.innerWidth - width - USER_POPOVER_VIEWPORT_PADDING)
+  const maxTop = Math.max(USER_POPOVER_VIEWPORT_PADDING, window.innerHeight - height - USER_POPOVER_VIEWPORT_PADDING)
+  const preferredRightLeft = triggerRect.right + USER_POPOVER_GAP
+  const preferredLeftLeft = triggerRect.left - width - USER_POPOVER_GAP
+  const resolvedLeft = preferredRightLeft <= maxLeft || preferredLeftLeft < USER_POPOVER_VIEWPORT_PADDING
+    ? preferredRightLeft
+    : preferredLeftLeft
+  const resolvedTop = triggerRect.bottom - height
+
+  userPopoverPosition.left = clamp(resolvedLeft, USER_POPOVER_VIEWPORT_PADDING, maxLeft)
+  userPopoverPosition.top = clamp(resolvedTop, USER_POPOVER_VIEWPORT_PADDING, maxTop)
+}
+
+function scheduleUserPopoverPositionSync(): void {
+  if (!import.meta.client)
+    return
+
+  clearUserPopoverLayoutFrame()
+  userPopoverLayoutFrame = window.requestAnimationFrame(() => {
+    userPopoverLayoutFrame = null
+    syncUserPopoverPosition()
+  })
 }
 
 function openUserPopover(): void {
@@ -107,8 +177,11 @@ function scheduleUserPopoverClose(): void {
 
 function handleUserPopoverFocusOut(event: FocusEvent): void {
   const nextTarget = event.relatedTarget as Node | null
-  const container = userPopoverRef.value
-  if (container && nextTarget && container.contains(nextTarget))
+  const root = userMenuRootRef.value
+  if (root && nextTarget && root.contains(nextTarget))
+    return
+  const popover = userPopoverRef.value
+  if (popover && nextTarget && popover.contains(nextTarget))
     return
   scheduleUserPopoverClose()
 }
@@ -161,9 +234,15 @@ function handleGlobalPointerDown(event: Event): void {
   if (!target || !userPopoverVisible.value)
     return
 
-  const container = userPopoverRef.value
-  if (!container || !container.contains(target))
-    closeUserPopover()
+  const root = userMenuRootRef.value
+  if (root?.contains(target))
+    return
+
+  const popover = userPopoverRef.value
+  if (popover?.contains(target))
+    return
+
+  closeUserPopover()
 }
 
 function handleGlobalEscape(event: KeyboardEvent): void {
@@ -172,25 +251,48 @@ function handleGlobalEscape(event: KeyboardEvent): void {
   closeUserPopover()
 }
 
+function handleGlobalLayoutChange(): void {
+  if (!userPopoverVisible.value)
+    return
+  scheduleUserPopoverPositionSync()
+}
+
+watch(userPopoverVisible, (visible) => {
+  if (!visible) {
+    clearUserPopoverLayoutFrame()
+    return
+  }
+
+  void nextTick(() => {
+    syncUserPopoverPosition()
+    scheduleUserPopoverPositionSync()
+  })
+})
+
 onMounted(() => {
   if (!import.meta.client)
     return
   document.addEventListener('pointerdown', handleGlobalPointerDown)
   document.addEventListener('keydown', handleGlobalEscape)
+  window.addEventListener('resize', handleGlobalLayoutChange)
+  window.addEventListener('scroll', handleGlobalLayoutChange, true)
 })
 
 onBeforeUnmount(() => {
   clearUserPopoverCloseTimer()
+  clearUserPopoverLayoutFrame()
   if (!import.meta.client)
     return
   document.removeEventListener('pointerdown', handleGlobalPointerDown)
   document.removeEventListener('keydown', handleGlobalEscape)
+  window.removeEventListener('resize', handleGlobalLayoutChange)
+  window.removeEventListener('scroll', handleGlobalLayoutChange, true)
 })
 </script>
 
 <template>
   <div
-    ref="userPopoverRef"
+    ref="userMenuRootRef"
     class="workspace-user-rail-menu"
     @mouseenter="openUserPopover"
     @mouseleave="scheduleUserPopoverClose"
@@ -198,6 +300,7 @@ onBeforeUnmount(() => {
     @focusout="handleUserPopoverFocusOut"
   >
     <button
+      ref="userTriggerRef"
       data-testid="workspace-left-rail-user-trigger"
       class="workspace-user-rail-menu__trigger"
       type="button"
@@ -213,11 +316,19 @@ onBeforeUnmount(() => {
       />
       <span class="workspace-user-rail-menu__hint" aria-hidden="true">空间与账号</span>
     </button>
+  </div>
 
+  <Teleport to="body">
     <div
       v-if="userPopoverVisible"
+      ref="userPopoverRef"
       data-testid="workspace-left-rail-user-popover"
       class="workspace-user-rail-menu__popover"
+      :style="userPopoverStyle"
+      @mouseenter="clearUserPopoverCloseTimer"
+      @mouseleave="scheduleUserPopoverClose"
+      @focusin="openUserPopover"
+      @focusout="handleUserPopoverFocusOut"
     >
       <section class="pb-3 border-b border-slate-100">
         <div class="flex gap-3 items-start">
@@ -332,7 +443,7 @@ onBeforeUnmount(() => {
         </button>
       </section>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -341,7 +452,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   width: 100%;
-  z-index: 80;
+  z-index: 200;
   isolation: isolate;
 }
 
@@ -403,17 +514,19 @@ onBeforeUnmount(() => {
 }
 
 .workspace-user-rail-menu__popover {
-  position: absolute;
-  left: calc(100% + 12px);
-  bottom: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 320px;
-  max-width: min(320px, calc(100vw - 84px));
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   padding: 14px;
   border: 1px solid #e2e8f0;
   border-radius: 22px;
   background: #ffffff;
   backdrop-filter: blur(18px);
   box-shadow: 0 22px 56px rgba(15, 23, 42, 0.18);
-  z-index: 120;
+  z-index: 4000;
 }
 </style>

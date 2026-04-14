@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import type { ContextMenuRequest } from '~/components/ui/context-menu'
 import type {
   Contest,
   ProjectIssue,
   ProjectIssueReport,
+  ProjectMeeting,
+  ProjectMeetingMode,
+  ProjectMeetingRuntimeHealth,
   ProjectMemberSummary,
   ProjectOutlineNode,
   ProjectResourceShareDurationPreset,
@@ -14,7 +18,7 @@ import type {
 import type { ProjectUploadActivityItem, ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 
-type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
+type WorkspaceLeftModuleId = 'resource_manager' | 'meeting' | 'analysis' | 'project_config' | 'issue_center'
 type WorkspaceLeftPanelContentId = WorkspaceLeftModuleId
 
 interface WorkspaceLeftModule {
@@ -49,6 +53,11 @@ const props = withDefaults(defineProps<{
   uploadDrawerOpen?: boolean
   uploadActivityItems?: ProjectUploadActivityItem[]
   uploadHistoryLoaded?: boolean
+  meetings?: ProjectMeeting[]
+  activeMeetingId?: string
+  meetingLoading?: boolean
+  meetingMutating?: boolean
+  meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
   projectMembers?: ProjectMemberSummary[]
   projectOutline?: ProjectOutlineNode[]
   issueReports?: ProjectIssueReport[]
@@ -90,6 +99,11 @@ const props = withDefaults(defineProps<{
   uploadDrawerOpen: false,
   uploadActivityItems: () => [],
   uploadHistoryLoaded: false,
+  meetings: () => [],
+  activeMeetingId: '',
+  meetingLoading: false,
+  meetingMutating: false,
+  meetingRuntimeHealth: null,
   projectMembers: () => [],
   projectOutline: () => [],
   issueReports: () => [],
@@ -138,6 +152,7 @@ const emit = defineEmits<{
   'pauseAllUploadTasks': []
   'resumeAllUploadTasks': []
   'clearCompletedUploadTasks': []
+  'openMeetingPanel': []
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
@@ -145,7 +160,9 @@ const emit = defineEmits<{
   'openWorkspaceHome': []
   'openDisplayPreferences': []
   'openAccountCenter': []
-  'createCollabResource': [payload: { kind: 'markdown' | 'draw', parentResourceId?: string | null }]
+  'createMeeting': [value: { mode: ProjectMeetingMode }]
+  'selectMeeting': [meetingId: string]
+  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform', parentResourceId?: string | null }]
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
   'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
@@ -158,7 +175,10 @@ const emit = defineEmits<{
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
   'uploadResources': [payload: { files: File[], parentResourceId?: string | null }]
+  requestContextMenu: [payload: ContextMenuRequest]
 }>()
+
+const notificationCenter = useNotificationCenter()
 
 const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
 
@@ -168,6 +188,12 @@ const modules: WorkspaceLeftModule[] = [
     title: '资源管理器',
     icon: 'description',
     hint: '项目资料与结构大纲',
+  },
+  {
+    id: 'meeting',
+    title: '项目会议',
+    icon: 'video_call',
+    hint: '发起会议与最近记录',
   },
   {
     id: 'analysis',
@@ -200,6 +226,7 @@ const panelContentTransitionName = ref<'workspace-left-panel-content-forward' | 
 
 function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId {
   return value === 'resource_manager'
+    || value === 'meeting'
     || value === 'analysis'
     || value === 'project_config'
     || value === 'issue_center'
@@ -221,6 +248,7 @@ function syncPanelTransitionDirection(moduleId: string) {
 function switchModule(moduleId: string, options: { allowCollapse?: boolean } = {}) {
   if (!isWorkspaceLeftModuleId(moduleId))
     return
+  closeRailOverlays()
   const allowCollapse = options.allowCollapse !== false
   if (allowCollapse && !props.collapsed && !recyclePanelOpen.value && activeModule.value === moduleId) {
     emit('update:collapsed', true)
@@ -229,19 +257,33 @@ function switchModule(moduleId: string, options: { allowCollapse?: boolean } = {
   syncPanelTransitionDirection(moduleId)
   recyclePanelOpen.value = false
   activeModule.value = moduleId
+  if (moduleId === 'meeting')
+    emit('openMeetingPanel')
   if (props.collapsed)
     emit('update:collapsed', false)
 }
 
+function openMeetingPanel() {
+  closeRailOverlays()
+  emit('openMeetingPanel')
+}
+
+function createMeeting(mode: ProjectMeetingMode) {
+  emit('createMeeting', { mode })
+}
+
 function openSettingsPanel() {
+  closeRailOverlays()
   emit('openSettingsPanel')
 }
 
 function openMemberManagementPanel() {
+  closeRailOverlays()
   emit('openMemberManagementPanel')
 }
 
 function openRecycleBinPanel(options: { allowCollapse?: boolean } = {}) {
+  closeRailOverlays()
   const allowCollapse = options.allowCollapse !== false
   if (allowCollapse && !props.collapsed && recyclePanelOpen.value) {
     emit('update:collapsed', true)
@@ -250,6 +292,22 @@ function openRecycleBinPanel(options: { allowCollapse?: boolean } = {}) {
   recyclePanelOpen.value = true
   if (props.collapsed)
     emit('update:collapsed', false)
+}
+
+function closeRailOverlays(options: { keepNotifications?: boolean, keepUpload?: boolean } = {}) {
+  if (!options.keepNotifications)
+    notificationCenter.closeDrawer()
+  if (!options.keepUpload && props.uploadDrawerOpen)
+    emit('toggleUploadDrawer')
+}
+
+function handleToggleUploadDrawer() {
+  closeRailOverlays({ keepUpload: true })
+  emit('toggleUploadDrawer')
+}
+
+function handleOpenNotifications() {
+  closeRailOverlays({ keepNotifications: true })
 }
 
 watch(() => props.commandSignal, (next, previous) => {
@@ -305,9 +363,10 @@ watch(activeModule, (value) => {
       :upload-history-loaded="props.uploadHistoryLoaded"
       :member-management-active="props.activeMainTabId === 'members'"
       @select="switchModule"
-      @toggle-upload-drawer="emit('toggleUploadDrawer')"
+      @toggle-upload-drawer="handleToggleUploadDrawer"
       @open-recycle-bin="openRecycleBinPanel"
       @open-member-management="openMemberManagementPanel"
+      @open-notifications="handleOpenNotifications"
       @open-settings="openSettingsPanel"
       @switch-workspace="emit('switchWorkspace', $event)"
       @open-workspace-home="emit('openWorkspaceHome')"
@@ -355,11 +414,24 @@ watch(activeModule, (value) => {
             @restore-project-resource="emit('restoreProjectResource', $event)"
             @purge-project-resource="emit('purgeProjectResource', $event)"
             @upload-resources="emit('uploadResources', $event)"
+            @request-context-menu="emit('requestContextMenu', $event)"
             @pause-upload-task="emit('pauseUploadTask', $event)"
             @resume-upload-task="emit('resumeUploadTask', $event)"
             @retry-upload-task="emit('retryUploadTask', $event)"
             @cancel-upload-task="emit('cancelUploadTask', $event)"
             @rebind-upload-task="emit('rebindUploadTask', $event)"
+          />
+
+          <WorkspaceMeetingSidebarPanel
+            v-else-if="activeModule === 'meeting'"
+            :meetings="props.meetings"
+            :active-meeting-id="props.activeMeetingId"
+            :loading="props.meetingLoading"
+            :mutating="props.meetingMutating"
+            :runtime-health="props.meetingRuntimeHealth"
+            @open-meeting-overview="openMeetingPanel"
+            @create-meeting="createMeeting($event.mode)"
+            @select-meeting="emit('selectMeeting', $event)"
           />
 
           <WorkspaceAnalysisPanel
@@ -419,15 +491,18 @@ watch(activeModule, (value) => {
 
 <style scoped>
 .workspace-left-dock {
+  --workspace-left-rail-width: 56px;
+  --workspace-left-dock-width: 360px;
+  --workspace-left-panel-width: calc(var(--workspace-left-dock-width) - var(--workspace-left-rail-width));
   display: flex;
   min-height: 0;
   min-width: 0;
-  flex: 0 0 360px;
+  flex: 0 0 var(--workspace-left-dock-width);
   transition: flex-basis 0.22s ease;
 }
 
 .workspace-left-dock--collapsed {
-  flex-basis: 56px;
+  flex-basis: var(--workspace-left-rail-width);
 }
 
 .workspace-left-panel {
@@ -467,12 +542,12 @@ watch(activeModule, (value) => {
 .workspace-left-panel-content-forward-enter-from,
 .workspace-left-panel-content-backward-leave-to {
   opacity: 0;
-  transform: translateX(10px);
+  transform: translateY(10px);
 }
 
 .workspace-left-panel-content-backward-enter-from,
 .workspace-left-panel-content-forward-leave-to {
   opacity: 0;
-  transform: translateX(-10px);
+  transform: translateY(-10px);
 }
 </style>

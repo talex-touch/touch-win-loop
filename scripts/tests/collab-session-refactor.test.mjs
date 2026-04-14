@@ -18,8 +18,13 @@ it('项目页使用 useCollabSession 统一协作状态机', async () => {
   assert.match(source, /collabSession\.activateRoom\(\)/, '项目页未复用协作会话激活逻辑')
   assert.match(source, /const collabMarkdownDoc = collabSession\.markdownDoc/, '项目页未透传 markdown Y.Doc')
   assert.match(source, /const collabMarkdownAwareness = collabSession\.markdownAwareness/, '项目页未透传 markdown Awareness')
+  assert.match(source, /const collabPreviewLoading = ref\(false\)/, '项目页缺少协作资料预览加载状态')
+  assert.match(source, /if \(options\.openTab !== false\)\s+openPreviewSignal\.value \+= 1/, '协作资料仍未在加载前立即打开 tab')
+  assert.match(source, /collabPreviewLoading\.value = true/, '协作资料打开时未进入加载态')
   assert.match(source, /:collab-markdown-doc="collabMarkdownDoc"/, '主面板未接入 markdown 文档对象')
   assert.match(source, /:collab-markdown-awareness="collabMarkdownAwareness"/, '主面板未接入 markdown Awareness')
+  assert.match(source, /:collab-preview-loading="collabPreviewLoading"/, '主面板未接入协作预览加载状态')
+  assert.match(source, /projectResourcePreviewRequestId = 0/, '项目页缺少资源预览请求序号守卫')
   assert.doesNotMatch(source, /update:collab-markdown-value/, '项目页仍保留旧的 Markdown 文本双向绑定')
   assert.doesNotMatch(source, /function startCollabSnapshotPollTimer/, '项目页仍保留旧的页面级轮询实现')
 

@@ -20,6 +20,7 @@ import {
   syncMarkdownMirrorFromRichText,
   writeRichTextDocumentToFragment,
 } from '~~/shared/utils/collab-markdown-rich-text'
+import { COLLAB_NOTES_RESOURCE_LABEL, resolveCollabResourceDisplayLabel } from '~~/shared/utils/collab-resource'
 import { normalizeDrawMode, normalizeSceneSourceType } from '~~/shared/utils/scene-document'
 
 interface ProjectResourceRow {
@@ -215,7 +216,7 @@ function normalizeCollabPurpose(
     return resolveDefaultCollabPurpose(kind)
   if (kind === 'markdown')
     return parsed === 'notes' ? parsed : null
-  return parsed === 'workflow' || parsed === 'freeform' ? parsed : null
+  return parsed === 'workflow' || parsed === 'freeform' || parsed === 'design' ? parsed : null
 }
 
 function parseResourceKind(value: unknown): ResourceKind | null {
@@ -681,7 +682,7 @@ export function resolveEmbeddedMarkdownImageUploadTitle(input: {
     : []
 
   if (!baseTitle || isGenericEmbeddedImageTitleCandidate(baseTitle)) {
-    const hostResourceTitle = normalizeString(input.hostResourceTitle) || '协作文档'
+    const hostResourceTitle = normalizeString(input.hostResourceTitle) || COLLAB_NOTES_RESOURCE_LABEL
     const prefix = `${hostResourceTitle} - 图片`
     const pattern = new RegExp(`^${escapeRegExp(prefix)}\\s+(\\d{3})$`)
     let maxIndex = 0
@@ -778,11 +779,7 @@ function resolveCollabResourceTitlePrefix(
   kind: Extract<ResourceKind, 'markdown' | 'draw'>,
   purpose: CollabPurpose,
 ): string {
-  if (purpose === 'workflow')
-    return '流程画布'
-  if (purpose === 'freeform')
-    return '自由画布'
-  return kind === 'draw' ? '自由画布' : '协作文档'
+  return resolveCollabResourceDisplayLabel(purpose, kind)
 }
 
 function escapeRegExp(value: string): string {
@@ -837,8 +834,9 @@ function toResource(row: ProjectResourceRow): Resource {
   const persistedKind = parseResourceKind(row.resource_kind)
   const metadataKind = parseResourceKind(metadata.resourceKind)
   const collabKind = parseCollabKind(row.resource_kind) || parseCollabKind(metadata.resourceKind) || 'markdown'
+  const inferredCollabPurpose = resolveDefaultCollabPurpose(collabKind)
   const collabPurpose = sourceType === 'collab'
-    ? (parseCollabPurpose(metadata.collabPurpose) || resolveDefaultCollabPurpose(collabKind))
+    ? (parseCollabPurpose(metadata.collabPurpose) || inferredCollabPurpose)
     : undefined
   const resourceKind: ResourceKind = persistedKind
     || metadataKind
@@ -870,14 +868,22 @@ function toResource(row: ProjectResourceRow): Resource {
     ? signedUrls?.previewUrl
     : undefined
   const drawMode = resourceKind === 'draw'
-    ? normalizeDrawMode(metadata.drawMode, collabPurpose === 'workflow' ? 'diagram' : 'freeform')
+    ? normalizeDrawMode(
+        metadata.drawMode,
+        collabPurpose === 'workflow'
+          ? 'diagram'
+          : 'freeform',
+      )
     : undefined
   const sceneSourceType = resourceKind === 'draw'
     ? normalizeSceneSourceType(metadata.sceneSourceType, 'manual')
     : undefined
   const templateKey = normalizeString(metadata.templateKey) || undefined
   const editorEngine = resourceKind === 'draw'
-    ? normalizeSceneEditorEngine(metadata.editorEngine, drawMode === 'freeform' ? 'tldraw_legacy' : 'vueflow')
+    ? normalizeSceneEditorEngine(
+        metadata.editorEngine,
+        drawMode === 'freeform' ? 'tldraw_legacy' : 'vueflow',
+      )
     : undefined
 
   return {
@@ -1647,12 +1653,25 @@ export async function createProjectCollabResource(
     ...inputMetadata,
     ...(kind === 'draw'
       ? {
-          drawMode: normalizeDrawMode(inputMetadata.drawMode, purpose === 'workflow' ? 'diagram' : 'freeform'),
-          sceneSourceType: normalizeSceneSourceType(inputMetadata.sceneSourceType, 'manual'),
+          drawMode: normalizeDrawMode(
+            inputMetadata.drawMode,
+            purpose === 'workflow'
+              ? 'diagram'
+              : 'freeform',
+          ),
+          sceneSourceType: normalizeSceneSourceType(
+            inputMetadata.sceneSourceType,
+            'manual',
+          ),
           templateKey: normalizeString(inputMetadata.templateKey) || undefined,
           editorEngine: normalizeSceneEditorEngine(
             inputMetadata.editorEngine,
-            normalizeDrawMode(inputMetadata.drawMode, purpose === 'workflow' ? 'diagram' : 'freeform') === 'freeform'
+            normalizeDrawMode(
+              inputMetadata.drawMode,
+              purpose === 'workflow'
+                ? 'diagram'
+                : 'freeform',
+            ) === 'freeform'
               ? 'tldraw_legacy'
               : 'vueflow',
           ),
@@ -1892,9 +1911,13 @@ export async function ensureProjectDesignCanvas(
        AND pr.status = 'active'
        AND pr.source = 'collab'
        AND pr.resource_kind = 'draw'
-       AND COALESCE(pr.metadata->>'collabPurpose', '') = 'freeform'
-       AND COALESCE(pr.metadata->>'drawMode', '') = 'composition'
-       AND COALESCE(pr.metadata->>'fixedTab', '') = 'design'
+       AND (
+         COALESCE(pr.metadata->>'collabPurpose', '') = 'design'
+         OR (
+           COALESCE(pr.metadata->>'drawMode', '') = 'composition'
+           AND COALESCE(pr.metadata->>'fixedTab', '') = 'design'
+         )
+       )
      ORDER BY pr.created_at ASC
      LIMIT 1`,
     [input.projectId],
@@ -1918,8 +1941,8 @@ export async function ensureProjectDesignCanvas(
     projectId: input.projectId,
     actorUserId: input.actorUserId,
     kind: 'draw',
-    purpose: 'freeform',
-    title: input.title || '设计稿',
+    purpose: 'design',
+    title: input.title,
     metadata: {
       fixedTab: 'design',
       drawMode: 'composition',

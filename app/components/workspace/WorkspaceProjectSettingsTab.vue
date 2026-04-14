@@ -84,7 +84,7 @@ const hasActiveProject = computed(() => Boolean(props.activeProject?.id))
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl space-y-4">
+  <div class="w-full space-y-4">
     <section class="border border-slate-200 rounded-lg bg-white overflow-hidden">
       <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="flex gap-3 items-center">

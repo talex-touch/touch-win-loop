@@ -13,6 +13,7 @@ import type {
   SceneDocument,
 } from "~~/shared/types/domain";
 import type { WorkspaceCollabCursorUser } from "~/components/workspace/collab/presence";
+import type { ContextMenuItem } from "~/components/ui/context-menu";
 import {
   computed,
   nextTick,
@@ -57,6 +58,7 @@ import {
   removeDesignFrameFromSceneDocument,
   removeDesignPageFromSceneDocument,
   resolveDesignFrameExportMetadata,
+  resolveDeviceFramePreset,
   resolveDisplayCompositionElementsForFrame,
   resolveDisplayCompositionElementsForPage,
   resolveCompositionElementsForPage,
@@ -73,6 +75,7 @@ import {
 import WLDesignContainer from "../wl-design/WLDesignContainer.vue";
 import WLDesignLayer from "../wl-design/WLDesignLayer.vue";
 import WLDesignLayout from "../wl-design/WLDesignLayout.vue";
+import UiContextMenu from "../ui/UiContextMenu.vue";
 import WorkspaceDesignInspector from "./design/WorkspaceDesignInspector.vue";
 import WorkspaceDesignSidebarTabs from "./design/WorkspaceDesignSidebarTabs.vue";
 import WorkspaceDesignStage from "./design/WorkspaceDesignStage.vue";
@@ -146,6 +149,11 @@ const sidebarCollapsed = ref(false);
 const inspectorCollapsed = ref(false);
 const actionMenuOpen = ref(false);
 const actionMenuRef = ref<HTMLElement | null>(null);
+const collapsedLayerNodeIds = ref<string[]>([]);
+const layerTreeMenuVisible = ref(false);
+const layerTreeMenuNodeId = ref("");
+const layerTreeMenuItems = ref<ContextMenuItem[]>([]);
+const layerTreeMenuAnchorEl = ref<HTMLElement | null>(null);
 const inspectorHeaderEditing = ref(false);
 const inspectorHeaderDraft = ref("");
 const inspectorHeaderInputRef = ref<HTMLInputElement | null>(null);
@@ -215,6 +223,13 @@ function rememberStageViewportState(
 
 function closeActionMenu(): void {
   actionMenuOpen.value = false;
+}
+
+function closeLayerTreeMenu(): void {
+  layerTreeMenuVisible.value = false;
+  layerTreeMenuNodeId.value = "";
+  layerTreeMenuAnchorEl.value = null;
+  layerTreeMenuItems.value = [];
 }
 
 function toggleActionMenu(): void {
@@ -700,6 +715,26 @@ const currentPageFrames = computed(() => {
     (frame) => frame.pageId === currentPage.value?.id,
   );
 });
+const imageAssets = computed(() => {
+  return (compositionModel.value.assets || []).filter(
+    (asset) => asset.metadata?.role !== "device_shell",
+  );
+});
+const deviceShellAssets = computed(() => {
+  return (compositionModel.value.assets || []).filter(
+    (asset) => asset.metadata?.role === "device_shell",
+  );
+});
+const availableDeviceArtboards = computed(() => {
+  return (compositionModel.value.frames || [])
+    .filter((frame) => frame.kind === "device_artboard")
+    .map((frame) => ({
+      id: frame.id,
+      name: frame.name,
+      presetKey: frame.deviceFramePresetKey || "",
+      pageId: frame.pageId,
+    }));
+});
 function resolveFrameElements(
   frame: DesignFrameModel | null | undefined,
 ): DesignElementModel[] {
@@ -848,11 +883,15 @@ function flattenDesignLayerTreeRows(
   depth = 0,
 ): SidebarLayerTreeRow[] {
   return nodes.flatMap((node) => {
+    if (node.type === "page_root_group" || node.type === "frame_children_group")
+      return flattenDesignLayerTreeRows(node.children || [], depth);
+
     const currentRow: SidebarLayerTreeRow = {
       node,
       depth,
     };
-    if (!node.children?.length) return [currentRow];
+    if (!node.children?.length || !isLayerTreeNodeExpanded(node.id))
+      return [currentRow];
     return [
       currentRow,
       ...flattenDesignLayerTreeRows(node.children, depth + 1),
@@ -954,6 +993,32 @@ const frameSidebarTreeRows = computed<SidebarLayerTreeRow[]>(() => {
 const currentPageElementCount = computed(() => {
   return designEditorState.allPageElements.value.length;
 });
+const selectedLayerTreeAncestorNodeIds = computed(() => {
+  const nextIds = new Set<string>();
+
+  for (const selectedElementId of selectedElementIds.value) {
+    const normalizedElementId = normalizeString(selectedElementId);
+    const selectedElement = currentPageElementMap.value.get(normalizedElementId);
+    if (!selectedElement) continue;
+
+    const frameId = normalizeString(selectedElement.frameId);
+    if (frameId) nextIds.add(`frame:${frameId}`);
+
+    const visitedAncestorIds = new Set<string>();
+    let cursorParentId = normalizeString(selectedElement.parentId);
+    while (cursorParentId && !visitedAncestorIds.has(cursorParentId)) {
+      visitedAncestorIds.add(cursorParentId);
+      nextIds.add(`element:${cursorParentId}`);
+      const parentElement = currentPageElementMap.value.get(cursorParentId);
+      if (!parentElement) break;
+      const parentFrameId = normalizeString(parentElement.frameId);
+      if (parentFrameId) nextIds.add(`frame:${parentFrameId}`);
+      cursorParentId = normalizeString(parentElement.parentId);
+    }
+  }
+
+  return nextIds;
+});
 const canExportSingleFrame = computed(
   () => selectedFrames.value.length === 1 && Boolean(selectedFrame.value),
 );
@@ -962,6 +1027,45 @@ const canOpenDiagramEditor = computed(
     selectedFrames.value.length === 1 &&
     selectedFrame.value?.kind === "diagram",
 );
+function renderFramePreviewMarkup(
+  frameId: string,
+  shellMode?: "none" | "builtin" | "external",
+): string {
+  const frame = resolveFrameFromDocument(draftDocument.value, frameId);
+  if (!frame) return "";
+  const nextDocument =
+    shellMode === undefined
+      ? draftDocument.value
+      : updateDesignFrameInSceneDocument(draftDocument.value, frameId, {
+          metadata: {
+            ...(frame.metadata || {}),
+            device: {
+              ...(frame.metadata?.device || {}),
+              shellMode,
+            },
+          },
+        });
+  return renderCompositionAssetToSvg(nextDocument, {
+    frameId,
+  });
+}
+const selectedFramePreviewSvg = computed(() => {
+  if (!selectedFrame.value) return "";
+  if (selectedFrame.value.kind === "device_artboard")
+    return renderFramePreviewMarkup(selectedFrame.value.id, "none");
+  return renderFramePreviewMarkup(selectedFrame.value.id);
+});
+const selectedFrameShellPreviewSvg = computed(() => {
+  if (!selectedFrame.value) return "";
+  if (selectedFrame.value.kind === "device_artboard")
+    return renderFramePreviewMarkup(
+      selectedFrame.value.id,
+      selectedFrame.value.metadata?.device?.shellMode === "external"
+        ? "external"
+        : "builtin",
+    );
+  return renderFramePreviewMarkup(selectedFrame.value.id);
+});
 
 function replaceSelectionState(
   nextState: Partial<DesignCanvasSelectionState> | DesignCanvasSelectionState,
@@ -1025,9 +1129,28 @@ function handleStageViewportChange(payload: {
 function createDesignElementFromStage(
   payload: Partial<DesignElementModel>,
 ): void {
-  commitDocument(
-    appendDesignElementToSceneDocument(draftDocument.value, payload),
+  const previousElementIds = new Set(
+    draftDocument.value.sourceModel.kind === "composition"
+      ? (draftDocument.value.sourceModel.elements || []).map((item) => item.id)
+      : [],
   );
+  const nextDocument = appendDesignElementToSceneDocument(
+    draftDocument.value,
+    payload,
+  );
+  const createdElement =
+    nextDocument.sourceModel.kind === "composition"
+      ? (nextDocument.sourceModel.elements || []).find(
+          (item) => !previousElementIds.has(item.id),
+        ) || null
+      : null;
+  commitDocument(nextDocument);
+  if (!createdElement) return;
+  setSelectedElements([createdElement.id], {
+    primaryElementId: createdElement.id,
+    editingFrameId:
+      selectionState.value.editingFrameId || normalizeString(createdElement.frameId),
+  });
 }
 
 function updateDesignElementFromStage(payload: {
@@ -1286,9 +1409,33 @@ watch(
   () => currentPage.value?.id || "",
   () => {
     syncStageViewportState(currentPage.value);
+    collapsedLayerNodeIds.value = [];
+    closeLayerTreeMenu();
   },
   { immediate: true },
 );
+
+watch(
+  [selectedElementIds, selectedFrameIds, selectedLayerTreeAncestorNodeIds],
+  () => {
+    const protectedNodeIds = new Set<string>([
+      ...selectedElementIds.value.map(id => `element:${normalizeString(id)}`),
+      ...selectedFrameIds.value.map(id => `frame:${normalizeString(id)}`),
+      ...selectedLayerTreeAncestorNodeIds.value,
+    ]);
+    collapsedLayerNodeIds.value = collapsedLayerNodeIds.value.filter(
+      nodeId => !protectedNodeIds.has(nodeId),
+    );
+  },
+  { immediate: true },
+);
+
+watch(frameSidebarTreeRows, (rows) => {
+  if (!layerTreeMenuVisible.value)
+    return;
+  if (!rows.some(row => row.node.id === layerTreeMenuNodeId.value))
+    closeLayerTreeMenu();
+});
 
 function selectPage(pageId: string): void {
   const nextDocument = setCurrentDesignPageInSceneDocument(
@@ -1992,12 +2139,29 @@ function isPrimarySelectedElement(elementId: string): boolean {
   return selectedElementId.value === elementId;
 }
 
+function isLayerTreeNodeExpanded(nodeId: string): boolean {
+  return !collapsedLayerNodeIds.value.includes(nodeId);
+}
+
+function toggleLayerTreeNodeExpanded(nodeId: string): void {
+  const normalizedNodeId = normalizeString(nodeId);
+  if (!normalizedNodeId) return;
+  collapsedLayerNodeIds.value = collapsedLayerNodeIds.value.includes(normalizedNodeId)
+    ? collapsedLayerNodeIds.value.filter(id => id !== normalizedNodeId)
+    : [...collapsedLayerNodeIds.value, normalizedNodeId];
+}
+
+function isLayerTreeNodeAncestor(nodeId: string): boolean {
+  return selectedLayerTreeAncestorNodeIds.value.has(normalizeString(nodeId));
+}
+
 function resolveLayerTreeNodeIcon(node: DesignLayerTreeNode): string {
   if (node.type === "page_root_group") return "layers";
   if (node.type === "frame") {
     const frame = currentPageFrameMap.value.get(normalizeString(node.frameId));
     if (frame?.kind === "diagram") return "schema";
     if (frame?.kind === "device_mockup") return "phone_iphone";
+    if (frame?.kind === "device_artboard") return "smartphone";
     return "crop_portrait";
   }
 
@@ -2019,6 +2183,8 @@ function resolveLayerTreeNodeClass(node: DesignLayerTreeNode): string {
       return "border-slate-300 bg-white/88 text-slate-950";
     if (isFrameSelected(node.frameId))
       return "border-sky-300 bg-sky-50/82 text-sky-950";
+    if (isLayerTreeNodeAncestor(node.id))
+      return "border-slate-200 bg-slate-100/86 text-slate-800";
     return "border-slate-200 bg-white/56 text-slate-700 hover:border-slate-300 hover:bg-white/78";
   }
 
@@ -2027,6 +2193,8 @@ function resolveLayerTreeNodeClass(node: DesignLayerTreeNode): string {
       return "border-slate-300 bg-white/88 text-slate-950";
     if (isElementSelected(node.elementId))
       return "border-sky-300 bg-sky-50/82 text-sky-950";
+    if (isLayerTreeNodeAncestor(node.id))
+      return "border-slate-200 bg-slate-100/86 text-slate-800";
     return "border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-white/76 hover:text-slate-900";
   }
 
@@ -2109,32 +2277,20 @@ function upsertFrameElement(
 
 function applyImageToSelectedFrame(src: string): void {
   if (!selectedFrame.value) return;
+  const isMarketingFrame =
+    selectedFrame.value.kind === "device_mockup" ||
+    selectedFrame.value.kind === "template";
+  const isDeviceArtboard = selectedFrame.value.kind === "device_artboard";
   const nextElements = upsertFrameElement(
     selectedFrame.value,
     (element) => element.id === "hero-image" || element.type === "image",
     {
       id: "hero-image",
       type: "image",
-      x:
-        selectedFrame.value.kind === "device_mockup" ||
-        selectedFrame.value.kind === "template"
-          ? 960
-          : 56,
-      y:
-        selectedFrame.value.kind === "device_mockup" ||
-        selectedFrame.value.kind === "template"
-          ? 128
-          : 220,
-      width:
-        selectedFrame.value.kind === "device_mockup" ||
-        selectedFrame.value.kind === "template"
-          ? 520
-          : 320,
-      height:
-        selectedFrame.value.kind === "device_mockup" ||
-        selectedFrame.value.kind === "template"
-          ? 640
-          : 220,
+      x: isMarketingFrame ? 960 : isDeviceArtboard ? 0 : 56,
+      y: isMarketingFrame ? 128 : isDeviceArtboard ? 0 : 220,
+      width: isMarketingFrame ? 520 : isDeviceArtboard ? selectedFrame.value.width : 320,
+      height: isMarketingFrame ? 640 : isDeviceArtboard ? selectedFrame.value.height : 220,
       imageSrc: src,
     },
   );
@@ -2150,6 +2306,23 @@ async function readImageAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("FILE_READ_FAILED"));
     reader.readAsDataURL(file);
   }).catch(() => "");
+}
+
+async function readImageDimensions(
+  src: string,
+): Promise<{ width: number; height: number }> {
+  if (!import.meta.client || !src) return { width: 0, height: 0 };
+  return await new Promise<{ width: number; height: number }>((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      resolve({
+        width: Number(image.naturalWidth || image.width || 0),
+        height: Number(image.naturalHeight || image.height || 0),
+      });
+    };
+    image.onerror = () => resolve({ width: 0, height: 0 });
+    image.src = src;
+  });
 }
 
 function createAssetId(): string {
@@ -2182,10 +2355,190 @@ async function handleAssetUpload(event: Event): Promise<void> {
     };
   });
   applyImageToSelectedFrame(src);
+  if (input) input.value = "";
 }
 
 function useAsset(asset: DesignAssetModel): void {
   applyImageToSelectedFrame(asset.src);
+}
+
+function buildShellViewportDefaults() {
+  const preset = resolveDeviceFramePreset(
+    selectedFrame.value?.deviceFramePresetKey || DEFAULT_DEVICE_FRAME_KEY,
+  );
+  if (preset.deviceFamily === "browser") {
+    return {
+      x: 0,
+      y: 54,
+      width: preset.screenWidth,
+      height: preset.screenHeight,
+      cornerRadius: preset.screenRadius,
+    };
+  }
+  if (preset.deviceFamily === "desktop") {
+    return {
+      x: 35,
+      y: 24,
+      width: preset.screenWidth,
+      height: preset.screenHeight,
+      cornerRadius: preset.screenRadius,
+    };
+  }
+  return {
+    x: preset.framePadding,
+    y: preset.framePadding,
+    width: preset.screenWidth,
+    height: preset.screenHeight,
+    cornerRadius: preset.screenRadius,
+  };
+}
+
+async function handleShellAssetUpload(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  const src = await readImageAsDataUrl(file);
+  if (!src) return;
+  const dimensions = await readImageDimensions(src);
+  const viewportDefaults = buildShellViewportDefaults();
+
+  const asset: DesignAssetModel = {
+    id: createAssetId(),
+    type: "image",
+    name: file.name,
+    src,
+    mimeType: file.type || undefined,
+    width: dimensions.width || undefined,
+    height: dimensions.height || undefined,
+    metadata: {
+      role: "device_shell",
+      deviceShell: {
+        presetKeys: [
+          selectedFrame.value?.deviceFramePresetKey || DEFAULT_DEVICE_FRAME_KEY,
+        ],
+        viewportRect: {
+          x: viewportDefaults.x,
+          y: viewportDefaults.y,
+          width: viewportDefaults.width,
+          height: viewportDefaults.height,
+        },
+        cornerRadius: viewportDefaults.cornerRadius,
+        source: "uploaded",
+      },
+    },
+  };
+
+  mutateCompositionDocument((composition) => {
+    return {
+      ...composition,
+      assets: [...(composition.assets || []), asset],
+    };
+  });
+
+  if (
+    selectedFrame.value &&
+    (selectedFrame.value.kind === "device_mockup" ||
+      selectedFrame.value.kind === "device_artboard")
+  ) {
+    updateSelectedFrame({
+      metadata: {
+        ...(selectedFrame.value.metadata || {}),
+        device: {
+          ...(selectedFrame.value.metadata?.device || {}),
+          shellMode: "external",
+          shellAssetId: asset.id,
+        },
+      },
+    });
+  }
+  if (input) input.value = "";
+}
+
+function resolveShellViewportRect(asset: DesignAssetModel) {
+  return asset.metadata?.deviceShell?.viewportRect || {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  };
+}
+
+function isDeviceShellAssetValid(asset: DesignAssetModel): boolean {
+  const viewportRect = asset.metadata?.deviceShell?.viewportRect;
+  const cornerRadius = Number(asset.metadata?.deviceShell?.cornerRadius ?? -1);
+  return Boolean(
+    viewportRect &&
+      Number(viewportRect.width) > 0 &&
+      Number(viewportRect.height) > 0 &&
+      Number.isFinite(cornerRadius) &&
+      cornerRadius >= 0,
+  );
+}
+
+function resolveDeviceShellPresetSummary(asset: DesignAssetModel): string {
+  const presetKeys = asset.metadata?.deviceShell?.presetKeys || [];
+  if (!presetKeys.length) return "未绑定机型";
+  return presetKeys.join(" / ");
+}
+
+function updateShellAssetMetadata(
+  assetId: string,
+  patch: {
+    viewportRect?: Partial<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
+    cornerRadius?: number;
+  },
+): void {
+  mutateCompositionDocument((composition) => {
+    return {
+      ...composition,
+      assets: (composition.assets || []).map((asset) => {
+        if (asset.id !== assetId) return asset;
+        return {
+          ...asset,
+          metadata: {
+            ...(asset.metadata || {}),
+            role: "device_shell",
+            deviceShell: {
+              ...(asset.metadata?.deviceShell || {}),
+              ...(patch.viewportRect
+                ? {
+                    viewportRect: {
+                      ...(asset.metadata?.deviceShell?.viewportRect || {}),
+                      ...patch.viewportRect,
+                    },
+                  }
+                : {}),
+              ...(patch.cornerRadius !== undefined
+                ? {
+                    cornerRadius: patch.cornerRadius,
+                  }
+                : {}),
+            },
+          },
+        };
+      }),
+    };
+  });
+}
+
+function useShellAsset(asset: DesignAssetModel): void {
+  if (!selectedFrame.value) return;
+  updateSelectedFrame({
+    metadata: {
+      ...(selectedFrame.value.metadata || {}),
+      device: {
+        ...(selectedFrame.value.metadata?.device || {}),
+        shellMode: "external",
+        shellAssetId: asset.id,
+      },
+    },
+  });
 }
 
 function applyTemplateFrame(templateKey: string): void {
@@ -3553,6 +3906,20 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                       type="button"
                       :disabled="!currentPage"
                       @click="
+                        createFrame('device_artboard');
+                        closeActionMenu();
+                      "
+                    >
+                      <span class="material-symbols-outlined text-base"
+                        >smartphone</span
+                      >
+                      <span>新建设备画板</span>
+                    </button>
+                    <button
+                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                      type="button"
+                      :disabled="!currentPage"
+                      @click="
                         createFrame('device_mockup');
                         closeActionMenu();
                       "
@@ -3706,7 +4073,12 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                 <span
                   class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
                 >
-                  {{ (compositionModel.assets || []).length }} assets
+                  {{ imageAssets.length }} 图片
+                </span>
+                <span
+                  class="rounded-full border border-slate-200 bg-white/72 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
+                >
+                  {{ deviceShellAssets.length }} 设备壳
                 </span>
               </template>
             </div>
@@ -3865,62 +4237,257 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             </div>
 
             <div v-else data-testid="workspace-design-sidebar-assets">
-              <div class="space-y-2">
-                <button
-                  v-for="template in templateOptions"
-                  :key="template.templateKey"
-                  class="w-full rounded-2xl border border-slate-200 bg-white/56 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white/78"
-                  type="button"
-                  @click="applyTemplateFrame(template.templateKey)"
-                >
-                  <p class="text-sm font-semibold text-slate-800">
-                    {{ template.title }}
-                  </p>
-                  <p class="mt-1 text-[11px] leading-5 text-slate-500">
-                    {{ template.summary }}
-                  </p>
-                </button>
-              </div>
-
-              <label
-                class="mt-4 block rounded-2xl border border-dashed border-slate-300 bg-white/56 px-3 py-4 text-center"
-              >
-                <span class="text-xs font-semibold text-slate-700"
-                  >上传图片资源</span
-                >
-                <input
-                  class="hidden"
-                  accept="image/*"
-                  type="file"
-                  @change="handleAssetUpload"
-                />
-              </label>
-
-              <div
-                v-if="(compositionModel.assets || []).length"
-                class="mt-4 space-y-2"
-              >
-                <button
-                  v-for="asset in compositionModel.assets || []"
-                  :key="asset.id"
-                  class="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white/72 px-3 py-2 text-left transition-colors hover:border-slate-300 hover:bg-white/88"
-                  type="button"
-                  @click="useAsset(asset)"
-                >
-                  <img
-                    :src="asset.src"
-                    alt=""
-                    class="h-12 w-12 rounded-xl object-cover"
-                  />
-                  <div class="min-w-0">
-                    <p class="truncate text-sm font-semibold text-slate-800">
-                      {{ asset.name }}
-                    </p>
-                    <p class="truncate text-[11px] text-slate-500">
-                      {{ asset.mimeType || "image/*" }}
-                    </p>
+              <div class="space-y-4">
+                <section class="space-y-2">
+                  <div
+                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                  >
+                    <span>模板</span>
+                    <span>{{ templateOptions.length }}</span>
                   </div>
-                </button>
+                  <div class="space-y-2">
+                    <button
+                      v-for="template in templateOptions"
+                      :key="template.templateKey"
+                      class="w-full rounded-2xl border border-slate-200 bg-white/56 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white/78"
+                      type="button"
+                      @click="applyTemplateFrame(template.templateKey)"
+                    >
+                      <p class="text-sm font-semibold text-slate-800">
+                        {{ template.title }}
+                      </p>
+                      <p class="mt-1 text-[11px] leading-5 text-slate-500">
+                        {{ template.summary }}
+                      </p>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="space-y-2">
+                  <div
+                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                  >
+                    <span>普通图片资源</span>
+                    <span>{{ imageAssets.length }}</span>
+                  </div>
+
+                  <label
+                    class="block rounded-2xl border border-dashed border-slate-300 bg-white/56 px-3 py-4 text-center"
+                  >
+                    <span class="text-xs font-semibold text-slate-700"
+                      >上传图片资源</span
+                    >
+                    <input
+                      class="hidden"
+                      accept="image/*"
+                      type="file"
+                      @change="handleAssetUpload"
+                    />
+                  </label>
+
+                  <div v-if="imageAssets.length" class="space-y-2">
+                    <button
+                      v-for="asset in imageAssets"
+                      :key="asset.id"
+                      class="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white/72 px-3 py-2 text-left transition-colors hover:border-slate-300 hover:bg-white/88"
+                      type="button"
+                      @click="useAsset(asset)"
+                    >
+                      <img
+                        :src="asset.src"
+                        alt=""
+                        class="h-12 w-12 rounded-xl object-cover"
+                      />
+                      <div class="min-w-0 flex-1">
+                        <p class="truncate text-sm font-semibold text-slate-800">
+                          {{ asset.name }}
+                        </p>
+                        <p class="truncate text-[11px] text-slate-500">
+                          {{ asset.mimeType || "image/*" }}
+                        </p>
+                      </div>
+                      <span
+                        class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500"
+                      >
+                        应用
+                      </span>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="space-y-2">
+                  <div
+                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                  >
+                    <span>设备壳资源</span>
+                    <span>{{ deviceShellAssets.length }}</span>
+                  </div>
+
+                  <label
+                    class="block rounded-2xl border border-dashed border-slate-300 bg-white/56 px-3 py-4 text-center"
+                  >
+                    <span class="text-xs font-semibold text-slate-700"
+                      >上传 SVG / PNG 设备壳</span
+                    >
+                    <p class="mt-1 text-[11px] leading-5 text-slate-500">
+                      上传后可直接填写 viewportRect 和 cornerRadius。
+                    </p>
+                    <input
+                      class="hidden"
+                      accept="image/svg+xml,image/png"
+                      type="file"
+                      @change="handleShellAssetUpload"
+                    />
+                  </label>
+
+                  <div
+                    v-if="deviceShellAssets.length"
+                    class="space-y-3"
+                  >
+                    <div
+                      v-for="asset in deviceShellAssets"
+                      :key="asset.id"
+                      class="rounded-2xl border border-slate-200 bg-white/72 p-3"
+                    >
+                      <div class="flex items-start gap-3">
+                        <img
+                          :src="asset.src"
+                          alt=""
+                          class="h-14 w-14 rounded-xl border border-slate-200 bg-slate-50 object-contain"
+                        />
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center gap-2">
+                            <p class="truncate text-sm font-semibold text-slate-800">
+                              {{ asset.name }}
+                            </p>
+                            <span
+                              class="rounded-full px-2 py-1 text-[10px] font-semibold"
+                              :class="
+                                isDeviceShellAssetValid(asset)
+                                  ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border border-amber-200 bg-amber-50 text-amber-700'
+                              "
+                            >
+                              {{
+                                isDeviceShellAssetValid(asset)
+                                  ? '可导出'
+                                  : '待补 viewport'
+                              }}
+                            </span>
+                          </div>
+                          <p class="mt-1 truncate text-[11px] text-slate-500">
+                            {{ resolveDeviceShellPresetSummary(asset) }}
+                          </p>
+                        </div>
+                        <button
+                          class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:opacity-50"
+                          type="button"
+                          :disabled="
+                            !selectedFrame ||
+                            (selectedFrame.kind !== 'device_mockup' &&
+                              selectedFrame.kind !== 'device_artboard') ||
+                            !isDeviceShellAssetValid(asset)
+                          "
+                          @click="useShellAsset(asset)"
+                        >
+                          应用到当前设备
+                        </button>
+                      </div>
+
+                      <div class="mt-3 grid grid-cols-2 gap-2">
+                        <label class="flex flex-col gap-1">
+                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">x</span>
+                          <input
+                            :value="resolveShellViewportRect(asset).x"
+                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            type="number"
+                            @change="
+                              updateShellAssetMetadata(asset.id, {
+                                viewportRect: {
+                                  x: Number(
+                                    ($event.target as HTMLInputElement).value,
+                                  ),
+                                },
+                              })
+                            "
+                          />
+                        </label>
+                        <label class="flex flex-col gap-1">
+                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">y</span>
+                          <input
+                            :value="resolveShellViewportRect(asset).y"
+                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            type="number"
+                            @change="
+                              updateShellAssetMetadata(asset.id, {
+                                viewportRect: {
+                                  y: Number(
+                                    ($event.target as HTMLInputElement).value,
+                                  ),
+                                },
+                              })
+                            "
+                          />
+                        </label>
+                        <label class="flex flex-col gap-1">
+                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">width</span>
+                          <input
+                            :value="resolveShellViewportRect(asset).width"
+                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            type="number"
+                            min="0"
+                            @change="
+                              updateShellAssetMetadata(asset.id, {
+                                viewportRect: {
+                                  width: Number(
+                                    ($event.target as HTMLInputElement).value,
+                                  ),
+                                },
+                              })
+                            "
+                          />
+                        </label>
+                        <label class="flex flex-col gap-1">
+                          <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">height</span>
+                          <input
+                            :value="resolveShellViewportRect(asset).height"
+                            class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                            type="number"
+                            min="0"
+                            @change="
+                              updateShellAssetMetadata(asset.id, {
+                                viewportRect: {
+                                  height: Number(
+                                    ($event.target as HTMLInputElement).value,
+                                  ),
+                                },
+                              })
+                            "
+                          />
+                        </label>
+                      </div>
+
+                      <label class="mt-2 flex flex-col gap-1">
+                        <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">cornerRadius</span>
+                        <input
+                          :value="
+                            Number(asset.metadata?.deviceShell?.cornerRadius || 0)
+                          "
+                          class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                          type="number"
+                          min="0"
+                          @change="
+                            updateShellAssetMetadata(asset.id, {
+                              cornerRadius: Number(
+                                ($event.target as HTMLInputElement).value,
+                              ),
+                            })
+                          "
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
           </template>
@@ -4108,6 +4675,10 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
               :selected-frame-count="selectedFrameIds.length"
               :selected-element-count="selectedElementIds.length"
               :device-frame-presets="DEVICE_FRAME_PRESETS"
+              :device-artboard-options="availableDeviceArtboards"
+              :device-shell-assets="deviceShellAssets"
+              :frame-preview-markup="selectedFramePreviewSvg"
+              :frame-shell-preview-markup="selectedFrameShellPreviewSvg"
               :design-resource-id="
                 props.designResourceId || 'pending-design-resource'
               "

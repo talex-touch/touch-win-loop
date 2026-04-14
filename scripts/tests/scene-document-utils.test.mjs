@@ -262,3 +262,174 @@ it('repo architecture scanner 可从当前工作区读取 manifests 并生成 ar
   assert.ok(result.packageManifestCount >= 1)
   assert.ok(Array.isArray(result.workspacePatterns))
 })
+
+it('设备预设目录、画板尺寸绑定、联动预览和旧文档兼容都可用', async () => {
+  const {
+    DEVICE_FRAME_PRESETS,
+    appendDesignFrameToSceneDocument,
+    buildDeviceMockupSceneDocument,
+    parseSceneDocumentString,
+    renderCompositionAssetToSvg,
+    resolveDeviceFramePreset,
+    updateDesignFrameInSceneDocument,
+  } = await loadSceneUtils()
+
+  const presetGroups = new Set(DEVICE_FRAME_PRESETS.map(preset => preset.group))
+  assert.ok(presetGroups.has('iPhone'))
+  assert.ok(presetGroups.has('Android Phone'))
+  assert.ok(presetGroups.has('iPad'))
+  assert.ok(presetGroups.has('Surface/Desktop'))
+
+  const artboardPreset = resolveDeviceFramePreset('ipad-pro-11')
+  let scene = buildDeviceMockupSceneDocument({
+    title: '设备联动',
+    subtitle: '验证 device_artboard',
+    badge: 'Device',
+    templateKey: 'device-showcase',
+    deviceFramePresetKey: 'iphone-16-pro',
+  })
+  const pageId = scene.sourceModel.currentPageId
+  scene = appendDesignFrameToSceneDocument(scene, {
+    pageId,
+    kind: 'device_artboard',
+    name: 'iPad 画板',
+    deviceFramePresetKey: artboardPreset.key,
+    elements: [
+      {
+        id: 'linked-title',
+        type: 'text',
+        x: 48,
+        y: 72,
+        width: 320,
+        height: 64,
+        text: '联动画板内容',
+      },
+    ],
+  })
+
+  const artboardFrame = scene.sourceModel.frames?.find(frame => frame.kind === 'device_artboard')
+  const mockupFrame = scene.sourceModel.frames?.find(frame => frame.kind === 'device_mockup')
+  assert.ok(artboardFrame)
+  assert.ok(mockupFrame)
+  assert.equal(artboardFrame?.width, artboardPreset.screenWidth)
+  assert.equal(artboardFrame?.height, artboardPreset.screenHeight)
+
+  const externalShellAsset = {
+    id: 'shell-1',
+    type: 'image',
+    name: 'External Shell',
+    src: 'data:image/png;base64,custom-shell-asset',
+    metadata: {
+      role: 'device_shell',
+      deviceShell: {
+        presetKeys: ['iphone-16-pro'],
+        viewportRect: {
+          x: 18,
+          y: 18,
+          width: 390,
+          height: 844,
+        },
+        cornerRadius: 48,
+        source: 'uploaded',
+      },
+    },
+  }
+  scene = {
+    ...scene,
+    sourceModel: {
+      ...scene.sourceModel,
+      assets: [...(scene.sourceModel.assets || []), externalShellAsset],
+    },
+  }
+  scene = updateDesignFrameInSceneDocument(scene, mockupFrame?.id || '', {
+    metadata: {
+      device: {
+        shellMode: 'external',
+        shellAssetId: externalShellAsset.id,
+        mockupSourceFrameId: artboardFrame?.id,
+      },
+    },
+  })
+
+  const linkedSvg = renderCompositionAssetToSvg(scene, {
+    frameId: mockupFrame?.id,
+  })
+  assert.match(linkedSvg, /联动画板内容/)
+  assert.match(linkedSvg, /custom-shell-asset/)
+
+  const noShellScene = updateDesignFrameInSceneDocument(scene, mockupFrame?.id || '', {
+    metadata: {
+      device: {
+        shellMode: 'none',
+        shellAssetId: externalShellAsset.id,
+        mockupSourceFrameId: artboardFrame?.id,
+      },
+    },
+  })
+  const noShellSvg = renderCompositionAssetToSvg(noShellScene, {
+    frameId: mockupFrame?.id,
+  })
+  assert.match(noShellSvg, /联动画板内容/)
+  assert.doesNotMatch(noShellSvg, /custom-shell-asset/)
+
+  const migratedDeviceScene = parseSceneDocumentString(JSON.stringify({
+    drawMode: 'composition',
+    sourceType: 'image_mockup',
+    sourceModel: {
+      kind: 'composition',
+      currentPageId: 'page-1',
+      pages: [
+        {
+          id: 'page-1',
+          name: 'Legacy Page',
+        },
+      ],
+      frames: [
+        {
+          id: 'frame-1',
+          pageId: 'page-1',
+          name: 'Legacy Device Mockup',
+          kind: 'device_mockup',
+          x: 120,
+          y: 120,
+          width: 1440,
+          height: 960,
+          deviceFramePresetKey: 'iphone-13-14',
+          elements: [
+            {
+              id: 'hero-image',
+              type: 'image',
+              pageId: 'page-1',
+              frameId: 'frame-1',
+              x: 960,
+              y: 128,
+              width: 520,
+              height: 640,
+              imageSrc: 'data:image/png;base64,legacy-image',
+            },
+          ],
+          metadata: {
+            export: {
+              scale: 2,
+            },
+          },
+        },
+      ],
+      elements: [],
+      assets: [],
+    },
+  }), {
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'image_mockup',
+  })
+  const migratedFrame = migratedDeviceScene.sourceModel.frames?.[0]
+  assert.equal(migratedFrame?.kind, 'device_mockup')
+  assert.equal(migratedFrame?.metadata?.device?.shellMode, 'builtin')
+  assert.equal(migratedFrame?.metadata?.device?.screenScaleMode, 'fit')
+  assert.equal(migratedFrame?.metadata?.device?.showSafeArea, false)
+  assert.equal(migratedFrame?.metadata?.export?.scale, 2)
+  assert.match(
+    renderCompositionAssetToSvg(migratedDeviceScene, { frameId: migratedFrame?.id }),
+    /data-device-frame="iphone-13-14"/,
+  )
+})

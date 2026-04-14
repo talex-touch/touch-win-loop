@@ -11,6 +11,7 @@ import type {
 import type { WorkspaceFontSizePreset } from '~~/shared/types/domain'
 import type { CollabMarkdownHeadingLevel } from '~~/shared/utils/collab-rich-text-schema'
 import type { RichTextEditorCommand } from '~/components/editor/rich-text-editor-commands'
+import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
 import type {
   WorkspaceCollabAwarenessSelectionState,
   WorkspaceCollabSelectionSummary,
@@ -120,7 +121,7 @@ const props = withDefaults(defineProps<{
   awareness: null,
   currentUser: null,
   editable: true,
-  placeholder: '输入正文或标题，协作文档会实时同步',
+  placeholder: `输入正文或标题，${COLLAB_NOTES_RESOURCE_LABEL}会实时同步`,
   headingLevels: () => [...COLLAB_MARKDOWN_HEADING_LEVELS],
   showToolbar: true,
   contentMaxWidth: '1040px',
@@ -554,15 +555,24 @@ function resolvePrimaryHeadingTitle(): string {
   if (!instance)
     return ''
 
-  let title = ''
-  instance.state.doc.descendants((node) => {
-    if (node.type.name !== 'heading' || Number(node.attrs?.level) !== 1)
-      return true
+  for (let index = 0; index < instance.state.doc.childCount; index += 1) {
+    const node = instance.state.doc.child(index)
+    const text = normalizeString(node.textContent)
+    const isMeaningful = node.type.name === 'image'
+      || node.type.name === 'table'
+      || node.type.name === 'horizontalRule'
+      || Boolean(text)
 
-    title = normalizeString(node.textContent)
-    return !title
-  })
-  return title
+    if (!isMeaningful)
+      continue
+
+    if (node.type.name !== 'heading' || Number(node.attrs?.level) !== 1)
+      return ''
+
+    return text
+  }
+
+  return ''
 }
 
 function emitPrimaryHeadingChange(): void {
@@ -2515,20 +2525,18 @@ onBeforeUnmount(() => {
         :class="{ 'rich-text-editor__outline--collapsed': outlineCollapsed }"
         data-testid="rich-text-editor-outline"
       >
-        <div class="rich-text-editor__outline-header">
-          <button
-            type="button"
-            class="rich-text-editor__outline-collapse"
-            :aria-label="outlineCollapsed ? '展开大纲' : '收起大纲'"
-            :title="outlineCollapsed ? '展开大纲' : '收起大纲'"
-            data-testid="rich-text-editor-outline-collapse"
-            @click="outlineCollapsed = !outlineCollapsed"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">
-              {{ outlineCollapsed ? 'chevron_right' : 'chevron_left' }}
-            </span>
-          </button>
-          <template v-if="!outlineCollapsed">
+        <template v-if="!outlineCollapsed">
+          <div class="rich-text-editor__outline-header">
+            <button
+              type="button"
+              class="rich-text-editor__outline-collapse"
+              aria-label="收起大纲"
+              title="收起大纲"
+              data-testid="rich-text-editor-outline-collapse"
+              @click="outlineCollapsed = true"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
+            </button>
             <button
               type="button"
               class="rich-text-editor__outline-title"
@@ -2541,101 +2549,113 @@ onBeforeUnmount(() => {
               </span>
               <span>大纲</span>
             </button>
-          </template>
-        </div>
-
-        <div v-if="!outlineCollapsed" class="rich-text-editor__outline-body">
-          <div class="rich-text-editor__outline-search">
-          <label class="sr-only" for="rich-text-editor-outline-search-input">文内搜索</label>
-          <div class="rich-text-editor__outline-search-input-wrap">
-            <span class="rich-text-editor__outline-search-icon material-symbols-outlined" aria-hidden="true">
-              search
-            </span>
-            <input
-              id="rich-text-editor-outline-search-input"
-              ref="outlineSearchInputRef"
-              v-model="outlineSearchQuery"
-              class="rich-text-editor__outline-search-input"
-              type="search"
-              inputmode="search"
-              placeholder="搜索正文"
-              data-testid="rich-text-editor-search-input"
-              @keydown="onOutlineSearchKeydown"
-            >
-            <button
-              v-if="outlineSearchQuery"
-              type="button"
-              class="rich-text-editor__outline-search-clear"
-              aria-label="清空搜索"
-              @click="clearOutlineSearch()"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">close</span>
-            </button>
           </div>
 
-          <div class="rich-text-editor__outline-search-meta">
-            <span class="rich-text-editor__outline-search-count">{{ outlineSearchResultLabel }}</span>
-            <div class="rich-text-editor__outline-search-actions">
-              <button
-                type="button"
-                class="rich-text-editor__outline-search-action"
-                aria-label="上一条结果"
-                :disabled="outlineSearchMatches.length === 0"
-                @click="jumpToPreviousOutlineSearchMatch()"
+          <div class="rich-text-editor__outline-body">
+            <div class="rich-text-editor__outline-search">
+              <label class="sr-only" for="rich-text-editor-outline-search-input">文内搜索</label>
+              <div class="rich-text-editor__outline-search-input-wrap">
+                <span class="rich-text-editor__outline-search-icon material-symbols-outlined" aria-hidden="true">
+                  search
+                </span>
+                <input
+                  id="rich-text-editor-outline-search-input"
+                  ref="outlineSearchInputRef"
+                  v-model="outlineSearchQuery"
+                  class="rich-text-editor__outline-search-input"
+                  type="search"
+                  inputmode="search"
+                  placeholder="搜索正文"
+                  data-testid="rich-text-editor-search-input"
+                  @keydown="onOutlineSearchKeydown"
+                >
+                <button
+                  v-if="outlineSearchQuery"
+                  type="button"
+                  class="rich-text-editor__outline-search-clear"
+                  aria-label="清空搜索"
+                  @click="clearOutlineSearch()"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">close</span>
+                </button>
+              </div>
+
+              <div class="rich-text-editor__outline-search-meta">
+                <span class="rich-text-editor__outline-search-count">{{ outlineSearchResultLabel }}</span>
+                <div class="rich-text-editor__outline-search-actions">
+                  <button
+                    type="button"
+                    class="rich-text-editor__outline-search-action"
+                    aria-label="上一条结果"
+                    :disabled="outlineSearchMatches.length === 0"
+                    @click="jumpToPreviousOutlineSearchMatch()"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="rich-text-editor__outline-search-action"
+                    aria-label="下一条结果"
+                    :disabled="outlineSearchMatches.length === 0"
+                    @click="jumpToNextOutlineSearchMatch()"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <nav v-if="outlineItems.length > 0" class="rich-text-editor__outline-list" aria-label="文档大纲">
+              <div
+                v-for="item in outlineItems"
+                :key="`${item.pos}-${item.level}`"
+                class="rich-text-editor__outline-row"
+                :class="{ 'rich-text-editor__outline-row--active': activeOutlineHeadingPos === item.pos }"
               >
-                <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span>
-              </button>
-              <button
-                type="button"
-                class="rich-text-editor__outline-search-action"
-                aria-label="下一条结果"
-                :disabled="outlineSearchMatches.length === 0"
-                @click="jumpToNextOutlineSearchMatch()"
-              >
-                <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
-              </button>
+                <button
+                  class="rich-text-editor__outline-item"
+                  type="button"
+                  :style="{ paddingLeft: `${(item.level - 1) * 14}px` }"
+                  @click="scrollToOutlineHeading(item)"
+                >
+                  <span class="rich-text-editor__outline-item-label">
+                    {{ item.text }}
+                  </span>
+                </button>
+                <button
+                  v-if="item.anchorId"
+                  type="button"
+                  class="rich-text-editor__outline-anchor-button"
+                  :class="{ 'rich-text-editor__outline-anchor-button--copied': copiedHeadingAnchorId === item.anchorId }"
+                  :aria-label="`复制 ${item.text} 的标题链接`"
+                  :title="copiedHeadingAnchorId === item.anchorId ? '已复制标题链接' : '复制标题链接'"
+                  @click.stop="copyHeadingAnchor(item)"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">
+                    {{ copiedHeadingAnchorId === item.anchorId ? 'check' : 'link' }}
+                  </span>
+                </button>
+              </div>
+            </nav>
+
+            <div v-else class="rich-text-editor__outline-empty">
+              添加标题后，这里会自动生成目录。
             </div>
           </div>
-          </div>
-
-          <nav v-if="outlineItems.length > 0" class="rich-text-editor__outline-list" aria-label="文档大纲">
-            <div
-              v-for="item in outlineItems"
-              :key="`${item.pos}-${item.level}`"
-              class="rich-text-editor__outline-row"
-              :class="{ 'rich-text-editor__outline-row--active': activeOutlineHeadingPos === item.pos }"
-            >
-              <button
-                class="rich-text-editor__outline-item"
-                type="button"
-                :style="{ paddingLeft: `${(item.level - 1) * 14}px` }"
-                @click="scrollToOutlineHeading(item)"
-              >
-                <span class="rich-text-editor__outline-item-label">
-                  {{ item.text }}
-                </span>
-              </button>
-              <button
-                v-if="item.anchorId"
-                type="button"
-                class="rich-text-editor__outline-anchor-button"
-                :class="{ 'rich-text-editor__outline-anchor-button--copied': copiedHeadingAnchorId === item.anchorId }"
-                :aria-label="`复制 ${item.text} 的标题链接`"
-                :title="copiedHeadingAnchorId === item.anchorId ? '已复制标题链接' : '复制标题链接'"
-                @click.stop="copyHeadingAnchor(item)"
-              >
-                <span class="material-symbols-outlined" aria-hidden="true">
-                  {{ copiedHeadingAnchorId === item.anchorId ? 'check' : 'link' }}
-                </span>
-              </button>
-            </div>
-          </nav>
-
-          <div v-else class="rich-text-editor__outline-empty">
-            添加标题后，这里会自动生成目录。
-          </div>
-        </div>
+        </template>
       </aside>
+
+      <button
+        v-if="outlineCollapsed"
+        type="button"
+        class="rich-text-editor__outline-floating-toggle"
+        aria-label="展开大纲"
+        title="展开大纲"
+        data-testid="rich-text-editor-outline-collapse"
+        @click="outlineCollapsed = false"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">toc</span>
+      </button>
 
       <div
         ref="editorScrollRef"
@@ -2927,6 +2947,7 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__surface {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   height: 100%;
@@ -2955,9 +2976,10 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__outline--collapsed {
-  width: 52px;
-  min-width: 52px;
-  padding-inline: 8px;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border-right: none;
 }
 
 .rich-text-editor__outline-header {
@@ -3014,6 +3036,29 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: 1;
   flex-direction: column;
+}
+
+.rich-text-editor__outline-floating-toggle {
+  position: absolute;
+  top: 20px;
+  left: 16px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #475569;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.rich-text-editor__outline-floating-toggle:hover {
+  background: rgba(248, 250, 252, 0.96);
+  color: #0f172a;
 }
 
 .rich-text-editor__outline-search {
@@ -3723,7 +3768,9 @@ onBeforeUnmount(() => {
   padding: var(--rich-text-editor-selection-toolbar-padding, 4px);
   border: 1px solid #dbe3ef;
   border-radius: 12px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   overflow-x: auto;
 }
 
@@ -3878,6 +3925,10 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1280px) {
   .rich-text-editor__outline {
+    display: none;
+  }
+
+  .rich-text-editor__outline-floating-toggle {
     display: none;
   }
 }

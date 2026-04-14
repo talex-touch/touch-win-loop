@@ -10,6 +10,7 @@ import type {
   ResourcePreviewStatus,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabCursorUser, WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
+import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
 import RichTextEditor from '~/components/editor/RichTextEditor.vue'
 import WorkspaceDocumentCommentsPanel from '~/components/workspace/WorkspaceDocumentCommentsPanel.vue'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
@@ -36,7 +37,11 @@ const props = withDefaults(defineProps<{
   previewStatus?: WorkspacePreviewStatusPayload | null
   previewStatusLoading?: boolean
   previewPdfUrl?: string
+  collabPreviewLoading?: boolean
+  collabPreviewError?: string
   currentUserId?: string
+  currentUserName?: string
+  currentUserAvatarUrl?: string
   collabRevision?: number
   collabConnected?: boolean
   collabConnectionText?: string
@@ -63,7 +68,11 @@ const props = withDefaults(defineProps<{
   previewStatus: null,
   previewStatusLoading: false,
   previewPdfUrl: '',
+  collabPreviewLoading: false,
+  collabPreviewError: '',
   currentUserId: '',
+  currentUserName: '',
+  currentUserAvatarUrl: '',
   collabRevision: 0,
   collabConnected: false,
   collabConnectionText: '',
@@ -132,13 +141,60 @@ const richTextEditorRef = ref<{
   scrollToCommentThread: (threadId: string) => void
   scrollToHeadingAnchor: (anchorId: string) => boolean
 } | null>(null)
+const commentsPanelRef = ref<{
+  scrollToCommentThread: (threadId: string) => void
+} | null>(null)
+const markdownCommentsCollapsed = ref(false)
+const markdownPlaceholder = `输入正文或标题，${COLLAB_NOTES_RESOURCE_LABEL}会实时同步`
+const isMarkdownCollabReady = computed(() => {
+  if (props.activePreviewMode !== 'markdown')
+    return false
+  return Boolean(props.collabMarkdownDoc)
+})
+const isDrawCollabReady = computed(() => {
+  if (props.activePreviewMode !== 'draw')
+    return false
+  return Boolean(String(props.previewResourceId || '').trim() && !props.collabPreviewLoading && !props.collabPreviewError)
+})
+
+function expandMarkdownCommentsPanel(): void {
+  markdownCommentsCollapsed.value = false
+}
+
+function collapseMarkdownCommentsPanel(): void {
+  markdownCommentsCollapsed.value = true
+}
+
+function syncMarkdownCommentThreadFocus(threadId: string): void {
+  const normalizedThreadId = String(threadId || '').trim()
+  if (!normalizedThreadId)
+    return
+
+  expandMarkdownCommentsPanel()
+  nextTick(() => {
+    richTextEditorRef.value?.scrollToCommentThread(normalizedThreadId)
+    commentsPanelRef.value?.scrollToCommentThread(normalizedThreadId)
+  })
+}
+
+watch(() => props.activeCommentThreadId, (threadId) => {
+  if (!String(threadId || '').trim())
+    return
+  syncMarkdownCommentThreadFocus(threadId)
+})
+
+watch(() => props.commentDraftAnchor, (draftAnchor) => {
+  if (!draftAnchor)
+    return
+  expandMarkdownCommentsPanel()
+})
 
 defineExpose({
   applyDocumentAssistResult(payload: { action: AiWorkspaceDocumentAction, text: string }) {
     return richTextEditorRef.value?.applyDocumentAssistResult(payload) || false
   },
   scrollToCommentThread(threadId: string) {
-    richTextEditorRef.value?.scrollToCommentThread(threadId)
+    syncMarkdownCommentThreadFocus(threadId)
   },
   scrollToHeadingAnchor(anchorId: string) {
     return richTextEditorRef.value?.scrollToHeadingAnchor(anchorId) || false
@@ -151,8 +207,20 @@ defineExpose({
     <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
       <div class="bg-slate-50 flex-1 min-h-0">
         <template v-if="props.activePreviewMode === 'markdown'">
-          <div class="workspace-resource-preview-tab__markdown bg-white flex h-full min-h-0 w-full">
-            <div class="flex min-w-0 flex-1 min-h-0">
+          <div v-if="props.collabPreviewLoading || !isMarkdownCollabReady" class="workspace-resource-preview-tab__loading">
+            <p class="workspace-resource-preview-tab__loading-title">
+              WinLoop 正在加载
+            </p>
+            <p class="workspace-resource-preview-tab__loading-text">
+              正在准备协作文档内容，请稍候...
+            </p>
+            <p v-if="props.collabPreviewError" class="workspace-resource-preview-tab__loading-error">
+              {{ props.collabPreviewError }}
+            </p>
+          </div>
+
+          <div v-else class="workspace-resource-preview-tab__markdown bg-white flex h-full min-h-0 w-full">
+            <div class="flex min-w-0 flex-1 min-h-0 workspace-resource-preview-tab__markdown-editor">
               <RichTextEditor
                 ref="richTextEditorRef"
                 :doc="props.collabMarkdownDoc"
@@ -160,7 +228,8 @@ defineExpose({
                 :current-user="props.collabCurrentUser"
                 :editable="true"
                 class="h-full min-h-0 w-full"
-                placeholder="输入正文或标题，协作文档会实时同步"
+                content-max-width="none"
+                :placeholder="markdownPlaceholder"
                 :resource-id="props.previewResourceId"
                 :heading-levels="[1, 2, 3, 4, 5, 6]"
                 :show-toolbar="false"
@@ -179,46 +248,76 @@ defineExpose({
                 @trigger-document-assist="emit('markdownTriggerDocumentAssist', $event)"
                 @request-image-action="emit('markdownRequestImageAction', $event)"
               />
+
+              <button
+                v-if="markdownCommentsCollapsed"
+                class="workspace-resource-preview-tab__comments-expand"
+                type="button"
+                title="展开评论"
+                aria-label="展开评论"
+                @click="expandMarkdownCommentsPanel()"
+              >
+                <span class="material-symbols-outlined text-[16px]" aria-hidden="true">comment</span>
+              </button>
             </div>
 
             <WorkspaceDocumentCommentsPanel
+              v-if="!markdownCommentsCollapsed"
+              ref="commentsPanelRef"
               :comment-threads="props.commentThreads"
               :active-comment-thread-id="props.activeCommentThreadId"
               :comment-draft-anchor="props.commentDraftAnchor"
               :comment-loading="props.commentLoading"
               :comment-mutating="props.commentMutating"
               :current-user-id="props.currentUserId"
+              :current-user-name="props.currentUserName"
+              :current-user-avatar-url="props.currentUserAvatarUrl"
               @select-comment-thread="emit('markdownOpenCommentThread', $event)"
               @create-comment-thread="emit('markdownCreateCommentThread', $event)"
               @reply-comment-thread="emit('markdownReplyCommentThread', $event)"
               @resolve-comment-thread="emit('markdownResolveCommentThread', $event)"
               @reopen-comment-thread="emit('markdownReopenCommentThread', $event)"
               @cancel-comment-draft="emit('markdownCancelCommentDraft')"
+              @toggle-collapsed="collapseMarkdownCommentsPanel()"
             />
           </div>
         </template>
 
         <template v-else-if="props.activePreviewMode === 'draw'">
-          <div class="px-4 py-2 border-b border-slate-200 bg-white text-xs" :class="props.collabConnected ? 'text-emerald-600' : 'text-amber-600'">
+          <div v-if="props.collabPreviewLoading || !isDrawCollabReady" class="workspace-resource-preview-tab__loading">
+            <p class="workspace-resource-preview-tab__loading-title">
+              WinLoop 正在加载
+            </p>
+            <p class="workspace-resource-preview-tab__loading-text">
+              正在准备协作画布，请稍候...
+            </p>
+            <p v-if="props.collabPreviewError" class="workspace-resource-preview-tab__loading-error">
+              {{ props.collabPreviewError }}
+            </p>
+          </div>
+
+          <template v-else>
+            <div class="px-4 py-2 border-b border-slate-200 bg-white text-xs" :class="props.collabConnected ? 'text-emerald-600' : 'text-amber-600'">
             {{ props.collabConnectionText }}
-          </div>
-          <div class="h-full">
-            <div class="flex flex-col h-full">
-              <WorkspaceTldrawCanvas
-                :key="props.previewResourceId || props.activeResourceTab.id"
-                class="h-full min-h-0 w-full"
-                :model-value="props.collabDrawValue"
-                :remote-cursors="props.collabPresenceCursors"
-                :persistence-key="`workspace-collab-${props.previewResourceId || props.activeResourceTab.id}`"
-                :readonly="false"
-                @update:model-value="emit('updateCollabDrawValue', $event)"
-                @update-collab-cursor="emit('updateCollabCursor', $event)"
-              />
-              <p v-if="props.collabDrawError" class="text-xs text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
-                {{ props.collabDrawError }}
-              </p>
             </div>
-          </div>
+            <div class="h-full">
+              <div class="flex flex-col h-full">
+                <WorkspaceTldrawCanvas
+                  :key="props.previewResourceId || props.activeResourceTab.id"
+                  class="h-full min-h-0 w-full"
+                  :model-value="props.collabDrawValue"
+                  :remote-cursors="props.collabPresenceCursors"
+                  :persistence-key="`workspace-collab-${props.previewResourceId || props.activeResourceTab.id}`"
+                  :readonly="false"
+                  @update:model-value="emit('updateCollabDrawValue', $event)"
+                  @update-collab-cursor="emit('updateCollabCursor', $event)"
+                />
+                <p v-if="props.collabDrawError" class="text-xs text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
+                  {{ props.collabDrawError }}
+                </p>
+              </div>
+            </div>
+          </template>
         </template>
 
         <template v-else>
@@ -270,7 +369,74 @@ defineExpose({
 </template>
 
 <style scoped>
+.workspace-resource-preview-tab__loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.98) 100%);
+  color: var(--wl-text-secondary);
+  text-align: center;
+}
+
+.workspace-resource-preview-tab__loading-title {
+  margin: 0;
+  color: var(--wl-text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.workspace-resource-preview-tab__loading-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.workspace-resource-preview-tab__loading-error {
+  margin: 4px 0 0;
+  color: var(--wl-danger-700);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .workspace-resource-preview-tab__markdown {
   --workspace-markdown-comments-width: 320px;
+  --workspace-preview-comments-border: var(--wl-border);
+  --workspace-preview-comments-bg: rgba(255, 255, 255, 0.88);
+  --workspace-preview-comments-bg-hover: rgba(248, 250, 252, 0.96);
+  --workspace-preview-comments-text: var(--wl-text-secondary);
+  --workspace-preview-comments-text-hover: var(--wl-text-primary);
+  position: relative;
+}
+
+.workspace-resource-preview-tab__markdown-editor {
+  position: relative;
+}
+
+.workspace-resource-preview-tab__comments-expand {
+  position: absolute;
+  top: 18px;
+  right: 14px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--workspace-preview-comments-border);
+  border-radius: 999px;
+  background: var(--workspace-preview-comments-bg);
+  color: var(--workspace-preview-comments-text);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.workspace-resource-preview-tab__comments-expand:hover {
+  background: var(--workspace-preview-comments-bg-hover);
+  color: var(--workspace-preview-comments-text-hover);
 }
 </style>
