@@ -1,7 +1,9 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
 import { Buffer } from 'node:buffer'
-import { createHmac, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
+import { basename } from 'node:path'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { buildApiEndpoint, isHttpUrl } from '~~/shared/utils/api-url'
 
 export interface RtcProviderRoom {
   roomId: string
@@ -30,6 +32,7 @@ export interface RtcRecordingArtifact {
   fileName: string
   mimeType: string
   downloadUrl?: string
+  localFilePath?: string
   base64Content?: string
   textContent?: string
   metadata?: Record<string, unknown>
@@ -56,6 +59,7 @@ export interface RtcProviderGateway {
   startRecording: (input: {
     roomName: string
     meetingId: string
+    mode: 'audio' | 'video'
   }) => Promise<RtcProviderRecordingSession>
   resolveRecordingArtifact: (input: {
     meetingMetadata?: Record<string, unknown>
@@ -63,7 +67,17 @@ export interface RtcProviderGateway {
   }) => Promise<RtcRecordingArtifact | null>
   verifyWebhook: (input: {
     headers: Headers | Record<string, unknown>
+    rawBody?: string
   }) => boolean
+}
+
+export interface RtcProviderProbeResult {
+  provider: string
+  endpoint: string
+  ok: boolean
+  statusCode?: number
+  latencyMs: number
+  detail: string
 }
 
 function normalizeString(value: unknown): string {
@@ -80,6 +94,12 @@ function toBase64Url(input: Buffer | string): string {
   return Buffer.isBuffer(input)
     ? input.toString('base64url')
     : Buffer.from(input).toString('base64url')
+}
+
+function fromBase64Url(input: string): Buffer {
+  const normalized = String(input || '').replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  return Buffer.from(padded, 'base64')
 }
 
 function signJwt(
@@ -121,6 +141,140 @@ function readHeader(headers: Headers | Record<string, unknown>, name: string): s
   return normalizeString(value)
 }
 
+function normalizeArray<T = Record<string, unknown>>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : []
+}
+
+function summarizeProbeResponse(value: unknown, fallback = '请求成功。'): string {
+  const normalized = normalizeString(value)
+  if (!normalized)
+    return fallback
+  return normalized.replace(/\s+/g, ' ').slice(0, 240)
+}
+
+function normalizePathSegment(value: unknown, fallback: string): string {
+  const normalized = normalizeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+/g, '')
+    .replace(/-+$/g, '')
+  return normalized || fallback
+}
+
+function buildMeetingProviderWebhookUrl(runtime: RuntimeSettings): string {
+  const callbackPath = buildApiEndpoint(runtime.apiBaseUrl, '/internal/meetings/provider-events')
+  return buildApiEndpoint(runtime.onlyOffice.sourceBaseURL, callbackPath)
+}
+
+function buildLiveKitRecordingOutputPath(input: {
+  meetingId: string
+  roomName: string
+  mode: 'audio' | 'video'
+}): string {
+  const extension = input.mode === 'audio' ? 'ogg' : 'mp4'
+  const meetingId = normalizePathSegment(input.meetingId, 'meeting')
+  const roomName = normalizePathSegment(input.roomName, 'room')
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return `/tmp/winloop-meeting-egress/${meetingId}/${roomName}-${timestamp}.${extension}`
+}
+
+function resolveMimeTypeFromFileNameOrType(fileName: string, fileType: string): string {
+  const normalizedType = normalizeString(fileType).toLowerCase()
+  const normalizedFileName = normalizeString(fileName).toLowerCase()
+  if (normalizedType === 'ogg' || normalizedFileName.endsWith('.ogg'))
+    return 'audio/ogg'
+  if (normalizedType === 'mp3' || normalizedFileName.endsWith('.mp3'))
+    return 'audio/mpeg'
+  if (normalizedType === 'm4a' || normalizedFileName.endsWith('.m4a'))
+    return 'audio/mp4'
+  if (normalizedType === 'webm' || normalizedFileName.endsWith('.webm'))
+    return 'video/webm'
+  return 'video/mp4'
+}
+
+function resolveArtifactFileName(value: string, fallback = 'meeting-recording.mp4'): string {
+  const normalized = normalizeString(value)
+  if (!normalized)
+    return fallback
+
+  if (isHttpUrl(normalized) || normalized.startsWith('file://')) {
+    try {
+      const parsed = new URL(normalized)
+      return basename(parsed.pathname || '') || fallback
+    }
+    catch {
+      return fallback
+    }
+  }
+
+  return basename(normalized) || fallback
+}
+
+function resolveLocalFilePath(value: string): string | undefined {
+  const normalized = normalizeString(value)
+  if (!normalized)
+    return undefined
+  if (normalized.startsWith('file://')) {
+    try {
+      return new URL(normalized).pathname || undefined
+    }
+    catch {
+      return undefined
+    }
+  }
+  if (isHttpUrl(normalized))
+    return undefined
+  return normalized
+}
+
+function verifyLiveKitWebhookToken(input: {
+  token: string
+  rawBody: string
+  apiKey: string
+  apiSecret: string
+}): boolean {
+  const [headerPart, payloadPart, signaturePart] = normalizeString(input.token).split('.')
+  if (!headerPart || !payloadPart || !signaturePart)
+    return false
+
+  const unsigned = `${headerPart}.${payloadPart}`
+  const expectedSignature = createHmac('sha256', input.apiSecret).update(unsigned).digest('base64url')
+  if (expectedSignature !== signaturePart)
+    return false
+
+  try {
+    const header = JSON.parse(fromBase64Url(headerPart).toString('utf8')) as Record<string, unknown>
+    const payload = JSON.parse(fromBase64Url(payloadPart).toString('utf8')) as Record<string, unknown>
+    if (normalizeString(header.alg).toUpperCase() !== 'HS256')
+      return false
+
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const exp = Number(payload.exp || 0)
+    if (Number.isFinite(exp) && exp > 0 && nowSeconds >= exp)
+      return false
+    const nbf = Number(payload.nbf || 0)
+    if (Number.isFinite(nbf) && nbf > 0 && nowSeconds + 5 < nbf)
+      return false
+    const iss = normalizeString(payload.iss)
+    if (normalizeString(input.apiKey) && iss && iss !== normalizeString(input.apiKey))
+      return false
+
+    const bodyHash = createHash('sha256').update(input.rawBody).digest()
+    const actualHashes = new Set([
+      bodyHash.toString('hex'),
+      bodyHash.toString('base64'),
+      bodyHash.toString('base64url'),
+    ])
+    const claimedHash = normalizeString(payload.sha256)
+    if (claimedHash && !actualHashes.has(claimedHash))
+      return false
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
 function buildJoinUrl(runtime: RuntimeSettings, payload: {
   roomName: string
   token: string
@@ -153,6 +307,30 @@ async function postJson<T>(url: string, body: Record<string, unknown>, token: st
   if (!response.ok)
     throw new Error(`RTC_PROVIDER_HTTP_${response.status}`)
   return await response.json() as T
+}
+
+async function postJsonWithTimeout(
+  url: string,
+  body: Record<string, unknown>,
+  token: string,
+  timeoutMs = 4000,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs))
+  try {
+    return await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  }
+  finally {
+    clearTimeout(timer)
+  }
 }
 
 function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
@@ -256,12 +434,50 @@ function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
       }
     },
     async startRecording(input) {
+      assertLiveKitConfig()
+      const token = createAccessToken({
+        subject: `server-recording-${randomUUID().slice(0, 8)}`,
+        grants: {
+          roomRecord: true,
+          roomAdmin: true,
+          room: input.roomName,
+        },
+        expiresInSeconds: 10 * 60,
+      })
+      const outputPath = buildLiveKitRecordingOutputPath({
+        meetingId: input.meetingId,
+        roomName: input.roomName,
+        mode: input.mode,
+      })
+      const webhookUrl = buildMeetingProviderWebhookUrl(runtime)
+      const response = await postJson<Record<string, unknown>>(`${serverUrl}/twirp/livekit.Egress/StartRoomCompositeEgress`, {
+        room_name: input.roomName,
+        layout: input.mode === 'audio' ? '' : 'speaker',
+        audio_only: input.mode === 'audio',
+        file_outputs: [
+          {
+            filepath: outputPath,
+            file_type: input.mode === 'audio' ? 'OGG' : 'MP4',
+          },
+        ],
+        webhooks: [
+          {
+            url: webhookUrl,
+          },
+        ],
+      }, token)
+      const egressInfo = normalizeRecord(response.egressInfo ?? response.egress_info ?? response)
+      const egressId = normalizeString(egressInfo.egressId ?? egressInfo.egress_id) || `livekit-recording-${input.meetingId}`
       return {
-        recordingId: `livekit-recording-${input.meetingId}`,
+        recordingId: egressId,
         metadata: {
           roomName: input.roomName,
           provider: 'livekit',
           pendingWebhook: true,
+          egressId,
+          outputPath,
+          webhookUrl,
+          mode: input.mode,
         },
       }
     },
@@ -270,25 +486,61 @@ function createLiveKitGateway(runtime: RuntimeSettings): RtcProviderGateway {
         ...normalizeRecord(input.meetingMetadata),
         ...normalizeRecord(input.eventPayload),
       }
-      const artifact = normalizeRecord(payload.recordingArtifact)
+      let artifact = normalizeRecord(payload.recordingArtifact)
+      if (Object.keys(artifact).length === 0) {
+        const egressInfo = normalizeRecord(payload.egressInfo ?? payload.egress_info ?? payload.recordingSession)
+        const fileResult = normalizeRecord(normalizeArray(egressInfo.fileResults ?? egressInfo.file_results)[0])
+        const rawLocation = normalizeString(
+          fileResult.location
+          ?? fileResult.filename
+          ?? fileResult.filepath
+          ?? egressInfo.location
+          ?? egressInfo.filepath,
+        )
+        if (rawLocation) {
+          const resolvedFileName = resolveArtifactFileName(rawLocation, 'meeting-recording.mp4')
+          const resolvedFileType = normalizeString(fileResult.fileType ?? fileResult.file_type)
+          artifact = {
+            fileName: resolvedFileName,
+            mimeType: resolveMimeTypeFromFileNameOrType(resolvedFileName, resolvedFileType),
+            downloadUrl: isHttpUrl(rawLocation) ? rawLocation : undefined,
+            localFilePath: resolveLocalFilePath(rawLocation),
+            metadata: {
+              provider: 'livekit',
+              egressId: normalizeString(egressInfo.egressId ?? egressInfo.egress_id),
+              egressStatus: normalizeString(egressInfo.status),
+              location: rawLocation,
+            },
+          }
+        }
+      }
       if (Object.keys(artifact).length === 0)
         return null
       return {
         fileName: normalizeString(artifact.fileName) || 'meeting-recording.mp4',
         mimeType: normalizeString(artifact.mimeType) || 'video/mp4',
         downloadUrl: normalizeString(artifact.downloadUrl) || undefined,
+        localFilePath: normalizeString(artifact.localFilePath) || undefined,
         base64Content: normalizeString(artifact.base64Content) || undefined,
         textContent: normalizeString(artifact.textContent) || undefined,
         metadata: normalizeRecord(artifact.metadata),
       }
     },
     verifyWebhook(input) {
+      const signed = readHeader(input.headers, 'authorization').replace(/^Bearer\s+/i, '')
+        || readHeader(input.headers, 'authorize').replace(/^Bearer\s+/i, '')
+      if (signed && normalizeString(input.rawBody)) {
+        if (verifyLiveKitWebhookToken({ token: signed, rawBody: normalizeString(input.rawBody), apiKey, apiSecret })) {
+          return true
+        }
+      }
+
       const configured = normalizeString(runtime.meeting.rtc.webhookSecret)
-      if (!configured)
-        return true
-      const bearer = readHeader(input.headers, 'authorization').replace(/^Bearer\s+/i, '')
+      const bearer = signed || readHeader(input.headers, 'authorization').replace(/^Bearer\s+/i, '')
       const direct = readHeader(input.headers, 'x-winloop-meeting-secret')
-      return bearer === configured || direct === configured
+      if (configured)
+        return bearer === configured || direct === configured
+      return false
     },
   }
 }
@@ -300,6 +552,85 @@ export function buildMeetingParticipantIdentity(userId: string, runtime = readRu
 
   const secret = normalizeString(runtime.meeting.rtc.apiSecret || runtime.meeting.rtc.webhookSecret || 'winloop-meeting-identity')
   return `member:${createHmac('sha256', secret).update(normalizedUserId).digest('hex').slice(0, 24)}`
+}
+
+export async function probeRtcProviderGateway(runtime = readRuntimeSettings()): Promise<RtcProviderProbeResult> {
+  const provider = normalizeString(runtime.meeting.rtc.provider).toLowerCase()
+  const serverUrl = normalizeString(runtime.meeting.rtc.serverUrl).replace(/\/+$/g, '')
+  const endpoint = provider === 'livekit'
+    ? `${serverUrl}/twirp/livekit.RoomService/ListRooms`
+    : serverUrl
+  const startedAt = Date.now()
+
+  try {
+    const gateway = getRtcProviderGateway(runtime)
+    if (gateway.provider !== 'livekit') {
+      return {
+        provider: gateway.provider,
+        endpoint,
+        ok: false,
+        latencyMs: Date.now() - startedAt,
+        detail: '当前 RTC provider 暂未适配连通性探针。',
+      }
+    }
+
+    const apiKey = normalizeString(runtime.meeting.rtc.apiKey)
+    const apiSecret = normalizeString(runtime.meeting.rtc.apiSecret)
+    const token = signJwt({
+      video: {
+        roomList: true,
+      },
+    }, {
+      keyId: apiKey,
+      secret: apiSecret,
+      subject: `meeting-probe-${randomUUID().slice(0, 8)}`,
+      expiresInSeconds: 60,
+    })
+    const response = await postJsonWithTimeout(endpoint, {}, token)
+    const raw = await response.text()
+    const latencyMs = Date.now() - startedAt
+    if (!response.ok) {
+      return {
+        provider: gateway.provider,
+        endpoint,
+        ok: false,
+        statusCode: response.status,
+        latencyMs,
+        detail: summarizeProbeResponse(raw, `LiveKit API 返回 HTTP ${response.status}。`),
+      }
+    }
+
+    let roomCountText = ''
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      const roomCount = normalizeArray(parsed.rooms).length
+      roomCountText = `ListRooms 可达，当前返回 ${roomCount} 个房间。`
+    }
+    catch {
+      roomCountText = summarizeProbeResponse(raw, 'LiveKit API 请求成功。')
+    }
+
+    return {
+      provider: gateway.provider,
+      endpoint,
+      ok: true,
+      statusCode: response.status,
+      latencyMs,
+      detail: roomCountText,
+    }
+  }
+  catch (error: any) {
+    const detail = error?.name === 'AbortError'
+      ? 'LiveKit API 请求超时。'
+      : summarizeProbeResponse(error?.message, 'LiveKit API 请求失败。')
+    return {
+      provider: provider || 'unknown',
+      endpoint,
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      detail,
+    }
+  }
 }
 
 export function getRtcProviderGateway(runtime = readRuntimeSettings()): RtcProviderGateway {

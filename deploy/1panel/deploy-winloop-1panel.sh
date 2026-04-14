@@ -86,6 +86,10 @@ trim_spaces() {
   printf '%s' "$value"
 }
 
+escape_sql_literal() {
+  printf '%s' "$1" | sed "s/'/''/g"
+}
+
 normalize_image_ref() {
   local raw
   raw="$(printf '%s' "$1" | tr -d '\r' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
@@ -134,6 +138,157 @@ load_runtime_env_files() {
     # shellcheck disable=SC1090
     source "$env_file"
     set +a
+  done
+}
+
+resolve_db_migration_dir() {
+  local configured_dir="${DB_MIGRATION_DIR:-}"
+  local candidate=""
+
+  if [[ -n "$configured_dir" ]]; then
+    if [[ "$configured_dir" == /* ]]; then
+      printf '%s' "$configured_dir"
+    else
+      printf '%s/%s' "$SCRIPT_DIR" "$configured_dir"
+    fi
+    return 0
+  fi
+
+  for candidate in \
+    "$SCRIPT_DIR/scripts/migrations" \
+    "$SCRIPT_DIR/../scripts/migrations" \
+    "$SCRIPT_DIR/../../scripts/migrations"
+  do
+    if [[ -d "$candidate" ]]; then
+      (
+        cd "$candidate"
+        pwd
+      )
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+resolve_db_migration_file_list() {
+  local migration_dir="$1"
+  local raw_list="${DB_MIGRATION_FILES_RAW:-}"
+  local item=""
+  local candidate=""
+  local -a requested=()
+
+  DB_MIGRATION_FILE_PATHS=()
+
+  if [[ -n "$raw_list" ]]; then
+    IFS=',' read -r -a requested <<< "$raw_list"
+    for item in "${requested[@]}"; do
+      item="$(trim_spaces "$item")"
+      if [[ -z "$item" ]]; then
+        continue
+      fi
+
+      if [[ "$item" == /* ]]; then
+        candidate="$item"
+      else
+        candidate="${migration_dir}/${item}"
+      fi
+
+      if [[ ! -f "$candidate" ]]; then
+        error "DB migration file not found: $candidate"
+        exit 1
+      fi
+
+      DB_MIGRATION_FILE_PATHS+=("$candidate")
+    done
+    return 0
+  fi
+
+  while IFS= read -r candidate; do
+    DB_MIGRATION_FILE_PATHS+=("$candidate")
+  done < <(find "$migration_dir" -maxdepth 1 -type f -name '*.sql' | sort)
+}
+
+db_client_psql() {
+  docker run --rm \
+    --network "$DB_MIGRATION_NETWORK" \
+    --entrypoint psql \
+    -e PGAPPNAME=winloop-deploy-migrate \
+    -e PGCONNECT_TIMEOUT=10 \
+    -v "${DB_MIGRATION_DIR_RESOLVED}:/migrations:ro" \
+    "$DB_MIGRATION_CLIENT_IMAGE" \
+    "$@" \
+    "$WINLOOP_PG_URL"
+}
+
+run_db_migrations() {
+  local migration_dir=""
+  local file=""
+  local migration_key=""
+  local migration_key_sql=""
+  local existing=""
+  local output=""
+  local output_compact=""
+
+  if [[ -z "${WINLOOP_PG_URL:-}" ]]; then
+    log "DB migration skipped: WINLOOP_PG_URL is empty"
+    return 0
+  fi
+
+  if ! migration_dir="$(resolve_db_migration_dir)"; then
+    log "DB migration files: <none>"
+    return 0
+  fi
+
+  DB_MIGRATION_DIR_RESOLVED="$migration_dir"
+  resolve_db_migration_file_list "$DB_MIGRATION_DIR_RESOLVED"
+
+  if [[ ${#DB_MIGRATION_FILE_PATHS[@]} -eq 0 ]]; then
+    log "DB migration files: <none>"
+    return 0
+  fi
+
+  log "DB migration dir: $DB_MIGRATION_DIR_RESOLVED"
+  log "DB migration client image: $DB_MIGRATION_CLIENT_IMAGE"
+  log "DB migration network: $DB_MIGRATION_NETWORK"
+  log "DB migration files: ${DB_MIGRATION_FILE_PATHS[*]}"
+
+  db_client_psql -v ON_ERROR_STOP=1 -Atqc "
+    CREATE TABLE IF NOT EXISTS migrations_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  "
+
+  for file in "${DB_MIGRATION_FILE_PATHS[@]}"; do
+    migration_key="$(basename "$file")"
+    migration_key="${migration_key%.sql}"
+    migration_key_sql="$(escape_sql_literal "$migration_key")"
+
+    existing="$(db_client_psql -Atqc "SELECT value FROM migrations_meta WHERE key = '${migration_key_sql}' LIMIT 1;")"
+    if [[ "$existing" == "1" ]]; then
+      log "DB migration skipped: $migration_key"
+      continue
+    fi
+
+    log "DB migration apply: $migration_key"
+    output="$(db_client_psql -v ON_ERROR_STOP=1 -Atqf "/migrations/$(basename "$file")")"
+    output_compact="$(printf '%s' "$output" | tr -d '[:space:]')"
+    if [[ -n "$output_compact" ]]; then
+      error "DB migration validation failed: $migration_key"
+      printf '%s\n' "$output" >&2
+      exit 1
+    fi
+
+    db_client_psql -v ON_ERROR_STOP=1 -Atqc "
+      INSERT INTO migrations_meta (key, value, updated_at)
+      VALUES ('${migration_key_sql}', '1', NOW())
+      ON CONFLICT (key) DO UPDATE
+      SET value = EXCLUDED.value,
+          updated_at = EXCLUDED.updated_at;
+    "
+    log "DB migration applied: $migration_key"
   done
 }
 
@@ -412,6 +567,7 @@ compose_with_override() {
   "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" "$@"
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${WINLOOP_PROJECT_DIR:-$(pwd)}"
 COMPOSE_FILE="${WINLOOP_COMPOSE_FILE:-docker-compose.yml}"
 SERVICE_NAME="${WINLOOP_SERVICE_NAME:-winloop}"
@@ -429,6 +585,12 @@ FORCE_RECREATE="$(to_bool "${WINLOOP_FORCE_RECREATE:-true}")"
 PULL_ONLY="false"
 BOOTSTRAP_COMPOSE="$(to_bool "${WINLOOP_BOOTSTRAP_COMPOSE:-false}")"
 BOOTSTRAP_HTTP_PORT="${WINLOOP_BOOTSTRAP_HTTP_PORT:-3510}"
+DB_MIGRATION_DIR="${WINLOOP_DB_MIGRATION_DIR:-}"
+DB_MIGRATION_FILES_RAW="${WINLOOP_DB_MIGRATION_FILES:-}"
+DB_MIGRATION_CLIENT_IMAGE="${WINLOOP_DB_MIGRATION_CLIENT_IMAGE:-postgres:18-alpine}"
+DB_MIGRATION_NETWORK="${WINLOOP_DB_MIGRATION_NETWORK:-1panel-network}"
+DB_MIGRATION_FILE_PATHS=()
+DB_MIGRATION_DIR_RESOLVED=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -601,6 +763,8 @@ if [[ "$PULL_ONLY" == "true" ]]; then
   log "Pull-only mode enabled, image fetched successfully. Service was not restarted."
   exit 0
 fi
+
+run_db_migrations
 
 if [[ "$FORCE_RECREATE" == "true" ]]; then
   compose_with_override up -d --force-recreate "$SERVICE_NAME"

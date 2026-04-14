@@ -41,10 +41,18 @@ export interface PlatformMeetingRuntimeOverrides {
 }
 
 export interface MeetingSettingsConfigSource {
-  rtc: 'env' | 'override'
-  asr: 'env' | 'override'
-  worker: 'env' | 'override'
+  rtc: 'default' | 'override'
+  asr: 'default' | 'override'
+  worker: 'default' | 'override'
 }
+
+const DEFAULT_MEETING_ROOM_PREFIX = 'winloop'
+const DEFAULT_MEETING_WORKER_SETTINGS = Object.freeze({
+  enabled: true,
+  intervalMs: 5000,
+  batchSize: 6,
+  maxAttempts: 5,
+})
 
 function hasOwn(source: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(source, key)
@@ -281,10 +289,24 @@ export function applyPlatformMeetingRuntimeOverrides(
   const next: RuntimeSettings = {
     ...runtime,
     meeting: {
-      ...runtime.meeting,
-      rtc: { ...runtime.meeting.rtc },
-      asr: { ...runtime.meeting.asr },
-      worker: { ...runtime.meeting.worker },
+      rtc: {
+        provider: '',
+        serverUrl: '',
+        apiKey: '',
+        apiSecret: '',
+        embedBaseUrl: '',
+        webhookSecret: '',
+        roomPrefix: DEFAULT_MEETING_ROOM_PREFIX,
+      },
+      asr: {
+        provider: '',
+        serviceUrl: '',
+        apiKey: '',
+        webhookSecret: '',
+      },
+      worker: {
+        ...DEFAULT_MEETING_WORKER_SETTINGS,
+      },
     },
   }
 
@@ -335,9 +357,9 @@ export function applyPlatformMeetingRuntimeOverrides(
 
 export function getMeetingSettingsConfigSource(overrides: PlatformMeetingRuntimeOverrides): MeetingSettingsConfigSource {
   return {
-    rtc: hasSectionOverrides(overrides.rtc as Record<string, unknown> | undefined) ? 'override' : 'env',
-    asr: hasSectionOverrides(overrides.asr as Record<string, unknown> | undefined) ? 'override' : 'env',
-    worker: hasSectionOverrides(overrides.worker as Record<string, unknown> | undefined) ? 'override' : 'env',
+    rtc: hasSectionOverrides(overrides.rtc as Record<string, unknown> | undefined) ? 'override' : 'default',
+    asr: hasSectionOverrides(overrides.asr as Record<string, unknown> | undefined) ? 'override' : 'default',
+    worker: hasSectionOverrides(overrides.worker as Record<string, unknown> | undefined) ? 'override' : 'default',
   }
 }
 

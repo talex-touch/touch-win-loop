@@ -70,6 +70,12 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return {}
+  return value as Record<string, unknown>
+}
+
 function normalizeSpeakerLabel(value: unknown): string {
   const normalized = normalizeString(value)
   if (!normalized)
@@ -121,6 +127,12 @@ function isTimestampInPast(value: string | null | undefined): boolean {
 
 function buildRtcServerUrl(runtime: RuntimeSettings): string {
   return normalizeString(runtime.meeting.rtc.serverUrl)
+}
+
+function resolveMeetingAsrSessionId(meeting: Pick<ProjectMeeting, 'providerMetadata'>): string {
+  const metadata = normalizeRecord(meeting.providerMetadata)
+  const asrSession = normalizeRecord(metadata.asrSession)
+  return normalizeString(asrSession.sessionId)
 }
 
 function buildLegacyJoinPayload(join: {
@@ -291,6 +303,7 @@ async function provisionProjectMeetingSession(
     rtc.startRecording({
       roomName: room.roomName,
       meetingId: input.meetingId,
+      mode: input.mode,
     }),
     asr.startSession({
       roomName: room.roomName,
@@ -627,6 +640,55 @@ export async function endProjectMeetingSession(
   return buildMeetingDetailOrThrow(db, input.projectId, input.meetingId)
 }
 
+export async function finalizeProjectMeetingAsrSession(
+  db: Queryable,
+  input: {
+    projectId: string
+    meetingId: string
+    runtime?: RuntimeSettings
+  },
+): Promise<{ finished: boolean, errorMessage?: string }> {
+  const runtime = await resolveMeetingRuntime(input.runtime)
+  const meeting = await buildMeetingDetailOrThrow(db, input.projectId, input.meetingId)
+  const sessionId = resolveMeetingAsrSessionId(meeting)
+  if (!sessionId)
+    return { finished: false }
+
+  const asr = getMeetingAsrGateway(runtime)
+  const finishedAt = new Date().toISOString()
+  try {
+    await asr.finishSession({
+      sessionId,
+    })
+    await patchProjectMeeting(db, {
+      projectId: meeting.projectId,
+      meetingId: meeting.id,
+      providerMetadata: {
+        asrSessionFinishedAt: finishedAt,
+        asrSessionFinishAttemptAt: finishedAt,
+      },
+    })
+    return {
+      finished: true,
+    }
+  }
+  catch (error) {
+    const errorMessage = error instanceof Error ? normalizeString(error.message) : 'ASR_SESSION_FINISH_FAILED'
+    await patchProjectMeeting(db, {
+      projectId: meeting.projectId,
+      meetingId: meeting.id,
+      providerMetadata: {
+        asrSessionFinishAttemptAt: finishedAt,
+        asrSessionFinishError: errorMessage,
+      },
+    }).catch(() => undefined)
+    return {
+      finished: false,
+      errorMessage,
+    }
+  }
+}
+
 export async function joinProjectMeetingSession(
   db: Queryable,
   input: {
@@ -640,6 +702,77 @@ export async function joinProjectMeetingSession(
   if (meeting.status === 'scheduled')
     throw new Error('MEETING_NOT_STARTED')
   return buildProjectMeetingJoinSession(db, input)
+}
+
+export async function resolveProjectMeetingAudioFrameTarget(
+  db: Queryable,
+  input: {
+    meetingId: string
+    participantIdentity?: string
+    meetingGuestToken?: string
+    user?: AuthUser
+    runtime?: RuntimeSettings
+  },
+): Promise<{
+  meeting: ProjectMeetingDetail
+  participantIdentity: string
+  asrSessionId: string
+}> {
+  const runtime = await resolveMeetingRuntime(input.runtime)
+
+  let meeting: ProjectMeetingDetail | null = null
+  let participantIdentity = ''
+  const rawParticipantIdentity = normalizeString(input.participantIdentity)
+  const meetingGuestToken = normalizeString(input.meetingGuestToken)
+
+  if (meetingGuestToken) {
+    const validatedGuest = await resolveValidatedMeetingGuestToken(db, meetingGuestToken, runtime)
+    if (!validatedGuest)
+      throw new Error('MEETING_GUEST_TOKEN_INVALID')
+
+    meeting = validatedGuest.meeting
+    participantIdentity = validatedGuest.providerIdentity
+    if (rawParticipantIdentity && rawParticipantIdentity !== participantIdentity)
+      throw new Error('MEETING_PARTICIPANT_IDENTITY_MISMATCH')
+  }
+  else {
+    if (!input.user)
+      throw new Error('UNAUTHORIZED')
+
+    meeting = await getProjectMeetingDetailByMeetingId(db, input.meetingId)
+    if (!meeting)
+      throw new Error('MEETING_NOT_FOUND')
+
+    await assertProjectMemberAccess(db, meeting.projectId, input.user)
+    const expectedIdentity = buildMeetingParticipantIdentity(input.user.id, runtime)
+    if (rawParticipantIdentity && rawParticipantIdentity !== expectedIdentity) {
+      const matchedParticipant = await getProjectMeetingParticipantByIdentity(db, {
+        meetingId: meeting.id,
+        providerIdentity: rawParticipantIdentity,
+      })
+      if (!matchedParticipant || normalizeString(matchedParticipant.userId) !== normalizeString(input.user.id))
+        throw new Error('MEETING_PARTICIPANT_IDENTITY_MISMATCH')
+      participantIdentity = rawParticipantIdentity
+    }
+    else {
+      participantIdentity = rawParticipantIdentity || expectedIdentity
+    }
+  }
+
+  if (!meeting)
+    throw new Error('MEETING_NOT_FOUND')
+  if (meeting.status !== 'active')
+    throw new Error('MEETING_NOT_ACTIVE')
+
+  const sessionId = resolveMeetingAsrSessionId(meeting)
+  if (!sessionId)
+    throw new Error('MEETING_ASR_SESSION_NOT_STARTED')
+
+  return {
+    meeting,
+    participantIdentity,
+    asrSessionId: sessionId,
+  }
 }
 
 export async function startProjectMeetingSession(

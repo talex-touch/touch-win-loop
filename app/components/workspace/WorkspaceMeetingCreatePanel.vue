@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ProjectMeetingMode,
+  ProjectMeetingRuntimeHealth,
   ProjectMemberSummary,
   WorkspaceType,
 } from '~~/shared/types/domain'
@@ -19,12 +20,14 @@ const props = withDefaults(defineProps<{
   currentUserId?: string
   workspaceType?: WorkspaceType | ''
   meetingPlanTier?: 'personal_team' | 'business_team' | null
+  runtimeHealth?: ProjectMeetingRuntimeHealth | null
   mutating?: boolean
 }>(), {
   projectMembers: () => [],
   currentUserId: '',
   workspaceType: '',
   meetingPlanTier: null,
+  runtimeHealth: null,
   mutating: false,
 })
 
@@ -108,6 +111,18 @@ const defaultDurationText = computed(() => {
   return `${resolveDefaultDurationMinutes()} 分钟`
 })
 
+const meetingRuntimeLoading = computed(() => !props.runtimeHealth)
+const meetingRuntimeReady = computed(() => props.runtimeHealth?.ready === true)
+const meetingRuntimeIssues = computed(() => props.runtimeHealth?.issues || [])
+const meetingRuntimeWarningText = computed(() => {
+  if (meetingRuntimeReady.value)
+    return ''
+  if (meetingRuntimeLoading.value)
+    return '正在检查会议服务配置，请稍候。'
+  return meetingRuntimeIssues.value.join('；') || '会议服务尚未完成配置。'
+})
+const createActionDisabled = computed(() => props.mutating || meetingRuntimeLoading.value || !meetingRuntimeReady.value)
+
 function resetForm(): void {
   const nextRange = createDefaultRange()
   formTitle.value = ''
@@ -184,6 +199,10 @@ function buildPayload(options: { quickCreate?: boolean } = {}): MeetingCreatePay
 }
 
 function submitQuickCreate(): void {
+  if (!meetingRuntimeReady.value) {
+    localError.value = meetingRuntimeWarningText.value || '会议服务尚未完成配置。'
+    return
+  }
   const payload = buildPayload({ quickCreate: true })
   if (!payload)
     return
@@ -191,6 +210,10 @@ function submitQuickCreate(): void {
 }
 
 function submitForm(): void {
+  if (!meetingRuntimeReady.value) {
+    localError.value = meetingRuntimeWarningText.value || '会议服务尚未完成配置。'
+    return
+  }
   const payload = buildPayload()
   if (!payload)
     return
@@ -213,7 +236,7 @@ watch(currentUser, (next, previous) => {
 </script>
 
 <template>
-  <div class="meeting-create-panel mx-auto max-w-5xl space-y-4">
+  <div class="meeting-create-panel w-full space-y-4">
     <section class="meeting-create-hero">
       <div class="space-y-2">
         <div class="meeting-create-hero__badge">
@@ -236,6 +259,21 @@ watch(currentUser, (next, previous) => {
     </section>
 
     <section class="meeting-create-card">
+      <div v-if="meetingRuntimeLoading || !meetingRuntimeReady" class="meeting-create-runtime-alert">
+        <div class="meeting-create-runtime-alert__icon">
+          <span class="material-symbols-outlined">{{ meetingRuntimeLoading ? 'hourglass_top' : 'warning' }}</span>
+        </div>
+        <div class="meeting-create-runtime-alert__body">
+          <h3>{{ meetingRuntimeLoading ? '正在检查会议服务配置' : '会议服务未就绪' }}</h3>
+          <p>
+            {{ meetingRuntimeLoading ? '页面正在同步当前项目的会议运行状态，完成前会暂时禁用创建操作。' : '当前无法创建会议。请联系管理员在后台完成 RTC / ASR 配置后再试。' }}
+          </p>
+          <p class="meeting-create-runtime-alert__issues">
+            {{ meetingRuntimeWarningText }}
+          </p>
+        </div>
+      </div>
+
       <div class="meeting-create-card__header">
         <div>
           <h3>快速创建</h3>
@@ -244,7 +282,7 @@ watch(currentUser, (next, previous) => {
         <button
           class="meeting-create-btn"
           type="button"
-          :disabled="mutating"
+          :disabled="createActionDisabled"
           @click="submitQuickCreate"
         >
           {{ mutating ? '创建中...' : mode === 'audio' ? '立即发起语音会议' : '立即发起视频会议' }}
@@ -313,7 +351,7 @@ watch(currentUser, (next, previous) => {
         </p>
 
         <div class="meeting-create-actions">
-          <button class="meeting-create-btn" type="submit" :disabled="mutating">
+          <button class="meeting-create-btn" type="submit" :disabled="createActionDisabled">
             {{ mutating ? '提交中...' : '创建会议' }}
           </button>
         </div>
@@ -373,6 +411,41 @@ watch(currentUser, (next, previous) => {
   margin: 0.35rem 0 0;
   font-size: 0.875rem;
   color: #64748b;
+}
+
+.meeting-create-runtime-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+  border: 1px solid #fecaca;
+  border-radius: 1rem;
+  background: #fff7ed;
+  padding: 1rem;
+}
+
+.meeting-create-runtime-alert__icon {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  color: #c2410c;
+}
+
+.meeting-create-runtime-alert__body h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #9a3412;
+}
+
+.meeting-create-runtime-alert__body p {
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  color: #9a3412;
+}
+
+.meeting-create-runtime-alert__issues {
+  color: #c2410c;
 }
 
 .meeting-create-form {

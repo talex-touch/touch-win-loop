@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="meeting-panel mx-auto max-w-6xl space-y-4">
+  <div class="meeting-panel w-full space-y-4">
     <section class="meeting-panel__hero">
       <div class="space-y-3">
         <div class="meeting-panel__badge">

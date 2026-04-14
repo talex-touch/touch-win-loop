@@ -8,8 +8,8 @@ import type {
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
 import { resolveWorkspaceOptions } from '~/composables/team-ui'
-import { useAdminRouteTabs } from '~/composables/useAdminRouteTabs'
 import { readActiveWorkspacePreference } from '~/composables/useActiveWorkspacePreference'
+import { useAdminRouteTabs } from '~/composables/useAdminRouteTabs'
 
 interface AdminNavItem {
   key: string
@@ -349,8 +349,6 @@ if (import.meta.client) {
     />
   </div>
 </template>
-
-<style src="@arco-design/web-vue/dist/arco.css"></style>
 
 <style scoped>
 .admin-shell {

@@ -1,0 +1,24 @@
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+
+redis:
+  address: redis:6379
+
+keys:
+  devkey: devsecret
+
+room:
+  auto_create: true
+
+webhook:
+  api_key: devkey
+  urls:
+    - http://host.docker.internal:3510/api/internal/meetings/provider-events
+
+logging:
+  level: info

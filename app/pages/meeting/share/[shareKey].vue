@@ -415,6 +415,7 @@ onBeforeUnmount(() => {
           :rtc-join-url="guestJoinSession.rtcJoinUrl"
           :participants="shareSnapshot.participants"
           :captions="mergedCaptions"
+          :meeting-guest-token="guestJoinSession.meetingGuestToken"
           :guest="true"
         />
 

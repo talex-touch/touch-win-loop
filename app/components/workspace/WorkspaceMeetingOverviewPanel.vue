@@ -45,7 +45,7 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
 </script>
 
 <template>
-  <div class="meeting-overview mx-auto max-w-6xl space-y-4">
+  <div class="meeting-overview w-full space-y-4">
     <section class="meeting-overview__hero">
       <div>
         <div class="meeting-overview__badge">

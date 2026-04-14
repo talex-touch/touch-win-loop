@@ -1,5 +1,5 @@
 import { setResponseStatus } from 'h3'
-import { endProjectMeetingSession } from '~~/server/services/meeting/project-meeting'
+import { endProjectMeetingSession, finalizeProjectMeetingAsrSession } from '~~/server/services/meeting/project-meeting'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
@@ -49,6 +49,14 @@ export default defineEventHandler(async (event) => {
         runtime,
       })
     })
+
+    await withTransaction(event, async (db) => {
+      await finalizeProjectMeetingAsrSession(db, {
+        projectId,
+        meetingId,
+        runtime,
+      })
+    }).catch(() => undefined)
 
     await Promise.allSettled([
       emitRealtimeEvent({

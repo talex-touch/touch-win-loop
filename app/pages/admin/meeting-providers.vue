@@ -46,10 +46,27 @@ interface MeetingProvidersPayload {
     updatedByUserId: string
   }
   configSource: {
-    rtc: 'env' | 'override'
-    asr: 'env' | 'override'
-    worker: 'env' | 'override'
+    rtc: 'default' | 'override'
+    asr: 'default' | 'override'
+    worker: 'default' | 'override'
   }
+}
+
+interface MeetingProvidersTestProbe {
+  provider: string
+  endpoint: string
+  configured: boolean
+  ok: boolean
+  statusCode?: number
+  latencyMs: number
+  detail: string
+}
+
+interface MeetingProvidersTestPayload {
+  ready: boolean
+  testedAt: string
+  rtc: MeetingProvidersTestProbe
+  asr: MeetingProvidersTestProbe
 }
 
 const runtime = useRuntimeConfig()
@@ -57,9 +74,12 @@ const { endpoint } = useApiEndpoint(runtime)
 
 const loading = ref(true)
 const saving = ref(false)
+const testing = ref(false)
 const errorText = ref('')
 const successText = ref('')
 const payload = ref<MeetingProvidersPayload | null>(null)
+const testErrorText = ref('')
+const testResult = ref<MeetingProvidersTestPayload | null>(null)
 
 const form = reactive({
   rtcProvider: '',
@@ -84,6 +104,15 @@ const form = reactive({
   workerMaxAttempts: 5,
 })
 
+const rtcProviderOptions = [
+  { value: 'livekit', label: 'livekit' },
+] as const
+
+const asrProviderOptions = [
+  { value: 'http', label: 'http' },
+  { value: 'openai-compatible', label: 'openai-compatible' },
+] as const
+
 function formatTime(raw: string): string {
   const text = String(raw || '').trim()
   if (!text)
@@ -94,8 +123,24 @@ function formatTime(raw: string): string {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
-function configSourceLabel(value: 'env' | 'override' | ''): string {
-  return value === 'override' ? '后台覆盖' : '环境默认'
+function configSourceLabel(value: 'default' | 'override' | ''): string {
+  return value === 'override' ? '后台已配置' : '内置默认'
+}
+
+function applyLocalLiveKitPreset(): void {
+  form.rtcProvider = 'livekit'
+  form.rtcServerUrl = 'http://127.0.0.1:7880'
+  form.rtcRoomPrefix = form.rtcRoomPrefix || 'winloop'
+}
+
+function applyLocalAsrBridgePreset(): void {
+  form.asrProvider = 'http'
+  form.asrServiceUrl = 'http://127.0.0.1:8790'
+}
+
+function applyOpenAiCompatibleAsrPreset(): void {
+  form.asrProvider = 'openai-compatible'
+  form.asrServiceUrl = 'https://api.openai.com/v1'
 }
 
 function applyPayload(nextPayload: MeetingProvidersPayload): void {
@@ -125,11 +170,48 @@ function applyPayload(nextPayload: MeetingProvidersPayload): void {
   form.workerMaxAttempts = Number(nextPayload.worker.maxAttempts || 5)
 }
 
+function resetTestState(): void {
+  testErrorText.value = ''
+  testResult.value = null
+}
+
+function buildRequestBody() {
+  return {
+    rtc: {
+      provider: form.rtcProvider,
+      serverUrl: form.rtcServerUrl,
+      embedBaseUrl: form.rtcEmbedBaseUrl,
+      roomPrefix: form.rtcRoomPrefix,
+      apiKeyMode: form.rtcApiKeyMode,
+      apiKey: form.rtcApiKey,
+      apiSecretMode: form.rtcApiSecretMode,
+      apiSecret: form.rtcApiSecret,
+      webhookSecretMode: form.rtcWebhookSecretMode,
+      webhookSecret: form.rtcWebhookSecret,
+    },
+    asr: {
+      provider: form.asrProvider,
+      serviceUrl: form.asrServiceUrl,
+      apiKeyMode: form.asrApiKeyMode,
+      apiKey: form.asrApiKey,
+      webhookSecretMode: form.asrWebhookSecretMode,
+      webhookSecret: form.asrWebhookSecret,
+    },
+    worker: {
+      enabled: Boolean(form.workerEnabled),
+      intervalMs: Number(form.workerIntervalMs || 5000),
+      batchSize: Number(form.workerBatchSize || 6),
+      maxAttempts: Number(form.workerMaxAttempts || 5),
+    },
+  }
+}
+
 async function loadSettings(showLoading = false) {
   if (showLoading)
     loading.value = true
   errorText.value = ''
   successText.value = ''
+  resetTestState()
 
   try {
     const response = await fetch(endpoint('/admin/meeting/providers'), {
@@ -153,6 +235,7 @@ async function saveSettings() {
   saving.value = true
   errorText.value = ''
   successText.value = ''
+  testErrorText.value = ''
 
   try {
     const response = await fetch(endpoint('/admin/meeting/providers'), {
@@ -161,39 +244,13 @@ async function saveSettings() {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        rtc: {
-          provider: form.rtcProvider,
-          serverUrl: form.rtcServerUrl,
-          embedBaseUrl: form.rtcEmbedBaseUrl,
-          roomPrefix: form.rtcRoomPrefix,
-          apiKeyMode: form.rtcApiKeyMode,
-          apiKey: form.rtcApiKey,
-          apiSecretMode: form.rtcApiSecretMode,
-          apiSecret: form.rtcApiSecret,
-          webhookSecretMode: form.rtcWebhookSecretMode,
-          webhookSecret: form.rtcWebhookSecret,
-        },
-        asr: {
-          provider: form.asrProvider,
-          serviceUrl: form.asrServiceUrl,
-          apiKeyMode: form.asrApiKeyMode,
-          apiKey: form.asrApiKey,
-          webhookSecretMode: form.asrWebhookSecretMode,
-          webhookSecret: form.asrWebhookSecret,
-        },
-        worker: {
-          enabled: Boolean(form.workerEnabled),
-          intervalMs: Number(form.workerIntervalMs || 5000),
-          batchSize: Number(form.workerBatchSize || 6),
-          maxAttempts: Number(form.workerMaxAttempts || 5),
-        },
-      }),
+      body: JSON.stringify(buildRequestBody()),
     })
     const result = await response.json().catch(() => null) as ApiResponse<MeetingProvidersPayload> | null
     if (!response.ok || !result || result.code !== 0)
       throw new Error(String(result?.message || '会议服务配置保存失败。'))
     applyPayload(result.data)
+    testResult.value = null
     successText.value = '会议服务配置已保存。后续新建 / 启动 / 加入会议会直接使用后台生效配置。'
   }
   catch (error: any) {
@@ -201,6 +258,35 @@ async function saveSettings() {
   }
   finally {
     saving.value = false
+  }
+}
+
+async function runConnectivityTest() {
+  testing.value = true
+  errorText.value = ''
+  successText.value = ''
+  testErrorText.value = ''
+
+  try {
+    const response = await fetch(endpoint('/admin/meeting/providers/test'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildRequestBody()),
+    })
+    const result = await response.json().catch(() => null) as ApiResponse<MeetingProvidersTestPayload> | null
+    if (!response.ok || !result || result.code !== 0)
+      throw new Error(String(result?.message || '会议服务连通性测试失败。'))
+    testResult.value = result.data
+  }
+  catch (error: any) {
+    testResult.value = null
+    testErrorText.value = String(error?.data?.message || error?.message || '会议服务连通性测试失败。')
+  }
+  finally {
+    testing.value = false
   }
 }
 
@@ -224,6 +310,9 @@ onMounted(async () => {
         <div class="flex gap-2 items-center">
           <a-button size="small" type="outline" :loading="loading" @click="loadSettings(false)">
             刷新
+          </a-button>
+          <a-button size="small" type="outline" :loading="testing" @click="runConnectivityTest">
+            测试连通性
           </a-button>
           <a-button size="small" type="primary" :loading="saving" @click="saveSettings">
             保存
@@ -268,8 +357,73 @@ onMounted(async () => {
         </ul>
       </section>
 
+      <section v-if="testErrorText" class="text-rose-600 p-3 border border-rose-200 bg-rose-50">
+        {{ testErrorText }}
+      </section>
+
+      <section
+        v-if="testResult"
+        class="p-3 border"
+        :class="testResult.ready ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'"
+      >
+        <div class="flex gap-3 items-center justify-between">
+          <div>
+            <p class="font-semibold m-0">
+              {{ testResult.ready ? '会议服务联通测试通过' : '会议服务联通测试未通过' }}
+            </p>
+            <p class="m-0 mt-1">
+              最近测试时间：{{ formatTime(testResult.testedAt) }}
+            </p>
+          </div>
+          <a-tag size="small" :color="testResult.ready ? 'green' : 'orange'">
+            {{ testResult.ready ? 'READY' : 'CHECK REQUIRED' }}
+          </a-tag>
+        </div>
+        <div class="mt-3 gap-3 grid md:grid-cols-2">
+          <article class="text-slate-800 p-3 border border-current/10 rounded-lg bg-white/70">
+            <div class="flex gap-3 items-center justify-between">
+              <p class="font-semibold m-0">
+                RTC / {{ testResult.rtc.provider || '未配置' }}
+              </p>
+              <a-tag size="small" :color="testResult.rtc.ok ? 'green' : (testResult.rtc.configured ? 'orange' : 'red')">
+                {{ testResult.rtc.ok ? 'PASS' : (testResult.rtc.configured ? 'FAIL' : 'CONFIG') }}
+              </a-tag>
+            </div>
+            <p class="text-[11px] text-slate-500 m-0 mt-2 break-all">
+              {{ testResult.rtc.endpoint || '未提供探针地址' }}
+            </p>
+            <p class="text-[11px] text-slate-700 m-0 mt-2">
+              {{ testResult.rtc.detail }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0 mt-2">
+              延迟 {{ testResult.rtc.latencyMs }} ms<span v-if="testResult.rtc.statusCode"> / HTTP {{ testResult.rtc.statusCode }}</span>
+            </p>
+          </article>
+
+          <article class="text-slate-800 p-3 border border-current/10 rounded-lg bg-white/70">
+            <div class="flex gap-3 items-center justify-between">
+              <p class="font-semibold m-0">
+                ASR / {{ testResult.asr.provider || '未配置' }}
+              </p>
+              <a-tag size="small" :color="testResult.asr.ok ? 'green' : (testResult.asr.configured ? 'orange' : 'red')">
+                {{ testResult.asr.ok ? 'PASS' : (testResult.asr.configured ? 'FAIL' : 'CONFIG') }}
+              </a-tag>
+            </div>
+            <p class="text-[11px] text-slate-500 m-0 mt-2 break-all">
+              {{ testResult.asr.endpoint || '未提供探针地址' }}
+            </p>
+            <p class="text-[11px] text-slate-700 m-0 mt-2">
+              {{ testResult.asr.detail }}
+            </p>
+            <p class="text-[10px] text-slate-500 m-0 mt-2">
+              延迟 {{ testResult.asr.latencyMs }} ms<span v-if="testResult.asr.statusCode"> / HTTP {{ testResult.asr.statusCode }}</span>
+            </p>
+          </article>
+        </div>
+      </section>
+
       <section v-if="!payload.masterKeyReady" class="text-amber-800 p-3 border border-amber-200 bg-amber-50">
-        未检测到 `WINLOOP_CONFIG_MASTER_KEY`。当前仍可保存非密钥字段，但不能替换 RTC / ASR 的 secret。
+        未检测到 `WINLOOP_CONFIG_MASTER_KEY`。当前保存的 RTC / ASR secret 将以明文形式托管，建议后续补齐根密钥后再重新保存一次完成加密。
       </section>
 
       <section class="p-3 border border-slate-200 bg-white space-y-3">
@@ -281,10 +435,22 @@ onMounted(async () => {
             {{ configSourceLabel(payload.configSource.rtc) }}
           </a-tag>
         </div>
+        <div class="flex flex-wrap gap-2">
+          <a-button size="small" type="outline" @click="applyLocalLiveKitPreset">
+            填入本机 LiveKit
+          </a-button>
+        </div>
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-slate-600">Provider</span>
-            <input v-model="form.rtcProvider" class="admin-input" placeholder="livekit">
+            <select v-model="form.rtcProvider" class="admin-select">
+              <option value="">
+                请选择
+              </option>
+              <option v-for="item in rtcProviderOptions" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
           </label>
           <label class="block space-y-1">
             <span class="text-slate-600">Room Prefix</span>
@@ -342,16 +508,34 @@ onMounted(async () => {
             {{ configSourceLabel(payload.configSource.asr) }}
           </a-tag>
         </div>
+        <div class="flex flex-wrap gap-2">
+          <a-button size="small" type="outline" @click="applyLocalAsrBridgePreset">
+            填入本机 ASR bridge
+          </a-button>
+          <a-button size="small" type="outline" @click="applyOpenAiCompatibleAsrPreset">
+            填入 OpenAI Compatible ASR
+          </a-button>
+        </div>
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-slate-600">Provider</span>
-            <input v-model="form.asrProvider" class="admin-input" placeholder="http">
+            <select v-model="form.asrProvider" class="admin-select">
+              <option value="">
+                请选择
+              </option>
+              <option v-for="item in asrProviderOptions" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
           </label>
           <label class="block space-y-1">
             <span class="text-slate-600">Service URL</span>
-            <input v-model="form.asrServiceUrl" class="admin-input" placeholder="http://127.0.0.1:8090">
+            <input v-model="form.asrServiceUrl" class="admin-input" placeholder="http://127.0.0.1:8790 或 https://api.openai.com/v1">
           </label>
         </div>
+        <p class="text-[10px] text-slate-500 m-0">
+          `http` 表示外部 ASR 网关；`openai-compatible` 表示应用内直接调用 `audio/transcriptions`，不再依赖独立 bridge。
+        </p>
         <div class="gap-3 grid md:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-slate-600">API Key</span>

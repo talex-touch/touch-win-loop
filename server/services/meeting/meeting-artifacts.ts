@@ -6,6 +6,7 @@ import type {
   Resource,
 } from '~~/shared/types/domain'
 import { Buffer } from 'node:buffer'
+import { readFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
 import * as projectResourceStore from '~~/server/utils/project-resource-store'
@@ -19,6 +20,8 @@ async function resolveArtifactBuffer(artifact: RtcRecordingArtifact): Promise<Bu
     return Buffer.from(artifact.base64Content, 'base64')
   if (artifact.textContent)
     return Buffer.from(artifact.textContent, 'utf-8')
+  if (artifact.localFilePath)
+    return readFile(artifact.localFilePath)
   if (artifact.downloadUrl) {
     const response = await fetch(artifact.downloadUrl)
     if (!response.ok)

@@ -73,6 +73,7 @@ export default defineNuxtConfig({
   },
 
   css: [
+    '@arco-design/web-vue/dist/arco.css',
     '~/assets/styles/design-tokens.css',
     '~/assets/styles/ui-primitives.css',
     '~/assets/styles/user-settings.css',

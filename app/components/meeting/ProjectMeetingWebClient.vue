@@ -47,6 +47,7 @@ const props = withDefaults(defineProps<{
   rtcJoinUrl?: string
   participants?: MeetingParticipantItem[]
   captions?: MeetingCaptionItem[]
+  meetingGuestToken?: string
   guest?: boolean
 }>(), {
   provider: '',
@@ -59,9 +60,12 @@ const props = withDefaults(defineProps<{
   rtcJoinUrl: '',
   participants: () => [],
   captions: () => [],
+  meetingGuestToken: '',
   guest: false,
 })
 
+const runtime = useRuntimeConfig()
+const { endpoint } = useApiEndpoint(runtime)
 const roomRef = shallowRef<any>(null)
 const mediaTracks = ref<MediaTrackItem[]>([])
 const connectionState = ref<'idle' | 'connecting' | 'connected' | 'error'>('idle')
@@ -72,11 +76,25 @@ const screenShareEnabled = ref(false)
 const screenShareAudioEnabled = ref(false)
 const screenShareHint = ref('')
 const screenShareBusy = ref(false)
+const captionUploadState = ref<'idle' | 'capturing' | 'error'>('idle')
+const captionUploadHint = ref('')
 
 const videoElements = new Map<string, HTMLVideoElement>()
 const audioElements = new Map<string, HTMLAudioElement>()
 const boundVideoTracks = new Map<string, any>()
 const boundAudioTracks = new Map<string, any>()
+let captionAudioContext: AudioContext | null = null
+let captionSourceNode: MediaStreamAudioSourceNode | null = null
+let captionProcessorNode: ScriptProcessorNode | null = null
+let captionSilentGainNode: GainNode | null = null
+let captionFlushTimer: ReturnType<typeof window.setTimeout> | null = null
+let captionPcmChunks: Uint8Array[] = []
+let captionPendingBytes = 0
+let captionUploading = false
+let captionTrackKey = ''
+let captionParticipantIdentity = ''
+let captionSampleRate = 0
+let captionCaptureEpoch = 0
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -129,6 +147,52 @@ function resolveTrackSource(value: unknown): MediaTrackSource {
   if (normalized === 'screen_share_audio')
     return 'screen_share_audio'
   return 'unknown'
+}
+
+function resolveCaptionUploadLabel(): string {
+  if (captionUploadState.value === 'capturing')
+    return '上行中'
+  if (captionUploadState.value === 'error')
+    return '异常'
+  return '待机'
+}
+
+function clearCaptionFlushTimer(): void {
+  if (!captionFlushTimer)
+    return
+  clearTimeout(captionFlushTimer)
+  captionFlushTimer = null
+}
+
+function encodePcm16Mono(samples: Float32Array): Uint8Array {
+  const pcm = new ArrayBuffer(samples.length * 2)
+  const view = new DataView(pcm)
+  for (let index = 0; index < samples.length; index += 1) {
+    const clamped = Math.max(-1, Math.min(1, samples[index] || 0))
+    view.setInt16(index * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF, true)
+  }
+  return new Uint8Array(pcm)
+}
+
+function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((sum, item) => sum + item.byteLength, 0)
+  const merged = new Uint8Array(totalLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return merged
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const step = 0x8000
+  for (let offset = 0; offset < bytes.byteLength; offset += step) {
+    const slice = bytes.subarray(offset, Math.min(bytes.byteLength, offset + step))
+    binary += String.fromCharCode(...slice)
+  }
+  return window.btoa(binary)
 }
 
 function buildTrackLabel(baseLabel: string, source: MediaTrackSource): string {
@@ -302,9 +366,236 @@ function syncRoomTracks(): void {
   void nextTick(() => {
     syncTrackBindings()
   })
+  void syncCaptionCapture()
+}
+
+function resolveLocalMicrophoneTrack(room: any): MediaStreamTrack | null {
+  const publications = Array.from(room?.localParticipant?.trackPublications?.values?.() || [])
+  for (const publication of publications) {
+    if (resolveTrackSource(publication?.source || publication?.track?.source) !== 'microphone')
+      continue
+    const mediaStreamTrack = publication?.track?.mediaStreamTrack
+    if (mediaStreamTrack instanceof MediaStreamTrack)
+      return mediaStreamTrack
+  }
+  return null
+}
+
+async function postCaptionFrame(chunkBase64: string): Promise<void> {
+  const meetingId = normalizeString(props.meetingId)
+  const participantIdentity = normalizeString(captionParticipantIdentity)
+  if (!import.meta.client || !meetingId || !chunkBase64 || !participantIdentity)
+    return
+
+  const response = await fetch(endpoint(`/meetings/${meetingId}/captions/frame`), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      meetingGuestToken: normalizeString(props.meetingGuestToken) || undefined,
+      participantIdentity,
+      chunkBase64,
+      mimeType: captionSampleRate > 0
+        ? `audio/pcm;rate=${captionSampleRate};channels=1;encoding=s16le`
+        : 'audio/pcm;channels=1;encoding=s16le',
+    }),
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { message?: string } | null
+    throw new Error(normalizeString(payload?.message) || '字幕音频上传失败。')
+  }
+}
+
+async function flushCaptionQueue(force = false): Promise<void> {
+  clearCaptionFlushTimer()
+  if (captionUploading || captionPcmChunks.length === 0)
+    return
+  if (!force && captionPendingBytes < 32 * 1024)
+    return
+
+  const currentEpoch = captionCaptureEpoch
+  const merged = concatUint8Arrays(captionPcmChunks)
+  captionPcmChunks = []
+  captionPendingBytes = 0
+  captionUploading = true
+
+  try {
+    await postCaptionFrame(toBase64(merged))
+    if (currentEpoch === captionCaptureEpoch) {
+      captionUploadState.value = 'capturing'
+      captionUploadHint.value = '字幕音频正在上行。'
+    }
+  }
+  catch (error) {
+    if (currentEpoch === captionCaptureEpoch) {
+      captionUploadState.value = 'error'
+      captionUploadHint.value = error instanceof Error ? error.message : '字幕音频上传失败。'
+    }
+  }
+  finally {
+    captionUploading = false
+    if (captionPcmChunks.length > 0)
+      void flushCaptionQueue(true)
+  }
+}
+
+function scheduleCaptionFlush(): void {
+  if (captionPendingBytes >= 32 * 1024) {
+    void flushCaptionQueue(true)
+    return
+  }
+  if (captionFlushTimer)
+    return
+  captionFlushTimer = window.setTimeout(() => {
+    captionFlushTimer = null
+    void flushCaptionQueue(true)
+  }, 400)
+}
+
+async function stopCaptionCapture(options: { flush?: boolean } = {}): Promise<void> {
+  captionCaptureEpoch += 1
+  clearCaptionFlushTimer()
+  if (options.flush !== false)
+    await flushCaptionQueue(true)
+
+  if (captionProcessorNode) {
+    captionProcessorNode.onaudioprocess = null
+    try {
+      captionProcessorNode.disconnect()
+    }
+    catch {
+      // ignore disconnect failures
+    }
+  }
+
+  if (captionSourceNode) {
+    try {
+      captionSourceNode.disconnect()
+    }
+    catch {
+      // ignore disconnect failures
+    }
+  }
+
+  if (captionSilentGainNode) {
+    try {
+      captionSilentGainNode.disconnect()
+    }
+    catch {
+      // ignore disconnect failures
+    }
+  }
+
+  if (captionAudioContext) {
+    try {
+      await captionAudioContext.close()
+    }
+    catch {
+      // ignore close failures
+    }
+  }
+
+  captionAudioContext = null
+  captionSourceNode = null
+  captionProcessorNode = null
+  captionSilentGainNode = null
+  captionPcmChunks = []
+  captionPendingBytes = 0
+  captionUploading = false
+  captionTrackKey = ''
+  captionParticipantIdentity = ''
+  captionSampleRate = 0
+
+  if (captionUploadState.value !== 'error') {
+    captionUploadState.value = 'idle'
+    if (!captionUploadHint.value || captionUploadHint.value === '字幕音频正在上行。')
+      captionUploadHint.value = ''
+  }
+}
+
+async function syncCaptionCapture(): Promise<void> {
+  if (!import.meta.client || props.provider !== 'livekit') {
+    await stopCaptionCapture({ flush: false })
+    return
+  }
+
+  const room = roomRef.value
+  const meetingId = normalizeString(props.meetingId)
+  const localParticipant = room?.localParticipant
+  const localIdentity = normalizeString(localParticipant?.identity)
+  const microphoneTrack = resolveLocalMicrophoneTrack(room)
+  const nextTrackKey = microphoneTrack ? `${localIdentity}:${microphoneTrack.id}` : ''
+
+  if (
+    !room
+    || connectionState.value !== 'connected'
+    || !meetingId
+    || !localParticipant?.isMicrophoneEnabled
+    || !localIdentity
+    || !microphoneTrack
+  ) {
+    await stopCaptionCapture()
+    return
+  }
+
+  if (captionTrackKey === nextTrackKey)
+    return
+
+  await stopCaptionCapture()
+
+  const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext
+  if (!AudioContextCtor) {
+    captionUploadState.value = 'error'
+    captionUploadHint.value = '当前浏览器不支持会中字幕音频采集。'
+    return
+  }
+
+  try {
+    const audioContext = new AudioContextCtor()
+    if (audioContext.state === 'suspended')
+      await audioContext.resume().catch(() => undefined)
+
+    const sourceNode = audioContext.createMediaStreamSource(new MediaStream([microphoneTrack]))
+    const processorNode = audioContext.createScriptProcessor(4096, 1, 1)
+    const silentGainNode = audioContext.createGain()
+    silentGainNode.gain.value = 0
+
+    processorNode.onaudioprocess = (audioEvent: AudioProcessingEvent) => {
+      if (!localParticipant?.isMicrophoneEnabled)
+        return
+      const samples = audioEvent.inputBuffer.getChannelData(0)
+      const pcmChunk = encodePcm16Mono(samples)
+      captionPcmChunks.push(pcmChunk)
+      captionPendingBytes += pcmChunk.byteLength
+      scheduleCaptionFlush()
+    }
+
+    sourceNode.connect(processorNode)
+    processorNode.connect(silentGainNode)
+    silentGainNode.connect(audioContext.destination)
+
+    captionAudioContext = audioContext
+    captionSourceNode = sourceNode
+    captionProcessorNode = processorNode
+    captionSilentGainNode = silentGainNode
+    captionTrackKey = nextTrackKey
+    captionParticipantIdentity = localIdentity
+    captionSampleRate = audioContext.sampleRate
+    captionUploadState.value = 'capturing'
+    captionUploadHint.value = '字幕音频正在上行。'
+  }
+  catch (error) {
+    captionUploadState.value = 'error'
+    captionUploadHint.value = error instanceof Error ? error.message : '启动字幕音频采集失败。'
+    await stopCaptionCapture({ flush: false })
+  }
 }
 
 async function disconnectRoom(): Promise<void> {
+  await stopCaptionCapture()
   releaseAllTrackBindings()
   mediaTracks.value = []
   const room = roomRef.value
@@ -401,6 +692,7 @@ async function connectLivekitRoom(): Promise<void> {
       })
       .on(livekit.RoomEvent.Disconnected, () => {
         connectionState.value = 'idle'
+        void stopCaptionCapture()
         releaseAllTrackBindings()
         mediaTracks.value = []
       })
@@ -689,6 +981,10 @@ onBeforeUnmount(() => {
       {{ screenShareHint }}
     </div>
 
+    <div v-if="captionUploadHint && isLivekit && connectionState === 'connected'" class="meeting-web-client__notice">
+      字幕上行：{{ captionUploadHint }}
+    </div>
+
     <div v-if="isUnsupported" class="meeting-web-client__notice">
       当前 provider 为 `{{ provider || 'unknown' }}`，此轮仅正式支持 `livekit` Web 客户端。
     </div>
@@ -837,6 +1133,10 @@ onBeforeUnmount(() => {
             <div class="meeting-web-client__status-item">
               <span>远端麦克风</span>
               <strong>{{ remoteMicrophoneTracks.length }} 路</strong>
+            </div>
+            <div class="meeting-web-client__status-item">
+              <span>字幕上行</span>
+              <strong>{{ resolveCaptionUploadLabel() }}</strong>
             </div>
           </div>
         </section>

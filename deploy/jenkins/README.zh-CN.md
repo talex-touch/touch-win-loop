@@ -67,6 +67,9 @@ Jenkins 容器只需要具备以下能力：
 - `.env.runtime`
 - `storage/`
 
+Jenkins 主链路在部署时还会把仓库里的 `scripts/migrations/*.sql` 一并同步到远端临时工作区，并在 `pull` 成功后、`up -d` 之前按文件名字典序执行。
+迁移执行状态会记录到目标库的 `migrations_meta`，已执行过的 SQL 会自动跳过。
+
 建议初始化命令：
 
 ```bash
@@ -91,12 +94,18 @@ FORCE_RECREATE=true
 APP_BIND_IP=127.0.0.1
 APP_HOST_PORT=3511
 STORAGE_HOST_DIR=./storage
+DB_MIGRATION_DIR=
+DB_MIGRATION_FILES=
+DB_MIGRATION_CLIENT_IMAGE=postgres:18-alpine
+DB_MIGRATION_NETWORK=1panel-network
 ```
 
 其中：
 
 - `DOCKER_EXTERNAL_NETWORK` 用于指定应用容器加入的外部 Docker 网络，默认建议填 `1panel-network`
 - 如果 PostgreSQL / Redis / PgBouncer 通过容器名互联，应用必须与这些基础容器处于同一个外部网络
+- `DB_MIGRATION_*` 为可选项；默认会自动发现远端工作区里的 `scripts/migrations/*.sql`
+- 迁移不会参与自动回滚，因此所有上线 SQL 必须保持向后兼容或显式幂等
 
 production 只需要改成独立的：
 

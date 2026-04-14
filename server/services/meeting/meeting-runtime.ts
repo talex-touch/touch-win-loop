@@ -1,4 +1,5 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
+import type { ProjectMeetingRuntimeHealth } from '~~/shared/types/domain'
 import { getMeetingAsrGateway } from '~~/server/services/meeting/asr-gateway'
 import { getRtcProviderGateway } from '~~/server/services/meeting/rtc-provider'
 
@@ -29,7 +30,7 @@ export function listMeetingAsrConfigIssues(runtime: RuntimeSettings): string[] {
   if (!provider)
     return ['ASR provider 未配置']
 
-  if (provider !== 'http')
+  if (provider !== 'http' && provider !== 'openai-compatible')
     return [`ASR provider "${provider}" 暂不支持`]
 
   const issues: string[] = []
@@ -43,6 +44,19 @@ export function listMeetingRuntimeIssues(runtime: RuntimeSettings): string[] {
     ...listMeetingRtcConfigIssues(runtime),
     ...listMeetingAsrConfigIssues(runtime),
   ]
+}
+
+export function buildProjectMeetingRuntimeHealth(runtime: RuntimeSettings): ProjectMeetingRuntimeHealth {
+  const rtcIssues = listMeetingRtcConfigIssues(runtime)
+  const asrIssues = listMeetingAsrConfigIssues(runtime)
+  return {
+    ready: rtcIssues.length === 0 && asrIssues.length === 0,
+    rtcProvider: normalizeString(runtime.meeting.rtc.provider),
+    asrProvider: normalizeString(runtime.meeting.asr.provider),
+    rtcIssues,
+    asrIssues,
+    issues: [...rtcIssues, ...asrIssues],
+  }
 }
 
 export function assertMeetingRuntimeReady(runtime: RuntimeSettings): void {

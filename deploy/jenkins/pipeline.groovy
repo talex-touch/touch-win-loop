@@ -318,11 +318,16 @@ ssh_target=${shellQuote(sshTarget)}
 mkdir -p .jenkins-dist
 cp "deploy/jenkins/deploy-winloop.sh" ".jenkins-dist/deploy-winloop.sh"
 cp "deploy/jenkins/compose.yaml" ".jenkins-dist/compose.yaml"
+mkdir -p ".jenkins-dist/scripts"
+rm -rf ".jenkins-dist/scripts/migrations"
+cp -R "scripts/migrations" ".jenkins-dist/scripts/migrations"
 chmod +x ".jenkins-dist/deploy-winloop.sh"
 ssh ${sshOptions} "\${ssh_target}" "rm -rf \\"\${remote_workspace}\\" && mkdir -p \\"\${remote_workspace}\\""
 scp ${sshOptions} ".jenkins-dist/deploy-winloop.sh" ".jenkins-dist/compose.yaml" "\${ssh_target}:\${remote_workspace}/"
+scp -r ${sshOptions} ".jenkins-dist/scripts" "\${ssh_target}:\${remote_workspace}/"
 printf '%s' "\${GHCR_TOKEN}" | ssh ${sshOptions} "\${ssh_target}" "set -euo pipefail
 chmod +x \\"\${remote_workspace}/deploy-winloop.sh\\"
+cd \\"\${remote_workspace}\\"
 docker login ghcr.io -u \\"\${GHCR_USERNAME}\\" --password-stdin >/dev/null
 ${remoteDeployBaseDir ? "export WINLOOP_DEPLOY_BASE_DIR=${shellQuote(remoteDeployBaseDir)}" : ":"}
 export WINLOOP_DEPLOY_TEMPLATE_FILE=\\"\${remote_workspace}/compose.yaml\\"
