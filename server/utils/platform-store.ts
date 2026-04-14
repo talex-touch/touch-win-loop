@@ -2006,7 +2006,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
   const primaryContestId = contestIds[0] || input.contestId
   const creatorIsDifferentOwner = input.creatorUserId !== input.ownerUserId
   const display = normalizeProjectDisplayPatch(input.display)
-  const metadata = display ? { display } : null
+  const metadata = display ? { display } : {}
 
   await assertWorkspaceProjectCreationAllowed(db, input.workspaceId)
 
@@ -2084,7 +2084,7 @@ export async function createProject(db: Queryable, input: CreateProjectInput): P
       normalizeStringArray(input.risks),
       normalizeStringArray(input.deliverables),
       input.summary || null,
-      metadata ? JSON.stringify(metadata) : null,
+      JSON.stringify(metadata),
       input.source,
       input.status || 'draft',
       now,

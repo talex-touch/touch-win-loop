@@ -1,15 +1,12 @@
 import type { ResourceAvailability, ResourceCategory } from '~~/shared/types/domain'
-import { ok } from '~~/server/utils/api'
+import { defineApiHandler } from '~~/server/utils/api-handler'
 import { getAuthFromEvent } from '~~/server/utils/auth'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { parseResourceMinQuality, parseResourceSearchSort, parseResourceSearchTags, resolveResourceSearchSessionId } from '~~/server/utils/resource-knowledge-event'
 import { enqueueResourceGovernanceTask, listGlobalResourcesWithKnowledge, recordResourceSearchEvent } from '~~/server/utils/resource-knowledge-store'
 
-export default defineEventHandler(async (event) => {
-  const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+export default defineApiHandler(async ({ event, ok }) => {
   const query = getQuery(event)
   const auth = await getAuthFromEvent(event)
   const queryText = typeof query.q === 'string' ? query.q : ''
@@ -123,11 +120,5 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  return ok(resources, {
-    startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
-    fallbackUsed: false,
-    attempts: 1,
-  })
+  return ok(resources)
 })

@@ -84,35 +84,83 @@ WINLOOP_CONTEST_AUTO_SEED=false
 - 资源回收 worker 参数改为后台 UI 管理，不再从 Env 读取。
 - Sentry 为可选能力；未配置 `WINLOOP_SENTRY_DSN` / `WINLOOP_SENTRY_ENVIRONMENT` 时应用仍可正常运行，只是不启用错误上报。
 
-## 会议能力环境变量
+如果要检查当前仓库 / Shell 的 Sentry 就绪状态，可执行：
 
-项目内置会议默认支持 `mock` 模式，本地未接真实 RTC / ASR 时也能跑通页面和后端链路。切到真实 provider 时，至少补齐以下参数：
-
-```txt
-WINLOOP_MEETING_RTC_PROVIDER=mock
-WINLOOP_MEETING_RTC_SERVER_URL=
-WINLOOP_MEETING_RTC_API_KEY=
-WINLOOP_MEETING_RTC_API_SECRET=
-WINLOOP_MEETING_RTC_EMBED_BASE_URL=
-WINLOOP_MEETING_RTC_WEBHOOK_SECRET=
-WINLOOP_MEETING_RTC_ROOM_PREFIX=winloop
-
-WINLOOP_MEETING_ASR_PROVIDER=mock
-WINLOOP_MEETING_ASR_SERVICE_URL=
-WINLOOP_MEETING_ASR_API_KEY=
-WINLOOP_MEETING_ASR_WEBHOOK_SECRET=
-
-WINLOOP_MEETING_WORKER_ENABLED=true
-WINLOOP_MEETING_WORKER_INTERVAL_MS=5000
-WINLOOP_MEETING_WORKER_BATCH_SIZE=6
-WINLOOP_MEETING_WORKER_MAX_ATTEMPTS=5
+```bash
+pnpm run sentry:doctor --mode production
 ```
 
-说明：
+输出会区分：
+
+- 代码接入是否完整
+- 运行期上报是否具备前置条件
+- source map 上传所需的构建期变量是否齐全
+
+如果要做 staging 验收，可在满足以下前提后使用内部 smoke 接口：
+
+- `WINLOOP_SENTRY_ENVIRONMENT=staging`
+- 已配置 `WINLOOP_SENTRY_DSN`
+- 当前登录用户具备 `contest.read_internal`
+
+```bash
+curl -X POST "https://<staging-host>/api/admin/sentry/smoke" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <your-session-cookie>" \
+  --data '{"target":"nitro"}' \
+  -i
+
+curl -X POST "https://<staging-host>/api/admin/sentry/smoke" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: <your-session-cookie>" \
+  --data '{"target":"worker"}'
+```
+
+预期结果：
+
+- `target=nitro`：返回 `500`，响应头里带 `x-trace-id`
+- `target=worker`：返回 `200`，返回体里带 `traceId` / `release` / `environment`
+- 若返回 `404`：说明当前不是 `staging`
+- 若返回 `412`：说明 Sentry SDK 还没初始化，通常是 `WINLOOP_SENTRY_DSN` 或 `WINLOOP_SENTRY_ENVIRONMENT` 未生效
+
+更完整的部署与验收说明见：
+
+- [Jenkins 部署说明](./deploy/jenkins/README.zh-CN.md)
+
+## 数据库迁移
+
+当前应用在启动阶段会尝试补齐部分 schema，但它不应该成为唯一的迁移入口。
+对于已经在线上运行的环境，建议显式执行 SQL 迁移，再发布依赖新 schema 的镜像。
+
+示例：
+
+```bash
+pnpm db:migrate:project-resource-tree
+```
+
+通用用法：
+
+```bash
+pnpm db:migrate ./scripts/migrations/<your-migration>.sql
+```
+
+如需重复执行幂等迁移，可追加 `--force`；如不希望写入 `migrations_meta`，可追加 `--no-mark`。
+
+## 会议能力配置
+
+会议运行时配置已经改为后台维护，不再从应用环境变量直接读取 `RTC / ASR / worker` 参数，也不再默认回退 `mock`。
+
+当前约束：
+
+- `RTC`、`ASR`、`worker` 统一在后台页面 `/admin/meeting-providers` 配置。
+- 当后台配置缺失时，前端会直接禁用“发起会议 / 启动会议 / 加入会议”，并显示明确问题。
+- 应用环境变量里只保留 `WINLOOP_CONFIG_MASTER_KEY` 作为会议密钥加密根密钥。
+- 本地联调真实链路时，使用 [deploy/meeting/README.zh-CN.md](./deploy/meeting/README.zh-CN.md) 和 [docs/meeting-runtime-setup.md](./docs/meeting-runtime-setup.md) 提供的 LiveKit / ASR bring-up 方案。
+
+当前会议建模：
 
 - `RTC` 负责房间、入会 token、录制与 webhook。
 - `ASR` 负责实时字幕输入；partial 只广播，final 才会落库。
-- `WORKER` 负责会后录制入库、纪要生成和失败重试。
+- `worker` 负责会后录制入库、纪要生成和失败重试。
 - 默认按 `LiveKit` 风格能力建模，但通过 `RtcProviderGateway` / `MeetingAsrGateway` 做了适配隔离。
 
 ## 相关文档

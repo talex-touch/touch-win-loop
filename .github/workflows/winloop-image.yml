@@ -85,10 +85,10 @@ jobs:
 
               if (allowSmokeOnlyGate) {
                 const jobs = await resolveRunJobs(run.id);
-                const buildAndSmokeJob = jobs.find(job => job.name === 'build_and_smoke');
+                const smokeJob = jobs.find(job => job.name === 'smoke' || job.name === 'build_and_smoke');
 
-                if (buildAndSmokeJob?.conclusion === 'success') {
-                  core.warning(`CI concluded as ${run.conclusion || 'unknown'}, but build_and_smoke passed on ${branch}; continue image publish.`);
+                if (smokeJob?.conclusion === 'success') {
+                  core.warning(`CI concluded as ${run.conclusion || 'unknown'}, but smoke gate passed on ${branch}; continue image publish.`);
                   core.setOutput('should_publish', 'true');
                   return;
                 }

@@ -1,14 +1,11 @@
 import type { ContestLevel } from '~~/shared/types/domain'
-import { ok } from '~~/server/utils/api'
+import { defineApiHandler } from '~~/server/utils/api-handler'
 import { getAuthFromEvent } from '~~/server/utils/auth'
 import { listContestLibrary } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
-import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
-export default defineEventHandler(async (event) => {
-  const startedAt = Date.now()
-  const runtime = readRuntimeSettings(event)
+export default defineApiHandler(async ({ event, ok }) => {
   const query = getQuery(event)
   const auth = await getAuthFromEvent(event)
 
@@ -37,11 +34,5 @@ export default defineEventHandler(async (event) => {
     })
   })
 
-  return ok(contestResult.items, {
-    startedAt,
-    provider: runtime.ai.provider,
-    model: runtime.ai.model,
-    fallbackUsed: false,
-    attempts: 1,
-  })
+  return ok(contestResult.items)
 })

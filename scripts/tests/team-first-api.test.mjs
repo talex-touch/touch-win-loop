@@ -23,6 +23,7 @@ const TEAM_INVITATION_CREATE_FILE = resolve(process.cwd(), 'server/api/teams/[id
 const TEAM_MEMBER_ROLE_PATCH_FILE = resolve(process.cwd(), 'server/api/teams/[id]/members/[userId]/role.patch.ts')
 const TEAM_MEMBERSHIP_STORE_FILE = resolve(process.cwd(), 'server/utils/team-membership-store.ts')
 const DB_SCHEMA_FILE = resolve(process.cwd(), 'server/utils/db.ts')
+const DB_BOOTSTRAP_SCHEMA_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
 const TEAM_MEMBER_DELETE_FILE = resolve(process.cwd(), 'server/api/teams/[id]/members/[userId].delete.ts')
 const TEAM_INVITATION_REVOKE_FILE = resolve(process.cwd(), 'server/api/teams/[id]/invitations/[invitationId]/revoke.post.ts')
 const TEAM_SPLIT_IMPORT_FILES = [
@@ -47,7 +48,7 @@ const TEAM_SPLIT_IMPORT_FILES = [
 it('workspace 旧接口统一返回 Team-First 410', async () => {
   for (const relativePath of WORKSPACE_ENDPOINT_FILES) {
     const source = await readFile(resolve(process.cwd(), relativePath), 'utf8')
-    assert.match(source, /teamFirstApiRemoved/, `${relativePath} 未统一为 Team-First 410 兼容返回`)
+    assert.match(source, /teamFirstDeprecatedHandler/, `${relativePath} 未统一为 Team-First 410 兼容返回`)
   }
 })
 
@@ -116,7 +117,7 @@ it('personal 空间不再允许 admin 或 manager 二级空间角色', async () 
   const invitationSource = await readFile(TEAM_INVITATION_CREATE_FILE, 'utf8')
   const rolePatchSource = await readFile(TEAM_MEMBER_ROLE_PATCH_FILE, 'utf8')
   const membershipSource = await readFile(TEAM_MEMBERSHIP_STORE_FILE, 'utf8')
-  const dbSource = await readFile(DB_SCHEMA_FILE, 'utf8')
+  const dbSource = await readFile(DB_BOOTSTRAP_SCHEMA_FILE, 'utf8')
 
   assert.match(invitationSource, /if \(workspaceType === 'personal' && role !== 'member'\)\s+throw new Error\('PERSONAL_WORKSPACE_ONLY_MEMBER_ALLOWED'\)/, 'personal 仍允许通过 Team 邀请授予 admin\/manager')
   assert.match(rolePatchSource, /PERSONAL_WORKSPACE_SECONDARY_ROLE_FORBIDDEN/, 'personal 空间成员角色接口未拒绝 admin\/manager')
@@ -144,7 +145,7 @@ it('team API 改为通过分域 store 引用，不再直接依赖 platform-store
 })
 
 it('db schema 不再创建 Team-First 过渡桥接视图与触发器', async () => {
-  const source = await readFile(DB_SCHEMA_FILE, 'utf8')
+  const source = await readFile(DB_BOOTSTRAP_SCHEMA_FILE, 'utf8')
   assert.doesNotMatch(source, /CREATE OR REPLACE VIEW teams AS/, 'db.ts 仍包含 teams 过渡视图创建')
   assert.doesNotMatch(source, /CREATE OR REPLACE VIEW team_members AS/, 'db.ts 仍包含 team_members 过渡视图创建')
   assert.doesNotMatch(source, /CREATE OR REPLACE VIEW team_billing AS/, 'db.ts 仍包含 team_billing 过渡视图创建')
@@ -153,7 +154,7 @@ it('db schema 不再创建 Team-First 过渡桥接视图与触发器', async () 
 })
 
 it('db schema 会先补齐 invitations.project_id 再创建对应索引', async () => {
-  const source = await readFile(DB_SCHEMA_FILE, 'utf8')
+  const source = await readFile(DB_BOOTSTRAP_SCHEMA_FILE, 'utf8')
   const addColumnSql = `ALTER TABLE invitations
   ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;`
   const indexSql = `CREATE INDEX IF NOT EXISTS idx_invitations_workspace_project_created ON invitations(workspace_id, project_id, created_at DESC);`
@@ -164,4 +165,11 @@ it('db schema 会先补齐 invitations.project_id 再创建对应索引', async 
   assert.notEqual(addColumnIndex, -1, 'db.ts 缺少 invitations.project_id 补列迁移')
   assert.notEqual(createIndexIndex, -1, 'db.ts 缺少 invitations project 维度索引')
   assert.ok(addColumnIndex < createIndexIndex, 'db.ts 先创建 invitations.project_id 索引后补列，旧库启动会失败')
+})
+
+it('db 连接层已从 schema bootstrap 中剥离', async () => {
+  const source = await readFile(DB_SCHEMA_FILE, 'utf8')
+  assert.match(source, /ensureSchemaReady/, 'db.ts 未委托 schema bootstrap')
+  assert.match(source, /ensureProjectResourceTreeSchemaReady/, 'db.ts 未委托资料树 schema bootstrap')
+  assert.doesNotMatch(source, /CREATE TABLE IF NOT EXISTS users/, 'db.ts 仍内联 schema bootstrap SQL')
 })
