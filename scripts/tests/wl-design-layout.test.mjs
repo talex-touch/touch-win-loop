@@ -231,6 +231,9 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   );
   assert.match(stageSource, /const selectedTransformTarget = computed\(/);
   assert.match(stageSource, /const selectedTransformBoxStyle = computed/);
+  assert.match(stageSource, /function resolveTopmostFrameElementAtClientPoint\(/);
+  assert.match(stageSource, /function handleCanvasNodeDoubleClick\(payload: \{/);
+  assert.match(stageSource, /editingFrameId: frameId,/);
   assert.match(stageSource, /v-if="selectedTransformBoxStyle"/);
   assert.match(stageSource, /v-for="handle in resizeHandleDefinitions"/);
   assert.match(stageSource, /pointer-events-auto/);
@@ -247,11 +250,18 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(canvasSource, /const CANVAS_COLLAPSED_CONTROL_HIT_HEIGHT = 24/);
   assert.match(canvasSource, /const CANVAS_MINIMAP_HEIGHT = 136/);
   assert.match(canvasSource, /function emitFrameEditing\(frameId: string\): void/);
-  assert.match(canvasSource, /function handleNodeDoubleClick\(payload: \{ node\?: \{ id\?: string \} \}\): void/);
+  assert.match(canvasSource, /const activeFrameDragIds = ref<string\[\]>\(\[\]\);/);
+  assert.match(canvasSource, /function beginFrameDragSession\(frameId: string\): void/);
+  assert.match(canvasSource, /function handleNodeDoubleClick\(payload: NodeMouseEvent\): void/);
   assert.match(
     canvasSource,
-    /if \(frame && canDesignFrameCreateElements\(frame\)\) emitFrameEditing\(frameId\);/,
+    /emit\("node-double-click", \{/,
   );
+  assert.match(
+    canvasSource,
+    /const pointer = resolvePointerClientPosition\(payload\.event\);/,
+  );
+  assert.match(canvasSource, /scheduleFrameDragSessionCleanup\(\);/);
   assert.match(
     canvasSource,
     /const CANVAS_RESTING_MINIMAP_HEIGHT = Math\.round/,

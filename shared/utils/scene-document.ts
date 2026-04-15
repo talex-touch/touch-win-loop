@@ -5,20 +5,19 @@ import type {
   ArchitectureRelationModel,
   CompositionModel,
   DesignAssetDeviceShellMetadata,
-  DesignAssetModel,
   DesignAssetMetadata,
+  DesignAssetModel,
   DesignConstraintHorizontal,
   DesignConstraintVertical,
   DesignElementModel,
   DesignElementStyle,
-  DesignFrameDeviceMetadata,
   DesignFrameKind,
   DesignFrameLayoutPadding,
   DesignFrameModel,
   DesignPageModel,
   DesignTemplateManifest,
-  DeviceScaleMode,
   DeviceFramePreset,
+  DeviceScaleMode,
   DeviceShellMode,
   DrawMode,
   DrawRuntimeSnapshot,
@@ -28,8 +27,8 @@ import type {
   GraphSourceNode,
   SceneArtboard,
   SceneDocument,
-  SceneEditorEngine,
   SceneEdge,
+  SceneEditorEngine,
   SceneLayoutDirection,
   SceneModel,
   SceneNode,
@@ -42,13 +41,15 @@ import type {
   SchemaIndexModel,
   SchemaModel,
   SchemaTableModel,
-} from '../types/domain'
+} from '../types/domain-legacy'
 import YAML from 'yaml'
 
 const DEFAULT_ARTBOARD_WIDTH = 1600
 const DEFAULT_ARTBOARD_HEIGHT = 900
 const DEFAULT_COMPOSITION_PAGE_ID = 'page-1'
 const DEFAULT_COMPOSITION_FRAME_ID = 'frame-1'
+const MERMAID_EDGE_OPERATORS = ['-.->', '==>', '-->', '---'] as const
+const ARCHITECTURE_EDGE_OPERATORS = ['-->', '->', '=>'] as const
 const DESIGN_ELEMENT_SUPPORTED_STYLE_KEYS = new Set([
   'fill',
   'stroke',
@@ -64,8 +65,8 @@ const DESIGN_ELEMENT_SUPPORTED_STYLE_KEYS = new Set([
   'strokeLineJoin',
 ])
 type ArchitectureMermaidView = 'system_context' | 'container' | 'dependency_map'
-type DesignRect = { x: number, y: number, width: number, height: number }
-type ResolvedDesignFrameLayout = {
+export interface DesignRect { x: number, y: number, width: number, height: number }
+interface ResolvedDesignFrameLayout {
   mode: 'absolute' | 'auto'
   direction: 'horizontal' | 'vertical'
   gap: number
@@ -73,37 +74,49 @@ type ResolvedDesignFrameLayout = {
   alignPrimary: 'start' | 'center' | 'end' | 'space-between'
   alignCross: 'start' | 'center' | 'end' | 'stretch'
 }
-type ResolvedDesignFrameGrid = {
+interface ResolvedDesignFrameGrid {
   columns: number
   rows: number
   margin: number
   gutter: number
   visible: boolean
 }
-type ResolvedDesignFrameExport = {
+interface ResolvedDesignFrameExport {
   includePageOverlays: boolean
   scale: number
   format: 'svg' | 'png' | 'pdf'
 }
-type ResolvedDesignFrameDevice = {
+interface ResolvedDesignFrameDevice {
   shellMode: DeviceShellMode
   shellAssetId: string
   mockupSourceFrameId: string
   screenScaleMode: DeviceScaleMode
   showSafeArea: boolean
 }
-type ResolvedDeviceShellViewportRect = {
+interface ResolvedDeviceShellViewportRect {
   x: number
   y: number
   width: number
   height: number
 }
-type ResolvedDesignAssetDeviceShell = {
+interface ResolvedDesignAssetDeviceShell {
   presetKeys: string[]
   viewportRect: ResolvedDeviceShellViewportRect
   cornerRadius: number
   maskPath: string
   source: 'builtin' | 'uploaded'
+}
+export interface DesignFrameDeviceSurfaceLayout {
+  shellKind: 'none' | 'builtin' | 'external'
+  outerRect: DesignRect
+  screenRect: DesignRect
+  clipRadius: number
+  preset: DeviceFramePreset
+  shellAsset: DesignAssetModel | null
+}
+export type DesignFrameContentLayout = DesignFrameDeviceSurfaceLayout & {
+  contentRect: DesignRect
+  contentScale: number
 }
 type ResolvedDesignElementConstraints = {
   horizontal: DesignConstraintHorizontal
@@ -116,6 +129,31 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+export function normalizeDesignFrameKind(
+  value: unknown,
+  options: {
+    canonicalizeDeviceMockup?: boolean
+  } = {},
+): DesignFrameKind {
+  const normalized = normalizeString(value) as DesignFrameKind
+  if (normalized === 'device_mockup')
+    return options.canonicalizeDeviceMockup ? 'device_artboard' : 'device_mockup'
+  if (
+    normalized === 'freeform'
+    || normalized === 'template'
+    || normalized === 'device_artboard'
+    || normalized === 'diagram'
+  ) {
+    return normalized
+  }
+  return 'freeform'
+}
+
+export function isDeviceDesignFrameKind(value: unknown): boolean {
+  const normalized = normalizeString(value)
+  return normalized === 'device_mockup' || normalized === 'device_artboard'
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
@@ -124,6 +162,8 @@ function normalizeRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {}
 }
 
+function ensureArray<T>(value: T[] | readonly T[] | null | undefined): T[]
+function ensureArray<T = unknown>(value: unknown): T[]
 function ensureArray<T = unknown>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : []
 }
@@ -149,7 +189,7 @@ function sanitizeIdentifier(value: unknown, fallback: string): string {
   const normalized = normalizeString(value)
     .replace(/^["'`]+|["'`]+$/g, '')
     .replace(/\s+/g, '-')
-    .replace(/[^a-zA-Z0-9:_-]+/g, '-')
+    .replace(/[^\w:-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')
   return normalized || fallback
@@ -591,7 +631,7 @@ function resolveFrameExportsVisiblePageOverlays(frame: DesignFrameModel | null |
   if (!frame)
     return false
   const metadata = normalizeDesignFrameMetadata(frame.metadata, frame.kind)
-  return resolveDesignFrameExportMetadata(metadata.export, metadata.exportWithVisiblePageOverlays !== false).includePageOverlays
+  return resolveDesignFrameExportMetadata(metadata?.export, metadata?.exportWithVisiblePageOverlays !== false).includePageOverlays
 }
 
 function createDesignElement(input: Partial<DesignElementModel> = {}, fallbackId = 'element-1'): DesignElementModel {
@@ -720,7 +760,7 @@ function createLegacyCompositionFrame(input: {
     id: frameId,
     pageId,
     name: normalizeString(input.name) || '封面 Frame',
-    kind: (normalizeString(input.kind) as DesignFrameKind) || 'device_mockup',
+    kind: normalizeDesignFrameKind(input.kind || 'device_mockup'),
     x: 120,
     y: 120,
     width: size.width,
@@ -731,13 +771,13 @@ function createLegacyCompositionFrame(input: {
     elements: createLegacyCompositionElements({
       pageId,
       frameId,
-      title: slots.title,
-      subtitle: slots.subtitle,
-      badge: slots.badge,
-      imageSrc: slots.imageSrc,
+      title: normalizeString(slots.title) || undefined,
+      subtitle: normalizeString(slots.subtitle) || undefined,
+      badge: normalizeString(slots.badge) || undefined,
+      imageSrc: normalizeString(slots.imageSrc) || undefined,
     }),
     themeTokens,
-    metadata: normalizeDesignFrameMetadata(input.metadata, (normalizeString(input.kind) as DesignFrameKind) || 'device_mockup'),
+    metadata: normalizeDesignFrameMetadata(input.metadata, normalizeDesignFrameKind(input.kind || 'device_mockup')),
   }
 }
 
@@ -1052,7 +1092,7 @@ function normalizeDesignFrameModel(value: unknown, index: number, fallbackPageId
   const source = normalizeRecord(value)
   const pageId = sanitizeIdentifier(source.pageId, fallbackPageId)
   const frameId = sanitizeIdentifier(source.id, `frame-${index + 1}`)
-  const kind = (normalizeString(source.kind) as DesignFrameKind) || 'freeform'
+  const kind = normalizeDesignFrameKind(source.kind)
   return {
     id: frameId,
     pageId,
@@ -1375,11 +1415,12 @@ export function parseSceneDocumentString(
   } = {},
 ): SceneDocument {
   const normalized = String(rawValue || '').trim()
-  if (!normalized)
+  if (!normalized) {
     return createEmptySceneDocument({
       drawMode: options.fallbackDrawMode || 'freeform',
       sourceType: options.fallbackSourceType || 'manual',
     })
+  }
 
   try {
     return sceneDocumentFromUnknown(JSON.parse(normalized), options)
@@ -1392,8 +1433,29 @@ export function parseSceneDocumentString(
   }
 }
 
+export function canonicalizeSceneDocumentForPersistence(document: SceneDocument | unknown): SceneDocument {
+  const normalized = sceneDocumentFromUnknown(document)
+  if (normalized.sourceModel.kind !== 'composition')
+    return normalized
+
+  return relayoutSceneDocument({
+    ...normalized,
+    sourceModel: {
+      ...normalized.sourceModel,
+      frames: ensureArray(normalized.sourceModel.frames).map((frame) => {
+        if (frame.kind !== 'device_mockup')
+          return frame
+        return {
+          ...frame,
+          kind: 'device_artboard',
+        }
+      }),
+    },
+  })
+}
+
 export function serializeSceneDocument(document: SceneDocument | unknown): string {
-  return JSON.stringify(sceneDocumentFromUnknown(document), null, 2)
+  return JSON.stringify(canonicalizeSceneDocumentForPersistence(document), null, 2)
 }
 
 export function withRuntimeSnapshot(
@@ -2346,13 +2408,13 @@ function cloneSortedDesignElements(elements: DesignElementModel[]): DesignElemen
 
 export function resolveCompositionElementsForPage(composition: CompositionModel, pageId: string): DesignElementModel[] {
   return cloneSortedDesignElements(ensureArray(composition.elements)
-    .filter(element => normalizeString(element.pageId) === normalizeString(pageId) && !normalizeString(element.frameId))
+    .filter(element => normalizeString(element.pageId) === normalizeString(pageId) && !normalizeString(element.frameId)),
   )
 }
 
 export function resolveCompositionElementsForFrame(composition: CompositionModel, frameId: string): DesignElementModel[] {
   return cloneSortedDesignElements(ensureArray(composition.elements)
-    .filter(element => normalizeString(element.frameId) === normalizeString(frameId))
+    .filter(element => normalizeString(element.frameId) === normalizeString(frameId)),
   )
 }
 
@@ -2628,20 +2690,7 @@ function resolveFrameRect(frame: DesignFrameModel): DesignRect {
 }
 
 function resolveFrameExportRect(composition: CompositionModel, frame: DesignFrameModel): DesignRect {
-  const frameRect = resolveFrameRect(frame)
-  if (frame.kind !== 'device_artboard' || resolveFrameDeviceConfig(frame).shellMode === 'none')
-    return frameRect
-
-  const preset = resolveDeviceFramePreset(frame.deviceFramePresetKey || composition.deviceFramePresetKey || 'iphone-16-pro')
-  const shellTarget = resolveDeviceShellTarget(composition, frame, preset)
-  const scaleX = frame.width / Math.max(1, shellTarget.metrics.screenWidth)
-  const scaleY = frame.height / Math.max(1, shellTarget.metrics.screenHeight)
-  return {
-    x: frame.x - shellTarget.metrics.screenX * scaleX,
-    y: frame.y - shellTarget.metrics.screenY * scaleY,
-    width: shellTarget.metrics.width * scaleX,
-    height: shellTarget.metrics.height * scaleY,
-  }
+  return resolveFrameRect(frame)
 }
 
 export function rewriteDesignElementZIndices(elements: DesignElementModel[]): DesignElementModel[] {
@@ -2914,7 +2963,8 @@ function renderEmbeddedSceneMarkup(sceneDocument: SceneDocument | undefined, wid
         <rect x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${layoutKind === 'swimlane' ? 18 : 24}" ry="${layoutKind === 'swimlane' ? 18 : 24}" fill="#e0f2fe" fill-opacity="0.22" stroke="#38bdf8" stroke-dasharray="${layoutKind === 'swimlane' ? '10 6' : '0'}" />
         <text x="${x + 18}" y="${y + Math.min(nodeHeight - 16, 28)}" fill="#0f172a" font-size="${Math.max(12, Math.round(16 * safeScale))}" font-weight="700">${escapeXml(node.label)}</text>
       </g>`
-    }).join('')
+    })
+    .join('')
 
   const nodeMarkup = nodes.filter(node => node.type !== 'group').map((node) => {
     const x = offsetX + node.x * safeScale
@@ -3010,7 +3060,7 @@ function renderDesignElementMarkup(
   return ''
 }
 
-type DeviceShellMetrics = {
+interface DeviceShellMetrics {
   width: number
   height: number
   screenX: number
@@ -3020,7 +3070,25 @@ type DeviceShellMetrics = {
   cornerRadius: number
 }
 
-function resolveFrameDeviceConfig(frame: DesignFrameModel): ResolvedDesignFrameDevice {
+interface ParsedEdgeOperatorMatch {
+  index: number
+  operator: string
+}
+
+interface ParsedMermaidEdgeLine {
+  label: string
+  operator: string
+  sourceToken: string
+  targetToken: string
+}
+
+interface ParsedRelationLine {
+  operator: string
+  sourceToken: string
+  targetToken: string
+}
+
+export function resolveFrameDeviceConfig(frame: DesignFrameModel): ResolvedDesignFrameDevice {
   return resolveDesignFrameDeviceMetadata(frame.metadata?.device, frame.kind)
 }
 
@@ -3116,7 +3184,102 @@ function resolveAssetShellMetrics(asset: DesignAssetModel | null | undefined): D
   }
 }
 
-function resolveDeviceShellTarget(
+export function resolveDesignFrameDeviceSurfaceLayout(
+  frame: DesignFrameModel,
+  options: {
+    assets?: DesignAssetModel[] | null | undefined
+    outerRect?: DesignRect
+  } = {},
+): DesignFrameDeviceSurfaceLayout | null {
+  if (!isDeviceDesignFrameKind(frame.kind))
+    return null
+
+  const preset = resolveDeviceFramePreset(frame.deviceFramePresetKey || 'iphone-16-pro')
+  const deviceConfig = resolveFrameDeviceConfig(frame)
+  const outerRect = options.outerRect || {
+    x: frame.x,
+    y: frame.y,
+    width: frame.width,
+    height: frame.height,
+  }
+  if (deviceConfig.shellMode === 'none') {
+    return {
+      shellKind: 'none',
+      outerRect,
+      screenRect: outerRect,
+      clipRadius: Math.max(12, Math.round(Math.min(outerRect.width, outerRect.height) * 0.04)),
+      preset,
+      shellAsset: null,
+    }
+  }
+
+  let shellKind: 'builtin' | 'external' = 'builtin'
+  let shellMetrics = measureBuiltinDeviceShellMetrics(preset)
+  let shellAsset: DesignAssetModel | null = null
+  if (deviceConfig.shellMode === 'external') {
+    const asset = ensureArray(options.assets).find(entry => normalizeString(entry.id) === deviceConfig.shellAssetId) || null
+    const assetMetrics = resolveAssetShellMetrics(asset)
+    const shellMetadata = resolveDesignAssetDeviceShellMetadata(asset?.metadata?.deviceShell)
+    const presetKeys = shellMetadata?.presetKeys || []
+    const matchesPreset = presetKeys.length === 0 || presetKeys.includes(preset.key)
+    if (asset && assetMetrics && matchesPreset) {
+      shellKind = 'external'
+      shellAsset = asset
+      shellMetrics = assetMetrics
+    }
+  }
+
+  const scaleX = outerRect.width / Math.max(1, shellMetrics.width)
+  const scaleY = outerRect.height / Math.max(1, shellMetrics.height)
+  return {
+    shellKind,
+    outerRect,
+    screenRect: {
+      x: outerRect.x + shellMetrics.screenX * scaleX,
+      y: outerRect.y + shellMetrics.screenY * scaleY,
+      width: shellMetrics.screenWidth * scaleX,
+      height: shellMetrics.screenHeight * scaleY,
+    },
+    clipRadius: shellKind === 'external'
+      ? Math.max(0, Math.round(shellMetrics.cornerRadius * Math.min(scaleX, scaleY)))
+      : Math.max(12, Math.round(preset.screenRadius * Math.min(scaleX, scaleY))),
+    preset,
+    shellAsset,
+  }
+}
+
+export function resolveDesignFrameContentLayout(
+  frame: DesignFrameModel,
+  options: {
+    assets?: DesignAssetModel[] | null | undefined
+    outerRect?: DesignRect
+  } = {},
+): DesignFrameContentLayout | null {
+  const surfaceLayout = resolveDesignFrameDeviceSurfaceLayout(frame, options)
+  if (!surfaceLayout)
+    return null
+
+  const deviceConfig = resolveFrameDeviceConfig(frame)
+  const scaleX = surfaceLayout.screenRect.width / Math.max(1, frame.width)
+  const scaleY = surfaceLayout.screenRect.height / Math.max(1, frame.height)
+  const contentScale = deviceConfig.screenScaleMode === 'fill'
+    ? Math.max(scaleX, scaleY)
+    : Math.min(scaleX, scaleY)
+  const contentWidth = frame.width * contentScale
+  const contentHeight = frame.height * contentScale
+  return {
+    ...surfaceLayout,
+    contentScale,
+    contentRect: {
+      x: surfaceLayout.screenRect.x + (surfaceLayout.screenRect.width - contentWidth) / 2,
+      y: surfaceLayout.screenRect.y + (surfaceLayout.screenRect.height - contentHeight) / 2,
+      width: contentWidth,
+      height: contentHeight,
+    },
+  }
+}
+
+function _resolveDeviceShellTarget(
   composition: CompositionModel,
   frame: DesignFrameModel,
   preset: DeviceFramePreset,
@@ -3300,12 +3463,12 @@ function renderBuiltinShellMarkup(
     <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
     <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
     ${shellKey === 'android-phone-shell'
-      ? `<rect x="${speakerX}" y="${speakerY}" width="${speakerWidth}" height="${speakerHeight}" rx="${Math.round(speakerHeight / 2)}" ry="${Math.round(speakerHeight / 2)}" fill="#475569" opacity="0.72" />`
-      : `<rect x="${islandX}" y="${islandY}" width="${islandWidth}" height="${islandHeight}" rx="${Math.round(islandHeight / 2)}" ry="${Math.round(islandHeight / 2)}" fill="#020617" />`
+        ? `<rect x="${speakerX}" y="${speakerY}" width="${speakerWidth}" height="${speakerHeight}" rx="${Math.round(speakerHeight / 2)}" ry="${Math.round(speakerHeight / 2)}" fill="#475569" opacity="0.72" />`
+        : `<rect x="${islandX}" y="${islandY}" width="${islandWidth}" height="${islandHeight}" rx="${Math.round(islandHeight / 2)}" ry="${Math.round(islandHeight / 2)}" fill="#020617" />`
     }
     ${(shellKey === 'ipad-pro-11-shell' || shellKey === 'ipad-generic-shell')
-      ? `<circle cx="${cameraDotX}" cy="${cameraDotY}" r="${Math.max(5, Math.round(Math.min(outerRect.width, outerRect.height) * 0.008))}" fill="#334155" opacity="0.74" />`
-      : ''
+        ? `<circle cx="${cameraDotX}" cy="${cameraDotY}" r="${Math.max(5, Math.round(Math.min(outerRect.width, outerRect.height) * 0.008))}" fill="#334155" opacity="0.74" />`
+        : ''
     }
   </g>`
 }
@@ -3316,29 +3479,25 @@ function renderDeviceSurfaceMarkup(
   preset: DeviceFramePreset,
   outerRect: DesignRect,
 ): string {
-  const shellTarget = resolveDeviceShellTarget(composition, frame, preset)
-  const scaleX = outerRect.width / Math.max(1, shellTarget.metrics.width)
-  const scaleY = outerRect.height / Math.max(1, shellTarget.metrics.height)
-  const screenRect: DesignRect = {
-    x: outerRect.x + shellTarget.metrics.screenX * scaleX,
-    y: outerRect.y + shellTarget.metrics.screenY * scaleY,
-    width: shellTarget.metrics.screenWidth * scaleX,
-    height: shellTarget.metrics.screenHeight * scaleY,
-  }
+  const surfaceLayout = resolveDesignFrameDeviceSurfaceLayout(frame, {
+    assets: composition.assets,
+    outerRect,
+  })
+  if (!surfaceLayout)
+    return ''
+
+  const screenRect = surfaceLayout.screenRect
   const clipId = `device-screen-${sanitizeIdentifier(frame.id, 'frame')}-${Math.round(outerRect.x)}-${Math.round(outerRect.y)}`
-  const shellMarkup = shellTarget.kind === 'external' && shellTarget.asset
-    ? `<image href="${escapeXml(shellTarget.asset.src)}" x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" preserveAspectRatio="none" />`
-    : shellTarget.kind === 'builtin'
-      ? renderBuiltinShellMarkup(preset, shellTarget.shellKey || resolveBuiltinShellKey(preset), outerRect, screenRect)
+  const shellMarkup = surfaceLayout.shellKind === 'external' && surfaceLayout.shellAsset
+    ? `<image href="${escapeXml(surfaceLayout.shellAsset.src)}" x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" preserveAspectRatio="none" />`
+    : surfaceLayout.shellKind === 'builtin'
+      ? renderBuiltinShellMarkup(preset, resolveBuiltinShellKey(preset), outerRect, screenRect)
       : ''
   const screenContentMarkup = renderScreenContentMarkup(composition, frame, screenRect, clipId)
-  const clipRadius = shellTarget.kind === 'external'
-    ? Math.max(0, Math.round(shellTarget.metrics.cornerRadius * Math.min(scaleX, scaleY)))
-    : Math.max(12, Math.round(preset.screenRadius * Math.min(scaleX, scaleY)))
 
   return `<defs>
     <clipPath id="${clipId}">
-      <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${clipRadius}" ry="${clipRadius}" />
+      <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${surfaceLayout.clipRadius}" ry="${surfaceLayout.clipRadius}" />
     </clipPath>
   </defs>
   ${shellMarkup}
@@ -3368,26 +3527,8 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
   }
 
   if (frame.kind === 'device_artboard') {
-    const shellMetrics = measureBuiltinDeviceShellMetrics(preset)
-    const shouldRenderShell = frameDeviceConfig.shellMode !== 'none'
-    const frameScaleX = frameWidth / Math.max(1, preset.screenWidth)
-    const frameScaleY = frameHeight / Math.max(1, preset.screenHeight)
-    const outerRect: DesignRect = shouldRenderShell
-      ? {
-          x: frameX - shellMetrics.screenX * frameScaleX,
-          y: frameY - shellMetrics.screenY * frameScaleY,
-          width: shellMetrics.width * frameScaleX,
-          height: shellMetrics.height * frameScaleY,
-        }
-      : {
-          x: frameX,
-          y: frameY,
-          width: frameWidth,
-          height: frameHeight,
-        }
-    const shellMarkup = shouldRenderShell
-      ? renderDeviceSurfaceMarkup(composition, frame, preset, outerRect)
-      : `<defs>
+    const shellMarkup = frameDeviceConfig.shellMode === 'none'
+      ? `<defs>
           <clipPath id="device-artboard-${sanitizeIdentifier(frame.id, 'frame')}">
             <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${Math.max(12, Math.round(Math.min(frameWidth, frameHeight) * 0.04))}" ry="${Math.max(12, Math.round(Math.min(frameWidth, frameHeight) * 0.04))}" />
           </clipPath>
@@ -3405,6 +3546,12 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
           frameDeviceConfig.screenScaleMode,
           frameDeviceConfig.showSafeArea,
         )}`
+      : renderDeviceSurfaceMarkup(composition, frame, preset, {
+          x: frameX,
+          y: frameY,
+          width: frameWidth,
+          height: frameHeight,
+        })
     return `<g>
       ${frameLabel}
       ${shellMarkup}
@@ -3412,25 +3559,14 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
   }
 
   if (frame.kind === 'device_mockup') {
-    const textMarkup = frameElements
-      .filter(element => element.type !== 'image')
-      .map(element => renderDesignElementMarkup(element, themeTokens, frameX, frameY))
-      .join('')
-    const shellMetrics = measureBuiltinDeviceShellMetrics(preset)
-    const frameScale = Math.min((frameWidth * 0.34) / shellMetrics.width, (frameHeight * 0.72) / shellMetrics.height)
-    const mockupWidth = Math.round(shellMetrics.width * frameScale)
-    const mockupHeight = Math.round(shellMetrics.height * frameScale)
-    const mockupX = frameX + frameWidth - mockupWidth - 72
-    const mockupY = frameY + Math.round((frameHeight - mockupHeight) / 2)
     return `<g>
       <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" />
       ${frameLabel}
-      ${textMarkup}
       ${renderDeviceSurfaceMarkup(composition, frame, preset, {
-        x: mockupX,
-        y: mockupY,
-        width: mockupWidth,
-        height: mockupHeight,
+        x: frameX,
+        y: frameY,
+        width: frameWidth,
+        height: frameHeight,
       })}
     </g>`
   }
@@ -3478,7 +3614,7 @@ function parseMermaidNodeToken(token: string, fallbackIndex: number): GraphSourc
   const normalizedToken = normalizeString(token)
     .replace(/:::.*$/g, '')
     .replace(/,\s*$/g, '')
-  const explicitMatch = normalizedToken.match(/^([A-Za-z0-9_.:-]+)\s*([\[\(\{].*[\]\)\}])$/)
+  const explicitMatch = normalizedToken.match(/^([\w.:-]+)\s*([[({].*[\])}])$/)
   if (explicitMatch) {
     const explicitId = explicitMatch[1] || `node-${fallbackIndex}`
     const explicitLabel = explicitMatch[2] || ''
@@ -3490,7 +3626,7 @@ function parseMermaidNodeToken(token: string, fallbackIndex: number): GraphSourc
     }
   }
 
-  const plainMatch = normalizedToken.match(/^([A-Za-z0-9_.:-]+)$/)
+  const plainMatch = normalizedToken.match(/^([\w.:-]+)$/)
   if (plainMatch) {
     const plainId = plainMatch[1] || `node-${fallbackIndex}`
     return {
@@ -3539,6 +3675,69 @@ function parseMermaidGroupHint(line: string): GraphSourceGroup | null {
   }
 }
 
+function findEdgeOperator(line: string, operators: readonly string[]): ParsedEdgeOperatorMatch | null {
+  let matched: ParsedEdgeOperatorMatch | null = null
+  for (const operator of operators) {
+    const index = line.indexOf(operator)
+    if (index < 0)
+      continue
+    if (!matched || index < matched.index || (index === matched.index && operator.length > matched.operator.length))
+      matched = { index, operator }
+  }
+  return matched
+}
+
+function parseMermaidEdgeLine(line: string): ParsedMermaidEdgeLine | null {
+  const operatorMatch = findEdgeOperator(line, MERMAID_EDGE_OPERATORS)
+  if (!operatorMatch)
+    return null
+
+  const sourceToken = normalizeString(line.slice(0, operatorMatch.index))
+  if (!sourceToken)
+    return null
+
+  const remainder = line.slice(operatorMatch.index + operatorMatch.operator.length).trim()
+  if (!remainder)
+    return null
+
+  let label = ''
+  let targetToken = remainder
+  if (remainder.startsWith('|')) {
+    const labelEndIndex = remainder.indexOf('|', 1)
+    if (labelEndIndex < 0)
+      return null
+    label = remainder.slice(1, labelEndIndex).trim()
+    targetToken = remainder.slice(labelEndIndex + 1).trim()
+  }
+
+  if (!targetToken)
+    return null
+
+  return {
+    sourceToken,
+    label,
+    targetToken,
+    operator: operatorMatch.operator,
+  }
+}
+
+function parseArchitectureRelationLine(line: string): ParsedRelationLine | null {
+  const operatorMatch = findEdgeOperator(line, ARCHITECTURE_EDGE_OPERATORS)
+  if (!operatorMatch)
+    return null
+
+  const sourceToken = normalizeString(line.slice(0, operatorMatch.index))
+  const targetToken = normalizeString(line.slice(operatorMatch.index + operatorMatch.operator.length))
+  if (!sourceToken || !targetToken)
+    return null
+
+  return {
+    sourceToken,
+    targetToken,
+    operator: operatorMatch.operator,
+  }
+}
+
 export function importFromMermaid(sourceText: string): SceneDocument {
   const graphNodes = new Map<string, GraphSourceNode>()
   const graphGroups = new Map<string, GraphSourceGroup>()
@@ -3570,7 +3769,7 @@ export function importFromMermaid(sourceText: string): SceneDocument {
   }
 
   for (const [index, line] of lines.entries()) {
-    if (/^(graph|flowchart)\b/i.test(line)) {
+    if (/^(?:graph|flowchart)\b/i.test(line)) {
       if (!hasDiagramTypeHint)
         diagramType = 'flowchart'
       continue
@@ -3580,26 +3779,20 @@ export function importFromMermaid(sourceText: string): SceneDocument {
         diagramType = 'mindmap'
       continue
     }
-    if (/^(subgraph|end|classDef|class|style|linkStyle)\b/i.test(line))
+    if (/^(?:subgraph|end|classDef|class|style|linkStyle)\b/i.test(line))
       continue
 
-    const labeledEdge = line.match(/^(.+?)\s*(-->|---|==>|-.->)\s*\|([^|]+)\|\s*(.+)$/)
-    const simpleEdge = line.match(/^(.+?)\s*(-->|---|==>|-.->)\s*(.+)$/)
-
-    if (labeledEdge || simpleEdge) {
-      const parts = labeledEdge || simpleEdge
-      const sourceToken = parts?.[1] || ''
-      const label = labeledEdge?.[3] || ''
-      const targetToken = labeledEdge?.[4] || simpleEdge?.[3] || ''
-      const sourceNode = upsertGraphNode(graphNodes, sourceToken, index * 2 + 1)
-      const targetNode = upsertGraphNode(graphNodes, targetToken, index * 2 + 2)
+    const parsedEdge = parseMermaidEdgeLine(line)
+    if (parsedEdge) {
+      const sourceNode = upsertGraphNode(graphNodes, parsedEdge.sourceToken, index * 2 + 1)
+      const targetNode = upsertGraphNode(graphNodes, parsedEdge.targetToken, index * 2 + 2)
       graphEdges.push({
         id: sanitizeIdentifier(`${sourceNode.id}-${targetNode.id}-${graphEdges.length + 1}`, `edge-${graphEdges.length + 1}`),
         source: sourceNode.id,
         target: targetNode.id,
-        label: normalizeString(label) || undefined,
+        label: normalizeString(parsedEdge.label) || undefined,
         metadata: {
-          mermaidOperator: parts?.[2],
+          mermaidOperator: parsedEdge.operator,
         },
       })
       continue
@@ -3650,17 +3843,21 @@ export function importFromMermaid(sourceText: string): SceneDocument {
 
 function parseOutlineDepth(line: string): { depth: number, label: string } | null {
   const normalized = line.replace(/\t/g, '  ')
-  const headingMatch = normalized.match(/^(#{1,6})\s+(.+)$/)
-  if (headingMatch && headingMatch[1] && headingMatch[2])
-    return { depth: headingMatch[1].length, label: normalizeString(headingMatch[2]) }
+  const headingPrefix = normalized.match(/^#{1,6}\s+/)
+  if (headingPrefix?.[0]) {
+    const label = normalizeString(normalized.slice(headingPrefix[0].length))
+    if (label)
+      return { depth: headingPrefix[0].trim().length, label }
+  }
 
   const indent = normalized.match(/^\s*/)?.[0].length || 0
-  const bullet = normalized.trim().match(/^([-*+]|\d+\.)\s+(.+)$/)
-  if (!bullet)
+  const trimmed = normalized.trim()
+  const bulletPrefix = trimmed.match(/^(?:[-*+]|\d+\.)\s+/)
+  if (!bulletPrefix?.[0])
     return null
   return {
     depth: Math.floor(indent / 2) + 1,
-    label: normalizeString(bullet[2]),
+    label: normalizeString(trimmed.slice(bulletPrefix[0].length)),
   }
 }
 
@@ -3785,30 +3982,59 @@ function parseQualifiedTableName(rawValue: string): { schemaName?: string, table
   return { tableName: left || normalized || 'unnamed_table' }
 }
 
+function extractSqlDefaultValue(remainder: string): string | undefined {
+  const defaultKeyword = /\bdefault\b/i.exec(remainder)
+  if (!defaultKeyword)
+    return undefined
+
+  const defaultTail = remainder.slice((defaultKeyword.index || 0) + defaultKeyword[0].length).trim()
+  if (!defaultTail)
+    return undefined
+
+  let endIndex = defaultTail.length
+  const boundaryPatterns = [
+    /\s+not null\b/i,
+    /\s+null\b/i,
+    /\s+primary key\b/i,
+    /\s+references\b/i,
+    /\s+unique\b/i,
+    /\s+constraint\b/i,
+    /\s+check\b/i,
+    /\s+comment\b/i,
+  ]
+  for (const pattern of boundaryPatterns) {
+    const match = pattern.exec(defaultTail)
+    if (match && match.index < endIndex)
+      endIndex = match.index
+  }
+
+  const defaultValue = normalizeString(defaultTail.slice(0, endIndex))
+  return defaultValue || undefined
+}
+
 function parseColumnDefinition(rawValue: string): SchemaColumnModel | null {
   const normalized = normalizeString(rawValue)
   if (!normalized)
     return null
 
-  const nameMatch = normalized.match(/^([A-Za-z0-9_"`[\].-]+)\s+(.+)$/)
-  if (!nameMatch)
+  const namePrefix = normalized.match(/^[\w"`[\].-]+\s+/)
+  if (!namePrefix?.[0])
     return null
 
-  const name = cleanSqlIdentifier(nameMatch[1] || '')
-  const remainder = normalizeString(nameMatch[2] || '')
+  const name = cleanSqlIdentifier(namePrefix[0].trim())
+  const remainder = normalizeString(normalized.slice(namePrefix[0].length))
   if (!name || !remainder)
     return null
 
   const constraintIndex = remainder.search(/\b(not null|null|default|primary key|references|unique|constraint|check|comment)\b/i)
   const type = constraintIndex >= 0 ? remainder.slice(0, constraintIndex).trim() : remainder
-  const defaultMatch = remainder.match(/\bdefault\s+(.+?)(?=\s+(?:not null|null|primary key|references|unique|constraint|check|comment)\b|$)/i)
-  const referencesMatch = remainder.match(/\breferences\s+([A-Za-z0-9_"`.[\]-]+)\s*\(([^)]+)\)/i)
+  const referencesMatch = remainder.match(/\breferences\s+([\w"`.[\]-]+)\s*\(([^)]+)\)/i)
 
   return {
     name,
     type: type || 'text',
     nullable: !/\bnot null\b/i.test(remainder),
-    defaultValue: normalizeString(defaultMatch?.[1]) || undefined,
+    defaultValue: extractSqlDefaultValue(remainder),
     isPrimaryKey: /\bprimary key\b/i.test(remainder),
     referencesTable: normalizeString(referencesMatch?.[1] ? parseQualifiedTableName(referencesMatch[1]).tableName : ''),
     referencesColumn: normalizeString(referencesMatch?.[2]).split(',').map(item => cleanSqlIdentifier(item)).filter(Boolean)[0],
@@ -3819,7 +4045,7 @@ function parseColumnDefinition(rawValue: string): SchemaColumnModel | null {
 export function importFromDDL(sourceText: string): SchemaImportResult {
   const tables: SchemaTableModel[] = []
   const warnings: string[] = []
-  const createTableRegex = /create\s+table\s+(?:if\s+not\s+exists\s+)?([A-Za-z0-9_"`.[\]-]+)\s*\(([\s\S]*?)\)\s*;/gi
+  const createTableRegex = /create\s+table\s+(?:if\s+not\s+exists\s+)?([\w"`.[\]-]+)\s*\(([\s\S]*?)\)\s*;/gi
   let matched = createTableRegex.exec(sourceText)
 
   while (matched) {
@@ -3835,7 +4061,7 @@ export function importFromDDL(sourceText: string): SchemaImportResult {
       if (!normalized)
         continue
 
-      const fkMatch = normalized.match(/^(?:constraint\s+([A-Za-z0-9_"`-]+)\s+)?foreign\s+key\s*\(([^)]+)\)\s+references\s+([A-Za-z0-9_"`.[\]-]+)\s*\(([^)]+)\)/i)
+      const fkMatch = normalized.match(/^(?:constraint\s+([\w"`-]+)\s+)?foreign\s+key\s*\(([^)]+)\)\s+references\s+([\w"`.[\]-]+)\s*\(([^)]+)\)/i)
       if (fkMatch) {
         foreignKeys.push({
           name: cleanSqlIdentifier(fkMatch[1] || ''),
@@ -3847,13 +4073,13 @@ export function importFromDDL(sourceText: string): SchemaImportResult {
         continue
       }
 
-      const pkMatch = normalized.match(/^(?:constraint\s+([A-Za-z0-9_"`-]+)\s+)?primary\s+key\s*\(([^)]+)\)/i)
+      const pkMatch = normalized.match(/^(?:constraint\s+([\w"`-]+)\s+)?primary\s+key\s*\(([^)]+)\)/i)
       if (pkMatch) {
         primaryKeys.push(...normalizeString(pkMatch[2]).split(',').map(item => cleanSqlIdentifier(item)).filter(Boolean))
         continue
       }
 
-      const uniqueMatch = normalized.match(/^(?:constraint\s+([A-Za-z0-9_"`-]+)\s+)?unique\s*\(([^)]+)\)/i)
+      const uniqueMatch = normalized.match(/^(?:constraint\s+([\w"`-]+)\s+)?unique\s*\(([^)]+)\)/i)
       if (uniqueMatch) {
         indexes.push({
           name: cleanSqlIdentifier(uniqueMatch[1] || `uniq_${indexes.length + 1}`),
@@ -4084,13 +4310,13 @@ function resolveArchitectureMermaidNodes(architectureModel: ArchitectureModel, v
 
 function inferArchitectureElementType(label: string): string {
   const normalized = label.toLowerCase()
-  if (/(db|database|postgres|mysql|redis|mongo)/.test(normalized))
+  if (/db|database|postgres|mysql|redis|mongo/.test(normalized))
     return 'database'
-  if (/(queue|topic|kafka|mq|stream)/.test(normalized))
+  if (/queue|topic|kafka|mq|stream/.test(normalized))
     return 'queue'
-  if (/(client|web|app|mobile|mini)/.test(normalized))
+  if (/client|web|app|mobile|mini/.test(normalized))
     return 'component'
-  if (/(external|third|partner|stripe|slack|openai)/.test(normalized))
+  if (/external|third|partner|stripe|slack|openai/.test(normalized))
     return 'external'
   return 'service'
 }
@@ -4177,7 +4403,7 @@ function inferWorkspacePackageType(packageName: string, packagePath: string): 's
   }
 
   const normalizedName = normalizeString(packageName).toLowerCase()
-  if (/(web|api|server|worker|gateway|service|app)/.test(normalizedName))
+  if (/web|api|server|worker|gateway|service|app/.test(normalizedName))
     return 'service'
 
   return 'component'
@@ -4360,9 +4586,11 @@ function deriveLegacySlotsFromFrame(composition: CompositionModel, frame: Design
 
 function syncCompositionFrameIds(composition: CompositionModel): CompositionModel {
   const rawPages = ensureArray(composition.pages)
-  const pages = (rawPages.length > 0 ? rawPages : [createDefaultDesignPage({
-    id: DEFAULT_COMPOSITION_PAGE_ID,
-  })]).map((page, index) => {
+  const pages = (rawPages.length > 0
+    ? rawPages
+    : [createDefaultDesignPage({
+        id: DEFAULT_COMPOSITION_PAGE_ID,
+      })]).map((page, index) => {
     return createDefaultDesignPage({
       ...page,
       id: sanitizeIdentifier(page.id, `page-${index + 1}`),
@@ -4505,7 +4733,7 @@ function createDesignFrameFromInput(
   fallbackPageId: string,
 ): DesignFrameModel {
   const pageId = sanitizeIdentifier(input.pageId, fallbackPageId)
-  const kind = (normalizeString(input.kind) as DesignFrameKind) || 'freeform'
+  const kind = normalizeDesignFrameKind(input.kind || 'freeform')
   const frameId = normalizeString(input.id) || `frame-${Date.now()}`
   const pageFrameCount = ensureArray(composition.frames).filter(frame => normalizeString(frame.pageId) === pageId).length
   const frameIndex = pageFrameCount + 1
@@ -5013,16 +5241,16 @@ export function importArchitectureFromMetadata(source: string | Record<string, u
   if (text) {
     const lines = text.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean)
     for (const line of lines) {
-      const edgeMatch = line.match(/^(.+?)\s*(?:-->|->|=>)\s*(.+)$/)
-      if (!edgeMatch)
+      const relationLine = parseArchitectureRelationLine(line)
+      if (!relationLine)
         continue
-      const sourceElement = ensureElement(edgeMatch[1] || '')
-      const targetElement = ensureElement(edgeMatch[2] || '')
+      const sourceElement = ensureElement(relationLine.sourceToken)
+      const targetElement = ensureElement(relationLine.targetToken)
       relations.push({
         id: `relation-${relations.length + 1}`,
         source: sourceElement.id,
         target: targetElement.id,
-        protocol: inferProtocolFromValue(edgeMatch[0]),
+        protocol: inferProtocolFromValue(relationLine.operator),
         metadata: {},
       })
     }
@@ -5601,5 +5829,28 @@ export function renderCompositionAssetToSvg(
   ${renderCompositionBackdrop(width, height, background, accent, gradientId)}
   ${clippedMarkup}
   <text x="${singleFrame ? 24 : 40}" y="${height - 28}" fill="${escapeXml(themeTokens.muted || '#94a3b8')}" font-size="${singleFrame ? 14 : 18}" font-weight="500">${escapeXml(label)}</text>
+</svg>`.trim()
+}
+
+export function renderCompositionFramePreviewSvg(
+  document: SceneDocument | CompositionModel | unknown,
+  frameId: string,
+): string {
+  const state = resolveCompositionDocumentState(document)
+  const sceneDocument = finalizeCompositionSceneDocument(state.base, state.composition)
+  const composition = sceneDocument.sourceModel.kind === 'composition'
+    ? sceneDocument.sourceModel
+    : defaultCompositionModel(sceneDocument.templateKey || 'device-showcase')
+  const frame = ensureArray(composition.frames).find(item => normalizeString(item.id) === normalizeString(frameId)) || null
+  if (!frame)
+    return ''
+
+  const width = Math.max(1, Math.round(frame.width))
+  const height = Math.max(1, Math.round(frame.height))
+  const offsetX = -frame.x
+  const offsetY = -frame.y
+  return `
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" data-frame-id="${escapeXml(frame.id)}">
+  ${renderDesignFrameMarkup(frame, composition, offsetX, offsetY)}
 </svg>`.trim()
 }

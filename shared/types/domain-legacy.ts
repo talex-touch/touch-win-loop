@@ -1996,6 +1996,7 @@ export interface ProjectWorkspaceViewState {
   previewResourceId: string
   selectedContestId: string
   selectedTrackId: string
+  openChatSessionIds: string[]
   activeChatSessionId: string
   activeMeetingId: string
   leftSidebarCollapsed: boolean

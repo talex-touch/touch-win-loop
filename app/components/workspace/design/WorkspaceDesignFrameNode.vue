@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import type { DesignElementModel, DesignFrameModel } from '~~/shared/types/domain'
+import type {
+  CompositionModel,
+  DesignAssetModel,
+  DesignElementModel,
+  DesignFrameModel,
+  DesignPageModel,
+} from '~~/shared/types/domain'
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { resolveDeviceFramePreset } from '~~/shared/utils/scene-document'
+import {
+  isDeviceDesignFrameKind,
+  renderCompositionFramePreviewSvg,
+} from '~~/shared/utils/scene-document'
 
 const MIN_FRAME_WIDTH = 280
 const MIN_FRAME_HEIGHT = 180
@@ -22,11 +31,15 @@ type ResizeSession = {
 
 const props = withDefaults(defineProps<{
   frame: DesignFrameModel
+  previewFrame?: DesignFrameModel | null
+  deviceShellAsset?: DesignAssetModel | null
   selected?: boolean
   disabled?: boolean
   onResizePreview?: (patch: ResizePatch) => void
   onResizeCommit?: (patch: ResizePatch) => void
 }>(), {
+  previewFrame: null,
+  deviceShellAsset: null,
   selected: false,
   disabled: false,
   onResizePreview: undefined,
@@ -58,15 +71,66 @@ const titleText = computed(() => normalizeString(findElement('text', 'title')?.t
 const subtitleText = computed(() => normalizeString(findElement('caption', 'subtitle')?.text))
 const badgeText = computed(() => normalizeString(findElement('badge', 'badge')?.text))
 const imageSrc = computed(() => normalizeString(findElement('image', 'hero-image')?.imageSrc))
-const devicePreset = computed(() => {
-  if (props.frame.kind !== 'device_mockup' && props.frame.kind !== 'device_artboard')
+const isDeviceFrame = computed(() => isDeviceDesignFrameKind(props.frame.kind))
+const devicePreviewFrame = computed(() => {
+  if (!isDeviceFrame.value)
     return null
-  return resolveDeviceFramePreset(props.frame.deviceFramePresetKey || 'iphone-16-pro')
+  return props.previewFrame || props.frame
 })
-const isDeviceArtboard = computed(() => props.frame.kind === 'device_artboard')
-const isDeviceMockup = computed(() => props.frame.kind === 'device_mockup')
-const deviceAspectRatio = computed(() => `${devicePreset.value?.screenWidth || 390} / ${devicePreset.value?.screenHeight || 844}`)
-const deviceShellMode = computed(() => normalizeString(props.frame.metadata?.device?.shellMode) || (isDeviceArtboard.value ? 'none' : 'builtin'))
+const devicePreviewPage = computed<DesignPageModel>(() => ({
+  id: props.frame.pageId,
+  name: 'Preview',
+  background: normalizeString(devicePreviewFrame.value?.themeTokens?.background) || normalizeString(themeTokens.value.background) || '#0f172a',
+  frameIds: [props.frame.id, ...(devicePreviewFrame.value && devicePreviewFrame.value.id !== props.frame.id ? [devicePreviewFrame.value.id] : [])],
+  viewport: {
+    x: 0,
+    y: 0,
+    zoom: 1,
+  },
+  metadata: {},
+}))
+const devicePreviewComposition = computed<CompositionModel | null>(() => {
+  if (!isDeviceFrame.value)
+    return null
+
+  const previewFrames = [props.frame]
+  if (devicePreviewFrame.value && devicePreviewFrame.value.id !== props.frame.id)
+    previewFrames.push(devicePreviewFrame.value)
+  const elements = previewFrames.flatMap((frame) => {
+    return (frame.elements || []).map((element, index) => ({
+      ...element,
+      pageId: props.frame.pageId,
+      frameId: frame.id,
+      zIndex: Number.isFinite(Number(element.zIndex)) ? Number(element.zIndex) : index,
+    }))
+  })
+  return {
+    kind: 'composition',
+    templateKey: normalizeString(props.frame.templateKey) || 'device-showcase',
+    pages: [devicePreviewPage.value],
+    currentPageId: devicePreviewPage.value.id,
+    frames: previewFrames,
+    elements,
+    assets: props.deviceShellAsset ? [props.deviceShellAsset] : [],
+    slots: {},
+    themeTokens: {
+      ...themeTokens.value,
+      ...(devicePreviewFrame.value?.themeTokens || {}),
+    },
+    layoutRules: {},
+    allowedBlocks: [],
+    exportPresets: ['svg'],
+    aspectRatio: `${Math.max(1, Math.round(props.frame.width))}:${Math.max(1, Math.round(props.frame.height))}`,
+    deviceFramePresetKey: props.frame.deviceFramePresetKey || 'iphone-16-pro',
+    blocks: [],
+    metadata: {},
+  }
+})
+const deviceFramePreviewSvg = computed(() => {
+  if (!devicePreviewComposition.value)
+    return ''
+  return renderCompositionFramePreviewSvg(devicePreviewComposition.value, props.frame.id)
+})
 const diagramStats = computed(() => {
   const embeddedScene = props.frame.embeddedScene
   return {
@@ -203,104 +267,12 @@ onBeforeUnmount(() => {
       </span>
     </div>
 
-    <template v-if="isDeviceMockup || isDeviceArtboard">
+    <template v-if="isDeviceFrame">
       <div
-        v-if="isDeviceMockup"
-        class="absolute inset-y-0 left-0 w-[46%] px-6 pb-6 pt-16"
-      >
-        <h3
-          class="text-2xl font-semibold leading-tight"
-          :style="{ color: themeTokens.text }"
-        >
-          {{ titleText }}
-        </h3>
-        <p
-          v-if="subtitleText"
-          class="mt-3 text-sm leading-6"
-          :style="{ color: themeTokens.muted }"
-        >
-          {{ subtitleText }}
-        </p>
-      </div>
-
-      <div
-        class="absolute inset-y-0 flex items-center justify-center px-8 py-10"
-        :class="isDeviceMockup ? 'right-0 w-[52%]' : 'inset-x-0'"
-      >
-        <div
-          class="relative overflow-hidden border border-white/10 shadow-[0_28px_72px_rgba(15,23,42,0.28)]"
-          :class="[
-            devicePreset?.deviceFamily === 'browser'
-              ? 'rounded-[22px]'
-              : isDeviceArtboard
-                ? 'rounded-[30px]'
-                : 'rounded-[34px]',
-          ]"
-          :style="{
-            backgroundColor:
-              deviceShellMode === 'none'
-                ? 'rgba(255,255,255,0.08)'
-                : devicePreset?.background || '#020617',
-            width: isDeviceArtboard
-              ? '78%'
-              : devicePreset?.deviceFamily === 'browser'
-                ? '92%'
-                : '68%',
-            aspectRatio: deviceAspectRatio,
-            padding:
-              deviceShellMode === 'none'
-                ? '0px'
-                : devicePreset?.deviceFamily === 'browser'
-                  ? '12px 12px 12px'
-                  : '16px',
-          }"
-        >
-          <div
-            v-if="deviceShellMode !== 'none' && devicePreset?.deviceFamily === 'browser'"
-            class="flex h-10 items-center gap-2 border-b border-slate-200/70 bg-slate-100 px-4"
-          >
-            <span class="h-2.5 w-2.5 rounded-full bg-rose-400" />
-            <span class="h-2.5 w-2.5 rounded-full bg-amber-400" />
-            <span class="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-          </div>
-          <div
-            class="overflow-hidden bg-slate-100"
-            :class="[
-              deviceShellMode === 'none'
-                ? 'rounded-[30px]'
-                : devicePreset?.deviceFamily === 'browser'
-                  ? 'rounded-[18px]'
-                  : 'rounded-[26px]',
-            ]"
-            :style="{
-              aspectRatio: deviceAspectRatio,
-              minHeight: isDeviceArtboard ? '82%' : undefined,
-              marginTop:
-                deviceShellMode !== 'none' &&
-                devicePreset?.deviceFamily === 'browser'
-                  ? '12px'
-                  : '0px',
-            }"
-          >
-            <img
-              v-if="imageSrc"
-              :src="imageSrc"
-              alt=""
-              class="h-full w-full object-cover"
-            >
-            <div
-              v-else
-              class="flex h-full min-h-[220px] items-center justify-center text-center text-sm font-medium text-slate-500"
-            >
-              {{ isDeviceArtboard ? '设备画板实时预览' : '上传截图' }}
-            </div>
-          </div>
-          <div
-            v-if="deviceShellMode !== 'none' && devicePreset?.deviceFamily !== 'browser'"
-            class="absolute left-1/2 top-2.5 h-5 w-24 -translate-x-1/2 rounded-full bg-slate-950/90"
-          />
-        </div>
-      </div>
+        class="absolute inset-0 overflow-hidden"
+        :style="{ background: 'transparent' }"
+        v-html="deviceFramePreviewSvg"
+      />
     </template>
 
     <template v-else-if="frame.kind === 'diagram'">

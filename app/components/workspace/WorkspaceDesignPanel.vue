@@ -1771,10 +1771,29 @@ function createFrame(
   } = {},
 ): void {
   if (!currentPage.value) return;
+  const resolvedKind = kind === "device_mockup" ? "device_artboard" : kind;
+  const nextShellMode: "none" | "builtin" | "external" =
+    extra.metadata?.device?.shellMode === "none" ||
+    extra.metadata?.device?.shellMode === "external"
+      ? extra.metadata.device.shellMode
+      : "builtin";
+  const nextExtra =
+    resolvedKind === "device_artboard"
+      ? {
+          ...extra,
+          metadata: {
+            ...(extra.metadata || {}),
+            device: {
+              ...(extra.metadata?.device || {}),
+              shellMode: nextShellMode,
+            },
+          },
+        }
+      : extra;
   const nextDocument = appendDesignFrameToSceneDocument(draftDocument.value, {
     pageId: currentPage.value.id,
-    kind,
-    ...extra,
+    kind: resolvedKind,
+    ...nextExtra,
   });
   const nextComposition =
     nextDocument.sourceModel.kind === "composition"
@@ -1786,7 +1805,7 @@ function createFrame(
   setSelectedFrames(nextFrame ? [nextFrame.id] : [], {
     primaryFrameId: nextFrame?.id || "",
   });
-  if (kind === "diagram" && nextFrame) {
+  if (resolvedKind === "diagram" && nextFrame) {
     diagramEditorFrameId.value = nextFrame.id;
     syncDiagramEditorFromFrame(nextFrame);
   }
@@ -4432,23 +4451,9 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                       "
                     >
                       <span class="material-symbols-outlined text-base"
-                        >smartphone</span
-                      >
-                      <span>新建设备画板</span>
-                    </button>
-                    <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
-                      type="button"
-                      :disabled="!currentPage"
-                      @click="
-                        createFrame('device_mockup');
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base"
                         >phone_iphone</span
                       >
-                      <span>新建设备 Mockup</span>
+                      <span>新建设备 Frame</span>
                     </button>
                     <button
                       class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
@@ -5047,8 +5052,9 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
           <WorkspaceDesignStage
             :page="designEditorState.currentPage.value"
             :frames="designEditorState.currentPageFrames.value"
+            :assets="compositionModel.assets || []"
             :page-root-elements="designEditorState.pageRootElements.value"
-            :frame-elements="frameElementsById.value"
+            :frame-elements="frameElementsById"
             :theme-tokens="compositionModel.themeTokens || {}"
             :active-tool="activeTool"
             :selection-state="selectionState"

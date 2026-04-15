@@ -242,6 +242,12 @@ const isDeviceMockup = computed(() => props.frame?.kind === "device_mockup");
 const isDeviceFrame = computed(
   () => isDeviceArtboard.value || isDeviceMockup.value,
 );
+const frameKindValue = computed<DesignFrameKind | "">(() => {
+  if (!props.frame) return "";
+  return props.frame.kind === "device_mockup"
+    ? "device_artboard"
+    : props.frame.kind;
+});
 const devicePresetSearch = ref("");
 const devicePreviewMode = ref<"screen" | "shell">("screen");
 const frameDeviceMetadata = computed(() => {
@@ -422,10 +428,11 @@ function updateFrameDeviceMetadata(
 
 function handleFrameKindChange(nextKind: DesignFrameKind): void {
   if (!props.frame) return;
+  const resolvedKind = nextKind === "device_mockup" ? "device_artboard" : nextKind;
   const patch: Partial<DesignFrameModel> = {
-    kind: nextKind,
+    kind: resolvedKind,
   };
-  if (nextKind === "device_artboard") {
+  if (resolvedKind === "device_artboard") {
     const preset = frameDevicePreset.value || props.deviceFramePresets[0] || null;
     if (preset) {
       patch.deviceFramePresetKey = preset.key;
@@ -436,20 +443,10 @@ function handleFrameKindChange(nextKind: DesignFrameKind): void {
       ...(props.frame.metadata || {}),
       device: {
         ...(props.frame.metadata?.device || {}),
-        shellMode: "none",
-      },
-    };
-  } else if (nextKind === "device_mockup") {
-    patch.deviceFramePresetKey =
-      props.frame.deviceFramePresetKey || props.deviceFramePresets[0]?.key || "";
-    patch.metadata = {
-      ...(props.frame.metadata || {}),
-      device: {
-        ...(props.frame.metadata?.device || {}),
         shellMode:
-          frameDeviceMetadata.value.shellMode === "none"
-            ? "builtin"
-            : frameDeviceMetadata.value.shellMode,
+          frameDeviceMetadata.value.shellMode === "external"
+            ? "external"
+            : "builtin",
       },
     };
   }
@@ -1519,9 +1516,9 @@ function updateElementConstraints(
               <span class="workspace-design-inspector__compact-label"
                 >类型</span
               >
-              <select
-                :value="props.frame.kind"
-                class="workspace-design-inspector__compact-input"
+	              <select
+	                :value="frameKindValue"
+	                class="workspace-design-inspector__compact-input"
                 @change="
                   handleFrameKindChange(
                     ($event.target as HTMLSelectElement).value as
@@ -1529,12 +1526,11 @@ function updateElementConstraints(
                   )
                 "
               >
-                <option value="freeform">freeform</option>
-                <option value="template">template</option>
-                <option value="device_artboard">device_artboard</option>
-                <option value="device_mockup">device_mockup</option>
-                <option value="diagram">diagram</option>
-              </select>
+	                <option value="freeform">freeform</option>
+	                <option value="template">template</option>
+	                <option value="device_artboard">device_artboard</option>
+	                <option value="diagram">diagram</option>
+	              </select>
             </label>
           </div>
 

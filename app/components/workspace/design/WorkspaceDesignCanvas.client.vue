@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DesignFrameModel, DesignPageModel } from "~~/shared/types/domain";
+import type { DesignAssetModel, DesignFrameModel, DesignPageModel } from "~~/shared/types/domain";
 import type { WorkspaceCollabCursorUser } from "~/components/workspace/collab/presence";
 import { resolveWorkspaceCollabPresenceInitial } from "~/components/workspace/collab/presence";
 import type {
@@ -56,6 +56,7 @@ const props = withDefaults(
   defineProps<{
     page?: DesignPageModel | null;
     frames?: DesignFrameModel[];
+    assets?: DesignAssetModel[];
     selectionState?: DesignCanvasSelectionState;
     interactionContext?: DesignCanvasInteractionContext;
     remoteCursors?: WorkspaceCollabCursorUser[];
@@ -67,6 +68,7 @@ const props = withDefaults(
   {
     page: null,
     frames: () => [],
+    assets: () => [],
     selectionState: () => createEmptyDesignCanvasSelectionState(),
     interactionContext: () => ({
       effectiveTool: "select",
@@ -112,6 +114,9 @@ const emit = defineEmits<{
   ];
   "viewport-change": [payload: { x: number; y: number; zoom: number }];
   updateCollabCursor: [value: { cursorX?: number; cursorY?: number }];
+  "node-double-click": [
+    payload: { frameId: string; clientX: number; clientY: number },
+  ];
 }>();
 
 type FrameDragAnchor = "start" | "center" | "end";
@@ -147,6 +152,7 @@ const localPointerScreen = ref<{ x: number; y: number } | null>(null);
 const shortcutButtonRef = ref<HTMLButtonElement | null>(null);
 const shortcutDialogRef = ref<HTMLElement | null>(null);
 const floatingChromeTarget = ref<HTMLElement | null>(null);
+const activeFrameDragIds = ref<string[]>([]);
 let zoomControlRestingTimer: ReturnType<typeof setTimeout> | null = null;
 let zoomControlDormantTimer: ReturnType<typeof setTimeout> | null = null;
 let rootResizeObserver: ResizeObserver | null = null;
@@ -154,6 +160,7 @@ let presenceCursorTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPresencePoint: { clientX: number; clientY: number } | null = null;
 let activeZoomRangePointerId: number | null = null;
 let activeZoomRangePercent: number | null = null;
+let frameDragCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 const shortcutItems: Array<{ description: string; keys: string[] }> = [
   ...DESIGN_TOOL_PRESETS.map((tool) => ({
     description: `${tool.label}工具`,
@@ -191,18 +198,18 @@ const zoomRatio = computed(() => {
   );
 });
 const zoomDisplayText = computed(() => `${zoomPercent.value}%`);
-const nextQuickZoomPreset = computed(() => {
+const nextQuickZoomPreset = computed<number>(() => {
   const matchedPresetIndex = QUICK_ZOOM_PRESETS.findIndex(
     (preset) => preset === zoomPercent.value,
   );
   if (matchedPresetIndex >= 0)
     return QUICK_ZOOM_PRESETS[
       (matchedPresetIndex + 1) % QUICK_ZOOM_PRESETS.length
-    ];
+    ] ?? 100;
   const nextHigherPreset = QUICK_ZOOM_PRESETS.find(
     (preset) => preset > zoomPercent.value,
   );
-  return nextHigherPreset ?? QUICK_ZOOM_PRESETS[0];
+  return nextHigherPreset ?? QUICK_ZOOM_PRESETS[0] ?? 100;
 });
 const zoomRangeStyle = computed(() => {
   const progress = Math.round(zoomRatio.value * 100);
@@ -639,6 +646,37 @@ function syncFlowViewportState(
   };
 }
 
+function resolveViewportSnapshot(
+  viewport:
+    | Partial<{ x: number; y: number; zoom: number }>
+    | { value?: Partial<{ x: number; y: number; zoom: number }> }
+    | null
+    | undefined,
+): Partial<{ x: number; y: number; zoom: number }> {
+  if (!viewport) return {};
+  if ("value" in viewport && viewport.value) return viewport.value;
+  return viewport;
+}
+
+function resolvePointerClientPosition(
+  event: NodeMouseEvent["event"],
+): { clientX: number; clientY: number } | null {
+  if ("clientX" in event && typeof event.clientX === "number") {
+    return {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+  }
+  const touch =
+    ("touches" in event ? event.touches?.[0] : undefined) ||
+    ("changedTouches" in event ? event.changedTouches?.[0] : undefined);
+  if (!touch) return null;
+  return {
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+  };
+}
+
 function resolveFlowPointFromClient(
   clientX: number,
   clientY: number,
@@ -722,7 +760,7 @@ function handlePresencePointerLeave(): void {
 
 function handleFlowInit(instance: VueFlowStore): void {
   flowInstance.value = instance;
-  syncFlowViewportState(instance.viewport);
+  syncFlowViewportState(resolveViewportSnapshot(instance.viewport));
 }
 
 function clearZoomControlTimers(): void {
@@ -986,23 +1024,66 @@ function applyFrameNodePreview(
   });
 }
 
+function beginFrameDragSession(frameId: string): void {
+  if (frameDragCleanupTimer) {
+    clearTimeout(frameDragCleanupTimer);
+    frameDragCleanupTimer = null;
+  }
+  const selectedIds = normalizeFrameSelection(props.selectionState.frameIds || []);
+  activeFrameDragIds.value = selectedIds.includes(frameId) ? selectedIds : [frameId];
+}
+
+function scheduleFrameDragSessionCleanup(): void {
+  if (frameDragCleanupTimer) clearTimeout(frameDragCleanupTimer);
+  frameDragCleanupTimer = setTimeout(() => {
+    activeFrameDragIds.value = [];
+    frameDragCleanupTimer = null;
+  }, 0);
+}
+
 watch(
   [
     () => props.frames,
+    () => props.assets,
     () => props.selectionState.frameIds,
     () => props.page?.id,
     () => props.disabled,
     frameInteractionEnabled,
   ],
   () => {
+    const activeDragIdSet = new Set(activeFrameDragIds.value);
+    const currentNodeMap = new Map(
+      nodes.value.map((node) => [normalizeString(node.id), node]),
+    );
     nodes.value = (props.frames || []).map((frame) => {
+      const linkedFrameId = normalizeString(frame.metadata?.device?.mockupSourceFrameId);
+      const previewFrame = linkedFrameId
+        ? (props.frames || []).find((candidate) => candidate.id === linkedFrameId) ||
+          null
+        : null;
+      const shellAssetId = normalizeString(frame.metadata?.device?.shellAssetId);
+      const deviceShellAsset = shellAssetId
+        ? (props.assets || []).find((asset) => asset.id === shellAssetId) || null
+        : null;
+      const persistedNode = currentNodeMap.get(frame.id);
+      const preserveDuringDrag =
+        activeDragIdSet.has(frame.id) && Boolean(persistedNode);
       return {
         id: frame.id,
         type: "frame",
-        position: { x: frame.x, y: frame.y },
-        selected: (props.selectionState.frameIds || []).includes(frame.id),
+        position: preserveDuringDrag
+          ? {
+              x: Number(persistedNode?.position?.x || frame.x),
+              y: Number(persistedNode?.position?.y || frame.y),
+            }
+          : { x: frame.x, y: frame.y },
+        selected: preserveDuringDrag
+          ? Boolean(persistedNode?.selected)
+          : (props.selectionState.frameIds || []).includes(frame.id),
         data: {
           frame,
+          previewFrame,
+          deviceShellAsset,
           disabled:
             props.disabled || frame.locked || !frameInteractionEnabled.value,
           onResizePreview: (payload: {
@@ -1030,8 +1111,12 @@ watch(
         selectable: frameInteractionEnabled.value,
         connectable: false,
         style: {
-          width: `${frame.width}px`,
-          height: `${frame.height}px`,
+          width: preserveDuringDrag
+            ? String(persistedNode?.style?.width || `${frame.width}px`)
+            : `${frame.width}px`,
+          height: preserveDuringDrag
+            ? String(persistedNode?.style?.height || `${frame.height}px`)
+            : `${frame.height}px`,
         },
       };
     });
@@ -1079,7 +1164,7 @@ function handleNodeClick(payload: NodeMouseEvent): void {
   focusCanvas();
 }
 
-function handleNodeDoubleClick(payload: { node?: { id?: string } }): void {
+function handleNodeDoubleClick(payload: NodeMouseEvent): void {
   const frameId = normalizeString(payload?.node?.id);
   if (!frameId) return;
   const frame =
@@ -1088,7 +1173,14 @@ function handleNodeDoubleClick(payload: { node?: { id?: string } }): void {
     emit("open-frame", frameId);
     return;
   }
-  if (frame && canDesignFrameCreateElements(frame)) emitFrameEditing(frameId);
+  if (!frame || !canDesignFrameCreateElements(frame)) return;
+  const pointer = resolvePointerClientPosition(payload.event);
+  if (!pointer) return;
+  emit("node-double-click", {
+    frameId,
+    clientX: pointer.clientX,
+    clientY: pointer.clientY,
+  });
 }
 
 function handleNodeDragStart(payload: {
@@ -1097,9 +1189,8 @@ function handleNodeDragStart(payload: {
   if (!frameInteractionEnabled.value) return;
   const frameId = normalizeString(payload?.node?.id);
   if (!frameId) return;
+  beginFrameDragSession(frameId);
   revealZoomControl();
-  if (!(props.selectionState.frameIds || []).includes(frameId))
-    emitFrameSelection([frameId], frameId);
   setDragFeedback(frameId, payload?.node?.position);
 }
 
@@ -1122,6 +1213,7 @@ function handleNodeDragStop(payload: {
   if (!frameId) return;
   if ((payload?.nodes || []).length > 1) {
     clearDragFeedback();
+    scheduleFrameDragSessionCleanup();
     return;
   }
 
@@ -1131,8 +1223,11 @@ function handleNodeDragStop(payload: {
     x: nextFeedback?.x ?? Math.round(Number(payload?.node?.position?.x || 0)),
     y: nextFeedback?.y ?? Math.round(Number(payload?.node?.position?.y || 0)),
   });
+  if (!(props.selectionState.frameIds || []).includes(frameId))
+    emitFrameSelection([frameId], frameId);
   revealZoomControl({ collapseAfterIdle: true });
   clearDragFeedback();
+  scheduleFrameDragSessionCleanup();
 }
 
 function handleSelectionDragStop(payload: {
@@ -1157,6 +1252,7 @@ function handleSelectionDragStop(payload: {
     emit("update-frame-positions", { positions: nextPositions });
   revealZoomControl({ collapseAfterIdle: true });
   clearDragFeedback();
+  scheduleFrameDragSessionCleanup();
 }
 
 function handleNodesChange(
@@ -1302,6 +1398,7 @@ onBeforeUnmount(() => {
   clearPresenceCursor();
   clearZoomControlTimers();
   resetZoomRangePointerState();
+  if (frameDragCleanupTimer) clearTimeout(frameDragCleanupTimer);
   rootResizeObserver?.disconnect();
   rootResizeObserver = null;
   floatingChromeTarget.value = null;
@@ -1372,6 +1469,8 @@ onBeforeUnmount(() => {
       <template #node-frame="nodeProps">
         <WorkspaceDesignFrameNode
           :frame="nodeProps.data.frame"
+          :preview-frame="nodeProps.data.previewFrame"
+          :device-shell-asset="nodeProps.data.deviceShellAsset"
           :selected="nodeProps.selected"
           :disabled="Boolean(nodeProps.data.disabled)"
           :on-resize-preview="nodeProps.data.onResizePreview"

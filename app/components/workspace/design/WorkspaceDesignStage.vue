@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  DesignAssetModel,
   DesignElementModel,
   DesignFrameModel,
   DesignPageModel,
@@ -17,6 +18,7 @@ import {
 import {
   canDesignFrameCreateElements,
   isDesignFrameClipContentEnabled,
+  resolveDesignFrameContentLayout,
   resolveDesignElementAbsoluteRect,
   resolveDesignElementPresentation,
   resolveDesignFrameGridMetadata,
@@ -35,6 +37,7 @@ const RESIZE_HANDLE_SIZE = 12
 const props = withDefaults(defineProps<{
   page?: DesignPageModel | null
   frames?: DesignFrameModel[]
+  assets?: DesignAssetModel[]
   pageRootElements?: DesignElementModel[]
   frameElements?: Record<string, DesignElementModel[]>
   themeTokens?: Record<string, string>
@@ -49,6 +52,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   page: null,
   frames: () => [],
+  assets: () => [],
   pageRootElements: () => [],
   frameElements: () => ({}),
   themeTokens: () => ({}),
@@ -79,6 +83,7 @@ const emit = defineEmits<{
   'create-element': [payload: Partial<DesignElementModel>]
   'update-element': [payload: { elementId: string, patch: Partial<DesignElementModel>, historyMergeKey?: string }]
   'update-elements': [payload: { patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>, historyMergeKey?: string }]
+  'node-double-click': [payload: { frameId: string, clientX: number, clientY: number }]
 }>()
 
 type OverlayElementItem = {
@@ -88,6 +93,7 @@ type OverlayElementItem = {
   clipped: boolean
 }
 type CreateDraft = {
+  frameId?: string
   startX: number
   startY: number
   currentX: number
@@ -138,6 +144,8 @@ type ElementTransformDraft = {
   startPointerAngle?: number
   previewPatch: Partial<DesignElementModel>
 }
+type SvgStrokeLineCap = 'butt' | 'inherit' | 'round' | 'square'
+type SvgStrokeLineJoin = 'arcs' | 'bevel' | 'inherit' | 'miter' | 'miter-clip' | 'round'
 type TransformBadgeSnapshot = {
   style: Record<string, string>
   text: string
@@ -285,9 +293,65 @@ const overlayCapturesCanvasPointer = computed(() => {
     return true
   return deepSelectionEnabled.value || Boolean(createDraft.value || elementSelectionDraft.value || elementDragDraft.value || elementTransformDraft.value)
 })
+const createDraftRectStyle = computed<Record<string, string> | null>(() => {
+  const draft = createDraft.value
+  if (!draft || props.activeTool === 'pencil')
+    return null
+
+  const start = resolveFlowPointFromContainerPoint({
+    x: draft.startX,
+    y: draft.startY,
+    frameId: draft.frameId,
+  })
+  const current = resolveFlowPointFromContainerPoint({
+    x: draft.currentX,
+    y: draft.currentY,
+    frameId: draft.frameId,
+  })
+  return {
+    left: `${Math.min(start.x, current.x) * viewport.value.zoom + viewport.value.x}px`,
+    top: `${Math.min(start.y, current.y) * viewport.value.zoom + viewport.value.y}px`,
+    width: `${Math.max(1, Math.abs(current.x - start.x)) * viewport.value.zoom}px`,
+    height: `${Math.max(1, Math.abs(current.y - start.y)) * viewport.value.zoom}px`,
+    borderRadius: props.activeTool === 'ellipse' ? '999px' : '16px',
+  }
+})
+const createDraftPathPoints = computed(() => {
+  const draft = createDraft.value
+  if (!draft?.points?.length || props.activeTool !== 'pencil')
+    return ''
+
+  return draft.points
+    .map(point => resolveFlowPointFromContainerPoint({
+      x: point.x,
+      y: point.y,
+      frameId: draft.frameId,
+    }))
+    .map(point => `${point.x * viewport.value.zoom + viewport.value.x},${point.y * viewport.value.zoom + viewport.value.y}`)
+    .join(' ')
+})
+
+const frameMap = computed(() => {
+  return new Map((props.frames || []).map(frame => [frame.id, frame]))
+})
+const deviceFrameContentLayoutMap = computed(() => {
+  return new Map(
+    (props.frames || []).flatMap((frame) => {
+      const layout = resolveDesignFrameContentLayout(frame, {
+        assets: props.assets,
+        outerRect: {
+          x: frame.x,
+          y: frame.y,
+          width: frame.width,
+          height: frame.height,
+        },
+      })
+      return layout ? [[frame.id, layout] as const] : []
+    }),
+  )
+})
 
 const overlayElements = computed<OverlayElementItem[]>(() => {
-  const frameMap = new Map((props.frames || []).map(frame => [frame.id, frame]))
   const pageElements = (props.pageRootElements || []).map((element) => {
     return {
       element,
@@ -297,7 +361,7 @@ const overlayElements = computed<OverlayElementItem[]>(() => {
     }
   })
   const frameChildren = Object.entries(props.frameElements || {}).flatMap(([frameId, elements]) => {
-    const frame = frameMap.get(frameId) || null
+    const frame = frameMap.value.get(frameId) || null
     if (!frame)
       return []
     return elements.map((element) => {
@@ -368,13 +432,14 @@ watch(
 )
 
 function toScreenRect(item: OverlayElementItem, overridePosition?: { x: number, y: number }) {
-  const rectX = overridePosition?.x ?? item.rect.x
-  const rectY = overridePosition?.y ?? item.rect.y
+  const geometry = resolveElementAbsoluteGeometry(item)
+  const rectX = overridePosition?.x ?? geometry.x
+  const rectY = overridePosition?.y ?? geometry.y
   return {
     left: rectX * viewport.value.zoom + viewport.value.x,
     top: rectY * viewport.value.zoom + viewport.value.y,
-    width: item.rect.width * viewport.value.zoom,
-    height: item.rect.height * viewport.value.zoom,
+    width: geometry.width * viewport.value.zoom,
+    height: geometry.height * viewport.value.zoom,
   }
 }
 
@@ -388,16 +453,57 @@ function toFlowPoint(event: PointerEvent) {
   }
 }
 
+function resolveFrameContentLayout(frame: DesignFrameModel | null | undefined) {
+  if (!frame)
+    return null
+  return deviceFrameContentLayoutMap.value.get(frame.id) || null
+}
+
+function resolveFlowPointFromContainerPoint(point: {
+  x: number
+  y: number
+  frameId?: string
+}) {
+  const frame = normalizeString(point.frameId)
+    ? frameMap.value.get(normalizeString(point.frameId)) || null
+    : null
+  const contentLayout = resolveFrameContentLayout(frame)
+  if (frame && contentLayout) {
+    return {
+      x: contentLayout.contentRect.x + point.x * contentLayout.contentScale,
+      y: contentLayout.contentRect.y + point.y * contentLayout.contentScale,
+    }
+  }
+  if (frame) {
+    return {
+      x: frame.x + point.x,
+      y: frame.y + point.y,
+    }
+  }
+  return {
+    x: point.x,
+    y: point.y,
+  }
+}
+
 function toContainerPoint(flowPoint: { x: number, y: number }) {
   const editingFrameId = normalizeString(props.selectionState.editingFrameId)
   const frame = editingFrameId
-    ? (props.frames || []).find(item => item.id === editingFrameId) || null
+    ? frameMap.value.get(editingFrameId) || null
     : null
   if (!frame || !canDesignFrameCreateElements(frame)) {
     return {
       x: flowPoint.x,
       y: flowPoint.y,
       frameId: undefined,
+    }
+  }
+  const contentLayout = resolveFrameContentLayout(frame)
+  if (contentLayout) {
+    return {
+      x: (flowPoint.x - contentLayout.contentRect.x) / contentLayout.contentScale,
+      y: (flowPoint.y - contentLayout.contentRect.y) / contentLayout.contentScale,
+      frameId: frame.id,
     }
   }
   return {
@@ -454,12 +560,49 @@ function resolvePreviewElement(item: OverlayElementItem): DesignElementModel {
 
 function resolveElementPresentationForOverlay(item: OverlayElementItem) {
   const previewElement = resolvePreviewElement(item)
-  return resolveDesignElementPresentation(
+  const contentScale = resolveElementContentScale(item)
+  const presentation = resolveDesignElementPresentation(
     previewElement,
     resolveElementThemeTokens(item),
-    item.frame ? item.frame.x : 0,
-    item.frame ? item.frame.y : 0,
   )
+  return {
+    ...presentation,
+    x: presentation.x * contentScale,
+    y: presentation.y * contentScale,
+    width: presentation.width * contentScale,
+    height: presentation.height * contentScale,
+    borderRadius: presentation.borderRadius * contentScale,
+    strokeWidth: presentation.strokeWidth * contentScale,
+    fontSize: presentation.fontSize * contentScale,
+    lineHeight: presentation.lineHeight * contentScale,
+  }
+}
+
+function resolveElementContentScale(item: OverlayElementItem): number {
+  return resolveFrameContentLayout(item.frame)?.contentScale || 1
+}
+
+function resolvePathWorldPoints(item: OverlayElementItem): Array<{ x: number, y: number }> {
+  const points = resolvePreviewElement(item).points || []
+  if (!points.length)
+    return []
+
+  const contentLayout = resolveFrameContentLayout(item.frame)
+  const contentScale = contentLayout?.contentScale || 1
+  const offsetX = contentLayout
+    ? contentLayout.contentRect.x
+    : item.frame
+      ? item.frame.x
+      : 0
+  const offsetY = contentLayout
+    ? contentLayout.contentRect.y
+    : item.frame
+      ? item.frame.y
+      : 0
+  return points.map(point => ({
+    x: offsetX + point.x * contentScale,
+    y: offsetY + point.y * contentScale,
+  }))
 }
 
 function isElementInAutoLayoutFrame(item: OverlayElementItem): boolean {
@@ -485,6 +628,34 @@ function resolveElementAbsoluteGeometry(item: OverlayElementItem): {
 } {
   const previewPatch = resolveElementPreviewPatch(item)
   const localGeometry = resolveElementLocalGeometry(item)
+  const previewElement = resolvePreviewElement(item)
+  const contentLayout = resolveFrameContentLayout(item.frame)
+  const contentScale = contentLayout?.contentScale || 1
+  if (previewElement.type === 'path') {
+    const worldPoints = resolvePathWorldPoints(item)
+    if (worldPoints.length > 0) {
+      const xs = worldPoints.map(point => point.x)
+      const ys = worldPoints.map(point => point.y)
+      const presentation = resolveElementPresentationForOverlay(item)
+      const strokePadding = Math.max(1, presentation.strokeWidth) / 2
+      return {
+        x: Math.min(...xs) - strokePadding,
+        y: Math.min(...ys) - strokePadding,
+        width: Math.max(MIN_ELEMENT_WIDTH, Math.max(...xs) - Math.min(...xs) + strokePadding * 2),
+        height: Math.max(MIN_ELEMENT_HEIGHT, Math.max(...ys) - Math.min(...ys) + strokePadding * 2),
+        rotation: 0,
+      }
+    }
+  }
+  if (item.frame && contentLayout) {
+    return {
+      x: contentLayout.contentRect.x + Number(previewPatch.x ?? localGeometry.x) * contentScale,
+      y: contentLayout.contentRect.y + Number(previewPatch.y ?? localGeometry.y) * contentScale,
+      width: Math.max(MIN_ELEMENT_WIDTH, Number(previewPatch.width ?? localGeometry.width) * contentScale),
+      height: Math.max(MIN_ELEMENT_HEIGHT, Number(previewPatch.height ?? localGeometry.height) * contentScale),
+      rotation: Number(previewPatch.rotation ?? localGeometry.rotation),
+    }
+  }
   return {
     x: previewPatch.x !== undefined
       ? (item.frame ? Number(previewPatch.x) + item.frame.x : Number(previewPatch.x))
@@ -500,11 +671,12 @@ function resolveElementAbsoluteGeometry(item: OverlayElementItem): {
 
 function resolveElementStyle(item: OverlayElementItem) {
   const presentation = resolveElementPresentationForOverlay(item)
+  const geometry = resolveElementAbsoluteGeometry(item)
   const rect = {
-    left: presentation.x * viewport.value.zoom + viewport.value.x,
-    top: presentation.y * viewport.value.zoom + viewport.value.y,
-    width: presentation.width * viewport.value.zoom,
-    height: presentation.height * viewport.value.zoom,
+    left: geometry.x * viewport.value.zoom + viewport.value.x,
+    top: geometry.y * viewport.value.zoom + viewport.value.y,
+    width: geometry.width * viewport.value.zoom,
+    height: geometry.height * viewport.value.zoom,
   }
   const isSelected = previewSelectedElementIdSet.value.has(item.element.id)
   const baseStyle: Record<string, string> = {
@@ -513,7 +685,7 @@ function resolveElementStyle(item: OverlayElementItem) {
     width: `${Math.max(rect.width, 8)}px`,
     height: `${Math.max(rect.height, 8)}px`,
     opacity: String(Math.max(0, Math.min(1, presentation.opacity * (item.element.locked ? 0.72 : 1)))),
-    transform: presentation.rotation ? `rotate(${presentation.rotation}deg)` : 'none',
+    transform: geometry.rotation ? `rotate(${geometry.rotation}deg)` : 'none',
     transformOrigin: 'center center',
     overflow: 'visible',
   }
@@ -574,15 +746,31 @@ function resolveElementSvgStyle(item: OverlayElementItem): Record<string, string
 }
 
 function resolvePathSvgPoints(item: OverlayElementItem): string {
-  const points = resolvePreviewElement(item).points || []
-  if (!points.length)
+  const worldPoints = resolvePathWorldPoints(item)
+  const geometry = resolveElementAbsoluteGeometry(item)
+  if (!worldPoints.length)
     return ''
-
-  const frameOffsetX = item.frame?.x || 0
-  const frameOffsetY = item.frame?.y || 0
-  return points
-    .map(point => `${point.x + frameOffsetX - item.rect.x},${point.y + frameOffsetY - item.rect.y}`)
+  return worldPoints
+    .map(point => `${point.x - geometry.x},${point.y - geometry.y}`)
     .join(' ')
+}
+
+function resolveOverlayStrokeLineCap(item: OverlayElementItem): SvgStrokeLineCap {
+  const value = resolveElementPresentationForOverlay(item).strokeLineCap
+  return value === 'butt' || value === 'inherit' || value === 'square'
+    ? value
+    : 'round'
+}
+
+function resolveOverlayStrokeLineJoin(item: OverlayElementItem): SvgStrokeLineJoin {
+  const value = resolveElementPresentationForOverlay(item).strokeLineJoin
+  return value === 'arcs'
+    || value === 'bevel'
+    || value === 'inherit'
+    || value === 'miter'
+    || value === 'miter-clip'
+    ? value
+    : 'round'
 }
 
 const selectedTransformTarget = computed(() => {
@@ -734,6 +922,67 @@ function canInteractWithOverlayElement(item: OverlayElementItem): boolean {
   return !elementFrameId
 }
 
+function resolveTopmostFrameElementAtClientPoint(
+  frameId: string,
+  clientX: number,
+  clientY: number,
+): OverlayElementItem | null {
+  const normalizedFrameId = normalizeString(frameId)
+  if (!normalizedFrameId)
+    return null
+
+  const candidates = overlayElements.value
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      return !item.element.locked
+        && normalizeString(item.frame?.id) === normalizedFrameId
+    })
+    .sort((left, right) => {
+      const zIndexDelta = Number(right.item.element.zIndex || 0) - Number(left.item.element.zIndex || 0)
+      if (zIndexDelta !== 0)
+        return zIndexDelta
+      return left.index - right.index
+    })
+
+  for (const { item } of candidates) {
+    const rect = toScreenRect(item)
+    const right = rect.left + rect.width
+    const bottom = rect.top + rect.height
+    if (clientX >= rect.left && clientX <= right && clientY >= rect.top && clientY <= bottom)
+      return item
+  }
+  return null
+}
+
+function handleCanvasNodeDoubleClick(payload: {
+  frameId: string
+  clientX: number
+  clientY: number
+}): void {
+  const frameId = normalizeString(payload.frameId)
+  const frame = frameMap.value.get(frameId) || null
+  if (!frame || !canDesignFrameCreateElements(frame))
+    return
+
+  const hitItem = resolveTopmostFrameElementAtClientPoint(
+    frameId,
+    payload.clientX,
+    payload.clientY,
+  )
+  if (hitItem) {
+    emit('update-selection', createElementSelectionState([hitItem.element.id], {
+      primaryElementId: hitItem.element.id,
+      editingFrameId: frameId,
+    }))
+    return
+  }
+
+  emit('update-selection', {
+    ...createClearedSelectionState(),
+    editingFrameId: frameId,
+  })
+}
+
 function normalizeWheelDelta(delta: number, deltaMode: number): number {
   if (deltaMode === 1)
     return delta * 16
@@ -793,10 +1042,12 @@ function applyElementResizeDelta(
   if (!handle)
     return {}
 
+  const targetItem = overlayElementMap.value.get(draft.targetElementId) || null
+  const contentScale = Math.max(0.0001, targetItem ? resolveElementContentScale(targetItem) : 1)
   const rotationInRadians = (draft.startGeometry.rotation * Math.PI) / 180
   const pointerDelta = {
-    x: (event.clientX - draft.startClientX) / viewport.value.zoom,
-    y: (event.clientY - draft.startClientY) / viewport.value.zoom,
+    x: (event.clientX - draft.startClientX) / viewport.value.zoom / contentScale,
+    y: (event.clientY - draft.startClientY) / viewport.value.zoom / contentScale,
   }
   const localDelta = rotateVector(pointerDelta.x, pointerDelta.y, -rotationInRadians)
 
@@ -942,6 +1193,7 @@ function handleOverlayPanePointerDown(event: PointerEvent): void {
   const containerPoint = toContainerPoint(flowPoint)
   if (props.activeTool === 'pencil') {
     createDraft.value = {
+      frameId: containerPoint.frameId,
       startX: containerPoint.x,
       startY: containerPoint.y,
       currentX: containerPoint.x,
@@ -952,6 +1204,7 @@ function handleOverlayPanePointerDown(event: PointerEvent): void {
   }
   if (props.activeTool === 'rectangle' || props.activeTool === 'ellipse' || props.activeTool === 'arrow' || props.activeTool === 'text') {
     createDraft.value = {
+      frameId: containerPoint.frameId,
       startX: containerPoint.x,
       startY: containerPoint.y,
       currentX: containerPoint.x,
@@ -1131,11 +1384,13 @@ function handleOverlayPointerMove(event: PointerEvent): void {
     ...elementDragDraft.value,
     previewPatches: Object.fromEntries(elementDragDraft.value.activeElementIds.map((elementId) => {
       const position = elementDragDraft.value?.startPositions[elementId]
+      const item = overlayElementMap.value.get(elementId) || null
+      const contentScale = Math.max(0.0001, item ? resolveElementContentScale(item) : 1)
       return [
         elementId,
         {
-          x: Number(position?.x || 0) + deltaX,
-          y: Number(position?.y || 0) + deltaY,
+          x: Number(position?.x || 0) + deltaX / contentScale,
+          y: Number(position?.y || 0) + deltaY / contentScale,
         },
       ]
     })),
@@ -1351,6 +1606,7 @@ onBeforeUnmount(() => {
     <WorkspaceDesignCanvas
       :page="props.page"
       :frames="props.frames"
+      :assets="props.assets"
       :selection-state="props.selectionState"
       :interaction-context="props.interactionContext"
       :remote-cursors="props.remoteCursors"
@@ -1367,6 +1623,7 @@ onBeforeUnmount(() => {
       @update-frame-size="emit('update-frame-size', $event)"
       @viewport-change="handleViewportChange"
       @update-collab-cursor="emit('updateCollabCursor', $event)"
+      @node-double-click="handleCanvasNodeDoubleClick"
     />
 
     <div
@@ -1526,8 +1783,8 @@ onBeforeUnmount(() => {
             fill="none"
             :stroke="resolveElementPresentationForOverlay(item).stroke"
             :stroke-width="resolveElementPresentationForOverlay(item).strokeWidth"
-            :stroke-linecap="resolveElementPresentationForOverlay(item).strokeLineCap"
-            :stroke-linejoin="resolveElementPresentationForOverlay(item).strokeLineJoin"
+            :stroke-linecap="resolveOverlayStrokeLineCap(item)"
+            :stroke-linejoin="resolveOverlayStrokeLineJoin(item)"
           />
         </svg>
       </div>
@@ -1597,15 +1854,9 @@ onBeforeUnmount(() => {
       </div>
 
       <div
-        v-if="createDraft && props.activeTool !== 'pencil'"
+        v-if="createDraftRectStyle"
         class="pointer-events-none absolute border-2 border-dashed border-sky-500/80 bg-sky-200/10"
-        :style="{
-          left: `${Math.min(createDraft.startX, createDraft.currentX) * viewport.zoom + viewport.x}px`,
-          top: `${Math.min(createDraft.startY, createDraft.currentY) * viewport.zoom + viewport.y}px`,
-          width: `${Math.max(1, Math.abs(createDraft.currentX - createDraft.startX)) * viewport.zoom}px`,
-          height: `${Math.max(1, Math.abs(createDraft.currentY - createDraft.startY)) * viewport.zoom}px`,
-          borderRadius: props.activeTool === 'ellipse' ? '999px' : '16px',
-        }"
+        :style="createDraftRectStyle"
       />
 
       <div
@@ -1620,9 +1871,9 @@ onBeforeUnmount(() => {
         }"
       />
 
-      <svg v-if="createDraft?.points?.length && props.activeTool === 'pencil'" class="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+      <svg v-if="createDraftPathPoints" class="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
         <polyline
-          :points="createDraft.points.map(point => `${point.x * viewport.zoom + viewport.x},${point.y * viewport.zoom + viewport.y}`).join(' ')"
+          :points="createDraftPathPoints"
           fill="none"
           stroke="#0f172a"
           stroke-width="3"
