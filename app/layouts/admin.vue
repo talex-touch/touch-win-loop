@@ -41,6 +41,7 @@ const navItems: AdminNavItem[] = [
   { key: 'admin-orgs', to: '/admin/organizations', label: '组织管理', icon: 'i-heroicons-outline-building-office-2', section: 'system', requiredAny: ['pricing.write'] },
   { key: 'admin-contests', to: '/admin/contests', label: '赛事管理', icon: 'i-heroicons-outline-academic-cap', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-ai-prompts', to: '/admin/ai-prompts', label: 'AI配置', icon: 'i-heroicons-outline-sparkles', section: 'system', requiredAny: ['contest.read_internal'] },
+  { key: 'admin-canvas-library', to: '/admin/canvas-library', label: '画布资源库', icon: 'i-heroicons-outline-swatch', section: 'system', requiredAny: ['contest.read_internal'] },
   { key: 'admin-integrations', to: '/admin/integrations', label: '集成中心', icon: 'i-heroicons-outline-puzzle-piece', section: 'system', requiredAny: ['role.assign', 'contest.write'] },
   { key: 'admin-notifications', to: '/admin/notifications', label: '通知管理', icon: 'i-heroicons-outline-bell', section: 'system', requiredAny: ['contest.write'] },
   { key: 'admin-runtime-settings', to: '/admin/runtime-settings', label: '运行设置', icon: 'i-heroicons-outline-adjustments-horizontal', section: 'system', requiredAny: ['contest.write'] },
