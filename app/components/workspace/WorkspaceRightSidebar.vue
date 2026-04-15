@@ -428,6 +428,22 @@ function documentAssistActionDisabledReason(action: AiWorkspaceDocumentAction): 
   return String(props.documentAssistActionStatus?.[action]?.reason || aiDisabledNoticeText.value).trim()
 }
 
+const documentAssistComposerPlaceholder = computed(() => {
+  if (!props.aiEnabled)
+    return aiDisabledNoticeText.value
+  if (!props.documentAssistAction)
+    return '先点击上方快捷动作，可选补充要求后再发送。'
+  return `补充${documentAssistActionLabel(props.documentAssistAction)}的额外要求，例如：更正式、保留标题层级。`
+})
+
+const documentAssistSendDisabled = computed(() => {
+  return !props.aiEnabled || props.documentAssistRunning || !props.documentAssistAction
+})
+
+const documentAssistInputDisabled = computed(() => {
+  return !props.aiEnabled || props.documentAssistRunning
+})
+
 function isChangeActing(changeId: string): boolean {
   return props.changeActingIds.includes(changeId)
 }
@@ -749,6 +765,8 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey)
     return
   if (event.isComposing || (event as KeyboardEvent & { keyCode?: number }).keyCode === 229)
+    return
+  if (showDocumentAssistView.value && props.documentAssistRunning)
     return
   if (props.chatLoading || props.chatInterrupting)
     return
@@ -1581,67 +1599,102 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
         </template>
 
         <template v-else-if="showDocumentAssistView">
-          <div class="grid grid-cols-3 gap-2">
-            <button
-              class="workspace-right-sidebar__doc-action"
-              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'summarize' }"
-              type="button"
-              :title="documentAssistActionDisabledReason('summarize')"
-              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('summarize')"
-              @click="emit('runDocumentAssist', 'summarize')"
+          <div class="space-y-2">
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                class="workspace-right-sidebar__doc-action"
+                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'summarize' }"
+                type="button"
+                :title="documentAssistActionDisabledReason('summarize')"
+                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('summarize')"
+                @click="emit('runDocumentAssist', 'summarize')"
+              >
+                总结
+              </button>
+              <button
+                class="workspace-right-sidebar__doc-action"
+                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'rewrite' }"
+                type="button"
+                :title="documentAssistActionDisabledReason('rewrite')"
+                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('rewrite')"
+                @click="emit('runDocumentAssist', 'rewrite')"
+              >
+                润写
+              </button>
+              <button
+                class="workspace-right-sidebar__doc-action"
+                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'continue' }"
+                type="button"
+                :title="documentAssistActionDisabledReason('continue')"
+                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('continue')"
+                @click="emit('runDocumentAssist', 'continue')"
+              >
+                续写
+              </button>
+              <button
+                class="workspace-right-sidebar__doc-action"
+                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'expand' }"
+                type="button"
+                :title="documentAssistActionDisabledReason('expand')"
+                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('expand')"
+                @click="emit('runDocumentAssist', 'expand')"
+              >
+                扩写
+              </button>
+              <button
+                class="workspace-right-sidebar__doc-action"
+                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'complete_context' }"
+                type="button"
+                :title="documentAssistActionDisabledReason('complete_context')"
+                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('complete_context')"
+                @click="emit('runDocumentAssist', 'complete_context')"
+              >
+                补全上下文
+              </button>
+              <button
+                class="workspace-right-sidebar__doc-action"
+                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'restructure' }"
+                type="button"
+                :title="documentAssistActionDisabledReason('restructure')"
+                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('restructure')"
+                @click="emit('runDocumentAssist', 'restructure')"
+              >
+                结构整理
+              </button>
+            </div>
+            <div
+              class="workspace-chat-composer__input-shell"
+              :class="{ 'workspace-chat-composer__input-shell--running': props.documentAssistRunning }"
             >
-              总结
-            </button>
-            <button
-              class="workspace-right-sidebar__doc-action"
-              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'rewrite' }"
-              type="button"
-              :title="documentAssistActionDisabledReason('rewrite')"
-              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('rewrite')"
-              @click="emit('runDocumentAssist', 'rewrite')"
-            >
-              润写
-            </button>
-            <button
-              class="workspace-right-sidebar__doc-action"
-              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'continue' }"
-              type="button"
-              :title="documentAssistActionDisabledReason('continue')"
-              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('continue')"
-              @click="emit('runDocumentAssist', 'continue')"
-            >
-              续写
-            </button>
-            <button
-              class="workspace-right-sidebar__doc-action"
-              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'expand' }"
-              type="button"
-              :title="documentAssistActionDisabledReason('expand')"
-              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('expand')"
-              @click="emit('runDocumentAssist', 'expand')"
-            >
-              扩写
-            </button>
-            <button
-              class="workspace-right-sidebar__doc-action"
-              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'complete_context' }"
-              type="button"
-              :title="documentAssistActionDisabledReason('complete_context')"
-              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('complete_context')"
-              @click="emit('runDocumentAssist', 'complete_context')"
-            >
-              补全上下文
-            </button>
-            <button
-              class="workspace-right-sidebar__doc-action"
-              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'restructure' }"
-              type="button"
-              :title="documentAssistActionDisabledReason('restructure')"
-              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('restructure')"
-              @click="emit('runDocumentAssist', 'restructure')"
-            >
-              结构整理
-            </button>
+              <textarea
+                :value="chatInput"
+                class="workspace-chat-composer__textarea"
+                :placeholder="documentAssistComposerPlaceholder"
+                :disabled="documentAssistInputDisabled"
+                @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
+                @keydown="handleChatComposerKeydown"
+              />
+              <div class="workspace-chat-composer__footer workspace-chat-composer__footer--doc">
+                <div class="workspace-chat-composer__toolbar">
+                  <div class="workspace-chat-composer__doc-hint">
+                    {{ props.documentAssistAction ? documentAssistActionLabel(props.documentAssistAction) : '先选择动作' }}
+                  </div>
+                </div>
+                <button
+                  class="workspace-chat-composer__send"
+                  :class="{ 'workspace-chat-composer__send--running': props.documentAssistRunning }"
+                  :disabled="documentAssistSendDisabled"
+                  aria-label="发送文稿助手指令"
+                  title="发送文稿助手指令"
+                  @click="emit('sendChat')"
+                >
+                  <span class="workspace-chat-composer__send-spark" aria-hidden="true" />
+                  <span class="workspace-chat-composer__send-icon material-symbols-outlined">
+                    auto_awesome
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
           <button
             class="workspace-right-sidebar__doc-apply"
