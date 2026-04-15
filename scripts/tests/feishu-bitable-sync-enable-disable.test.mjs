@@ -3,11 +3,23 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 
+const DB_SCHEMA_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
+const DOMAIN_LEGACY_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
+const STORE_FILE = resolve(process.cwd(), 'server/utils/feishu-integration-store.ts')
+const PATCH_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id].patch.ts')
+const SERVICE_FILE = resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts')
+const SCHEDULER_FILE = resolve(process.cwd(), 'server/plugins/feishu-bitable-scheduler-worker.ts')
+const RUN_API_FILE = resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/run.post.ts')
+const EDITOR_FILE = resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue')
+const OVERVIEW_FILE = resolve(process.cwd(), 'app/pages/admin/integrations/feishu.vue')
+
 it('主同步信息会持久化 enabled 字段并支持补丁更新', async () => {
-  const dbSource = await readFile(resolve(process.cwd(), 'server/utils/db.ts'), 'utf8')
-  const storeSource = await readFile(resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'), 'utf8')
-  const typeSource = await readFile(resolve(process.cwd(), 'shared/types/domain.ts'), 'utf8')
-  const apiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id].patch.ts'), 'utf8')
+  const [dbSource, storeSource, typeSource, apiSource] = await Promise.all([
+    readFile(DB_SCHEMA_FILE, 'utf8'),
+    readFile(STORE_FILE, 'utf8'),
+    readFile(DOMAIN_LEGACY_FILE, 'utf8'),
+    readFile(PATCH_API_FILE, 'utf8'),
+  ])
 
   assert.match(dbSource, /CREATE TABLE IF NOT EXISTS feishu_bitable_syncs[\s\S]*is_enabled BOOLEAN NOT NULL DEFAULT TRUE/, '主同步信息表未持久化 is_enabled 字段')
   assert.match(dbSource, /ALTER TABLE feishu_bitable_syncs[\s\S]*ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE/, '主同步信息表缺少 is_enabled 兼容迁移')
@@ -28,10 +40,12 @@ it('主同步信息会持久化 enabled 字段并支持补丁更新', async () =
 })
 
 it('调度、事件和手动执行都会尊重主同步信息的 enabled 状态', async () => {
-  const storeSource = await readFile(resolve(process.cwd(), 'server/utils/feishu-integration-store.ts'), 'utf8')
-  const serviceSource = await readFile(resolve(process.cwd(), 'server/services/feishu/bitable-sync.ts'), 'utf8')
-  const schedulerSource = await readFile(resolve(process.cwd(), 'server/plugins/feishu-bitable-scheduler-worker.ts'), 'utf8')
-  const runApiSource = await readFile(resolve(process.cwd(), 'server/api/admin/integrations/feishu/bitable-syncs/[id]/items/[itemId]/run.post.ts'), 'utf8')
+  const [storeSource, serviceSource, schedulerSource, runApiSource] = await Promise.all([
+    readFile(STORE_FILE, 'utf8'),
+    readFile(SERVICE_FILE, 'utf8'),
+    readFile(SCHEDULER_FILE, 'utf8'),
+    readFile(RUN_API_FILE, 'utf8'),
+  ])
 
   assert.match(storeSource, /listFeishuBitableSyncItems[\s\S]*COALESCE\(s\.is_enabled, TRUE\) = TRUE/, '同步项活动列表未过滤已禁用的主同步信息')
   assert.match(storeSource, /claimNextDueFeishuBitableSync[\s\S]*s\.is_enabled = TRUE/, '主同步调度领取逻辑未过滤已禁用的主同步信息')
@@ -45,13 +59,15 @@ it('调度、事件和手动执行都会尊重主同步信息的 enabled 状态'
 })
 
 it('编辑器会提供主同步启停和子表快捷启停入口', async () => {
-  const editorSource = await readFile(resolve(process.cwd(), 'app/components/admin/AdminFeishuBitableSyncEditor.vue'), 'utf8')
-  const overviewSource = await readFile(resolve(process.cwd(), 'app/pages/admin/integrations/feishu.vue'), 'utf8')
+  const [editorSource, overviewSource] = await Promise.all([
+    readFile(EDITOR_FILE, 'utf8'),
+    readFile(OVERVIEW_FILE, 'utf8'),
+  ])
 
   assert.match(editorSource, /const syncForm = reactive\(\{[\s\S]*enabled: true/, '同步信息表单未接入 enabled 字段')
   assert.match(editorSource, /const syncForm = reactive\(\{[\s\S]*scheduleEnabled: false[\s\S]*scheduleMode: 'interval'/, '同步信息表单未接入主调度字段')
-  assert.match(editorSource, /syncForm\.enabled = Boolean\(response\.data\.enabled\)/, '同步详情加载后未回填 enabled')
-  assert.match(editorSource, /syncForm\.scheduleEnabled = Boolean\(response\.data\.schedule\?\.enabled\)/, '同步详情加载后未回填主调度状态')
+  assert.match(editorSource, /syncForm\.enabled = Boolean\(detail\.enabled\)/, '同步详情加载后未回填 enabled')
+  assert.match(editorSource, /syncForm\.scheduleEnabled = Boolean\(detail\.schedule\?\.enabled\)/, '同步详情加载后未回填主调度状态')
   assert.match(editorSource, /body:\s*\{[\s\S]*enabled:\s*syncForm\.enabled[\s\S]*schedule:\s*\{/, '保存同步信息时未提交主调度')
   assert.match(editorSource, /environment:\s*syncForm\.environment === 'production' \|\| syncForm\.environment === 'test'/, '保存同步信息时未提交环境标签')
   assert.match(editorSource, /启用主同步/, '编辑器未展示主同步启用开关')

@@ -5,7 +5,9 @@ import { it } from 'vitest'
 
 const TARGET_FILE = resolve(process.cwd(), 'server/utils/platform-store.ts')
 const ACCESS_TARGET_FILE = resolve(process.cwd(), 'server/utils/project-access-store.ts')
-const DOMAIN_TYPES_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
+const DOMAIN_BARREL_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
+const PROJECT_TYPES_FILE = resolve(process.cwd(), 'shared/types/project.ts')
+const DOMAIN_LEGACY_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
 
 it('listVisibleProjects 非平台管理员查询必须包含 workspace 可见性门槛', async () => {
   const source = await readFile(TARGET_FILE, 'utf8')
@@ -116,8 +118,12 @@ it('移除 Team 成员时会同步清理该空间下的 project_members 残留',
 })
 
 it('项目列表返回项目席位摘要，避免前端逐项目补请求', async () => {
-  const source = await readFile(TARGET_FILE, 'utf8')
-  const domainSource = await readFile(DOMAIN_TYPES_FILE, 'utf8')
+  const [source, domainBarrelSource, projectTypesSource, domainLegacySource] = await Promise.all([
+    readFile(TARGET_FILE, 'utf8'),
+    readFile(DOMAIN_BARREL_FILE, 'utf8'),
+    readFile(PROJECT_TYPES_FILE, 'utf8'),
+    readFile(DOMAIN_LEGACY_FILE, 'utf8'),
+  ])
 
   assert.match(
     source,
@@ -130,12 +136,22 @@ it('项目列表返回项目席位摘要，避免前端逐项目补请求', asyn
     'mapProject 未写入 projectSeatQuota 摘要，工作台项目卡无法展示席位信息',
   )
   assert.match(
-    domainSource,
+    domainBarrelSource,
+    /export \* from '\.\/project'/,
+    'shared/types/domain.ts 未继续转发 project 类型出口',
+  )
+  assert.match(
+    projectTypesSource,
+    /ProjectMemberPreviewSummary,[\s\S]*ProjectSeatQuotaSummary,[\s\S]*from '\.\/domain-legacy'/,
+    'project 类型聚合未继续转发项目席位与成员预览摘要类型',
+  )
+  assert.match(
+    domainLegacySource,
     /export interface ProjectSeatQuotaSummary \{\s+seatLimit: number\s+seatUsed: number\s+\}/,
     '共享类型缺少 ProjectSeatQuotaSummary 定义',
   )
   assert.match(
-    domainSource,
+    domainLegacySource,
     /projectSeatQuota\?: ProjectSeatQuotaSummary \| null/,
     'Project 类型未暴露 projectSeatQuota 摘要字段',
   )
@@ -145,12 +161,12 @@ it('项目列表返回项目席位摘要，避免前端逐项目补请求', asyn
     'mapProject 未写入成员预览摘要，项目卡无法展示头像叠层',
   )
   assert.match(
-    domainSource,
+    domainLegacySource,
     /export interface ProjectMemberPreviewSummary \{\s+projectId: string\s+userId: string\s+username: string\s+role: ProjectMemberRole\s+avatarUrl\?: string \| null\s+\}/,
     '共享类型缺少 ProjectMemberPreviewSummary 定义',
   )
   assert.match(
-    domainSource,
+    domainLegacySource,
     /memberPreview\?: ProjectMemberPreviewSummary\[\]/,
     'Project 类型未暴露 memberPreview 摘要字段',
   )
