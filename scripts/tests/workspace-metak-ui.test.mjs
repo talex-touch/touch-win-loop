@@ -16,8 +16,9 @@ it('MetaK 面板具备快捷键、键盘导航和结果分组锚点', async () =
     readFile(WORKSPACE_METAK_FILE, 'utf8'),
   ])
 
-  assert.match(workspaceSource, /function onMetaKGlobalKeydown\(event: KeyboardEvent\): void/, '项目工作区缺少 MetaK 全局快捷键监听')
-  assert.match(workspaceSource, /document\.addEventListener\('keydown', onMetaKGlobalKeydown\)/, '项目工作区未注册 MetaK 全局快捷键')
+  assert.match(workspaceSource, /function handleWorkspaceGlobalKeydown\(event: KeyboardEvent\): void/, '项目工作区缺少统一全局快捷键监听')
+  assert.match(workspaceSource, /if \(isWorkspaceMetaKHotkey\(event\)\) \{[\s\S]*openMetaK\(\)/, '项目工作区未在统一快捷键处理器中分发 MetaK 打开逻辑')
+  assert.match(workspaceSource, /document\.addEventListener\('keydown', handleWorkspaceGlobalKeydown\)/, '项目工作区未注册统一全局快捷键')
   assert.match(workspaceSource, /resolveWorkspaceMetaKShortcutLabel\(window\.navigator\.platform\)/, '项目工作区未按平台解析 MetaK 快捷键标签')
   assert.match(workspaceSource, /function executeMetaKItem\(item: WorkspaceMetaKItem\): Promise<void>/, '项目工作区缺少 MetaK 执行分发函数')
   assert.match(workspaceSource, /function buildMetaKRemoteLibraryItems\(resources: Resource\[\], query: string\): WorkspaceMetaKItem\[\]/, '项目工作区缺少远端系统资料库结果构建逻辑')

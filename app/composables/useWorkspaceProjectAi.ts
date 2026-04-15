@@ -66,6 +66,7 @@ export function useWorkspaceProjectAi() {
 
   const chatMessages = ref<ChatMessage[]>([])
   const chatSessions = ref<AiChatSession[]>([])
+  const openChatSessionIds = ref<string[]>([])
   const activeChatSessionId = ref('')
   const chatInput = ref('')
   const chatMissingFields = ref<string[]>([])
@@ -83,6 +84,7 @@ export function useWorkspaceProjectAi() {
 
   const aiFiltering = ref(false)
   const chatLoading = ref(false)
+  const chatInterrupting = ref(false)
   const chatSessionsLoading = ref(false)
   const formSubmitting = ref(false)
 
@@ -151,6 +153,7 @@ export function useWorkspaceProjectAi() {
     normalizedInfo,
     chatMessages,
     chatSessions,
+    openChatSessionIds,
     activeChatSessionId,
     chatInput,
     chatMissingFields,
@@ -166,6 +169,7 @@ export function useWorkspaceProjectAi() {
     preFinalReviewOpenTabs,
     aiFiltering,
     chatLoading,
+    chatInterrupting,
     chatSessionsLoading,
     formSubmitting,
     aiChangeRequests,

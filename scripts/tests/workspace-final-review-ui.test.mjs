@@ -4,18 +4,23 @@ import { resolve } from 'node:path'
 import { it } from 'vitest'
 
 const WORKSPACE_DETAIL_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
+const WORKSPACE_PROJECT_AI_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceProjectAi.ts')
 const WORKSPACE_METAK_UTIL_FILE = resolve(process.cwd(), 'app/utils/workspace-metak.ts')
 const FINAL_REVIEW_WORKBENCH_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFinalReviewWorkbench.vue')
 const FINAL_REVIEW_MATERIALS_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFinalReviewMaterialsDrawer.vue')
 const FINAL_REVIEW_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFinalReviewSidebar.vue')
 
 it('终审工作台切到独立驾驶舱布局，并挂载左右边缘触发器与覆盖式抽屉', async () => {
-  const source = await readFile(WORKSPACE_DETAIL_FILE, 'utf8')
+  const [source, composableSource] = await Promise.all([
+    readFile(WORKSPACE_DETAIL_FILE, 'utf8'),
+    readFile(WORKSPACE_PROJECT_AI_COMPOSABLE_FILE, 'utf8'),
+  ])
 
-  assert.match(source, /const finalReviewMaterialsOpen = ref\(false\)/, '项目页缺少终审资料抽屉状态')
-  assert.match(source, /const finalReviewAssistantOpen = ref\(false\)/, '项目页缺少终审助手抽屉状态')
-  assert.match(source, /const preFinalReviewLeftCollapsed = ref\(false\)/, '项目页缺少进入终审前的左栏折叠快照')
-  assert.match(source, /const preFinalReviewRightCollapsed = ref\(false\)/, '项目页缺少进入终审前的右栏折叠快照')
+  assert.match(composableSource, /const finalReviewMaterialsOpen = ref\(false\)/, '终审资料抽屉状态未沉淀到 AI composable')
+  assert.match(composableSource, /const finalReviewAssistantOpen = ref\(false\)/, '终审助手抽屉状态未沉淀到 AI composable')
+  assert.match(composableSource, /const preFinalReviewLeftCollapsed = ref\(false\)/, '进入终审前的左栏折叠快照未沉淀到 AI composable')
+  assert.match(composableSource, /const preFinalReviewRightCollapsed = ref\(false\)/, '进入终审前的右栏折叠快照未沉淀到 AI composable')
+  assert.match(source, /const \{[\s\S]*finalReviewMaterialsOpen,[\s\S]*finalReviewAssistantOpen,[\s\S]*preFinalReviewLeftCollapsed,[\s\S]*preFinalReviewRightCollapsed,[\s\S]*\} = useWorkspaceProjectAi\(\)/, '项目页未消费终审抽屉与布局快照状态')
   assert.match(source, /rememberPreFinalReviewWorkbenchState/, '项目页缺少终审进入前的普通工作台快照函数')
   assert.match(source, /restorePreFinalReviewWorkbenchState/, '项目页缺少终审退出时的普通工作台恢复函数')
   assert.match(source, /<main v-if="workbenchMode !== 'final_review'" class="workspace-layout/, '项目页未为普通工作台保留独立分支')

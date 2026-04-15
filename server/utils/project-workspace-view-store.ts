@@ -84,6 +84,23 @@ function normalizeWorkspaceOpenTabs(
   return normalized.length > 0 ? normalized : ['dashboard']
 }
 
+function normalizeOpenChatSessionIds(value: unknown): string[] {
+  if (!Array.isArray(value))
+    return []
+
+  const normalized: string[] = []
+  const used = new Set<string>()
+  for (const item of value) {
+    const sessionId = normalizeString(item)
+    if (!sessionId || used.has(sessionId))
+      continue
+    normalized.push(sessionId)
+    used.add(sessionId)
+  }
+
+  return normalized.slice(-8)
+}
+
 function parseTimestamp(value: string): number {
   const timestamp = new Date(value).getTime()
   if (Number.isNaN(timestamp))
@@ -114,10 +131,14 @@ function normalizeProjectWorkspaceViewStatePayloadWithOptions(
   const workbenchMode = requestedWorkbenchMode === 'defense' ? 'defense' : 'project'
 
   const previewResourceId = normalizeString(source.previewResourceId)
+  const openChatSessionIds = normalizeOpenChatSessionIds(source.openChatSessionIds)
   const activeChatSessionId = normalizeString(source.activeChatSessionId)
   const activeMeetingId = normalizeString(source.activeMeetingId)
   const selectedContestId = normalizeString(source.selectedContestId)
   const selectedTrackId = normalizeString(source.selectedTrackId)
+
+  if (activeChatSessionId && !openChatSessionIds.includes(activeChatSessionId))
+    openChatSessionIds.push(activeChatSessionId)
 
   if (previewResourceId) {
     const previewTabId = `resource:${previewResourceId}` as WorkspaceOpenTabStateLike
@@ -139,6 +160,7 @@ function normalizeProjectWorkspaceViewStatePayloadWithOptions(
     previewResourceId,
     selectedContestId,
     selectedTrackId,
+    openChatSessionIds: normalizeOpenChatSessionIds(openChatSessionIds),
     activeChatSessionId,
     activeMeetingId,
     leftSidebarCollapsed: normalizeBoolean(source.leftSidebarCollapsed),

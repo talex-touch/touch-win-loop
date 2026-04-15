@@ -84,6 +84,7 @@ interface UseWorkspaceProjectViewStateOptions {
   previewResourceId: Ref<string>
   selectedContestId: Ref<string>
   selectedTrackId: Ref<string>
+  openChatSessionIds: Ref<string[]>
   activeChatSessionId: Ref<string>
   activeMeetingId: Ref<string>
   activeMeetingDetail: Ref<ProjectMeetingDetail | null>
@@ -122,6 +123,23 @@ function listRawWorkspaceTabIds(value: unknown): string[] {
     .map(item => normalizeString(item))
     .filter(Boolean)
     .slice(0, 8)
+}
+
+function normalizeOpenChatSessionIds(value: unknown): string[] {
+  if (!Array.isArray(value))
+    return []
+
+  const normalized: string[] = []
+  const used = new Set<string>()
+  for (const item of value) {
+    const sessionId = normalizeString(item)
+    if (!sessionId || used.has(sessionId))
+      continue
+    normalized.push(sessionId)
+    used.add(sessionId)
+  }
+
+  return normalized.slice(-8)
 }
 
 function resolveLegacyDesignResourceId(
@@ -285,6 +303,7 @@ export function createDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewSt
     previewResourceId: '',
     selectedContestId: '',
     selectedTrackId: '',
+    openChatSessionIds: [],
     activeChatSessionId: '',
     activeMeetingId: '',
     leftSidebarCollapsed: true,
@@ -300,12 +319,17 @@ export function normalizeProjectWorkspaceViewState(
   const mainTabs = normalizeWorkspaceMainTabIds(source.mainTabs, { allowEmpty: allowEmptyMainTabs })
   let previewResourceId = normalizeString(source.previewResourceId)
   let activeMeetingId = normalizeString(source.activeMeetingId)
+  const activeChatSessionId = normalizeString(source.activeChatSessionId)
+  const openChatSessionIds = normalizeOpenChatSessionIds(source.openChatSessionIds)
 
   const requestedActiveTabId = normalizeString(source.activeMainTabId)
   if (!previewResourceId && requestedActiveTabId.startsWith('resource:'))
     previewResourceId = requestedActiveTabId.slice('resource:'.length)
   if (!activeMeetingId && requestedActiveTabId.startsWith('meeting:'))
     activeMeetingId = resolveMeetingIdFromTabId(requestedActiveTabId)
+
+  if (activeChatSessionId && !openChatSessionIds.includes(activeChatSessionId))
+    openChatSessionIds.push(activeChatSessionId)
 
   if (previewResourceId) {
     const previewTabId = createResourceTabId(previewResourceId)
@@ -324,7 +348,8 @@ export function normalizeProjectWorkspaceViewState(
     previewResourceId,
     selectedContestId: normalizeString(source.selectedContestId),
     selectedTrackId: normalizeString(source.selectedTrackId),
-    activeChatSessionId: normalizeString(source.activeChatSessionId),
+    openChatSessionIds: normalizeOpenChatSessionIds(openChatSessionIds),
+    activeChatSessionId,
     activeMeetingId,
     leftSidebarCollapsed: Boolean(source.leftSidebarCollapsed),
     rightSidebarCollapsed: Boolean(source.rightSidebarCollapsed),
@@ -372,6 +397,8 @@ export function isProjectWorkspaceViewStateEqual(
     && left.previewResourceId === right.previewResourceId
     && left.selectedContestId === right.selectedContestId
     && left.selectedTrackId === right.selectedTrackId
+    && left.openChatSessionIds.length === right.openChatSessionIds.length
+    && left.openChatSessionIds.every((item, index) => item === right.openChatSessionIds[index])
     && left.activeChatSessionId === right.activeChatSessionId
     && left.activeMeetingId === right.activeMeetingId
     && left.leftSidebarCollapsed === right.leftSidebarCollapsed
@@ -381,7 +408,7 @@ export function isProjectWorkspaceViewStateEqual(
   )
 }
 
-const PROJECT_VIEW_STATE_QUERY_KEYS = ['wb', 'tab', 'tabs', 'res', 'contest', 'track', 'session', 'meeting', 'ls', 'rs', 'panel'] as const
+const PROJECT_VIEW_STATE_QUERY_KEYS = ['wb', 'tab', 'tabs', 'res', 'contest', 'track', 'sessions', 'session', 'meeting', 'ls', 'rs', 'panel'] as const
 
 function readString(source: Ref<string> | ComputedRef<string>): string {
   return normalizeString(source.value)
@@ -517,6 +544,7 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
       previewResourceId: options.previewResourceId.value,
       selectedContestId: options.selectedContestId.value,
       selectedTrackId: options.selectedTrackId.value,
+      openChatSessionIds: options.openChatSessionIds.value,
       activeChatSessionId: options.activeChatSessionId.value,
       activeMeetingId: options.activeMeetingId.value,
       leftSidebarCollapsed: options.leftSidebarCollapsed.value,
@@ -537,6 +565,11 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
   } {
     const hasManagedQuery = PROJECT_VIEW_STATE_QUERY_KEYS.some(key => key in route.query)
     const hasManagedTabsQuery = ['tabs', 'tab', 'res', 'panel'].some(key => key in route.query)
+    const chatSessionItems = normalizeQueryParam(route.query.sessions)
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+      .slice(0, 8)
     const tabItems = normalizeQueryParam(route.query.tabs)
       .split(',')
       .map(item => item.trim())
@@ -583,6 +616,7 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
         previewResourceId,
         selectedContestId: normalizeString(route.query.contest),
         selectedTrackId: normalizeString(route.query.track),
+        openChatSessionIds: normalizeOpenChatSessionIds(chatSessionItems),
         activeChatSessionId: normalizeString(route.query.session),
         activeMeetingId,
         leftSidebarCollapsed: isTruthyQueryFlag(route.query.ls),
@@ -609,6 +643,8 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
       query.contest = normalized.selectedContestId
     if (normalized.selectedTrackId)
       query.track = normalized.selectedTrackId
+    if (normalized.openChatSessionIds.length > 0)
+      query.sessions = normalized.openChatSessionIds.join(',')
     if (normalized.activeChatSessionId)
       query.session = normalized.activeChatSessionId
     if (normalized.activeMeetingId)
@@ -770,6 +806,7 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
       options.previewResourceId.value = normalized.previewResourceId
       options.selectedContestId.value = normalized.selectedContestId
       options.selectedTrackId.value = normalized.selectedTrackId
+      options.openChatSessionIds.value = [...normalized.openChatSessionIds]
       options.activeChatSessionId.value = normalized.activeChatSessionId
       options.activeMeetingId.value = nextMeetingId
       options.leftSidebarCollapsed.value = normalized.leftSidebarCollapsed

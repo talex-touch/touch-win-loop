@@ -25,14 +25,18 @@ import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
 
 type WorkspacePrimarySidebarAiMode = Exclude<WorkspaceAiMode, 'defense' | 'document_assist'>
 type WorkspaceRightSidebarView = 'ai' | 'comments'
+type WorkspaceSessionVisualType = WorkspaceAiMode | 'final_review' | 'topic_proposal'
 
 const props = withDefaults(defineProps<{
   chatSessions?: AiChatSession[]
+  openChatSessionIds?: string[]
   activeChatSessionId?: string
   chatSessionsLoading?: boolean
+  chatSessionDeletingId?: string
   chatMessages?: ChatMessage[]
   chatInput?: string
   chatLoading?: boolean
+  chatInterrupting?: boolean
   workspacePreparing?: boolean
   currentUserName?: string
   currentUserAvatarUrl?: string | null
@@ -73,11 +77,14 @@ const props = withDefaults(defineProps<{
   collapsed?: boolean
 }>(), {
   chatSessions: () => [],
+  openChatSessionIds: () => [],
   activeChatSessionId: '',
   chatSessionsLoading: false,
+  chatSessionDeletingId: '',
   chatMessages: () => [],
   chatInput: '',
   chatLoading: false,
+  chatInterrupting: false,
   workspacePreparing: false,
   currentUserName: '',
   currentUserAvatarUrl: '',
@@ -124,7 +131,9 @@ const emit = defineEmits<{
   'update:sidebarView': [value: WorkspaceRightSidebarView]
   'collapse': []
   'sendChat': []
+  'interruptChat': []
   'switchChatSession': [sessionId: string]
+  'deleteChatSession': [sessionId: string]
   'createChatSession': []
   'approveChange': [change: AiProjectChangeRequest]
   'rejectChange': [change: AiProjectChangeRequest]
@@ -158,6 +167,44 @@ const PRIMARY_MODES: Array<{ value: WorkspacePrimarySidebarAiMode, label: string
   { value: 'auto_optimize', label: '自动优化' },
   { value: 'issue_discovery', label: '寻疑发现' },
 ]
+
+const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label: string, prefixes: string[] }> = {
+  topic_proposal: {
+    icon: 'lightbulb',
+    label: '选题助手',
+    prefixes: ['选题助手'],
+  },
+  dialog_ask: {
+    icon: 'chat',
+    label: '对话询问',
+    prefixes: ['Loopy 对话'],
+  },
+  auto_optimize: {
+    icon: 'auto_fix_high',
+    label: '自动优化',
+    prefixes: ['Loopy 自动优化'],
+  },
+  issue_discovery: {
+    icon: 'search_insights',
+    label: '寻疑发现',
+    prefixes: ['Loopy 寻疑发现'],
+  },
+  defense: {
+    icon: 'record_voice_over',
+    label: '答辩模拟',
+    prefixes: ['Loopy 答辩模拟', 'Loopy 答辩会话', '答辩模拟'],
+  },
+  document_assist: {
+    icon: 'edit_document',
+    label: '文档增强',
+    prefixes: ['Loopy 文档增强'],
+  },
+  final_review: {
+    icon: 'task_alt',
+    label: '终审助手',
+    prefixes: ['终审助手'],
+  },
+}
 
 const inputPlaceholder = computed(() => {
   if (props.aiMode === 'auto_optimize')
@@ -205,6 +252,7 @@ const issueReportStatusLabel = computed(() => {
 
 const commentDraftText = ref('')
 const commentReplyDraftMap = reactive<Record<string, string>>({})
+const historyPopoverVisible = ref(false)
 
 const showCommentsView = computed(() => props.showCommentTab && props.sidebarView === 'comments')
 const showDocumentAssistView = computed(() => props.sidebarView === 'ai' && props.aiMode === 'document_assist')
@@ -213,6 +261,27 @@ const markdownSidebarEnabled = computed(() => {
     props.aiMode === 'document_assist'
     || (props.showCommentTab && (props.commentDraftAnchor || props.commentThreads.length > 0)),
   )
+})
+const showSessionHeaderCompact = computed(() => {
+  return !showCommentsView.value && !showDocumentAssistView.value && !markdownSidebarEnabled.value
+})
+const openChatSessions = computed(() => {
+  const sessionMap = new Map(props.chatSessions.map(item => [item.id, item] as const))
+  const openedSessions = props.openChatSessionIds
+    .map(sessionId => sessionMap.get(sessionId) || null)
+    .filter((session): session is AiChatSession => Boolean(session))
+
+  if (
+    props.activeChatSessionId
+    && !props.openChatSessionIds.includes(props.activeChatSessionId)
+    && sessionMap.has(props.activeChatSessionId)
+  ) {
+    const activeSession = sessionMap.get(props.activeChatSessionId)
+    if (activeSession)
+      openedSessions.push(activeSession)
+  }
+
+  return openedSessions
 })
 const activeCommentThread = computed(() => {
   const threadId = String(props.activeCommentThreadId || '').trim()
@@ -345,6 +414,106 @@ function handleModeSelectChange(event: Event) {
     selectMode(value as WorkspacePrimarySidebarAiMode)
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function resolveSessionTitle(session: AiChatSession): string {
+  const title = String(session.title || '').trim()
+  return title || '未命名会话'
+}
+
+function resolveSessionVisualType(session: AiChatSession): WorkspaceSessionVisualType {
+  const title = resolveSessionTitle(session)
+
+  if (title.includes('选题助手'))
+    return 'topic_proposal'
+  if (title.includes('终审助手'))
+    return 'final_review'
+  if (title.includes('答辩'))
+    return 'defense'
+  if (title.includes('自动优化'))
+    return 'auto_optimize'
+  if (title.includes('寻疑发现'))
+    return 'issue_discovery'
+  if (title.includes('文档增强'))
+    return 'document_assist'
+  if (session.mode === 'auto_optimize' || session.mode === 'issue_discovery' || session.mode === 'defense' || session.mode === 'document_assist')
+    return session.mode
+  return 'dialog_ask'
+}
+
+function trimSessionTypePrefix(title: string, type: WorkspaceSessionVisualType): string {
+  const prefixes = SESSION_VISUALS[type].prefixes
+  for (const prefix of prefixes) {
+    const pattern = new RegExp(`^(?:新建\\s*)?${escapeRegExp(prefix)}\\s*[·•|｜:：-]?\\s*`, 'u')
+    const stripped = title.replace(pattern, '').trim()
+    if (stripped)
+      return stripped
+  }
+
+  return title
+}
+
+function truncateSessionTabLabel(title: string): string {
+  const chars = Array.from(title)
+  if (chars.length <= 8)
+    return title
+  return `${chars.slice(0, 8).join('')}…`
+}
+
+function resolveSessionTabLabel(session: AiChatSession): string {
+  const fullTitle = resolveSessionTitle(session)
+  const trimmedTitle = trimSessionTypePrefix(fullTitle, resolveSessionVisualType(session))
+  return truncateSessionTabLabel(trimmedTitle || fullTitle)
+}
+
+function resolveSessionTabIcon(session: AiChatSession): string {
+  return SESSION_VISUALS[resolveSessionVisualType(session)].icon
+}
+
+function resolveSessionTypeLabel(session: AiChatSession): string {
+  return SESSION_VISUALS[resolveSessionVisualType(session)].label
+}
+
+function formatSessionDetailTime(value: string | null | undefined): string {
+  const normalized = String(value || '').trim()
+  if (!normalized)
+    return '暂无'
+
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime()))
+    return normalized
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
+function setHistoryPopoverVisible(visible: boolean): void {
+  historyPopoverVisible.value = visible
+}
+
+function handleChatSessionSwitch(sessionId: string): void {
+  historyPopoverVisible.value = false
+  emit('switchChatSession', sessionId)
+}
+
+function handleCreateChatSession(): void {
+  historyPopoverVisible.value = false
+  emit('createChatSession')
+}
+
+function handleDeleteChatSession(sessionId: string): void {
+  emit('deleteChatSession', sessionId)
+}
+
 function defenseStageLabel(stage: AiDefenseStage | undefined): string {
   if (stage === 'opening')
     return '开场'
@@ -454,7 +623,7 @@ function requestExportIssueReport() {
     class="border-l border-slate-200 bg-white flex flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
     :tabindex="props.collapsed ? -1 : 0"
   >
-    <div class="px-3.5 py-2.5 border-b border-slate-200 bg-slate-50/72 shrink-0 space-y-2">
+    <div class="border-b border-slate-200 bg-slate-50/72 shrink-0 px-3.5 py-2.5 space-y-2" :class="{ 'workspace-right-sidebar__header--compact': showSessionHeaderCompact }">
       <div
         v-if="showCommentsView || showDocumentAssistView"
         class="workspace-right-sidebar__context-chip"
@@ -523,24 +692,138 @@ function requestExportIssueReport() {
           <div class="rounded bg-slate-100 h-7 animate-pulse" />
           <div class="rounded bg-slate-100 h-7 animate-pulse" />
         </div>
-        <div v-else-if="chatSessions.length === 0" class="text-[11px] text-slate-400 leading-5">
-          暂无会话，直接发送问题即可开始对话。
-        </div>
-        <div v-else class="workspace-right-sidebar__session-list">
-          <button
-            v-for="session in chatSessions"
-            :key="session.id"
-            class="workspace-right-sidebar__session-button"
-            :class="session.id === activeChatSessionId ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'"
-            @click="emit('switchChatSession', session.id)"
+        <div v-else class="workspace-right-sidebar__session-strip">
+          <div
+            class="workspace-right-sidebar__session-tabs"
+            data-testid="workspace-right-sidebar-session-tabs"
           >
-            <div class="text-[10px] text-slate-700 font-semibold truncate">
-              {{ session.title || '未命名会话' }}
+            <div
+              v-if="openChatSessions.length === 0"
+              class="workspace-right-sidebar__session-empty"
+            >
+              暂无打开的会话
             </div>
-            <div class="text-[10px] text-slate-500 mt-0.5">
-              消息 {{ session.messageCount }} · {{ session.lastMessageAt || session.updatedAt }}
-            </div>
-          </button>
+            <a-trigger
+              v-for="session in openChatSessions"
+              :key="session.id"
+              class="workspace-right-sidebar__session-trigger"
+              trigger="hover"
+              position="bottom"
+            >
+              <button
+                class="workspace-right-sidebar__session-tab"
+                :class="{ 'workspace-right-sidebar__session-tab--active': session.id === activeChatSessionId }"
+                :title="resolveSessionTitle(session)"
+                type="button"
+                @click="handleChatSessionSwitch(session.id)"
+              >
+                <span class="material-symbols-outlined workspace-right-sidebar__session-tab-icon">{{ resolveSessionTabIcon(session) }}</span>
+                <span class="workspace-right-sidebar__session-tab-label">{{ resolveSessionTabLabel(session) }}</span>
+              </button>
+
+              <template #content>
+                <div
+                  class="workspace-right-sidebar__session-popover"
+                  data-testid="workspace-right-sidebar-session-popover"
+                >
+                  <div class="workspace-right-sidebar__session-popover-title">
+                    {{ resolveSessionTitle(session) }}
+                  </div>
+                  <div class="workspace-right-sidebar__session-popover-row">
+                    <span>类型</span>
+                    <span>{{ resolveSessionTypeLabel(session) }}</span>
+                  </div>
+                  <div class="workspace-right-sidebar__session-popover-row">
+                    <span>消息</span>
+                    <span>{{ session.messageCount }}</span>
+                  </div>
+                  <div class="workspace-right-sidebar__session-popover-row">
+                    <span>最近更新</span>
+                    <span>{{ formatSessionDetailTime(session.lastMessageAt || session.updatedAt) }}</span>
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+          </div>
+
+          <div class="workspace-right-sidebar__session-actions">
+            <a-trigger
+              class="workspace-right-sidebar__session-history-trigger"
+              trigger="click"
+              position="bottom"
+              :popup-visible="historyPopoverVisible"
+              @popup-visible-change="setHistoryPopoverVisible"
+            >
+              <button
+                class="workspace-right-sidebar__session-action workspace-right-sidebar__session-history-button"
+                data-testid="workspace-right-sidebar-session-history-button"
+                type="button"
+                title="会话历史"
+                aria-label="会话历史"
+                @click.stop
+              >
+                <span class="material-symbols-outlined workspace-right-sidebar__session-action-icon">history</span>
+              </button>
+
+              <template #content>
+                <div
+                  class="workspace-right-sidebar__session-history-popover"
+                  data-testid="workspace-right-sidebar-session-history-popover"
+                >
+                  <div class="workspace-right-sidebar__session-history-heading">历史记录</div>
+                  <div v-if="chatSessions.length === 0" class="workspace-right-sidebar__session-history-empty">
+                    暂无历史记录
+                  </div>
+                  <div v-else class="workspace-right-sidebar__session-history-list">
+                    <div
+                      v-for="session in chatSessions"
+                      :key="`history-${session.id}`"
+                      class="workspace-right-sidebar__session-history-row"
+                      :class="{ 'workspace-right-sidebar__session-history-row--active': session.id === activeChatSessionId }"
+                    >
+                      <button
+                        class="workspace-right-sidebar__session-history-entry"
+                        type="button"
+                        :title="resolveSessionTitle(session)"
+                        @click="handleChatSessionSwitch(session.id)"
+                      >
+                        <span class="material-symbols-outlined workspace-right-sidebar__session-history-icon">{{ resolveSessionTabIcon(session) }}</span>
+                        <span class="workspace-right-sidebar__session-history-copy">
+                          <span class="workspace-right-sidebar__session-history-title">{{ resolveSessionTitle(session) }}</span>
+                          <span class="workspace-right-sidebar__session-history-meta">
+                            {{ resolveSessionTypeLabel(session) }} · {{ formatSessionDetailTime(session.lastMessageAt || session.updatedAt) }}
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        class="workspace-right-sidebar__session-history-delete"
+                        data-testid="workspace-right-sidebar-session-history-delete"
+                        type="button"
+                        :title="props.chatSessionDeletingId === session.id ? '删除中' : '删除会话'"
+                        :aria-label="props.chatSessionDeletingId === session.id ? '删除中' : '删除会话'"
+                        :disabled="props.chatSessionDeletingId === session.id"
+                        @click.stop="handleDeleteChatSession(session.id)"
+                      >
+                        <span class="material-symbols-outlined workspace-right-sidebar__session-history-delete-icon">
+                          {{ props.chatSessionDeletingId === session.id ? 'hourglass_top' : 'delete' }}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </a-trigger>
+
+            <button
+              class="workspace-right-sidebar__session-action workspace-right-sidebar__session-create"
+              type="button"
+              title="新建对话"
+              aria-label="新建对话"
+              @click="handleCreateChatSession"
+            >
+              <span class="material-symbols-outlined workspace-right-sidebar__session-create-icon">add</span>
+            </button>
+          </div>
         </div>
       </template>
     </div>
@@ -1189,54 +1472,62 @@ function requestExportIssueReport() {
             </div>
           </div>
 
-          <div class="workspace-chat-composer__input-shell">
+          <div
+            class="workspace-chat-composer__input-shell"
+            :class="{ 'workspace-chat-composer__input-shell--running': chatLoading }"
+          >
             <textarea
               :value="chatInput"
               class="workspace-chat-composer__textarea"
               :placeholder="inputPlaceholder"
               @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
             />
-            <div class="workspace-chat-composer__toolbar">
-              <label
-                class="workspace-chat-composer__mode-pill"
-                :class="{ 'workspace-chat-composer__mode-pill--disabled': aiMode === 'defense' }"
-              >
-                <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
-                  auto_awesome
-                </span>
-                <select
-                  data-testid="workspace-right-sidebar-mode-select"
-                  class="workspace-mode-select workspace-mode-select--embedded"
-                  :value="modeSelectValue()"
-                  :disabled="aiMode === 'defense'"
-                  @change="handleModeSelectChange"
+            <div class="workspace-chat-composer__footer">
+              <div class="workspace-chat-composer__toolbar">
+                <label
+                  class="workspace-chat-composer__mode-pill"
+                  :class="{ 'workspace-chat-composer__mode-pill--disabled': aiMode === 'defense' }"
                 >
-                  <option v-if="aiMode === 'defense'" value="" disabled>
-                    答辩工作台（顶部切换）
-                  </option>
-                  <option
-                    v-for="mode in PRIMARY_MODES"
-                    :key="mode.value"
-                    :value="mode.value"
+                  <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
+                    auto_awesome
+                  </span>
+                  <select
+                    data-testid="workspace-right-sidebar-mode-select"
+                    class="workspace-mode-select workspace-mode-select--embedded"
+                    :value="modeSelectValue()"
+                    :disabled="aiMode === 'defense'"
+                    @change="handleModeSelectChange"
                   >
-                    {{ mode.label }}
-                  </option>
-                </select>
-                <span class="workspace-chat-composer__mode-chevron material-symbols-outlined" aria-hidden="true">
-                  expand_more
+                    <option v-if="aiMode === 'defense'" value="" disabled>
+                      答辩工作台（顶部切换）
+                    </option>
+                    <option
+                      v-for="mode in PRIMARY_MODES"
+                      :key="mode.value"
+                      :value="mode.value"
+                    >
+                      {{ mode.label }}
+                    </option>
+                  </select>
+                  <span class="workspace-chat-composer__mode-chevron material-symbols-outlined" aria-hidden="true">
+                    expand_more
+                  </span>
+                </label>
+              </div>
+              <button
+                class="workspace-chat-composer__send"
+                :class="{ 'workspace-chat-composer__send--running': chatLoading }"
+                :disabled="props.chatInterrupting"
+                :aria-label="chatLoading ? '打断生成' : '发送消息'"
+                :title="chatLoading ? '打断生成' : '发送消息'"
+                @click="chatLoading ? emit('interruptChat') : emit('sendChat')"
+              >
+                <span class="workspace-chat-composer__send-spark" aria-hidden="true" />
+                <span class="workspace-chat-composer__send-icon material-symbols-outlined">
+                  {{ chatLoading ? 'stop' : 'send' }}
                 </span>
-              </label>
+              </button>
             </div>
-            <button
-              class="workspace-chat-composer__send"
-              :disabled="chatLoading"
-              @click="emit('sendChat')"
-            >
-              <span class="workspace-chat-composer__send-spark" aria-hidden="true" />
-              <span class="workspace-chat-composer__send-icon material-symbols-outlined">
-                {{ chatLoading ? 'hourglass_top' : 'send' }}
-              </span>
-            </button>
           </div>
         </template>
       </div>
@@ -1296,25 +1587,330 @@ function requestExportIssueReport() {
   letter-spacing: 0.02em;
 }
 
-.workspace-right-sidebar__session-list {
-  max-height: 108px;
-  padding-right: 2px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.workspace-right-sidebar__header--compact {
+  padding: 0;
 }
 
-.workspace-right-sidebar__session-button {
-  width: 100%;
-  padding: 8px 9px;
-  text-align: left;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+.workspace-right-sidebar__header--compact > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0 !important;
+}
+
+.workspace-right-sidebar__session-strip {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: 40px;
+  background: #fff;
+}
+
+.workspace-right-sidebar__session-tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: stretch;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.workspace-right-sidebar__session-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-right-sidebar__session-empty {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  border-right: 1px solid #e2e8f0;
+  background: #fff;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workspace-right-sidebar__session-trigger {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: max-content;
+  height: 100%;
+  border-right: 1px solid #e2e8f0;
+}
+
+.workspace-right-sidebar__session-tab {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 132px;
+  height: 100%;
+  padding: 0 14px;
+  border: none;
+  border-radius: 0;
+  background: #fff;
+  color: #475569;
+  white-space: nowrap;
   transition:
-    border-color 0.18s ease,
     background-color 0.18s ease,
-    box-shadow 0.18s ease;
+    color 0.18s ease;
+}
+
+.workspace-right-sidebar__session-tab:hover {
+  background: #f8fafc;
+}
+
+.workspace-right-sidebar__session-tab--active {
+  background: #f8fafc;
+  color: #1d4ed8;
+}
+
+.workspace-right-sidebar__session-tab::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 2px;
+  background: #3b82f6;
+  opacity: 0;
+  transform: scaleX(0.55);
+  transform-origin: center;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.workspace-right-sidebar__session-tab--active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.workspace-right-sidebar__session-tab-icon {
+  font-size: 16px;
+  color: inherit;
+}
+
+.workspace-right-sidebar__session-tab-label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.workspace-right-sidebar__session-popover {
+  width: 220px;
+  padding: 10px 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.workspace-right-sidebar__session-popover-title {
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.workspace-right-sidebar__session-popover-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.workspace-right-sidebar__session-popover-row span:last-child {
+  color: #334155;
+  text-align: right;
+  word-break: break-word;
+}
+
+.workspace-right-sidebar__session-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  height: 100%;
+}
+
+.workspace-right-sidebar__session-history-trigger {
+  display: flex;
+  height: 100%;
+}
+
+.workspace-right-sidebar__session-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-left: 1px solid #e2e8f0;
+  border-radius: 0;
+  background: #fff;
+  color: #64748b;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.workspace-right-sidebar__session-action:hover {
+  background: #f8fafc;
+}
+
+.workspace-right-sidebar__session-history-button:hover {
+  color: #0f172a;
+}
+
+.workspace-right-sidebar__session-action-icon,
+.workspace-right-sidebar__session-create-icon {
+  font-size: 16px;
+}
+
+.workspace-right-sidebar__session-create {
+  color: #1d4ed8;
+}
+
+.workspace-right-sidebar__session-create:hover {
+  color: #1d4ed8;
+}
+
+.workspace-right-sidebar__session-history-popover {
+  width: 300px;
+  border: 1px solid #e2e8f0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.99);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.workspace-right-sidebar__session-history-heading {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.workspace-right-sidebar__session-history-empty {
+  padding: 14px 12px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.workspace-right-sidebar__session-history-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.workspace-right-sidebar__session-history-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.workspace-right-sidebar__session-history-row:first-child {
+  border-top: none;
+}
+
+.workspace-right-sidebar__session-history-row--active {
+  background: #f8fafc;
+}
+
+.workspace-right-sidebar__session-history-entry {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #0f172a;
+  text-align: left;
+  transition: background-color 0.18s ease;
+}
+
+.workspace-right-sidebar__session-history-entry:hover {
+  background: #f8fafc;
+}
+
+.workspace-right-sidebar__session-history-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-size: 16px;
+  color: #64748b;
+}
+
+.workspace-right-sidebar__session-history-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workspace-right-sidebar__session-history-title {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-right-sidebar__session-history-meta {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-right-sidebar__session-history-delete {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid #f1f5f9;
+  border-radius: 0;
+  background: transparent;
+  color: #94a3b8;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.workspace-right-sidebar__session-history-delete:hover:not(:disabled) {
+  background: #fff1f2;
+  color: #dc2626;
+}
+
+.workspace-right-sidebar__session-history-delete:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.workspace-right-sidebar__session-history-delete-icon {
+  font-size: 16px;
 }
 
 .workspace-chat-messages {
@@ -1328,44 +1924,132 @@ function requestExportIssueReport() {
   flex-direction: column;
   gap: 10px;
   flex-shrink: 0;
-  padding: 12px;
-  border-top: 1px solid #e2e8f0;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92) 0%, #ffffff 22px);
+  padding: 0 12px 14px;
+  border-top: none;
+  background: transparent;
 }
 
 .workspace-chat-composer__input-shell {
   position: relative;
-  padding: 2px;
-  overflow: hidden;
-  border-radius: 22px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.94)) padding-box,
-    linear-gradient(128deg, rgba(129, 140, 248, 0.78), rgba(96, 165, 250, 0.38) 48%, rgba(251, 191, 36, 0.82)) border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: visible;
+  isolation: isolate;
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.06);
+}
+
+.workspace-chat-composer__input-shell--running {
   box-shadow:
     0 18px 38px rgba(15, 23, 42, 0.08),
-    0 1px 0 rgba(255, 255, 255, 0.7) inset;
+    0 0 18px rgba(96, 165, 250, 0.18),
+    0 0 40px rgba(244, 114, 182, 0.12);
+}
+
+.workspace-chat-composer__input-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    110deg,
+    rgba(96, 165, 250, 0.96) 0%,
+    rgba(129, 140, 248, 0.92) 18%,
+    rgba(244, 114, 182, 0.88) 36%,
+    rgba(251, 191, 36, 0.92) 52%,
+    rgba(96, 165, 250, 0.96) 68%,
+    rgba(129, 140, 248, 0.92) 84%,
+    rgba(244, 114, 182, 0.88) 100%
+  );
+  background-size: 240% 240%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.88;
+  animation: workspace-composer-border-flow 7.5s linear infinite;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+
+.workspace-chat-composer__input-shell--running::before {
+  opacity: 0.98;
+  animation-duration: 5.4s;
+}
+
+.workspace-chat-composer__input-shell::after {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  border-radius: 38px;
+  background: linear-gradient(
+    110deg,
+    rgba(96, 165, 250, 0.42) 0%,
+    rgba(129, 140, 248, 0.38) 18%,
+    rgba(244, 114, 182, 0.34) 36%,
+    rgba(251, 191, 36, 0.38) 52%,
+    rgba(96, 165, 250, 0.42) 68%,
+    rgba(129, 140, 248, 0.38) 84%,
+    rgba(244, 114, 182, 0.34) 100%
+  );
+  background-size: 240% 240%;
+  filter: blur(22px);
+  opacity: 0.34;
+  pointer-events: none;
+  z-index: -1;
+  animation: workspace-composer-border-flow 9.5s linear infinite reverse;
+}
+
+.workspace-chat-composer__input-shell--running::after {
+  inset: -18px;
+  opacity: 0.5;
+  filter: blur(28px);
+  animation-duration: 6.6s;
 }
 
 .workspace-chat-composer__input-shell:focus-within {
+  box-shadow: 0 18px 36px rgba(37, 99, 235, 0.08);
+}
+
+.workspace-chat-composer__input-shell:focus-within::after {
+  opacity: 0.42;
+  filter: blur(24px);
+}
+
+.workspace-chat-composer__input-shell--running:focus-within {
   box-shadow:
-    0 22px 42px rgba(37, 99, 235, 0.12),
-    0 0 0 1px rgba(129, 140, 248, 0.22);
+    0 20px 40px rgba(37, 99, 235, 0.1),
+    0 0 22px rgba(96, 165, 250, 0.22),
+    0 0 48px rgba(244, 114, 182, 0.14);
+}
+
+.workspace-chat-composer__input-shell--running:focus-within::after {
+  opacity: 0.58;
+  filter: blur(30px);
 }
 
 .workspace-chat-composer__textarea {
   width: 100%;
-  height: 116px;
+  min-height: 92px;
+  max-height: 188px;
   resize: none;
   border: none;
-  border-radius: 20px;
-  background:
-    radial-gradient(circle at left top, rgba(255, 255, 255, 0.86), transparent 52%),
-    linear-gradient(180deg, #f8fbff 0%, #f4f7fd 100%);
+  background: transparent;
   color: #0f172a;
   font-size: 12px;
   line-height: 1.55;
-  padding: 15px 70px 58px 15px;
+  padding: 15px 15px 6px;
   outline: none;
+  overflow-y: auto;
+  position: relative;
+  z-index: 1;
 }
 
 .workspace-chat-composer__textarea::placeholder {
@@ -1373,19 +2057,26 @@ function requestExportIssueReport() {
 }
 
 .workspace-chat-composer__textarea:focus {
-  box-shadow: inset 0 0 0 1px rgba(134, 174, 251, 0.34);
+  box-shadow: none;
+}
+
+.workspace-chat-composer__footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px 12px;
+  position: relative;
+  z-index: 1;
 }
 
 .workspace-chat-composer__toolbar {
-  position: absolute;
-  right: 70px;
-  bottom: 11px;
-  left: 12px;
   display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  pointer-events: none;
 }
 
 .workspace-chat-composer__mode-pill {
@@ -1395,14 +2086,10 @@ function requestExportIssueReport() {
   max-width: 100%;
   height: 34px;
   align-items: center;
-  border: 1px solid rgba(165, 180, 252, 0.28);
+  border: 1px solid rgba(196, 208, 255, 0.85);
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(243, 246, 255, 0.92));
-  box-shadow:
-    0 10px 20px rgba(99, 102, 241, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 8px 18px rgba(99, 102, 241, 0.05);
 }
 
 .workspace-chat-composer__mode-pill--disabled {
@@ -1462,6 +2149,18 @@ function requestExportIssueReport() {
   }
 }
 
+@keyframes workspace-composer-border-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
 .workspace-mode-select {
   min-width: 118px;
   height: 24px;
@@ -1489,11 +2188,10 @@ function requestExportIssueReport() {
 }
 
 .workspace-chat-composer__send {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  width: 42px;
-  height: 42px;
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
   border: 1px solid rgba(255, 255, 255, 0.42);
   border-radius: 999px;
   background: linear-gradient(135deg, #4f46e5 0%, #2563eb 48%, #f59e0b 100%);
@@ -1511,8 +2209,14 @@ function requestExportIssueReport() {
     opacity 0.18s ease,
     border-color 0.18s ease,
     box-shadow 0.18s ease,
-    filter 0.18s ease,
-    transform 0.18s ease;
+    filter 0.18s ease;
+}
+
+.workspace-chat-composer__send--running {
+  box-shadow:
+    0 16px 30px rgba(79, 70, 229, 0.28),
+    0 0 18px rgba(96, 165, 250, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
 }
 
 .workspace-chat-composer__send:disabled {
@@ -1524,7 +2228,6 @@ function requestExportIssueReport() {
   border-color: rgba(255, 255, 255, 0.56);
   box-shadow: 0 18px 34px rgba(79, 70, 229, 0.28);
   filter: saturate(1.06);
-  transform: translateY(-1px);
 }
 
 .workspace-chat-composer__send:focus-visible {
@@ -1549,7 +2252,7 @@ function requestExportIssueReport() {
 .workspace-chat-composer__send-icon {
   position: relative;
   z-index: 1;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
   font-variation-settings:
     'FILL' 0,

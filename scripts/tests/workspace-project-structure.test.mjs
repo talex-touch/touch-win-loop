@@ -54,6 +54,7 @@ it('项目工作区入口已将 route、侧栏布局、领域状态机与纯 hel
   assert.match(pageSource, /const \{[\s\S]*projectMeetings,[\s\S]*loadProjectMeetings,[\s\S]*handleMeetingRealtimeEnvelope,[\s\S]*\} = useWorkspaceProjectMeetings\(/, '项目工作区未复用会议状态 composable')
   assert.match(pageSource, /const \{[\s\S]*markdownCommentThreads,[\s\S]*loadMarkdownCommentThreads,[\s\S]*reopenMarkdownCommentThread,[\s\S]*\} = useWorkspaceProjectComments\(/, '项目工作区未复用评论状态 composable')
   assert.match(pageSource, /const \{[\s\S]*topicBoardDraft,[\s\S]*chatMessages,[\s\S]*resetChatState,[\s\S]*\} = useWorkspaceProjectAi\(\)/, '项目工作区未复用 AI 状态 composable')
+  assert.match(pageSource, /const \{[\s\S]*chatSessions,[\s\S]*openChatSessionIds,[\s\S]*activeChatSessionId,[\s\S]*\} = useWorkspaceProjectAi\(\)/, '项目工作区未复用 AI 会话 tabs 打开态')
   assert.match(pageSource, /const \{[\s\S]*projectSettingsLoading,[\s\S]*projectSettingsDraftServerRevision,[\s\S]*\} = useWorkspaceProjectSettings\(\)/, '项目工作区未复用 settings 状态 composable')
   assert.match(pageSource, /const \{[\s\S]*initializeRightSidebarBreakpointTracking,[\s\S]*collapseRightSidebar,[\s\S]*expandRightSidebar,[\s\S]*\} = useWorkspaceSidebarLayout\(\)/, '项目工作区未复用侧栏布局状态机')
   assert.match(pageSource, /async function removeProjectResources\(resourceIds: string\[\]\)/, '项目工作区缺少批量删除资源处理')
@@ -87,6 +88,7 @@ it('项目工作区入口已将 route、侧栏布局、领域状态机与纯 hel
   assert.match(meetingsSource, /export function useWorkspaceProjectMeetings\(/, '缺少项目工作区 meetings composable')
   assert.match(commentsSource, /export function useWorkspaceProjectComments\(/, '缺少项目工作区 comments composable')
   assert.match(aiSource, /export function useWorkspaceProjectAi\(/, '缺少项目工作区 ai composable')
+  assert.match(aiSource, /const openChatSessionIds = ref<string\[\]>\(\[\]\)/, '项目工作区 ai composable 缺少打开中的会话 tabs 状态')
   assert.match(settingsSource, /export function useWorkspaceProjectSettings\(/, '缺少项目工作区 settings composable')
 
   assert.match(helperSource, /export function createEmptyProjectAdaptationForm/, '缺少项目工作区 adaptation helper')

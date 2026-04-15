@@ -4,7 +4,9 @@ import { resolve } from 'node:path'
 import { it } from 'vitest'
 
 const DOMAIN_FILE = resolve(process.cwd(), 'shared/types/domain.ts')
-const DB_FILE = resolve(process.cwd(), 'server/utils/db.ts')
+const DOMAIN_LEGACY_FILE = resolve(process.cwd(), 'shared/types/domain-legacy.ts')
+const WORKSPACE_TYPES_FILE = resolve(process.cwd(), 'shared/types/workspace.ts')
+const DB_SCHEMA_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
 const STORE_FILE = resolve(process.cwd(), 'server/utils/workspace-display-preference-store.ts')
 const USER_GET_API_FILE = resolve(process.cwd(), 'server/api/user/workspace-display-preferences.get.ts')
 const USER_PATCH_API_FILE = resolve(process.cwd(), 'server/api/user/workspace-display-preferences.patch.ts')
@@ -20,24 +22,28 @@ const APP_FILE = resolve(process.cwd(), 'app/app.vue')
 const COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceDisplayPreferences.ts')
 
 it('工作区显示偏好共享类型、存储表与后端优先级链已落地', async () => {
-  const [domainSource, dbSource, storeSource] = await Promise.all([
+  const [domainSource, domainLegacySource, workspaceTypesSource, dbSchemaSource, storeSource] = await Promise.all([
     readFile(DOMAIN_FILE, 'utf8'),
-    readFile(DB_FILE, 'utf8'),
+    readFile(DOMAIN_LEGACY_FILE, 'utf8'),
+    readFile(WORKSPACE_TYPES_FILE, 'utf8'),
+    readFile(DB_SCHEMA_FILE, 'utf8'),
     readFile(STORE_FILE, 'utf8'),
   ])
 
-  assert.match(domainSource, /export type WorkspaceFontSizePreset = 'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl'/, '缺少字体大小五档预设类型')
-  assert.match(domainSource, /export type WorkspaceTabSpacingPreset = 'compact' \| 'default' \| 'relaxed'/, '缺少标签边距预设类型')
-  assert.match(domainSource, /export type WorkspaceDisplayPreferenceSource = 'workspace_override' \| 'user_default' \| 'team_default' \| 'system_default'/, '缺少显示偏好来源类型')
-  assert.match(domainSource, /tabSpacingPreset\?: WorkspaceTabSpacingPreset \| null/, '显示偏好缺少标签边距字段')
-  assert.match(domainSource, /tabSpacingPreset: WorkspaceDisplayPreferenceSource/, '显示偏好来源缺少标签边距来源字段')
-  assert.match(domainSource, /export interface WorkspaceDisplayPreferenceSnapshot \{[\s\S]*userDefault: WorkspaceDisplayPreferences \| null[\s\S]*teamDefault: WorkspaceDisplayPreferences \| null[\s\S]*workspaceOverride: WorkspaceDisplayPreferences \| null[\s\S]*effective: WorkspaceDisplayPreferences[\s\S]*sources: WorkspaceDisplayPreferenceSources[\s\S]*canManageTeamDefault: boolean[\s\S]*\}/, '缺少工作区显示偏好快照结构')
+  assert.match(domainSource, /export \* from '\.\/workspace'/, 'shared/types/domain.ts 未继续转发 workspace 类型出口')
+  assert.match(workspaceTypesSource, /WorkspaceDisplayPreferenceSnapshot,[\s\S]*WorkspaceDisplayPreferenceSource,[\s\S]*WorkspaceDisplayPreferenceSources,[\s\S]*WorkspaceFontSizePreset,[\s\S]*WorkspaceTabSpacingPreset,[\s\S]*from '\.\/domain-legacy'/, 'workspace 类型聚合未继续转发显示偏好相关共享类型')
+  assert.match(domainLegacySource, /export type WorkspaceFontSizePreset = 'xs' \| 'sm' \| 'md' \| 'lg' \| 'xl'/, '缺少字体大小五档预设类型')
+  assert.match(domainLegacySource, /export type WorkspaceTabSpacingPreset = 'compact' \| 'default' \| 'relaxed'/, '缺少标签边距预设类型')
+  assert.match(domainLegacySource, /export type WorkspaceDisplayPreferenceSource = 'workspace_override' \| 'user_default' \| 'team_default' \| 'system_default'/, '缺少显示偏好来源类型')
+  assert.match(domainLegacySource, /tabSpacingPreset\?: WorkspaceTabSpacingPreset \| null/, '显示偏好缺少标签边距字段')
+  assert.match(domainLegacySource, /tabSpacingPreset: WorkspaceDisplayPreferenceSource/, '显示偏好来源缺少标签边距来源字段')
+  assert.match(domainLegacySource, /export interface WorkspaceDisplayPreferenceSnapshot \{[\s\S]*userDefault: WorkspaceDisplayPreferences \| null[\s\S]*teamDefault: WorkspaceDisplayPreferences \| null[\s\S]*workspaceOverride: WorkspaceDisplayPreferences \| null[\s\S]*effective: WorkspaceDisplayPreferences[\s\S]*sources: WorkspaceDisplayPreferenceSources[\s\S]*canManageTeamDefault: boolean[\s\S]*\}/, '缺少工作区显示偏好快照结构')
 
-  assert.match(dbSource, /CREATE TABLE IF NOT EXISTS user_workspace_display_defaults \(/, '缺少个人全局默认表')
-  assert.match(dbSource, /CREATE TABLE IF NOT EXISTS workspace_display_defaults \(/, '缺少团队默认表')
-  assert.match(dbSource, /CREATE TABLE IF NOT EXISTS user_workspace_display_overrides \(/, '缺少工作区个人覆盖表')
-  assert.match(dbSource, /preferences JSONB NOT NULL/, '显示偏好表未统一使用 JSONB 存储')
-  assert.match(dbSource, /idx_user_workspace_display_overrides_workspace_user/, '缺少工作区个人覆盖索引')
+  assert.match(dbSchemaSource, /CREATE TABLE IF NOT EXISTS user_workspace_display_defaults \(/, '缺少个人全局默认表')
+  assert.match(dbSchemaSource, /CREATE TABLE IF NOT EXISTS workspace_display_defaults \(/, '缺少团队默认表')
+  assert.match(dbSchemaSource, /CREATE TABLE IF NOT EXISTS user_workspace_display_overrides \(/, '缺少工作区个人覆盖表')
+  assert.match(dbSchemaSource, /preferences JSONB NOT NULL/, '显示偏好表未统一使用 JSONB 存储')
+  assert.match(dbSchemaSource, /idx_user_workspace_display_overrides_workspace_user/, '缺少工作区个人覆盖索引')
 
   assert.match(storeSource, /function resolveEffectiveWorkspaceDisplayPreferences\(/, '后端未提供统一解析函数')
   assert.match(storeSource, /function resolveWorkspaceDisplayPreferenceValue<.*WorkspaceFontSizePreset \| WorkspaceTabSpacingPreset>/, '后端未抽出显示偏好字段解析逻辑')

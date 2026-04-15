@@ -3,10 +3,11 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { it } from 'vitest'
 
-const DB_FILE = resolve(process.cwd(), 'server/utils/db.ts')
+const DB_FILE = resolve(process.cwd(), 'server/database/bootstrap/schema.ts')
 const CHAT_STORE_FILE = resolve(process.cwd(), 'server/utils/chat-store.ts')
 const TEAM_SESSIONS_GET_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/index.get.ts')
 const TEAM_SESSIONS_POST_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/index.post.ts')
+const TEAM_SESSIONS_DELETE_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/[sessionId].delete.ts')
 const TEAM_MESSAGES_GET_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/[sessionId]/messages/index.get.ts')
 const TEAM_MESSAGES_POST_FILE = resolve(process.cwd(), 'server/api/teams/[id]/chat/sessions/[sessionId]/messages/index.post.ts')
 const WORKSPACE_PAGE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
@@ -93,11 +94,31 @@ it('team 消息接口对 dialog_ask 放行空 projectId，并继续使用 strict
   )
 })
 
+it('team 会话删除接口对 dialog_ask 放行空 projectId，并继续使用 strictScope 做作用域校验', async () => {
+  const source = await readFile(TEAM_SESSIONS_DELETE_FILE, 'utf8')
+
+  assert.match(
+    source,
+    /if \(!workspaceId \|\| !sessionId \|\| !mode \|\| \(mode !== 'dialog_ask' && !projectId\)\)/,
+    'Team 会话删除接口未放行 workspace 级 dialog_ask 或未保留其它模式的 projectId 校验',
+  )
+  assert.match(
+    source,
+    /getAiChatSessionById\([\s\S]*projectId,[\s\S]*mode,[\s\S]*strictScope: true/,
+    'Team 会话删除接口未按 strictScope 校验会话作用域',
+  )
+  assert.match(
+    source,
+    /deleteAiChatSession\([\s\S]*projectId,[\s\S]*mode,[\s\S]*strictScope: true/,
+    'Team 会话删除接口未按 strictScope 删除作用域内会话',
+  )
+})
+
 it('项目页会话请求携带 projectId + mode 并在切模式时重载会话', async () => {
   const source = await readFile(WORKSPACE_PAGE_FILE, 'utf8')
   assert.match(
     source,
-    /endpoint\(`\/teams\/\$\{activeWorkspaceId\.value\}\/chat\/sessions`\),[\s\S]*query: \{[\s\S]*projectId,[\s\S]*mode: aiMode\.value/,
+    /endpoint\(`\/teams\/\$\{workspaceId\}\/chat\/sessions`\),[\s\S]*\{[\s\S]*projectId,[\s\S]*mode,[\s\S]*limit: 30/,
     '项目页会话列表请求未携带 projectId + mode',
   )
   assert.match(

@@ -462,6 +462,7 @@ const {
   normalizedInfo,
   chatMessages,
   chatSessions,
+  openChatSessionIds,
   activeChatSessionId,
   chatInput,
   chatMissingFields,
@@ -477,6 +478,7 @@ const {
   preFinalReviewOpenTabs,
   aiFiltering,
   chatLoading,
+  chatInterrupting,
   chatSessionsLoading,
   formSubmitting,
   aiChangeRequests,
@@ -506,6 +508,8 @@ let projectResourcePreviewRequestId = 0
 let chatMessagesRequestId = 0
 let chatSessionsRequestId = 0
 let defenseSessionDetailRequestId = 0
+const activeChatStreamAbortController = ref<AbortController | null>(null)
+const deletingChatSessionId = ref('')
 const {
   resources,
   recycleResources,
@@ -700,6 +704,7 @@ const {
   previewResourceId,
   selectedContestId,
   selectedTrackId,
+  openChatSessionIds,
   activeChatSessionId,
   activeMeetingId,
   activeMeetingDetail,
@@ -2670,6 +2675,23 @@ const workspaceShellLoading = computed(() => {
   if (!projectWorkspaceViewReady.value)
     return true
   return !activeTabReady.value
+})
+const workspaceShellLoadingProgress = computed(() => {
+  if (!me.value)
+    return 6
+  if (!activeWorkspaceId.value)
+    return 12
+  if (!highlightedProjectId.value)
+    return 100
+  if (activeTabReady.value)
+    return 100
+  if (projectWorkspaceViewReady.value)
+    return 74
+  if (projectWorkspaceModeHydrating.value || projectWorkspaceViewHydrating.value)
+    return 52
+  if (workspaceCriticalLoading.value)
+    return 28
+  return 16
 })
 
 const collabSelectionStatus = ref({
@@ -6113,8 +6135,10 @@ async function runDocumentAssistAction(
 
         if (eventType === 'progress') {
           statusLine.value = String(data.message || '文档 AI 处理中...')
-          if (data.sessionId)
+          if (data.sessionId) {
+            ensureOpenChatSessionTab(String(data.sessionId))
             activeChatSessionId.value = String(data.sessionId)
+          }
           continue
         }
 
@@ -6128,8 +6152,10 @@ async function runDocumentAssistAction(
           const result = toJsonPayload(data.result) as Partial<AiWorkspaceResult>
           assistantBuffer = String(result.assistantReply || assistantBuffer)
           documentAssistResult.value = assistantBuffer
-          if (result.sessionId)
+          if (result.sessionId) {
+            ensureOpenChatSessionTab(String(result.sessionId))
             activeChatSessionId.value = String(result.sessionId)
+          }
           statusLine.value = '文档 AI 结果已生成。'
           continue
         }
@@ -6512,6 +6538,7 @@ async function startDefenseRealtime() {
         },
       },
     )
+    ensureOpenChatSessionTab(response.data.sessionId)
     activeChatSessionId.value = response.data.sessionId
     defenseStage.value = 'opening'
     defenseTurnCount.value = 0
@@ -6536,6 +6563,71 @@ async function startDefenseRealtime() {
   finally {
     meetingMutating.value = false
   }
+}
+
+const MAX_OPEN_CHAT_SESSION_TABS = 8
+
+function normalizeOpenChatSessionIdList(value: string[]): string[] {
+  const normalized: string[] = []
+  const used = new Set<string>()
+
+  for (const item of value) {
+    const sessionId = normalizeString(item)
+    if (!sessionId || used.has(sessionId))
+      continue
+    normalized.push(sessionId)
+    used.add(sessionId)
+  }
+
+  return normalized.slice(-MAX_OPEN_CHAT_SESSION_TABS)
+}
+
+function setOpenChatSessionTabs(value: string[]): void {
+  openChatSessionIds.value = normalizeOpenChatSessionIdList(value)
+}
+
+function ensureOpenChatSessionTab(sessionId: string): void {
+  const normalizedSessionId = normalizeString(sessionId)
+  if (!normalizedSessionId || openChatSessionIds.value.includes(normalizedSessionId))
+    return
+
+  setOpenChatSessionTabs([
+    ...openChatSessionIds.value,
+    normalizedSessionId,
+  ])
+}
+
+function removeOpenChatSessionTab(sessionId: string): void {
+  const normalizedSessionId = normalizeString(sessionId)
+  if (!normalizedSessionId)
+    return
+
+  setOpenChatSessionTabs(openChatSessionIds.value.filter(item => item !== normalizedSessionId))
+}
+
+function syncOpenChatSessionTabsInScope(
+  sessions: AiChatSession[],
+  options: {
+    preferredSessionId?: string
+  } = {},
+): string[] {
+  const availableSessionIdSet = new Set(
+    sessions.map(item => normalizeString(item.id)).filter(Boolean),
+  )
+  const nextOpenSessionIds = normalizeOpenChatSessionIdList(
+    openChatSessionIds.value.filter(item => availableSessionIdSet.has(item)),
+  )
+  const preferredSessionId = normalizeString(options.preferredSessionId)
+  const activeSessionId = normalizeString(activeChatSessionId.value)
+
+  if (preferredSessionId && availableSessionIdSet.has(preferredSessionId) && !nextOpenSessionIds.includes(preferredSessionId))
+    nextOpenSessionIds.push(preferredSessionId)
+  if (activeSessionId && availableSessionIdSet.has(activeSessionId) && !nextOpenSessionIds.includes(activeSessionId))
+    nextOpenSessionIds.push(activeSessionId)
+
+  const normalizedOpenSessionIds = normalizeOpenChatSessionIdList(nextOpenSessionIds)
+  openChatSessionIds.value = normalizedOpenSessionIds
+  return normalizedOpenSessionIds
 }
 
 function buildSessionTitleByMode(): string {
@@ -6594,6 +6686,7 @@ async function loadChatSessions(options: {
   const requestId = ++chatSessionsRequestId
   if (!workspaceId || !projectId) {
     chatSessions.value = []
+    openChatSessionIds.value = []
     activeChatSessionId.value = ''
     resetChatState()
     return
@@ -6619,17 +6712,24 @@ async function loadChatSessions(options: {
       return
     }
     chatSessions.value = data
+    const openSessionIdsInScope = syncOpenChatSessionTabsInScope(chatSessions.value, {
+      preferredSessionId: options.preferredSessionId,
+    })
 
     const preferredSessionId = normalizeString(options.preferredSessionId)
     const fallbackToFirst = options.fallbackToFirst !== false
     const nextSession = (
       (preferredSessionId ? chatSessions.value.find(item => item.id === preferredSessionId) : null)
       || chatSessions.value.find(item => item.id === activeChatSessionId.value)
+      || openSessionIdsInScope
+        .map(sessionId => chatSessions.value.find(item => item.id === sessionId) || null)
+        .find(Boolean)
       || (fallbackToFirst ? chatSessions.value[0] : null)
     )
 
     if (!nextSession) {
       if (options.autoCreate === false) {
+        openChatSessionIds.value = []
         activeChatSessionId.value = ''
         resetChatState()
         return
@@ -6637,10 +6737,12 @@ async function loadChatSessions(options: {
 
       const createdId = await createChatSession()
       if (!createdId) {
+        openChatSessionIds.value = []
         activeChatSessionId.value = ''
         resetChatState()
         return
       }
+      ensureOpenChatSessionTab(createdId)
       activeChatSessionId.value = createdId
       await loadChatSessions({
         preferredSessionId: createdId,
@@ -6648,6 +6750,7 @@ async function loadChatSessions(options: {
       return
     }
 
+    ensureOpenChatSessionTab(nextSession.id)
     activeChatSessionId.value = nextSession.id
     await loadChatMessages(nextSession.id)
   }
@@ -6659,6 +6762,7 @@ async function loadChatSessions(options: {
       && aiMode.value === mode
     ) {
       chatSessions.value = []
+      openChatSessionIds.value = []
       activeChatSessionId.value = ''
       resetChatState()
     }
@@ -6670,11 +6774,55 @@ async function loadChatSessions(options: {
 }
 
 async function switchChatSession(sessionId: string) {
-  if (!sessionId || sessionId === activeChatSessionId.value)
+  if (!sessionId)
+    return
+
+  ensureOpenChatSessionTab(sessionId)
+  if (sessionId === activeChatSessionId.value)
     return
 
   activeChatSessionId.value = sessionId
   await loadChatMessages(sessionId)
+}
+
+async function deleteChatSession(sessionId: string) {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  const projectId = String(activeProjectId.value || '').trim()
+  if (!workspaceId || !projectId || !sessionId || deletingChatSessionId.value)
+    return
+
+  const previousOpenChatSessionIds = [...openChatSessionIds.value]
+  deletingChatSessionId.value = sessionId
+  removeOpenChatSessionTab(sessionId)
+  try {
+    await unsafeFetch<ApiResponse<{ sessionId: string }>>(
+      buildProjectApiRequestUrl(
+        endpoint(`/teams/${workspaceId}/chat/sessions/${sessionId}`),
+        {
+          projectId,
+          mode: aiMode.value,
+        },
+      ),
+      {
+        method: 'DELETE',
+      },
+    )
+
+    await loadChatSessions({
+      preferredSessionId: activeChatSessionId.value === sessionId ? '' : activeChatSessionId.value,
+      autoCreate: false,
+      fallbackToFirst: true,
+    })
+    statusLine.value = '已删除会话。'
+  }
+  catch (error) {
+    openChatSessionIds.value = previousOpenChatSessionIds
+    statusLine.value = resolveApiErrorMessage(error, '删除会话失败，请稍后重试。')
+  }
+  finally {
+    if (deletingChatSessionId.value === sessionId)
+      deletingChatSessionId.value = ''
+  }
 }
 
 async function startNewChatSession() {
@@ -7230,7 +7378,7 @@ function buildWorkspaceSystemMessage(eventType: 'progress' | 'tool', data: Recor
   }
 }
 
-async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[]) {
+async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: AbortSignal) {
   const runningMode = aiMode.value
   chatDraft.value = null
   chatMissingFields.value = []
@@ -7267,6 +7415,7 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[]) {
   const response = await fetch(endpoint('/ai/workspace/stream'), {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers: {
       'Content-Type': 'application/json',
     },
@@ -7311,8 +7460,10 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[]) {
 
       if (eventType === 'progress') {
         statusLine.value = String(data.message || 'AI 处理中...')
-        if (data.sessionId)
+        if (data.sessionId) {
+          ensureOpenChatSessionTab(String(data.sessionId))
           activeChatSessionId.value = String(data.sessionId)
+        }
         streamSystemMessages.push(buildWorkspaceSystemMessage('progress', data))
         renderStreamMessages()
         continue
@@ -7340,8 +7491,10 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[]) {
         assistantBuffer = String(result.assistantReply || assistantBuffer)
         renderStreamMessages()
 
-        if (result.sessionId)
+        if (result.sessionId) {
+          ensureOpenChatSessionTab(String(result.sessionId))
           activeChatSessionId.value = String(result.sessionId)
+        }
 
         if (runningMode === 'auto_optimize') {
           const createdCount = Array.isArray(result.proposals) ? result.proposals.length : 0
@@ -7394,7 +7547,7 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[]) {
     await loadProjectIssues()
 }
 
-async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
+async function sendDefenseMessage(pendingMessages: ChatMessage[], signal?: AbortSignal) {
   chatDraft.value = null
   chatMissingFields.value = []
   defenseRounds.value = []
@@ -7408,6 +7561,7 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
   const response = await fetch(endpoint('/ai/defense/stream'), {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers: {
       'Content-Type': 'application/json',
     },
@@ -7467,8 +7621,10 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
 
       if (eventType === 'progress') {
         statusLine.value = String(data.message || '答辩模拟处理中...')
-        if (data.sessionId)
+        if (data.sessionId) {
+          ensureOpenChatSessionTab(String(data.sessionId))
           activeChatSessionId.value = String(data.sessionId)
+        }
         continue
       }
       if (eventType === 'stage') {
@@ -7510,8 +7666,10 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
           defenseScorecard.value = scorecard
         if (Array.isArray(result.missingFields))
           chatMissingFields.value = result.missingFields.map(item => String(item))
-        if (result.sessionId)
+        if (result.sessionId) {
+          ensureOpenChatSessionTab(String(result.sessionId))
           activeChatSessionId.value = String(result.sessionId)
+        }
         if (result.stage)
           defenseStage.value = String(result.stage) as AiDefenseStage
         if (Number.isFinite(Number(result.turnIndex)))
@@ -7540,6 +7698,11 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[]) {
 }
 
 async function sendChatMessage() {
+  if (chatLoading.value) {
+    interruptChatMessage()
+    return
+  }
+
   if (!activeWorkspaceId.value) {
     statusLine.value = '请先选择一个空间。'
     return
@@ -7560,6 +7723,7 @@ async function sendChatMessage() {
       statusLine.value = '创建对话会话失败，请稍后重试。'
       return
     }
+    ensureOpenChatSessionTab(createdId)
     activeChatSessionId.value = createdId
   }
 
@@ -7570,6 +7734,7 @@ async function sendChatMessage() {
       statusLine.value = '当前会话不属于该项目作用域，且重建失败。'
       return
     }
+    ensureOpenChatSessionTab(recreatedId)
     activeChatSessionId.value = recreatedId
     await loadChatSessions({
       preferredSessionId: recreatedId,
@@ -7580,16 +7745,28 @@ async function sendChatMessage() {
   chatMessages.value = pendingMessages
   chatInput.value = ''
   chatLoading.value = true
+  chatInterrupting.value = false
+  const abortController = new AbortController()
+  activeChatStreamAbortController.value = abortController
   let streamFailed = false
+  let streamInterrupted = false
 
   try {
     if (aiMode.value === 'defense')
-      await sendDefenseMessage(pendingMessages)
+      await sendDefenseMessage(pendingMessages, abortController.signal)
     else
-      await sendWorkspaceAiMessage(pendingMessages)
+      await sendWorkspaceAiMessage(pendingMessages, abortController.signal)
   }
   catch (error) {
-    streamFailed = true
+    if (isAbortError(error)) {
+      streamInterrupted = true
+      statusLine.value = '已打断当前 AI 运行。'
+    }
+    else {
+      streamFailed = true
+    }
+    if (streamInterrupted)
+      return
     const message = error instanceof Error ? error.message : 'AI 调用失败。'
     const errorText = message || '聊天服务暂不可用，请稍后重试。'
     const existingMessages = [...chatMessages.value]
@@ -7601,12 +7778,26 @@ async function sendChatMessage() {
   }
   finally {
     chatLoading.value = false
-    if (!streamFailed) {
+    chatInterrupting.value = false
+    activeChatStreamAbortController.value = null
+    if (!streamFailed && !streamInterrupted) {
       await loadChatSessions({
         preferredSessionId: activeChatSessionId.value,
       })
     }
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function interruptChatMessage(): void {
+  if (!chatLoading.value || !activeChatStreamAbortController.value || chatInterrupting.value)
+    return
+  chatInterrupting.value = true
+  statusLine.value = '正在打断当前 AI 运行...'
+  activeChatStreamAbortController.value.abort()
 }
 
 async function submitProject(target?: { contestId?: string, trackId?: string }) {
@@ -8303,6 +8494,7 @@ watch(activeProjectId, async (next, previous) => {
     resetWorkspaceMemberManagementState()
     workspaceInvitationLink.value = ''
     chatSessions.value = []
+    openChatSessionIds.value = []
     activeChatSessionId.value = ''
     defensePersonas.value = []
     selectedContestDetail.value = null
@@ -8775,6 +8967,7 @@ watch(
     previewResourceId,
     selectedContestId,
     selectedTrackId,
+    openChatSessionIds,
     activeChatSessionId,
     activeMeetingId,
     leftSidebarCollapsed,
@@ -8820,11 +9013,13 @@ watch(aiMode, async (next, previous) => {
 
   if (!activeWorkspaceId.value || !activeProjectId.value) {
     chatSessions.value = []
+    openChatSessionIds.value = []
     activeChatSessionId.value = ''
     resetChatState()
     return
   }
 
+  openChatSessionIds.value = []
   activeChatSessionId.value = ''
   resetChatState()
   if (next === 'defense')
@@ -9149,10 +9344,13 @@ watch(() => workspaceRealtime.connected.value, () => {
             :sidebar-view="rightSidebarView"
             class="min-h-0 overflow-hidden"
             :chat-sessions="chatSessions"
+            :open-chat-session-ids="openChatSessionIds"
             :active-chat-session-id="activeChatSessionId"
             :chat-sessions-loading="chatSessionsLoading"
+            :chat-session-deleting-id="deletingChatSessionId"
             :chat-messages="chatMessages"
             :chat-loading="chatLoading"
+            :chat-interrupting="chatInterrupting"
             :workspace-preparing="workspacePreparing"
             :current-user-name="me?.user.username || ''"
             :current-user-avatar-url="me?.user.avatarUrl || ''"
@@ -9191,9 +9389,11 @@ watch(() => workspaceRealtime.connected.value, () => {
             :collapsed="rightSidebarCollapsed"
             @update:sidebar-view="rightSidebarView = $event"
             @send-chat="sendChatMessage"
+            @interrupt-chat="interruptChatMessage"
             @update:ai-mode="updateWorkspaceAiMode"
             @collapse="collapseRightSidebar"
             @switch-chat-session="switchChatSession"
+            @delete-chat-session="deleteChatSession"
             @create-chat-session="startNewChatSession"
             @approve-change="approveAiChange"
             @reject-change="rejectAiChange"
@@ -9293,7 +9493,6 @@ watch(() => workspaceRealtime.connected.value, () => {
         @close="finalReviewAssistantOpen = false"
         @send-chat="sendChatMessage"
       />
-
     </main>
 
     <WorkspaceStatusBar
@@ -9311,7 +9510,10 @@ watch(() => workspaceRealtime.connected.value, () => {
     />
 
     <Transition name="workspace-shell-loading-overlay">
-      <WorkspaceShellLoadingOverlay v-if="workspaceShellLoading" />
+      <WorkspaceShellLoadingOverlay
+        v-if="workspaceShellLoading"
+        :progress="workspaceShellLoadingProgress"
+      />
     </Transition>
 
     <input

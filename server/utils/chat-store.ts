@@ -309,6 +309,48 @@ export async function getAiChatSessionById(
   return row ? mapChatSession(row) : null
 }
 
+export async function deleteAiChatSession(
+  db: Queryable,
+  input: {
+    workspaceId: string
+    sessionId: string
+    projectId?: string
+    mode?: WorkspaceAiMode
+    strictScope?: boolean
+  },
+): Promise<boolean> {
+  const strictScope = Boolean(input.strictScope)
+  const hasProjectFilter = input.projectId !== undefined
+  const hasModeFilter = input.mode !== undefined
+  const normalizedProjectId = hasProjectFilter ? normalizeProjectId(input.projectId) : ''
+  const normalizedMode = hasModeFilter ? normalizeChatSessionMode(input.mode) : 'dialog_ask'
+
+  if (!isStrictScopeSatisfied(strictScope, hasModeFilter, normalizedMode, normalizedProjectId))
+    return false
+
+  const where: string[] = ['workspace_id = $1', 'id = $2']
+  const values: unknown[] = [input.workspaceId, input.sessionId]
+
+  if (hasProjectFilter) {
+    values.push(normalizedProjectId)
+    where.push(`project_id = $${values.length}`)
+  }
+
+  if (hasModeFilter) {
+    values.push(normalizedMode)
+    where.push(`mode = $${values.length}`)
+  }
+
+  const result = await db.query<{ id: string }>(
+    `DELETE FROM ai_chat_sessions
+     WHERE ${where.join(' AND ')}
+     RETURNING id`,
+    values,
+  )
+
+  return result.rowCount > 0
+}
+
 export async function listAiChatMessagesBySession(
   db: Queryable,
   input: {
