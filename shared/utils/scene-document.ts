@@ -1282,7 +1282,7 @@ function normalizeCompositionModel(value: unknown, templateKey = ''): Compositio
   const pages = ensureArray(source.pages).map(normalizeDesignPageModel)
   const frames = ensureArray(source.frames).map((entry, index) => normalizeDesignFrameModel(entry, index, pages[0]?.id || DEFAULT_COMPOSITION_PAGE_ID))
   const assets = ensureArray(source.assets).map(normalizeDesignAssetModel)
-  const migratedFrame = pages.length === 0 || frames.length === 0
+  const migratedFrame = pages.length === 0
     ? createLegacyCompositionFrame({
         id: DEFAULT_COMPOSITION_FRAME_ID,
         pageId: DEFAULT_COMPOSITION_PAGE_ID,
@@ -2288,20 +2288,11 @@ function buildCompositionSceneModel(sourceModel: CompositionModel): SceneModel {
     id: currentPageId,
   })
   const currentFrames = frames.filter(frame => normalizeString(frame.pageId) === normalizeString(currentPage.id))
-  const fallbackFrame = createLegacyCompositionFrame({
-    id: DEFAULT_COMPOSITION_FRAME_ID,
-    pageId: currentPage.id,
-    templateKey: sourceModel.templateKey,
-    deviceFramePresetKey: sourceModel.deviceFramePresetKey,
-    aspectRatio: sourceModel.aspectRatio,
-    slots: sourceModel.slots,
-    themeTokens: sourceModel.themeTokens,
-  })
-  const pageFrames = currentFrames.length > 0 ? currentFrames : [fallbackFrame]
-  const minX = Math.min(...pageFrames.map(frame => frame.x))
-  const minY = Math.min(...pageFrames.map(frame => frame.y))
-  const maxX = Math.max(...pageFrames.map(frame => frame.x + frame.width))
-  const maxY = Math.max(...pageFrames.map(frame => frame.y + frame.height))
+  const pageFrames = currentFrames
+  const minX = pageFrames.length > 0 ? Math.min(...pageFrames.map(frame => frame.x)) : 0
+  const minY = pageFrames.length > 0 ? Math.min(...pageFrames.map(frame => frame.y)) : 0
+  const maxX = pageFrames.length > 0 ? Math.max(...pageFrames.map(frame => frame.x + frame.width)) : DEFAULT_ARTBOARD_WIDTH
+  const maxY = pageFrames.length > 0 ? Math.max(...pageFrames.map(frame => frame.y + frame.height)) : DEFAULT_ARTBOARD_HEIGHT
   return {
     nodes: pageFrames.map((frame) => {
       return {

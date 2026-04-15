@@ -2292,7 +2292,10 @@ export type WorkspaceAiMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery'
 export type ProjectResourceCommentAnchorType = 'text_selection' | 'image_node'
 export type ProjectResourceCommentThreadStatus = 'open' | 'resolved'
 export type AiWorkspaceDocumentTrigger = 'selection_toolbar' | 'slash_menu' | 'right_sidebar'
-export type AiWorkspaceDocumentAction = 'summarize' | 'rewrite' | 'continue'
+export type AiWorkspaceDocumentAction = 'summarize' | 'rewrite' | 'continue' | 'expand' | 'complete_context' | 'restructure'
+export type AiCanvasAssistAction = 'generate' | 'complete' | 'refine'
+export type AiCanvasAssistTemplate = 'flowchart' | 'mindmap' | 'er' | 'architecture'
+export type AiCanvasAssistSourceFormat = 'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
 
 export interface AiWorkspaceDocumentSelectionRange {
   anchorLine: number
@@ -2833,6 +2836,43 @@ export interface AiWorkspaceIssueDraft {
   severity: ProjectIssueSeverity
   evidence: string
   recommendation: string
+}
+
+export interface AiCanvasAssistRequest {
+  teamId?: string
+  workspaceId?: string
+  projectId?: string
+  action: AiCanvasAssistAction
+  template: AiCanvasAssistTemplate
+  messages: ChatMessage[]
+  context?: {
+    teamId?: string
+    workspaceId?: string
+    projectId?: string
+    contestId?: string
+    trackId?: string
+    major?: string
+    resourceId?: string
+    resourceTitle?: string
+    sourceText?: string
+    sourceFormat?: AiCanvasAssistSourceFormat
+  }
+  aiOptions?: Partial<AiAssistantOptions>
+}
+
+export interface AiCanvasAssistResult {
+  assistantReply: string
+  action: AiCanvasAssistAction
+  template: AiCanvasAssistTemplate
+  sourceFormat: AiCanvasAssistSourceFormat
+  sourceText: string
+}
+
+export type AiCanvasAssistStreamEventType = 'progress' | 'delta' | 'done' | 'error'
+
+export interface AiCanvasAssistStreamEvent {
+  event: AiCanvasAssistStreamEventType
+  data: Record<string, unknown>
 }
 
 export interface AiWorkspaceResult {

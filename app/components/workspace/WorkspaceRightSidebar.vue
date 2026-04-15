@@ -26,6 +26,10 @@ import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
 type WorkspacePrimarySidebarAiMode = Exclude<WorkspaceAiMode, 'defense' | 'document_assist'>
 type WorkspaceRightSidebarView = 'ai' | 'comments'
 type WorkspaceSessionVisualType = WorkspaceAiMode | 'final_review' | 'topic_proposal'
+type DocumentAssistActionStatus = {
+  configured: boolean
+  reason: string
+}
 
 const props = withDefaults(defineProps<{
   chatSessions?: AiChatSession[]
@@ -70,6 +74,7 @@ const props = withDefaults(defineProps<{
   documentSelectionText?: string
   documentSelectionRange?: AiWorkspaceDocumentSelectionRange | null
   documentAssistAction?: AiWorkspaceDocumentAction | ''
+  documentAssistActionStatus?: Record<AiWorkspaceDocumentAction, DocumentAssistActionStatus>
   documentAssistResult?: string
   documentAssistRunning?: boolean
   issueReportSubmitting?: boolean
@@ -120,6 +125,14 @@ const props = withDefaults(defineProps<{
   documentSelectionText: '',
   documentSelectionRange: null,
   documentAssistAction: '',
+  documentAssistActionStatus: (): Record<AiWorkspaceDocumentAction, DocumentAssistActionStatus> => ({
+    summarize: { configured: true, reason: '' },
+    rewrite: { configured: true, reason: '' },
+    continue: { configured: true, reason: '' },
+    expand: { configured: true, reason: '' },
+    complete_context: { configured: true, reason: '' },
+    restructure: { configured: true, reason: '' },
+  }),
   documentAssistResult: '',
   documentAssistRunning: false,
   issueReportSubmitting: false,
@@ -360,10 +373,26 @@ function documentAssistActionLabel(action: AiWorkspaceDocumentAction | ''): stri
   if (action === 'summarize')
     return '总结选区'
   if (action === 'rewrite')
-    return '改写选区'
+    return '润写选区'
   if (action === 'continue')
     return '续写当前位置'
+  if (action === 'expand')
+    return '扩写选区'
+  if (action === 'complete_context')
+    return '补全上下文'
+  if (action === 'restructure')
+    return '整理结构'
   return '文档增强'
+}
+
+function documentAssistActionEnabled(action: AiWorkspaceDocumentAction): boolean {
+  return Boolean(props.documentAssistActionStatus?.[action]?.configured)
+}
+
+function documentAssistActionDisabledReason(action: AiWorkspaceDocumentAction): string {
+  if (documentAssistActionEnabled(action))
+    return ''
+  return String(props.documentAssistActionStatus?.[action]?.reason || aiDisabledNoticeText.value).trim()
 }
 
 function isChangeActing(changeId: string): boolean {
@@ -1456,7 +1485,8 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               class="workspace-right-sidebar__doc-action"
               :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'summarize' }"
               type="button"
-              :disabled="props.documentAssistRunning || !props.aiEnabled"
+              :title="documentAssistActionDisabledReason('summarize')"
+              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('summarize')"
               @click="emit('runDocumentAssist', 'summarize')"
             >
               总结
@@ -1465,19 +1495,51 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               class="workspace-right-sidebar__doc-action"
               :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'rewrite' }"
               type="button"
-              :disabled="props.documentAssistRunning || !props.aiEnabled"
+              :title="documentAssistActionDisabledReason('rewrite')"
+              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('rewrite')"
               @click="emit('runDocumentAssist', 'rewrite')"
             >
-              改写
+              润写
             </button>
             <button
               class="workspace-right-sidebar__doc-action"
               :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'continue' }"
               type="button"
-              :disabled="props.documentAssistRunning || !props.aiEnabled"
+              :title="documentAssistActionDisabledReason('continue')"
+              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('continue')"
               @click="emit('runDocumentAssist', 'continue')"
             >
               续写
+            </button>
+            <button
+              class="workspace-right-sidebar__doc-action"
+              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'expand' }"
+              type="button"
+              :title="documentAssistActionDisabledReason('expand')"
+              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('expand')"
+              @click="emit('runDocumentAssist', 'expand')"
+            >
+              扩写
+            </button>
+            <button
+              class="workspace-right-sidebar__doc-action"
+              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'complete_context' }"
+              type="button"
+              :title="documentAssistActionDisabledReason('complete_context')"
+              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('complete_context')"
+              @click="emit('runDocumentAssist', 'complete_context')"
+            >
+              补全上下文
+            </button>
+            <button
+              class="workspace-right-sidebar__doc-action"
+              :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'restructure' }"
+              type="button"
+              :title="documentAssistActionDisabledReason('restructure')"
+              :disabled="props.documentAssistRunning || !documentAssistActionEnabled('restructure')"
+              @click="emit('runDocumentAssist', 'restructure')"
+            >
+              结构整理
             </button>
           </div>
           <button

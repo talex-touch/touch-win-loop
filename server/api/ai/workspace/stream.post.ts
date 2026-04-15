@@ -1,4 +1,5 @@
 import type {
+  AiWorkspaceDocumentAction,
   AiWorkspaceRequest,
   AiWorkspaceResult,
   AiWorkspaceStreamEvent,
@@ -8,6 +9,7 @@ import type {
 import { createEventStream, setResponseStatus } from 'h3'
 import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { executeWorkspaceAi } from '~~/server/services/ai/workspace-orchestrator'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import {
@@ -19,7 +21,7 @@ import {
 import { getContestDetail, recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { getProjectSettingsSnapshot } from '~~/server/utils/platform-store'
 import {
@@ -27,7 +29,6 @@ import {
   createProjectIssueReportWithIssues,
 } from '~~/server/utils/project-ai-store'
 import { getProjectOutlineSnapshot } from '~~/server/utils/project-outline-store'
-import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
@@ -87,7 +88,7 @@ function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName
       ? 'Loopy 寻疑发现'
       : mode === 'document_assist'
         ? 'Loopy 文档增强'
-      : 'Loopy 对话'
+        : 'Loopy 对话'
 
   if (left && right)
     return `${modeLabel} · ${left} · ${right}`
@@ -208,11 +209,31 @@ function buildWorkspaceSystemEventContent(eventType: 'progress' | 'tool', data: 
   return `工具：${toolName} · ${payloadSummary}`
 }
 
-function resolveWorkspaceChannelKey(mode: WorkspaceAiMode): 'workspace_dialog_ask' | 'workspace_auto_optimize' | 'workspace_issue_discovery' {
+function resolveDocumentAssistChannelKey(action: unknown): 'workspace_document_summarize' | 'workspace_document_rewrite' | 'workspace_document_continue' | 'workspace_document_expand' | 'workspace_document_complete_context' | 'workspace_document_restructure' {
+  const normalized = toText(action) as AiWorkspaceDocumentAction
+  if (normalized === 'rewrite')
+    return 'workspace_document_rewrite'
+  if (normalized === 'continue')
+    return 'workspace_document_continue'
+  if (normalized === 'expand')
+    return 'workspace_document_expand'
+  if (normalized === 'complete_context')
+    return 'workspace_document_complete_context'
+  if (normalized === 'restructure')
+    return 'workspace_document_restructure'
+  return 'workspace_document_summarize'
+}
+
+function resolveWorkspaceChannelKey(
+  mode: WorkspaceAiMode,
+  documentAction?: unknown,
+): 'workspace_dialog_ask' | 'workspace_auto_optimize' | 'workspace_issue_discovery' | 'workspace_document_summarize' | 'workspace_document_rewrite' | 'workspace_document_continue' | 'workspace_document_expand' | 'workspace_document_complete_context' | 'workspace_document_restructure' {
   if (mode === 'auto_optimize')
     return 'workspace_auto_optimize'
   if (mode === 'issue_discovery')
     return 'workspace_issue_discovery'
+  if (mode === 'document_assist')
+    return resolveDocumentAssistChannelKey(documentAction)
   return 'workspace_dialog_ask'
 }
 
@@ -221,7 +242,8 @@ export default defineEventHandler(async (event) => {
   const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AiWorkspaceRequest>>(event).catch(() => ({})))
-  const channelRuntime = resolveAiRuntimeForChannel(runtime, resolveWorkspaceChannelKey(request.mode || 'dialog_ask'))
+  const channelKey = resolveWorkspaceChannelKey(request.mode || 'dialog_ask', request.context?.documentAction)
+  const channelRuntime = resolveAiRuntimeForChannel(runtime, channelKey)
   const workspaceAiConfig = {
     ...channelRuntime.ai,
     temperature: Number.isFinite(Number(request.aiOptions?.temperature))
@@ -243,7 +265,7 @@ export default defineEventHandler(async (event) => {
   if (!isAiRuntimeConfigured(workspaceAiConfig)) {
     setResponseStatus(event, 503)
     return fail(
-      buildAiNotConfiguredMessage(request.mode === 'document_assist' ? '文档 AI' : '工作台 AI'),
+      buildAiNotConfiguredMessage(channelRuntime.channel.label || (request.mode === 'document_assist' ? '文档 AI' : '工作台 AI')),
       {
         startedAt,
         provider: workspaceAiConfig.provider,
@@ -453,53 +475,63 @@ export default defineEventHandler(async (event) => {
         }
       })
 
-      const execution = await executeWorkspaceAi({
-        runtime: {
-          ai: workspaceAiConfig,
-          adminAi: runtime.adminAi,
-        },
-        mode: request.mode || 'dialog_ask',
-        messages: request.messages || [],
-        context: {
-          workspaceId: request.workspaceId || '',
-          projectId: request.projectId || '',
-          contestId: request.context?.contestId || '',
-          trackId: request.context?.trackId || '',
-          major: request.context?.major || '',
-          contestName,
-          trackName,
-          resourceId: request.context?.resourceId || '',
-          resourceTitle: request.context?.resourceTitle || '',
-          markdown: request.context?.markdown || '',
-          selectionText: request.context?.selectionText || '',
-          selectionRange: request.context?.selectionRange
-            ? {
-                ...request.context.selectionRange,
-              } as Record<string, unknown>
-            : null,
-          trigger: toText(request.context?.trigger),
-          documentAction: toText(request.context?.documentAction),
-          projectSettingsSummary: contextBundle.projectSettingsSummary,
-          projectOutlineSummary: contextBundle.projectOutlineSummary,
-          resourceSummary: contextBundle.resourceSummary,
-          latestUserMessage,
-        },
-        channelPrompt: channelRuntime.prompt,
-        hooks: {
-          onProgress: message => pushEvent('progress', { message }),
-          onTool: (name, payload) => pushEvent('tool', { name, payload }),
-          onDelta: text => pushEvent('delta', { text }),
-          onProposal: proposal => pushEvent('proposal', { proposal }),
-          onIssue: issue => pushEvent('issue', { issue }),
-        },
+      const execution = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, prompt }) => {
+        const nextAiConfig = {
+          ...ai,
+          temperature: Number.isFinite(Number(request.aiOptions?.temperature))
+            ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
+            : ai.temperature,
+        }
+
+        return executeWorkspaceAi({
+          runtime: {
+            ai: nextAiConfig,
+            adminAi: runtime.adminAi,
+          },
+          mode: request.mode || 'dialog_ask',
+          messages: request.messages || [],
+          context: {
+            workspaceId: request.workspaceId || '',
+            projectId: request.projectId || '',
+            contestId: request.context?.contestId || '',
+            trackId: request.context?.trackId || '',
+            major: request.context?.major || '',
+            contestName,
+            trackName,
+            resourceId: request.context?.resourceId || '',
+            resourceTitle: request.context?.resourceTitle || '',
+            markdown: request.context?.markdown || '',
+            selectionText: request.context?.selectionText || '',
+            selectionRange: request.context?.selectionRange
+              ? {
+                  ...request.context.selectionRange,
+                } as Record<string, unknown>
+              : null,
+            trigger: toText(request.context?.trigger),
+            documentAction: toText(request.context?.documentAction),
+            projectSettingsSummary: contextBundle.projectSettingsSummary,
+            projectOutlineSummary: contextBundle.projectOutlineSummary,
+            resourceSummary: contextBundle.resourceSummary,
+            latestUserMessage,
+          },
+          channelPrompt: prompt,
+          hooks: {
+            onProgress: message => pushEvent('progress', { message }),
+            onTool: (name, payload) => pushEvent('tool', { name, payload }),
+            onDelta: text => pushEvent('delta', { text }),
+            onProposal: proposal => pushEvent('proposal', { proposal }),
+            onIssue: issue => pushEvent('issue', { issue }),
+          },
+        })
       })
 
       const persisted = await withTransaction(event, async (db) => {
         const baseMetadata = {
           mode: scopeMode,
           projectId: scopeProjectId,
-          channelKey: channelRuntime.key,
-          providerId: channelRuntime.provider?.id || null,
+          channelKey: execution.channel.key,
+          providerId: execution.provider?.id || null,
+          attemptChain: execution.attemptChain,
         }
 
         if (latestUserMessage) {
@@ -508,8 +540,8 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             role: 'user',
             content: latestUserMessage,
-            provider: workspaceAiConfig.provider,
-            model: workspaceAiConfig.model,
+            provider: execution.ai.provider,
+            model: execution.ai.model,
             fallbackUsed: false,
             metadata: baseMetadata,
             createdByUserId: user.id,
@@ -522,8 +554,8 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             role: 'system',
             content: systemMessage.content,
-            provider: workspaceAiConfig.provider,
-            model: workspaceAiConfig.model,
+            provider: execution.ai.provider,
+            model: execution.ai.model,
             fallbackUsed: false,
             metadata: {
               ...baseMetadata,
@@ -538,10 +570,10 @@ export default defineEventHandler(async (event) => {
           workspaceId: request.workspaceId || '',
           sessionId: prepared.sessionId,
           role: 'assistant',
-          content: execution.data.assistantReply,
-          provider: workspaceAiConfig.provider,
-          model: workspaceAiConfig.model,
-          fallbackUsed: execution.fallbackUsed,
+          content: execution.data.data.assistantReply,
+          provider: execution.ai.provider,
+          model: execution.ai.model,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
           metadata: baseMetadata,
           createdByUserId: user.id,
         })
@@ -565,14 +597,14 @@ export default defineEventHandler(async (event) => {
 
         const proposals = request.projectId
           && request.mode === 'auto_optimize'
-          && execution.data.changeDrafts.length > 0
+          && execution.data.data.changeDrafts.length > 0
           ? await createAiProjectChangeRequests(db, {
               workspaceId: request.workspaceId || '',
               projectId: request.projectId,
               sessionId: prepared.sessionId,
               mode: request.mode || 'dialog_ask',
               createdByUserId: user.id,
-              changes: execution.data.changeDrafts,
+              changes: execution.data.data.changeDrafts,
             })
           : []
 
@@ -582,11 +614,11 @@ export default defineEventHandler(async (event) => {
               projectId: request.projectId,
               sessionId: prepared.sessionId,
               sourceMode: request.mode || 'dialog_ask',
-              title: execution.data.reportTitle || 'AI 寻疑报告',
-              summary: execution.data.reportSummary || execution.data.assistantReply,
-              markdown: execution.data.reportMarkdown || execution.data.assistantReply,
+              title: execution.data.data.reportTitle || 'AI 寻疑报告',
+              summary: execution.data.data.reportSummary || execution.data.data.assistantReply,
+              markdown: execution.data.data.reportMarkdown || execution.data.data.assistantReply,
               createdByUserId: user.id,
-              issues: execution.data.issueDrafts,
+              issues: execution.data.data.issueDrafts,
             })
           : null
 
@@ -600,12 +632,13 @@ export default defineEventHandler(async (event) => {
             projectId: request.projectId,
             sessionId: prepared.sessionId,
             mode: request.mode,
-            channelKey: channelRuntime.key,
-            providerId: channelRuntime.provider?.id || null,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
             proposals: proposals.length,
             issues: issuePayload?.issues.length || 0,
-            fallbackUsed: execution.fallbackUsed,
-            attempts: execution.attempts,
+            fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+            attempts: execution.attemptChain.length,
+            attemptChain: execution.attemptChain,
             latencyMs: Date.now() - startedAt,
             remainingQuota: prepared.remainingQuota,
           },
@@ -619,7 +652,7 @@ export default defineEventHandler(async (event) => {
       })
 
       const result: AiWorkspaceResult = {
-        assistantReply: execution.data.assistantReply,
+        assistantReply: execution.data.data.assistantReply,
         mode: request.mode || 'dialog_ask',
         sessionId: prepared.sessionId,
         proposals: persisted.proposals,
@@ -630,8 +663,8 @@ export default defineEventHandler(async (event) => {
       await pushEvent('done', {
         result,
         meta: {
-          attempts: execution.attempts,
-          fallbackUsed: execution.fallbackUsed,
+          attempts: execution.attemptChain.length,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
           latencyMs: Date.now() - startedAt,
         },
       })

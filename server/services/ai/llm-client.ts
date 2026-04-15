@@ -1,4 +1,5 @@
 import { ChatOpenAI, ChatOpenAIResponses } from '@langchain/openai'
+import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 
 export type AiModelFormat = 'openai-compatible' | 'response'
 
@@ -18,8 +19,11 @@ export interface AiRuntimeConfig {
 }
 
 export function createChatModel(config: AiRuntimeConfig): ChatOpenAI | ChatOpenAIResponses {
-  if (!config.apiKey)
+  const normalizedApiKey = normalizePlatformAiApiKey(config.apiKey)
+  if (!normalizedApiKey)
     throw new Error('AI 模型密钥未配置，无法调用真实模型')
+
+  const requestBaseURL = resolvePlatformAiRequestBaseURL(config.baseURL, config.provider)
 
   const normalizedTemperature = Number.isFinite(Number(config.temperature))
     ? Math.max(0, Math.min(1, Number(config.temperature)))
@@ -48,8 +52,8 @@ export function createChatModel(config: AiRuntimeConfig): ChatOpenAI | ChatOpenA
     frequencyPenalty: normalizedFrequencyPenalty,
     timeout: config.timeoutMs,
     maxRetries: normalizedRetries,
-    apiKey: config.apiKey,
-    configuration: config.baseURL ? { baseURL: config.baseURL } : undefined,
+    apiKey: normalizedApiKey,
+    configuration: requestBaseURL ? { baseURL: requestBaseURL } : undefined,
   }
 
   if (config.format === 'response')

@@ -20,6 +20,9 @@ export type RichTextEditorCommandAction
     | 'comment'
     | 'aiSummarize'
     | 'aiRewrite'
+    | 'aiExpand'
+    | 'aiCompleteContext'
+    | 'aiRestructure'
     | 'aiContinue'
 
 export interface RichTextEditorCommand {
@@ -139,11 +142,38 @@ export function buildRichTextEditorCommands(
       },
       {
         id: 'ai-rewrite',
-        label: '改写选区',
+        label: '润写选区',
         icon: 'edit_note',
         action: 'aiRewrite',
         group: 'inline',
         keywords: ['ai', 'rewrite', 'polish'],
+        toolbarVisible: false,
+      },
+      {
+        id: 'ai-expand',
+        label: '扩写选区',
+        icon: 'open_in_full',
+        action: 'aiExpand',
+        group: 'inline',
+        keywords: ['ai', 'expand', 'extend'],
+        toolbarVisible: false,
+      },
+      {
+        id: 'ai-complete-context',
+        label: '补全上下文',
+        icon: 'library_add',
+        action: 'aiCompleteContext',
+        group: 'inline',
+        keywords: ['ai', 'context', 'complete'],
+        toolbarVisible: false,
+      },
+      {
+        id: 'ai-restructure',
+        label: '整理结构',
+        icon: 'account_tree',
+        action: 'aiRestructure',
+        group: 'block',
+        keywords: ['ai', 'restructure', 'outline'],
         toolbarVisible: false,
       },
       {

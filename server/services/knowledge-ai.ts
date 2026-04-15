@@ -4,6 +4,7 @@ import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { readRuntimeSettings } from '~~/server/utils/env'
+import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 import { runWithRetry } from '~~/server/utils/retry'
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small'
@@ -110,6 +111,7 @@ export async function createKnowledgeEmbedding(input: {
   const sourceText = toKnowledgeText(input.text)
   const provider = toKnowledgeText(runtime.ai.provider) || 'openai-compatible'
   const model = normalizeEmbeddingModel(runtime.ai.embeddingModel || runtime.ai.model)
+  const normalizedApiKey = normalizePlatformAiApiKey(runtime.ai.apiKey)
   if (!sourceText) {
     return {
       embedding: [],
@@ -120,7 +122,7 @@ export async function createKnowledgeEmbedding(input: {
     }
   }
 
-  if (!toKnowledgeText(runtime.ai.apiKey)) {
+  if (!normalizedApiKey) {
     return {
       embedding: buildDeterministicKnowledgeEmbedding(sourceText),
       provider,
@@ -130,7 +132,7 @@ export async function createKnowledgeEmbedding(input: {
     }
   }
 
-  const endpoint = `${toKnowledgeText(runtime.ai.baseURL) || 'https://api.openai.com/v1'}`.replace(/\/+$/g, '')
+  const endpoint = resolvePlatformAiRequestBaseURL(runtime.ai.baseURL, provider) || 'https://api.openai.com/v1'
   const timeoutMs = Math.max(3_000, Math.min(120_000, Number(runtime.ai.timeoutMs || 15_000)))
   const maxRetries = Math.max(0, Math.min(6, Number(runtime.ai.maxRetries || 0)))
 
@@ -143,7 +145,7 @@ export async function createKnowledgeEmbedding(input: {
         const response = await fetch(`${endpoint}/embeddings`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${runtime.ai.apiKey}`,
+            'Authorization': `Bearer ${normalizedApiKey}`,
             'content-type': 'application/json',
           },
           body: JSON.stringify({

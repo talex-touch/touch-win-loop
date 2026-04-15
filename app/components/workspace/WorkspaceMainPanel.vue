@@ -2719,6 +2719,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :design-resource-id="activeDesignResourceId"
         :bound-resource-id="props.collabResourceId"
         :project-id="props.activeProjectId"
+        :workspace-id="props.activeProject?.teamId || props.activeProject?.workspaceId || ''"
         :current-user-id="props.currentUserId"
         :is-platform-admin-user="props.isPlatformAdminUser"
         :design-panel-title="activeDesignPanelTitle"

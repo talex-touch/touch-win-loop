@@ -2,8 +2,8 @@ import type { AiProjectChatRequest, AiProjectChatResult } from '~~/shared/types/
 import { setResponseStatus } from 'h3'
 import { runProjectChatChain } from '~~/server/services/ai/project-chat-chain'
 import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
-import { fail, ok } from '~~/server/utils/api'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
+import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import {
   appendAiChatMessage,
@@ -14,7 +14,7 @@ import {
 import { getContestDetail, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
@@ -165,7 +165,6 @@ export default defineEventHandler(async (event) => {
     ...channelAiConfig,
     temperature: effectiveAiSettings.temperature,
   }
-  const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
   const scopeProjectId = String(safeRequest.context.projectId || '').trim()
   const scopeMode = 'dialog_ask' as const
 
@@ -280,23 +279,29 @@ export default defineEventHandler(async (event) => {
     }, 42971)
   }
 
-  let result: {
+  let execution: Awaited<ReturnType<typeof runWithPlatformAiChannelFallback<{
     data: AiProjectChatResult
     fallbackUsed: boolean
     attempts: number
-  }
+  }>>>
 
   try {
-    result = await runWithRetry({
-      maxRetries: effectiveAiConfig.maxRetries,
-      run: () => runProjectChatChain({
-        request: safeRequest,
-        ai: effectiveAiConfig,
-        contestName: contest?.name,
-        trackName: track?.name,
-        injectedPrompt: mergedInjectedPrompt,
-        localContext: contextBundle.localContext,
-      }),
+    execution = await runWithPlatformAiChannelFallback(runtime, 'project_chat', async ({ ai, prompt }) => {
+      const nextAiConfig = {
+        ...ai,
+        temperature: effectiveAiSettings.temperature,
+      }
+      return runWithRetry({
+        maxRetries: nextAiConfig.maxRetries,
+        run: () => runProjectChatChain({
+          request: safeRequest,
+          ai: nextAiConfig,
+          contestName: contest?.name,
+          trackName: track?.name,
+          injectedPrompt: buildMergedPrompt(prompt, contextBundle.injectedPrompt),
+          localContext: contextBundle.localContext,
+        }),
+      })
     })
   }
   catch (error) {
@@ -329,13 +334,13 @@ export default defineEventHandler(async (event) => {
         sessionId: activeSession.id,
         role: 'user',
         content: latestUserMessage,
-        provider: effectiveAiConfig.provider,
-        model: effectiveAiConfig.model,
+        provider: execution.ai.provider,
+        model: execution.ai.model,
         fallbackUsed: false,
         metadata: {
           ...modeMetadata,
-          channelKey: channelRuntime.key,
-          providerId: channelRuntime.provider?.id || null,
+          channelKey: execution.channel.key,
+          providerId: execution.provider?.id || null,
         },
         createdByUserId: user.id,
       })
@@ -345,14 +350,15 @@ export default defineEventHandler(async (event) => {
       workspaceId,
       sessionId: activeSession.id,
       role: 'assistant',
-      content: result.data.assistantReply,
-      provider: effectiveAiConfig.provider,
-      model: effectiveAiConfig.model,
-      fallbackUsed: result.fallbackUsed,
+      content: execution.data.data.assistantReply,
+      provider: execution.ai.provider,
+      model: execution.ai.model,
+      fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
       metadata: {
         ...modeMetadata,
-        channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
+        channelKey: execution.channel.key,
+        providerId: execution.provider?.id || null,
+        attemptChain: execution.attemptChain,
       },
       createdByUserId: user.id,
     })
@@ -365,7 +371,7 @@ export default defineEventHandler(async (event) => {
       contestId: safeRequest.context.contestId,
       trackId: safeRequest.context.trackId,
       major: safeRequest.context.major,
-      title: result.data.projectDraft.title,
+      title: execution.data.data.projectDraft.title,
     })
 
     await recordContestAuditLog(db, {
@@ -378,21 +384,22 @@ export default defineEventHandler(async (event) => {
         trackId: safeRequest.context.trackId,
         reasoningEnabled: effectiveAiSettings.reasoningEnabled,
         networkEnabled: effectiveAiSettings.networkEnabled,
-        channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
-        fallbackUsed: false,
-        attempts: result.attempts,
+        channelKey: execution.channel.key,
+        providerId: execution.provider?.id || null,
+        fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+        attempts: execution.attemptChain.length,
+        attemptChain: execution.attemptChain,
       },
     })
   })
 
-  result.data.sessionId = activeSession.id
+  execution.data.data.sessionId = activeSession.id
 
-  return ok(result.data, {
+  return ok(execution.data.data, {
     startedAt,
-    provider: effectiveAiConfig.provider,
-    model: effectiveAiConfig.model,
-    fallbackUsed: false,
-    attempts: result.attempts,
+    provider: execution.ai.provider,
+    model: execution.ai.model,
+    fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+    attempts: execution.attemptChain.length,
   }, 'ok')
 })

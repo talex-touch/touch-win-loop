@@ -1,4 +1,5 @@
 import type { PlatformAiProviderAdapter } from '~~/server/utils/platform-ai-channels'
+import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformAiDefaultBaseURL, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 
 export type ProviderModelScope = 'llm' | 'docAi' | 'provider'
 
@@ -189,25 +190,6 @@ function resolvePricingFromTable(
   }
 }
 
-function resolveDefaultBaseURL(provider: string): string {
-  const normalized = provider.toLowerCase()
-  if (normalized.includes('openrouter'))
-    return 'https://openrouter.ai/api/v1'
-  return 'https://api.openai.com/v1'
-}
-
-function normalizeBaseURL(baseURL: string, provider: string): string {
-  const trimmed = toNonEmptyString(baseURL) || resolveDefaultBaseURL(provider)
-  let normalized = trimmed.replace(/\/+$/, '')
-
-  normalized = normalized.replace(/\/chat\/completions$/i, '')
-  normalized = normalized.replace(/\/completions$/i, '')
-  normalized = normalized.replace(/\/v1\/chat\/completions$/i, '/v1')
-  normalized = normalized.replace(/\/v1\/completions$/i, '/v1')
-
-  return normalized
-}
-
 function appendPath(baseURL: string, path: string): string {
   return `${baseURL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
 }
@@ -216,14 +198,12 @@ function resolveModelsEndpoints(
   baseURL: string,
   provider: string,
 ): string[] {
-  const normalizedBase = normalizeBaseURL(baseURL, provider)
+  const normalizedBase = normalizePlatformAiBaseURL(baseURL, provider) || resolvePlatformAiDefaultBaseURL(provider)
+  const requestBase = resolvePlatformAiRequestBaseURL(normalizedBase, provider)
   const candidates: string[] = []
 
-  if (/\/models$/i.test(normalizedBase))
-    candidates.push(normalizedBase)
-
+  candidates.push(appendPath(requestBase, 'models'))
   candidates.push(appendPath(normalizedBase, 'models'))
-  candidates.push(appendPath(normalizedBase, 'v1/models'))
 
   const unique: string[] = []
   for (const item of candidates) {
@@ -322,6 +302,17 @@ function extractModelItemsFromMap(payload: unknown): Record<string, unknown>[] {
     const modelKey = toNonEmptyString(key)
     if (!modelKey)
       continue
+
+    if (Array.isArray(value)) {
+      const nestedRecords = value
+        .map(item => maybeModelRecord(item))
+        .filter((item): item is Record<string, unknown> => Boolean(item))
+
+      if (nestedRecords.length > 0) {
+        records.push(...nestedRecords)
+        continue
+      }
+    }
 
     if (typeof value === 'string') {
       const label = toNonEmptyString(value)
@@ -454,6 +445,18 @@ async function fetchModelsPayload(input: {
       }
 
       const payload = await response.json().catch(() => null)
+      if (payload === null) {
+        errors.push(`${endpoint} -> 200 OK（返回内容不是合法 JSON）`)
+        continue
+      }
+
+      const records = extractModelItems(payload)
+      if (records.length === 0) {
+        const payloadKeys = toModelRecord(payload) ? Object.keys(payload as Record<string, unknown>).slice(0, 6).join(', ') : ''
+        errors.push(`${endpoint} -> 200 OK（未解析到模型${payloadKeys ? `，顶层字段：${payloadKeys}` : ''}）`)
+        continue
+      }
+
       return {
         payload,
         endpoint,
@@ -473,7 +476,7 @@ async function fetchModelsPayload(input: {
 }
 
 export async function discoverProviderModels(input: DiscoverProviderModelsInput): Promise<ProviderModelItem[]> {
-  const apiKey = toNonEmptyString(input.apiKey)
+  const apiKey = normalizePlatformAiApiKey(input.apiKey)
   if (!apiKey)
     throw new Error('API Key 未配置，无法拉取模型列表。')
 

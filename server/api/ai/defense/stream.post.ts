@@ -10,8 +10,8 @@ import type {
 import { createEventStream, setResponseStatus } from 'h3'
 import { runDefenseChain } from '~~/server/services/ai/defense-chain'
 import { buildDefenseContextPack } from '~~/server/services/ai/defense-context'
-import { fail } from '~~/server/utils/api'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
+import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
 import {
@@ -23,7 +23,7 @@ import {
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import {
   createProjectDefenseTurns,
@@ -417,42 +417,44 @@ export default defineEventHandler(async (event) => {
         })
       }
 
-      const effectiveAiConfig = {
-        ...channelAiConfig,
-        temperature: Number.isFinite(Number(request.aiOptions?.temperature))
-          ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
-          : channelAiConfig.temperature,
-      }
-      const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextPack.promptText)
       const effectiveRequest: AiDefenseRequest = {
         ...request,
         stageHint: stage,
       }
 
-      const execution = await runWithRetry<AiDefenseResult>({
-        maxRetries: effectiveAiConfig.maxRetries,
-        run: () => runDefenseChain({
-          request: effectiveRequest,
-          ai: effectiveAiConfig,
-          contestName: contextPack.contestName,
-          trackName: contextPack.trackName,
-          injectedPrompt: mergedInjectedPrompt,
-          rubricDigest: contextPack.rubricDigest,
-          promptContextText: contextPack.promptContextText,
-          evidenceRefs: contextPack.evidenceRefs,
-          personas: contextPack.personas,
-          stage,
-          turnIndex,
-        }),
+      const execution = await runWithPlatformAiChannelFallback(runtime, 'defense', async ({ ai, prompt }) => {
+        const nextAiConfig = {
+          ...ai,
+          temperature: Number.isFinite(Number(request.aiOptions?.temperature))
+            ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
+            : ai.temperature,
+        }
+
+        return runWithRetry<AiDefenseResult>({
+          maxRetries: nextAiConfig.maxRetries,
+          run: () => runDefenseChain({
+            request: effectiveRequest,
+            ai: nextAiConfig,
+            contestName: contextPack.contestName,
+            trackName: contextPack.trackName,
+            injectedPrompt: buildMergedPrompt(prompt, contextPack.promptText),
+            rubricDigest: contextPack.rubricDigest,
+            promptContextText: contextPack.promptContextText,
+            evidenceRefs: contextPack.evidenceRefs,
+            personas: contextPack.personas,
+            stage,
+            turnIndex,
+          }),
+        })
       })
 
       const result: AiDefenseResult = {
-        ...execution.data,
+        ...execution.data.data,
         sessionId: prepared.sessionId,
         stage,
         turnIndex,
         summaryStatus: 'queued',
-        selectedPersonaIds: execution.data.selectedPersonaIds || contextPack.personas.map(item => item.id),
+        selectedPersonaIds: execution.data.data.selectedPersonaIds || contextPack.personas.map(item => item.id),
       }
 
       for (const round of result.rounds)
@@ -480,13 +482,13 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             role: 'user',
             content: latestUserMessage,
-            provider: effectiveAiConfig.provider,
-            model: effectiveAiConfig.model,
+            provider: execution.ai.provider,
+            model: execution.ai.model,
             fallbackUsed: false,
             metadata: {
               ...modeMetadata,
-              channelKey: channelRuntime.key,
-              providerId: channelRuntime.provider?.id || null,
+              channelKey: execution.channel.key,
+              providerId: execution.provider?.id || null,
               attachments: request.attachments || [],
               clientTurnId: request.clientTurnId || null,
               meetingId: request.meetingId || null,
@@ -500,13 +502,14 @@ export default defineEventHandler(async (event) => {
           sessionId: prepared.sessionId,
           role: 'assistant',
           content: result.assistantReply,
-          provider: effectiveAiConfig.provider,
-          model: effectiveAiConfig.model,
-          fallbackUsed: execution.fallbackUsed,
+          provider: execution.ai.provider,
+          model: execution.ai.model,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
           metadata: {
             ...modeMetadata,
-            channelKey: channelRuntime.key,
-            providerId: channelRuntime.provider?.id || null,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
+            attemptChain: execution.attemptChain,
             scorecard: result.scorecard,
             evidenceRefs: result.evidenceRefs || [],
           },
@@ -568,10 +571,11 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             projectId: request.context.projectId,
             trackId: request.context.trackId,
-            channelKey: channelRuntime.key,
-            providerId: channelRuntime.provider?.id || null,
-            fallbackUsed: execution.fallbackUsed,
-            attempts: execution.attempts,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
+            fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+            attempts: execution.attemptChain.length,
+            attemptChain: execution.attemptChain,
             latencyMs: Date.now() - startedAt,
             remainingQuota: prepared.remainingQuota,
             stage,
@@ -588,8 +592,8 @@ export default defineEventHandler(async (event) => {
       if (prepared.shouldRecordStart) {
         await recordDefenseUsage('success', {
           sessionId: prepared.sessionId,
-          fallbackUsed: execution.fallbackUsed,
-          attempts: execution.attempts,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+          attempts: execution.attemptChain.length,
           isNewSession: prepared.createdNewSession,
           isFirstSessionMessage: true,
         })
@@ -599,8 +603,8 @@ export default defineEventHandler(async (event) => {
       await pushEvent('done', {
         result,
         meta: {
-          attempts: execution.attempts,
-          fallbackUsed: execution.fallbackUsed,
+          attempts: execution.attemptChain.length,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
           latencyMs: Date.now() - startedAt,
         },
       })

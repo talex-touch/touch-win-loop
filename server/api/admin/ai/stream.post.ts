@@ -17,7 +17,7 @@ import {
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
@@ -224,23 +224,25 @@ export default defineEventHandler(async (event) => {
         sessionId: prepared.sessionId,
       })
 
-      const execution = await executeAdminAgent(event, request, {
-        onProgress: message => pushEvent('progress', { message }),
-        onTool: (name, payload) => pushEvent('tool', {
-          name,
-          payload,
-        }),
-        onDelta: text => pushEvent('delta', { text }),
-        onArtifact: artifact => pushEvent('artifact', { artifact }),
-      }, {
-        runtime: {
-          ...runtime,
-          ai: {
-            ...runtime.ai,
-            ...adminAiConfig,
+      const execution = await runWithPlatformAiChannelFallback(runtime, resolveAdminChannelKey(request.taskType), async ({ ai, prompt }) => {
+        return executeAdminAgent(event, request, {
+          onProgress: message => pushEvent('progress', { message }),
+          onTool: (name, payload) => pushEvent('tool', {
+            name,
+            payload,
+          }),
+          onDelta: text => pushEvent('delta', { text }),
+          onArtifact: artifact => pushEvent('artifact', { artifact }),
+        }, {
+          runtime: {
+            ...runtime,
+            ai: {
+              ...runtime.ai,
+              ...ai,
+            },
           },
-        },
-        channelPrompt: channelRuntime.prompt,
+          channelPrompt: prompt,
+        })
       })
 
       await withTransaction(event, async (db) => {
@@ -254,8 +256,8 @@ export default defineEventHandler(async (event) => {
             sessionId: prepared.sessionId,
             role: 'user',
             content: request.message,
-            provider: adminAiConfig.provider,
-            model: adminAiConfig.model,
+            provider: execution.ai.provider,
+            model: execution.ai.model,
             fallbackUsed: false,
             createdByUserId: user.id,
           })
@@ -265,10 +267,10 @@ export default defineEventHandler(async (event) => {
           workspaceId: request.workspaceId,
           sessionId: prepared.sessionId,
           role: 'assistant',
-          content: execution.data.assistantReply,
-          provider: adminAiConfig.provider,
-          model: adminAiConfig.model,
-          fallbackUsed: execution.fallbackUsed,
+          content: execution.data.data.assistantReply,
+          provider: execution.ai.provider,
+          model: execution.ai.model,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
           createdByUserId: user.id,
         })
 
@@ -290,10 +292,11 @@ export default defineEventHandler(async (event) => {
             workspaceId: request.workspaceId,
             sessionId: prepared.sessionId,
             taskType: request.taskType,
-            channelKey: channelRuntime.key,
-            providerId: channelRuntime.provider?.id || null,
-            fallbackUsed: execution.fallbackUsed,
-            attempts: execution.attempts,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
+            fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+            attempts: execution.attemptChain.length,
+            attemptChain: execution.attemptChain,
             latencyMs: Date.now() - startedAt,
             remainingQuota: prepared.remainingQuota,
           },
@@ -302,12 +305,12 @@ export default defineEventHandler(async (event) => {
 
       await pushEvent('done', {
         result: {
-          ...execution.data,
+          ...execution.data.data,
           sessionId: prepared.sessionId,
         },
         meta: {
-          attempts: execution.attempts,
-          fallbackUsed: execution.fallbackUsed,
+          attempts: execution.attemptChain.length,
+          fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
           latencyMs: Date.now() - startedAt,
         },
       })

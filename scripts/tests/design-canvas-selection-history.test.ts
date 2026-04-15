@@ -169,6 +169,16 @@ describe('useDesignHistory', () => {
 })
 
 describe('WorkspaceDesignPanel', () => {
+  it('默认空设计文档不会再创建 device mockup 封面 frame', async () => {
+    const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
+
+    expect(source).toMatch(/function createDefaultDesignSceneDocument\(\): SceneDocument/)
+    expect(source).toMatch(/return createEmptySceneDocument\(\{/)
+    expect(source).toMatch(/drawMode: "composition"/)
+    expect(source).toMatch(/sourceType: "manual"/)
+    expect(source).not.toMatch(/return buildDeviceMockupSceneDocument\(\{/)
+  })
+
   it('新建元素后会立即选中新元素并保留当前 editingFrameId', async () => {
     const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
 

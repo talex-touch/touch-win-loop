@@ -2542,7 +2542,7 @@ function updateElementConstraints(
           <div>
             <h5 class="workspace-design-inspector__subsection-title">结构源</h5>
             <p class="workspace-design-inspector__group-description">
-              右栏只保留轻量入口，复杂操作仍进入 Diagram 编辑态。
+              右栏只保留轻量入口，复杂操作和 AI 生成/续改仍进入 Diagram 编辑态。
             </p>
           </div>
           <div class="workspace-design-inspector__group-actions">

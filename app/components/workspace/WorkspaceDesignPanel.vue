@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type {
   ApiResponse,
+  AiCanvasAssistAction,
+  AiCanvasAssistRequest,
+  AiCanvasAssistResult,
+  AiCanvasAssistSourceFormat,
+  AiCanvasAssistStreamEvent,
+  AiCanvasAssistStreamEventType,
   CanvasLibraryBinaryAssetPayload,
   CanvasLibraryFrameTemplatePayload,
   CanvasLibraryItem,
@@ -13,6 +19,7 @@ import type {
   DesignFrameKind,
   DesignFrameModel,
   DesignPageModel,
+  ChatMessage,
   Resource,
   GraphSourceEdge,
   GraphSourceGroup,
@@ -56,8 +63,8 @@ import {
   appendDesignElementToSceneDocument,
   appendDesignPageToSceneDocument,
   buildDesignAssetFromCanvasLibraryPayload,
-  buildDeviceMockupSceneDocument,
   canDesignFrameCreateElements,
+  createEmptySceneDocument,
   DEVICE_FRAME_PRESETS,
   mergeCanvasLibraryFrameTemplate,
   mergeCanvasLibraryPageTemplate,
@@ -125,6 +132,7 @@ const props = withDefaults(
     designResourceId?: string;
     boundResourceId?: string;
     projectId?: string;
+    workspaceId?: string;
     currentUserId?: string;
     isPlatformAdminUser?: boolean;
     designPanelTitle?: string;
@@ -142,6 +150,7 @@ const props = withDefaults(
     designResourceId: "",
     boundResourceId: "",
     projectId: "",
+    workspaceId: "",
     currentUserId: "",
     isPlatformAdminUser: false,
     designPanelTitle: "设计画布",
@@ -172,12 +181,11 @@ const runtime = useRuntimeConfig();
 const { endpoint } = useApiEndpoint(runtime);
 
 const draftDocument = ref<SceneDocument>(
-  buildDeviceMockupSceneDocument({
-    title: "统一设计文档",
-    subtitle: "一个文档多 Page，一个 Page 多 Frame，图表与设计稿统一协作。",
-    badge: "Design",
+  createEmptySceneDocument({
+    drawMode: "composition",
+    sourceType: "manual",
     templateKey: DEFAULT_TEMPLATE_KEY,
-    deviceFramePresetKey: DEFAULT_DEVICE_FRAME_KEY,
+    editorEngine: "vueflow",
   }),
 );
 const panelRootRef = ref<HTMLElement | null>(null);
@@ -215,6 +223,22 @@ const diagramSourceFormat = ref<
   "mermaid" | "markdown_outline" | "ddl" | "architecture"
 >("mermaid");
 const diagramSourceText = ref("");
+const canvasAiPrompt = ref("");
+const canvasAiRunning = ref(false);
+const canvasAiPreviewPending = ref(false);
+const canvasAiError = ref("");
+const canvasAiAction = ref<AiCanvasAssistAction>("generate");
+const canvasAiTemplate = ref<AiCanvasAssistRequest["template"]>("flowchart");
+const canvasAiMessages = ref<ChatMessage[]>([]);
+const canvasAiRuntimeLoading = ref(false);
+const canvasAiRuntimeLoaded = ref(false);
+const canvasAiRuntimeError = ref("");
+const canvasAiRuntimeStatus = ref<Record<"canvasGenerate" | "canvasComplete" | "canvasRefine", {
+  configured: boolean
+  provider: string
+  model: string
+  reason: string
+}> | null>(null);
 const diagramSelectedGroupId = ref("");
 const diagramSelectedNodeId = ref("");
 const diagramSelectedEdgeId = ref("");
@@ -225,6 +249,11 @@ const toolSwitchHint = ref("");
 let toolSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
 
 const TOOL_SWITCH_HINT_DURATION = 1600;
+const CANVAS_AI_ACTION_FEATURE_KEYS = {
+  generate: "canvasGenerate",
+  complete: "canvasComplete",
+  refine: "canvasRefine",
+} as const;
 
 const resolvedDesignPanelFontSizePreset = computed<WorkspaceFontSizePreset>(
   () => props.fontSizePreset || "md",
@@ -388,6 +417,152 @@ function resolveLayerTreeConnectorStyle(depth: number): Record<string, string> {
 
 function normalizeString(value: unknown): string {
   return String(value || "").trim();
+}
+
+function resolveCanvasTemplateFromSourceFormat(
+  sourceFormat: AiCanvasAssistSourceFormat,
+): AiCanvasAssistRequest["template"] {
+  if (sourceFormat === "markdown_outline") return "mindmap";
+  if (sourceFormat === "ddl") return "er";
+  if (sourceFormat === "architecture") return "architecture";
+  return "flowchart";
+}
+
+function resolveCanvasSourceFormatFromTemplate(
+  template: AiCanvasAssistRequest["template"],
+): AiCanvasAssistSourceFormat {
+  if (template === "mindmap") return "markdown_outline";
+  if (template === "er") return "ddl";
+  if (template === "architecture") return "architecture";
+  return "mermaid";
+}
+
+function getCanvasAiFeatureStatus(action: AiCanvasAssistAction) {
+  return canvasAiRuntimeStatus.value?.[CANVAS_AI_ACTION_FEATURE_KEYS[action]] || {
+    configured: true,
+    provider: "",
+    model: "",
+    reason: "",
+  };
+}
+
+function isCanvasAiActionEnabled(action: AiCanvasAssistAction): boolean {
+  if (!canvasAiRuntimeLoaded.value) return true;
+  return Boolean(getCanvasAiFeatureStatus(action).configured);
+}
+
+const canvasAiAnyActionConfigured = computed(() => {
+  if (!canvasAiRuntimeLoaded.value) return true;
+  return Object.values(canvasAiRuntimeStatus.value || {}).some(
+    status => Boolean(status?.configured),
+  );
+});
+
+const canvasAiInputDisabled = computed(() => {
+  if (canvasAiRunning.value) return true;
+  if (!canvasAiRuntimeLoaded.value) return false;
+  return !canvasAiAnyActionConfigured.value;
+});
+
+const canvasAiStatusLabel = computed(() => {
+  if (canvasAiRunning.value) return "运行中";
+  if (canvasAiRuntimeLoading.value) return "检查中";
+  if (canvasAiRuntimeError.value) return "状态异常";
+  if (!canvasAiRuntimeLoaded.value) return "待确认";
+  return canvasAiAnyActionConfigured.value ? "已配置" : "未配置";
+});
+
+const canvasAiStatusClass = computed(() => {
+  if (canvasAiRunning.value)
+    return "border-sky-400/60 bg-sky-400/10 text-sky-200";
+  if (canvasAiRuntimeError.value)
+    return "border-amber-400/60 bg-amber-400/10 text-amber-200";
+  if (!canvasAiRuntimeLoaded.value || canvasAiRuntimeLoading.value)
+    return "border-slate-700 bg-slate-900 text-slate-300";
+  if (!canvasAiAnyActionConfigured.value)
+    return "border-rose-400/60 bg-rose-400/10 text-rose-200";
+  return "border-emerald-400/50 bg-emerald-400/10 text-emerald-200";
+});
+
+function buildCanvasAiUnavailableMessage(action: AiCanvasAssistAction): string {
+  return normalizeString(getCanvasAiFeatureStatus(action).reason) || "画布 AI 未配置，请先在后台完成模型与密钥配置。";
+}
+
+function parseSseBlock(block: string): { eventType: string; dataText: string } | null {
+  const lines = block
+    .split("\n")
+    .map(line => line.replace(/\r$/, ""));
+  let eventType = "";
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (!line) continue;
+    if (line.startsWith("event:")) {
+      eventType = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+
+  if (!eventType && dataLines.length === 0) return null;
+  return {
+    eventType,
+    dataText: dataLines.join("\n"),
+  };
+}
+
+function previewCanvasAssistSource(
+  sourceText: string,
+  sourceFormat: AiCanvasAssistSourceFormat,
+): boolean {
+  if (!normalizeString(sourceText)) return false;
+
+  if (sourceFormat === "markdown_outline") {
+    importFromMarkdownOutline(sourceText);
+    return true;
+  }
+  if (sourceFormat === "ddl") {
+    importFromDDL(sourceText);
+    return true;
+  }
+  if (sourceFormat === "architecture") {
+    importArchitectureFromMetadata(sourceText);
+    return true;
+  }
+  importFromMermaid(sourceText);
+  return true;
+}
+
+async function loadCanvasAiRuntimeStatus(): Promise<void> {
+  canvasAiRuntimeLoading.value = true;
+  canvasAiRuntimeError.value = "";
+
+  try {
+    const response = await fetch(endpoint("/user/ai/runtime"), {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as ApiResponse<{
+      canvasGenerate: { configured: boolean; provider: string; model: string; reason: string };
+      canvasComplete: { configured: boolean; provider: string; model: string; reason: string };
+      canvasRefine: { configured: boolean; provider: string; model: string; reason: string };
+    }>;
+    canvasAiRuntimeStatus.value = payload.data;
+    canvasAiRuntimeLoaded.value = true;
+  }
+  catch (error: any) {
+    canvasAiRuntimeStatus.value = null;
+    canvasAiRuntimeLoaded.value = false;
+    canvasAiRuntimeError.value = String(error?.message || "画布 AI 状态检查失败。");
+  }
+  finally {
+    canvasAiRuntimeLoading.value = false;
+  }
 }
 
 function normalizeStageViewportState(
@@ -860,12 +1035,11 @@ function parseFrameMetric(value: unknown, fallback: number, min = 0): number {
 }
 
 function createDefaultDesignSceneDocument(): SceneDocument {
-  return buildDeviceMockupSceneDocument({
-    title: "统一设计文档",
-    subtitle: "一个文档多 Page，一个 Page 多 Frame，图表与设计稿统一协作。",
-    badge: "Design",
+  return createEmptySceneDocument({
+    drawMode: "composition",
+    sourceType: "manual",
     templateKey: DEFAULT_TEMPLATE_KEY,
-    deviceFramePresetKey: DEFAULT_DEVICE_FRAME_KEY,
+    editorEngine: "vueflow",
   });
 }
 
@@ -1724,6 +1898,12 @@ watch(
   { immediate: true },
 );
 
+watch(diagramSourceFormat, (nextFormat) => {
+  canvasAiTemplate.value = resolveCanvasTemplateFromSourceFormat(
+    nextFormat as AiCanvasAssistSourceFormat,
+  );
+});
+
 watch(
   diagramEditorGraph,
   (graph) => {
@@ -1740,10 +1920,18 @@ watch(
 );
 
 onMounted(() => {
+  void loadCanvasAiRuntimeStatus();
   if (!import.meta.client) return;
   window.addEventListener("pointerdown", handleActionMenuPointerDown);
   window.addEventListener("blur", clearTransientInteractionState);
 });
+
+watch(
+  () => props.workspaceId,
+  () => {
+    void loadCanvasAiRuntimeStatus();
+  },
+);
 
 onBeforeUnmount(() => {
   if (!import.meta.client) return;
@@ -3655,7 +3843,159 @@ function applyDiagramSource(): void {
               .sceneDocument;
 
   clearDiagramSelection();
+  canvasAiPreviewPending.value = false;
   commitDiagramFrameUpdate(frame.id, { embeddedScene });
+}
+
+async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
+  const projectId = normalizeString(props.projectId);
+  const workspaceId = normalizeString(props.workspaceId);
+  if (!projectId || !workspaceId) {
+    canvasAiError.value = "当前项目上下文未就绪，暂时无法调用画布 AI。";
+    return;
+  }
+  if (!isCanvasAiActionEnabled(action)) {
+    canvasAiError.value = buildCanvasAiUnavailableMessage(action);
+    return;
+  }
+
+  const prompt = normalizeString(canvasAiPrompt.value);
+  if (action === "generate" && !prompt) {
+    canvasAiError.value = "请先描述你希望生成的流程或结构。";
+    return;
+  }
+  if ((action === "complete" || action === "refine") && !normalizeString(diagramSourceText.value)) {
+    canvasAiError.value = "当前结构源为空，无法执行补全或续改。";
+    return;
+  }
+
+  const latestUserMessage = prompt
+    || (action === "complete"
+      ? "请基于当前结构源补全缺失节点与关系。"
+      : action === "refine"
+        ? "请基于当前结构源继续优化结构与命名。"
+        : "请生成一版可直接导入的结构源。");
+
+  canvasAiRunning.value = true;
+  canvasAiError.value = "";
+  canvasAiAction.value = action;
+
+  const nextMessages = [
+    ...canvasAiMessages.value.slice(-5),
+    {
+      role: "user",
+      content: latestUserMessage,
+    } satisfies ChatMessage,
+  ]
+
+  try {
+    const requestBody: AiCanvasAssistRequest = {
+      teamId: workspaceId,
+      workspaceId,
+      projectId,
+      action,
+      template: canvasAiTemplate.value,
+      messages: nextMessages,
+      context: {
+        teamId: workspaceId,
+        workspaceId,
+        projectId,
+        resourceId: normalizeString(props.boundResourceId || props.designResourceId),
+        resourceTitle: normalizeString(props.designPanelTitle),
+        sourceText: diagramSourceText.value,
+        sourceFormat: diagramSourceFormat.value as AiCanvasAssistSourceFormat,
+      },
+    };
+
+    const response = await fetch(endpoint("/ai/canvas/stream"), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const fallbackMessage = `请求失败：HTTP ${response.status}`;
+      const data = (await response.json().catch(() => null)) as ApiResponse<null> | null;
+      throw new Error(String(data?.message || fallbackMessage));
+    }
+
+    if (!response.body) {
+      throw new Error("未收到可读取的流式响应。");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let draftSourceText = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      while (true) {
+        const separatorIndex = buffer.indexOf("\n\n");
+        if (separatorIndex < 0) break;
+
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        const parsed = parseSseBlock(block);
+        if (!parsed) continue;
+
+        const eventPayload = parsed.dataText
+          ? (JSON.parse(parsed.dataText) as AiCanvasAssistStreamEvent)
+          : null;
+        const eventType = (eventPayload?.event || parsed.eventType) as AiCanvasAssistStreamEventType;
+        const data = (eventPayload?.data || {}) as Record<string, unknown>;
+
+        if (eventType === "progress") {
+          canvasAiError.value = "";
+          continue;
+        }
+
+        if (eventType === "delta") {
+          draftSourceText += String(data.text || "");
+          continue;
+        }
+
+        if (eventType === "done") {
+          const result = (data.result || {}) as Partial<AiCanvasAssistResult>;
+          const nextSourceFormat = (result.sourceFormat || resolveCanvasSourceFormatFromTemplate(canvasAiTemplate.value)) as AiCanvasAssistSourceFormat;
+          const nextSourceText = normalizeString(result.sourceText || draftSourceText);
+
+          if (!nextSourceText) {
+            throw new Error("画布 AI 未返回可用结构源。");
+          }
+
+          previewCanvasAssistSource(nextSourceText, nextSourceFormat);
+          diagramSourceFormat.value = nextSourceFormat;
+          diagramSourceText.value = nextSourceText;
+          canvasAiPreviewPending.value = true;
+          canvasAiMessages.value = [
+            ...nextMessages,
+            {
+              role: "assistant",
+              content: normalizeString(result.assistantReply || "画布结构源预览已生成。"),
+            } satisfies ChatMessage,
+          ].slice(-6);
+          continue;
+        }
+
+        if (eventType === "error") {
+          throw new Error(String(data.message || "画布 AI 调用失败。"));
+        }
+      }
+    }
+  }
+  catch (error: any) {
+    canvasAiError.value = String(error?.message || "画布 AI 调用失败。");
+  }
+  finally {
+    canvasAiRunning.value = false;
+  }
 }
 
 function resolveDiagramSourceFormat(
@@ -3696,6 +4036,13 @@ function resolveDiagramSourceText(frame: DesignFrameModel | null): string {
 function syncDiagramEditorFromFrame(frame: DesignFrameModel | null): void {
   diagramSourceFormat.value = resolveDiagramSourceFormat(frame);
   diagramSourceText.value = resolveDiagramSourceText(frame);
+  canvasAiTemplate.value = resolveCanvasTemplateFromSourceFormat(
+    diagramSourceFormat.value as AiCanvasAssistSourceFormat,
+  );
+  canvasAiPreviewPending.value = false;
+  canvasAiError.value = "";
+  canvasAiPrompt.value = "";
+  canvasAiMessages.value = [];
 }
 
 function openFrameEditor(frameId: string): void {
@@ -6014,6 +6361,99 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
               >
                 重新布局
               </button>
+            </div>
+
+            <div class="mt-4 rounded-[24px] border border-slate-800 bg-slate-950/70 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <h4 class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
+                    画布 AI
+                  </h4>
+                  <p class="mt-1 text-xs leading-5 text-slate-400">
+                    生成、补全或续改结构源。AI 只回填到源文本区，仍需你手动点击“覆盖导入”。
+                  </p>
+                </div>
+                <span
+                  class="rounded-full border px-2 py-1 text-[10px] font-semibold"
+                  :class="canvasAiStatusClass"
+                >
+                  {{ canvasAiStatusLabel }}
+                </span>
+              </div>
+
+              <div class="mt-4 grid gap-3 xl:grid-cols-[220px,1fr]">
+                <label class="block space-y-1">
+                  <span class="text-xs font-semibold text-slate-300">图类型</span>
+                  <select
+                    v-model="canvasAiTemplate"
+                    class="h-10 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs text-slate-100 outline-none focus:border-sky-400 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
+                    :disabled="canvasAiInputDisabled"
+                  >
+                    <option value="flowchart">流程图</option>
+                    <option value="mindmap">脑图</option>
+                    <option value="er">ER 图</option>
+                    <option value="architecture">架构图</option>
+                  </select>
+                </label>
+                <label class="block space-y-1">
+                  <span class="text-xs font-semibold text-slate-300">AI 指令</span>
+                  <textarea
+                    v-model="canvasAiPrompt"
+                    class="min-h-[84px] w-full rounded-[18px] border border-slate-800 bg-slate-950 px-3 py-2 text-xs leading-6 text-slate-100 outline-none focus:border-sky-400 disabled:cursor-not-allowed disabled:border-slate-900 disabled:text-slate-500"
+                    :disabled="canvasAiInputDisabled"
+                    placeholder="例如：生成一个从资料收集、评分映射、作品打磨到答辩准备的项目流程图。"
+                  ></textarea>
+                </label>
+              </div>
+
+              <div class="mt-3 flex flex-wrap gap-2">
+                <button
+                  class="rounded-2xl bg-sky-500 px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+                  type="button"
+                  :title="buildCanvasAiUnavailableMessage('generate')"
+                  :disabled="canvasAiRunning || !isCanvasAiActionEnabled('generate')"
+                  @click="runCanvasAssist('generate')"
+                >
+                  AI 生成
+                </button>
+                <button
+                  class="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:text-slate-500"
+                  type="button"
+                  :title="buildCanvasAiUnavailableMessage('complete')"
+                  :disabled="canvasAiRunning || !isCanvasAiActionEnabled('complete')"
+                  @click="runCanvasAssist('complete')"
+                >
+                  AI 补全
+                </button>
+                <button
+                  class="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:text-slate-500"
+                  type="button"
+                  :title="buildCanvasAiUnavailableMessage('refine')"
+                  :disabled="canvasAiRunning || !isCanvasAiActionEnabled('refine')"
+                  @click="runCanvasAssist('refine')"
+                >
+                  AI 续改
+                </button>
+                <span
+                  v-if="canvasAiPreviewPending"
+                  class="inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+                >
+                  已生成预览，待手动导入
+                </span>
+              </div>
+
+              <p
+                v-if="canvasAiError"
+                class="mt-3 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs leading-5 text-rose-200"
+              >
+                {{ canvasAiError }}
+              </p>
+              <p
+                v-else-if="canvasAiRuntimeError"
+                class="mt-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-200"
+              >
+                {{ canvasAiRuntimeError }}
+              </p>
             </div>
 
             <label class="mt-4 block space-y-1">

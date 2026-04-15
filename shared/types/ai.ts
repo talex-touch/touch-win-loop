@@ -1,5 +1,12 @@
-export {
+export type {
   AiAssistantOptions,
+  AiCanvasAssistAction,
+  AiCanvasAssistRequest,
+  AiCanvasAssistResult,
+  AiCanvasAssistSourceFormat,
+  AiCanvasAssistStreamEvent,
+  AiCanvasAssistStreamEventType,
+  AiCanvasAssistTemplate,
   AiChatMessage,
   AiChatSession,
   AiContestFilterRequest,
@@ -42,7 +49,6 @@ export {
   AiWorkspaceResult,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
-  BILLING_USAGE_EVENT_CODES,
   BillingCycle,
   BillingPlan,
   BillingUsageEvent,
@@ -55,4 +61,8 @@ export {
   UserAiSettings,
   WorkspaceAiMode,
   WorkspaceBillingEstimate,
+} from './domain-legacy'
+
+export {
+  BILLING_USAGE_EVENT_CODES,
 } from './domain-legacy'

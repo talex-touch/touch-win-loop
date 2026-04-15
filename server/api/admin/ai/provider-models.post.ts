@@ -5,8 +5,29 @@ import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
+import { normalizePlatformAiBaseURL, resolvePlatformAiTransientApiKey } from '~~/server/utils/platform-ai-base-url'
 import { resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+
+type SecretMode = 'keep' | 'replace' | 'clear'
+
+interface ProviderModelsBody {
+  provider?: string
+  baseURL?: string
+  apiKey?: string
+  apiKeyMode?: SecretMode
+}
+
+function toText(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function toMode(value: unknown): SecretMode {
+  const normalized = toText(value)
+  if (normalized === 'replace' || normalized === 'clear')
+    return normalized
+  return 'keep'
+}
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -25,24 +46,25 @@ export default defineEventHandler(async (event) => {
     }, 40396)
   }
 
+  const body = await readBody<ProviderModelsBody>(event).catch(() => ({} as ProviderModelsBody))
   const registry = resolvePlatformAiRegistry(runtime)
-  const provider = registry.providers[0]
-  if (!provider) {
-    setResponseStatus(event, 400)
-    return fail('尚未配置共享上游，无法拉取模型列表。', {
-      startedAt,
-      provider: runtime.ai.provider,
-      model: runtime.ai.model,
-      fallbackUsed: false,
-      attempts: 1,
-    }, 40096)
-  }
+  const currentProvider = registry.providers[0]
+  const provider = toText(body.provider) || currentProvider?.provider || runtime.ai.provider
+  const baseURL = normalizePlatformAiBaseURL(body.baseURL, provider) || currentProvider?.baseURL || runtime.ai.baseURL
+  const apiKeyMode = toMode(body.apiKeyMode)
+  const apiKey = resolvePlatformAiTransientApiKey({
+    currentApiKey: currentProvider?.apiKey || runtime.ai.apiKey,
+    providedApiKey: body.apiKey,
+    mode: apiKeyMode,
+  })
+  const usedProvidedApiKey = Boolean(toText(body.apiKey))
+  const timeoutMs = currentProvider?.timeoutMs || runtime.ai.timeoutMs
 
-  if (!String(provider.apiKey || '').trim()) {
+  if (!toText(apiKey)) {
     setResponseStatus(event, 400)
     return fail('共享上游 API Key 未配置，无法自动拉取模型。', {
       startedAt,
-      provider: provider.provider,
+      provider,
       model: runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
@@ -52,12 +74,12 @@ export default defineEventHandler(async (event) => {
   try {
     const items = await discoverProviderModels({
       scope: 'provider',
-      provider: provider.provider,
-      baseURL: provider.baseURL,
-      apiKey: provider.apiKey,
+      provider,
+      baseURL,
+      apiKey,
       modelPricingJson: '',
-      timeoutMs: provider.timeoutMs,
-      adapter: provider.adapter,
+      timeoutMs,
+      adapter: currentProvider?.adapter,
     })
 
     await withTransaction(event, async (db) => {
@@ -65,31 +87,33 @@ export default defineEventHandler(async (event) => {
         actorUserId: user.id,
         action: 'read.admin.ai.provider_models',
         payload: {
-          provider: provider.provider,
+          provider,
           count: items.length,
+          usedRequestOverrides: Boolean(toText(body.provider) || toText(body.baseURL) || usedProvidedApiKey || apiKeyMode !== 'keep'),
         },
       })
     })
 
     return ok({
-      provider: provider.provider,
-      baseURL: provider.baseURL,
+      provider,
+      baseURL,
       fetchedAt: new Date().toISOString(),
       items,
     }, {
       startedAt,
-      provider: provider.provider,
-      model: provider.models[0]?.model || runtime.ai.model,
+      provider,
+      model: currentProvider?.models[0]?.model || runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     })
   }
   catch (error: any) {
     setResponseStatus(event, 502)
-    return fail(String(error?.message || '模型列表拉取失败，请检查 provider/baseURL/apiKey。'), {
+    const sourceLabel = usedProvidedApiKey ? '当前输入的 API Key' : '已保存的 API Key'
+    return fail(`[${sourceLabel}] ${String(error?.message || '模型列表拉取失败，请检查 provider/baseURL/apiKey。')}`, {
       startedAt,
-      provider: provider.provider,
-      model: provider.models[0]?.model || runtime.ai.model,
+      provider,
+      model: currentProvider?.models[0]?.model || runtime.ai.model,
       fallbackUsed: false,
       attempts: 1,
     }, 50296)

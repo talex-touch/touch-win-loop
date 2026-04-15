@@ -374,7 +374,7 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
     '模式：文档增强（只读生成，用户确认后才落文）。',
     '禁止产出任何可执行写入动作，也不要假设已经修改文档。',
     '仅输出适合直接插入 markdown 文档的结果正文，不要附加冗长说明。',
-    '若是 summarize，则输出精炼摘要；若是 rewrite，则直接输出改写后的替代文本；若是 continue，则输出自然续写段落。',
+    '若是 summarize，则输出精炼摘要；若是 rewrite，则直接输出润写后的替代文本；若是 continue，则输出自然续写段落；若是 expand，则输出扩写后的完整替代文本；若是 complete_context，则输出补全后的完整正文；若是 restructure，则输出整理结构后的完整正文。',
   ].join('\n')
 }
 
@@ -437,7 +437,7 @@ function buildDocumentAssistPrompt(context: WorkspaceAiExecutionContext): string
     '文档正文（截断前文）：',
     context.markdown || '（空文档）',
     '',
-    '请严格按动作返回可直接落入文档的正文内容。',
+    '请严格按动作返回可直接落入文档的正文内容，不要返回解释、标题或代码块围栏。',
   ].join('\n')
 }
 

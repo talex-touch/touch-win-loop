@@ -1993,7 +1993,7 @@ function applyDocumentAssistResult(input: { action: AiWorkspaceDocumentAction, t
 
   const { selection } = instance.state
   const chain = instance.chain().focus()
-  if (input.action === 'rewrite' && !selection.empty) {
+  if ((input.action === 'rewrite' || input.action === 'expand' || input.action === 'complete_context' || input.action === 'restructure') && !selection.empty) {
     chain.insertContentAt({ from: selection.from, to: selection.to }, text).run()
     return true
   }
@@ -2084,6 +2084,27 @@ function executeCommand(command: RichTextEditorCommand, options?: { replaceRange
 
   if (command.action === 'aiRewrite') {
     emitDocumentAssistAction('rewrite', replaceRange ? 'slash_menu' : 'selection_toolbar')
+    closeSlashMenu()
+    closeHeadingMenu()
+    return
+  }
+
+  if (command.action === 'aiExpand') {
+    emitDocumentAssistAction('expand', replaceRange ? 'slash_menu' : 'selection_toolbar')
+    closeSlashMenu()
+    closeHeadingMenu()
+    return
+  }
+
+  if (command.action === 'aiCompleteContext') {
+    emitDocumentAssistAction('complete_context', replaceRange ? 'slash_menu' : 'selection_toolbar')
+    closeSlashMenu()
+    closeHeadingMenu()
+    return
+  }
+
+  if (command.action === 'aiRestructure') {
+    emitDocumentAssistAction('restructure', replaceRange ? 'slash_menu' : 'selection_toolbar')
     closeSlashMenu()
     closeHeadingMenu()
     return

@@ -7,6 +7,7 @@ import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { getPlatformAiChannelDefinitions, resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { getPlatformAiOverrideState, readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+import { hasConfigMasterKey } from '~~/server/utils/secure-config'
 
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
@@ -26,34 +27,27 @@ export default defineEventHandler(async (event) => {
   }
 
   const registry = resolvePlatformAiRegistry(runtime)
+  const sharedProvider = registry.providers[0]
   const providerStats = await withClient(event, db => aggregatePlatformAiProviderUsage(db, registry.providers))
   const payload = {
-    llm: {
-      provider: runtime.ai.provider,
-      baseURL: runtime.ai.baseURL,
-      model: runtime.ai.model,
-      embeddingModel: runtime.ai.embeddingModel,
-      modelCatalogJson: runtime.ai.modelCatalogJson,
-      modelPricingJson: runtime.ai.modelPricingJson,
-      providersJson: runtime.ai.providersJson,
-      channelsJson: runtime.ai.channelsJson,
-      temperature: runtime.ai.temperature,
-      topP: runtime.ai.topP,
-      maxTokens: runtime.ai.maxTokens,
-      presencePenalty: runtime.ai.presencePenalty,
-      frequencyPenalty: runtime.ai.frequencyPenalty,
-      timeoutMs: runtime.ai.timeoutMs,
-      maxRetries: runtime.ai.maxRetries,
+    upstream: {
+      provider: sharedProvider?.provider || runtime.ai.provider,
+      baseURL: sharedProvider?.baseURL || runtime.ai.baseURL,
+      timeoutMs: sharedProvider?.timeoutMs || runtime.ai.timeoutMs,
+      maxRetries: sharedProvider?.maxRetries || runtime.ai.maxRetries,
       apiKeyConfigured: Boolean(runtime.ai.apiKey),
+      defaultModel: registry.defaults.defaultModel || runtime.ai.model,
+      embeddingModel: registry.defaults.embeddingModel || runtime.ai.embeddingModel,
+      documentModel: registry.defaults.documentModel || runtime.docAi.model,
     },
-    docAi: {
-      provider: runtime.docAi.provider,
-      baseURL: runtime.docAi.baseURL,
-      model: runtime.docAi.model,
-      modelPricingJson: runtime.docAi.modelPricingJson,
-      timeoutMs: runtime.docAi.timeoutMs,
-      maxRetries: runtime.docAi.maxRetries,
-      apiKeyConfigured: Boolean(runtime.docAi.apiKey),
+    modelPool: {
+      fetchedAt: sharedProvider?.fetchedAt || '',
+      total: sharedProvider?.models.length || 0,
+      items: sharedProvider?.models || [],
+    },
+    scenes: {
+      items: registry.channels,
+      definitions: getPlatformAiChannelDefinitions(),
     },
     adminAi: {
       enabled: runtime.adminAi.enabled,
@@ -62,22 +56,11 @@ export default defineEventHandler(async (event) => {
       maxWebResults: runtime.adminAi.maxWebResults,
       maxPageChars: runtime.adminAi.maxPageChars,
     },
-    registry: {
-      providers: registry.providers.map(item => ({
-        id: item.id,
-        name: item.name,
-        adapter: item.adapter,
-        provider: item.provider,
-        baseURL: item.baseURL,
-        enabled: item.enabled,
-        timeoutMs: item.timeoutMs,
-        maxRetries: item.maxRetries,
-        apiKeyConfigured: Boolean(item.apiKey),
-        models: item.models,
-      })),
-      providerStats,
-      channels: registry.channels,
-      channelDefinitions: getPlatformAiChannelDefinitions(),
+    config: {
+      masterKeyReady: hasConfigMasterKey(event),
+    },
+    stats: {
+      providerUsage: providerStats,
     },
     overrideState: getPlatformAiOverrideState(overrides),
   }
@@ -87,7 +70,8 @@ export default defineEventHandler(async (event) => {
       actorUserId: user.id,
       action: 'read.admin.ai.providers',
       payload: {
-        adminAiEnabled: runtime.adminAi.enabled,
+        upstreamProvider: payload.upstream.provider,
+        modelPoolSize: payload.modelPool.total,
       },
     })
   })

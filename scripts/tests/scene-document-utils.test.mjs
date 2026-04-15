@@ -14,6 +14,7 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
     appendDesignFrameToSceneDocument,
     appendDesignPageToSceneDocument,
     buildDeviceMockupSceneDocument,
+    createEmptySceneDocument,
     exportArchitectureModelToMermaid,
     exportSchemaModelToDDL,
     importArchitectureFromMetadata,
@@ -22,6 +23,7 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
     importFromMermaid,
     parseSceneDocumentString,
     renderCompositionAssetToSvg,
+    removeDesignFrameFromSceneDocument,
     resolveDesignFrameEditingBinding,
     resolveDesignFrameProjectionLayout,
   } = await loadSceneUtils()
@@ -306,6 +308,30 @@ packages:
   assert.equal(linkedProjection?.ownerFrame.id, 'frame-wrapper')
   assert.equal(linkedProjection?.projected, false)
   assert.ok(Number(linkedProjection?.contentScale || 0) > 0)
+
+  const emptyCompositionScene = createEmptySceneDocument({
+    drawMode: 'composition',
+    sourceType: 'manual',
+    templateKey: 'device-showcase',
+    editorEngine: 'vueflow',
+  })
+  assert.equal(emptyCompositionScene.sourceModel.kind, 'composition')
+  assert.equal(emptyCompositionScene.sourceModel.pages?.length, 1)
+  assert.equal(emptyCompositionScene.sourceModel.frames?.length || 0, 0)
+
+  const singleFrameScene = appendDesignFrameToSceneDocument(emptyCompositionScene, {
+    pageId: emptyCompositionScene.sourceModel.currentPageId,
+    kind: 'device_mockup',
+    name: '可删除设备 Mock',
+  })
+  const removableFrameId = singleFrameScene.sourceModel.frames?.[0]?.id || ''
+  assert.ok(removableFrameId)
+  const removedFrameScene = removeDesignFrameFromSceneDocument(
+    singleFrameScene,
+    removableFrameId,
+  )
+  assert.equal(removedFrameScene.sourceModel.kind, 'composition')
+  assert.equal(removedFrameScene.sourceModel.frames?.length || 0, 0)
 })
 
 it('repo architecture scanner 可从当前工作区读取 manifests 并生成 architecture scene', async () => {

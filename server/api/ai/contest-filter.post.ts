@@ -1,13 +1,13 @@
 import type { AiContestFilterRequest, AiContestFilterResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { runContestFilterChain } from '~~/server/services/ai/contest-filter-chain'
-import { fail, ok } from '~~/server/utils/api'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
+import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { listContestLibrary, recordContestAuditLog, resolveAiPromptText } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
@@ -122,17 +122,22 @@ export default defineEventHandler(async (event) => {
       target: 'contest_filter',
     })
   })
-  const mergedPrompt = buildMergedPrompt(channelRuntime.prompt, injectedPrompt)
-
-  let result: {
+  let execution: Awaited<ReturnType<typeof runWithPlatformAiChannelFallback<{
     data: AiContestFilterResult
     fallbackUsed: boolean
     attempts: number
-  }
+  }>>>
   try {
-    result = await runWithRetry({
-      maxRetries: activeAiConfig.maxRetries,
-      run: () => runContestFilterChain({ request: safeRequest, contests, ai: activeAiConfig, injectedPrompt: mergedPrompt }),
+    execution = await runWithPlatformAiChannelFallback(runtime, 'contest_filter', async ({ ai, prompt }) => {
+      return runWithRetry({
+        maxRetries: ai.maxRetries,
+        run: () => runContestFilterChain({
+          request: safeRequest,
+          contests,
+          ai,
+          injectedPrompt: buildMergedPrompt(prompt, injectedPrompt),
+        }),
+      })
     })
   }
   catch (error) {
@@ -155,18 +160,19 @@ export default defineEventHandler(async (event) => {
         trackId: safeRequest.trackId,
         workspaceId,
         channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
-        fallbackUsed: false,
-        attempts: result.attempts,
+        providerId: execution.provider?.id || null,
+        fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+        attempts: execution.attemptChain.length,
+        attemptChain: execution.attemptChain,
       },
     })
   })
 
-  return ok(result.data, {
+  return ok(execution.data.data, {
     startedAt,
-    provider: activeAiConfig.provider,
-    model: activeAiConfig.model,
-    fallbackUsed: false,
-    attempts: result.attempts,
+    provider: execution.ai.provider,
+    model: execution.ai.model,
+    fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+    attempts: execution.attemptChain.length,
   }, 'ok')
 })

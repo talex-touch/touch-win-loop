@@ -1,4 +1,3 @@
-import type { AdminAgentExecutionResult } from '~~/server/services/admin-ai/orchestrator'
 import type { AdminAgentRunRequest, AdminAgentTaskType } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { executeAdminAgent } from '~~/server/services/admin-ai/orchestrator'
@@ -13,7 +12,7 @@ import {
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
@@ -193,19 +192,21 @@ export default defineEventHandler(async (event) => {
     }, 42992)
   }
 
-  const execution: AdminAgentExecutionResult | 'CONTEST_NOT_FOUND' = await executeAdminAgent(event, request, {}, {
-    runtime: {
-      ...runtime,
-      ai: {
-        ...runtime.ai,
-        ...adminAiConfig,
+  const execution = await runWithPlatformAiChannelFallback(runtime, resolveAdminChannelKey(request.taskType), async ({ ai, prompt }) => {
+    return executeAdminAgent(event, request, {}, {
+      runtime: {
+        ...runtime,
+        ai: {
+          ...runtime.ai,
+          ...ai,
+        },
       },
-    },
-    channelPrompt: channelRuntime.prompt,
+      channelPrompt: prompt,
+    })
   }).catch((error) => {
     if (error instanceof Error && error.message === 'CONTEST_NOT_FOUND') {
       setResponseStatus(event, 404)
-      return 'CONTEST_NOT_FOUND'
+      return 'CONTEST_NOT_FOUND' as const
     }
     throw error
   })
@@ -231,8 +232,8 @@ export default defineEventHandler(async (event) => {
         sessionId: prepared.sessionId,
         role: 'user',
         content: request.message,
-        provider: adminAiConfig.provider,
-        model: adminAiConfig.model,
+        provider: execution.ai.provider,
+        model: execution.ai.model,
         fallbackUsed: false,
         createdByUserId: user.id,
       })
@@ -242,10 +243,10 @@ export default defineEventHandler(async (event) => {
       workspaceId: request.workspaceId,
       sessionId: prepared.sessionId,
       role: 'assistant',
-      content: execution.data.assistantReply,
-      provider: adminAiConfig.provider,
-      model: adminAiConfig.model,
-      fallbackUsed: execution.fallbackUsed,
+      content: execution.data.data.assistantReply,
+      provider: execution.ai.provider,
+      model: execution.ai.model,
+      fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
       createdByUserId: user.id,
     })
 
@@ -267,10 +268,11 @@ export default defineEventHandler(async (event) => {
         workspaceId: request.workspaceId,
         sessionId: prepared.sessionId,
         taskType: request.taskType,
-        channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
-        fallbackUsed: execution.fallbackUsed,
-        attempts: execution.attempts,
+        channelKey: execution.channel.key,
+        providerId: execution.provider?.id || null,
+        fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+        attempts: execution.attemptChain.length,
+        attemptChain: execution.attemptChain,
         latencyMs: Date.now() - startedAt,
         remainingQuota: prepared.remainingQuota,
       },
@@ -278,13 +280,13 @@ export default defineEventHandler(async (event) => {
   })
 
   return ok({
-    ...execution.data,
+    ...execution.data.data,
     sessionId: prepared.sessionId,
   }, {
     startedAt,
-    provider: adminAiConfig.provider,
-    model: adminAiConfig.model,
-    fallbackUsed: execution.fallbackUsed,
-    attempts: execution.attempts,
-  }, execution.fallbackUsed ? 'fallback used' : 'ok')
+    provider: execution.ai.provider,
+    model: execution.ai.model,
+    fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+    attempts: execution.attemptChain.length,
+  }, execution.usedFallback || execution.data.fallbackUsed ? 'fallback used' : 'ok')
 })

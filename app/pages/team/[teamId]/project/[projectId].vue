@@ -251,6 +251,15 @@ interface ProjectWorkspaceAiRuntimeStatus {
   workspaceAutoOptimize: AiRuntimeFeatureStatus
   workspaceIssueDiscovery: AiRuntimeFeatureStatus
   documentAssist: AiRuntimeFeatureStatus
+  documentSummarize: AiRuntimeFeatureStatus
+  documentRewrite: AiRuntimeFeatureStatus
+  documentContinue: AiRuntimeFeatureStatus
+  documentExpand: AiRuntimeFeatureStatus
+  documentCompleteContext: AiRuntimeFeatureStatus
+  documentRestructure: AiRuntimeFeatureStatus
+  canvasGenerate: AiRuntimeFeatureStatus
+  canvasComplete: AiRuntimeFeatureStatus
+  canvasRefine: AiRuntimeFeatureStatus
   defense: AiRuntimeFeatureStatus
   contestFilter: AiRuntimeFeatureStatus
   topicProposal: AiRuntimeFeatureStatus
@@ -258,16 +267,41 @@ interface ProjectWorkspaceAiRuntimeStatus {
 }
 
 type ProjectWorkspaceAiFeatureKey = keyof ProjectWorkspaceAiRuntimeStatus
+type DocumentAssistFeatureKey
+  = 'documentSummarize'
+    | 'documentRewrite'
+    | 'documentContinue'
+    | 'documentExpand'
+    | 'documentCompleteContext'
+    | 'documentRestructure'
 
 const AI_RUNTIME_FEATURE_LABELS: Record<ProjectWorkspaceAiFeatureKey, string> = {
   workspaceDialogAsk: '工作台 AI',
   workspaceAutoOptimize: '工作台 AI',
   workspaceIssueDiscovery: '工作台 AI',
   documentAssist: '文档 AI',
+  documentSummarize: '文档总结 AI',
+  documentRewrite: '文档润写 AI',
+  documentContinue: '文档续写 AI',
+  documentExpand: '文档扩写 AI',
+  documentCompleteContext: '文档补全上下文 AI',
+  documentRestructure: '文档结构整理 AI',
+  canvasGenerate: '画布生成 AI',
+  canvasComplete: '画布补全 AI',
+  canvasRefine: '画布续改 AI',
   defense: '答辩 AI',
   contestFilter: '赛事筛选 AI',
   topicProposal: '选题助手 AI',
   projectChat: '项目对话 AI',
+}
+
+const DOCUMENT_ASSIST_FEATURE_KEY_MAP: Record<AiWorkspaceDocumentAction, DocumentAssistFeatureKey> = {
+  summarize: 'documentSummarize',
+  rewrite: 'documentRewrite',
+  continue: 'documentContinue',
+  expand: 'documentExpand',
+  complete_context: 'documentCompleteContext',
+  restructure: 'documentRestructure',
 }
 
 function splitTopicBoardTags(text: string): string[] {
@@ -2700,6 +2734,10 @@ function getAiFeatureStatus(key: ProjectWorkspaceAiFeatureKey): AiRuntimeFeature
   return aiRuntimeStatus.value?.[key] || null
 }
 
+function resolveDocumentAssistFeatureKey(action: AiWorkspaceDocumentAction): DocumentAssistFeatureKey {
+  return DOCUMENT_ASSIST_FEATURE_KEY_MAP[action]
+}
+
 function resolveAiFeatureKeyForMode(mode: WorkspaceAiMode): ProjectWorkspaceAiFeatureKey {
   if (mode === 'auto_optimize')
     return 'workspaceAutoOptimize'
@@ -2728,6 +2766,24 @@ function ensureAiFeatureAvailable(key: ProjectWorkspaceAiFeatureKey, message = '
   statusLine.value = message || buildAiUnavailableMessage(key)
   return false
 }
+
+const documentAssistActionStatusMap = computed<Record<AiWorkspaceDocumentAction, AiRuntimeFeatureStatus>>(() => {
+  const fallback = {
+    configured: true,
+    provider: '',
+    model: '',
+    reason: '',
+  }
+
+  return {
+    summarize: getAiFeatureStatus(resolveDocumentAssistFeatureKey('summarize')) || fallback,
+    rewrite: getAiFeatureStatus(resolveDocumentAssistFeatureKey('rewrite')) || fallback,
+    continue: getAiFeatureStatus(resolveDocumentAssistFeatureKey('continue')) || fallback,
+    expand: getAiFeatureStatus(resolveDocumentAssistFeatureKey('expand')) || fallback,
+    complete_context: getAiFeatureStatus(resolveDocumentAssistFeatureKey('complete_context')) || fallback,
+    restructure: getAiFeatureStatus(resolveDocumentAssistFeatureKey('restructure')) || fallback,
+  }
+})
 
 const currentAiFeatureKey = computed<ProjectWorkspaceAiFeatureKey>(() => {
   return resolveAiFeatureKeyForMode(aiMode.value)
@@ -6167,7 +6223,13 @@ function buildDocumentAssistUserPrompt(action: AiWorkspaceDocumentAction): strin
   if (action === 'summarize')
     return '请总结当前选区内容，保留关键信息并输出可直接插入文档的精炼结果。'
   if (action === 'rewrite')
-    return '请改写当前选区，使表达更清晰、专业且与当前文档语气一致。'
+    return '请润写当前选区，使表达更清晰、专业且与当前文档语气一致。'
+  if (action === 'expand')
+    return '请扩写当前选区，在不偏离原意的前提下补充必要细节，并直接输出完整替代文本。'
+  if (action === 'complete_context')
+    return '请补全当前选区缺失的上下文、衔接与背景信息，直接输出可替换原文的完整正文。'
+  if (action === 'restructure')
+    return '请整理当前选区的结构与层次，提升逻辑顺序和可读性，并直接输出完整替代文本。'
   return '请基于当前文档上下文，从当前位置继续写作，保持语气、结构和主题一致。'
 }
 
@@ -6200,7 +6262,7 @@ async function runDocumentAssistAction(
     statusLine.value = '当前文档未就绪，暂时无法调用文档 AI。'
     return
   }
-  if (!ensureAiFeatureAvailable('documentAssist'))
+  if (!ensureAiFeatureAvailable(resolveDocumentAssistFeatureKey(payload.action)))
     return
 
   syncDocumentAssistRequestState({
@@ -9536,6 +9598,7 @@ watch(() => workspaceShellLoading.value, (loading) => {
             :document-selection-text="documentAssistRequestState.selectionText"
             :document-selection-range="documentAssistRequestState.selectionRange"
             :document-assist-action="documentAssistRequestState.action"
+            :document-assist-action-status="documentAssistActionStatusMap"
             :document-assist-result="documentAssistResult"
             :document-assist-running="documentAssistRunning"
             :ai-enabled="currentAiModeAvailable"

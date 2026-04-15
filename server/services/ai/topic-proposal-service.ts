@@ -21,7 +21,7 @@ import {
 } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
-import { buildMergedPrompt, resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
+import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { runWithRetry } from '~~/server/utils/retry'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
@@ -438,25 +438,33 @@ export async function executeTopicProposal(
       ? Math.max(0, Math.min(1, Number(input.request.aiOptions?.temperature)))
       : channelAiConfig.temperature,
   }
-  const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
   if (!isAiRuntimeConfigured(effectiveAiConfig))
     throw new Error(buildAiNotConfiguredMessage('选题助手 AI'))
 
-  const result = await runWithRetry({
-    maxRetries: effectiveAiConfig.maxRetries,
-    run: () => runTopicProposalChain({
-      request: input.request,
-      ai: effectiveAiConfig,
-      contestName: contest?.name,
-      trackName: track?.name,
-      injectedPrompt: mergedInjectedPrompt,
-      localContext: contextBundle.localContext,
-      webContext,
-    }),
+  const execution = await runWithPlatformAiChannelFallback(runtime, 'topic_proposal', async ({ ai, prompt }) => {
+    const nextAiConfig = {
+      ...ai,
+      temperature: Number.isFinite(Number(input.request.aiOptions?.temperature))
+        ? Math.max(0, Math.min(1, Number(input.request.aiOptions?.temperature)))
+        : ai.temperature,
+    }
+
+    return runWithRetry({
+      maxRetries: nextAiConfig.maxRetries,
+      run: () => runTopicProposalChain({
+        request: input.request,
+        ai: nextAiConfig,
+        contestName: contest?.name,
+        trackName: track?.name,
+        injectedPrompt: buildMergedPrompt(prompt, contextBundle.injectedPrompt),
+        localContext: contextBundle.localContext,
+        webContext,
+      }),
+    })
   })
 
   const baseResult: AiTopicProposalResult = {
-    ...result.data,
+    ...execution.data.data,
     references: webReferences,
     webSearchEnabled,
     sessionId: resolvedSession.id,
@@ -489,8 +497,8 @@ export async function executeTopicProposal(
         sessionId: resolvedSession.id,
         role: 'user',
         content: effectiveUserMessage,
-        provider: effectiveAiConfig.provider,
-        model: effectiveAiConfig.model,
+        provider: execution.ai.provider,
+        model: execution.ai.model,
         fallbackUsed: false,
         metadata: modeMetadata,
         createdByUserId: input.user.id,
@@ -502,9 +510,9 @@ export async function executeTopicProposal(
       sessionId: resolvedSession.id,
       role: 'assistant',
       content: enrichedResult.assistantReply,
-      provider: effectiveAiConfig.provider,
-      model: effectiveAiConfig.model,
-      fallbackUsed: result.fallbackUsed,
+      provider: execution.ai.provider,
+      model: execution.ai.model,
+      fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
       metadata: modeMetadata,
       createdByUserId: input.user.id,
     })
@@ -529,9 +537,10 @@ export async function executeTopicProposal(
         projectId: input.request.context.projectId,
         trackId: input.request.context.trackId,
         channelKey: channelRuntime.key,
-        providerId: channelRuntime.provider?.id || null,
-        fallbackUsed: result.fallbackUsed,
-        attempts: result.attempts,
+        providerId: execution.provider?.id || null,
+        fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+        attempts: execution.attemptChain.length,
+        attemptChain: execution.attemptChain,
         webSearchEnabled,
         boardInput,
       },
@@ -546,10 +555,10 @@ export async function executeTopicProposal(
     },
     meta: {
       startedAt,
-      provider: effectiveAiConfig.provider,
-      model: effectiveAiConfig.model,
-      fallbackUsed: result.fallbackUsed,
-      attempts: result.attempts,
+      provider: execution.ai.provider,
+      model: execution.ai.model,
+      fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+      attempts: execution.attemptChain.length,
     },
   }
 }
