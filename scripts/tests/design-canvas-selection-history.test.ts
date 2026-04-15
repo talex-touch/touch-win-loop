@@ -78,6 +78,7 @@ describe('useDesignCanvasSelection', () => {
     expect(selection.state.value).toEqual({
       scope: 'none',
       editingFrameId: 'frame-1',
+      displayFrameId: 'frame-1',
       frameIds: [],
       primaryFrameId: '',
       elementIds: [],
@@ -91,6 +92,22 @@ describe('useDesignCanvasSelection', () => {
     expect(selection.state.value).toEqual({
       scope: 'element',
       editingFrameId: 'frame-1',
+      displayFrameId: 'frame-1',
+      frameIds: [],
+      primaryFrameId: '',
+      elementIds: ['element-1'],
+      primaryElementId: 'element-1',
+    })
+
+    selection.setElementSelection(['element-1'], {
+      editingFrameId: 'frame-1',
+      displayFrameId: 'frame-2',
+      primaryElementId: 'element-1',
+    })
+    expect(selection.state.value).toEqual({
+      scope: 'element',
+      editingFrameId: 'frame-1',
+      displayFrameId: 'frame-2',
       frameIds: [],
       primaryFrameId: '',
       elementIds: ['element-1'],
@@ -101,6 +118,7 @@ describe('useDesignCanvasSelection', () => {
     expect(selection.state.value).toEqual({
       scope: 'none',
       editingFrameId: 'frame-1',
+      displayFrameId: 'frame-2',
       frameIds: [],
       primaryFrameId: '',
       elementIds: [],
@@ -111,6 +129,7 @@ describe('useDesignCanvasSelection', () => {
     expect(selection.state.value).toEqual({
       scope: 'frame',
       editingFrameId: '',
+      displayFrameId: '',
       frameIds: ['frame-1'],
       primaryFrameId: 'frame-1',
       elementIds: [],
@@ -158,8 +177,9 @@ describe('WorkspaceDesignPanel', () => {
     expect(source).toMatch(/const nextDocument = appendDesignElementToSceneDocument\(/)
     expect(source).toMatch(/const createdElement =/)
     expect(source).toMatch(/commitDocument\(nextDocument\);/)
+    expect(source).toMatch(/const editingFrameId =\s*selectionState\.value\.editingFrameId \|\| normalizeString\(createdElement\.frameId\)/)
     expect(source).toMatch(/setSelectedElements\(\[createdElement\.id\], \{/)
     expect(source).toMatch(/primaryElementId:\s*createdElement\.id/)
-    expect(source).toMatch(/editingFrameId:\s*selectionState\.value\.editingFrameId \|\| normalizeString\(createdElement\.frameId\)/)
+    expect(source).toMatch(/editingFrameId,\s*displayFrameId:\s*resolveDisplayFrameIdForOwnerSelection\(editingFrameId\)/)
   })
 })

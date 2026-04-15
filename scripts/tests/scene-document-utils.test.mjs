@@ -22,6 +22,8 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
     importFromMermaid,
     parseSceneDocumentString,
     renderCompositionAssetToSvg,
+    resolveDesignFrameEditingBinding,
+    resolveDesignFrameProjectionLayout,
   } = await loadSceneUtils()
 
   const mermaidScene = importFromMermaid('flowchart TD\nA[入口] --> B[出口]')
@@ -249,6 +251,61 @@ packages:
   assert.equal(migratedComposition.sourceModel.pages?.length, 1)
   assert.equal(migratedComposition.sourceModel.frames?.length, 1)
   assert.equal(migratedComposition.sourceModel.frames?.[0]?.kind, 'device_mockup')
+
+  const linkedSourceFrame = {
+    id: 'frame-source',
+    pageId: 'page-2',
+    kind: 'device_artboard',
+    name: 'Source Artboard',
+    x: 0,
+    y: 0,
+    width: 390,
+    height: 844,
+  }
+  const linkedWrapperFrame = {
+    id: 'frame-wrapper',
+    pageId: 'page-1',
+    kind: 'device_artboard',
+    name: 'Wrapper Preview',
+    x: 120,
+    y: 80,
+    width: 480,
+    height: 960,
+    metadata: {
+      device: {
+        mockupSourceFrameId: 'frame-source',
+        shellMode: 'builtin',
+      },
+    },
+  }
+  const linkedComposition = {
+    kind: 'composition',
+    templateKey: 'device-showcase',
+    currentPageId: 'page-1',
+    pages: [
+      { id: 'page-1', name: 'Page 1', frameIds: ['frame-wrapper'] },
+      { id: 'page-2', name: 'Page 2', frameIds: ['frame-source'] },
+    ],
+    frames: [linkedWrapperFrame, linkedSourceFrame],
+    elements: [],
+    assets: [],
+  }
+  const linkedBinding = resolveDesignFrameEditingBinding(
+    linkedComposition,
+    linkedWrapperFrame,
+  )
+  assert.equal(linkedBinding?.displayFrame.id, 'frame-wrapper')
+  assert.equal(linkedBinding?.ownerFrame.id, 'frame-source')
+  assert.equal(linkedBinding?.projected, true)
+
+  const linkedProjection = resolveDesignFrameProjectionLayout(
+    linkedComposition,
+    linkedWrapperFrame,
+  )
+  assert.equal(linkedProjection?.displayFrame.id, 'frame-wrapper')
+  assert.equal(linkedProjection?.ownerFrame.id, 'frame-source')
+  assert.equal(linkedProjection?.projected, true)
+  assert.ok(Number(linkedProjection?.contentScale || 0) > 0)
 })
 
 it('repo architecture scanner 可从当前工作区读取 manifests 并生成 architecture scene', async () => {

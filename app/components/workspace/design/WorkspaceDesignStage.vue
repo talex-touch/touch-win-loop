@@ -18,11 +18,11 @@ import {
 import {
   canDesignFrameCreateElements,
   isDesignFrameClipContentEnabled,
-  resolveDesignFrameContentLayout,
   resolveDesignElementAbsoluteRect,
   resolveDesignElementPresentation,
   resolveDesignFrameGridMetadata,
   resolveDesignFrameLayoutMetadata,
+  resolveDesignFrameProjectionLayoutForFrames,
 } from '~~/shared/utils/scene-document'
 import WorkspaceDesignCanvas from './WorkspaceDesignCanvas.client.vue'
 
@@ -40,6 +40,7 @@ const props = withDefaults(defineProps<{
   assets?: DesignAssetModel[]
   pageRootElements?: DesignElementModel[]
   frameElements?: Record<string, DesignElementModel[]>
+  frameOwnerFrames?: Record<string, DesignFrameModel>
   themeTokens?: Record<string, string>
   activeTool?: DesignEditorTool
   selectionState?: DesignCanvasSelectionState
@@ -55,6 +56,7 @@ const props = withDefaults(defineProps<{
   assets: () => [],
   pageRootElements: () => [],
   frameElements: () => ({}),
+  frameOwnerFrames: () => ({}),
   themeTokens: () => ({}),
   activeTool: 'select',
   selectionState: () => createEmptyDesignCanvasSelectionState(),
@@ -84,11 +86,16 @@ const emit = defineEmits<{
   'update-element': [payload: { elementId: string, patch: Partial<DesignElementModel>, historyMergeKey?: string }]
   'update-elements': [payload: { patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>, historyMergeKey?: string }]
   'node-double-click': [payload: { frameId: string, clientX: number, clientY: number }]
+  'request-deep-selection': [payload: { ownerFrameId: string, ownerPageId: string, displayFrameId: string, ownerElementId?: string }]
 }>()
 
 type OverlayElementItem = {
+  displayKey: string
   element: DesignElementModel
-  frame: DesignFrameModel | null
+  ownerFrame: DesignFrameModel | null
+  displayFrame: DesignFrameModel | null
+  ownerFrameId: string
+  displayFrameId: string
   rect: { x: number, y: number, width: number, height: number }
   clipped: boolean
 }
@@ -111,6 +118,7 @@ type ElementSelectionDraft = {
 }
 type ElementDragDraft = {
   targetElementId: string
+  displayFrameId: string
   startClientX: number
   startClientY: number
   dragging: boolean
@@ -125,6 +133,7 @@ type ElementTransformDraft = {
   mode: 'resize' | 'rotate'
   targetElementId: string
   editingFrameId: string
+  displayFrameId: string
   hasExceededThreshold: boolean
   preserveAspect: boolean
   handle?: ResizeHandleDirection
@@ -244,27 +253,18 @@ function queueResizeBadgeFade(snapshot: Omit<TransformBadgeSnapshot, 'fading'>):
   }, 200)
 }
 
-function cloneSelectionState(value: DesignCanvasSelectionState | null | undefined): DesignCanvasSelectionState {
-  return {
-    scope: value?.scope || 'none',
-    editingFrameId: normalizeString(value?.editingFrameId),
-    frameIds: [...(value?.frameIds || [])],
-    primaryFrameId: normalizeString(value?.primaryFrameId),
-    elementIds: [...(value?.elementIds || [])],
-    primaryElementId: normalizeString(value?.primaryElementId),
-  }
-}
-
 function createElementSelectionState(
   elementIds: string[],
   options: {
     primaryElementId?: string
     editingFrameId?: string
+    displayFrameId?: string
   } = {},
 ): DesignCanvasSelectionState {
   return {
     scope: elementIds.length > 0 ? 'element' : 'none',
     editingFrameId: normalizeString(options.editingFrameId),
+    displayFrameId: normalizeString(options.displayFrameId) || normalizeString(options.editingFrameId),
     frameIds: [],
     primaryFrameId: '',
     elementIds: [...elementIds],
@@ -276,7 +276,26 @@ function createClearedSelectionState(preserveEditingFrameId = false): DesignCanv
   return {
     ...createEmptyDesignCanvasSelectionState(),
     editingFrameId: preserveEditingFrameId ? normalizeString(props.selectionState.editingFrameId) : '',
+    displayFrameId: preserveEditingFrameId ? normalizeString(props.selectionState.displayFrameId) : '',
   }
+}
+
+function resolveOverlayDisplayKey(elementId: string, displayFrameId = ''): string {
+  return `${normalizeString(displayFrameId) || '__page__'}::${normalizeString(elementId)}`
+}
+
+function resolveSelectionDisplayFrameId(): string {
+  return normalizeString(props.selectionState.displayFrameId)
+    || normalizeString(props.selectionState.editingFrameId)
+}
+
+function clearTransientOverlayDrafts(): void {
+  createDraft.value = null
+  elementSelectionDraft.value = null
+  elementDragDraft.value = null
+  elementTransformDraft.value = null
+  clearResizeBadgeGhostTimers()
+  transformBadgeGhost.value = null
 }
 
 const isHandModeActive = computed(() => props.interactionContext.effectiveTool === 'hand')
@@ -334,10 +353,22 @@ const createDraftPathPoints = computed(() => {
 const frameMap = computed(() => {
   return new Map((props.frames || []).map(frame => [frame.id, frame]))
 })
-const deviceFrameContentLayoutMap = computed(() => {
+const frameOwnerFrameMap = computed(() => {
+  const nextMap = new Map<string, DesignFrameModel>()
+  for (const frame of props.frames || [])
+    nextMap.set(frame.id, props.frameOwnerFrames?.[frame.id] || frame)
+  for (const [displayFrameId, ownerFrame] of Object.entries(props.frameOwnerFrames || {})) {
+    if (!normalizeString(displayFrameId) || !ownerFrame)
+      continue
+    nextMap.set(displayFrameId, ownerFrame)
+  }
+  return nextMap
+})
+const frameProjectionLayoutMap = computed(() => {
   return new Map(
     (props.frames || []).flatMap((frame) => {
-      const layout = resolveDesignFrameContentLayout(frame, {
+      const ownerFrame = frameOwnerFrameMap.value.get(frame.id) || frame
+      const layout = resolveDesignFrameProjectionLayoutForFrames(frame, ownerFrame, {
         assets: props.assets,
         outerRect: {
           x: frame.x,
@@ -354,22 +385,31 @@ const deviceFrameContentLayoutMap = computed(() => {
 const overlayElements = computed<OverlayElementItem[]>(() => {
   const pageElements = (props.pageRootElements || []).map((element) => {
     return {
+      displayKey: resolveOverlayDisplayKey(element.id),
       element,
-      frame: null,
+      ownerFrame: null,
+      displayFrame: null,
+      ownerFrameId: '',
+      displayFrameId: '',
       rect: resolveDesignElementAbsoluteRect(element),
       clipped: false,
     }
   })
   const frameChildren = Object.entries(props.frameElements || {}).flatMap(([frameId, elements]) => {
-    const frame = frameMap.value.get(frameId) || null
-    if (!frame)
+    const displayFrame = frameMap.value.get(frameId) || null
+    if (!displayFrame)
       return []
+    const ownerFrame = frameOwnerFrameMap.value.get(frameId) || displayFrame
     return elements.map((element) => {
       return {
+        displayKey: resolveOverlayDisplayKey(element.id, displayFrame.id),
         element,
-        frame,
-        rect: resolveDesignElementAbsoluteRect(element, frame),
-        clipped: isDesignFrameClipContentEnabled(frame),
+        ownerFrame,
+        displayFrame,
+        ownerFrameId: normalizeString(element.frameId) || normalizeString(ownerFrame?.id),
+        displayFrameId: normalizeString(displayFrame.id),
+        rect: resolveDesignElementAbsoluteRect(element, ownerFrame),
+        clipped: isDesignFrameClipContentEnabled(displayFrame),
       }
     })
   })
@@ -380,33 +420,73 @@ const overlayElements = computed<OverlayElementItem[]>(() => {
       const zIndexDelta = Number(left.element.zIndex || 0) - Number(right.element.zIndex || 0)
       if (zIndexDelta !== 0)
         return zIndexDelta
-      return normalizeString(left.element.id).localeCompare(normalizeString(right.element.id))
+      return normalizeString(left.displayKey).localeCompare(normalizeString(right.displayKey))
     })
 })
 
-const overlayElementMap = computed(() => {
-  return new Map(
-    overlayElements.value.map(item => [item.element.id, item]),
-  )
+const overlayElementsByElementId = computed(() => {
+  const nextMap = new Map<string, OverlayElementItem[]>()
+  for (const item of overlayElements.value) {
+    const elementId = normalizeString(item.element.id)
+    if (!elementId)
+      continue
+    const currentItems = nextMap.get(elementId) || []
+    currentItems.push(item)
+    nextMap.set(elementId, currentItems)
+  }
+  return nextMap
 })
+
+function resolveOverlayElement(
+  elementId: string,
+  displayFrameId = resolveSelectionDisplayFrameId(),
+): OverlayElementItem | null {
+  const items = overlayElementsByElementId.value.get(normalizeString(elementId)) || []
+  if (!items.length)
+    return null
+
+  const normalizedDisplayFrameId = normalizeString(displayFrameId)
+  if (normalizedDisplayFrameId) {
+    return items.find(item => item.displayFrameId === normalizedDisplayFrameId)
+      || items.find(item => item.ownerFrameId === normalizedDisplayFrameId)
+      || items[0]
+      || null
+  }
+
+  const editingFrameId = normalizeString(props.selectionState.editingFrameId)
+  if (editingFrameId)
+    return items.find(item => item.ownerFrameId === editingFrameId) || items[0] || null
+
+  return items[0] || null
+}
 
 const selectableOverlayElements = computed(() => {
   return overlayElements.value.filter(item => canInteractWithOverlayElement(item))
 })
 
-const previewSelectedElementIdSet = computed(() => {
-  const selectedIds = new Set((props.selectionState.elementIds || []).map(id => normalizeString(id)).filter(Boolean))
+const previewSelectedElementDisplayKeySet = computed(() => {
+  const selectedKeys = new Set(
+    (props.selectionState.elementIds || [])
+      .map(elementId => resolveOverlayElement(elementId, resolveSelectionDisplayFrameId())?.displayKey || '')
+      .filter(Boolean),
+  )
   if (elementSelectionDraft.value?.selecting) {
-    selectedIds.clear()
-    for (const elementId of elementSelectionDraft.value.previewElementIds)
-      selectedIds.add(elementId)
+    selectedKeys.clear()
+    for (const elementId of elementSelectionDraft.value.previewElementIds) {
+      const item = resolveOverlayElement(elementId, resolveSelectionDisplayFrameId())
+      if (item)
+        selectedKeys.add(item.displayKey)
+    }
   }
   if (elementDragDraft.value?.dragging) {
-    selectedIds.clear()
-    for (const elementId of elementDragDraft.value.activeElementIds)
-      selectedIds.add(elementId)
+    selectedKeys.clear()
+    for (const elementId of elementDragDraft.value.activeElementIds) {
+      const item = resolveOverlayElement(elementId, elementDragDraft.value.displayFrameId)
+      if (item)
+        selectedKeys.add(item.displayKey)
+    }
   }
-  return selectedIds
+  return selectedKeys
 })
 
 watch(
@@ -422,7 +502,7 @@ watch(
 )
 
 watch(
-  () => [props.selectionState.editingFrameId, props.selectionState.scope] as const,
+  () => [props.selectionState.editingFrameId, props.selectionState.displayFrameId, props.selectionState.scope] as const,
   () => {
     if (props.selectionState.scope !== 'element' && !normalizeString(props.selectionState.editingFrameId)) {
       elementDragDraft.value = null
@@ -456,7 +536,7 @@ function toFlowPoint(event: PointerEvent) {
 function resolveFrameContentLayout(frame: DesignFrameModel | null | undefined) {
   if (!frame)
     return null
-  return deviceFrameContentLayoutMap.value.get(frame.id) || null
+  return frameProjectionLayoutMap.value.get(frame.id) || null
 }
 
 function resolveFlowPointFromContainerPoint(point: {
@@ -488,28 +568,36 @@ function resolveFlowPointFromContainerPoint(point: {
 
 function toContainerPoint(flowPoint: { x: number, y: number }) {
   const editingFrameId = normalizeString(props.selectionState.editingFrameId)
-  const frame = editingFrameId
-    ? frameMap.value.get(editingFrameId) || null
-    : null
-  if (!frame || !canDesignFrameCreateElements(frame)) {
+  const displayFrameId = resolveSelectionDisplayFrameId()
+  const displayFrame = displayFrameId
+    ? frameMap.value.get(displayFrameId) || null
+    : editingFrameId
+      ? frameMap.value.get(editingFrameId) || null
+      : null
+  const ownerFrame = displayFrame
+    ? frameOwnerFrameMap.value.get(displayFrame.id) || displayFrame
+    : editingFrameId
+      ? frameMap.value.get(editingFrameId) || null
+      : null
+  if (!ownerFrame || !canDesignFrameCreateElements(ownerFrame)) {
     return {
       x: flowPoint.x,
       y: flowPoint.y,
       frameId: undefined,
     }
   }
-  const contentLayout = resolveFrameContentLayout(frame)
+  const contentLayout = resolveFrameContentLayout(displayFrame || ownerFrame)
   if (contentLayout) {
     return {
       x: (flowPoint.x - contentLayout.contentRect.x) / contentLayout.contentScale,
       y: (flowPoint.y - contentLayout.contentRect.y) / contentLayout.contentScale,
-      frameId: frame.id,
+      frameId: normalizeString(displayFrame?.id) || normalizeString(ownerFrame.id),
     }
   }
   return {
-    x: flowPoint.x - frame.x,
-    y: flowPoint.y - frame.y,
-    frameId: frame.id,
+    x: flowPoint.x - (displayFrame?.x ?? ownerFrame.x),
+    y: flowPoint.y - (displayFrame?.y ?? ownerFrame.y),
+    frameId: normalizeString(displayFrame?.id) || normalizeString(ownerFrame.id),
   }
 }
 
@@ -547,7 +635,8 @@ function resolveElementThemeTokens(item: OverlayElementItem): Record<string, str
     text: '#0f172a',
     muted: '#94a3b8',
     ...(props.themeTokens || {}),
-    ...(item.frame?.themeTokens || {}),
+    ...(item.ownerFrame?.themeTokens || {}),
+    ...(item.displayFrame?.themeTokens || {}),
   }
 }
 
@@ -579,7 +668,7 @@ function resolveElementPresentationForOverlay(item: OverlayElementItem) {
 }
 
 function resolveElementContentScale(item: OverlayElementItem): number {
-  return resolveFrameContentLayout(item.frame)?.contentScale || 1
+  return resolveFrameContentLayout(item.displayFrame)?.contentScale || 1
 }
 
 function resolvePathWorldPoints(item: OverlayElementItem): Array<{ x: number, y: number }> {
@@ -587,17 +676,17 @@ function resolvePathWorldPoints(item: OverlayElementItem): Array<{ x: number, y:
   if (!points.length)
     return []
 
-  const contentLayout = resolveFrameContentLayout(item.frame)
+  const contentLayout = resolveFrameContentLayout(item.displayFrame)
   const contentScale = contentLayout?.contentScale || 1
   const offsetX = contentLayout
     ? contentLayout.contentRect.x
-    : item.frame
-      ? item.frame.x
+    : item.displayFrame
+      ? item.displayFrame.x
       : 0
   const offsetY = contentLayout
     ? contentLayout.contentRect.y
-    : item.frame
-      ? item.frame.y
+    : item.displayFrame
+      ? item.displayFrame.y
       : 0
   return points.map(point => ({
     x: offsetX + point.x * contentScale,
@@ -606,7 +695,7 @@ function resolvePathWorldPoints(item: OverlayElementItem): Array<{ x: number, y:
 }
 
 function isElementInAutoLayoutFrame(item: OverlayElementItem): boolean {
-  return Boolean(item.frame && resolveDesignFrameLayoutMetadata(item.frame.metadata?.layout).mode === 'auto')
+  return Boolean(item.ownerFrame && resolveDesignFrameLayoutMetadata(item.ownerFrame.metadata?.layout).mode === 'auto')
 }
 
 function canDragOverlayElement(item: OverlayElementItem): boolean {
@@ -629,7 +718,7 @@ function resolveElementAbsoluteGeometry(item: OverlayElementItem): {
   const previewPatch = resolveElementPreviewPatch(item)
   const localGeometry = resolveElementLocalGeometry(item)
   const previewElement = resolvePreviewElement(item)
-  const contentLayout = resolveFrameContentLayout(item.frame)
+  const contentLayout = resolveFrameContentLayout(item.displayFrame)
   const contentScale = contentLayout?.contentScale || 1
   if (previewElement.type === 'path') {
     const worldPoints = resolvePathWorldPoints(item)
@@ -647,7 +736,7 @@ function resolveElementAbsoluteGeometry(item: OverlayElementItem): {
       }
     }
   }
-  if (item.frame && contentLayout) {
+  if (item.displayFrame && contentLayout) {
     return {
       x: contentLayout.contentRect.x + Number(previewPatch.x ?? localGeometry.x) * contentScale,
       y: contentLayout.contentRect.y + Number(previewPatch.y ?? localGeometry.y) * contentScale,
@@ -658,10 +747,10 @@ function resolveElementAbsoluteGeometry(item: OverlayElementItem): {
   }
   return {
     x: previewPatch.x !== undefined
-      ? (item.frame ? Number(previewPatch.x) + item.frame.x : Number(previewPatch.x))
+      ? (item.displayFrame ? Number(previewPatch.x) + item.displayFrame.x : Number(previewPatch.x))
       : item.rect.x,
     y: previewPatch.y !== undefined
-      ? (item.frame ? Number(previewPatch.y) + item.frame.y : Number(previewPatch.y))
+      ? (item.displayFrame ? Number(previewPatch.y) + item.displayFrame.y : Number(previewPatch.y))
       : item.rect.y,
     width: Math.max(MIN_ELEMENT_WIDTH, Number(previewPatch.width ?? localGeometry.width)),
     height: Math.max(MIN_ELEMENT_HEIGHT, Number(previewPatch.height ?? localGeometry.height)),
@@ -678,7 +767,7 @@ function resolveElementStyle(item: OverlayElementItem) {
     width: geometry.width * viewport.value.zoom,
     height: geometry.height * viewport.value.zoom,
   }
-  const isSelected = previewSelectedElementIdSet.value.has(item.element.id)
+  const isSelected = previewSelectedElementDisplayKeySet.value.has(item.displayKey)
   const baseStyle: Record<string, string> = {
     left: `${rect.left}px`,
     top: `${rect.top}px`,
@@ -691,7 +780,7 @@ function resolveElementStyle(item: OverlayElementItem) {
   }
 
   if (isSelected) {
-    if (selectedTransformTarget.value?.elementId === item.element.id) {
+    if (selectedTransformTarget.value?.item.displayKey === item.displayKey) {
       baseStyle.outline = 'none'
       baseStyle.boxShadow = 'none'
     }
@@ -778,7 +867,7 @@ const selectedTransformTarget = computed(() => {
     return null
 
   const targetElementId = normalizeString(props.selectionState.primaryElementId) || normalizeString(props.selectionState.elementIds[0])
-  const item = overlayElementMap.value.get(targetElementId)
+  const item = resolveOverlayElement(targetElementId, resolveSelectionDisplayFrameId())
   if (!item || !canTransformOverlayElement(item))
     return null
 
@@ -912,14 +1001,15 @@ function canInteractWithOverlayElement(item: OverlayElementItem): boolean {
     return false
 
   const editingFrameId = normalizeString(props.selectionState.editingFrameId)
-  const elementFrameId = normalizeString(item.element.frameId)
+  const activeDisplayFrameId = resolveSelectionDisplayFrameId()
   if (editingFrameId)
-    return elementFrameId === editingFrameId
+    return item.ownerFrameId === editingFrameId
+      && item.displayFrameId === (activeDisplayFrameId || editingFrameId)
 
   if (props.interactionContext.isDeepSelectModifierPressed)
     return true
 
-  return !elementFrameId
+  return !item.ownerFrameId
 }
 
 function resolveTopmostFrameElementAtClientPoint(
@@ -935,7 +1025,7 @@ function resolveTopmostFrameElementAtClientPoint(
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => {
       return !item.element.locked
-        && normalizeString(item.frame?.id) === normalizedFrameId
+        && item.displayFrameId === normalizedFrameId
     })
     .sort((left, right) => {
       const zIndexDelta = Number(right.item.element.zIndex || 0) - Number(left.item.element.zIndex || 0)
@@ -960,9 +1050,12 @@ function handleCanvasNodeDoubleClick(payload: {
   clientY: number
 }): void {
   const frameId = normalizeString(payload.frameId)
-  const frame = frameMap.value.get(frameId) || null
-  if (!frame || !canDesignFrameCreateElements(frame))
+  const displayFrame = frameMap.value.get(frameId) || null
+  const ownerFrame = frameOwnerFrameMap.value.get(frameId) || displayFrame
+  if (!displayFrame || !ownerFrame || !canDesignFrameCreateElements(ownerFrame))
     return
+
+  clearTransientOverlayDrafts()
 
   const hitItem = resolveTopmostFrameElementAtClientPoint(
     frameId,
@@ -970,16 +1063,19 @@ function handleCanvasNodeDoubleClick(payload: {
     payload.clientY,
   )
   if (hitItem) {
-    emit('update-selection', createElementSelectionState([hitItem.element.id], {
-      primaryElementId: hitItem.element.id,
-      editingFrameId: frameId,
-    }))
+    emit('request-deep-selection', {
+      ownerFrameId: hitItem.ownerFrameId || ownerFrame.id,
+      ownerPageId: normalizeString(hitItem.ownerFrame?.pageId) || normalizeString(ownerFrame.pageId),
+      displayFrameId: hitItem.displayFrameId || displayFrame.id,
+      ownerElementId: hitItem.element.id,
+    })
     return
   }
 
-  emit('update-selection', {
-    ...createClearedSelectionState(),
-    editingFrameId: frameId,
+  emit('request-deep-selection', {
+    ownerFrameId: ownerFrame.id,
+    ownerPageId: normalizeString(ownerFrame.pageId),
+    displayFrameId: displayFrame.id,
   })
 }
 
@@ -1042,7 +1138,7 @@ function applyElementResizeDelta(
   if (!handle)
     return {}
 
-  const targetItem = overlayElementMap.value.get(draft.targetElementId) || null
+  const targetItem = resolveOverlayElement(draft.targetElementId, draft.displayFrameId)
   const contentScale = Math.max(0.0001, targetItem ? resolveElementContentScale(targetItem) : 1)
   const rotationInRadians = (draft.startGeometry.rotation * Math.PI) / 180
   const pointerDelta = {
@@ -1362,7 +1458,7 @@ function handleOverlayPointerMove(event: PointerEvent): void {
           .filter(elementId => currentElementIds.includes(elementId))
       : [draft.targetElementId]
     const startPositions = Object.fromEntries(activeElementIds.map((elementId) => {
-      const element = overlayElementMap.value.get(elementId)?.element
+      const element = resolveOverlayElement(elementId, draft.displayFrameId)?.element
       return [elementId, {
         x: Number(element?.x || 0),
         y: Number(element?.y || 0),
@@ -1384,7 +1480,7 @@ function handleOverlayPointerMove(event: PointerEvent): void {
     ...elementDragDraft.value,
     previewPatches: Object.fromEntries(elementDragDraft.value.activeElementIds.map((elementId) => {
       const position = elementDragDraft.value?.startPositions[elementId]
-      const item = overlayElementMap.value.get(elementId) || null
+      const item = resolveOverlayElement(elementId, elementDragDraft.value?.displayFrameId) || null
       const contentScale = Math.max(0.0001, item ? resolveElementContentScale(item) : 1)
       return [
         elementId,
@@ -1434,6 +1530,7 @@ function handleOverlayPointerUp(): void {
       emit('update-selection', createElementSelectionState(nextIds, {
         primaryElementId: nextIds[nextIds.length - 1] || '',
         editingFrameId: normalizeString(props.selectionState.editingFrameId),
+        displayFrameId: resolveSelectionDisplayFrameId(),
       }))
     }
     else {
@@ -1458,10 +1555,11 @@ function handleOverlayPointerUp(): void {
       })),
       historyMergeKey: 'element-drag',
     })
-    emit('update-selection', createElementSelectionState(draft.activeElementIds, {
-      primaryElementId: draft.targetElementId,
-      editingFrameId: draft.editingFrameId,
-    }))
+      emit('update-selection', createElementSelectionState(draft.activeElementIds, {
+        primaryElementId: draft.targetElementId,
+        editingFrameId: draft.editingFrameId,
+        displayFrameId: draft.displayFrameId,
+      }))
     elementDragDraft.value = null
     return
   }
@@ -1476,12 +1574,14 @@ function handleOverlayPointerUp(): void {
     emit('update-selection', createElementSelectionState(nextIds, {
       primaryElementId: draft.targetElementId,
       editingFrameId: draft.editingFrameId,
+      displayFrameId: draft.displayFrameId,
     }))
   }
   else {
     emit('update-selection', createElementSelectionState([draft.targetElementId], {
       primaryElementId: draft.targetElementId,
       editingFrameId: draft.editingFrameId,
+      displayFrameId: draft.displayFrameId,
     }))
   }
   elementDragDraft.value = null
@@ -1493,6 +1593,7 @@ function handleElementDragStart(event: PointerEvent, item: OverlayElementItem): 
   ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
   elementDragDraft.value = {
     targetElementId: item.element.id,
+    displayFrameId: item.displayFrameId,
     startClientX: event.clientX,
     startClientY: event.clientY,
     dragging: false,
@@ -1500,7 +1601,7 @@ function handleElementDragStart(event: PointerEvent, item: OverlayElementItem): 
     activeElementIds: [],
     previewPatches: {},
     startPositions: {},
-    editingFrameId: normalizeString(item.element.frameId) || normalizeString(props.selectionState.editingFrameId),
+    editingFrameId: item.ownerFrameId || normalizeString(props.selectionState.editingFrameId),
   }
 }
 
@@ -1523,7 +1624,8 @@ function handleElementClick(event: MouseEvent, item: OverlayElementItem): void {
 
   emit('update-selection', createElementSelectionState(nextIds, {
     primaryElementId: targetElementId,
-    editingFrameId: normalizeString(item.element.frameId) || normalizeString(props.selectionState.editingFrameId),
+    editingFrameId: item.ownerFrameId || normalizeString(props.selectionState.editingFrameId),
+    displayFrameId: item.displayFrameId,
   }))
 }
 
@@ -1546,7 +1648,8 @@ function handleElementResizeHandlePointerDown(
   elementTransformDraft.value = {
     mode: 'resize',
     targetElementId: target.elementId,
-    editingFrameId: normalizeString(target.item.element.frameId) || normalizeString(props.selectionState.editingFrameId),
+    editingFrameId: target.item.ownerFrameId || normalizeString(props.selectionState.editingFrameId),
+    displayFrameId: target.item.displayFrameId,
     hasExceededThreshold: false,
     preserveAspect: Boolean(event.ctrlKey || event.metaKey),
     handle,
@@ -1578,7 +1681,8 @@ function handleElementRotateHandlePointerDown(event: PointerEvent): void {
   elementTransformDraft.value = {
     mode: 'rotate',
     targetElementId: target.elementId,
-    editingFrameId: normalizeString(target.item.element.frameId) || normalizeString(props.selectionState.editingFrameId),
+    editingFrameId: target.item.ownerFrameId || normalizeString(props.selectionState.editingFrameId),
+    displayFrameId: target.item.displayFrameId,
     hasExceededThreshold: false,
     preserveAspect: false,
     startClientX: event.clientX,
@@ -1676,7 +1780,7 @@ onBeforeUnmount(() => {
 
       <div
         v-for="item in overlayElements"
-        :key="item.element.id"
+        :key="item.displayKey"
         class="absolute select-none"
         :class="[
           canInteractWithOverlayElement(item) ? 'pointer-events-auto' : 'pointer-events-none',

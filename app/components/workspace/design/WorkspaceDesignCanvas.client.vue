@@ -410,6 +410,7 @@ function emitFrameSelection(frameIds: string[], primaryFrameId = ""): void {
   emit("update-selection", {
     scope: nextFrameIds.length > 0 ? "frame" : "none",
     editingFrameId: "",
+    displayFrameId: "",
     frameIds: nextFrameIds,
     primaryFrameId: normalizeString(primaryFrameId) || nextFrameIds[0] || "",
     elementIds: [],
@@ -421,6 +422,7 @@ function emitFrameEditing(frameId: string): void {
   emit("update-selection", {
     scope: "none",
     editingFrameId: normalizeString(frameId),
+    displayFrameId: normalizeString(frameId),
     frameIds: [],
     primaryFrameId: "",
     elementIds: [],

@@ -118,6 +118,19 @@ export type DesignFrameContentLayout = DesignFrameDeviceSurfaceLayout & {
   contentRect: DesignRect
   contentScale: number
 }
+export interface DesignFrameEditingBinding {
+  displayFrame: DesignFrameModel
+  ownerFrame: DesignFrameModel
+  projected: boolean
+}
+export interface DesignFrameProjectionLayout {
+  displayFrame: DesignFrameModel
+  ownerFrame: DesignFrameModel
+  projected: boolean
+  contentRect: DesignRect
+  contentScale: number
+  surfaceLayout: DesignFrameDeviceSurfaceLayout | null
+}
 type ResolvedDesignElementConstraints = {
   horizontal: DesignConstraintHorizontal
   vertical: DesignConstraintVertical
@@ -2621,6 +2634,40 @@ export function resolveDisplayCompositionElementsForFrame(
   return resolveAutoLayoutFrameElements(frame, resolveCompositionElementsForFrame(composition, frame.id))
 }
 
+export function resolveDesignFrameEditingBinding(
+  composition: CompositionModel,
+  frame: DesignFrameModel | null | undefined,
+): DesignFrameEditingBinding | null {
+  if (!frame)
+    return null
+
+  const deviceConfig = resolveFrameDeviceConfig(frame)
+  const linkedFrame = resolveCompositionFrameById(composition, deviceConfig.mockupSourceFrameId)
+  if (linkedFrame?.kind === 'device_artboard') {
+    return {
+      displayFrame: frame,
+      ownerFrame: linkedFrame,
+      projected: linkedFrame.id !== frame.id,
+    }
+  }
+
+  return {
+    displayFrame: frame,
+    ownerFrame: frame,
+    projected: false,
+  }
+}
+
+export function resolveDesignFrameEditableElements(
+  composition: CompositionModel,
+  frame: DesignFrameModel | null | undefined,
+): DesignElementModel[] {
+  const binding = resolveDesignFrameEditingBinding(composition, frame)
+  if (!binding)
+    return []
+  return resolveDisplayCompositionElementsForFrame(composition, binding.ownerFrame)
+}
+
 export function resolveDesignElementAbsoluteRect(element: DesignElementModel, frame?: DesignFrameModel | null): DesignRect {
   const offsetX = frame ? frame.x : 0
   const offsetY = frame ? frame.y : 0
@@ -3276,6 +3323,110 @@ export function resolveDesignFrameContentLayout(
       width: contentWidth,
       height: contentHeight,
     },
+  }
+}
+
+export function resolveDesignFrameProjectionLayout(
+  composition: CompositionModel,
+  frame: DesignFrameModel | null | undefined,
+  options: {
+    assets?: DesignAssetModel[] | null | undefined
+    outerRect?: DesignRect
+  } = {},
+): DesignFrameProjectionLayout | null {
+  const binding = resolveDesignFrameEditingBinding(composition, frame)
+  if (!binding)
+    return null
+
+  return resolveDesignFrameProjectionLayoutForFrames(
+    binding.displayFrame,
+    binding.ownerFrame,
+    {
+      assets: options.assets,
+      outerRect: options.outerRect,
+    },
+  )
+}
+
+export function resolveDesignFrameProjectionLayoutForFrames(
+  displayFrame: DesignFrameModel | null | undefined,
+  ownerFrame: DesignFrameModel | null | undefined,
+  options: {
+    assets?: DesignAssetModel[] | null | undefined
+    outerRect?: DesignRect
+  } = {},
+): DesignFrameProjectionLayout | null {
+  if (!displayFrame || !ownerFrame)
+    return null
+
+  const projected = normalizeString(displayFrame.id) !== normalizeString(ownerFrame.id)
+  const outerRect = options.outerRect || {
+    x: displayFrame.x,
+    y: displayFrame.y,
+    width: displayFrame.width,
+    height: displayFrame.height,
+  }
+
+  if (!projected) {
+    const directContentLayout = resolveDesignFrameContentLayout(displayFrame, {
+      assets: options.assets,
+      outerRect,
+    })
+    return {
+      displayFrame,
+      ownerFrame,
+      projected: false,
+      contentRect: directContentLayout?.contentRect || outerRect,
+      contentScale: directContentLayout?.contentScale || 1,
+      surfaceLayout: directContentLayout || null,
+    }
+  }
+
+  const surfaceLayout = resolveDesignFrameDeviceSurfaceLayout(displayFrame, {
+    assets: options.assets,
+    outerRect,
+  })
+  if (!surfaceLayout) {
+    const scaleX = outerRect.width / Math.max(1, ownerFrame.width)
+    const scaleY = outerRect.height / Math.max(1, ownerFrame.height)
+    const contentScale = Math.min(scaleX, scaleY)
+    const contentWidth = ownerFrame.width * contentScale
+    const contentHeight = ownerFrame.height * contentScale
+    return {
+      displayFrame,
+      ownerFrame,
+      projected: true,
+      contentRect: {
+        x: outerRect.x + (outerRect.width - contentWidth) / 2,
+        y: outerRect.y + (outerRect.height - contentHeight) / 2,
+        width: contentWidth,
+        height: contentHeight,
+      },
+      contentScale,
+      surfaceLayout: null,
+    }
+  }
+
+  const deviceConfig = resolveFrameDeviceConfig(displayFrame)
+  const scaleX = surfaceLayout.screenRect.width / Math.max(1, ownerFrame.width)
+  const scaleY = surfaceLayout.screenRect.height / Math.max(1, ownerFrame.height)
+  const contentScale = deviceConfig.screenScaleMode === 'fill'
+    ? Math.max(scaleX, scaleY)
+    : Math.min(scaleX, scaleY)
+  const contentWidth = ownerFrame.width * contentScale
+  const contentHeight = ownerFrame.height * contentScale
+  return {
+    displayFrame,
+    ownerFrame,
+    projected: true,
+    contentRect: {
+      x: surfaceLayout.screenRect.x + (surfaceLayout.screenRect.width - contentWidth) / 2,
+      y: surfaceLayout.screenRect.y + (surfaceLayout.screenRect.height - contentHeight) / 2,
+      width: contentWidth,
+      height: contentHeight,
+    },
+    contentScale,
+    surfaceLayout,
   }
 }
 

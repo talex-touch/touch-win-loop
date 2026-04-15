@@ -10,6 +10,7 @@ export type DesignCanvasSelectionScope = 'none' | 'frame' | 'element'
 export interface DesignCanvasSelectionState {
   scope: DesignCanvasSelectionScope
   editingFrameId: string
+  displayFrameId: string
   frameIds: string[]
   primaryFrameId: string
   elementIds: string[]
@@ -43,6 +44,7 @@ export function createEmptyDesignCanvasSelectionState(): DesignCanvasSelectionSt
   return {
     scope: 'none',
     editingFrameId: '',
+    displayFrameId: '',
     frameIds: [],
     primaryFrameId: '',
     elementIds: [],
@@ -72,6 +74,9 @@ export function useDesignCanvasSelection(input: {
     const nextEditingFrameId = frameIdSet.value.has(normalizeString(value.editingFrameId))
       ? normalizeString(value.editingFrameId)
       : ''
+    const nextDisplayFrameId = frameIdSet.value.has(normalizeString(value.displayFrameId))
+      ? normalizeString(value.displayFrameId)
+      : ''
     let nextElementIds = normalizeIdentifierList(value.elementIds || [], new Set(elementMap.value.keys()))
 
     if (nextEditingFrameId) {
@@ -87,6 +92,7 @@ export function useDesignCanvasSelection(input: {
       return {
         scope: 'element',
         editingFrameId: nextEditingFrameId || normalizeString(elementMap.value.get(primaryElementId)?.frameId),
+        displayFrameId: nextDisplayFrameId || nextEditingFrameId || normalizeString(elementMap.value.get(primaryElementId)?.frameId),
         frameIds: [],
         primaryFrameId: '',
         elementIds: nextElementIds,
@@ -101,6 +107,7 @@ export function useDesignCanvasSelection(input: {
       return {
         scope: 'frame',
         editingFrameId: '',
+        displayFrameId: '',
         frameIds: nextFrameIds,
         primaryFrameId,
         elementIds: [],
@@ -111,6 +118,7 @@ export function useDesignCanvasSelection(input: {
     return {
       scope: 'none',
       editingFrameId: nextEditingFrameId,
+      displayFrameId: nextDisplayFrameId,
       frameIds: [],
       primaryFrameId: '',
       elementIds: [],
@@ -126,6 +134,7 @@ export function useDesignCanvasSelection(input: {
     replaceSelection({
       scope: 'none',
       editingFrameId: options.preserveEditingFrameId ? state.value.editingFrameId : '',
+      displayFrameId: options.preserveEditingFrameId ? state.value.displayFrameId : '',
       frameIds: [],
       primaryFrameId: '',
       elementIds: [],
@@ -139,6 +148,7 @@ export function useDesignCanvasSelection(input: {
     replaceSelection({
       scope: frameIds.length > 0 ? 'frame' : 'none',
       editingFrameId: '',
+      displayFrameId: '',
       frameIds,
       primaryFrameId: options.primaryFrameId || '',
       elementIds: [],
@@ -149,10 +159,12 @@ export function useDesignCanvasSelection(input: {
   function setElementSelection(elementIds: string[], options: {
     primaryElementId?: string
     editingFrameId?: string
+    displayFrameId?: string
   } = {}): void {
     replaceSelection({
       scope: elementIds.length > 0 ? 'element' : 'none',
       editingFrameId: options.editingFrameId ?? state.value.editingFrameId,
+      displayFrameId: options.displayFrameId ?? options.editingFrameId ?? state.value.displayFrameId,
       frameIds: [],
       primaryFrameId: '',
       elementIds,
@@ -167,6 +179,7 @@ export function useDesignCanvasSelection(input: {
     replaceSelection({
       scope: options.preserveFrameSelection ? 'frame' : 'none',
       editingFrameId: normalizedFrameId,
+      displayFrameId: normalizedFrameId,
       frameIds: options.preserveFrameSelection ? [normalizedFrameId] : [],
       primaryFrameId: options.preserveFrameSelection ? normalizedFrameId : '',
       elementIds: [],

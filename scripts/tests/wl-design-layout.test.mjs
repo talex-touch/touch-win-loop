@@ -143,8 +143,10 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(panelSource, /workspace-design-tool-switch-hint/);
   assert.match(panelSource, /undoDesignChange\(\)/);
   assert.match(panelSource, /redoDesignChange\(\)/);
-  assert.match(panelSource, /designSelection\.enterFrameEditing/);
+  assert.match(panelSource, /function requestDeepSelection\(payload: StageDeepSelectionRequest\): void/);
+  assert.match(panelSource, /function enterFrameEditingFromSelection\(frame: DesignFrameModel\): void/);
   assert.match(panelSource, /designSelection\.exitFrameEditing/);
+  assert.match(panelSource, /resolveDisplayFrameIdForOwnerSelection/);
   assert.match(panelSource, /<template #left>/);
   assert.match(panelSource, /<template #canvas>/);
   assert.match(panelSource, /<template #right>/);
@@ -162,6 +164,8 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(panelSource, /data-testid="workspace-design-sidebar-frames"/);
   assert.match(panelSource, /data-testid="workspace-design-sidebar-assets"/);
   assert.match(panelSource, /data-testid="workspace-design-inspector-toggle"/);
+  assert.match(panelSource, /data-layer-tree-node-id/);
+  assert.match(panelSource, /scrollActiveLayerTreeNodeIntoView/);
   assert.match(
     panelSource,
     /:theme-tokens="compositionModel\.themeTokens \|\| \{\}"/,
@@ -179,6 +183,7 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(sidebarTabsSource, /label: ["']Assets["']/);
 
   assert.match(stageSource, /data-testid="workspace-design-stage"/);
+  assert.match(stageSource, /frameOwnerFrames\?: Record<string, DesignFrameModel>/);
   assert.match(stageSource, /selectionState\?: DesignCanvasSelectionState/);
   assert.match(
     stageSource,
@@ -194,8 +199,15 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   );
   assert.match(
     stageSource,
+    /["']request-deep-selection["']:\s*\[payload: \{ ownerFrameId: string, ownerPageId: string, displayFrameId: string, ownerElementId\?: string \}\]/,
+  );
+  assert.match(
+    stageSource,
     /const elementTransformDraft = ref<ElementTransformDraft \| null>\(null\)/,
   );
+  assert.match(stageSource, /displayKey: string/);
+  assert.match(stageSource, /ownerFrameId: string/);
+  assert.match(stageSource, /displayFrameId: string/);
   assert.match(
     stageSource,
     /function handleOverlayWheel\(event: WheelEvent\): void/,
@@ -211,12 +223,17 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(stageSource, /resolveDesignElementPresentation/);
   assert.match(stageSource, /resolveDesignFrameLayoutMetadata/);
   assert.match(stageSource, /resolveDesignFrameGridMetadata/);
+  assert.match(stageSource, /resolveDesignFrameProjectionLayoutForFrames/);
   assert.match(stageSource, /canDesignFrameCreateElements/);
   assert.match(stageSource, /visibleFrameGrids = computed/);
   assert.match(stageSource, /resolvePathSvgPoints/);
   assert.match(stageSource, /historyMergeKey:\s*["']element-drag["']/);
   assert.match(stageSource, /deepSelectionEnabled/);
   assert.match(stageSource, /overlayCapturesCanvasPointer/);
+  assert.match(stageSource, /const frameProjectionLayoutMap = computed/);
+  assert.match(stageSource, /const overlayElementsByElementId = computed/);
+  assert.match(stageSource, /function resolveOverlayElement\(/);
+  assert.match(stageSource, /function clearTransientOverlayDrafts\(\): void/);
   assert.match(
     stageSource,
     /props\.activeTool === 'rectangle' \|\| props\.activeTool === 'ellipse' \|\| props\.activeTool === 'arrow' \|\| props\.activeTool === 'text'/,
@@ -233,7 +250,8 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(stageSource, /const selectedTransformBoxStyle = computed/);
   assert.match(stageSource, /function resolveTopmostFrameElementAtClientPoint\(/);
   assert.match(stageSource, /function handleCanvasNodeDoubleClick\(payload: \{/);
-  assert.match(stageSource, /editingFrameId: frameId,/);
+  assert.match(stageSource, /emit\('request-deep-selection', \{/);
+  assert.match(stageSource, /displayFrameId: hitItem\.displayFrameId \|\| displayFrame\.id/);
   assert.match(stageSource, /v-if="selectedTransformBoxStyle"/);
   assert.match(stageSource, /v-for="handle in resizeHandleDefinitions"/);
   assert.match(stageSource, /pointer-events-auto/);
@@ -250,6 +268,8 @@ it("wl design 骨架组件和设计主面板已切换到插槽式布局", async 
   assert.match(canvasSource, /const CANVAS_COLLAPSED_CONTROL_HIT_HEIGHT = 24/);
   assert.match(canvasSource, /const CANVAS_MINIMAP_HEIGHT = 136/);
   assert.match(canvasSource, /function emitFrameEditing\(frameId: string\): void/);
+  assert.match(canvasSource, /displayFrameId: ""/);
+  assert.match(canvasSource, /displayFrameId: normalizeString\(frameId\)/);
   assert.match(canvasSource, /const activeFrameDragIds = ref<string\[\]>\(\[\]\);/);
   assert.match(canvasSource, /function beginFrameDragSession\(frameId: string\): void/);
   assert.match(canvasSource, /function handleNodeDoubleClick\(payload: NodeMouseEvent\): void/);

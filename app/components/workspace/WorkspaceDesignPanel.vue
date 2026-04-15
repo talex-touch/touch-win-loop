@@ -26,6 +26,7 @@ import {
 } from "vue";
 import type { DesignEditorTool } from "~~/app/composables/useDesignToolController";
 import {
+  createEmptyDesignCanvasSelectionState,
   type DesignCanvasInteractionContext,
   type DesignCanvasSelectionState,
   useDesignCanvasSelection,
@@ -59,9 +60,10 @@ import {
   removeDesignElementFromSceneDocument,
   removeDesignFrameFromSceneDocument,
   removeDesignPageFromSceneDocument,
+  resolveDesignFrameEditableElements,
+  resolveDesignFrameEditingBinding,
   resolveDesignFrameExportMetadata,
   resolveDeviceFramePreset,
-  resolveDisplayCompositionElementsForFrame,
   resolveDisplayCompositionElementsForPage,
   resolveCompositionElementsForPage,
   renderCompositionAssetToSvg,
@@ -90,6 +92,18 @@ type StageViewportState = { x: number; y: number; zoom: number };
 type SidebarLayerTreeRow = {
   node: DesignLayerTreeNode;
   depth: number;
+};
+type DesignFrameEditingOwnerState = {
+  displayFrame: DesignFrameModel;
+  ownerFrame: DesignFrameModel;
+  ownerPageId: string;
+  projected: boolean;
+};
+type StageDeepSelectionRequest = {
+  ownerFrameId: string;
+  ownerPageId: string;
+  displayFrameId: string;
+  ownerElementId?: string;
 };
 
 const props = withDefaults(
@@ -146,6 +160,7 @@ const draftDocument = ref<SceneDocument>(
   }),
 );
 const panelRootRef = ref<HTMLElement | null>(null);
+const layerTreeRootRef = ref<HTMLElement | null>(null);
 const activeTool = ref<DesignEditorTool>("select");
 const stageViewportX = ref(0);
 const stageViewportY = ref(0);
@@ -531,7 +546,7 @@ function handlePanelKeydown(event: KeyboardEvent): void {
   if (!canDesignFrameCreateElements(selectedFrame.value)) return;
 
   event.preventDefault();
-  designSelection.enterFrameEditing(selectedFrame.value.id);
+  enterFrameEditingFromSelection(selectedFrame.value);
 }
 
 function handlePanelKeyup(event: KeyboardEvent): void {
@@ -549,6 +564,18 @@ function cloneDesignElement(element: DesignElementModel): DesignElementModel {
     style: element.style ? { ...element.style } : undefined,
     metadata: element.metadata ? { ...element.metadata } : undefined,
   };
+}
+
+function dedupeDesignElements(
+  elements: DesignElementModel[],
+): DesignElementModel[] {
+  const elementMap = new Map<string, DesignElementModel>();
+  for (const element of elements) {
+    const elementId = normalizeString(element.id);
+    if (!elementId) continue;
+    elementMap.set(elementId, element);
+  }
+  return [...elementMap.values()];
 }
 
 function cloneCompositionModel(
@@ -881,6 +908,14 @@ const currentPageFrames = computed(() => {
     (frame) => frame.pageId === currentPage.value?.id,
   );
 });
+const allFramesMap = computed(() => {
+  return new Map(
+    (compositionModel.value.frames || []).map((frame) => [
+      normalizeString(frame.id),
+      frame,
+    ]),
+  );
+});
 const imageAssets = computed(() => {
   return (compositionModel.value.assets || []).filter(
     (asset) => asset.metadata?.role !== "device_shell",
@@ -914,18 +949,46 @@ function resolveFrameElements(
   ).map(cloneDesignElement);
 }
 
+function resolveFrameEditingOwnerState(
+  frame: DesignFrameModel | null | undefined,
+): DesignFrameEditingOwnerState | null {
+  if (!frame) return null;
+  const binding = resolveDesignFrameEditingBinding(
+    compositionModel.value,
+    frame,
+  );
+  if (!binding) return null;
+  return {
+    displayFrame: binding.displayFrame,
+    ownerFrame: binding.ownerFrame,
+    ownerPageId: normalizeString(binding.ownerFrame.pageId),
+    projected: binding.projected,
+  };
+}
+
+function resolveFrameTreeElements(
+  frame: DesignFrameModel | null | undefined,
+): DesignElementModel[] {
+  const editingOwner = resolveFrameEditingOwnerState(frame);
+  if (!editingOwner || editingOwner.projected) return [];
+  return resolveDesignFrameEditableElements(
+    compositionModel.value,
+    editingOwner.ownerFrame,
+  ).map(cloneDesignElement);
+}
+
 function resolveDisplayFrameElements(
   frame: DesignFrameModel | null | undefined,
 ): DesignElementModel[] {
   if (!frame) return [];
-  return resolveDisplayCompositionElementsForFrame(
+  return resolveDesignFrameEditableElements(
     compositionModel.value,
     frame,
   ).map(cloneDesignElement);
 }
 const currentPageElements = computed(() => {
   if (!currentPage.value) return [];
-  return [
+  return dedupeDesignElements([
     ...resolveDisplayCompositionElementsForPage(
       compositionModel.value,
       currentPage.value.id,
@@ -933,7 +996,7 @@ const currentPageElements = computed(() => {
     ...currentPageFrames.value.flatMap((frame) =>
       resolveDisplayFrameElements(frame),
     ),
-  ];
+  ]);
 });
 const designSelection = useDesignCanvasSelection({
   frames: currentPageFrames,
@@ -1025,7 +1088,7 @@ const designLayerTree = useDesignLayerTree({
   page: currentPage,
   frames: currentPageFrames,
   pageRootElements: designEditorState.pageRootElements,
-  resolveFrameElements,
+  resolveFrameElements: resolveFrameTreeElements,
 });
 const selectedFrames = designEditorState.selectedFrames;
 const selectedFrame = designEditorState.selectedFrame;
@@ -1127,7 +1190,7 @@ const selectedElementFrame = computed(() => {
     designEditorState.selectedElement.value?.frameId,
   );
   if (!frameId) return null;
-  return currentPageFrames.value.find((frame) => frame.id === frameId) || null;
+  return allFramesMap.value.get(frameId) || null;
 });
 const currentPageFrameMap = computed(() => {
   return new Map(
@@ -1140,6 +1203,15 @@ const currentPageElementMap = computed(() => {
       normalizeString(element.id),
       element,
     ]),
+  );
+});
+const frameOwnerFramesByDisplayId = computed<Record<string, DesignFrameModel>>(() => {
+  return Object.fromEntries(
+    currentPageFrames.value.flatMap((frame) => {
+      const editingOwner = resolveFrameEditingOwnerState(frame);
+      if (!editingOwner) return [];
+      return [[frame.id, editingOwner.ownerFrame] as const];
+    }),
   );
 });
 const frameElementsById = computed<Record<string, DesignElementModel[]>>(() => {
@@ -1209,6 +1281,39 @@ const activeLayerTreePathNodeIds = computed<string[]>(() => {
   if (frameId) return [`frame:${frameId}`];
   return [];
 });
+
+function resolvePrimaryLayerTreeNodeId(): string {
+  const selectedElementNodeId = normalizeString(selectedElementId.value);
+  if (selectedElementNodeId) return `element:${selectedElementNodeId}`;
+
+  const selectedFrameNodeId = normalizeString(selectedFrameId.value);
+  if (selectedFrameNodeId) return `frame:${selectedFrameNodeId}`;
+
+  return normalizeString(
+    activeLayerTreePathNodeIds.value[activeLayerTreePathNodeIds.value.length - 1],
+  );
+}
+
+function scrollActiveLayerTreeNodeIntoView(): void {
+  if (activeSidebarTab.value !== "frames") return;
+  const targetNodeId = resolvePrimaryLayerTreeNodeId();
+  if (!targetNodeId) return;
+
+  void nextTick(() => {
+    const root = layerTreeRootRef.value;
+    if (!root) return;
+    const targetNode = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-layer-tree-node-id]"),
+    ).find((element) => {
+      return element.dataset.layerTreeNodeId === targetNodeId;
+    });
+    targetNode?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  });
+}
+
 const activeLayerTreeGuideState = computed(() => {
   const rows = frameSidebarTreeRows.value;
   const rowIndexByNodeId = new Map(
@@ -1335,6 +1440,7 @@ function cloneSelectionStateSnapshot(
   return {
     scope: state.scope,
     editingFrameId: state.editingFrameId,
+    displayFrameId: state.displayFrameId,
     frameIds: [...state.frameIds],
     primaryFrameId: state.primaryFrameId,
     elementIds: [...state.elementIds],
@@ -1358,9 +1464,88 @@ function setSelectedElements(
   options: {
     primaryElementId?: string;
     editingFrameId?: string;
+    displayFrameId?: string;
   } = {},
 ): void {
   designSelection.setElementSelection(elementIds, options);
+}
+
+function resolveDisplayFrameIdForOwnerSelection(
+  ownerFrameId: string,
+  options: {
+    preferCurrentProjection?: boolean;
+  } = {},
+): string {
+  const normalizedOwnerFrameId = normalizeString(ownerFrameId);
+  const preferCurrentProjection = options.preferCurrentProjection !== false;
+  const currentEditingFrameId = normalizeString(selectionState.value.editingFrameId);
+  const currentDisplayFrameId = normalizeString(selectionState.value.displayFrameId);
+  if (
+    preferCurrentProjection &&
+    normalizedOwnerFrameId &&
+    normalizedOwnerFrameId === currentEditingFrameId &&
+    currentDisplayFrameId
+  ) {
+    return currentDisplayFrameId;
+  }
+  return normalizedOwnerFrameId;
+}
+
+function applyDeepSelectionState(payload: StageDeepSelectionRequest): void {
+  const ownerFrameId = normalizeString(payload.ownerFrameId);
+  const ownerPageId = normalizeString(payload.ownerPageId);
+  const displayFrameId =
+    ownerPageId && ownerPageId !== normalizeString(currentPage.value?.id)
+      ? ownerFrameId
+      : normalizeString(payload.displayFrameId) || ownerFrameId;
+  if (!ownerFrameId) return;
+
+  if (payload.ownerElementId) {
+    setSelectedElements([payload.ownerElementId], {
+      primaryElementId: payload.ownerElementId,
+      editingFrameId: ownerFrameId,
+      displayFrameId,
+    });
+    return;
+  }
+
+  replaceSelectionState({
+    ...createEmptyDesignCanvasSelectionState(),
+    editingFrameId: ownerFrameId,
+    displayFrameId,
+  });
+}
+
+function requestDeepSelection(payload: StageDeepSelectionRequest): void {
+  const ownerFrameId = normalizeString(payload.ownerFrameId);
+  const ownerPageId = normalizeString(payload.ownerPageId);
+  if (!ownerFrameId) return;
+
+  if (ownerPageId && ownerPageId !== normalizeString(currentPage.value?.id)) {
+    const nextDocument = setCurrentDesignPageInSceneDocument(
+      draftDocument.value,
+      ownerPageId,
+    );
+    commitDocument(nextDocument);
+    void nextTick(() => {
+      applyDeepSelectionState(payload);
+    });
+    return;
+  }
+
+  applyDeepSelectionState(payload);
+}
+
+function enterFrameEditingFromSelection(frame: DesignFrameModel): void {
+  const editingOwner = resolveFrameEditingOwnerState(frame);
+  if (!editingOwner || !canDesignFrameCreateElements(editingOwner.ownerFrame))
+    return;
+
+  requestDeepSelection({
+    ownerFrameId: editingOwner.ownerFrame.id,
+    ownerPageId: editingOwner.ownerPageId,
+    displayFrameId: editingOwner.displayFrame.id,
+  });
 }
 
 function selectSingleFrame(frameId: string): void {
@@ -1402,10 +1587,12 @@ function createDesignElementFromStage(
       : null;
   commitDocument(nextDocument);
   if (!createdElement) return;
+  const editingFrameId =
+    selectionState.value.editingFrameId || normalizeString(createdElement.frameId);
   setSelectedElements([createdElement.id], {
     primaryElementId: createdElement.id,
-    editingFrameId:
-      selectionState.value.editingFrameId || normalizeString(createdElement.frameId),
+    editingFrameId,
+    displayFrameId: resolveDisplayFrameIdForOwnerSelection(editingFrameId),
   });
 }
 
@@ -1693,6 +1880,21 @@ watch(frameSidebarTreeRows, (rows) => {
     closeLayerTreeMenu();
 });
 
+watch(
+  [
+    selectedElementId,
+    selectedFrameId,
+    activeLayerTreePathNodeIds,
+    () => currentPage.value?.id || "",
+    () => activeSidebarTab.value,
+    () => frameSidebarTreeRows.value.length,
+  ],
+  () => {
+    scrollActiveLayerTreeNodeIntoView();
+  },
+  { flush: "post" },
+);
+
 function selectPage(pageId: string): void {
   const nextDocument = setCurrentDesignPageInSceneDocument(
     draftDocument.value,
@@ -1911,10 +2113,12 @@ function duplicateSelectedElement(): void {
   }
 
   commitDocument(nextDocument);
+  const editingFrameId = normalizeString(selectionState.value.editingFrameId);
   setSelectedElements(duplicatedElementIds, {
     primaryElementId:
       duplicatedElementIds[duplicatedElementIds.length - 1] || "",
-    editingFrameId: selectionState.value.editingFrameId,
+    editingFrameId,
+    displayFrameId: resolveDisplayFrameIdForOwnerSelection(editingFrameId),
   });
 }
 
@@ -2511,6 +2715,7 @@ function handleLayerTreeNodeSelection(
     setSelectedElements(nextSelection, {
       primaryElementId: node.elementId,
       editingFrameId,
+      displayFrameId: editingFrameId,
     });
     return;
   }
@@ -2518,6 +2723,7 @@ function handleLayerTreeNodeSelection(
   setSelectedElements([node.elementId], {
     primaryElementId: node.elementId,
     editingFrameId,
+    displayFrameId: editingFrameId,
   });
 }
 
@@ -2598,6 +2804,7 @@ function selectLayerTreeParent(node: DesignLayerTreeNode): void {
     setSelectedElements([parentElementId], {
       primaryElementId: parentElementId,
       editingFrameId: normalizeString(element.frameId),
+      displayFrameId: normalizeString(element.frameId),
     });
     return;
   }
@@ -2758,17 +2965,21 @@ function handleLayerTreeMenuSelect(key: string): void {
     return;
   }
   if (key === "duplicate") {
+    const editingFrameId = normalizeString(node.frameId);
     setSelectedElements([node.elementId], {
       primaryElementId: node.elementId,
-      editingFrameId: normalizeString(node.frameId),
+      editingFrameId,
+      displayFrameId: editingFrameId,
     });
     duplicateSelectedElement();
     return;
   }
   if (key === "delete") {
+    const editingFrameId = normalizeString(node.frameId);
     setSelectedElements([node.elementId], {
       primaryElementId: node.elementId,
-      editingFrameId: normalizeString(node.frameId),
+      editingFrameId,
+      displayFrameId: editingFrameId,
     });
     removeSelectedElement();
   }
@@ -4655,6 +4866,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
 
             <div
               v-else-if="activeSidebarTab === 'frames'"
+              ref="layerTreeRootRef"
               class="workspace-design-layer-tree space-y-0.5"
               :style="layerTreeMetricsStyle"
               data-testid="workspace-design-sidebar-frames"
@@ -4671,6 +4883,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                   class="workspace-design-layer-tree__row group flex items-center transition-colors"
                   :class="resolveLayerTreeNodeClass(row.node)"
                   :style="{ paddingLeft: resolveLayerTreeRowPaddingLeft(row.depth) }"
+                  :data-layer-tree-node-id="row.node.id"
                 >
                   <template
                     v-for="guideDepth in resolveActiveLayerTreeGuideDepths(row.node.id)"
@@ -5055,6 +5268,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             :assets="compositionModel.assets || []"
             :page-root-elements="designEditorState.pageRootElements.value"
             :frame-elements="frameElementsById"
+            :frame-owner-frames="frameOwnerFramesByDisplayId"
             :theme-tokens="compositionModel.themeTokens || {}"
             :active-tool="activeTool"
             :selection-state="selectionState"
@@ -5076,6 +5290,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             @create-element="createDesignElementFromStage"
             @update-element="updateDesignElementFromStage"
             @update-elements="updateDesignElementsFromStage"
+            @request-deep-selection="requestDeepSelection"
           />
         </WLDesignLayer>
       </template>

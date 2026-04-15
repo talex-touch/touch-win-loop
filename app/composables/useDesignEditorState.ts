@@ -9,8 +9,8 @@ import type { ComputedRef, Ref } from 'vue'
 import { computed } from 'vue'
 import {
   canDesignFrameContainElements,
-  resolveCompositionElementsForFrame,
   resolveCompositionElementsForPage,
+  resolveDesignFrameEditableElements,
 } from '~~/shared/utils/scene-document'
 
 function normalizeString(value: unknown): string {
@@ -24,6 +24,17 @@ function cloneDesignElement(element: DesignElementModel): DesignElementModel {
     style: element.style ? { ...element.style } : undefined,
     metadata: element.metadata ? { ...element.metadata } : undefined,
   }
+}
+
+function dedupeDesignElements(elements: DesignElementModel[]): DesignElementModel[] {
+  const elementMap = new Map<string, DesignElementModel>()
+  for (const element of elements) {
+    const elementId = normalizeString(element.id)
+    if (!elementId)
+      continue
+    elementMap.set(elementId, element)
+  }
+  return [...elementMap.values()]
 }
 
 export interface DesignSelectionState {
@@ -80,13 +91,13 @@ export function useDesignEditorState(input: {
   const selectedFrameElements = computed<DesignElementModel[]>(() => {
     if (!selectedFrame.value)
       return []
-    return resolveCompositionElementsForFrame(composition.value, selectedFrame.value.id).map(cloneDesignElement)
+    return resolveDesignFrameEditableElements(composition.value, selectedFrame.value).map(cloneDesignElement)
   })
   const allPageElements = computed<DesignElementModel[]>(() => {
     const frameElements = currentPageFrames.value.flatMap((frame) => {
-      return resolveCompositionElementsForFrame(composition.value, frame.id).map(cloneDesignElement)
+      return resolveDesignFrameEditableElements(composition.value, frame).map(cloneDesignElement)
     })
-    return [...pageRootElements.value, ...frameElements]
+    return dedupeDesignElements([...pageRootElements.value, ...frameElements])
   })
   const selectedElements = computed<DesignElementModel[]>(() => {
     const selectedIdSet = new Set(input.selection.elementIds.value.map(item => normalizeString(item)).filter(Boolean))
