@@ -432,6 +432,9 @@ const mappingSaveSuccess = ref('')
 const writebackSaveSuccess = ref('')
 const autoSyncSaveSuccess = ref('')
 const editorRootRef = ref<HTMLElement>()
+const mappingDrawerRootRef = ref<HTMLElement>()
+const writebackDrawerRootRef = ref<HTMLElement>()
+const autoSyncDrawerRootRef = ref<HTMLElement>()
 
 const syncDetail = ref<FeishuBitableSyncDetail | null>(null)
 const currentItem = ref<FeishuBitableSyncItemDetail | null>(null)
@@ -581,6 +584,9 @@ const currentItemLogSelectedRun = computed(() => {
 const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
 const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
 const selectPopupContainer = computed(() => editorRootRef.value)
+const mappingSelectPopupContainer = computed(() => mappingDrawerRootRef.value || editorRootRef.value)
+const writebackSelectPopupContainer = computed(() => writebackDrawerRootRef.value || editorRootRef.value)
+const autoSyncSelectPopupContainer = computed(() => autoSyncDrawerRootRef.value || editorRootRef.value)
 const unexpectedConfiguredMappingLabels = computed(() => {
   const parsed = pickMappingFromRaw(parseJsonTextLoose(itemForm.mappingText))
   const supportedKeys = new Set(activeMappingOptions.value.map(item => item.key))
@@ -3516,7 +3522,7 @@ watch(() => props.selectedItemId, (value) => {
       :mask-closable="!(savingItem || previewingItem || runningItem)"
       :closable="!(savingItem || previewingItem || runningItem)"
     >
-      <div class="space-y-4">
+      <div ref="mappingDrawerRootRef" class="space-y-4">
         <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
           <div class="flex items-center justify-between">
             <div>
@@ -3598,7 +3604,7 @@ watch(() => props.selectedItemId, (value) => {
                     重点
                   </span>
                 </div>
-                <a-select v-model="binding.sourceField" size="small" allow-search allow-clear :popup-container="selectPopupContainer" placeholder="来源字段">
+                <a-select v-model="binding.sourceField" size="small" allow-search allow-clear :popup-container="mappingSelectPopupContainer" placeholder="来源字段">
                   <a-option v-for="field in fieldInspection" :key="field.fieldName" :value="field.fieldName">
                     {{ field.fieldName }}
                   </a-option>
@@ -3660,7 +3666,7 @@ watch(() => props.selectedItemId, (value) => {
       :mask-closable="!(savingItem || previewingItem || runningItem)"
       :closable="!(savingItem || previewingItem || runningItem)"
     >
-      <div class="space-y-4">
+      <div ref="writebackDrawerRootRef" class="space-y-4">
         <a-alert v-if="feedbackError" type="error" :show-icon="true">
           {{ feedbackError }}
         </a-alert>
@@ -3701,7 +3707,7 @@ watch(() => props.selectedItemId, (value) => {
                 size="small"
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="writebackSelectPopupContainer"
                 placeholder="选择飞书字段"
               >
                 <a-option
@@ -3778,7 +3784,7 @@ watch(() => props.selectedItemId, (value) => {
       :mask-closable="!(savingItem || previewingItem || runningItem)"
       :closable="!(savingItem || previewingItem || runningItem)"
     >
-      <div class="space-y-4">
+      <div ref="autoSyncDrawerRootRef" class="space-y-4">
         <a-alert v-if="feedbackError" type="error" :show-icon="true">
           {{ feedbackError }}
         </a-alert>
@@ -3820,7 +3826,7 @@ watch(() => props.selectedItemId, (value) => {
                 size="small"
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="选择飞书字段"
               >
                 <a-option
@@ -3840,7 +3846,7 @@ watch(() => props.selectedItemId, (value) => {
                 size="small"
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="选择飞书字段"
               >
                 <a-option
@@ -3861,7 +3867,7 @@ watch(() => props.selectedItemId, (value) => {
                 multiple
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="从记录状态样本值里选择"
               >
                 <a-option
@@ -3882,7 +3888,7 @@ watch(() => props.selectedItemId, (value) => {
                 multiple
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="从同步信息样本值里选择"
               >
                 <a-option
@@ -3903,7 +3909,7 @@ watch(() => props.selectedItemId, (value) => {
                 multiple
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="从同步信息样本值里选择"
               >
                 <a-option
@@ -3923,7 +3929,7 @@ watch(() => props.selectedItemId, (value) => {
                 size="small"
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="从记录状态样本值里选择"
               >
                 <a-option
@@ -3943,7 +3949,7 @@ watch(() => props.selectedItemId, (value) => {
                 size="small"
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="从同步信息样本值里选择"
               >
                 <a-option
@@ -3970,7 +3976,7 @@ watch(() => props.selectedItemId, (value) => {
                 multiple
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="选择飞书字段；这些字段变更也会被当作业务变化"
               >
                 <a-option
@@ -3991,7 +3997,7 @@ watch(() => props.selectedItemId, (value) => {
                 multiple
                 allow-search
                 allow-clear
-                :popup-container="selectPopupContainer"
+                :popup-container="autoSyncSelectPopupContainer"
                 placeholder="选择飞书字段；这些字段变化不会触发重置"
               >
                 <a-option
