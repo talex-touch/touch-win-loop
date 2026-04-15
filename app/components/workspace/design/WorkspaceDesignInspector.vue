@@ -244,9 +244,7 @@ const isDeviceFrame = computed(
 );
 const frameKindValue = computed<DesignFrameKind | "">(() => {
   if (!props.frame) return "";
-  return props.frame.kind === "device_mockup"
-    ? "device_artboard"
-    : props.frame.kind;
+  return props.frame.kind;
 });
 const devicePresetSearch = ref("");
 const devicePreviewMode = ref<"screen" | "shell">("screen");
@@ -264,8 +262,6 @@ const frameDeviceMetadata = computed(() => {
           ? "none"
           : "builtin",
     shellAssetId: String(source.shellAssetId || "").trim() || undefined,
-    mockupSourceFrameId:
-      String(source.mockupSourceFrameId || "").trim() || undefined,
     screenScaleMode: screenScaleMode === "fill" ? "fill" : "fit",
     showSafeArea: Boolean(source.showSafeArea),
   } satisfies Required<
@@ -276,7 +272,7 @@ const frameDeviceMetadata = computed(() => {
   > &
     Pick<
       DesignFrameDeviceMetadata,
-      "shellAssetId" | "mockupSourceFrameId"
+      "shellAssetId"
     >;
 });
 const frameDevicePreset = computed(() => {
@@ -428,7 +424,7 @@ function updateFrameDeviceMetadata(
 
 function handleFrameKindChange(nextKind: DesignFrameKind): void {
   if (!props.frame) return;
-  const resolvedKind = nextKind === "device_mockup" ? "device_artboard" : nextKind;
+  const resolvedKind = nextKind;
   const patch: Partial<DesignFrameModel> = {
     kind: resolvedKind,
   };
@@ -446,7 +442,22 @@ function handleFrameKindChange(nextKind: DesignFrameKind): void {
         shellMode:
           frameDeviceMetadata.value.shellMode === "external"
             ? "external"
+            : frameDeviceMetadata.value.shellMode === "none"
+              ? "none"
+              : "builtin",
+      },
+    };
+  }
+  if (resolvedKind === "device_mockup") {
+    patch.metadata = {
+      ...(props.frame.metadata || {}),
+      device: {
+        ...(props.frame.metadata?.device || {}),
+        shellMode:
+          frameDeviceMetadata.value.shellMode === "external"
+            ? "external"
             : "builtin",
+        showSafeArea: false,
       },
     };
   }
@@ -1525,9 +1536,10 @@ function updateElementConstraints(
                       DesignFrameKind,
                   )
                 "
-              >
+	              >
 	                <option value="freeform">freeform</option>
 	                <option value="template">template</option>
+	                <option value="device_mockup">device_mockup</option>
 	                <option value="device_artboard">device_artboard</option>
 	                <option value="diagram">diagram</option>
 	              </select>
@@ -2390,7 +2402,7 @@ function updateElementConstraints(
                   设备导出
                 </h5>
                 <p class="workspace-design-inspector__group-description">
-                  支持裸屏、内置壳、外部壳和联动画板导出。
+                  device_mockup 渲染单图模板，device_artboard 渲染自身内容。
                 </p>
               </div>
             </div>
@@ -2483,36 +2495,12 @@ function updateElementConstraints(
                 </select>
               </label>
 
-              <label
-                v-if="isDeviceMockup"
-                class="workspace-design-inspector__field workspace-design-inspector__field--span-two"
-              >
-                <span class="workspace-design-inspector__label">联动源画板</span>
-                <select
-                  :value="frameDeviceMetadata.mockupSourceFrameId || ''"
-                  class="workspace-design-inspector__input"
-                  @change="
-                    updateFrameDeviceMetadata({
-                      mockupSourceFrameId:
-                        normalizeString(
-                          ($event.target as HTMLSelectElement).value,
-                        ) || undefined,
-                    })
-                  "
-                >
-                  <option value="">未绑定，回退到上传图片</option>
-                  <option
-                    v-for="option in props.deviceArtboardOptions"
-                    :key="option.id"
-                    :value="option.id"
-                  >
-                    {{ option.name }}
-                  </option>
-                </select>
-              </label>
             </div>
 
-            <label class="workspace-design-inspector__check">
+            <label
+              v-if="isDeviceArtboard"
+              class="workspace-design-inspector__check"
+            >
               <input
                 :checked="frameDeviceMetadata.showSafeArea"
                 type="checkbox"
@@ -2526,7 +2514,7 @@ function updateElementConstraints(
             </label>
 
             <div
-              v-if="selectedShellAsset || frameDeviceMetadata.mockupSourceFrameId"
+              v-if="selectedShellAsset"
               class="workspace-design-inspector__meta-list"
             >
               <div
@@ -2536,18 +2524,6 @@ function updateElementConstraints(
                 <span class="workspace-design-inspector__meta-key">当前外部壳</span>
                 <span class="workspace-design-inspector__meta-value">{{
                   selectedShellAsset.name
-                }}</span>
-              </div>
-              <div
-                v-if="frameDeviceMetadata.mockupSourceFrameId"
-                class="workspace-design-inspector__meta-row"
-              >
-                <span class="workspace-design-inspector__meta-key">联动画板</span>
-                <span class="workspace-design-inspector__meta-value">{{
-                  props.deviceArtboardOptions.find(
-                    (option) =>
-                      option.id === frameDeviceMetadata.mockupSourceFrameId,
-                  )?.name || frameDeviceMetadata.mockupSourceFrameId
                 }}</span>
               </div>
             </div>

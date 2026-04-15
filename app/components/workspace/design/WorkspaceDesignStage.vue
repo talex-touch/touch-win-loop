@@ -124,6 +124,7 @@ type ElementDragDraft = {
   dragging: boolean
   additive: boolean
   activeElementIds: string[]
+  basePatches: Record<string, Partial<DesignElementModel>>
   previewPatches: Record<string, { x: number, y: number }>
   startPositions: Record<string, { x: number, y: number }>
   editingFrameId: string
@@ -151,6 +152,7 @@ type ElementTransformDraft = {
     y: number
   }
   startPointerAngle?: number
+  basePatch: Partial<DesignElementModel>
   previewPatch: Partial<DesignElementModel>
 }
 type SvgStrokeLineCap = 'butt' | 'inherit' | 'round' | 'square'
@@ -694,18 +696,74 @@ function resolvePathWorldPoints(item: OverlayElementItem): Array<{ x: number, y:
   }))
 }
 
-function isElementInAutoLayoutFrame(item: OverlayElementItem): boolean {
-  return Boolean(item.ownerFrame && resolveDesignFrameLayoutMetadata(item.ownerFrame.metadata?.layout).mode === 'auto')
-}
-
 function canDragOverlayElement(item: OverlayElementItem): boolean {
   return canInteractWithOverlayElement(item)
-    && !isElementInAutoLayoutFrame(item)
     && item.element.type !== 'path'
 }
 
 function canTransformOverlayElement(item: OverlayElementItem): boolean {
   return canDragOverlayElement(item)
+}
+
+function resolveRenderedElementLocalGeometry(item: OverlayElementItem): {
+  x: number
+  y: number
+  width: number
+  height: number
+  rotation: number
+} {
+  const absoluteGeometry = resolveElementAbsoluteGeometry(item)
+  const contentLayout = resolveFrameContentLayout(item.displayFrame)
+  const contentScale = Math.max(0.0001, contentLayout?.contentScale || 1)
+  if (item.displayFrame && contentLayout) {
+    return {
+      x: roundMetric((absoluteGeometry.x - contentLayout.contentRect.x) / contentScale),
+      y: roundMetric((absoluteGeometry.y - contentLayout.contentRect.y) / contentScale),
+      width: roundMetric(absoluteGeometry.width / contentScale),
+      height: roundMetric(absoluteGeometry.height / contentScale),
+      rotation: absoluteGeometry.rotation,
+    }
+  }
+  if (item.displayFrame) {
+    return {
+      x: roundMetric(absoluteGeometry.x - item.displayFrame.x),
+      y: roundMetric(absoluteGeometry.y - item.displayFrame.y),
+      width: roundMetric(absoluteGeometry.width),
+      height: roundMetric(absoluteGeometry.height),
+      rotation: absoluteGeometry.rotation,
+    }
+  }
+  return {
+    x: roundMetric(absoluteGeometry.x),
+    y: roundMetric(absoluteGeometry.y),
+    width: roundMetric(absoluteGeometry.width),
+    height: roundMetric(absoluteGeometry.height),
+    rotation: absoluteGeometry.rotation,
+  }
+}
+
+function resolveElementLayoutDetachPatch(item: OverlayElementItem): Partial<DesignElementModel> {
+  const frameUsesAutoLayout = Boolean(
+    item.ownerFrame
+      && resolveDesignFrameLayoutMetadata(item.ownerFrame.metadata?.layout).mode === 'auto',
+  )
+  const hasConstraints = Boolean(item.element.metadata?.constraints)
+  const layoutSizing = normalizeString(item.element.metadata?.layoutSizing)
+  if (!frameUsesAutoLayout && !hasConstraints && (!layoutSizing || layoutSizing === 'fixed'))
+    return {}
+
+  const geometry = resolveRenderedElementLocalGeometry(item)
+  return {
+    x: geometry.x,
+    y: geometry.y,
+    width: geometry.width,
+    height: geometry.height,
+    metadata: {
+      ...(item.element.metadata || {}),
+      layoutSizing: 'fixed',
+      constraints: undefined,
+    },
+  }
 }
 
 function resolveElementAbsoluteGeometry(item: OverlayElementItem): {
@@ -1457,11 +1515,17 @@ function handleOverlayPointerMove(event: PointerEvent): void {
           .map(item => item.element.id)
           .filter(elementId => currentElementIds.includes(elementId))
       : [draft.targetElementId]
+    const basePatches = Object.fromEntries(activeElementIds.map((elementId) => {
+      const item = resolveOverlayElement(elementId, draft.displayFrameId)
+      return [elementId, item ? resolveElementLayoutDetachPatch(item) : {}]
+    }))
     const startPositions = Object.fromEntries(activeElementIds.map((elementId) => {
-      const element = resolveOverlayElement(elementId, draft.displayFrameId)?.element
+      const item = resolveOverlayElement(elementId, draft.displayFrameId) || null
+      const basePatch = basePatches[elementId] || {}
+      const geometry = item ? resolveRenderedElementLocalGeometry(item) : null
       return [elementId, {
-        x: Number(element?.x || 0),
-        y: Number(element?.y || 0),
+        x: Number(basePatch.x ?? geometry?.x ?? item?.element.x ?? 0),
+        y: Number(basePatch.y ?? geometry?.y ?? item?.element.y ?? 0),
       }]
     }))
 
@@ -1469,6 +1533,7 @@ function handleOverlayPointerMove(event: PointerEvent): void {
       ...draft,
       dragging: true,
       activeElementIds,
+      basePatches,
       startPositions,
     }
   }
@@ -1513,7 +1578,10 @@ function handleOverlayPointerUp(): void {
     if (hasPatch) {
       emit('update-element', {
         elementId: draft.targetElementId,
-        patch: draft.previewPatch,
+        patch: {
+          ...draft.basePatch,
+          ...draft.previewPatch,
+        },
         historyMergeKey: draft.mode === 'resize' ? 'element-resize' : 'element-rotate',
       })
     }
@@ -1549,6 +1617,7 @@ function handleOverlayPointerUp(): void {
       patches: draft.activeElementIds.map((elementId) => ({
         elementId,
         patch: {
+          ...(draft.basePatches[elementId] || {}),
           x: draft.previewPatches[elementId]?.x ?? draft.startPositions[elementId]?.x ?? 0,
           y: draft.previewPatches[elementId]?.y ?? draft.startPositions[elementId]?.y ?? 0,
         },
@@ -1599,6 +1668,7 @@ function handleElementDragStart(event: PointerEvent, item: OverlayElementItem): 
     dragging: false,
     additive: Boolean(event.shiftKey),
     activeElementIds: [],
+    basePatches: {},
     previewPatches: {},
     startPositions: {},
     editingFrameId: item.ownerFrameId || normalizeString(props.selectionState.editingFrameId),
@@ -1643,7 +1713,7 @@ function handleElementResizeHandlePointerDown(
   clearResizeBadgeGhostTimers()
   transformBadgeGhost.value = null
 
-  const localGeometry = resolveElementLocalGeometry(target.item)
+  const localGeometry = resolveRenderedElementLocalGeometry(target.item)
   const absoluteGeometry = resolveElementAbsoluteGeometry(target.item)
   elementTransformDraft.value = {
     mode: 'resize',
@@ -1660,6 +1730,7 @@ function handleElementResizeHandlePointerDown(
       x: absoluteGeometry.x + absoluteGeometry.width / 2,
       y: absoluteGeometry.y + absoluteGeometry.height / 2,
     },
+    basePatch: resolveElementLayoutDetachPatch(target.item),
     previewPatch: {},
   }
 }
@@ -1675,7 +1746,7 @@ function handleElementRotateHandlePointerDown(event: PointerEvent): void {
   clearResizeBadgeGhostTimers()
   transformBadgeGhost.value = null
 
-  const localGeometry = resolveElementLocalGeometry(target.item)
+  const localGeometry = resolveRenderedElementLocalGeometry(target.item)
   const absoluteGeometry = resolveElementAbsoluteGeometry(target.item)
   const pointer = toFlowPoint(event)
   elementTransformDraft.value = {
@@ -1696,6 +1767,7 @@ function handleElementRotateHandlePointerDown(event: PointerEvent): void {
       pointer.y - (absoluteGeometry.y + absoluteGeometry.height / 2),
       pointer.x - (absoluteGeometry.x + absoluteGeometry.width / 2),
     ),
+    basePatch: resolveElementLayoutDetachPatch(target.item),
     previewPatch: {},
   }
 }

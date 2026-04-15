@@ -2028,14 +2028,14 @@ function createFrame(
   } = {},
 ): void {
   if (!currentPage.value) return;
-  const resolvedKind = kind === "device_mockup" ? "device_artboard" : kind;
+  const resolvedKind = kind;
   const nextShellMode: "none" | "builtin" | "external" =
     extra.metadata?.device?.shellMode === "none" ||
     extra.metadata?.device?.shellMode === "external"
       ? extra.metadata.device.shellMode
       : "builtin";
   const nextExtra =
-    resolvedKind === "device_artboard"
+    resolvedKind === "device_artboard" || resolvedKind === "device_mockup"
       ? {
           ...extra,
           metadata: {
@@ -3091,9 +3091,8 @@ function upsertFrameElement(
 
 function applyImageToSelectedFrame(src: string): void {
   if (!selectedFrame.value) return;
-  const isMarketingFrame =
-    selectedFrame.value.kind === "device_mockup" ||
-    selectedFrame.value.kind === "template";
+  const isDeviceMockup = selectedFrame.value.kind === "device_mockup";
+  const isMarketingFrame = selectedFrame.value.kind === "template";
   const isDeviceArtboard = selectedFrame.value.kind === "device_artboard";
   const existingElements = resolveFrameElements(selectedFrame.value);
   const nextElements = upsertFrameElement(
@@ -3102,10 +3101,10 @@ function applyImageToSelectedFrame(src: string): void {
     {
       id: "hero-image",
       type: "image",
-      x: isMarketingFrame ? 960 : isDeviceArtboard ? 0 : 56,
-      y: isMarketingFrame ? 128 : isDeviceArtboard ? 0 : 220,
-      width: isMarketingFrame ? 520 : isDeviceArtboard ? selectedFrame.value.width : 320,
-      height: isMarketingFrame ? 640 : isDeviceArtboard ? selectedFrame.value.height : 220,
+      x: isDeviceMockup || isDeviceArtboard ? 0 : isMarketingFrame ? 960 : 56,
+      y: isDeviceMockup || isDeviceArtboard ? 0 : isMarketingFrame ? 128 : 220,
+      width: isDeviceMockup || isDeviceArtboard ? selectedFrame.value.width : isMarketingFrame ? 520 : 320,
+      height: isDeviceMockup || isDeviceArtboard ? selectedFrame.value.height : isMarketingFrame ? 640 : 220,
       pageId: selectedFrame.value.pageId,
       frameId: selectedFrame.value.id,
       zIndex: existingElements.length + 1,

@@ -150,13 +150,10 @@ function normalizeString(value: unknown): string {
 
 export function normalizeDesignFrameKind(
   value: unknown,
-  options: {
-    canonicalizeDeviceMockup?: boolean
-  } = {},
 ): DesignFrameKind {
   const normalized = normalizeString(value) as DesignFrameKind
   if (normalized === 'device_mockup')
-    return options.canonicalizeDeviceMockup ? 'device_artboard' : 'device_mockup'
+    return 'device_mockup'
   if (
     normalized === 'freeform'
     || normalized === 'template'
@@ -548,12 +545,97 @@ function resolveDesignFrameDeviceMetadata(value: unknown, kind: DesignFrameKind)
       ? shellMode
       : defaultShellMode,
     shellAssetId: normalizeString(source.shellAssetId),
-    mockupSourceFrameId: normalizeString(source.mockupSourceFrameId),
+    mockupSourceFrameId: '',
     screenScaleMode: screenScaleMode === 'fill' ? 'fill' : 'fit',
     showSafeArea: typeof source.showSafeArea === 'boolean'
       ? source.showSafeArea
       : kind === 'device_artboard',
   }
+}
+
+function resolveRawCompositionElementsForFrame(
+  composition: CompositionModel,
+  frame: DesignFrameModel,
+): DesignElementModel[] {
+  const compositionElements = ensureArray(composition.elements)
+    .filter(element => normalizeString(element.frameId) === normalizeString(frame.id))
+  if (compositionElements.length > 0)
+    return cloneSortedDesignElements(compositionElements)
+
+  return ensureArray(frame.elements).map((element, index) => {
+    return createDesignElement({
+      ...element,
+      pageId: normalizeString(element.pageId) || frame.pageId,
+      frameId: frame.id,
+      zIndex: toFiniteNumber(element.zIndex, index),
+    }, normalizeString(element.id) || `${frame.id}-element-${index + 1}`)
+  })
+}
+
+function resolveDeviceMockupImageElement(
+  elements: DesignElementModel[],
+): DesignElementModel | null {
+  return elements.find(element => element.id === 'hero-image' && element.type === 'image')
+    || elements.find(element => element.type === 'image')
+    || null
+}
+
+function createDeviceMockupElements(input: {
+  pageId?: string
+  frameId?: string
+  imageSrc?: string
+  sourceImage?: Partial<DesignElementModel> | null
+} = {}): DesignElementModel[] {
+  const pageId = sanitizeIdentifier(input.pageId, DEFAULT_COMPOSITION_PAGE_ID)
+  const frameId = normalizeString(input.frameId) || undefined
+  const sourceImage = input.sourceImage ? normalizeRecord(input.sourceImage) : null
+  const imageSrc = normalizeString(input.imageSrc || sourceImage?.imageSrc)
+  if (!imageSrc)
+    return []
+
+  return [createDesignElement({
+    ...sourceImage,
+    id: 'hero-image',
+    type: 'image',
+    pageId,
+    frameId,
+    x: toFiniteNumber(sourceImage?.x, 0),
+    y: toFiniteNumber(sourceImage?.y, 0),
+    width: Math.max(1, toPositiveNumber(sourceImage?.width, 1)),
+    height: Math.max(1, toPositiveNumber(sourceImage?.height, 1)),
+    zIndex: 0,
+    imageSrc,
+  }, 'hero-image')]
+}
+
+function stripDeviceMockupUnsupportedElements(
+  composition: CompositionModel,
+  frame: DesignFrameModel,
+): DesignElementModel[] {
+  const imageElement = resolveDeviceMockupImageElement(resolveRawCompositionElementsForFrame(composition, frame))
+  return createDeviceMockupElements({
+    pageId: frame.pageId,
+    frameId: frame.id,
+    sourceImage: imageElement,
+  })
+}
+
+function sanitizeDeviceFrameMetadataForPersistence(
+  metadata: DesignFrameModel['metadata'],
+): DesignFrameModel['metadata'] {
+  const sourceMetadata = normalizeRecord(metadata)
+  const deviceMetadata = normalizeRecord(sourceMetadata.device)
+  const { mockupSourceFrameId: _ignoredMockupSourceFrameId, ...nextDeviceMetadata } = deviceMetadata
+  const nextMetadata: Record<string, unknown> = {
+    ...sourceMetadata,
+  }
+  if (Object.keys(nextDeviceMetadata).length > 0) {
+    nextMetadata.device = nextDeviceMetadata
+  }
+  else {
+    delete nextMetadata.device
+  }
+  return nextMetadata as DesignFrameModel['metadata']
 }
 
 function normalizeDesignElementMetadata(
@@ -633,7 +715,7 @@ export function canDesignFrameContainElements(frame: DesignFrameModel | null | u
 }
 
 export function canDesignFrameCreateElements(frame: DesignFrameModel | null | undefined): boolean {
-  return canDesignFrameContainElements(frame)
+  return Boolean(frame && (frame.kind === 'freeform' || frame.kind === 'template' || frame.kind === 'device_artboard'))
 }
 
 export function isDesignFrameClipContentEnabled(frame: DesignFrameModel | null | undefined): boolean {
@@ -787,14 +869,20 @@ function createLegacyCompositionFrame(input: {
     locked: false,
     templateKey: normalizeString(input.templateKey) || 'device-showcase',
     deviceFramePresetKey: normalizeString(input.deviceFramePresetKey) || 'iphone-16-pro',
-    elements: createLegacyCompositionElements({
-      pageId,
-      frameId,
-      title: normalizeString(slots.title) || undefined,
-      subtitle: normalizeString(slots.subtitle) || undefined,
-      badge: normalizeString(slots.badge) || undefined,
-      imageSrc: normalizeString(slots.imageSrc) || undefined,
-    }),
+    elements: normalizeDesignFrameKind(input.kind || 'device_mockup') === 'device_mockup'
+      ? createDeviceMockupElements({
+          pageId,
+          frameId,
+          imageSrc: normalizeString(slots.imageSrc) || undefined,
+        })
+      : createLegacyCompositionElements({
+          pageId,
+          frameId,
+          title: normalizeString(slots.title) || undefined,
+          subtitle: normalizeString(slots.subtitle) || undefined,
+          badge: normalizeString(slots.badge) || undefined,
+          imageSrc: normalizeString(slots.imageSrc) || undefined,
+        }),
     themeTokens,
     metadata: normalizeDesignFrameMetadata(input.metadata, normalizeDesignFrameKind(input.kind || 'device_mockup')),
   }
@@ -1457,18 +1545,30 @@ export function canonicalizeSceneDocumentForPersistence(document: SceneDocument 
   if (normalized.sourceModel.kind !== 'composition')
     return normalized
 
+  const composition = normalized.sourceModel
+  const pageRootElements = ensureArray(composition.elements)
+    .filter(element => !normalizeString(element.frameId))
+    .map(element => createDesignElement(element, element.id))
+  const frameElements = ensureArray(composition.frames).flatMap((frame) => {
+    if (frame.kind === 'device_mockup')
+      return stripDeviceMockupUnsupportedElements(composition, frame)
+    return resolveRawCompositionElementsForFrame(composition, frame)
+  })
+
   return relayoutSceneDocument({
     ...normalized,
     sourceModel: {
-      ...normalized.sourceModel,
-      frames: ensureArray(normalized.sourceModel.frames).map((frame) => {
-        if (frame.kind !== 'device_mockup')
-          return frame
-        return {
+      ...composition,
+      frames: ensureArray(composition.frames).map((frame) => {
+        return normalizeDesignFrameModel({
           ...frame,
-          kind: 'device_artboard',
-        }
+          metadata: sanitizeDeviceFrameMetadataForPersistence(frame.metadata),
+          elements: frame.kind === 'device_mockup'
+            ? stripDeviceMockupUnsupportedElements(composition, frame)
+            : resolveRawCompositionElementsForFrame(composition, frame),
+        }, 0, frame.pageId)
       }),
+      elements: [...pageRootElements, ...frameElements],
     },
   })
 }
@@ -2641,21 +2741,11 @@ export function resolveDisplayCompositionElementsForFrame(
 }
 
 export function resolveDesignFrameEditingBinding(
-  composition: CompositionModel,
+  _composition: CompositionModel,
   frame: DesignFrameModel | null | undefined,
 ): DesignFrameEditingBinding | null {
   if (!frame)
     return null
-
-  const deviceConfig = resolveFrameDeviceConfig(frame)
-  const linkedFrame = resolveCompositionFrameById(composition, deviceConfig.mockupSourceFrameId)
-  if (linkedFrame?.kind === 'device_artboard') {
-    return {
-      displayFrame: frame,
-      ownerFrame: linkedFrame,
-      projected: linkedFrame.id !== frame.id,
-    }
-  }
 
   return {
     displayFrame: frame,
@@ -2668,10 +2758,9 @@ export function resolveDesignFrameEditableElements(
   composition: CompositionModel,
   frame: DesignFrameModel | null | undefined,
 ): DesignElementModel[] {
-  const binding = resolveDesignFrameEditingBinding(composition, frame)
-  if (!binding)
+  if (!frame || frame.kind === 'device_mockup')
     return []
-  return resolveDisplayCompositionElementsForFrame(composition, binding.ownerFrame)
+  return resolveDisplayCompositionElementsForFrame(composition, frame)
 }
 
 export function resolveDesignElementAbsoluteRect(element: DesignElementModel, frame?: DesignFrameModel | null): DesignRect {
@@ -3524,7 +3613,7 @@ function renderFrameContentIntoScreenMarkup(
 function renderDevicePlaceholderMarkup(screenRect: DesignRect, clipId: string): string {
   return `<g clip-path="url(#${clipId})">
     <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" fill="#e2e8f0" />
-    <text x="${screenRect.x + 18}" y="${screenRect.y + 38}" fill="#475569" font-size="16" font-weight="600">上传截图或绑定设备画板</text>
+    <text x="${screenRect.x + 18}" y="${screenRect.y + 38}" fill="#475569" font-size="16" font-weight="600">上传截图</text>
   </g>`
 }
 
@@ -3535,18 +3624,6 @@ function renderScreenContentMarkup(
   clipId: string,
 ): string {
   const deviceConfig = resolveFrameDeviceConfig(targetFrame)
-  const linkedFrame = resolveCompositionFrameById(composition, deviceConfig.mockupSourceFrameId)
-  if (linkedFrame?.kind === 'device_artboard') {
-    return renderFrameContentIntoScreenMarkup(
-      composition,
-      linkedFrame,
-      screenRect,
-      clipId,
-      deviceConfig.screenScaleMode,
-      deviceConfig.showSafeArea,
-    )
-  }
-
   if (targetFrame.kind === 'device_artboard') {
     return renderFrameContentIntoScreenMarkup(
       composition,
@@ -3558,8 +3635,9 @@ function renderScreenContentMarkup(
     )
   }
 
-  const frameElements = resolveDisplayCompositionElementsForFrame(composition, targetFrame)
-  const imageElement = frameElements.find(element => element.id === 'hero-image' || element.type === 'image')
+  const imageElement = resolveDeviceMockupImageElement(
+    resolveRawCompositionElementsForFrame(composition, targetFrame),
+  )
   const imageSrc = normalizeString(imageElement?.imageSrc)
   if (imageSrc)
     return renderImageIntoScreenMarkup(imageSrc, screenRect, clipId, deviceConfig.screenScaleMode)
@@ -4920,7 +4998,38 @@ function createDesignFrameFromInput(
     ...(normalizeString(input.imageSrc) ? { imageSrc: normalizeString(input.imageSrc) } : {}),
   }
 
-  if (kind === 'template' || kind === 'device_mockup') {
+  if (kind === 'device_mockup') {
+    const defaultDeviceFrameSize = resolveDefaultFrameSize('device_artboard', aspectRatio, deviceFramePresetKey)
+    return normalizeDesignFrameModel({
+      id: frameId,
+      pageId,
+      name: normalizeString(input.name) || resolveDesignFrameDefaultName(kind, frameIndex),
+      kind,
+      x,
+      y,
+      width: toPositiveNumber(input.width, defaultDeviceFrameSize.width),
+      height: toPositiveNumber(input.height, defaultDeviceFrameSize.height),
+      locked: Boolean(input.locked),
+      templateKey: normalizeString(input.templateKey) || composition.templateKey,
+      deviceFramePresetKey,
+      elements: createDeviceMockupElements({
+        pageId,
+        frameId,
+        imageSrc: normalizeString(slots.imageSrc) || undefined,
+        sourceImage: ensureArray(input.elements).find(element => normalizeString(element.id) === 'hero-image' || element.type === 'image') || null,
+      }),
+      themeTokens,
+      metadata: {
+        ...normalizeRecord(input.metadata),
+        device: {
+          ...normalizeRecord(normalizeRecord(input.metadata).device),
+          shellMode: normalizeString(normalizeRecord(normalizeRecord(input.metadata).device).shellMode) || 'builtin',
+        },
+      },
+    }, frameIndex - 1, pageId)
+  }
+
+  if (kind === 'template') {
     const legacyFrame = createLegacyCompositionFrame({
       id: frameId,
       pageId,
@@ -5969,12 +6078,11 @@ function resolveCanvasLibraryReferencedAssets(
 
 function sanitizeCanvasLibraryFrameLinks(
   frame: DesignFrameModel,
-  availableFrameIds: Set<string>,
+  _availableFrameIds: Set<string>,
   assetIdMap?: Map<string, string>,
 ): DesignFrameModel {
   const nextMetadata = normalizeRecord(frame.metadata)
   const deviceMetadata = normalizeRecord(nextMetadata.device)
-  const mockupSourceFrameId = normalizeString(deviceMetadata.mockupSourceFrameId)
   const shellAssetId = normalizeString(deviceMetadata.shellAssetId)
   const mappedShellAssetId = shellAssetId && assetIdMap
     ? normalizeString(assetIdMap.get(shellAssetId))
@@ -5985,15 +6093,10 @@ function sanitizeCanvasLibraryFrameLinks(
     metadata: {
       ...nextMetadata,
       device: {
-        ...deviceMetadata,
+        ...Object.fromEntries(Object.entries(deviceMetadata).filter(([key]) => key !== 'mockupSourceFrameId')),
         ...(shellAssetId
           ? {
               shellAssetId: mappedShellAssetId || undefined,
-            }
-          : {}),
-        ...(mockupSourceFrameId && !availableFrameIds.has(mockupSourceFrameId)
-          ? {
-              mockupSourceFrameId: '',
             }
           : {}),
       },
@@ -6238,16 +6341,14 @@ export function mergeCanvasLibraryPageTemplate(
   const sanitizedFrames = nextFrames.map((frame) => {
     const sourceMetadata = normalizeRecord(frame.metadata)
     const deviceMetadata = normalizeRecord(sourceMetadata.device)
-    const mappedMockupSourceFrameId = normalizeString(frameIdMap.get(normalizeString(deviceMetadata.mockupSourceFrameId)))
     const mappedShellAssetId = normalizeString(assetIdMap.get(normalizeString(deviceMetadata.shellAssetId)))
     return applyCanvasLibraryOriginToFrame(sanitizeCanvasLibraryFrameLinks(normalizeDesignFrameModel({
       ...frame,
       metadata: {
         ...sourceMetadata,
         device: {
-          ...deviceMetadata,
+          ...Object.fromEntries(Object.entries(deviceMetadata).filter(([key]) => key !== 'mockupSourceFrameId')),
           shellAssetId: mappedShellAssetId || undefined,
-          mockupSourceFrameId: mappedMockupSourceFrameId || undefined,
         },
       },
     }, 0, nextPageId), nextFrameIds), normalizedOrigin)

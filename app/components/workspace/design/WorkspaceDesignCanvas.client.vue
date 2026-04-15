@@ -1058,11 +1058,6 @@ watch(
       nodes.value.map((node) => [normalizeString(node.id), node]),
     );
     nodes.value = (props.frames || []).map((frame) => {
-      const linkedFrameId = normalizeString(frame.metadata?.device?.mockupSourceFrameId);
-      const previewFrame = linkedFrameId
-        ? (props.frames || []).find((candidate) => candidate.id === linkedFrameId) ||
-          null
-        : null;
       const shellAssetId = normalizeString(frame.metadata?.device?.shellAssetId);
       const deviceShellAsset = shellAssetId
         ? (props.assets || []).find((asset) => asset.id === shellAssetId) || null
@@ -1084,7 +1079,6 @@ watch(
           : (props.selectionState.frameIds || []).includes(frame.id),
         data: {
           frame,
-          previewFrame,
           deviceShellAsset,
           disabled:
             props.disabled || frame.locked || !frameInteractionEnabled.value,
@@ -1471,7 +1465,6 @@ onBeforeUnmount(() => {
       <template #node-frame="nodeProps">
         <WorkspaceDesignFrameNode
           :frame="nodeProps.data.frame"
-          :preview-frame="nodeProps.data.previewFrame"
           :device-shell-asset="nodeProps.data.deviceShellAsset"
           :selected="nodeProps.selected"
           :disabled="Boolean(nodeProps.data.disabled)"

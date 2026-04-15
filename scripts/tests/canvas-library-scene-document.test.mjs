@@ -9,7 +9,7 @@ async function loadSceneUtils() {
   return import(pathToFileURL(SCENE_UTILS_PATH).href)
 }
 
-it('page template 提取与合并会保留 libraryOrigin，并重映射设备壳与联动画板关系', async () => {
+it('page template 提取与合并会保留 libraryOrigin，并清理失效的 mockup source 关联', async () => {
   const {
     appendDesignAssetToSceneDocument,
     appendDesignFrameToSceneDocument,
@@ -118,7 +118,7 @@ it('page template 提取与合并会保留 libraryOrigin，并重映射设备壳
   assert.ok(importedMockup, '导入 mockup 丢失')
   assert.notEqual(importedArtboard?.id, sourceArtboardId)
   assert.equal(importedMockup?.metadata?.libraryOrigin?.versionId, 'canvas-version-1')
-  assert.equal(importedMockup?.metadata?.device?.mockupSourceFrameId, importedArtboard?.id)
+  assert.ok(!importedMockup?.metadata?.device?.mockupSourceFrameId)
 
   const importedShellAsset = (mergedComposition.assets || []).find(
     asset => asset.metadata?.libraryOrigin?.itemId === 'canvas-item-1',

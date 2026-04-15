@@ -31,14 +31,12 @@ type ResizeSession = {
 
 const props = withDefaults(defineProps<{
   frame: DesignFrameModel
-  previewFrame?: DesignFrameModel | null
   deviceShellAsset?: DesignAssetModel | null
   selected?: boolean
   disabled?: boolean
   onResizePreview?: (patch: ResizePatch) => void
   onResizeCommit?: (patch: ResizePatch) => void
 }>(), {
-  previewFrame: null,
   deviceShellAsset: null,
   selected: false,
   disabled: false,
@@ -72,16 +70,11 @@ const subtitleText = computed(() => normalizeString(findElement('caption', 'subt
 const badgeText = computed(() => normalizeString(findElement('badge', 'badge')?.text))
 const imageSrc = computed(() => normalizeString(findElement('image', 'hero-image')?.imageSrc))
 const isDeviceFrame = computed(() => isDeviceDesignFrameKind(props.frame.kind))
-const devicePreviewFrame = computed(() => {
-  if (!isDeviceFrame.value)
-    return null
-  return props.previewFrame || props.frame
-})
 const devicePreviewPage = computed<DesignPageModel>(() => ({
   id: props.frame.pageId,
   name: 'Preview',
-  background: normalizeString(devicePreviewFrame.value?.themeTokens?.background) || normalizeString(themeTokens.value.background) || '#0f172a',
-  frameIds: [props.frame.id, ...(devicePreviewFrame.value && devicePreviewFrame.value.id !== props.frame.id ? [devicePreviewFrame.value.id] : [])],
+  background: normalizeString(props.frame.themeTokens?.background) || normalizeString(themeTokens.value.background) || '#0f172a',
+  frameIds: [props.frame.id],
   viewport: {
     x: 0,
     y: 0,
@@ -93,10 +86,7 @@ const devicePreviewComposition = computed<CompositionModel | null>(() => {
   if (!isDeviceFrame.value)
     return null
 
-  const previewFrames = [props.frame]
-  if (devicePreviewFrame.value && devicePreviewFrame.value.id !== props.frame.id)
-    previewFrames.push(devicePreviewFrame.value)
-  const elements = previewFrames.flatMap((frame) => {
+  const elements = [props.frame].flatMap((frame) => {
     return (frame.elements || []).map((element, index) => ({
       ...element,
       pageId: props.frame.pageId,
@@ -109,13 +99,13 @@ const devicePreviewComposition = computed<CompositionModel | null>(() => {
     templateKey: normalizeString(props.frame.templateKey) || 'device-showcase',
     pages: [devicePreviewPage.value],
     currentPageId: devicePreviewPage.value.id,
-    frames: previewFrames,
+    frames: [props.frame],
     elements,
     assets: props.deviceShellAsset ? [props.deviceShellAsset] : [],
     slots: {},
     themeTokens: {
       ...themeTokens.value,
-      ...(devicePreviewFrame.value?.themeTokens || {}),
+      ...(props.frame.themeTokens || {}),
     },
     layoutRules: {},
     allowedBlocks: [],
