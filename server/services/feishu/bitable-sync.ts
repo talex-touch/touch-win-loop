@@ -999,13 +999,13 @@ async function resolveContestIdByExternal(
       [mappedContestExternalId],
     )
     return {
-      contestId: normalizeText(result.rows[0]?.live_entity_id) || null,
+      contestId: toText(result.rows[0]?.live_entity_id) || null,
       contestExternalId: mappedContestExternalId,
-      scopeTitle: normalizeText(result.rows[0]?.scope_title) || mappedContestExternalId,
+      scopeTitle: toText(result.rows[0]?.scope_title) || mappedContestExternalId,
     }
   }
 
-  const staticContestId = normalizeText(input.options.contestId)
+  const staticContestId = toText(input.options.contestId)
   if (!staticContestId) {
     return {
       contestId: null,
@@ -1035,7 +1035,7 @@ async function resolveContestIdByExternal(
     return {
       contestId: staticContestId,
       contestExternalId: releaseResult.rows[0].scope_id,
-      scopeTitle: normalizeText(releaseResult.rows[0].scope_title) || releaseResult.rows[0].scope_id,
+      scopeTitle: toText(releaseResult.rows[0].scope_title) || releaseResult.rows[0].scope_id,
     }
   }
 

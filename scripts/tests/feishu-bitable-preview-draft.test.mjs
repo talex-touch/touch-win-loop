@@ -134,5 +134,7 @@ describe('飞书多维表格版本草稿链路', () => {
     assert.match(serviceSource, /function buildSummaryBase\(records: FeishuBitableRecord\[], sourceRecordCount\?: number\)/, '服务端未支持按原始记录数构建汇总')
     assert.match(serviceSource, /skippedCount:\s*Math\.max\(0,\s*fetchedCount - processedCount\)/, '服务端未把过滤掉的记录计入跳过数')
     assert.match(serviceSource, /sourceRecordCount:\s*records\.length/, '执行链路未透传原始飞书记录数')
+    assert.match(serviceSource, /contestId: toText\(result\.rows\[0\]\?\.live_entity_id\) \|\| null/, '赛事关联解析仍未改用本地 toText')
+    assert.doesNotMatch(serviceSource, /normalizeText\(/, 'bitable-sync 不应再残留未定义的 normalizeText 调用')
   })
 })
