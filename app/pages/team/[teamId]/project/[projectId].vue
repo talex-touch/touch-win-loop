@@ -13,8 +13,10 @@ import type {
   AiDefenseSummary,
   AiProjectChangeRequest,
   AiWorkspaceDocumentAction,
+  AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentSelectionRange,
-  AiWorkspaceDocumentTrigger,
+  AiWorkspaceInlineCompletionAcceptResult,
+  AiWorkspaceInlineCompletionResult,
   AiWorkspaceRequest,
   AiWorkspaceResult,
   AiWorkspaceStreamEvent,
@@ -59,6 +61,8 @@ import type {
   TopicProposalItem,
   WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
+  WorkspaceAiUsageHistory,
+  WorkspaceBillingEstimate,
   WorkspaceFontSizePreset,
   WorkspaceMemberRole,
   WorkspaceOpenTabState,
@@ -88,9 +92,12 @@ import {
   PROJECT_RESOURCE_UPLOAD_MAX_FILE_SIZE_BYTES,
 } from '~~/shared/constants/project-resource-upload'
 import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
+import {
+  buildAgentDocDraftKey,
+  computeAgentDocContentHash,
+} from '~~/shared/utils/agent-doc'
 import { syncMarkdownMirrorFromRichText } from '~~/shared/utils/collab-markdown-rich-text'
 import {
-  COLLAB_DESIGN_RESOURCE_LABEL,
   COLLAB_FREEFORM_RESOURCE_LABEL,
   COLLAB_NOTES_RESOURCE_LABEL,
   resolveCollabResourceDisplayLabel,
@@ -218,6 +225,11 @@ interface HydratedProjectWorkspaceViewStateResult {
   legacyDesignUnavailable: boolean
 }
 
+type CollabWorkspaceResource = Resource & (
+  { source: 'collab' }
+  | { resourceKind: 'markdown' | 'draw' }
+)
+
 type DeviceRestoreChoice = 'sync' | 'keep'
 
 interface ProjectSettingsDraftHydrationResult {
@@ -237,8 +249,6 @@ interface MarkdownDocumentAssistRequestState {
   markdown: string
   selectionText: string
   selectionRange: AiWorkspaceDocumentSelectionRange | null
-  action: AiWorkspaceDocumentAction | ''
-  trigger: AiWorkspaceDocumentTrigger
 }
 
 interface AiRuntimeFeatureStatus {
@@ -281,7 +291,7 @@ const AI_RUNTIME_FEATURE_LABELS: Record<ProjectWorkspaceAiFeatureKey, string> = 
   workspaceDialogAsk: '工作台 AI',
   workspaceAutoOptimize: '工作台 AI',
   workspaceIssueDiscovery: '工作台 AI',
-  documentAssist: '文稿助手 AI',
+  documentAssist: 'AgentDoc AI',
   documentSummarize: '文稿总结 AI',
   documentRewrite: '文稿润写 AI',
   documentContinue: '文稿续写 AI',
@@ -486,7 +496,7 @@ type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
 type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
-type WorkspaceProjectContextualAssistant = {
+interface WorkspaceProjectContextualAssistant {
   preset: WorkspaceAiAssistantPreset
   label: string
   aiMode: Extract<WorkspaceAiMode, 'dialog_ask' | 'document_assist'>
@@ -660,6 +670,7 @@ const {
   preFinalReviewOpenTabs: preFinalReviewOpenTabs as typeof openMainTabs,
 })
 const workspaceMainPanelRef = ref<{
+  applyMarkdownDocumentDraft: (payload: AiWorkspaceDocumentDraft) => boolean
   applyMarkdownDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
   scrollToMarkdownCommentThread: (threadId: string) => void
   scrollToMarkdownHeadingAnchor: (anchorId: string) => boolean
@@ -674,11 +685,8 @@ const documentAssistRequestState = reactive<MarkdownDocumentAssistRequestState>(
   markdown: '',
   selectionText: '',
   selectionRange: null,
-  action: '',
-  trigger: 'right_sidebar',
 })
-const documentAssistResult = ref('')
-const documentAssistRunning = ref(false)
+const appliedAgentDocDraftKeys = ref<string[]>([])
 const selectedContestDetailLoading = ref(false)
 const {
   projectSettingsLoading,
@@ -1052,7 +1060,7 @@ function closeWorkspaceContextMenu(options: { restoreFocus?: boolean, invokeClos
 }
 
 function openWorkspaceContextMenu(request: ContextMenuRequest): void {
-  if (workspaceShellLoading.value || !request.items.length)
+  if (resolveWorkspaceShellLoadingState() || !request.items.length)
     return
 
   closeWorkspaceContextMenu({
@@ -1324,7 +1332,7 @@ function handleWorkspaceKeyboardContextMenu(event: KeyboardEvent): boolean {
   if (!import.meta.client || !isWorkspaceContextMenuHotkey(event))
     return false
 
-  if (workspaceShellLoading.value) {
+  if (resolveWorkspaceShellLoadingState()) {
     event.preventDefault()
     closeWorkspaceContextMenu({
       restoreFocus: false,
@@ -1409,7 +1417,7 @@ function handleWorkspaceShellContextMenu(event: MouseEvent): void {
   if (event.defaultPrevented)
     return
 
-  if (workspaceShellLoading.value) {
+  if (resolveWorkspaceShellLoadingState()) {
     event.preventDefault()
     event.stopPropagation()
     closeWorkspaceContextMenu({
@@ -1550,6 +1558,10 @@ const visibleWorkspaceIdSet = computed(() => {
 const currentWorkspace = computed(() => {
   return workspaceOptions.value.find(item => item.workspace.id === activeWorkspaceId.value) || null
 })
+const workspaceBillingEstimate = ref<WorkspaceBillingEstimate | null>(null)
+const workspaceAiUsageTotalUnits = ref<number | null>(null)
+let workspaceBillingEstimateSeq = 0
+let workspaceAiUsageSummarySeq = 0
 const currentWorkspaceMeetingPlanTier = computed<'personal_team' | 'business_team'>(() => {
   const quotaPlanTier = currentWorkspace.value?.quota?.planTier
   if (quotaPlanTier === 'personal_team' || quotaPlanTier === 'business_team')
@@ -1780,7 +1792,7 @@ const projectContextualAssistant = computed<WorkspaceProjectContextualAssistant 
   if (previewMode.value === 'markdown') {
     return {
       preset: 'document',
-      label: '文稿助手',
+      label: 'AgentDoc',
       aiMode: 'document_assist',
     }
   }
@@ -1831,7 +1843,7 @@ const currentWorkspaceAssistantLabel = computed(() => {
   if (aiMode.value === 'issue_discovery')
     return '寻疑发现'
   if (aiMode.value === 'document_assist')
-    return '文稿助手'
+    return 'AgentDoc'
   return '对话询问'
 })
 const currentWorkspaceAssistantContext = computed(() => {
@@ -1842,6 +1854,11 @@ const currentWorkspaceAssistantContext = computed(() => {
     previewMode: activeResourceWorkspaceTabId.value ? previewMode.value : '',
     resourcePurpose: activeResourceWorkspaceTabId.value ? activePreviewResourcePurpose.value : '',
   }
+})
+const activeAgentDocDocumentHash = computed(() => {
+  if (!documentAssistRequestState.resourceId)
+    return ''
+  return computeAgentDocContentHash(documentAssistRequestState.markdown)
 })
 const activeMarkdownResourceId = computed(() => {
   if (previewMode.value !== 'markdown')
@@ -2595,7 +2612,7 @@ const previewPdfUrl = computed(() => {
   return endpoint(`/projects/${projectId}/resources/${resourceId}/preview`)
 })
 
-function isCollabResource(resource: Resource | null | undefined): resource is Resource {
+function isCollabResource(resource: Resource | null | undefined): resource is CollabWorkspaceResource {
   if (!resource)
     return false
   const kind = String(resource.resourceKind || '').trim().toLowerCase()
@@ -2815,12 +2832,132 @@ const trendBars = computed<number[]>(() => {
   ].map(value => clamp(value, 0, 100))
 })
 
-const tokenBalance = computed(() => {
-  const quota = currentWorkspace.value?.quota
-  if (quota)
-    return Math.max(0, quota.aiQuotaTotal - quota.aiQuotaUsed)
-  return 0
+function formatAiQuotaResetCycleLabel(value: string | null | undefined): string {
+  if (value === 'quarterly')
+    return '每季度'
+  if (value === 'yearly')
+    return '每年'
+  return '每月'
+}
+
+const currentWorkspaceQuota = computed(() => currentWorkspace.value?.quota || null)
+
+const aiCreditsUsed = computed(() => {
+  const quota = currentWorkspaceQuota.value
+  return Math.max(
+    0,
+    Number(quota?.aiQuotaUsed || 0),
+    Number(workspaceAiUsageTotalUnits.value || 0),
+  )
 })
+
+const aiCreditsTotal = computed(() => {
+  const quota = currentWorkspaceQuota.value
+  const estimate = workspaceBillingEstimate.value
+  return Math.max(
+    0,
+    Number(quota?.aiQuotaTotal || 0),
+    Number(estimate?.aiQuotaTotal || 0),
+    Number(estimate?.includedAiQuota || 0),
+    aiCreditsUsed.value,
+  )
+})
+
+const aiCreditsRemaining = computed(() => {
+  if (aiCreditsTotal.value <= 0)
+    return 0
+  return Math.max(0, aiCreditsTotal.value - aiCreditsUsed.value)
+})
+
+const aiQuotaResetCycle = computed(() => {
+  const quota = currentWorkspaceQuota.value
+  if (quota?.resetCycle)
+    return quota.resetCycle
+  if (workspaceBillingEstimate.value?.billingCycle)
+    return workspaceBillingEstimate.value.billingCycle
+  return ''
+})
+
+const hasAiCreditsConfigured = computed(() => {
+  return aiCreditsTotal.value > 0 || aiCreditsUsed.value > 0
+})
+
+const aiCreditsUsageText = computed(() => {
+  if (!hasAiCreditsConfigured.value)
+    return '未配置'
+  return `${aiCreditsUsed.value.toLocaleString('zh-CN')} / ${aiCreditsTotal.value.toLocaleString('zh-CN')} credits`
+})
+
+const aiCreditsRemainingText = computed(() => {
+  if (!hasAiCreditsConfigured.value)
+    return '未配置'
+  return `${aiCreditsRemaining.value.toLocaleString('zh-CN')} credits`
+})
+
+const aiCreditsTooltipLabel = computed(() => {
+  if (hasAiCreditsConfigured.value) {
+    const cycleText = formatAiQuotaResetCycleLabel(aiQuotaResetCycle.value)
+    return `按 credits 配额计费 · ${cycleText}重置`
+  }
+  return '按 credits 配额计费'
+})
+
+const aiBillingLabel = computed(() => {
+  return aiCreditsTooltipLabel.value
+})
+
+function patchWorkspaceQuotaUsage<T extends {
+  quota: {
+    aiQuotaTotal: number
+    aiQuotaUsed: number
+    updatedAt: string
+  } | null
+}>(items: T[], resolveWorkspaceId: (item: T) => string, input: {
+  workspaceId: string
+  consumedUnits: number
+  remainingQuota: number | null
+}): T[] {
+  return items.map((item) => {
+    if (resolveWorkspaceId(item) !== input.workspaceId || !item.quota)
+      return item
+
+    const nextUsed = input.remainingQuota === null
+      ? Math.max(0, item.quota.aiQuotaUsed + input.consumedUnits)
+      : Math.max(0, item.quota.aiQuotaTotal - input.remainingQuota)
+
+    return {
+      ...item,
+      quota: {
+        ...item.quota,
+        aiQuotaUsed: nextUsed,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+  })
+}
+
+function applyInlineCompletionQuotaResult(result: AiWorkspaceInlineCompletionAcceptResult): void {
+  const workspaceId = normalizeString(activeWorkspaceId.value)
+  if (!me.value || !workspaceId)
+    return
+
+  me.value = {
+    ...me.value,
+    teams: patchWorkspaceQuotaUsage(me.value.teams, item => String(item.team.id || '').trim(), {
+      workspaceId,
+      consumedUnits: result.consumedUnits,
+      remainingQuota: result.remainingQuota,
+    }),
+    workspaces: patchWorkspaceQuotaUsage(me.value.workspaces, item => String(item.workspace.id || '').trim(), {
+      workspaceId,
+      consumedUnits: result.consumedUnits,
+      remainingQuota: result.remainingQuota,
+    }),
+  }
+
+  if (workspaceAiUsageTotalUnits.value !== null)
+    workspaceAiUsageTotalUnits.value = Math.max(0, workspaceAiUsageTotalUnits.value + result.consumedUnits)
+}
 
 const projectUploadStorageUsedBytes = computed(() => {
   return selectedResources.value.reduce((sum, resource) => sum + parseFileSizeFromResource(resource), 0)
@@ -2888,11 +3025,15 @@ const currentAiFeatureStatus = computed(() => {
   return getAiFeatureStatus(currentAiFeatureKey.value)
 })
 const currentAiModeAvailable = computed(() => {
+  if (aiMode.value === 'document_assist')
+    return Object.values(documentAssistActionStatusMap.value).some(item => item.configured)
   return isAiFeatureAvailable(currentAiFeatureKey.value)
 })
 const currentAiDisabledReason = computed(() => {
   if (currentAiModeAvailable.value)
     return ''
+  if (aiMode.value === 'document_assist')
+    return 'AgentDoc 未配置，请先在后台完成至少一个文档场景的模型与密钥配置后再试。'
   if (workbenchMode.value === 'project' && projectAssistantMode.value === 'contextual' && projectContextualAssistant.value) {
     return String(currentAiFeatureStatus.value?.reason || '').trim()
       || `${projectContextualAssistant.value.label} 未配置，请先在后台完成模型与密钥配置后再试。`
@@ -2914,7 +3055,6 @@ const aiRuntimeBusy = computed(() => {
   return aiFiltering.value
     || chatLoading.value
     || topicBoardLoading.value
-    || documentAssistRunning.value
     || defenseSummaryLoading.value
     || defenseRealtimeStarting.value
 })
@@ -2960,7 +3100,7 @@ const workspacePreparing = computed(() => {
     && (workspaceCriticalLoading.value || workspaceBackgroundLoading.value)
     && !hasWorkspaceBootstrapData.value
 })
-const workspaceShellLoading = computed(() => {
+function resolveWorkspaceShellLoadingState(): boolean {
   if (!me.value)
     return true
   if (!activeWorkspaceId.value)
@@ -2972,6 +3112,10 @@ const workspaceShellLoading = computed(() => {
   if (!projectWorkspaceViewReady.value)
     return true
   return !activeTabReady.value
+}
+
+const workspaceShellLoading = computed(() => {
+  return resolveWorkspaceShellLoadingState()
 })
 const workspaceShellLoadingProgress = computed(() => {
   if (!me.value)
@@ -4254,6 +4398,46 @@ async function loadAuthContext(): Promise<boolean> {
       query: { redirect: route.fullPath || teamDashboardPath() },
     })
     return false
+  }
+}
+
+async function loadWorkspaceBillingEstimate(workspaceId = activeWorkspaceId.value): Promise<void> {
+  const normalizedWorkspaceId = normalizeString(workspaceId)
+  if (!normalizedWorkspaceId) {
+    workspaceBillingEstimate.value = null
+    return
+  }
+
+  const requestSeq = ++workspaceBillingEstimateSeq
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceBillingEstimate>>(`/teams/${normalizedWorkspaceId}/billing/estimate`)
+    if (requestSeq !== workspaceBillingEstimateSeq || normalizeString(activeWorkspaceId.value) !== normalizedWorkspaceId)
+      return
+    workspaceBillingEstimate.value = response.data
+  }
+  catch {
+    if (requestSeq === workspaceBillingEstimateSeq && normalizeString(activeWorkspaceId.value) === normalizedWorkspaceId)
+      workspaceBillingEstimate.value = null
+  }
+}
+
+async function loadWorkspaceAiUsageSummary(workspaceId = activeWorkspaceId.value): Promise<void> {
+  const normalizedWorkspaceId = normalizeString(workspaceId)
+  if (!normalizedWorkspaceId) {
+    workspaceAiUsageTotalUnits.value = null
+    return
+  }
+
+  const requestSeq = ++workspaceAiUsageSummarySeq
+  try {
+    const response = await authApiFetch<ApiResponse<WorkspaceAiUsageHistory>>(`/teams/${normalizedWorkspaceId}/ai/usage?page=1&pageSize=1`)
+    if (requestSeq !== workspaceAiUsageSummarySeq || normalizeString(activeWorkspaceId.value) !== normalizedWorkspaceId)
+      return
+    workspaceAiUsageTotalUnits.value = Math.max(0, Number(response.data?.totalUnits || 0))
+  }
+  catch {
+    if (requestSeq === workspaceAiUsageSummarySeq && normalizeString(activeWorkspaceId.value) === normalizedWorkspaceId)
+      workspaceAiUsageTotalUnits.value = null
   }
 }
 
@@ -5627,12 +5811,44 @@ function updateCollabCursor(value: { cursorX?: number, cursorY?: number }): void
   collabSession.updatePresenceCursor(value.cursorX, value.cursorY)
 }
 
-function updateCollabSelectionStatus(value: { line: number, column: number, selectionLength: number }): void {
+function updateCollabSelectionStatus(value: {
+  line: number
+  column: number
+  selectionLength: number
+  selection?: {
+    anchorLine: number
+    anchorColumn: number
+    headLine: number
+    headColumn: number
+    isCollapsed: boolean
+    selectionLength: number
+    selectedText?: string
+    selectedTextPreview?: string
+  } | null
+}): void {
   collabSelectionStatus.value = {
     line: Math.max(1, Math.trunc(Number(value.line) || 1)),
     column: Math.max(1, Math.trunc(Number(value.column) || 1)),
     selectionLength: Math.max(0, Math.trunc(Number(value.selectionLength) || 0)),
   }
+
+  if (!activeMarkdownResourceId.value)
+    return
+
+  const selection = value.selection || null
+  syncDocumentAssistRequestState({
+    selectionText: String(selection?.selectedText || '').trim(),
+    selectionRange: selection
+      ? {
+          anchorLine: selection.anchorLine,
+          anchorColumn: selection.anchorColumn,
+          headLine: selection.headLine,
+          headColumn: selection.headColumn,
+          isCollapsed: selection.isCollapsed,
+          selectionLength: selection.selectionLength,
+        }
+      : null,
+  })
 }
 
 async function fetchCollabSnapshot(resourceId: string): Promise<CollabSnapshotPayload | null> {
@@ -6274,12 +6490,6 @@ async function requestProjectApi<T>(path: string, query: Record<string, string |
   return payload.data
 }
 
-function openDocumentAssistSidebar(): void {
-  rightSidebarView.value = 'ai'
-  if (rightSidebarCollapsed.value)
-    expandRightSidebar()
-}
-
 function getActiveMarkdownMirror(): string {
   const doc = collabMarkdownDoc.value
   if (doc) {
@@ -6292,6 +6502,138 @@ function getActiveMarkdownMirror(): string {
   }
 
   return normalizeString(previewResource.value?.content)
+}
+
+function canUseInlineCompletion(): boolean {
+  const workspaceId = normalizeString(activeWorkspaceId.value)
+  const projectId = normalizeString(activeProjectId.value)
+  const resourceId = activeMarkdownResourceId.value
+  if (!workspaceId || !projectId || !resourceId)
+    return false
+  if (previewMode.value !== 'markdown' || activePreviewResourcePurpose.value !== 'notes')
+    return false
+  if (!isAiFeatureAvailable('documentContinue'))
+    return false
+  return aiCreditsRemaining.value >= 1
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError'
+}
+
+function logInlineCompletionDebug(event: string, payload?: Record<string, unknown>): void {
+  console.warn('[inline-completion]', {
+    event,
+    workspaceId: normalizeString(activeWorkspaceId.value),
+    projectId: normalizeString(activeProjectId.value),
+    resourceId: activeMarkdownResourceId.value,
+    ...(payload || {}),
+  })
+}
+
+async function requestInlineCompletion(payload: {
+  requestKey: string
+  selectionRange: AiWorkspaceDocumentSelectionRange
+  signal?: AbortSignal
+}): Promise<AiWorkspaceInlineCompletionResult | null> {
+  if (!canUseInlineCompletion())
+    return null
+
+  try {
+    logInlineCompletionDebug('request-dispatched', {
+      requestKey: payload.requestKey,
+      selectionRange: payload.selectionRange,
+    })
+
+    const response = await fetch(endpoint('/ai/workspace/document-completion'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        teamId: activeWorkspaceId.value,
+        workspaceId: activeWorkspaceId.value,
+        projectId: normalizeString(activeProjectId.value),
+        context: {
+          teamId: activeWorkspaceId.value,
+          workspaceId: activeWorkspaceId.value,
+          projectId: normalizeString(activeProjectId.value),
+          resourceId: activeMarkdownResourceId.value,
+          resourceTitle: activeMarkdownResourceTitle.value,
+          markdown: getActiveMarkdownMirror(),
+          selectionRange: payload.selectionRange,
+        },
+      }),
+      signal: payload.signal,
+    })
+
+    const data = await response.json().catch(() => null) as ApiResponse<AiWorkspaceInlineCompletionResult> | null
+    if (!response.ok || !data || data.code !== 0) {
+      logInlineCompletionDebug('request-response-error', {
+        requestKey: payload.requestKey,
+        status: response.status,
+        message: String(data?.message || response.statusText || 'UNKNOWN_ERROR'),
+      })
+      return null
+    }
+
+    logInlineCompletionDebug('request-response-success', {
+      requestKey: payload.requestKey,
+      suggestionLength: String(data.data?.suggestion || '').length,
+    })
+    return data.data
+  }
+  catch (error) {
+    if (isAbortError(error)) {
+      logInlineCompletionDebug('request-aborted', {
+        requestKey: payload.requestKey,
+        reason: payload.signal?.reason ?? 'AbortError',
+      })
+      throw error
+    }
+
+    logInlineCompletionDebug('request-network-error', {
+      requestKey: payload.requestKey,
+      message: error instanceof Error ? (error.message || error.name || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
+    })
+    return null
+  }
+}
+
+async function acceptInlineCompletion(_payload: {
+  requestKey: string
+  suggestion: string
+  selectionRange: AiWorkspaceDocumentSelectionRange
+}): Promise<AiWorkspaceInlineCompletionAcceptResult | null> {
+  if (!canUseInlineCompletion())
+    throw new Error('当前文档自动补齐不可用。')
+
+  const response = await fetch(endpoint('/ai/workspace/document-completion/accept'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      teamId: activeWorkspaceId.value,
+      workspaceId: activeWorkspaceId.value,
+      projectId: normalizeString(activeProjectId.value),
+      resourceId: activeMarkdownResourceId.value,
+    }),
+  })
+
+  const data = await response.json().catch(() => null) as ApiResponse<AiWorkspaceInlineCompletionAcceptResult> | null
+  if (!response.ok || !data || data.code !== 0) {
+    const message = resolveApiErrorMessage(data?.message || response.statusText || '自动补齐扣费失败，请稍后重试。', '自动补齐扣费失败，请稍后重试。')
+    statusLine.value = message
+    throw new Error(message)
+  }
+
+  applyInlineCompletionQuotaResult(data.data)
+  return data.data
 }
 
 function handleMarkdownPrimaryHeadingChange(title: string): void {
@@ -6319,29 +6661,7 @@ function handleMarkdownPrimaryHeadingChange(title: string): void {
   }
 }
 
-function buildDocumentAssistUserPrompt(action: AiWorkspaceDocumentAction, extraInstruction = ''): string {
-  const normalizedExtraInstruction = String(extraInstruction || '').trim()
-  const basePrompt = action === 'summarize'
-    ? '请总结当前选区内容，保留关键信息并输出可直接插入文档的精炼结果。'
-    : action === 'rewrite'
-      ? '请润写当前选区，使表达更清晰、专业且与当前文档语气一致。'
-      : action === 'expand'
-        ? '请扩写当前选区，在不偏离原意的前提下补充必要细节，并直接输出完整替代文本。'
-        : action === 'complete_context'
-          ? '请补全当前选区缺失的上下文、衔接与背景信息，直接输出可替换原文的完整正文。'
-          : action === 'restructure'
-            ? '请整理当前选区的结构与层次，提升逻辑顺序和可读性，并直接输出完整替代文本。'
-            : '请基于当前文档上下文，从当前位置继续写作，保持语气、结构和主题一致。'
-
-  if (!normalizedExtraInstruction)
-    return basePrompt
-
-  return `${basePrompt}\n\n额外要求：${normalizedExtraInstruction}`
-}
-
 function syncDocumentAssistRequestState(payload: {
-  action: AiWorkspaceDocumentAction
-  trigger: AiWorkspaceDocumentTrigger
   selectionText: string
   selectionRange: AiWorkspaceDocumentSelectionRange | null
 }): void {
@@ -6350,228 +6670,20 @@ function syncDocumentAssistRequestState(payload: {
   documentAssistRequestState.markdown = getActiveMarkdownMirror()
   documentAssistRequestState.selectionText = String(payload.selectionText || '').trim()
   documentAssistRequestState.selectionRange = payload.selectionRange || null
-  documentAssistRequestState.action = payload.action
-  documentAssistRequestState.trigger = payload.trigger
 }
 
-async function runDocumentAssistAction(
-  payload: {
-    action: AiWorkspaceDocumentAction
-    trigger: AiWorkspaceDocumentTrigger
-    selectionText?: string
-    selectionRange?: AiWorkspaceDocumentSelectionRange | null
-    extraInstruction?: string
-  },
-): Promise<void> {
-  const projectId = normalizeString(activeProjectId.value)
-  const resourceId = activeMarkdownResourceId.value
-  if (!activeWorkspaceId.value || !projectId || !resourceId) {
-    statusLine.value = '当前文档未就绪，暂时无法调用文档 AI。'
-    return
-  }
-  if (!ensureAiFeatureAvailable(resolveDocumentAssistFeatureKey(payload.action)))
-    return
-
-  syncDocumentAssistRequestState({
-    action: payload.action,
-    trigger: payload.trigger,
-    selectionText: payload.selectionText ?? documentAssistRequestState.selectionText,
-    selectionRange: payload.selectionRange ?? documentAssistRequestState.selectionRange,
-  })
-
-  if (!documentAssistRequestState.markdown) {
-    statusLine.value = '当前文档内容为空，暂时无法调用文档 AI。'
+function applyAgentDocDraft(draft: AiWorkspaceDocumentDraft): void {
+  const applied = workspaceMainPanelRef.value?.applyMarkdownDocumentDraft(draft) || false
+  if (!applied) {
+    statusLine.value = '当前文档已变化，无法应用该 AgentDoc 草案，请重新生成。'
     return
   }
 
-  openDocumentAssistSidebar()
-  projectAssistantMode.value = 'contextual'
-  aiMode.value = 'document_assist'
-  documentAssistRunning.value = true
-  documentAssistResult.value = ''
-
-  try {
-    const requestBody: AiWorkspaceRequest = {
-      teamId: activeWorkspaceId.value,
-      workspaceId: activeWorkspaceId.value,
-      projectId,
-      sessionId: activeChatSessionId.value,
-      mode: 'document_assist',
-      messages: [
-        {
-          role: 'user',
-          content: buildDocumentAssistUserPrompt(payload.action, payload.extraInstruction),
-        },
-      ],
-      context: {
-        teamId: activeWorkspaceId.value,
-        workspaceId: activeWorkspaceId.value,
-        projectId,
-        contestId: selectedContestId.value,
-        trackId: selectedTrackId.value,
-        major: major.value,
-        resourceId: documentAssistRequestState.resourceId,
-        resourceTitle: documentAssistRequestState.resourceTitle,
-        markdown: documentAssistRequestState.markdown,
-        selectionText: documentAssistRequestState.selectionText,
-        selectionRange: documentAssistRequestState.selectionRange,
-        trigger: payload.trigger,
-        documentAction: payload.action,
-        assistantPreset: 'document',
-        assistantLabel: '文稿助手',
-        activeTabId: normalizeString(activeMainTabId.value),
-        previewMode: previewMode.value,
-        resourcePurpose: activePreviewResourcePurpose.value,
-      },
-    }
-
-    const response = await fetch(endpoint('/ai/workspace/stream'), {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    })
-
-    if (!response.ok) {
-      const fallbackMessage = `请求失败：HTTP ${response.status}`
-      const data = await response.json().catch(() => null) as ApiResponse<null> | null
-      throw new Error(String(data?.message || fallbackMessage))
-    }
-
-    if (!response.body)
-      throw new Error('未收到可读取的流式响应。')
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let assistantBuffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done)
-        break
-
-      buffer += decoder.decode(value, { stream: true })
-      while (true) {
-        const separatorIndex = buffer.indexOf('\n\n')
-        if (separatorIndex < 0)
-          break
-
-        const block = buffer.slice(0, separatorIndex)
-        buffer = buffer.slice(separatorIndex + 2)
-        const parsed = parseSseBlock(block)
-        if (!parsed)
-          continue
-
-        const eventPayload = parsed.dataText
-          ? JSON.parse(parsed.dataText) as AiWorkspaceStreamEvent
-          : null
-        const eventType = (eventPayload?.event || parsed.eventType) as AiWorkspaceStreamEventType
-        const data = toJsonPayload(eventPayload?.data)
-
-        if (eventType === 'progress') {
-          statusLine.value = String(data.message || '文档 AI 处理中...')
-          if (data.sessionId) {
-            ensureOpenChatSessionTab(String(data.sessionId))
-            activeChatSessionId.value = String(data.sessionId)
-          }
-          continue
-        }
-
-        if (eventType === 'delta') {
-          assistantBuffer += String(data.text || '')
-          documentAssistResult.value = assistantBuffer
-          continue
-        }
-
-        if (eventType === 'done') {
-          const result = toJsonPayload(data.result) as Partial<AiWorkspaceResult>
-          assistantBuffer = String(result.assistantReply || assistantBuffer)
-          documentAssistResult.value = assistantBuffer
-          if (result.sessionId) {
-            ensureOpenChatSessionTab(String(result.sessionId))
-            activeChatSessionId.value = String(result.sessionId)
-          }
-          statusLine.value = '文档 AI 结果已生成。'
-          continue
-        }
-
-        if (eventType === 'error')
-          throw new Error(String(data.message || '文档 AI 调用失败。'))
-      }
-    }
-
-    buffer += decoder.decode()
-    const tail = parseSseBlock(buffer)
-    if (tail?.dataText) {
-      const payload = JSON.parse(tail.dataText) as AiWorkspaceStreamEvent
-      if (payload.event === 'error')
-        throw new Error(String(toJsonPayload(payload.data).message || '文档 AI 调用失败。'))
-    }
-  }
-  catch (error) {
-    documentAssistResult.value = ''
-    statusLine.value = resolveApiErrorMessage(error, '文档 AI 调用失败，请稍后重试。')
-  }
-  finally {
-    documentAssistRunning.value = false
-  }
-}
-
-function handleMarkdownTriggerDocumentAssist(payload: {
-  action: AiWorkspaceDocumentAction
-  trigger: AiWorkspaceDocumentTrigger
-  selectionText: string
-  selectionRange: AiWorkspaceDocumentSelectionRange | null
-}): void {
-  void runDocumentAssistAction(payload)
-}
-
-function rerunDocumentAssistFromSidebar(action: AiWorkspaceDocumentAction): void {
-  void runDocumentAssistAction({
-    action,
-    trigger: 'right_sidebar',
-    extraInstruction: chatInput.value.trim(),
-  })
-}
-
-async function submitDocumentAssistFromComposer(): Promise<void> {
-  const action = documentAssistRequestState.action
-  if (!action) {
-    statusLine.value = '请先选择一个文稿动作。'
-    return
-  }
-
-  const extraInstruction = chatInput.value.trim()
-  chatInput.value = ''
-
-  await runDocumentAssistAction({
-    action,
-    trigger: 'right_sidebar',
-    extraInstruction,
-  })
-}
-
-function applyDocumentAssistToMarkdown(): void {
-  const action = documentAssistRequestState.action
-  const text = String(documentAssistResult.value || '').trim()
-  if (!action || !text)
-    return
-
-  const applied = workspaceMainPanelRef.value?.applyMarkdownDocumentAssistResult({
-    action,
-    text,
-  })
-
-  if (applied) {
-    statusLine.value = 'AI 结果已应用到文档。'
-    documentAssistRequestState.markdown = getActiveMarkdownMirror()
-    return
-  }
-
-  statusLine.value = '当前无法将 AI 结果写回文档。'
+  const draftKey = buildAgentDocDraftKey(draft)
+  if (!appliedAgentDocDraftKeys.value.includes(draftKey))
+    appliedAgentDocDraftKeys.value = [...appliedAgentDocDraftKeys.value, draftKey]
+  documentAssistRequestState.markdown = getActiveMarkdownMirror()
+  statusLine.value = 'AgentDoc 草案已应用到文档。'
 }
 
 async function handleMarkdownImageAction(payload: {
@@ -6652,6 +6764,7 @@ async function loadChatMessages(sessionId: string) {
       .map(item => ({
         role: item.role,
         content: item.content,
+        metadata: item.metadata,
       }))
       .filter(message => message.role !== 'system') as ChatMessage[]
 
@@ -6662,6 +6775,7 @@ async function loadChatMessages(sessionId: string) {
     defenseSummary.value = null
     defenseStage.value = undefined
     defenseTurnCount.value = 0
+    appliedAgentDocDraftKeys.value = []
     chatMessages.value = restoredMessages
 
     if (mode === 'defense')
@@ -7008,7 +7122,7 @@ function buildSessionTitleByMode(): string {
   if (aiMode.value === 'defense')
     return `Loopy 答辩模拟 · ${contestName} · ${trackName}`
   if (aiMode.value === 'document_assist')
-    return `Loopy 文稿助手 · ${activeMarkdownResourceTitle.value || contestName} · ${trackName}`
+    return `AgentDoc · ${activeMarkdownResourceTitle.value || contestName} · ${trackName}`
   return `Loopy 对话 · ${contestName} · ${trackName}`
 }
 
@@ -7089,7 +7203,7 @@ async function loadChatSessions(options: {
       || openSessionIdsInScope
         .map(sessionId => chatSessions.value.find(item => item.id === sessionId) || null)
         .find(Boolean)
-      || (fallbackToFirst ? chatSessions.value[0] : null)
+        || (fallbackToFirst ? chatSessions.value[0] : null)
     )
 
     if (!nextSession) {
@@ -7204,7 +7318,7 @@ async function startNewChatSession() {
   else if (aiMode.value === 'issue_discovery')
     modeTitle = '新建 Loopy 寻疑发现会话'
   else if (aiMode.value === 'document_assist')
-    modeTitle = '新建 Loopy 文稿助手会话'
+    modeTitle = '新建 AgentDoc 会话'
   const createdId = await createChatSession(modeTitle)
   if (!createdId) {
     statusLine.value = '新建 Loopy 会话失败，请稍后重试。'
@@ -7716,11 +7830,17 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
   defenseScorecard.value = null
   const baseMessages = [...pendingMessages]
   let assistantBuffer = ''
+  let assistantMetadata: ChatMessage['metadata'] | undefined
 
   const renderStreamMessages = () => {
     const nextMessages: ChatMessage[] = [...baseMessages]
-    if (assistantBuffer)
-      nextMessages.push({ role: 'assistant', content: assistantBuffer })
+    if (assistantBuffer) {
+      nextMessages.push({
+        role: 'assistant',
+        content: assistantBuffer,
+        metadata: assistantMetadata,
+      })
+    }
     chatMessages.value = nextMessages
   }
 
@@ -7740,6 +7860,9 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       major: major.value,
       resourceId: activeResourceWorkspaceTabId.value ? activePreviewResource.value?.id || '' : '',
       resourceTitle: activeResourceWorkspaceTabId.value ? activePreviewResource.value?.title || '' : '',
+      markdown: runningMode === 'document_assist' ? documentAssistRequestState.markdown : '',
+      selectionText: runningMode === 'document_assist' ? documentAssistRequestState.selectionText : '',
+      selectionRange: runningMode === 'document_assist' ? documentAssistRequestState.selectionRange : null,
       assistantPreset: currentWorkspaceAssistantContext.value.assistantPreset,
       assistantLabel: currentWorkspaceAssistantContext.value.assistantLabel,
       activeTabId: currentWorkspaceAssistantContext.value.activeTabId,
@@ -7821,6 +7944,9 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       if (eventType === 'done') {
         const result = toJsonPayload(data.result) as Partial<AiWorkspaceResult>
         assistantBuffer = String(result.assistantReply || assistantBuffer)
+        assistantMetadata = result.documentDraft
+          ? { agentDocDraft: result.documentDraft }
+          : undefined
         renderStreamMessages()
 
         if (result.sessionId) {
@@ -7853,6 +7979,11 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
           statusLine.value = issues.length > 0
             ? `寻疑扫描完成，记录 ${issues.length} 条高置信问题。`
             : '寻疑扫描完成，当前未发现高置信问题。'
+        }
+        else if (runningMode === 'document_assist') {
+          statusLine.value = result.documentDraft
+            ? 'AgentDoc 已生成待确认的文档草案。'
+            : 'AgentDoc 已完成，本次未生成可安全应用的文档草案。'
         }
         else {
           statusLine.value = '只读对话完成，项目未发生写入。'
@@ -8034,10 +8165,6 @@ async function sendChatMessage() {
     interruptChatMessage()
     return
   }
-  if (aiMode.value === 'document_assist') {
-    await submitDocumentAssistFromComposer()
-    return
-  }
   if (!ensureAiFeatureAvailable(resolveAiFeatureKeyForMode(aiMode.value)))
     return
 
@@ -8049,6 +8176,20 @@ async function sendChatMessage() {
   if (!activeProjectId.value) {
     statusLine.value = '请先选择一个项目。'
     return
+  }
+
+  if (aiMode.value === 'document_assist') {
+    if (!activeMarkdownResourceId.value) {
+      statusLine.value = '当前没有可编辑文档，暂时无法使用 AgentDoc。'
+      return
+    }
+    documentAssistRequestState.resourceId = activeMarkdownResourceId.value
+    documentAssistRequestState.resourceTitle = activeMarkdownResourceTitle.value
+    documentAssistRequestState.markdown = getActiveMarkdownMirror()
+    if (!documentAssistRequestState.markdown) {
+      statusLine.value = '当前文档内容为空，暂时无法生成 AgentDoc 草案。'
+      return
+    }
   }
 
   const content = chatInput.value.trim()
@@ -8124,10 +8265,6 @@ async function sendChatMessage() {
       })
     }
   }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError'
 }
 
 function interruptChatMessage(): void {
@@ -8780,6 +8917,18 @@ watch(activeWorkspaceId, async (value, previous) => {
     await navigateTo(workspaceDetailPath(value), { replace: true })
 })
 
+watch(activeWorkspaceId, (value) => {
+  const normalizedWorkspaceId = normalizeString(value)
+  if (!normalizedWorkspaceId) {
+    workspaceBillingEstimate.value = null
+    workspaceAiUsageTotalUnits.value = null
+    return
+  }
+
+  void loadWorkspaceBillingEstimate(normalizedWorkspaceId)
+  void loadWorkspaceAiUsageSummary(normalizedWorkspaceId)
+}, { immediate: true })
+
 watch(routeWorkspaceId, async (value, previous) => {
   if (!value || value === previous)
     return
@@ -9009,7 +9158,6 @@ watch(activeMarkdownResourceId, async (nextResourceId, previousResourceId) => {
   markdownCommentThreads.value = []
   activeMarkdownCommentThreadId.value = ''
   markdownCommentDraftAnchor.value = null
-  documentAssistResult.value = ''
   documentAssistRequestState.resourceId = nextResourceId
   documentAssistRequestState.resourceTitle = nextResourceId
     ? activeMarkdownResourceTitle.value
@@ -9019,8 +9167,6 @@ watch(activeMarkdownResourceId, async (nextResourceId, previousResourceId) => {
     : ''
   documentAssistRequestState.selectionText = ''
   documentAssistRequestState.selectionRange = null
-  documentAssistRequestState.action = ''
-  documentAssistRequestState.trigger = 'right_sidebar'
 
   if (!nextResourceId) {
     if (rightSidebarView.value === 'comments')
@@ -9623,6 +9769,9 @@ watch(() => workspaceShellLoading.value, (loading) => {
         :collab-preview-loading="collabPreviewLoading"
         :collab-preview-error="collabPreviewError"
         :collab-presence-members="collabPresenceMembers"
+        :inline-completion-enabled="canUseInlineCompletion()"
+        :inline-completion-request-handler="requestInlineCompletion"
+        :inline-completion-accept-handler="acceptInlineCompletion"
         :comment-threads="markdownCommentThreads"
         :active-comment-thread-id="activeMarkdownCommentThreadId"
         :comment-draft-anchor="markdownCommentDraftAnchor"
@@ -9718,7 +9867,6 @@ watch(() => workspaceShellLoading.value, (loading) => {
         @markdown-create-comment-from-selection="handleMarkdownCreateCommentFromSelection"
         @markdown-create-comment-from-image="handleMarkdownCreateCommentFromImage"
         @markdown-open-comment-thread="handleMarkdownOpenCommentThread"
-        @markdown-trigger-document-assist="handleMarkdownTriggerDocumentAssist"
         @markdown-request-image-action="handleMarkdownImageAction"
         @markdown-cancel-comment-draft="cancelMarkdownCommentDraft"
         @markdown-reply-comment-thread="replyMarkdownCommentThread"
@@ -9786,10 +9934,9 @@ watch(() => workspaceShellLoading.value, (loading) => {
             :document-resource-title="activeMarkdownResourceTitle"
             :document-selection-text="documentAssistRequestState.selectionText"
             :document-selection-range="documentAssistRequestState.selectionRange"
-            :document-assist-action="documentAssistRequestState.action"
-            :document-assist-action-status="documentAssistActionStatusMap"
-            :document-assist-result="documentAssistResult"
-            :document-assist-running="documentAssistRunning"
+            :document-resource-id="documentAssistRequestState.resourceId"
+            :document-markdown-hash="activeAgentDocDocumentHash"
+            :applied-agent-doc-draft-keys="appliedAgentDocDraftKeys"
             :ai-enabled="currentAiModeAvailable"
             :ai-disabled-reason="currentAiDisabledReason"
             :collapsed="rightSidebarCollapsed"
@@ -9817,8 +9964,7 @@ watch(() => workspaceShellLoading.value, (loading) => {
             @reopen-comment-thread="reopenMarkdownCommentThread"
             @select-comment-thread="handleMarkdownOpenCommentThread"
             @cancel-comment-draft="cancelMarkdownCommentDraft"
-            @run-document-assist="rerunDocumentAssistFromSidebar"
-            @apply-document-assist="applyDocumentAssistToMarkdown"
+            @apply-document-draft="applyAgentDocDraft"
           />
         </div>
       </div>
@@ -9908,7 +10054,12 @@ watch(() => workspaceShellLoading.value, (loading) => {
       :ai-model-label="currentAiModelLabel"
       :ai-status-label="aiStatusLabel"
       :ai-status-tone="aiStatusTone"
-      :token-balance="tokenBalance"
+      :ai-credits-used="aiCreditsUsed"
+      :ai-credits-total="aiCreditsTotal"
+      :ai-credits-remaining="aiCreditsRemaining"
+      :ai-credits-usage-text="aiCreditsUsageText"
+      :ai-credits-remaining-text="aiCreditsRemainingText"
+      :ai-billing-label="aiBillingLabel"
       :project-storage-used-bytes="projectUploadStorageUsedBytes"
       :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
       :line="statusCursor.line"

@@ -19,7 +19,7 @@ interface CreateChatSessionBody {
 
 function parseMode(value: unknown): WorkspaceAiMode | null {
   const text = String(value || '').trim()
-  if (text === 'dialog_ask' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense')
+  if (text === 'dialog_ask' || text === 'auto_optimize' || text === 'issue_discovery' || text === 'defense' || text === 'document_assist')
     return text
   return null
 }

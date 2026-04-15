@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { Awareness } from 'y-protocols/awareness'
 import type { Doc as YDoc } from 'yjs'
-import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type {
   AiWorkspaceDocumentAction,
+  AiWorkspaceDocumentDraft,
+  AiWorkspaceInlineCompletionAcceptResult,
+  AiWorkspaceInlineCompletionResult,
   CollabPurpose,
   Contest,
   Project,
@@ -31,12 +33,18 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceType,
 } from '~~/shared/types/domain'
+import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type { WorkspaceCollabAwarenessSelectionState, WorkspaceCollabCursorUser, WorkspaceCollabPresenceMember, WorkspaceCollabPresenceUser, WorkspaceCollabSelectionSummary } from '~/components/workspace/collab/presence'
 import type {
   NullableWorkspaceFontSizePreset,
   NullableWorkspaceTabSpacingPreset,
   WorkspaceDisplayPreferencePatchPayload,
 } from '~/composables/useWorkspaceDisplayPreferences'
+import type {
+  WorkspaceMainTab,
+  WorkspaceMainTabId,
+  WorkspacePreviewMode,
+} from '~/composables/useWorkspaceMainTabs'
 import type {
   MappingTone,
   WorkspaceFormState,
@@ -48,6 +56,7 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+import { resolveCollabResourceDisplayLabel } from '~~/shared/utils/collab-resource'
 import {
   normalizeWorkspaceCollabPresenceActivityState,
   resolveWorkspaceCollabPresenceColor,
@@ -65,11 +74,10 @@ import {
 import {
   useWorkspaceMainTabs,
 } from '~/composables/useWorkspaceMainTabs'
-import type {
-  WorkspaceMainTab,
-  WorkspaceMainTabId,
-  WorkspacePreviewMode,
-} from '~/composables/useWorkspaceMainTabs'
+import {
+  resolveCollabPurpose,
+  resolveCollabResourceLabel,
+} from '~/utils/workspace-left-sidebar-helpers'
 import {
   formatDateTime,
   formatEtaSeconds,
@@ -85,11 +93,6 @@ import {
   workspaceRoleLabel,
   workspaceTypeLabel,
 } from '~/utils/workspace-main-panel-formatters'
-import {
-  resolveCollabPurpose,
-  resolveCollabResourceLabel,
-} from '~/utils/workspace-left-sidebar-helpers'
-import { resolveCollabResourceDisplayLabel } from '~~/shared/utils/collab-resource'
 
 const props = withDefaults(defineProps<{
   activeTabId?: WorkspaceOpenTabState | ''
@@ -136,6 +139,31 @@ const props = withDefaults(defineProps<{
   collabConnected?: boolean
   collabStatusText?: string
   collabPresenceMembers?: WorkspaceCollabPresenceMember[]
+  inlineCompletionEnabled?: boolean
+  inlineCompletionRequestHandler?: ((payload: {
+    requestKey: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    }
+    signal?: AbortSignal
+  }) => Promise<AiWorkspaceInlineCompletionResult | null>) | null
+  inlineCompletionAcceptHandler?: ((payload: {
+    requestKey: string
+    suggestion: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    }
+  }) => Promise<AiWorkspaceInlineCompletionAcceptResult | null>) | null
   markdownImageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
   imageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
   commentThreads?: ProjectResourceCommentThread[]
@@ -248,6 +276,9 @@ const props = withDefaults(defineProps<{
   collabConnected: false,
   collabStatusText: '',
   collabPresenceMembers: () => [],
+  inlineCompletionEnabled: false,
+  inlineCompletionRequestHandler: null,
+  inlineCompletionAcceptHandler: null,
   markdownImageUploadHandler: null,
   imageUploadHandler: null,
   commentThreads: () => [],
@@ -400,19 +431,6 @@ const emit = defineEmits<{
   'markdownCreateCommentFromSelection': [value: ProjectResourceCommentTextSelectionAnchor]
   'markdownCreateCommentFromImage': [value: ProjectResourceCommentImageNodeAnchor]
   'markdownOpenCommentThread': [threadId: string]
-  'markdownTriggerDocumentAssist': [value: {
-    action: AiWorkspaceDocumentAction
-    trigger: 'selection_toolbar' | 'slash_menu' | 'right_sidebar'
-    selectionText: string
-    selectionRange: {
-      anchorLine: number
-      anchorColumn: number
-      headLine: number
-      headColumn: number
-      isCollapsed: boolean
-      selectionLength: number
-    } | null
-  }]
   'markdownRequestImageAction': [value: {
     resourceId?: string | null
     src: string
@@ -423,7 +441,7 @@ const emit = defineEmits<{
   'markdownResolveCommentThread': [threadId: string]
   'markdownReopenCommentThread': [threadId: string]
   'markdownCreateCommentThread': [body: string]
-  requestContextMenu: [payload: ContextMenuRequest]
+  'requestContextMenu': [payload: ContextMenuRequest]
 }>()
 
 type WorkspaceMeetingTabId = `meeting:${string}`
@@ -569,6 +587,7 @@ const migratedPropActiveTabId = computed<WorkspaceMainTabId | ''>(() => {
   return migratedPropOpenTabs.value[0] || ''
 })
 const resourcePreviewTabRef = ref<{
+  applyDocumentDraft: (payload: AiWorkspaceDocumentDraft) => boolean
   applyDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
   scrollToCommentThread: (threadId: string) => void
   scrollToHeadingAnchor: (anchorId: string) => boolean
@@ -578,7 +597,7 @@ const {
   openTabs,
   activeTabId,
   hasOpenTabs,
-  draggingTabId,
+  draggingTabId: _draggingTabId,
   dragOverTabId,
   tabContextMenuVisible,
   tabContextMenuPosition,
@@ -1964,6 +1983,7 @@ function onMarkdownSelectionChange(value: {
   headLine: number
   headColumn: number
   isCollapsed: boolean
+  selectedText?: string
   selectedTextPreview: string
 }): void {
   const selection: WorkspaceCollabSelectionSummary = {
@@ -1973,6 +1993,7 @@ function onMarkdownSelectionChange(value: {
     headColumn: value.headColumn,
     isCollapsed: value.isCollapsed,
     selectionLength: value.selectionLength,
+    selectedText: value.selectedText,
     selectedTextPreview: value.selectedTextPreview,
   }
 
@@ -2040,6 +2061,9 @@ function closeCurrentTab(): WorkspacePanelCommandResult {
 }
 
 defineExpose({
+  applyMarkdownDocumentDraft(payload: AiWorkspaceDocumentDraft) {
+    return resourcePreviewTabRef.value?.applyDocumentDraft(payload) || false
+  },
   applyMarkdownDocumentAssistResult(payload: { action: AiWorkspaceDocumentAction, text: string }) {
     return resourcePreviewTabRef.value?.applyDocumentAssistResult(payload) || false
   },
@@ -2439,7 +2463,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
             </div>
 
             <template v-else>
-              <section class="border border-slate-200 rounded-2xl bg-slate-50/70 p-4 space-y-4">
+              <section class="p-4 border border-slate-200 rounded-2xl bg-slate-50/70 space-y-4">
                 <div>
                   <h4 class="text-sm text-slate-900 font-semibold">
                     外观设置
@@ -2450,7 +2474,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
                 </div>
 
                 <div class="space-y-3">
-                  <div class="flex items-center justify-between text-xs text-slate-600">
+                  <div class="text-xs text-slate-600 flex items-center justify-between">
                     <span>字体大小</span>
                   </div>
 
@@ -2482,11 +2506,11 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
                     >
                   </div>
 
-                  <div class="grid grid-cols-5 gap-2">
+                  <div class="gap-2 grid grid-cols-5">
                     <span
                       v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
                       :key="`workspace-display-user-label-${option.value}`"
-                      class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                      class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
                       :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
                         ? 'text-blue-700'
                         : 'text-slate-500'"
@@ -2516,7 +2540,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
                 </div>
 
                 <div class="space-y-3">
-                  <div class="flex items-center justify-between text-xs text-slate-600">
+                  <div class="text-xs text-slate-600 flex items-center justify-between">
                     <span>标签边距</span>
                     <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
                   </div>
@@ -2549,11 +2573,11 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
                     >
                   </div>
 
-                  <div class="grid grid-cols-3 gap-2">
+                  <div class="gap-2 grid grid-cols-3">
                     <span
                       v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
                       :key="`workspace-display-user-tab-spacing-label-${option.value}`"
-                      class="workspace-display-slider-label text-center text-[11px] font-medium transition-colors"
+                      class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
                       :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
                         ? 'text-blue-700'
                         : 'text-slate-500'"
@@ -2759,6 +2783,9 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :collab-current-user="collabCurrentUser"
         :collab-presence-users="collabPresenceUsers"
         :collab-presence-cursors="collabPresenceCursors"
+        :inline-completion-enabled="props.inlineCompletionEnabled"
+        :inline-completion-request-handler="props.inlineCompletionRequestHandler"
+        :inline-completion-accept-handler="props.inlineCompletionAcceptHandler"
         :image-upload-handler="markdownImageUploadHandler"
         :comment-threads="commentThreads"
         :active-comment-thread-id="activeCommentThreadId"
@@ -2779,7 +2806,6 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         @markdown-create-comment-from-selection="emit('markdownCreateCommentFromSelection', $event)"
         @markdown-create-comment-from-image="emit('markdownCreateCommentFromImage', $event)"
         @markdown-open-comment-thread="emit('markdownOpenCommentThread', $event)"
-        @markdown-trigger-document-assist="emit('markdownTriggerDocumentAssist', $event)"
         @markdown-request-image-action="emit('markdownRequestImageAction', $event)"
         @markdown-cancel-comment-draft="emit('markdownCancelCommentDraft')"
         @markdown-reply-comment-thread="emit('markdownReplyCommentThread', $event)"

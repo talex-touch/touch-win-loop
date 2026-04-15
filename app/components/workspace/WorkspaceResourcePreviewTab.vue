@@ -3,8 +3,11 @@ import type { Awareness } from 'y-protocols/awareness'
 import type { Doc as YDoc } from 'yjs'
 import type {
   AiWorkspaceDocumentAction,
-  ProjectResourceCommentImageNodeAnchor,
+  AiWorkspaceDocumentDraft,
+  AiWorkspaceInlineCompletionAcceptResult,
+  AiWorkspaceInlineCompletionResult,
   ProjectResourceCommentAnchor,
+  ProjectResourceCommentImageNodeAnchor,
   ProjectResourceCommentTextSelectionAnchor,
   ProjectResourceCommentThread,
   ResourcePreviewStatus,
@@ -12,8 +15,8 @@ import type {
 import type { WorkspaceCollabCursorUser, WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
 import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
 import RichTextEditor from '~/components/editor/RichTextEditor.vue'
-import WorkspaceDocumentCommentsPanel from '~/components/workspace/WorkspaceDocumentCommentsPanel.vue'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
+import WorkspaceDocumentCommentsPanel from '~/components/workspace/WorkspaceDocumentCommentsPanel.vue'
 
 type WorkspacePreviewMode = 'binary' | 'markdown' | 'draw'
 
@@ -50,6 +53,31 @@ const props = withDefaults(defineProps<{
   collabCurrentUser?: any
   collabPresenceUsers?: WorkspaceCollabPresenceUser[]
   collabPresenceCursors?: WorkspaceCollabCursorUser[]
+  inlineCompletionEnabled?: boolean
+  inlineCompletionRequestHandler?: ((payload: {
+    requestKey: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    }
+    signal?: AbortSignal
+  }) => Promise<AiWorkspaceInlineCompletionResult | null>) | null
+  inlineCompletionAcceptHandler?: ((payload: {
+    requestKey: string
+    suggestion: string
+    selectionRange: {
+      anchorLine: number
+      anchorColumn: number
+      headLine: number
+      headColumn: number
+      isCollapsed: boolean
+      selectionLength: number
+    }
+  }) => Promise<AiWorkspaceInlineCompletionAcceptResult | null>) | null
   imageUploadHandler?: ((file: File) => Promise<{ src: string, alt?: string, title?: string, resourceId?: string }>) | null
   commentThreads?: ProjectResourceCommentThread[]
   activeCommentThreadId?: string
@@ -81,6 +109,9 @@ const props = withDefaults(defineProps<{
   collabCurrentUser: null,
   collabPresenceUsers: () => [],
   collabPresenceCursors: () => [],
+  inlineCompletionEnabled: false,
+  inlineCompletionRequestHandler: null,
+  inlineCompletionAcceptHandler: null,
   imageUploadHandler: null,
   commentThreads: () => [],
   activeCommentThreadId: '',
@@ -104,6 +135,7 @@ const emit = defineEmits<{
     headLine: number
     headColumn: number
     isCollapsed: boolean
+    selectedText?: string
     selectedTextPreview: string
   }]
   markdownRemotePresenceChange: [value: any[]]
@@ -111,19 +143,6 @@ const emit = defineEmits<{
   markdownCreateCommentFromSelection: [value: ProjectResourceCommentTextSelectionAnchor]
   markdownCreateCommentFromImage: [value: ProjectResourceCommentImageNodeAnchor]
   markdownOpenCommentThread: [threadId: string]
-  markdownTriggerDocumentAssist: [value: {
-    action: AiWorkspaceDocumentAction
-    trigger: 'selection_toolbar' | 'slash_menu' | 'right_sidebar'
-    selectionText: string
-    selectionRange: {
-      anchorLine: number
-      anchorColumn: number
-      headLine: number
-      headColumn: number
-      isCollapsed: boolean
-      selectionLength: number
-    } | null
-  }]
   markdownRequestImageAction: [value: {
     resourceId?: string | null
     src: string
@@ -137,6 +156,7 @@ const emit = defineEmits<{
 }>()
 
 const richTextEditorRef = ref<{
+  applyDocumentDraft: (payload: AiWorkspaceDocumentDraft) => boolean
   applyDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
   scrollToCommentThread: (threadId: string) => void
   scrollToHeadingAnchor: (anchorId: string) => boolean
@@ -189,7 +209,25 @@ watch(() => props.commentDraftAnchor, (draftAnchor) => {
   expandMarkdownCommentsPanel()
 })
 
+function handleMarkdownSelectionChange(value: {
+  line: number
+  column: number
+  selectionLength: number
+  anchorLine: number
+  anchorColumn: number
+  headLine: number
+  headColumn: number
+  isCollapsed: boolean
+  selectedText?: string
+  selectedTextPreview: string
+}): void {
+  emit('markdownSelectionChange', value)
+}
+
 defineExpose({
+  applyDocumentDraft(payload: AiWorkspaceDocumentDraft) {
+    return richTextEditorRef.value?.applyDocumentDraft(payload) || false
+  },
   applyDocumentAssistResult(payload: { action: AiWorkspaceDocumentAction, text: string }) {
     return richTextEditorRef.value?.applyDocumentAssistResult(payload) || false
   },
@@ -220,7 +258,7 @@ defineExpose({
           </div>
 
           <div v-else class="workspace-resource-preview-tab__markdown bg-white flex h-full min-h-0 w-full">
-            <div class="flex min-w-0 flex-1 min-h-0 workspace-resource-preview-tab__markdown-editor">
+            <div class="workspace-resource-preview-tab__markdown-editor flex flex-1 min-h-0 min-w-0">
               <RichTextEditor
                 ref="richTextEditorRef"
                 :doc="props.collabMarkdownDoc"
@@ -235,17 +273,18 @@ defineExpose({
                 :show-toolbar="false"
                 :enable-slash-menu="true"
                 :enable-comments="true"
+                :enable-inline-completion="props.inlineCompletionEnabled"
+                :inline-completion-request-handler="props.inlineCompletionRequestHandler"
+                :inline-completion-accept-handler="props.inlineCompletionAcceptHandler"
                 :comment-threads="props.commentThreads"
                 :active-comment-thread-id="props.activeCommentThreadId"
-                :enable-document-assist="true"
                 :image-upload-handler="props.imageUploadHandler"
-                @selection-change="emit('markdownSelectionChange', $event)"
+                @selection-change="handleMarkdownSelectionChange"
                 @remote-presence-change="emit('markdownRemotePresenceChange', $event)"
                 @primary-heading-change="emit('markdownPrimaryHeadingChange', $event)"
                 @create-comment-from-selection="emit('markdownCreateCommentFromSelection', $event)"
                 @create-comment-from-image="emit('markdownCreateCommentFromImage', $event)"
                 @open-comment-thread="emit('markdownOpenCommentThread', $event)"
-                @trigger-document-assist="emit('markdownTriggerDocumentAssist', $event)"
                 @request-image-action="emit('markdownRequestImageAction', $event)"
               />
 
@@ -297,8 +336,8 @@ defineExpose({
           </div>
 
           <template v-else>
-            <div class="px-4 py-2 border-b border-slate-200 bg-white text-xs" :class="props.collabConnected ? 'text-emerald-600' : 'text-amber-600'">
-            {{ props.collabConnectionText }}
+            <div class="text-xs px-4 py-2 border-b border-slate-200 bg-white" :class="props.collabConnected ? 'text-emerald-600' : 'text-amber-600'">
+              {{ props.collabConnectionText }}
             </div>
             <div class="h-full">
               <div class="flex flex-col h-full">

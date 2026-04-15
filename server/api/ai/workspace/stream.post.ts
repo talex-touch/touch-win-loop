@@ -6,6 +6,7 @@ import type {
   AiWorkspaceStreamEventType,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
+import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import { createEventStream, setResponseStatus } from 'h3'
 import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { executeWorkspaceAi } from '~~/server/services/ai/workspace-orchestrator'
@@ -37,6 +38,14 @@ const ALLOWED_MODES: WorkspaceAiMode[] = [
   'auto_optimize',
   'issue_discovery',
   'document_assist',
+]
+const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
+  'workspace_document_summarize',
+  'workspace_document_rewrite',
+  'workspace_document_continue',
+  'workspace_document_expand',
+  'workspace_document_complete_context',
+  'workspace_document_restructure',
 ]
 
 function toText(value: unknown): string {
@@ -242,12 +251,31 @@ function resolveWorkspaceChannelKey(
   return 'workspace_dialog_ask'
 }
 
+function resolveDocumentAssistExecutionChannelKey(
+  runtime: Awaited<ReturnType<typeof readEffectiveRuntimeSettings>>['runtime'],
+  documentAction?: unknown,
+): PlatformAiChannelKey {
+  const explicitAction = toText(documentAction)
+  if (explicitAction)
+    return resolveDocumentAssistChannelKey(explicitAction)
+
+  for (const key of DOCUMENT_ASSIST_CHANNEL_KEYS) {
+    const resolved = resolveAiRuntimeForChannel(runtime, key)
+    if (resolved.channel.enabled && isAiRuntimeConfigured(resolved.ai))
+      return key
+  }
+
+  return 'workspace_document_summarize'
+}
+
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AiWorkspaceRequest>>(event).catch(() => ({})))
-  const channelKey = resolveWorkspaceChannelKey(request.mode || 'dialog_ask', request.context?.documentAction)
+  const channelKey = request.mode === 'document_assist'
+    ? resolveDocumentAssistExecutionChannelKey(runtime, request.context?.documentAction)
+    : resolveWorkspaceChannelKey(request.mode || 'dialog_ask', request.context?.documentAction)
   const channelRuntime = resolveAiRuntimeForChannel(runtime, channelKey)
   const workspaceAiConfig = {
     ...channelRuntime.ai,
@@ -267,10 +295,10 @@ export default defineEventHandler(async (event) => {
     }, 40095)
   }
 
-  if (!isAiRuntimeConfigured(workspaceAiConfig)) {
+  if (!channelRuntime.channel.enabled || !isAiRuntimeConfigured(workspaceAiConfig)) {
     setResponseStatus(event, 503)
     return fail(
-      buildAiNotConfiguredMessage(channelRuntime.channel.label || (request.mode === 'document_assist' ? '文稿助手 AI' : '工作台 AI')),
+      buildAiNotConfiguredMessage(channelRuntime.channel.label || (request.mode === 'document_assist' ? 'AgentDoc AI' : '工作台 AI')),
       {
         startedAt,
         provider: workspaceAiConfig.provider,
@@ -489,10 +517,8 @@ export default defineEventHandler(async (event) => {
         }
 
         return executeWorkspaceAi({
-          runtime: {
-            ai: nextAiConfig,
-            adminAi: runtime.adminAi,
-          },
+          runtime,
+          ai: nextAiConfig,
           mode: request.mode || 'dialog_ask',
           messages: request.messages || [],
           context: {
@@ -524,7 +550,9 @@ export default defineEventHandler(async (event) => {
             resourceSummary: contextBundle.resourceSummary,
             latestUserMessage,
           },
-          channelPrompt: prompt,
+          channelPrompt: request.mode === 'document_assist' && !toText(request.context?.documentAction)
+            ? ''
+            : prompt,
           hooks: {
             onProgress: message => pushEvent('progress', { message }),
             onTool: (name, payload) => pushEvent('tool', { name, payload }),
@@ -584,7 +612,12 @@ export default defineEventHandler(async (event) => {
           provider: execution.ai.provider,
           model: execution.ai.model,
           fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
-          metadata: baseMetadata,
+          metadata: execution.data.data.documentDraft
+            ? {
+                ...baseMetadata,
+                agentDocDraft: execution.data.data.documentDraft,
+              }
+            : baseMetadata,
           createdByUserId: user.id,
         })
 
@@ -658,6 +691,7 @@ export default defineEventHandler(async (event) => {
           proposals,
           report: issuePayload?.report || null,
           issues: issuePayload?.issues || [],
+          documentDraft: execution.data.data.documentDraft || null,
         }
       })
 
@@ -668,6 +702,7 @@ export default defineEventHandler(async (event) => {
         proposals: persisted.proposals,
         report: persisted.report,
         issues: persisted.issues,
+        documentDraft: persisted.documentDraft,
       }
 
       await pushEvent('done', {

@@ -1,5 +1,5 @@
-import type { ApiResponse, WorkspaceAiUsageHistory, WorkspaceBillingEstimate, WorkspaceWithQuota } from '~~/shared/types/domain'
 import type { ComputedRef } from 'vue'
+import type { ApiResponse, WorkspaceAiUsageHistory, WorkspaceBillingEstimate, WorkspaceWithQuota } from '~~/shared/types/domain'
 
 function formatResetCycleLabel(cycle: string | null | undefined): string {
   if (cycle === 'quarterly')
@@ -14,6 +14,7 @@ function formatAiRouteLabel(routeValue: string | null | undefined): string {
   const routeLabelMap: Record<string, string> = {
     '/api/ai/project-chat': '项目对话',
     '/api/ai/workspace/stream': '工作空间助手',
+    '/api/ai/workspace/document-completion/accept': '文档自动补齐',
     '/api/ai/topic-proposal': '选题生成',
     '/api/ai/contest-filter': '赛事筛选',
     '/api/ai/defense/stream': '答辩助手',
@@ -51,12 +52,13 @@ export function useUserAiUsage(options: {
   const aiQuotaTotalCount = computed(() => {
     if (options.currentWorkspaceQuota.value)
       return Math.max(options.currentWorkspaceQuota.value.aiQuotaTotal, aiQuotaUsedCount.value)
-    if (options.workspaceBillingEstimate.value)
+    if (options.workspaceBillingEstimate.value) {
       return Math.max(
         options.workspaceBillingEstimate.value.aiQuotaTotal,
         options.workspaceBillingEstimate.value.includedAiQuota,
         aiQuotaUsedCount.value,
       )
+    }
     return 0
   })
 

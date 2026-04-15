@@ -2,27 +2,30 @@
 import type { Awareness } from 'y-protocols/awareness'
 import type {
   AiWorkspaceDocumentAction,
+  AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentSelectionRange,
-  AiWorkspaceDocumentTrigger,
+  AiWorkspaceInlineCompletionAcceptResult,
+  AiWorkspaceInlineCompletionResult,
   ProjectResourceCommentImageNodeAnchor,
   ProjectResourceCommentTextSelectionAnchor,
   ProjectResourceCommentThread,
+  WorkspaceFontSizePreset,
 } from '~~/shared/types/domain'
-import type { WorkspaceFontSizePreset } from '~~/shared/types/domain'
 import type { CollabMarkdownHeadingLevel } from '~~/shared/utils/collab-rich-text-schema'
 import type { RichTextEditorCommand } from '~/components/editor/rich-text-editor-commands'
-import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
+import type { RichTextEditorImageNodeActionPayload } from '~/components/editor/rich-text-editor-image-extension'
 import type {
   WorkspaceCollabAwarenessSelectionState,
   WorkspaceCollabSelectionSummary,
 } from '~/components/workspace/collab/presence'
+import type { CollabMarkdownHeadingItem } from '~/utils/collab-markdown-navigation'
 import { Extension } from '@tiptap/core'
-import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
-import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import Collaboration from '@tiptap/extension-collaboration'
 import Dropcursor from '@tiptap/extension-dropcursor'
 import Gapcursor from '@tiptap/extension-gapcursor'
 import Placeholder from '@tiptap/extension-placeholder'
+import { AllSelection, NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Editor, EditorContent } from '@tiptap/vue-3'
 import {
   absolutePositionToRelativePosition,
@@ -32,20 +35,33 @@ import {
 } from '@tiptap/y-tiptap'
 import * as Y from 'yjs'
 import {
-  COLLAB_MARKDOWN_HEADING_LEVELS,
+  applyAgentDocDraftToMarkdown,
+  computeAgentDocContentHash,
+} from '~~/shared/utils/agent-doc'
+import {
+  parseMarkdownToRichTextDocument,
+  readMarkdownFromRichText,
+  writeRichTextDocumentToFragment,
+} from '~~/shared/utils/collab-markdown-rich-text'
+import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
+import {
   COLLAB_MARKDOWN_CODE_LANGUAGES,
+  COLLAB_MARKDOWN_HEADING_LEVELS,
   createCollabMarkdownBaseExtensions,
 } from '~~/shared/utils/collab-rich-text-schema'
 import { buildRichTextEditorCommands } from '~/components/editor/rich-text-editor-commands'
 import {
   createRichTextEditorImageExtension,
-  type RichTextEditorImageNodeActionPayload,
 } from '~/components/editor/rich-text-editor-image-extension'
+import {
+  canRetainInlineCompletionForContext,
+  canStartInlineCompletionForContext,
+  shouldCancelInlineCompletionOnBlur,
+} from '~/components/editor/rich-text-editor-inline-completion'
 import {
   attachCollabMarkdownHeadingAnchors,
   buildCollabMarkdownHeadingSectionRanges,
   resolveCollabMarkdownCollapsedHeadingAncestors,
-  type CollabMarkdownHeadingItem,
 } from '~/utils/collab-markdown-navigation'
 
 interface RichTextEditorCurrentUser {
@@ -66,11 +82,16 @@ interface RichTextEditorSelectionChangePayload extends WorkspaceCollabSelectionS
   column: number
 }
 
-interface RichTextEditorDocumentAssistPayload {
-  action: AiWorkspaceDocumentAction
-  trigger: AiWorkspaceDocumentTrigger
-  selectionText: string
-  selectionRange: AiWorkspaceDocumentSelectionRange | null
+interface RichTextEditorInlineCompletionRequestPayload {
+  requestKey: string
+  selectionRange: AiWorkspaceDocumentSelectionRange
+  signal?: AbortSignal
+}
+
+interface RichTextEditorInlineCompletionAcceptPayload {
+  requestKey: string
+  suggestion: string
+  selectionRange: AiWorkspaceDocumentSelectionRange
 }
 
 interface RichTextEditorOutlineItem {
@@ -115,7 +136,9 @@ const props = withDefaults(defineProps<{
   enableComments?: boolean
   commentThreads?: ProjectResourceCommentThread[]
   activeCommentThreadId?: string
-  enableDocumentAssist?: boolean
+  enableInlineCompletion?: boolean
+  inlineCompletionRequestHandler?: ((payload: RichTextEditorInlineCompletionRequestPayload) => Promise<AiWorkspaceInlineCompletionResult | null>) | null
+  inlineCompletionAcceptHandler?: ((payload: RichTextEditorInlineCompletionAcceptPayload) => Promise<AiWorkspaceInlineCompletionAcceptResult | null>) | null
   imageUploadHandler?: ((file: File) => Promise<RichTextEditorImageUploadResult>) | null
 }>(), {
   awareness: null,
@@ -131,7 +154,9 @@ const props = withDefaults(defineProps<{
   enableComments: false,
   commentThreads: () => [],
   activeCommentThreadId: '',
-  enableDocumentAssist: false,
+  enableInlineCompletion: false,
+  inlineCompletionRequestHandler: null,
+  inlineCompletionAcceptHandler: null,
   imageUploadHandler: null,
 })
 
@@ -142,7 +167,6 @@ const emit = defineEmits<{
   createCommentFromSelection: [value: ProjectResourceCommentTextSelectionAnchor]
   createCommentFromImage: [value: ProjectResourceCommentImageNodeAnchor]
   openCommentThread: [threadId: string]
-  triggerDocumentAssist: [value: RichTextEditorDocumentAssistPayload]
   requestImageAction: [value: RichTextEditorImageNodeActionPayload]
 }>()
 
@@ -184,10 +208,26 @@ const headingMenuState = reactive({
   top: 0,
   left: 0,
 })
+const inlineCompletionState = reactive({
+  suggestionText: '',
+  requestKey: '',
+  suggestionKey: '',
+  loadingRequestKey: '',
+  suppressedRequestKey: '',
+  suppressedUntil: 0,
+  acceptPending: false,
+  suspendUntilNextUserInput: false,
+  focused: false,
+  composing: false,
+})
 const editorChromePluginKey = new PluginKey('rich-text-editor-navigation')
 const searchDecorationPluginKey = new PluginKey('rich-text-editor-search')
+const inlineCompletionPluginKey = new PluginKey('rich-text-editor-inline-completion')
 let copiedHeadingAnchorTimer: ReturnType<typeof setTimeout> | null = null
 let codeBlockCopyTimer: ReturnType<typeof setTimeout> | null = null
+let inlineCompletionDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let inlineCompletionAbortController: AbortController | null = null
+const INLINE_COMPLETION_RETRY_COOLDOWN_MS = 15_000
 
 const normalizedHeadingLevels = computed<CollabMarkdownHeadingLevel[]>(() => {
   const dedupe = new Set<CollabMarkdownHeadingLevel>()
@@ -204,7 +244,6 @@ const commandItems = computed(() => {
   return buildRichTextEditorCommands(normalizedHeadingLevels.value, {
     includeImageCommand: Boolean(props.imageUploadHandler),
     includeCommentCommand: props.enableComments,
-    includeDocumentAssistCommands: props.enableDocumentAssist,
   })
 })
 
@@ -221,8 +260,6 @@ const selectionToolbarInlineItems = computed(() => {
     'link',
     'code',
     'comment',
-    'aiSummarize',
-    'aiRewrite',
   ])
   return commandItems.value.filter(item => actionWhitelist.has(item.action))
 })
@@ -352,6 +389,10 @@ const outlineSearchResultLabel = computed(() => {
 
 let removeAwarenessListener: (() => void) | null = null
 let removeWindowResizeListener: (() => void) | null = null
+let removeDocumentPointerDownListener: (() => void) | null = null
+let removeDocumentPointerUpListener: (() => void) | null = null
+let removeDocumentPointerCancelListener: (() => void) | null = null
+let inlineCompletionPointerDownOutsideEditor = false
 const commentDecorationPluginKey = new PluginKey('rich-text-editor-comments')
 
 function normalizeString(value: unknown): string {
@@ -533,6 +574,7 @@ function buildSelectionSummary(doc: any, anchor: number, head: number): Workspac
     headColumn: headPosition.column,
     isCollapsed: from === to,
     selectionLength: String(selectedText || '').length,
+    selectedText: String(selectedText || ''),
     selectedTextPreview: normalizePreviewText(String(selectedText || '')),
   }
 }
@@ -547,6 +589,496 @@ function toDocumentSelectionRange(summary: WorkspaceCollabSelectionSummary | nul
     headColumn: summary.headColumn,
     isCollapsed: summary.isCollapsed,
     selectionLength: summary.selectionLength,
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError'
+}
+
+function logInlineCompletionDebug(event: string, payload?: Record<string, unknown>): void {
+  console.warn('[inline-completion]', {
+    event,
+    resourceId: normalizeString(props.resourceId),
+    requestKey: inlineCompletionState.requestKey || inlineCompletionState.loadingRequestKey || inlineCompletionState.suggestionKey || '',
+    ...(payload || {}),
+  })
+}
+
+function clearInlineCompletionDebounce(): void {
+  if (!inlineCompletionDebounceTimer)
+    return
+  clearTimeout(inlineCompletionDebounceTimer)
+  inlineCompletionDebounceTimer = null
+}
+
+function abortInlineCompletionRequest(reason = 'abort'): void {
+  if (!inlineCompletionAbortController)
+    return
+  logInlineCompletionDebug('editor-request-abort', {
+    reason,
+  })
+  inlineCompletionAbortController.abort(reason)
+  inlineCompletionAbortController = null
+}
+
+function refreshInlineCompletionDecorations(): void {
+  const instance = editor.value
+  if (!instance)
+    return
+  instance.view.dispatch(instance.state.tr.setMeta(inlineCompletionPluginKey, Date.now()))
+}
+
+function cancelInlineCompletionRequest(reason = 'manual-cancel'): void {
+  clearInlineCompletionState({
+    cancelPendingRequest: true,
+    reason,
+  })
+}
+
+function clearInlineCompletionState(options?: {
+  cancelPendingRequest?: boolean
+  resetSuspend?: boolean
+  reason?: string
+}): void {
+  const shouldRefreshDecorations = Boolean(
+    inlineCompletionState.suggestionText
+    || inlineCompletionState.suggestionKey
+    || inlineCompletionState.loadingRequestKey,
+  )
+
+  if (options?.cancelPendingRequest !== false) {
+    clearInlineCompletionDebounce()
+    abortInlineCompletionRequest(options?.reason || 'clear-state')
+    inlineCompletionState.requestKey = ''
+  }
+
+  if (inlineCompletionState.suggestionText || inlineCompletionState.suggestionKey || inlineCompletionState.loadingRequestKey) {
+    if (options?.reason) {
+      logInlineCompletionDebug('editor-state-cleared', {
+        reason: options.reason,
+        hadSuggestion: Boolean(inlineCompletionState.suggestionText),
+        hadLoading: Boolean(inlineCompletionState.loadingRequestKey),
+      })
+    }
+    inlineCompletionState.suggestionText = ''
+    inlineCompletionState.suggestionKey = ''
+    inlineCompletionState.loadingRequestKey = ''
+  }
+
+  if (options?.resetSuspend)
+    inlineCompletionState.suspendUntilNextUserInput = false
+
+  if (options?.resetSuspend) {
+    inlineCompletionState.suppressedRequestKey = ''
+    inlineCompletionState.suppressedUntil = 0
+  }
+
+  if (shouldRefreshDecorations)
+    refreshInlineCompletionDecorations()
+}
+
+function suppressInlineCompletionRequest(requestKey: string): void {
+  inlineCompletionState.suppressedRequestKey = requestKey
+  inlineCompletionState.suppressedUntil = Date.now() + INLINE_COMPLETION_RETRY_COOLDOWN_MS
+}
+
+function clearInlineCompletionSuppression(): void {
+  inlineCompletionState.suppressedRequestKey = ''
+  inlineCompletionState.suppressedUntil = 0
+}
+
+function isInlineCompletionRequestSuppressed(requestKey: string): boolean {
+  if (
+    !requestKey
+    || inlineCompletionState.suppressedRequestKey !== requestKey
+    || inlineCompletionState.suppressedUntil <= 0
+  ) {
+    return false
+  }
+
+  if (inlineCompletionState.suppressedUntil <= Date.now()) {
+    clearInlineCompletionSuppression()
+    return false
+  }
+
+  return true
+}
+
+function noteInlineCompletionUserInput(): void {
+  if (inlineCompletionState.suspendUntilNextUserInput)
+    inlineCompletionState.suspendUntilNextUserInput = false
+  clearInlineCompletionSuppression()
+}
+
+function isInlineCompletionUserInputKey(event: KeyboardEvent): boolean {
+  if (event.metaKey || event.ctrlKey || event.altKey)
+    return false
+  if (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Enter')
+    return true
+  return event.key.length === 1
+}
+
+function buildInlineCompletionContext(state: any) {
+  const selection = state?.selection
+  return {
+    enabled: Boolean(props.enableInlineCompletion),
+    hasRequestHandler: Boolean(props.inlineCompletionRequestHandler),
+    hasAcceptHandler: Boolean(props.inlineCompletionAcceptHandler),
+    editable: Boolean(props.editable),
+    focused: inlineCompletionState.focused,
+    composing: inlineCompletionState.composing,
+    acceptPending: inlineCompletionState.acceptPending,
+    suspendUntilNextUserInput: inlineCompletionState.suspendUntilNextUserInput,
+    linkInputVisible: linkInputVisible.value,
+    slashMenuVisible: slashMenuState.visible,
+    hasCollapsedSelection: Boolean(selection && selection.empty === true),
+    inCodeBlock: Boolean(resolveActiveCodeBlock()),
+  }
+}
+
+function canRetainInlineCompletionState(state: any): boolean {
+  return canRetainInlineCompletionForContext(buildInlineCompletionContext(state))
+}
+
+function canStartInlineCompletionState(state: any): boolean {
+  return canStartInlineCompletionForContext(buildInlineCompletionContext(state))
+}
+
+function isInlineCompletionTargetInsideEditor(target: EventTarget | null): boolean {
+  const editorDom = editor.value?.view.dom
+  return Boolean(editorDom && target instanceof Node && editorDom.contains(target))
+}
+
+function setInlineCompletionPointerDownContext(target: EventTarget | null): void {
+  if (!inlineCompletionState.focused) {
+    inlineCompletionPointerDownOutsideEditor = false
+    return
+  }
+
+  inlineCompletionPointerDownOutsideEditor = !isInlineCompletionTargetInsideEditor(target)
+}
+
+function resetInlineCompletionPointerDownContext(): void {
+  inlineCompletionPointerDownOutsideEditor = false
+}
+
+function buildInlineCompletionRequestKeyFromState(state: any): string {
+  const resourceId = normalizeString(props.resourceId)
+  const selection = state?.selection
+  if (!resourceId || !selection || selection.empty !== true)
+    return ''
+
+  const position = Math.max(0, Number(selection.from || 0))
+  const start = Math.max(0, position - 80)
+  const end = Math.min(Number(state?.doc?.content?.size || 0), position + 80)
+  const contextText = String(state?.doc?.textBetween(start, end, '\n', '\n') || '')
+  return `${resourceId}::${position}::${Number(state?.doc?.content?.size || 0)}::${contextText}`
+}
+
+function buildInlineCompletionSelectionRangeFromState(state: any): AiWorkspaceDocumentSelectionRange | null {
+  const selection = state?.selection
+  if (!selection || selection.empty !== true)
+    return null
+  const summary = buildSelectionSummary(state.doc, selection.anchor, selection.head)
+  return toDocumentSelectionRange(summary)
+}
+
+function buildInlineCompletionGhostElement(text: string): HTMLElement {
+  const container = document.createElement('span')
+  container.className = 'rich-text-editor__inline-completion'
+
+  const segments = String(text || '').split('\n')
+  segments.forEach((segment, index) => {
+    if (index > 0)
+      container.appendChild(document.createElement('br'))
+
+    const textNode = document.createElement('span')
+    textNode.textContent = segment
+    container.appendChild(textNode)
+  })
+
+  return container
+}
+
+function buildInlineCompletionLoadingElement(requestKey: string): HTMLElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'rich-text-editor__inline-completion-loading'
+  button.setAttribute('aria-label', '取消自动补齐请求')
+  button.title = '取消自动补齐请求'
+
+  const spinner = document.createElement('span')
+  spinner.className = 'rich-text-editor__inline-completion-loading-spinner'
+  spinner.setAttribute('aria-hidden', 'true')
+  button.appendChild(spinner)
+
+  button.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+  })
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (
+      inlineCompletionState.requestKey === requestKey
+      || inlineCompletionState.loadingRequestKey === requestKey
+    ) {
+      cancelInlineCompletionRequest('loading-button-click')
+    }
+  })
+
+  return button
+}
+
+function buildInlineCompletionDecorations(state: any): DecorationSet {
+  if (!props.editable)
+    return DecorationSet.empty
+
+  const selection = state?.selection
+  if (!selection || selection.empty !== true)
+    return DecorationSet.empty
+
+  const currentRequestKey = buildInlineCompletionRequestKeyFromState(state)
+  if (!currentRequestKey)
+    return DecorationSet.empty
+
+  const decorations: Decoration[] = []
+  if (
+    inlineCompletionState.suggestionText
+    && inlineCompletionState.suggestionKey
+    && currentRequestKey === inlineCompletionState.suggestionKey
+  ) {
+    decorations.push(Decoration.widget(selection.from, () => buildInlineCompletionGhostElement(inlineCompletionState.suggestionText), {
+      side: 1,
+      ignoreSelection: true,
+    }))
+  }
+  else if (
+    inlineCompletionState.loadingRequestKey
+    && currentRequestKey === inlineCompletionState.loadingRequestKey
+  ) {
+    decorations.push(Decoration.widget(selection.from, () => buildInlineCompletionLoadingElement(currentRequestKey), {
+      side: 1,
+      ignoreSelection: true,
+    }))
+  }
+
+  return decorations.length > 0 ? DecorationSet.create(state.doc, decorations) : DecorationSet.empty
+}
+
+function createInlineCompletionExtension() {
+  return Extension.create({
+    name: 'workspace-inline-completion',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: inlineCompletionPluginKey,
+          props: {
+            decorations: state => buildInlineCompletionDecorations(state),
+          },
+        }),
+      ]
+    },
+  })
+}
+
+async function runInlineCompletionRequest(requestKey: string): Promise<void> {
+  const instance = editor.value
+  const requestHandler = props.inlineCompletionRequestHandler
+  if (!instance || !requestHandler)
+    return
+
+  const selectionRange = buildInlineCompletionSelectionRangeFromState(instance.state)
+  if (!selectionRange?.isCollapsed) {
+    inlineCompletionState.requestKey = ''
+    return
+  }
+
+  const controller = new AbortController()
+  inlineCompletionAbortController = controller
+  inlineCompletionState.loadingRequestKey = requestKey
+  logInlineCompletionDebug('editor-request-start', {
+    requestKey,
+    selectionRange,
+  })
+  refreshInlineCompletionDecorations()
+
+  try {
+    const result = await requestHandler({
+      requestKey,
+      selectionRange,
+      signal: controller.signal,
+    })
+
+    if (inlineCompletionAbortController !== controller || inlineCompletionState.requestKey !== requestKey)
+      return
+
+    inlineCompletionState.requestKey = ''
+    inlineCompletionState.loadingRequestKey = ''
+    const suggestion = String(result?.suggestion || '')
+    if (!suggestion) {
+      logInlineCompletionDebug('editor-request-empty', {
+        requestKey,
+      })
+      suppressInlineCompletionRequest(requestKey)
+      clearInlineCompletionState({
+        cancelPendingRequest: false,
+        reason: 'empty-suggestion',
+      })
+      return
+    }
+
+    if (!canRetainInlineCompletionState(instance.state) || buildInlineCompletionRequestKeyFromState(instance.state) !== requestKey) {
+      clearInlineCompletionState({
+        cancelPendingRequest: false,
+        reason: 'drop-stale-result',
+      })
+      return
+    }
+
+    clearInlineCompletionSuppression()
+    inlineCompletionState.suggestionText = suggestion
+    inlineCompletionState.suggestionKey = requestKey
+    logInlineCompletionDebug('editor-request-success', {
+      requestKey,
+      suggestionLength: suggestion.length,
+    })
+    refreshInlineCompletionDecorations()
+  }
+  catch (error) {
+    if (isAbortError(error)) {
+      logInlineCompletionDebug('editor-request-cancelled', {
+        requestKey,
+        reason: controller.signal.reason ?? 'AbortError',
+      })
+      return
+    }
+    inlineCompletionState.requestKey = ''
+    inlineCompletionState.loadingRequestKey = ''
+    logInlineCompletionDebug('editor-request-error', {
+      requestKey,
+      message: error instanceof Error ? (error.message || error.name || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
+    })
+    suppressInlineCompletionRequest(requestKey)
+    clearInlineCompletionState({
+      cancelPendingRequest: false,
+      reason: 'request-error',
+    })
+  }
+  finally {
+    if (inlineCompletionAbortController === controller)
+      inlineCompletionAbortController = null
+    if (inlineCompletionState.loadingRequestKey === requestKey) {
+      inlineCompletionState.loadingRequestKey = ''
+      refreshInlineCompletionDecorations()
+    }
+  }
+}
+
+function syncInlineCompletion(): void {
+  const instance = editor.value
+  if (!instance) {
+    clearInlineCompletionState({
+      cancelPendingRequest: true,
+      resetSuspend: true,
+      reason: 'editor-unavailable',
+    })
+    return
+  }
+
+  const nextRequestKey = buildInlineCompletionRequestKeyFromState(instance.state)
+  if (!canRetainInlineCompletionState(instance.state) || !nextRequestKey) {
+    clearInlineCompletionState({
+      cancelPendingRequest: true,
+      reason: 'context-invalid',
+    })
+    return
+  }
+
+  if (isInlineCompletionRequestSuppressed(nextRequestKey))
+    return
+
+  const hasMatchingSuggestion = Boolean(
+    inlineCompletionState.suggestionText
+    && inlineCompletionState.suggestionKey === nextRequestKey,
+  )
+  const hasMatchingLoadingRequest = inlineCompletionState.loadingRequestKey === nextRequestKey
+  const hasMatchingPendingRequest = inlineCompletionState.requestKey === nextRequestKey
+  const hasMatchingState = hasMatchingSuggestion || hasMatchingLoadingRequest || hasMatchingPendingRequest
+  const hasInlineCompletionState = Boolean(
+    inlineCompletionState.suggestionKey
+    || inlineCompletionState.loadingRequestKey
+    || inlineCompletionState.requestKey,
+  )
+
+  if (!hasMatchingState && hasInlineCompletionState) {
+    clearInlineCompletionState({
+      cancelPendingRequest: true,
+      reason: 'request-key-changed',
+    })
+  }
+
+  if (hasMatchingSuggestion || hasMatchingLoadingRequest || hasMatchingPendingRequest)
+    return
+
+  if (!canStartInlineCompletionState(instance.state))
+    return
+
+  clearInlineCompletionState({
+    cancelPendingRequest: true,
+    reason: 'start-new-request',
+  })
+  inlineCompletionState.requestKey = nextRequestKey
+  inlineCompletionDebounceTimer = setTimeout(() => {
+    void runInlineCompletionRequest(nextRequestKey)
+  }, 600)
+}
+
+async function acceptInlineCompletionSuggestion(): Promise<boolean> {
+  const instance = editor.value
+  const acceptHandler = props.inlineCompletionAcceptHandler
+  const suggestion = String(inlineCompletionState.suggestionText || '')
+  const suggestionKey = inlineCompletionState.suggestionKey
+  if (!instance || !acceptHandler || !suggestion || !suggestionKey || inlineCompletionState.acceptPending)
+    return false
+
+  const selectionRange = buildInlineCompletionSelectionRangeFromState(instance.state)
+  if (!selectionRange?.isCollapsed)
+    return false
+
+  inlineCompletionState.acceptPending = true
+
+  try {
+    const accepted = await acceptHandler({
+      requestKey: suggestionKey,
+      suggestion,
+      selectionRange,
+    })
+
+    if (!accepted)
+      return false
+
+    if (buildInlineCompletionRequestKeyFromState(instance.state) !== suggestionKey) {
+      clearInlineCompletionState({
+        cancelPendingRequest: true,
+      })
+      return false
+    }
+
+    inlineCompletionState.suspendUntilNextUserInput = true
+    clearInlineCompletionState({
+      cancelPendingRequest: true,
+    })
+    instance.chain().focus().insertContent(suggestion).run()
+    return true
+  }
+  catch {
+    return false
+  }
+  finally {
+    inlineCompletionState.acceptPending = false
   }
 }
 
@@ -628,29 +1160,6 @@ function emitCommentFromSelection(): void {
     emit('createCommentFromSelection', anchor)
 }
 
-function resolveCurrentSelectionText(): string {
-  const instance = editor.value
-  if (!instance)
-    return ''
-  const { selection } = instance.state
-  if (selection.empty)
-    return ''
-  return String(instance.state.doc.textBetween(selection.from, selection.to, '\n', '\n') || '').trim()
-}
-
-function emitDocumentAssistAction(action: AiWorkspaceDocumentAction, trigger: AiWorkspaceDocumentTrigger): void {
-  const instance = editor.value
-  const selectionSummary = instance
-    ? buildSelectionSummary(instance.state.doc, instance.state.selection.anchor, instance.state.selection.head)
-    : null
-  emit('triggerDocumentAssist', {
-    action,
-    trigger,
-    selectionText: resolveCurrentSelectionText(),
-    selectionRange: toDocumentSelectionRange(selectionSummary),
-  })
-}
-
 function buildCommentMarker(threadId: string, active: boolean): HTMLElement {
   const marker = document.createElement('button')
   marker.type = 'button'
@@ -717,7 +1226,7 @@ function buildCommentDecorations(state: any): DecorationSet {
     const active = thread.id === activeThreadId
     if (selection.from < selection.to) {
       decorations.push(Decoration.inline(selection.from, selection.to, {
-        class: active
+        'class': active
           ? 'rich-text-editor__comment-selection rich-text-editor__comment-selection--active'
           : 'rich-text-editor__comment-selection',
         'data-comment-thread-id': thread.id,
@@ -798,6 +1307,7 @@ function defaultSelectionChangePayload(): RichTextEditorSelectionChangePayload {
     headColumn: 1,
     isCollapsed: true,
     selectionLength: 0,
+    selectedText: '',
     selectedTextPreview: '',
   }
 }
@@ -1641,12 +2151,21 @@ function syncDerivedState(): void {
   syncOutlineState()
   syncOutlineSearchMatches()
   syncActiveCodeBlockState()
+  syncInlineCompletion()
 }
 
 function destroyEditor(): void {
   closeLinkEditor()
   closeSlashMenu()
   closeSelectionToolbar()
+  resetInlineCompletionPointerDownContext()
+  clearInlineCompletionState({
+    cancelPendingRequest: true,
+    resetSuspend: true,
+  })
+  inlineCompletionState.focused = false
+  inlineCompletionState.composing = false
+  inlineCompletionState.acceptPending = false
   removeAwarenessListener?.()
   removeAwarenessListener = null
   if (copiedHeadingAnchorTimer) {
@@ -1985,26 +2504,69 @@ function scrollToCommentThread(threadId: string): void {
   })
 }
 
+function writeMarkdownToCollabDocument(doc: Y.Doc, markdown: string): boolean {
+  try {
+    doc.transact(() => {
+      writeRichTextDocumentToFragment(doc.getXmlFragment('prosemirror'), parseMarkdownToRichTextDocument(markdown))
+      syncMarkdownMirrorFromRichText(doc)
+    })
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+function applyDocumentDraft(draft: AiWorkspaceDocumentDraft): boolean {
+  const doc = props.doc
+  if (!doc || !props.editable)
+    return false
+
+  try {
+    const currentMarkdown = readMarkdownFromRichText(doc)
+    const result = applyAgentDocDraftToMarkdown(currentMarkdown, draft)
+    if (!result.ok)
+      return false
+    return writeMarkdownToCollabDocument(doc, result.markdown)
+  }
+  catch {
+    return false
+  }
+}
+
 function applyDocumentAssistResult(input: { action: AiWorkspaceDocumentAction, text: string }): boolean {
   const instance = editor.value
   const text = String(input.text || '').trim()
-  if (!instance || !props.editable || !text)
+  const doc = props.doc
+  if (!instance || !doc || !props.editable || !text)
     return false
 
-  const { selection } = instance.state
-  const chain = instance.chain().focus()
-  if ((input.action === 'rewrite' || input.action === 'expand' || input.action === 'complete_context' || input.action === 'restructure') && !selection.empty) {
-    chain.insertContentAt({ from: selection.from, to: selection.to }, text).run()
-    return true
-  }
+  const summary = buildSelectionSummary(instance.state.doc, instance.state.selection.anchor, instance.state.selection.head)
+  const selectionRange = toDocumentSelectionRange(summary)
+  const currentMarkdown = readMarkdownFromRichText(doc)
+  const replaceSelectionActions = new Set<AiWorkspaceDocumentAction>(['rewrite', 'expand', 'complete_context', 'restructure'])
+  const applyMode = input.action === 'continue'
+    ? 'insert_at_cursor'
+    : (input.action === 'summarize'
+        ? (summary.isCollapsed ? 'insert_at_cursor' : 'insert_after_selection')
+        : (summary.isCollapsed ? 'replace_document' : 'replace_selection'))
+  const originalText = summary.isCollapsed ? '' : String(summary.selectedText || '')
 
-  if (input.action === 'summarize' && !selection.empty) {
-    chain.insertContentAt(selection.to, `\n\n${text}`).run()
-    return true
-  }
-
-  chain.insertContent(text).run()
-  return true
+  return applyDocumentDraft({
+    action: input.action,
+    title: '',
+    summary: '',
+    resourceId: normalizeString(props.resourceId),
+    resourceTitle: '',
+    selectionText: originalText,
+    selectionRange,
+    applyMode: replaceSelectionActions.has(input.action)
+      ? (summary.isCollapsed ? 'replace_document' : 'replace_selection')
+      : applyMode,
+    baseDocumentHash: computeAgentDocContentHash(currentMarkdown),
+    originalText,
+    proposedText: text,
+  })
 }
 
 function openImagePicker(position?: number | null): void {
@@ -2070,49 +2632,6 @@ function executeCommand(command: RichTextEditorCommand, options?: { replaceRange
 
   if (command.action === 'comment') {
     emitCommentFromSelection()
-    closeSlashMenu()
-    closeHeadingMenu()
-    return
-  }
-
-  if (command.action === 'aiSummarize') {
-    emitDocumentAssistAction('summarize', replaceRange ? 'slash_menu' : 'selection_toolbar')
-    closeSlashMenu()
-    closeHeadingMenu()
-    return
-  }
-
-  if (command.action === 'aiRewrite') {
-    emitDocumentAssistAction('rewrite', replaceRange ? 'slash_menu' : 'selection_toolbar')
-    closeSlashMenu()
-    closeHeadingMenu()
-    return
-  }
-
-  if (command.action === 'aiExpand') {
-    emitDocumentAssistAction('expand', replaceRange ? 'slash_menu' : 'selection_toolbar')
-    closeSlashMenu()
-    closeHeadingMenu()
-    return
-  }
-
-  if (command.action === 'aiCompleteContext') {
-    emitDocumentAssistAction('complete_context', replaceRange ? 'slash_menu' : 'selection_toolbar')
-    closeSlashMenu()
-    closeHeadingMenu()
-    return
-  }
-
-  if (command.action === 'aiRestructure') {
-    emitDocumentAssistAction('restructure', replaceRange ? 'slash_menu' : 'selection_toolbar')
-    closeSlashMenu()
-    closeHeadingMenu()
-    return
-  }
-
-  if (command.action === 'aiContinue') {
-    prepareCommandSelection(replaceRange)
-    emitDocumentAssistAction('continue', replaceRange ? 'slash_menu' : 'right_sidebar')
     closeSlashMenu()
     closeHeadingMenu()
     return
@@ -2211,6 +2730,33 @@ function isToolbarItemActive(item: RichTextEditorCommand): boolean {
 }
 
 function handleEditorKeyDown(_view: unknown, event: KeyboardEvent): boolean {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a') {
+    const instance = editor.value
+    if (!instance)
+      return false
+
+    event.preventDefault()
+    instance.view.dispatch(instance.state.tr.setSelection(new AllSelection(instance.state.doc)))
+    return true
+  }
+
+  if (
+    event.key === 'Tab'
+    && !event.shiftKey
+    && !event.metaKey
+    && !event.ctrlKey
+    && !event.altKey
+    && inlineCompletionState.suggestionText
+    && inlineCompletionState.suggestionKey
+  ) {
+    event.preventDefault()
+    void acceptInlineCompletionSuggestion()
+    return true
+  }
+
+  if (isInlineCompletionUserInputKey(event))
+    noteInlineCompletionUserInput()
+
   if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
     event.preventDefault()
     focusOutlineSearchInput()
@@ -2264,7 +2810,13 @@ function handleEditorKeyDown(_view: unknown, event: KeyboardEvent): boolean {
   return false
 }
 
+function handleEditorTextInput(): boolean {
+  noteInlineCompletionUserInput()
+  return false
+}
+
 function handleEditorPaste(_view: unknown, event: ClipboardEvent): boolean {
+  noteInlineCompletionUserInput()
   if (!props.editable || !props.imageUploadHandler)
     return false
 
@@ -2282,6 +2834,7 @@ function handleEditorPaste(_view: unknown, event: ClipboardEvent): boolean {
 }
 
 function handleEditorDrop(view: any, event: DragEvent): boolean {
+  noteInlineCompletionUserInput()
   if (!props.editable || !props.imageUploadHandler)
     return false
 
@@ -2299,6 +2852,30 @@ function handleEditorDrop(view: any, event: DragEvent): boolean {
   event.preventDefault()
   void uploadImagesAt(files, position)
   return true
+}
+
+function onEditorCompositionStart(): boolean {
+  inlineCompletionState.composing = true
+  clearInlineCompletionState({
+    cancelPendingRequest: true,
+    reason: 'composition-start',
+  })
+  return false
+}
+
+function onEditorCompositionEnd(): boolean {
+  inlineCompletionState.composing = false
+  noteInlineCompletionUserInput()
+  syncInlineCompletion()
+  return false
+}
+
+function handleDocumentPointerDown(event: PointerEvent): void {
+  setInlineCompletionPointerDownContext(event.target)
+}
+
+function handleDocumentPointerUp(): void {
+  resetInlineCompletionPointerDownContext()
 }
 
 function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
@@ -2340,6 +2917,8 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
     extensions.push(createCollabCursorExtension(awareness))
   if (props.enableComments)
     extensions.push(createCommentExtension())
+  if (props.enableInlineCompletion)
+    extensions.push(createInlineCompletionExtension())
 
   editor.value = new Editor({
     element: document.createElement('div'),
@@ -2350,15 +2929,41 @@ function createEditor(doc: Y.Doc, awareness: Awareness | null): void {
         class: 'rich-text-editor__prosemirror',
       },
       handleKeyDown: handleEditorKeyDown,
+      handleTextInput: handleEditorTextInput,
       handlePaste: handleEditorPaste,
       handleDrop: handleEditorDrop,
+      handleDOMEvents: {
+        compositionstart: () => onEditorCompositionStart(),
+        compositionend: () => onEditorCompositionEnd(),
+      },
     },
     extensions,
-    onCreate: syncDerivedState,
+    onCreate: () => {
+      inlineCompletionState.focused = false
+      syncDerivedState()
+    },
     onSelectionUpdate: syncDerivedState,
     onUpdate: syncDerivedState,
-    onFocus: syncDerivedState,
+    onFocus: () => {
+      resetInlineCompletionPointerDownContext()
+      inlineCompletionState.focused = true
+      syncDerivedState()
+    },
     onBlur: () => {
+      const shouldCancelOnBlur = shouldCancelInlineCompletionOnBlur(inlineCompletionPointerDownOutsideEditor)
+      logInlineCompletionDebug('editor-blur', {
+        shouldCancelOnBlur,
+        outsidePointerDown: inlineCompletionPointerDownOutsideEditor,
+      })
+      resetInlineCompletionPointerDownContext()
+      inlineCompletionState.focused = false
+      inlineCompletionState.composing = false
+      if (shouldCancelOnBlur) {
+        clearInlineCompletionState({
+          cancelPendingRequest: true,
+          reason: 'blur-outside',
+        })
+      }
       emitSelectionChange()
       emitRemotePresenceChange()
       closeSlashMenu()
@@ -2393,6 +2998,7 @@ function handleViewportResize(): void {
 }
 
 defineExpose({
+  applyDocumentDraft,
   applyDocumentAssistResult,
   scrollToCommentThread,
   scrollToHeadingAnchor,
@@ -2421,6 +3027,13 @@ watch([() => props.doc, () => props.awareness], ([nextDoc, nextAwareness]) => {
 
 watch(() => props.editable, (editable) => {
   editor.value?.setEditable(Boolean(editable))
+  inlineCompletionState.focused = Boolean(editable && editor.value?.isFocused)
+  if (!editable) {
+    clearInlineCompletionState({
+      cancelPendingRequest: true,
+      resetSuspend: true,
+    })
+  }
   syncDerivedState()
 })
 
@@ -2437,13 +3050,36 @@ watch(() => props.placeholder, () => {
 })
 
 watch(() => props.resourceId, () => {
+  clearInlineCompletionState({
+    cancelPendingRequest: true,
+    resetSuspend: true,
+  })
   syncOutlineState()
+  syncInlineCompletion()
 })
 
 watch(() => props.enableComments, () => {
   if (!props.doc)
     return
   createEditor(props.doc, props.awareness)
+})
+
+watch(() => props.enableInlineCompletion, () => {
+  clearInlineCompletionState({
+    cancelPendingRequest: true,
+    resetSuspend: true,
+  })
+  if (!props.doc)
+    return
+  createEditor(props.doc, props.awareness)
+})
+
+watch([() => props.inlineCompletionRequestHandler, () => props.inlineCompletionAcceptHandler], () => {
+  clearInlineCompletionState({
+    cancelPendingRequest: true,
+    resetSuspend: true,
+  })
+  syncInlineCompletion()
 })
 
 watch(() => props.currentUser, () => {
@@ -2477,19 +3113,59 @@ watch(() => props.activeCommentThreadId, (threadId) => {
   })
 })
 
+watch(linkInputVisible, (visible) => {
+  if (visible) {
+    clearInlineCompletionState({
+      cancelPendingRequest: true,
+    })
+    return
+  }
+
+  syncInlineCompletion()
+})
+
+watch(() => slashMenuState.visible, (visible) => {
+  if (visible) {
+    clearInlineCompletionState({
+      cancelPendingRequest: true,
+    })
+    return
+  }
+
+  syncInlineCompletion()
+})
+
 onMounted(() => {
   if (!import.meta.client)
     return
 
   window.addEventListener('resize', handleViewportResize)
+  document.addEventListener('pointerdown', handleDocumentPointerDown, true)
+  document.addEventListener('pointerup', handleDocumentPointerUp, true)
+  document.addEventListener('pointercancel', handleDocumentPointerUp, true)
   removeWindowResizeListener = () => {
     window.removeEventListener('resize', handleViewportResize)
     removeWindowResizeListener = null
+  }
+  removeDocumentPointerDownListener = () => {
+    document.removeEventListener('pointerdown', handleDocumentPointerDown, true)
+    removeDocumentPointerDownListener = null
+  }
+  removeDocumentPointerUpListener = () => {
+    document.removeEventListener('pointerup', handleDocumentPointerUp, true)
+    removeDocumentPointerUpListener = null
+  }
+  removeDocumentPointerCancelListener = () => {
+    document.removeEventListener('pointercancel', handleDocumentPointerUp, true)
+    removeDocumentPointerCancelListener = null
   }
 })
 
 onBeforeUnmount(() => {
   removeWindowResizeListener?.()
+  removeDocumentPointerDownListener?.()
+  removeDocumentPointerUpListener?.()
+  removeDocumentPointerCancelListener?.()
   destroyEditor()
 })
 </script>
@@ -3248,7 +3924,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   min-height: 100%;
-  padding: 0;
+  padding: 0 8px;
   background: transparent;
 }
 
@@ -3432,6 +4108,48 @@ onBeforeUnmount(() => {
 
 .rich-text-editor__canvas :deep(.tiptap .rich-text-editor__search-match--active) {
   background: rgba(250, 204, 21, 0.36);
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion) {
+  display: inline;
+  color: rgba(100, 116, 139, 0.7);
+  pointer-events: none;
+  user-select: none;
+  white-space: pre-wrap;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-loading) {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  vertical-align: text-bottom;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-loading:hover) {
+  background: rgba(226, 232, 240, 0.8);
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-loading:focus-visible) {
+  outline: 2px solid rgba(37, 99, 235, 0.28);
+  outline-offset: 1px;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-loading-spinner) {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid rgba(148, 163, 184, 0.45);
+  border-top-color: #2563eb;
+  border-radius: 999px;
+  animation: rich-text-editor-inline-completion-spin 0.8s linear infinite;
 }
 
 .rich-text-editor__canvas :deep(.tiptap hr) {
@@ -3942,6 +4660,16 @@ onBeforeUnmount(() => {
 
 :global(body.rich-text-editor--image-resizing) {
   cursor: ew-resize;
+}
+
+@keyframes rich-text-editor-inline-completion-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1280px) {

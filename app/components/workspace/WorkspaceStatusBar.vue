@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { ProjectUploadActivityItem, ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
 import { formatFileSize } from '~~/shared/constants/project-resource-upload'
-import { resolveProjectUploadTaskStatusText } from '~/utils/project-upload'
 
 const props = withDefaults(defineProps<{
   statusLine?: string
@@ -9,7 +8,12 @@ const props = withDefaults(defineProps<{
   aiModelLabel?: string
   aiStatusLabel?: string
   aiStatusTone?: 'ready' | 'running' | 'missing' | 'checking' | 'error'
-  tokenBalance?: number
+  aiCreditsUsed?: number
+  aiCreditsTotal?: number
+  aiCreditsRemaining?: number
+  aiCreditsUsageText?: string
+  aiCreditsRemainingText?: string
+  aiBillingLabel?: string
   projectStorageUsedBytes?: number
   projectStorageLimitBytes?: number
   line?: number | null
@@ -27,7 +31,12 @@ const props = withDefaults(defineProps<{
   aiModelLabel: '状态检查中',
   aiStatusLabel: 'AI 状态检查中',
   aiStatusTone: 'checking',
-  tokenBalance: 0,
+  aiCreditsUsed: 0,
+  aiCreditsTotal: 0,
+  aiCreditsRemaining: 0,
+  aiCreditsUsageText: '',
+  aiCreditsRemainingText: '',
+  aiBillingLabel: '按 credits 配额计费',
   projectStorageUsedBytes: 0,
   projectStorageLimitBytes: 0,
   line: null,
@@ -41,24 +50,8 @@ const props = withDefaults(defineProps<{
   uploadHistoryLoaded: false,
 })
 
-const emit = defineEmits<{
-  toggleUploadDrawer: []
-  pauseUploadTask: [sessionId: string]
-  resumeUploadTask: [sessionId: string]
-  retryUploadTask: [sessionId: string]
-  cancelUploadTask: [sessionId: string]
-  rebindUploadTask: [sessionId: string]
-  pauseAllUploadTasks: []
-  resumeAllUploadTasks: []
-  clearCompletedUploadTasks: []
-}>()
-
 const IMPORTANT_STATUS_KEYWORDS = ['失败', '错误', '冲突', '请先', '缺失', '无权', '异常', '告警', '重试', '未清除']
 const GB_BYTES = 1024 * 1024 * 1024
-
-function isInProgressStatus(status: ProjectUploadActivityItem['status']): boolean {
-  return status === 'queued' || status === 'uploading' || status === 'finalizing'
-}
 
 const visibleStatusLine = computed(() => {
   const text = String(props.statusLine || '').trim()
@@ -108,86 +101,6 @@ const storageBarClass = computed(() => {
   return 'workspace-status-storage--safe'
 })
 
-const normalizedUploadSummary = computed<ProjectUploadSummary | null>(() => {
-  if (!props.uploadSummary || props.uploadSummary.totalCount <= 0)
-    return null
-  return props.uploadSummary
-})
-
-const uploadActivityItems = computed(() => {
-  return props.uploadActivityItems.filter(item => item.status !== 'canceled')
-})
-
-const myUploadItems = computed(() => {
-  return uploadActivityItems.value.filter((item) => {
-    return item.isOwnedByCurrentUser
-      && item.status !== 'completed'
-      && item.status !== 'canceled'
-  })
-})
-
-const teamUploadingItems = computed(() => {
-  return uploadActivityItems.value.filter((item) => {
-    return !item.isOwnedByCurrentUser && isInProgressStatus(item.status)
-  })
-})
-
-const pendingUploadItems = computed(() => {
-  return uploadActivityItems.value.filter((item) => {
-    return !item.isOwnedByCurrentUser
-      && (item.status === 'paused' || item.status === 'failed')
-  })
-})
-
-const recentCompletedItems = computed(() => {
-  return uploadActivityItems.value.filter(item => item.status === 'completed')
-})
-
-const pausableUploadItems = computed(() => {
-  return myUploadItems.value.filter(item => item.isActionable && item.status === 'uploading' && !item.needsFileRebind)
-})
-
-const resumableUploadItems = computed(() => {
-  return myUploadItems.value.filter((item) => {
-    return item.isActionable
-      && (item.status === 'paused' || item.status === 'failed')
-      && !item.needsFileRebind
-  })
-})
-
-const clearableCompletedCount = computed(() => {
-  return normalizedUploadSummary.value?.completedCount || 0
-})
-
-const uploadTrayText = computed(() => {
-  const summary = normalizedUploadSummary.value
-  if (summary)
-    return `上传 ${summary.totalCount} 项 · ${summary.progressPercent.toFixed(0)}%`
-  if (uploadActivityItems.value.length > 0)
-    return `上传记录 · 最近7天 ${uploadActivityItems.value.length} 项`
-  return '上传记录'
-})
-
-const uploadTrayMetaText = computed(() => {
-  const summary = normalizedUploadSummary.value
-  if (summary) {
-    const fragments: string[] = []
-    if (summary.failedCount > 0)
-      fragments.push(`失败 ${summary.failedCount}`)
-    if (summary.pausedCount > 0)
-      fragments.push(`暂停 ${summary.pausedCount}`)
-    if (summary.completedCount > 0)
-      fragments.push(`完成 ${summary.completedCount}`)
-    return fragments.join(' · ')
-  }
-
-  if (teamUploadingItems.value.length > 0)
-    return `团队上传中 ${teamUploadingItems.value.length}`
-  if (recentCompletedItems.value.length > 0)
-    return `最近完成 ${recentCompletedItems.value.length}`
-  return ''
-})
-
 const normalizedSelectionLength = computed(() => {
   const value = Number(props.selectionLength || 0)
   if (!Number.isFinite(value) || value <= 0)
@@ -233,102 +146,49 @@ const aiStatusIcon = computed(() => {
   return 'hourglass_top'
 })
 
-const hasUploadDrawerContent = computed(() => uploadActivityItems.value.length > 0)
+const normalizedAiCreditsUsed = computed(() => {
+  const value = Number(props.aiCreditsUsed || 0)
+  if (!Number.isFinite(value) || value <= 0)
+    return 0
+  return Math.trunc(value)
+})
 
-function uploadTaskStatusText(item: ProjectUploadActivityItem): string {
-  return resolveProjectUploadTaskStatusText(item.status, item.needsFileRebind)
-}
+const normalizedAiCreditsTotal = computed(() => {
+  const value = Number(props.aiCreditsTotal || 0)
+  if (!Number.isFinite(value) || value <= 0)
+    return 0
+  return Math.trunc(value)
+})
 
-function uploadTaskActorText(item: ProjectUploadActivityItem): string {
-  const actorName = String(item.actorUsername || '').trim()
-  if (actorName)
-    return actorName
-  return item.isOwnedByCurrentUser ? '我' : '未识别成员'
-}
+const normalizedAiCreditsRemaining = computed(() => {
+  const value = Number(props.aiCreditsRemaining || 0)
+  if (!Number.isFinite(value) || value <= 0)
+    return 0
+  return Math.trunc(value)
+})
 
-function uploadTaskActorInitial(item: ProjectUploadActivityItem): string {
-  const actorText = uploadTaskActorText(item)
-  return actorText.slice(0, 1).toUpperCase() || 'U'
-}
+const aiCreditsUsageText = computed(() => {
+  const provided = String(props.aiCreditsUsageText || '').trim()
+  if (provided)
+    return provided
+  if (normalizedAiCreditsTotal.value <= 0)
+    return '未配置'
+  return `${normalizedAiCreditsUsed.value.toLocaleString('zh-CN')} / ${normalizedAiCreditsTotal.value.toLocaleString('zh-CN')} credits`
+})
 
-function formatRelativeDateTime(value: string): string {
-  const normalized = String(value || '').trim()
-  if (!normalized)
-    return '刚刚'
+const aiCreditsRemainingText = computed(() => {
+  const provided = String(props.aiCreditsRemainingText || '').trim()
+  if (provided)
+    return provided
+  if (normalizedAiCreditsTotal.value <= 0)
+    return '未配置'
+  return `${normalizedAiCreditsRemaining.value.toLocaleString('zh-CN')} credits`
+})
 
-  const time = new Date(normalized).getTime()
-  if (!Number.isFinite(time))
-    return normalized
-
-  const diffMs = Date.now() - time
-  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000))
-  if (diffMinutes < 1)
-    return '刚刚'
-  if (diffMinutes < 60)
-    return `${diffMinutes} 分钟前`
-
-  const diffHours = Math.floor(diffMinutes / 60)
-  if (diffHours < 24)
-    return `${diffHours} 小时前`
-
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays < 7)
-    return `${diffDays} 天前`
-
-  return new Date(time).toLocaleString('zh-CN', { hour12: false })
-}
-
-function uploadTaskDetailText(item: ProjectUploadActivityItem): string {
-  const progressText = `${formatFileSize(item.uploadedBytes)} / ${formatFileSize(item.fileSize)}`
-  const chunkText = `${Math.min(item.uploadedChunkCount, item.chunkCount)} / ${item.chunkCount} 分片`
-  const updatedText = formatRelativeDateTime(item.completedAt || item.updatedAt)
-  if (item.needsFileRebind)
-    return `${uploadTaskActorText(item)} · ${progressText} · ${chunkText} · 需重新选择原文件 · ${updatedText}`
-  if (item.status === 'finalizing')
-    return `${uploadTaskActorText(item)} · ${progressText} · 正在创建资源与预览 · ${updatedText}`
-  if (item.errorMessage)
-    return `${uploadTaskActorText(item)} · ${progressText} · ${chunkText} · ${item.errorMessage} · ${updatedText}`
-  return `${uploadTaskActorText(item)} · ${progressText} · ${chunkText} · ${updatedText}`
-}
-
-function uploadTaskProgressStyle(item: ProjectUploadActivityItem): Record<string, string> {
-  const progress = item.status === 'finalizing'
-    ? 100
-    : Math.max(0, Math.min(100, Number(item.progressPercent || 0)))
-  return {
-    width: `${progress}%`,
-  }
-}
-
-function uploadTaskBarClass(item: ProjectUploadActivityItem): string {
-  if (item.needsFileRebind || item.status === 'failed')
-    return 'workspace-upload-task-row__bar--failed'
-  if (item.status === 'paused')
-    return 'workspace-upload-task-row__bar--paused'
-  if (item.status === 'completed')
-    return 'workspace-upload-task-row__bar--completed'
-  return 'workspace-upload-task-row__bar--active'
-}
-
-function canPauseUploadTask(item: ProjectUploadActivityItem): boolean {
-  return item.isActionable && item.status === 'uploading' && !item.needsFileRebind
-}
-
-function canResumeUploadTask(item: ProjectUploadActivityItem): boolean {
-  return item.isActionable && item.status === 'paused' && !item.needsFileRebind
-}
-
-function canRetryUploadTask(item: ProjectUploadActivityItem): boolean {
-  return item.isActionable && item.status === 'failed' && !item.needsFileRebind
-}
-
-function canCancelUploadTask(item: ProjectUploadActivityItem): boolean {
-  return item.isActionable && item.status !== 'finalizing'
-}
-
-function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
-  return item.isActionable && (item.needsFileRebind || item.status === 'failed')
-}
+const aiBillingTooltipText = computed(() => {
+  const text = String(props.aiBillingLabel || '').trim()
+  return text || '按 credits 配额计费'
+})
 </script>
 
 <template>
@@ -346,10 +206,6 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
         <div class="max-w-72 truncate">
           <span v-if="loading" class="align-middle rounded bg-slate-200 h-2.5 w-28 inline-block animate-pulse" />
           <span v-else>{{ visibleStatusLine || '系统就绪' }}</span>
-        </div>
-        <div class="gap-2 hidden items-center md:flex">
-          <span>模型: {{ aiModelLabel }}</span>
-          <span>Token: {{ tokenBalance.toLocaleString('zh-CN') }}</span>
         </div>
         <div class="workspace-status-storage" :class="storageBarClass">
           <div class="workspace-status-storage__summary">
@@ -378,10 +234,38 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
           </template>
         </span>
         <span>Space: 4</span>
-        <span :class="aiStatusClass">
-          <span class="material-symbols-outlined workspace-status-ai__icon">{{ aiStatusIcon }}</span>
-          <span>{{ aiStatusLabel }}</span>
-        </span>
+        <div
+          class="workspace-status-ai-anchor"
+          tabindex="0"
+          :aria-label="`AI 状态详情：${aiStatusLabel}`"
+        >
+          <span :class="aiStatusClass">
+            <span class="material-symbols-outlined workspace-status-ai__icon">{{ aiStatusIcon }}</span>
+            <span>{{ aiStatusLabel }}</span>
+          </span>
+          <div class="workspace-status-ai__tooltip">
+            <div class="workspace-status-ai__tooltip-row">
+              <span class="workspace-status-ai__tooltip-label">当前状态</span>
+              <span class="workspace-status-ai__tooltip-value">{{ aiStatusLabel }}</span>
+            </div>
+            <div class="workspace-status-ai__tooltip-row">
+              <span class="workspace-status-ai__tooltip-label">使用模型</span>
+              <span class="workspace-status-ai__tooltip-value">{{ aiModelLabel }}</span>
+            </div>
+            <div class="workspace-status-ai__tooltip-row">
+              <span class="workspace-status-ai__tooltip-label">计费方式</span>
+              <span class="workspace-status-ai__tooltip-value">{{ aiBillingTooltipText }}</span>
+            </div>
+            <div class="workspace-status-ai__tooltip-row">
+              <span class="workspace-status-ai__tooltip-label">已用 / 总量</span>
+              <span class="workspace-status-ai__tooltip-value">{{ aiCreditsUsageText }}</span>
+            </div>
+            <div class="workspace-status-ai__tooltip-row">
+              <span class="workspace-status-ai__tooltip-label">剩余 credits</span>
+              <span class="workspace-status-ai__tooltip-value">{{ aiCreditsRemainingText }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </footer>
   </div>
@@ -472,6 +356,62 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
   align-items: center;
   gap: 4px;
   font-weight: 700;
+}
+
+.workspace-status-ai-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+  outline: none;
+}
+
+.workspace-status-ai__tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #d5deed;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 10px 12px;
+  color: #4b5f83;
+  font-size: var(--wl-text-caption);
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: 0 12px 28px rgba(32, 53, 89, 0.14);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-status-ai__tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-status-ai__tooltip-label {
+  color: #6c7f9f;
+}
+
+.workspace-status-ai__tooltip-value {
+  color: #22324d;
+  font-weight: 600;
+  text-align: right;
+}
+
+.workspace-status-ai-anchor:hover .workspace-status-ai__tooltip,
+.workspace-status-ai-anchor:focus-within .workspace-status-ai__tooltip {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .workspace-status-ai__icon {

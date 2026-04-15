@@ -22,6 +22,7 @@ export interface WorkspaceCollabSelectionSummary {
   headColumn: number
   isCollapsed: boolean
   selectionLength: number
+  selectedText?: string
   selectedTextPreview: string
 }
 

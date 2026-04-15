@@ -674,8 +674,8 @@ export interface DesignPageModel {
   frameIds?: string[]
   viewport?: {
     x: number
-      y: number
-      zoom: number
+    y: number
+    zoom: number
   }
   metadata?: DesignPageMetadata
 }
@@ -795,8 +795,8 @@ export type CanvasLibraryAssetKind = 'image' | 'svg' | 'device_shell'
 export type CanvasLibraryItemStatus = 'draft' | 'published' | 'archived'
 export type CanvasLibraryItemSource = 'admin_upload' | 'design_publish'
 export type CanvasLibraryItemPayloadType = 'scene_document' | 'design_fragment' | 'binary_asset'
-export type MockupDeviceCategory = 'iphone' | 'tablet' | 'pc' | 'watch' | 'android' | 'browser'
-export type MockupVariantSlotKey = 'variant_1' | 'variant_2' | 'variant_3' | 'variant_4'
+export type MockupDeviceCategory = 'phone' | 'tablet' | 'desktop' | 'watch' | 'earbuds' | 'glasses' | 'browser'
+export type MockupVariantSlotKey = string
 export type MockupDeviceModelStatus = 'draft' | 'published' | 'archived'
 
 export interface CanvasLibraryOriginMetadata {
@@ -865,20 +865,20 @@ export interface CanvasLibraryBinaryAssetPreviewPayload {
   height?: number
 }
 
-export type CanvasLibraryItemPayload =
-  | SceneDocument
-  | CanvasLibraryPageTemplatePayload
-  | CanvasLibraryFrameTemplatePayload
-  | CanvasLibraryBinaryAssetPayload
-  | CanvasLibraryDeviceShellAssetPayload
+export type CanvasLibraryItemPayload
+  = | SceneDocument
+    | CanvasLibraryPageTemplatePayload
+    | CanvasLibraryFrameTemplatePayload
+    | CanvasLibraryBinaryAssetPayload
+    | CanvasLibraryDeviceShellAssetPayload
 
-export type CanvasLibraryItemPreviewPayload =
-  | SceneDocument
-  | CanvasLibraryPageTemplatePayload
-  | CanvasLibraryFrameTemplatePayload
-  | CanvasLibraryBinaryAssetPreviewPayload
-  | Record<string, unknown>
-  | null
+export type CanvasLibraryItemPreviewPayload
+  = | SceneDocument
+    | CanvasLibraryPageTemplatePayload
+    | CanvasLibraryFrameTemplatePayload
+    | CanvasLibraryBinaryAssetPreviewPayload
+    | Record<string, unknown>
+    | null
 
 export interface CanvasLibraryItem {
   id: string
@@ -2233,6 +2233,7 @@ export interface TeamLastProjectPreference {
 export interface ChatMessage {
   role: 'system' | 'assistant' | 'user'
   content: string
+  metadata?: Record<string, unknown>
 }
 
 export interface AiModelOption {
@@ -2361,6 +2362,7 @@ export type ProjectResourceCommentAnchorType = 'text_selection' | 'image_node'
 export type ProjectResourceCommentThreadStatus = 'open' | 'resolved'
 export type AiWorkspaceDocumentTrigger = 'selection_toolbar' | 'slash_menu' | 'right_sidebar'
 export type AiWorkspaceDocumentAction = 'summarize' | 'rewrite' | 'continue' | 'expand' | 'complete_context' | 'restructure'
+export type AiWorkspaceDocumentDraftApplyMode = 'replace_selection' | 'replace_document' | 'insert_after_selection' | 'insert_at_cursor'
 export type AiCanvasAssistAction = 'generate' | 'complete' | 'refine'
 export type AiCanvasAssistTemplate = 'flowchart' | 'mindmap' | 'er' | 'architecture'
 export type AiCanvasAssistSourceFormat = 'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
@@ -2372,6 +2374,20 @@ export interface AiWorkspaceDocumentSelectionRange {
   headColumn: number
   isCollapsed: boolean
   selectionLength: number
+}
+
+export interface AiWorkspaceDocumentDraft {
+  action: AiWorkspaceDocumentAction
+  title: string
+  summary: string
+  resourceId: string
+  resourceTitle: string
+  selectionText: string
+  selectionRange: AiWorkspaceDocumentSelectionRange | null
+  applyMode: AiWorkspaceDocumentDraftApplyMode
+  baseDocumentHash: string
+  originalText: string
+  proposedText: string
 }
 
 export interface ProjectResourceCommentTextSelectionAnchor {
@@ -2904,6 +2920,38 @@ export interface AiWorkspaceRequest {
   aiOptions?: Partial<AiAssistantOptions>
 }
 
+export interface AiWorkspaceInlineCompletionRequest {
+  teamId?: string
+  workspaceId?: string
+  projectId?: string
+  context?: {
+    teamId?: string
+    workspaceId?: string
+    projectId?: string
+    resourceId?: string
+    resourceTitle?: string
+    markdown?: string
+    selectionRange?: AiWorkspaceDocumentSelectionRange | null
+  }
+  aiOptions?: Partial<AiAssistantOptions>
+}
+
+export interface AiWorkspaceInlineCompletionResult {
+  suggestion: string
+}
+
+export interface AiWorkspaceInlineCompletionAcceptRequest {
+  teamId?: string
+  workspaceId?: string
+  projectId?: string
+  resourceId?: string
+}
+
+export interface AiWorkspaceInlineCompletionAcceptResult {
+  remainingQuota: number | null
+  consumedUnits: number
+}
+
 export interface AiWorkspaceIssueDraft {
   title: string
   severity: ProjectIssueSeverity
@@ -2955,6 +3003,7 @@ export interface AiWorkspaceResult {
   proposals?: AiProjectChangeRequest[]
   issues?: ProjectIssue[]
   report?: ProjectIssueReport | null
+  documentDraft?: AiWorkspaceDocumentDraft | null
 }
 
 export type AdminAgentTaskType

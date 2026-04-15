@@ -1,4 +1,6 @@
 import type {
+  AiWorkspaceDocumentDraft,
+  AiWorkspaceDocumentDraftApplyMode,
   AiProjectChangeType,
   AiWorkspaceIssueDraft,
   ChatMessage,
@@ -6,11 +8,20 @@ import type {
   WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
+import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
+import type { RuntimeSettings } from '~~/server/utils/env'
+import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { createDeepAgent } from 'deepagents'
 import { tool } from 'langchain'
 import { z } from 'zod'
+import {
+  computeAgentDocContentHash,
+  extractAgentDocSelectionText,
+} from '~~/shared/utils/agent-doc'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
+import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { runWithRetry } from '~~/server/utils/retry'
 
 type WorkspaceSupportedMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'document_assist'
@@ -45,6 +56,7 @@ export interface WorkspaceAiExecutionResult {
   reportTitle: string
   reportSummary: string
   reportMarkdown: string
+  documentDraft: AiWorkspaceDocumentDraft | null
 }
 
 export interface WorkspaceAiExecutionContext {
@@ -73,28 +85,6 @@ export interface WorkspaceAiExecutionContext {
   latestUserMessage: string
 }
 
-export interface WorkspaceAiRuntime {
-  ai: {
-    provider: string
-    baseURL: string
-    apiKey: string
-    model: string
-    temperature?: number
-    topP?: number
-    maxTokens?: number
-    presencePenalty?: number
-    frequencyPenalty?: number
-    timeoutMs: number
-    maxRetries: number
-  }
-  adminAi: {
-    tavilyApiKey: string
-    maxWebResults: number
-    webTimeoutMs: number
-    maxPageChars: number
-  }
-}
-
 export interface WorkspaceAiHooks {
   onProgress?: (message: string) => Promise<void> | void
   onTool?: (name: string, payload: Record<string, unknown>) => Promise<void> | void
@@ -121,10 +111,12 @@ interface WorkspaceModeState {
   issueFingerprints: Set<string>
   reportTitle: string
   reportSummary: string
+  documentDraft: AiWorkspaceDocumentDraft | null
 }
 
 interface WorkspaceModeExecutionInput {
-  runtime: WorkspaceAiRuntime
+  runtime: RuntimeSettings
+  ai: RuntimeSettings['ai']
   context: WorkspaceAiExecutionContext
   channelPrompt?: string
   hooks: WorkspaceAiHooks
@@ -140,6 +132,34 @@ export interface WorkspaceExecutionOutcome {
 const MAX_WORKSPACE_AGENT_MESSAGES = 10
 const MAX_AUTO_OPTIMIZE_PROPOSALS = 5
 const ISSUE_SCAN_DIMENSIONS = ['评分映射', '证据链', '量化指标', '资料完整度']
+const DOCUMENT_ACTION_CHANNEL_MAP: Record<WorkspaceAiExecutionContext['documentAction'] | string, PlatformAiChannelKey> = {
+  summarize: 'workspace_document_summarize',
+  rewrite: 'workspace_document_rewrite',
+  continue: 'workspace_document_continue',
+  expand: 'workspace_document_expand',
+  complete_context: 'workspace_document_complete_context',
+  restructure: 'workspace_document_restructure',
+}
+
+const documentDraftApplyModeSchema = z.enum([
+  'replace_selection',
+  'replace_document',
+  'insert_after_selection',
+  'insert_at_cursor',
+])
+
+const documentDraftActionSchema = z.enum([
+  'summarize',
+  'rewrite',
+  'continue',
+  'expand',
+  'complete_context',
+  'restructure',
+])
+
+const documentDraftResultSchema = z.object({
+  proposedText: z.string().min(1),
+})
 
 const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentProfile> = {
   dialog_ask: {
@@ -321,6 +341,148 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
   }, null, 2)
 }
 
+function isDocumentAction(value: unknown): value is AiWorkspaceDocumentDraft['action'] {
+  return documentDraftActionSchema.safeParse(value).success
+}
+
+function isDocumentApplyMode(value: unknown): value is AiWorkspaceDocumentDraftApplyMode {
+  return documentDraftApplyModeSchema.safeParse(value).success
+}
+
+function normalizeDocumentSelectionRange(value: unknown): AiWorkspaceDocumentDraft['selectionRange'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return null
+
+  const source = value as Record<string, unknown>
+  const anchorLine = Number(source.anchorLine)
+  const anchorColumn = Number(source.anchorColumn)
+  const headLine = Number(source.headLine)
+  const headColumn = Number(source.headColumn)
+  const selectionLength = Number(source.selectionLength)
+  if (![anchorLine, anchorColumn, headLine, headColumn, selectionLength].every(Number.isFinite))
+    return null
+
+  return {
+    anchorLine,
+    anchorColumn,
+    headLine,
+    headColumn,
+    isCollapsed: Boolean(source.isCollapsed),
+    selectionLength,
+  }
+}
+
+function hasDocumentSelection(context: WorkspaceAiExecutionContext): boolean {
+  const selectionRange = normalizeDocumentSelectionRange(context.selectionRange)
+  return Boolean(selectionRange && !selectionRange.isCollapsed && context.selectionText)
+}
+
+function resolveDocumentActionChannelKey(action: AiWorkspaceDocumentDraft['action']): PlatformAiChannelKey {
+  return DOCUMENT_ACTION_CHANNEL_MAP[action] || 'workspace_document_summarize'
+}
+
+function resolveDefaultDocumentApplyMode(
+  action: AiWorkspaceDocumentDraft['action'],
+  context: WorkspaceAiExecutionContext,
+): AiWorkspaceDocumentDraftApplyMode {
+  const selectionRange = normalizeDocumentSelectionRange(context.selectionRange)
+  if (action === 'continue')
+    return selectionRange?.isCollapsed ? 'insert_at_cursor' : 'insert_after_selection'
+  if (action === 'summarize')
+    return hasDocumentSelection(context) ? 'insert_after_selection' : 'replace_document'
+  return hasDocumentSelection(context) ? 'replace_selection' : 'replace_document'
+}
+
+function validateDocumentDraftScope(input: {
+  action: AiWorkspaceDocumentDraft['action']
+  applyMode: AiWorkspaceDocumentDraftApplyMode
+  context: WorkspaceAiExecutionContext
+}): { ok: true } | { ok: false, reason: string } {
+  const hasSelection = hasDocumentSelection(input.context)
+  if (hasSelection) {
+    if (input.applyMode === 'replace_document' || input.applyMode === 'insert_at_cursor')
+      return { ok: false, reason: 'SELECTION_SCOPE_MISMATCH' }
+    return { ok: true }
+  }
+
+  if (input.applyMode === 'replace_selection' || input.applyMode === 'insert_after_selection')
+    return { ok: false, reason: 'DOCUMENT_SCOPE_MISMATCH' }
+  return { ok: true }
+}
+
+function buildConversationDigest(messages: ChatMessage[]): string {
+  return normalizeConversationMessages(messages)
+    .map(message => `${message.role === 'user' ? '用户' : '助手'}：${message.content}`)
+    .join('\n')
+    .trim()
+}
+
+function buildDocumentGenerationSystemPrompt(input: {
+  action: AiWorkspaceDocumentDraft['action']
+  applyMode: AiWorkspaceDocumentDraftApplyMode
+  channelPrompt: string
+}): string {
+  const fixedPrompt = [
+    '你是 AgentDoc 的文档改写执行器。',
+    '你的唯一任务是返回一段可直接用于文档替换或插入的 Markdown 正文。',
+    '禁止输出解释、标题、前言、后记、代码块围栏或“以下是结果”等包装语。',
+    `动作：${input.action}`,
+    `写回方式：${input.applyMode}`,
+  ].join('\n')
+  return buildMergedPrompt(fixedPrompt, input.channelPrompt)
+}
+
+async function generateDocumentDraftText(input: {
+  runtime: RuntimeSettings
+  context: WorkspaceAiExecutionContext
+  messages: ChatMessage[]
+  action: AiWorkspaceDocumentDraft['action']
+  applyMode: AiWorkspaceDocumentDraftApplyMode
+  originalText: string
+}): Promise<{
+  proposedText: string
+  channelKey: PlatformAiChannelKey
+}> {
+  const channelKey = resolveDocumentActionChannelKey(input.action)
+  const channelRuntime = resolveAiRuntimeForChannel(input.runtime, channelKey)
+  if (!channelRuntime.channel.enabled || !isAiRuntimeConfigured(channelRuntime.ai))
+    throw new Error(buildAiNotConfiguredMessage(channelRuntime.channel.label || 'AgentDoc AI'))
+
+  const conversationDigest = buildConversationDigest(input.messages)
+  const fullDocument = String(input.context.markdown || '').replace(/\r\n?/g, '\n')
+
+  const generated = await runWithPlatformAiChannelFallback(input.runtime, channelKey, async ({ ai, prompt }) => {
+    const model = createChatModel(ai)
+    const structuredModel = model.withStructuredOutput(documentDraftResultSchema, {
+      name: 'AgentDocDraftResult',
+      strict: false,
+    })
+    const promptTemplate = ChatPromptTemplate.fromMessages([
+      ['system', buildDocumentGenerationSystemPrompt({
+        action: input.action,
+        applyMode: input.applyMode,
+        channelPrompt: prompt,
+      })],
+      ['human', [
+        `文档标题：${input.context.resourceTitle || '未命名文档'}`,
+        `用户最新要求：${input.context.latestUserMessage || '（无）'}`,
+        conversationDigest ? `最近多轮对话：\n${conversationDigest}` : '',
+        input.context.selectionText ? `当前选区：\n${input.context.selectionText}` : '',
+        `当前作用文本：\n${input.originalText || '（空）'}`,
+        `当前全文：\n${fullDocument || '（空文档）'}`,
+        '请仅返回 proposedText 字段，对应最终要替换或插入的正文内容。',
+      ].filter(Boolean).join('\n\n')],
+    ])
+    const promptValue = await promptTemplate.invoke({})
+    return documentDraftResultSchema.parse(await structuredModel.invoke(promptValue))
+  })
+
+  return {
+    proposedText: String(generated.data.proposedText || '').replace(/\r\n?/g, '\n'),
+    channelKey,
+  }
+}
+
 function buildIssueMarkdown(input: {
   title: string
   summary: string
@@ -382,10 +544,11 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
   }
 
   return [
-    '模式：文稿助手（只读生成，用户确认后才落文）。',
-    '禁止产出任何可执行写入动作，也不要假设已经修改文档。',
-    '仅输出适合直接插入 markdown 文档的结果正文，不要附加冗长说明。',
-    '若是 summarize，则输出精炼摘要；若是 rewrite，则直接输出润写后的替代文本；若是 continue，则输出自然续写段落；若是 expand，则输出扩写后的完整替代文本；若是 complete_context，则输出补全后的完整正文；若是 restructure，则输出整理结构后的完整正文。',
+    '模式：AgentDoc（文档草案模式，用户确认后才真正落文）。',
+    '你必须先调用 get_workspace_context 读取上下文，再判断是否需要调用 propose_document_change。',
+    '只有在请求可安全映射为文档修改时，才允许调用 propose_document_change。',
+    '如果只是问答、上下文不足，或无法安全判断修改范围，就直接用自然语言说明，不要伪造草案。',
+    '禁止暗示文档已经被修改，也禁止输出审批通过、已替换等语气。',
   ].join('\n')
 }
 
@@ -459,7 +622,6 @@ function buildDocumentAssistPrompt(context: WorkspaceAiExecutionContext): string
   return [
     '当前模式：document_assist',
     `文档标题：${context.resourceTitle || '未命名文档'}`,
-    `动作：${context.documentAction || 'summarize'}`,
     `触发来源：${context.trigger || 'right_sidebar'}`,
     '',
     '当前选区：',
@@ -468,7 +630,8 @@ function buildDocumentAssistPrompt(context: WorkspaceAiExecutionContext): string
     '文档正文（截断前文）：',
     context.markdown || '（空文档）',
     '',
-    '请严格按动作返回可直接落入文档的正文内容，不要返回解释、标题或代码块围栏。',
+    '请结合最近多轮对话，判断用户想对文档做什么。',
+    '如果能够安全生成文档草案，请调用 propose_document_change；否则直接回复原因或补充建议。',
   ].join('\n')
 }
 
@@ -500,9 +663,6 @@ function buildWorkspaceConversationMessages(
 ): WorkspaceConversationMessage[] {
   const profile = WORKSPACE_AGENT_PROFILES[mode]
   const prompt = buildPrompt(profile, context)
-  if (mode === 'document_assist')
-    return [{ role: 'user', content: prompt }]
-
   const normalizedMessages = normalizeConversationMessages(messages)
   if (normalizedMessages.length === 0)
     return [{ role: 'user', content: prompt }]
@@ -534,6 +694,7 @@ function createWorkspaceModeState(): WorkspaceModeState {
     issueFingerprints: new Set<string>(),
     reportTitle: 'AI 寻疑报告',
     reportSummary: '',
+    documentDraft: null,
   }
 }
 
@@ -847,6 +1008,128 @@ function createWorkspaceIssueTools(
   return [reportIssue, setIssueReport]
 }
 
+function createWorkspaceDocumentDraftTool(
+  input: WorkspaceModeExecutionInput,
+  state: WorkspaceModeState,
+): any {
+  return tool(
+    async (payload: {
+      action: AiWorkspaceDocumentDraft['action']
+      title: string
+      summary: string
+      applyMode?: AiWorkspaceDocumentDraftApplyMode
+    }) => {
+      if (state.documentDraft) {
+        await input.hooks.onTool?.('propose_document_change_rejected', {
+          reason: 'DOCUMENT_DRAFT_ALREADY_EXISTS',
+        })
+        return JSON.stringify({ ok: false, reason: 'DOCUMENT_DRAFT_ALREADY_EXISTS' })
+      }
+
+      if (!isDocumentAction(payload.action)) {
+        await input.hooks.onTool?.('propose_document_change_rejected', {
+          reason: 'INVALID_DOCUMENT_ACTION',
+        })
+        return JSON.stringify({ ok: false, reason: 'INVALID_DOCUMENT_ACTION' })
+      }
+
+      const action = payload.action
+      const title = toText(payload.title) || 'AgentDoc 文档草案'
+      const summary = toText(payload.summary)
+      if (title.length < 2 || summary.length < 4) {
+        await input.hooks.onTool?.('propose_document_change_rejected', {
+          reason: 'TITLE_OR_SUMMARY_REQUIRED',
+        })
+        return JSON.stringify({ ok: false, reason: 'TITLE_OR_SUMMARY_REQUIRED' })
+      }
+
+      const applyMode = isDocumentApplyMode(payload.applyMode)
+        ? payload.applyMode
+        : resolveDefaultDocumentApplyMode(action, input.context)
+      const scopeValidation = validateDocumentDraftScope({
+        action,
+        applyMode,
+        context: input.context,
+      })
+      if (!scopeValidation.ok) {
+        await input.hooks.onTool?.('propose_document_change_rejected', {
+          reason: scopeValidation.reason,
+          action,
+          applyMode,
+        })
+        return JSON.stringify({ ok: false, reason: scopeValidation.reason })
+      }
+
+      const markdown = String(input.context.markdown || '').replace(/\r\n?/g, '\n')
+      const selectionText = String(input.context.selectionText || '').replace(/\r\n?/g, '\n')
+      const selectionRange = normalizeDocumentSelectionRange(input.context.selectionRange)
+      const originalText = applyMode === 'replace_document'
+        ? markdown
+        : applyMode === 'insert_at_cursor'
+          ? ''
+          : extractAgentDocSelectionText(markdown, selectionRange)
+
+      if ((applyMode === 'replace_selection' || applyMode === 'insert_after_selection') && !originalText) {
+        await input.hooks.onTool?.('propose_document_change_rejected', {
+          reason: 'SELECTION_REQUIRED',
+          action,
+          applyMode,
+        })
+        return JSON.stringify({ ok: false, reason: 'SELECTION_REQUIRED' })
+      }
+
+      const generated = await generateDocumentDraftText({
+        runtime: input.runtime,
+        context: input.context,
+        messages: input.messages,
+        action,
+        applyMode,
+        originalText: originalText || selectionText,
+      })
+      const proposedText = String(generated.proposedText || '')
+      if (!proposedText.trim()) {
+        await input.hooks.onTool?.('propose_document_change_rejected', {
+          reason: 'PROPOSED_TEXT_REQUIRED',
+          action,
+          channelKey: generated.channelKey,
+        })
+        return JSON.stringify({ ok: false, reason: 'PROPOSED_TEXT_REQUIRED' })
+      }
+
+      state.documentDraft = {
+        action,
+        title,
+        summary,
+        resourceId: toText(input.context.resourceId),
+        resourceTitle: toText(input.context.resourceTitle),
+        selectionText,
+        selectionRange,
+        applyMode,
+        baseDocumentHash: computeAgentDocContentHash(markdown),
+        originalText,
+        proposedText,
+      }
+
+      await input.hooks.onTool?.('propose_document_change', {
+        action,
+        applyMode,
+        channelKey: generated.channelKey,
+      })
+      return JSON.stringify({ ok: true, action, applyMode })
+    },
+    {
+      name: 'propose_document_change',
+      description: '为 AgentDoc 生成一条待确认的文档改写草案。仅允许产出单条草案。',
+      schema: z.object({
+        action: documentDraftActionSchema,
+        title: z.string().min(2),
+        summary: z.string().min(4),
+        applyMode: documentDraftApplyModeSchema.optional(),
+      }),
+    },
+  )
+}
+
 function createWorkspaceToolset(
   input: WorkspaceModeExecutionInput,
   profile: WorkspaceAgentProfile,
@@ -869,6 +1152,9 @@ function createWorkspaceToolset(
     const [reportIssue, setIssueReport] = createWorkspaceIssueTools(input, state)
     tools.push(reportIssue, setIssueReport)
   }
+
+  if (profile.mode === 'document_assist')
+    tools.push(createWorkspaceDocumentDraftTool(input, state))
 
   return { tools }
 }
@@ -899,6 +1185,7 @@ function finalizeWorkspaceExecutionResult(
       reportTitle: '',
       reportSummary: '',
       reportMarkdown: '',
+      documentDraft: null,
     }
   }
 
@@ -922,17 +1209,23 @@ function finalizeWorkspaceExecutionResult(
         summary: reportSummary,
         issues: state.issueDrafts,
       }),
+      documentDraft: null,
     }
   }
 
   return {
     mode: profile.mode,
-    assistantReply: assistantText || 'AI 未返回有效结果，请稍后重试。',
+    assistantReply: assistantText || (profile.mode === 'document_assist'
+      ? (state.documentDraft
+          ? '已生成一条待确认的文档草案，请先查看差异并确认后再应用。'
+          : '当前无法安全生成文档草案，请补充更明确的文档修改意图。')
+      : 'AI 未返回有效结果，请稍后重试。'),
     changeDrafts: [],
     issueDrafts: [],
     reportTitle: '',
     reportSummary: '',
     reportMarkdown: '',
+    documentDraft: state.documentDraft,
   }
 }
 
@@ -944,14 +1237,14 @@ async function executeWorkspaceAgentMode(
   const channelPrompt = toText(input.channelPrompt)
 
   const executed = await runWithRetry<WorkspaceAiExecutionResult>({
-    maxRetries: input.runtime.ai.maxRetries,
+    maxRetries: input.ai.maxRetries,
     run: async () => {
       await input.hooks.onProgress?.(profile.progressMessage)
 
       const state = createWorkspaceModeState()
       const toolset = createWorkspaceToolset(input, profile, state, contextSnapshot)
       const agent = createDeepAgent({
-        model: createChatModel(input.runtime.ai),
+        model: createChatModel(input.ai),
         tools: toolset.tools,
         systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt),
       })
@@ -991,7 +1284,8 @@ async function executeDocumentAssistWorkspaceAi(input: WorkspaceModeExecutionInp
 }
 
 export async function executeWorkspaceAi(input: {
-  runtime: WorkspaceAiRuntime
+  runtime: RuntimeSettings
+  ai: RuntimeSettings['ai']
   mode: WorkspaceAiMode
   context: WorkspaceAiExecutionContext
   messages?: ChatMessage[]
@@ -1000,6 +1294,7 @@ export async function executeWorkspaceAi(input: {
 }): Promise<WorkspaceExecutionOutcome> {
   const executionInput: WorkspaceModeExecutionInput = {
     runtime: input.runtime,
+    ai: input.ai,
     context: input.context,
     channelPrompt: input.channelPrompt,
     hooks: input.hooks || {},

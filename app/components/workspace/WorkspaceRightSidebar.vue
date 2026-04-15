@@ -1,8 +1,5 @@
 <script setup lang="ts">
 import type {
-  AiWorkspaceDocumentAction,
-  AiWorkspaceDocumentSelectionRange,
-  WorkspaceAiAssistantPreset,
   AiChatSession,
   AiDefenseJudgeRound,
   AiDefensePersona,
@@ -11,6 +8,9 @@ import type {
   AiDefenseStage,
   AiDefenseSummary,
   AiProjectChangeRequest,
+  AiWorkspaceDocumentAction,
+  AiWorkspaceDocumentDraft,
+  AiWorkspaceDocumentSelectionRange,
   ChatMessage,
   Contest,
   ProjectIssue,
@@ -19,9 +19,10 @@ import type {
   ProjectResourceCommentThread,
   Resource,
   Track,
+  WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
-import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
+import { buildAgentDocDraftKey } from '~~/shared/utils/agent-doc'
 import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
 
 type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
@@ -29,9 +30,16 @@ type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
 type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
 type WorkspaceRightSidebarView = 'ai' | 'comments'
 type WorkspaceSessionVisualType = WorkspaceAiMode | 'final_review' | 'topic_proposal'
-type DocumentAssistActionStatus = {
-  configured: boolean
-  reason: string
+type AgentDocDraftStatus = 'pending' | 'superseded' | 'expired' | 'applied'
+type AgentDocDiffRowKind = 'same' | 'change' | 'delete' | 'insert'
+
+interface AgentDocDiffRow {
+  key: string
+  kind: AgentDocDiffRowKind
+  leftLineNumber: string
+  rightLineNumber: string
+  leftText: string
+  rightText: string
 }
 
 const props = withDefaults(defineProps<{
@@ -78,12 +86,11 @@ const props = withDefaults(defineProps<{
   commentMutating?: boolean
   showCommentTab?: boolean
   documentResourceTitle?: string
+  documentResourceId?: string
+  documentMarkdownHash?: string
   documentSelectionText?: string
   documentSelectionRange?: AiWorkspaceDocumentSelectionRange | null
-  documentAssistAction?: AiWorkspaceDocumentAction | ''
-  documentAssistActionStatus?: Record<AiWorkspaceDocumentAction, DocumentAssistActionStatus>
-  documentAssistResult?: string
-  documentAssistRunning?: boolean
+  appliedAgentDocDraftKeys?: string[]
   issueReportSubmitting?: boolean
   issueReportExporting?: boolean
   aiEnabled?: boolean
@@ -133,19 +140,11 @@ const props = withDefaults(defineProps<{
   commentMutating: false,
   showCommentTab: true,
   documentResourceTitle: '',
+  documentResourceId: '',
+  documentMarkdownHash: '',
   documentSelectionText: '',
   documentSelectionRange: null,
-  documentAssistAction: '',
-  documentAssistActionStatus: (): Record<AiWorkspaceDocumentAction, DocumentAssistActionStatus> => ({
-    summarize: { configured: true, reason: '' },
-    rewrite: { configured: true, reason: '' },
-    continue: { configured: true, reason: '' },
-    expand: { configured: true, reason: '' },
-    complete_context: { configured: true, reason: '' },
-    restructure: { configured: true, reason: '' },
-  }),
-  documentAssistResult: '',
-  documentAssistRunning: false,
+  appliedAgentDocDraftKeys: () => [],
   issueReportSubmitting: false,
   issueReportExporting: false,
   aiEnabled: true,
@@ -187,8 +186,7 @@ const emit = defineEmits<{
   'resolveCommentThread': [threadId: string]
   'reopenCommentThread': [threadId: string]
   'cancelCommentDraft': []
-  'runDocumentAssist': [action: AiWorkspaceDocumentAction]
-  'applyDocumentAssist': []
+  'applyDocumentDraft': [draft: AiWorkspaceDocumentDraft]
 }>()
 
 const DEFENSE_MODES: Array<{ value: WorkspaceDefenseSidebarAiMode, label: string }> = [
@@ -226,8 +224,8 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
   },
   document_assist: {
     icon: 'edit_document',
-    label: '文稿助手',
-    prefixes: ['Loopy 文稿助手', 'Loopy 文档增强'],
+    label: 'AgentDoc',
+    prefixes: ['Loopy AgentDoc', 'Loopy 文稿助手', 'Loopy 文档增强', 'AgentDoc', '文稿助手', '文档增强'],
   },
   final_review: {
     icon: 'task_alt',
@@ -238,7 +236,9 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
 
 const inputPlaceholder = computed(() => {
   if (!props.aiEnabled)
-    return aiDisabledNoticeText.value
+    return String(props.aiDisabledReason || '').trim() || '当前 AI 未配置，已禁用当前模式。请先在后台完成模型与密钥配置。'
+  if (props.aiMode === 'document_assist')
+    return '描述你希望如何修改当前文档，AgentDoc 会自动判断意图并先生成待确认草案。'
   if (props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual') {
     if (props.projectContextualAssistantPreset === 'design')
       return '描述当前页面结构或交互目标，例如：把评审首页拆成更清晰的页面层级，并说明关键交互。'
@@ -260,6 +260,14 @@ const pendingChangeRequests = computed(() => {
 
 const visibleChatMessages = computed(() => {
   return props.chatMessages.filter(message => message.role !== 'system')
+})
+
+const visibleChatMessageEntries = computed(() => {
+  return visibleChatMessages.value.map((message, index) => ({
+    id: `${message.role}-${index}`,
+    message,
+    agentDocDraft: resolveAgentDocDraft(message),
+  }))
 })
 
 const showChatSkeleton = computed(() => {
@@ -291,6 +299,7 @@ const markdownSidebarEnabled = computed(() => {
 const showSessionHeaderCompact = computed(() => {
   return !showCommentsView.value && !showDocumentAssistView.value && !markdownSidebarEnabled.value
 })
+const showSessionHeaderFlush = computed(() => showDocumentAssistView.value)
 const openChatSessions = computed(() => {
   const sessionMap = new Map(props.chatSessions.map(item => [item.id, item] as const))
   const openedSessions = props.openChatSessionIds
@@ -315,24 +324,6 @@ const activeCommentThread = computed(() => {
     return null
   return props.commentThreads.find(item => item.id === threadId) || null
 })
-const documentAssistSelectionLabel = computed(() => {
-  const text = String(props.documentSelectionText || '').trim()
-  if (text)
-    return text.length > 140 ? `${text.slice(0, 140)}…` : text
-
-  const range = props.documentSelectionRange
-  if (!range)
-    return '未指定选区，将基于当前文档上下文执行。'
-
-  const anchor = `${range.anchorLine}:${range.anchorColumn}`
-  const head = `${range.headLine}:${range.headColumn}`
-  if (range.isCollapsed)
-    return `当前位置 ${head}`
-  return `选区 ${anchor} → ${head} · ${range.selectionLength} 字`
-})
-const canApplyDocumentAssist = computed(() => {
-  return Boolean(String(props.documentAssistResult || '').trim()) && !props.documentAssistRunning
-})
 const aiDisabledNoticeText = computed(() => {
   const text = String(props.aiDisabledReason || '').trim()
   if (text)
@@ -356,11 +347,6 @@ const projectAssistantOptions = computed<Array<{ value: WorkspaceProjectAssistan
 
 watch(() => props.showCommentTab, (nextValue) => {
   if (!nextValue && props.sidebarView === 'comments')
-    emit('update:sidebarView', 'ai')
-})
-
-watch(() => props.documentAssistAction, (nextAction) => {
-  if (nextAction)
     emit('update:sidebarView', 'ai')
 })
 
@@ -402,47 +388,21 @@ function submitCommentReply(threadId: string): void {
   commentReplyDraftMap[threadId] = ''
 }
 
-function documentAssistActionLabel(action: AiWorkspaceDocumentAction | ''): string {
+function resolveAgentDocActionLabel(action: AiWorkspaceDocumentAction): string {
   if (action === 'summarize')
-    return '总结选区'
+    return '总结'
   if (action === 'rewrite')
-    return '润写选区'
+    return '润写'
   if (action === 'continue')
-    return '续写当前位置'
+    return '续写'
   if (action === 'expand')
-    return '扩写选区'
+    return '扩写'
   if (action === 'complete_context')
     return '补全上下文'
   if (action === 'restructure')
     return '整理结构'
-  return '文稿助手'
+  return 'AgentDoc'
 }
-
-function documentAssistActionEnabled(action: AiWorkspaceDocumentAction): boolean {
-  return Boolean(props.documentAssistActionStatus?.[action]?.configured)
-}
-
-function documentAssistActionDisabledReason(action: AiWorkspaceDocumentAction): string {
-  if (documentAssistActionEnabled(action))
-    return ''
-  return String(props.documentAssistActionStatus?.[action]?.reason || aiDisabledNoticeText.value).trim()
-}
-
-const documentAssistComposerPlaceholder = computed(() => {
-  if (!props.aiEnabled)
-    return aiDisabledNoticeText.value
-  if (!props.documentAssistAction)
-    return '先点击上方快捷动作，可选补充要求后再发送。'
-  return `补充${documentAssistActionLabel(props.documentAssistAction)}的额外要求，例如：更正式、保留标题层级。`
-})
-
-const documentAssistSendDisabled = computed(() => {
-  return !props.aiEnabled || props.documentAssistRunning || !props.documentAssistAction
-})
-
-const documentAssistInputDisabled = computed(() => {
-  return !props.aiEnabled || props.documentAssistRunning
-})
 
 function isChangeActing(changeId: string): boolean {
   return props.changeActingIds.includes(changeId)
@@ -545,10 +505,14 @@ function resolveSessionTitle(session: AiChatSession): string {
   const title = String(session.title || '').trim()
   if (!title)
     return '未命名会话'
+  if (title.startsWith('Loopy 文稿助手'))
+    return title.replace('Loopy 文稿助手', 'Loopy AgentDoc')
   if (title.startsWith('Loopy 文档增强'))
-    return title.replace('Loopy 文档增强', 'Loopy 文稿助手')
+    return title.replace('Loopy 文档增强', 'Loopy AgentDoc')
+  if (title.startsWith('文稿助手'))
+    return title.replace('文稿助手', 'AgentDoc')
   if (title.startsWith('文档增强'))
-    return title.replace('文档增强', '文稿助手')
+    return title.replace('文档增强', 'AgentDoc')
   return title
 }
 
@@ -565,7 +529,7 @@ function resolveSessionVisualType(session: AiChatSession): WorkspaceSessionVisua
     return 'auto_optimize'
   if (title.includes('寻疑发现'))
     return 'issue_discovery'
-  if (title.includes('文稿助手') || title.includes('文档增强'))
+  if (title.includes('AgentDoc') || title.includes('文稿助手') || title.includes('文档增强'))
     return 'document_assist'
   if (session.mode === 'auto_optimize' || session.mode === 'issue_discovery' || session.mode === 'defense' || session.mode === 'document_assist')
     return session.mode
@@ -603,6 +567,217 @@ function resolveSessionTabIcon(session: AiChatSession): string {
 
 function resolveSessionTypeLabel(session: AiChatSession): string {
   return SESSION_VISUALS[resolveSessionVisualType(session)].label
+}
+
+function normalizeAgentDocText(value: string): string {
+  return String(value || '').replace(/\r\n?/g, '\n')
+}
+
+function splitAgentDocLines(value: string): string[] {
+  return normalizeAgentDocText(value).split('\n')
+}
+
+function isAgentDocDraft(value: unknown): value is AiWorkspaceDocumentDraft {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return false
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.action === 'string'
+    && typeof candidate.title === 'string'
+    && typeof candidate.summary === 'string'
+    && typeof candidate.resourceId === 'string'
+    && typeof candidate.baseDocumentHash === 'string'
+    && typeof candidate.applyMode === 'string'
+    && typeof candidate.originalText === 'string'
+    && typeof candidate.proposedText === 'string'
+  )
+}
+
+function resolveAgentDocDraft(message: ChatMessage): AiWorkspaceDocumentDraft | null {
+  const metadata = message.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return null
+  const draft = (metadata as Record<string, unknown>).agentDocDraft
+  return isAgentDocDraft(draft) ? draft : null
+}
+
+const latestAgentDocDraftKeyByResource = computed(() => {
+  const result = new Map<string, string>()
+  for (const entry of visibleChatMessageEntries.value) {
+    if (!entry.agentDocDraft)
+      continue
+    result.set(entry.agentDocDraft.resourceId, buildAgentDocDraftKey(entry.agentDocDraft))
+  }
+  return result
+})
+
+const appliedAgentDocDraftKeySet = computed(() => {
+  return new Set((props.appliedAgentDocDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
+})
+
+function resolveAgentDocDraftStatus(draft: AiWorkspaceDocumentDraft): AgentDocDraftStatus {
+  const draftKey = buildAgentDocDraftKey(draft)
+  if (appliedAgentDocDraftKeySet.value.has(draftKey))
+    return 'applied'
+
+  const latestDraftKey = latestAgentDocDraftKeyByResource.value.get(draft.resourceId)
+  if (latestDraftKey && latestDraftKey !== draftKey)
+    return 'superseded'
+
+  if (
+    draft.resourceId !== String(props.documentResourceId || '').trim()
+    || draft.baseDocumentHash !== String(props.documentMarkdownHash || '').trim()
+  ) {
+    return 'expired'
+  }
+
+  return 'pending'
+}
+
+function resolveAgentDocDraftStatusLabel(status: AgentDocDraftStatus): string {
+  if (status === 'applied')
+    return '已应用'
+  if (status === 'superseded')
+    return '已被更新草案替代'
+  if (status === 'expired')
+    return '已过期，请重新生成'
+  return '待确认，确认后才会替换当前文档内容'
+}
+
+function buildFallbackAgentDocDiffRows(leftLines: string[], rightLines: string[]): AgentDocDiffRow[] {
+  const rows: AgentDocDiffRow[] = []
+  const rowCount = Math.max(leftLines.length, rightLines.length)
+  for (let index = 0; index < rowCount; index += 1) {
+    const leftText = leftLines[index] ?? ''
+    const rightText = rightLines[index] ?? ''
+    rows.push({
+      key: `fallback-${index}`,
+      kind: leftText === rightText ? 'same' : (leftText && rightText ? 'change' : (leftText ? 'delete' : 'insert')),
+      leftLineNumber: leftLines[index] !== undefined ? String(index + 1) : '',
+      rightLineNumber: rightLines[index] !== undefined ? String(index + 1) : '',
+      leftText,
+      rightText,
+    })
+  }
+  return rows
+}
+
+function buildAgentDocDiffRows(draft: AiWorkspaceDocumentDraft): AgentDocDiffRow[] {
+  const leftLines = splitAgentDocLines(draft.originalText)
+  const rightLines = splitAgentDocLines(draft.proposedText)
+  if (leftLines.length * rightLines.length > 60000)
+    return buildFallbackAgentDocDiffRows(leftLines, rightLines)
+
+  const lcs = Array.from(
+    { length: leftLines.length + 1 },
+    () => Array.from({ length: rightLines.length + 1 }).fill(0),
+  ) as number[][]
+  for (let leftIndex = 1; leftIndex <= leftLines.length; leftIndex += 1) {
+    for (let rightIndex = 1; rightIndex <= rightLines.length; rightIndex += 1) {
+      const currentRow = lcs[leftIndex]
+      const previousRow = lcs[leftIndex - 1]
+      if (!currentRow || !previousRow)
+        continue
+      if (leftLines[leftIndex - 1] === rightLines[rightIndex - 1])
+        currentRow[rightIndex] = previousRow[rightIndex - 1] ?? 0
+      else
+        currentRow[rightIndex] = Math.max(previousRow[rightIndex] ?? 0, currentRow[rightIndex - 1] ?? 0)
+    }
+  }
+
+  const operations: Array<{ type: 'same' | 'delete' | 'insert', text: string }> = []
+  let leftIndex = leftLines.length
+  let rightIndex = rightLines.length
+
+  while (leftIndex > 0 || rightIndex > 0) {
+    const leftText = leftLines[leftIndex - 1]
+    const rightText = rightLines[rightIndex - 1]
+    if (leftIndex > 0 && rightIndex > 0 && leftText === rightText) {
+      operations.unshift({ type: 'same', text: leftText || '' })
+      leftIndex -= 1
+      rightIndex -= 1
+      continue
+    }
+    if (rightIndex > 0 && (leftIndex === 0 || (lcs[leftIndex]?.[rightIndex - 1] || 0) >= (lcs[leftIndex - 1]?.[rightIndex] || 0))) {
+      operations.unshift({ type: 'insert', text: rightText || '' })
+      rightIndex -= 1
+      continue
+    }
+    operations.unshift({ type: 'delete', text: leftText || '' })
+    leftIndex -= 1
+  }
+
+  const rows: AgentDocDiffRow[] = []
+  let nextLeftLineNumber = 1
+  let nextRightLineNumber = 1
+  let operationIndex = 0
+
+  while (operationIndex < operations.length) {
+    const operation = operations[operationIndex]
+    if (!operation) {
+      operationIndex += 1
+      continue
+    }
+
+    if (operation.type === 'same') {
+      rows.push({
+        key: `same-${operationIndex}`,
+        kind: 'same',
+        leftLineNumber: String(nextLeftLineNumber),
+        rightLineNumber: String(nextRightLineNumber),
+        leftText: operation.text,
+        rightText: operation.text,
+      })
+      nextLeftLineNumber += 1
+      nextRightLineNumber += 1
+      operationIndex += 1
+      continue
+    }
+
+    const deletedLines: string[] = []
+    const insertedLines: string[] = []
+    while (operationIndex < operations.length && operations[operationIndex]?.type !== 'same') {
+      const blockOperation = operations[operationIndex]
+      if (blockOperation?.type === 'delete')
+        deletedLines.push(blockOperation.text)
+      else if (blockOperation?.type === 'insert')
+        insertedLines.push(blockOperation.text)
+      operationIndex += 1
+    }
+
+    const rowCount = Math.max(deletedLines.length, insertedLines.length)
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+      const leftText = deletedLines[rowIndex] ?? ''
+      const rightText = insertedLines[rowIndex] ?? ''
+      rows.push({
+        key: `change-${operationIndex}-${rowIndex}`,
+        kind: leftText && rightText ? 'change' : (leftText ? 'delete' : 'insert'),
+        leftLineNumber: deletedLines[rowIndex] !== undefined ? String(nextLeftLineNumber++) : '',
+        rightLineNumber: insertedLines[rowIndex] !== undefined ? String(nextRightLineNumber++) : '',
+        leftText,
+        rightText,
+      })
+    }
+  }
+
+  return rows
+}
+
+function resolveAgentDocDiffClass(kind: AgentDocDiffRowKind): string {
+  if (kind === 'change')
+    return 'workspace-agent-doc-card__diff-row--change'
+  if (kind === 'delete')
+    return 'workspace-agent-doc-card__diff-row--delete'
+  if (kind === 'insert')
+    return 'workspace-agent-doc-card__diff-row--insert'
+  return ''
+}
+
+function requestApplyAgentDocDraft(draft: AiWorkspaceDocumentDraft): void {
+  if (resolveAgentDocDraftStatus(draft) !== 'pending')
+    return
+  emit('applyDocumentDraft', draft)
 }
 
 function formatSessionDetailTime(value: string | null | undefined): string {
@@ -766,8 +941,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
     return
   if (event.isComposing || (event as KeyboardEvent & { keyCode?: number }).keyCode === 229)
     return
-  if (showDocumentAssistView.value && props.documentAssistRunning)
-    return
   if (props.chatLoading || props.chatInterrupting)
     return
 
@@ -781,20 +954,23 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
     class="border-l border-slate-200 bg-white flex flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
     :tabindex="props.collapsed ? -1 : 0"
   >
-    <div class="border-b border-slate-200 bg-slate-50/72 shrink-0 px-3.5 py-2.5 space-y-2" :class="{ 'workspace-right-sidebar__header--compact': showSessionHeaderCompact }">
+    <div
+      class="px-3.5 py-2.5 border-b border-slate-200 bg-slate-50/72 shrink-0 space-y-2"
+      :class="{
+        'workspace-right-sidebar__header--compact': showSessionHeaderCompact,
+        'workspace-right-sidebar__header--flush': showSessionHeaderFlush,
+      }"
+    >
       <div
-        v-if="showCommentsView || showDocumentAssistView"
+        v-if="showCommentsView"
         class="workspace-right-sidebar__context-chip"
       >
         <template v-if="showCommentsView">
           文档评论（{{ props.commentThreads.length }}）
         </template>
-        <template v-else-if="showDocumentAssistView">
-          文稿助手
-        </template>
       </div>
 
-      <div v-if="markdownSidebarEnabled && props.showCommentTab" class="flex gap-1 rounded-lg bg-white border border-slate-200 p-1">
+      <div v-if="markdownSidebarEnabled && props.showCommentTab" class="p-1 border border-slate-200 rounded-lg bg-white flex gap-1">
         <button
           class="workspace-right-sidebar__switch-pill"
           :class="{ 'workspace-right-sidebar__switch-pill--active': !showCommentsView }"
@@ -826,22 +1002,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           <template v-else>
             选择文内评论标记，或先在正文里选区后发起评论。
           </template>
-        </div>
-      </template>
-
-      <template v-else-if="showDocumentAssistView">
-        <div class="space-y-2">
-          <div class="p-3 border border-slate-200 rounded bg-white">
-            <div class="text-[10px] text-slate-500 font-semibold tracking-wide uppercase">
-              当前文档
-            </div>
-            <div class="text-[11px] text-slate-800 font-semibold mt-1">
-              {{ props.documentResourceTitle || `未命名${COLLAB_NOTES_RESOURCE_LABEL}` }}
-            </div>
-            <div class="text-[10px] text-slate-500 mt-2 leading-5 whitespace-pre-wrap">
-              {{ documentAssistSelectionLabel }}
-            </div>
-          </div>
         </div>
       </template>
 
@@ -928,7 +1088,9 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                   class="workspace-right-sidebar__session-history-popover"
                   data-testid="workspace-right-sidebar-session-history-popover"
                 >
-                  <div class="workspace-right-sidebar__session-history-heading">历史记录</div>
+                  <div class="workspace-right-sidebar__session-history-heading">
+                    历史记录
+                  </div>
                   <div v-if="chatSessions.length === 0" class="workspace-right-sidebar__session-history-empty">
                     暂无历史记录
                   </div>
@@ -1005,11 +1167,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               :class="thread.id === props.activeCommentThreadId ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200'"
             >
               <button
-                class="w-full text-left"
+                class="text-left w-full"
                 type="button"
                 @click="selectCommentThread(thread.id)"
               >
-                <div class="flex items-start justify-between gap-3">
+                <div class="flex gap-3 items-start justify-between">
                   <div class="min-w-0">
                     <div class="text-[11px] text-slate-800 font-semibold truncate">
                       {{ thread.summaryText || summarizeCommentAnchor(thread.anchor) }}
@@ -1017,13 +1179,13 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                     <div class="text-[10px] text-slate-500 mt-1">
                       {{ thread.createdByUsername || thread.createdByUserId }} · {{ thread.updatedAt || thread.createdAt }}
                     </div>
-                    <div class="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+                    <div class="text-[10px] text-slate-500 mt-1 flex gap-1 items-center">
                       <span class="material-symbols-outlined text-[12px]" aria-hidden="true">place</span>
                       <span class="truncate">{{ summarizeCommentAnchor(thread.anchor) }}</span>
                     </div>
                   </div>
                   <span
-                    class="shrink-0 text-[10px] px-2 py-0.5 rounded-full"
+                    class="text-[10px] px-2 py-0.5 rounded-full shrink-0"
                     :class="thread.status === 'resolved' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'"
                   >
                     {{ thread.status === 'resolved' ? '已解决' : '进行中' }}
@@ -1035,7 +1197,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 <div
                   v-for="message in thread.messages"
                   :key="message.id"
-                  class="rounded border border-slate-200 bg-slate-50 px-3 py-2"
+                  class="px-3 py-2 border border-slate-200 rounded bg-slate-50"
                 >
                   <div class="text-[10px] text-slate-500">
                     {{ message.createdByUsername || message.createdByUserId }} · {{ message.createdAt }}
@@ -1048,7 +1210,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
               <div class="mt-3 flex flex-wrap gap-2">
                 <button
-                  class="text-[11px] font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white text-slate-700 hover:bg-slate-100"
+                  class="text-[11px] text-slate-700 font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100"
                   type="button"
                   @click="selectCommentThread(thread.id)"
                 >
@@ -1056,7 +1218,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 </button>
                 <button
                   v-if="thread.status !== 'resolved'"
-                  class="text-[11px] font-semibold px-2.5 py-1 border border-emerald-200 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+                  class="text-[11px] text-emerald-700 font-semibold px-2.5 py-1 border border-emerald-200 rounded bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
                   :disabled="props.commentMutating"
                   type="button"
                   @click="emit('resolveCommentThread', thread.id)"
@@ -1065,7 +1227,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 </button>
                 <button
                   v-else
-                  class="text-[11px] font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                  class="text-[11px] text-slate-700 font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-60"
                   :disabled="props.commentMutating"
                   type="button"
                   @click="emit('reopenCommentThread', thread.id)"
@@ -1077,455 +1239,477 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           </div>
         </template>
 
-        <template v-else-if="showDocumentAssistView">
-          <div class="space-y-3">
+        <template v-else>
+          <div class="workspace-chat-scroll-content">
             <div
               v-if="!props.aiEnabled"
-              class="workspace-right-sidebar__disabled-notice text-[11px] leading-5 text-amber-700 p-3 border border-amber-200 rounded bg-amber-50"
+              class="workspace-right-sidebar__disabled-notice text-[11px] text-amber-700 leading-5 p-3 border border-amber-200 rounded bg-amber-50"
             >
               {{ aiDisabledNoticeText }}
             </div>
-            <div class="p-3 border border-slate-200 rounded bg-white">
-              <div class="text-[10px] text-slate-500 font-semibold tracking-wide uppercase">
-                当前动作
-              </div>
-              <div class="text-[11px] text-slate-800 font-semibold mt-1">
-                {{ documentAssistActionLabel(props.documentAssistAction) }}
-              </div>
-              <div class="text-[10px] text-slate-500 mt-2 leading-5 whitespace-pre-wrap">
-                {{ documentAssistSelectionLabel }}
-              </div>
-            </div>
-
-            <div
-              v-if="props.documentAssistRunning"
-              class="text-[11px] text-blue-700 p-3 border border-blue-200 rounded bg-blue-50"
-            >
-              文稿助手正在生成结果，请稍候。
-            </div>
-
-            <div
-              v-if="props.documentAssistResult"
-              class="p-3 border border-slate-200 rounded bg-white"
-            >
-              <div class="text-[10px] text-slate-500 font-semibold tracking-wide uppercase">
-                结果预览
-              </div>
-              <div class="text-[11px] text-slate-700 mt-2 leading-6 whitespace-pre-wrap">
-                {{ props.documentAssistResult }}
-              </div>
-            </div>
-
-            <div
-              v-else-if="!props.documentAssistRunning"
-              class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed"
-            >
-              从正文里的浮动工具栏、`/` 菜单，或下面的动作按钮触发文稿助手。
-            </div>
-          </div>
-        </template>
-
-        <template v-else>
-          <div class="workspace-chat-scroll-content">
-          <div
-            v-if="!props.aiEnabled"
-            class="workspace-right-sidebar__disabled-notice text-[11px] leading-5 text-amber-700 p-3 border border-amber-200 rounded bg-amber-50"
-          >
-            {{ aiDisabledNoticeText }}
-          </div>
-          <div v-if="showChatSkeleton" class="workspace-chat-messages" aria-hidden="true">
-            <div
-              v-for="index in 4"
-              :key="`workspace-chat-skeleton-${index}`"
-              class="flex gap-2 items-start"
-              :class="index % 2 === 0 ? '' : 'justify-end'"
-            >
-              <div v-if="index % 2 === 0" class="rounded bg-slate-200 shrink-0 h-6 w-6 animate-pulse" />
+            <div v-if="showChatSkeleton" class="workspace-chat-messages" aria-hidden="true">
               <div
-                class="rounded-lg bg-slate-100 animate-pulse"
-                :class="index % 2 === 0 ? 'h-14 w-4/5 rounded-tl-none' : 'h-12 w-3/5 rounded-tr-none'"
-              />
-              <div v-if="index % 2 === 1" class="rounded-full bg-slate-200 shrink-0 h-6 w-6 animate-pulse" />
-            </div>
-          </div>
-          <div v-else class="workspace-chat-messages">
-            <div
-              v-for="(message, index) in visibleChatMessages"
-              :key="`${message.role}-${index}`"
-              class="flex gap-2 items-start"
-              :class="message.role === 'user' ? 'justify-end' : ''"
-            >
-              <div
-                v-if="message.role === 'assistant'"
-                class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
+                v-for="index in 4"
+                :key="`workspace-chat-skeleton-${index}`"
+                class="flex gap-2 items-start"
+                :class="index % 2 === 0 ? '' : 'justify-end'"
               >
-                <span class="material-symbols-outlined text-sm">smart_toy</span>
-              </div>
-
-              <div
-                class="text-[11px] leading-relaxed p-3 rounded-lg max-w-[86%] whitespace-pre-wrap"
-                :class="message.role === 'user'
-                  ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none'
-                  : 'bg-slate-100 text-slate-700 rounded-tl-none'"
-              >
-                {{ message.content }}
-              </div>
-
-              <div
-                v-if="message.role === 'user'"
-                class="flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
-              >
-                <UnifiedAvatar
-                  :name="currentUserName"
-                  :src="currentUserAvatarUrl"
-                  :size="24"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div v-if="showDialogAskEmpty" class="text-[11px] text-slate-500 leading-5 p-3 border border-slate-200 rounded border-dashed">
-            当前会话还没有消息，直接发送问题开始对话。
-          </div>
-
-          <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">
-            <template v-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'design'">
-              当前为设计助手，只做只读分析，优先帮助你梳理页面层级、布局结构、视觉一致性和交互说明。
-            </template>
-            <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'prototype'">
-              当前为原型助手，只做只读分析，优先帮助你梳理页面流转、模块拆分、关键状态和交互路径。
-            </template>
-            <template v-else>
-              当前为只读对话模式，只提供解释、澄清与下一步建议，不会写入项目。
-            </template>
-          </div>
-
-          <div v-if="aiMode === 'auto_optimize'" class="space-y-2">
-            <div class="text-[11px] text-amber-700 leading-5 p-3 border border-amber-200 rounded bg-amber-50">
-              当前模式只生成待审批提案，不会自动执行项目修改。
-            </div>
-            <div class="flex items-center justify-between">
-              <div class="text-xs text-slate-700 font-semibold">
-                待审批变更（{{ pendingChangeRequests.length }}）
-              </div>
-              <span v-if="changeRequestsLoading" class="text-[10px] text-slate-500">刷新中...</span>
-            </div>
-            <div v-if="pendingChangeRequests.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-              暂无待审批提案。发送请求后，AI 只会生成可审批提案，不会自动执行。
-            </div>
-            <div
-              v-for="change in pendingChangeRequests"
-              :key="change.id"
-              class="p-3 border border-slate-200 rounded bg-slate-50"
-            >
-              <div class="flex gap-2 items-start justify-between">
-                <div class="text-xs text-slate-800 leading-5 font-semibold">
-                  {{ change.title }}
-                </div>
-                <span
-                  v-if="change.destructive"
-                  class="text-[10px] text-rose-600 px-1.5 py-0.5 border border-rose-200 rounded bg-rose-50"
-                >
-                  破坏性
-                </span>
-              </div>
-              <div class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
-                {{ change.summary }}
-              </div>
-              <div class="text-[10px] text-slate-500 mt-1">
-                类型：{{ change.changeType }}
-              </div>
-              <div class="mt-2 flex gap-2 items-center">
-                <button
-                  class="text-[11px] text-emerald-700 px-2 py-1 border border-emerald-300 rounded bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
-                  :disabled="isChangeActing(change.id)"
-                  @click="emit('approveChange', change)"
-                >
-                  {{ isChangeActing(change.id)
-                    ? '处理中...'
-                    : (requiresSecondConfirm(change) ? '再次确认通过' : '通过') }}
-                </button>
-                <button
-                  class="text-[11px] text-slate-700 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-60"
-                  :disabled="isChangeActing(change.id)"
-                  @click="emit('rejectChange', change)"
-                >
-                  拒绝
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="aiMode === 'issue_discovery'" class="space-y-2">
-            <div class="text-[11px] text-amber-700 leading-5 p-3 border border-amber-200 rounded bg-amber-50">
-              当前模式固定从评分映射、证据链、量化指标、资料完整度四个维度扫描问题。
-            </div>
-            <div class="flex items-center justify-between">
-              <div class="text-xs text-slate-700 font-semibold">
-                寻疑结果
-              </div>
-              <span v-if="issueLoading" class="text-[10px] text-slate-500">刷新中...</span>
-            </div>
-
-            <div v-if="issueReport" class="p-3 border border-amber-200 rounded bg-amber-50">
-              <div class="text-xs text-amber-800 font-semibold">
-                {{ issueReport.title }}
-              </div>
-              <div class="text-[11px] text-amber-700 mt-1 whitespace-pre-wrap">
-                {{ issueReport.summary }}
-              </div>
-              <div class="workspace-issue-report-meta">
-                <span class="workspace-issue-report-status">
-                  {{ issueReportStatusLabel }}
-                </span>
-                <span v-if="issueReport.reviewSubmittedAt">
-                  提交时间：{{ issueReport.reviewSubmittedAt }}
-                </span>
-                <span v-if="issueReport.reviewSubmittedByUserId">
-                  提交人：{{ issueReport.reviewSubmittedByUsername || issueReport.reviewSubmittedByUserId }}
-                </span>
-              </div>
-              <div class="workspace-issue-report-actions">
-                <button
-                  class="workspace-issue-report-btn workspace-issue-report-btn--primary"
-                  type="button"
-                  :disabled="issueReportSubmitting || issueReport.reviewSubmissionStatus === 'submitted'"
-                  @click="requestSubmitIssueReport"
-                >
-                  {{ issueReportSubmitting
-                    ? '提交中...'
-                    : (issueReport.reviewSubmissionStatus === 'submitted' ? '已提交评审' : '提交评审') }}
-                </button>
-                <button
-                  class="workspace-issue-report-btn workspace-issue-report-btn--ghost"
-                  type="button"
-                  :disabled="issueReportExporting"
-                  @click="requestExportIssueReport"
-                >
-                  {{ issueReportExporting ? '导出中...' : '导出 Markdown' }}
-                </button>
-              </div>
-            </div>
-
-            <div
-              v-for="issue in projectIssues.slice(0, 8)"
-              :key="issue.id"
-              class="p-3 border border-slate-200 rounded bg-white"
-            >
-              <div class="flex gap-2 items-center justify-between">
-                <div class="text-[11px] text-slate-800 leading-5 font-semibold">
-                  {{ issue.title }}
-                </div>
-                <span :class="severityClass(issue.severity)">
-                  {{ severityLabel(issue.severity) }}
-                </span>
-              </div>
-              <div class="text-[11px] text-slate-600 mt-1">
-                证据：{{ issue.evidence || '暂无' }}
-              </div>
-              <div class="text-[11px] text-emerald-700 mt-1">
-                建议：{{ issue.recommendation || '暂无' }}
-              </div>
-            </div>
-
-            <div v-if="projectIssues.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-              暂无 issue 条目。执行一次“寻疑发现”后会生成结构化报告，并仅记录高置信问题。
-            </div>
-          </div>
-
-          <div v-if="aiMode === 'defense'" class="space-y-2">
-            <div class="p-3 border border-slate-200 rounded bg-slate-50">
-              <div class="flex gap-2 items-center justify-between">
-                <div>
-                  <div class="text-xs text-slate-700 font-semibold">
-                    答辩状态
-                  </div>
-                  <p class="text-[11px] text-slate-500 mt-1">
-                    阶段：{{ defenseStageLabel(defenseStage) }} · 已完成 {{ defenseTurnCount }} 轮
-                  </p>
-                </div>
-                <button
-                  class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                  :disabled="defenseSummaryLoading || !props.aiEnabled"
-                  @click="emit('generateDefenseSummary')"
-                >
-                  {{ defenseSummaryLoading ? '生成中...' : '生成总结' }}
-                </button>
-                <button
-                  class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                  :disabled="!props.aiEnabled"
-                  @click="emit('startDefenseRealtime')"
-                >
-                  语音答辩
-                </button>
-              </div>
-            </div>
-
-            <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
-              <div class="flex gap-2 items-center justify-between">
-                <div class="text-xs text-slate-700 font-semibold">
-                  评委人设
-                </div>
-                <div class="flex gap-2 items-center">
-                  <button
-                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
-                    @click="emit('importDefensePersonas')"
-                  >
-                    导入比赛预设
-                  </button>
-                  <button
-                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
-                    @click="openCreateDefensePersonaForm"
-                  >
-                    新建
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="defensePersonasLoading" class="text-[11px] text-slate-500">
-                人设加载中...
-              </div>
-              <div v-else-if="defensePersonas.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-                当前项目还没有答辩人设。可先导入比赛预设，再按项目需要调整。
-              </div>
-              <div v-else class="space-y-2">
+                <div v-if="index % 2 === 0" class="rounded bg-slate-200 shrink-0 h-6 w-6 animate-pulse" />
                 <div
-                  v-for="persona in defensePersonas"
-                  :key="persona.id"
-                  class="p-3 border border-slate-200 rounded bg-slate-50/60"
+                  class="rounded-lg bg-slate-100 animate-pulse"
+                  :class="index % 2 === 0 ? 'h-14 w-4/5 rounded-tl-none' : 'h-12 w-3/5 rounded-tr-none'"
+                />
+                <div v-if="index % 2 === 1" class="rounded-full bg-slate-200 shrink-0 h-6 w-6 animate-pulse" />
+              </div>
+            </div>
+            <div v-else class="workspace-chat-messages">
+              <div
+                v-for="entry in visibleChatMessageEntries"
+                :key="entry.id"
+                class="flex gap-2 items-start"
+                :class="entry.message.role === 'user' ? 'justify-end' : ''"
+              >
+                <div
+                  v-if="entry.message.role === 'assistant'"
+                  class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
                 >
-                  <div class="flex gap-2 items-start justify-between">
-                    <div>
-                      <div class="text-[11px] text-slate-800 font-semibold">
-                        {{ persona.name }}
+                  <span class="material-symbols-outlined text-sm">smart_toy</span>
+                </div>
+
+                <div
+                  class="flex flex-col gap-2 max-w-[86%]"
+                  :class="entry.message.role === 'user' ? 'items-end' : 'items-start'"
+                >
+                  <div
+                    class="text-[11px] leading-relaxed p-3 rounded-lg w-full whitespace-pre-wrap"
+                    :class="entry.message.role === 'user'
+                      ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none'
+                      : 'bg-slate-100 text-slate-700 rounded-tl-none'"
+                  >
+                    {{ entry.message.content }}
+                  </div>
+
+                  <div
+                    v-if="entry.message.role === 'assistant' && entry.agentDocDraft"
+                    class="workspace-agent-doc-card"
+                  >
+                    <div class="workspace-agent-doc-card__header">
+                      <div class="workspace-agent-doc-card__header-copy">
+                        <div class="workspace-agent-doc-card__eyebrow">
+                          AgentDoc 草案
+                        </div>
+                        <div class="workspace-agent-doc-card__title">
+                          {{ entry.agentDocDraft.title || '待确认修改' }}
+                        </div>
+                        <div v-if="entry.agentDocDraft.summary" class="workspace-agent-doc-card__summary">
+                          {{ entry.agentDocDraft.summary }}
+                        </div>
                       </div>
-                      <div class="text-[10px] text-slate-500 mt-1">
-                        {{ persona.judgeType }} · {{ persona.enabled ? '已启用' : '已停用' }}
+                      <div class="workspace-agent-doc-card__meta">
+                        <span class="workspace-agent-doc-card__action">
+                          {{ resolveAgentDocActionLabel(entry.agentDocDraft.action) }}
+                        </span>
+                        <span
+                          class="workspace-agent-doc-card__status"
+                          :class="`workspace-agent-doc-card__status--${resolveAgentDocDraftStatus(entry.agentDocDraft)}`"
+                        >
+                          {{ resolveAgentDocDraftStatusLabel(resolveAgentDocDraftStatus(entry.agentDocDraft)) }}
+                        </span>
                       </div>
                     </div>
-                    <div class="flex gap-1 items-center">
+
+                    <div class="workspace-agent-doc-card__diff">
+                      <div class="workspace-agent-doc-card__diff-header">
+                        <span>改前</span>
+                        <span>改后</span>
+                      </div>
+                      <div class="workspace-agent-doc-card__diff-body">
+                        <div
+                          v-for="row in buildAgentDocDiffRows(entry.agentDocDraft)"
+                          :key="row.key"
+                          class="workspace-agent-doc-card__diff-row"
+                          :class="resolveAgentDocDiffClass(row.kind)"
+                        >
+                          <div class="workspace-agent-doc-card__diff-side">
+                            <span class="workspace-agent-doc-card__diff-line-number">{{ row.leftLineNumber || ' ' }}</span>
+                            <pre class="workspace-agent-doc-card__diff-text">{{ row.leftText || ' ' }}</pre>
+                          </div>
+                          <div class="workspace-agent-doc-card__diff-side">
+                            <span class="workspace-agent-doc-card__diff-line-number">{{ row.rightLineNumber || ' ' }}</span>
+                            <pre class="workspace-agent-doc-card__diff-text">{{ row.rightText || ' ' }}</pre>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="workspace-agent-doc-card__footer">
                       <button
-                        class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
-                        @click="quickToggleDefensePersona(persona)"
+                        class="workspace-agent-doc-card__apply"
+                        type="button"
+                        :disabled="resolveAgentDocDraftStatus(entry.agentDocDraft) !== 'pending'"
+                        @click="requestApplyAgentDocDraft(entry.agentDocDraft)"
                       >
-                        {{ persona.enabled ? '停用' : '启用' }}
-                      </button>
-                      <button
-                        class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
-                        @click="openEditDefensePersonaForm(persona)"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        class="text-[10px] text-rose-600 px-2 border border-rose-200 rounded bg-white h-6 hover:bg-rose-50"
-                        @click="emit('deleteDefensePersona', persona.id)"
-                      >
-                        删除
+                        确认替换
                       </button>
                     </div>
                   </div>
-                  <p v-if="persona.summary" class="text-[11px] text-slate-600 mt-2">
-                    {{ persona.summary }}
-                  </p>
-                  <p v-if="persona.focusAreas.length > 0" class="text-[10px] text-slate-500 mt-1">
-                    关注点：{{ persona.focusAreas.join('、') }}
-                  </p>
+                </div>
+
+                <div
+                  v-if="entry.message.role === 'user'"
+                  class="flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
+                >
+                  <UnifiedAvatar
+                    :name="currentUserName"
+                    :src="currentUserAvatarUrl"
+                    :size="24"
+                  />
                 </div>
               </div>
+            </div>
 
-              <div v-if="defensePersonaFormVisible" class="p-3 border border-blue-200 rounded bg-blue-50/60 space-y-2">
-                <div class="flex gap-2 items-center justify-between">
-                  <div class="text-[11px] text-slate-800 font-semibold">
-                    {{ defensePersonaEditingId ? '编辑人设' : '新建人设' }}
+            <div v-if="showDialogAskEmpty" class="text-[11px] text-slate-500 leading-5 p-3 border border-slate-200 rounded border-dashed">
+              当前会话还没有消息，直接发送问题开始对话。
+            </div>
+
+            <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">
+              <template v-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'design'">
+                当前为设计助手，只做只读分析，优先帮助你梳理页面层级、布局结构、视觉一致性和交互说明。
+              </template>
+              <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'prototype'">
+                当前为原型助手，只做只读分析，优先帮助你梳理页面流转、模块拆分、关键状态和交互路径。
+              </template>
+              <template v-else>
+                当前为只读对话模式，只提供解释、澄清与下一步建议，不会写入项目。
+              </template>
+            </div>
+
+            <div v-if="aiMode === 'auto_optimize'" class="space-y-2">
+              <div class="text-[11px] text-amber-700 leading-5 p-3 border border-amber-200 rounded bg-amber-50">
+                当前模式只生成待审批提案，不会自动执行项目修改。
+              </div>
+              <div class="flex items-center justify-between">
+                <div class="text-xs text-slate-700 font-semibold">
+                  待审批变更（{{ pendingChangeRequests.length }}）
+                </div>
+                <span v-if="changeRequestsLoading" class="text-[10px] text-slate-500">刷新中...</span>
+              </div>
+              <div v-if="pendingChangeRequests.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+                暂无待审批提案。发送请求后，AI 只会生成可审批提案，不会自动执行。
+              </div>
+              <div
+                v-for="change in pendingChangeRequests"
+                :key="change.id"
+                class="p-3 border border-slate-200 rounded bg-slate-50"
+              >
+                <div class="flex gap-2 items-start justify-between">
+                  <div class="text-xs text-slate-800 leading-5 font-semibold">
+                    {{ change.title }}
                   </div>
-                  <button
-                    class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
-                    @click="defensePersonaFormVisible = false"
+                  <span
+                    v-if="change.destructive"
+                    class="text-[10px] text-rose-600 px-1.5 py-0.5 border border-rose-200 rounded bg-rose-50"
                   >
-                    取消
+                    破坏性
+                  </span>
+                </div>
+                <div class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
+                  {{ change.summary }}
+                </div>
+                <div class="text-[10px] text-slate-500 mt-1">
+                  类型：{{ change.changeType }}
+                </div>
+                <div class="mt-2 flex gap-2 items-center">
+                  <button
+                    class="text-[11px] text-emerald-700 px-2 py-1 border border-emerald-300 rounded bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
+                    :disabled="isChangeActing(change.id)"
+                    @click="emit('approveChange', change)"
+                  >
+                    {{ isChangeActing(change.id)
+                      ? '处理中...'
+                      : (requiresSecondConfirm(change) ? '再次确认通过' : '通过') }}
+                  </button>
+                  <button
+                    class="text-[11px] text-slate-700 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-60"
+                    :disabled="isChangeActing(change.id)"
+                    @click="emit('rejectChange', change)"
+                  >
+                    拒绝
                   </button>
                 </div>
-                <select v-model="defensePersonaForm.judgeType" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full">
-                  <option value="technical">
-                    technical
-                  </option>
-                  <option value="business">
-                    business
-                  </option>
-                  <option value="expression">
-                    expression
-                  </option>
-                  <option value="custom">
-                    custom
-                  </option>
-                </select>
-                <input v-model="defensePersonaForm.name" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full" placeholder="人设名称">
-                <textarea v-model="defensePersonaForm.summary" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="一句话说明评委关注点" />
-                <textarea v-model="defensePersonaForm.systemPrompt" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-28 w-full resize-none" placeholder="系统提示词" />
-                <textarea v-model="defensePersonaForm.focusAreasText" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="关注点，每行一个" />
-                <label class="text-[11px] text-slate-600 flex gap-2 items-center">
-                  <input v-model="defensePersonaForm.enabled" type="checkbox">
-                  新建后立即启用
-                </label>
-                <button
-                  class="text-[11px] text-white font-semibold px-3 border border-blue-500 rounded bg-blue-600 h-8 hover:bg-blue-500 disabled:opacity-60"
-                  :disabled="!defensePersonaForm.name.trim() || !defensePersonaForm.systemPrompt.trim()"
-                  @click="submitDefensePersonaForm"
-                >
-                  保存人设
-                </button>
               </div>
             </div>
 
-            <div v-if="defenseScorecard" class="p-3 border border-slate-200 rounded bg-slate-50">
-              <div class="text-xs text-slate-700 font-semibold">
-                答辩评分
+            <div v-if="aiMode === 'issue_discovery'" class="space-y-2">
+              <div class="text-[11px] text-amber-700 leading-5 p-3 border border-amber-200 rounded bg-amber-50">
+                当前模式固定从评分映射、证据链、量化指标、资料完整度四个维度扫描问题。
               </div>
-              <p class="text-[11px] text-slate-600 mt-1">
-                技术 {{ defenseScorecard.technical }} / 业务 {{ defenseScorecard.business }} / 表达 {{ defenseScorecard.expression }} / 总分 {{ defenseScorecard.total }}
-              </p>
-              <p class="text-[11px] text-slate-500 mt-1">
-                {{ defenseScorecard.summary }}
-              </p>
-              <p v-if="defenseScorecard.materialGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
-                材料缺口：{{ defenseScorecard.materialGaps.join('、') }}
-              </p>
-              <p v-if="defenseScorecard.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-1">
-                改进动作：{{ defenseScorecard.actionItems.join('、') }}
-              </p>
+              <div class="flex items-center justify-between">
+                <div class="text-xs text-slate-700 font-semibold">
+                  寻疑结果
+                </div>
+                <span v-if="issueLoading" class="text-[10px] text-slate-500">刷新中...</span>
+              </div>
+
+              <div v-if="issueReport" class="p-3 border border-amber-200 rounded bg-amber-50">
+                <div class="text-xs text-amber-800 font-semibold">
+                  {{ issueReport.title }}
+                </div>
+                <div class="text-[11px] text-amber-700 mt-1 whitespace-pre-wrap">
+                  {{ issueReport.summary }}
+                </div>
+                <div class="workspace-issue-report-meta">
+                  <span class="workspace-issue-report-status">
+                    {{ issueReportStatusLabel }}
+                  </span>
+                  <span v-if="issueReport.reviewSubmittedAt">
+                    提交时间：{{ issueReport.reviewSubmittedAt }}
+                  </span>
+                  <span v-if="issueReport.reviewSubmittedByUserId">
+                    提交人：{{ issueReport.reviewSubmittedByUsername || issueReport.reviewSubmittedByUserId }}
+                  </span>
+                </div>
+                <div class="workspace-issue-report-actions">
+                  <button
+                    class="workspace-issue-report-btn workspace-issue-report-btn--primary"
+                    type="button"
+                    :disabled="issueReportSubmitting || issueReport.reviewSubmissionStatus === 'submitted'"
+                    @click="requestSubmitIssueReport"
+                  >
+                    {{ issueReportSubmitting
+                      ? '提交中...'
+                      : (issueReport.reviewSubmissionStatus === 'submitted' ? '已提交评审' : '提交评审') }}
+                  </button>
+                  <button
+                    class="workspace-issue-report-btn workspace-issue-report-btn--ghost"
+                    type="button"
+                    :disabled="issueReportExporting"
+                    @click="requestExportIssueReport"
+                  >
+                    {{ issueReportExporting ? '导出中...' : '导出 Markdown' }}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-for="issue in projectIssues.slice(0, 8)"
+                :key="issue.id"
+                class="p-3 border border-slate-200 rounded bg-white"
+              >
+                <div class="flex gap-2 items-center justify-between">
+                  <div class="text-[11px] text-slate-800 leading-5 font-semibold">
+                    {{ issue.title }}
+                  </div>
+                  <span :class="severityClass(issue.severity)">
+                    {{ severityLabel(issue.severity) }}
+                  </span>
+                </div>
+                <div class="text-[11px] text-slate-600 mt-1">
+                  证据：{{ issue.evidence || '暂无' }}
+                </div>
+                <div class="text-[11px] text-emerald-700 mt-1">
+                  建议：{{ issue.recommendation || '暂无' }}
+                </div>
+              </div>
+
+              <div v-if="projectIssues.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+                暂无 issue 条目。执行一次“寻疑发现”后会生成结构化报告，并仅记录高置信问题。
+              </div>
             </div>
 
-            <div v-if="defenseSummary" class="p-3 border border-slate-200 rounded bg-white">
-              <div class="text-xs text-slate-700 font-semibold">
-                会话总结
+            <div v-if="aiMode === 'defense'" class="space-y-2">
+              <div class="p-3 border border-slate-200 rounded bg-slate-50">
+                <div class="flex gap-2 items-center justify-between">
+                  <div>
+                    <div class="text-xs text-slate-700 font-semibold">
+                      答辩状态
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-1">
+                      阶段：{{ defenseStageLabel(defenseStage) }} · 已完成 {{ defenseTurnCount }} 轮
+                    </p>
+                  </div>
+                  <button
+                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                    :disabled="defenseSummaryLoading || !props.aiEnabled"
+                    @click="emit('generateDefenseSummary')"
+                  >
+                    {{ defenseSummaryLoading ? '生成中...' : '生成总结' }}
+                  </button>
+                  <button
+                    class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                    :disabled="!props.aiEnabled"
+                    @click="emit('startDefenseRealtime')"
+                  >
+                    语音答辩
+                  </button>
+                </div>
               </div>
-              <p class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
-                {{ defenseSummary.summary }}
-              </p>
-              <p v-if="defenseSummary.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-2">
-                动作：{{ defenseSummary.actionItems.join('；') }}
-              </p>
-              <p v-if="defenseSummary.evidenceGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
-                证据缺口：{{ defenseSummary.evidenceGaps.join('；') }}
-              </p>
-            </div>
-            <div
-              v-for="(round, index) in defenseRounds"
-              :key="`${round.judge}-${index}`"
-              class="p-3 border border-slate-200 rounded bg-white"
-            >
-              <p class="text-xs text-slate-700 font-semibold">
-                {{ round.judge }} 评委（{{ round.score }}）
-              </p>
-              <p class="text-[11px] text-slate-700 mt-1">
-                问题：{{ round.question }}
-              </p>
-              <p class="text-[11px] text-slate-500 mt-1">
-                追问：{{ round.followUp }}
-              </p>
+
+              <div class="p-3 border border-slate-200 rounded bg-white space-y-2">
+                <div class="flex gap-2 items-center justify-between">
+                  <div class="text-xs text-slate-700 font-semibold">
+                    评委人设
+                  </div>
+                  <div class="flex gap-2 items-center">
+                    <button
+                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
+                      @click="emit('importDefensePersonas')"
+                    >
+                      导入比赛预设
+                    </button>
+                    <button
+                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
+                      @click="openCreateDefensePersonaForm"
+                    >
+                      新建
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="defensePersonasLoading" class="text-[11px] text-slate-500">
+                  人设加载中...
+                </div>
+                <div v-else-if="defensePersonas.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
+                  当前项目还没有答辩人设。可先导入比赛预设，再按项目需要调整。
+                </div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="persona in defensePersonas"
+                    :key="persona.id"
+                    class="p-3 border border-slate-200 rounded bg-slate-50/60"
+                  >
+                    <div class="flex gap-2 items-start justify-between">
+                      <div>
+                        <div class="text-[11px] text-slate-800 font-semibold">
+                          {{ persona.name }}
+                        </div>
+                        <div class="text-[10px] text-slate-500 mt-1">
+                          {{ persona.judgeType }} · {{ persona.enabled ? '已启用' : '已停用' }}
+                        </div>
+                      </div>
+                      <div class="flex gap-1 items-center">
+                        <button
+                          class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
+                          @click="quickToggleDefensePersona(persona)"
+                        >
+                          {{ persona.enabled ? '停用' : '启用' }}
+                        </button>
+                        <button
+                          class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
+                          @click="openEditDefensePersonaForm(persona)"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          class="text-[10px] text-rose-600 px-2 border border-rose-200 rounded bg-white h-6 hover:bg-rose-50"
+                          @click="emit('deleteDefensePersona', persona.id)"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                    <p v-if="persona.summary" class="text-[11px] text-slate-600 mt-2">
+                      {{ persona.summary }}
+                    </p>
+                    <p v-if="persona.focusAreas.length > 0" class="text-[10px] text-slate-500 mt-1">
+                      关注点：{{ persona.focusAreas.join('、') }}
+                    </p>
+                  </div>
+                </div>
+
+                <div v-if="defensePersonaFormVisible" class="p-3 border border-blue-200 rounded bg-blue-50/60 space-y-2">
+                  <div class="flex gap-2 items-center justify-between">
+                    <div class="text-[11px] text-slate-800 font-semibold">
+                      {{ defensePersonaEditingId ? '编辑人设' : '新建人设' }}
+                    </div>
+                    <button
+                      class="text-[10px] px-2 border border-slate-300 rounded bg-white h-6 hover:bg-slate-100"
+                      @click="defensePersonaFormVisible = false"
+                    >
+                      取消
+                    </button>
+                  </div>
+                  <select v-model="defensePersonaForm.judgeType" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full">
+                    <option value="technical">
+                      technical
+                    </option>
+                    <option value="business">
+                      business
+                    </option>
+                    <option value="expression">
+                      expression
+                    </option>
+                    <option value="custom">
+                      custom
+                    </option>
+                  </select>
+                  <input v-model="defensePersonaForm.name" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white w-full" placeholder="人设名称">
+                  <textarea v-model="defensePersonaForm.summary" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="一句话说明评委关注点" />
+                  <textarea v-model="defensePersonaForm.systemPrompt" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-28 w-full resize-none" placeholder="系统提示词" />
+                  <textarea v-model="defensePersonaForm.focusAreasText" class="text-[11px] px-2 py-1.5 border border-slate-200 rounded bg-white h-16 w-full resize-none" placeholder="关注点，每行一个" />
+                  <label class="text-[11px] text-slate-600 flex gap-2 items-center">
+                    <input v-model="defensePersonaForm.enabled" type="checkbox">
+                    新建后立即启用
+                  </label>
+                  <button
+                    class="text-[11px] text-white font-semibold px-3 border border-blue-500 rounded bg-blue-600 h-8 hover:bg-blue-500 disabled:opacity-60"
+                    :disabled="!defensePersonaForm.name.trim() || !defensePersonaForm.systemPrompt.trim()"
+                    @click="submitDefensePersonaForm"
+                  >
+                    保存人设
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="defenseScorecard" class="p-3 border border-slate-200 rounded bg-slate-50">
+                <div class="text-xs text-slate-700 font-semibold">
+                  答辩评分
+                </div>
+                <p class="text-[11px] text-slate-600 mt-1">
+                  技术 {{ defenseScorecard.technical }} / 业务 {{ defenseScorecard.business }} / 表达 {{ defenseScorecard.expression }} / 总分 {{ defenseScorecard.total }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-1">
+                  {{ defenseScorecard.summary }}
+                </p>
+                <p v-if="defenseScorecard.materialGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
+                  材料缺口：{{ defenseScorecard.materialGaps.join('、') }}
+                </p>
+                <p v-if="defenseScorecard.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-1">
+                  改进动作：{{ defenseScorecard.actionItems.join('、') }}
+                </p>
+              </div>
+
+              <div v-if="defenseSummary" class="p-3 border border-slate-200 rounded bg-white">
+                <div class="text-xs text-slate-700 font-semibold">
+                  会话总结
+                </div>
+                <p class="text-[11px] text-slate-600 mt-1 whitespace-pre-wrap">
+                  {{ defenseSummary.summary }}
+                </p>
+                <p v-if="defenseSummary.actionItems.length > 0" class="text-[11px] text-emerald-700 mt-2">
+                  动作：{{ defenseSummary.actionItems.join('；') }}
+                </p>
+                <p v-if="defenseSummary.evidenceGaps.length > 0" class="text-[11px] text-amber-700 mt-1">
+                  证据缺口：{{ defenseSummary.evidenceGaps.join('；') }}
+                </p>
+              </div>
+              <div
+                v-for="(round, index) in defenseRounds"
+                :key="`${round.judge}-${index}`"
+                class="p-3 border border-slate-200 rounded bg-white"
+              >
+                <p class="text-xs text-slate-700 font-semibold">
+                  {{ round.judge }} 评委（{{ round.score }}）
+                </p>
+                <p class="text-[11px] text-slate-700 mt-1">
+                  问题：{{ round.question }}
+                </p>
+                <p class="text-[11px] text-slate-500 mt-1">
+                  追问：{{ round.followUp }}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
         </template>
       </div>
 
@@ -1543,7 +1727,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               class="text-xs p-2.5 border border-slate-200 rounded-lg bg-slate-50 h-24 w-full resize-none placeholder:text-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
               placeholder="输入评论内容"
             />
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex gap-2 items-center justify-between">
               <button
                 class="text-[11px] font-semibold px-3 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-100"
                 type="button"
@@ -1552,7 +1736,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 取消
               </button>
               <button
-                class="text-[11px] font-semibold px-3 py-1.5 border border-blue-600 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-60"
+                class="text-[11px] text-white font-semibold px-3 py-1.5 border border-blue-600 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
                 :disabled="props.commentMutating || !commentDraftText.trim()"
                 type="button"
                 @click="submitCommentDraft"
@@ -1566,12 +1750,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             v-else-if="activeCommentThread"
             class="space-y-3"
           >
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex gap-2 items-center justify-between">
               <div class="text-[11px] text-slate-600 min-w-0">
                 回复线程：{{ activeCommentThread.summaryText || summarizeCommentAnchor(activeCommentThread.anchor) }}
               </div>
               <button
-                class="shrink-0 text-[11px] font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white text-slate-700 hover:bg-slate-100"
+                class="text-[11px] text-slate-700 font-semibold px-2.5 py-1 border border-slate-300 rounded bg-white shrink-0 hover:bg-slate-100"
                 type="button"
                 @click="selectCommentThread(activeCommentThread.id)"
               >
@@ -1584,7 +1768,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               placeholder="输入回复内容"
             />
             <button
-              class="text-[11px] font-semibold px-3 py-1.5 border border-blue-600 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-60"
+              class="text-[11px] text-white font-semibold px-3 py-1.5 border border-blue-600 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
               :disabled="props.commentMutating || !String(commentReplyDraftMap[activeCommentThread.id] || '').trim()"
               type="button"
               @click="submitCommentReply(activeCommentThread.id)"
@@ -1596,114 +1780,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           <div v-else class="text-[11px] text-slate-500">
             选择一个线程查看详情，或先在正文里发起新评论。
           </div>
-        </template>
-
-        <template v-else-if="showDocumentAssistView">
-          <div class="space-y-2">
-            <div class="grid grid-cols-3 gap-2">
-              <button
-                class="workspace-right-sidebar__doc-action"
-                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'summarize' }"
-                type="button"
-                :title="documentAssistActionDisabledReason('summarize')"
-                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('summarize')"
-                @click="emit('runDocumentAssist', 'summarize')"
-              >
-                总结
-              </button>
-              <button
-                class="workspace-right-sidebar__doc-action"
-                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'rewrite' }"
-                type="button"
-                :title="documentAssistActionDisabledReason('rewrite')"
-                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('rewrite')"
-                @click="emit('runDocumentAssist', 'rewrite')"
-              >
-                润写
-              </button>
-              <button
-                class="workspace-right-sidebar__doc-action"
-                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'continue' }"
-                type="button"
-                :title="documentAssistActionDisabledReason('continue')"
-                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('continue')"
-                @click="emit('runDocumentAssist', 'continue')"
-              >
-                续写
-              </button>
-              <button
-                class="workspace-right-sidebar__doc-action"
-                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'expand' }"
-                type="button"
-                :title="documentAssistActionDisabledReason('expand')"
-                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('expand')"
-                @click="emit('runDocumentAssist', 'expand')"
-              >
-                扩写
-              </button>
-              <button
-                class="workspace-right-sidebar__doc-action"
-                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'complete_context' }"
-                type="button"
-                :title="documentAssistActionDisabledReason('complete_context')"
-                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('complete_context')"
-                @click="emit('runDocumentAssist', 'complete_context')"
-              >
-                补全上下文
-              </button>
-              <button
-                class="workspace-right-sidebar__doc-action"
-                :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'restructure' }"
-                type="button"
-                :title="documentAssistActionDisabledReason('restructure')"
-                :disabled="props.documentAssistRunning || !documentAssistActionEnabled('restructure')"
-                @click="emit('runDocumentAssist', 'restructure')"
-              >
-                结构整理
-              </button>
-            </div>
-            <div
-              class="workspace-chat-composer__input-shell"
-              :class="{ 'workspace-chat-composer__input-shell--running': props.documentAssistRunning }"
-            >
-              <textarea
-                :value="chatInput"
-                class="workspace-chat-composer__textarea"
-                :placeholder="documentAssistComposerPlaceholder"
-                :disabled="documentAssistInputDisabled"
-                @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
-                @keydown="handleChatComposerKeydown"
-              />
-              <div class="workspace-chat-composer__footer workspace-chat-composer__footer--doc">
-                <div class="workspace-chat-composer__toolbar">
-                  <div class="workspace-chat-composer__doc-hint">
-                    {{ props.documentAssistAction ? documentAssistActionLabel(props.documentAssistAction) : '先选择动作' }}
-                  </div>
-                </div>
-                <button
-                  class="workspace-chat-composer__send"
-                  :class="{ 'workspace-chat-composer__send--running': props.documentAssistRunning }"
-                  :disabled="documentAssistSendDisabled"
-                  aria-label="发送文稿助手指令"
-                  title="发送文稿助手指令"
-                  @click="emit('sendChat')"
-                >
-                  <span class="workspace-chat-composer__send-spark" aria-hidden="true" />
-                  <span class="workspace-chat-composer__send-icon material-symbols-outlined">
-                    auto_awesome
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-          <button
-            class="workspace-right-sidebar__doc-apply"
-            type="button"
-            :disabled="!props.aiEnabled || !canApplyDocumentAssist"
-            @click="emit('applyDocumentAssist')"
-          >
-            应用到文档
-          </button>
         </template>
 
         <template v-else>
@@ -1721,25 +1797,25 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             />
             <div class="workspace-chat-composer__footer">
               <div class="workspace-chat-composer__toolbar">
-              <label
-                class="workspace-chat-composer__mode-pill"
-              >
-                <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
-                  auto_awesome
-                </span>
-                <select
-                  data-testid="workspace-right-sidebar-mode-select"
-                  class="workspace-mode-select workspace-mode-select--embedded"
-                  :value="modeSelectValue()"
-                  @change="handleModeSelectChange"
+                <label
+                  class="workspace-chat-composer__mode-pill"
                 >
-                  <option
-                    v-for="mode in props.workbenchMode === 'project' ? projectAssistantOptions : DEFENSE_MODES"
-                    :key="mode.value"
-                    :value="mode.value"
+                  <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
+                    auto_awesome
+                  </span>
+                  <select
+                    data-testid="workspace-right-sidebar-mode-select"
+                    class="workspace-mode-select workspace-mode-select--embedded"
+                    :value="modeSelectValue()"
+                    @change="handleModeSelectChange"
                   >
-                    {{ mode.label }}
-                  </option>
+                    <option
+                      v-for="mode in props.workbenchMode === 'project' ? projectAssistantOptions : DEFENSE_MODES"
+                      :key="mode.value"
+                      :value="mode.value"
+                    >
+                      {{ mode.label }}
+                    </option>
                   </select>
                   <span class="workspace-chat-composer__mode-chevron material-symbols-outlined" aria-hidden="true">
                     expand_more
@@ -1824,6 +1900,15 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-right-sidebar__header--compact > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0 !important;
+}
+
+.workspace-right-sidebar__header--flush {
+  padding: 0;
+  background: #fff;
+}
+
+.workspace-right-sidebar__header--flush > :not([hidden]) ~ :not([hidden]) {
   margin-top: 0 !important;
 }
 
@@ -2190,7 +2275,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-chat-composer__input-shell::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   padding: 1px;
@@ -2226,7 +2311,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-chat-composer__input-shell::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: -14px;
   border-radius: 38px;
@@ -2316,10 +2401,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   z-index: 1;
 }
 
-.workspace-chat-composer__footer--doc {
-  align-items: center;
-}
-
 .workspace-chat-composer__toolbar {
   display: flex;
   min-width: 0;
@@ -2327,20 +2408,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-
-.workspace-chat-composer__doc-hint {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  padding: 0 10px;
-  min-height: 30px;
-  border-radius: 999px;
-  background: rgba(239, 246, 255, 0.95);
-  color: #47627f;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.4;
 }
 
 .workspace-chat-composer__mode-pill {
@@ -2473,7 +2540,13 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
     radial-gradient(circle at 28% 28%, rgba(255, 217, 125, 0.96) 0%, rgba(255, 217, 125, 0) 34%),
     radial-gradient(circle at 74% 24%, rgba(129, 214, 255, 0.92) 0%, rgba(129, 214, 255, 0) 34%),
     radial-gradient(circle at 68% 76%, rgba(176, 132, 255, 0.9) 0%, rgba(176, 132, 255, 0) 32%),
-    conic-gradient(from 0deg, rgba(255, 208, 91, 0.2), rgba(96, 165, 250, 0.48), rgba(129, 140, 248, 0.32), rgba(255, 208, 91, 0.2));
+    conic-gradient(
+      from 0deg,
+      rgba(255, 208, 91, 0.2),
+      rgba(96, 165, 250, 0.48),
+      rgba(129, 140, 248, 0.32),
+      rgba(255, 208, 91, 0.2)
+    );
   filter: blur(8px);
   opacity: 0.95;
   animation: workspace-ai-send-spark 4.8s linear infinite;
@@ -2518,29 +2591,198 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   cursor: not-allowed;
 }
 
-.workspace-right-sidebar__doc-action {
-  height: 34px;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
+.workspace-agent-doc-card {
+  width: 100%;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
   background: #ffffff;
-  color: #334155;
-  font-size: 11px;
-  font-weight: 600;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
 }
 
-.workspace-right-sidebar__doc-action--active {
-  border-color: #93c5fd;
+.workspace-agent-doc-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid #e5edf7;
+}
+
+.workspace-agent-doc-card__header-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.workspace-agent-doc-card__eyebrow {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-agent-doc-card__title {
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.workspace-agent-doc-card__summary {
+  margin-top: 6px;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.workspace-agent-doc-card__meta {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.workspace-agent-doc-card__action,
+.workspace-agent-doc-card__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.workspace-agent-doc-card__action {
+  border: 1px solid #dbeafe;
   background: #eff6ff;
   color: #1d4ed8;
 }
 
-.workspace-right-sidebar__doc-action:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
+.workspace-agent-doc-card__status {
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+  color: #64748b;
 }
 
-.workspace-right-sidebar__doc-apply {
-  height: 36px;
+.workspace-agent-doc-card__status--pending {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.workspace-agent-doc-card__status--applied {
+  border-color: #bbf7d0;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.workspace-agent-doc-card__status--superseded,
+.workspace-agent-doc-card__status--expired {
+  border-color: #fde68a;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.workspace-agent-doc-card__diff {
+  background: #f8fafc;
+}
+
+.workspace-agent-doc-card__diff-header {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border-bottom: 1px solid #e5edf7;
+}
+
+.workspace-agent-doc-card__diff-header span {
+  padding: 10px 12px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-agent-doc-card__diff-header span:last-child {
+  border-left: 1px solid #e5edf7;
+}
+
+.workspace-agent-doc-card__diff-body {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.workspace-agent-doc-card__diff-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+}
+
+.workspace-agent-doc-card__diff-row + .workspace-agent-doc-card__diff-row {
+  border-top: 1px solid #edf2f7;
+}
+
+.workspace-agent-doc-card__diff-side {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 12px;
+}
+
+.workspace-agent-doc-card__diff-side:last-child {
+  border-left: 1px solid #e5edf7;
+}
+
+.workspace-agent-doc-card__diff-line-number {
+  color: #94a3b8;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+  text-align: right;
+}
+
+.workspace-agent-doc-card__diff-text {
+  margin: 0;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workspace-agent-doc-card__diff-row--change .workspace-agent-doc-card__diff-side {
+  background: rgba(254, 240, 138, 0.16);
+}
+
+.workspace-agent-doc-card__diff-row--delete .workspace-agent-doc-card__diff-side:first-child {
+  background: rgba(254, 226, 226, 0.45);
+}
+
+.workspace-agent-doc-card__diff-row--insert .workspace-agent-doc-card__diff-side:last-child {
+  background: rgba(220, 252, 231, 0.52);
+}
+
+.workspace-agent-doc-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px;
+  border-top: 1px solid #e5edf7;
+  background: #ffffff;
+}
+
+.workspace-agent-doc-card__apply {
+  min-height: 34px;
+  padding: 0 14px;
   border: 1px solid #2563eb;
   border-radius: 10px;
   background: #2563eb;
@@ -2549,9 +2791,9 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   font-weight: 700;
 }
 
-.workspace-right-sidebar__doc-apply:disabled {
+.workspace-agent-doc-card__apply:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .workspace-issue-pill {
