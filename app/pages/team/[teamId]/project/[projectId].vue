@@ -1007,7 +1007,7 @@ function closeWorkspaceContextMenu(options: { restoreFocus?: boolean, invokeClos
 }
 
 function openWorkspaceContextMenu(request: ContextMenuRequest): void {
-  if (!request.items.length)
+  if (workspaceShellLoading.value || !request.items.length)
     return
 
   closeWorkspaceContextMenu({
@@ -1279,6 +1279,14 @@ function handleWorkspaceKeyboardContextMenu(event: KeyboardEvent): boolean {
   if (!import.meta.client || !isWorkspaceContextMenuHotkey(event))
     return false
 
+  if (workspaceShellLoading.value) {
+    event.preventDefault()
+    closeWorkspaceContextMenu({
+      restoreFocus: false,
+    })
+    return true
+  }
+
   const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
   if (!activeElement)
     return false
@@ -1355,6 +1363,15 @@ function handleWorkspaceGlobalKeydown(event: KeyboardEvent): void {
 function handleWorkspaceShellContextMenu(event: MouseEvent): void {
   if (event.defaultPrevented)
     return
+
+  if (workspaceShellLoading.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    closeWorkspaceContextMenu({
+      restoreFocus: false,
+    })
+    return
+  }
 
   const editableContext = resolveWorkspaceEditableContext(event.target)
   if (editableContext) {
@@ -9154,6 +9171,15 @@ watch(aiMode, async (next, previous) => {
 
 watch(() => workspaceRealtime.connected.value, () => {
   syncFallbackResourceRefreshTimer()
+})
+
+watch(() => workspaceShellLoading.value, (loading) => {
+  if (!loading || !workspaceContextMenu.visible)
+    return
+
+  closeWorkspaceContextMenu({
+    restoreFocus: false,
+  })
 })
 </script>
 

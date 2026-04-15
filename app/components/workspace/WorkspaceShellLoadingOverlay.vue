@@ -12,7 +12,7 @@ const props = withDefaults(defineProps<{
 const WORDMARK_VIEWBOX_WIDTH = 1480
 const WORDMARK_VIEWBOX_HEIGHT = 320
 
-const displayProgress = ref(0)
+const displayProgress = ref(clampProgress(props.progress))
 const wordmarkBaseTextRef = ref<SVGTextElement | null>(null)
 const wordmarkBounds = ref({
   y: 0,
@@ -124,6 +124,7 @@ onBeforeUnmount(() => {
     aria-live="polite"
     aria-atomic="true"
     :aria-label="statusLabel"
+    @contextmenu.prevent.stop
   >
     <div class="workspace-shell-loading-overlay__content" aria-hidden="true">
       <svg
