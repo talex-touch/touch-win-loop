@@ -431,6 +431,7 @@ const feedbackSuccess = ref('')
 const mappingSaveSuccess = ref('')
 const writebackSaveSuccess = ref('')
 const autoSyncSaveSuccess = ref('')
+const autoSyncDraftText = ref(JSON.stringify(buildDefaultSyncItemConfig('contest').autoSync, null, 2))
 const editorRootRef = ref<HTMLElement>()
 const mappingDrawerRootRef = ref<HTMLElement>()
 const writebackDrawerRootRef = ref<HTMLElement>()
@@ -554,7 +555,13 @@ const mappingFocusFieldLabels = computed(() => previewFocusFields(itemForm.entit
 const selectedWritebackFieldCount = computed(() => WRITEBACK_FIELD_CONFIGS.filter(field => Boolean(toText(writebackForm[field.key]))).length)
 const writebackSelectableFieldCount = computed(() => fieldInspection.value.filter(field => Boolean(toText(field.fieldName))).length)
 const writebackStatusLabel = computed(() => writebackForm.enabled ? '已启用回填' : '未启用回填')
-const autoSyncStatusLabel = computed(() => autoSyncForm.enabled ? '已启用自动同步' : '未启用自动同步')
+const savedAutoSyncState = computed(() => buildAutoSyncFormState(parseJsonTextLoose(itemForm.autoSyncText), itemForm.entityType))
+const autoSyncStatusLabel = computed(() => savedAutoSyncState.value.enabled ? '已启用自动同步' : '未启用自动同步')
+const savedAutoSyncCompletedValues = computed(() => splitMultiValueText(savedAutoSyncState.value.completedValuesText))
+const savedAutoSyncWatchedFields = computed(() => splitMultiValueText(savedAutoSyncState.value.watchedFieldNamesText))
+const autoSyncSummaryText = computed(() => savedAutoSyncState.value.enabled
+  ? `预检、手动执行和事件同步都会只处理“${savedAutoSyncState.value.recordStatusField || '记录状态'} ∈ 已完成”且“${savedAutoSyncState.value.syncStatusField || '同步信息'} ∈ 未同步”的记录。`
+  : '当前未启用自动同步规则，预检和手动执行仍会按当前视图全量处理。')
 const autoSyncCompletedValues = computed<string[]>({
   get: () => splitMultiValueText(autoSyncForm.completedValuesText),
   set: values => autoSyncForm.completedValuesText = joinMultiValueText(values),
@@ -883,21 +890,27 @@ function fillOptionForm(raw: Record<string, unknown>) {
   optionForm.defaultResourceAccessLevel = toText(raw.defaultResourceAccessLevel || defaults.defaultResourceAccessLevel || 'public') || 'public'
 }
 
+function buildAutoSyncFormState(raw: Record<string, unknown>, entityType: FeishuBitableSyncItemEntityType): SyncAutoSyncFormState {
+  const defaults = buildDefaultSyncItemConfig(entityType).autoSync as Record<string, unknown>
+  return {
+    enabled: raw.enabled === undefined ? Boolean(defaults.enabled) : Boolean(raw.enabled),
+    recordStatusField: toText(raw.recordStatusField || defaults.recordStatusField || '记录状态') || '记录状态',
+    syncStatusField: toText(raw.syncStatusField || defaults.syncStatusField || '同步信息') || '同步信息',
+    completedValuesText: joinMultiValueText(raw.completedValues || defaults.completedValues || ['已完成']) || '已完成',
+    pendingValuesText: joinMultiValueText(raw.pendingValues || defaults.pendingValues || ['未同步']) || '未同步',
+    syncedValuesText: joinMultiValueText(raw.syncedValues || defaults.syncedValues || ['已同步']) || '已同步',
+    resetRecordStatusValue: toText(raw.resetRecordStatusValue || defaults.resetRecordStatusValue || '撰写中') || '撰写中',
+    resetSyncStatusValue: toText(raw.resetSyncStatusValue || defaults.resetSyncStatusValue || '未同步') || '未同步',
+    useMappedFieldsAsWatched: raw.useMappedFieldsAsWatched === undefined
+      ? Boolean(defaults.useMappedFieldsAsWatched ?? true)
+      : Boolean(raw.useMappedFieldsAsWatched),
+    watchedFieldNamesText: joinMultiValueText(raw.watchedFieldNames || defaults.watchedFieldNames),
+    ignoredFieldNamesText: joinMultiValueText(raw.ignoredFieldNames || defaults.ignoredFieldNames),
+  }
+}
+
 function fillAutoSyncForm(raw: Record<string, unknown>) {
-  const defaults = buildDefaultSyncItemConfig(itemForm.entityType).autoSync as Record<string, unknown>
-  autoSyncForm.enabled = raw.enabled === undefined ? Boolean(defaults.enabled) : Boolean(raw.enabled)
-  autoSyncForm.recordStatusField = toText(raw.recordStatusField || defaults.recordStatusField || '记录状态') || '记录状态'
-  autoSyncForm.syncStatusField = toText(raw.syncStatusField || defaults.syncStatusField || '同步信息') || '同步信息'
-  autoSyncForm.completedValuesText = joinMultiValueText(raw.completedValues || defaults.completedValues || ['已完成']) || '已完成'
-  autoSyncForm.pendingValuesText = joinMultiValueText(raw.pendingValues || defaults.pendingValues || ['未同步']) || '未同步'
-  autoSyncForm.syncedValuesText = joinMultiValueText(raw.syncedValues || defaults.syncedValues || ['已同步']) || '已同步'
-  autoSyncForm.resetRecordStatusValue = toText(raw.resetRecordStatusValue || defaults.resetRecordStatusValue || '撰写中') || '撰写中'
-  autoSyncForm.resetSyncStatusValue = toText(raw.resetSyncStatusValue || defaults.resetSyncStatusValue || '未同步') || '未同步'
-  autoSyncForm.useMappedFieldsAsWatched = raw.useMappedFieldsAsWatched === undefined
-    ? Boolean(defaults.useMappedFieldsAsWatched ?? true)
-    : Boolean(raw.useMappedFieldsAsWatched)
-  autoSyncForm.watchedFieldNamesText = joinMultiValueText(raw.watchedFieldNames || defaults.watchedFieldNames)
-  autoSyncForm.ignoredFieldNamesText = joinMultiValueText(raw.ignoredFieldNames || defaults.ignoredFieldNames)
+  Object.assign(autoSyncForm, buildAutoSyncFormState(raw, itemForm.entityType))
 }
 
 function fillWritebackForm(raw: Record<string, unknown>) {
@@ -1179,7 +1192,7 @@ function fillItemForm(item: FeishuBitableSyncItemDetail) {
     itemForm.writebackText = normalized.writebackText
     loadMappingWizardFromJson()
     loadOptionsFormFromJson(false)
-    loadAutoSyncFormFromJson(false)
+    resetAutoSyncDraft(false)
     loadWritebackFormFromJson(false)
   })
 }
@@ -1190,8 +1203,19 @@ function closeNestedConfigDrawers() {
   autoSyncDrawerVisible.value = false
 }
 
+function resetAutoSyncDraft(showNotice = false) {
+  const savedText = String(itemForm.autoSyncText || '').trim() || formatJson(buildDefaultSyncItemConfig(itemForm.entityType).autoSync)
+  autoSyncDraftText.value = savedText
+  withVisualSyncPaused(() => {
+    fillAutoSyncForm(parseJsonTextLoose(savedText))
+  })
+  if (showNotice)
+    setSuccess('已恢复到当前已保存的自动同步配置。')
+}
+
 function openAutoSyncDrawer() {
   clearFeedback()
+  resetAutoSyncDraft(false)
   autoSyncDrawerVisible.value = true
 }
 
@@ -1278,7 +1302,7 @@ function applyContestAutoSyncPreset() {
     autoSyncForm.useMappedFieldsAsWatched = true
   })
   syncAutoSyncFormToJson(false)
-  setSuccess('已套用竞赛库自动同步预设：记录状态=已完成，且同步信息=未同步。')
+  setSuccess('已套用竞赛库自动同步预设，点“保存配置”后才会生效。')
 }
 
 function withNewItemSuggestionSync(action: () => void) {
@@ -1330,7 +1354,7 @@ function syncOptionsFormToJson(showNotice = false) {
 }
 
 function loadAutoSyncFormFromJson(showNotice = true) {
-  const autoSync = parseJsonText(itemForm.autoSyncText, '自动同步配置')
+  const autoSync = parseJsonText(autoSyncDraftText.value, '自动同步配置')
   withVisualSyncPaused(() => {
     fillAutoSyncForm(autoSync)
   })
@@ -1339,7 +1363,7 @@ function loadAutoSyncFormFromJson(showNotice = true) {
 }
 
 function syncAutoSyncFormToJson(showNotice = false) {
-  itemForm.autoSyncText = formatJson(buildAutoSyncPayload())
+  autoSyncDraftText.value = formatJson(buildAutoSyncPayload())
   if (showNotice)
     setSuccess('已将自动同步配置同步到 JSON。')
 }
@@ -1396,6 +1420,7 @@ function applyRecommendedTemplateIfNeeded(entityType: FeishuBitableSyncItemEntit
     }
     if (isSyncItemConfigEmpty(autoSync)) {
       itemForm.autoSyncText = formatJson(defaults.autoSync)
+      autoSyncDraftText.value = itemForm.autoSyncText
       fillAutoSyncForm(defaults.autoSync as Record<string, unknown>)
     }
     if (isSyncItemConfigEmpty(writeback)) {
@@ -1954,7 +1979,7 @@ async function saveCurrentItem(saveContext: SaveCurrentItemContext = 'main') {
     syncWritebackFormToJson(false)
     mapping = parseJsonText(itemForm.mappingText, '字段映射')
     options = parseJsonText(itemForm.optionsText, '同步选项')
-    autoSync = parseJsonText(itemForm.autoSyncText, '自动同步配置')
+    autoSync = parseJsonText(autoSyncDraftText.value, '自动同步配置')
     writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
   }
   catch (error) {
@@ -2141,7 +2166,7 @@ async function previewCurrentItem() {
     syncWritebackFormToJson(false)
     const mapping = parseJsonText(itemForm.mappingText, '字段映射')
     const options = parseJsonText(itemForm.optionsText, '同步选项')
-    const autoSync = parseJsonText(itemForm.autoSyncText, '自动同步配置')
+    const autoSync = parseJsonText(autoSyncDraftText.value, '自动同步配置')
     const writeback = parseJsonText(itemForm.writebackText, '状态回填配置')
     const draft: FeishuBitableSyncItemPreviewRequest = {
       source: {
@@ -2317,6 +2342,12 @@ watch(autoSyncForm, () => {
     return
   syncAutoSyncFormToJson(false)
 }, { deep: true })
+
+watch(autoSyncDrawerVisible, (visible, previousVisible) => {
+  if (visible || !previousVisible)
+    return
+  resetAutoSyncDraft(false)
+})
 
 watch(writebackForm, () => {
   if (suppressVisualSync.value)
@@ -2837,7 +2868,15 @@ watch(() => props.selectedItemId, (value) => {
               <div class="gap-3 grid md:grid-cols-2 xl:grid-cols-3">
                 <label class="text-[11px] text-slate-600 font-medium block">
                   子表
-                  <a-select v-model="itemForm.tableId" class="mt-1" size="small" allow-search allow-clear :popup-container="selectPopupContainer" @change="handleItemTableChange">
+                  <a-select
+                    v-model="itemForm.tableId"
+                    class="mt-1"
+                    size="small"
+                    allow-search
+                    :popup-container="selectPopupContainer"
+                    placeholder="选择子表"
+                    @change="handleItemTableChange"
+                  >
                     <a-option v-for="item in availableTables" :key="item.tableId" :value="item.tableId">
                       {{ item.name }} ({{ item.tableId }})
                     </a-option>
@@ -2845,7 +2884,18 @@ watch(() => props.selectedItemId, (value) => {
                 </label>
                 <label class="text-[11px] text-slate-600 font-medium block">
                   视图
-                  <a-select v-model="itemForm.viewId" class="mt-1" size="small" allow-search allow-clear :popup-container="selectPopupContainer" @change="handleItemViewChange">
+                  <a-select
+                    v-model="itemForm.viewId"
+                    class="mt-1"
+                    size="small"
+                    allow-search
+                    :popup-container="selectPopupContainer"
+                    placeholder="选择视图（可选）"
+                    @change="handleItemViewChange"
+                  >
+                    <a-option :value="''">
+                      全部视图（不限制）
+                    </a-option>
                     <a-option v-for="item in availableViews" :key="item.viewId" :value="item.viewId">
                       {{ item.name }} ({{ item.viewId }})
                     </a-option>
@@ -2956,20 +3006,18 @@ watch(() => props.selectedItemId, (value) => {
                     </a-button>
                   </div>
                   <div class="flex flex-wrap gap-2">
-                    <a-tag size="small" :color="autoSyncForm.enabled ? 'green' : 'gray'">
+                    <a-tag size="small" :color="savedAutoSyncState.enabled ? 'green' : 'gray'">
                       {{ autoSyncStatusLabel }}
                     </a-tag>
                     <a-tag size="small" color="arcoblue">
-                      完成值 {{ autoSyncCompletedValues.length || 0 }}
+                      完成值 {{ savedAutoSyncCompletedValues.length || 0 }}
                     </a-tag>
                     <a-tag size="small" color="purple">
-                      额外监听 {{ autoSyncWatchedFields.length || 0 }}
+                      额外监听 {{ savedAutoSyncWatchedFields.length || 0 }}
                     </a-tag>
                   </div>
                   <p class="text-[11px] text-slate-600 m-0">
-                    {{ autoSyncForm.enabled
-                      ? `预检、手动执行和事件同步都会只处理“${autoSyncForm.recordStatusField || '记录状态'} ∈ 已完成”且“${autoSyncForm.syncStatusField || '同步信息'} ∈ 未同步”的记录。`
-                      : '当前未启用自动扫描规则，预检和手动执行仍会按当前视图全量处理。' }}
+                    {{ autoSyncSummaryText }}
                   </p>
                   <p v-if="autoSyncSaveSuccess" class="text-[11px] text-emerald-700 m-0">
                     {{ autoSyncSaveSuccess }}
@@ -4053,7 +4101,7 @@ watch(() => props.selectedItemId, (value) => {
                       </a-button>
                     </div>
                   </div>
-                  <a-textarea v-model="itemForm.autoSyncText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 16 }" />
+                  <a-textarea v-model="autoSyncDraftText" class="font-mono" :auto-size="{ minRows: 6, maxRows: 16 }" />
                 </section>
               </div>
             </a-collapse-item>
@@ -4139,7 +4187,15 @@ watch(() => props.selectedItemId, (value) => {
         </div>
         <label class="text-[11px] text-slate-600 font-medium block">
           子表 tableId
-          <a-select v-model="newItemForm.tableId" class="mt-1" size="small" allow-search allow-clear :popup-container="selectPopupContainer" @change="handleNewItemTableChange">
+          <a-select
+            v-model="newItemForm.tableId"
+            class="mt-1"
+            size="small"
+            allow-search
+            :popup-container="selectPopupContainer"
+            placeholder="选择子表"
+            @change="handleNewItemTableChange"
+          >
             <a-option v-for="item in availableTables" :key="item.tableId" :value="item.tableId">
               {{ item.name }} ({{ item.tableId }})
             </a-option>
@@ -4147,7 +4203,18 @@ watch(() => props.selectedItemId, (value) => {
         </label>
         <label class="text-[11px] text-slate-600 font-medium block">
           视图 viewId（可选）
-          <a-select v-model="newItemForm.viewId" class="mt-1" size="small" allow-search allow-clear :popup-container="selectPopupContainer" @change="handleNewItemViewChange">
+          <a-select
+            v-model="newItemForm.viewId"
+            class="mt-1"
+            size="small"
+            allow-search
+            :popup-container="selectPopupContainer"
+            placeholder="选择视图（可选）"
+            @change="handleNewItemViewChange"
+          >
+            <a-option :value="''">
+              全部视图（不限制）
+            </a-option>
             <a-option v-for="item in newItemViews" :key="item.viewId" :value="item.viewId">
               {{ item.name }} ({{ item.viewId }})
             </a-option>

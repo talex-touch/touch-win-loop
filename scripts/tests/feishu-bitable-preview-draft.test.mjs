@@ -15,9 +15,10 @@ describe('飞书多维表格版本草稿链路', () => {
     assert.match(componentSource, /const draft: FeishuBitableSyncItemPreviewRequest = \{/, '编辑器没有构造草稿预检请求')
     assert.match(componentSource, /source:\s*\{[\s\S]*appToken:[\s\S]*tableId:[\s\S]*viewId:/, '预检请求缺少来源草稿')
     assert.match(componentSource, /mapping,\s*options,\s*autoSync,\s*writeback,/, '预检请求缺少映射\/选项\/自动同步\/回填草稿')
+    assert.match(componentSource, /const autoSync = parseJsonText\(autoSyncDraftText\.value, '自动同步配置'\)/, '预检链路未读取自动同步 Drawer 草稿')
     assert.ok(saveBlockMatch, '未找到同步项保存逻辑')
     const saveBlock = saveBlockMatch[1]
-    assert.match(saveBlock, /autoSync = parseJsonText\(itemForm\.autoSyncText, '自动同步配置'\)/, '保存链路未解析自动同步草稿')
+    assert.match(saveBlock, /autoSync = parseJsonText\(autoSyncDraftText\.value, '自动同步配置'\)/, '保存链路未解析自动同步 Drawer 草稿')
     assert.match(saveBlock, /mapping,\s*options,\s*autoSync,\s*writeback,/, '保存链路未提交自动同步草稿')
     assert.match(saveBlock, /applySavedItemLocally\(data\)/, '保存后没有本地回写同步项状态')
     assert.doesNotMatch(saveBlock, /await loadSyncDetail\(/, '保存同步项后不应隐式整页重载')
