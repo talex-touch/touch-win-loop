@@ -3,6 +3,7 @@ import { setResponseStatus } from 'h3'
 import { buildTopicBoardPromptMessage, normalizeTopicBoardInput } from '~~/server/services/ai/topic-board-logic'
 import { executeTopicProposal } from '~~/server/services/ai/topic-proposal-service'
 import { fail, ok } from '~~/server/utils/api'
+import { buildAiNotConfiguredMessage } from '~~/server/utils/ai-runtime'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
@@ -158,6 +159,24 @@ export default defineEventHandler(async (event) => {
       }, 42982)
     }
 
-    throw error
+    if (message === buildAiNotConfiguredMessage('选题助手 AI')) {
+      setResponseStatus(event, 503)
+      return fail(message, {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 50382)
+    }
+
+    setResponseStatus(event, 502)
+    return fail(message || '选题助手调用失败，请稍后重试。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50282)
   }
 })

@@ -13,11 +13,16 @@ const WORDMARK_VIEWBOX_WIDTH = 1480
 const WORDMARK_VIEWBOX_HEIGHT = 320
 
 const displayProgress = ref(0)
+const wordmarkBaseTextRef = ref<SVGTextElement | null>(null)
+const wordmarkBounds = ref({
+  y: 0,
+  height: WORDMARK_VIEWBOX_HEIGHT,
+})
 
 const progressLabel = computed(() => `${Math.round(displayProgress.value)}%`)
 const statusLabel = computed(() => `${props.label} ${progressLabel.value}`)
-const progressClipHeight = computed(() => (WORDMARK_VIEWBOX_HEIGHT * displayProgress.value) / 100)
-const progressClipY = computed(() => WORDMARK_VIEWBOX_HEIGHT - progressClipHeight.value)
+const progressClipHeight = computed(() => (wordmarkBounds.value.height * displayProgress.value) / 100)
+const progressClipY = computed(() => (wordmarkBounds.value.y + wordmarkBounds.value.height) - progressClipHeight.value)
 
 let progressAnimationFrame: ReturnType<typeof requestAnimationFrame> | null = null
 
@@ -72,6 +77,40 @@ function animateProgress(nextProgress: number): void {
 }
 
 watch(() => props.progress, nextProgress => animateProgress(nextProgress), { immediate: true })
+watch(() => props.brand, () => {
+  void syncWordmarkBounds()
+})
+
+async function syncWordmarkBounds(): Promise<void> {
+  if (!import.meta.client)
+    return
+  await nextTick()
+  const textEl = wordmarkBaseTextRef.value
+  if (!textEl)
+    return
+  try {
+    const bounds = textEl.getBBox()
+    if (!Number.isFinite(bounds.y) || !Number.isFinite(bounds.height) || bounds.height <= 0)
+      return
+    const nextY = Math.max(0, bounds.y)
+    const nextHeight = Math.min(WORDMARK_VIEWBOX_HEIGHT - nextY, bounds.height)
+    if (nextHeight <= 0)
+      return
+    wordmarkBounds.value = {
+      y: nextY,
+      height: nextHeight,
+    }
+  }
+  catch {
+  }
+}
+
+onMounted(() => {
+  void syncWordmarkBounds()
+  if (!import.meta.client || !('fonts' in document) || !document.fonts?.ready)
+    return
+  void document.fonts.ready.then(() => syncWordmarkBounds())
+})
 
 onBeforeUnmount(() => {
   stopProgressAnimation()
@@ -103,6 +142,7 @@ onBeforeUnmount(() => {
           </clipPath>
         </defs>
         <text
+          ref="wordmarkBaseTextRef"
           x="50%"
           y="56%"
           text-anchor="middle"

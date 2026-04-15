@@ -1,9 +1,9 @@
 import type { AiProjectChatRequest, AiProjectChatResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
-import { runProjectChatFallback } from '~~/server/services/ai/fallback'
 import { runProjectChatChain } from '~~/server/services/ai/project-chat-chain'
 import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { fail, ok } from '~~/server/utils/api'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { requireAuth } from '~~/server/utils/auth'
 import {
   appendAiChatMessage,
@@ -78,6 +78,17 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40071)
+  }
+
+  if (!isAiRuntimeConfigured(channelAiConfig)) {
+    setResponseStatus(event, 503)
+    return fail(buildAiNotConfiguredMessage('项目对话 AI'), {
+      startedAt,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50371)
   }
 
   const includeInternal = Boolean(
@@ -269,21 +280,13 @@ export default defineEventHandler(async (event) => {
     }, 42971)
   }
 
-  const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
   let result: {
     data: AiProjectChatResult
     fallbackUsed: boolean
     attempts: number
   }
 
-  if (onlyFallback) {
-    result = {
-      data: runProjectChatFallback(safeRequest),
-      fallbackUsed: true,
-      attempts: 1,
-    }
-  }
-  else {
+  try {
     result = await runWithRetry({
       maxRetries: effectiveAiConfig.maxRetries,
       run: () => runProjectChatChain({
@@ -294,8 +297,17 @@ export default defineEventHandler(async (event) => {
         injectedPrompt: mergedInjectedPrompt,
         localContext: contextBundle.localContext,
       }),
-      fallback: () => runProjectChatFallback(safeRequest),
     })
+  }
+  catch (error) {
+    setResponseStatus(event, 502)
+    return fail(error instanceof Error ? error.message || '项目对话 AI 调用失败。' : '项目对话 AI 调用失败。', {
+      startedAt,
+      provider: effectiveAiConfig.provider,
+      model: effectiveAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50271)
   }
 
   const latestUserMessage = [...safeRequest.messages]
@@ -368,7 +380,7 @@ export default defineEventHandler(async (event) => {
         networkEnabled: effectiveAiSettings.networkEnabled,
         channelKey: channelRuntime.key,
         providerId: channelRuntime.provider?.id || null,
-        fallbackUsed: result.fallbackUsed,
+        fallbackUsed: false,
         attempts: result.attempts,
       },
     })
@@ -380,7 +392,7 @@ export default defineEventHandler(async (event) => {
     startedAt,
     provider: effectiveAiConfig.provider,
     model: effectiveAiConfig.model,
-    fallbackUsed: result.fallbackUsed,
+    fallbackUsed: false,
     attempts: result.attempts,
-  }, result.fallbackUsed ? 'fallback used' : 'ok')
+  }, 'ok')
 })

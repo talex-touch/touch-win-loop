@@ -27,6 +27,7 @@ import {
   createProjectIssueReportWithIssues,
 } from '~~/server/utils/project-ai-store'
 import { getProjectOutlineSnapshot } from '~~/server/utils/project-outline-store'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
@@ -237,6 +238,21 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40095)
+  }
+
+  if (!isAiRuntimeConfigured(workspaceAiConfig)) {
+    setResponseStatus(event, 503)
+    return fail(
+      buildAiNotConfiguredMessage(request.mode === 'document_assist' ? '文档 AI' : '工作台 AI'),
+      {
+        startedAt,
+        provider: workspaceAiConfig.provider,
+        model: workspaceAiConfig.model,
+        fallbackUsed: false,
+        attempts: 1,
+      },
+      50395,
+    )
   }
 
   if (!request.projectId && request.mode !== 'dialog_ask') {

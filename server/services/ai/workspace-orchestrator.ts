@@ -340,97 +340,6 @@ function buildIssueMarkdown(input: {
   return lines.join('\n').trim()
 }
 
-function buildDialogFallback(context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
-  return {
-    mode: 'dialog_ask',
-    assistantReply: context.latestUserMessage
-      ? `已基于当前项目配置与资料给出只读建议，不会修改项目数据。若需更准确结果，请补充“${context.latestUserMessage.slice(0, 24)}”涉及的对象与目标。`
-      : '已基于当前项目配置与资料给出只读建议，不会修改项目数据。',
-    changeDrafts: [],
-    issueDrafts: [],
-    reportTitle: '',
-    reportSummary: '',
-    reportMarkdown: '',
-  }
-}
-
-function buildAutoOptimizeFallback(context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
-  return {
-    mode: 'auto_optimize',
-    assistantReply: `当前上下文未识别出可安全落入审批链的优化提案。请补充更明确的目标字段、竞赛适配范围或资源对象后再试。`,
-    changeDrafts: [],
-    issueDrafts: [],
-    reportTitle: '',
-    reportSummary: '',
-    reportMarkdown: '',
-  }
-}
-
-function buildIssueDiscoveryFallback(): WorkspaceAiExecutionResult {
-  const reportTitle = 'AI 寻疑报告'
-  const reportSummary = '当前未发现高置信问题，或上下文不足以形成结构化结论。建议补充评分映射、证据链、量化指标与关键资料后再扫描。'
-  return {
-    mode: 'issue_discovery',
-    assistantReply: reportSummary,
-    changeDrafts: [],
-    issueDrafts: [],
-    reportTitle,
-    reportSummary,
-    reportMarkdown: buildIssueMarkdown({
-      title: reportTitle,
-      summary: reportSummary,
-      issues: [],
-    }),
-  }
-}
-
-function buildDocumentAssistFallback(context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
-  const selection = context.selectionText || '当前选区'
-  if (context.documentAction === 'rewrite') {
-    return {
-      mode: 'document_assist',
-      assistantReply: `改写建议：围绕“${selection.slice(0, 36)}”补齐主语、动作和结果，让句子更直接、更像项目文档。`,
-      changeDrafts: [],
-      issueDrafts: [],
-      reportTitle: '',
-      reportSummary: '',
-      reportMarkdown: '',
-    }
-  }
-
-  if (context.documentAction === 'continue') {
-    return {
-      mode: 'document_assist',
-      assistantReply: `建议继续补一段“目标、方法、预期产出”三句式说明，承接 ${context.resourceTitle || '当前文档'} 的上下文。`,
-      changeDrafts: [],
-      issueDrafts: [],
-      reportTitle: '',
-      reportSummary: '',
-      reportMarkdown: '',
-    }
-  }
-
-  return {
-    mode: 'document_assist',
-    assistantReply: `摘要：${selection.slice(0, 72) || context.resourceTitle || '当前文档'} 的核心是先明确问题，再用可验证路径组织方案与交付。`,
-    changeDrafts: [],
-    issueDrafts: [],
-    reportTitle: '',
-    reportSummary: '',
-    reportMarkdown: '',
-  }
-}
-
-function buildFallbackResult(mode: WorkspaceSupportedMode, context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
-  if (mode === 'auto_optimize')
-    return buildAutoOptimizeFallback(context)
-  if (mode === 'issue_discovery')
-    return buildIssueDiscoveryFallback()
-  if (mode === 'document_assist')
-    return buildDocumentAssistFallback(context)
-  return buildDialogFallback(context)
-}
-
 function buildModePrompt(profile: WorkspaceAgentProfile): string {
   if (profile.mode === 'dialog_ask') {
     return [
@@ -946,7 +855,6 @@ function finalizeWorkspaceExecutionResult(
   profile: WorkspaceAgentProfile,
   state: WorkspaceModeState,
   assistantText: string,
-  fallback: WorkspaceAiExecutionResult,
 ): WorkspaceAiExecutionResult {
   if (profile.mode === 'auto_optimize') {
     const hasProposals = state.changeDrafts.length > 0
@@ -954,7 +862,7 @@ function finalizeWorkspaceExecutionResult(
       mode: profile.mode,
       assistantReply: hasProposals
         ? (assistantText || '已生成可审批的优化提案，请逐条确认后再执行。')
-        : fallback.assistantReply,
+        : (assistantText || '当前无安全提案。'),
       changeDrafts: state.changeDrafts,
       issueDrafts: [],
       reportTitle: '',
@@ -965,15 +873,15 @@ function finalizeWorkspaceExecutionResult(
 
   if (profile.mode === 'issue_discovery') {
     const hasIssues = state.issueDrafts.length > 0
-    const reportTitle = toText(state.reportTitle) || fallback.reportTitle || 'AI 寻疑报告'
+    const reportTitle = toText(state.reportTitle) || 'AI 寻疑报告'
     const reportSummary = hasIssues
       ? (toText(state.reportSummary) || assistantText || '已完成问题扫描并生成结构化报告。')
-      : (fallback.reportSummary || fallback.assistantReply)
+      : (toText(state.reportSummary) || assistantText || '当前未发现高置信问题，或上下文不足以形成结构化结论。')
     return {
       mode: profile.mode,
       assistantReply: hasIssues
         ? (assistantText || reportSummary)
-        : fallback.assistantReply,
+        : reportSummary,
       changeDrafts: [],
       issueDrafts: state.issueDrafts,
       reportTitle,
@@ -988,7 +896,7 @@ function finalizeWorkspaceExecutionResult(
 
   return {
     mode: profile.mode,
-    assistantReply: assistantText || fallback.assistantReply,
+    assistantReply: assistantText || 'AI 未返回有效结果，请稍后重试。',
     changeDrafts: [],
     issueDrafts: [],
     reportTitle: '',
@@ -997,33 +905,10 @@ function finalizeWorkspaceExecutionResult(
   }
 }
 
-async function emitFallbackOutcome(
-  input: WorkspaceModeExecutionInput,
-  fallback: WorkspaceAiExecutionResult,
-): Promise<WorkspaceExecutionOutcome> {
-  for (const issue of fallback.issueDrafts)
-    await input.hooks.onIssue?.(issue)
-  for (const proposal of fallback.changeDrafts)
-    await input.hooks.onProposal?.(proposal)
-  for (const chunk of chunkText(fallback.assistantReply))
-    await input.hooks.onDelta?.(chunk)
-
-  return {
-    data: fallback,
-    fallbackUsed: true,
-    attempts: 1,
-  }
-}
-
 async function executeWorkspaceAgentMode(
   input: WorkspaceModeExecutionInput,
   profile: WorkspaceAgentProfile,
 ): Promise<WorkspaceExecutionOutcome> {
-  const fallback = buildFallbackResult(profile.mode, input.context)
-  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
-  if (onlyFallback)
-    return emitFallbackOutcome(input, fallback)
-
   const contextSnapshot = buildContextSnapshot(input.context)
   const channelPrompt = toText(input.channelPrompt)
 
@@ -1044,12 +929,11 @@ async function executeWorkspaceAgentMode(
         messages: buildWorkspaceConversationMessages(profile.mode, input.context, input.messages),
       })
 
-      const result = finalizeWorkspaceExecutionResult(profile, state, extractAssistantText(response), fallback)
+      const result = finalizeWorkspaceExecutionResult(profile, state, extractAssistantText(response))
       for (const chunk of chunkText(result.assistantReply))
         await input.hooks.onDelta?.(chunk)
       return result
     },
-    fallback: () => fallback,
   })
 
   return {

@@ -8,6 +8,7 @@ import type {
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { buildAiNotConfiguredMessage } from '~~/server/utils/ai-runtime'
 
 export interface DefenseSummaryResult {
   summary: string
@@ -107,63 +108,6 @@ function buildDefenseSummaryMarkdown(input: {
   return lines.join('\n')
 }
 
-function buildFallbackDefenseSummary(input: {
-  sessionTitle: string
-  currentStage?: AiDefenseStage
-  turnCount: number
-  turns: AiDefenseTurn[]
-  scorecard?: AiDefenseScorecard | null
-}): DefenseSummaryResult {
-  const turns = input.turns
-  const strengths = compactUnique(
-    turns
-      .filter(item => item.score >= 80)
-      .slice(0, 3)
-      .map(item => `${item.judgeName}认可：${item.comment}`),
-    '答辩结构基本完整，可继续压实证据。',
-  )
-  const risks = compactUnique(
-    turns
-      .filter(item => item.score < 80)
-      .slice(0, 3)
-      .map(item => `${item.judgeName}关注：${item.followUp}`),
-    '当前轮次没有暴露明显高风险点，但仍需补强量化证据。',
-  )
-  const actionItems = compactUnique(
-    [
-      ...(input.scorecard?.actionItems || []),
-      ...turns.slice(-3).map(item => `准备回答：${item.followUp}`),
-    ],
-    '补齐量化指标、落地路径和答辩卡片。',
-  )
-  const evidenceGaps = compactUnique(
-    [
-      ...(input.scorecard?.materialGaps || []),
-      ...turns.filter(item => item.evidenceRefs.length === 0).slice(0, 2).map(item => `${item.judgeName}问题缺少直接证据支持`),
-    ],
-    '需要补充与关键结论对应的直接证据。',
-  )
-  const summary = input.scorecard?.summary
-    || `当前会话已完成 ${input.turnCount} 轮模拟答辩，建议继续围绕技术、业务和表达三条线补齐答辩证据。`
-
-  const result: DefenseSummaryResult = {
-    summary,
-    strengths,
-    risks,
-    actionItems,
-    evidenceGaps,
-    markdown: '',
-  }
-  result.markdown = buildDefenseSummaryMarkdown({
-    sessionTitle: input.sessionTitle,
-    currentStage: input.currentStage,
-    turnCount: input.turnCount,
-    scorecard: input.scorecard,
-    result,
-  })
-  return result
-}
-
 export async function summarizeDefenseSessionByAi(input: {
   sessionTitle: string
   currentStage?: AiDefenseStage
@@ -174,7 +118,7 @@ export async function summarizeDefenseSessionByAi(input: {
   ai: AiRuntimeConfig
 }): Promise<DefenseSummaryResult> {
   if (!input.ai.apiKey || input.ai.provider === 'mock')
-    return buildFallbackDefenseSummary(input)
+    throw new Error(buildAiNotConfiguredMessage('答辩总结 AI'))
 
   const model = createChatModel(input.ai)
   const structuredModel = model.withStructuredOutput(defenseSummarySchema, {

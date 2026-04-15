@@ -47,6 +47,7 @@ const createAssetKind = ref<CanvasLibraryAssetKind>("image");
 const createPublishNow = ref(true);
 const createPayloadText = ref("");
 const createAssetFile = ref<File | null>(null);
+const createAssetInputRef = ref<HTMLInputElement | null>(null);
 const createAssetViewportRect = ref('{"x":0,"y":0,"width":0,"height":0}');
 const createAssetCornerRadius = ref("0");
 const createAssetPresetKeys = ref("");
@@ -74,6 +75,22 @@ function normalizeString(value: unknown): string {
   return String(value || "").trim();
 }
 
+function parseJsonText<T = unknown>(value: string, fieldLabel: string): T {
+  const text = value.trim();
+  if (!text) throw new Error(`${fieldLabel} 不能为空。`);
+  try {
+    return JSON.parse(text) as T;
+  }
+  catch {
+    throw new Error(`${fieldLabel} 不是合法 JSON。`);
+  }
+}
+
+function resetCreateAssetInput(): void {
+  createAssetFile.value = null;
+  if (createAssetInputRef.value) createAssetInputRef.value.value = "";
+}
+
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(endpoint(path), {
     credentials: "include",
@@ -86,14 +103,14 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 function syncSelectedEditor(detail: CanvasLibraryDetail | null): void {
+  const editableVersion = detail?.draftVersion || detail?.publishedVersion || null;
   editTitle.value = detail?.item.title || "";
   editSummary.value = detail?.item.summary || "";
   editSlug.value = detail?.item.slug || "";
   editTags.value = (detail?.item.tags || []).join(", ");
-  editPayloadType.value =
-    selectedEditableVersion.value?.payloadType || "scene_document";
-  editPayloadText.value = selectedEditableVersion.value
-    ? JSON.stringify(selectedEditableVersion.value.payload, null, 2)
+  editPayloadType.value = editableVersion?.payloadType || "scene_document";
+  editPayloadText.value = editableVersion
+    ? JSON.stringify(editableVersion.payload, null, 2)
     : "";
 }
 
@@ -109,6 +126,8 @@ async function loadItems(): Promise<void> {
     items.value = await apiRequest<CanvasLibraryItem[]>(
       `/admin/canvas-library/items${query.size ? `?${query.toString()}` : ""}`,
     );
+    if (selectedItemId.value && !items.value.some((item) => item.id === selectedItemId.value))
+      selectedItemId.value = "";
     if (!selectedItemId.value && items.value[0]?.id) {
       selectedItemId.value = items.value[0].id;
       await loadSelectedItem();
@@ -174,11 +193,12 @@ async function createLibraryItem(): Promise<void> {
     if (!createTitle.value.trim())
       throw new Error("标题不能为空。");
 
+    let created: CanvasLibraryDetail | null = null;
     if (createMode.value === "template") {
-      const payload = JSON.parse(createPayloadText.value || "{}");
+      const payload = parseJsonText(createPayloadText.value, "模板 payload");
       const payloadType: CanvasLibraryItemPayloadType =
         createTemplateTarget.value === "scene" ? "scene_document" : "design_fragment";
-      await apiRequest("/admin/canvas-library/items", {
+      created = await apiRequest<CanvasLibraryDetail>("/admin/canvas-library/items", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -221,7 +241,7 @@ async function createLibraryItem(): Promise<void> {
         method: "POST",
         body: formData,
       });
-      await apiRequest("/admin/canvas-library/items", {
+      created = await apiRequest<CanvasLibraryDetail>("/admin/canvas-library/items", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -249,7 +269,12 @@ async function createLibraryItem(): Promise<void> {
     createSlug.value = "";
     createTags.value = "";
     createPayloadText.value = "";
-    createAssetFile.value = null;
+    resetCreateAssetInput();
+    if (created?.item.id) {
+      selectedItemId.value = created.item.id;
+      selectedDetail.value = created;
+      syncSelectedEditor(created);
+    }
     await loadItems();
   }
   catch (error: any) {
@@ -265,6 +290,9 @@ async function saveSelectedItem(): Promise<void> {
   mutating.value = true;
   errorText.value = "";
   try {
+    const nextPayload = editPayloadText.value.trim()
+      ? parseJsonText(editPayloadText.value, "版本 payload")
+      : undefined;
     await apiRequest(
       `/admin/canvas-library/items/${encodeURIComponent(selectedDetail.value.item.id)}`,
       {
@@ -280,13 +308,9 @@ async function saveSelectedItem(): Promise<void> {
             .split(/[，,\n]+/)
             .map((item) => item.trim())
             .filter(Boolean),
-          payloadType: editPayloadText.value.trim() ? editPayloadType.value : undefined,
-          payload: editPayloadText.value.trim()
-            ? JSON.parse(editPayloadText.value)
-            : undefined,
-          previewPayload: editPayloadText.value.trim()
-            ? JSON.parse(editPayloadText.value)
-            : undefined,
+          payloadType: nextPayload !== undefined ? editPayloadType.value : undefined,
+          payload: nextPayload,
+          previewPayload: nextPayload,
         }),
       },
     );
@@ -551,6 +575,7 @@ onMounted(async () => {
               <option value="device_shell">device_shell</option>
             </select>
             <input
+              ref="createAssetInputRef"
               class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
               type="file"
               accept="image/png,image/jpeg,image/webp,image/svg+xml"

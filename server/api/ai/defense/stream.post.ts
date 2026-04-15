@@ -10,8 +10,8 @@ import type {
 import { createEventStream, setResponseStatus } from 'h3'
 import { runDefenseChain } from '~~/server/services/ai/defense-chain'
 import { buildDefenseContextPack } from '~~/server/services/ai/defense-context'
-import { runDefenseFallback } from '~~/server/services/ai/fallback'
 import { fail } from '~~/server/utils/api'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordBillingUsageEventSafely } from '~~/server/utils/billing-usage-tracker'
 import {
@@ -164,6 +164,17 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40074)
+  }
+
+  if (!isAiRuntimeConfigured(channelAiConfig)) {
+    setResponseStatus(event, 503)
+    return fail(buildAiNotConfiguredMessage('答辩模拟 AI'), {
+      startedAt,
+      provider: channelAiConfig.provider,
+      model: channelAiConfig.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 50374)
   }
 
   const includeInternal = Boolean(
@@ -418,30 +429,22 @@ export default defineEventHandler(async (event) => {
         stageHint: stage,
       }
 
-      const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
-      const execution = onlyFallback
-        ? {
-            data: runDefenseFallback(effectiveRequest),
-            fallbackUsed: true,
-            attempts: 1,
-          }
-        : await runWithRetry<AiDefenseResult>({
-            maxRetries: effectiveAiConfig.maxRetries,
-            run: () => runDefenseChain({
-              request: effectiveRequest,
-              ai: effectiveAiConfig,
-              contestName: contextPack.contestName,
-              trackName: contextPack.trackName,
-              injectedPrompt: mergedInjectedPrompt,
-              rubricDigest: contextPack.rubricDigest,
-              promptContextText: contextPack.promptContextText,
-              evidenceRefs: contextPack.evidenceRefs,
-              personas: contextPack.personas,
-              stage,
-              turnIndex,
-            }),
-            fallback: () => runDefenseFallback(effectiveRequest),
-          })
+      const execution = await runWithRetry<AiDefenseResult>({
+        maxRetries: effectiveAiConfig.maxRetries,
+        run: () => runDefenseChain({
+          request: effectiveRequest,
+          ai: effectiveAiConfig,
+          contestName: contextPack.contestName,
+          trackName: contextPack.trackName,
+          injectedPrompt: mergedInjectedPrompt,
+          rubricDigest: contextPack.rubricDigest,
+          promptContextText: contextPack.promptContextText,
+          evidenceRefs: contextPack.evidenceRefs,
+          personas: contextPack.personas,
+          stage,
+          turnIndex,
+        }),
+      })
 
       const result: AiDefenseResult = {
         ...execution.data,

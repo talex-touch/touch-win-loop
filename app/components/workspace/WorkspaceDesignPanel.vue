@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import type {
+  ApiResponse,
+  CanvasLibraryBinaryAssetPayload,
+  CanvasLibraryFrameTemplatePayload,
+  CanvasLibraryItem,
+  CanvasLibraryItemVersion,
+  CanvasLibraryOriginMetadata,
+  CanvasLibraryPageTemplatePayload,
   CompositionModel,
   DesignAssetModel,
   DesignElementModel,
   DesignFrameKind,
   DesignFrameModel,
   DesignPageModel,
+  Resource,
   GraphSourceEdge,
   GraphSourceGroup,
   GraphSourceModel,
@@ -44,11 +52,15 @@ import {
 } from "~~/app/composables/useDesignToolController";
 import {
   appendDesignFrameToSceneDocument,
+  appendDesignAssetToSceneDocument,
   appendDesignElementToSceneDocument,
   appendDesignPageToSceneDocument,
+  buildDesignAssetFromCanvasLibraryPayload,
   buildDeviceMockupSceneDocument,
   canDesignFrameCreateElements,
   DEVICE_FRAME_PRESETS,
+  mergeCanvasLibraryFrameTemplate,
+  mergeCanvasLibraryPageTemplate,
   exportArchitectureModelToMermaid,
   exportSchemaModelToDDL,
   importArchitectureFromMetadata,
@@ -112,6 +124,9 @@ const props = withDefaults(
     hasDesignResource?: boolean;
     designResourceId?: string;
     boundResourceId?: string;
+    projectId?: string;
+    currentUserId?: string;
+    isPlatformAdminUser?: boolean;
     designPanelTitle?: string;
     collabRevision?: number;
     collabConnected?: boolean;
@@ -126,6 +141,9 @@ const props = withDefaults(
     hasDesignResource: false,
     designResourceId: "",
     boundResourceId: "",
+    projectId: "",
+    currentUserId: "",
+    isPlatformAdminUser: false,
     designPanelTitle: "设计画布",
     collabRevision: 0,
     collabConnected: false,
@@ -140,6 +158,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   "update:modelValue": [value: string];
   updateCollabCursor: [value: { cursorX?: number, cursorY?: number }];
+  activateResource: [resourceId: string];
 }>();
 
 const templateOptions = SYSTEM_SCENE_TEMPLATES.filter(
@@ -149,6 +168,8 @@ const DEFAULT_TEMPLATE_KEY =
   templateOptions[0]?.templateKey || "device-showcase";
 const DEFAULT_DEVICE_FRAME_KEY =
   DEVICE_FRAME_PRESETS[0]?.key || "iphone-16-pro";
+const runtime = useRuntimeConfig();
+const { endpoint } = useApiEndpoint(runtime);
 
 const draftDocument = ref<SceneDocument>(
   buildDeviceMockupSceneDocument({
@@ -170,6 +191,15 @@ const sidebarCollapsed = ref(false);
 const inspectorCollapsed = ref(false);
 const actionMenuOpen = ref(false);
 const actionMenuRef = ref<HTMLElement | null>(null);
+const canvasLibrarySearch = ref("");
+const canvasLibraryItems = ref<CanvasLibraryItem[]>([]);
+const canvasLibraryLoading = ref(false);
+const canvasLibraryError = ref("");
+const canvasLibraryActioningId = ref("");
+const canvasLibraryPublishScope = ref<"scene" | "page" | "frame">("scene");
+const canvasLibraryPublishTitle = ref("");
+const canvasLibraryPublishSummary = ref("");
+const canvasLibraryPublishTags = ref("");
 const collapsedLayerNodeIds = ref<string[]>([]);
 const layerTreeMenuVisible = ref(false);
 const layerTreeMenuNodeId = ref("");
@@ -936,6 +966,31 @@ const availableDeviceArtboards = computed(() => {
       pageId: frame.pageId,
     }));
 });
+const filteredCanvasLibraryItems = computed(() => {
+  const keyword = canvasLibrarySearch.value.trim().toLowerCase();
+  return canvasLibraryItems.value.filter((item) => {
+    if (!keyword) return true;
+    return [item.title, item.summary, item.slug, ...(item.tags || [])]
+      .join(" ")
+      .toLowerCase()
+      .includes(keyword);
+  });
+});
+const canvasLibraryTemplateItems = computed(() => {
+  return filteredCanvasLibraryItems.value.filter((item) => item.kind === "template");
+});
+const canvasLibraryAssetItems = computed(() => {
+  return filteredCanvasLibraryItems.value.filter((item) => item.kind === "asset");
+});
+watch(
+  () => props.projectId,
+  () => {
+    void loadCanvasLibraryItems();
+  },
+  {
+    immediate: true,
+  },
+);
 function resolveFrameElements(
   frame: DesignFrameModel | null | undefined,
 ): DesignElementModel[] {
@@ -2412,6 +2467,9 @@ function buildSelectionGeometryPatches<
   T extends { id: string; x: number; y: number; width: number; height: number },
 >(items: T[], command: string): Map<string, Partial<T>> {
   const patches = new Map<string, Partial<T>>();
+  const setPatch = (itemId: string, patch: Partial<T>): void => {
+    patches.set(itemId, patch);
+  };
   if (!items.length) return patches;
 
   const bounds = resolveSelectionBounds(items);
@@ -2428,78 +2486,84 @@ function buildSelectionGeometryPatches<
 
   if (command === "align-left") {
     items.forEach((item) =>
-      patches.set(item.id, { x: Math.round(bounds.minX) }),
+      setPatch(item.id, { x: Math.round(bounds.minX) } as Partial<T>),
     );
     return patches;
   }
   if (command === "align-center-x") {
     items.forEach((item) =>
-      patches.set(item.id, { x: Math.round(bounds.centerX - item.width / 2) }),
+      setPatch(
+        item.id,
+        { x: Math.round(bounds.centerX - item.width / 2) } as Partial<T>,
+      ),
     );
     return patches;
   }
   if (command === "align-right") {
     items.forEach((item) =>
-      patches.set(item.id, { x: Math.round(bounds.maxX - item.width) }),
+      setPatch(item.id, { x: Math.round(bounds.maxX - item.width) } as Partial<T>),
     );
     return patches;
   }
   if (command === "align-top") {
     items.forEach((item) =>
-      patches.set(item.id, { y: Math.round(bounds.minY) }),
+      setPatch(item.id, { y: Math.round(bounds.minY) } as Partial<T>),
     );
     return patches;
   }
   if (command === "align-center-y") {
     items.forEach((item) =>
-      patches.set(item.id, { y: Math.round(bounds.centerY - item.height / 2) }),
+      setPatch(
+        item.id,
+        { y: Math.round(bounds.centerY - item.height / 2) } as Partial<T>,
+      ),
     );
     return patches;
   }
   if (command === "align-bottom") {
     items.forEach((item) =>
-      patches.set(item.id, { y: Math.round(bounds.maxY - item.height) }),
+      setPatch(item.id, { y: Math.round(bounds.maxY - item.height) } as Partial<T>),
     );
     return patches;
   }
   if (command === "match-width") {
     if (items.length < 2 || referenceWidth <= 0) return patches;
     items.forEach((item) =>
-      patches.set(item.id, { width: Math.round(referenceWidth) }),
+      setPatch(item.id, { width: Math.round(referenceWidth) } as Partial<T>),
     );
     return patches;
   }
   if (command === "match-height") {
     if (items.length < 2 || referenceHeight <= 0) return patches;
     items.forEach((item) =>
-      patches.set(item.id, { height: Math.round(referenceHeight) }),
+      setPatch(item.id, { height: Math.round(referenceHeight) } as Partial<T>),
     );
     return patches;
   }
   if (command === "mirror-x") {
     items.forEach((item) => {
-      patches.set(item.id, {
+      setPatch(item.id, {
         x: Math.round(bounds.minX + bounds.maxX - item.x - item.width),
-      });
+      } as Partial<T>);
     });
     return patches;
   }
   if (command === "mirror-y") {
     items.forEach((item) => {
-      patches.set(item.id, {
+      setPatch(item.id, {
         y: Math.round(bounds.minY + bounds.maxY - item.y - item.height),
-      });
+      } as Partial<T>);
     });
     return patches;
   }
   if (command === "snap-grid") {
     items.forEach((item) => {
-      patches.set(item.id, {
+      setPatch(item.id, {
         x: Math.round(item.x / 8) * 8,
         y: Math.round(item.y / 8) * 8,
         width: Math.max(8, Math.round(item.width / 8) * 8),
         height: Math.max(8, Math.round(item.height / 8) * 8),
-      });
+      } as Partial<T>);
     });
     return patches;
   }
@@ -2510,7 +2574,7 @@ function buildSelectionGeometryPatches<
     const gap = (bounds.width - totalWidth) / (ordered.length - 1);
     let cursor = bounds.minX;
     for (const item of ordered) {
-      patches.set(item.id, { x: Math.round(cursor) });
+      setPatch(item.id, { x: Math.round(cursor) } as Partial<T>);
       cursor += item.width + gap;
     }
     return patches;
@@ -2522,7 +2586,7 @@ function buildSelectionGeometryPatches<
     const gap = (bounds.height - totalHeight) / (ordered.length - 1);
     let cursor = bounds.minY;
     for (const item of ordered) {
-      patches.set(item.id, { y: Math.round(cursor) });
+      setPatch(item.id, { y: Math.round(cursor) } as Partial<T>);
       cursor += item.height + gap;
     }
     return patches;
@@ -2828,6 +2892,7 @@ function buildLayerTreeMenuItems(node: DesignLayerTreeNode): ContextMenuItem[] {
   }
 
   if (node.type === "frame" && node.frameId) {
+    const frame = currentPageFrameMap.value.get(normalizeString(node.frameId)) || null;
     items.push(
       {
         key: "move-up",
@@ -3030,6 +3095,7 @@ function applyImageToSelectedFrame(src: string): void {
     selectedFrame.value.kind === "device_mockup" ||
     selectedFrame.value.kind === "template";
   const isDeviceArtboard = selectedFrame.value.kind === "device_artboard";
+  const existingElements = resolveFrameElements(selectedFrame.value);
   const nextElements = upsertFrameElement(
     selectedFrame.value,
     (element) => element.id === "hero-image" || element.type === "image",
@@ -3040,6 +3106,11 @@ function applyImageToSelectedFrame(src: string): void {
       y: isMarketingFrame ? 128 : isDeviceArtboard ? 0 : 220,
       width: isMarketingFrame ? 520 : isDeviceArtboard ? selectedFrame.value.width : 320,
       height: isMarketingFrame ? 640 : isDeviceArtboard ? selectedFrame.value.height : 220,
+      pageId: selectedFrame.value.pageId,
+      frameId: selectedFrame.value.id,
+      zIndex: existingElements.length + 1,
+      locked: false,
+      hidden: false,
       imageSrc: src,
     },
   );
@@ -3076,6 +3147,221 @@ async function readImageDimensions(
 
 function createAssetId(): string {
   return `asset-${Date.now()}`;
+}
+
+async function requestCanvasLibraryApi<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(endpoint(path), {
+    credentials: "include",
+    ...init,
+  });
+  const result = (await response.json().catch(() => null)) as ApiResponse<T> | null;
+  if (!response.ok || !result || result.code !== 0) {
+    throw new Error(String(result?.message || "画布资源库请求失败。"));
+  }
+  return result.data;
+}
+
+function notifyCanvasLibraryError(message: string): void {
+  canvasLibraryError.value = message;
+  if (import.meta.client) window.alert(message);
+}
+
+async function loadCanvasLibraryItems(): Promise<void> {
+  const projectId = normalizeString(props.projectId);
+  if (!projectId) {
+    canvasLibraryItems.value = [];
+    canvasLibraryError.value = "";
+    return;
+  }
+
+  canvasLibraryLoading.value = true;
+  canvasLibraryError.value = "";
+  try {
+    const items = await requestCanvasLibraryApi<CanvasLibraryItem[]>(
+      `/projects/${encodeURIComponent(projectId)}/design-library/items`,
+    );
+    canvasLibraryItems.value = items;
+  }
+  catch (error: any) {
+    canvasLibraryItems.value = [];
+    canvasLibraryError.value = String(error?.message || "资源库加载失败。");
+  }
+  finally {
+    canvasLibraryLoading.value = false;
+  }
+}
+
+function buildCanvasLibraryImportOrigin(
+  version: CanvasLibraryItemVersion,
+): CanvasLibraryOriginMetadata {
+  return {
+    itemId: version.itemId,
+    versionId: version.id,
+    importedAt: new Date().toISOString(),
+    importedBy: normalizeString(props.currentUserId) || "anonymous",
+    source: "canvas_library",
+  };
+}
+
+async function importCanvasLibraryItem(item: CanvasLibraryItem): Promise<void> {
+  const projectId = normalizeString(props.projectId);
+  if (!projectId) return;
+
+  canvasLibraryActioningId.value = item.id;
+  try {
+    const detail = await requestCanvasLibraryApi<{
+      item: CanvasLibraryItem;
+      draftVersion: CanvasLibraryItemVersion | null;
+      publishedVersion: CanvasLibraryItemVersion | null;
+      assetUrl?: string;
+    }>(
+      `/projects/${encodeURIComponent(projectId)}/design-library/items/${encodeURIComponent(item.id)}`,
+    );
+    const version = detail.publishedVersion;
+    if (!version) throw new Error("资源库版本不存在。");
+    const origin = buildCanvasLibraryImportOrigin(version);
+
+    if (detail.item.kind === "template") {
+      if (detail.item.templateTarget === "scene") {
+        const created = await requestCanvasLibraryApi<Resource>(
+          `/projects/${encodeURIComponent(projectId)}/design-library/templates/${encodeURIComponent(item.id)}/create-resource`,
+          {
+            method: "POST",
+          },
+        );
+        emit("activateResource", created.id);
+        return;
+      }
+
+      if (detail.item.templateTarget === "page") {
+        commitDocument(
+          mergeCanvasLibraryPageTemplate(
+            draftDocument.value,
+            version.payload as CanvasLibraryPageTemplatePayload,
+            origin,
+          ),
+        );
+        return;
+      }
+
+      if (detail.item.templateTarget === "frame") {
+        commitDocument(
+          mergeCanvasLibraryFrameTemplate(
+            draftDocument.value,
+            version.payload as CanvasLibraryFrameTemplatePayload,
+            origin,
+            currentPage.value?.id,
+          ),
+        );
+        return;
+      }
+
+      throw new Error("暂不支持的模板目标。");
+    }
+
+    if (version.payloadType !== "binary_asset" || !detail.assetUrl) {
+      throw new Error("素材版本不可导入。");
+    }
+
+    const asset = buildDesignAssetFromCanvasLibraryPayload(
+      version.payload as CanvasLibraryBinaryAssetPayload,
+      {
+        id: createAssetId(),
+        src: detail.assetUrl,
+        assetKind:
+          detail.item.assetKind === "device_shell"
+            ? "device_shell"
+            : detail.item.assetKind === "svg"
+              ? "svg"
+              : "image",
+        origin,
+      },
+    );
+    commitDocument(appendDesignAssetToSceneDocument(draftDocument.value, asset));
+  }
+  catch (error: any) {
+    notifyCanvasLibraryError(
+      String(error?.message || "导入资源库条目失败。"),
+    );
+  }
+  finally {
+    canvasLibraryActioningId.value = "";
+  }
+}
+
+function resolveCanvasPublishDefaults(): {
+  title: string;
+  pageId?: string;
+  frameId?: string;
+} {
+  if (canvasLibraryPublishScope.value === "frame" && selectedFrame.value) {
+    return {
+      title: selectedFrame.value.name || "Frame 模板",
+      pageId: selectedFrame.value.pageId,
+      frameId: selectedFrame.value.id,
+    };
+  }
+  if (canvasLibraryPublishScope.value === "page" && currentPage.value) {
+    return {
+      title: currentPage.value.name || "Page 模板",
+      pageId: currentPage.value.id,
+    };
+  }
+  return {
+    title: props.designPanelTitle || "设计模板",
+  };
+}
+
+async function publishCurrentDesignToCanvasLibrary(
+  publish: boolean,
+): Promise<void> {
+  const projectId = normalizeString(props.projectId);
+  const designResourceId = normalizeString(props.designResourceId);
+  if (!projectId || !designResourceId) return;
+
+  const defaults = resolveCanvasPublishDefaults();
+  const title = canvasLibraryPublishTitle.value.trim() || defaults.title;
+  canvasLibraryActioningId.value = publish ? "publish" : "draft";
+  try {
+    await requestCanvasLibraryApi(
+      "/admin/canvas-library/from-design",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          designResourceId,
+          scope: canvasLibraryPublishScope.value,
+          pageId: defaults.pageId,
+          frameId: defaults.frameId,
+          title,
+          summary: canvasLibraryPublishSummary.value.trim(),
+          tags: canvasLibraryPublishTags.value
+            .split(/[，,\n]+/)
+            .map((item) => item.trim())
+            .filter(Boolean),
+          publish,
+        }),
+      },
+    );
+    canvasLibraryPublishTitle.value = "";
+    canvasLibraryPublishSummary.value = "";
+    canvasLibraryPublishTags.value = "";
+    await loadCanvasLibraryItems();
+  }
+  catch (error: any) {
+    notifyCanvasLibraryError(
+      String(error?.message || "发布到资源库失败。"),
+    );
+  }
+  finally {
+    canvasLibraryActioningId.value = "";
+  }
 }
 
 async function handleAssetUpload(event: Event): Promise<void> {
@@ -3750,9 +4036,20 @@ function duplicateDiagramGraphNode(nodeId: string): void {
 }
 
 function updateDiagramGraphNodePosition(
-  nodeId: string,
-  position: { x: number; y: number },
+  nodeIdOrPayload: string | { nodeId: string; x: number; y: number },
+  position: { x: number; y: number } = { x: 0, y: 0 },
 ): void {
+  const nodeId =
+    typeof nodeIdOrPayload === "string"
+      ? nodeIdOrPayload
+      : normalizeString(nodeIdOrPayload.nodeId);
+  const nextPosition =
+    typeof nodeIdOrPayload === "string"
+      ? position
+      : {
+          x: nodeIdOrPayload.x,
+          y: nodeIdOrPayload.y,
+        };
   updateDiagramGraph((graph) => {
     const nodeIndex = graph.nodes.findIndex((node) => node.id === nodeId);
     if (nodeIndex < 0) return null;
@@ -3765,8 +4062,8 @@ function updateDiagramGraphNodePosition(
       metadata: {
         ...(currentNode.metadata || {}),
         manualPosition: {
-          x: Math.round(Number(position.x || 0)),
-          y: Math.round(Number(position.y || 0)),
+          x: Math.round(Number(nextPosition.x || 0)),
+          y: Math.round(Number(nextPosition.y || 0)),
         },
       },
     };
@@ -5004,6 +5301,196 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
 
             <div v-else data-testid="workspace-design-sidebar-assets">
               <div class="space-y-4">
+                <section class="space-y-3 rounded-3xl border border-slate-200/80 bg-slate-50/70 p-3">
+                  <div
+                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                  >
+                    <span>资源库</span>
+                    <button
+                      class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                      type="button"
+                      @click="loadCanvasLibraryItems"
+                    >
+                      刷新
+                    </button>
+                  </div>
+
+                  <input
+                    v-model="canvasLibrarySearch"
+                    class="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                    type="search"
+                    placeholder="搜索模板 / 素材 / 标签"
+                  />
+
+                  <p
+                    v-if="canvasLibraryError"
+                    class="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-600"
+                  >
+                    {{ canvasLibraryError }}
+                  </p>
+
+                  <div
+                    v-if="canvasLibraryLoading"
+                    class="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[11px] text-slate-500"
+                  >
+                    正在加载资源库……
+                  </div>
+
+                  <div v-else class="space-y-3">
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                        <span>Templates</span>
+                        <span>{{ canvasLibraryTemplateItems.length }}</span>
+                      </div>
+                      <div v-if="canvasLibraryTemplateItems.length" class="space-y-2">
+                        <button
+                          v-for="item in canvasLibraryTemplateItems"
+                          :key="item.id"
+                          class="flex w-full items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition-colors hover:border-slate-300"
+                          type="button"
+                          :disabled="canvasLibraryActioningId === item.id"
+                          @click="importCanvasLibraryItem(item)"
+                        >
+                          <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                              <p class="truncate text-sm font-semibold text-slate-800">
+                                {{ item.title }}
+                              </p>
+                              <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                                {{ item.templateTarget || "scene" }}
+                              </span>
+                            </div>
+                            <p class="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">
+                              {{ item.summary || "已发布的设计模板，可直接导入当前画布。" }}
+                            </p>
+                          </div>
+                          <span class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">
+                            {{ canvasLibraryActioningId === item.id ? "处理中" : "导入" }}
+                          </span>
+                        </button>
+                      </div>
+                      <div
+                        v-else
+                        class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-3 py-3 text-[11px] leading-5 text-slate-500"
+                      >
+                        当前没有匹配的模板条目。
+                      </div>
+                    </div>
+
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                        <span>Assets</span>
+                        <span>{{ canvasLibraryAssetItems.length }}</span>
+                      </div>
+                      <div v-if="canvasLibraryAssetItems.length" class="space-y-2">
+                        <button
+                          v-for="item in canvasLibraryAssetItems"
+                          :key="item.id"
+                          class="flex w-full items-start gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition-colors hover:border-slate-300"
+                          type="button"
+                          :disabled="canvasLibraryActioningId === item.id"
+                          @click="importCanvasLibraryItem(item)"
+                        >
+                          <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                              <p class="truncate text-sm font-semibold text-slate-800">
+                                {{ item.title }}
+                              </p>
+                              <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                                {{ item.assetKind || "image" }}
+                              </span>
+                            </div>
+                            <p class="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">
+                              {{ item.summary || "已发布素材，可加入当前设计文档 assets。" }}
+                            </p>
+                          </div>
+                          <span class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">
+                            {{ canvasLibraryActioningId === item.id ? "处理中" : "导入" }}
+                          </span>
+                        </button>
+                      </div>
+                      <div
+                        v-else
+                        class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-3 py-3 text-[11px] leading-5 text-slate-500"
+                      >
+                        当前没有匹配的素材条目。
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section
+                  v-if="props.isPlatformAdminUser && isBoundToDesignResource"
+                  class="space-y-3 rounded-3xl border border-slate-200 bg-white/80 p-3"
+                >
+                  <div
+                    class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                  >
+                    <span>发布到资源库</span>
+                    <span class="text-[10px] text-slate-400">Admin</span>
+                  </div>
+
+                  <label class="flex flex-col gap-1">
+                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">scope</span>
+                    <select
+                      v-model="canvasLibraryPublishScope"
+                      class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition-colors focus:border-slate-300"
+                    >
+                      <option value="scene">Scene</option>
+                      <option value="page">Page</option>
+                      <option value="frame">Frame</option>
+                    </select>
+                  </label>
+
+                  <label class="flex flex-col gap-1">
+                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">title</span>
+                    <input
+                      v-model="canvasLibraryPublishTitle"
+                      class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                      type="text"
+                      placeholder="为空时自动使用当前 Scene / Page / Frame 名称"
+                    />
+                  </label>
+
+                  <label class="flex flex-col gap-1">
+                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">summary</span>
+                    <textarea
+                      v-model="canvasLibraryPublishSummary"
+                      class="min-h-[76px] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                      placeholder="这套模板适合什么场景、包含哪些结构。"
+                    />
+                  </label>
+
+                  <label class="flex flex-col gap-1">
+                    <span class="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">tags</span>
+                    <input
+                      v-model="canvasLibraryPublishTags"
+                      class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300"
+                      type="text"
+                      placeholder="template, mobile, marketing"
+                    />
+                  </label>
+
+                  <div class="flex items-center gap-2">
+                    <button
+                      class="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-white"
+                      type="button"
+                      :disabled="canvasLibraryActioningId === 'draft'"
+                      @click="publishCurrentDesignToCanvasLibrary(false)"
+                    >
+                      {{ canvasLibraryActioningId === "draft" ? "保存中..." : "保存草稿" }}
+                    </button>
+                    <button
+                      class="flex-1 rounded-2xl border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-700"
+                      type="button"
+                      :disabled="canvasLibraryActioningId === 'publish'"
+                      @click="publishCurrentDesignToCanvasLibrary(true)"
+                    >
+                      {{ canvasLibraryActioningId === "publish" ? "发布中..." : "立即发布" }}
+                    </button>
+                  </div>
+                </section>
+
                 <section class="space-y-2">
                   <div
                     class="flex items-center justify-between gap-3 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"

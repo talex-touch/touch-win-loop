@@ -57,7 +57,17 @@ export default defineEventHandler(async (event) => {
   }
 
   const storage = getDocumentStorage()
-  const buffer = await storage.getObjectBuffer(objectKey)
+  const buffer = await storage.getObjectBuffer(objectKey).catch(() => null)
+  if (!buffer) {
+    setResponseStatus(event, 404)
+    return fail('素材对象不存在。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40497)
+  }
   setHeader(event, 'Content-Type', normalizeString(payload.mimeType) || 'application/octet-stream')
   setHeader(event, 'Cache-Control', 'private, max-age=60')
   return buffer

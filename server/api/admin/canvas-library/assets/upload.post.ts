@@ -12,6 +12,23 @@ function normalizeString(value: unknown): string {
   return String(value || '').trim()
 }
 
+function parseJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  const text = normalizeString(value)
+  if (!text)
+    return undefined
+  try {
+    const parsed = JSON.parse(text)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+      return parsed as Record<string, unknown>
+  }
+  catch {
+  }
+  throw createError({
+    statusCode: 400,
+    statusMessage: '画布资源库素材元数据 JSON 无效。',
+  })
+}
+
 function toStringMap(parts: Awaited<ReturnType<typeof readMultipartFormData>>): Record<string, string> {
   const map: Record<string, string> = {}
   for (const part of parts || []) {
@@ -72,8 +89,8 @@ export default defineEventHandler(async (event) => {
     assetKind,
     width: Number(fields.width || 0),
     height: Number(fields.height || 0),
-    metadata: normalizeString(fields.metadata) ? JSON.parse(fields.metadata) as Record<string, unknown> : undefined,
-    viewportRect: normalizeString(fields.viewportRect) ? JSON.parse(fields.viewportRect) as Record<string, unknown> : undefined,
+    metadata: parseJsonRecord(fields.metadata),
+    viewportRect: parseJsonRecord(fields.viewportRect),
     cornerRadius: Number(fields.cornerRadius || 0),
     presetKeys: normalizeString(fields.presetKeys)
       ? normalizeString(fields.presetKeys).split(',').map(item => item.trim()).filter(Boolean)

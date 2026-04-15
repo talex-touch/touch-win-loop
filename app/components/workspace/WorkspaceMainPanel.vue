@@ -126,6 +126,7 @@ const props = withDefaults(defineProps<{
   currentUserId?: string
   currentUserName?: string
   currentUserAvatarUrl?: string
+  isPlatformAdminUser?: boolean
   collabResourceId?: string
   collabMarkdownDoc?: YDoc | null
   collabMarkdownAwareness?: Awareness | null
@@ -237,6 +238,7 @@ const props = withDefaults(defineProps<{
   currentUserId: '',
   currentUserName: '',
   currentUserAvatarUrl: '',
+  isPlatformAdminUser: false,
   collabResourceId: '',
   collabMarkdownDoc: null,
   collabMarkdownAwareness: null,
@@ -2716,6 +2718,9 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         class="h-full min-h-0 w-full"
         :design-resource-id="activeDesignResourceId"
         :bound-resource-id="props.collabResourceId"
+        :project-id="props.activeProjectId"
+        :current-user-id="props.currentUserId"
+        :is-platform-admin-user="props.isPlatformAdminUser"
         :design-panel-title="activeDesignPanelTitle"
         :has-design-resource="isActiveDesignResource"
         :collab-revision="collabRevision"
@@ -2728,6 +2733,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
         @update:model-value="onCollabDrawModelUpdate"
         @update-collab-cursor="onCollabCursorUpdate"
+        @activate-resource="emitActivatePreviewResource($event)"
       />
 
       <WorkspaceResourcePreviewTab

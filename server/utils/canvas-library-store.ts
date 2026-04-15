@@ -2,6 +2,7 @@ import type { Queryable } from '~~/server/utils/db'
 import type {
   CanvasLibraryAssetKind,
   CanvasLibraryBinaryAssetPayload,
+  CanvasLibraryDeviceShellAssetPayload,
   CanvasLibraryItem,
   CanvasLibraryItemKind,
   CanvasLibraryItemPayload,
@@ -14,7 +15,6 @@ import type {
   Resource,
   SceneDocument,
 } from '~~/shared/types/domain'
-import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
 import {
@@ -877,7 +877,7 @@ export function buildCanvasLibraryAssetPayload(input: {
   cornerRadius?: number
   presetKeys?: string[]
   maskPath?: string
-}): CanvasLibraryBinaryAssetPayload {
+}): CanvasLibraryBinaryAssetPayload | CanvasLibraryDeviceShellAssetPayload {
   const payload: CanvasLibraryBinaryAssetPayload = {
     mimeType: normalizeString(input.mimeType) || 'application/octet-stream',
     objectKey: normalizeString(input.objectKey),

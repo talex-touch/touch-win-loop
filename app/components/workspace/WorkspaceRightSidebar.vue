@@ -74,6 +74,8 @@ const props = withDefaults(defineProps<{
   documentAssistRunning?: boolean
   issueReportSubmitting?: boolean
   issueReportExporting?: boolean
+  aiEnabled?: boolean
+  aiDisabledReason?: string
   collapsed?: boolean
 }>(), {
   chatSessions: () => [],
@@ -122,6 +124,8 @@ const props = withDefaults(defineProps<{
   documentAssistRunning: false,
   issueReportSubmitting: false,
   issueReportExporting: false,
+  aiEnabled: true,
+  aiDisabledReason: '',
   collapsed: false,
 })
 
@@ -207,6 +211,8 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
 }
 
 const inputPlaceholder = computed(() => {
+  if (!props.aiEnabled)
+    return aiDisabledNoticeText.value
   if (props.aiMode === 'auto_optimize')
     return '描述你希望生成哪些可审批提案，例如：补齐摘要与问题陈述。'
   if (props.aiMode === 'issue_discovery')
@@ -294,6 +300,12 @@ const documentAssistSelectionLabel = computed(() => {
 })
 const canApplyDocumentAssist = computed(() => {
   return Boolean(String(props.documentAssistResult || '').trim()) && !props.documentAssistRunning
+})
+const aiDisabledNoticeText = computed(() => {
+  const text = String(props.aiDisabledReason || '').trim()
+  if (text)
+    return text
+  return '当前 AI 未配置，已禁用当前模式。请先在后台完成模型与密钥配置。'
 })
 
 watch(() => props.showCommentTab, (nextValue) => {
@@ -494,6 +506,8 @@ function handleChatSessionSwitch(sessionId: string): void {
 }
 
 function handleCreateChatSession(): void {
+  if (!props.aiEnabled)
+    return
   historyPopoverVisible.value = false
   emit('createChatSession')
 }
@@ -606,6 +620,8 @@ function requestExportIssueReport() {
 }
 
 function handleChatComposerKeydown(event: KeyboardEvent): void {
+  if (!props.aiEnabled)
+    return
   if (event.key !== 'Enter')
     return
   if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey)
@@ -821,6 +837,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               type="button"
               title="新建对话"
               aria-label="新建对话"
+              :disabled="!props.aiEnabled"
               @click="handleCreateChatSession"
             >
               <span class="material-symbols-outlined workspace-right-sidebar__session-create-icon">add</span>
@@ -922,6 +939,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
         <template v-else-if="showDocumentAssistView">
           <div class="space-y-3">
+            <div
+              v-if="!props.aiEnabled"
+              class="workspace-right-sidebar__disabled-notice text-[11px] leading-5 text-amber-700 p-3 border border-amber-200 rounded bg-amber-50"
+            >
+              {{ aiDisabledNoticeText }}
+            </div>
             <div class="p-3 border border-slate-200 rounded bg-white">
               <div class="text-[10px] text-slate-500 font-semibold tracking-wide uppercase">
                 当前动作
@@ -964,6 +987,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
         <template v-else>
           <div class="workspace-chat-scroll-content">
+          <div
+            v-if="!props.aiEnabled"
+            class="workspace-right-sidebar__disabled-notice text-[11px] leading-5 text-amber-700 p-3 border border-amber-200 rounded bg-amber-50"
+          >
+            {{ aiDisabledNoticeText }}
+          </div>
           <div v-if="showChatSkeleton" class="workspace-chat-messages" aria-hidden="true">
             <div
               v-for="index in 4"
@@ -1169,13 +1198,14 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 </div>
                 <button
                   class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                  :disabled="defenseSummaryLoading"
+                  :disabled="defenseSummaryLoading || !props.aiEnabled"
                   @click="emit('generateDefenseSummary')"
                 >
                   {{ defenseSummaryLoading ? '生成中...' : '生成总结' }}
                 </button>
                 <button
-                  class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100"
+                  class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                  :disabled="!props.aiEnabled"
                   @click="emit('startDefenseRealtime')"
                 >
                   语音答辩
@@ -1426,7 +1456,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               class="workspace-right-sidebar__doc-action"
               :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'summarize' }"
               type="button"
-              :disabled="props.documentAssistRunning"
+              :disabled="props.documentAssistRunning || !props.aiEnabled"
               @click="emit('runDocumentAssist', 'summarize')"
             >
               总结
@@ -1435,7 +1465,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               class="workspace-right-sidebar__doc-action"
               :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'rewrite' }"
               type="button"
-              :disabled="props.documentAssistRunning"
+              :disabled="props.documentAssistRunning || !props.aiEnabled"
               @click="emit('runDocumentAssist', 'rewrite')"
             >
               改写
@@ -1444,7 +1474,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               class="workspace-right-sidebar__doc-action"
               :class="{ 'workspace-right-sidebar__doc-action--active': props.documentAssistAction === 'continue' }"
               type="button"
-              :disabled="props.documentAssistRunning"
+              :disabled="props.documentAssistRunning || !props.aiEnabled"
               @click="emit('runDocumentAssist', 'continue')"
             >
               续写
@@ -1453,7 +1483,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           <button
             class="workspace-right-sidebar__doc-apply"
             type="button"
-            :disabled="!canApplyDocumentAssist"
+            :disabled="!props.aiEnabled || !canApplyDocumentAssist"
             @click="emit('applyDocumentAssist')"
           >
             应用到文档
@@ -1469,6 +1499,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               :value="chatInput"
               class="workspace-chat-composer__textarea"
               :placeholder="inputPlaceholder"
+              :disabled="!props.aiEnabled"
               @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
               @keydown="handleChatComposerKeydown"
             />
@@ -1507,7 +1538,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               <button
                 class="workspace-chat-composer__send"
                 :class="{ 'workspace-chat-composer__send--running': chatLoading }"
-                :disabled="props.chatInterrupting"
+                :disabled="props.chatInterrupting || (!props.aiEnabled && !chatLoading)"
                 :aria-label="chatLoading ? '打断生成' : '发送消息'"
                 :title="chatLoading ? '打断生成' : '发送消息'"
                 @click="chatLoading ? emit('interruptChat') : emit('sendChat')"
@@ -1756,6 +1787,15 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
 .workspace-right-sidebar__session-action:hover {
   background: #f8fafc;
+}
+
+.workspace-right-sidebar__session-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.workspace-right-sidebar__session-action:disabled:hover {
+  background: #fff;
 }
 
 .workspace-right-sidebar__session-history-button:hover {
@@ -2050,6 +2090,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   box-shadow: none;
 }
 
+.workspace-chat-composer__textarea:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
+}
+
 .workspace-chat-composer__footer {
   display: flex;
   align-items: flex-end;
@@ -2258,6 +2303,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-color: #93c5fd;
   background: #eff6ff;
   color: #1d4ed8;
+}
+
+.workspace-right-sidebar__doc-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .workspace-right-sidebar__doc-apply {

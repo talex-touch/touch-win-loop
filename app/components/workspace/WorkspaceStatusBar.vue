@@ -6,8 +6,9 @@ import { resolveProjectUploadTaskStatusText } from '~/utils/project-upload'
 const props = withDefaults(defineProps<{
   statusLine?: string
   loading?: boolean
-  aiReady?: boolean
   aiModelLabel?: string
+  aiStatusLabel?: string
+  aiStatusTone?: 'ready' | 'running' | 'missing' | 'checking' | 'error'
   tokenBalance?: number
   projectStorageUsedBytes?: number
   projectStorageLimitBytes?: number
@@ -23,8 +24,9 @@ const props = withDefaults(defineProps<{
 }>(), {
   statusLine: '',
   loading: false,
-  aiReady: true,
-  aiModelLabel: '由后端配置',
+  aiModelLabel: '状态检查中',
+  aiStatusLabel: 'AI 状态检查中',
+  aiStatusTone: 'checking',
   tokenBalance: 0,
   projectStorageUsedBytes: 0,
   projectStorageLimitBytes: 0,
@@ -207,6 +209,30 @@ const normalizedCursorColumn = computed<number | null>(() => {
   return Math.trunc(value)
 })
 
+const aiStatusClass = computed(() => {
+  if (props.aiStatusTone === 'running')
+    return 'workspace-status-ai workspace-status-ai--running'
+  if (props.aiStatusTone === 'missing')
+    return 'workspace-status-ai workspace-status-ai--missing'
+  if (props.aiStatusTone === 'error')
+    return 'workspace-status-ai workspace-status-ai--error'
+  if (props.aiStatusTone === 'ready')
+    return 'workspace-status-ai workspace-status-ai--ready'
+  return 'workspace-status-ai workspace-status-ai--checking'
+})
+
+const aiStatusIcon = computed(() => {
+  if (props.aiStatusTone === 'running')
+    return 'progress_activity'
+  if (props.aiStatusTone === 'missing')
+    return 'block'
+  if (props.aiStatusTone === 'error')
+    return 'error'
+  if (props.aiStatusTone === 'ready')
+    return 'cloud_done'
+  return 'hourglass_top'
+})
+
 const hasUploadDrawerContent = computed(() => uploadActivityItems.value.length > 0)
 
 function uploadTaskStatusText(item: ProjectUploadActivityItem): string {
@@ -321,10 +347,6 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
           <span v-if="loading" class="align-middle rounded bg-slate-200 h-2.5 w-28 inline-block animate-pulse" />
           <span v-else>{{ visibleStatusLine || '系统就绪' }}</span>
         </div>
-        <div class="flex gap-1 items-center">
-          <span class="rounded-full bg-green-500 h-1.5 w-1.5" />
-          <span>AI运行状态</span>
-        </div>
         <div class="gap-2 hidden items-center md:flex">
           <span>模型: {{ aiModelLabel }}</span>
           <span>Token: {{ tokenBalance.toLocaleString('zh-CN') }}</span>
@@ -356,8 +378,9 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
           </template>
         </span>
         <span>Space: 4</span>
-        <span class="font-bold" :class="aiReady ? 'text-blue-600' : 'text-amber-600'">
-          {{ aiReady ? 'Analysis Ready' : 'AI Working' }}
+        <span :class="aiStatusClass">
+          <span class="material-symbols-outlined workspace-status-ai__icon">{{ aiStatusIcon }}</span>
+          <span>{{ aiStatusLabel }}</span>
         </span>
       </div>
     </footer>
@@ -442,6 +465,34 @@ function canRebindUploadTask(item: ProjectUploadActivityItem): boolean {
 .workspace-status-storage:hover .workspace-status-storage__tooltip {
   opacity: 1;
   transform: translateY(0);
+}
+
+.workspace-status-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.workspace-status-ai__icon {
+  font-size: 12px;
+}
+
+.workspace-status-ai--ready {
+  color: #2563eb;
+}
+
+.workspace-status-ai--running {
+  color: #1d4ed8;
+}
+
+.workspace-status-ai--missing,
+.workspace-status-ai--error {
+  color: #b45309;
+}
+
+.workspace-status-ai--checking {
+  color: #64748b;
 }
 
 .workspace-upload-tray {

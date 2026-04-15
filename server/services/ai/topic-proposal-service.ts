@@ -3,10 +3,10 @@ import type { Queryable } from '~~/server/utils/db'
 import type { AiTopicProposalRequest, AiTopicProposalResult, AuthUser, ChatMessage, Resource } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { searchWithTavily } from '~~/server/services/admin-ai/web'
-import { runTopicProposalFallback } from '~~/server/services/ai/fallback'
 import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { buildTopicBoardPromptMessage, enrichTopicProposalResult, normalizeTopicBoardInput } from '~~/server/services/ai/topic-board-logic'
 import { runTopicProposalChain } from '~~/server/services/ai/topic-proposal-chain'
+import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import {
   appendAiChatMessage,
   createAiChatSession,
@@ -439,26 +439,21 @@ export async function executeTopicProposal(
       : channelAiConfig.temperature,
   }
   const mergedInjectedPrompt = buildMergedPrompt(channelRuntime.prompt, contextBundle.injectedPrompt)
-  const onlyFallback = effectiveAiConfig.provider === 'mock' || !effectiveAiConfig.apiKey
-  const result = onlyFallback
-    ? {
-        data: runTopicProposalFallback(input.request),
-        fallbackUsed: true,
-        attempts: 1,
-      }
-    : await runWithRetry({
-        maxRetries: effectiveAiConfig.maxRetries,
-        run: () => runTopicProposalChain({
-          request: input.request,
-          ai: effectiveAiConfig,
-          contestName: contest?.name,
-          trackName: track?.name,
-          injectedPrompt: mergedInjectedPrompt,
-          localContext: contextBundle.localContext,
-          webContext,
-        }),
-        fallback: () => runTopicProposalFallback(input.request),
-      })
+  if (!isAiRuntimeConfigured(effectiveAiConfig))
+    throw new Error(buildAiNotConfiguredMessage('选题助手 AI'))
+
+  const result = await runWithRetry({
+    maxRetries: effectiveAiConfig.maxRetries,
+    run: () => runTopicProposalChain({
+      request: input.request,
+      ai: effectiveAiConfig,
+      contestName: contest?.name,
+      trackName: track?.name,
+      injectedPrompt: mergedInjectedPrompt,
+      localContext: contextBundle.localContext,
+      webContext,
+    }),
+  })
 
   const baseResult: AiTopicProposalResult = {
     ...result.data,

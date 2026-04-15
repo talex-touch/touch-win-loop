@@ -239,6 +239,37 @@ interface MarkdownDocumentAssistRequestState {
   trigger: AiWorkspaceDocumentTrigger
 }
 
+interface AiRuntimeFeatureStatus {
+  configured: boolean
+  provider: string
+  model: string
+  reason: string
+}
+
+interface ProjectWorkspaceAiRuntimeStatus {
+  workspaceDialogAsk: AiRuntimeFeatureStatus
+  workspaceAutoOptimize: AiRuntimeFeatureStatus
+  workspaceIssueDiscovery: AiRuntimeFeatureStatus
+  documentAssist: AiRuntimeFeatureStatus
+  defense: AiRuntimeFeatureStatus
+  contestFilter: AiRuntimeFeatureStatus
+  topicProposal: AiRuntimeFeatureStatus
+  projectChat: AiRuntimeFeatureStatus
+}
+
+type ProjectWorkspaceAiFeatureKey = keyof ProjectWorkspaceAiRuntimeStatus
+
+const AI_RUNTIME_FEATURE_LABELS: Record<ProjectWorkspaceAiFeatureKey, string> = {
+  workspaceDialogAsk: '工作台 AI',
+  workspaceAutoOptimize: '工作台 AI',
+  workspaceIssueDiscovery: '工作台 AI',
+  documentAssist: '文档 AI',
+  defense: '答辩 AI',
+  contestFilter: '赛事筛选 AI',
+  topicProposal: '选题助手 AI',
+  projectChat: '项目对话 AI',
+}
+
 function splitTopicBoardTags(text: string): string[] {
   return String(text || '')
     .split(/[\n,，、]+/)
@@ -754,6 +785,11 @@ const workspaceBootstrapLoading = ref(false)
 const workspaceCriticalLoading = workspaceBootstrapLoading
 const workspaceBackgroundLoading = ref(false)
 const activeTabReady = ref(false)
+const aiRuntimeStatus = ref<ProjectWorkspaceAiRuntimeStatus | null>(null)
+const aiRuntimeStatusLoaded = ref(false)
+const aiRuntimeStatusLoading = ref(false)
+const aiRuntimeStatusError = ref('')
+const defenseRealtimeStarting = ref(false)
 
 let workspaceBootstrapRequestId = 0
 const workspaceBootstrapStartedAt = ref(0)
@@ -2643,7 +2679,95 @@ const projectUploadStorageUsedBytes = computed(() => {
   return selectedResources.value.reduce((sum, resource) => sum + parseFileSizeFromResource(resource), 0)
 })
 
-const aiBusy = computed(() => listLoading.value || aiFiltering.value || chatLoading.value || formSubmitting.value || topicBoardLoading.value)
+function getAiFeatureStatus(key: ProjectWorkspaceAiFeatureKey): AiRuntimeFeatureStatus | null {
+  return aiRuntimeStatus.value?.[key] || null
+}
+
+function resolveAiFeatureKeyForMode(mode: WorkspaceAiMode): ProjectWorkspaceAiFeatureKey {
+  if (mode === 'auto_optimize')
+    return 'workspaceAutoOptimize'
+  if (mode === 'issue_discovery')
+    return 'workspaceIssueDiscovery'
+  if (mode === 'document_assist')
+    return 'documentAssist'
+  if (mode === 'defense')
+    return 'defense'
+  return 'workspaceDialogAsk'
+}
+
+function buildAiUnavailableMessage(key: ProjectWorkspaceAiFeatureKey): string {
+  return String(getAiFeatureStatus(key)?.reason || '').trim() || `${AI_RUNTIME_FEATURE_LABELS[key]} 未配置，请先在后台完成模型与密钥配置后再试。`
+}
+
+function isAiFeatureAvailable(key: ProjectWorkspaceAiFeatureKey): boolean {
+  if (!aiRuntimeStatusLoaded.value)
+    return true
+  return Boolean(getAiFeatureStatus(key)?.configured)
+}
+
+function ensureAiFeatureAvailable(key: ProjectWorkspaceAiFeatureKey, message = ''): boolean {
+  if (isAiFeatureAvailable(key))
+    return true
+  statusLine.value = message || buildAiUnavailableMessage(key)
+  return false
+}
+
+const currentAiFeatureKey = computed<ProjectWorkspaceAiFeatureKey>(() => {
+  return resolveAiFeatureKeyForMode(aiMode.value)
+})
+const currentAiFeatureStatus = computed(() => {
+  return getAiFeatureStatus(currentAiFeatureKey.value)
+})
+const currentAiModeAvailable = computed(() => {
+  return isAiFeatureAvailable(currentAiFeatureKey.value)
+})
+const currentAiDisabledReason = computed(() => {
+  if (currentAiModeAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(currentAiFeatureKey.value)
+})
+const currentAiModelLabel = computed(() => {
+  if (aiRuntimeStatusLoading.value)
+    return '状态检查中'
+  if (aiRuntimeStatusError.value)
+    return '状态未知'
+  if (!aiRuntimeStatusLoaded.value)
+    return '等待检查'
+  if (!currentAiFeatureStatus.value?.configured)
+    return '未配置'
+  return String(currentAiFeatureStatus.value.model || '').trim() || '已配置'
+})
+const aiRuntimeBusy = computed(() => {
+  return aiFiltering.value
+    || chatLoading.value
+    || topicBoardLoading.value
+    || documentAssistRunning.value
+    || defenseSummaryLoading.value
+    || defenseRealtimeStarting.value
+})
+const aiStatusLabel = computed(() => {
+  if (aiRuntimeBusy.value)
+    return 'AI 运行中'
+  if (aiRuntimeStatusLoading.value)
+    return 'AI 状态检查中'
+  if (aiRuntimeStatusError.value)
+    return 'AI 状态检查失败'
+  if (!aiRuntimeStatusLoaded.value)
+    return 'AI 状态待确认'
+  return currentAiModeAvailable.value ? 'AI 已配置' : 'AI 未配置'
+})
+const aiStatusTone = computed<'ready' | 'running' | 'missing' | 'checking' | 'error'>(() => {
+  if (aiRuntimeBusy.value)
+    return 'running'
+  if (aiRuntimeStatusLoading.value)
+    return 'checking'
+  if (aiRuntimeStatusError.value)
+    return 'error'
+  if (!aiRuntimeStatusLoaded.value)
+    return 'checking'
+  return currentAiModeAvailable.value ? 'ready' : 'missing'
+})
+
 const hasWorkspaceBootstrapData = computed(() => {
   return Boolean(selectedContest.value)
     || Boolean(selectedTrack.value)
@@ -3957,6 +4081,26 @@ async function loadAuthContext(): Promise<boolean> {
       query: { redirect: route.fullPath || teamDashboardPath() },
     })
     return false
+  }
+}
+
+async function loadAiRuntimeStatus(): Promise<void> {
+  aiRuntimeStatusLoading.value = true
+  aiRuntimeStatusError.value = ''
+
+  try {
+    const response = await unsafeFetch<ApiResponse<ProjectWorkspaceAiRuntimeStatus>>(endpoint('/user/ai/runtime'))
+    aiRuntimeStatus.value = response.data
+    aiRuntimeStatusLoaded.value = true
+  }
+  catch (error) {
+    aiRuntimeStatus.value = null
+    aiRuntimeStatusLoaded.value = false
+    aiRuntimeStatusError.value = resolveApiErrorMessage(error, 'AI 状态检查失败，请稍后重试。')
+    console.error('[workspace-ai-runtime] load failed', error)
+  }
+  finally {
+    aiRuntimeStatusLoading.value = false
   }
 }
 
@@ -6039,6 +6183,8 @@ async function runDocumentAssistAction(
     statusLine.value = '当前文档未就绪，暂时无法调用文档 AI。'
     return
   }
+  if (!ensureAiFeatureAvailable('documentAssist'))
+    return
 
   syncDocumentAssistRequestState({
     action: payload.action,
@@ -6488,6 +6634,9 @@ async function deleteDefensePersona(personaId: string) {
 }
 
 async function generateDefenseSummary() {
+  if (!ensureAiFeatureAvailable('defense'))
+    return
+
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId || !activeChatSessionId.value) {
     statusLine.value = '请先完成至少一轮答辩，再生成总结。'
@@ -6519,12 +6668,15 @@ async function generateDefenseSummary() {
 
 async function startDefenseRealtime() {
   const projectId = String(activeProjectId.value || '').trim()
-  if (!projectId || meetingMutating.value) {
+  if (!ensureAiFeatureAvailable('defense'))
+    return
+  if (!projectId || meetingMutating.value || defenseRealtimeStarting.value) {
     if (!projectId)
       statusLine.value = '请先选择项目。'
     return
   }
 
+  defenseRealtimeStarting.value = true
   meetingMutating.value = true
   try {
     const enabledPersonaIds = defensePersonas.value
@@ -6563,6 +6715,7 @@ async function startDefenseRealtime() {
     statusLine.value = resolveApiErrorMessage(error, '发起语音答辩失败，请稍后重试。')
   }
   finally {
+    defenseRealtimeStarting.value = false
     meetingMutating.value = false
   }
 }
@@ -6828,6 +6981,9 @@ async function deleteChatSession(sessionId: string) {
 }
 
 async function startNewChatSession() {
+  if (!ensureAiFeatureAvailable(resolveAiFeatureKeyForMode(aiMode.value)))
+    return
+
   let modeTitle = '新建 Loopy 对话'
   if (workbenchMode.value === 'final_review')
     modeTitle = '新建终审助手会话'
@@ -6848,7 +7004,6 @@ async function startNewChatSession() {
   await loadChatSessions({
     preferredSessionId: createdId,
   })
-  statusLine.value = '已创建新的 Loopy 会话。'
 }
 
 function syncFormContestTrack() {
@@ -6863,6 +7018,9 @@ function syncFormContestTrack() {
 }
 
 async function runAiFilter() {
+  if (!ensureAiFeatureAvailable('contestFilter'))
+    return
+
   if (!activeWorkspaceId.value) {
     statusLine.value = '请先选择一个空间。'
     return
@@ -6903,12 +7061,10 @@ async function runAiFilter() {
     if (firstContest)
       selectedContestId.value = firstContest.id
 
-    statusLine.value = response.meta.fallbackUsed
-      ? 'AI 调用失败，已启用规则兜底并返回结果。'
-      : 'AI 已完成筛选并返回排序结果。'
+    statusLine.value = 'AI 已完成筛选并返回排序结果。'
   }
-  catch {
-    statusLine.value = 'AI 筛选失败，请检查服务状态。'
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, 'AI 筛选失败，请检查服务状态。')
   }
   finally {
     aiFiltering.value = false
@@ -6990,6 +7146,9 @@ async function loadTopicBoards() {
 }
 
 async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] = 'workspace_dashboard') {
+  if (!ensureAiFeatureAvailable('topicProposal'))
+    return
+
   const projectId = String(activeProjectId.value || '').trim()
   if (!projectId) {
     statusLine.value = '请先选择一个项目。'
@@ -7025,9 +7184,7 @@ async function generateTopicBoard(source: ProjectTopicBoardCreateSeed['source'] 
 
     topicBoardSnapshot.value = response.data
     topicBoardHistory.value = [response.data, ...topicBoardHistory.value.filter(item => item.id !== response.data.id)].slice(0, 5)
-    statusLine.value = response.meta.fallbackUsed
-      ? '选题板已生成，当前为内部资料/规则兜底结果。'
-      : '选题板已生成，可继续设主推、写入草案或发送到右侧 AI。'
+    statusLine.value = '选题板已生成，可继续设主推、写入草案或发送到右侧 AI。'
   }
   catch (error) {
     const message = resolveApiErrorMessage(error, '生成选题板失败，请稍后重试。')
@@ -7126,6 +7283,8 @@ async function sendTopicBoardCandidateToChat(candidateId: string) {
   const candidate = findTopicBoardCandidate(candidateId)
   const projectId = String(activeProjectId.value || '').trim()
   if (!candidate || !projectId || !activeWorkspaceId.value)
+    return
+  if (!ensureAiFeatureAvailable('workspaceDialogAsk'))
     return
 
   expandRightSidebar()
@@ -7657,6 +7816,8 @@ async function sendChatMessage() {
     interruptChatMessage()
     return
   }
+  if (!ensureAiFeatureAvailable(resolveAiFeatureKeyForMode(aiMode.value)))
+    return
 
   if (!activeWorkspaceId.value) {
     statusLine.value = '请先选择一个空间。'
@@ -8311,6 +8472,7 @@ onMounted(async () => {
     workspaceRealtime.subscribeWorkspace(activeWorkspaceId.value)
 
   await Promise.all([
+    loadAiRuntimeStatus(),
     loadContestCatalog(),
     loadContests(),
     loadProjects(),
@@ -8979,6 +9141,14 @@ watch(aiMode, async (next, previous) => {
   resetChatState()
   if (next === 'defense')
     await loadDefensePersonas()
+  if (!isAiFeatureAvailable(resolveAiFeatureKeyForMode(next))) {
+    await loadChatSessions({
+      autoCreate: false,
+      fallbackToFirst: false,
+    })
+    statusLine.value = buildAiUnavailableMessage(resolveAiFeatureKeyForMode(next))
+    return
+  }
   await loadChatSessions()
 })
 
@@ -9168,6 +9338,7 @@ watch(() => workspaceRealtime.connected.value, () => {
         :current-user-id="me?.user.id || ''"
         :current-user-name="me?.user.username || ''"
         :current-user-avatar-url="me?.user.avatarUrl || ''"
+        :is-platform-admin-user="Boolean(me?.user.isPlatformAdmin)"
         :collab-resource-id="collabBindingResourceId"
         :collab-markdown-doc="collabMarkdownDoc"
         :collab-markdown-awareness="collabMarkdownAwareness"
@@ -9341,6 +9512,8 @@ watch(() => workspaceRealtime.connected.value, () => {
             :document-assist-action="documentAssistRequestState.action"
             :document-assist-result="documentAssistResult"
             :document-assist-running="documentAssistRunning"
+            :ai-enabled="currentAiModeAvailable"
+            :ai-disabled-reason="currentAiDisabledReason"
             :collapsed="rightSidebarCollapsed"
             @update:sidebar-view="rightSidebarView = $event"
             @send-chat="sendChatMessage"
@@ -9453,8 +9626,9 @@ watch(() => workspaceRealtime.connected.value, () => {
     <WorkspaceStatusBar
       :status-line="statusLine"
       :loading="resourcesLoading"
-      :ai-ready="!aiBusy"
-      ai-model-label="由后端配置"
+      :ai-model-label="currentAiModelLabel"
+      :ai-status-label="aiStatusLabel"
+      :ai-status-tone="aiStatusTone"
       :token-balance="tokenBalance"
       :project-storage-used-bytes="projectUploadStorageUsedBytes"
       :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
