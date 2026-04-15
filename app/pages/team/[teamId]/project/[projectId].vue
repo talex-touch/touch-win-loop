@@ -6319,18 +6319,24 @@ function handleMarkdownPrimaryHeadingChange(title: string): void {
   }
 }
 
-function buildDocumentAssistUserPrompt(action: AiWorkspaceDocumentAction): string {
-  if (action === 'summarize')
-    return '请总结当前选区内容，保留关键信息并输出可直接插入文档的精炼结果。'
-  if (action === 'rewrite')
-    return '请润写当前选区，使表达更清晰、专业且与当前文档语气一致。'
-  if (action === 'expand')
-    return '请扩写当前选区，在不偏离原意的前提下补充必要细节，并直接输出完整替代文本。'
-  if (action === 'complete_context')
-    return '请补全当前选区缺失的上下文、衔接与背景信息，直接输出可替换原文的完整正文。'
-  if (action === 'restructure')
-    return '请整理当前选区的结构与层次，提升逻辑顺序和可读性，并直接输出完整替代文本。'
-  return '请基于当前文档上下文，从当前位置继续写作，保持语气、结构和主题一致。'
+function buildDocumentAssistUserPrompt(action: AiWorkspaceDocumentAction, extraInstruction = ''): string {
+  const normalizedExtraInstruction = String(extraInstruction || '').trim()
+  const basePrompt = action === 'summarize'
+    ? '请总结当前选区内容，保留关键信息并输出可直接插入文档的精炼结果。'
+    : action === 'rewrite'
+      ? '请润写当前选区，使表达更清晰、专业且与当前文档语气一致。'
+      : action === 'expand'
+        ? '请扩写当前选区，在不偏离原意的前提下补充必要细节，并直接输出完整替代文本。'
+        : action === 'complete_context'
+          ? '请补全当前选区缺失的上下文、衔接与背景信息，直接输出可替换原文的完整正文。'
+          : action === 'restructure'
+            ? '请整理当前选区的结构与层次，提升逻辑顺序和可读性，并直接输出完整替代文本。'
+            : '请基于当前文档上下文，从当前位置继续写作，保持语气、结构和主题一致。'
+
+  if (!normalizedExtraInstruction)
+    return basePrompt
+
+  return `${basePrompt}\n\n额外要求：${normalizedExtraInstruction}`
 }
 
 function syncDocumentAssistRequestState(payload: {
@@ -6354,6 +6360,7 @@ async function runDocumentAssistAction(
     trigger: AiWorkspaceDocumentTrigger
     selectionText?: string
     selectionRange?: AiWorkspaceDocumentSelectionRange | null
+    extraInstruction?: string
   },
 ): Promise<void> {
   const projectId = normalizeString(activeProjectId.value)
@@ -6393,7 +6400,7 @@ async function runDocumentAssistAction(
       messages: [
         {
           role: 'user',
-          content: buildDocumentAssistUserPrompt(payload.action),
+          content: buildDocumentAssistUserPrompt(payload.action, payload.extraInstruction),
         },
       ],
       context: {
@@ -6526,6 +6533,24 @@ function rerunDocumentAssistFromSidebar(action: AiWorkspaceDocumentAction): void
   void runDocumentAssistAction({
     action,
     trigger: 'right_sidebar',
+    extraInstruction: chatInput.value.trim(),
+  })
+}
+
+async function submitDocumentAssistFromComposer(): Promise<void> {
+  const action = documentAssistRequestState.action
+  if (!action) {
+    statusLine.value = '请先选择一个文稿动作。'
+    return
+  }
+
+  const extraInstruction = chatInput.value.trim()
+  chatInput.value = ''
+
+  await runDocumentAssistAction({
+    action,
+    trigger: 'right_sidebar',
+    extraInstruction,
   })
 }
 
@@ -8007,6 +8032,10 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[], signal?: Abort
 async function sendChatMessage() {
   if (chatLoading.value) {
     interruptChatMessage()
+    return
+  }
+  if (aiMode.value === 'document_assist') {
+    await submitDocumentAssistFromComposer()
     return
   }
   if (!ensureAiFeatureAvailable(resolveAiFeatureKeyForMode(aiMode.value)))
