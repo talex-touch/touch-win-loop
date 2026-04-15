@@ -440,13 +440,13 @@ it('设备预设目录、单图 mockup 语义和旧文档兼容都可用', async
   const linkedSvg = renderCompositionAssetToSvg(scene, {
     frameId: mockupFrame?.id,
   })
-  assert.doesNotMatch(linkedSvg, /联动画板内容/)
+  assert.match(linkedSvg, /联动画板内容/)
   assert.match(linkedSvg, /custom-shell-asset/)
   const linkedPreviewSvg = renderCompositionFramePreviewSvg(scene, mockupFrame?.id || '')
-  assert.doesNotMatch(linkedPreviewSvg, /联动画板内容/)
+  assert.match(linkedPreviewSvg, /联动画板内容/)
   assert.doesNotMatch(linkedPreviewSvg, /设备联动/)
   assert.doesNotMatch(linkedPreviewSvg, /验证 device_artboard/)
-  assert.match(linkedPreviewSvg, /上传截图/)
+  assert.doesNotMatch(linkedPreviewSvg, /上传截图/)
 
   const noShellScene = updateDesignFrameInSceneDocument(scene, mockupFrame?.id || '', {
     metadata: {
@@ -460,14 +460,14 @@ it('设备预设目录、单图 mockup 语义和旧文档兼容都可用', async
   const noShellSvg = renderCompositionAssetToSvg(noShellScene, {
     frameId: mockupFrame?.id,
   })
-  assert.doesNotMatch(noShellSvg, /联动画板内容/)
+  assert.match(noShellSvg, /联动画板内容/)
   assert.doesNotMatch(noShellSvg, /custom-shell-asset/)
   const canonicalizedScene = JSON.parse(serializeSceneDocument(scene))
   const canonicalizedMockupFrame = canonicalizedScene.sourceModel.frames?.find(frame => frame.id === mockupFrame?.id)
   assert.equal(canonicalizedMockupFrame?.kind, 'device_mockup')
   assert.equal(canonicalizedMockupFrame?.metadata?.device?.shellMode, 'external')
   assert.equal(canonicalizedMockupFrame?.metadata?.device?.shellAssetId, externalShellAsset.id)
-  assert.ok(!canonicalizedMockupFrame?.metadata?.device?.mockupSourceFrameId)
+  assert.equal(canonicalizedMockupFrame?.metadata?.device?.mockupSourceFrameId, artboardFrame?.id)
   assert.equal(canonicalizedMockupFrame?.metadata?.device?.screenScaleMode, 'fit')
   assert.equal(canonicalizedMockupFrame?.metadata?.device?.showSafeArea, false)
 
@@ -553,4 +553,94 @@ it('设备预设目录、单图 mockup 语义和旧文档兼容都可用', async
     renderCompositionAssetToSvg(migratedDeviceScene, { frameId: migratedFrame?.id }),
     /data-device-frame="iphone-13-14"/,
   )
+})
+
+it('device_mockup 的 screenTransform 会同步作用于预览与导出', async () => {
+  const {
+    appendDesignFrameToSceneDocument,
+    buildDeviceMockupSceneDocument,
+    renderCompositionAssetToSvg,
+    renderCompositionFramePreviewSvg,
+    resolveDesignFrameProjectionLayoutForFrames,
+    updateDesignFrameInSceneDocument,
+  } = await loadSceneUtils()
+
+  let scene = buildDeviceMockupSceneDocument({
+    title: 'Mockup 构图',
+    subtitle: '验证 screenTransform',
+    badge: 'Transform',
+    templateKey: 'device-showcase',
+    deviceFramePresetKey: 'iphone-16-pro',
+  })
+  const pageId = scene.sourceModel.currentPageId
+
+  scene = appendDesignFrameToSceneDocument(scene, {
+    id: 'artboard-source',
+    pageId,
+    kind: 'device_artboard',
+    name: '联动画板',
+    deviceFramePresetKey: 'iphone-16-pro',
+    elements: [
+      {
+        id: 'artboard-title',
+        type: 'text',
+        x: 48,
+        y: 64,
+        width: 240,
+        height: 72,
+        text: '构图联动',
+      },
+    ],
+  })
+
+  const sourceArtboard = scene.sourceModel.frames?.find(frame => frame.id === 'artboard-source')
+  const mockupFrame = scene.sourceModel.frames?.find(frame => frame.kind === 'device_mockup')
+  assert.ok(sourceArtboard, '缺少 source artboard')
+  assert.ok(mockupFrame, '缺少 device_mockup')
+
+  const baselinePreviewSvg = renderCompositionFramePreviewSvg(scene, mockupFrame?.id || '')
+  const baselineAssetSvg = renderCompositionAssetToSvg(scene, {
+    frameId: mockupFrame?.id,
+  })
+
+  scene = updateDesignFrameInSceneDocument(scene, mockupFrame?.id || '', {
+    metadata: {
+      device: {
+        mockupSourceFrameId: sourceArtboard?.id,
+        screenScaleMode: 'fit',
+        screenTransform: {
+          offsetX: 32,
+          offsetY: -18,
+          scale: 1.2,
+        },
+      },
+    },
+  })
+
+  const updatedMockup = scene.sourceModel.frames?.find(frame => frame.id === mockupFrame?.id) || null
+  const projectionLayout = resolveDesignFrameProjectionLayoutForFrames(
+    updatedMockup,
+    sourceArtboard,
+    {
+      assets: scene.sourceModel.assets,
+      outerRect: {
+        x: 0,
+        y: 0,
+        width: updatedMockup?.width || 0,
+        height: updatedMockup?.height || 0,
+      },
+    },
+  )
+  assert.ok(projectionLayout, '缺少 mockup 投影布局')
+  const expectedScale = (projectionLayout?.contentScale || 1) * 1.2
+  const expectedTransform = `transform="translate(${(projectionLayout?.surfaceLayout?.screenRect.x || 0) + ((projectionLayout?.surfaceLayout?.screenRect.width || 0) - sourceArtboard.width * expectedScale) / 2 + 32} ${(projectionLayout?.surfaceLayout?.screenRect.y || 0) + ((projectionLayout?.surfaceLayout?.screenRect.height || 0) - sourceArtboard.height * expectedScale) / 2 - 18}) scale(${expectedScale})"`
+  const previewSvg = renderCompositionFramePreviewSvg(scene, mockupFrame?.id || '')
+  const assetSvg = renderCompositionAssetToSvg(scene, {
+    frameId: mockupFrame?.id,
+  })
+
+  assert.notEqual(previewSvg, baselinePreviewSvg)
+  assert.notEqual(assetSvg, baselineAssetSvg)
+  assert.ok(previewSvg.includes(expectedTransform), '预览未应用 screenTransform 后的 translate/scale')
+  assert.ok(assetSvg.includes(expectedTransform), '导出未应用 screenTransform 后的 translate/scale')
 })

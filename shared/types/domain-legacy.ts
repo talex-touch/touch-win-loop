@@ -571,7 +571,7 @@ export type DesignLayoutSizing = 'fixed' | 'hug' | 'fill'
 export type DeviceShellMode = 'none' | 'builtin' | 'external'
 export type DeviceShellSource = 'builtin' | 'uploaded'
 export type DeviceScaleMode = 'fit' | 'fill'
-export type DeviceFramePlatform = 'ios' | 'android' | 'ipados' | 'windows' | 'web'
+export type DeviceFramePlatform = 'ios' | 'android' | 'ipados' | 'watchos' | 'windows' | 'web'
 
 export interface DesignElementConstraints {
   horizontal?: DesignConstraintHorizontal
@@ -710,12 +710,19 @@ export interface DesignFrameExportMetadata extends Record<string, unknown> {
   format?: 'svg' | 'png' | 'pdf'
 }
 
+export interface DesignFrameDeviceScreenTransform {
+  offsetX: number
+  offsetY: number
+  scale: number
+}
+
 export interface DesignFrameDeviceMetadata extends Record<string, unknown> {
   shellMode?: DeviceShellMode
   shellAssetId?: string
   mockupSourceFrameId?: string
   screenScaleMode?: DeviceScaleMode
   showSafeArea?: boolean
+  screenTransform?: DesignFrameDeviceScreenTransform
 }
 
 export interface DesignFrameMetadata extends Record<string, unknown> {
@@ -788,6 +795,9 @@ export type CanvasLibraryAssetKind = 'image' | 'svg' | 'device_shell'
 export type CanvasLibraryItemStatus = 'draft' | 'published' | 'archived'
 export type CanvasLibraryItemSource = 'admin_upload' | 'design_publish'
 export type CanvasLibraryItemPayloadType = 'scene_document' | 'design_fragment' | 'binary_asset'
+export type MockupDeviceCategory = 'iphone' | 'tablet' | 'pc' | 'watch' | 'android' | 'browser'
+export type MockupVariantSlotKey = 'variant_1' | 'variant_2' | 'variant_3' | 'variant_4'
+export type MockupDeviceModelStatus = 'draft' | 'published' | 'archived'
 
 export interface CanvasLibraryOriginMetadata {
   itemId: string
@@ -902,6 +912,59 @@ export interface CanvasLibraryItemVersion {
   createdAt?: string
 }
 
+export interface MockupDeviceModel {
+  id: string
+  slug: string
+  title: string
+  category: MockupDeviceCategory
+  brand?: string
+  modelName: string
+  screenWidth: number
+  screenHeight: number
+  sortOrder: number
+  status: MockupDeviceModelStatus
+  defaultVariantSlotKey?: MockupVariantSlotKey
+  createdBy: string
+  updatedBy: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface MockupDeviceVariant {
+  id: string
+  deviceModelId: string
+  slotKey: MockupVariantSlotKey
+  title: string
+  shellAssetItemId?: string | null
+  shellAssetVersionId?: string | null
+  enabled: boolean
+  sortOrder: number
+}
+
+export interface MockupProjectCatalogVariant extends MockupDeviceVariant {
+  presetKey: string
+  resolvedPreset: DeviceFramePreset
+  shellAssetTitle?: string
+  shellAssetSlug?: string
+  shellAssetUrl?: string
+  shellAssetPayload?: CanvasLibraryDeviceShellAssetPayload | null
+}
+
+export interface MockupProjectCatalogModel extends MockupDeviceModel {
+  variants: MockupProjectCatalogVariant[]
+}
+
+export interface MockupProjectCatalogCategory {
+  key: MockupDeviceCategory
+  title: string
+  models: MockupProjectCatalogModel[]
+}
+
+export interface MockupProjectCatalog {
+  categories: MockupProjectCatalogCategory[]
+  resolvedPresets: DeviceFramePreset[]
+}
+
 export interface SceneTemplateSummary {
   templateKey: string
   category: SceneTemplateCategory
@@ -923,9 +986,9 @@ export interface DesignTemplateManifest extends SceneTemplateSummary {
 export interface DeviceFramePreset {
   key: string
   title: string
-  group: 'iPhone' | 'Android Phone' | 'iPad' | 'Surface/Desktop'
+  group: 'iPhone' | 'Android Phone' | 'iPad' | 'Surface/Desktop' | 'Tablet' | 'PC' | 'Watch' | 'Browser'
   platform: DeviceFramePlatform
-  deviceFamily: 'phone' | 'tablet' | 'desktop' | 'browser'
+  deviceFamily: 'phone' | 'tablet' | 'desktop' | 'browser' | 'watch'
   screenWidth: number
   screenHeight: number
   framePadding: number
@@ -2288,6 +2351,7 @@ export interface AiProjectChatResult {
 }
 
 export type WorkspaceAiMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'defense' | 'document_assist'
+export type WorkspaceAiAssistantPreset = 'default' | 'document' | 'prototype' | 'design'
 
 export type ProjectResourceCommentAnchorType = 'text_selection' | 'image_node'
 export type ProjectResourceCommentThreadStatus = 'open' | 'resolved'
@@ -2827,6 +2891,11 @@ export interface AiWorkspaceRequest {
     selectionRange?: AiWorkspaceDocumentSelectionRange | null
     trigger?: AiWorkspaceDocumentTrigger
     documentAction?: AiWorkspaceDocumentAction
+    assistantPreset?: WorkspaceAiAssistantPreset
+    assistantLabel?: string
+    activeTabId?: string
+    previewMode?: string
+    resourcePurpose?: CollabPurpose | ''
   }
   aiOptions?: Partial<AiAssistantOptions>
 }

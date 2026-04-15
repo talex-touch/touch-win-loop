@@ -63,6 +63,7 @@ const props = withDefaults(
     viewportX?: number;
     viewportY?: number;
     viewportZoom?: number;
+    mockupScreenEditingFrameId?: string;
     disabled?: boolean;
   }>(),
   {
@@ -79,6 +80,7 @@ const props = withDefaults(
     viewportX: 0,
     viewportY: 0,
     viewportZoom: 1,
+    mockupScreenEditingFrameId: "",
     disabled: false,
   },
 );
@@ -337,7 +339,8 @@ const frameInteractionEnabled = computed(() => {
     !props.disabled &&
     props.interactionContext.effectiveTool === "select" &&
     props.selectionState.scope !== "element" &&
-    !normalizeString(props.selectionState.editingFrameId)
+    !normalizeString(props.selectionState.editingFrameId) &&
+    !normalizeString(props.mockupScreenEditingFrameId)
   );
 });
 const remoteScreenCursors = computed<ScreenCursor[]>(() => {
@@ -1080,6 +1083,8 @@ watch(
         data: {
           frame,
           deviceShellAsset,
+          previewFrames: props.frames,
+          previewAssets: props.assets,
           disabled:
             props.disabled || frame.locked || !frameInteractionEnabled.value,
           onResizePreview: (payload: {
@@ -1169,7 +1174,8 @@ function handleNodeDoubleClick(payload: NodeMouseEvent): void {
     emit("open-frame", frameId);
     return;
   }
-  if (!frame || !canDesignFrameCreateElements(frame)) return;
+  if (!frame) return;
+  if (frame.kind !== "device_mockup" && !canDesignFrameCreateElements(frame)) return;
   const pointer = resolvePointerClientPosition(payload.event);
   if (!pointer) return;
   emit("node-double-click", {
@@ -1466,6 +1472,8 @@ onBeforeUnmount(() => {
         <WorkspaceDesignFrameNode
           :frame="nodeProps.data.frame"
           :device-shell-asset="nodeProps.data.deviceShellAsset"
+          :preview-frames="nodeProps.data.previewFrames"
+          :preview-assets="nodeProps.data.previewAssets"
           :selected="nodeProps.selected"
           :disabled="Boolean(nodeProps.data.disabled)"
           :on-resize-preview="nodeProps.data.onResizePreview"

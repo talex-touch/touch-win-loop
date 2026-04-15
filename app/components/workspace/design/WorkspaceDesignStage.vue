@@ -49,6 +49,7 @@ const props = withDefaults(defineProps<{
   viewportX?: number
   viewportY?: number
   viewportZoom?: number
+  mockupScreenEditingFrameId?: string
   disabled?: boolean
 }>(), {
   page: null,
@@ -69,6 +70,7 @@ const props = withDefaults(defineProps<{
   viewportX: 0,
   viewportY: 0,
   viewportZoom: 1,
+  mockupScreenEditingFrameId: '',
   disabled: false,
 })
 
@@ -87,6 +89,8 @@ const emit = defineEmits<{
   'update-elements': [payload: { patches: Array<{ elementId: string, patch: Partial<DesignElementModel> }>, historyMergeKey?: string }]
   'node-double-click': [payload: { frameId: string, clientX: number, clientY: number }]
   'request-deep-selection': [payload: { ownerFrameId: string, ownerPageId: string, displayFrameId: string, ownerElementId?: string }]
+  'edit-mockup-screen': [payload: { frameId: string }]
+  'update-mockup-screen-transform': [payload: { frameId: string, offsetX: number, offsetY: number, historyMergeKey?: string }]
 }>()
 
 type OverlayElementItem = {
@@ -156,12 +160,20 @@ type ElementTransformDraft = {
   previewPatch: Partial<DesignElementModel>
 }
 type SvgStrokeLineCap = 'butt' | 'inherit' | 'round' | 'square'
-type SvgStrokeLineJoin = 'arcs' | 'bevel' | 'inherit' | 'miter' | 'miter-clip' | 'round'
+type SvgStrokeLineJoin = 'bevel' | 'inherit' | 'miter' | 'round'
 type TransformBadgeSnapshot = {
   style: Record<string, string>
   text: string
   status?: string
   fading: boolean
+}
+type MockupScreenDragDraft = {
+  frameId: string
+  startClientX: number
+  startClientY: number
+  startOffsetX: number
+  startOffsetY: number
+  dragging: boolean
 }
 
 const viewport = ref({
@@ -174,6 +186,7 @@ const createDraft = ref<CreateDraft | null>(null)
 const elementSelectionDraft = ref<ElementSelectionDraft | null>(null)
 const elementDragDraft = ref<ElementDragDraft | null>(null)
 const elementTransformDraft = ref<ElementTransformDraft | null>(null)
+const mockupScreenDragDraft = ref<MockupScreenDragDraft | null>(null)
 const transformBadgeGhost = ref<TransformBadgeSnapshot | null>(null)
 let resizeBadgeGhostFadeTimer: ReturnType<typeof setTimeout> | null = null
 let resizeBadgeGhostDisposeTimer: ReturnType<typeof setTimeout> | null = null
@@ -296,6 +309,7 @@ function clearTransientOverlayDrafts(): void {
   elementSelectionDraft.value = null
   elementDragDraft.value = null
   elementTransformDraft.value = null
+  mockupScreenDragDraft.value = null
   clearResizeBadgeGhostTimers()
   transformBadgeGhost.value = null
 }
@@ -312,7 +326,15 @@ const overlayCapturesCanvasPointer = computed(() => {
     return false
   if (props.activeTool !== 'select')
     return true
-  return deepSelectionEnabled.value || Boolean(createDraft.value || elementSelectionDraft.value || elementDragDraft.value || elementTransformDraft.value)
+  return deepSelectionEnabled.value
+    || Boolean(
+      createDraft.value
+      || elementSelectionDraft.value
+      || elementDragDraft.value
+      || elementTransformDraft.value
+      || normalizeString(props.mockupScreenEditingFrameId)
+      || mockupScreenDragDraft.value,
+    )
 })
 const createDraftRectStyle = computed<Record<string, string> | null>(() => {
   const draft = createDraft.value
@@ -382,6 +404,51 @@ const frameProjectionLayoutMap = computed(() => {
       return layout ? [[frame.id, layout] as const] : []
     }),
   )
+})
+const activeMockupScreenEditingLayout = computed(() => {
+  const displayFrameId = normalizeString(props.mockupScreenEditingFrameId)
+  if (!displayFrameId)
+    return null
+
+  const displayFrame = frameMap.value.get(displayFrameId) || null
+  const ownerFrame = frameOwnerFrameMap.value.get(displayFrameId) || displayFrame
+  if (!displayFrame || !ownerFrame || displayFrame.kind !== 'device_mockup')
+    return null
+
+  const layout = resolveDesignFrameProjectionLayoutForFrames(
+    displayFrame,
+    ownerFrame,
+    {
+      assets: props.assets,
+      outerRect: {
+        x: displayFrame.x,
+        y: displayFrame.y,
+        width: displayFrame.width,
+        height: displayFrame.height,
+      },
+    },
+  )
+  if (!layout?.surfaceLayout)
+    return null
+
+  return {
+    displayFrame,
+    ownerFrame,
+    layout,
+    screenRect: layout.surfaceLayout.screenRect,
+  }
+})
+const activeMockupScreenRectStyle = computed<Record<string, string> | null>(() => {
+  const state = activeMockupScreenEditingLayout.value
+  if (!state)
+    return null
+
+  return {
+    left: `${state.screenRect.x * viewport.value.zoom + viewport.value.x}px`,
+    top: `${state.screenRect.y * viewport.value.zoom + viewport.value.y}px`,
+    width: `${Math.max(1, state.screenRect.width * viewport.value.zoom)}px`,
+    height: `${Math.max(1, state.screenRect.height * viewport.value.zoom)}px`,
+  }
 })
 
 const overlayElements = computed<OverlayElementItem[]>(() => {
@@ -600,6 +667,26 @@ function toContainerPoint(flowPoint: { x: number, y: number }) {
     x: flowPoint.x - (displayFrame?.x ?? ownerFrame.x),
     y: flowPoint.y - (displayFrame?.y ?? ownerFrame.y),
     frameId: normalizeString(displayFrame?.id) || normalizeString(ownerFrame.id),
+  }
+}
+
+function isFlowPointInsideRect(
+  point: { x: number, y: number },
+  rect: { x: number, y: number, width: number, height: number },
+): boolean {
+  return point.x >= rect.x
+    && point.x <= rect.x + rect.width
+    && point.y >= rect.y
+    && point.y <= rect.y + rect.height
+}
+
+function resolveMockupScreenTransform(frame: DesignFrameModel | null | undefined): {
+  offsetX: number
+  offsetY: number
+} {
+  return {
+    offsetX: Number(frame?.metadata?.device?.screenTransform?.offsetX || 0),
+    offsetY: Number(frame?.metadata?.device?.screenTransform?.offsetY || 0),
   }
 }
 
@@ -911,13 +998,13 @@ function resolveOverlayStrokeLineCap(item: OverlayElementItem): SvgStrokeLineCap
 
 function resolveOverlayStrokeLineJoin(item: OverlayElementItem): SvgStrokeLineJoin {
   const value = resolveElementPresentationForOverlay(item).strokeLineJoin
-  return value === 'arcs'
-    || value === 'bevel'
+  return value === 'bevel'
     || value === 'inherit'
     || value === 'miter'
-    || value === 'miter-clip'
     ? value
-    : 'round'
+    : value === 'arcs' || value === 'miter-clip'
+      ? 'miter'
+      : 'round'
 }
 
 const selectedTransformTarget = computed(() => {
@@ -1055,8 +1142,15 @@ const visibleFrameGrids = computed(() => {
 })
 
 function canInteractWithOverlayElement(item: OverlayElementItem): boolean {
-  if (props.activeTool !== 'select' || props.disabled || isHandModeActive.value || item.element.locked)
+  if (
+    props.activeTool !== 'select'
+    || props.disabled
+    || isHandModeActive.value
+    || item.element.locked
+    || Boolean(normalizeString(props.mockupScreenEditingFrameId))
+  ) {
     return false
+  }
 
   const editingFrameId = normalizeString(props.selectionState.editingFrameId)
   const activeDisplayFrameId = resolveSelectionDisplayFrameId()
@@ -1110,7 +1204,17 @@ function handleCanvasNodeDoubleClick(payload: {
   const frameId = normalizeString(payload.frameId)
   const displayFrame = frameMap.value.get(frameId) || null
   const ownerFrame = frameOwnerFrameMap.value.get(frameId) || displayFrame
-  if (!displayFrame || !ownerFrame || !canDesignFrameCreateElements(ownerFrame))
+  if (!displayFrame || !ownerFrame)
+    return
+
+  if (displayFrame.kind === 'device_mockup') {
+    emit('edit-mockup-screen', {
+      frameId: displayFrame.id,
+    })
+    return
+  }
+
+  if (!canDesignFrameCreateElements(ownerFrame))
     return
 
   clearTransientOverlayDrafts()
@@ -1344,6 +1448,25 @@ function resolveSelectionDraftMatches(draft: ElementSelectionDraft): string[] {
 
 function handleOverlayPanePointerDown(event: PointerEvent): void {
   const flowPoint = toFlowPoint(event)
+  const activeMockupScreen = activeMockupScreenEditingLayout.value
+  if (
+    props.activeTool === 'select'
+    && activeMockupScreen
+  ) {
+    if (!isFlowPointInsideRect(flowPoint, activeMockupScreen.screenRect))
+      return
+    const transform = resolveMockupScreenTransform(activeMockupScreen.displayFrame)
+    mockupScreenDragDraft.value = {
+      frameId: activeMockupScreen.displayFrame.id,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startOffsetX: transform.offsetX,
+      startOffsetY: transform.offsetY,
+      dragging: false,
+    }
+    return
+  }
+
   const containerPoint = toContainerPoint(flowPoint)
   if (props.activeTool === 'pencil') {
     createDraft.value = {
@@ -1448,6 +1571,27 @@ function emitCreateElementFromDraft(): void {
 }
 
 function handleOverlayPointerMove(event: PointerEvent): void {
+  if (mockupScreenDragDraft.value) {
+    const draft = mockupScreenDragDraft.value
+    const deltaX = (event.clientX - draft.startClientX) / viewport.value.zoom
+    const deltaY = (event.clientY - draft.startClientY) / viewport.value.zoom
+    const dragging = draft.dragging
+      || Math.abs(deltaX) > POINTER_GESTURE_THRESHOLD / viewport.value.zoom
+      || Math.abs(deltaY) > POINTER_GESTURE_THRESHOLD / viewport.value.zoom
+
+    mockupScreenDragDraft.value = {
+      ...draft,
+      dragging,
+    }
+    emit('update-mockup-screen-transform', {
+      frameId: draft.frameId,
+      offsetX: roundMetric(draft.startOffsetX + deltaX),
+      offsetY: roundMetric(draft.startOffsetY + deltaY),
+      historyMergeKey: 'mockup-screen-transform',
+    })
+    return
+  }
+
   if (createDraft.value) {
     const flowPoint = toFlowPoint(event)
     const containerPoint = toContainerPoint(flowPoint)
@@ -1559,6 +1703,11 @@ function handleOverlayPointerMove(event: PointerEvent): void {
 }
 
 function handleOverlayPointerUp(): void {
+  if (mockupScreenDragDraft.value) {
+    mockupScreenDragDraft.value = null
+    return
+  }
+
   if (createDraft.value) {
     emitCreateElementFromDraft()
     return
@@ -1789,6 +1938,7 @@ onBeforeUnmount(() => {
       :viewport-x="props.viewportX"
       :viewport-y="props.viewportY"
       :viewport-zoom="props.viewportZoom"
+      :mockup-screen-editing-frame-id="props.mockupScreenEditingFrameId"
       :disabled="props.disabled || !['select', 'hand'].includes(props.interactionContext.effectiveTool)"
       @update-selection="emit('update-selection', $event)"
       @open-frame="emit('open-frame', $event)"
@@ -1849,6 +1999,16 @@ onBeforeUnmount(() => {
           />
         </g>
       </svg>
+
+      <div
+        v-if="activeMockupScreenRectStyle"
+        class="pointer-events-none absolute rounded-[20px] border border-sky-400/75 bg-sky-300/10 shadow-[0_0_0_1px_rgba(125,211,252,0.16)]"
+        :style="activeMockupScreenRectStyle"
+      >
+        <div class="absolute left-2 top-2 rounded-full bg-slate-950/75 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-100">
+          Screen Crop
+        </div>
+      </div>
 
       <div
         v-for="item in overlayElements"

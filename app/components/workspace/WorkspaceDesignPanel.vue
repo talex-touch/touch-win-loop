@@ -19,7 +19,10 @@ import type {
   DesignFrameKind,
   DesignFrameModel,
   DesignPageModel,
+  DeviceFramePreset,
   ChatMessage,
+  MockupProjectCatalog,
+  MockupProjectCatalogVariant,
   Resource,
   GraphSourceEdge,
   GraphSourceGroup,
@@ -86,6 +89,7 @@ import {
   resolveDisplayCompositionElementsForPage,
   resolveCompositionElementsForPage,
   renderCompositionAssetToSvg,
+  registerRuntimeDeviceFramePresets,
   resolveCompositionElementsForFrame,
   sceneDocumentFromUnknown,
   serializeSceneDocument,
@@ -203,6 +207,9 @@ const canvasLibrarySearch = ref("");
 const canvasLibraryItems = ref<CanvasLibraryItem[]>([]);
 const canvasLibraryLoading = ref(false);
 const canvasLibraryError = ref("");
+const mockupCatalog = ref<MockupProjectCatalog | null>(null);
+const mockupCatalogLoading = ref(false);
+const mockupCatalogError = ref("");
 const canvasLibraryActioningId = ref("");
 const canvasLibraryPublishScope = ref<"scene" | "page" | "frame">("scene");
 const canvasLibraryPublishTitle = ref("");
@@ -245,6 +252,7 @@ const diagramSelectedEdgeId = ref("");
 const localPageViewportById = ref<Record<string, StageViewportState>>({});
 const temporaryHandToolActive = ref(false);
 const deepSelectModifierPressed = ref(false);
+const mockupScreenEditingFrameId = ref("");
 const toolSwitchHint = ref("");
 let toolSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1140,6 +1148,43 @@ const availableDeviceArtboards = computed(() => {
       pageId: frame.pageId,
     }));
 });
+const resolvedDeviceFramePresets = computed<DeviceFramePreset[]>(() => {
+  const presetMap = new Map<string, DeviceFramePreset>();
+  for (const preset of mockupCatalog.value?.resolvedPresets || []) {
+    if (!normalizeString(preset.key)) continue;
+    presetMap.set(preset.key, preset);
+  }
+  for (const preset of DEVICE_FRAME_PRESETS) {
+    if (!normalizeString(preset.key) || presetMap.has(preset.key)) continue;
+    presetMap.set(preset.key, preset);
+  }
+  return [...presetMap.values()];
+});
+const mockupCatalogVariantMap = computed(() => {
+  const variantMap = new Map<string, MockupProjectCatalogVariant>();
+  for (const category of mockupCatalog.value?.categories || []) {
+    for (const model of category.models) {
+      for (const variant of model.variants) {
+        if (!normalizeString(variant.presetKey)) continue;
+        variantMap.set(variant.presetKey, variant);
+      }
+    }
+  }
+  return variantMap;
+});
+watch(
+  resolvedDeviceFramePresets,
+  (presets) => {
+    registerRuntimeDeviceFramePresets(
+      presets.filter((preset) =>
+        !DEVICE_FRAME_PRESETS.some((legacyPreset) => legacyPreset.key === preset.key),
+      ),
+    );
+  },
+  {
+    immediate: true,
+  },
+);
 const filteredCanvasLibraryItems = computed(() => {
   const keyword = canvasLibrarySearch.value.trim().toLowerCase();
   return canvasLibraryItems.value.filter((item) => {
@@ -1159,7 +1204,7 @@ const canvasLibraryAssetItems = computed(() => {
 watch(
   () => props.projectId,
   () => {
-    void loadCanvasLibraryItems();
+    void Promise.all([loadCanvasLibraryItems(), loadMockupCatalog()]);
   },
   {
     immediate: true,
@@ -1894,9 +1939,22 @@ watch(
   (frame) => {
     if (!diagramEditorFrameId.value && frame?.kind === "diagram")
       syncDiagramEditorFromFrame(frame);
+    if (
+      !frame ||
+      frame.kind !== "device_mockup" ||
+      normalizeString(mockupScreenEditingFrameId.value) !== normalizeString(frame.id)
+    ) {
+      mockupScreenEditingFrameId.value = "";
+    }
   },
   { immediate: true },
 );
+
+watch(activeTool, (tool) => {
+  if (tool !== "select") {
+    mockupScreenEditingFrameId.value = "";
+  }
+});
 
 watch(diagramSourceFormat, (nextFormat) => {
   canvasAiTemplate.value = resolveCanvasTemplateFromSourceFormat(
@@ -2548,6 +2606,7 @@ function updateSelectedFrame(
     badge?: string;
     imageSrc?: string;
   },
+  historyMergeKey?: string,
 ): void {
   if (!selectedFrame.value) return;
   const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
@@ -2557,6 +2616,45 @@ function updateSelectedFrame(
       selectedFrame.value.id,
       patch,
     ),
+    {
+      historyMergeKey,
+    },
+  );
+  replaceSelectionState(selectionSnapshot);
+}
+
+function updateMockupScreenTransform(
+  frameId: string,
+  patch: {
+    offsetX: number;
+    offsetY: number;
+  },
+  historyMergeKey?: string,
+): void {
+  const normalizedFrameId = normalizeString(frameId);
+  if (!normalizedFrameId) return;
+  const targetFrame = resolveFrameFromDocument(draftDocument.value, normalizedFrameId);
+  if (!targetFrame) return;
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+
+  commitDocument(
+    updateDesignFrameInSceneDocument(draftDocument.value, normalizedFrameId, {
+      metadata: {
+        ...(targetFrame.metadata || {}),
+        device: {
+          ...(targetFrame.metadata?.device || {}),
+          screenTransform: {
+            ...(targetFrame.metadata?.device?.screenTransform || {}),
+            offsetX: patch.offsetX,
+            offsetY: patch.offsetY,
+            scale: Number(targetFrame.metadata?.device?.screenTransform?.scale || 1),
+          },
+        },
+      },
+    }),
+    {
+      historyMergeKey,
+    },
   );
   replaceSelectionState(selectionSnapshot);
 }
@@ -3381,6 +3479,30 @@ async function loadCanvasLibraryItems(): Promise<void> {
   }
 }
 
+async function loadMockupCatalog(): Promise<void> {
+  const projectId = normalizeString(props.projectId);
+  if (!projectId) {
+    mockupCatalog.value = null;
+    mockupCatalogError.value = "";
+    return;
+  }
+
+  mockupCatalogLoading.value = true;
+  mockupCatalogError.value = "";
+  try {
+    mockupCatalog.value = await requestCanvasLibraryApi<MockupProjectCatalog>(
+      `/projects/${encodeURIComponent(projectId)}/mockups/catalog`,
+    );
+  }
+  catch (error: any) {
+    mockupCatalog.value = null;
+    mockupCatalogError.value = String(error?.message || "Mockup 目录加载失败。");
+  }
+  finally {
+    mockupCatalogLoading.value = false;
+  }
+}
+
 function buildCanvasLibraryImportOrigin(
   version: CanvasLibraryItemVersion,
 ): CanvasLibraryOriginMetadata {
@@ -3391,6 +3513,100 @@ function buildCanvasLibraryImportOrigin(
     importedBy: normalizeString(props.currentUserId) || "anonymous",
     source: "canvas_library",
   };
+}
+
+function buildLibraryOriginMetadata(input: {
+  itemId: string;
+  versionId: string;
+}): CanvasLibraryOriginMetadata {
+  return {
+    itemId: input.itemId,
+    versionId: input.versionId,
+    importedAt: new Date().toISOString(),
+    importedBy: normalizeString(props.currentUserId) || "anonymous",
+    source: "canvas_library",
+  };
+}
+
+async function ensureMockupShellAssetFromCatalogVariant(
+  variant: MockupProjectCatalogVariant,
+): Promise<DesignAssetModel | null> {
+  const itemId = normalizeString(variant.shellAssetItemId);
+  const versionId = normalizeString(variant.shellAssetVersionId);
+  const shellAssetUrl = normalizeString(variant.shellAssetUrl);
+  if (!itemId || !versionId || !variant.shellAssetPayload || !shellAssetUrl) {
+    return null;
+  }
+
+  const existingAsset =
+    (compositionModel.value.assets || []).find((asset) => {
+      const origin = asset.metadata?.libraryOrigin;
+      return (
+        asset.metadata?.role === "device_shell" &&
+        normalizeString(origin?.itemId) === itemId &&
+        normalizeString(origin?.versionId) === versionId
+      );
+    }) || null;
+  if (existingAsset) return existingAsset;
+
+  const asset = buildDesignAssetFromCanvasLibraryPayload(
+    variant.shellAssetPayload,
+    {
+      id: createAssetId(),
+      src: shellAssetUrl,
+      assetKind: "device_shell",
+      name:
+        normalizeString(variant.shellAssetTitle) ||
+        normalizeString(variant.title) ||
+        variant.resolvedPreset.title,
+      origin: buildLibraryOriginMetadata({
+        itemId,
+        versionId,
+      }),
+    },
+  );
+  commitDocument(appendDesignAssetToSceneDocument(draftDocument.value, asset));
+  return asset;
+}
+
+async function selectMockupVariant(presetKey: string): Promise<void> {
+  const frame = selectedFrame.value;
+  if (!frame || (frame.kind !== "device_mockup" && frame.kind !== "device_artboard")) {
+    return;
+  }
+
+  const normalizedPresetKey = normalizeString(presetKey);
+  if (!normalizedPresetKey) return;
+
+  const preset =
+    resolvedDeviceFramePresets.value.find((item) => item.key === normalizedPresetKey) ||
+    resolveDeviceFramePreset(normalizedPresetKey);
+  const catalogVariant = mockupCatalogVariantMap.value.get(normalizedPresetKey) || null;
+  const importedShellAsset = catalogVariant
+    ? await ensureMockupShellAssetFromCatalogVariant(catalogVariant)
+    : null;
+
+  updateSelectedFrame({
+    deviceFramePresetKey: normalizedPresetKey,
+    ...(frame.kind === "device_artboard" && preset
+      ? {
+          width: preset.screenWidth,
+          height: preset.screenHeight,
+        }
+      : {}),
+    metadata: {
+      ...(frame.metadata || {}),
+      device: {
+        ...(frame.metadata?.device || {}),
+        ...(importedShellAsset
+          ? {
+              shellMode: "external",
+              shellAssetId: importedShellAsset.id,
+            }
+          : {}),
+      },
+    },
+  });
 }
 
 async function importCanvasLibraryItem(item: CanvasLibraryItem): Promise<void> {
@@ -6110,6 +6326,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             :viewport-x="stageViewportX"
             :viewport-y="stageViewportY"
             :viewport-zoom="stageViewportZoom"
+            :mockup-screen-editing-frame-id="mockupScreenEditingFrameId"
             :disabled="!isBoundToDesignResource"
             @update-selection="replaceSelectionState($event)"
             @open-frame="openFrameEditor"
@@ -6124,6 +6341,17 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             @update-element="updateDesignElementFromStage"
             @update-elements="updateDesignElementsFromStage"
             @request-deep-selection="requestDeepSelection"
+            @edit-mockup-screen="mockupScreenEditingFrameId = $event.frameId"
+            @update-mockup-screen-transform="
+              updateMockupScreenTransform(
+                $event.frameId,
+                {
+                  offsetX: $event.offsetX,
+                  offsetY: $event.offsetY,
+                },
+                $event.historyMergeKey,
+              )
+            "
           />
         </WLDesignLayer>
       </template>
@@ -6276,11 +6504,13 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
               :element-frame="selectedElementFrame"
               :selected-frame-count="selectedFrameIds.length"
               :selected-element-count="selectedElementIds.length"
-              :device-frame-presets="DEVICE_FRAME_PRESETS"
+              :device-frame-presets="resolvedDeviceFramePresets"
+              :mockup-catalog="mockupCatalog"
               :device-artboard-options="availableDeviceArtboards"
               :device-shell-assets="deviceShellAssets"
               :frame-preview-markup="selectedFramePreviewSvg"
               :frame-shell-preview-markup="selectedFrameShellPreviewSvg"
+              :mockup-screen-editing-frame-id="mockupScreenEditingFrameId"
               :design-resource-id="
                 props.designResourceId || 'pending-design-resource'
               "
@@ -6299,6 +6529,26 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
               @update:diagram-source-text="diagramSourceText = $event"
               @apply-diagram-source="applyDiagramSource"
               @open-diagram-editor="openFrameEditor(selectedFrame?.id || '')"
+              @select-mockup-variant="void selectMockupVariant($event)"
+              @enter-mockup-screen-edit="
+                mockupScreenEditingFrameId = selectedFrame?.id || ''
+              "
+              @exit-mockup-screen-edit="mockupScreenEditingFrameId = ''"
+              @reset-mockup-screen-transform="
+                updateSelectedFrame({
+                  metadata: {
+                    ...(selectedFrame?.metadata || {}),
+                    device: {
+                      ...(selectedFrame?.metadata?.device || {}),
+                      screenTransform: {
+                        offsetX: 0,
+                        offsetY: 0,
+                        scale: 1,
+                      },
+                    },
+                  },
+                })
+              "
             />
           </WLDesignContainer>
         </div>

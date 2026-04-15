@@ -18,6 +18,7 @@ import type {
   DesignElementModel,
   DesignElementStyle,
   DesignFrameKind,
+  DesignFrameDeviceScreenTransform,
   DesignFrameLayoutPadding,
   DesignFrameModel,
   DesignPageModel,
@@ -48,6 +49,7 @@ import type {
   SchemaModel,
   SchemaTableModel,
 } from '../types/domain-legacy'
+import { parseMockupDevicePresetKey } from './mockup-device-catalog'
 import YAML from 'yaml'
 
 const DEFAULT_ARTBOARD_WIDTH = 1600
@@ -98,6 +100,7 @@ interface ResolvedDesignFrameDevice {
   mockupSourceFrameId: string
   screenScaleMode: DeviceScaleMode
   showSafeArea: boolean
+  screenTransform: DesignFrameDeviceScreenTransform
 }
 interface ResolvedDeviceShellViewportRect {
   x: number
@@ -540,16 +543,22 @@ function resolveDesignFrameDeviceMetadata(value: unknown, kind: DesignFrameKind)
   const shellMode = normalizeString(source.shellMode).toLowerCase()
   const screenScaleMode = normalizeString(source.screenScaleMode).toLowerCase()
   const defaultShellMode: DeviceShellMode = kind === 'device_mockup' ? 'builtin' : 'none'
+  const screenTransformSource = normalizeRecord(source.screenTransform)
   return {
     shellMode: shellMode === 'builtin' || shellMode === 'external' || shellMode === 'none'
       ? shellMode
       : defaultShellMode,
     shellAssetId: normalizeString(source.shellAssetId),
-    mockupSourceFrameId: '',
+    mockupSourceFrameId: normalizeString(source.mockupSourceFrameId),
     screenScaleMode: screenScaleMode === 'fill' ? 'fill' : 'fit',
     showSafeArea: typeof source.showSafeArea === 'boolean'
       ? source.showSafeArea
       : kind === 'device_artboard',
+    screenTransform: {
+      offsetX: toFiniteNumber(screenTransformSource.offsetX, 0),
+      offsetY: toFiniteNumber(screenTransformSource.offsetY, 0),
+      scale: Math.max(0.1, toFiniteNumber(screenTransformSource.scale, 1) || 1),
+    },
   }
 }
 
@@ -625,12 +634,11 @@ function sanitizeDeviceFrameMetadataForPersistence(
 ): DesignFrameModel['metadata'] {
   const sourceMetadata = normalizeRecord(metadata)
   const deviceMetadata = normalizeRecord(sourceMetadata.device)
-  const { mockupSourceFrameId: _ignoredMockupSourceFrameId, ...nextDeviceMetadata } = deviceMetadata
   const nextMetadata: Record<string, unknown> = {
     ...sourceMetadata,
   }
-  if (Object.keys(nextDeviceMetadata).length > 0) {
-    nextMetadata.device = nextDeviceMetadata
+  if (Object.keys(deviceMetadata).length > 0) {
+    nextMetadata.device = deviceMetadata
   }
   else {
     delete nextMetadata.device
@@ -1909,6 +1917,18 @@ export const DEVICE_FRAME_PRESETS: DeviceFramePreset[] = [
   },
 ]
 
+const runtimeDeviceFramePresetMap = new Map<string, DeviceFramePreset>()
+
+export function registerRuntimeDeviceFramePresets(presets: DeviceFramePreset[] = []): void {
+  runtimeDeviceFramePresetMap.clear()
+  for (const preset of ensureArray(presets)) {
+    const key = normalizeString(preset?.key)
+    if (!key)
+      continue
+    runtimeDeviceFramePresetMap.set(key, preset)
+  }
+}
+
 export const SYSTEM_SCENE_TEMPLATES: DesignTemplateManifest[] = [
   {
     templateKey: 'device-showcase',
@@ -2002,7 +2022,12 @@ export const SYSTEM_SCENE_TEMPLATE_SUMMARIES: SceneTemplateSummary[] = SYSTEM_SC
 
 export function resolveDeviceFramePreset(key: string): DeviceFramePreset {
   const normalizedKey = normalizeString(key)
-  return DEVICE_FRAME_PRESETS.find(preset => preset.key === normalizedKey)
+  const parsedPresetKey = parseMockupDevicePresetKey(normalizedKey)
+  const fallbackKey = parsedPresetKey.modelSlug || normalizedKey
+  return runtimeDeviceFramePresetMap.get(normalizedKey)
+    || runtimeDeviceFramePresetMap.get(fallbackKey)
+    || DEVICE_FRAME_PRESETS.find(preset => preset.key === normalizedKey)
+    || DEVICE_FRAME_PRESETS.find(preset => preset.key === fallbackKey)
     || DEVICE_FRAME_PRESETS.find(preset => preset.key === 'iphone-16-pro')
     || DEVICE_FRAME_PRESETS[0]!
 }
@@ -3243,6 +3268,8 @@ function resolveBuiltinShellKey(preset: DeviceFramePreset): string {
   const explicitKey = normalizeString(preset.builtinShellKey)
   if (explicitKey)
     return explicitKey
+  if (preset.deviceFamily === 'watch')
+    return 'watch-generic-shell'
   if (preset.deviceFamily === 'browser')
     return 'browser-window-shell'
   if (preset.deviceFamily === 'desktop')
@@ -3255,6 +3282,18 @@ function resolveBuiltinShellKey(preset: DeviceFramePreset): string {
 }
 
 function measureBuiltinDeviceShellMetrics(preset: DeviceFramePreset): DeviceShellMetrics {
+  if (preset.deviceFamily === 'watch') {
+    return {
+      width: preset.screenWidth + preset.framePadding * 2,
+      height: preset.screenHeight + preset.framePadding * 2,
+      screenX: preset.framePadding,
+      screenY: preset.framePadding,
+      screenWidth: preset.screenWidth,
+      screenHeight: preset.screenHeight,
+      cornerRadius: preset.screenRadius,
+    }
+  }
+
   if (preset.deviceFamily === 'browser') {
     return {
       width: preset.screenWidth,
@@ -3567,8 +3606,49 @@ function renderDeviceSafeAreaMarkup(screenRect: DesignRect): string {
   return `<rect x="${screenRect.x + insetX}" y="${screenRect.y + insetTop}" width="${width}" height="${height}" rx="${Math.max(12, Math.round(Math.min(width, height) * 0.04))}" ry="${Math.max(12, Math.round(Math.min(width, height) * 0.04))}" fill="none" stroke="rgba(56,189,248,0.55)" stroke-width="2" stroke-dasharray="10 8" />`
 }
 
-function renderImageIntoScreenMarkup(imageSrc: string, screenRect: DesignRect, clipId: string, screenScaleMode: DeviceScaleMode): string {
-  return `<image href="${escapeXml(imageSrc)}" x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" preserveAspectRatio="${screenScaleMode === 'fill' ? 'xMidYMid slice' : 'xMidYMid meet'}" clip-path="url(#${clipId})" />`
+function resolveScreenContentPlacement(
+  screenRect: DesignRect,
+  sourceWidth: number,
+  sourceHeight: number,
+  screenScaleMode: DeviceScaleMode,
+  screenTransform: DesignFrameDeviceScreenTransform,
+): DesignRect & { scale: number } {
+  const safeSourceWidth = Math.max(1, sourceWidth)
+  const safeSourceHeight = Math.max(1, sourceHeight)
+  const scaleX = screenRect.width / safeSourceWidth
+  const scaleY = screenRect.height / safeSourceHeight
+  const baseScale = screenScaleMode === 'fill'
+    ? Math.max(scaleX, scaleY)
+    : Math.min(scaleX, scaleY)
+  const scale = baseScale * Math.max(0.1, Number(screenTransform.scale || 1))
+  const width = safeSourceWidth * scale
+  const height = safeSourceHeight * scale
+  return {
+    x: screenRect.x + (screenRect.width - width) / 2 + Number(screenTransform.offsetX || 0),
+    y: screenRect.y + (screenRect.height - height) / 2 + Number(screenTransform.offsetY || 0),
+    width,
+    height,
+    scale,
+  }
+}
+
+function renderImageIntoScreenMarkup(
+  imageSrc: string,
+  screenRect: DesignRect,
+  clipId: string,
+  screenScaleMode: DeviceScaleMode,
+  sourceWidth: number,
+  sourceHeight: number,
+  screenTransform: DesignFrameDeviceScreenTransform,
+): string {
+  const imageRect = resolveScreenContentPlacement(
+    screenRect,
+    sourceWidth,
+    sourceHeight,
+    screenScaleMode,
+    screenTransform,
+  )
+  return `<image href="${escapeXml(imageSrc)}" x="${imageRect.x}" y="${imageRect.y}" width="${imageRect.width}" height="${imageRect.height}" preserveAspectRatio="none" clip-path="url(#${clipId})" />`
 }
 
 function renderFrameContentIntoScreenMarkup(
@@ -3578,26 +3658,25 @@ function renderFrameContentIntoScreenMarkup(
   clipId: string,
   screenScaleMode: DeviceScaleMode,
   showSafeArea: boolean,
+  screenTransform: DesignFrameDeviceScreenTransform,
 ): string {
   const themeTokens = resolveFrameThemeTokens(composition, sourceFrame)
   const elements = resolveDisplayCompositionElementsForFrame(composition, sourceFrame)
     .filter(element => !element.hidden)
-  const scaleX = screenRect.width / Math.max(1, sourceFrame.width)
-  const scaleY = screenRect.height / Math.max(1, sourceFrame.height)
-  const contentScale = screenScaleMode === 'fill'
-    ? Math.max(scaleX, scaleY)
-    : Math.min(scaleX, scaleY)
-  const contentWidth = sourceFrame.width * contentScale
-  const contentHeight = sourceFrame.height * contentScale
-  const translateX = screenRect.x + (screenRect.width - contentWidth) / 2
-  const translateY = screenRect.y + (screenRect.height - contentHeight) / 2
+  const contentRect = resolveScreenContentPlacement(
+    screenRect,
+    sourceFrame.width,
+    sourceFrame.height,
+    screenScaleMode,
+    screenTransform,
+  )
   const elementMarkup = elements
     .map(element => renderDesignElementMarkup(element, themeTokens))
     .join('')
   const safeAreaMarkup = showSafeArea ? renderDeviceSafeAreaMarkup(screenRect) : ''
   return `<g clip-path="url(#${clipId})">
     <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" fill="${escapeXml(themeTokens.background || '#ffffff')}" />
-    <g transform="translate(${translateX} ${translateY}) scale(${contentScale})">${elementMarkup}</g>
+    <g transform="translate(${contentRect.x} ${contentRect.y}) scale(${contentRect.scale})">${elementMarkup}</g>
   </g>${safeAreaMarkup}`
 }
 
@@ -3623,6 +3702,22 @@ function renderScreenContentMarkup(
       clipId,
       deviceConfig.screenScaleMode,
       deviceConfig.showSafeArea,
+      deviceConfig.screenTransform,
+    )
+  }
+
+  const sourceFrame = deviceConfig.mockupSourceFrameId
+    ? resolveCompositionFrameById(composition, deviceConfig.mockupSourceFrameId)
+    : null
+  if (sourceFrame && sourceFrame.kind === 'device_artboard') {
+    return renderFrameContentIntoScreenMarkup(
+      composition,
+      sourceFrame,
+      screenRect,
+      clipId,
+      deviceConfig.screenScaleMode,
+      false,
+      deviceConfig.screenTransform,
     )
   }
 
@@ -3630,8 +3725,17 @@ function renderScreenContentMarkup(
     resolveRawCompositionElementsForFrame(composition, targetFrame),
   )
   const imageSrc = normalizeString(imageElement?.imageSrc)
-  if (imageSrc)
-    return renderImageIntoScreenMarkup(imageSrc, screenRect, clipId, deviceConfig.screenScaleMode)
+  if (imageSrc) {
+    return renderImageIntoScreenMarkup(
+      imageSrc,
+      screenRect,
+      clipId,
+      deviceConfig.screenScaleMode,
+      toPositiveNumber(imageElement?.width, targetFrame.width || screenRect.width),
+      toPositiveNumber(imageElement?.height, targetFrame.height || screenRect.height),
+      deviceConfig.screenTransform,
+    )
+  }
 
   return renderDevicePlaceholderMarkup(screenRect, clipId)
 }
@@ -3684,6 +3788,18 @@ function renderBuiltinShellMarkup(
   const speakerHeight = Math.max(6, Math.round(screenRect.height * 0.008))
   const speakerX = screenRect.x + (screenRect.width - speakerWidth) / 2
   const speakerY = outerRect.y + Math.max(12, Math.round((screenRect.y - outerRect.y) * 0.58))
+
+  if (preset.deviceFamily === 'watch') {
+    const crownWidth = Math.max(8, Math.round(outerRect.width * 0.06))
+    const crownHeight = Math.max(26, Math.round(outerRect.height * 0.18))
+    const crownX = outerRect.x + outerRect.width - Math.max(2, Math.round(outerRect.width * 0.01))
+    const crownY = outerRect.y + (outerRect.height - crownHeight) / 2
+    return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
+      <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
+      <rect x="${screenRect.x}" y="${screenRect.y}" width="${screenRect.width}" height="${screenRect.height}" rx="${screenRadius}" ry="${screenRadius}" fill="#ffffff" />
+      <rect x="${crownX}" y="${crownY}" width="${crownWidth}" height="${crownHeight}" rx="${Math.round(crownWidth / 2)}" ry="${Math.round(crownWidth / 2)}" fill="#475569" />
+    </g>`
+  }
 
   return `<g filter="drop-shadow(${escapeXml(preset.shadow)})">
     <rect x="${outerRect.x}" y="${outerRect.y}" width="${outerRect.width}" height="${outerRect.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(preset.background)}" />
@@ -3771,6 +3887,7 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
           `device-artboard-${sanitizeIdentifier(frame.id, 'frame')}`,
           frameDeviceConfig.screenScaleMode,
           frameDeviceConfig.showSafeArea,
+          frameDeviceConfig.screenTransform,
         )}`
       : renderDeviceSurfaceMarkup(composition, frame, preset, {
           x: frameX,

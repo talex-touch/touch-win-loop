@@ -1,19 +1,24 @@
 <script setup lang="ts">
 import type {
   DesignAssetModel,
+  DesignFrameDeviceScreenTransform,
   DesignElementModel,
   DesignFrameDeviceMetadata,
   DesignFrameKind,
   DesignFrameModel,
   DesignPageModel,
   DeviceFramePreset,
+  MockupProjectCatalog,
+  MockupProjectCatalogModel,
+  MockupProjectCatalogVariant,
 } from "~~/shared/types/domain";
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import {
   resolveDesignFrameExportMetadata,
   resolveDesignFrameGridMetadata,
   resolveDesignFrameLayoutMetadata,
 } from "~~/shared/utils/scene-document";
+import { parseMockupDevicePresetKey } from "~~/shared/utils/mockup-device-catalog";
 
 const props = withDefaults(
   defineProps<{
@@ -24,10 +29,12 @@ const props = withDefaults(
     selectedFrameCount?: number;
     selectedElementCount?: number;
     deviceFramePresets?: DeviceFramePreset[];
+    mockupCatalog?: MockupProjectCatalog | null;
     deviceArtboardOptions?: DeviceArtboardOption[];
     deviceShellAssets?: DesignAssetModel[];
     framePreviewMarkup?: string;
     frameShellPreviewMarkup?: string;
+    mockupScreenEditingFrameId?: string;
     designResourceId?: string;
     collabDrawError?: string;
     canOpenDiagramEditor?: boolean;
@@ -46,10 +53,12 @@ const props = withDefaults(
     selectedFrameCount: 0,
     selectedElementCount: 0,
     deviceFramePresets: () => [],
+    mockupCatalog: null,
     deviceArtboardOptions: () => [],
     deviceShellAssets: () => [],
     framePreviewMarkup: "",
     frameShellPreviewMarkup: "",
+    mockupScreenEditingFrameId: "",
     designResourceId: "",
     collabDrawError: "",
     canOpenDiagramEditor: false,
@@ -72,6 +81,10 @@ const emit = defineEmits<{
   "update:diagramSourceText": [string];
   applyDiagramSource: [];
   openDiagramEditor: [];
+  selectMockupVariant: [presetKey: string];
+  enterMockupScreenEdit: [];
+  exitMockupScreenEdit: [];
+  resetMockupScreenTransform: [];
 }>();
 
 const selectionCommands = [
@@ -248,10 +261,14 @@ const frameKindValue = computed<DesignFrameKind | "">(() => {
 });
 const devicePresetSearch = ref("");
 const devicePreviewMode = ref<"screen" | "shell">("screen");
+const selectedMockupCategoryKey = ref("");
+const selectedMockupModelId = ref("");
 const frameDeviceMetadata = computed(() => {
   const source = props.frame?.metadata?.device || {};
   const shellMode = source.shellMode;
   const screenScaleMode = source.screenScaleMode;
+  const screenTransform =
+    (source.screenTransform || {}) as Partial<DesignFrameDeviceScreenTransform>;
   return {
     shellMode:
       shellMode === "none" ||
@@ -262,17 +279,23 @@ const frameDeviceMetadata = computed(() => {
           ? "none"
           : "builtin",
     shellAssetId: String(source.shellAssetId || "").trim() || undefined,
+    mockupSourceFrameId: String(source.mockupSourceFrameId || "").trim() || undefined,
     screenScaleMode: screenScaleMode === "fill" ? "fill" : "fit",
     showSafeArea: Boolean(source.showSafeArea),
+    screenTransform: {
+      offsetX: toFiniteNumber(screenTransform.offsetX, 0),
+      offsetY: toFiniteNumber(screenTransform.offsetY, 0),
+      scale: Math.max(0.1, toFiniteNumber(screenTransform.scale, 1) || 1),
+    },
   } satisfies Required<
     Pick<
       DesignFrameDeviceMetadata,
-      "shellMode" | "screenScaleMode" | "showSafeArea"
+      "shellMode" | "screenScaleMode" | "showSafeArea" | "screenTransform"
     >
   > &
     Pick<
       DesignFrameDeviceMetadata,
-      "shellAssetId"
+      "shellAssetId" | "mockupSourceFrameId"
     >;
 });
 const frameDevicePreset = computed(() => {
@@ -310,6 +333,66 @@ const groupedDeviceFramePresets = computed(() => {
     items,
   }));
 });
+const mockupCatalogVariantEntries = computed(() => {
+  return (props.mockupCatalog?.categories || []).flatMap((category) => {
+    return category.models.flatMap((model) => {
+      return model.variants.map((variant) => ({
+        categoryKey: category.key,
+        categoryTitle: category.title,
+        model,
+        variant,
+      }));
+    });
+  });
+});
+const currentMockupCatalogSelection = computed(() => {
+  const currentPresetKey = normalizeString(props.frame?.deviceFramePresetKey);
+  const parsedPresetKey = parseMockupDevicePresetKey(currentPresetKey);
+  return (
+    mockupCatalogVariantEntries.value.find(
+      (entry) =>
+        entry.variant.presetKey === currentPresetKey ||
+        (entry.model.slug === parsedPresetKey.modelSlug &&
+          (!parsedPresetKey.slotKey ||
+            entry.variant.slotKey === parsedPresetKey.slotKey)),
+    ) || null
+  );
+});
+const selectedMockupCategory = computed(() => {
+  const categoryKey =
+    normalizeString(selectedMockupCategoryKey.value) ||
+    currentMockupCatalogSelection.value?.categoryKey ||
+    props.mockupCatalog?.categories[0]?.key ||
+    "";
+  return (
+    props.mockupCatalog?.categories.find((item) => item.key === categoryKey) ||
+    null
+  );
+});
+const selectedMockupModel = computed<MockupProjectCatalogModel | null>(() => {
+  const modelId =
+    normalizeString(selectedMockupModelId.value) ||
+    currentMockupCatalogSelection.value?.model.id ||
+    selectedMockupCategory.value?.models[0]?.id ||
+    "";
+  return (
+    selectedMockupCategory.value?.models.find((item) => item.id === modelId) ||
+    null
+  );
+});
+const currentMockupCatalogVariant = computed<MockupProjectCatalogVariant | null>(
+  () => {
+    const currentPresetKey = normalizeString(props.frame?.deviceFramePresetKey);
+    return (
+      selectedMockupModel.value?.variants.find(
+        (item) => item.presetKey === currentPresetKey,
+      ) ||
+      currentMockupCatalogSelection.value?.variant ||
+      selectedMockupModel.value?.variants[0] ||
+      null
+    );
+  },
+);
 const framePresetBound = computed(() =>
   Boolean(isDeviceArtboard.value && props.frame?.deviceFramePresetKey),
 );
@@ -328,6 +411,13 @@ const activeFramePreviewMarkup = computed(() => {
       : props.framePreviewMarkup;
   }
   return props.framePreviewMarkup || props.frameShellPreviewMarkup;
+});
+const isMockupScreenEditing = computed(() => {
+  return (
+    Boolean(props.frame?.id) &&
+    normalizeString(props.mockupScreenEditingFrameId) ===
+      normalizeString(props.frame?.id)
+  );
 });
 
 function toFiniteNumber(value: unknown, fallback: number): number {
@@ -504,6 +594,49 @@ function setFrameShellEnabled(enabled: boolean): void {
       : "none",
   });
 }
+
+function syncMockupCatalogSelection(): void {
+  selectedMockupCategoryKey.value =
+    currentMockupCatalogSelection.value?.categoryKey ||
+    props.mockupCatalog?.categories[0]?.key ||
+    "";
+  selectedMockupModelId.value =
+    currentMockupCatalogSelection.value?.model.id ||
+    selectedMockupCategory.value?.models[0]?.id ||
+    "";
+}
+
+function handleMockupCategoryChange(nextCategoryKey: string): void {
+  selectedMockupCategoryKey.value = normalizeString(nextCategoryKey);
+  const category =
+    props.mockupCatalog?.categories.find(
+      (item) => item.key === selectedMockupCategoryKey.value,
+    ) || null;
+  const model = category?.models[0] || null;
+  selectedMockupModelId.value = model?.id || "";
+  const variant = model?.variants[0] || null;
+  if (variant) emit("selectMockupVariant", variant.presetKey);
+}
+
+function handleMockupModelChange(nextModelId: string): void {
+  selectedMockupModelId.value = normalizeString(nextModelId);
+  const variant = selectedMockupModel.value?.variants[0] || null;
+  if (variant) emit("selectMockupVariant", variant.presetKey);
+}
+
+function handleMockupVariantChange(nextPresetKey: string): void {
+  const presetKey = normalizeString(nextPresetKey);
+  if (!presetKey) return;
+  emit("selectMockupVariant", presetKey);
+}
+
+watch(
+  () => [props.mockupCatalog, props.frame?.deviceFramePresetKey] as const,
+  () => {
+    syncMockupCatalogSelection();
+  },
+  { immediate: true },
+);
 
 function isDeviceShellAssetValid(
   asset?: DesignAssetModel | null,
@@ -1571,6 +1704,77 @@ function updateElementConstraints(
             <div
               class="workspace-design-inspector__field-grid workspace-design-inspector__field-grid--two"
             >
+              <label
+                v-if="props.mockupCatalog?.categories?.length"
+                class="workspace-design-inspector__field"
+              >
+                <span class="workspace-design-inspector__label">分类</span>
+                <select
+                  :value="selectedMockupCategory?.key || ''"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    handleMockupCategoryChange(
+                      ($event.target as HTMLSelectElement).value,
+                    )
+                  "
+                >
+                  <option
+                    v-for="category in props.mockupCatalog.categories"
+                    :key="category.key"
+                    :value="category.key"
+                  >
+                    {{ category.title }}
+                  </option>
+                </select>
+              </label>
+              <label
+                v-if="props.mockupCatalog?.categories?.length"
+                class="workspace-design-inspector__field"
+              >
+                <span class="workspace-design-inspector__label">型号</span>
+                <select
+                  :value="selectedMockupModel?.id || ''"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    handleMockupModelChange(
+                      ($event.target as HTMLSelectElement).value,
+                    )
+                  "
+                >
+                  <option
+                    v-for="model in selectedMockupCategory?.models || []"
+                    :key="model.id"
+                    :value="model.id"
+                  >
+                    {{ model.title }}
+                  </option>
+                </select>
+              </label>
+              <label
+                v-if="props.mockupCatalog?.categories?.length"
+                class="workspace-design-inspector__field workspace-design-inspector__field--span-two"
+              >
+                <span class="workspace-design-inspector__label">Variant</span>
+                <select
+                  :value="currentMockupCatalogVariant?.presetKey || ''"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    handleMockupVariantChange(
+                      ($event.target as HTMLSelectElement).value,
+                    )
+                  "
+                >
+                  <option
+                    v-for="variant in selectedMockupModel?.variants || []"
+                    :key="variant.presetKey"
+                    :value="variant.presetKey"
+                  >
+                    {{
+                      `${variant.title} · ${variant.resolvedPreset.screenWidth}×${variant.resolvedPreset.screenHeight}`
+                    }}
+                  </option>
+                </select>
+              </label>
               <label class="workspace-design-inspector__field">
                 <span class="workspace-design-inspector__label">搜索预设</span>
                 <input
@@ -1586,7 +1790,7 @@ function updateElementConstraints(
                 />
               </label>
               <label class="workspace-design-inspector__field">
-                <span class="workspace-design-inspector__label">当前预设</span>
+                <span class="workspace-design-inspector__label">预设回退 / 兼容</span>
                 <select
                   :value="frameDevicePreset?.key || ''"
                   class="workspace-design-inspector__input"
@@ -1642,6 +1846,15 @@ function updateElementConstraints(
                 <span class="workspace-design-inspector__meta-key">屏幕</span>
                 <span class="workspace-design-inspector__meta-value">{{
                   `${frameDevicePreset.screenWidth} × ${frameDevicePreset.screenHeight}`
+                }}</span>
+              </div>
+              <div
+                v-if="currentMockupCatalogVariant"
+                class="workspace-design-inspector__meta-row"
+              >
+                <span class="workspace-design-inspector__meta-key">Variant</span>
+                <span class="workspace-design-inspector__meta-value">{{
+                  currentMockupCatalogVariant.title
                 }}</span>
               </div>
             </div>
@@ -2461,6 +2674,62 @@ function updateElementConstraints(
                   <option value="fill">fill</option>
                 </select>
               </label>
+              <label
+                v-if="isDeviceMockup"
+                class="workspace-design-inspector__field"
+              >
+                <span class="workspace-design-inspector__label">联动源画板</span>
+                <select
+                  :value="frameDeviceMetadata.mockupSourceFrameId || ''"
+                  class="workspace-design-inspector__input"
+                  @change="
+                    updateFrameDeviceMetadata({
+                      mockupSourceFrameId:
+                        normalizeString(
+                          ($event.target as HTMLSelectElement).value,
+                        ) || undefined,
+                    })
+                  "
+                >
+                  <option value="">
+                    未绑定，回退当前截图源
+                  </option>
+                  <option
+                    v-for="option in props.deviceArtboardOptions"
+                    :key="option.id"
+                    :value="option.id"
+                  >
+                    {{ option.name }}
+                  </option>
+                </select>
+              </label>
+              <label
+                v-if="isDeviceMockup"
+                class="workspace-design-inspector__field"
+              >
+                <span class="workspace-design-inspector__label">构图倍率</span>
+                <input
+                  :value="frameDeviceMetadata.screenTransform.scale"
+                  class="workspace-design-inspector__input"
+                  type="number"
+                  min="0.1"
+                  step="0.05"
+                  @change="
+                    updateFrameDeviceMetadata({
+                      screenTransform: {
+                        ...frameDeviceMetadata.screenTransform,
+                        scale: Math.max(
+                          0.1,
+                          toFiniteNumber(
+                            ($event.target as HTMLInputElement).value,
+                            frameDeviceMetadata.screenTransform.scale,
+                          ),
+                        ),
+                      },
+                    })
+                  "
+                />
+              </label>
 
               <label
                 v-if="frameDeviceMetadata.shellMode === 'external'"
@@ -2497,6 +2766,37 @@ function updateElementConstraints(
 
             </div>
 
+            <div
+              v-if="isDeviceMockup"
+              class="workspace-design-inspector__compact-actions"
+            >
+              <span class="workspace-design-inspector__status-pill">
+                {{
+                  isMockupScreenEditing
+                    ? "当前处于屏幕构图编辑态"
+                    : "双击 mockup 或点按钮进入屏幕构图编辑态"
+                }}
+              </span>
+              <button
+                class="workspace-design-inspector__command-button"
+                type="button"
+                @click="
+                  isMockupScreenEditing
+                    ? emit('exitMockupScreenEdit')
+                    : emit('enterMockupScreenEdit')
+                "
+              >
+                {{ isMockupScreenEditing ? "退出调整" : "调整屏幕内容" }}
+              </button>
+              <button
+                class="workspace-design-inspector__command-button"
+                type="button"
+                @click="emit('resetMockupScreenTransform')"
+              >
+                重置构图
+              </button>
+            </div>
+
             <label
               v-if="isDeviceArtboard"
               class="workspace-design-inspector__check"
@@ -2524,6 +2824,15 @@ function updateElementConstraints(
                 <span class="workspace-design-inspector__meta-key">当前外部壳</span>
                 <span class="workspace-design-inspector__meta-value">{{
                   selectedShellAsset.name
+                }}</span>
+              </div>
+              <div
+                v-if="isDeviceMockup"
+                class="workspace-design-inspector__meta-row"
+              >
+                <span class="workspace-design-inspector__meta-key">当前构图</span>
+                <span class="workspace-design-inspector__meta-value">{{
+                  `x ${Math.round(frameDeviceMetadata.screenTransform.offsetX)} / y ${Math.round(frameDeviceMetadata.screenTransform.offsetY)} / scale ${frameDeviceMetadata.screenTransform.scale.toFixed(2)}`
                 }}</span>
               </div>
             </div>

@@ -32,12 +32,16 @@ type ResizeSession = {
 const props = withDefaults(defineProps<{
   frame: DesignFrameModel
   deviceShellAsset?: DesignAssetModel | null
+  previewFrames?: DesignFrameModel[]
+  previewAssets?: DesignAssetModel[]
   selected?: boolean
   disabled?: boolean
   onResizePreview?: (patch: ResizePatch) => void
   onResizeCommit?: (patch: ResizePatch) => void
 }>(), {
   deviceShellAsset: null,
+  previewFrames: () => [],
+  previewAssets: () => [],
   selected: false,
   disabled: false,
   onResizePreview: undefined,
@@ -74,7 +78,7 @@ const devicePreviewPage = computed<DesignPageModel>(() => ({
   id: props.frame.pageId,
   name: 'Preview',
   background: normalizeString(props.frame.themeTokens?.background) || normalizeString(themeTokens.value.background) || '#0f172a',
-  frameIds: [props.frame.id],
+  frameIds: (props.previewFrames?.length ? props.previewFrames : [props.frame]).map(frame => frame.id),
   viewport: {
     x: 0,
     y: 0,
@@ -86,10 +90,13 @@ const devicePreviewComposition = computed<CompositionModel | null>(() => {
   if (!isDeviceFrame.value)
     return null
 
-  const elements = [props.frame].flatMap((frame) => {
+  const previewFrames = props.previewFrames?.length
+    ? props.previewFrames
+    : [props.frame]
+  const elements = previewFrames.flatMap((frame) => {
     return (frame.elements || []).map((element, index) => ({
       ...element,
-      pageId: props.frame.pageId,
+      pageId: frame.pageId || props.frame.pageId,
       frameId: frame.id,
       zIndex: Number.isFinite(Number(element.zIndex)) ? Number(element.zIndex) : index,
     }))
@@ -99,9 +106,13 @@ const devicePreviewComposition = computed<CompositionModel | null>(() => {
     templateKey: normalizeString(props.frame.templateKey) || 'device-showcase',
     pages: [devicePreviewPage.value],
     currentPageId: devicePreviewPage.value.id,
-    frames: [props.frame],
+    frames: previewFrames,
     elements,
-    assets: props.deviceShellAsset ? [props.deviceShellAsset] : [],
+    assets: props.previewAssets?.length
+      ? props.previewAssets
+      : props.deviceShellAsset
+        ? [props.deviceShellAsset]
+        : [],
     slots: {},
     themeTokens: {
       ...themeTokens.value,
@@ -259,7 +270,7 @@ onBeforeUnmount(() => {
 
     <template v-if="isDeviceFrame">
       <div
-        class="absolute inset-0 overflow-hidden"
+        class="pointer-events-none absolute inset-0 overflow-hidden"
         :style="{ background: 'transparent' }"
         v-html="deviceFramePreviewSvg"
       />
