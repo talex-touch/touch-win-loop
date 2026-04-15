@@ -74,9 +74,20 @@ const migrationKey = resolveMigrationKey(sqlFilePath, parsedArgs.positionals[1])
 const shouldForce = parsedArgs.flags.has('--force')
 const shouldMark = !parsedArgs.flags.has('--no-mark')
 const pgUrl = String(process.env.WINLOOP_PG_URL || '').trim()
+const allowHardCutover = String(process.env.WINLOOP_ALLOW_HARD_CUTOVER || '').trim() === '1'
 
 if (!pgUrl) {
   console.error('缺少 WINLOOP_PG_URL，无法执行迁移。请先配置数据库连接。')
+  process.exit(1)
+}
+
+const hardCutoverNamePattern = /(^|[-_])hard-cutover($|[-_])/i
+const isHardCutoverMigration = [basename(sqlFilePath).replace(/\.sql$/i, ''), migrationKey]
+  .some(name => hardCutoverNamePattern.test(String(name || '')))
+
+if (isHardCutoverMigration && !allowHardCutover) {
+  console.error('检测到 hard-cutover 迁移，该类迁移会直接改写 workspace/team 主模型。')
+  console.error('如已完成备份、维护窗口和人工复核，请显式设置 WINLOOP_ALLOW_HARD_CUTOVER=1 后再执行。')
   process.exit(1)
 }
 

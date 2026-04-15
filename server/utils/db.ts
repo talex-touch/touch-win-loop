@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import type { Pool as PgPoolType, PoolClient, QueryResult, QueryResultRow } from 'pg'
 import { Pool as PgPool } from 'pg'
+import { assertWorkspaceSchemaCompatible } from '~~/server/database/bootstrap/compatibility'
 import { ensureProjectResourceTreeSchemaReady, ensureSchemaReady, normalizeDbError } from '~~/server/database/bootstrap/schema'
 import { readRuntimeSettings } from '~~/server/utils/env'
 
@@ -22,6 +23,7 @@ export async function getPool(event?: H3Event): Promise<PgPoolType> {
   }
 
   try {
+    await assertWorkspaceSchemaCompatible(pool)
     await ensureSchemaReady(pool)
     await ensureProjectResourceTreeSchemaReady(pool)
   }
