@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
   <header class="px-4 border-b border-slate-200 bg-white flex shrink-0 gap-3 h-12 items-center z-10">
     <div class="flex flex-1 gap-2 min-w-0 items-center">
       <nav
-        aria-label="项目工作区面包屑"
+        aria-label="研发工作台面包屑"
         class="flex gap-1 min-w-0 items-center"
       >
         <span class="material-symbols-outlined text-xl text-blue-600">dataset</span>
@@ -242,7 +242,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="selectWorkbench('project')"
         >
-          项目工作台
+          研发工作台
         </button>
         <button
           class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"

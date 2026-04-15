@@ -622,7 +622,7 @@ const visibleWorkspaceSettingsSecondaryTabs = computed(() => {
   })
 })
 const recommendedWorkspaceDisplayTagText = computed(() => {
-  return '项目工作区推荐'
+  return '研发工作台推荐'
 })
 const workspaceMainTabLayoutStyle = computed<Record<string, string>>(() => {
   const preset = props.workspaceDisplayPreferences.effective.tabSpacingPreset || 'default'

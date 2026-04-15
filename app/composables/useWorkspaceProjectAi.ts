@@ -23,6 +23,8 @@ import { reactive, ref } from 'vue'
 
 export type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 export type WorkspaceWorkbenchMode = ProjectWorkbenchMode
+export type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
+export type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
 
 function createEmptyTopicBoardDraft(): WorkspaceTopicBoardDraft {
   return {
@@ -74,6 +76,8 @@ export function useWorkspaceProjectAi() {
   const aiMode = ref<WorkspaceAiMode>('dialog_ask')
   const workbenchMode = ref<WorkspaceWorkbenchMode>('project')
   const lastPrimaryAiMode = ref<WorkspacePrimaryAiMode>('dialog_ask')
+  const projectAssistantMode = ref<WorkspaceProjectAssistantMode>('contextual')
+  const defenseWorkbenchAiMode = ref<WorkspaceDefenseWorkbenchAiMode>('defense')
 
   const finalReviewMaterialsOpen = ref(false)
   const finalReviewAssistantOpen = ref(false)
@@ -161,6 +165,8 @@ export function useWorkspaceProjectAi() {
     aiMode,
     workbenchMode,
     lastPrimaryAiMode,
+    projectAssistantMode,
+    defenseWorkbenchAiMode,
     finalReviewMaterialsOpen,
     finalReviewAssistantOpen,
     preFinalReviewLeftCollapsed,

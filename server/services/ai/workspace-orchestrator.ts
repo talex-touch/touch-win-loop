@@ -3,6 +3,7 @@ import type {
   AiWorkspaceIssueDraft,
   ChatMessage,
   ProjectIssueSeverity,
+  WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 import { createDeepAgent } from 'deepagents'
@@ -61,6 +62,11 @@ export interface WorkspaceAiExecutionContext {
   selectionRange: Record<string, unknown> | null
   trigger: string
   documentAction: string
+  assistantPreset: WorkspaceAiAssistantPreset
+  assistantLabel: string
+  activeTabId: string
+  previewMode: string
+  resourcePurpose: string
   projectSettingsSummary: string
   projectOutlineSummary: string
   resourceSummary: string
@@ -156,7 +162,7 @@ const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentPro
   document_assist: {
     mode: 'document_assist',
     allowWebAccess: false,
-    progressMessage: 'AI 正在生成文档增强结果...',
+    progressMessage: 'AI 正在生成文稿助手结果...',
   },
 }
 
@@ -303,6 +309,11 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
     selectionRange: context.selectionRange,
     trigger: context.trigger,
     documentAction: context.documentAction,
+    assistantPreset: context.assistantPreset,
+    assistantLabel: context.assistantLabel,
+    activeTabId: context.activeTabId,
+    previewMode: context.previewMode,
+    resourcePurpose: context.resourcePurpose,
     projectSettingsSummary: context.projectSettingsSummary,
     projectOutlineSummary: context.projectOutlineSummary,
     resourceSummary: context.resourceSummary,
@@ -371,7 +382,7 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
   }
 
   return [
-    '模式：文档增强（只读生成，用户确认后才落文）。',
+    '模式：文稿助手（只读生成，用户确认后才落文）。',
     '禁止产出任何可执行写入动作，也不要假设已经修改文档。',
     '仅输出适合直接插入 markdown 文档的结果正文，不要附加冗长说明。',
     '若是 summarize，则输出精炼摘要；若是 rewrite，则直接输出润写后的替代文本；若是 continue，则输出自然续写段落；若是 expand，则输出扩写后的完整替代文本；若是 complete_context，则输出补全后的完整正文；若是 restructure，则输出整理结构后的完整正文。',
@@ -410,11 +421,31 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
     ].join('\n')
   }
 
+  const assistantGuide = context.assistantPreset === 'design'
+    ? [
+        `当前助手：${context.assistantLabel || '设计助手'}`,
+        `当前标签：${context.activeTabId || '未指定'}`,
+        `当前画布：${context.resourceTitle || '未命名设计画布'}`,
+        '优先围绕页面层级、布局结构、视觉一致性和关键交互说明给出只读建议。',
+      ]
+    : context.assistantPreset === 'prototype'
+      ? [
+          `当前助手：${context.assistantLabel || '原型助手'}`,
+          `当前标签：${context.activeTabId || '未指定'}`,
+          `当前画布：${context.resourceTitle || '未命名原型画布'}`,
+          '优先围绕页面流转、模块拆分、核心状态与交互路径给出只读建议。',
+        ]
+      : [
+          `当前助手：${context.assistantLabel || '对话询问'}`,
+        ]
+
   return [
     `当前模式：${profile.mode}`,
     `竞赛：${context.contestName || '未选择'}`,
     `赛道：${context.trackName || '未选择'}`,
     `专业：${context.major || '未提供'}`,
+    '',
+    ...assistantGuide,
     '',
     '请先调用 get_workspace_context 读取当前项目上下文，再决定是否联网检索。',
     '只做只读问答，输出必须简洁、具体、可执行。',

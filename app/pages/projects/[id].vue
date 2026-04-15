@@ -27,7 +27,7 @@ async function loadProject() {
     const teamId = String(project.teamId || project.workspaceId || '').trim()
 
     if (!teamId) {
-      errorText.value = '项目未绑定 Team，暂时无法打开项目工作区。'
+      errorText.value = '项目未绑定 Team，暂时无法打开研发工作台。'
       return
     }
 
@@ -54,12 +54,12 @@ onMounted(loadProject)
 
 <template>
   <PageShell size="auth" gap="lg">
-    <PageHeader title="项目跳转" description="正在定位项目所属 Team 并进入对应工作区。" />
+    <PageHeader title="项目跳转" description="正在定位项目所属 Team 并进入对应研发工作台。" />
 
     <SectionCard>
       <StateBlock
         :tone="loading ? 'loading' : (errorText ? 'error' : 'default')"
-        :description="loading ? '正在进入项目工作区...' : '项目工作区暂不可用。'"
+        :description="loading ? '正在进入研发工作台...' : '研发工作台暂不可用。'"
       >
         <p v-if="errorText" class="wl-inline-notice wl-inline-notice--error mt-4">
           {{ errorText }}

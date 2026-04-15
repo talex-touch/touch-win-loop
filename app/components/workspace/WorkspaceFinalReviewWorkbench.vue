@@ -122,7 +122,7 @@ const visibleShares = computed(() => props.shares.slice(0, 4))
           <span class="workspace-final-review-workbench__stat-label">资料数</span>
           <strong class="workspace-final-review-workbench__stat-value">{{ resourceCount }}</strong>
           <p class="workspace-final-review-workbench__stat-note">
-            已关联到项目工作区的送审资料。
+            已关联到研发工作台的送审资料。
           </p>
         </article>
         <article class="workspace-final-review-workbench__stat">

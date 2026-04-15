@@ -72,7 +72,7 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
           风险摘记
         </p>
         <p class="workspace-final-review-sidebar__summary-text">
-          {{ props.riskSummary || '当前还没有终审问题报告，可先在项目工作台生成寻疑结果。' }}
+          {{ props.riskSummary || '当前还没有终审问题报告，可先在研发工作台生成寻疑结果。' }}
         </p>
       </section>
 

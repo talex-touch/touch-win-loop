@@ -13,6 +13,8 @@ it('admin 布局已将路由标签状态与持久化逻辑抽到 composable', as
   ])
 
   assert.match(layoutSource, /from '~\/composables\/useAdminRouteTabs'/, 'admin 布局未接入 route tabs composable')
+  assert.match(layoutSource, /to: '\/admin\/canvas-library', label: '画布资源库'/, 'admin 主侧栏缺少画布资源库入口')
+  assert.doesNotMatch(layoutSource, /to: '\/admin\/mockups', label: 'Mockup 专项'/, 'admin 主侧栏不应再保留独立 Mockup 专项入口')
   assert.match(layoutSource, /const \{[\s\S]*adminRouteTabs,[\s\S]*activeRouteTabId,[\s\S]*restoreAdminRouteTabs,[\s\S]*appendRouteTab,[\s\S]*openRouteTab,[\s\S]*closeRouteTab,[\s\S]*\} = useAdminRouteTabs\(/, 'admin 布局未复用 route tabs 状态机')
   assert.doesNotMatch(layoutSource, /function normalizeAdminRoutePath\(/, 'admin 布局仍内联 route path 归一化逻辑')
   assert.doesNotMatch(layoutSource, /function restoreAdminRouteTabs\(/, 'admin 布局仍内联 route tab 持久化逻辑')

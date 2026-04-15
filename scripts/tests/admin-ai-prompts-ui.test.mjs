@@ -45,7 +45,16 @@ it('模型与场景编辑改为 drawer 且包含滚动容器', async () => {
 
   assert.match(source, /<a-drawer[\s\S]*v-model:visible="modelEditorVisible"/, '缺少模型编辑抽屉')
   assert.match(source, /<a-drawer[\s\S]*v-model:visible="sceneEditorVisible"/, '缺少场景编辑抽屉')
+  assert.match(source, /<a-drawer[\s\S]*v-model:visible="sceneBatchEditorVisible"/, '缺少批量场景模型抽屉')
   assert.match(source, /max-h-\[calc\(100vh-132px\)\][\s\S]*overflow-y-auto/, '抽屉内容缺少滚动容器')
+})
+
+it('场景页支持一键设置全部场景模型', async () => {
+  const source = await readFile(PAGE_FILE, 'utf8')
+
+  assert.match(source, /一键设置全部场景模型/, '缺少批量设置全部场景模型入口')
+  assert.match(source, /应用到全部场景/, '缺少批量应用按钮')
+  assert.match(source, /复制模型链到全部场景/, '缺少从当前场景复制模型链到全部场景入口')
 })
 
 it('后台 AI 场景类型包含文档动作与画布动作 channel key', async () => {

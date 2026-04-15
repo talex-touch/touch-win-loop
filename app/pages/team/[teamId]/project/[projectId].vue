@@ -57,6 +57,7 @@ import type {
   ResourcePreviewStatus,
   TopicProposalDecisionStatus,
   TopicProposalItem,
+  WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
   WorkspaceFontSizePreset,
   WorkspaceMemberRole,
@@ -89,6 +90,7 @@ import {
 import { TOPIC_BOARD_CREATE_SEED_STORAGE_PREFIX } from '~~/shared/constants/topic-board'
 import { syncMarkdownMirrorFromRichText } from '~~/shared/utils/collab-markdown-rich-text'
 import {
+  COLLAB_DESIGN_RESOURCE_LABEL,
   COLLAB_FREEFORM_RESOURCE_LABEL,
   COLLAB_NOTES_RESOURCE_LABEL,
   resolveCollabResourceDisplayLabel,
@@ -161,7 +163,7 @@ definePageMeta({
 })
 
 useHead({
-  title: '项目工作区',
+  title: '研发工作台',
   link: [
     {
       rel: 'stylesheet',
@@ -279,13 +281,13 @@ const AI_RUNTIME_FEATURE_LABELS: Record<ProjectWorkspaceAiFeatureKey, string> = 
   workspaceDialogAsk: '工作台 AI',
   workspaceAutoOptimize: '工作台 AI',
   workspaceIssueDiscovery: '工作台 AI',
-  documentAssist: '文档 AI',
-  documentSummarize: '文档总结 AI',
-  documentRewrite: '文档润写 AI',
-  documentContinue: '文档续写 AI',
-  documentExpand: '文档扩写 AI',
-  documentCompleteContext: '文档补全上下文 AI',
-  documentRestructure: '文档结构整理 AI',
+  documentAssist: '文稿助手 AI',
+  documentSummarize: '文稿总结 AI',
+  documentRewrite: '文稿润写 AI',
+  documentContinue: '文稿续写 AI',
+  documentExpand: '文稿扩写 AI',
+  documentCompleteContext: '文稿补全上下文 AI',
+  documentRestructure: '文稿结构整理 AI',
   canvasGenerate: '画布生成 AI',
   canvasComplete: '画布补全 AI',
   canvasRefine: '画布续改 AI',
@@ -482,6 +484,13 @@ type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
 type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
+type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
+type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
+type WorkspaceProjectContextualAssistant = {
+  preset: WorkspaceAiAssistantPreset
+  label: string
+  aiMode: Extract<WorkspaceAiMode, 'dialog_ask' | 'document_assist'>
+}
 type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
 type FinalReviewChecklistStatus = 'pass' | 'warning' | 'missing'
 
@@ -535,6 +544,8 @@ const {
   aiMode,
   workbenchMode,
   lastPrimaryAiMode,
+  projectAssistantMode,
+  defenseWorkbenchAiMode,
   finalReviewMaterialsOpen,
   finalReviewAssistantOpen,
   preFinalReviewLeftCollapsed,
@@ -1747,6 +1758,91 @@ const selectedResources = computed(() => {
     }
   })
 })
+const activePreviewResource = computed(() => {
+  const resourceId = normalizeString(previewResourceId.value)
+  if (!resourceId)
+    return null
+  return selectedResources.value.find(item => item.id === resourceId) || null
+})
+const activeResourceWorkspaceTabId = computed(() => {
+  const tabId = normalizeString(activeMainTabId.value)
+  return tabId.startsWith('resource:') ? tabId : ''
+})
+const activePreviewResourcePurpose = computed(() => {
+  if (!activeResourceWorkspaceTabId.value)
+    return ''
+  return resolveCollabPurpose(activePreviewResource.value)
+})
+const projectContextualAssistant = computed<WorkspaceProjectContextualAssistant | null>(() => {
+  if (!activeResourceWorkspaceTabId.value)
+    return null
+
+  if (previewMode.value === 'markdown') {
+    return {
+      preset: 'document',
+      label: '文稿助手',
+      aiMode: 'document_assist',
+    }
+  }
+
+  if (previewMode.value !== 'draw')
+    return null
+
+  if (activePreviewResourcePurpose.value === 'design') {
+    return {
+      preset: 'design',
+      label: '设计助手',
+      aiMode: 'dialog_ask',
+    }
+  }
+
+  if (activePreviewResourcePurpose.value !== 'workflow') {
+    return {
+      preset: 'prototype',
+      label: '原型助手',
+      aiMode: 'dialog_ask',
+    }
+  }
+
+  return null
+})
+const projectResolvedAiMode = computed<WorkspacePrimaryAiMode>(() => {
+  if (projectAssistantMode.value === 'dialog_ask')
+    return 'dialog_ask'
+  return projectContextualAssistant.value?.aiMode || 'dialog_ask'
+})
+const currentWorkspaceAssistantPreset = computed<WorkspaceAiAssistantPreset>(() => {
+  if (workbenchMode.value === 'project' && projectAssistantMode.value === 'contextual')
+    return projectContextualAssistant.value?.preset || 'default'
+  if (aiMode.value === 'document_assist')
+    return 'document'
+  return 'default'
+})
+const currentWorkspaceAssistantLabel = computed(() => {
+  if (workbenchMode.value === 'project') {
+    if (projectAssistantMode.value === 'contextual')
+      return projectContextualAssistant.value?.label || '对话询问'
+    return '对话询问'
+  }
+  if (aiMode.value === 'defense')
+    return '答辩模拟'
+  if (aiMode.value === 'auto_optimize')
+    return '自动优化'
+  if (aiMode.value === 'issue_discovery')
+    return '寻疑发现'
+  if (aiMode.value === 'document_assist')
+    return '文稿助手'
+  return '对话询问'
+})
+const currentWorkspaceAssistantContext = computed(() => {
+  return {
+    assistantPreset: currentWorkspaceAssistantPreset.value,
+    assistantLabel: currentWorkspaceAssistantLabel.value,
+    activeTabId: normalizeString(activeMainTabId.value),
+    previewMode: activeResourceWorkspaceTabId.value ? previewMode.value : '',
+    resourcePurpose: activeResourceWorkspaceTabId.value ? activePreviewResourcePurpose.value : '',
+  }
+})
 const activeMarkdownResourceId = computed(() => {
   if (previewMode.value !== 'markdown')
     return ''
@@ -1869,7 +1965,7 @@ const finalReviewChecklistItems = computed<FinalReviewChecklistItem[]>(() => {
       title: '已关联项目资料',
       description: hasResources
         ? `当前已关联 ${selectedResources.value.length} 份项目资料。`
-        : '终审材料还没有挂到项目工作区，无法形成证据链。',
+        : '终审材料还没有挂到研发工作台，无法形成证据链。',
       status: hasResources ? 'pass' : 'missing',
       blocker: true,
     },
@@ -2076,15 +2172,15 @@ const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
       id: 'metak-command-switch-workbench-project',
       sectionId: 'actions',
       type: 'command',
-      title: '切换到项目工作台',
-      subtitle: '回到项目推进主工作台。',
+      title: '切换到研发工作台',
+      subtitle: '回到研发推进主工作台。',
       icon: 'space_dashboard',
       source: 'local',
       priority: 320,
       defaultVisible: true,
       actionId: 'switch_workbench_project',
       badge: workbenchMode.value === 'project' ? '当前' : '',
-      keywords: buildWorkspaceMetaKKeywords('项目工作台', 'project workbench'),
+      keywords: buildWorkspaceMetaKKeywords('研发工作台', 'project workbench', '研发'),
     },
     {
       id: 'metak-command-switch-workbench-defense',
@@ -2119,7 +2215,7 @@ const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
       sectionId: 'actions',
       type: 'command',
       title: '切换 AI 到对话询问',
-      subtitle: '回到 Loopy 常规对话模式。',
+      subtitle: '切到当前工作台的默认对话模式。',
       icon: 'chat',
       source: 'local',
       priority: 305,
@@ -2133,13 +2229,13 @@ const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
       sectionId: 'actions',
       type: 'command',
       title: '切换 AI 到自动优化',
-      subtitle: '让右侧 AI 进入自动优化模式。',
+      subtitle: '切到答辩工作台的自动优化模式。',
       icon: 'auto_fix_high',
       source: 'local',
       priority: 300,
       defaultVisible: true,
       actionId: 'switch_ai_optimize',
-      badge: aiMode.value === 'auto_optimize' ? '当前' : '',
+      badge: workbenchMode.value === 'defense' && aiMode.value === 'auto_optimize' ? '当前' : '',
       keywords: buildWorkspaceMetaKKeywords('自动优化', 'auto optimize'),
     },
     {
@@ -2147,13 +2243,13 @@ const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
       sectionId: 'actions',
       type: 'command',
       title: '切换 AI 到寻疑发现',
-      subtitle: '切到问题发现链路，查看证据与建议。',
+      subtitle: '切到答辩工作台的寻疑发现模式。',
       icon: 'search_insights',
       source: 'local',
       priority: 295,
       defaultVisible: true,
       actionId: 'switch_ai_issue',
-      badge: aiMode.value === 'issue_discovery' ? '当前' : '',
+      badge: workbenchMode.value === 'defense' && aiMode.value === 'issue_discovery' ? '当前' : '',
       keywords: buildWorkspaceMetaKKeywords('寻疑发现', 'issue discovery', '问题发现'),
     },
     {
@@ -2797,6 +2893,10 @@ const currentAiModeAvailable = computed(() => {
 const currentAiDisabledReason = computed(() => {
   if (currentAiModeAvailable.value)
     return ''
+  if (workbenchMode.value === 'project' && projectAssistantMode.value === 'contextual' && projectContextualAssistant.value) {
+    return String(currentAiFeatureStatus.value?.reason || '').trim()
+      || `${projectContextualAssistant.value.label} 未配置，请先在后台完成模型与密钥配置后再试。`
+  }
   return buildAiUnavailableMessage(currentAiFeatureKey.value)
 })
 const currentAiModelLabel = computed(() => {
@@ -6278,6 +6378,7 @@ async function runDocumentAssistAction(
   }
 
   openDocumentAssistSidebar()
+  projectAssistantMode.value = 'contextual'
   aiMode.value = 'document_assist'
   documentAssistRunning.value = true
   documentAssistResult.value = ''
@@ -6309,6 +6410,11 @@ async function runDocumentAssistAction(
         selectionRange: documentAssistRequestState.selectionRange,
         trigger: payload.trigger,
         documentAction: payload.action,
+        assistantPreset: 'document',
+        assistantLabel: '文稿助手',
+        activeTabId: normalizeString(activeMainTabId.value),
+        previewMode: previewMode.value,
+        resourcePurpose: activePreviewResourcePurpose.value,
       },
     }
 
@@ -6877,7 +6983,7 @@ function buildSessionTitleByMode(): string {
   if (aiMode.value === 'defense')
     return `Loopy 答辩模拟 · ${contestName} · ${trackName}`
   if (aiMode.value === 'document_assist')
-    return `Loopy 文档增强 · ${activeMarkdownResourceTitle.value || contestName} · ${trackName}`
+    return `Loopy 文稿助手 · ${activeMarkdownResourceTitle.value || contestName} · ${trackName}`
   return `Loopy 对话 · ${contestName} · ${trackName}`
 }
 
@@ -7073,7 +7179,7 @@ async function startNewChatSession() {
   else if (aiMode.value === 'issue_discovery')
     modeTitle = '新建 Loopy 寻疑发现会话'
   else if (aiMode.value === 'document_assist')
-    modeTitle = '新建 Loopy 文档增强会话'
+    modeTitle = '新建 Loopy 文稿助手会话'
   const createdId = await createChatSession(modeTitle)
   if (!createdId) {
     statusLine.value = '新建 Loopy 会话失败，请稍后重试。'
@@ -7367,7 +7473,8 @@ async function sendTopicBoardCandidateToChat(candidateId: string) {
     return
 
   expandRightSidebar()
-  aiMode.value = 'dialog_ask'
+  workbenchMode.value = 'project'
+  updateProjectAssistantMode('dialog_ask')
   await nextTick()
   await loadChatSessions()
   if (!isCurrentTopicBoardScope(projectId) || aiMode.value !== 'dialog_ask')
@@ -7606,6 +7713,13 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       contestId: selectedContestId.value,
       trackId: selectedTrackId.value,
       major: major.value,
+      resourceId: activeResourceWorkspaceTabId.value ? activePreviewResource.value?.id || '' : '',
+      resourceTitle: activeResourceWorkspaceTabId.value ? activePreviewResource.value?.title || '' : '',
+      assistantPreset: currentWorkspaceAssistantContext.value.assistantPreset,
+      assistantLabel: currentWorkspaceAssistantContext.value.assistantLabel,
+      activeTabId: currentWorkspaceAssistantContext.value.activeTabId,
+      previewMode: currentWorkspaceAssistantContext.value.previewMode,
+      resourcePurpose: currentWorkspaceAssistantContext.value.resourcePurpose,
     },
   }
 
@@ -8069,24 +8183,46 @@ function switchWorkspaceFromHeader(workspaceId: string): void {
   activeWorkspaceId.value = normalizedWorkspaceId
 }
 
+function syncProjectWorkbenchAiMode(): void {
+  if (workbenchMode.value !== 'project')
+    return
+
+  const nextMode = projectResolvedAiMode.value
+  if (aiMode.value !== nextMode)
+    aiMode.value = nextMode
+
+  lastPrimaryAiMode.value = nextMode
+}
+
+function updateProjectAssistantMode(nextMode: WorkspaceProjectAssistantMode): void {
+  rightSidebarView.value = 'ai'
+  projectAssistantMode.value = nextMode
+  if (workbenchMode.value === 'project')
+    syncProjectWorkbenchAiMode()
+}
+
+function updateDefenseWorkbenchAiMode(nextMode: WorkspaceDefenseWorkbenchAiMode): void {
+  rightSidebarView.value = 'ai'
+  defenseWorkbenchAiMode.value = nextMode
+  aiMode.value = nextMode
+}
+
 async function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
   if (nextMode === 'defense') {
     if (workbenchMode.value === 'final_review')
       restorePreFinalReviewWorkbenchState()
     closeFinalReviewDrawers()
     workbenchMode.value = 'defense'
-    aiMode.value = 'defense'
+    updateDefenseWorkbenchAiMode('defense')
     return
   }
 
   if (nextMode === 'final_review') {
-    const nextPrimaryMode = aiMode.value !== 'defense'
-      ? aiMode.value as WorkspacePrimaryAiMode
-      : (lastPrimaryAiMode.value || 'dialog_ask')
     if (workbenchMode.value !== 'final_review') {
       rememberPreFinalReviewWorkbenchState()
     }
-    lastPrimaryAiMode.value = nextPrimaryMode
+    if (workbenchMode.value === 'project')
+      lastPrimaryAiMode.value = projectResolvedAiMode.value
     closeFinalReviewDrawers()
     workbenchMode.value = 'final_review'
     aiMode.value = 'dialog_ask'
@@ -8097,25 +8233,30 @@ async function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
   if (workbenchMode.value === 'final_review')
     restorePreFinalReviewWorkbenchState()
   closeFinalReviewDrawers()
-  aiMode.value = lastPrimaryAiMode.value || 'dialog_ask'
   workbenchMode.value = 'project'
+  syncProjectWorkbenchAiMode()
 }
 
 function updateWorkspaceAiMode(nextMode: WorkspaceAiMode) {
   rightSidebarView.value = 'ai'
+  if (workbenchMode.value === 'project') {
+    updateProjectAssistantMode(nextMode === 'dialog_ask' ? 'dialog_ask' : 'contextual')
+    return
+  }
   if (workbenchMode.value === 'final_review' && nextMode !== 'defense') {
-    lastPrimaryAiMode.value = nextMode as WorkspacePrimaryAiMode
     aiMode.value = 'dialog_ask'
     return
   }
-  aiMode.value = nextMode
+  if (nextMode === 'document_assist')
+    return
+  updateDefenseWorkbenchAiMode(nextMode as WorkspaceDefenseWorkbenchAiMode)
 }
 
 async function openFinalReviewFlowFromWorkbench(): Promise<void> {
   await updateWorkbenchMode('project')
   const opened = await ensureWorkflowCanvas()
   if (opened)
-    statusLine.value = '已打开终审流程，当前回到项目工作台查看流程画布。'
+    statusLine.value = '已打开终审流程，当前回到研发工作台查看流程画布。'
 }
 
 async function openProjectSettingsFromFinalReview(): Promise<void> {
@@ -8399,7 +8540,8 @@ async function executeMetaKCommandAction(actionId: WorkspaceMetaKActionId): Prom
       return
     case 'open_issue_view':
       expandRightSidebar()
-      updateWorkspaceAiMode('issue_discovery')
+      await updateWorkbenchMode('defense')
+      updateDefenseWorkbenchAiMode('issue_discovery')
       statusLine.value = '已切到 Issue 视图。'
       return
     case 'open_flow':
@@ -8410,7 +8552,7 @@ async function executeMetaKCommandAction(actionId: WorkspaceMetaKActionId): Prom
       return
     case 'switch_workbench_project':
       await updateWorkbenchMode('project')
-      statusLine.value = '已切回项目工作台。'
+      statusLine.value = '已切回研发工作台。'
       return
     case 'switch_workbench_defense':
       await updateWorkbenchMode('defense')
@@ -8421,17 +8563,22 @@ async function executeMetaKCommandAction(actionId: WorkspaceMetaKActionId): Prom
       return
     case 'switch_ai_dialog':
       expandRightSidebar()
-      updateWorkspaceAiMode('dialog_ask')
+      if (workbenchMode.value === 'defense')
+        updateDefenseWorkbenchAiMode('dialog_ask')
+      else
+        updateProjectAssistantMode('dialog_ask')
       statusLine.value = '已切到 AI 对话模式。'
       return
     case 'switch_ai_optimize':
       expandRightSidebar()
-      updateWorkspaceAiMode('auto_optimize')
+      await updateWorkbenchMode('defense')
+      updateDefenseWorkbenchAiMode('auto_optimize')
       statusLine.value = '已切到 AI 自动优化模式。'
       return
     case 'switch_ai_issue':
       expandRightSidebar()
-      updateWorkspaceAiMode('issue_discovery')
+      await updateWorkbenchMode('defense')
+      updateDefenseWorkbenchAiMode('issue_discovery')
       statusLine.value = '已切到 AI 寻疑发现模式。'
       return
     case 'create_collab_markdown':
@@ -8471,7 +8618,8 @@ async function executeMetaKItem(item: WorkspaceMetaKItem): Promise<void> {
     }
     case 'issue':
       expandRightSidebar()
-      updateWorkspaceAiMode('issue_discovery')
+      await updateWorkbenchMode('defense')
+      updateDefenseWorkbenchAiMode('issue_discovery')
       statusLine.value = `已定位 Issue：${item.title}`
       return
     case 'contest': {
@@ -8664,6 +8812,8 @@ watch(activeProjectId, async (next, previous) => {
   workspaceBootstrapLoading.value = Boolean(next)
   workspaceBackgroundLoading.value = Boolean(next)
   closeProjectResourcePreview()
+  projectAssistantMode.value = 'contextual'
+  defenseWorkbenchAiMode.value = 'defense'
   if (next) {
     workspaceRealtime.subscribeProject(next)
     beginWorkspaceBootstrapTrace(next, requestId)
@@ -8715,6 +8865,8 @@ watch(activeProjectId, async (next, previous) => {
     const restoredViewState = await hydrateProjectWorkspaceViewState(next)
     if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
       return
+    if (workbenchMode.value === 'project')
+      syncProjectWorkbenchAiMode()
     if (restoredViewState.legacyDesignUnavailable)
       statusLine.value = '旧设计入口已不可用，已返回项目仪表盘。'
 
@@ -9185,27 +9337,31 @@ watch([leftSidebarCollapsed, rightSidebarCollapsed], ([nextLeft, nextRight], [pr
   scheduleProjectSettingsDraftPersist()
 })
 
+watch(projectResolvedAiMode, (next, previous) => {
+  if (next === previous)
+    return
+  if (projectWorkspaceModeHydrating.value)
+    return
+  if (workbenchMode.value !== 'project')
+    return
+  if (aiMode.value !== next)
+    aiMode.value = next
+  else
+    lastPrimaryAiMode.value = next
+})
+
 watch(aiMode, async (next, previous) => {
   if (next === previous)
     return
 
-  if (projectWorkspaceModeHydrating.value) {
-    if (next === 'defense')
-      workbenchMode.value = 'defense'
-    else if (workbenchMode.value !== 'final_review')
-      workbenchMode.value = 'project'
+  if (projectWorkspaceModeHydrating.value)
     return
-  }
 
-  if (next === 'defense') {
-    workbenchMode.value = 'defense'
-  }
-  else {
-    if (workbenchMode.value !== 'final_review') {
-      workbenchMode.value = 'project'
-      lastPrimaryAiMode.value = next
-    }
-  }
+  if (workbenchMode.value === 'defense' && next !== 'document_assist')
+    defenseWorkbenchAiMode.value = next as WorkspaceDefenseWorkbenchAiMode
+
+  if (workbenchMode.value === 'project' && next !== 'defense')
+    lastPrimaryAiMode.value = next as WorkspacePrimaryAiMode
 
   if (!activeWorkspaceId.value || !activeProjectId.value) {
     chatSessions.value = []
@@ -9225,7 +9381,7 @@ watch(aiMode, async (next, previous) => {
       autoCreate: false,
       fallbackToFirst: false,
     })
-    statusLine.value = buildAiUnavailableMessage(resolveAiFeatureKeyForMode(next))
+    statusLine.value = currentAiDisabledReason.value || buildAiUnavailableMessage(resolveAiFeatureKeyForMode(next))
     return
   }
   await loadChatSessions()
@@ -9554,6 +9710,10 @@ watch(() => workspaceShellLoading.value, (loading) => {
         >
           <WorkspaceRightSidebar
             v-model:chat-input="chatInput"
+            :workbench-mode="workbenchMode"
+            :project-assistant-mode="projectAssistantMode"
+            :project-contextual-assistant-label="projectContextualAssistant?.label || ''"
+            :project-contextual-assistant-preset="projectContextualAssistant?.preset || ''"
             :ai-mode="aiMode"
             :sidebar-view="rightSidebarView"
             class="min-h-0 overflow-hidden"
@@ -9604,6 +9764,7 @@ watch(() => workspaceShellLoading.value, (loading) => {
             :ai-enabled="currentAiModeAvailable"
             :ai-disabled-reason="currentAiDisabledReason"
             :collapsed="rightSidebarCollapsed"
+            @update:project-assistant-mode="updateProjectAssistantMode"
             @update:sidebar-view="rightSidebarView = $event"
             @send-chat="sendChatMessage"
             @interrupt-chat="interruptChatMessage"

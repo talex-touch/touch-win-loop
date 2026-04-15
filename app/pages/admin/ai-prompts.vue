@@ -272,6 +272,10 @@ const sceneEditorForm = reactive({
   modelsText: '',
   prompt: '',
 })
+const sceneBatchEditorVisible = ref(false)
+const sceneBatchForm = reactive({
+  modelsText: '',
+})
 
 function formatTime(value?: string | null): string {
   if (!value)
@@ -774,6 +778,34 @@ function appendSceneModel(model: string) {
   sceneEditorForm.modelsText = items.join('\n')
 }
 
+function openSceneBatchDrawer() {
+  const mostUsedModels = dedupeModels(sceneItems.value.flatMap(item => item.models || []))
+  sceneBatchForm.modelsText = mostUsedModels.join('\n')
+  sceneBatchEditorVisible.value = true
+}
+
+function closeSceneBatchDrawer() {
+  sceneBatchEditorVisible.value = false
+}
+
+function appendSceneBatchModel(model: string) {
+  const items = dedupeModels([
+    ...parseSceneModelsText(sceneBatchForm.modelsText),
+    model,
+  ])
+  sceneBatchForm.modelsText = items.join('\n')
+}
+
+function applySceneBatchModels() {
+  const models = parseSceneModelsText(sceneBatchForm.modelsText)
+  sceneItems.value = sceneItems.value.map(item => ({
+    ...item,
+    models,
+  }))
+  sceneBatchEditorVisible.value = false
+  Message.success(`已为 ${sceneItems.value.length} 个场景应用统一模型回退链。`)
+}
+
 function saveSceneDrawer() {
   const index = sceneItems.value.findIndex(item => item.key === sceneEditorForm.key)
   if (index < 0)
@@ -790,6 +822,15 @@ function saveSceneDrawer() {
   })
   sceneItems.value = next
   sceneEditorVisible.value = false
+}
+
+function applyCurrentSceneModelsToAll() {
+  const models = parseSceneModelsText(sceneEditorForm.modelsText)
+  sceneItems.value = sceneItems.value.map(item => ({
+    ...item,
+    models,
+  }))
+  Message.success(`已将「${sceneEditorForm.label}」的模型回退链复制到全部场景。`)
 }
 
 async function testScene(scene: SceneItem) {
@@ -1189,9 +1230,14 @@ onMounted(async () => {
                 每个场景可配置多个模型，运行时按顺序回退，不做随机、不做负载均衡。
               </div>
             </div>
-            <a-button type="primary" :loading="saving" @click="saveConsole">
-              保存场景
-            </a-button>
+            <div class="flex flex-wrap gap-2">
+              <a-button @click="openSceneBatchDrawer">
+                一键设置全部场景模型
+              </a-button>
+              <a-button type="primary" :loading="saving" @click="saveConsole">
+                保存场景
+              </a-button>
+            </div>
           </div>
         </template>
 
@@ -1530,11 +1576,59 @@ onMounted(async () => {
 
       <template #footer>
         <div class="flex gap-2 justify-end">
+          <a-button @click="applyCurrentSceneModelsToAll">
+            复制模型链到全部场景
+          </a-button>
           <a-button @click="closeSceneDrawer">
             取消
           </a-button>
           <a-button type="primary" @click="saveSceneDrawer">
             保存场景
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="sceneBatchEditorVisible"
+      title="一键设置全部场景模型"
+      :width="620"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div class="gap-4 grid">
+          <a-alert type="info" :show-icon="true">
+            这里填写的模型回退链会覆盖全部场景的模型配置，不会改动提示词和启停状态。
+          </a-alert>
+          <a-form-item label="统一模型回退链">
+            <a-textarea
+              v-model="sceneBatchForm.modelsText"
+              :auto-size="{ minRows: 5, maxRows: 12 }"
+              placeholder="每行一个模型，按顺序回退。"
+            />
+          </a-form-item>
+
+          <div class="flex flex-wrap gap-2">
+            <a-tag
+              v-for="model in enabledModelOptions"
+              :key="`batch-${model}`"
+              color="arcoblue"
+              class="cursor-pointer"
+              @click="appendSceneBatchModel(model)"
+            >
+              {{ model }}
+            </a-tag>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeSceneBatchDrawer">
+            取消
+          </a-button>
+          <a-button type="primary" @click="applySceneBatchModels">
+            应用到全部场景
           </a-button>
         </div>
       </template>

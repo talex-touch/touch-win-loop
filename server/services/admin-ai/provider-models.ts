@@ -201,9 +201,11 @@ function resolveModelsEndpoints(
   const normalizedBase = normalizePlatformAiBaseURL(baseURL, provider) || resolvePlatformAiDefaultBaseURL(provider)
   const requestBase = resolvePlatformAiRequestBaseURL(normalizedBase, provider)
   const candidates: string[] = []
+  const normalizedProvider = toNonEmptyString(provider).toLowerCase()
 
   candidates.push(appendPath(requestBase, 'models'))
-  candidates.push(appendPath(normalizedBase, 'models'))
+  if (!(normalizedProvider === 'newapi' || normalizedProvider.includes('newapi')))
+    candidates.push(appendPath(normalizedBase, 'models'))
 
   const unique: string[] = []
   for (const item of candidates) {
@@ -266,6 +268,40 @@ function toModelRecord(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return null
   return raw as Record<string, unknown>
+}
+
+function isErrorEnvelope(record: Record<string, unknown>): boolean {
+  const metaKeys = [
+    'success',
+    'message',
+    'msg',
+    'error',
+    'code',
+    'type',
+    'status',
+    'request_id',
+    'requestId',
+  ]
+  const hasMetaKey = metaKeys.some(key => key in record)
+  if (!hasMetaKey)
+    return false
+
+  const hasModelContainer = [
+    record.data,
+    record.models,
+    record.items,
+    record.result,
+    record.payload,
+    record.model_ids,
+    record.modelIds,
+    record.available_models,
+  ].some((value) => {
+    if (Array.isArray(value))
+      return value.length > 0
+    return Boolean(toModelRecord(value))
+  })
+
+  return !hasModelContainer
 }
 
 function maybeModelRecord(raw: unknown): Record<string, unknown> | null {
@@ -368,6 +404,8 @@ function extractModelItems(payload: unknown, depth = 0): Record<string, unknown>
   const objectPayload = toModelRecord(payload)
   if (!objectPayload)
     return []
+  if (isErrorEnvelope(objectPayload))
+    return []
 
   const direct = maybeModelRecord(objectPayload)
   if (direct)
@@ -415,6 +453,10 @@ function shouldTryNextEndpoint(status: number): boolean {
   return status === 404 || status === 405 || status === 406 || status === 501
 }
 
+function readResponseContentType(response: Response): string {
+  return response.headers?.get?.('content-type') || ''
+}
+
 async function fetchModelsPayload(input: {
   endpoints: string[]
   apiKey: string
@@ -427,6 +469,12 @@ async function fetchModelsPayload(input: {
     const timer = setTimeout(() => controller.abort(), input.timeoutMs)
 
     try {
+      console.warn('[admin-ai][provider-models] requesting endpoint', {
+        endpoint,
+        timeoutMs: input.timeoutMs,
+        apiKeyPresent: Boolean(input.apiKey),
+        apiKeyLength: String(input.apiKey || '').length,
+      })
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
@@ -438,6 +486,13 @@ async function fetchModelsPayload(input: {
 
       if (!response.ok) {
         const bodyText = await response.text().catch(() => '')
+        console.warn('[admin-ai][provider-models] endpoint failed', {
+          endpoint,
+          status: response.status,
+          statusText: response.statusText,
+          contentType: readResponseContentType(response),
+          bodyPreview: bodyText.slice(0, 200),
+        })
         errors.push(`${endpoint} -> ${response.status} ${response.statusText}${bodyText ? ` (${bodyText.slice(0, 80)})` : ''}`)
         if (shouldTryNextEndpoint(response.status))
           continue
@@ -446,6 +501,11 @@ async function fetchModelsPayload(input: {
 
       const payload = await response.json().catch(() => null)
       if (payload === null) {
+        console.warn('[admin-ai][provider-models] endpoint returned non-json payload', {
+          endpoint,
+          status: response.status,
+          contentType: readResponseContentType(response),
+        })
         errors.push(`${endpoint} -> 200 OK（返回内容不是合法 JSON）`)
         continue
       }
@@ -453,10 +513,20 @@ async function fetchModelsPayload(input: {
       const records = extractModelItems(payload)
       if (records.length === 0) {
         const payloadKeys = toModelRecord(payload) ? Object.keys(payload as Record<string, unknown>).slice(0, 6).join(', ') : ''
+        console.warn('[admin-ai][provider-models] endpoint returned unsupported payload', {
+          endpoint,
+          status: response.status,
+          contentType: readResponseContentType(response),
+          payloadKeys,
+        })
         errors.push(`${endpoint} -> 200 OK（未解析到模型${payloadKeys ? `，顶层字段：${payloadKeys}` : ''}）`)
         continue
       }
 
+      console.warn('[admin-ai][provider-models] endpoint succeeded', {
+        endpoint,
+        modelCount: records.length,
+      })
       return {
         payload,
         endpoint,
@@ -464,6 +534,10 @@ async function fetchModelsPayload(input: {
     }
     catch (error: any) {
       const message = String(error?.message || 'unknown error')
+      console.warn('[admin-ai][provider-models] request threw error', {
+        endpoint,
+        message,
+      })
       errors.push(`${endpoint} -> ${message}`)
       continue
     }

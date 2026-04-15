@@ -73,7 +73,7 @@ export default defineEventHandler(async (event) => {
   catch (error) {
     if (error instanceof Error && error.message === 'FORBIDDEN') {
       setResponseStatus(event, 403)
-      return fail('当前用户无权更新该项目工作区视图。', {
+      return fail('当前用户无权更新该研发工作台视图。', {
         startedAt,
         provider: runtime.ai.provider,
         model: runtime.ai.model,

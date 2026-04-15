@@ -60,6 +60,15 @@ export default defineEventHandler(async (event) => {
   const usedProvidedApiKey = Boolean(toText(body.apiKey))
   const timeoutMs = currentProvider?.timeoutMs || runtime.ai.timeoutMs
 
+  console.warn('[admin-ai][provider-models] starting pull', {
+    provider,
+    baseURL,
+    apiKeyMode,
+    usedProvidedApiKey,
+    apiKeyPresent: Boolean(apiKey),
+    apiKeyLength: String(apiKey || '').length,
+  })
+
   if (!toText(apiKey)) {
     setResponseStatus(event, 400)
     return fail('共享上游 API Key 未配置，无法自动拉取模型。', {
@@ -108,6 +117,13 @@ export default defineEventHandler(async (event) => {
     })
   }
   catch (error: any) {
+    console.warn('[admin-ai][provider-models] pull failed', {
+      provider,
+      baseURL,
+      apiKeyMode,
+      usedProvidedApiKey,
+      message: String(error?.message || '模型列表拉取失败'),
+    })
     setResponseStatus(event, 502)
     const sourceLabel = usedProvidedApiKey ? '当前输入的 API Key' : '已保存的 API Key'
     return fail(`[${sourceLabel}] ${String(error?.message || '模型列表拉取失败，请检查 provider/baseURL/apiKey。')}`, {

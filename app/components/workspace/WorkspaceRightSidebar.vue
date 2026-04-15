@@ -2,6 +2,7 @@
 import type {
   AiWorkspaceDocumentAction,
   AiWorkspaceDocumentSelectionRange,
+  WorkspaceAiAssistantPreset,
   AiChatSession,
   AiDefenseJudgeRound,
   AiDefensePersona,
@@ -23,7 +24,9 @@ import type {
 import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
 import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
 
-type WorkspacePrimarySidebarAiMode = Exclude<WorkspaceAiMode, 'defense' | 'document_assist'>
+type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
+type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
+type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
 type WorkspaceRightSidebarView = 'ai' | 'comments'
 type WorkspaceSessionVisualType = WorkspaceAiMode | 'final_review' | 'topic_proposal'
 type DocumentAssistActionStatus = {
@@ -44,6 +47,10 @@ const props = withDefaults(defineProps<{
   workspacePreparing?: boolean
   currentUserName?: string
   currentUserAvatarUrl?: string | null
+  workbenchMode?: WorkspaceWorkbenchMode
+  projectAssistantMode?: WorkspaceProjectAssistantMode
+  projectContextualAssistantLabel?: string
+  projectContextualAssistantPreset?: WorkspaceAiAssistantPreset | ''
   aiMode?: WorkspaceAiMode
   changeRequests?: AiProjectChangeRequest[]
   changeRequestsLoading?: boolean
@@ -95,6 +102,10 @@ const props = withDefaults(defineProps<{
   workspacePreparing: false,
   currentUserName: '',
   currentUserAvatarUrl: '',
+  workbenchMode: 'project',
+  projectAssistantMode: 'contextual',
+  projectContextualAssistantLabel: '',
+  projectContextualAssistantPreset: '',
   aiMode: 'dialog_ask',
   changeRequests: () => [],
   changeRequestsLoading: false,
@@ -145,6 +156,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'update:chatInput': [value: string]
   'update:aiMode': [value: WorkspaceAiMode]
+  'update:projectAssistantMode': [value: WorkspaceProjectAssistantMode]
   'update:sidebarView': [value: WorkspaceRightSidebarView]
   'collapse': []
   'sendChat': []
@@ -179,7 +191,8 @@ const emit = defineEmits<{
   'applyDocumentAssist': []
 }>()
 
-const PRIMARY_MODES: Array<{ value: WorkspacePrimarySidebarAiMode, label: string }> = [
+const DEFENSE_MODES: Array<{ value: WorkspaceDefenseSidebarAiMode, label: string }> = [
+  { value: 'defense', label: '答辩模拟' },
   { value: 'dialog_ask', label: '对话询问' },
   { value: 'auto_optimize', label: '自动优化' },
   { value: 'issue_discovery', label: '寻疑发现' },
@@ -213,8 +226,8 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
   },
   document_assist: {
     icon: 'edit_document',
-    label: '文档增强',
-    prefixes: ['Loopy 文档增强'],
+    label: '文稿助手',
+    prefixes: ['Loopy 文稿助手', 'Loopy 文档增强'],
   },
   final_review: {
     icon: 'task_alt',
@@ -226,6 +239,12 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
 const inputPlaceholder = computed(() => {
   if (!props.aiEnabled)
     return aiDisabledNoticeText.value
+  if (props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual') {
+    if (props.projectContextualAssistantPreset === 'design')
+      return '描述当前页面结构或交互目标，例如：把评审首页拆成更清晰的页面层级，并说明关键交互。'
+    if (props.projectContextualAssistantPreset === 'prototype')
+      return '描述原型页面或交互路径，例如：梳理从首页到提交成功页的关键状态和跳转。'
+  }
   if (props.aiMode === 'auto_optimize')
     return '描述你希望生成哪些可审批提案，例如：补齐摘要与问题陈述。'
   if (props.aiMode === 'issue_discovery')
@@ -320,6 +339,20 @@ const aiDisabledNoticeText = computed(() => {
     return text
   return '当前 AI 未配置，已禁用当前模式。请先在后台完成模型与密钥配置。'
 })
+const projectAssistantOptions = computed<Array<{ value: WorkspaceProjectAssistantMode, label: string }>>(() => {
+  const options: Array<{ value: WorkspaceProjectAssistantMode, label: string }> = []
+  if (props.projectContextualAssistantLabel) {
+    options.push({
+      value: 'contextual',
+      label: props.projectContextualAssistantLabel,
+    })
+  }
+  options.push({
+    value: 'dialog_ask',
+    label: '对话询问',
+  })
+  return options
+})
 
 watch(() => props.showCommentTab, (nextValue) => {
   if (!nextValue && props.sidebarView === 'comments')
@@ -382,7 +415,7 @@ function documentAssistActionLabel(action: AiWorkspaceDocumentAction | ''): stri
     return '补全上下文'
   if (action === 'restructure')
     return '整理结构'
-  return '文档增强'
+  return '文稿助手'
 }
 
 function documentAssistActionEnabled(action: AiWorkspaceDocumentAction): boolean {
@@ -425,22 +458,67 @@ function severityClass(value: string): string {
   return 'workspace-issue-pill workspace-issue-pill--medium'
 }
 
-function selectMode(mode: WorkspacePrimarySidebarAiMode) {
+function selectDefenseMode(mode: WorkspaceDefenseSidebarAiMode) {
   emit('update:aiMode', mode)
 }
 
-function modeSelectValue(): WorkspacePrimarySidebarAiMode | '' {
-  if (props.aiMode === 'defense' || props.aiMode === 'document_assist')
+function selectProjectAssistantMode(mode: WorkspaceProjectAssistantMode) {
+  emit('update:projectAssistantMode', mode)
+}
+
+function resolveEmbeddedModeOptions(): Array<{ value: WorkspaceDefenseSidebarAiMode | WorkspaceProjectAssistantMode, label: string }> {
+  if (props.workbenchMode === 'project')
+    return projectAssistantOptions.value
+  return DEFENSE_MODES
+}
+
+function modeSelectValue(): WorkspaceDefenseSidebarAiMode | WorkspaceProjectAssistantMode | '' {
+  if (props.workbenchMode === 'project') {
+    if (props.projectAssistantMode === 'dialog_ask')
+      return 'dialog_ask'
+    return props.projectContextualAssistantLabel ? 'contextual' : 'dialog_ask'
+  }
+  if (props.aiMode === 'document_assist')
     return ''
-  return props.aiMode
+  return props.aiMode as WorkspaceDefenseSidebarAiMode
+}
+
+function applyModeSelectValue(value: WorkspaceDefenseSidebarAiMode | WorkspaceProjectAssistantMode): void {
+  if (!value)
+    return
+
+  if (props.workbenchMode === 'project') {
+    if (value === 'contextual' || value === 'dialog_ask')
+      selectProjectAssistantMode(value as WorkspaceProjectAssistantMode)
+    return
+  }
+  if (value === 'defense' || value === 'dialog_ask' || value === 'auto_optimize' || value === 'issue_discovery')
+    selectDefenseMode(value as WorkspaceDefenseSidebarAiMode)
 }
 
 function handleModeSelectChange(event: Event) {
   const value = String((event.target as HTMLSelectElement).value || '').trim()
   if (!value)
     return
-  if (value === 'dialog_ask' || value === 'auto_optimize' || value === 'issue_discovery')
-    selectMode(value as WorkspacePrimarySidebarAiMode)
+
+  applyModeSelectValue(value as WorkspaceDefenseSidebarAiMode | WorkspaceProjectAssistantMode)
+}
+
+function cycleEmbeddedModeByShortcut(direction: 1 | -1): void {
+  const options = resolveEmbeddedModeOptions()
+  if (options.length < 2)
+    return
+
+  const currentValue = modeSelectValue()
+  const currentIndex = options.findIndex(option => option.value === currentValue)
+  const fallbackIndex = direction > 0 ? -1 : 0
+  const nextIndex = (currentIndex >= 0 ? currentIndex : fallbackIndex) + direction
+  const normalizedIndex = (nextIndex + options.length) % options.length
+  const nextOption = options[normalizedIndex]
+  if (!nextOption)
+    return
+
+  applyModeSelectValue(nextOption.value)
 }
 
 function escapeRegExp(value: string): string {
@@ -449,7 +527,13 @@ function escapeRegExp(value: string): string {
 
 function resolveSessionTitle(session: AiChatSession): string {
   const title = String(session.title || '').trim()
-  return title || '未命名会话'
+  if (!title)
+    return '未命名会话'
+  if (title.startsWith('Loopy 文档增强'))
+    return title.replace('Loopy 文档增强', 'Loopy 文稿助手')
+  if (title.startsWith('文档增强'))
+    return title.replace('文档增强', '文稿助手')
+  return title
 }
 
 function resolveSessionVisualType(session: AiChatSession): WorkspaceSessionVisualType {
@@ -465,7 +549,7 @@ function resolveSessionVisualType(session: AiChatSession): WorkspaceSessionVisua
     return 'auto_optimize'
   if (title.includes('寻疑发现'))
     return 'issue_discovery'
-  if (title.includes('文档增强'))
+  if (title.includes('文稿助手') || title.includes('文档增强'))
     return 'document_assist'
   if (session.mode === 'auto_optimize' || session.mode === 'issue_discovery' || session.mode === 'defense' || session.mode === 'document_assist')
     return session.mode
@@ -649,6 +733,15 @@ function requestExportIssueReport() {
 }
 
 function handleChatComposerKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Tab' && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.isComposing || (event as KeyboardEvent & { keyCode?: number }).keyCode === 229)
+      return
+
+    event.preventDefault()
+    cycleEmbeddedModeByShortcut(-1)
+    return
+  }
+
   if (!props.aiEnabled)
     return
   if (event.key !== 'Enter')
@@ -679,7 +772,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           文档评论（{{ props.commentThreads.length }}）
         </template>
         <template v-else-if="showDocumentAssistView">
-          文档增强
+          文稿助手
         </template>
       </div>
 
@@ -990,7 +1083,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               v-if="props.documentAssistRunning"
               class="text-[11px] text-blue-700 p-3 border border-blue-200 rounded bg-blue-50"
             >
-              文档 AI 正在生成结果，请稍候。
+              文稿助手正在生成结果，请稍候。
             </div>
 
             <div
@@ -1009,7 +1102,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               v-else-if="!props.documentAssistRunning"
               class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed"
             >
-              从正文里的浮动工具栏、`/` 菜单，或下面的动作按钮触发文档增强。
+              从正文里的浮动工具栏、`/` 菜单，或下面的动作按钮触发文稿助手。
             </div>
           </div>
         </template>
@@ -1078,7 +1171,15 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           </div>
 
           <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">
-            当前为只读对话模式，只提供解释、澄清与下一步建议，不会写入项目。
+            <template v-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'design'">
+              当前为设计助手，只做只读分析，优先帮助你梳理页面层级、布局结构、视觉一致性和交互说明。
+            </template>
+            <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'prototype'">
+              当前为原型助手，只做只读分析，优先帮助你梳理页面流转、模块拆分、关键状态和交互路径。
+            </template>
+            <template v-else>
+              当前为只读对话模式，只提供解释、澄清与下一步建议，不会写入项目。
+            </template>
           </div>
 
           <div v-if="aiMode === 'auto_optimize'" class="space-y-2">
@@ -1567,30 +1668,25 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             />
             <div class="workspace-chat-composer__footer">
               <div class="workspace-chat-composer__toolbar">
-                <label
-                  class="workspace-chat-composer__mode-pill"
-                  :class="{ 'workspace-chat-composer__mode-pill--disabled': aiMode === 'defense' }"
+              <label
+                class="workspace-chat-composer__mode-pill"
+              >
+                <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
+                  auto_awesome
+                </span>
+                <select
+                  data-testid="workspace-right-sidebar-mode-select"
+                  class="workspace-mode-select workspace-mode-select--embedded"
+                  :value="modeSelectValue()"
+                  @change="handleModeSelectChange"
                 >
-                  <span class="workspace-chat-composer__mode-icon material-symbols-outlined" aria-hidden="true">
-                    auto_awesome
-                  </span>
-                  <select
-                    data-testid="workspace-right-sidebar-mode-select"
-                    class="workspace-mode-select workspace-mode-select--embedded"
-                    :value="modeSelectValue()"
-                    :disabled="aiMode === 'defense'"
-                    @change="handleModeSelectChange"
+                  <option
+                    v-for="mode in props.workbenchMode === 'project' ? projectAssistantOptions : DEFENSE_MODES"
+                    :key="mode.value"
+                    :value="mode.value"
                   >
-                    <option v-if="aiMode === 'defense'" value="" disabled>
-                      答辩工作台（顶部切换）
-                    </option>
-                    <option
-                      v-for="mode in PRIMARY_MODES"
-                      :key="mode.value"
-                      :value="mode.value"
-                    >
-                      {{ mode.label }}
-                    </option>
+                    {{ mode.label }}
+                  </option>
                   </select>
                   <span class="workspace-chat-composer__mode-chevron material-symbols-outlined" aria-hidden="true">
                     expand_more

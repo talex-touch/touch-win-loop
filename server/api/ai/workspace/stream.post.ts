@@ -73,6 +73,11 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       selectionRange: context.selectionRange || null,
       trigger: context.trigger,
       documentAction: context.documentAction,
+      assistantPreset: context.assistantPreset,
+      assistantLabel: toText(context.assistantLabel),
+      activeTabId: toText(context.activeTabId),
+      previewMode: toText(context.previewMode),
+      resourcePurpose: toText(context.resourcePurpose),
     },
     aiOptions: body?.aiOptions || {},
   }
@@ -87,7 +92,7 @@ function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName
     : mode === 'issue_discovery'
       ? 'Loopy 寻疑发现'
       : mode === 'document_assist'
-        ? 'Loopy 文档增强'
+        ? 'Loopy 文稿助手'
         : 'Loopy 对话'
 
   if (left && right)
@@ -265,7 +270,7 @@ export default defineEventHandler(async (event) => {
   if (!isAiRuntimeConfigured(workspaceAiConfig)) {
     setResponseStatus(event, 503)
     return fail(
-      buildAiNotConfiguredMessage(channelRuntime.channel.label || (request.mode === 'document_assist' ? '文档 AI' : '工作台 AI')),
+      buildAiNotConfiguredMessage(channelRuntime.channel.label || (request.mode === 'document_assist' ? '文稿助手 AI' : '工作台 AI')),
       {
         startedAt,
         provider: workspaceAiConfig.provider,
@@ -509,6 +514,11 @@ export default defineEventHandler(async (event) => {
               : null,
             trigger: toText(request.context?.trigger),
             documentAction: toText(request.context?.documentAction),
+            assistantPreset: request.context?.assistantPreset || 'default',
+            assistantLabel: toText(request.context?.assistantLabel),
+            activeTabId: toText(request.context?.activeTabId),
+            previewMode: toText(request.context?.previewMode),
+            resourcePurpose: toText(request.context?.resourcePurpose),
             projectSettingsSummary: contextBundle.projectSettingsSummary,
             projectOutlineSummary: contextBundle.projectOutlineSummary,
             resourceSummary: contextBundle.resourceSummary,

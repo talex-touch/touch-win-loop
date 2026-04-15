@@ -89,12 +89,64 @@ describe('admin-ai provider models', () => {
 
     const items = await discoverProviderModels({
       scope: 'provider',
-      provider: 'newapi',
+      provider: 'openai-compatible',
       baseURL: 'https://proxy.example/custom',
       apiKey: 'test-key',
     })
 
     expect(items.map(item => item.model)).toEqual(['gpt-4.1-mini'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('newapi 仅使用官方 /v1/models 路径', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+
+      if (url === 'https://newapi.example/v1/models')
+        return okJson({ data: ['gpt-4.1-mini', 'gpt-4.1'] })
+
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'newapi',
+      baseURL: 'https://newapi.example',
+      apiKey: 'test-key',
+    })
+
+    expect(items.map(item => item.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('不会把错误响应里的 success 和 message 误判成模型', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+
+      if (url === 'https://proxy.example/v1/models') {
+        return okJson({
+          success: false,
+          message: '无权进行此操作，access token 无效',
+        })
+      }
+
+      if (url === 'https://proxy.example/models')
+        return okJson({ data: [{ id: 'gpt-4.1-mini' }] })
+
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const items = await discoverProviderModels({
+      scope: 'provider',
+      provider: 'openai-compatible',
+      baseURL: 'https://proxy.example',
+      apiKey: 'test-key',
+    })
+
+    expect(items.map(item => item.model)).toEqual(['gpt-4.1-mini'])
+    expect(items.some(item => item.model === 'success' || item.model === 'message')).toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 

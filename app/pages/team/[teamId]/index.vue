@@ -824,7 +824,7 @@ async function submitQuickCreate(mode: 'stay' | 'enter') {
       return
     }
 
-    Message.success('项目已创建，正在进入项目工作区。')
+    Message.success('项目已创建，正在进入研发工作台。')
     writeActiveWorkspacePreference(createdWorkspaceId)
 
     await navigateTo(projectWorkspacePath(createdWorkspaceId, created.id))
