@@ -94,7 +94,7 @@ describe('workspace-inline-completion', () => {
     expect(oversized.length).toBeLessThanOrEqual(120)
   })
 
-  it('只会在 DashScope compatible-mode 的 Qwen 上游启用 partial mode', () => {
+  it('会在 openai-compatible 的 Qwen 模型上启用 partial mode', () => {
     expect(supportsInlineCompletionPartialMode({
       provider: 'DashScope',
       baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -111,13 +111,23 @@ describe('workspace-inline-completion', () => {
       model: 'qwen3.6-plus',
       timeoutMs: 12000,
       maxRetries: 0,
-    })).toBe(false)
+    })).toBe(true)
 
     expect(supportsInlineCompletionPartialMode({
       provider: 'DashScope',
       baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       apiKey: 'sk-test',
       model: 'deepseek-v3.2',
+      timeoutMs: 12000,
+      maxRetries: 0,
+    })).toBe(false)
+
+    expect(supportsInlineCompletionPartialMode({
+      provider: 'DashScope',
+      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      apiKey: 'sk-test',
+      model: 'qwen3.6-plus',
+      format: 'response',
       timeoutMs: 12000,
       maxRetries: 0,
     })).toBe(false)
@@ -172,8 +182,11 @@ describe('workspace-inline-completion', () => {
       readFile(USER_AI_USAGE_FILE, 'utf8'),
     ])
 
-    assert.match(serviceSource, /role:\s*'assistant'[\s\S]*partial:\s*true/, '自动补齐服务未以 partial mode 发送 assistant 前缀')
-    assert.match(serviceSource, /isDashScopeCompatibleMode/, '自动补齐未限制 partial mode 只在 DashScope compatible-mode 上游启用')
+    assert.match(serviceSource, /new AIMessage\(\s*\{\s*content:\s*input\.prefix\s*\}\s*\)/, '自动补齐服务未把前缀包装成 assistant message')
+    assert.match(serviceSource, /partial:\s*true/, '自动补齐服务未在最后一条 assistant message 上附带 partial 标记')
+    assert.match(serviceSource, /convertMessagesToCompletionsMessageParams/, '自动补齐服务未复用 LangChain completions message 转换器')
+    assert.match(serviceSource, /completionWithRetry/, '自动补齐服务未通过 LangChain chat model 发起 partial mode 请求')
+    assert.doesNotMatch(serviceSource, /import OpenAI from 'openai'/, '自动补齐服务不应再直连 OpenAI SDK')
     assert.match(serviceSource, /if \(input\.signal\?\.aborted\)\s+throw error/, 'partial mode 回退仍会吞掉外部 abort')
     assert.match(suggestionApiSource, /maxRetries:\s*0/, '自动补齐 suggestion 接口未关闭上游内部重试')
     assert.doesNotMatch(suggestionApiSource, /runWithPlatformAiChannelFallback/, '自动补齐 suggestion 接口不应在轻量场景里串行回退多个模型')

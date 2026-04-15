@@ -8,6 +8,8 @@ import { withClient } from '~~/server/utils/db'
 import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
+const INLINE_COMPLETION_TIMEOUT_MS = 30_000
+
 function toText(value: unknown): string {
   return String(value || '').trim()
 }
@@ -47,6 +49,7 @@ export default defineEventHandler(async (event) => {
   const channelRuntime = resolveAiRuntimeForChannel(runtime, 'workspace_document_continue')
   const completionAi = {
     ...channelRuntime.ai,
+    timeoutMs: Math.max(INLINE_COMPLETION_TIMEOUT_MS, Number(channelRuntime.ai.timeoutMs || 0) || INLINE_COMPLETION_TIMEOUT_MS),
     maxRetries: 0,
   }
   const aiConfig = {
@@ -171,6 +174,7 @@ export default defineEventHandler(async (event) => {
       provider: aiConfig.provider,
       model: aiConfig.model,
       baseURL: aiConfig.baseURL,
+      timeoutMs: aiConfig.timeoutMs,
       resourceId: request.context?.resourceId || '',
       selectionRange: request.context?.selectionRange || null,
       error: error instanceof Error ? (error.message || error.name || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',

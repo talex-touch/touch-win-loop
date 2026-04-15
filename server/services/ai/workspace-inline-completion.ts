@@ -1,9 +1,11 @@
 import type { AiRuntimeConfig } from '~~/server/services/ai/llm-client'
 import type { Queryable } from '~~/server/utils/db'
 import type { AiWorkspaceDocumentSelectionRange, AuthUser, Resource } from '~~/shared/types/domain'
+import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
+import { convertMessagesToCompletionsMessageParams } from '@langchain/openai'
 import { createChatModel } from '~~/server/services/ai/llm-client'
-import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import { resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 import { buildMergedPrompt } from '~~/server/utils/platform-ai-channels'
 import { getProjectResourceById } from '~~/server/utils/project-resource-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
@@ -20,6 +22,14 @@ interface OpenAiCompatibleChatCompletionResponse {
       content?: string | Array<{ text?: string }>
     }
   }>
+}
+
+interface PartialModeChatModel {
+  invocationParams: (options?: Record<string, unknown>, extra?: { streaming?: boolean }) => Record<string, unknown>
+  completionWithRetry: (
+    request: Record<string, unknown>,
+    requestOptions?: { signal?: AbortSignal },
+  ) => Promise<OpenAiCompatibleChatCompletionResponse>
 }
 
 function normalizeString(value: unknown): string {
@@ -49,35 +59,6 @@ function resolveNormalizedTemperature(ai: AiRuntimeConfig): number {
   if (!Number.isFinite(parsed))
     return 0.2
   return Math.max(0, Math.min(1, parsed))
-}
-
-function createRequestSignal(timeoutMs: number, externalSignal?: AbortSignal): {
-  signal: AbortSignal
-  cleanup: () => void
-} {
-  const controller = new AbortController()
-  const normalizedTimeout = clampInt(timeoutMs, 15_000, 1_000, 120_000)
-  const timer = setTimeout(() => controller.abort(new Error('INLINE_COMPLETION_TIMEOUT')), normalizedTimeout)
-
-  const handleExternalAbort = () => {
-    controller.abort(externalSignal?.reason)
-  }
-
-  if (externalSignal) {
-    if (externalSignal.aborted)
-      handleExternalAbort()
-    else
-      externalSignal.addEventListener('abort', handleExternalAbort, { once: true })
-  }
-
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timer)
-      if (externalSignal)
-        externalSignal.removeEventListener('abort', handleExternalAbort)
-    },
-  }
 }
 
 function extractOpenAiCompatibleMessageText(payload: OpenAiCompatibleChatCompletionResponse): string {
@@ -194,14 +175,8 @@ export function supportsInlineCompletionPartialMode(ai: AiRuntimeConfig): boolea
   if (ai.format === 'response')
     return false
 
-  const provider = normalizeString(ai.provider).toLowerCase()
   const model = normalizeString(ai.model).toLowerCase()
-  const requestBase = resolvePlatformAiRequestBaseURL(ai.baseURL, ai.provider).toLowerCase()
-  const isDashScopeCompatibleMode = requestBase.includes('dashscope.aliyuncs.com/compatible-mode/v1')
-    || requestBase.includes('dashscope-intl.aliyuncs.com/compatible-mode/v1')
-    || provider.includes('dashscope')
-
-  return isDashScopeCompatibleMode && model.includes('qwen')
+  return model.includes('qwen')
 }
 
 async function invokePartialModeInlineCompletion(input: {
@@ -211,54 +186,60 @@ async function invokePartialModeInlineCompletion(input: {
   prefix: string
   signal?: AbortSignal
 }): Promise<string> {
-  const apiKey = normalizePlatformAiApiKey(input.ai.apiKey)
-  const requestBase = resolvePlatformAiRequestBaseURL(input.ai.baseURL, input.ai.provider)
-  if (!apiKey || !requestBase)
-    throw new Error('INLINE_COMPLETION_PROVIDER_NOT_CONFIGURED')
+  const model = createChatModel({
+    ...input.ai,
+    temperature: resolveNormalizedTemperature(input.ai),
+    maxTokens: resolveInlineCompletionMaxTokens(input.ai),
+  })
+  const partialModeModel = model as PartialModeChatModel
+  const requestMessages = convertMessagesToCompletionsMessageParams({
+    messages: [
+      new SystemMessage(input.systemPrompt),
+      new HumanMessage(input.userPrompt),
+      new AIMessage({ content: input.prefix }),
+    ],
+    model: input.ai.model,
+  }).map((message, index, messages) => {
+    if (index !== messages.length - 1 || message.role !== 'assistant')
+      return message
 
-  const { signal, cleanup } = createRequestSignal(input.ai.timeoutMs, input.signal)
+    return {
+      ...message,
+      partial: true,
+    }
+  })
+  const requestPayload = {
+    ...partialModeModel.invocationParams(),
+    stream: false,
+    messages: requestMessages,
+  }
 
   try {
-    const response = await fetch(`${requestBase}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: input.ai.model,
-        messages: [
-          {
-            role: 'system',
-            content: input.systemPrompt,
-          },
-          {
-            role: 'user',
-            content: input.userPrompt,
-          },
-          {
-            role: 'assistant',
-            content: input.prefix,
-            partial: true,
-          },
-        ],
-        temperature: resolveNormalizedTemperature(input.ai),
-        max_tokens: resolveInlineCompletionMaxTokens(input.ai),
-        top_p: Number.isFinite(Number(input.ai.topP)) ? Number(input.ai.topP) : undefined,
-        presence_penalty: Number.isFinite(Number(input.ai.presencePenalty)) ? Number(input.ai.presencePenalty) : undefined,
-        frequency_penalty: Number.isFinite(Number(input.ai.frequencyPenalty)) ? Number(input.ai.frequencyPenalty) : undefined,
-      }),
-      signal,
+    console.info('[inline-completion] partial mode request', {
+      provider: input.ai.provider,
+      model: input.ai.model,
+      baseURL: resolvePlatformAiRequestBaseURL(input.ai.baseURL, input.ai.provider),
+      timeoutMs: input.ai.timeoutMs,
+      request: requestPayload,
     })
 
-    const payload = await response.json().catch(() => ({})) as OpenAiCompatibleChatCompletionResponse & { error?: { message?: string } }
-    if (!response.ok)
-      throw new Error(String(payload.error?.message || `INLINE_COMPLETION_HTTP_${response.status}`))
+    const response = await partialModeModel.completionWithRetry(requestPayload, {
+      signal: input.signal,
+    })
 
-    return extractOpenAiCompatibleMessageText(payload).trim()
+    return extractOpenAiCompatibleMessageText(response).trim()
   }
-  finally {
-    cleanup()
+  catch (error) {
+    if (input.signal?.aborted)
+      throw error
+
+    const message = error instanceof Error
+      ? (error.message || error.name || 'UNKNOWN_ERROR')
+      : 'UNKNOWN_ERROR'
+    if (/timed out/i.test(message))
+      throw new Error('INLINE_COMPLETION_TIMEOUT')
+
+    throw error
   }
 }
 
@@ -266,6 +247,7 @@ async function invokePromptModeInlineCompletion(input: {
   ai: AiRuntimeConfig
   systemPrompt: string
   userPrompt: string
+  signal?: AbortSignal
 }): Promise<string> {
   const model = createChatModel({
     ...input.ai,
@@ -378,6 +360,7 @@ export async function generateWorkspaceInlineCompletion(input: {
         ai: input.ai,
         systemPrompt,
         userPrompt: promptModeUserPrompt,
+        signal: input.signal,
       })
     }
   }
@@ -386,6 +369,7 @@ export async function generateWorkspaceInlineCompletion(input: {
       ai: input.ai,
       systemPrompt,
       userPrompt: promptModeUserPrompt,
+      signal: input.signal,
     })
   }
 
