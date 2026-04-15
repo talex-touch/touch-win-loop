@@ -648,6 +648,7 @@ export interface DesignAssetDeviceShellMetadata extends Record<string, unknown> 
 export interface DesignAssetMetadata extends Record<string, unknown> {
   role?: 'image' | 'device_shell'
   deviceShell?: DesignAssetDeviceShellMetadata
+  libraryOrigin?: CanvasLibraryOriginMetadata
 }
 
 export interface DesignAssetModel {
@@ -663,6 +664,7 @@ export interface DesignAssetModel {
 
 export interface DesignPageMetadata extends Record<string, unknown> {
   clipToPage?: boolean
+  libraryOrigin?: CanvasLibraryOriginMetadata
 }
 
 export interface DesignPageModel {
@@ -723,6 +725,7 @@ export interface DesignFrameMetadata extends Record<string, unknown> {
   grid?: DesignFrameGridMetadata
   export?: DesignFrameExportMetadata
   device?: DesignFrameDeviceMetadata
+  libraryOrigin?: CanvasLibraryOriginMetadata
 }
 
 export interface DesignFrameModel {
@@ -777,6 +780,126 @@ export interface SceneDocument {
   metadata?: Record<string, unknown>
   createdAt?: string
   updatedAt?: string
+}
+
+export type CanvasLibraryItemKind = 'template' | 'asset'
+export type CanvasLibraryTemplateTarget = 'scene' | 'page' | 'frame'
+export type CanvasLibraryAssetKind = 'image' | 'svg' | 'device_shell'
+export type CanvasLibraryItemStatus = 'draft' | 'published' | 'archived'
+export type CanvasLibraryItemSource = 'admin_upload' | 'design_publish'
+export type CanvasLibraryItemPayloadType = 'scene_document' | 'design_fragment' | 'binary_asset'
+
+export interface CanvasLibraryOriginMetadata {
+  itemId: string
+  versionId: string
+  importedAt: string
+  importedBy: string
+  source: 'canvas_library'
+}
+
+export interface CanvasLibraryItemCover {
+  src?: string
+  mimeType?: string
+  background?: string
+  alt?: string
+}
+
+export interface CanvasLibraryCompositionSnapshot extends Record<string, unknown> {
+  templateKey?: string
+  themeTokens?: Record<string, string>
+  layoutRules?: Record<string, unknown>
+  allowedBlocks?: string[]
+  exportPresets?: string[]
+  aspectRatio?: string
+  deviceFramePresetKey?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface CanvasLibraryPageTemplatePayload {
+  target: 'page'
+  page: DesignPageModel
+  frames: DesignFrameModel[]
+  elements: DesignElementModel[]
+  assets: DesignAssetModel[]
+  composition?: CanvasLibraryCompositionSnapshot
+}
+
+export interface CanvasLibraryFrameTemplatePayload {
+  target: 'frame'
+  frame: DesignFrameModel
+  elements: DesignElementModel[]
+  assets: DesignAssetModel[]
+  composition?: CanvasLibraryCompositionSnapshot
+}
+
+export interface CanvasLibraryBinaryAssetPayload {
+  mimeType: string
+  objectKey: string
+  fileName: string
+  size: number
+  width?: number
+  height?: number
+  metadata?: DesignAssetMetadata
+}
+
+export interface CanvasLibraryDeviceShellAssetPayload extends CanvasLibraryBinaryAssetPayload {
+  viewportRect: DesignAssetDeviceShellViewportRect
+  cornerRadius: number
+  presetKeys: string[]
+  maskPath?: string
+}
+
+export interface CanvasLibraryBinaryAssetPreviewPayload {
+  src?: string
+  width?: number
+  height?: number
+}
+
+export type CanvasLibraryItemPayload =
+  | SceneDocument
+  | CanvasLibraryPageTemplatePayload
+  | CanvasLibraryFrameTemplatePayload
+  | CanvasLibraryBinaryAssetPayload
+  | CanvasLibraryDeviceShellAssetPayload
+
+export type CanvasLibraryItemPreviewPayload =
+  | SceneDocument
+  | CanvasLibraryPageTemplatePayload
+  | CanvasLibraryFrameTemplatePayload
+  | CanvasLibraryBinaryAssetPreviewPayload
+  | Record<string, unknown>
+  | null
+
+export interface CanvasLibraryItem {
+  id: string
+  slug: string
+  title: string
+  summary: string
+  kind: CanvasLibraryItemKind
+  templateTarget?: CanvasLibraryTemplateTarget
+  assetKind?: CanvasLibraryAssetKind
+  status: CanvasLibraryItemStatus
+  tags: string[]
+  cover?: CanvasLibraryItemCover | null
+  source: CanvasLibraryItemSource
+  draftVersionId?: string | null
+  publishedVersionId?: string | null
+  createdBy: string
+  updatedBy: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface CanvasLibraryItemVersion {
+  id: string
+  itemId: string
+  version: number
+  payloadSchemaVersion: number
+  payloadType: CanvasLibraryItemPayloadType
+  payload: CanvasLibraryItemPayload
+  previewPayload?: CanvasLibraryItemPreviewPayload
+  notes?: string
+  createdAt?: string
 }
 
 export interface SceneTemplateSummary {

@@ -1289,6 +1289,40 @@ CREATE TABLE IF NOT EXISTS project_resource_collab_docs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS canvas_library_items (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL CHECK (kind IN ('template', 'asset')),
+  template_target TEXT CHECK (template_target IN ('scene', 'page', 'frame')),
+  asset_kind TEXT CHECK (asset_kind IN ('image', 'svg', 'device_shell')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
+  tags TEXT[] NOT NULL DEFAULT '{}',
+  cover JSONB NOT NULL DEFAULT '{}'::JSONB,
+  source TEXT NOT NULL CHECK (source IN ('admin_upload', 'design_publish')),
+  draft_version_id TEXT,
+  published_version_id TEXT,
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS canvas_library_item_versions (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES canvas_library_items(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  payload_schema_version INTEGER NOT NULL DEFAULT 1,
+  payload_type TEXT NOT NULL CHECK (payload_type IN ('scene_document', 'design_fragment', 'binary_asset')),
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  preview_payload JSONB,
+  notes TEXT NOT NULL DEFAULT '',
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(item_id, version)
+);
+
 CREATE TABLE IF NOT EXISTS project_resource_comment_threads (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -1442,6 +1476,18 @@ CREATE INDEX IF NOT EXISTS idx_project_meeting_invitees_meeting_invited_at
 
 CREATE INDEX IF NOT EXISTS idx_project_meeting_invitees_project_user
   ON project_meeting_invitees(project_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_canvas_library_items_status_kind_updated_at
+  ON canvas_library_items(status, kind, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_canvas_library_items_source_updated_at
+  ON canvas_library_items(source, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_canvas_library_items_published_version_id
+  ON canvas_library_items(published_version_id);
+
+CREATE INDEX IF NOT EXISTS idx_canvas_library_item_versions_item_version_desc
+  ON canvas_library_item_versions(item_id, version DESC);
 
 CREATE INDEX IF NOT EXISTS idx_project_meeting_utterances_meeting_sequence
   ON project_meeting_utterances(meeting_id, sequence_no ASC, created_at ASC);

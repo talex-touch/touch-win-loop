@@ -3,6 +3,12 @@ import type {
   ArchitectureImportResult,
   ArchitectureModel,
   ArchitectureRelationModel,
+  CanvasLibraryBinaryAssetPayload,
+  CanvasLibraryCompositionSnapshot,
+  CanvasLibraryDeviceShellAssetPayload,
+  CanvasLibraryFrameTemplatePayload,
+  CanvasLibraryOriginMetadata,
+  CanvasLibraryPageTemplatePayload,
   CompositionModel,
   DesignAssetDeviceShellMetadata,
   DesignAssetMetadata,
@@ -5896,6 +5902,457 @@ export function removeDesignElementFromSceneDocument(
   return finalizeCompositionSceneDocument(base, {
     ...composition,
     elements: [...unaffected, ...sourceContainerElements],
+  })
+}
+
+function normalizeCanvasLibraryOrigin(origin: CanvasLibraryOriginMetadata): CanvasLibraryOriginMetadata {
+  return {
+    itemId: normalizeString(origin.itemId),
+    versionId: normalizeString(origin.versionId),
+    importedAt: normalizeString(origin.importedAt) || new Date().toISOString(),
+    importedBy: normalizeString(origin.importedBy),
+    source: 'canvas_library',
+  }
+}
+
+function buildCanvasLibraryCompositionSnapshot(composition: CompositionModel): CanvasLibraryCompositionSnapshot {
+  return {
+    templateKey: normalizeString(composition.templateKey) || undefined,
+    themeTokens: normalizeThemeTokens(composition.themeTokens),
+    layoutRules: normalizeRecord(composition.layoutRules),
+    allowedBlocks: ensureArray(composition.allowedBlocks).map(item => normalizeString(item)).filter(Boolean),
+    exportPresets: ensureArray(composition.exportPresets).map(item => normalizeString(item)).filter(Boolean),
+    aspectRatio: normalizeString(composition.aspectRatio) || undefined,
+    deviceFramePresetKey: normalizeString(composition.deviceFramePresetKey) || undefined,
+    metadata: normalizeRecord(composition.metadata),
+  }
+}
+
+function resolveCanvasLibraryNextIdentifier(existingIds: Set<string>, prefix: string): string {
+  let index = Math.max(1, existingIds.size + 1)
+  let candidate = `${prefix}-${index}`
+  while (existingIds.has(candidate)) {
+    index += 1
+    candidate = `${prefix}-${index}`
+  }
+  existingIds.add(candidate)
+  return candidate
+}
+
+function resolveCanvasLibraryReferencedAssets(
+  composition: CompositionModel,
+  frames: DesignFrameModel[],
+  elements: DesignElementModel[],
+): DesignAssetModel[] {
+  const referencedAssetIds = new Set<string>()
+  const referencedImageSrcs = new Set<string>()
+
+  elements.forEach((element) => {
+    const imageSrc = normalizeString(element.imageSrc)
+    if (imageSrc)
+      referencedImageSrcs.add(imageSrc)
+  })
+
+  frames.forEach((frame) => {
+    const shellAssetId = normalizeString(frame.metadata?.device?.shellAssetId)
+    if (shellAssetId)
+      referencedAssetIds.add(shellAssetId)
+  })
+
+  return ensureArray(composition.assets)
+    .filter((asset) => {
+      return referencedAssetIds.has(normalizeString(asset.id))
+        || referencedImageSrcs.has(normalizeString(asset.src))
+    })
+    .map((asset, index) => normalizeDesignAssetModel(asset, index))
+}
+
+function sanitizeCanvasLibraryFrameLinks(
+  frame: DesignFrameModel,
+  availableFrameIds: Set<string>,
+  assetIdMap?: Map<string, string>,
+): DesignFrameModel {
+  const nextMetadata = normalizeRecord(frame.metadata)
+  const deviceMetadata = normalizeRecord(nextMetadata.device)
+  const mockupSourceFrameId = normalizeString(deviceMetadata.mockupSourceFrameId)
+  const shellAssetId = normalizeString(deviceMetadata.shellAssetId)
+  const mappedShellAssetId = shellAssetId && assetIdMap
+    ? normalizeString(assetIdMap.get(shellAssetId))
+    : shellAssetId
+
+  return normalizeDesignFrameModel({
+    ...frame,
+    metadata: {
+      ...nextMetadata,
+      device: {
+        ...deviceMetadata,
+        ...(shellAssetId
+          ? {
+              shellAssetId: mappedShellAssetId || undefined,
+            }
+          : {}),
+        ...(mockupSourceFrameId && !availableFrameIds.has(mockupSourceFrameId)
+          ? {
+              mockupSourceFrameId: '',
+            }
+          : {}),
+      },
+    },
+  }, 0, frame.pageId)
+}
+
+function applyCanvasLibraryOriginToPage(page: DesignPageModel, origin: CanvasLibraryOriginMetadata): DesignPageModel {
+  return createDefaultDesignPage({
+    ...page,
+    metadata: {
+      ...normalizeRecord(page.metadata),
+      libraryOrigin: origin,
+    },
+  })
+}
+
+function applyCanvasLibraryOriginToFrame(frame: DesignFrameModel, origin: CanvasLibraryOriginMetadata): DesignFrameModel {
+  return normalizeDesignFrameModel({
+    ...frame,
+    metadata: {
+      ...normalizeRecord(frame.metadata),
+      libraryOrigin: origin,
+    },
+  }, 0, frame.pageId)
+}
+
+function applyCanvasLibraryOriginToAsset(asset: DesignAssetModel, origin: CanvasLibraryOriginMetadata): DesignAssetModel {
+  return normalizeDesignAssetModel({
+    ...asset,
+    metadata: {
+      ...normalizeRecord(asset.metadata),
+      libraryOrigin: origin,
+    },
+  }, 0)
+}
+
+export function appendDesignAssetToSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  input: Partial<DesignAssetModel>,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const existingIds = new Set(ensureArray(composition.assets).map(asset => normalizeString(asset.id)).filter(Boolean))
+  const assetId = normalizeString(input.id) && !existingIds.has(normalizeString(input.id))
+    ? normalizeString(input.id)
+    : resolveCanvasLibraryNextIdentifier(existingIds, 'asset')
+  const nextAsset = normalizeDesignAssetModel({
+    ...input,
+    id: assetId,
+  }, ensureArray(composition.assets).length)
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    assets: [...ensureArray(composition.assets), nextAsset],
+  })
+}
+
+export function buildDesignAssetFromCanvasLibraryPayload(
+  payload: CanvasLibraryBinaryAssetPayload | CanvasLibraryDeviceShellAssetPayload,
+  options: {
+    src: string
+    assetKind?: 'image' | 'svg' | 'device_shell'
+    name?: string
+    id?: string
+    origin?: CanvasLibraryOriginMetadata
+  },
+): DesignAssetModel {
+  const metadata = normalizeRecord(payload.metadata)
+  const origin = options.origin ? normalizeCanvasLibraryOrigin(options.origin) : null
+  const assetKind = options.assetKind || 'image'
+
+  return normalizeDesignAssetModel({
+    id: normalizeString(options.id) || undefined,
+    type: 'image',
+    name: normalizeString(options.name) || normalizeString(payload.fileName) || 'asset',
+    src: normalizeString(options.src),
+    mimeType: normalizeString(payload.mimeType) || undefined,
+    width: toPositiveNumber(payload.width, 0) || undefined,
+    height: toPositiveNumber(payload.height, 0) || undefined,
+    metadata: {
+      ...metadata,
+      ...(origin ? { libraryOrigin: origin } : {}),
+      ...(assetKind === 'device_shell'
+        ? {
+            role: 'device_shell',
+            deviceShell: {
+              ...normalizeRecord(metadata.deviceShell),
+              presetKeys: ensureArray((payload as CanvasLibraryDeviceShellAssetPayload).presetKeys)
+                .map(item => normalizeString(item))
+                .filter(Boolean),
+              viewportRect: {
+                ...normalizeRecord((payload as CanvasLibraryDeviceShellAssetPayload).viewportRect),
+              },
+              cornerRadius: toNonNegativeNumber((payload as CanvasLibraryDeviceShellAssetPayload).cornerRadius, 0),
+              maskPath: normalizeString((payload as CanvasLibraryDeviceShellAssetPayload).maskPath) || undefined,
+              source: normalizeString(normalizeRecord(metadata.deviceShell).source) === 'builtin' ? 'builtin' : 'uploaded',
+            },
+          }
+        : {
+            role: (normalizeString(metadata.role) === 'device_shell'
+              ? 'image'
+              : (normalizeString(metadata.role) || 'image')) as DesignAssetMetadata['role'],
+          }),
+    },
+  }, 0)
+}
+
+export function applyCanvasLibraryOriginToSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  origin: CanvasLibraryOriginMetadata,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const normalizedOrigin = normalizeCanvasLibraryOrigin(origin)
+  const frameIds = new Set(ensureArray(composition.frames).map(frame => normalizeString(frame.id)).filter(Boolean))
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    pages: ensureArray(composition.pages).map(page => applyCanvasLibraryOriginToPage(page, normalizedOrigin)),
+    frames: ensureArray(composition.frames).map((frame) => {
+      const nextFrame = applyCanvasLibraryOriginToFrame(frame, normalizedOrigin)
+      return sanitizeCanvasLibraryFrameLinks(nextFrame, frameIds)
+    }),
+    assets: ensureArray(composition.assets).map(asset => applyCanvasLibraryOriginToAsset(asset, normalizedOrigin)),
+  })
+}
+
+export function extractCanvasLibrarySceneTemplate(
+  document: SceneDocument | CompositionModel | unknown,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  return finalizeCompositionSceneDocument(base, composition)
+}
+
+export function extractCanvasLibraryPageTemplate(
+  document: SceneDocument | CompositionModel | unknown,
+  pageId: string,
+): CanvasLibraryPageTemplatePayload | null {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const sceneDocument = finalizeCompositionSceneDocument(base, composition)
+  const normalizedComposition = sceneDocument.sourceModel.kind === 'composition'
+    ? sceneDocument.sourceModel
+    : composition
+  const page = ensureArray(normalizedComposition.pages).find(entry => normalizeString(entry.id) === normalizeString(pageId))
+  if (!page)
+    return null
+
+  const frames = resolveCompositionFramesForPage(normalizedComposition, page.id)
+    .map((frame, index) => normalizeDesignFrameModel(frame, index, page.id))
+  const frameIds = new Set(frames.map(frame => normalizeString(frame.id)).filter(Boolean))
+  const elements = ensureArray(normalizedComposition.elements)
+    .filter((element) => {
+      return normalizeString(element.pageId) === normalizeString(page.id)
+        && (!normalizeString(element.frameId) || frameIds.has(normalizeString(element.frameId)))
+    })
+    .map((element, index) => normalizeCompositionElementModel(element, index, {
+      fallbackPageId: page.id,
+    }))
+  const assets = resolveCanvasLibraryReferencedAssets(normalizedComposition, frames, elements)
+  const sanitizedFrames = frames.map(frame => sanitizeCanvasLibraryFrameLinks(frame, frameIds))
+
+  return {
+    target: 'page',
+    page: createDefaultDesignPage({
+      ...page,
+      frameIds: sanitizedFrames.map(frame => frame.id),
+    }),
+    frames: sanitizedFrames,
+    elements,
+    assets,
+    composition: buildCanvasLibraryCompositionSnapshot(normalizedComposition),
+  }
+}
+
+export function extractCanvasLibraryFrameTemplate(
+  document: SceneDocument | CompositionModel | unknown,
+  frameId: string,
+): CanvasLibraryFrameTemplatePayload | null {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const sceneDocument = finalizeCompositionSceneDocument(base, composition)
+  const normalizedComposition = sceneDocument.sourceModel.kind === 'composition'
+    ? sceneDocument.sourceModel
+    : composition
+  const frame = ensureArray(normalizedComposition.frames).find(entry => normalizeString(entry.id) === normalizeString(frameId))
+  if (!frame)
+    return null
+
+  const elements = ensureArray(normalizedComposition.elements)
+    .filter(element => normalizeString(element.frameId) === normalizeString(frame.id))
+    .map((element, index) => normalizeCompositionElementModel(element, index, {
+      fallbackPageId: frame.pageId,
+      fallbackFrameId: frame.id,
+    }))
+  const assets = resolveCanvasLibraryReferencedAssets(normalizedComposition, [frame], elements)
+  const sanitizedFrame = sanitizeCanvasLibraryFrameLinks(
+    normalizeDesignFrameModel(frame, 0, frame.pageId),
+    new Set([normalizeString(frame.id)]),
+  )
+
+  return {
+    target: 'frame',
+    frame: sanitizedFrame,
+    elements,
+    assets,
+    composition: buildCanvasLibraryCompositionSnapshot(normalizedComposition),
+  }
+}
+
+export function mergeCanvasLibraryPageTemplate(
+  document: SceneDocument | CompositionModel | unknown,
+  payload: CanvasLibraryPageTemplatePayload,
+  origin: CanvasLibraryOriginMetadata,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const normalizedOrigin = normalizeCanvasLibraryOrigin(origin)
+  const existingPageIds = new Set(ensureArray(composition.pages).map(page => normalizeString(page.id)).filter(Boolean))
+  const existingFrameIds = new Set(ensureArray(composition.frames).map(frame => normalizeString(frame.id)).filter(Boolean))
+  const existingAssetIds = new Set(ensureArray(composition.assets).map(asset => normalizeString(asset.id)).filter(Boolean))
+  const existingElementIds = new Set(ensureArray(composition.elements).map(element => normalizeString(element.id)).filter(Boolean))
+  const assetIdMap = new Map<string, string>()
+  const frameIdMap = new Map<string, string>()
+
+  const nextPageId = resolveCanvasLibraryNextIdentifier(existingPageIds, 'page')
+  const nextAssets = ensureArray(payload.assets).map((asset) => {
+    const nextAssetId = resolveCanvasLibraryNextIdentifier(existingAssetIds, 'asset')
+    assetIdMap.set(normalizeString(asset.id), nextAssetId)
+    return applyCanvasLibraryOriginToAsset(normalizeDesignAssetModel({
+      ...asset,
+      id: nextAssetId,
+    }, 0), normalizedOrigin)
+  })
+
+  const nextFrames = ensureArray(payload.frames).map((frame, index) => {
+    const nextFrameId = resolveCanvasLibraryNextIdentifier(existingFrameIds, 'frame')
+    frameIdMap.set(normalizeString(frame.id), nextFrameId)
+    return normalizeDesignFrameModel({
+      ...frame,
+      id: nextFrameId,
+      pageId: nextPageId,
+    }, index, nextPageId)
+  })
+  const nextFrameIds = new Set(nextFrames.map(frame => normalizeString(frame.id)).filter(Boolean))
+  const sanitizedFrames = nextFrames.map((frame) => {
+    const sourceMetadata = normalizeRecord(frame.metadata)
+    const deviceMetadata = normalizeRecord(sourceMetadata.device)
+    const mappedMockupSourceFrameId = normalizeString(frameIdMap.get(normalizeString(deviceMetadata.mockupSourceFrameId)))
+    const mappedShellAssetId = normalizeString(assetIdMap.get(normalizeString(deviceMetadata.shellAssetId)))
+    return applyCanvasLibraryOriginToFrame(sanitizeCanvasLibraryFrameLinks(normalizeDesignFrameModel({
+      ...frame,
+      metadata: {
+        ...sourceMetadata,
+        device: {
+          ...deviceMetadata,
+          shellAssetId: mappedShellAssetId || undefined,
+          mockupSourceFrameId: mappedMockupSourceFrameId || undefined,
+        },
+      },
+    }, 0, nextPageId), nextFrameIds, assetIdMap), normalizedOrigin)
+  })
+
+  const nextElements = ensureArray(payload.elements).map((element, index) => {
+    const nextElementId = resolveCanvasLibraryNextIdentifier(existingElementIds, 'element')
+    return normalizeCompositionElementModel({
+      ...element,
+      id: nextElementId,
+      pageId: nextPageId,
+      frameId: normalizeString(element.frameId) ? frameIdMap.get(normalizeString(element.frameId)) : undefined,
+    }, index, {
+      fallbackPageId: nextPageId,
+      fallbackFrameId: normalizeString(element.frameId)
+        ? frameIdMap.get(normalizeString(element.frameId))
+        : undefined,
+    })
+  })
+
+  const nextPage = applyCanvasLibraryOriginToPage(createDefaultDesignPage({
+    ...payload.page,
+    id: nextPageId,
+    frameIds: sanitizedFrames.map(frame => frame.id),
+  }), normalizedOrigin)
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: nextPageId,
+    pages: [...ensureArray(composition.pages), nextPage],
+    frames: [...ensureArray(composition.frames), ...sanitizedFrames],
+    elements: [...ensureArray(composition.elements), ...nextElements],
+    assets: [...ensureArray(composition.assets), ...nextAssets],
+    ...(payload.composition
+      ? {
+          themeTokens: {
+            ...normalizeThemeTokens(composition.themeTokens),
+            ...normalizeThemeTokens(payload.composition.themeTokens),
+          },
+        }
+      : {}),
+  })
+}
+
+export function mergeCanvasLibraryFrameTemplate(
+  document: SceneDocument | CompositionModel | unknown,
+  payload: CanvasLibraryFrameTemplatePayload,
+  origin: CanvasLibraryOriginMetadata,
+  pageId?: string,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const normalizedOrigin = normalizeCanvasLibraryOrigin(origin)
+  const targetPageId = ensureArray(composition.pages).some(page => normalizeString(page.id) === normalizeString(pageId))
+    ? normalizeString(pageId)
+    : resolveCompositionCurrentPage(composition).id
+  const existingFrameIds = new Set(ensureArray(composition.frames).map(frame => normalizeString(frame.id)).filter(Boolean))
+  const existingAssetIds = new Set(ensureArray(composition.assets).map(asset => normalizeString(asset.id)).filter(Boolean))
+  const existingElementIds = new Set(ensureArray(composition.elements).map(element => normalizeString(element.id)).filter(Boolean))
+  const assetIdMap = new Map<string, string>()
+
+  const nextAssets = ensureArray(payload.assets).map((asset) => {
+    const nextAssetId = resolveCanvasLibraryNextIdentifier(existingAssetIds, 'asset')
+    assetIdMap.set(normalizeString(asset.id), nextAssetId)
+    return applyCanvasLibraryOriginToAsset(normalizeDesignAssetModel({
+      ...asset,
+      id: nextAssetId,
+    }, 0), normalizedOrigin)
+  })
+
+  const nextFrameId = resolveCanvasLibraryNextIdentifier(existingFrameIds, 'frame')
+  const sourceMetadata = normalizeRecord(payload.frame.metadata)
+  const sourceDeviceMetadata = normalizeRecord(sourceMetadata.device)
+  const sanitizedFrame = applyCanvasLibraryOriginToFrame(sanitizeCanvasLibraryFrameLinks(normalizeDesignFrameModel({
+    ...payload.frame,
+    id: nextFrameId,
+    pageId: targetPageId,
+    metadata: {
+      ...sourceMetadata,
+      device: {
+        ...sourceDeviceMetadata,
+        shellAssetId: normalizeString(assetIdMap.get(normalizeString(sourceDeviceMetadata.shellAssetId))) || undefined,
+        mockupSourceFrameId: '',
+      },
+    },
+  }, 0, targetPageId), new Set([nextFrameId]), assetIdMap), normalizedOrigin)
+
+  const nextElements = ensureArray(payload.elements).map((element, index) => {
+    const nextElementId = resolveCanvasLibraryNextIdentifier(existingElementIds, 'element')
+    return normalizeCompositionElementModel({
+      ...element,
+      id: nextElementId,
+      pageId: targetPageId,
+      frameId: nextFrameId,
+    }, index, {
+      fallbackPageId: targetPageId,
+      fallbackFrameId: nextFrameId,
+    })
+  })
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: targetPageId,
+    frames: [...ensureArray(composition.frames), sanitizedFrame],
+    elements: [...ensureArray(composition.elements), ...nextElements],
+    assets: [...ensureArray(composition.assets), ...nextAssets],
   })
 }
 
