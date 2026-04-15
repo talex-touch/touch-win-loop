@@ -26,6 +26,11 @@ import type {
   FeishuPostSyncTask,
   FeishuPostSyncTaskStatus,
   FeishuPostSyncTaskType,
+  FeishuSyncedDataQuery,
+  FeishuSyncedDataRecord,
+  FeishuSyncedDataRecordStatus,
+  FeishuSyncedDataResult,
+  FeishuSyncedDataSyncItemOption,
   FeishuSyncIssue,
   FeishuSyncIssueResolution,
   FeishuSyncIssueStatus,
@@ -168,6 +173,27 @@ interface FeishuPostSyncTaskRow {
   finished_at: string | null
   created_at: string
   updated_at: string
+}
+
+interface FeishuSyncedDataRow {
+  status: string
+  scope: FeishuBitableSyncItemEntityType
+  sync_id: string | null
+  sync_name: string | null
+  sync_item_id: string | null
+  sync_item_name: string | null
+  title: string | null
+  summary: string | null
+  body: string | null
+  external_id: string | null
+  entity_id: string
+  record_id: string | null
+  run_id: string | null
+  keywords: unknown
+  metadata: unknown
+  created_at: string
+  updated_at: string
+  total_count: number | string
 }
 
 const FEISHU_VECTOR_MODE_KEY = Symbol.for('winloop.feishu.vector.mode.v1')
@@ -616,6 +642,31 @@ function toPostSyncTask(row: FeishuPostSyncTaskRow): FeishuPostSyncTask {
     finishedAt: row.finished_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function toSyncedDataStatus(raw: unknown): FeishuSyncedDataRecordStatus {
+  return raw === 'ref_only' ? 'ref_only' : 'indexed'
+}
+
+function toSyncedDataRecord(row: FeishuSyncedDataRow): FeishuSyncedDataRecord {
+  return {
+    status: toSyncedDataStatus(row.status),
+    scope: row.scope,
+    syncId: toText(row.sync_id),
+    syncName: toText(row.sync_name),
+    syncItemId: toText(row.sync_item_id),
+    syncItemName: toText(row.sync_item_name),
+    title: toText(row.title),
+    summary: toText(row.summary),
+    body: toText(row.body),
+    externalId: toText(row.external_id),
+    entityId: toText(row.entity_id),
+    recordId: toText(row.record_id),
+    runId: toText(row.run_id),
+    keywords: toStringArray(row.keywords),
+    metadata: parseJsonObject(row.metadata),
+    updatedAt: toText(row.updated_at),
   }
 }
 
@@ -2718,6 +2769,249 @@ export async function listFeishuExternalRefExternalIdsBySyncItemId(
   return result.rows
     .map(row => toText(row.external_id))
     .filter(Boolean)
+}
+
+export async function searchFeishuSyncedData(
+  db: Queryable,
+  input: FeishuSyncedDataQuery = {},
+): Promise<Omit<FeishuSyncedDataResult, 'syncOptions' | 'syncItemOptions'>> {
+  const page = Math.max(1, Number(input.page || 1) || 1)
+  const pageSize = Math.max(1, Math.min(100, Number(input.pageSize || 20) || 20))
+  const syncId = toText(input.syncId)
+  const syncItemId = toText(input.syncItemId)
+  const scope = toText(input.scope)
+  const externalId = toText(input.externalId)
+  const recordId = toText(input.recordId)
+  const keyword = toText(input.keyword)
+  const where: string[] = []
+  const values: unknown[] = []
+
+  if (syncId) {
+    values.push(syncId)
+    where.push(`rows.sync_id = $${values.length}`)
+  }
+  if (syncItemId) {
+    values.push(syncItemId)
+    where.push(`rows.sync_item_id = $${values.length}`)
+  }
+  if (scope) {
+    values.push(scope)
+    where.push(`rows.scope = $${values.length}`)
+  }
+  if (externalId) {
+    values.push(externalId)
+    where.push(`rows.external_id = $${values.length}`)
+  }
+  if (recordId) {
+    values.push(recordId)
+    where.push(`rows.record_id = $${values.length}`)
+  }
+  if (keyword) {
+    values.push(`%${keyword}%`)
+    where.push(`(
+      rows.title ILIKE $${values.length}
+      OR rows.summary ILIKE $${values.length}
+      OR rows.body ILIKE $${values.length}
+      OR rows.external_id ILIKE $${values.length}
+      OR rows.entity_id ILIKE $${values.length}
+      OR rows.record_id ILIKE $${values.length}
+    )`)
+  }
+
+  values.push(pageSize)
+  const limitParam = values.length
+  values.push((page - 1) * pageSize)
+  const offsetParam = values.length
+
+  const result = await db.query<FeishuSyncedDataRow>(
+    `WITH latest_index AS (
+      SELECT
+        ranked.id,
+        ranked.scope,
+        ranked.entity_id,
+        ranked.external_id,
+        ranked.sync_item_id,
+        ranked.run_id,
+        ranked.title,
+        ranked.summary,
+        ranked.body,
+        ranked.keywords,
+        ranked.metadata,
+        ranked.created_at,
+        ranked.updated_at
+      FROM (
+        SELECT
+          idx.id,
+          idx.scope,
+          idx.entity_id,
+          idx.external_id,
+          idx.sync_item_id,
+          idx.run_id,
+          idx.title,
+          idx.summary,
+          idx.body,
+          idx.keywords,
+          idx.metadata,
+          idx.created_at,
+          idx.updated_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY idx.scope, idx.entity_id
+            ORDER BY idx.updated_at DESC, idx.created_at DESC, idx.id DESC
+          ) AS row_number
+        FROM feishu_search_index idx
+      ) ranked
+      WHERE ranked.row_number = 1
+    ),
+    indexed_rows AS (
+      SELECT
+        'indexed'::TEXT AS status,
+        li.scope,
+        COALESCE(sync.id, ref_sync.id, '') AS sync_id,
+        COALESCE(sync.name, ref_sync.name, '') AS sync_name,
+        COALESCE(item.id, ref_item.id, '') AS sync_item_id,
+        COALESCE(item.name, ref_item.name, '') AS sync_item_name,
+        COALESCE(
+          NULLIF(li.title, ''),
+          NULLIF(ref.metadata ->> 'title', ''),
+          NULLIF(ref.metadata ->> 'name', ''),
+          NULLIF(ref.metadata ->> 'scopeTitle', ''),
+          NULLIF(li.external_id, ''),
+          NULLIF(ref.external_id, ''),
+          li.entity_id
+        ) AS title,
+        COALESCE(li.summary, '') AS summary,
+        COALESCE(li.body, '') AS body,
+        COALESCE(NULLIF(li.external_id, ''), NULLIF(ref.external_id, ''), '') AS external_id,
+        li.entity_id,
+        COALESCE(NULLIF(li.metadata ->> 'recordId', ''), NULLIF(ref.metadata ->> 'recordId', ''), '') AS record_id,
+        COALESCE(li.run_id, '') AS run_id,
+        li.keywords,
+        COALESCE(NULLIF(li.metadata, '{}'::JSONB), ref.metadata, '{}'::JSONB) AS metadata,
+        li.created_at,
+        li.updated_at
+      FROM latest_index li
+      LEFT JOIN LATERAL (
+        SELECT
+          ref.external_id,
+          ref.sync_item_id,
+          ref.metadata
+        FROM feishu_external_refs ref
+        WHERE ref.provider = 'feishu_bitable'
+          AND ref.scope = li.scope
+          AND ref.entity_id = li.entity_id
+        ORDER BY ref.updated_at DESC, ref.created_at DESC, ref.id DESC
+        LIMIT 1
+      ) ref ON TRUE
+      LEFT JOIN feishu_bitable_sync_items item ON item.id = li.sync_item_id
+      LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+      LEFT JOIN feishu_bitable_sync_items ref_item ON ref_item.id = ref.sync_item_id
+      LEFT JOIN feishu_bitable_syncs ref_sync ON ref_sync.id = ref_item.sync_id
+    ),
+    ref_only_rows AS (
+      SELECT
+        'ref_only'::TEXT AS status,
+        ref.scope,
+        COALESCE(sync.id, '') AS sync_id,
+        COALESCE(sync.name, '') AS sync_name,
+        COALESCE(item.id, '') AS sync_item_id,
+        COALESCE(item.name, '') AS sync_item_name,
+        COALESCE(
+          NULLIF(ref.metadata ->> 'title', ''),
+          NULLIF(ref.metadata ->> 'name', ''),
+          NULLIF(ref.metadata ->> 'scopeTitle', ''),
+          NULLIF(ref.external_id, ''),
+          ref.entity_id
+        ) AS title,
+        '' AS summary,
+        '' AS body,
+        ref.external_id,
+        ref.entity_id,
+        COALESCE(NULLIF(ref.metadata ->> 'recordId', ''), '') AS record_id,
+        '' AS run_id,
+        ARRAY[]::TEXT[] AS keywords,
+        ref.metadata,
+        ref.created_at,
+        ref.updated_at
+      FROM feishu_external_refs ref
+      LEFT JOIN latest_index li
+        ON li.scope = ref.scope
+       AND li.entity_id = ref.entity_id
+      LEFT JOIN feishu_bitable_sync_items item ON item.id = ref.sync_item_id
+      LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+      WHERE ref.provider = 'feishu_bitable'
+        AND li.id IS NULL
+    ),
+    all_rows AS (
+      SELECT * FROM indexed_rows
+      UNION ALL
+      SELECT * FROM ref_only_rows
+    )
+    SELECT
+      rows.status,
+      rows.scope,
+      rows.sync_id,
+      rows.sync_name,
+      rows.sync_item_id,
+      rows.sync_item_name,
+      rows.title,
+      rows.summary,
+      rows.body,
+      rows.external_id,
+      rows.entity_id,
+      rows.record_id,
+      rows.run_id,
+      rows.keywords,
+      rows.metadata,
+      rows.created_at::TEXT,
+      rows.updated_at::TEXT,
+      COUNT(*) OVER()::INTEGER AS total_count
+    FROM all_rows rows
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY rows.updated_at DESC, rows.created_at DESC
+    LIMIT $${limitParam}
+    OFFSET $${offsetParam}`,
+    values,
+  )
+
+  return {
+    items: result.rows.map(toSyncedDataRecord),
+    total: Math.max(0, Number(result.rows[0]?.total_count || 0) || 0),
+    page,
+    pageSize,
+  }
+}
+
+export async function listFeishuSyncedDataSyncItemOptions(
+  db: Queryable,
+  input: {
+    syncId?: string
+  } = {},
+): Promise<FeishuSyncedDataSyncItemOption[]> {
+  const syncId = toText(input.syncId)
+  const result = await db.query<{
+    sync_item_id: string
+    sync_item_name: string
+    sync_id: string | null
+    sync_name: string | null
+  }>(
+    `SELECT
+      item.id AS sync_item_id,
+      item.name AS sync_item_name,
+      sync.id AS sync_id,
+      sync.name AS sync_name
+     FROM feishu_bitable_sync_items item
+     LEFT JOIN feishu_bitable_syncs sync ON sync.id = item.sync_id
+     WHERE ($1::TEXT = '' OR item.sync_id = $1)
+     ORDER BY sync.name ASC NULLS LAST, item.name ASC, item.updated_at DESC`,
+    [syncId],
+  )
+
+  return result.rows.map(row => ({
+    id: toText(row.sync_item_id),
+    name: toText(row.sync_item_name),
+    syncId: toText(row.sync_id),
+    syncName: toText(row.sync_name),
+  }))
 }
 
 export async function upsertFeishuExternalRef(

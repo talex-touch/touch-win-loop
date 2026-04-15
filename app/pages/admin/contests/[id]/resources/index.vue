@@ -8,7 +8,7 @@ definePageMeta({
 
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
-const { contestId, withEmbed } = useAdminContestRoute()
+const { contestId, isEmbedMode, withEmbed } = useAdminContestRoute()
 
 const loading = ref(false)
 const errorText = ref('')
@@ -31,6 +31,16 @@ const categoryLabelMap = computed(() => {
     map.set(item.value, item.label)
   return map
 })
+
+function buildFeishuSyncedDataOverviewLink() {
+  return {
+    path: '/admin/integrations/feishu/data',
+    query: {
+      scope: 'resource',
+      ...(isEmbedMode.value ? { embed: '1' } : {}),
+    },
+  }
+}
 
 async function loadItems() {
   loading.value = true
@@ -60,6 +70,9 @@ onMounted(loadItems)
   <PageShell>
     <PageHeader title="资料管理" :meta="`赛事 ID：${contestId}`">
       <template #actions>
+        <NuxtLink class="dense-btn" :to="buildFeishuSyncedDataOverviewLink()">
+          全览
+        </NuxtLink>
         <NuxtLink class="dense-btn" :to="withEmbed(`/admin/contests/${contestId}/resources/new`)">
           上传 PDF
         </NuxtLink>

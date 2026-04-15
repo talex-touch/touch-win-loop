@@ -432,10 +432,6 @@ const mappingSaveSuccess = ref('')
 const writebackSaveSuccess = ref('')
 const autoSyncSaveSuccess = ref('')
 const autoSyncDraftText = ref(JSON.stringify(buildDefaultSyncItemConfig('contest').autoSync, null, 2))
-const editorRootRef = ref<HTMLElement>()
-const mappingDrawerRootRef = ref<HTMLElement>()
-const writebackDrawerRootRef = ref<HTMLElement>()
-const autoSyncDrawerRootRef = ref<HTMLElement>()
 
 const syncDetail = ref<FeishuBitableSyncDetail | null>(null)
 const currentItem = ref<FeishuBitableSyncItemDetail | null>(null)
@@ -590,10 +586,10 @@ const currentItemLogSelectedRun = computed(() => {
 })
 const syncEnvironmentLabel = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.label || '未标记')
 const syncEnvironmentTagColor = computed(() => SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === syncForm.environment)?.tagColor || 'gray')
-const selectPopupContainer = computed(() => editorRootRef.value)
-const mappingSelectPopupContainer = computed(() => mappingDrawerRootRef.value || editorRootRef.value)
-const writebackSelectPopupContainer = computed(() => writebackDrawerRootRef.value || editorRootRef.value)
-const autoSyncSelectPopupContainer = computed(() => autoSyncDrawerRootRef.value || editorRootRef.value)
+const selectPopupContainer = computed(() => 'body')
+const mappingSelectPopupContainer = computed(() => 'body')
+const writebackSelectPopupContainer = computed(() => 'body')
+const autoSyncSelectPopupContainer = computed(() => 'body')
 const unexpectedConfiguredMappingLabels = computed(() => {
   const parsed = pickMappingFromRaw(parseJsonTextLoose(itemForm.mappingText))
   const supportedKeys = new Set(activeMappingOptions.value.map(item => item.key))
@@ -864,6 +860,51 @@ function latestRunSummaryText(summary?: FeishuTaskLatestRunSummary | null): stri
   if (!summary)
     return '暂无执行记录'
   return `${formatDateTime(summary.startedAt)} / ${runStatusLabel(summary.status)} / 错误 ${summary.errorCount}`
+}
+
+function shouldShowPersonaZeroOutputHint(summary?: {
+  fetchedCount?: number | null
+  createdCount?: number | null
+  updatedCount?: number | null
+  errorCount?: number | null
+} | null): boolean {
+  if (!summary)
+    return false
+  const fetchedCount = Math.max(0, Number(summary.fetchedCount) || 0)
+  const createdCount = Math.max(0, Number(summary.createdCount) || 0)
+  const updatedCount = Math.max(0, Number(summary.updatedCount) || 0)
+  const errorCount = Math.max(0, Number(summary.errorCount) || 0)
+  return fetchedCount > 0 && createdCount + updatedCount === 0 && errorCount === 0
+}
+
+const PERSONA_ZERO_OUTPUT_HINT = '已抓取到飞书源行，但本次没有生成任何人设。优先检查 object、contestExternalId、persona1~5 映射与问题单里的 PERSONA_SLOTS_EMPTY / MISSING_REQUIRED_FIELD。'
+const SYNC_RUN_ZERO_FETCH_HINT = '本次没有进入任何记录处理。优先检查当前子表/视图是否真的有记录；如果启用了自动同步规则，也检查“记录状态 / 同步信息”是否命中了“已完成 / 未同步”。'
+const SYNC_RUN_ALL_SKIPPED_HINT = '本次记录全部被跳过。常见原因是自动同步规则没有命中，或关键映射字段仍然缺失。'
+
+function syncRunHintText(entityType: FeishuBitableSyncItemEntityType | string | undefined, summary?: {
+  fetchedCount?: number | null
+  createdCount?: number | null
+  updatedCount?: number | null
+  skippedCount?: number | null
+  errorCount?: number | null
+} | null): string {
+  if (!summary)
+    return ''
+  if (shouldShowPersonaZeroOutputHint(summary) && entityType === 'persona')
+    return PERSONA_ZERO_OUTPUT_HINT
+
+  const fetchedCount = Math.max(0, Number(summary.fetchedCount) || 0)
+  const createdCount = Math.max(0, Number(summary.createdCount) || 0)
+  const updatedCount = Math.max(0, Number(summary.updatedCount) || 0)
+  const skippedCount = Math.max(0, Number(summary.skippedCount) || 0)
+  const errorCount = Math.max(0, Number(summary.errorCount) || 0)
+  if (errorCount > 0)
+    return ''
+  if (fetchedCount === 0)
+    return SYNC_RUN_ZERO_FETCH_HINT
+  if (createdCount + updatedCount === 0 && skippedCount >= fetchedCount)
+    return SYNC_RUN_ALL_SKIPPED_HINT
+  return ''
 }
 
 function normalizeItemConfigText(entityType: FeishuBitableSyncItemEntityType, raw: {
@@ -2409,7 +2450,7 @@ watch(() => props.selectedItemId, (value) => {
 </script>
 
 <template>
-  <div ref="editorRootRef" class="space-y-4" :class="embedded ? 'pb-4' : ''">
+  <div class="space-y-4" :class="embedded ? 'pb-4' : ''">
     <div class="flex flex-wrap gap-3 items-start justify-between">
       <div class="space-y-1">
         <div class="flex gap-2 items-center">
@@ -3315,6 +3356,12 @@ watch(() => props.selectedItemId, (value) => {
                     <p class="text-[10px] text-slate-500 m-0 mt-1">
                       抓取 {{ run.fetchedCount }} / 新增 {{ run.createdCount }} / 更新 {{ run.updatedCount }} / 跳过 {{ run.skippedCount }} / 错误 {{ run.errorCount }}
                     </p>
+                    <p
+                      v-if="syncRunHintText(currentItem.entityType, run)"
+                      class="text-[10px] text-amber-600 m-0 mt-1"
+                    >
+                      {{ syncRunHintText(currentItem.entityType, run) }}
+                    </p>
                     <p v-if="run.deltaRecordCount !== undefined" class="text-[10px] text-slate-500 m-0 mt-1">
                       Delta 记录数：{{ run.deltaRecordCount }}
                     </p>
@@ -3468,6 +3515,12 @@ watch(() => props.selectedItemId, (value) => {
                 <p class="text-[10px] text-slate-500 m-0">
                   抓取 {{ currentItemLogSelectedRun.fetchedCount }} / 新增 {{ currentItemLogSelectedRun.createdCount }} / 更新 {{ currentItemLogSelectedRun.updatedCount }} / 跳过 {{ currentItemLogSelectedRun.skippedCount }} / 错误 {{ currentItemLogSelectedRun.errorCount }}
                 </p>
+                <p
+                  v-if="syncRunHintText(currentItemLogItemDetail.entityType, currentItemLogSelectedRun)"
+                  class="text-[10px] text-amber-600 m-0"
+                >
+                  {{ syncRunHintText(currentItemLogItemDetail.entityType, currentItemLogSelectedRun) }}
+                </p>
                 <p v-if="currentItemLogSelectedRun.deltaRecordCount !== undefined" class="text-[10px] text-slate-500 m-0">
                   Delta 记录数：{{ currentItemLogSelectedRun.deltaRecordCount }}
                 </p>
@@ -3570,7 +3623,7 @@ watch(() => props.selectedItemId, (value) => {
       :mask-closable="!(savingItem || previewingItem || runningItem)"
       :closable="!(savingItem || previewingItem || runningItem)"
     >
-      <div ref="mappingDrawerRootRef" class="space-y-4">
+      <div class="space-y-4">
         <section class="p-4 border border-slate-200 rounded bg-white space-y-3">
           <div class="flex items-center justify-between">
             <div>
@@ -3714,7 +3767,7 @@ watch(() => props.selectedItemId, (value) => {
       :mask-closable="!(savingItem || previewingItem || runningItem)"
       :closable="!(savingItem || previewingItem || runningItem)"
     >
-      <div ref="writebackDrawerRootRef" class="space-y-4">
+      <div class="space-y-4">
         <a-alert v-if="feedbackError" type="error" :show-icon="true">
           {{ feedbackError }}
         </a-alert>
@@ -3832,7 +3885,7 @@ watch(() => props.selectedItemId, (value) => {
       :mask-closable="!(savingItem || previewingItem || runningItem)"
       :closable="!(savingItem || previewingItem || runningItem)"
     >
-      <div ref="autoSyncDrawerRootRef" class="space-y-4">
+      <div class="space-y-4">
         <a-alert v-if="feedbackError" type="error" :show-icon="true">
           {{ feedbackError }}
         </a-alert>

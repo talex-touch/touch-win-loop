@@ -138,3 +138,20 @@ export function computeFeishuPersonaStaleExternalIds(input: {
       .filter(Boolean),
   )].filter(item => !active.has(item))
 }
+
+export function shouldCleanupFeishuPersonaStaleData(input: {
+  fetchedCount: number
+  activeExternalIds: string[]
+}): boolean {
+  const fetchedCount = Math.max(0, Math.trunc(Number(input.fetchedCount) || 0))
+  const activeCount = [...new Set(
+    input.activeExternalIds
+      .map(item => normalizeText(item))
+      .filter(Boolean),
+  )].length
+
+  if (fetchedCount === 0)
+    return true
+
+  return activeCount > 0
+}

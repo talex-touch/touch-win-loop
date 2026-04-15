@@ -77,7 +77,10 @@ describe('feishu-persona-sync', () => {
   })
 
   it('会按本次活跃 externalId 计算需要清理的历史派生项', async () => {
-    const { computeFeishuPersonaStaleExternalIds } = await loadModule()
+    const {
+      computeFeishuPersonaStaleExternalIds,
+      shouldCleanupFeishuPersonaStaleData,
+    } = await loadModule()
 
     assert.deepEqual(
       computeFeishuPersonaStaleExternalIds({
@@ -91,6 +94,27 @@ describe('feishu-persona-sync', () => {
         activeExternalIds: ['persona-source:1', 'persona-source:2'],
       }),
       ['persona-source', 'persona-source:3'],
+    )
+    assert.equal(
+      shouldCleanupFeishuPersonaStaleData({
+        fetchedCount: 0,
+        activeExternalIds: [],
+      }),
+      true,
+    )
+    assert.equal(
+      shouldCleanupFeishuPersonaStaleData({
+        fetchedCount: 3,
+        activeExternalIds: ['persona-source:1'],
+      }),
+      true,
+    )
+    assert.equal(
+      shouldCleanupFeishuPersonaStaleData({
+        fetchedCount: 3,
+        activeExternalIds: [],
+      }),
+      false,
     )
   })
 })

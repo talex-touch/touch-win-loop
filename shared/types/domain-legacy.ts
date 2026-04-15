@@ -3812,6 +3812,59 @@ export interface FeishuPostSyncTask {
   updatedAt: string
 }
 
+export type FeishuSyncedDataRecordStatus = 'indexed' | 'ref_only'
+
+export interface FeishuSyncedDataQuery {
+  keyword?: string
+  syncId?: string
+  syncItemId?: string
+  scope?: FeishuBitableSyncItemEntityType
+  externalId?: string
+  recordId?: string
+  page?: number
+  pageSize?: number
+}
+
+export interface FeishuSyncedDataSyncOption {
+  id: string
+  name: string
+}
+
+export interface FeishuSyncedDataSyncItemOption {
+  id: string
+  name: string
+  syncId: string
+  syncName: string
+}
+
+export interface FeishuSyncedDataRecord {
+  status: FeishuSyncedDataRecordStatus
+  scope: FeishuBitableSyncItemEntityType
+  syncId: string
+  syncName: string
+  syncItemId: string
+  syncItemName: string
+  title: string
+  summary: string
+  body: string
+  externalId: string
+  entityId: string
+  recordId: string
+  runId: string
+  keywords: string[]
+  metadata: Record<string, unknown>
+  updatedAt: string
+}
+
+export interface FeishuSyncedDataResult {
+  items: FeishuSyncedDataRecord[]
+  total: number
+  page: number
+  pageSize: number
+  syncOptions: FeishuSyncedDataSyncOption[]
+  syncItemOptions: FeishuSyncedDataSyncItemOption[]
+}
+
 export interface ContestDetailPayload {
   contest: Contest
   timelines: ContestTimeline[]

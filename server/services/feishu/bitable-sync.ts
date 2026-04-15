@@ -68,6 +68,7 @@ import {
   countFeishuPersonaFilledSlots,
   PERSONA_SLOT_FIELD_KEYS,
   pickFeishuPersonaAggregateStatus,
+  shouldCleanupFeishuPersonaStaleData,
   summarizeFeishuPersonaRowResult,
 } from '~~/shared/utils/feishu-persona-sync'
 
@@ -1180,12 +1181,14 @@ function buildTrackReleaseTimelines(
   }))
 }
 
-function buildSummaryBase(records: FeishuBitableRecord[]): SyncSummary {
+function buildSummaryBase(records: FeishuBitableRecord[], sourceRecordCount?: number): SyncSummary {
+  const processedCount = Math.max(0, Math.trunc(Number(records.length) || 0))
+  const fetchedCount = Math.max(processedCount, Math.trunc(Number(sourceRecordCount) || 0))
   return {
-    fetchedCount: records.length,
+    fetchedCount,
     createdCount: 0,
     updatedCount: 0,
-    skippedCount: 0,
+    skippedCount: Math.max(0, fetchedCount - processedCount),
     errorCount: 0,
     writebackSuccessCount: 0,
     writebackErrorCount: 0,
@@ -2042,7 +2045,7 @@ async function applyPersonaRecord(
       summaryCounts: {
         createdCount: 0,
         updatedCount: 0,
-        skippedCount: candidateSlotCount,
+        skippedCount: Math.max(candidateSlotCount, 1),
       },
       activeExternalIds: [],
       payload: {
@@ -2068,11 +2071,11 @@ async function applyPersonaRecord(
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'PERSONA_SLOTS_EMPTY',
-      message: '人设记录未提供 persona1~5 的有效文案，已跳过。',
+      message: '人设记录未提供 persona1~5 的有效文案，已跳过且不会产出任何人设。',
       summaryCounts: {
         createdCount: 0,
         updatedCount: 0,
-        skippedCount: 0,
+        skippedCount: 1,
       },
       activeExternalIds: [],
       payload: {
@@ -2340,10 +2343,11 @@ async function executeRecords(
     appToken: string
     tableId: string
     records: FeishuBitableRecord[]
+    sourceRecordCount?: number
     dryRun: boolean
   },
 ): Promise<SyncSummary> {
-  const summary = buildSummaryBase(input.records)
+  const summary = buildSummaryBase(input.records, input.sourceRecordCount)
   const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
   const activePersonaExternalIds = new Set<string>()
 
@@ -2427,7 +2431,10 @@ async function executeRecords(
     }
   }
 
-  if (!input.dryRun && input.entityType === 'persona' && summary.errorCount === 0) {
+  if (!input.dryRun && input.entityType === 'persona' && summary.errorCount === 0 && shouldCleanupFeishuPersonaStaleData({
+    fetchedCount: summary.fetchedCount,
+    activeExternalIds: [...activePersonaExternalIds],
+  })) {
     const [existingPresetExternalIds, existingRefExternalIds] = await Promise.all([
       listDefensePersonaPresetExternalIdsBySyncItemId(db, {
         syncItemId: input.syncItemId,
@@ -2553,7 +2560,7 @@ async function buildFeishuBitableSyncItemPreview(
     sourceRecords?: FeishuBitableRecord[]
   },
 ): Promise<FeishuBitableSyncItemPreviewResult> {
-  const summary = buildSummaryBase(input.records)
+  const summary = buildSummaryBase(input.records, input.sourceRecords?.length)
   const mappedColumns = [...TARGET_PREVIEW_FIELDS[input.entityType]]
   const mappedSampleRows: FeishuMappedPreviewRow[] = []
   const fieldDiagnostics: FeishuFieldDiagnosticItem[] = []
@@ -2882,6 +2889,7 @@ async function runFeishuBitableSyncItemById(
         appToken: task.appToken,
         tableId: task.tableId,
         records: filteredRecords,
+        sourceRecordCount: records.length,
         dryRun: false,
       })
     })

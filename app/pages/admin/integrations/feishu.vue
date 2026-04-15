@@ -146,7 +146,7 @@ const syncColumns = [
   { title: '主调度', dataIndex: 'schedule', slotName: 'schedule', width: 220 },
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 170 },
-  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 340 },
+  { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 430 },
 ]
 
 const syncItemPreviewColumns = [
@@ -160,6 +160,7 @@ const syncItemPreviewColumns = [
 
 const canManageConfig = computed(() => permissions.value.includes('role.assign'))
 const canManageBitable = computed(() => permissions.value.includes('contest.write'))
+const canReadSyncedData = computed(() => permissions.value.includes('contest.read_internal'))
 const canAccessPage = computed(() => canManageConfig.value || canManageBitable.value)
 const loadingAny = computed(() => loadingPermissions.value || loadingConfig.value || loadingSyncs.value)
 
@@ -503,6 +504,18 @@ function buildSuggestedCreateSyncName(): string {
   const prefix = SYNC_ENVIRONMENT_OPTIONS.find(item => item.value === environment)?.namePrefix || ''
   const baseName = createSyncForm.appName.trim() || buildDefaultSyncName()
   return prefix ? `${prefix} ${baseName}` : baseName
+}
+
+function buildSyncedDataLink(options?: { syncId?: string }) {
+  const query: Record<string, string> = {}
+  const syncId = String(options?.syncId || '').trim()
+  if (syncId)
+    query.syncId = syncId
+  if ((Array.isArray(route.query.embed) ? route.query.embed[0] : route.query.embed) === '1')
+    query.embed = '1'
+  return Object.keys(query).length
+    ? { path: '/admin/integrations/feishu/data', query }
+    : '/admin/integrations/feishu/data'
 }
 
 function buildCreateSourceConfig(): FeishuBitableSourceConfig {
@@ -1415,9 +1428,14 @@ onMounted(initializePage)
                 `role.assign` 权限可维护 OAuth、事件回调与管理员手动授权配置。
               </p>
             </div>
-            <a-button size="small" type="primary" @click="openConfigDialog">
-              打开配置
-            </a-button>
+            <div class="flex flex-wrap gap-2 items-center">
+              <NuxtLink v-if="canReadSyncedData" class="dense-btn" :to="buildSyncedDataLink()">
+                查看所有已同步的数据
+              </NuxtLink>
+              <a-button size="small" type="primary" @click="openConfigDialog">
+                打开配置
+              </a-button>
+            </div>
           </div>
 
           <div class="text-[10px] text-slate-600 p-3 border border-slate-200 bg-slate-50 space-y-1">
@@ -1576,6 +1594,9 @@ onMounted(initializePage)
 
             <template #actions="{ record }">
               <div class="flex flex-wrap gap-1">
+                <NuxtLink v-if="canReadSyncedData" class="dense-btn" :to="buildSyncedDataLink({ syncId: record.id })">
+                  查看同步数据
+                </NuxtLink>
                 <a-button
                   size="mini"
                   type="primary"
