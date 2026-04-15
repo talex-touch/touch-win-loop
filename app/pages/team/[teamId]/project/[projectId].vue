@@ -6292,10 +6292,12 @@ async function loadChatMessages(sessionId: string) {
       return
     }
 
-    const restoredMessages = data.messages.map(item => ({
-      role: item.role,
-      content: item.content,
-    })) as ChatMessage[]
+    const restoredMessages = data.messages
+      .map(item => ({
+        role: item.role,
+        content: item.content,
+      }))
+      .filter(message => message.role !== 'system') as ChatMessage[]
 
     chatDraft.value = null
     chatMissingFields.value = []
@@ -7336,48 +7338,6 @@ function toModelMessages(messages: ChatMessage[]): ChatMessage[] {
     }))
 }
 
-function summarizeToolPayload(payload: unknown, maxLength = 120): string {
-  if (payload === null || payload === undefined)
-    return ''
-
-  const normalized = typeof payload === 'string'
-    ? payload.trim()
-    : (() => {
-        try {
-          return JSON.stringify(payload)
-        }
-        catch {
-          return ''
-        }
-      })()
-
-  if (!normalized || normalized === '{}' || normalized === '[]')
-    return ''
-
-  if (normalized.length <= maxLength)
-    return normalized
-  return `${normalized.slice(0, maxLength)}...`
-}
-
-function buildWorkspaceSystemMessage(eventType: 'progress' | 'tool', data: Record<string, unknown>): ChatMessage {
-  if (eventType === 'progress') {
-    const message = String(data.message || 'AI 处理中...').trim() || 'AI 处理中...'
-    return {
-      role: 'system',
-      content: `进度：${message}`,
-    }
-  }
-
-  const toolName = String(data.name || '').trim() || 'unknown_tool'
-  const summary = summarizeToolPayload(data.payload)
-  return {
-    role: 'system',
-    content: summary
-      ? `工具：${toolName} · ${summary}`
-      : `工具：${toolName}`,
-  }
-}
-
 async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: AbortSignal) {
   const runningMode = aiMode.value
   chatDraft.value = null
@@ -7385,11 +7345,10 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
   defenseRounds.value = []
   defenseScorecard.value = null
   const baseMessages = [...pendingMessages]
-  const streamSystemMessages: ChatMessage[] = []
   let assistantBuffer = ''
 
   const renderStreamMessages = () => {
-    const nextMessages: ChatMessage[] = [...baseMessages, ...streamSystemMessages]
+    const nextMessages: ChatMessage[] = [...baseMessages]
     if (assistantBuffer)
       nextMessages.push({ role: 'assistant', content: assistantBuffer })
     chatMessages.value = nextMessages
@@ -7464,8 +7423,6 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
           ensureOpenChatSessionTab(String(data.sessionId))
           activeChatSessionId.value = String(data.sessionId)
         }
-        streamSystemMessages.push(buildWorkspaceSystemMessage('progress', data))
-        renderStreamMessages()
         continue
       }
 
@@ -7475,8 +7432,6 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
           statusLine.value = `AI 正在调用工具：${name}`
         else
           statusLine.value = 'AI 正在调用工具...'
-        streamSystemMessages.push(buildWorkspaceSystemMessage('tool', data))
-        renderStreamMessages()
         continue
       }
 
@@ -7499,8 +7454,8 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
         if (runningMode === 'auto_optimize') {
           const createdCount = Array.isArray(result.proposals) ? result.proposals.length : 0
           statusLine.value = createdCount > 0
-            ? `已生成 ${createdCount} 条待审批变更。`
-            : '自动优化已完成，暂未生成可审批提案。'
+            ? `已生成 ${createdCount} 条待审批提案，尚未自动执行。`
+            : '自动优化已完成，当前没有生成安全提案。'
         }
         else if (runningMode === 'issue_discovery') {
           const report = result.report as ProjectIssueReport | null | undefined
@@ -7519,11 +7474,11 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
             projectIssues.value = [...dedupe.values()]
           }
           statusLine.value = issues.length > 0
-            ? `寻疑扫描完成，发现 ${issues.length} 条问题。`
-            : '寻疑扫描完成。'
+            ? `寻疑扫描完成，记录 ${issues.length} 条高置信问题。`
+            : '寻疑扫描完成，当前未发现高置信问题。'
         }
         else {
-          statusLine.value = '只读对话完成。'
+          statusLine.value = '只读对话完成，项目未发生写入。'
         }
         continue
       }

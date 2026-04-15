@@ -208,40 +208,28 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
 
 const inputPlaceholder = computed(() => {
   if (props.aiMode === 'auto_optimize')
-    return '描述你想自动优化的目标，例如：统一摘要结构并补齐关键字段。'
+    return '描述你希望生成哪些可审批提案，例如：补齐摘要与问题陈述。'
   if (props.aiMode === 'issue_discovery')
-    return '描述你希望重点扫描的风险，例如：评分映射、证据链、可行性。'
+    return '描述你希望重点扫描的维度，例如：评分映射、证据链、量化指标、资料完整度。'
   if (props.aiMode === 'defense')
     return '输入答辩要点或追问，例如：请继续追问技术可行性。'
-  return '请输入问题，AI 将仅做只读分析，不改动项目。'
+  return '请输入问题，AI 只做只读分析，不会写入项目。'
 })
 
 const pendingChangeRequests = computed(() => {
   return props.changeRequests.filter(item => item.status === 'pending')
 })
 
+const visibleChatMessages = computed(() => {
+  return props.chatMessages.filter(message => message.role !== 'system')
+})
+
 const showChatSkeleton = computed(() => {
-  return props.workspacePreparing || (props.chatSessionsLoading && props.chatMessages.length === 0)
+  return props.workspacePreparing || (props.chatSessionsLoading && visibleChatMessages.value.length === 0)
 })
 
 const showDialogAskEmpty = computed(() => {
-  return !showChatSkeleton.value && props.aiMode === 'dialog_ask' && props.chatMessages.length === 0
-})
-
-const aiRunning = computed(() => {
-  return props.chatLoading
-    || (props.aiMode === 'auto_optimize' && props.changeRequestsLoading)
-    || (props.aiMode === 'issue_discovery' && props.issueLoading)
-})
-
-const aiRunningMarqueeText = computed(() => {
-  if (props.aiMode === 'auto_optimize')
-    return 'AI 正在生成优化提案，请稍候同步审批卡片'
-  if (props.aiMode === 'issue_discovery')
-    return 'AI 正在扫描问题与证据链，请稍候查看寻疑结果'
-  if (props.aiMode === 'defense')
-    return 'AI 正在模拟评委追问，请稍候生成答辩轮次'
-  return 'AI 正在分析上下文、资料与问题，请稍候'
+  return !showChatSkeleton.value && props.aiMode === 'dialog_ask' && visibleChatMessages.value.length === 0
 })
 
 const issueReportStatusLabel = computed(() => {
@@ -616,6 +604,20 @@ function requestExportIssueReport() {
     return
   emit('exportIssueReport', reportId)
 }
+
+function handleChatComposerKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter')
+    return
+  if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey)
+    return
+  if (event.isComposing || (event as KeyboardEvent & { keyCode?: number }).keyCode === 229)
+    return
+  if (props.chatLoading || props.chatInterrupting)
+    return
+
+  event.preventDefault()
+  emit('sendChat')
+}
 </script>
 
 <template>
@@ -979,7 +981,7 @@ function requestExportIssueReport() {
           </div>
           <div v-else class="workspace-chat-messages">
             <div
-              v-for="(message, index) in chatMessages"
+              v-for="(message, index) in visibleChatMessages"
               :key="`${message.role}-${index}`"
               class="flex gap-2 items-start"
               :class="message.role === 'user' ? 'justify-end' : ''"
@@ -992,23 +994,11 @@ function requestExportIssueReport() {
               </div>
 
               <div
-                v-else-if="message.role === 'system'"
-                class="text-slate-700 border border-slate-300 rounded bg-slate-200 flex shrink-0 h-6 w-6 items-center justify-center"
-              >
-                <span class="text-[9px] font-semibold">SYS</span>
-              </div>
-
-              <div
                 class="text-[11px] leading-relaxed p-3 rounded-lg max-w-[86%] whitespace-pre-wrap"
                 :class="message.role === 'user'
                   ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none'
-                  : message.role === 'system'
-                    ? 'bg-slate-50 border border-slate-200 text-slate-600 rounded-tl-sm'
-                    : 'bg-slate-100 text-slate-700 rounded-tl-none'"
+                  : 'bg-slate-100 text-slate-700 rounded-tl-none'"
               >
-                <div v-if="message.role === 'system'" class="text-[10px] text-slate-500 tracking-wide font-semibold mb-1">
-                  SYSTEM
-                </div>
                 {{ message.content }}
               </div>
 
@@ -1030,10 +1020,13 @@ function requestExportIssueReport() {
           </div>
 
           <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">
-            当前为只读对话模式，不会触发任何项目写入动作。
+            当前为只读对话模式，只提供解释、澄清与下一步建议，不会写入项目。
           </div>
 
           <div v-if="aiMode === 'auto_optimize'" class="space-y-2">
+            <div class="text-[11px] text-amber-700 leading-5 p-3 border border-amber-200 rounded bg-amber-50">
+              当前模式只生成待审批提案，不会自动执行项目修改。
+            </div>
             <div class="flex items-center justify-between">
               <div class="text-xs text-slate-700 font-semibold">
                 待审批变更（{{ pendingChangeRequests.length }}）
@@ -1041,7 +1034,7 @@ function requestExportIssueReport() {
               <span v-if="changeRequestsLoading" class="text-[10px] text-slate-500">刷新中...</span>
             </div>
             <div v-if="pendingChangeRequests.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-              暂无待审批提案，发送优化请求后会自动生成。
+              暂无待审批提案。发送请求后，AI 只会生成可审批提案，不会自动执行。
             </div>
             <div
               v-for="change in pendingChangeRequests"
@@ -1087,6 +1080,9 @@ function requestExportIssueReport() {
           </div>
 
           <div v-if="aiMode === 'issue_discovery'" class="space-y-2">
+            <div class="text-[11px] text-amber-700 leading-5 p-3 border border-amber-200 rounded bg-amber-50">
+              当前模式固定从评分映射、证据链、量化指标、资料完整度四个维度扫描问题。
+            </div>
             <div class="flex items-center justify-between">
               <div class="text-xs text-slate-700 font-semibold">
                 寻疑结果
@@ -1156,7 +1152,7 @@ function requestExportIssueReport() {
             </div>
 
             <div v-if="projectIssues.length === 0" class="text-[11px] text-slate-500 p-3 border border-slate-200 rounded border-dashed">
-              暂无 issue 条目，执行一次“寻疑发现”后会自动落地。
+              暂无 issue 条目。执行一次“寻疑发现”后会生成结构化报告，并仅记录高置信问题。
             </div>
           </div>
 
@@ -1465,13 +1461,6 @@ function requestExportIssueReport() {
         </template>
 
         <template v-else>
-          <div v-if="aiRunning" class="workspace-ai-marquee" aria-live="polite">
-            <div class="workspace-ai-marquee__track">
-              <span>{{ aiRunningMarqueeText }}</span>
-              <span>{{ aiRunningMarqueeText }}</span>
-            </div>
-          </div>
-
           <div
             class="workspace-chat-composer__input-shell"
             :class="{ 'workspace-chat-composer__input-shell--running': chatLoading }"
@@ -1481,6 +1470,7 @@ function requestExportIssueReport() {
               class="workspace-chat-composer__textarea"
               :placeholder="inputPlaceholder"
               @input="emit('update:chatInput', ($event.target as HTMLTextAreaElement).value)"
+              @keydown="handleChatComposerKeydown"
             />
             <div class="workspace-chat-composer__footer">
               <div class="workspace-chat-composer__toolbar">
@@ -2114,39 +2104,6 @@ function requestExportIssueReport() {
   right: 10px;
   color: #6b7a90;
   font-size: 15px;
-}
-
-.workspace-ai-marquee {
-  margin-bottom: 2px;
-  overflow: hidden;
-  border: 1px solid #c7d2fe;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #eff6ff 0%, #eef2ff 100%);
-  color: #1d4ed8;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.workspace-ai-marquee__track {
-  display: inline-flex;
-  min-width: 200%;
-  gap: 48px;
-  padding: 7px 0;
-  animation: workspace-ai-marquee 12s linear infinite;
-}
-
-.workspace-ai-marquee__track span {
-  padding-left: 18px;
-  font-weight: 600;
-}
-
-@keyframes workspace-ai-marquee {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(-50%, 0, 0);
-  }
 }
 
 @keyframes workspace-composer-border-flow {

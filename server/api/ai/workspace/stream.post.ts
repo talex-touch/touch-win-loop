@@ -443,6 +443,7 @@ export default defineEventHandler(async (event) => {
           adminAi: runtime.adminAi,
         },
         mode: request.mode || 'dialog_ask',
+        messages: request.messages || [],
         context: {
           workspaceId: request.workspaceId || '',
           projectId: request.projectId || '',

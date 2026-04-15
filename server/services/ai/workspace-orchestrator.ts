@@ -1,6 +1,7 @@
 import type {
   AiProjectChangeType,
   AiWorkspaceIssueDraft,
+  ChatMessage,
   ProjectIssueSeverity,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
@@ -9,22 +10,21 @@ import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
 import { createChatModel } from '~~/server/services/ai/llm-client'
-import { scanRepoArchitecture } from '~~/server/services/scene/data-source-connectors'
-import {
-  applySceneTemplate,
-  appendDesignFrameToSceneDocument,
-  buildDeviceMockupSceneDocument,
-  exportArchitectureModelToMermaid,
-  exportSchemaModelToDDL,
-  importArchitectureFromMetadata,
-  importFromDDL,
-  importFromMarkdownOutline,
-  importFromMermaid,
-  relayoutSceneDocument,
-  sceneDocumentFromUnknown,
-  serializeSceneDocument,
-} from '~~/shared/utils/scene-document'
 import { runWithRetry } from '~~/server/utils/retry'
+
+type WorkspaceSupportedMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'document_assist'
+type WorkspaceConversationRole = 'user' | 'assistant'
+
+interface WorkspaceConversationMessage {
+  role: WorkspaceConversationRole
+  content: string
+}
+
+interface ChangePayloadRule {
+  requiredKeys: string[]
+  allowedKeys: string[]
+  changeKeys?: string[]
+}
 
 export interface WorkspaceAiChangeDraft {
   changeType: AiProjectChangeType
@@ -97,10 +97,148 @@ export interface WorkspaceAiHooks {
   onIssue?: (issue: WorkspaceAiIssueDraft) => Promise<void> | void
 }
 
+interface WorkspaceAgentProfile {
+  mode: WorkspaceSupportedMode
+  allowWebAccess: boolean
+  progressMessage: string
+  maxProposals?: number
+  scanDimensions?: string[]
+}
+
+interface WorkspaceAgentToolset {
+  tools: any[]
+}
+
+interface WorkspaceModeState {
+  changeDrafts: WorkspaceAiChangeDraft[]
+  issueDrafts: WorkspaceAiIssueDraft[]
+  issueFingerprints: Set<string>
+  reportTitle: string
+  reportSummary: string
+}
+
+interface WorkspaceModeExecutionInput {
+  runtime: WorkspaceAiRuntime
+  context: WorkspaceAiExecutionContext
+  channelPrompt?: string
+  hooks: WorkspaceAiHooks
+  messages: ChatMessage[]
+}
+
+export interface WorkspaceExecutionOutcome {
+  data: WorkspaceAiExecutionResult
+  fallbackUsed: boolean
+  attempts: number
+}
+
+const MAX_WORKSPACE_AGENT_MESSAGES = 10
+const MAX_AUTO_OPTIMIZE_PROPOSALS = 5
+const ISSUE_SCAN_DIMENSIONS = ['评分映射', '证据链', '量化指标', '资料完整度']
+
+const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentProfile> = {
+  dialog_ask: {
+    mode: 'dialog_ask',
+    allowWebAccess: true,
+    progressMessage: 'AI 正在读取工作台上下文并生成只读建议...',
+  },
+  auto_optimize: {
+    mode: 'auto_optimize',
+    allowWebAccess: false,
+    progressMessage: 'AI 正在生成可审批的最小优化提案...',
+    maxProposals: MAX_AUTO_OPTIMIZE_PROPOSALS,
+  },
+  issue_discovery: {
+    mode: 'issue_discovery',
+    allowWebAccess: false,
+    progressMessage: 'AI 正在按固定扫描维度检查问题与证据链...',
+    scanDimensions: ISSUE_SCAN_DIMENSIONS,
+  },
+  document_assist: {
+    mode: 'document_assist',
+    allowWebAccess: false,
+    progressMessage: 'AI 正在生成文档增强结果...',
+  },
+}
+
+const CHANGE_PAYLOAD_RULES: Record<AiProjectChangeType, ChangePayloadRule> = {
+  settings_common_patch: {
+    requiredKeys: [],
+    allowedKeys: [
+      'title',
+      'summary',
+      'problemStatement',
+      'innovationPoints',
+      'techRouteSteps',
+      'scoringMapping',
+      'risks',
+      'deliverables',
+    ],
+    changeKeys: [
+      'title',
+      'summary',
+      'problemStatement',
+      'innovationPoints',
+      'techRouteSteps',
+      'scoringMapping',
+      'risks',
+      'deliverables',
+    ],
+  },
+  contest_bindings_replace: {
+    requiredKeys: ['contestBindings'],
+    allowedKeys: ['contestBindings', 'currentContestId'],
+    changeKeys: ['contestBindings'],
+  },
+  adaptation_patch: {
+    requiredKeys: ['contestId'],
+    allowedKeys: [
+      'contestId',
+      'problemStatement',
+      'innovationPoints',
+      'techRouteSteps',
+      'scoringMapping',
+      'risks',
+      'deliverables',
+      'summary',
+    ],
+    changeKeys: [
+      'problemStatement',
+      'innovationPoints',
+      'techRouteSteps',
+      'scoringMapping',
+      'risks',
+      'deliverables',
+      'summary',
+    ],
+  },
+  resource_bind_library: {
+    requiredKeys: ['resourceId'],
+    allowedKeys: ['resourceId'],
+  },
+  resource_update_metadata: {
+    requiredKeys: ['resourceId'],
+    allowedKeys: ['resourceId', 'title', 'summary', 'category', 'availability'],
+    changeKeys: ['title', 'summary', 'category', 'availability'],
+  },
+  resource_archive: {
+    requiredKeys: ['resourceId'],
+    allowedKeys: ['resourceId'],
+  },
+  resource_restore: {
+    requiredKeys: ['resourceId'],
+    allowedKeys: ['resourceId'],
+  },
+  resource_purge: {
+    requiredKeys: ['resourceId'],
+    allowedKeys: ['resourceId'],
+  },
+}
+
 function chunkText(text: string, chunkSize = 24): string[] {
   const normalized = String(text || '')
   if (!normalized)
     return []
+
   const chunks: string[] = []
   for (let i = 0; i < normalized.length; i += chunkSize)
     chunks.push(normalized.slice(i, i + chunkSize))
@@ -111,23 +249,11 @@ function toText(value: unknown): string {
   return String(value || '').trim()
 }
 
-function toSeverity(value: unknown): ProjectIssueSeverity {
+function parseSeverity(value: unknown): ProjectIssueSeverity | null {
   const text = String(value || '').trim().toLowerCase()
   if (text === 'critical' || text === 'high' || text === 'medium' || text === 'low')
     return text
-  return 'medium'
-}
-
-function parseJsonValue(rawValue: string): unknown {
-  const normalized = String(rawValue || '').trim()
-  if (!normalized)
-    return {}
-  try {
-    return JSON.parse(normalized)
-  }
-  catch {
-    return {}
-  }
+  return null
 }
 
 function extractAssistantText(payload: unknown): string {
@@ -198,6 +324,11 @@ function buildIssueMarkdown(input: {
     '',
   ]
 
+  if (input.issues.length === 0) {
+    lines.push('当前未发现高置信问题，或上下文不足以形成结构化问题清单。')
+    return lines.join('\n').trim()
+  }
+
   for (const [index, issue] of input.issues.entries()) {
     lines.push(`## ${index + 1}. ${issue.title}`)
     lines.push(`- 严重级别：${issue.severity}`)
@@ -209,118 +340,12 @@ function buildIssueMarkdown(input: {
   return lines.join('\n').trim()
 }
 
-function buildFallbackResult(mode: WorkspaceAiMode, context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
-  if (mode === 'document_assist') {
-    const selection = context.selectionText || '当前选区'
-    if (context.documentAction === 'rewrite') {
-      return {
-        mode,
-        assistantReply: `改写建议：围绕“${selection.slice(0, 36)}”补齐主语、动作和结果，让句子更直接、更像项目文档。`,
-        changeDrafts: [],
-        issueDrafts: [],
-        reportTitle: '',
-        reportSummary: '',
-        reportMarkdown: '',
-      }
-    }
-
-    if (context.documentAction === 'continue') {
-      return {
-        mode,
-        assistantReply: `建议继续补一段“目标、方法、预期产出”三句式说明，承接 ${context.resourceTitle || '当前文档'} 的上下文。`,
-        changeDrafts: [],
-        issueDrafts: [],
-        reportTitle: '',
-        reportSummary: '',
-        reportMarkdown: '',
-      }
-    }
-
-    return {
-      mode,
-      assistantReply: `摘要：${selection.slice(0, 72) || context.resourceTitle || '当前文档'} 的核心是先明确问题，再用可验证路径组织方案与交付。`,
-      changeDrafts: [],
-      issueDrafts: [],
-      reportTitle: '',
-      reportSummary: '',
-      reportMarkdown: '',
-    }
-  }
-
-  if (mode === 'auto_optimize') {
-    const draftSummary = context.projectSettingsSummary || '项目设置信息较少，建议先补齐。'
-    const changeDrafts: WorkspaceAiChangeDraft[] = [
-      {
-        changeType: 'settings_common_patch',
-        title: '补齐项目摘要与问题陈述',
-        summary: '建议基于当前竞赛上下文补全项目摘要和问题定义，提升可读性。',
-        destructive: false,
-        payload: {
-          summary: `围绕 ${context.contestName || '目标竞赛'} 的 ${context.trackName || '目标赛道'} 形成可验证方案，分阶段推进交付。`,
-          problemStatement: context.latestUserMessage || draftSummary,
-        },
-      },
-    ]
-
-    if (context.contestId) {
-      changeDrafts.push({
-        changeType: 'adaptation_patch',
-        title: '补齐当前竞赛适配摘要',
-        summary: '补全当前竞赛下的适配稿摘要，便于评审快速理解方案定位。',
-        destructive: false,
-        payload: {
-          contestId: context.contestId,
-          summary: `面向 ${context.contestName || '当前竞赛'} 的 ${context.trackName || '目标赛道'} 输出阶段化落地方案与验收路径。`,
-        },
-      })
-    }
-
-    return {
-      mode,
-      assistantReply: '已生成可执行优化建议，请逐条审批后执行。',
-      changeDrafts,
-      issueDrafts: [],
-      reportTitle: '',
-      reportSummary: '',
-      reportMarkdown: '',
-    }
-  }
-
-  if (mode === 'issue_discovery') {
-    const issueDrafts: WorkspaceAiIssueDraft[] = [
-      {
-        title: '缺少可量化指标',
-        severity: 'high',
-        evidence: '项目描述未给出核心指标与验收阈值。',
-        recommendation: '补充准确率、时延、成本等核心指标，并定义验收标准。',
-      },
-      {
-        title: '资料与评分维度映射不足',
-        severity: 'medium',
-        evidence: '现有资料摘要未明确映射评分项与证据来源。',
-        recommendation: '新增“评分项-证据”对照表，并绑定到关键文档段落。',
-      },
-    ]
-    const reportTitle = 'AI 寻疑报告'
-    const reportSummary = '识别到 2 个高优先级改进点，建议先补齐量化指标与评分映射。'
-    return {
-      mode,
-      assistantReply: reportSummary,
-      changeDrafts: [],
-      issueDrafts,
-      reportTitle,
-      reportSummary,
-      reportMarkdown: buildIssueMarkdown({
-        title: reportTitle,
-        summary: reportSummary,
-        issues: issueDrafts,
-      }),
-    }
-  }
-
+function buildDialogFallback(context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
   return {
-    mode,
-    assistantReply: '已基于当前项目配置与资料给出只读建议，不会修改项目数据。',
+    mode: 'dialog_ask',
+    assistantReply: context.latestUserMessage
+      ? `已基于当前项目配置与资料给出只读建议，不会修改项目数据。若需更准确结果，请补充“${context.latestUserMessage.slice(0, 24)}”涉及的对象与目标。`
+      : '已基于当前项目配置与资料给出只读建议，不会修改项目数据。',
     changeDrafts: [],
     issueDrafts: [],
     reportTitle: '',
@@ -329,796 +354,701 @@ function buildFallbackResult(mode: WorkspaceAiMode, context: WorkspaceAiExecutio
   }
 }
 
-function buildModePrompt(mode: WorkspaceAiMode): string {
-  if (mode === 'dialog_ask') {
-    return [
-      '模式：对话询问（只读）。',
-      '禁止产出任何可执行写入动作。',
-      '仅根据上下文给出解释、建议、澄清与下一步方案。',
-    ].join('\n')
+function buildAutoOptimizeFallback(context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
+  return {
+    mode: 'auto_optimize',
+    assistantReply: `当前上下文未识别出可安全落入审批链的优化提案。请补充更明确的目标字段、竞赛适配范围或资源对象后再试。`,
+    changeDrafts: [],
+    issueDrafts: [],
+    reportTitle: '',
+    reportSummary: '',
+    reportMarkdown: '',
   }
-
-  if (mode === 'auto_optimize') {
-    return [
-      '模式：自动优化（先提案后审批）。',
-      '你必须通过 propose_change 工具提交变更提案，禁止直接假设已执行。',
-      '提案应最小化、可回滚、可审计。',
-      '遇到删除/覆盖风险时必须将 destructive 设为 true 并在 summary 中说明影响范围。',
-    ].join('\n')
-  }
-
-  if (mode === 'issue_discovery') {
-    return [
-      '模式：寻疑发现（自动扫描并产出问题清单）。',
-      '你必须通过 report_issue 工具记录每个问题，至少 2 条。',
-      '最终输出需要包含结构化问题与结论性摘要。',
-      '可通过 set_issue_report 工具设置报告标题/摘要/Markdown。',
-    ].join('\n')
-  }
-
-  if (mode === 'document_assist') {
-    return [
-      '模式：文档增强（只读生成，用户确认后才落文）。',
-      '禁止产出任何可执行写入动作，也不要假设已经修改文档。',
-      '仅输出适合直接插入 markdown 文档的结果正文，不要附加冗长说明。',
-      '若是 summarize，则输出精炼摘要；若是 rewrite，则直接输出改写后的替代文本；若是 continue，则输出自然续写段落。',
-    ].join('\n')
-  }
-
-  return '模式：答辩模拟。'
 }
 
-function buildPrompt(mode: WorkspaceAiMode, context: WorkspaceAiExecutionContext): string {
-  if (mode === 'document_assist') {
+function buildIssueDiscoveryFallback(): WorkspaceAiExecutionResult {
+  const reportTitle = 'AI 寻疑报告'
+  const reportSummary = '当前未发现高置信问题，或上下文不足以形成结构化结论。建议补充评分映射、证据链、量化指标与关键资料后再扫描。'
+  return {
+    mode: 'issue_discovery',
+    assistantReply: reportSummary,
+    changeDrafts: [],
+    issueDrafts: [],
+    reportTitle,
+    reportSummary,
+    reportMarkdown: buildIssueMarkdown({
+      title: reportTitle,
+      summary: reportSummary,
+      issues: [],
+    }),
+  }
+}
+
+function buildDocumentAssistFallback(context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
+  const selection = context.selectionText || '当前选区'
+  if (context.documentAction === 'rewrite') {
+    return {
+      mode: 'document_assist',
+      assistantReply: `改写建议：围绕“${selection.slice(0, 36)}”补齐主语、动作和结果，让句子更直接、更像项目文档。`,
+      changeDrafts: [],
+      issueDrafts: [],
+      reportTitle: '',
+      reportSummary: '',
+      reportMarkdown: '',
+    }
+  }
+
+  if (context.documentAction === 'continue') {
+    return {
+      mode: 'document_assist',
+      assistantReply: `建议继续补一段“目标、方法、预期产出”三句式说明，承接 ${context.resourceTitle || '当前文档'} 的上下文。`,
+      changeDrafts: [],
+      issueDrafts: [],
+      reportTitle: '',
+      reportSummary: '',
+      reportMarkdown: '',
+    }
+  }
+
+  return {
+    mode: 'document_assist',
+    assistantReply: `摘要：${selection.slice(0, 72) || context.resourceTitle || '当前文档'} 的核心是先明确问题，再用可验证路径组织方案与交付。`,
+    changeDrafts: [],
+    issueDrafts: [],
+    reportTitle: '',
+    reportSummary: '',
+    reportMarkdown: '',
+  }
+}
+
+function buildFallbackResult(mode: WorkspaceSupportedMode, context: WorkspaceAiExecutionContext): WorkspaceAiExecutionResult {
+  if (mode === 'auto_optimize')
+    return buildAutoOptimizeFallback(context)
+  if (mode === 'issue_discovery')
+    return buildIssueDiscoveryFallback()
+  if (mode === 'document_assist')
+    return buildDocumentAssistFallback(context)
+  return buildDialogFallback(context)
+}
+
+function buildModePrompt(profile: WorkspaceAgentProfile): string {
+  if (profile.mode === 'dialog_ask') {
     return [
-      `当前模式：${mode}`,
-      `文档标题：${context.resourceTitle || '未命名文档'}`,
-      `动作：${context.documentAction || 'summarize'}`,
-      `触发来源：${context.trigger || 'right_sidebar'}`,
-      '',
-      '当前选区：',
-      context.selectionText || '（无选区）',
-      '',
-      '文档正文（截断前文）：',
-      context.markdown || '（空文档）',
-      '',
-      '请严格按动作返回可直接落入文档的正文内容。',
+      '模式：对话询问（只读）。',
+      '仅允许解释、澄清、对比、归纳和下一步建议。',
+      '禁止输出任何写入、审批通过、自动执行或文档已修改之类的暗示。',
+      '如果信息不足，要明确指出缺口，而不是编造结论。',
     ].join('\n')
   }
 
-  const lines = [
-    `当前模式：${mode}`,
+  if (profile.mode === 'auto_optimize') {
+    return [
+      '模式：自动优化（只生成提案，不执行）。',
+      '你只能通过 propose_change 提交最小可审批提案，禁止直接假设已执行。',
+      `单次最多生成 ${profile.maxProposals || MAX_AUTO_OPTIMIZE_PROPOSALS} 条提案。`,
+      '提案必须能映射到现有审批链 changeType；空 payload、未知字段、缺少必填字段都不允许。',
+      '如果当前没有安全提案，明确说明“当前无安全提案”。',
+    ].join('\n')
+  }
+
+  if (profile.mode === 'issue_discovery') {
+    return [
+      '模式：寻疑发现（结构化扫描）。',
+      `请固定从以下四个视角扫描：${(profile.scanDimensions || ISSUE_SCAN_DIMENSIONS).join('、')}。`,
+      '只记录高置信问题，不要凑数；如果没有高置信问题，明确说明。',
+      '只能通过 report_issue 记录问题，通过 set_issue_report 设置报告标题和摘要。',
+      '报告 Markdown 由系统统一生成，你不需要自己拼接 Markdown 正文。',
+    ].join('\n')
+  }
+
+  return [
+    '模式：文档增强（只读生成，用户确认后才落文）。',
+    '禁止产出任何可执行写入动作，也不要假设已经修改文档。',
+    '仅输出适合直接插入 markdown 文档的结果正文，不要附加冗长说明。',
+    '若是 summarize，则输出精炼摘要；若是 rewrite，则直接输出改写后的替代文本；若是 continue，则输出自然续写段落。',
+  ].join('\n')
+}
+
+function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: WorkspaceAiExecutionContext): string {
+  if (profile.mode === 'auto_optimize') {
+    return [
+      `当前模式：${profile.mode}`,
+      `竞赛：${context.contestName || '未选择'}`,
+      `赛道：${context.trackName || '未选择'}`,
+      `专业：${context.major || '未提供'}`,
+      '',
+      '请先调用 get_workspace_context 读取当前项目上下文，再决定是否生成提案。',
+      '只允许生成能直接落入审批链的最小提案；不要输出任何已执行语气。',
+      '',
+      '用户当前目标：',
+      context.latestUserMessage || '（无）',
+    ].join('\n')
+  }
+
+  if (profile.mode === 'issue_discovery') {
+    return [
+      `当前模式：${profile.mode}`,
+      `竞赛：${context.contestName || '未选择'}`,
+      `赛道：${context.trackName || '未选择'}`,
+      `专业：${context.major || '未提供'}`,
+      '',
+      '请先调用 get_workspace_context 读取当前项目上下文。',
+      `按以下四个视角扫描：${(profile.scanDimensions || ISSUE_SCAN_DIMENSIONS).join('、')}。`,
+      '如果没有高置信问题，不要凑数，直接说明上下文不足或未发现明显风险。',
+      '',
+      '用户当前关注点：',
+      context.latestUserMessage || '（无）',
+    ].join('\n')
+  }
+
+  return [
+    `当前模式：${profile.mode}`,
     `竞赛：${context.contestName || '未选择'}`,
     `赛道：${context.trackName || '未选择'}`,
     `专业：${context.major || '未提供'}`,
     '',
-    '请先调用 get_workspace_context 获取完整上下文，再决定是否调用联网工具。',
-    '输出必须简洁、可执行、避免空话。',
+    '请先调用 get_workspace_context 读取当前项目上下文，再决定是否联网检索。',
+    '只做只读问答，输出必须简洁、具体、可执行。',
     '',
     '用户最新输入：',
     context.latestUserMessage || '（无）',
-  ]
-  return lines.join('\n')
+  ].join('\n')
 }
 
-export async function executeWorkspaceAi(input: {
-  runtime: WorkspaceAiRuntime
-  mode: WorkspaceAiMode
-  context: WorkspaceAiExecutionContext
-  channelPrompt?: string
-  hooks?: WorkspaceAiHooks
-}): Promise<{
-  data: WorkspaceAiExecutionResult
-  fallbackUsed: boolean
-  attempts: number
-}> {
-  const hooks = input.hooks || {}
-  const fallback = buildFallbackResult(input.mode, input.context)
-  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
+function buildDocumentAssistPrompt(context: WorkspaceAiExecutionContext): string {
+  return [
+    '当前模式：document_assist',
+    `文档标题：${context.resourceTitle || '未命名文档'}`,
+    `动作：${context.documentAction || 'summarize'}`,
+    `触发来源：${context.trigger || 'right_sidebar'}`,
+    '',
+    '当前选区：',
+    context.selectionText || '（无选区）',
+    '',
+    '文档正文（截断前文）：',
+    context.markdown || '（空文档）',
+    '',
+    '请严格按动作返回可直接落入文档的正文内容。',
+  ].join('\n')
+}
 
-  if (onlyFallback) {
-    for (const issue of fallback.issueDrafts)
-      await hooks.onIssue?.(issue)
-    for (const proposal of fallback.changeDrafts)
-      await hooks.onProposal?.(proposal)
-    for (const chunk of chunkText(fallback.assistantReply))
-      await hooks.onDelta?.(chunk)
+function buildPrompt(profile: WorkspaceAgentProfile, context: WorkspaceAiExecutionContext): string {
+  if (profile.mode === 'document_assist')
+    return buildDocumentAssistPrompt(context)
+  return buildPrimaryModePrompt(profile, context)
+}
+
+function isConversationRole(role: unknown): role is WorkspaceConversationRole {
+  return role === 'user' || role === 'assistant'
+}
+
+function normalizeConversationMessages(messages: ChatMessage[]): WorkspaceConversationMessage[] {
+  return messages
+    .filter(message => isConversationRole(message.role))
+    .map(message => ({
+      role: message.role,
+      content: toText(message.content),
+    }))
+    .filter(message => Boolean(message.content))
+    .slice(-MAX_WORKSPACE_AGENT_MESSAGES)
+}
+
+function buildWorkspaceConversationMessages(
+  mode: WorkspaceSupportedMode,
+  context: WorkspaceAiExecutionContext,
+  messages: ChatMessage[],
+): WorkspaceConversationMessage[] {
+  const profile = WORKSPACE_AGENT_PROFILES[mode]
+  const prompt = buildPrompt(profile, context)
+  if (mode === 'document_assist')
+    return [{ role: 'user', content: prompt }]
+
+  const normalizedMessages = normalizeConversationMessages(messages)
+  if (normalizedMessages.length === 0)
+    return [{ role: 'user', content: prompt }]
+
+  const lastUserMessageIndex = [...normalizedMessages.keys()].reverse().find(index => normalizedMessages[index]?.role === 'user')
+  if (lastUserMessageIndex === undefined)
+    return [...normalizedMessages, { role: 'user', content: prompt }]
+
+  return normalizedMessages.map((message, index) => {
+    if (index !== lastUserMessageIndex)
+      return message
+
     return {
-      data: fallback,
-      fallbackUsed: true,
-      attempts: 1,
+      ...message,
+      content: [
+        message.content,
+        '',
+        '[工作台上下文要求]',
+        prompt,
+      ].filter(Boolean).join('\n'),
+    }
+  })
+}
+
+function createWorkspaceModeState(): WorkspaceModeState {
+  return {
+    changeDrafts: [],
+    issueDrafts: [],
+    issueFingerprints: new Set<string>(),
+    reportTitle: 'AI 寻疑报告',
+    reportSummary: '',
+  }
+}
+
+function hasRequiredPayloadValue(value: unknown): boolean {
+  if (Array.isArray(value))
+    return value.length > 0
+  if (value && typeof value === 'object')
+    return Object.keys(value as Record<string, unknown>).length > 0
+  return Boolean(toText(value))
+}
+
+function sanitizeWorkspaceChangePayload(
+  changeType: AiProjectChangeType,
+  payload: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const rule = CHANGE_PAYLOAD_RULES[changeType]
+  if (!rule)
+    return null
+
+  const sanitizedPayload: Record<string, unknown> = {}
+  for (const key of rule.allowedKeys) {
+    if (payload[key] !== undefined)
+      sanitizedPayload[key] = payload[key]
+  }
+
+  return sanitizedPayload
+}
+
+function validateWorkspaceChangeDraft(
+  draft: WorkspaceAiChangeDraft,
+): { ok: true, changeDraft: WorkspaceAiChangeDraft } | { ok: false, reason: string } {
+  const rule = CHANGE_PAYLOAD_RULES[draft.changeType]
+  if (!rule)
+    return { ok: false, reason: 'UNSUPPORTED_CHANGE_TYPE' }
+
+  const title = toText(draft.title)
+  const summary = toText(draft.summary)
+  if (title.length < 2)
+    return { ok: false, reason: 'TITLE_REQUIRED' }
+  if (summary.length < 4)
+    return { ok: false, reason: 'SUMMARY_REQUIRED' }
+
+  const sanitizedPayload = sanitizeWorkspaceChangePayload(draft.changeType, draft.payload || {})
+  if (!sanitizedPayload || Object.keys(sanitizedPayload).length === 0)
+    return { ok: false, reason: 'PAYLOAD_EMPTY_OR_UNKNOWN' }
+
+  for (const requiredKey of rule.requiredKeys) {
+    if (!hasRequiredPayloadValue(sanitizedPayload[requiredKey]))
+      return { ok: false, reason: `MISSING_REQUIRED_${requiredKey.toUpperCase()}` }
+  }
+
+  if (Array.isArray(rule.changeKeys) && rule.changeKeys.length > 0) {
+    const hasChangeKeys = rule.changeKeys.some(key => hasRequiredPayloadValue(sanitizedPayload[key]))
+    if (!hasChangeKeys)
+      return { ok: false, reason: 'NO_MUTABLE_FIELDS' }
+  }
+
+  return {
+    ok: true,
+    changeDraft: {
+      ...draft,
+      title,
+      summary,
+      payload: sanitizedPayload,
+    },
+  }
+}
+
+function createWorkspaceIssueFingerprint(issue: WorkspaceAiIssueDraft): string {
+  return `${issue.title.toLowerCase()}::${issue.evidence.toLowerCase()}`
+}
+
+function validateWorkspaceIssueDraft(
+  rawIssue: WorkspaceAiIssueDraft,
+  state: WorkspaceModeState,
+): { ok: true, issueDraft: WorkspaceAiIssueDraft } | { ok: false, reason: string } {
+  const severity = parseSeverity(rawIssue.severity)
+  const issue: WorkspaceAiIssueDraft = {
+    title: toText(rawIssue.title),
+    severity: severity || 'medium',
+    evidence: toText(rawIssue.evidence),
+    recommendation: toText(rawIssue.recommendation),
+  }
+
+  if (!issue.title)
+    return { ok: false, reason: 'TITLE_REQUIRED' }
+  if (!severity)
+    return { ok: false, reason: 'SEVERITY_REQUIRED' }
+  if (!issue.evidence)
+    return { ok: false, reason: 'EVIDENCE_REQUIRED' }
+  if (!issue.recommendation)
+    return { ok: false, reason: 'RECOMMENDATION_REQUIRED' }
+
+  const issueFingerprint = createWorkspaceIssueFingerprint(issue)
+  if (state.issueFingerprints.has(issueFingerprint))
+    return { ok: false, reason: 'DUPLICATE_ISSUE' }
+
+  state.issueFingerprints.add(issueFingerprint)
+  return {
+    ok: true,
+    issueDraft: issue,
+  }
+}
+
+function createWorkspaceContextTool(input: WorkspaceModeExecutionInput, contextSnapshot: string): any {
+  return tool(
+    async () => {
+      await input.hooks.onTool?.('get_workspace_context', {
+        bytes: contextSnapshot.length,
+      })
+      return contextSnapshot
+    },
+    {
+      name: 'get_workspace_context',
+      description: '读取当前工作台上下文（项目配置、资料摘要、大纲与用户输入）。',
+      schema: z.object({}),
+    },
+  )
+}
+
+function createWorkspaceWebTools(input: WorkspaceModeExecutionInput): [any, any] {
+  const webEnabled = Boolean(input.runtime.adminAi.tavilyApiKey)
+
+  const webSearch = tool(
+    async ({ query }: { query: string }) => {
+      if (!webEnabled)
+        return JSON.stringify({ disabled: true, reason: '平台未配置联网检索密钥' })
+
+      const items = await searchWithTavily({
+        query,
+        tavilyApiKey: input.runtime.adminAi.tavilyApiKey,
+        maxResults: input.runtime.adminAi.maxWebResults,
+        timeoutMs: input.runtime.adminAi.webTimeoutMs,
+      })
+      await input.hooks.onTool?.('web_search', {
+        query,
+        results: items.length,
+      })
+      return JSON.stringify(items)
+    },
+    {
+      name: 'web_search',
+      description: '联网检索公开信息（优先 Tavily）。',
+      schema: z.object({
+        query: z.string().min(2),
+      }),
+    },
+  )
+
+  const fetchWebPage = tool(
+    async ({ url }: { url: string }) => {
+      const text = await fetchWebPageText({
+        url,
+        timeoutMs: input.runtime.adminAi.webTimeoutMs,
+        maxChars: input.runtime.adminAi.maxPageChars,
+      })
+      await input.hooks.onTool?.('fetch_web_page', {
+        url,
+        chars: text.length,
+      })
+      return text
+    },
+    {
+      name: 'fetch_web_page',
+      description: '抓取公开网页文本（内置 SSRF 防护）。',
+      schema: z.object({
+        url: z.string().url(),
+      }),
+    },
+  )
+
+  return [webSearch, fetchWebPage]
+}
+
+function createWorkspaceProposalTool(
+  input: WorkspaceModeExecutionInput,
+  state: WorkspaceModeState,
+  profile: WorkspaceAgentProfile,
+): any {
+  return tool(
+    async (payload: {
+      changeType: AiProjectChangeType
+      title: string
+      summary: string
+      destructive?: boolean
+      payload?: Record<string, unknown>
+    }) => {
+      if (state.changeDrafts.length >= (profile.maxProposals || MAX_AUTO_OPTIMIZE_PROPOSALS)) {
+        await input.hooks.onTool?.('propose_change_rejected', {
+          reason: 'MAX_PROPOSALS_REACHED',
+          max: profile.maxProposals || MAX_AUTO_OPTIMIZE_PROPOSALS,
+        })
+        return JSON.stringify({ ok: false, reason: 'MAX_PROPOSALS_REACHED' })
+      }
+
+      const validated = validateWorkspaceChangeDraft({
+        changeType: payload.changeType,
+        title: toText(payload.title) || 'AI 变更提案',
+        summary: toText(payload.summary),
+        destructive: Boolean(payload.destructive),
+        payload: payload.payload && typeof payload.payload === 'object' && !Array.isArray(payload.payload)
+          ? payload.payload
+          : {},
+      })
+
+      if (!validated.ok) {
+        await input.hooks.onTool?.('propose_change_rejected', {
+          changeType: payload.changeType,
+          reason: validated.reason,
+        })
+        return JSON.stringify({ ok: false, reason: validated.reason })
+      }
+
+      state.changeDrafts.push(validated.changeDraft)
+      await input.hooks.onProposal?.(validated.changeDraft)
+      await input.hooks.onTool?.('propose_change', {
+        changeType: validated.changeDraft.changeType,
+        destructive: validated.changeDraft.destructive,
+        proposalCount: state.changeDrafts.length,
+      })
+      return JSON.stringify({ ok: true, proposalCount: state.changeDrafts.length })
+    },
+    {
+      name: 'propose_change',
+      description: '提交自动优化模式下的可审批变更提案。',
+      schema: z.object({
+        changeType: z.enum([
+          'settings_common_patch',
+          'contest_bindings_replace',
+          'adaptation_patch',
+          'resource_bind_library',
+          'resource_update_metadata',
+          'resource_archive',
+          'resource_restore',
+          'resource_purge',
+        ]),
+        title: z.string().min(2),
+        summary: z.string().min(4),
+        destructive: z.boolean().optional(),
+        payload: z.record(z.string(), z.unknown()).optional(),
+      }),
+    },
+  )
+}
+
+function createWorkspaceIssueTools(
+  input: WorkspaceModeExecutionInput,
+  state: WorkspaceModeState,
+): [any, any] {
+  const reportIssue = tool(
+    async (payload: {
+      title: string
+      severity: ProjectIssueSeverity
+      evidence: string
+      recommendation: string
+    }) => {
+      const validated = validateWorkspaceIssueDraft({
+        title: payload.title,
+        severity: payload.severity,
+        evidence: payload.evidence,
+        recommendation: payload.recommendation,
+      }, state)
+
+      if (!validated.ok) {
+        await input.hooks.onTool?.('report_issue_rejected', {
+          reason: validated.reason,
+        })
+        return JSON.stringify({ ok: false, reason: validated.reason })
+      }
+
+      state.issueDrafts.push(validated.issueDraft)
+      await input.hooks.onIssue?.(validated.issueDraft)
+      await input.hooks.onTool?.('report_issue', {
+        severity: validated.issueDraft.severity,
+        issueCount: state.issueDrafts.length,
+      })
+      return JSON.stringify({ ok: true, issueCount: state.issueDrafts.length })
+    },
+    {
+      name: 'report_issue',
+      description: '在寻疑发现模式下记录结构化问题。',
+      schema: z.object({
+        title: z.string().min(2),
+        severity: z.enum(['critical', 'high', 'medium', 'low']),
+        evidence: z.string().min(2),
+        recommendation: z.string().min(2),
+      }),
+    },
+  )
+
+  const setIssueReport = tool(
+    async (payload: { title?: string, summary?: string }) => {
+      state.reportTitle = toText(payload.title) || state.reportTitle
+      state.reportSummary = toText(payload.summary) || state.reportSummary
+      await input.hooks.onTool?.('set_issue_report', {
+        hasTitle: Boolean(toText(payload.title)),
+        hasSummary: Boolean(toText(payload.summary)),
+      })
+      return JSON.stringify({ ok: true })
+    },
+    {
+      name: 'set_issue_report',
+      description: '设置寻疑报告标题和摘要。',
+      schema: z.object({
+        title: z.string().optional(),
+        summary: z.string().optional(),
+      }),
+    },
+  )
+
+  return [reportIssue, setIssueReport]
+}
+
+function createWorkspaceToolset(
+  input: WorkspaceModeExecutionInput,
+  profile: WorkspaceAgentProfile,
+  state: WorkspaceModeState,
+  contextSnapshot: string,
+): WorkspaceAgentToolset {
+  const tools: any[] = [
+    createWorkspaceContextTool(input, contextSnapshot),
+  ]
+
+  if (profile.allowWebAccess) {
+    const [webSearch, fetchWebPage] = createWorkspaceWebTools(input)
+    tools.push(webSearch, fetchWebPage)
+  }
+
+  if (profile.mode === 'auto_optimize')
+    tools.push(createWorkspaceProposalTool(input, state, profile))
+
+  if (profile.mode === 'issue_discovery') {
+    const [reportIssue, setIssueReport] = createWorkspaceIssueTools(input, state)
+    tools.push(reportIssue, setIssueReport)
+  }
+
+  return { tools }
+}
+
+function buildWorkspaceSystemPrompt(profile: WorkspaceAgentProfile, channelPrompt: string): string {
+  return [
+    '你是 Loopy，负责 Team 与项目上下文下的工作台问答与分析。',
+    buildModePrompt(profile),
+    channelPrompt ? `[场景提示词]\n${channelPrompt}` : '',
+    '必须先获取上下文再作答，避免与上下文冲突。',
+  ].filter(Boolean).join('\n')
+}
+
+function finalizeWorkspaceExecutionResult(
+  profile: WorkspaceAgentProfile,
+  state: WorkspaceModeState,
+  assistantText: string,
+  fallback: WorkspaceAiExecutionResult,
+): WorkspaceAiExecutionResult {
+  if (profile.mode === 'auto_optimize') {
+    const hasProposals = state.changeDrafts.length > 0
+    return {
+      mode: profile.mode,
+      assistantReply: hasProposals
+        ? (assistantText || '已生成可审批的优化提案，请逐条确认后再执行。')
+        : fallback.assistantReply,
+      changeDrafts: state.changeDrafts,
+      issueDrafts: [],
+      reportTitle: '',
+      reportSummary: '',
+      reportMarkdown: '',
     }
   }
 
-  const contextSnapshot = buildContextSnapshot(input.context)
-  const webEnabled = Boolean(input.runtime.adminAi.tavilyApiKey)
-  const channelPrompt = toText(input.channelPrompt)
-
-  const runOnce = async () => {
-    await hooks.onProgress?.('调用 DeepAgent 处理中...')
-
-    const changeDrafts: WorkspaceAiChangeDraft[] = []
-    const issueDrafts: WorkspaceAiIssueDraft[] = []
-    let reportTitle = 'AI 寻疑报告'
-    let reportSummary = ''
-    let reportMarkdown = ''
-
-    const getWorkspaceContext = tool(
-      async () => contextSnapshot,
-      {
-        name: 'get_workspace_context',
-        description: '读取当前工作台上下文（项目配置、资料摘要、大纲与用户输入）。',
-        schema: z.object({}),
-      },
-    )
-
-    const webSearch = tool(
-      async ({ query }: { query: string }) => {
-        if (!webEnabled)
-          return JSON.stringify({ disabled: true, reason: '平台未配置联网检索密钥' })
-        const items = await searchWithTavily({
-          query,
-          tavilyApiKey: input.runtime.adminAi.tavilyApiKey,
-          maxResults: input.runtime.adminAi.maxWebResults,
-          timeoutMs: input.runtime.adminAi.webTimeoutMs,
-        })
-        await hooks.onTool?.('web_search', {
-          query,
-          results: items.length,
-        })
-        return JSON.stringify(items)
-      },
-      {
-        name: 'web_search',
-        description: '联网检索公开信息（优先 Tavily）。',
-        schema: z.object({
-          query: z.string().min(2),
-        }),
-      },
-    )
-
-    const fetchWebPage = tool(
-      async ({ url }: { url: string }) => {
-        const text = await fetchWebPageText({
-          url,
-          timeoutMs: input.runtime.adminAi.webTimeoutMs,
-          maxChars: input.runtime.adminAi.maxPageChars,
-        })
-        await hooks.onTool?.('fetch_web_page', { url, chars: text.length })
-        return text
-      },
-      {
-        name: 'fetch_web_page',
-        description: '抓取公开网页文本（内置 SSRF 防护）。',
-        schema: z.object({
-          url: z.string().url(),
-        }),
-      },
-    )
-
-    const proposeChange = tool(
-      async (payload: {
-        changeType: AiProjectChangeType
-        title: string
-        summary: string
-        destructive?: boolean
-        payload?: Record<string, unknown>
-      }) => {
-        const proposal: WorkspaceAiChangeDraft = {
-          changeType: payload.changeType,
-          title: toText(payload.title) || 'AI 变更提案',
-          summary: toText(payload.summary),
-          destructive: Boolean(payload.destructive),
-          payload: payload.payload && typeof payload.payload === 'object' && !Array.isArray(payload.payload)
-            ? payload.payload
-            : {},
-        }
-        changeDrafts.push(proposal)
-        await hooks.onProposal?.(proposal)
-        await hooks.onTool?.('propose_change', {
-          changeType: proposal.changeType,
-          destructive: proposal.destructive,
-        })
-        return JSON.stringify({ ok: true, proposalCount: changeDrafts.length })
-      },
-      {
-        name: 'propose_change',
-        description: '提交自动优化模式下的可审批变更提案。',
-        schema: z.object({
-          changeType: z.enum([
-            'settings_common_patch',
-            'contest_bindings_replace',
-            'adaptation_patch',
-            'resource_bind_library',
-            'resource_update_metadata',
-            'resource_archive',
-            'resource_restore',
-            'resource_purge',
-          ]),
-          title: z.string().min(2),
-          summary: z.string().min(4),
-          destructive: z.boolean().optional(),
-          payload: z.record(z.string(), z.unknown()).optional(),
-        }),
-      },
-    )
-
-    const reportIssue = tool(
-      async (payload: {
-        title: string
-        severity: ProjectIssueSeverity
-        evidence: string
-        recommendation: string
-      }) => {
-        const issue: WorkspaceAiIssueDraft = {
-          title: toText(payload.title) || '未命名问题',
-          severity: toSeverity(payload.severity),
-          evidence: toText(payload.evidence),
-          recommendation: toText(payload.recommendation),
-        }
-        issueDrafts.push(issue)
-        await hooks.onIssue?.(issue)
-        await hooks.onTool?.('report_issue', {
-          severity: issue.severity,
-          count: issueDrafts.length,
-        })
-        return JSON.stringify({ ok: true, issueCount: issueDrafts.length })
-      },
-      {
-        name: 'report_issue',
-        description: '在寻疑发现模式下记录结构化问题。',
-        schema: z.object({
-          title: z.string().min(2),
-          severity: z.enum(['critical', 'high', 'medium', 'low']),
-          evidence: z.string().min(2),
-          recommendation: z.string().min(2),
-        }),
-      },
-    )
-
-    const setIssueReport = tool(
-      async (payload: { title?: string, summary?: string, markdown?: string }) => {
-        reportTitle = toText(payload.title) || reportTitle
-        reportSummary = toText(payload.summary) || reportSummary
-        reportMarkdown = toText(payload.markdown) || reportMarkdown
-        await hooks.onTool?.('set_issue_report', {
-          hasTitle: Boolean(toText(payload.title)),
-          hasSummary: Boolean(toText(payload.summary)),
-          hasMarkdown: Boolean(toText(payload.markdown)),
-        })
-        return JSON.stringify({ ok: true })
-      },
-      {
-        name: 'set_issue_report',
-        description: '设置寻疑报告标题、摘要和 Markdown 正文。',
-        schema: z.object({
-          title: z.string().optional(),
-          summary: z.string().optional(),
-          markdown: z.string().optional(),
-        }),
-      },
-    )
-
-    const generateSceneFromText = tool(
-      async ({ format, text }: { format: 'mermaid' | 'markdown_outline' | 'architecture', text: string }) => {
-        const sceneDocument = format === 'mermaid'
-          ? importFromMermaid(text)
-          : format === 'markdown_outline'
-            ? importFromMarkdownOutline(text)
-            : importArchitectureFromMetadata(text).sceneDocument
-        await hooks.onTool?.('generate_scene_from_text', {
-          format,
-          drawMode: sceneDocument.drawMode,
-        })
-        return serializeSceneDocument(sceneDocument)
-      },
-      {
-        name: 'generate_scene_from_text',
-        description: '把 Mermaid、Markdown 大纲或架构文本描述转成结构化 SceneDocument JSON。',
-        schema: z.object({
-          format: z.enum(['mermaid', 'markdown_outline', 'architecture']).default('mermaid'),
-          text: z.string().min(2),
-        }),
-      },
-    )
-
-    const generateSchemaFromDdl = tool(
-      async ({ ddl }: { ddl: string }) => {
-        const result = importFromDDL(ddl)
-        await hooks.onTool?.('generate_schema_from_ddl', {
-          tables: result.schemaModel.tables.length,
-          warnings: result.warnings.length,
-        })
-        return JSON.stringify(result)
-      },
-      {
-        name: 'generate_schema_from_ddl',
-        description: '把 SQL DDL 转成 SchemaModel 和对应 SceneDocument JSON。',
-        schema: z.object({
-          ddl: z.string().min(8),
-        }),
-      },
-    )
-
-    const generateArchitectureFromMetadata = tool(
-      async ({ metadata }: { metadata: string }) => {
-        const result = importArchitectureFromMetadata(metadata)
-        await hooks.onTool?.('generate_architecture_from_metadata', {
-          services: result.architectureModel.services.length,
-          relations: result.architectureModel.relations.length,
-        })
-        return JSON.stringify(result)
-      },
-      {
-        name: 'generate_architecture_from_metadata',
-        description: '把 repo/config/依赖关系文本或 JSON 元数据转成 ArchitectureModel 与 SceneDocument。',
-        schema: z.object({
-          metadata: z.string().min(2),
-        }),
-      },
-    )
-
-    const generateArchitectureFromRepo = tool(
-      async () => {
-        const result = await scanRepoArchitecture()
-        await hooks.onTool?.('generate_architecture_from_repo', {
-          workspaceName: result.workspaceName,
-          packageManifestCount: result.packageManifestCount,
-          relations: result.architectureModel.relations.length,
-        })
-        return JSON.stringify(result)
-      },
-      {
-        name: 'generate_architecture_from_repo',
-        description: '扫描当前服务端工作区的 package.json / workspace manifests，生成 ArchitectureModel 与 SceneDocument。',
-        schema: z.object({}),
-      },
-    )
-
-    const exportSchemaToDdl = tool(
-      async ({ sceneDocument }: { sceneDocument: string }) => {
-        const ddl = exportSchemaModelToDDL(parseJsonValue(sceneDocument))
-        await hooks.onTool?.('export_schema_to_ddl', {
-          length: ddl.length,
-        })
-        return ddl
-      },
-      {
-        name: 'export_schema_to_ddl',
-        description: '把 SchemaModel 或 schema SceneDocument JSON 导出成 SQL DDL 文本。',
-        schema: z.object({
-          sceneDocument: z.string().min(2),
-        }),
-      },
-    )
-
-    const exportArchitectureToMermaid = tool(
-      async ({ sceneDocument, view }: {
-        sceneDocument: string
-        view?: 'system_context' | 'container' | 'dependency_map'
-      }) => {
-        const mermaid = exportArchitectureModelToMermaid(parseJsonValue(sceneDocument), view || 'dependency_map')
-        await hooks.onTool?.('export_architecture_to_mermaid', {
-          length: mermaid.length,
-          view: view || 'dependency_map',
-        })
-        return mermaid
-      },
-      {
-        name: 'export_architecture_to_mermaid',
-        description: '把 ArchitectureModel 或 architecture SceneDocument JSON 导出成 Mermaid flowchart 文本。',
-        schema: z.object({
-          sceneDocument: z.string().min(2),
-          view: z.enum(['system_context', 'container', 'dependency_map']).optional(),
-        }),
-      },
-    )
-
-    const applyTemplateToScene = tool(
-      async (payload: {
-        sceneDocument: string
-        templateKey: string
-        title?: string
-        subtitle?: string
-        badge?: string
-        imageSrc?: string
-        deviceFramePresetKey?: string
-        themeTokens?: Record<string, string>
-      }) => {
-        const sceneDocument = applySceneTemplate({
-          sceneDocument: parseJsonValue(payload.sceneDocument),
-          templateKey: payload.templateKey,
-          title: payload.title,
-          subtitle: payload.subtitle,
-          badge: payload.badge,
-          imageSrc: payload.imageSrc,
-          deviceFramePresetKey: payload.deviceFramePresetKey,
-          themeTokens: payload.themeTokens,
-        })
-        await hooks.onTool?.('apply_template', {
-          templateKey: payload.templateKey,
-          drawMode: sceneDocument.drawMode,
-        })
-        return serializeSceneDocument(sceneDocument)
-      },
-      {
-        name: 'apply_template',
-        description: '对 SceneDocument 应用模板、主题和设备边框参数，输出新的 SceneDocument JSON。',
-        schema: z.object({
-          sceneDocument: z.string().min(2),
-          templateKey: z.string().min(2),
-          title: z.string().optional(),
-          subtitle: z.string().optional(),
-          badge: z.string().optional(),
-          imageSrc: z.string().optional(),
-          deviceFramePresetKey: z.string().optional(),
-          themeTokens: z.record(z.string(), z.string()).optional(),
-        }),
-      },
-    )
-
-    const relayoutScene = tool(
-      async ({ sceneDocument }: { sceneDocument: string }) => {
-        const nextDocument = relayoutSceneDocument(parseJsonValue(sceneDocument))
-        await hooks.onTool?.('relayout_scene', {
-          drawMode: nextDocument.drawMode,
-          nodeCount: nextDocument.sceneModel.nodes.length,
-        })
-        return serializeSceneDocument(nextDocument)
-      },
-      {
-        name: 'relayout_scene',
-        description: '对已有 SceneDocument 重新布局，保持 canonical schema 不变。',
-        schema: z.object({
-          sceneDocument: z.string().min(2),
-        }),
-      },
-    )
-
-    const generateDeviceMockup = tool(
-      async (payload: {
-        title?: string
-        subtitle?: string
-        badge?: string
-        imageSrc?: string
-        templateKey?: string
-        deviceFramePresetKey?: string
-        themeTokens?: Record<string, string>
-      }) => {
-        const sceneDocument = buildDeviceMockupSceneDocument(payload)
-        await hooks.onTool?.('generate_device_mockup', {
-          templateKey: sceneDocument.templateKey,
-          drawMode: sceneDocument.drawMode,
-        })
-        return serializeSceneDocument(sceneDocument)
-      },
-      {
-        name: 'generate_device_mockup',
-        description: '为截图生成带设备边框的 composition SceneDocument JSON。',
-        schema: z.object({
-          title: z.string().optional(),
-          subtitle: z.string().optional(),
-          badge: z.string().optional(),
-          imageSrc: z.string().optional(),
-          templateKey: z.string().optional(),
-          deviceFramePresetKey: z.string().optional(),
-          themeTokens: z.record(z.string(), z.string()).optional(),
-        }),
-      },
-    )
-
-    const generateDesignPage = tool(
-      async (payload: {
-        sceneDocument?: string
-        name?: string
-        background?: string
-      }) => {
-        const baseDocument = toText(payload.sceneDocument)
-          ? parseJsonValue(payload.sceneDocument)
-          : {
-              version: 1,
-              drawMode: 'composition',
-              sourceType: 'manual',
-              editorEngine: 'vueflow',
-            }
-        const sceneDocument = appendDesignPageToSceneDocument(baseDocument, {
-          name: payload.name,
-          background: payload.background,
-          makeCurrent: true,
-        })
-        await hooks.onTool?.('generate_design_page', {
-          pageCount: sceneDocument.sourceModel.kind === 'composition' ? sceneDocument.sourceModel.pages?.length || 0 : 0,
-        })
-        return serializeSceneDocument(sceneDocument)
-      },
-      {
-        name: 'generate_design_page',
-        description: '向设计文档追加一个新的 Page，并返回新的 SceneDocument JSON。',
-        schema: z.object({
-          sceneDocument: z.string().optional(),
-          name: z.string().optional(),
-          background: z.string().optional(),
-        }),
-      },
-    )
-
-    const generateDesignFrame = tool(
-      async (payload: {
-        sceneDocument?: string
-        pageId?: string
-        name?: string
-        kind?: 'freeform' | 'template' | 'device_mockup' | 'diagram'
-        templateKey?: string
-        deviceFramePresetKey?: string
-        themeTokens?: Record<string, string>
-      }) => {
-        const baseDocument = toText(payload.sceneDocument)
-          ? parseJsonValue(payload.sceneDocument)
-          : {
-              version: 1,
-              drawMode: 'composition',
-              sourceType: 'manual',
-              editorEngine: 'vueflow',
-            }
-        const sceneDocument = appendDesignFrameToSceneDocument(baseDocument, {
-          pageId: payload.pageId,
-          name: payload.name,
-          kind: payload.kind,
-          templateKey: payload.templateKey,
-          deviceFramePresetKey: payload.deviceFramePresetKey,
-          themeTokens: payload.themeTokens,
-          elements: [],
-        })
-        await hooks.onTool?.('generate_design_frame', {
-          kind: payload.kind || 'freeform',
-          frameCount: sceneDocument.sourceModel.kind === 'composition' ? sceneDocument.sourceModel.frames?.length || 0 : 0,
-        })
-        return serializeSceneDocument(sceneDocument)
-      },
-      {
-        name: 'generate_design_frame',
-        description: '向设计文档追加一个 freeform/template/device_mockup/diagram Frame，返回新的 SceneDocument JSON。',
-        schema: z.object({
-          sceneDocument: z.string().optional(),
-          pageId: z.string().optional(),
-          name: z.string().optional(),
-          kind: z.enum(['freeform', 'template', 'device_mockup', 'diagram']).optional(),
-          templateKey: z.string().optional(),
-          deviceFramePresetKey: z.string().optional(),
-          themeTokens: z.record(z.string(), z.string()).optional(),
-        }),
-      },
-    )
-
-    const generateDeviceMockupFrame = tool(
-      async (payload: {
-        sceneDocument?: string
-        pageId?: string
-        name?: string
-        templateKey?: string
-        deviceFramePresetKey?: string
-        themeTokens?: Record<string, string>
-      }) => {
-        const baseDocument = toText(payload.sceneDocument)
-          ? parseJsonValue(payload.sceneDocument)
-          : {
-              version: 1,
-              drawMode: 'composition',
-              sourceType: 'manual',
-              editorEngine: 'vueflow',
-            }
-        const sceneDocument = appendDesignFrameToSceneDocument(baseDocument, {
-          pageId: payload.pageId,
-          name: payload.name,
-          kind: 'device_mockup',
-          templateKey: payload.templateKey,
-          deviceFramePresetKey: payload.deviceFramePresetKey,
-          themeTokens: payload.themeTokens,
-          elements: [],
-        })
-        await hooks.onTool?.('generate_device_mockup_frame', {
-          pageId: payload.pageId || '',
-          templateKey: payload.templateKey || '',
-        })
-        return serializeSceneDocument(sceneDocument)
-      },
-      {
-        name: 'generate_device_mockup_frame',
-        description: '向设计文档追加一个设备边框 Frame，并返回新的 SceneDocument JSON。',
-        schema: z.object({
-          sceneDocument: z.string().optional(),
-          pageId: z.string().optional(),
-          name: z.string().optional(),
-          templateKey: z.string().optional(),
-          deviceFramePresetKey: z.string().optional(),
-          themeTokens: z.record(z.string(), z.string()).optional(),
-        }),
-      },
-    )
-
-    const generateDiagramFrame = tool(
-      async (payload: {
-        sceneDocument?: string
-        pageId?: string
-        name?: string
-        importFormat: 'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
-        sourceText: string
-      }) => {
-        const embeddedScene = payload.importFormat === 'mermaid'
-          ? importFromMermaid(payload.sourceText)
-          : payload.importFormat === 'markdown_outline'
-            ? importFromMarkdownOutline(payload.sourceText)
-            : payload.importFormat === 'ddl'
-              ? importFromDDL(payload.sourceText).sceneDocument
-              : importArchitectureFromMetadata(payload.sourceText).sceneDocument
-        const baseDocument = toText(payload.sceneDocument)
-          ? parseJsonValue(payload.sceneDocument)
-          : buildDeviceMockupSceneDocument({
-              templateKey: 'device-showcase',
-            })
-        const sceneDocument = appendDesignFrameToSceneDocument(baseDocument, {
-          pageId: payload.pageId,
-          kind: 'diagram',
-          name: payload.name,
-          embeddedScene,
-        })
-        await hooks.onTool?.('generate_diagram_frame', {
-          importFormat: payload.importFormat,
-          drawMode: embeddedScene.drawMode,
-        })
-        return serializeSceneDocument(sceneDocument)
-      },
-      {
-        name: 'generate_diagram_frame',
-        description: '把 Mermaid / Markdown / DDL / Architecture 元数据导入为新的 Diagram Frame，并返回新的 SceneDocument JSON。',
-        schema: z.object({
-          sceneDocument: z.string().optional(),
-          pageId: z.string().optional(),
-          name: z.string().optional(),
-          importFormat: z.enum(['mermaid', 'markdown_outline', 'ddl', 'architecture']),
-          sourceText: z.string().min(2),
-        }),
-      },
-    )
-
-    const exportSceneAsset = tool(
-      async ({ sceneDocument, format }: { sceneDocument: string, format: 'svg' | 'png' | 'pdf' }) => {
-        const normalizedDocument = sceneDocumentFromUnknown(parseJsonValue(sceneDocument))
-        const artboard = normalizedDocument.sceneModel.artboards?.[0]
-        const job = {
-          id: `scene-export-${Date.now()}`,
-          format,
-          status: 'succeeded',
-          width: artboard?.width || 1600,
-          height: artboard?.height || 900,
-          background: artboard?.background || '',
-          templateKey: normalizedDocument.templateKey || '',
-          drawMode: normalizedDocument.drawMode,
-        }
-        await hooks.onTool?.('export_scene_asset', job)
-        return JSON.stringify({
-          job,
-          note: '当前工具返回导出任务元数据，真正的 SVG/PNG/PDF 由后续导出插件执行。',
-        })
-      },
-      {
-        name: 'export_scene_asset',
-        description: '创建结构化导出任务描述，供后续导出插件消费，不直接返回原始 SVG/XML。',
-        schema: z.object({
-          sceneDocument: z.string().min(2),
-          format: z.enum(['svg', 'png', 'pdf']),
-        }),
-      },
-    )
-
-    const exportDesignAsset = tool(
-      async ({ sceneDocument, format, pageId, frameId }: { sceneDocument: string, format: 'svg' | 'png' | 'pdf', pageId?: string, frameId?: string }) => {
-        const normalizedDocument = sceneDocumentFromUnknown(parseJsonValue(sceneDocument))
-        const artboard = normalizedDocument.sceneModel.artboards?.[0]
-        const job = {
-          id: `scene-export-${Date.now()}`,
-          format,
-          status: 'succeeded',
-          width: artboard?.width || 1600,
-          height: artboard?.height || 900,
-          background: artboard?.background || '',
-          templateKey: normalizedDocument.templateKey || '',
-          drawMode: normalizedDocument.drawMode,
-          pageId: pageId || '',
-          frameId: frameId || '',
-        }
-        await hooks.onTool?.('export_design_asset', job)
-        return JSON.stringify({
-          job,
-          note: '当前工具返回设计导出任务元数据，真正导出仍由前端或后续导出插件执行。',
-        })
-      },
-      {
-        name: 'export_design_asset',
-        description: '为 design document 的 page/frame 创建结构化导出任务描述，不直接返回原始 SVG/XML。',
-        schema: z.object({
-          sceneDocument: z.string().min(2),
-          format: z.enum(['svg', 'png', 'pdf']),
-          pageId: z.string().optional(),
-          frameId: z.string().optional(),
-        }),
-      },
-    )
-
-    const tools: any[] = [
-      getWorkspaceContext,
-      webSearch,
-      fetchWebPage,
-      generateSceneFromText,
-      generateSchemaFromDdl,
-      generateArchitectureFromMetadata,
-      generateArchitectureFromRepo,
-      exportSchemaToDdl,
-      exportArchitectureToMermaid,
-      applyTemplateToScene,
-      relayoutScene,
-      generateDesignPage,
-      generateDesignFrame,
-      generateDeviceMockup,
-      generateDeviceMockupFrame,
-      generateDiagramFrame,
-      exportDesignAsset,
-      exportSceneAsset,
-    ]
-    if (input.mode === 'auto_optimize')
-      tools.push(proposeChange)
-    if (input.mode === 'issue_discovery')
-      tools.push(reportIssue, setIssueReport)
-
-    const agent = createDeepAgent({
-      model: createChatModel(input.runtime.ai),
-      tools,
-      systemPrompt: [
-        '你是 Loopy，负责 Team 与项目上下文下的工作台问答与分析。',
-        buildModePrompt(input.mode),
-        channelPrompt ? `[场景提示词]\n${channelPrompt}` : '',
-        '必须先获取上下文再作答，避免与上下文冲突。',
-      ].filter(Boolean).join('\n'),
-    })
-
-    const response = await agent.invoke({
-      messages: [{ role: 'user', content: buildPrompt(input.mode, input.context) }],
-    })
-
-    const assistantText = extractAssistantText(response)
-    const finalReply = assistantText || fallback.assistantReply
-
-    if (input.mode === 'issue_discovery') {
-      if (!reportSummary)
-        reportSummary = finalReply || '已完成项目扫描并输出问题建议。'
-      if (!reportMarkdown)
-        reportMarkdown = buildIssueMarkdown({ title: reportTitle, summary: reportSummary, issues: issueDrafts })
-    }
-
-    if (input.mode === 'auto_optimize' && changeDrafts.length === 0)
-      changeDrafts.push(...fallback.changeDrafts)
-
-    if (input.mode === 'issue_discovery' && issueDrafts.length === 0)
-      issueDrafts.push(...fallback.issueDrafts)
-
-    const result: WorkspaceAiExecutionResult = {
-      mode: input.mode,
-      assistantReply: finalReply,
-      changeDrafts,
-      issueDrafts,
+  if (profile.mode === 'issue_discovery') {
+    const hasIssues = state.issueDrafts.length > 0
+    const reportTitle = toText(state.reportTitle) || fallback.reportTitle || 'AI 寻疑报告'
+    const reportSummary = hasIssues
+      ? (toText(state.reportSummary) || assistantText || '已完成问题扫描并生成结构化报告。')
+      : (fallback.reportSummary || fallback.assistantReply)
+    return {
+      mode: profile.mode,
+      assistantReply: hasIssues
+        ? (assistantText || reportSummary)
+        : fallback.assistantReply,
+      changeDrafts: [],
+      issueDrafts: state.issueDrafts,
       reportTitle,
       reportSummary,
-      reportMarkdown,
+      reportMarkdown: buildIssueMarkdown({
+        title: reportTitle,
+        summary: reportSummary,
+        issues: state.issueDrafts,
+      }),
     }
-
-    for (const chunk of chunkText(result.assistantReply))
-      await hooks.onDelta?.(chunk)
-    return result
   }
+
+  return {
+    mode: profile.mode,
+    assistantReply: assistantText || fallback.assistantReply,
+    changeDrafts: [],
+    issueDrafts: [],
+    reportTitle: '',
+    reportSummary: '',
+    reportMarkdown: '',
+  }
+}
+
+async function emitFallbackOutcome(
+  input: WorkspaceModeExecutionInput,
+  fallback: WorkspaceAiExecutionResult,
+): Promise<WorkspaceExecutionOutcome> {
+  for (const issue of fallback.issueDrafts)
+    await input.hooks.onIssue?.(issue)
+  for (const proposal of fallback.changeDrafts)
+    await input.hooks.onProposal?.(proposal)
+  for (const chunk of chunkText(fallback.assistantReply))
+    await input.hooks.onDelta?.(chunk)
+
+  return {
+    data: fallback,
+    fallbackUsed: true,
+    attempts: 1,
+  }
+}
+
+async function executeWorkspaceAgentMode(
+  input: WorkspaceModeExecutionInput,
+  profile: WorkspaceAgentProfile,
+): Promise<WorkspaceExecutionOutcome> {
+  const fallback = buildFallbackResult(profile.mode, input.context)
+  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
+  if (onlyFallback)
+    return emitFallbackOutcome(input, fallback)
+
+  const contextSnapshot = buildContextSnapshot(input.context)
+  const channelPrompt = toText(input.channelPrompt)
 
   const executed = await runWithRetry<WorkspaceAiExecutionResult>({
     maxRetries: input.runtime.ai.maxRetries,
-    run: runOnce,
+    run: async () => {
+      await input.hooks.onProgress?.(profile.progressMessage)
+
+      const state = createWorkspaceModeState()
+      const toolset = createWorkspaceToolset(input, profile, state, contextSnapshot)
+      const agent = createDeepAgent({
+        model: createChatModel(input.runtime.ai),
+        tools: toolset.tools,
+        systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt),
+      })
+
+      const response = await agent.invoke({
+        messages: buildWorkspaceConversationMessages(profile.mode, input.context, input.messages),
+      })
+
+      const result = finalizeWorkspaceExecutionResult(profile, state, extractAssistantText(response), fallback)
+      for (const chunk of chunkText(result.assistantReply))
+        await input.hooks.onDelta?.(chunk)
+      return result
+    },
     fallback: () => fallback,
   })
 
@@ -1127,4 +1057,45 @@ export async function executeWorkspaceAi(input: {
     fallbackUsed: executed.fallbackUsed,
     attempts: executed.attempts,
   }
+}
+
+async function executeDialogAskWorkspaceAi(input: WorkspaceModeExecutionInput): Promise<WorkspaceExecutionOutcome> {
+  return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.dialog_ask)
+}
+
+async function executeAutoOptimizeWorkspaceAi(input: WorkspaceModeExecutionInput): Promise<WorkspaceExecutionOutcome> {
+  return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.auto_optimize)
+}
+
+async function executeIssueDiscoveryWorkspaceAi(input: WorkspaceModeExecutionInput): Promise<WorkspaceExecutionOutcome> {
+  return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.issue_discovery)
+}
+
+async function executeDocumentAssistWorkspaceAi(input: WorkspaceModeExecutionInput): Promise<WorkspaceExecutionOutcome> {
+  return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.document_assist)
+}
+
+export async function executeWorkspaceAi(input: {
+  runtime: WorkspaceAiRuntime
+  mode: WorkspaceAiMode
+  context: WorkspaceAiExecutionContext
+  messages?: ChatMessage[]
+  channelPrompt?: string
+  hooks?: WorkspaceAiHooks
+}): Promise<WorkspaceExecutionOutcome> {
+  const executionInput: WorkspaceModeExecutionInput = {
+    runtime: input.runtime,
+    context: input.context,
+    channelPrompt: input.channelPrompt,
+    hooks: input.hooks || {},
+    messages: Array.isArray(input.messages) ? input.messages : [],
+  }
+
+  if (input.mode === 'auto_optimize')
+    return executeAutoOptimizeWorkspaceAi(executionInput)
+  if (input.mode === 'issue_discovery')
+    return executeIssueDiscoveryWorkspaceAi(executionInput)
+  if (input.mode === 'document_assist')
+    return executeDocumentAssistWorkspaceAi(executionInput)
+  return executeDialogAskWorkspaceAi(executionInput)
 }
