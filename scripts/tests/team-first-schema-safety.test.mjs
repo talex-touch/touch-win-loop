@@ -23,11 +23,16 @@ it('db bootstrap performs team-first schema compatibility preflight', async () =
   assert.match(dbSource, /assertWorkspaceSchemaCompatible/, 'db.ts 未在 schema bootstrap 前执行兼容性预检')
   assert.match(compatibilitySource, /team_id/, 'compatibility 检查未覆盖 team_id 残留列')
   assert.match(compatibilitySource, /teams/, 'compatibility 检查未覆盖 teams 残留表')
+  assert.match(compatibilitySource, /relkind = 'r'/, 'compatibility 预检未忽略 Team-First 遗留视图，仍会误判兼容 schema')
+  assert.match(compatibilitySource, /FROM information_schema\.columns c/, 'compatibility 预检的 team_id 查询缺少 columns 别名，运行时会触发 SQL 语法错误')
 })
 
 it('repo contains a rollback migration for team-first hard cutover', async () => {
   const source = await readFile(RESTORE_MIGRATION_FILE, 'utf8')
 
+  assert.match(source, /DROP VIEW public\.%I/, '回滚迁移未清理遗留 Team-First 兼容视图')
+  assert.match(source, /DROP TRIGGER IF EXISTS %I ON %I\.%I/, '回滚迁移未清理 sync_team_workspace_ids 触发器')
+  assert.match(source, /DROP FUNCTION IF EXISTS public\.sync_team_workspace_ids\(\) CASCADE;/, '回滚迁移未清理 sync_team_workspace_ids 桥接函数')
   assert.match(source, /ALTER TABLE public\.teams RENAME TO workspaces;/, '回滚迁移未恢复 teams -> workspaces')
   assert.match(source, /RENAME COLUMN team_id TO workspace_id/, '回滚迁移未恢复 team_id -> workspace_id')
   assert.match(source, /DROP COLUMN team_id CASCADE/, '回滚迁移未处理双列共存场景')

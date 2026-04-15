@@ -17,17 +17,22 @@ const COMPATIBILITY_MISMATCH_MESSAGE = [
 export async function assertWorkspaceSchemaCompatible(poolRef: PgPoolType): Promise<void> {
   const [tableResult, columnResult] = await Promise.all([
     poolRef.query<TablePresenceRow>(
-      `SELECT table_name
-       FROM information_schema.tables
-       WHERE table_schema = 'public'
-         AND table_name IN ('teams', 'team_members', 'team_billing')`,
+      `SELECT relname AS table_name
+       FROM pg_class
+       WHERE relnamespace = 'public'::regnamespace
+         AND relkind = 'r'
+         AND relname IN ('teams', 'team_members', 'team_billing')`,
     ),
     poolRef.query<ColumnPresenceRow>(
-      `SELECT DISTINCT table_name
-       FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND column_name = 'team_id'
-       ORDER BY table_name ASC`,
+      `SELECT DISTINCT c.table_name
+       FROM information_schema.columns c
+       JOIN pg_class pc
+         ON pc.relname = c.table_name
+        AND pc.relnamespace = 'public'::regnamespace
+       WHERE c.table_schema = 'public'
+         AND c.column_name = 'team_id'
+         AND pc.relkind = 'r'
+       ORDER BY c.table_name ASC`,
     ),
   ])
 

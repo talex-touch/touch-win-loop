@@ -10,6 +10,43 @@ SET statement_timeout = '0';
 
 DO $$
 DECLARE
+  view_name TEXT;
+BEGIN
+  FOREACH view_name IN ARRAY ARRAY['teams', 'team_members', 'team_billing']
+  LOOP
+    IF EXISTS (
+      SELECT 1
+      FROM pg_class
+      WHERE relnamespace = 'public'::regnamespace
+        AND relname = view_name
+        AND relkind = 'v'
+    ) THEN
+      EXECUTE format('DROP VIEW public.%I', view_name);
+    END IF;
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  t RECORD;
+BEGIN
+  FOR t IN
+    SELECT n.nspname AS schema_name, c.relname AS table_name, tg.tgname AS trigger_name
+    FROM pg_trigger tg
+    JOIN pg_class c ON c.oid = tg.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND tg.tgname LIKE '%_sync_team_workspace_ids'
+      AND NOT tg.tgisinternal
+  LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I', t.trigger_name, t.schema_name, t.table_name);
+  END LOOP;
+END $$;
+
+DROP FUNCTION IF EXISTS public.sync_team_workspace_ids() CASCADE;
+
+DO $$
+DECLARE
   row_count BIGINT;
 BEGIN
   IF EXISTS (
