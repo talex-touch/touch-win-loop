@@ -2316,6 +2316,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   z-index: 1;
 }
 
+.workspace-chat-composer__footer--doc {
+  align-items: center;
+}
+
 .workspace-chat-composer__toolbar {
   display: flex;
   min-width: 0;
@@ -2323,6 +2327,20 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.workspace-chat-composer__doc-hint {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  padding: 0 10px;
+  min-height: 30px;
+  border-radius: 999px;
+  background: rgba(239, 246, 255, 0.95);
+  color: #47627f;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .workspace-chat-composer__mode-pill {
