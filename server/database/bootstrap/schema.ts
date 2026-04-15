@@ -439,6 +439,7 @@ CREATE TABLE IF NOT EXISTS feishu_bitable_sync_items (
   view_id TEXT NOT NULL DEFAULT '',
   source_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   writeback_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+  auto_sync_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   mapping_json JSONB NOT NULL DEFAULT '{}'::JSONB,
   options_json JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -2206,6 +2207,9 @@ ALTER TABLE feishu_bitable_sync_items
 
 ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS writeback_json JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+ALTER TABLE feishu_bitable_sync_items
+  ADD COLUMN IF NOT EXISTS auto_sync_json JSONB NOT NULL DEFAULT '{}'::JSONB;
 
 ALTER TABLE feishu_bitable_sync_items
   ADD COLUMN IF NOT EXISTS schedule_mode TEXT NOT NULL DEFAULT 'interval';

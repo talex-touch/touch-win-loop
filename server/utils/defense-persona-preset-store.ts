@@ -262,6 +262,65 @@ export async function listDefensePersonaPresetsByContestExternalId(
   return result.rows.map(mapDefensePersonaPreset)
 }
 
+export async function listDefensePersonaPresetExternalIdsBySyncItemId(
+  db: Queryable,
+  input: {
+    syncItemId: string
+  },
+): Promise<string[]> {
+  const syncItemId = normalizeString(input.syncItemId)
+  if (!syncItemId)
+    return []
+
+  const result = await db.query<{ external_id: string }>(
+    `SELECT external_id
+     FROM defense_persona_presets
+     WHERE sync_item_id = $1
+     ORDER BY sort_order ASC, created_at ASC`,
+    [syncItemId],
+  )
+
+  return result.rows
+    .map(row => normalizeString(row.external_id))
+    .filter(Boolean)
+}
+
+export async function deleteDefensePersonaPresetsByExternalIds(
+  db: Queryable,
+  input: {
+    syncItemId?: string | null
+    externalIds: string[]
+  },
+): Promise<number> {
+  const externalIds = [...new Set(input.externalIds.map(item => normalizeString(item)).filter(Boolean))]
+  if (externalIds.length === 0)
+    return 0
+
+  const syncItemId = normalizeString(input.syncItemId)
+  const result = syncItemId
+    ? await db.query<{ deleted_count: string }>(
+        `WITH deleted AS (
+          DELETE FROM defense_persona_presets
+          WHERE external_id = ANY($1::TEXT[])
+            AND sync_item_id = $2
+          RETURNING 1
+        )
+        SELECT COUNT(*)::TEXT AS deleted_count FROM deleted`,
+        [externalIds, syncItemId],
+      )
+    : await db.query<{ deleted_count: string }>(
+        `WITH deleted AS (
+          DELETE FROM defense_persona_presets
+          WHERE external_id = ANY($1::TEXT[])
+          RETURNING 1
+        )
+        SELECT COUNT(*)::TEXT AS deleted_count FROM deleted`,
+        [externalIds],
+      )
+
+  return Math.max(0, Number(result.rows[0]?.deleted_count || 0) || 0)
+}
+
 export async function upsertDefensePersonaPreset(
   db: Queryable,
   input: {

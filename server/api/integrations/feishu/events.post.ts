@@ -2,6 +2,8 @@ import type { H3Event } from 'h3'
 import { createHash } from 'node:crypto'
 import { setResponseStatus } from 'h3'
 import { reconcileFeishuAdminGroups } from '~~/server/services/feishu/admin-sync'
+import { handleFeishuBitableAutoSyncForItem } from '~~/server/services/feishu/bitable-auto-sync'
+import { getFeishuTenantAccessToken, listFeishuBitableRecordsByIds } from '~~/server/services/feishu/client'
 import {
   decryptFeishuEventPayload,
   verifyFeishuWebhookSignature,
@@ -56,12 +58,91 @@ function toStringArray(raw: unknown): string[] {
   return single ? [single] : []
 }
 
+function mergeRecordEventAction(currentAction: string, nextAction: string): string {
+  const current = toText(currentAction)
+  const next = toText(nextAction)
+  if (next === 'record_deleted' || current === 'record_deleted')
+    return 'record_deleted'
+  if (next === 'record_added')
+    return current || next
+  return next || current
+}
+
+function extractActionRecordId(raw: Record<string, unknown>): string {
+  return toText(
+    raw.record_id
+    || raw.recordId
+    || asObject(raw.record).record_id
+    || asObject(raw.record).recordId
+    || asObject(raw.target).record_id
+    || asObject(raw.target).recordId
+    || asObject(raw.meta).record_id
+    || asObject(raw.meta).recordId,
+  )
+}
+
+function collectChangedFieldNames(raw: unknown, target: Set<string>): void {
+  if (!raw)
+    return
+
+  if (Array.isArray(raw)) {
+    for (const item of raw)
+      collectChangedFieldNames(item, target)
+    return
+  }
+
+  if (typeof raw === 'string') {
+    const value = toText(raw)
+    if (value)
+      target.add(value)
+    return
+  }
+
+  if (typeof raw !== 'object')
+    return
+
+  const source = raw as Record<string, unknown>
+  const directFieldName = toText(
+    source.field_name
+    || source.fieldName
+    || source.column_name
+    || source.columnName
+    || source.name,
+  )
+  if (directFieldName)
+    target.add(directFieldName)
+
+  for (const key of ['changed_fields', 'changedFields', 'field_names', 'fieldNames', 'fields']) {
+    if (source[key] !== undefined)
+      collectChangedFieldNames(source[key], target)
+  }
+
+  const beforeValue = asObject(source.before_value || source.beforeValue || source.old_value || source.oldValue)
+  const afterValue = asObject(source.after_value || source.afterValue || source.new_value || source.newValue)
+  for (const key of [...Object.keys(beforeValue), ...Object.keys(afterValue)]) {
+    const normalizedKey = toText(key)
+    if (normalizedKey)
+      target.add(normalizedKey)
+  }
+}
+
+function extractActionChangedFieldNames(raw: Record<string, unknown>): string[] {
+  const changedFields = new Set<string>()
+  collectChangedFieldNames(raw, changedFields)
+  return [...changedFields]
+}
+
 function extractBitableEventPayload(payload: Record<string, unknown>): {
   eventId: string
   eventType: string
   appToken: string
   tableId: string
   recordIds: string[]
+  recordEvents: Array<{
+    recordId: string
+    action: string
+    changedFieldNames: string[]
+  }>
 } {
   const header = asObject(payload.header)
   const event = asObject(payload.event)
@@ -85,13 +166,49 @@ function extractBitableEventPayload(payload: Record<string, unknown>): {
     ...toStringArray(eventBody.record_id),
     ...toStringArray(asObject(eventBody.record).record_id),
   ]
+  const fallbackAction = toText(eventBody.action || eventBody.action_type || eventBody.actionType)
+  const recordEventsMap = new Map<string, { recordId: string, action: string, changedFieldNames: string[] }>()
+  const actionList = Array.isArray(eventBody.action_list) ? eventBody.action_list : []
+
+  for (const actionItem of actionList) {
+    if (!actionItem || typeof actionItem !== 'object' || Array.isArray(actionItem))
+      continue
+    const actionRaw = actionItem as Record<string, unknown>
+    const recordId = extractActionRecordId(actionRaw)
+    if (!recordId)
+      continue
+
+    const current = recordEventsMap.get(recordId)
+    const changedFieldNames = [
+      ...(current?.changedFieldNames || []),
+      ...extractActionChangedFieldNames(actionRaw),
+    ]
+    recordEventsMap.set(recordId, {
+      recordId,
+      action: mergeRecordEventAction(current?.action || '', toText(actionRaw.action || actionRaw.action_type || actionRaw.actionType || fallbackAction)),
+      changedFieldNames: [...new Set(changedFieldNames)],
+    })
+  }
+
+  for (const recordId of recordIds) {
+    if (!recordId)
+      continue
+    if (!recordEventsMap.has(recordId)) {
+      recordEventsMap.set(recordId, {
+        recordId,
+        action: fallbackAction,
+        changedFieldNames: [],
+      })
+    }
+  }
 
   return {
     eventId,
     eventType,
     appToken,
     tableId,
-    recordIds: [...new Set(recordIds)],
+    recordIds: [...new Set([...recordIds, ...recordEventsMap.keys()])],
+    recordEvents: [...recordEventsMap.values()],
   }
 }
 
@@ -199,9 +316,35 @@ export default defineEventHandler(async (event) => {
         tableId: parsed.tableId,
       })
     })
+    const autoSyncEnabled = items.some(item => item.autoSync?.enabled)
+    const tenantAccessToken = autoSyncEnabled
+      ? await getFeishuTenantAccessToken(config)
+      : ''
+    const recordsById = autoSyncEnabled
+      ? new Map(
+          (await listFeishuBitableRecordsByIds({
+            tenantAccessToken,
+            appToken: parsed.appToken,
+            tableId: parsed.tableId,
+            recordIds: parsed.recordIds,
+          })).map(record => [record.recordId, record] as const),
+        )
+      : new Map()
     for (const item of items) {
       const actorUserId = item.updatedByUserId || item.createdByUserId
       if (!actorUserId)
+        continue
+      let recordIdsToRun = parsed.recordIds
+      if (item.autoSync?.enabled) {
+        const autoSyncResult = await handleFeishuBitableAutoSyncForItem({
+          tenantAccessToken,
+          item,
+          recordEvents: parsed.recordEvents,
+          recordsById,
+        })
+        recordIdsToRun = autoSyncResult.triggeredRecordIds
+      }
+      if (recordIdsToRun.length === 0)
         continue
       await runWorkflow({
         providerName: 'feishu_bitable',
@@ -209,7 +352,7 @@ export default defineEventHandler(async (event) => {
         actorUserId,
         triggerSource: 'webhook',
         mode: 'delta',
-        recordIds: parsed.recordIds,
+        recordIds: recordIdsToRun,
       }).catch((error) => {
         console.error('[feishu-events] delta sync failed:', {
           syncItemId: item.id,

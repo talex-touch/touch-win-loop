@@ -63,6 +63,7 @@ const syncSteps = [
   '竞赛库、赛道库的时间节点统一映射到 `timelineText`。',
   '资料库重点映射 `contestExternalId / trackExternalId / attachment / attachmentSummary`。',
   '政策库使用 `policy` 实体类型，映射会议名称、简介、日期和各平台资料链接。',
+  '人设库使用 `persona` 实体类型，映射 `externalId / contestExternalId / object / persona1~5`，其中 `对象` 可以是比赛类型、具体赛事名或名人等自由文本。',
   '先点“预检”，确认模拟同步结果正确，再手动执行一次。',
 ]
 
@@ -109,6 +110,10 @@ const faqItems = [
   {
     question: '竞赛和政策为什么分成两个版本页？',
     answer: '竞赛版本会承载竞赛主表、赛道、赛道时间节点和资料；政策库是独立 scope，便于单独审批和发布。',
+  },
+  {
+    question: '人设库里的“对象”字段怎么填？',
+    answer: '对象是自由文本，可以写比赛类别、具体赛事名、名人名称等。系统会把它拼到导入后的人设名称里，例如“ICPC · 人设1”。',
   },
 ]
 </script>

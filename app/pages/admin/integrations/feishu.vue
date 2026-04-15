@@ -6,7 +6,11 @@ import type {
   FeishuAdminOverview,
   FeishuBitableSourceConfig,
   FeishuBitableSync,
+  FeishuBitableSyncDetail,
   FeishuBitableSyncEnvironment,
+  FeishuBitableSyncItem,
+  FeishuBitableSyncItemDetail,
+  FeishuBitableSyncItemEntityType,
   FeishuBitableTableMeta,
   FeishuBitableViewMeta,
   FeishuChatCandidate,
@@ -98,16 +102,19 @@ const manualAddingKey = ref('')
 const syncToggleMutating = reactive<Record<string, boolean>>({})
 const archivingSyncMutating = reactive<Record<string, boolean>>({})
 const restoringSyncMutating = reactive<Record<string, boolean>>({})
+const syncItemToggleMutating = reactive<Record<string, boolean>>({})
 
 const createSyncDrawerVisible = ref(false)
 const editSyncDrawerVisible = ref(false)
 const createSourceMode = ref<CreateSyncSourceMode>('url')
 const configDialogVisible = ref(false)
 const editingSyncId = ref('')
+const editingSelectedItemId = ref('')
 const editingDraftTableId = ref('')
 const editingDraftViewId = ref('')
 const editingSyncIncludeArchived = ref(false)
 const showArchivedSyncs = ref(false)
+const expandedSyncKeys = ref<string[]>([])
 
 const errorText = ref('')
 const successText = ref('')
@@ -119,6 +126,16 @@ const adminOverview = ref<FeishuAdminOverview | null>(null)
 const syncs = ref<FeishuBitableSync[]>([])
 const startupNotifyChatOptions = ref<FeishuChatCandidate[]>([])
 const startupNotifyChatSearchKeyword = ref('')
+const expandedSyncDetails = reactive<Record<string, FeishuBitableSyncDetail | null>>({})
+const expandedSyncLoading = reactive<Record<string, boolean>>({})
+const expandedSyncErrors = reactive<Record<string, string>>({})
+const syncItemLogVisible = ref(false)
+const syncItemLogLoading = ref(false)
+const syncItemLogErrorText = ref('')
+const syncItemLogSyncId = ref('')
+const syncItemLogSyncName = ref('')
+const syncItemLogIncludeArchived = ref(false)
+const syncItemLogItemDetail = ref<FeishuBitableSyncItemDetail | null>(null)
 let startupNotifyChatSearchSequence = 0
 
 const syncColumns = [
@@ -130,6 +147,15 @@ const syncColumns = [
   { title: '问题', dataIndex: 'issueStats', slotName: 'issueStats', width: 120 },
   { title: '更新时间', dataIndex: 'updatedAt', slotName: 'updatedAt', width: 170 },
   { title: '操作', dataIndex: 'actions', slotName: 'actions', width: 340 },
+]
+
+const syncItemPreviewColumns = [
+  { title: '子表同步项', dataIndex: 'name', slotName: 'itemName', width: 260 },
+  { title: '飞书来源', dataIndex: 'source', slotName: 'itemSource', width: 260 },
+  { title: '状态', dataIndex: 'status', slotName: 'itemStatus', width: 170 },
+  { title: '最近执行', dataIndex: 'latestRun', slotName: 'itemLatestRun', width: 240 },
+  { title: '调度状态', dataIndex: 'schedule', slotName: 'itemSchedule', width: 220 },
+  { title: '操作', dataIndex: 'actions', slotName: 'itemActions', width: 220 },
 ]
 
 const canManageConfig = computed(() => permissions.value.includes('role.assign'))
@@ -201,6 +227,15 @@ const SYNC_ENVIRONMENT_OPTIONS: Array<{ value: FeishuBitableSyncEnvironment, lab
   { value: 'production', label: '正式环境', tagColor: 'green', namePrefix: '[正式]' },
 ]
 
+const SYNC_ITEM_ENTITY_TYPE_LABELS: Record<FeishuBitableSyncItemEntityType, string> = {
+  contest: '竞赛',
+  track: '赛道',
+  resource: '资料',
+  persona: '人设',
+  policy: '政策',
+  track_timeline: '赛道时间线',
+}
+
 const sourceResolveLoading = ref(false)
 const sourceViewsLoading = ref(false)
 const sourceTables = ref<FeishuBitableTableMeta[]>([])
@@ -239,6 +274,16 @@ function runStatusLabel(status?: string | null): string {
   return status || '未知'
 }
 
+function runStatusColor(status?: string | null): string {
+  if (status === 'success')
+    return 'green'
+  if (status === 'partial_success')
+    return 'gold'
+  if (status === 'failed')
+    return 'red'
+  return 'gray'
+}
+
 function triggerSourceLabel(source?: string | null): string {
   if (source === 'manual')
     return '手动'
@@ -265,10 +310,70 @@ function syncLatestRunSummary(sync: FeishuBitableSync): string {
   return `${formatDateTime(sync.latestRunSummary.startedAt)} / ${runStatusLabel(sync.latestRunSummary.status)} / ${triggerSourceLabel(sync.latestRunSummary.triggerSource)}`
 }
 
+function syncItemEntityTypeLabel(entityType?: FeishuBitableSyncItemEntityType | null): string {
+  if (!entityType)
+    return '未知类型'
+  return SYNC_ITEM_ENTITY_TYPE_LABELS[entityType] || entityType
+}
+
+function syncItemLatestRunSummary(item: FeishuBitableSyncItem): string {
+  if (!item.latestRunSummary)
+    return '暂无执行记录'
+  return `${formatDateTime(item.latestRunSummary.startedAt)} / ${runStatusLabel(item.latestRunSummary.status)} / ${triggerSourceLabel(item.latestRunSummary.triggerSource)}`
+}
+
+function syncItemScheduleStatusLabel(sync: FeishuBitableSync, item: FeishuBitableSyncItem): string {
+  if (!sync.enabled)
+    return '受主同步影响'
+  if (!item.isEnabled)
+    return '子项已禁用'
+  if (!item.schedule?.enabled)
+    return '未启用调度'
+  return '已启用调度'
+}
+
+function syncItemScheduleStatusColor(sync: FeishuBitableSync, item: FeishuBitableSyncItem): string {
+  if (!sync.enabled)
+    return 'gold'
+  if (!item.isEnabled)
+    return 'gray'
+  if (!item.schedule?.enabled)
+    return 'gray'
+  return 'green'
+}
+
+function syncIssueStatusLabel(status?: string | null): string {
+  if (status === 'open')
+    return '待处理'
+  if (status === 'resolved')
+    return '已解决'
+  if (status === 'ignored')
+    return '已忽略'
+  return status || '未知'
+}
+
+function syncIssueStatusColor(status?: string | null): string {
+  if (status === 'open')
+    return 'red'
+  if (status === 'resolved')
+    return 'green'
+  if (status === 'ignored')
+    return 'gray'
+  return 'gray'
+}
+
+function syncRunModeLabel(mode?: string | null): string {
+  if (mode === 'full')
+    return '全量'
+  if (mode === 'delta')
+    return '增量'
+  return mode || '未标记'
+}
+
 function syncScheduleStatusLabel(sync: FeishuBitableSync): string {
   if (!sync.schedule.enabled)
-    return '未启用'
-  return sync.enabled ? '已启用' : '主同步已禁用'
+    return '已配置未启用'
+  return sync.enabled ? '已启用调度' : '主同步已禁用'
 }
 
 function syncScheduleStatusColor(sync: FeishuBitableSync): string {
@@ -452,6 +557,193 @@ function onViewIdChanged() {
   createSyncForm.viewName = selected?.name || ''
 }
 
+function pruneExpandedSyncPreviewState(availableSyncIds: string[]) {
+  const availableKeys = new Set(availableSyncIds)
+  expandedSyncKeys.value = expandedSyncKeys.value.filter(key => availableKeys.has(key))
+
+  for (const key of Object.keys(expandedSyncDetails)) {
+    if (!availableKeys.has(key))
+      delete expandedSyncDetails[key]
+  }
+
+  for (const key of Object.keys(expandedSyncLoading)) {
+    if (!availableKeys.has(key))
+      delete expandedSyncLoading[key]
+  }
+
+  for (const key of Object.keys(expandedSyncErrors)) {
+    if (!availableKeys.has(key))
+      delete expandedSyncErrors[key]
+  }
+}
+
+async function loadExpandedSyncDetail(sync: FeishuBitableSync, force = false) {
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  if (expandedSyncLoading[syncId])
+    return
+  if (!force && expandedSyncDetails[syncId])
+    return
+
+  expandedSyncLoading[syncId] = true
+  expandedSyncErrors[syncId] = ''
+
+  try {
+    const query = new URLSearchParams({
+      includeInactive: 'true',
+    })
+    if (sync.archivedAt)
+      query.set('includeArchived', 'true')
+
+    expandedSyncDetails[syncId] = await requestApi<FeishuBitableSyncDetail>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}?${query.toString()}`),
+      {},
+      '子表同步项预览加载失败。',
+    )
+  }
+  catch (error: any) {
+    expandedSyncDetails[syncId] = null
+    expandedSyncErrors[syncId] = String(error?.data?.message || '子表同步项预览加载失败。')
+  }
+  finally {
+    expandedSyncLoading[syncId] = false
+  }
+}
+
+function toggleSyncExpanded(sync: FeishuBitableSync) {
+  const syncId = String(sync.id || '').trim()
+  if (!syncId)
+    return
+
+  if (expandedSyncKeys.value.includes(syncId)) {
+    expandedSyncKeys.value = expandedSyncKeys.value.filter(key => key !== syncId)
+    return
+  }
+
+  expandedSyncKeys.value = [...expandedSyncKeys.value, syncId]
+  void loadExpandedSyncDetail(sync)
+}
+
+function handleSyncRowExpand(_: string | number, record: FeishuBitableSync) {
+  void loadExpandedSyncDetail(record)
+}
+
+async function toggleExpandedSyncItemEnabled(sync: FeishuBitableSync, item: FeishuBitableSyncItem, enabled: boolean) {
+  const syncId = String(sync.id || '').trim()
+  const itemId = String(item.id || '').trim()
+  if (!syncId || !itemId)
+    return
+
+  syncItemToggleMutating[itemId] = true
+  clearFeedback()
+  try {
+    await requestApi<FeishuBitableSyncItem>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/items/${encodeURIComponent(itemId)}`),
+      {
+        method: 'PATCH',
+        body: {
+          isEnabled: enabled,
+        },
+      },
+      `子表同步项${enabled ? '启用' : '禁用'}失败。`,
+    )
+    await loadSyncs()
+    setSuccess(`子表同步项“${item.name || itemId}”已${enabled ? '启用' : '禁用'}。`)
+  }
+  catch (error: any) {
+    setError(String(error?.data?.message || `子表同步项${enabled ? '启用' : '禁用'}失败。`))
+  }
+  finally {
+    syncItemToggleMutating[itemId] = false
+  }
+}
+
+async function openSyncItemLogDrawer(sync: FeishuBitableSync, item: FeishuBitableSyncItem) {
+  const syncId = String(sync.id || '').trim()
+  const itemId = String(item.id || '').trim()
+  if (!syncId || !itemId)
+    return
+
+  syncItemLogVisible.value = true
+  syncItemLogLoading.value = true
+  syncItemLogErrorText.value = ''
+  syncItemLogSyncId.value = syncId
+  syncItemLogSyncName.value = String(sync.name || '').trim()
+  syncItemLogIncludeArchived.value = Boolean(sync.archivedAt)
+  syncItemLogItemDetail.value = null
+
+  try {
+    const query = new URLSearchParams({
+      runLimit: '20',
+      issueLimit: '50',
+    })
+    if (syncItemLogIncludeArchived.value)
+      query.set('includeArchived', 'true')
+
+    syncItemLogItemDetail.value = await requestApi<FeishuBitableSyncItemDetail>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/items/${encodeURIComponent(itemId)}?${query.toString()}`),
+      {},
+      '子表同步项日志加载失败。',
+    )
+  }
+  catch (error: any) {
+    syncItemLogErrorText.value = String(error?.data?.message || '子表同步项日志加载失败。')
+  }
+  finally {
+    syncItemLogLoading.value = false
+  }
+}
+
+async function refreshSyncItemLogDrawer() {
+  const syncId = String(syncItemLogSyncId.value || '').trim()
+  const itemId = String(syncItemLogItemDetail.value?.id || '').trim()
+  if (!syncId || !itemId)
+    return
+
+  syncItemLogLoading.value = true
+  syncItemLogErrorText.value = ''
+  try {
+    const query = new URLSearchParams({
+      runLimit: '20',
+      issueLimit: '50',
+    })
+    if (syncItemLogIncludeArchived.value)
+      query.set('includeArchived', 'true')
+    syncItemLogItemDetail.value = await requestApi<FeishuBitableSyncItemDetail>(
+      endpoint(`/admin/integrations/feishu/bitable-syncs/${encodeURIComponent(syncId)}/items/${encodeURIComponent(itemId)}?${query.toString()}`),
+      {},
+      '子表同步项日志加载失败。',
+    )
+  }
+  catch (error: any) {
+    syncItemLogErrorText.value = String(error?.data?.message || '子表同步项日志加载失败。')
+  }
+  finally {
+    syncItemLogLoading.value = false
+  }
+}
+
+function openSyncItemLogEditor() {
+  const itemId = String(syncItemLogItemDetail.value?.id || '').trim()
+  if (!syncItemLogSyncId.value || !itemId)
+    return
+
+  syncItemLogVisible.value = false
+  openEditSyncDrawer(syncItemLogSyncId.value, {
+    selectedItemId: itemId,
+    includeArchived: syncItemLogIncludeArchived.value,
+  })
+}
+
+function openSyncItemEditor(sync: FeishuBitableSync, item: FeishuBitableSyncItem) {
+  openEditSyncDrawer(sync.id, {
+    selectedItemId: item.id,
+    includeArchived: Boolean(sync.archivedAt),
+  })
+}
+
 async function loadPermissions() {
   loadingPermissions.value = true
   try {
@@ -529,9 +821,17 @@ async function loadSyncs() {
       {},
       '多维同步信息加载失败。',
     ) || []
+
+    pruneExpandedSyncPreviewState(syncs.value.map(sync => String(sync.id || '').trim()))
+    for (const syncId of expandedSyncKeys.value) {
+      const target = syncs.value.find(sync => sync.id === syncId)
+      if (target)
+        void loadExpandedSyncDetail(target, true)
+    }
   }
   catch (error: any) {
     syncs.value = []
+    pruneExpandedSyncPreviewState([])
     setError(String(error?.data?.message || '多维同步信息加载失败。'))
   }
   finally {
@@ -801,13 +1101,15 @@ function openCreateSyncDrawer() {
 
 function resetEditSyncDrawerState() {
   editingSyncId.value = ''
+  editingSelectedItemId.value = ''
   editingDraftTableId.value = ''
   editingDraftViewId.value = ''
   editingSyncIncludeArchived.value = false
 }
 
-function openEditSyncDrawer(syncId: string, options?: { draftTableId?: string, draftViewId?: string, includeArchived?: boolean }) {
+function openEditSyncDrawer(syncId: string, options?: { selectedItemId?: string, draftTableId?: string, draftViewId?: string, includeArchived?: boolean }) {
   editingSyncId.value = String(syncId || '').trim()
+  editingSelectedItemId.value = String(options?.selectedItemId || '').trim()
   editingDraftTableId.value = String(options?.draftTableId || '').trim()
   editingDraftViewId.value = String(options?.draftViewId || '').trim()
   editingSyncIncludeArchived.value = options?.includeArchived === true
@@ -979,6 +1281,17 @@ watch(editSyncDrawerVisible, (visible, oldVisible) => {
   void refreshSyncList()
 })
 
+watch(expandedSyncKeys, (currentKeys, previousKeys) => {
+  const previousKeySet = new Set(previousKeys)
+  for (const syncId of currentKeys) {
+    if (previousKeySet.has(syncId))
+      continue
+    const target = syncs.value.find(sync => sync.id === syncId)
+    if (target)
+      void loadExpandedSyncDetail(target)
+  }
+})
+
 async function manualAddContestAdmin(targetUserId: string) {
   if (!canManageConfig.value || !targetUserId)
     return
@@ -1064,25 +1377,6 @@ onMounted(initializePage)
 
 <template>
   <div class="text-[11px] space-y-3">
-    <section class="p-3 border border-slate-200 bg-white">
-      <div class="flex flex-wrap gap-2 items-center justify-between">
-        <div>
-          <h1 class="text-[13px] text-slate-900 tracking-tight font-bold uppercase">
-            飞书多维同步中心
-          </h1>
-          <p class="text-[11px] text-slate-500 mt-1">
-            统一管理飞书多维主库、子表同步项、运行记录与回填链路。
-          </p>
-        </div>
-        <NuxtLink
-          to="/admin/integrations"
-          class="text-[10px] text-slate-700 px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50"
-        >
-          返回集成中心
-        </NuxtLink>
-      </div>
-    </section>
-
     <section v-if="loadingAny" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="10" />
@@ -1174,12 +1468,15 @@ onMounted(initializePage)
           </div>
 
           <a-table
+            v-model:expanded-keys="expandedSyncKeys"
             :columns="syncColumns"
             :data="syncs"
             :pagination="false"
             row-key="id"
             size="small"
             :bordered="{ cell: true }"
+            :expandable="{ width: 48 }"
+            @expand="handleSyncRowExpand"
           >
             <template #name="{ record }">
               <div class="min-w-0">
@@ -1226,6 +1523,9 @@ onMounted(initializePage)
                 <p class="text-[10px] text-slate-500 m-0">
                   {{ record.enabled ? `已启用 ${record.enabledItemCount}` : '主同步已禁用' }}
                 </p>
+                <a-button size="mini" type="text" class="!px-0" @click.stop="toggleSyncExpanded(record)">
+                  {{ expandedSyncKeys.includes(record.id) ? '收起子项' : '展开查看' }}
+                </a-button>
               </div>
             </template>
 
@@ -1324,6 +1624,167 @@ onMounted(initializePage)
                     恢复归档
                   </a-button>
                 </a-popconfirm>
+              </div>
+            </template>
+
+            <template #expand-row="{ record: syncRecord }">
+              <div class="p-3 bg-slate-50 space-y-3">
+                <div class="flex flex-wrap gap-2 items-center justify-between">
+                  <div>
+                    <p class="text-[11px] text-slate-900 font-semibold m-0">
+                      子表同步项快速预览
+                    </p>
+                    <p class="text-[10px] text-slate-500 m-0 mt-1">
+                      这里展示当前主同步下的子表同步项、运行状态和调度概况。
+                    </p>
+                  </div>
+                  <a-button
+                    size="mini"
+                    type="outline"
+                    @click="openEditSyncDrawer(syncRecord.id, { includeArchived: Boolean(syncRecord.archivedAt) })"
+                  >
+                    进入完整编辑
+                  </a-button>
+                </div>
+
+                <section v-if="expandedSyncLoading[syncRecord.id]" class="p-3 border border-slate-200 bg-white">
+                  <a-skeleton :animation="true">
+                    <a-skeleton-line :rows="4" />
+                  </a-skeleton>
+                </section>
+
+                <section
+                  v-else-if="expandedSyncErrors[syncRecord.id]"
+                  class="p-3 border border-rose-200 bg-rose-50 flex flex-wrap gap-2 items-center justify-between"
+                >
+                  <p class="text-[10px] text-rose-600 m-0">
+                    {{ expandedSyncErrors[syncRecord.id] }}
+                  </p>
+                  <a-button size="mini" status="danger" @click="loadExpandedSyncDetail(syncRecord, true)">
+                    重试
+                  </a-button>
+                </section>
+
+                <template v-else-if="expandedSyncDetails[syncRecord.id]?.items?.length">
+                  <div class="text-[10px] text-slate-500 flex flex-wrap gap-2 items-center">
+                    <span>共 {{ expandedSyncDetails[syncRecord.id]?.items?.length || 0 }} 个子表同步项</span>
+                    <span>已启用 {{ expandedSyncDetails[syncRecord.id]?.items?.filter(item => item.isEnabled).length || 0 }} 个</span>
+                  </div>
+
+                  <a-table
+                    :columns="syncItemPreviewColumns"
+                    :data="expandedSyncDetails[syncRecord.id]?.items || []"
+                    :pagination="false"
+                    row-key="id"
+                    size="small"
+                    :bordered="{ cell: true }"
+                  >
+                    <template #itemName="{ record: item }">
+                      <div class="min-w-0">
+                        <div class="flex flex-wrap gap-2 items-center">
+                          <p class="text-[10px] text-slate-900 font-semibold m-0">
+                            {{ item.name }}
+                          </p>
+                          <a-tag size="small" color="arcoblue">
+                            {{ syncItemEntityTypeLabel(item.entityType) }}
+                          </a-tag>
+                          <a-tag v-if="!item.isEnabled" size="small" color="gray">
+                            已禁用
+                          </a-tag>
+                          <a-tag v-else-if="!syncRecord.enabled" size="small" color="gold">
+                            受主同步影响
+                          </a-tag>
+                        </div>
+                        <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                          {{ item.id }}
+                        </p>
+                      </div>
+                    </template>
+
+                    <template #itemSource="{ record: item }">
+                      <div>
+                        <p class="text-[10px] text-slate-700 m-0">
+                          {{ item.source?.tableName || item.tableId || '-' }}
+                          <span class="text-slate-400"> / </span>
+                          {{ item.source?.viewName || item.viewId || '-' }}
+                        </p>
+                        <p class="text-[10px] text-slate-400 font-mono m-0 mt-1 break-all">
+                          {{ item.tableId || '-' }}
+                        </p>
+                      </div>
+                    </template>
+
+                    <template #itemStatus="{ record: item }">
+                      <div class="space-y-1">
+                        <label class="text-[10px] text-slate-500 flex gap-2 items-center">
+                          <span>启用</span>
+                          <a-switch
+                            :model-value="item.isEnabled"
+                            size="small"
+                            :loading="syncItemToggleMutating[item.id]"
+                            :disabled="Boolean(syncRecord.archivedAt)"
+                            @change="(value) => toggleExpandedSyncItemEnabled(syncRecord, item, Boolean(value))"
+                          />
+                        </label>
+                        <a-tag v-if="!syncRecord.enabled" size="small" color="gold">
+                          主同步已禁用
+                        </a-tag>
+                      </div>
+                    </template>
+
+                    <template #itemLatestRun="{ record: item }">
+                      <div class="space-y-1">
+                        <a-tag :color="runStatusColor(item.latestRunSummary?.status)" size="small">
+                          {{ item.latestRunSummary ? runStatusLabel(item.latestRunSummary.status) : '未执行' }}
+                        </a-tag>
+                        <p class="text-[10px] text-slate-500 m-0">
+                          {{ syncItemLatestRunSummary(item) }}
+                        </p>
+                        <p v-if="item.latestRunSummary?.errorCount" class="text-[10px] text-rose-500 m-0">
+                          最近错误数：{{ item.latestRunSummary.errorCount }}
+                        </p>
+                      </div>
+                    </template>
+
+                    <template #itemSchedule="{ record: item }">
+                      <div class="space-y-1">
+                        <a-tag :color="syncItemScheduleStatusColor(syncRecord, item)" size="small">
+                          {{ syncItemScheduleStatusLabel(syncRecord, item) }}
+                        </a-tag>
+                        <p class="text-[10px] text-slate-500 m-0">
+                          模式：{{ scheduleModeLabel(item.schedule?.mode) }}
+                        </p>
+                        <p class="text-[10px] text-slate-500 m-0">
+                          下次：{{ formatDateTime(item.scheduleRuntime?.nextRunAt) }}
+                        </p>
+                      </div>
+                    </template>
+
+                    <template #itemActions="{ record: item }">
+                      <div class="flex flex-wrap gap-1">
+                        <a-button
+                          size="mini"
+                          @click="openSyncItemLogDrawer(syncRecord, item)"
+                        >
+                          执行日志
+                        </a-button>
+                        <a-button
+                          size="mini"
+                          type="primary"
+                          @click="openSyncItemEditor(syncRecord, item)"
+                        >
+                          编辑子项
+                        </a-button>
+                      </div>
+                    </template>
+                  </a-table>
+                </template>
+
+                <section v-else class="p-3 border border-slate-300 border-dashed bg-white">
+                  <p class="text-[10px] text-slate-500 m-0">
+                    当前还没有子表同步项。可以直接进入编辑抽屉新增并配置字段映射。
+                  </p>
+                </section>
               </div>
             </template>
           </a-table>
@@ -1891,13 +2352,153 @@ onMounted(initializePage)
       <AdminFeishuBitableSyncEditor
         v-if="editingSyncId"
         :sync-id="editingSyncId"
+        :selected-item-id="editingSelectedItemId"
         :draft-table-id="editingDraftTableId"
         :draft-view-id="editingDraftViewId"
         :include-archived="editingSyncIncludeArchived"
         :embedded="true"
         :show-back-button="false"
+        @item-change="(itemId) => editingSelectedItemId = itemId"
         @updated="refreshSyncList"
       />
+    </a-drawer>
+
+    <a-drawer
+      v-model:visible="syncItemLogVisible"
+      title="子表同步项执行日志"
+      width="960px"
+      :footer="false"
+    >
+      <div class="space-y-4">
+        <section class="p-3 border border-slate-200 bg-slate-50 space-y-2">
+          <div class="flex flex-wrap gap-2 items-center justify-between">
+            <div class="space-y-1">
+              <p class="text-[12px] text-slate-900 font-semibold m-0">
+                {{ syncItemLogItemDetail?.name || '正在加载子表同步项' }}
+              </p>
+              <p class="text-[10px] text-slate-500 m-0">
+                主同步：{{ syncItemLogSyncName || syncItemLogSyncId || '-' }}
+              </p>
+              <p v-if="syncItemLogItemDetail" class="text-[10px] text-slate-500 m-0 break-all">
+                子表：{{ syncItemLogItemDetail.source?.tableName || syncItemLogItemDetail.tableId || '-' }}
+                /
+                视图：{{ syncItemLogItemDetail.source?.viewName || syncItemLogItemDetail.viewId || '全部视图' }}
+              </p>
+            </div>
+            <div class="flex gap-2">
+              <a-button size="small" :loading="syncItemLogLoading" :disabled="!syncItemLogItemDetail" @click="refreshSyncItemLogDrawer">
+                刷新
+              </a-button>
+              <a-button
+                size="small"
+                type="primary"
+                :disabled="!syncItemLogItemDetail"
+                @click="openSyncItemLogEditor"
+              >
+                进入子项配置
+              </a-button>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="syncItemLogLoading" class="p-3 border border-slate-200 bg-white">
+          <a-skeleton :animation="true">
+            <a-skeleton-line :rows="8" />
+          </a-skeleton>
+        </section>
+
+        <section v-else-if="syncItemLogErrorText" class="p-3 border border-rose-200 bg-rose-50 space-y-2">
+          <p class="text-[10px] text-rose-600 m-0">
+            {{ syncItemLogErrorText }}
+          </p>
+          <a-button size="small" status="danger" @click="refreshSyncItemLogDrawer">
+            重新加载
+          </a-button>
+        </section>
+
+        <template v-else-if="syncItemLogItemDetail">
+          <section class="gap-4 grid xl:grid-cols-2">
+            <div class="p-4 border border-slate-200 bg-white space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                  最近执行
+                </h3>
+                <a-tag size="small" :color="runStatusColor(syncItemLogItemDetail.latestRunSummary?.status)">
+                  {{ syncItemLogItemDetail.latestRunSummary ? runStatusLabel(syncItemLogItemDetail.latestRunSummary.status) : '未执行' }}
+                </a-tag>
+              </div>
+              <div v-if="syncItemLogItemDetail.recentRuns.length" class="space-y-2">
+                <div v-for="run in syncItemLogItemDetail.recentRuns" :key="run.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <a-tag :color="runStatusColor(run.status)" size="small">
+                      {{ runStatusLabel(run.status) }}
+                    </a-tag>
+                    <a-tag size="small">
+                      {{ triggerSourceLabel(run.triggerSource) }}
+                    </a-tag>
+                    <a-tag size="small" color="arcoblue">
+                      {{ syncRunModeLabel(run.mode) }}
+                    </a-tag>
+                    <span class="text-[10px] text-slate-500 font-mono">{{ run.id }}</span>
+                  </div>
+                  <p class="text-[10px] text-slate-700 m-0">
+                    开始：{{ formatDateTime(run.startedAt) }} / 结束：{{ formatDateTime(run.finishedAt) }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    抓取 {{ run.fetchedCount }} / 新增 {{ run.createdCount }} / 更新 {{ run.updatedCount }} / 跳过 {{ run.skippedCount }} / 错误 {{ run.errorCount }}
+                  </p>
+                  <p v-if="run.deltaRecordCount !== undefined" class="text-[10px] text-slate-500 m-0">
+                    Delta 记录数：{{ run.deltaRecordCount }}
+                  </p>
+                  <p v-if="run.errorMessage" class="text-[10px] text-rose-500 m-0 break-all">
+                    错误摘要：{{ run.errorMessage }}
+                  </p>
+                </div>
+              </div>
+              <a-empty v-else description="暂无执行记录" />
+            </div>
+
+            <div class="p-4 border border-slate-200 bg-white space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-[12px] text-slate-900 font-semibold m-0">
+                  关联问题
+                </h3>
+                <div class="flex gap-2">
+                  <a-tag size="small" color="gold">
+                    待处理 {{ syncItemLogItemDetail.issueStats.open }}
+                  </a-tag>
+                  <a-tag size="small">
+                    总计 {{ syncItemLogItemDetail.issueStats.total }}
+                  </a-tag>
+                </div>
+              </div>
+              <div v-if="syncItemLogItemDetail.issues.length" class="space-y-2">
+                <div v-for="issue in syncItemLogItemDetail.issues" :key="issue.id" class="p-3 border border-slate-200 rounded bg-slate-50 space-y-2">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <a-tag :color="syncIssueStatusColor(issue.status)" size="small">
+                      {{ syncIssueStatusLabel(issue.status) }}
+                    </a-tag>
+                    <a-tag size="small">
+                      {{ issue.reasonCode || '未标记原因' }}
+                    </a-tag>
+                    <span class="text-[10px] text-slate-500 font-mono">{{ issue.id }}</span>
+                  </div>
+                  <p class="text-[10px] text-slate-700 m-0 break-all">
+                    {{ issue.message }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0 break-all">
+                    externalId={{ issue.externalId || '-' }} / recordId={{ issue.recordId || '-' }}
+                  </p>
+                  <p class="text-[10px] text-slate-500 m-0">
+                    更新时间：{{ formatDateTime(issue.updatedAt) }}
+                  </p>
+                </div>
+              </div>
+              <a-empty v-else description="暂无问题单" />
+            </div>
+          </section>
+        </template>
+      </div>
     </a-drawer>
 
     <a-modal

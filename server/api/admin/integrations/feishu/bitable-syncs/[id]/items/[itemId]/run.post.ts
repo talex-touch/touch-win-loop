@@ -81,6 +81,16 @@ export default defineEventHandler(async (event) => {
         attempts: 1,
       }, 40166)
     }
+    if (code.includes('自动同步规则')) {
+      setResponseStatus(event, 400)
+      return fail(code, {
+        startedAt,
+        provider: runtime.ai.provider,
+        model: runtime.ai.model,
+        fallbackUsed: false,
+        attempts: 1,
+      }, 40167)
+    }
     throw error
   }) as {
     runId: string

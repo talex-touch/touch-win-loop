@@ -87,17 +87,17 @@ describe('defense-persona-preset-store', () => {
       presets: [
         createPreset({
           id: 'preset-business',
-          externalId: 'persona-business',
-          judgeType: 'business',
-          name: '商业评委',
+          externalId: 'persona-icpc-2',
+          judgeType: 'custom',
+          name: 'ICPC · 人设2',
           enabled: false,
           sortOrder: 20,
         }),
         createPreset({
           id: 'preset-technical',
-          externalId: 'persona-technical',
-          judgeType: 'technical',
-          name: '技术评委',
+          externalId: 'persona-icpc-1',
+          judgeType: 'custom',
+          name: 'ICPC · 人设1',
           sortOrder: 5,
         }),
       ],
@@ -114,14 +114,14 @@ describe('defense-persona-preset-store', () => {
       })),
       [
         {
-          sourceTemplateKey: 'preset:persona-technical',
-          judgeType: 'technical',
+          sourceTemplateKey: 'preset:persona-icpc-1',
+          judgeType: 'custom',
           enabled: true,
           sortOrder: 5,
         },
         {
-          sourceTemplateKey: 'preset:persona-business',
-          judgeType: 'business',
+          sourceTemplateKey: 'preset:persona-icpc-2',
+          judgeType: 'custom',
           enabled: false,
           sortOrder: 20,
         },

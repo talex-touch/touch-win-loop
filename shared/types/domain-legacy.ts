@@ -3330,6 +3330,7 @@ export interface FeishuBitableSyncItemPreviewRequest {
   mapping?: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
   options?: Record<string, unknown>
   writeback?: FeishuBitableWritebackConfig | Record<string, unknown>
+  autoSync?: FeishuBitableAutoSyncConfig | Record<string, unknown>
 }
 
 export interface FeishuConfigValidationResult {
@@ -3367,6 +3368,20 @@ export interface FeishuBitableWritebackConfig {
     failed?: string
     skipped?: string
   }
+}
+
+export interface FeishuBitableAutoSyncConfig {
+  enabled?: boolean
+  recordStatusField?: string
+  syncStatusField?: string
+  completedValues?: string[]
+  pendingValues?: string[]
+  syncedValues?: string[]
+  resetRecordStatusValue?: string
+  resetSyncStatusValue?: string
+  useMappedFieldsAsWatched?: boolean
+  watchedFieldNames?: string[]
+  ignoredFieldNames?: string[]
 }
 
 export interface FeishuBitableAppMeta {
@@ -3607,6 +3622,7 @@ export interface FeishuBitableSyncItem {
   viewId: string
   source?: FeishuBitableSourceConfig
   writeback?: FeishuBitableWritebackConfig
+  autoSync?: FeishuBitableAutoSyncConfig
   isEnabled: boolean
   mapping: FeishuMappingV1 | FeishuMappingConfigV2 | Record<string, unknown>
   options: Record<string, unknown>

@@ -1,4 +1,5 @@
 import type {
+  FeishuBitableAutoSyncConfig,
   FeishuBitableSourceConfig,
   FeishuBitableSyncItem,
   FeishuBitableSyncItemEntityType,
@@ -20,6 +21,7 @@ interface PatchItemBody {
   viewId?: string
   source?: FeishuBitableSourceConfig
   writeback?: FeishuBitableWritebackConfig
+  autoSync?: FeishuBitableAutoSyncConfig
   isEnabled?: boolean
   mapping?: Record<string, unknown>
   options?: Record<string, unknown>
@@ -89,6 +91,7 @@ export default defineEventHandler(async (event) => {
         viewId: body.viewId,
         source: body.source,
         writeback: body.writeback,
+        autoSync: body.autoSync,
         isEnabled: body.isEnabled,
         mapping: body.mapping,
         options: body.options,

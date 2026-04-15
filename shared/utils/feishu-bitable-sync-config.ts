@@ -1,12 +1,15 @@
 import type {
+  FeishuBitableAutoSyncConfig,
   FeishuBitableSyncItemEntityType,
   FeishuBitableWritebackConfig,
 } from '../types/domain'
+import { PERSONA_SLOT_FIELD_KEYS } from './feishu-persona-sync'
 
 export interface FeishuDefaultSyncItemConfig {
   mapping: Record<string, unknown>
   options: Record<string, unknown>
   writeback: FeishuBitableWritebackConfig
+  autoSync: FeishuBitableAutoSyncConfig
 }
 
 const ENTITY_TYPE_SOURCE_HINTS: Record<FeishuBitableSyncItemEntityType, string[]> = {
@@ -24,7 +27,7 @@ const REQUIRED_MAPPING_FIELD_KEYS: Record<FeishuBitableSyncItemEntityType, strin
   track_timeline: ['externalId', 'contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['externalId', 'contestExternalId', 'title', 'attachment'],
   policy: ['externalId', 'meetingName'],
-  persona: ['externalId', 'contestExternalId', 'judgeType', 'name', 'systemPrompt'],
+  persona: ['externalId', 'contestExternalId', 'object', PERSONA_SLOT_FIELD_KEYS[0]],
 }
 
 function buildDefaultWriteback(): FeishuBitableWritebackConfig {
@@ -47,6 +50,22 @@ function buildDefaultWriteback(): FeishuBitableWritebackConfig {
   }
 }
 
+function buildDefaultAutoSync(): FeishuBitableAutoSyncConfig {
+  return {
+    enabled: false,
+    recordStatusField: '记录状态',
+    syncStatusField: '同步信息',
+    completedValues: ['已完成'],
+    pendingValues: ['未同步'],
+    syncedValues: ['已同步'],
+    resetRecordStatusValue: '撰写中',
+    resetSyncStatusValue: '未同步',
+    useMappedFieldsAsWatched: true,
+    watchedFieldNames: [],
+    ignoredFieldNames: [],
+  }
+}
+
 export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEntityType): FeishuDefaultSyncItemConfig {
   if (entityType === 'contest') {
     return {
@@ -65,6 +84,7 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
       },
       options: {},
       writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
     }
   }
 
@@ -95,6 +115,7 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
         contestId: '',
       },
       writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
     }
   }
 
@@ -115,6 +136,7 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
       },
       options: {},
       writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
     }
   }
 
@@ -141,6 +163,7 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
       },
       options: {},
       writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
     }
   }
 
@@ -149,20 +172,18 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
       mapping: {
         externalIdField: '',
         contestExternalIdField: '',
-        trackExternalIdField: '',
         fieldMap: {
-          judgeType: '',
-          name: '',
-          summary: '',
-          systemPrompt: '',
-          focusAreas: '',
-          scoringRubric: '',
-          sortOrder: '',
-          enabled: '',
+          object: '',
+          persona1: '',
+          persona2: '',
+          persona3: '',
+          persona4: '',
+          persona5: '',
         },
       },
       options: {},
       writeback: buildDefaultWriteback(),
+      autoSync: buildDefaultAutoSync(),
     }
   }
 
@@ -186,6 +207,7 @@ export function buildDefaultSyncItemConfig(entityType: FeishuBitableSyncItemEnti
       defaultResourceAccessLevel: 'public',
     },
     writeback: buildDefaultWriteback(),
+    autoSync: buildDefaultAutoSync(),
   }
 }
 
@@ -215,7 +237,7 @@ export function suggestSyncItemEntityType(input: {
     return null
 
   for (const entityType of ['persona', 'track_timeline', 'track', 'policy', 'resource', 'contest'] as const) {
-    const hints = ENTITY_TYPE_SOURCE_HINTS[entityType]
+    const hints = ENTITY_TYPE_SOURCE_HINTS[entityType] || []
     if (hints.some(hint => sourceText.includes(normalizeSourceHintText(hint))))
       return entityType
   }

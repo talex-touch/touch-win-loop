@@ -8,6 +8,7 @@ import type {
   FeishuAdminOverviewContestAdmin,
   FeishuAuthBindStatus,
   FeishuAuthUnbindResult,
+  FeishuBitableAutoSyncConfig,
   FeishuBitableSourceConfig,
   FeishuBitableSync,
   FeishuBitableSyncDetail,
@@ -69,6 +70,7 @@ interface FeishuBitableSyncItemRow {
   view_id: string
   source_json: Record<string, unknown>
   writeback_json: Record<string, unknown>
+  auto_sync_json: Record<string, unknown>
   is_enabled: boolean
   mapping_json: Record<string, unknown>
   options_json: Record<string, unknown>
@@ -375,6 +377,31 @@ function normalizeWritebackConfig(raw: unknown): FeishuBitableWritebackConfig {
   }
 }
 
+function normalizeStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw))
+    return []
+  return [...new Set(raw.map(item => toText(item)).filter(Boolean))]
+}
+
+function normalizeAutoSyncConfig(raw: unknown): FeishuBitableAutoSyncConfig {
+  const source = parseJsonObject(raw)
+  return {
+    enabled: source.enabled === undefined ? false : Boolean(source.enabled),
+    recordStatusField: toText(source.recordStatusField),
+    syncStatusField: toText(source.syncStatusField),
+    completedValues: normalizeStringList(source.completedValues),
+    pendingValues: normalizeStringList(source.pendingValues),
+    syncedValues: normalizeStringList(source.syncedValues),
+    resetRecordStatusValue: toText(source.resetRecordStatusValue),
+    resetSyncStatusValue: toText(source.resetSyncStatusValue),
+    useMappedFieldsAsWatched: source.useMappedFieldsAsWatched === undefined
+      ? true
+      : Boolean(source.useMappedFieldsAsWatched),
+    watchedFieldNames: normalizeStringList(source.watchedFieldNames),
+    ignoredFieldNames: normalizeStringList(source.ignoredFieldNames),
+  }
+}
+
 function parseTaskSchedule(row: {
   schedule_enabled: boolean
   schedule_mode: 'interval' | 'cron'
@@ -528,6 +555,7 @@ function toSyncItem(row: FeishuBitableSyncItemRow): FeishuBitableSyncItem {
       viewId: row.view_id || '',
     }),
     writeback: normalizeWritebackConfig(row.writeback_json),
+    autoSync: normalizeAutoSyncConfig(row.auto_sync_json),
     isEnabled: Boolean(row.is_enabled),
     mapping: parseJsonObject(row.mapping_json),
     options: parseJsonObject(row.options_json),
@@ -1707,6 +1735,7 @@ export async function listFeishuBitableSyncItems(
       t.view_id,
       t.source_json,
       t.writeback_json,
+      t.auto_sync_json,
       t.is_enabled,
       t.mapping_json,
       t.options_json,
@@ -1772,6 +1801,7 @@ export async function getFeishuBitableSyncItemById(
       t.view_id,
       t.source_json,
       t.writeback_json,
+      t.auto_sync_json,
       t.is_enabled,
       t.mapping_json,
       t.options_json,
@@ -1832,6 +1862,7 @@ export async function createFeishuBitableSyncItem(
     viewId?: string
     source?: FeishuBitableSourceConfig
     writeback?: FeishuBitableWritebackConfig
+    autoSync?: FeishuBitableAutoSyncConfig
     isEnabled?: boolean
     mapping?: Record<string, unknown>
     options?: Record<string, unknown>
@@ -1883,6 +1914,7 @@ export async function createFeishuBitableSyncItem(
       view_id,
       source_json,
       writeback_json,
+      auto_sync_json,
       is_enabled,
       mapping_json,
       options_json,
@@ -1902,7 +1934,7 @@ export async function createFeishuBitableSyncItem(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10, $11::JSONB, $12::JSONB, NULL, $13, $14, $15, $16, $17, $18, NULL, '', NULL, NULL, $19, $19, NOW(), NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10::JSONB, $11, $12::JSONB, $13::JSONB, NULL, $14, $15, $16, $17, $18, $19, NULL, '', NULL, NULL, $20, $20, NOW(), NOW()
     )
     RETURNING
       id,
@@ -1914,6 +1946,7 @@ export async function createFeishuBitableSyncItem(
       view_id,
       source_json,
       writeback_json,
+      auto_sync_json,
       is_enabled,
       mapping_json,
       options_json,
@@ -1947,6 +1980,7 @@ export async function createFeishuBitableSyncItem(
       toText(input.viewId),
       JSON.stringify(parseJsonObject(resolvedSource)),
       JSON.stringify(parseJsonObject(input.writeback)),
+      JSON.stringify(parseJsonObject(input.autoSync)),
       input.isEnabled !== false,
       JSON.stringify(parseJsonObject(input.mapping)),
       JSON.stringify(parseJsonObject(input.options)),
@@ -2002,6 +2036,7 @@ export async function patchFeishuBitableSyncItem(
       viewId?: string
       source?: FeishuBitableSourceConfig
       writeback?: FeishuBitableWritebackConfig
+      autoSync?: FeishuBitableAutoSyncConfig
       isEnabled?: boolean
       mapping?: Record<string, unknown>
       options?: Record<string, unknown>
@@ -2052,6 +2087,8 @@ export async function patchFeishuBitableSyncItem(
   }
   if (input.patch.writeback !== undefined)
     addSet('writeback_json', JSON.stringify(parseJsonObject(input.patch.writeback)))
+  if (input.patch.autoSync !== undefined)
+    addSet('auto_sync_json', JSON.stringify(parseJsonObject(input.patch.autoSync)))
   if (input.patch.isEnabled !== undefined)
     addSet('is_enabled', Boolean(input.patch.isEnabled))
   if (input.patch.mapping !== undefined)
@@ -2657,6 +2694,32 @@ export async function getFeishuExternalRefByEntityId(
   }
 }
 
+export async function listFeishuExternalRefExternalIdsBySyncItemId(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    syncItemId: string
+  },
+): Promise<string[]> {
+  const syncItemId = toText(input.syncItemId)
+  if (!syncItemId)
+    return []
+
+  const result = await db.query<{ external_id: string }>(
+    `SELECT external_id
+     FROM feishu_external_refs
+     WHERE provider = 'feishu_bitable'
+       AND scope = $1
+       AND sync_item_id = $2
+     ORDER BY external_id ASC`,
+    [input.scope, syncItemId],
+  )
+
+  return result.rows
+    .map(row => toText(row.external_id))
+    .filter(Boolean)
+}
+
 export async function upsertFeishuExternalRef(
   db: Queryable,
   input: {
@@ -2696,6 +2759,47 @@ export async function upsertFeishuExternalRef(
       JSON.stringify(parseJsonObject(input.metadata)),
     ],
   )
+}
+
+export async function deleteFeishuExternalRefsByExternalIds(
+  db: Queryable,
+  input: {
+    scope: FeishuBitableSyncItemEntityType
+    syncItemId?: string | null
+    externalIds: string[]
+  },
+): Promise<number> {
+  const externalIds = [...new Set(input.externalIds.map(item => toText(item)).filter(Boolean))]
+  if (externalIds.length === 0)
+    return 0
+
+  const syncItemId = toText(input.syncItemId)
+  const result = syncItemId
+    ? await db.query<{ deleted_count: string }>(
+        `WITH deleted AS (
+          DELETE FROM feishu_external_refs
+          WHERE provider = 'feishu_bitable'
+            AND scope = $1
+            AND sync_item_id = $2
+            AND external_id = ANY($3::TEXT[])
+          RETURNING 1
+        )
+        SELECT COUNT(*)::TEXT AS deleted_count FROM deleted`,
+        [input.scope, syncItemId, externalIds],
+      )
+    : await db.query<{ deleted_count: string }>(
+        `WITH deleted AS (
+          DELETE FROM feishu_external_refs
+          WHERE provider = 'feishu_bitable'
+            AND scope = $1
+            AND external_id = ANY($2::TEXT[])
+          RETURNING 1
+        )
+        SELECT COUNT(*)::TEXT AS deleted_count FROM deleted`,
+        [input.scope, externalIds],
+      )
+
+  return Math.max(0, Number(result.rows[0]?.deleted_count || 0) || 0)
 }
 
 export function buildDefaultReconcileResult(input: {
@@ -2909,6 +3013,7 @@ export async function listActiveFeishuBitableSyncItemsBySource(
       t.view_id,
       t.source_json,
       t.writeback_json,
+      t.auto_sync_json,
       t.is_enabled,
       t.mapping_json,
       t.options_json,

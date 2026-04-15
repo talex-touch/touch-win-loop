@@ -2,13 +2,13 @@ import type { H3Event } from 'h3'
 import type { FeishuBitableRecord } from '~~/server/services/feishu/client'
 import type { Queryable } from '~~/server/utils/db'
 import type {
-  AiDefensePersonaJudgeType,
+  ContestLevel,
   ContestReleaseContestSnapshot,
   ContestReleaseResourceSnapshot,
   ContestReleaseTimelineSnapshot,
   ContestReleaseTrackSnapshot,
   ContestReleaseTrackTimelineSnapshot,
-  ContestLevel,
+  FeishuBitableAutoSyncConfig,
   FeishuBitableSourceConfig,
   FeishuBitableSyncItemEntityType,
   FeishuBitableSyncItemPreviewRequest,
@@ -20,13 +20,12 @@ import type {
   FeishuMappedPreviewRow,
   FeishuPreviewIssueCounts,
   FeishuSyncRunMode,
+  PolicyLibraryItemSnapshot,
   ResourceAvailability,
   ResourceCategory,
   ResourceStatus,
-  RubricDimension,
   ScopeType,
   TimelineNodeType,
-  PolicyLibraryItemSnapshot,
 } from '~~/shared/types/domain'
 import { createHash } from 'node:crypto'
 import jsonata from 'jsonata'
@@ -38,6 +37,24 @@ import {
   listFeishuBitableTables,
   listFeishuBitableViews,
 } from '~~/server/services/feishu/client'
+import { withClient, withTransaction } from '~~/server/utils/db'
+import {
+  deleteDefensePersonaPresetsByExternalIds,
+  getDefensePersonaPresetByExternalId,
+  listDefensePersonaPresetExternalIdsBySyncItemId,
+  upsertDefensePersonaPreset,
+} from '~~/server/utils/defense-persona-preset-store'
+import {
+  completeFeishuBitableSyncItemRun,
+  createFeishuBitableSyncItemRun,
+  deleteFeishuExternalRefsByExternalIds,
+  getFeishuBitableSyncById,
+  getFeishuBitableSyncItemById,
+  listFeishuExternalRefExternalIdsBySyncItemId,
+  readFeishuIntegrationConfig,
+  upsertFeishuExternalRef,
+  upsertFeishuSyncIssue,
+} from '~~/server/utils/feishu-integration-store'
 import {
   buildContestDerivedTimelineExternalId,
   buildTrackDerivedTimelineExternalId,
@@ -46,19 +63,13 @@ import {
   upsertPolicyLibraryReleaseDraft,
 } from '~~/server/utils/release-store'
 import {
-  getDefensePersonaPresetByExternalId,
-  upsertDefensePersonaPreset,
-} from '~~/server/utils/defense-persona-preset-store'
-import { withClient, withTransaction } from '~~/server/utils/db'
-import {
-  completeFeishuBitableSyncItemRun,
-  createFeishuBitableSyncItemRun,
-  getFeishuBitableSyncById,
-  getFeishuBitableSyncItemById,
-  readFeishuIntegrationConfig,
-  upsertFeishuExternalRef,
-  upsertFeishuSyncIssue,
-} from '~~/server/utils/feishu-integration-store'
+  buildFeishuPersonaSyncDrafts,
+  computeFeishuPersonaStaleExternalIds,
+  countFeishuPersonaFilledSlots,
+  PERSONA_SLOT_FIELD_KEYS,
+  pickFeishuPersonaAggregateStatus,
+  summarizeFeishuPersonaRowResult,
+} from '~~/shared/utils/feishu-persona-sync'
 
 interface SyncSummary {
   fetchedCount: number
@@ -113,6 +124,12 @@ interface ApplyRecordResult {
   status: 'created' | 'updated' | 'skipped'
   externalId: string
   entityId?: string
+  summaryCounts?: {
+    createdCount: number
+    updatedCount: number
+    skippedCount: number
+  }
+  activeExternalIds?: string[]
   reasonCode?: string
   message?: string
   payload?: Record<string, unknown>
@@ -134,6 +151,20 @@ interface NormalizedWriteback {
     failed: string
     skipped: string
   }
+}
+
+interface NormalizedAutoSync {
+  enabled: boolean
+  recordStatusField: string
+  syncStatusField: string
+  completedValues: string[]
+  pendingValues: string[]
+  syncedValues: string[]
+  resetRecordStatusValue: string
+  resetSyncStatusValue: string
+  useMappedFieldsAsWatched: boolean
+  watchedFieldNames: string[]
+  ignoredFieldNames: string[]
 }
 
 const RAW_TABLE_PREVIEW_SAMPLE_LIMIT = 100
@@ -215,15 +246,8 @@ const TARGET_PREVIEW_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> =
   persona: [
     'externalId',
     'contestExternalId',
-    'trackExternalId',
-    'judgeType',
-    'name',
-    'summary',
-    'systemPrompt',
-    'focusAreas',
-    'scoringRubric',
-    'sortOrder',
-    'enabled',
+    'object',
+    ...PERSONA_SLOT_FIELD_KEYS,
   ],
 }
 
@@ -233,7 +257,7 @@ const REQUIRED_TARGET_FIELDS: Record<FeishuBitableSyncItemEntityType, string[]> 
   track_timeline: ['contestExternalId', 'trackExternalId', 'nodeType'],
   resource: ['contestExternalId', 'title', 'attachment'],
   policy: ['externalId', 'meetingName'],
-  persona: ['externalId', 'contestExternalId', 'judgeType', 'name', 'systemPrompt'],
+  persona: ['externalId', 'contestExternalId', 'object'],
 }
 
 const ARRAY_PREVIEW_FIELDS = new Set([
@@ -245,7 +269,6 @@ const ARRAY_PREVIEW_FIELDS = new Set([
   'evidenceRequirements',
   'scoringPoints',
   'deductionItems',
-  'focusAreas',
 ])
 
 function parseJsonObject(raw: unknown): Record<string, unknown> {
@@ -443,6 +466,42 @@ function pickFieldText(record: FeishuBitableRecord, fieldName: string): string {
   return normalizeSpecialText(raw)
 }
 
+function ensureAutoSyncConfigReady(autoSync: NormalizedAutoSync): void {
+  if (!autoSync.enabled)
+    return
+  if (!autoSync.recordStatusField)
+    throw new Error('已启用自动同步规则，但缺少记录状态字段。')
+  if (!autoSync.syncStatusField)
+    throw new Error('已启用自动同步规则，但缺少同步信息字段。')
+  if (!autoSync.completedValues.length)
+    throw new Error('已启用自动同步规则，但缺少“完成状态值”。')
+  if (!autoSync.pendingValues.length)
+    throw new Error('已启用自动同步规则，但缺少“待同步值”。')
+}
+
+function validateAutoSyncFields(autoSync: NormalizedAutoSync, records: FeishuBitableRecord[]): void {
+  if (!autoSync.enabled || !records.length)
+    return
+  const sourceFields = new Set(collectRecordFieldNames(records))
+  const missingFields = [autoSync.recordStatusField, autoSync.syncStatusField]
+    .filter(Boolean)
+    .filter(fieldName => !sourceFields.has(fieldName))
+  if (!missingFields.length)
+    return
+  throw new Error(`自动同步规则字段在当前视图中不存在：${[...new Set(missingFields)].join(' / ')}。`)
+}
+
+function filterRecordsByAutoSync(records: FeishuBitableRecord[], autoSync: NormalizedAutoSync): FeishuBitableRecord[] {
+  if (!autoSync.enabled)
+    return records
+
+  return records.filter((record) => {
+    const recordStatus = pickFieldText(record, autoSync.recordStatusField)
+    const syncStatus = pickFieldText(record, autoSync.syncStatusField)
+    return autoSync.completedValues.includes(recordStatus) && autoSync.pendingValues.includes(syncStatus)
+  })
+}
+
 function mapContestLevel(raw: string): ContestLevel {
   const value = String(raw || '').trim().toLowerCase()
   if (!value)
@@ -546,92 +605,6 @@ function inferTimelineYear(input: {
     .find(value => Number.isInteger(value) && value >= 2000 && value <= 2100)
 
   return fromDate || new Date().getFullYear()
-}
-
-function normalizeBooleanLike(raw: unknown, fallback = true): boolean {
-  if (typeof raw === 'boolean')
-    return raw
-  if (typeof raw === 'number')
-    return raw !== 0
-
-  const value = toText(raw).toLowerCase()
-  if (!value)
-    return fallback
-  if (['true', '1', 'yes', 'y', 'enabled', 'on', '启用', '是', '开启'].includes(value))
-    return true
-  if (['false', '0', 'no', 'n', 'disabled', 'off', '停用', '否', '关闭'].includes(value))
-    return false
-  return fallback
-}
-
-function normalizePersonaJudgeType(raw: unknown): AiDefensePersonaJudgeType | null {
-  const value = toText(raw).toLowerCase()
-  if (!value)
-    return null
-  if (value === 'technical' || value.includes('技术'))
-    return 'technical'
-  if (value === 'business' || value.includes('业务') || value.includes('商业'))
-    return 'business'
-  if (value === 'expression' || value.includes('表达') || value.includes('答辩'))
-    return 'expression'
-  if (value === 'custom' || value.includes('自定义'))
-    return 'custom'
-  return null
-}
-
-function normalizeLooseStringArray(raw: unknown): string[] {
-  const arrayValues = toStringArray(raw)
-  if (arrayValues.length > 1)
-    return [...new Set(arrayValues)]
-
-  const single = arrayValues[0] || toText(raw)
-  if (!single)
-    return []
-  return [...new Set(single.split(/[|,，、;；\n]/g).map(item => item.trim()).filter(Boolean))]
-}
-
-function normalizeLooseRubricDimensions(raw: unknown): RubricDimension[] {
-  const source = Array.isArray(raw)
-    ? raw
-    : (() => {
-        const text = toText(raw)
-        if (!text)
-          return []
-        try {
-          const parsed = JSON.parse(text)
-          return Array.isArray(parsed) ? parsed : []
-        }
-        catch {
-          return []
-        }
-      })()
-
-  if (!Array.isArray(source))
-    return []
-
-  const next: RubricDimension[] = []
-  for (const item of source) {
-    if (!item || typeof item !== 'object' || Array.isArray(item))
-      continue
-    const record = item as Record<string, unknown>
-    const key = toText(record.key)
-    const name = toText(record.name)
-    const description = toText(record.description)
-    if (!key || !name || !description)
-      continue
-
-    const weight = Number(record.weight)
-    next.push({
-      key,
-      name,
-      description,
-      weight: Number.isFinite(weight) ? weight : undefined,
-      scoringPoint: toText(record.scoringPoint),
-      deductionPoint: toText(record.deductionPoint),
-      evidenceRequirement: toText(record.evidenceRequirement),
-    })
-  }
-  return next
 }
 
 function normalizeFieldMap(raw: unknown): Record<string, string> {
@@ -821,14 +794,40 @@ function normalizeOptions(raw: unknown, mappingDefaults: Record<string, unknown>
   }
 }
 
-function normalizeWritebackConfig(raw: unknown): NormalizedWriteback {
+function normalizeAutoSyncConfig(raw: unknown): NormalizedAutoSync {
+  const source = parseJsonObject(raw)
+  const normalizeList = (value: unknown, fallback: string[] = []): string[] => {
+    if (!Array.isArray(value))
+      return [...new Set(fallback.map(item => toText(item)).filter(Boolean))]
+    return [...new Set(value.map(item => toText(item)).filter(Boolean))]
+  }
+  return {
+    enabled: source.enabled === undefined ? false : Boolean(source.enabled),
+    recordStatusField: toText(source.recordStatusField),
+    syncStatusField: toText(source.syncStatusField),
+    completedValues: normalizeList(source.completedValues, ['已完成']),
+    pendingValues: normalizeList(source.pendingValues, ['未同步']),
+    syncedValues: normalizeList(source.syncedValues, ['已同步']),
+    resetRecordStatusValue: toText(source.resetRecordStatusValue),
+    resetSyncStatusValue: toText(source.resetSyncStatusValue),
+    useMappedFieldsAsWatched: source.useMappedFieldsAsWatched === undefined
+      ? true
+      : Boolean(source.useMappedFieldsAsWatched),
+    watchedFieldNames: normalizeList(source.watchedFieldNames),
+    ignoredFieldNames: normalizeList(source.ignoredFieldNames),
+  }
+}
+
+function normalizeWritebackConfig(raw: unknown, autoSync?: FeishuBitableAutoSyncConfig | NormalizedAutoSync | null): NormalizedWriteback {
   const source = parseJsonObject(raw)
   const fields = parseJsonObject(source.fields)
   const values = parseJsonObject(source.values)
+  const normalizedAutoSync = normalizeAutoSyncConfig(autoSync)
+  const syncedValue = normalizedAutoSync.syncedValues[0] || '已同步'
   return {
     enabled: source.enabled !== false,
     fields: {
-      status: toText(fields.status),
+      status: toText(fields.status) || (normalizedAutoSync.enabled ? normalizedAutoSync.syncStatusField : ''),
       syncedAt: toText(fields.syncedAt),
       errorMessage: toText(fields.errorMessage),
       reasonCode: toText(fields.reasonCode),
@@ -837,7 +836,7 @@ function normalizeWritebackConfig(raw: unknown): NormalizedWriteback {
       triggerSource: toText(fields.triggerSource),
     },
     values: {
-      success: toText(values.success) || '已同步',
+      success: toText(values.success) || syncedValue,
       failed: toText(values.failed) || '失败',
       skipped: toText(values.skipped) || '跳过',
     },
@@ -857,20 +856,6 @@ function normalizeWritebackValue(raw: unknown): unknown {
   catch {
     return ''
   }
-}
-
-function buildPostSyncSourceHash(input: {
-  scope: FeishuBitableSyncItemEntityType
-  externalId: string
-  record: FeishuBitableRecord
-}): string {
-  const payload = JSON.stringify({
-    scope: input.scope,
-    externalId: input.externalId,
-    recordId: input.record.recordId,
-    fields: input.record.fields || {},
-  })
-  return createHash('sha256').update(payload).digest('hex')
 }
 
 function createRecordResolver(
@@ -1347,6 +1332,10 @@ function hasMappingValue(mapping: NormalizedMapping, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(mapping.defaults, key)
 }
 
+function hasAnyPersonaSlotMapping(mapping: NormalizedMapping): boolean {
+  return PERSONA_SLOT_FIELD_KEYS.some(key => hasMappingValue(mapping, key))
+}
+
 function buildStaticPreviewDiagnostics(input: {
   entityType: FeishuBitableSyncItemEntityType
   mapping: NormalizedMapping
@@ -1376,6 +1365,15 @@ function buildStaticPreviewDiagnostics(input: {
       level: 'warning',
       fieldKey: key,
       message: `目标字段 ${key} 尚未配置来源字段、transform 或默认值。`,
+    }, FIELD_DIAGNOSTIC_LIMIT)
+  }
+
+  if (input.entityType === 'persona' && !hasAnyPersonaSlotMapping(input.mapping)) {
+    pushPreviewDiagnostic(diagnostics, seen, {
+      kind: 'mapping_empty',
+      level: 'warning',
+      fieldKey: PERSONA_SLOT_FIELD_KEYS[0],
+      message: '人设库至少需要配置 persona1~5 中的一个槽位来源、transform 或默认值。',
     }, FIELD_DIAGNOSTIC_LIMIT)
   }
 
@@ -2026,94 +2024,156 @@ async function applyPersonaRecord(
     options: NormalizedOptions
     resolver: RecordValueResolver
     dryRun: boolean
+    recordIndex: number
   },
 ): Promise<ApplyRecordResult> {
   const explicitExternalId = await input.resolver.getSpecialText('externalId')
   const contestExternalId = await input.resolver.getSpecialText('contestExternalId')
-  const trackExternalId = await input.resolver.getSpecialText('trackExternalId')
-  const judgeType = normalizePersonaJudgeType(await input.resolver.getText('judgeType'))
-  const [
-    name,
-    summary,
-    systemPrompt,
-    focusAreasRaw,
-    scoringRubricRaw,
-    sortOrderRaw,
-    enabledRaw,
-  ] = await Promise.all([
-    input.resolver.getText('name'),
-    input.resolver.getText('summary'),
-    input.resolver.getText('systemPrompt'),
-    input.resolver.getValue('focusAreas'),
-    input.resolver.getValue('scoringRubric'),
-    input.resolver.getValue('sortOrder'),
-    input.resolver.getValue('enabled'),
-  ])
+  const object = await input.resolver.getText('object')
+  const personaTexts = await Promise.all(PERSONA_SLOT_FIELD_KEYS.map(key => input.resolver.getValue(key)))
+  const candidateSlotCount = countFeishuPersonaFilledSlots(personaTexts)
 
-  if (!explicitExternalId || !contestExternalId || !judgeType || !name || !systemPrompt) {
+  if (!explicitExternalId || !contestExternalId || !object) {
     return {
       status: 'skipped',
       externalId: input.externalId,
       reasonCode: 'MISSING_REQUIRED_FIELD',
-      message: '人设记录缺少必要字段（externalId / contestExternalId / judgeType / name / systemPrompt）。',
+      message: `人设记录缺少必要字段（externalId / contestExternalId / object）。${candidateSlotCount > 0 ? ` 当前 ${candidateSlotCount} 个槽位无法生成人设。` : ''}`,
+      summaryCounts: {
+        createdCount: 0,
+        updatedCount: 0,
+        skippedCount: candidateSlotCount,
+      },
+      activeExternalIds: [],
       payload: {
         hasExternalId: Boolean(explicitExternalId),
         hasContestExternalId: Boolean(contestExternalId),
-        hasJudgeType: Boolean(judgeType),
-        hasName: Boolean(name),
-        hasSystemPrompt: Boolean(systemPrompt),
+        hasObject: Boolean(object),
+        candidateSlotCount,
       },
     }
   }
 
-  const focusAreas = normalizeLooseStringArray(focusAreasRaw)
-  const scoringRubric = normalizeLooseRubricDimensions(scoringRubricRaw)
-  const sortOrder = Math.max(0, Math.trunc(Number(sortOrderRaw || 0) || 0))
-  const enabled = normalizeBooleanLike(enabledRaw, true)
+  const drafts = buildFeishuPersonaSyncDrafts({
+    sourceExternalId: explicitExternalId,
+    contestExternalId,
+    object,
+    personaTexts,
+    recordId: input.record.recordId,
+    recordIndex: input.recordIndex,
+  })
+
+  if (drafts.length === 0) {
+    return {
+      status: 'skipped',
+      externalId: input.externalId,
+      reasonCode: 'PERSONA_SLOTS_EMPTY',
+      message: '人设记录未提供 persona1~5 的有效文案，已跳过。',
+      summaryCounts: {
+        createdCount: 0,
+        updatedCount: 0,
+        skippedCount: 0,
+      },
+      activeExternalIds: [],
+      payload: {
+        candidateSlotCount: 0,
+      },
+    }
+  }
 
   if (!input.dryRun) {
-    const saved = await upsertDefensePersonaPreset(db, {
-      actorUserId: input.actorUserId,
-      syncItemId: input.syncItemId,
-      externalId: input.externalId,
-      contestExternalId,
-      trackExternalId,
-      judgeType,
-      name,
-      summary,
-      systemPrompt,
-      focusAreas,
-      scoringRubric,
-      enabled,
-      sortOrder,
-      metadata: {
-        source: 'feishu_bitable',
-        recordId: input.record.recordId,
-      },
-    })
-    await upsertFeishuExternalRef(db, {
-      syncItemId: input.syncItemId,
-      scope: 'persona',
-      externalId: input.externalId,
-      entityId: saved.preset.id,
-      metadata: {
-        contestExternalId,
-        trackExternalId,
-      },
-    })
+    const entityIds: string[] = []
+    let createdCount = 0
+    let updatedCount = 0
+
+    for (const draft of drafts) {
+      const saved = await upsertDefensePersonaPreset(db, {
+        actorUserId: input.actorUserId,
+        syncItemId: input.syncItemId,
+        externalId: draft.externalId,
+        contestExternalId: draft.contestExternalId,
+        judgeType: 'custom',
+        name: draft.name,
+        summary: draft.summary,
+        systemPrompt: draft.systemPrompt,
+        focusAreas: [],
+        scoringRubric: [],
+        enabled: true,
+        sortOrder: draft.sortOrder,
+        metadata: draft.metadata,
+      })
+      await upsertFeishuExternalRef(db, {
+        syncItemId: input.syncItemId,
+        scope: 'persona',
+        externalId: draft.externalId,
+        entityId: saved.preset.id,
+        metadata: {
+          contestExternalId: draft.contestExternalId,
+          sourceExternalId: draft.sourceExternalId,
+          slotIndex: draft.slotIndex,
+          object: draft.object,
+        },
+      })
+      entityIds.push(saved.preset.id)
+      if (saved.existed)
+        updatedCount += 1
+      else
+        createdCount += 1
+    }
+
+    const skippedCount = 0
     return {
-      status: saved.existed ? 'updated' : 'created',
+      status: pickFeishuPersonaAggregateStatus({
+        createdCount,
+        updatedCount,
+        skippedCount,
+      }),
       externalId: input.externalId,
-      entityId: saved.preset.id,
+      entityId: entityIds.join(','),
+      summaryCounts: {
+        createdCount,
+        updatedCount,
+        skippedCount,
+      },
+      activeExternalIds: drafts.map(item => item.externalId),
+      message: summarizeFeishuPersonaRowResult({
+        createdCount,
+        updatedCount,
+        skippedCount,
+      }),
     }
   }
 
-  const existing = await getDefensePersonaPresetByExternalId(db, {
-    externalId: input.externalId,
-  })
+  let createdCount = 0
+  let updatedCount = 0
+  for (const draft of drafts) {
+    const existing = await getDefensePersonaPresetByExternalId(db, {
+      externalId: draft.externalId,
+    })
+    if (existing)
+      updatedCount += 1
+    else
+      createdCount += 1
+  }
+
   return {
-    status: existing ? 'updated' : 'created',
+    status: pickFeishuPersonaAggregateStatus({
+      createdCount,
+      updatedCount,
+      skippedCount: 0,
+    }),
     externalId: input.externalId,
+    summaryCounts: {
+      createdCount,
+      updatedCount,
+      skippedCount: 0,
+    },
+    activeExternalIds: drafts.map(item => item.externalId),
+    message: summarizeFeishuPersonaRowResult({
+      createdCount,
+      updatedCount,
+      skippedCount: 0,
+    }),
   }
 }
 
@@ -2129,6 +2189,7 @@ async function applySingleRecord(
     options: NormalizedOptions
     resolver?: RecordValueResolver
     dryRun: boolean
+    recordIndex: number
   },
 ): Promise<ApplyRecordResult> {
   const resolver = input.resolver || createRecordResolver(input.record, input.mapping)
@@ -2223,6 +2284,7 @@ async function applySingleRecord(
     options: input.options,
     resolver,
     dryRun: input.dryRun,
+    recordIndex: input.recordIndex,
   })
 }
 
@@ -2283,8 +2345,9 @@ async function executeRecords(
 ): Promise<SyncSummary> {
   const summary = buildSummaryBase(input.records)
   const writebackRecords: Array<{ recordId: string, fields: Record<string, unknown> }> = []
+  const activePersonaExternalIds = new Set<string>()
 
-  for (const record of input.records) {
+  for (const [recordIndex, record] of input.records.entries()) {
     try {
       const result = await applySingleRecord(db, {
         actorUserId: input.actorUserId,
@@ -2295,14 +2358,26 @@ async function executeRecords(
         mapping: input.mapping,
         options: input.options,
         dryRun: input.dryRun,
+        recordIndex,
       })
 
-      if (result.status === 'created')
+      if (result.summaryCounts) {
+        summary.createdCount += Math.max(0, Math.trunc(Number(result.summaryCounts.createdCount) || 0))
+        summary.updatedCount += Math.max(0, Math.trunc(Number(result.summaryCounts.updatedCount) || 0))
+        summary.skippedCount += Math.max(0, Math.trunc(Number(result.summaryCounts.skippedCount) || 0))
+      }
+      else if (result.status === 'created') {
         summary.createdCount += 1
-      else if (result.status === 'updated')
+      }
+      else if (result.status === 'updated') {
         summary.updatedCount += 1
-      else
+      }
+      else {
         summary.skippedCount += 1
+      }
+
+      for (const externalId of result.activeExternalIds || [])
+        activePersonaExternalIds.add(externalId)
 
       if (!input.dryRun && result.status === 'skipped' && result.reasonCode) {
         await upsertFeishuSyncIssue(db, {
@@ -2348,6 +2423,33 @@ async function executeRecords(
       summary.errors.push({
         recordId: record.recordId,
         message: error instanceof Error ? error.message : String(error || 'UNKNOWN_ERROR'),
+      })
+    }
+  }
+
+  if (!input.dryRun && input.entityType === 'persona' && summary.errorCount === 0) {
+    const [existingPresetExternalIds, existingRefExternalIds] = await Promise.all([
+      listDefensePersonaPresetExternalIdsBySyncItemId(db, {
+        syncItemId: input.syncItemId,
+      }),
+      listFeishuExternalRefExternalIdsBySyncItemId(db, {
+        scope: 'persona',
+        syncItemId: input.syncItemId,
+      }),
+    ])
+    const staleExternalIds = computeFeishuPersonaStaleExternalIds({
+      existingExternalIds: [...existingPresetExternalIds, ...existingRefExternalIds],
+      activeExternalIds: [...activePersonaExternalIds],
+    })
+    if (staleExternalIds.length > 0) {
+      await deleteDefensePersonaPresetsByExternalIds(db, {
+        syncItemId: input.syncItemId,
+        externalIds: staleExternalIds,
+      })
+      await deleteFeishuExternalRefsByExternalIds(db, {
+        scope: 'persona',
+        syncItemId: input.syncItemId,
+        externalIds: staleExternalIds,
       })
     }
   }
@@ -2448,6 +2550,7 @@ async function buildFeishuBitableSyncItemPreview(
     options: NormalizedOptions
     writeback: NormalizedWriteback
     records: FeishuBitableRecord[]
+    sourceRecords?: FeishuBitableRecord[]
   },
 ): Promise<FeishuBitableSyncItemPreviewResult> {
   const summary = buildSummaryBase(input.records)
@@ -2458,7 +2561,7 @@ async function buildFeishuBitableSyncItemPreview(
   const fieldDiagnosticSeen = new Set<string>()
   const transformErrorSeen = new Set<string>()
   const issueCounts = createEmptyPreviewIssueCounts()
-  const sourceFields = new Set(collectRecordFieldNames(input.records))
+  const sourceFields = new Set(collectRecordFieldNames(input.sourceRecords || input.records))
 
   for (const diagnostic of buildStaticPreviewDiagnostics({
     entityType: input.entityType,
@@ -2470,7 +2573,7 @@ async function buildFeishuBitableSyncItemPreview(
     incrementIssueCountsByDiagnostic(issueCounts, diagnostic)
   }
 
-  for (const record of input.records) {
+  for (const [recordIndex, record] of input.records.entries()) {
     const values: Record<string, string> = {}
     const shouldCollectSample = mappedSampleRows.length < MAPPED_PREVIEW_SAMPLE_LIMIT
     let transformErrorCountForRecord = 0
@@ -2506,14 +2609,23 @@ async function buildFeishuBitableSyncItemPreview(
         options: input.options,
         resolver,
         dryRun: true,
+        recordIndex,
       })
 
-      if (result.status === 'created')
+      if (result.summaryCounts) {
+        summary.createdCount += Math.max(0, Math.trunc(Number(result.summaryCounts.createdCount) || 0))
+        summary.updatedCount += Math.max(0, Math.trunc(Number(result.summaryCounts.updatedCount) || 0))
+        summary.skippedCount += Math.max(0, Math.trunc(Number(result.summaryCounts.skippedCount) || 0))
+      }
+      else if (result.status === 'created') {
         summary.createdCount += 1
-      else if (result.status === 'updated')
+      }
+      else if (result.status === 'updated') {
         summary.updatedCount += 1
-      else
+      }
+      else {
         summary.skippedCount += 1
+      }
 
       if (result.reasonCode) {
         incrementIssueCountsByReasonCode(issueCounts, result.reasonCode)
@@ -2641,6 +2753,7 @@ async function previewFeishuBitableSyncItemById(
   const entityType = isEntityType(input.draft?.entityType) ? input.draft.entityType : (task.entityType || 'contest')
   const mappingRaw = input.draft && hasOwn(input.draft, 'mapping') ? input.draft.mapping : task.mapping
   const optionsRaw = input.draft && hasOwn(input.draft, 'options') ? input.draft.options : task.options
+  const autoSyncRaw = input.draft && hasOwn(input.draft, 'autoSync') ? input.draft.autoSync : task.autoSync
   const writebackRaw = input.draft && hasOwn(input.draft, 'writeback')
     ? input.draft.writeback
     : (task.writeback || parseJsonObject(task.options).writeback)
@@ -2656,7 +2769,11 @@ async function previewFeishuBitableSyncItemById(
   return withClient(event, async (db) => {
     const mapping = normalizeMapping(mappingRaw, optionsRaw, entityType)
     const options = normalizeOptions(optionsRaw, mapping.defaults)
-    const writeback = normalizeWritebackConfig(writebackRaw)
+    const autoSync = normalizeAutoSyncConfig(autoSyncRaw)
+    ensureAutoSyncConfigReady(autoSync)
+    validateAutoSyncFields(autoSync, records)
+    const filteredRecords = filterRecordsByAutoSync(records, autoSync)
+    const writeback = normalizeWritebackConfig(writebackRaw, autoSync)
     return buildFeishuBitableSyncItemPreview(db, {
       actorUserId: input.actorUserId,
       syncItemId: task.id,
@@ -2664,7 +2781,8 @@ async function previewFeishuBitableSyncItemById(
       mapping,
       options,
       writeback,
-      records,
+      records: filteredRecords,
+      sourceRecords: records,
     })
   })
 }
@@ -2746,7 +2864,11 @@ async function runFeishuBitableSyncItemById(
       const entityType = task.entityType || 'contest'
       const mapping = normalizeMapping(task.mapping, task.options, entityType)
       const options = normalizeOptions(task.options, mapping.defaults)
-      const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback)
+      const autoSync = normalizeAutoSyncConfig(task.autoSync)
+      ensureAutoSyncConfigReady(autoSync)
+      validateAutoSyncFields(autoSync, records)
+      const writeback = normalizeWritebackConfig(task.writeback || parseJsonObject(task.options).writeback, autoSync)
+      const filteredRecords = filterRecordsByAutoSync(records, autoSync)
       return executeRecords(db, {
         actorUserId: input.actorUserId,
         runId,
@@ -2759,7 +2881,7 @@ async function runFeishuBitableSyncItemById(
         tenantAccessToken,
         appToken: task.appToken,
         tableId: task.tableId,
-        records,
+        records: filteredRecords,
         dryRun: false,
       })
     })
