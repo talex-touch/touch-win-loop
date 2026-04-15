@@ -38,12 +38,16 @@ export default defineEventHandler(async (event) => {
     if (error.message === 'MOCKUP_DEVICE_MODEL_NOT_FOUND')
       return { error: 'not_found' as const }
     if (
-      error.message === 'MOCKUP_MODEL_NO_ENABLED_VARIANTS'
+      error.message === 'MOCKUP_MODEL_PREVIEW_REQUIRED'
+      || error.message === 'MOCKUP_MODEL_PREVIEW_NOT_PUBLISHED'
+      || error.message === 'MOCKUP_MODEL_NO_ENABLED_VARIANTS'
       || error.message === 'MOCKUP_VARIANT_SHELL_REQUIRED'
       || error.message === 'MOCKUP_VARIANT_SHELL_NOT_PUBLISHED'
+      || error.message === 'MOCKUP_VARIANT_PREVIEW_REQUIRED'
+      || error.message === 'MOCKUP_VARIANT_PREVIEW_NOT_PUBLISHED'
       || error.message === 'MOCKUP_DEVICE_DEFAULT_VARIANT_INVALID'
     ) {
-      return { error: error.message as 'MOCKUP_MODEL_NO_ENABLED_VARIANTS' | 'MOCKUP_VARIANT_SHELL_REQUIRED' | 'MOCKUP_VARIANT_SHELL_NOT_PUBLISHED' | 'MOCKUP_DEVICE_DEFAULT_VARIANT_INVALID' }
+      return { error: error.message as 'MOCKUP_MODEL_PREVIEW_REQUIRED' | 'MOCKUP_MODEL_PREVIEW_NOT_PUBLISHED' | 'MOCKUP_MODEL_NO_ENABLED_VARIANTS' | 'MOCKUP_VARIANT_SHELL_REQUIRED' | 'MOCKUP_VARIANT_SHELL_NOT_PUBLISHED' | 'MOCKUP_VARIANT_PREVIEW_REQUIRED' | 'MOCKUP_VARIANT_PREVIEW_NOT_PUBLISHED' | 'MOCKUP_DEVICE_DEFAULT_VARIANT_INVALID' }
     }
     throw error
   })
@@ -62,9 +66,13 @@ export default defineEventHandler(async (event) => {
 
     setResponseStatus(event, 400)
     const messageMap: Record<string, string> = {
+      MOCKUP_MODEL_PREVIEW_REQUIRED: '型号必须绑定预览图后才能发布。',
+      MOCKUP_MODEL_PREVIEW_NOT_PUBLISHED: '型号预览图未发布，无法发布型号。',
       MOCKUP_MODEL_NO_ENABLED_VARIANTS: '至少需要 1 个启用的变体才能发布。',
       MOCKUP_VARIANT_SHELL_REQUIRED: '启用中的变体必须绑定已发布壳素材。',
       MOCKUP_VARIANT_SHELL_NOT_PUBLISHED: '绑定的壳素材版本未发布，无法发布型号。',
+      MOCKUP_VARIANT_PREVIEW_REQUIRED: '启用中的变体必须绑定预览图。',
+      MOCKUP_VARIANT_PREVIEW_NOT_PUBLISHED: '绑定的变体预览图未发布，无法发布型号。',
       MOCKUP_DEVICE_DEFAULT_VARIANT_INVALID: '默认变体无效，必须指向启用中的变体。',
     }
     return fail(messageMap[detail.error] || 'Mockup 型号发布校验失败。', {

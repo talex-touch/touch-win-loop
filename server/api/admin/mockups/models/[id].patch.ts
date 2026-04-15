@@ -15,6 +15,8 @@ interface PatchMockupDeviceModelBody {
   modelName?: string
   screenWidth?: number
   screenHeight?: number
+  previewAssetItemId?: string | null
+  previewAssetVersionId?: string | null
   sortOrder?: number
   defaultVariantSlotKey?: MockupVariantSlotKey | null
 }
@@ -48,17 +50,23 @@ export default defineEventHandler(async (event) => {
 
   const modelId = normalizeString(getRouterParam(event, 'id'))
   const body = (await readBody<PatchMockupDeviceModelBody>(event).catch(() => ({} as PatchMockupDeviceModelBody))) || {}
+  const nextModelName = body.modelName !== undefined ? normalizeString(body.modelName) : undefined
+  const nextTitle = body.title !== undefined
+    ? normalizeString(body.title)
+    : (nextModelName ? nextModelName : undefined)
   const detail = await withTransaction(event, async (db) => {
     return updateMockupDeviceModel(db, {
       modelId,
       actorUserId: user.id,
       slug: body.slug,
-      title: body.title,
+      title: nextTitle,
       category: body.category,
       brand: body.brand,
-      modelName: body.modelName,
+      modelName: nextModelName,
       screenWidth: body.screenWidth !== undefined ? Math.max(1, toInteger(body.screenWidth, 1)) : undefined,
       screenHeight: body.screenHeight !== undefined ? Math.max(1, toInteger(body.screenHeight, 1)) : undefined,
+      previewAssetItemId: body.previewAssetItemId !== undefined ? normalizeString(body.previewAssetItemId) || null : undefined,
+      previewAssetVersionId: body.previewAssetVersionId !== undefined ? normalizeString(body.previewAssetVersionId) || null : undefined,
       sortOrder: body.sortOrder !== undefined ? Math.max(0, toInteger(body.sortOrder, 0)) : undefined,
       defaultVariantSlotKey: body.defaultVariantSlotKey,
     })

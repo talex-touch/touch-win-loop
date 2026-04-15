@@ -8,24 +8,36 @@ import type {
   MockupVariantSlotKey,
 } from '../types/domain-legacy'
 
-export const MOCKUP_VARIANT_SLOT_KEYS: MockupVariantSlotKey[] = [
-  'variant_1',
-  'variant_2',
-  'variant_3',
-  'variant_4',
-]
+export const DEFAULT_MOCKUP_VARIANT_SLOT_KEY: MockupVariantSlotKey = 'variant_1'
 
 export const MOCKUP_DEVICE_CATEGORY_TITLES: Record<MockupDeviceCategory, string> = {
-  iphone: 'iPhone',
-  tablet: 'Tablet',
-  pc: 'PC',
-  watch: 'Watch',
-  android: 'Android',
-  browser: 'Browser',
+  phone: '手机',
+  tablet: '平板',
+  desktop: '电脑',
+  watch: '手表',
+  earbuds: '耳机',
+  glasses: '眼镜 / XR',
+  browser: '浏览器',
 }
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function isAppleDevice(model: Pick<MockupDeviceModel, 'brand' | 'modelName' | 'title'>): boolean {
+  const haystack = [
+    normalizeString(model.brand),
+    normalizeString(model.modelName),
+    normalizeString(model.title),
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes('apple')
+    || haystack.includes('iphone')
+    || haystack.includes('ipad')
+    || haystack.includes('watch')
+    || haystack.includes('airpods')
+    || haystack.includes('vision')
 }
 
 function isAppleTabletModel(model: Pick<MockupDeviceModel, 'brand' | 'modelName' | 'title'>): boolean {
@@ -39,11 +51,12 @@ function isAppleTabletModel(model: Pick<MockupDeviceModel, 'brand' | 'modelName'
   return haystack.includes('ipad') || haystack.includes('apple')
 }
 
-export function normalizeMockupVariantSlotKey(value: unknown, fallback: MockupVariantSlotKey = 'variant_1'): MockupVariantSlotKey {
+export function normalizeMockupVariantSlotKey(
+  value: unknown,
+  fallback: MockupVariantSlotKey = DEFAULT_MOCKUP_VARIANT_SLOT_KEY,
+): MockupVariantSlotKey {
   const normalized = normalizeString(value)
-  return MOCKUP_VARIANT_SLOT_KEYS.includes(normalized as MockupVariantSlotKey)
-    ? normalized as MockupVariantSlotKey
-    : fallback
+  return normalized || fallback
 }
 
 export function createMockupDevicePresetKey(modelSlug: string, slotKey: MockupVariantSlotKey): string {
@@ -64,9 +77,7 @@ export function parseMockupDevicePresetKey(value: unknown): {
   return {
     key,
     modelSlug: normalizeString(modelSlug),
-    slotKey: MOCKUP_VARIANT_SLOT_KEYS.includes(slotKeyRaw as MockupVariantSlotKey)
-      ? slotKeyRaw as MockupVariantSlotKey
-      : '',
+    slotKey: normalizeString(slotKeyRaw),
   }
 }
 
@@ -85,21 +96,21 @@ function resolveMockupPresetPresentation(model: Pick<MockupDeviceModel, 'categor
   shadow: string
   builtinShellKey?: string
 } {
-  if (model.category === 'iphone') {
-    return {
-      group: 'iPhone',
-      platform: 'ios',
-      deviceFamily: 'phone',
-      framePadding: 18,
-      bezelRadius: 54,
-      screenRadius: 42,
-      background: '#020617',
-      shadow: '0 36px 96px rgba(2, 6, 23, 0.32)',
-      builtinShellKey: 'iphone-generic-shell',
+  if (model.category === 'phone') {
+    if (isAppleDevice(model)) {
+      return {
+        group: 'iPhone',
+        platform: 'ios',
+        deviceFamily: 'phone',
+        framePadding: 18,
+        bezelRadius: 54,
+        screenRadius: 42,
+        background: '#020617',
+        shadow: '0 36px 96px rgba(2, 6, 23, 0.32)',
+        builtinShellKey: 'iphone-generic-shell',
+      }
     }
-  }
 
-  if (model.category === 'android') {
     return {
       group: 'Android Phone',
       platform: 'android',
@@ -113,10 +124,36 @@ function resolveMockupPresetPresentation(model: Pick<MockupDeviceModel, 'categor
     }
   }
 
+  if (model.category === 'earbuds') {
+    return {
+      group: 'Watch',
+      platform: isAppleDevice(model) ? 'ios' : 'android',
+      deviceFamily: 'watch',
+      framePadding: 12,
+      bezelRadius: 40,
+      screenRadius: 28,
+      background: '#0f172a',
+      shadow: '0 22px 64px rgba(15, 23, 42, 0.28)',
+    }
+  }
+
+  if (model.category === 'glasses') {
+    return {
+      group: 'Surface/Desktop',
+      platform: isAppleDevice(model) ? 'ios' : 'android',
+      deviceFamily: 'browser',
+      framePadding: 0,
+      bezelRadius: 32,
+      screenRadius: 24,
+      background: '#e2e8f0',
+      shadow: '0 24px 72px rgba(15, 23, 42, 0.2)',
+    }
+  }
+
   if (model.category === 'watch') {
     return {
       group: 'Watch',
-      platform: 'watchos',
+      platform: isAppleDevice(model) ? 'watchos' : 'android',
       deviceFamily: 'watch',
       framePadding: 16,
       bezelRadius: 54,
@@ -141,9 +178,9 @@ function resolveMockupPresetPresentation(model: Pick<MockupDeviceModel, 'categor
     }
   }
 
-  if (model.category === 'pc') {
+  if (model.category === 'desktop') {
     return {
-      group: 'PC',
+      group: 'Surface/Desktop',
       platform: 'windows',
       deviceFamily: 'desktop',
       framePadding: 0,
@@ -188,7 +225,7 @@ export function buildMockupDeviceResolvedPreset(
 ): DeviceFramePreset {
   const presentation = resolveMockupPresetPresentation(model)
   const slotKey = normalizeMockupVariantSlotKey(variant?.slotKey)
-  const variantTitle = normalizeString(variant?.title) || slotKey.replace('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+  const variantTitle = normalizeString(variant?.title) || slotKey.replace(/[_-]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
   return {
     key: createMockupDevicePresetKey(model.slug, slotKey),
     title: `${normalizeString(model.title) || normalizeString(model.modelName) || normalizeString(model.slug)} · ${variantTitle}`,
@@ -208,12 +245,13 @@ export function buildMockupDeviceResolvedPreset(
 
 export function sortMockupCatalogCategories(categories: MockupProjectCatalogCategory[]): MockupProjectCatalogCategory[] {
   const order = new Map<MockupDeviceCategory, number>([
-    ['iphone', 0],
+    ['phone', 0],
     ['tablet', 1],
-    ['pc', 2],
+    ['desktop', 2],
     ['watch', 3],
-    ['android', 4],
-    ['browser', 5],
+    ['earbuds', 4],
+    ['glasses', 5],
+    ['browser', 6],
   ])
 
   return [...categories].sort((left, right) => {

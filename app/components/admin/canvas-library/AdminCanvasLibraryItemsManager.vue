@@ -546,74 +546,76 @@ watch([filteredRows, pageSize], () => {
         row-key="id"
         size="small"
       >
-        <a-table-column title="标题" data-index="title">
-          <template #cell="{ record }">
-            <div class="min-w-0">
-              <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
-                {{ record.title }}
-              </p>
-              <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
-                {{ record.slug }}
-              </p>
-            </div>
-          </template>
-        </a-table-column>
-        <a-table-column title="类型" :width="190">
-          <template #cell="{ record }">
-            <div class="text-[11px] text-slate-700">
-              <div>{{ record.kind }}</div>
-              <div class="mt-1 text-slate-500">
-                {{ record.templateTarget || record.assetKind || "-" }}
+        <template #columns>
+          <a-table-column title="标题" data-index="title">
+            <template #cell="scope">
+              <div class="min-w-0">
+                <p class="m-0 truncate text-[12px] font-semibold text-slate-900">
+                  {{ scope.record.title }}
+                </p>
+                <p class="m-0 mt-1 truncate font-mono text-[10px] text-slate-500">
+                  {{ scope.record.slug }}
+                </p>
               </div>
-            </div>
-          </template>
-        </a-table-column>
-        <a-table-column title="状态" :width="110">
-          <template #cell="{ record }">
-            <a-tag :color="record.status === 'published' ? 'green' : record.status === 'archived' ? 'red' : 'gray'" size="small">
-              {{ record.status }}
-            </a-tag>
-          </template>
-        </a-table-column>
-        <a-table-column title="来源" :width="130">
-          <template #cell="{ record }">
-            <span class="text-[11px] text-slate-600">{{ record.source }}</span>
-          </template>
-        </a-table-column>
-        <a-table-column title="标签">
-          <template #cell="{ record }">
-            <div class="flex flex-wrap gap-1">
-              <a-tag
-                v-for="tag in (record.tags.length ? record.tags : ['-'])"
-                :key="`${record.id}-${tag}`"
-                bordered
-                size="small"
-              >
-                {{ tag }}
+            </template>
+          </a-table-column>
+          <a-table-column title="类型" data-index="kind" :width="190">
+            <template #cell="scope">
+              <div class="text-[11px] text-slate-700">
+                <div>{{ scope.record.kind }}</div>
+                <div class="mt-1 text-slate-500">
+                  {{ scope.record.templateTarget || scope.record.assetKind || "-" }}
+                </div>
+              </div>
+            </template>
+          </a-table-column>
+          <a-table-column title="状态" data-index="status" :width="110">
+            <template #cell="scope">
+              <a-tag :color="scope.record.status === 'published' ? 'green' : scope.record.status === 'archived' ? 'red' : 'gray'" size="small">
+                {{ scope.record.status }}
               </a-tag>
-            </div>
-          </template>
-        </a-table-column>
-        <a-table-column title="更新时间" :width="160">
-          <template #cell="{ record }">
-            <span class="text-[10px] text-slate-500">{{ formatDate(record.updatedAt || record.createdAt) }}</span>
-          </template>
-        </a-table-column>
-        <a-table-column title="操作" :width="240" fixed="right">
-          <template #cell="{ record }">
-            <div class="flex flex-wrap gap-2">
-              <a-button size="mini" @click="void openEditDialog(record)">
-                编辑
-              </a-button>
-              <a-button size="mini" type="primary" :disabled="record.status === 'published' || mutating" @click="void publishItem(record.id)">
-                发布
-              </a-button>
-              <a-button size="mini" status="danger" :disabled="record.status === 'archived' || mutating" @click="void archiveItem(record.id)">
-                归档
-              </a-button>
-            </div>
-          </template>
-        </a-table-column>
+            </template>
+          </a-table-column>
+          <a-table-column title="来源" data-index="source" :width="130">
+            <template #cell="scope">
+              <span class="text-[11px] text-slate-600">{{ scope.record.source }}</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="标签" data-index="tags">
+            <template #cell="scope">
+              <div class="flex flex-wrap gap-1">
+                <a-tag
+                  v-for="tag in (scope.record.tags.length ? scope.record.tags : ['-'])"
+                  :key="`${scope.record.id}-${tag}`"
+                  bordered
+                  size="small"
+                >
+                  {{ tag }}
+                </a-tag>
+              </div>
+            </template>
+          </a-table-column>
+          <a-table-column title="更新时间" data-index="updatedAt" :width="160">
+            <template #cell="scope">
+              <span class="text-[10px] text-slate-500">{{ formatDate(scope.record.updatedAt || scope.record.createdAt) }}</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="操作" data-index="actions" :width="240" fixed="right">
+            <template #cell="scope">
+              <div class="flex flex-wrap gap-2">
+                <a-button size="mini" @click="void openEditDialog(scope.record)">
+                  编辑
+                </a-button>
+                <a-button size="mini" type="primary" :disabled="scope.record.status === 'published' || mutating" @click="void publishItem(scope.record.id)">
+                  发布
+                </a-button>
+                <a-button size="mini" status="danger" :disabled="scope.record.status === 'archived' || mutating" @click="void archiveItem(scope.record.id)">
+                  归档
+                </a-button>
+              </div>
+            </template>
+          </a-table-column>
+        </template>
       </a-table>
 
       <div class="mt-3 flex justify-end">

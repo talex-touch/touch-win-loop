@@ -69,9 +69,9 @@ function setActiveTab(nextTab: CanvasLibraryAdminTab): void {
       </div>
     </section>
 
-    <AdminCanvasLibraryItemsManager v-show="activeTab === 'items'" />
+    <AdminCanvasLibraryItemsManager v-if="activeTab === 'items'" />
     <AdminCanvasLibraryMockupModelsManager
-      v-show="activeTab === 'mockups'"
+      v-else
       @open-library-items="setActiveTab('items')"
     />
   </div>

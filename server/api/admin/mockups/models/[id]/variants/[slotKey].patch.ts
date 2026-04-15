@@ -11,6 +11,8 @@ interface PatchMockupDeviceVariantBody {
   title?: string
   shellAssetItemId?: string | null
   shellAssetVersionId?: string | null
+  previewAssetItemId?: string | null
+  previewAssetVersionId?: string | null
   enabled?: boolean
   sortOrder?: number
 }
@@ -53,6 +55,8 @@ export default defineEventHandler(async (event) => {
       title: body.title,
       shellAssetItemId: body.shellAssetItemId,
       shellAssetVersionId: body.shellAssetVersionId,
+      previewAssetItemId: body.previewAssetItemId,
+      previewAssetVersionId: body.previewAssetVersionId,
       enabled: body.enabled,
       sortOrder: body.sortOrder !== undefined ? Math.max(0, toInteger(body.sortOrder, 0)) : undefined,
     })

@@ -1328,7 +1328,7 @@ CREATE TABLE IF NOT EXISTS mockup_device_models (
   id TEXT PRIMARY KEY,
   slug TEXT NOT NULL UNIQUE,
   title TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('iphone', 'tablet', 'pc', 'watch', 'android', 'browser')),
+  category TEXT NOT NULL CHECK (category IN ('phone', 'tablet', 'desktop', 'watch', 'earbuds', 'glasses', 'browser')),
   brand TEXT,
   model_name TEXT NOT NULL,
   screen_width INTEGER NOT NULL CHECK (screen_width > 0),
@@ -1337,7 +1337,7 @@ CREATE TABLE IF NOT EXISTS mockup_device_models (
   preview_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL,
   sort_order INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
-  default_variant_slot_key TEXT CHECK (default_variant_slot_key IN ('variant_1', 'variant_2', 'variant_3', 'variant_4')),
+  default_variant_slot_key TEXT,
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   updated_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1347,7 +1347,7 @@ CREATE TABLE IF NOT EXISTS mockup_device_models (
 CREATE TABLE IF NOT EXISTS mockup_device_variants (
   id TEXT PRIMARY KEY,
   device_model_id TEXT NOT NULL REFERENCES mockup_device_models(id) ON DELETE CASCADE,
-  slot_key TEXT NOT NULL CHECK (slot_key IN ('variant_1', 'variant_2', 'variant_3', 'variant_4')),
+  slot_key TEXT NOT NULL,
   title TEXT NOT NULL DEFAULT '',
   shell_asset_item_id TEXT REFERENCES canvas_library_items(id) ON DELETE SET NULL,
   shell_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL,
@@ -1371,6 +1371,27 @@ ALTER TABLE mockup_device_variants
 
 ALTER TABLE mockup_device_variants
   ADD COLUMN IF NOT EXISTS preview_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL;
+
+ALTER TABLE mockup_device_models
+  DROP CONSTRAINT IF EXISTS mockup_device_models_category_check;
+
+UPDATE mockup_device_models
+SET category = 'phone'
+WHERE category IN ('iphone', 'android');
+
+UPDATE mockup_device_models
+SET category = 'desktop'
+WHERE category = 'pc';
+
+ALTER TABLE mockup_device_models
+  ADD CONSTRAINT mockup_device_models_category_check
+  CHECK (category IN ('phone', 'tablet', 'desktop', 'watch', 'earbuds', 'glasses', 'browser'));
+
+ALTER TABLE mockup_device_models
+  DROP CONSTRAINT IF EXISTS mockup_device_models_default_variant_slot_key_check;
+
+ALTER TABLE mockup_device_variants
+  DROP CONSTRAINT IF EXISTS mockup_device_variants_slot_key_check;
 
 CREATE TABLE IF NOT EXISTS project_resource_comment_threads (
   id TEXT PRIMARY KEY,

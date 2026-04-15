@@ -4,8 +4,8 @@ import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { createMockupDeviceModel } from '~~/server/utils/mockup-device-store'
+import { checkPlatformPermission } from '~~/server/utils/platform-access'
 
 interface CreateMockupDeviceModelBody {
   slug?: string
@@ -15,6 +15,8 @@ interface CreateMockupDeviceModelBody {
   modelName?: string
   screenWidth?: number
   screenHeight?: number
+  previewAssetItemId?: string | null
+  previewAssetVersionId?: string | null
   sortOrder?: number
   defaultVariantSlotKey?: MockupVariantSlotKey
 }
@@ -47,9 +49,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = (await readBody<CreateMockupDeviceModelBody>(event).catch(() => ({} as CreateMockupDeviceModelBody))) || {}
-  if (!normalizeString(body.title) || !normalizeString(body.modelName)) {
+  const modelName = normalizeString(body.modelName)
+  const title = normalizeString(body.title) || modelName
+  if (!modelName) {
     setResponseStatus(event, 400)
-    return fail('title / modelName 不能为空。', {
+    return fail('modelName 不能为空。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -62,12 +66,14 @@ export default defineEventHandler(async (event) => {
     return createMockupDeviceModel(db, {
       actorUserId: user.id,
       slug: body.slug,
-      title: normalizeString(body.title),
-      category: body.category || 'iphone',
+      title,
+      category: body.category || 'phone',
       brand: body.brand,
-      modelName: normalizeString(body.modelName),
+      modelName,
       screenWidth: Math.max(1, toInteger(body.screenWidth, 1)),
       screenHeight: Math.max(1, toInteger(body.screenHeight, 1)),
+      previewAssetItemId: normalizeString(body.previewAssetItemId) || null,
+      previewAssetVersionId: normalizeString(body.previewAssetVersionId) || null,
       sortOrder: Math.max(0, toInteger(body.sortOrder, 0)),
       defaultVariantSlotKey: body.defaultVariantSlotKey,
     })

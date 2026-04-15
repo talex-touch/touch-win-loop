@@ -14,8 +14,8 @@ import { randomUUID } from 'node:crypto'
 import {
   buildMockupDeviceResolvedPreset,
   createMockupDevicePresetKey,
+  DEFAULT_MOCKUP_VARIANT_SLOT_KEY,
   MOCKUP_DEVICE_CATEGORY_TITLES,
-  MOCKUP_VARIANT_SLOT_KEYS,
   normalizeMockupVariantSlotKey,
   sortMockupCatalogCategories,
 } from '~~/shared/utils/mockup-device-catalog'
@@ -127,9 +127,22 @@ function sanitizeSlugPart(value: string): string {
 
 function normalizeMockupCategory(value: unknown): MockupDeviceCategory {
   const normalized = normalizeString(value) as MockupDeviceCategory
-  if (normalized === 'iphone' || normalized === 'tablet' || normalized === 'pc' || normalized === 'watch' || normalized === 'android' || normalized === 'browser')
+  if (
+    normalized === 'phone'
+    || normalized === 'tablet'
+    || normalized === 'desktop'
+    || normalized === 'watch'
+    || normalized === 'earbuds'
+    || normalized === 'glasses'
+    || normalized === 'browser'
+  ) {
     return normalized
-  return 'iphone'
+  }
+  if (normalized === 'iphone' || normalized === 'android')
+    return 'phone'
+  if (normalized === 'pc')
+    return 'desktop'
+  return 'phone'
 }
 
 function normalizeMockupStatus(value: unknown): MockupDeviceModelStatus {
@@ -144,7 +157,7 @@ function toMockupDeviceModel(row: MockupDeviceModelRow): MockupDeviceModel {
     id: row.id,
     slug: row.slug,
     title: row.title,
-    category: row.category,
+    category: normalizeMockupCategory(row.category),
     brand: normalizeString(row.brand) || undefined,
     modelName: row.model_name,
     screenWidth: Math.max(1, toInteger(row.screen_width, 1)),
@@ -251,7 +264,7 @@ async function listMockupVariantsByModelId(
   modelId: string,
 ): Promise<MockupDeviceVariant[]> {
   const result = await db.query<MockupDeviceVariantRow>(
-    `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, enabled, sort_order
+    `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, preview_asset_item_id, preview_asset_version_id, enabled, sort_order
      FROM mockup_device_variants
      WHERE device_model_id = $1
      ORDER BY sort_order ASC, slot_key ASC`,
@@ -260,40 +273,38 @@ async function listMockupVariantsByModelId(
   return result.rows.map(toMockupDeviceVariant)
 }
 
-async function createDefaultMockupVariants(
+async function createInitialMockupVariant(
   db: Queryable,
   input: {
     modelId: string
   },
 ): Promise<void> {
-  for (let index = 0; index < MOCKUP_VARIANT_SLOT_KEYS.length; index += 1) {
-    const slotKey = MOCKUP_VARIANT_SLOT_KEYS[index]!
-    await db.query(
-      `INSERT INTO mockup_device_variants (
-        id,
-        device_model_id,
-        slot_key,
-        title,
-        shell_asset_item_id,
-        shell_asset_version_id,
-        enabled,
-        sort_order,
-        created_at,
-        updated_at
-      ) VALUES (
-        $1, $2, $3, $4, NULL, NULL, FALSE, $5, NOW(), NOW()
-      )
-      ON CONFLICT (device_model_id, slot_key)
-      DO NOTHING`,
-      [
-        randomUUID(),
-        input.modelId,
-        slotKey,
-        `展示姿态 ${index + 1}`,
-        index,
-      ],
+  await db.query(
+    `INSERT INTO mockup_device_variants (
+      id,
+      device_model_id,
+      slot_key,
+      title,
+      shell_asset_item_id,
+      shell_asset_version_id,
+      preview_asset_item_id,
+      preview_asset_version_id,
+      enabled,
+      sort_order,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, NULL, NULL, NULL, NULL, FALSE, 0, NOW(), NOW()
     )
-  }
+    ON CONFLICT (device_model_id, slot_key)
+    DO NOTHING`,
+    [
+      randomUUID(),
+      input.modelId,
+      DEFAULT_MOCKUP_VARIANT_SLOT_KEY,
+      '展示变体 1',
+    ],
+  )
 }
 
 async function getMockupDeviceModelRow(
@@ -310,6 +321,8 @@ async function getMockupDeviceModelRow(
       model_name,
       screen_width,
       screen_height,
+      preview_asset_item_id,
+      preview_asset_version_id,
       sort_order,
       status,
       default_variant_slot_key,
@@ -415,6 +428,8 @@ export async function listMockupDeviceModels(
       model_name,
       screen_width,
       screen_height,
+      preview_asset_item_id,
+      preview_asset_version_id,
       sort_order,
       status,
       default_variant_slot_key,
@@ -450,9 +465,9 @@ export async function getMockupDeviceModelDetail(
     modelId: string
   },
 ): Promise<{
-    model: MockupDeviceModel
-    variants: MockupDeviceVariant[]
-  } | null> {
+  model: MockupDeviceModel
+  variants: MockupDeviceVariant[]
+} | null> {
   const modelRow = await getMockupDeviceModelRow(db, input.modelId)
   if (!modelRow)
     return null
@@ -474,20 +489,22 @@ export async function createMockupDeviceModel(
     modelName: string
     screenWidth: number
     screenHeight: number
+    previewAssetItemId?: string | null
+    previewAssetVersionId?: string | null
     sortOrder?: number
     defaultVariantSlotKey?: MockupVariantSlotKey
   },
 ): Promise<{
-    model: MockupDeviceModel
-    variants: MockupDeviceVariant[]
-  }> {
+  model: MockupDeviceModel
+  variants: MockupDeviceVariant[]
+}> {
   const modelId = randomUUID()
   const slug = await resolveUniqueMockupModelSlug(
     db,
     normalizeString(input.slug) || normalizeString(input.modelName) || normalizeString(input.title),
   )
   const defaultVariantSlotKey = normalizeString(input.defaultVariantSlotKey)
-    ? normalizeMockupVariantSlotKey(input.defaultVariantSlotKey)
+    ? normalizeString(input.defaultVariantSlotKey)
     : null
 
   await db.query(
@@ -500,6 +517,8 @@ export async function createMockupDeviceModel(
       model_name,
       screen_width,
       screen_height,
+      preview_asset_item_id,
+      preview_asset_version_id,
       sort_order,
       status,
       default_variant_slot_key,
@@ -508,7 +527,7 @@ export async function createMockupDeviceModel(
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', $10, $11, $11, NOW(), NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12, $13, $13, NOW(), NOW()
     )`,
     [
       modelId,
@@ -519,13 +538,15 @@ export async function createMockupDeviceModel(
       normalizeString(input.modelName) || normalizeString(input.title) || slug,
       Math.max(1, toInteger(input.screenWidth, 1)),
       Math.max(1, toInteger(input.screenHeight, 1)),
+      normalizeString(input.previewAssetItemId) || null,
+      normalizeString(input.previewAssetVersionId) || null,
       Math.max(0, toInteger(input.sortOrder, 0)),
       defaultVariantSlotKey,
       input.actorUserId,
     ],
   )
 
-  await createDefaultMockupVariants(db, { modelId })
+  await createInitialMockupVariant(db, { modelId })
   const detail = await getMockupDeviceModelDetail(db, { modelId })
   if (!detail)
     throw new Error('MOCKUP_DEVICE_MODEL_NOT_FOUND')
@@ -544,13 +565,15 @@ export async function updateMockupDeviceModel(
     modelName?: string
     screenWidth?: number
     screenHeight?: number
+    previewAssetItemId?: string | null
+    previewAssetVersionId?: string | null
     sortOrder?: number
     defaultVariantSlotKey?: MockupVariantSlotKey | null
   },
 ): Promise<{
-    model: MockupDeviceModel
-    variants: MockupDeviceVariant[]
-  }> {
+  model: MockupDeviceModel
+  variants: MockupDeviceVariant[]
+}> {
   const current = await getMockupDeviceModelRow(db, input.modelId)
   if (!current)
     throw new Error('MOCKUP_DEVICE_MODEL_NOT_FOUND')
@@ -572,9 +595,11 @@ export async function updateMockupDeviceModel(
        model_name = $6,
        screen_width = $7,
        screen_height = $8,
-       sort_order = $9,
-       default_variant_slot_key = $10,
-       updated_by_user_id = $11,
+       preview_asset_item_id = $9,
+       preview_asset_version_id = $10,
+       sort_order = $11,
+       default_variant_slot_key = $12,
+       updated_by_user_id = $13,
        updated_at = NOW()
      WHERE id = $1`,
     [
@@ -586,11 +611,13 @@ export async function updateMockupDeviceModel(
       input.modelName !== undefined ? normalizeString(input.modelName) || current.model_name : current.model_name,
       input.screenWidth !== undefined ? Math.max(1, toInteger(input.screenWidth, currentScreenWidth)) : currentScreenWidth,
       input.screenHeight !== undefined ? Math.max(1, toInteger(input.screenHeight, currentScreenHeight)) : currentScreenHeight,
+      input.previewAssetItemId !== undefined ? (normalizeString(input.previewAssetItemId) || null) : current.preview_asset_item_id,
+      input.previewAssetVersionId !== undefined ? (normalizeString(input.previewAssetVersionId) || null) : current.preview_asset_version_id,
       input.sortOrder !== undefined ? Math.max(0, toInteger(input.sortOrder, currentSortOrder)) : currentSortOrder,
       input.defaultVariantSlotKey === null
         ? null
         : input.defaultVariantSlotKey !== undefined
-          ? normalizeMockupVariantSlotKey(input.defaultVariantSlotKey)
+          ? normalizeString(input.defaultVariantSlotKey) || null
           : current.default_variant_slot_key,
       input.actorUserId,
     ],
@@ -611,32 +638,70 @@ export async function patchMockupDeviceVariant(
     title?: string
     shellAssetItemId?: string | null
     shellAssetVersionId?: string | null
+    previewAssetItemId?: string | null
+    previewAssetVersionId?: string | null
     enabled?: boolean
     sortOrder?: number
   },
 ): Promise<MockupDeviceVariant> {
+  const normalizedSlotKey = normalizeMockupVariantSlotKey(input.slotKey)
+  if (!await getMockupDeviceModelRow(db, input.modelId))
+    throw new Error('MOCKUP_DEVICE_VARIANT_NOT_FOUND')
+
   const currentResult = await db.query<MockupDeviceVariantRow>(
-    `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, enabled, sort_order
+    `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, preview_asset_item_id, preview_asset_version_id, enabled, sort_order
      FROM mockup_device_variants
      WHERE device_model_id = $1
        AND slot_key = $2
      LIMIT 1`,
-    [input.modelId, normalizeMockupVariantSlotKey(input.slotKey)],
+    [input.modelId, normalizedSlotKey],
   )
 
-  const current = currentResult.rows[0]
-  if (!current) {
-    await createDefaultMockupVariants(db, { modelId: input.modelId })
+  let existing = currentResult.rows[0]
+  if (!existing) {
+    const orderResult = await db.query<{ next_sort_order: number | string }>(
+      `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
+       FROM mockup_device_variants
+       WHERE device_model_id = $1`,
+      [input.modelId],
+    )
+    const nextSortOrder = Math.max(0, toInteger(orderResult.rows[0]?.next_sort_order, 0))
+    await db.query(
+      `INSERT INTO mockup_device_variants (
+        id,
+        device_model_id,
+        slot_key,
+        title,
+        shell_asset_item_id,
+        shell_asset_version_id,
+        preview_asset_item_id,
+        preview_asset_version_id,
+        enabled,
+        sort_order,
+        created_at,
+        updated_at
+      ) VALUES (
+        $1, $2, $3, $4, NULL, NULL, NULL, NULL, FALSE, $5, NOW(), NOW()
+      )
+      ON CONFLICT (device_model_id, slot_key)
+      DO NOTHING`,
+      [
+        randomUUID(),
+        input.modelId,
+        normalizedSlotKey,
+        input.title !== undefined ? normalizeString(input.title) || normalizedSlotKey : `展示变体 ${nextSortOrder + 1}`,
+        input.sortOrder !== undefined ? Math.max(0, toInteger(input.sortOrder, nextSortOrder)) : nextSortOrder,
+      ],
+    )
+    existing = (await db.query<MockupDeviceVariantRow>(
+      `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, preview_asset_item_id, preview_asset_version_id, enabled, sort_order
+       FROM mockup_device_variants
+       WHERE device_model_id = $1
+         AND slot_key = $2
+       LIMIT 1`,
+      [input.modelId, normalizedSlotKey],
+    )).rows[0]
   }
-
-  const existing = current || (await db.query<MockupDeviceVariantRow>(
-    `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, enabled, sort_order
-     FROM mockup_device_variants
-     WHERE device_model_id = $1
-       AND slot_key = $2
-     LIMIT 1`,
-    [input.modelId, normalizeMockupVariantSlotKey(input.slotKey)],
-  )).rows[0]
 
   if (!existing)
     throw new Error('MOCKUP_DEVICE_VARIANT_NOT_FOUND')
@@ -648,17 +713,21 @@ export async function patchMockupDeviceVariant(
        title = $3,
        shell_asset_item_id = $4,
        shell_asset_version_id = $5,
-       enabled = $6,
-       sort_order = $7,
+       preview_asset_item_id = $6,
+       preview_asset_version_id = $7,
+       enabled = $8,
+       sort_order = $9,
        updated_at = NOW()
      WHERE device_model_id = $1
        AND slot_key = $2`,
     [
       input.modelId,
-      normalizeMockupVariantSlotKey(input.slotKey),
+      normalizedSlotKey,
       input.title !== undefined ? normalizeString(input.title) || existing.title : existing.title,
       input.shellAssetItemId !== undefined ? (normalizeString(input.shellAssetItemId) || null) : existing.shell_asset_item_id,
       input.shellAssetVersionId !== undefined ? (normalizeString(input.shellAssetVersionId) || null) : existing.shell_asset_version_id,
+      input.previewAssetItemId !== undefined ? (normalizeString(input.previewAssetItemId) || null) : existing.preview_asset_item_id,
+      input.previewAssetVersionId !== undefined ? (normalizeString(input.previewAssetVersionId) || null) : existing.preview_asset_version_id,
       input.enabled !== undefined ? input.enabled === true : existing.enabled,
       input.sortOrder !== undefined ? Math.max(0, toInteger(input.sortOrder, existingSortOrder)) : existingSortOrder,
     ],
@@ -674,12 +743,12 @@ export async function patchMockupDeviceVariant(
   )
 
   const refreshed = await db.query<MockupDeviceVariantRow>(
-    `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, enabled, sort_order
+    `SELECT id, device_model_id, slot_key, title, shell_asset_item_id, shell_asset_version_id, preview_asset_item_id, preview_asset_version_id, enabled, sort_order
      FROM mockup_device_variants
      WHERE device_model_id = $1
        AND slot_key = $2
      LIMIT 1`,
-    [input.modelId, normalizeMockupVariantSlotKey(input.slotKey)],
+    [input.modelId, normalizedSlotKey],
   )
 
   if (!refreshed.rows[0])
@@ -694,14 +763,28 @@ export async function publishMockupDeviceModel(
     actorUserId: string
   },
 ): Promise<{
-    model: MockupDeviceModel
-    variants: MockupDeviceVariant[]
-  }> {
+  model: MockupDeviceModel
+  variants: MockupDeviceVariant[]
+}> {
   const detail = await getMockupDeviceModelDetail(db, { modelId: input.modelId })
   if (!detail)
     throw new Error('MOCKUP_DEVICE_MODEL_NOT_FOUND')
 
+  await assertPublishedPreviewAssetBinding(db, {
+    itemId: normalizeString(detail.model.previewAssetItemId),
+    versionId: normalizeString(detail.model.previewAssetVersionId),
+    errorWhenEmpty: 'MOCKUP_MODEL_PREVIEW_REQUIRED',
+    errorWhenInvalid: 'MOCKUP_MODEL_PREVIEW_NOT_PUBLISHED',
+  })
   await assertPublishedShellVariantBindings(db, detail.variants)
+  for (const variant of detail.variants.filter(entry => entry.enabled)) {
+    await assertPublishedPreviewAssetBinding(db, {
+      itemId: normalizeString(variant.previewAssetItemId),
+      versionId: normalizeString(variant.previewAssetVersionId),
+      errorWhenEmpty: 'MOCKUP_VARIANT_PREVIEW_REQUIRED',
+      errorWhenInvalid: 'MOCKUP_VARIANT_PREVIEW_NOT_PUBLISHED',
+    })
+  }
 
   const defaultVariantSlotKey = normalizeString(detail.model.defaultVariantSlotKey)
   if (defaultVariantSlotKey) {
@@ -733,9 +816,9 @@ export async function archiveMockupDeviceModel(
     actorUserId: string
   },
 ): Promise<{
-    model: MockupDeviceModel
-    variants: MockupDeviceVariant[]
-  }> {
+  model: MockupDeviceModel
+  variants: MockupDeviceVariant[]
+}> {
   const exists = await getMockupDeviceModelRow(db, input.modelId)
   if (!exists)
     throw new Error('MOCKUP_DEVICE_MODEL_NOT_FOUND')
@@ -769,6 +852,8 @@ export async function listPublishedMockupProjectCatalog(
       model.model_name AS model_model_name,
       model.screen_width AS model_screen_width,
       model.screen_height AS model_screen_height,
+      model.preview_asset_item_id AS model_preview_asset_item_id,
+      model.preview_asset_version_id AS model_preview_asset_version_id,
       model.sort_order AS model_sort_order,
       model.status AS model_status,
       model.default_variant_slot_key AS model_default_variant_slot_key,
@@ -782,6 +867,8 @@ export async function listPublishedMockupProjectCatalog(
       variant.title AS variant_title,
       variant.shell_asset_item_id AS variant_shell_asset_item_id,
       variant.shell_asset_version_id AS variant_shell_asset_version_id,
+      variant.preview_asset_item_id AS variant_preview_asset_item_id,
+      variant.preview_asset_version_id AS variant_preview_asset_version_id,
       variant.enabled AS variant_enabled,
       variant.sort_order AS variant_sort_order,
       asset.title AS shell_asset_title,
