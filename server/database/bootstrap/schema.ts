@@ -1333,6 +1333,8 @@ CREATE TABLE IF NOT EXISTS mockup_device_models (
   model_name TEXT NOT NULL,
   screen_width INTEGER NOT NULL CHECK (screen_width > 0),
   screen_height INTEGER NOT NULL CHECK (screen_height > 0),
+  preview_asset_item_id TEXT REFERENCES canvas_library_items(id) ON DELETE SET NULL,
+  preview_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL,
   sort_order INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
   default_variant_slot_key TEXT CHECK (default_variant_slot_key IN ('variant_1', 'variant_2', 'variant_3', 'variant_4')),
@@ -1349,12 +1351,26 @@ CREATE TABLE IF NOT EXISTS mockup_device_variants (
   title TEXT NOT NULL DEFAULT '',
   shell_asset_item_id TEXT REFERENCES canvas_library_items(id) ON DELETE SET NULL,
   shell_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL,
+  preview_asset_item_id TEXT REFERENCES canvas_library_items(id) ON DELETE SET NULL,
+  preview_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL,
   enabled BOOLEAN NOT NULL DEFAULT FALSE,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(device_model_id, slot_key)
 );
+
+ALTER TABLE mockup_device_models
+  ADD COLUMN IF NOT EXISTS preview_asset_item_id TEXT REFERENCES canvas_library_items(id) ON DELETE SET NULL;
+
+ALTER TABLE mockup_device_models
+  ADD COLUMN IF NOT EXISTS preview_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL;
+
+ALTER TABLE mockup_device_variants
+  ADD COLUMN IF NOT EXISTS preview_asset_item_id TEXT REFERENCES canvas_library_items(id) ON DELETE SET NULL;
+
+ALTER TABLE mockup_device_variants
+  ADD COLUMN IF NOT EXISTS preview_asset_version_id TEXT REFERENCES canvas_library_item_versions(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS project_resource_comment_threads (
   id TEXT PRIMARY KEY,
@@ -1530,6 +1546,12 @@ CREATE INDEX IF NOT EXISTS idx_mockup_device_variants_model_slot
 
 CREATE INDEX IF NOT EXISTS idx_mockup_device_variants_shell_asset_item_id
   ON mockup_device_variants(shell_asset_item_id);
+
+CREATE INDEX IF NOT EXISTS idx_mockup_device_models_preview_asset_item_id
+  ON mockup_device_models(preview_asset_item_id);
+
+CREATE INDEX IF NOT EXISTS idx_mockup_device_variants_preview_asset_item_id
+  ON mockup_device_variants(preview_asset_item_id);
 
 CREATE INDEX IF NOT EXISTS idx_project_meeting_utterances_meeting_sequence
   ON project_meeting_utterances(meeting_id, sequence_no ASC, created_at ASC);

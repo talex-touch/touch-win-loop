@@ -921,6 +921,8 @@ export interface MockupDeviceModel {
   modelName: string
   screenWidth: number
   screenHeight: number
+  previewAssetItemId?: string | null
+  previewAssetVersionId?: string | null
   sortOrder: number
   status: MockupDeviceModelStatus
   defaultVariantSlotKey?: MockupVariantSlotKey
@@ -937,6 +939,8 @@ export interface MockupDeviceVariant {
   title: string
   shellAssetItemId?: string | null
   shellAssetVersionId?: string | null
+  previewAssetItemId?: string | null
+  previewAssetVersionId?: string | null
   enabled: boolean
   sortOrder: number
 }

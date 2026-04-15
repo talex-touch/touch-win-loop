@@ -29,6 +29,8 @@ interface MockupDeviceModelRow {
   model_name: string
   screen_width: number | string
   screen_height: number | string
+  preview_asset_item_id: string | null
+  preview_asset_version_id: string | null
   sort_order: number | string
   status: MockupDeviceModelStatus
   default_variant_slot_key: MockupVariantSlotKey | null
@@ -45,6 +47,8 @@ interface MockupDeviceVariantRow {
   title: string
   shell_asset_item_id: string | null
   shell_asset_version_id: string | null
+  preview_asset_item_id: string | null
+  preview_asset_version_id: string | null
   enabled: boolean
   sort_order: number | string
   created_at?: string
@@ -60,6 +64,8 @@ interface MockupCatalogRow {
   model_model_name: string
   model_screen_width: number | string
   model_screen_height: number | string
+  model_preview_asset_item_id: string | null
+  model_preview_asset_version_id: string | null
   model_sort_order: number | string
   model_status: MockupDeviceModelStatus
   model_default_variant_slot_key: MockupVariantSlotKey | null
@@ -73,6 +79,8 @@ interface MockupCatalogRow {
   variant_title: string
   variant_shell_asset_item_id: string | null
   variant_shell_asset_version_id: string | null
+  variant_preview_asset_item_id: string | null
+  variant_preview_asset_version_id: string | null
   variant_enabled: boolean
   variant_sort_order: number | string
   shell_asset_title: string | null
@@ -141,6 +149,8 @@ function toMockupDeviceModel(row: MockupDeviceModelRow): MockupDeviceModel {
     modelName: row.model_name,
     screenWidth: Math.max(1, toInteger(row.screen_width, 1)),
     screenHeight: Math.max(1, toInteger(row.screen_height, 1)),
+    previewAssetItemId: normalizeString(row.preview_asset_item_id) || null,
+    previewAssetVersionId: normalizeString(row.preview_asset_version_id) || null,
     sortOrder: Math.max(0, toInteger(row.sort_order, 0)),
     status: normalizeMockupStatus(row.status),
     defaultVariantSlotKey: row.default_variant_slot_key || undefined,
@@ -159,6 +169,8 @@ function toMockupDeviceVariant(row: MockupDeviceVariantRow): MockupDeviceVariant
     title: normalizeString(row.title),
     shellAssetItemId: normalizeString(row.shell_asset_item_id) || null,
     shellAssetVersionId: normalizeString(row.shell_asset_version_id) || null,
+    previewAssetItemId: normalizeString(row.preview_asset_item_id) || null,
+    previewAssetVersionId: normalizeString(row.preview_asset_version_id) || null,
     enabled: row.enabled === true,
     sortOrder: Math.max(0, toInteger(row.sort_order, 0)),
   }
@@ -174,6 +186,8 @@ function toCatalogModelRow(row: MockupCatalogRow): MockupDeviceModelRow {
     model_name: row.model_model_name,
     screen_width: row.model_screen_width,
     screen_height: row.model_screen_height,
+    preview_asset_item_id: row.model_preview_asset_item_id,
+    preview_asset_version_id: row.model_preview_asset_version_id,
     sort_order: row.model_sort_order,
     status: row.model_status,
     default_variant_slot_key: row.model_default_variant_slot_key,
@@ -192,6 +206,8 @@ function toCatalogVariantRow(row: MockupCatalogRow): MockupDeviceVariantRow {
     title: row.variant_title,
     shell_asset_item_id: row.variant_shell_asset_item_id,
     shell_asset_version_id: row.variant_shell_asset_version_id,
+    preview_asset_item_id: row.variant_preview_asset_item_id,
+    preview_asset_version_id: row.variant_preview_asset_version_id,
     enabled: row.variant_enabled,
     sort_order: row.variant_sort_order,
   }
@@ -341,6 +357,43 @@ async function assertPublishedShellVariantBindings(
     if (!result.rows[0]?.valid_binding)
       throw new Error('MOCKUP_VARIANT_SHELL_NOT_PUBLISHED')
   }
+}
+
+async function assertPublishedPreviewAssetBinding(
+  db: Queryable,
+  input: {
+    itemId: string
+    versionId: string
+    allowEmpty?: boolean
+    errorWhenEmpty: string
+    errorWhenInvalid: string
+  },
+): Promise<void> {
+  const itemId = normalizeString(input.itemId)
+  const versionId = normalizeString(input.versionId)
+  if (!itemId || !versionId) {
+    if (input.allowEmpty)
+      return
+    throw new Error(input.errorWhenEmpty)
+  }
+
+  const result = await db.query<{ valid_binding: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1
+      FROM canvas_library_items item
+      JOIN canvas_library_item_versions version ON version.item_id = item.id
+      WHERE item.id = $1
+        AND version.id = $2
+        AND item.kind = 'asset'
+        AND item.asset_kind IN ('image', 'svg')
+        AND item.status = 'published'
+        AND item.published_version_id = version.id
+    ) AS valid_binding`,
+    [itemId, versionId],
+  )
+
+  if (!result.rows[0]?.valid_binding)
+    throw new Error(input.errorWhenInvalid)
 }
 
 export async function listMockupDeviceModels(
