@@ -57,6 +57,14 @@ it('场景页支持一键设置全部场景模型', async () => {
   assert.match(source, /复制模型链到全部场景/, '缺少从当前场景复制模型链到全部场景入口')
 })
 
+it('表格列配置使用 columns slot、数值宽度并避免 cell slot 解构告警写法', async () => {
+  const source = await readFile(PAGE_FILE, 'utf8')
+
+  assert.match(source, /<a-table[\s\S]*<template #columns>/, '表格应通过 columns slot 注册列定义')
+  assert.doesNotMatch(source, /<a-table-column[^>]*\swidth="(?:90|100|120|150|180|220|260)"/, '表格列宽不应再以字符串形式传入')
+  assert.doesNotMatch(source, /#cell="\{ record \}"/, '表格 cell slot 不应继续使用 record 解构写法')
+})
+
 it('后台 AI 场景类型包含文档动作与画布动作 channel key', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 

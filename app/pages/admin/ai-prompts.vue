@@ -1156,53 +1156,53 @@ onMounted(async () => {
           <a-table :data="modelPoolRows" :pagination="false" row-key="model">
             <template #columns>
               <a-table-column title="模型" data-index="model">
-                <template #cell="{ record }">
+                <template #cell="scope">
                   <div class="space-y-1">
                     <div class="text-slate-900 font-medium">
-                      {{ record.model }}
+                      {{ scope.record.model }}
                     </div>
                     <div class="text-xs text-slate-500">
-                      {{ record.label }}
+                      {{ scope.record.label }}
                     </div>
                   </div>
                 </template>
               </a-table-column>
-              <a-table-column title="格式" width="150">
-                <template #cell="{ record }">
-                  <a-tag>{{ record.format }}</a-tag>
+              <a-table-column title="格式" data-index="format" :width="150">
+                <template #cell="scope">
+                  <a-tag>{{ scope.record.format }}</a-tag>
                 </template>
               </a-table-column>
-              <a-table-column title="启用" width="100">
-                <template #cell="{ record }">
-                  <a-tag :color="record.enabled ? 'green' : 'gray'">
-                    {{ record.enabled ? 'on' : 'off' }}
+              <a-table-column title="启用" data-index="enabled" :width="100">
+                <template #cell="scope">
+                  <a-tag :color="scope.record.enabled ? 'green' : 'gray'">
+                    {{ scope.record.enabled ? 'on' : 'off' }}
                   </a-tag>
                 </template>
               </a-table-column>
-              <a-table-column title="导入价格" width="260">
-                <template #cell="{ record }">
-                  {{ buildImportedPriceText(record) }}
+              <a-table-column title="导入价格" data-index="providerInputPricePer1M" :width="260">
+                <template #cell="scope">
+                  {{ buildImportedPriceText(scope.record) }}
                 </template>
               </a-table-column>
-              <a-table-column title="生效价格" width="260">
-                <template #cell="{ record }">
-                  {{ buildPriceText(record) }}
+              <a-table-column title="生效价格" data-index="inputPricePer1M" :width="260">
+                <template #cell="scope">
+                  {{ buildPriceText(scope.record) }}
                 </template>
               </a-table-column>
-              <a-table-column title="来源" width="120">
-                <template #cell="{ record }">
-                  <a-tag :color="record.pricingSource === 'manual' ? 'orange' : record.pricingSource === 'provider' ? 'arcoblue' : 'gray'">
-                    {{ record.pricingSource }}
+              <a-table-column title="来源" data-index="pricingSource" :width="120">
+                <template #cell="scope">
+                  <a-tag :color="scope.record.pricingSource === 'manual' ? 'orange' : scope.record.pricingSource === 'provider' ? 'arcoblue' : 'gray'">
+                    {{ scope.record.pricingSource }}
                   </a-tag>
                 </template>
               </a-table-column>
-              <a-table-column title="操作" width="180">
-                <template #cell="{ record }">
+              <a-table-column title="操作" data-index="modelActions" :width="180">
+                <template #cell="scope">
                   <div class="flex gap-2">
-                    <a-button size="mini" @click="openEditModelDrawer(record)">
+                    <a-button size="mini" @click="openEditModelDrawer(scope.record)">
                       编辑
                     </a-button>
-                    <a-button size="mini" status="danger" @click="removeModel(record.model)">
+                    <a-button size="mini" status="danger" @click="removeModel(scope.record.model)">
                       删除
                     </a-button>
                   </div>
@@ -1244,48 +1244,48 @@ onMounted(async () => {
         <a-table :data="sceneRows" :pagination="false" row-key="key">
           <template #columns>
             <a-table-column title="场景" data-index="label" :width="220">
-              <template #cell="{ record }">
+              <template #cell="scope">
                 <div class="space-y-1">
                   <div class="text-slate-900 font-medium">
-                    {{ record.label }}
+                    {{ scope.record.label }}
                   </div>
                   <div class="text-xs text-slate-500">
-                    {{ record.description }}
+                    {{ scope.record.description }}
                   </div>
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="模型回退链">
-              <template #cell="{ record }">
+            <a-table-column title="模型回退链" data-index="models">
+              <template #cell="scope">
                 <div class="space-y-2">
                   <div class="text-sm text-slate-700">
-                    {{ sceneModelsPreview(record) }}
+                    {{ sceneModelsPreview(scope.record) }}
                   </div>
-                  <div v-if="sceneTestMessage[record.key]" class="text-xs text-slate-500">
-                    {{ sceneTestMessage[record.key] }}
+                  <div v-if="sceneTestMessage[scope.record.key]" class="text-xs text-slate-500">
+                    {{ sceneTestMessage[scope.record.key] }}
                   </div>
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="提示词">
-              <template #cell="{ record }">
-                {{ promptPreview(record.prompt) }}
+            <a-table-column title="提示词" data-index="prompt">
+              <template #cell="scope">
+                {{ promptPreview(scope.record.prompt) }}
               </template>
             </a-table-column>
-            <a-table-column title="状态" :width="100">
-              <template #cell="{ record }">
-                <a-tag :color="record.enabled ? 'green' : 'gray'">
-                  {{ record.enabled ? 'enabled' : 'disabled' }}
+            <a-table-column title="状态" data-index="enabled" :width="100">
+              <template #cell="scope">
+                <a-tag :color="scope.record.enabled ? 'green' : 'gray'">
+                  {{ scope.record.enabled ? 'enabled' : 'disabled' }}
                 </a-tag>
               </template>
             </a-table-column>
-            <a-table-column title="操作" :width="220">
-              <template #cell="{ record }">
+            <a-table-column title="操作" data-index="sceneActions" :width="220">
+              <template #cell="scope">
                 <div class="flex gap-2">
-                  <a-button size="mini" @click="openSceneDrawer(record)">
+                  <a-button size="mini" @click="openSceneDrawer(scope.record)">
                     编辑
                   </a-button>
-                  <a-button size="mini" :loading="sceneTesting[record.key]" @click="testScene(record)">
+                  <a-button size="mini" :loading="sceneTesting[scope.record.key]" @click="testScene(scope.record)">
                     测试
                   </a-button>
                 </div>
@@ -1318,32 +1318,32 @@ onMounted(async () => {
 
         <a-table :data="audits" :loading="auditLoading" :pagination="false" row-key="id">
           <template #columns>
-            <a-table-column title="时间" :width="180">
-              <template #cell="{ record }">
-                {{ formatTime(record.createdAt) }}
+            <a-table-column title="时间" data-index="createdAt" :width="180">
+              <template #cell="scope">
+                {{ formatTime(scope.record.createdAt) }}
               </template>
             </a-table-column>
             <a-table-column title="Action" data-index="action" :width="260" />
-            <a-table-column title="操作者" :width="150">
-              <template #cell="{ record }">
-                {{ record.actorName || record.actorUserId || '-' }}
+            <a-table-column title="操作者" data-index="actorName" :width="150">
+              <template #cell="scope">
+                {{ scope.record.actorName || scope.record.actorUserId || '-' }}
               </template>
             </a-table-column>
-            <a-table-column title="赛事" :width="180">
-              <template #cell="{ record }">
-                {{ record.contestName || '-' }}
+            <a-table-column title="赛事" data-index="contestName" :width="180">
+              <template #cell="scope">
+                {{ scope.record.contestName || '-' }}
               </template>
             </a-table-column>
-            <a-table-column title="Payload">
-              <template #cell="{ record }">
+            <a-table-column title="Payload" data-index="payload">
+              <template #cell="scope">
                 <div class="text-sm text-slate-600 truncate">
-                  {{ toPrettyJson(record.payload).slice(0, 160) }}
+                  {{ toPrettyJson(scope.record.payload).slice(0, 160) }}
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="操作" :width="90">
-              <template #cell="{ record }">
-                <a-button size="mini" @click="openAuditDetail(record)">
+            <a-table-column title="操作" data-index="auditActions" :width="90">
+              <template #cell="scope">
+                <a-button size="mini" @click="openAuditDetail(scope.record)">
                   详情
                 </a-button>
               </template>
@@ -1397,48 +1397,48 @@ onMounted(async () => {
 
         <a-table :data="logs" :loading="logLoading" :pagination="false" row-key="id">
           <template #columns>
-            <a-table-column title="时间" :width="180">
-              <template #cell="{ record }">
-                {{ formatTime(record.createdAt) }}
+            <a-table-column title="时间" data-index="createdAt" :width="180">
+              <template #cell="scope">
+                {{ formatTime(scope.record.createdAt) }}
               </template>
             </a-table-column>
-            <a-table-column title="Workspace / Session" :width="260">
-              <template #cell="{ record }">
+            <a-table-column title="Workspace / Session" data-index="workspaceName" :width="260">
+              <template #cell="scope">
                 <div class="space-y-1">
                   <div class="text-slate-900 font-medium">
-                    {{ record.workspaceName || record.workspaceId || '-' }}
+                    {{ scope.record.workspaceName || scope.record.workspaceId || '-' }}
                   </div>
                   <div class="text-xs text-slate-500">
-                    {{ record.sessionTitle || record.sessionId || '-' }}
+                    {{ scope.record.sessionTitle || scope.record.sessionId || '-' }}
                   </div>
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="角色" :width="100">
-              <template #cell="{ record }">
-                {{ record.role }}
+            <a-table-column title="角色" data-index="role" :width="100">
+              <template #cell="scope">
+                {{ scope.record.role }}
               </template>
             </a-table-column>
-            <a-table-column title="Provider / Model" :width="220">
-              <template #cell="{ record }">
+            <a-table-column title="Provider / Model" data-index="provider" :width="220">
+              <template #cell="scope">
                 <div class="space-y-1">
-                  <div>{{ record.provider || '-' }}</div>
+                  <div>{{ scope.record.provider || '-' }}</div>
                   <div class="text-xs text-slate-500">
-                    {{ record.model || '-' }}<span v-if="record.fallbackUsed"> · fallback</span>
+                    {{ scope.record.model || '-' }}<span v-if="scope.record.fallbackUsed"> · fallback</span>
                   </div>
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="消息">
-              <template #cell="{ record }">
+            <a-table-column title="消息" data-index="contentPreview">
+              <template #cell="scope">
                 <div class="text-sm text-slate-600 truncate">
-                  {{ record.contentPreview || record.content || '-' }}
+                  {{ scope.record.contentPreview || scope.record.content || '-' }}
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="操作" :width="90">
-              <template #cell="{ record }">
-                <a-button size="mini" @click="openLogDetail(record)">
+            <a-table-column title="操作" data-index="logActions" :width="90">
+              <template #cell="scope">
+                <a-button size="mini" @click="openLogDetail(scope.record)">
                   详情
                 </a-button>
               </template>
