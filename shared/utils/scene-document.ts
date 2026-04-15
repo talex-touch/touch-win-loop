@@ -6250,7 +6250,7 @@ export function mergeCanvasLibraryPageTemplate(
           mockupSourceFrameId: mappedMockupSourceFrameId || undefined,
         },
       },
-    }, 0, nextPageId), nextFrameIds, assetIdMap), normalizedOrigin)
+    }, 0, nextPageId), nextFrameIds), normalizedOrigin)
   })
 
   const nextElements = ensureArray(payload.elements).map((element, index) => {
@@ -6332,7 +6332,7 @@ export function mergeCanvasLibraryFrameTemplate(
         mockupSourceFrameId: '',
       },
     },
-  }, 0, targetPageId), new Set([nextFrameId]), assetIdMap), normalizedOrigin)
+  }, 0, targetPageId), new Set([nextFrameId])), normalizedOrigin)
 
   const nextElements = ensureArray(payload.elements).map((element, index) => {
     const nextElementId = resolveCanvasLibraryNextIdentifier(existingElementIds, 'element')
