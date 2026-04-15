@@ -7,6 +7,7 @@ const WORKSPACE_LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/works
 const WORKSPACE_RESOURCE_MANAGER_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourceManagerPanel.vue')
 const WORKSPACE_LEFT_RAIL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftRail.vue')
 const WORKSPACE_UPLOAD_ASIDE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceUploadAside.vue')
+const WORKSPACE_UPLOAD_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceUploadPanel.vue')
 const WORKSPACE_LEFT_SIDEBAR_STYLE_FILE = resolve(process.cwd(), 'app/assets/styles/workspace-left-sidebar.css')
 
 it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 panel', async () => {
@@ -41,15 +42,24 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   assert.match(source, /width: 0;/, 'WorkspaceLeftSidebar 缺少左侧 panel 宽度收起动画')
   assert.match(source, /opacity: 0;/, 'WorkspaceLeftSidebar 缺少左侧 panel 透明度收起动画')
   assert.match(source, /transform: translateX\(-10px\);/, 'WorkspaceLeftSidebar 缺少左侧 panel 位移动画')
+  assert.match(source, /type WorkspaceLeftModuleId = 'resource_manager' \| 'meeting' \| 'analysis' \| 'project_config' \| 'issue_center' \| 'upload_center' \| 'notification_center'/, 'WorkspaceLeftSidebar 未声明上传与通知左侧模块')
   assert.match(source, /function switchModule\(moduleId: string, options: \{ allowCollapse\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 未给左栏 tab 提供可控的折叠切换入口')
-  assert.match(source, /const notificationCenter = useNotificationCenter\(\)/, 'WorkspaceLeftSidebar 未接入通知中心状态，无法在左 rail 切换时回收通知 aside')
-  assert.match(source, /function closeRailOverlays\(options: \{ keepNotifications\?: boolean, keepUpload\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 缺少左 rail overlay 统一回收入口')
+  assert.match(source, /const notificationCenter = useNotificationCenter\(\)/, 'WorkspaceLeftSidebar 未接入通知中心状态，无法在左 rail 切换时回收通知 drawer 残留状态')
+  assert.match(source, /function closeRailOverlays\(options: \{ keepUpload\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 缺少左 rail overlay 统一回收入口')
   assert.match(source, /allowCollapse && !props\.collapsed && !recyclePanelOpen\.value && activeModule\.value === moduleId[\s\S]*emit\('update:collapsed', true\)/, 'WorkspaceLeftSidebar 点击当前左栏 tab 时仍不会收起 panel')
   assert.match(source, /switchModule\(moduleId: string, options: \{ allowCollapse\?: boolean \} = \{\}\) \{[\s\S]*closeRailOverlays\(\)/, 'WorkspaceLeftSidebar 切换模块时未回收通知或上传 aside')
   assert.match(source, /function openRecycleBinPanel\(options: \{ allowCollapse\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 未给回收站入口提供折叠切换入口')
   assert.match(source, /allowCollapse && !props\.collapsed && recyclePanelOpen\.value[\s\S]*emit\('update:collapsed', true\)/, 'WorkspaceLeftSidebar 点击当前回收站入口时仍不会收起 panel')
   assert.match(source, /switchModule\(props\.commandModuleId, \{ allowCollapse: false \}\)/, 'WorkspaceLeftSidebar 在命令面板触发时仍可能误收起左栏')
-  assert.match(source, /@open-notifications="handleOpenNotifications"/, 'WorkspaceLeftSidebar 未在通知入口打开时协调其他 rail aside')
+  assert.match(source, /function handleOpenNotifications\(\) \{[\s\S]*switchModule\('notification_center'\)/, 'WorkspaceLeftSidebar 未将通知入口改成左侧模块切换')
+  assert.match(source, /@open-notifications="handleOpenNotifications"/, 'WorkspaceLeftSidebar 未接住通知入口事件')
+  assert.match(source, /function openUploadPanel\(options: \{ allowCollapse\?: boolean, syncDrawer\?: boolean \} = \{\}\)/, 'WorkspaceLeftSidebar 未提供上传模块打开入口')
+  assert.match(source, /watch\(\(\) => props\.uploadDrawerOpen, \(next, previous\) => \{[\s\S]*openUploadPanel\(\{ allowCollapse: false, syncDrawer: false \}\)/, 'WorkspaceLeftSidebar 未在上传状态打开时切到上传模块')
+  assert.match(source, /:upload-active="!props\.collapsed && !recyclePanelOpen && activeModule === 'upload_center'"/, 'WorkspaceLeftSidebar 未向 left rail 透传上传激活态')
+  assert.match(source, /<WorkspaceUploadPanel[\s\S]*activeModule === 'upload_center'/, 'WorkspaceLeftSidebar 未渲染上传管理模块内容')
+  assert.match(source, /:notification-active="!props\.collapsed && !recyclePanelOpen && activeModule === 'notification_center'"/, 'WorkspaceLeftSidebar 未向 left rail 透传通知激活态')
+  assert.match(source, /<WorkspaceNotificationPanel[\s\S]*activeModule === 'notification_center'/, 'WorkspaceLeftSidebar 未渲染通知中心模块内容')
+  assert.doesNotMatch(source, /:member-management-active=/, 'WorkspaceLeftSidebar 仍向项目协作入口透传选中态')
   assert.match(source, /@toggle-upload-drawer="handleToggleUploadDrawer"/, 'WorkspaceLeftSidebar 未在上传入口切换时回收通知 aside')
   assert.match(source, /'removeProjectResources': \[resourceIds: string\[\]\]/, 'WorkspaceLeftSidebar 缺少批量删除资源事件透传')
   assert.match(source, /--workspace-left-panel-width:\s*calc\(var\(--workspace-left-dock-width\) - var\(--workspace-left-rail-width\)\);/, 'WorkspaceLeftSidebar 未暴露左栏面板宽度变量供 rail aside 复用')
@@ -60,6 +70,9 @@ it('左栏始终保留 WorkspaceLeftRail，并通过 collapsed 控制右侧 pane
   assert.match(styleSource, /padding:\s*var\(--workspace-left-recycle-row-padding-y\)\s+var\(--workspace-left-recycle-row-padding-x\);/, '回收站行未接入左栏密度变量')
   assert.match(styleSource, /padding:\s*var\(--workspace-left-library-row-padding-y\)\s+var\(--workspace-left-library-row-padding-x\);/, '资料库行未接入左栏密度变量')
   assert.match(railSource, /workspace-left-rail__item--active': !props\.collapsed && item\.id === props\.activeId/, 'left rail 在折叠态仍显示顶部模块选中标识')
+  assert.doesNotMatch(railSource, /memberManagementActive\?: boolean/, 'left rail 仍为项目协作入口保留选中态入参')
+  assert.doesNotMatch(railSource, /workspace-left-rail__members--active/, '项目协作入口仍保留选中态样式')
+  assert.match(railSource, /@click="emit\('openMemberManagement'\)"/, '项目协作入口点击后未继续打开主内容 tab')
 })
 
 it('资源管理器删除独立系统资料库分组，只保留导入入口', async () => {
@@ -87,7 +100,8 @@ it('资源管理器删除独立系统资料库分组，只保留导入入口', a
   assert.match(styleSource, /\.workspace-project-add-actions \{[\s\S]*display:\s*inline-flex;[\s\S]*gap:\s*6px;/, '资源管理器头部操作区未为批量管理入口预留并排布局')
   assert.match(styleSource, /\.workspace-resource-batch-toolbar \{/, '资源管理器缺少批量编辑工具条样式')
   assert.match(styleSource, /\.workspace-tree-item__checkbox-input \{[\s\S]*accent-color:\s*#3f6ae0;/, '资源管理器批量勾选框未接入统一强调色')
-  assert.match(styleSource, /\.workspace-tree-block__title-row--sticky,\s*[\s\S]*\.workspace-tree-block__title--sticky \{[\s\S]*position:\s*sticky;[\s\S]*top:\s*0;/, '资源管理器顶级栏标题缺少 sticky 样式')
+  assert.match(styleSource, /\.workspace-tree-block__title-row--sticky,/, '资源管理器顶级栏标题缺少 sticky 选择器')
+  assert.match(styleSource, /\.workspace-tree-block__title--sticky \{[\s\S]*position:\s*sticky;[\s\S]*top:\s*0;/, '资源管理器顶级栏标题缺少 sticky 样式')
   assert.doesNotMatch(styleSource, /\.workspace-tree-item-row--sticky-root/, '资源管理器仍在给资源节点本身挂 sticky 样式')
   assert.match(styleSource, /\.workspace-library-modal \.workspace-library-list \{[\s\S]*padding:\s*4px 0;/, '项目资源弹窗列表缺少滚动容器内边距')
   assert.match(styleSource, /\.workspace-library-item \{[\s\S]*align-items:\s*flex-start;[\s\S]*min-height:\s*52px;/, '项目资源弹窗列表项布局仍然过于拥挤')
@@ -133,24 +147,26 @@ it('left rail 图标收窄并改成轻量 popover 名称提示', async () => {
   assert.doesNotMatch(source, /record_voice_over/, 'left rail 底部仍保留模拟答辩按钮')
 })
 
-it('上传入口已迁移到左侧 rail，并从左侧 aside 打开上传管理', async () => {
-  const [sidebarSource, railSource, uploadSource] = await Promise.all([
+it('上传入口已迁移到左侧 rail，并切到左侧 panel 的上传模块', async () => {
+  const [sidebarSource, railSource, uploadSource, uploadPanelSource] = await Promise.all([
     readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
     readFile(WORKSPACE_LEFT_RAIL_FILE, 'utf8'),
     readFile(WORKSPACE_UPLOAD_ASIDE_FILE, 'utf8'),
+    readFile(WORKSPACE_UPLOAD_PANEL_FILE, 'utf8'),
   ])
 
   assert.match(sidebarSource, /uploadSummary\?: ProjectUploadSummary \| null/, 'WorkspaceLeftSidebar 缺少上传摘要入参')
   assert.match(sidebarSource, /uploadDrawerOpen\?: boolean/, 'WorkspaceLeftSidebar 缺少上传抽屉打开态入参')
   assert.match(sidebarSource, /uploadActivityItems\?: ProjectUploadActivityItem\[\]/, 'WorkspaceLeftSidebar 缺少上传活动列表入参')
-  assert.match(sidebarSource, /@toggle-upload-drawer="handleToggleUploadDrawer"/, 'WorkspaceLeftSidebar 未通过统一 overlay 协调逻辑处理上传抽屉切换')
+  assert.match(sidebarSource, /@toggle-upload-drawer="handleToggleUploadDrawer"/, 'WorkspaceLeftSidebar 未接住上传入口切换事件')
   assert.match(railSource, /<WorkspaceUploadAside/, 'WorkspaceLeftRail 未挂载上传 aside 组件')
   assert.match(uploadSource, /data-testid="workspace-left-rail-upload-button"/, '左 rail 上传入口缺少测试锚点')
-  assert.match(uploadSource, /data-testid="workspace-left-upload-drawer"/, '左侧上传抽屉缺少测试锚点')
-  assert.match(uploadSource, /<aside[\s\S]*class="workspace-upload-drawer workspace-upload-drawer--aside"/, '上传管理未使用 aside 语义容器')
-  assert.match(uploadSource, /workspace-upload-drawer--aside/, '上传管理未改成左侧 aside 形态')
-  assert.match(uploadSource, /\.workspace-upload-drawer--aside \{[\s\S]*top:\s*0;[\s\S]*bottom:\s*0;[\s\S]*left:\s*100%;/, '上传管理未贴左 rail 展开成真正侧边 aside')
-  assert.match(uploadSource, /width:\s*min\(var\(--workspace-left-panel-width,\s*304px\),\s*calc\(100vw - 108px\)\);/, '上传管理 aside 宽度未跟随左栏面板')
-  assert.match(uploadSource, /\.workspace-upload-drawer--aside \{[\s\S]*border-radius:\s*0 20px 20px 0;/, '上传管理 aside 缺少贴边抽屉圆角')
-  assert.doesNotMatch(uploadSource, /max-height:\s*min\(72vh,\s*720px\)/, '上传管理仍在使用浮层卡片高度限制')
+  assert.match(uploadSource, /active\?: boolean/, '左 rail 上传入口未暴露显式激活态入参')
+  assert.match(uploadSource, /:aria-pressed="props\.active \? 'true' : 'false'"/, '左 rail 上传入口未根据模块状态透传激活语义')
+  assert.doesNotMatch(uploadSource, /data-testid="workspace-left-upload-drawer"/, '上传入口组件仍在挂载 rail 抽屉')
+  assert.doesNotMatch(uploadSource, /workspace-upload-drawer--aside/, '上传入口组件仍保留 rail aside 形态')
+  assert.match(uploadPanelSource, /data-testid="workspace-left-panel-upload-module"/, '左侧上传模块缺少稳定测试锚点')
+  assert.match(uploadPanelSource, /上传管理/, '左侧上传模块缺少标题')
+  assert.match(uploadPanelSource, /最近 7 天暂无上传记录/, '左侧上传模块缺少空状态文案')
+  assert.match(uploadPanelSource, /emit\('pauseAllUploadTasks'\)/, '左侧上传模块未复用批量上传操作')
 })

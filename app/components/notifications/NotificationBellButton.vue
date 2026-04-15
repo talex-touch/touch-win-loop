@@ -5,10 +5,12 @@ const props = withDefaults(defineProps<{
   workspaceId?: string
   compact?: boolean
   variant?: 'default' | 'rail'
+  active?: boolean
 }>(), {
   workspaceId: '',
   compact: false,
   variant: 'default',
+  active: false,
 })
 
 const emit = defineEmits<{
@@ -25,9 +27,13 @@ watch(() => props.workspaceId, (value) => {
 }, { immediate: true })
 
 const isRailVariant = computed(() => props.variant === 'rail')
-const isRailActive = computed(() => isRailVariant.value && drawerVisible.value)
+const isRailActive = computed(() => isRailVariant.value ? props.active : drawerVisible.value)
 
 function openDrawer() {
+  if (isRailVariant.value) {
+    emit('open')
+    return
+  }
   if (drawerVisible.value) {
     center.closeDrawer()
     return
@@ -74,7 +80,7 @@ function openDrawer() {
       </span>
     </button>
 
-    <NotificationDrawer :workspace-id="props.workspaceId" :variant="props.variant" />
+    <NotificationDrawer v-if="!isRailVariant" :workspace-id="props.workspaceId" />
   </div>
 </template>
 

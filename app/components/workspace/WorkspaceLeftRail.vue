@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { WorkspaceWithQuota } from '~~/shared/types/domain'
-import type { ProjectUploadActivityItem, ProjectUploadSummary } from '~/types/project-upload'
+import type { ProjectUploadSummary } from '~/types/project-upload'
 import NotificationBellButton from '~/components/notifications/NotificationBellButton.vue'
 import WorkspaceUploadAside from '~/components/workspace/WorkspaceUploadAside.vue'
 import WorkspaceUserRailMenu from '~/components/workspace/WorkspaceUserRailMenu.vue'
@@ -17,7 +17,8 @@ const props = withDefaults(defineProps<{
   workspaceId?: string
   collapsed?: boolean
   recycleActive?: boolean
-  memberManagementActive?: boolean
+  uploadActive?: boolean
+  notificationActive?: boolean
   userName?: string
   userEmail?: string
   userAvatarUrl?: string
@@ -25,16 +26,14 @@ const props = withDefaults(defineProps<{
   workspaceCanManageMembers?: boolean
   hasActiveProject?: boolean
   uploadSummary?: ProjectUploadSummary | null
-  uploadDrawerOpen?: boolean
-  uploadActivityItems?: ProjectUploadActivityItem[]
-  uploadHistoryLoaded?: boolean
 }>(), {
   items: () => [],
   activeId: '',
   workspaceId: '',
   collapsed: false,
   recycleActive: false,
-  memberManagementActive: false,
+  uploadActive: false,
+  notificationActive: false,
   userName: '',
   userEmail: '',
   userAvatarUrl: '',
@@ -42,9 +41,6 @@ const props = withDefaults(defineProps<{
   workspaceCanManageMembers: false,
   hasActiveProject: false,
   uploadSummary: null,
-  uploadDrawerOpen: false,
-  uploadActivityItems: () => [],
-  uploadHistoryLoaded: false,
 })
 
 const emit = defineEmits<{
@@ -58,14 +54,6 @@ const emit = defineEmits<{
   openWorkspaceHome: []
   openDisplayPreferences: []
   openAccountCenter: []
-  pauseUploadTask: [sessionId: string]
-  resumeUploadTask: [sessionId: string]
-  retryUploadTask: [sessionId: string]
-  cancelUploadTask: [sessionId: string]
-  rebindUploadTask: [sessionId: string]
-  pauseAllUploadTasks: []
-  resumeAllUploadTasks: []
-  clearCompletedUploadTasks: []
 }>()
 </script>
 
@@ -92,18 +80,8 @@ const emit = defineEmits<{
       <WorkspaceUploadAside
         :has-active-project="props.hasActiveProject"
         :upload-summary="props.uploadSummary"
-        :upload-drawer-open="props.uploadDrawerOpen"
-        :upload-activity-items="props.uploadActivityItems"
-        :upload-history-loaded="props.uploadHistoryLoaded"
-        @toggle-upload-drawer="emit('toggleUploadDrawer')"
-        @pause-upload-task="emit('pauseUploadTask', $event)"
-        @resume-upload-task="emit('resumeUploadTask', $event)"
-        @retry-upload-task="emit('retryUploadTask', $event)"
-        @cancel-upload-task="emit('cancelUploadTask', $event)"
-        @rebind-upload-task="emit('rebindUploadTask', $event)"
-        @pause-all-upload-tasks="emit('pauseAllUploadTasks')"
-        @resume-all-upload-tasks="emit('resumeAllUploadTasks')"
-        @clear-completed-upload-tasks="emit('clearCompletedUploadTasks')"
+        :active="props.uploadActive"
+        @open="emit('toggleUploadDrawer')"
       />
 
       <button
@@ -120,7 +98,6 @@ const emit = defineEmits<{
       <button
         data-testid="workspace-left-rail-member-management-button"
         class="workspace-left-rail__members"
-        :class="{ 'workspace-left-rail__members--active': props.memberManagementActive }"
         aria-label="项目协作"
         type="button"
         @click="emit('openMemberManagement')"
@@ -132,6 +109,7 @@ const emit = defineEmits<{
       <NotificationBellButton
         data-testid="workspace-left-rail-notification-button"
         variant="rail"
+        :active="props.notificationActive"
         :workspace-id="props.workspaceId"
         @open="emit('openNotifications')"
       />
@@ -287,12 +265,6 @@ const emit = defineEmits<{
   color: #a92323;
   background: #fff2f2;
   box-shadow: inset 0 0 0 1px #f3d8d8;
-}
-
-.workspace-left-rail__members--active {
-  color: #1e3a74;
-  background: #eef4ff;
-  box-shadow: inset 0 0 0 1px #d7e3f8;
 }
 
 .workspace-left-rail__popover {

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { ContextMenuRequest } from '~/components/ui/context-menu'
 import type {
   Contest,
   ProjectIssue,
@@ -15,10 +14,11 @@ import type {
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import type { ContextMenuRequest } from '~/components/ui/context-menu'
 import type { ProjectUploadActivityItem, ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 
-type WorkspaceLeftModuleId = 'resource_manager' | 'meeting' | 'analysis' | 'project_config' | 'issue_center'
+type WorkspaceLeftModuleId = 'resource_manager' | 'meeting' | 'analysis' | 'project_config' | 'issue_center' | 'upload_center' | 'notification_center'
 type WorkspaceLeftPanelContentId = WorkspaceLeftModuleId
 
 interface WorkspaceLeftModule {
@@ -176,7 +176,7 @@ const emit = defineEmits<{
   'restoreProjectResource': [resourceId: string]
   'purgeProjectResource': [resourceId: string]
   'uploadResources': [payload: { files: File[], parentResourceId?: string | null }]
-  requestContextMenu: [payload: ContextMenuRequest]
+  'requestContextMenu': [payload: ContextMenuRequest]
 }>()
 
 const notificationCenter = useNotificationCenter()
@@ -215,6 +215,7 @@ const modules: WorkspaceLeftModule[] = [
     hint: '寻疑报告与问题清单',
   },
 ]
+const moduleOrder: WorkspaceLeftModuleId[] = ['resource_manager', 'meeting', 'analysis', 'project_config', 'issue_center', 'upload_center', 'notification_center']
 
 const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
 const recyclePanelOpen = ref(false)
@@ -231,10 +232,11 @@ function isWorkspaceLeftModuleId(value: string): value is WorkspaceLeftModuleId 
     || value === 'analysis'
     || value === 'project_config'
     || value === 'issue_center'
+    || value === 'upload_center'
+    || value === 'notification_center'
 }
 
 function syncPanelTransitionDirection(moduleId: string) {
-  const moduleOrder = modules.map(item => item.id)
   const currentIndex = moduleOrder.indexOf(activeModule.value)
   const nextIndex = moduleOrder.indexOf(moduleId as WorkspaceLeftModuleId)
   if (nextIndex < 0 || currentIndex < 0) {
@@ -295,20 +297,40 @@ function openRecycleBinPanel(options: { allowCollapse?: boolean } = {}) {
     emit('update:collapsed', false)
 }
 
-function closeRailOverlays(options: { keepNotifications?: boolean, keepUpload?: boolean } = {}) {
-  if (!options.keepNotifications)
-    notificationCenter.closeDrawer()
+function closeRailOverlays(options: { keepUpload?: boolean } = {}) {
+  notificationCenter.closeDrawer()
   if (!options.keepUpload && props.uploadDrawerOpen)
     emit('toggleUploadDrawer')
 }
 
 function handleToggleUploadDrawer() {
-  closeRailOverlays({ keepUpload: true })
-  emit('toggleUploadDrawer')
+  if (props.uploadDrawerOpen) {
+    emit('toggleUploadDrawer')
+    return
+  }
+  openUploadPanel({ allowCollapse: false })
 }
 
 function handleOpenNotifications() {
-  closeRailOverlays({ keepNotifications: true })
+  switchModule('notification_center')
+}
+
+function openUploadPanel(options: { allowCollapse?: boolean, syncDrawer?: boolean } = {}) {
+  closeRailOverlays({ keepUpload: true })
+  const allowCollapse = options.allowCollapse !== false
+  if (allowCollapse && !props.collapsed && !recyclePanelOpen.value && activeModule.value === 'upload_center') {
+    emit('update:collapsed', true)
+    if (props.uploadDrawerOpen && options.syncDrawer !== false)
+      emit('toggleUploadDrawer')
+    return
+  }
+  syncPanelTransitionDirection('upload_center')
+  recyclePanelOpen.value = false
+  activeModule.value = 'upload_center'
+  if (props.collapsed)
+    emit('update:collapsed', false)
+  if (!props.uploadDrawerOpen && options.syncDrawer !== false)
+    emit('toggleUploadDrawer')
 }
 
 watch(() => props.commandSignal, (next, previous) => {
@@ -320,11 +342,24 @@ watch(() => props.commandSignal, (next, previous) => {
     emit('update:collapsed', false)
 })
 
+watch(() => props.uploadDrawerOpen, (next, previous) => {
+  if (next === previous)
+    return
+  if (next) {
+    openUploadPanel({ allowCollapse: false, syncDrawer: false })
+    return
+  }
+  if (!props.collapsed && !recyclePanelOpen.value && activeModule.value === 'upload_center')
+    emit('update:collapsed', true)
+}, { immediate: true })
+
 onMounted(() => {
   if (!import.meta.client)
     return
 
   const saved = localStorage.getItem(LEFT_MODULE_STORAGE_KEY)
+  if (saved === 'upload_center' && !props.uploadDrawerOpen)
+    return
   if (saved && isWorkspaceLeftModuleId(saved))
     activeModule.value = saved
 })
@@ -359,10 +394,8 @@ watch(activeModule, (value) => {
       :workspace-can-manage-members="props.workspaceCanManageMembers"
       :has-active-project="props.hasActiveProject"
       :upload-summary="props.uploadSummary"
-      :upload-drawer-open="props.uploadDrawerOpen"
-      :upload-activity-items="props.uploadActivityItems"
-      :upload-history-loaded="props.uploadHistoryLoaded"
-      :member-management-active="props.activeMainTabId === 'members'"
+      :upload-active="!props.collapsed && !recyclePanelOpen && activeModule === 'upload_center'"
+      :notification-active="!props.collapsed && !recyclePanelOpen && activeModule === 'notification_center'"
       @select="switchModule"
       @toggle-upload-drawer="handleToggleUploadDrawer"
       @open-recycle-bin="openRecycleBinPanel"
@@ -373,14 +406,6 @@ watch(activeModule, (value) => {
       @open-workspace-home="emit('openWorkspaceHome')"
       @open-display-preferences="emit('openDisplayPreferences')"
       @open-account-center="emit('openAccountCenter')"
-      @pause-upload-task="emit('pauseUploadTask', $event)"
-      @resume-upload-task="emit('resumeUploadTask', $event)"
-      @retry-upload-task="emit('retryUploadTask', $event)"
-      @cancel-upload-task="emit('cancelUploadTask', $event)"
-      @rebind-upload-task="emit('rebindUploadTask', $event)"
-      @pause-all-upload-tasks="emit('pauseAllUploadTasks')"
-      @resume-all-upload-tasks="emit('resumeAllUploadTasks')"
-      @clear-completed-upload-tasks="emit('clearCompletedUploadTasks')"
     />
 
     <section
@@ -478,15 +503,35 @@ watch(activeModule, (value) => {
           />
 
           <WorkspaceIssuePanel
-            v-else
+            v-else-if="activeModule === 'issue_center'"
             :issue-reports="props.issueReports"
             :project-issues="props.projectIssues"
             :issue-loading="props.issueLoading"
             @reload-issues="emit('reloadIssues')"
           />
+
+          <WorkspaceUploadPanel
+            v-else-if="activeModule === 'upload_center'"
+            :upload-summary="props.uploadSummary"
+            :upload-activity-items="props.uploadActivityItems"
+            :upload-history-loaded="props.uploadHistoryLoaded"
+            @pause-upload-task="emit('pauseUploadTask', $event)"
+            @resume-upload-task="emit('resumeUploadTask', $event)"
+            @retry-upload-task="emit('retryUploadTask', $event)"
+            @cancel-upload-task="emit('cancelUploadTask', $event)"
+            @rebind-upload-task="emit('rebindUploadTask', $event)"
+            @pause-all-upload-tasks="emit('pauseAllUploadTasks')"
+            @resume-all-upload-tasks="emit('resumeAllUploadTasks')"
+            @clear-completed-upload-tasks="emit('clearCompletedUploadTasks')"
+          />
+
+          <WorkspaceNotificationPanel
+            v-else
+            :workspace-id="props.workspaceId"
+            :active="!props.collapsed && !recyclePanelOpen && activeModule === 'notification_center'"
+          />
         </div>
       </Transition>
-
     </section>
   </aside>
 </template>
