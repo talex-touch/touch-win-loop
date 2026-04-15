@@ -256,7 +256,7 @@ function splitSeedTags(value: string): string[] {
             :disabled="submitting"
             @click="emit('submit', 'enter')"
           >
-            {{ submittingMode === 'enter' ? '创建中...' : '创建并进入项目工作区' }}
+            {{ submittingMode === 'enter' ? '创建中...' : '创建并进入研发工作台' }}
           </button>
         </div>
       </div>
