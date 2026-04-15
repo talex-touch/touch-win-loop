@@ -22,8 +22,8 @@ const {
 </script>
 
 <template>
-  <div class="w-full">
-    <MagicCard class="max-w-[680px] min-w-[520px] w-full relative max-sm:min-w-0">
+  <div class="flex w-full justify-center" data-testid="login-page">
+    <MagicCard class="relative mx-auto w-full max-w-[680px] min-w-[520px] max-sm:min-w-0">
       <div class="space-y-7">
         <div class="flex items-center justify-center">
           <WinLoopTextLogo class="login-page__logo scale-[0.64] sm:scale-[0.72]" />
