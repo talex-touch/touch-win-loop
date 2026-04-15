@@ -168,6 +168,8 @@ function scopeKindLabel(scopeKind: ReleaseScopeKind): string {
 function actionLabel(action: ReleaseReviewLog['action']): string {
   if (action === 'sync_generated')
     return '飞书同步生成草稿'
+  if (action === 'sync_draft_overwritten')
+    return '飞书同步覆盖草稿'
   if (action === 'first_review_approved')
     return '初审通过'
   if (action === 'second_review_claimed')

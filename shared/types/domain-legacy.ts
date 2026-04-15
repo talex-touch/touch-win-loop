@@ -1225,6 +1225,7 @@ export type ReleaseVersionStatus
 
 export type ReleaseReviewAction
   = 'sync_generated'
+    | 'sync_draft_overwritten'
     | 'first_review_approved'
     | 'second_review_claimed'
     | 'second_review_approved'

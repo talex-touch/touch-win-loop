@@ -1001,6 +1001,61 @@ async function getOrCreateWorkingReleaseVersion(
   if (existingResult.rows[0])
     return mapReleaseVersion(existingResult.rows[0])
 
+  const reusableDraftResult = await db.query<ReleaseVersionRow>(
+    `SELECT
+      id,
+      scope_kind,
+      scope_id,
+      live_entity_id,
+      scope_title,
+      version_number,
+      status,
+      snapshot_json,
+      diff_summary_json,
+      sync_item_id,
+      sync_run_id,
+      first_review_by_user_id,
+      first_review_at::TEXT,
+      second_review_claimed_by_user_id,
+      second_review_claimed_at::TEXT,
+      second_review_by_user_id,
+      second_review_at::TEXT,
+      rejected_by_user_id,
+      rejected_at::TEXT,
+      reject_reason,
+      published_by_user_id,
+      published_at::TEXT,
+      created_by_user_id,
+      updated_by_user_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM release_versions
+     WHERE scope_kind = $1
+       AND scope_id = $2
+       AND status = 'pending_first_review'
+     ORDER BY version_number DESC
+     LIMIT 1`,
+    [input.scopeKind, input.scopeId],
+  )
+  if (reusableDraftResult.rows[0]) {
+    const reusable = mapReleaseVersion(reusableDraftResult.rows[0])
+    await insertReleaseReviewLog(db, {
+      releaseVersionId: reusable.id,
+      actorUserId: input.actorUserId,
+      action: 'sync_draft_overwritten',
+      payload: {
+        syncItemId: input.syncItemId,
+        syncRunId: input.syncRunId,
+        previousSyncItemId: normalizeText(reusable.syncItemId) || null,
+        previousSyncRunId: normalizeText(reusable.syncRunId) || null,
+        scopeKind: input.scopeKind,
+        scopeId: input.scopeId,
+        versionNumber: reusable.versionNumber,
+      },
+    })
+    return reusable
+  }
+
   const latestVersionResult = await db.query<{ version_number: string }>(
     `SELECT COALESCE(MAX(version_number), 0)::TEXT AS version_number
      FROM release_versions
@@ -1017,18 +1072,6 @@ async function getOrCreateWorkingReleaseVersion(
   const snapshot = input.scopeKind === 'contest'
     ? base.contestSnapshot || createEmptyContestSnapshot(input.scopeId)
     : base.policySnapshot || createEmptyPolicySnapshot()
-
-  await db.query(
-    `UPDATE release_versions
-     SET status = 'superseded',
-         superseded_by_version_id = $1,
-         updated_by_user_id = $2,
-         updated_at = NOW()
-     WHERE scope_kind = $3
-       AND scope_id = $4
-       AND status IN ('pending_first_review', 'pending_second_review', 'approved')`,
-    [versionId, input.actorUserId, input.scopeKind, input.scopeId],
-  )
 
   await db.query(
     `INSERT INTO release_versions (
@@ -1063,6 +1106,19 @@ async function getOrCreateWorkingReleaseVersion(
       input.syncRunId,
       input.actorUserId,
     ],
+  )
+
+  await db.query(
+    `UPDATE release_versions
+     SET status = 'superseded',
+         superseded_by_version_id = $1,
+         updated_by_user_id = $2,
+         updated_at = NOW()
+     WHERE scope_kind = $3
+       AND scope_id = $4
+       AND status = 'pending_first_review'
+       AND id <> $1`,
+    [versionId, input.actorUserId, input.scopeKind, input.scopeId],
   )
 
   await insertReleaseReviewLog(db, {
@@ -1166,7 +1222,9 @@ export async function upsertContestReleaseDraft(
      SET scope_title = $2,
          snapshot_json = $3::JSONB,
          diff_summary_json = $4::JSONB,
-         updated_by_user_id = $5,
+         sync_item_id = $5,
+         sync_run_id = $6,
+         updated_by_user_id = $7,
          updated_at = NOW()
      WHERE id = $1`,
     [
@@ -1174,6 +1232,8 @@ export async function upsertContestReleaseDraft(
       nextScopeTitle,
       JSON.stringify(sanitizedCurrent),
       JSON.stringify(diffSummary),
+      input.syncItemId,
+      input.syncRunId,
       input.actorUserId,
     ],
   )
@@ -1217,7 +1277,9 @@ export async function upsertPolicyLibraryReleaseDraft(
      SET scope_title = $2,
          snapshot_json = $3::JSONB,
          diff_summary_json = $4::JSONB,
-         updated_by_user_id = $5,
+         sync_item_id = $5,
+         sync_run_id = $6,
+         updated_by_user_id = $7,
          updated_at = NOW()
      WHERE id = $1`,
     [
@@ -1225,6 +1287,8 @@ export async function upsertPolicyLibraryReleaseDraft(
       normalizeText(input.scopeTitle) || '政策库',
       JSON.stringify(current),
       JSON.stringify(diffSummary),
+      input.syncItemId,
+      input.syncRunId,
       input.actorUserId,
     ],
   )

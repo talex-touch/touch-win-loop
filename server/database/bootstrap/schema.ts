@@ -1952,6 +1952,7 @@ CREATE TABLE IF NOT EXISTS release_review_logs (
   actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   action TEXT NOT NULL CHECK (action IN (
     'sync_generated',
+    'sync_draft_overwritten',
     'first_review_approved',
     'second_review_claimed',
     'second_review_approved',
@@ -1961,6 +1962,21 @@ CREATE TABLE IF NOT EXISTS release_review_logs (
   payload JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE release_review_logs
+  DROP CONSTRAINT IF EXISTS release_review_logs_action_check;
+
+ALTER TABLE release_review_logs
+  ADD CONSTRAINT release_review_logs_action_check
+  CHECK (action IN (
+    'sync_generated',
+    'sync_draft_overwritten',
+    'first_review_approved',
+    'second_review_claimed',
+    'second_review_approved',
+    'rejected',
+    'published'
+  ));
 
 -- Audit logs intentionally avoid foreign keys so events remain queryable
 -- even after referenced workspaces, projects, resources, or users are deleted.
