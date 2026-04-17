@@ -59,6 +59,10 @@
 
 - [答辩工作台改造进度](./workspace-defense-workbench-progress.md)
 
+项目知识索引、embeddings / RAG、引用渲染与 worker 观测当前落地进度详见：
+
+- [项目知识索引与 RAG 落地进度](./project-knowledge-rag-progress.md)
+
 ### 资源页签
 
 - 某条资源被打开后，会以 `resource:<id>` 形式进入可关闭资源 tab
