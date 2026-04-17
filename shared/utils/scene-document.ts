@@ -225,7 +225,7 @@ function escapeXml(value: unknown): string {
 
 function normalizeSceneEditorEngine(value: unknown, fallback: SceneEditorEngine): SceneEditorEngine {
   const normalized = normalizeString(value).toLowerCase()
-  if (normalized === 'vueflow' || normalized === 'tldraw_legacy')
+  if (normalized === 'vueflow' || normalized === 'tldraw_legacy' || normalized === 'canvaskit_wasm')
     return normalized
   return fallback
 }
@@ -2838,6 +2838,57 @@ function resolveRectUnion(source: DesignRect, target: DesignRect): DesignRect {
   }
 }
 
+function resolveElementLocalRect(element: DesignElementModel): DesignRect {
+  return resolveDesignElementAbsoluteRect(element)
+}
+
+function syncCompositionGroupElements(composition: CompositionModel): CompositionModel {
+  const elements = cloneSortedDesignElements(ensureArray(composition.elements))
+  if (!elements.some(element => element.type === 'group'))
+    return composition
+
+  const elementMap = new Map(elements.map(element => [normalizeString(element.id), element] as const))
+  const syncedElements = elements.map((element) => {
+    if (element.type !== 'group')
+      return createDesignElement(element, element.id)
+
+    const groupId = normalizeString(element.id)
+    if (!groupId)
+      return createDesignElement(element, element.id)
+
+    const directChildren = elements.filter((candidate) => {
+      return normalizeString(candidate.parentId) === groupId
+        && normalizeString(candidate.pageId) === normalizeString(element.pageId)
+        && normalizeString(candidate.frameId) === normalizeString(element.frameId)
+    })
+    if (!directChildren.length)
+      return createDesignElement(element, element.id)
+
+    const childBounds = directChildren
+      .map(resolveElementLocalRect)
+      .reduce((union, rect) => {
+        return union ? resolveRectUnion(union, rect) : rect
+      }, null as DesignRect | null)
+    if (!childBounds)
+      return createDesignElement(element, element.id)
+
+    const parentId = normalizeString(element.parentId)
+    return createDesignElement({
+      ...element,
+      parentId: parentId && elementMap.has(parentId) ? parentId : undefined,
+      x: Math.round(childBounds.x),
+      y: Math.round(childBounds.y),
+      width: Math.max(1, Math.round(childBounds.width)),
+      height: Math.max(1, Math.round(childBounds.height)),
+    }, element.id)
+  })
+
+  return {
+    ...composition,
+    elements: syncedElements,
+  }
+}
+
 function resolveFrameRect(frame: DesignFrameModel): DesignRect {
   return {
     x: frame.x,
@@ -2955,6 +3006,172 @@ export function moveDesignElementBetweenContainers(
     ...composition,
     currentPageId: pageId,
     elements: nextElements,
+  })
+}
+
+export function groupDesignElementsInSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  elementIds: string[],
+  options: {
+    groupId?: string
+    groupName?: string
+  } = {},
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const normalizedElementIds = Array.from(new Set(elementIds.map(id => normalizeString(id)).filter(Boolean)))
+  if (normalizedElementIds.length < 2)
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const selectedElements = cloneSortedDesignElements(
+    ensureArray(composition.elements).filter(element => normalizedElementIds.includes(normalizeString(element.id))),
+  )
+  if (selectedElements.length < 2 || selectedElements.some(element => element.type === 'group'))
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const reference = selectedElements[0]
+  const pageId = normalizeString(reference.pageId)
+  const frameId = normalizeString(reference.frameId) || undefined
+  const parentId = normalizeString(reference.parentId) || undefined
+  if (!selectedElements.every((element) => {
+    return normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(frameId)
+      && normalizeString(element.parentId) === normalizeString(parentId)
+  })) {
+    return finalizeCompositionSceneDocument(base, composition)
+  }
+
+  const targetFrame = frameId
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === frameId) || null
+    : null
+  if (targetFrame && resolveDesignFrameLayoutMetadata(normalizeRecord(targetFrame.metadata).layout).mode === 'auto')
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const groupId = sanitizeIdentifier(options.groupId, `group-${Date.now()}`)
+  const selectedIdSet = new Set(selectedElements.map(element => normalizeString(element.id)))
+  const containerSiblings = cloneSortedDesignElements(ensureArray(composition.elements).filter((element) => {
+    return normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(frameId)
+      && normalizeString(element.parentId) === normalizeString(parentId)
+  }))
+  const remainingContainerSiblings = containerSiblings.filter(element => !selectedIdSet.has(normalizeString(element.id)))
+  const selectedBounds = selectedElements
+    .map(resolveElementLocalRect)
+    .reduce((union, rect) => {
+      return union ? resolveRectUnion(union, rect) : rect
+    }, null as DesignRect | null)
+  if (!selectedBounds)
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const insertIndex = Math.min(
+    remainingContainerSiblings.length,
+    Math.max(
+      0,
+      Math.min(...selectedElements.map(element => Math.max(0, Math.trunc(toFiniteNumber(element.zIndex, 0))))),
+    ),
+  )
+  const nextGroupElement = createDesignElement({
+    id: groupId,
+    type: 'group',
+    pageId,
+    frameId,
+    parentId,
+    x: Math.round(selectedBounds.x),
+    y: Math.round(selectedBounds.y),
+    width: Math.max(1, Math.round(selectedBounds.width)),
+    height: Math.max(1, Math.round(selectedBounds.height)),
+    zIndex: insertIndex,
+    metadata: {
+      name: normalizeString(options.groupName) || 'Group',
+      containerRole: frameId ? 'frame_child' : 'page_root',
+    },
+  }, groupId)
+  const groupedChildren = rewriteDesignElementZIndices(selectedElements.map(element => createDesignElement({
+    ...element,
+    parentId: groupId,
+  }, element.id)))
+  const unaffected = ensureArray(composition.elements).filter((element) => {
+    if (selectedIdSet.has(normalizeString(element.id)))
+      return false
+    return !(normalizeString(element.pageId) === pageId
+      && normalizeString(element.frameId) === normalizeString(frameId)
+      && normalizeString(element.parentId) === normalizeString(parentId))
+  })
+  const nextContainerElements = rewriteDesignElementZIndices([
+    ...remainingContainerSiblings.slice(0, insertIndex),
+    nextGroupElement,
+    ...remainingContainerSiblings.slice(insertIndex),
+  ])
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: pageId || composition.currentPageId,
+    elements: [...unaffected, ...nextContainerElements, ...groupedChildren],
+  })
+}
+
+export function ungroupDesignElementInSceneDocument(
+  document: SceneDocument | CompositionModel | unknown,
+  groupId: string,
+): SceneDocument {
+  const { base, composition } = resolveCompositionDocumentState(document)
+  const normalizedGroupId = normalizeString(groupId)
+  if (!normalizedGroupId)
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const groupElement = ensureArray(composition.elements).find((element) => {
+    return normalizeString(element.id) === normalizedGroupId && element.type === 'group'
+  }) || null
+  if (!groupElement)
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const frameId = normalizeString(groupElement.frameId) || undefined
+  const targetFrame = frameId
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === frameId) || null
+    : null
+  if (targetFrame && resolveDesignFrameLayoutMetadata(normalizeRecord(targetFrame.metadata).layout).mode === 'auto')
+    return finalizeCompositionSceneDocument(base, composition)
+
+  const directChildren = cloneSortedDesignElements(ensureArray(composition.elements).filter((element) => {
+    return normalizeString(element.parentId) === normalizedGroupId
+  }))
+  const targetParentId = normalizeString(groupElement.parentId) || undefined
+  const containerSiblings = cloneSortedDesignElements(ensureArray(composition.elements).filter((element) => {
+    return normalizeString(element.pageId) === normalizeString(groupElement.pageId)
+      && normalizeString(element.frameId) === normalizeString(groupElement.frameId)
+      && normalizeString(element.parentId) === normalizeString(targetParentId)
+      && normalizeString(element.id) !== normalizedGroupId
+  }))
+  const insertIndex = Math.min(
+    containerSiblings.length,
+    Math.max(0, Math.trunc(toFiniteNumber(groupElement.zIndex, containerSiblings.length))),
+  )
+  const liftedChildren = rewriteDesignElementZIndices(directChildren.map((element) => {
+    return createDesignElement({
+      ...element,
+      pageId: groupElement.pageId,
+      frameId: groupElement.frameId,
+      parentId: targetParentId,
+    }, element.id)
+  }))
+  const unaffected = ensureArray(composition.elements).filter((element) => {
+    if (normalizeString(element.id) === normalizedGroupId)
+      return false
+    if (normalizeString(element.parentId) === normalizedGroupId)
+      return false
+    return !(normalizeString(element.pageId) === normalizeString(groupElement.pageId)
+      && normalizeString(element.frameId) === normalizeString(groupElement.frameId)
+      && normalizeString(element.parentId) === normalizeString(targetParentId))
+  })
+  const nextContainerElements = rewriteDesignElementZIndices([
+    ...containerSiblings.slice(0, insertIndex),
+    ...liftedChildren,
+    ...containerSiblings.slice(insertIndex),
+  ])
+
+  return finalizeCompositionSceneDocument(base, {
+    ...composition,
+    currentPageId: normalizeString(groupElement.pageId) || composition.currentPageId,
+    elements: [...unaffected, ...nextContainerElements],
   })
 }
 
@@ -4997,7 +5214,7 @@ function syncCompositionFrameIds(composition: CompositionModel): CompositionMode
 }
 
 function finalizeCompositionSceneDocument(base: SceneDocument, composition: CompositionModel): SceneDocument {
-  const syncedComposition = syncCompositionFrameIds(composition)
+  const syncedComposition = syncCompositionGroupElements(syncCompositionFrameIds(composition))
   const currentPageId = normalizeString(syncedComposition.currentPageId) || syncedComposition.pages?.[0]?.id || DEFAULT_COMPOSITION_PAGE_ID
   const currentPageFrames = ensureArray(syncedComposition.frames).filter(frame => normalizeString(frame.pageId) === currentPageId)
   const preferredFrame = currentPageFrames.find(frame => frame.kind === 'device_mockup' || frame.kind === 'template') || currentPageFrames[0]

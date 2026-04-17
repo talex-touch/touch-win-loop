@@ -11,9 +11,11 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:activeTool': [tool: DesignEditorTool]
+  'insert-image-file': [file: File]
 }>()
 
 const hoveredToolIndex = ref<number | null>(null)
+const imageInputRef = ref<HTMLInputElement | null>(null)
 
 function handleToolHover(index: number | null): void {
   hoveredToolIndex.value = index
@@ -36,6 +38,20 @@ function resolveDockStyle(index: number) {
     transform: `translateY(${translateY}px) scale(${scale})`,
     zIndex: Math.max(1, 20 - distance),
   }
+}
+
+function openImagePicker(): void {
+  imageInputRef.value?.click()
+}
+
+function handleImageInputChange(event: Event): void {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file)
+    return
+  emit('insert-image-file', file)
+  if (input)
+    input.value = ''
 }
 </script>
 
@@ -69,6 +85,38 @@ function resolveDockStyle(index: number) {
         {{ tool.label }} · {{ tool.shortcutLabel }}
       </span>
     </div>
+
+    <div
+      class="workspace-design-toolbar__item shrink-0"
+      :data-expanded="hoveredToolIndex === DESIGN_TOOL_PRESETS.length ? 'true' : 'false'"
+    >
+      <button
+        class="workspace-design-toolbar__tool text-[11px] font-semibold"
+        type="button"
+        title="插入图片"
+        aria-label="插入图片"
+        data-testid="workspace-design-toolbar-image-action"
+        :style="resolveDockStyle(DESIGN_TOOL_PRESETS.length)"
+        @mouseenter="handleToolHover(DESIGN_TOOL_PRESETS.length)"
+        @focus="handleToolHover(DESIGN_TOOL_PRESETS.length)"
+        @blur="handleToolHover(null)"
+        @click="openImagePicker"
+      >
+        <span class="material-symbols-outlined workspace-design-toolbar__tool-icon">imagesmode</span>
+      </button>
+      <span class="workspace-design-toolbar__tooltip">
+        插入图片
+      </span>
+    </div>
+
+    <input
+      ref="imageInputRef"
+      class="hidden"
+      type="file"
+      accept="image/*"
+      data-testid="workspace-design-toolbar-image-input"
+      @change="handleImageInputChange"
+    >
   </div>
 </template>
 

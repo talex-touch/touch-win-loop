@@ -88,6 +88,12 @@ const emit = defineEmits<{
 }>();
 
 const selectionCommands = [
+  { id: "group", label: "编组", icon: "group_work" },
+  { id: "ungroup", label: "解组", icon: "ungroup" },
+  { id: "bring-forward", label: "上移一层", icon: "vertical_align_top" },
+  { id: "send-backward", label: "下移一层", icon: "vertical_align_bottom" },
+  { id: "bring-to-front", label: "置于顶层", icon: "flip_to_front" },
+  { id: "send-to-back", label: "置于底层", icon: "flip_to_back" },
   { id: "align-left", label: "左对齐", icon: "format_align_left" },
   { id: "align-center-x", label: "水平居中", icon: "format_align_center" },
   { id: "align-right", label: "右对齐", icon: "format_align_right" },
@@ -105,7 +111,8 @@ const selectionCommands = [
 
 const selectionCommandRows = [
   selectionCommands.slice(0, 8),
-  selectionCommands.slice(8),
+  selectionCommands.slice(8, 16),
+  selectionCommands.slice(16),
 ] as const;
 
 type InspectorSectionScope = "element" | "frame" | "page";
