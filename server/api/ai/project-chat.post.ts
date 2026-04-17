@@ -1,7 +1,8 @@
 import type { AiProjectChatRequest, AiProjectChatResult } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { runProjectChatChain } from '~~/server/services/ai/project-chat-chain'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
+import { buildProjectKnowledgeLocalContext } from '~~/server/services/ai/project-knowledge-context'
+import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
@@ -100,7 +101,13 @@ export default defineEventHandler(async (event) => {
     detail: Awaited<ReturnType<typeof getContestDetail>> | null
     injectedPrompt: string
     localContext: string
+    knowledge: Awaited<ReturnType<typeof buildProjectKnowledgeLocalContext>>
   }
+  const latestUserMessage = [...safeRequest.messages]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
 
   try {
     contextBundle = await withClient(event, async (db) => {
@@ -126,17 +133,26 @@ export default defineEventHandler(async (event) => {
 
       const contestName = detail?.contest?.name || ''
       const trackName = detail?.contest?.tracks.find(item => item.id === safeRequest.context.trackId)?.name || ''
-      const localContext = buildProjectResourceLocalContext(resources, {
+      const knowledgeContext = await buildProjectKnowledgeLocalContext(db, {
+        projectId: safeRequest.context.projectId || '',
+        query: latestUserMessage,
+        resources,
         contestName,
         trackName,
         major: safeRequest.context.major,
-        limit: 10,
+        limit: 6,
+        event,
       })
 
       return {
         detail,
         injectedPrompt,
-        localContext,
+        localContext: knowledgeContext.summaryText,
+        knowledge: {
+          citations: knowledgeContext.citations,
+          warning: knowledgeContext.warning,
+          usedFallback: knowledgeContext.usedFallback,
+        },
       }
     })
   }
@@ -315,12 +331,6 @@ export default defineEventHandler(async (event) => {
     }, 50271)
   }
 
-  const latestUserMessage = [...safeRequest.messages]
-    .reverse()
-    .find(message => message.role === 'user')
-    ?.content
-    ?.trim() || ''
-
   await withTransaction(event, async (db) => {
     const modeMetadata = {
       mode: scopeMode,
@@ -359,6 +369,8 @@ export default defineEventHandler(async (event) => {
         channelKey: execution.channel.key,
         providerId: execution.provider?.id || null,
         attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
+        knowledge: execution.data.data.knowledge || contextBundle.knowledge,
       },
       createdByUserId: user.id,
     })
@@ -389,11 +401,13 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
         attempts: execution.attemptChain.length,
         attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
       },
     })
   })
 
   execution.data.data.sessionId = activeSession.id
+  execution.data.data.knowledge = execution.data.data.knowledge || contextBundle.knowledge
 
   return ok(execution.data.data, {
     startedAt,

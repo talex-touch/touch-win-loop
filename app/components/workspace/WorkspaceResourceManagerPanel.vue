@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type {
+  ApiResponse,
   Contest,
+  ProjectKnowledgeIndexSourceStatus,
   ProjectIssue,
   ProjectIssueReport,
   ProjectMemberSummary,
@@ -11,6 +12,8 @@ import type {
   Resource,
   ResourceCategory,
 } from '~~/shared/types/domain'
+import { Message } from '@arco-design/web-vue'
+import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type { ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
 import { formatFileSize, PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR } from '~~/shared/constants/project-resource-upload'
@@ -18,6 +21,7 @@ import {
   COLLAB_DESIGN_RESOURCE_LABEL,
   COLLAB_FREEFORM_RESOURCE_LABEL,
   COLLAB_NOTES_RESOURCE_LABEL,
+  COLLAB_WORKFLOW_RESOURCE_LABEL,
 } from '~~/shared/utils/collab-resource'
 import {
   isProjectUploadTaskSidebarVisible,
@@ -34,6 +38,7 @@ import {
   resourceIconClass,
   resourceSourceLabel,
 } from '~/utils/workspace-left-sidebar-helpers'
+import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
 
@@ -120,10 +125,13 @@ const props = withDefaults(defineProps<{
   projectIssues?: ProjectIssue[]
   issueLoading?: boolean
   projectResourcesLoading?: boolean
+  projectResourcesRefreshing?: boolean
   resourceLibraryLoading?: boolean
+  resourceLibraryRefreshing?: boolean
   projectOutlineLoading?: boolean
   resourceMutating?: boolean
   hasActiveProject?: boolean
+  activeProjectId?: string
   aiReasoning: string
   normalizedInfo?: string
   statusLine: string
@@ -151,10 +159,13 @@ const props = withDefaults(defineProps<{
   projectIssues: () => [],
   issueLoading: false,
   projectResourcesLoading: false,
+  projectResourcesRefreshing: false,
   resourceLibraryLoading: false,
+  resourceLibraryRefreshing: false,
   projectOutlineLoading: false,
   resourceMutating: false,
   hasActiveProject: false,
+  activeProjectId: '',
   normalizedInfo: '',
   isAdminView: false,
   activeMainTabId: '',
@@ -180,12 +191,13 @@ const emit = defineEmits<{
   'openSettingsPanel': []
   'openMemberManagementPanel': []
   'openFlowPanel': []
-  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design', parentResourceId?: string | null }]
+  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design' | 'workflow', parentResourceId?: string | null }]
   'openDefenseMode': []
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
   'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
   'openResource': [resourceId: string]
+  'renameProjectResource': [payload: { resourceId: string, title: string }]
   'downloadProjectResource': [resourceId: string]
   'copyProjectResourceName': [resourceId: string]
   'shareProjectResource': [payload: ShareProjectResourcePayload]
@@ -200,7 +212,7 @@ const emit = defineEmits<{
   'retryUploadTask': [sessionId: string]
   'cancelUploadTask': [sessionId: string]
   'rebindUploadTask': [sessionId: string]
-  requestContextMenu: [payload: ContextMenuRequest]
+  'requestContextMenu': [payload: ContextMenuRequest]
 }>()
 
 const LEFT_MODULE_STORAGE_KEY = 'workspace.leftSidebar.activeModule'
@@ -300,6 +312,8 @@ const filterPresets: FilterPreset[] = [
 const activeModule = ref<WorkspaceLeftModuleId>('resource_manager')
 const recyclePanelOpen = computed(() => props.recyclePanelOpen)
 const activeResourceId = ref('')
+const renamingResourceId = ref('')
+const renamingResourceDraft = ref('')
 const activeOutlineId = ref('')
 const pendingOutlineCommandId = ref('')
 const resourceActionOpenId = ref('')
@@ -528,11 +542,28 @@ const linkedContestResourceGroups = computed<WorkspaceLinkedContestResourceDispl
   }))
 })
 
+function flattenLinkedContestResourceIds(groups: Array<WorkspaceLinkedContestResourceGroup | WorkspaceLinkedContestResourceDisplayGroup>): string[] {
+  return groups
+    .flatMap(group => Array.isArray(group.resources) ? group.resources : [])
+    .map(resource => String(resource.id || '').trim())
+    .filter(Boolean)
+}
+
 const projectResourceSkeletonRows = [1, 2, 3, 4]
 const resourceLibrarySkeletonRows = [1, 2, 3]
 const projectOutlineSkeletonRows = [1, 2, 3, 4, 5]
 
 const recycleRetentionDays = 30
+const projectResourcesHighlightInitialized = ref(false)
+const resourceLibraryHighlightInitialized = ref(false)
+const {
+  isHighlighted: isProjectResourceHighlighted,
+  queueHighlightedIds: queueProjectResourceHighlightedIds,
+} = useTransientHighlightSet()
+const {
+  isHighlighted: isResourceLibraryHighlighted,
+  queueHighlightedIds: queueResourceLibraryHighlightedIds,
+} = useTransientHighlightSet()
 
 const projectResourceIds = computed(() => {
   return props.selectedResources
@@ -585,6 +616,12 @@ const resourceDetailTarget = computed(() => {
     return null
   return props.selectedResources.find(item => item.id === targetResourceId) || null
 })
+
+const resourceKnowledgeLoading = ref(false)
+const resourceKnowledgeRetrying = ref(false)
+const resourceKnowledgeError = ref('')
+const resourceKnowledgeStatus = ref<ProjectKnowledgeIndexSourceStatus | null>(null)
+let resourceKnowledgePollingTimer: ReturnType<typeof setInterval> | null = null
 
 const resourceDetailTitle = computed(() => {
   const target = resourceDetailTarget.value
@@ -650,6 +687,78 @@ const resourceDetailRows = computed<ResourceAttributeField[]>(() => {
     {
       label: '资源 ID',
       value: String(target.id || '-').trim() || '-',
+    },
+  ]
+})
+
+const resourceKnowledgeHeadline = computed(() => {
+  const status = resourceKnowledgeStatus.value
+  if (!status)
+    return '可查看当前资源的索引状态、阶段、进度和错误信息。'
+  if (status.status === 'ready')
+    return '索引完成，可参与正式知识检索。'
+  if (status.status === 'stale')
+    return '内容已更新，等待重新索引。'
+  if (status.status === 'failed')
+    return '索引失败，可查看原因后重试。'
+  if (status.status === 'queued')
+    return '索引任务已进入队列，等待处理。'
+  if (status.status === 'extracting' || status.status === 'chunking' || status.status === 'embedding')
+    return '索引进行中，进度会随任务阶段自动刷新。'
+  if (status.status === 'skipped')
+    return '当前资源暂未纳入主索引。'
+  return '等待索引任务启动。'
+})
+
+const resourceKnowledgeRows = computed<ResourceAttributeField[]>(() => {
+  const status = resourceKnowledgeStatus.value
+  if (!status)
+    return []
+
+  return [
+    {
+      label: '索引状态',
+      value: knowledgeStatusLabel(status.status),
+    },
+    {
+      label: '当前阶段',
+      value: knowledgeStageLabel(status.currentStage || status.status),
+    },
+    {
+      label: '当前进度',
+      value: `${Math.max(0, Math.min(100, Math.round(Number(status.progressPercent || 0))))}%`,
+    },
+    {
+      label: '预计剩余时间',
+      value: formatDurationLabel(status.etaSeconds),
+    },
+    {
+      label: '预计完成时间',
+      value: formatDateTime(String(status.estimatedFinishedAt || '')),
+    },
+    {
+      label: '已生成 Chunk 数',
+      value: String(status.chunkTotal || 0),
+    },
+    {
+      label: '已完成 Embedding 数',
+      value: String(status.chunkIndexed || 0),
+    },
+    {
+      label: '最后索引时间',
+      value: formatDateTime(String(status.lastIndexedAt || '')),
+    },
+    {
+      label: '索引版本',
+      value: String(status.indexVersion || '-').trim() || '-',
+    },
+    {
+      label: '最近错误阶段',
+      value: knowledgeStageLabel(status.lastErrorStage),
+    },
+    {
+      label: '最近错误原因',
+      value: String(status.lastError || '-').trim() || '-',
     },
   ]
 })
@@ -1047,6 +1156,111 @@ function formatDateTime(value: string): string {
   return date.toLocaleString('zh-CN', { hour12: false })
 }
 
+function formatDurationLabel(value: number | string | null | undefined): string {
+  const seconds = Math.max(0, Math.round(Number(value || 0)))
+  if (!Number.isFinite(seconds) || seconds <= 0)
+    return '-'
+  if (seconds < 60)
+    return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainSeconds = seconds % 60
+  if (minutes < 60)
+    return remainSeconds > 0 ? `${minutes} 分 ${remainSeconds} 秒` : `${minutes} 分`
+  const hours = Math.floor(minutes / 60)
+  const remainMinutes = minutes % 60
+  return remainMinutes > 0 ? `${hours} 小时 ${remainMinutes} 分` : `${hours} 小时`
+}
+
+function knowledgeStatusLabel(status: string): string {
+  const normalized = String(status || '').trim()
+  if (!normalized)
+    return '-'
+  if (normalized === 'pending')
+    return '待索引'
+  if (normalized === 'queued')
+    return '排队中'
+  if (normalized === 'extracting')
+    return '提取中'
+  if (normalized === 'chunking')
+    return '切块中'
+  if (normalized === 'embedding')
+    return '向量化中'
+  if (normalized === 'ready')
+    return '索引完成'
+  if (normalized === 'failed')
+    return '索引失败'
+  if (normalized === 'stale')
+    return '等待刷新'
+  if (normalized === 'skipped')
+    return '暂不索引'
+  return normalized
+}
+
+function knowledgeStageLabel(stage: string | null | undefined): string {
+  const normalized = String(stage || '').trim()
+  if (!normalized)
+    return '-'
+  if (normalized === 'queued')
+    return '排队中'
+  if (normalized === 'extracting')
+    return '提取中'
+  if (normalized === 'chunking')
+    return '切块中'
+  if (normalized === 'embedding')
+    return '向量化中'
+  if (normalized === 'finalizing')
+    return '收尾中'
+  return knowledgeStatusLabel(normalized)
+}
+
+async function loadResourceKnowledgeStatus() {
+  const projectId = String(props.activeProjectId || '').trim()
+  const resourceId = String(resourceDetailTargetId.value || '').trim()
+  if (!projectId || !resourceId) {
+    resourceKnowledgeStatus.value = null
+    resourceKnowledgeError.value = ''
+    return
+  }
+
+  resourceKnowledgeLoading.value = true
+  resourceKnowledgeError.value = ''
+  try {
+    const requestUrl: string = `/api/projects/${projectId}/resources/${resourceId}/knowledge/index-status`
+    const response = await unsafeFetch(requestUrl) as ApiResponse<ProjectKnowledgeIndexSourceStatus>
+    resourceKnowledgeStatus.value = response.data
+  }
+  catch (error: any) {
+    resourceKnowledgeStatus.value = null
+    resourceKnowledgeError.value = String(error?.data?.message || '加载索引状态失败，请稍后重试。').trim() || '加载索引状态失败，请稍后重试。'
+  }
+  finally {
+    resourceKnowledgeLoading.value = false
+  }
+}
+
+async function reindexResourceKnowledge() {
+  const projectId = String(props.activeProjectId || '').trim()
+  const resourceId = String(resourceDetailTargetId.value || '').trim()
+  if (!projectId || !resourceId || resourceKnowledgeRetrying.value)
+    return
+
+  resourceKnowledgeRetrying.value = true
+  try {
+    const requestUrl: string = `/api/projects/${projectId}/resources/${resourceId}/knowledge/reindex`
+    await unsafeFetch(requestUrl, {
+      method: 'POST',
+    })
+    Message.success('已加入重新索引队列。')
+    await loadResourceKnowledgeStatus()
+  }
+  catch (error: any) {
+    Message.error(String(error?.data?.message || '重新索引失败，请稍后重试。').trim() || '重新索引失败，请稍后重试。')
+  }
+  finally {
+    resourceKnowledgeRetrying.value = false
+  }
+}
+
 function resourceUploaderLabel(resource: Resource): string {
   const uploaderUserId = String(resource.uploaderUserId || resource.createdBy || '').trim()
   const createdBy = String(resource.createdBy || '').trim()
@@ -1263,6 +1477,13 @@ function openDesignCanvasFromMenu() {
   emit('createCollabResource', { kind: 'draw', purpose: 'design', parentResourceId: null })
 }
 
+function openWorkflowCanvasFromMenu() {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+  projectResourceAddMenuOpen.value = false
+  emit('createCollabResource', { kind: 'draw', purpose: 'workflow', parentResourceId: null })
+}
+
 function openLibraryFromMenu() {
   projectResourceAddMenuOpen.value = false
   openLibraryModal(null)
@@ -1368,6 +1589,18 @@ function createChildDesignCanvas(resourceId: string) {
   })
 }
 
+function createChildWorkflowCanvas(resourceId: string) {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+  resourceActionOpenId.value = ''
+  emit('createCollabResource', {
+    kind: 'draw',
+    purpose: 'workflow',
+    parentResourceId: normalizedResourceId,
+  })
+}
+
 function openChildLibraryImport(resourceId: string) {
   const normalizedResourceId = String(resourceId || '').trim()
   if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
@@ -1413,6 +1646,12 @@ function buildProjectResourceAddMenuItems(): ContextMenuItem[] {
       key: 'createDesignCanvas',
       label: `新建${COLLAB_DESIGN_RESOURCE_LABEL}`,
       icon: 'palette',
+      disabled,
+    },
+    {
+      key: 'createWorkflowCanvas',
+      label: `新建${COLLAB_WORKFLOW_RESOURCE_LABEL}`,
+      icon: 'flowsheet',
       disabled,
     },
     {
@@ -1538,6 +1777,9 @@ function requestProjectResourceAddMenu(anchorEl: HTMLElement | null): void {
           case 'createDesignCanvas':
             openDesignCanvasFromMenu()
             return
+          case 'createWorkflowCanvas':
+            openWorkflowCanvasFromMenu()
+            return
           case 'importLibrary':
             openLibraryFromMenu()
             return
@@ -1576,6 +1818,57 @@ function handleProjectResourcePrimaryAction(resource: Resource) {
   openResource(resource)
 }
 
+function focusRenamingResourceInput(resourceId: string): void {
+  nextTick(() => {
+    const target = document.querySelector<HTMLInputElement>(`[data-resource-rename-id="${resourceId}"]`)
+    target?.focus()
+    target?.select()
+  })
+}
+
+function startRenamingResource(resourceId: string): void {
+  const normalizedResourceId = String(resourceId || '').trim()
+  if (!normalizedResourceId || props.resourceMutating || !props.hasActiveProject)
+    return
+
+  const resource = props.selectedResources.find(item => item.id === normalizedResourceId)
+  if (!resource)
+    return
+
+  resourceActionOpenId.value = ''
+  projectResourceBatchMenuOpen.value = false
+  projectResourceAddMenuOpen.value = false
+  renamingResourceId.value = normalizedResourceId
+  renamingResourceDraft.value = resourceDisplayTitle(resource)
+  focusRenamingResourceInput(normalizedResourceId)
+}
+
+function cancelRenamingResource(): void {
+  if (!renamingResourceId.value)
+    return
+  renamingResourceId.value = ''
+  renamingResourceDraft.value = ''
+}
+
+function submitRenamingResource(): void {
+  const normalizedResourceId = String(renamingResourceId.value || '').trim()
+  if (!normalizedResourceId)
+    return
+
+  const resource = props.selectedResources.find(item => item.id === normalizedResourceId)
+  const nextTitle = renamingResourceDraft.value.trim()
+  const currentTitle = resource ? resourceDisplayTitle(resource) : ''
+  cancelRenamingResource()
+
+  if (!resource || !nextTitle || nextTitle === currentTitle)
+    return
+
+  emit('renameProjectResource', {
+    resourceId: normalizedResourceId,
+    title: nextTitle,
+  })
+}
+
 function requestBatchRemoveResources() {
   if (
     props.resourceMutating
@@ -1611,6 +1904,12 @@ function buildResourceActionMenuItems(resource: Resource): ContextMenuItem[] {
       disabled,
     },
     {
+      key: 'createWorkflowCanvasChild',
+      label: `新建子${COLLAB_WORKFLOW_RESOURCE_LABEL}`,
+      icon: 'flowsheet',
+      disabled,
+    },
+    {
       key: 'uploadChild',
       label: '上传到此节点',
       icon: 'upload_file',
@@ -1636,6 +1935,13 @@ function buildResourceActionMenuItems(resource: Resource): ContextMenuItem[] {
       disabled: disabled || !hasDownloadableSource(resource),
     },
     {
+      key: 'rename',
+      label: '改名',
+      icon: 'drive_file_rename_outline',
+      separatorBefore: true,
+      disabled,
+    },
+    {
       key: 'copyName',
       label: '复制名称',
       icon: 'content_copy',
@@ -1649,7 +1955,7 @@ function buildResourceActionMenuItems(resource: Resource): ContextMenuItem[] {
     },
     {
       key: 'details',
-      label: '文档属性',
+      label: '资源属性',
       icon: 'info',
       separatorBefore: true,
       disabled,
@@ -1707,6 +2013,9 @@ function requestResourceActionMenu(resourceId: string, optionsOverrides: {
           case 'createDesignCanvasChild':
             createChildDesignCanvas(normalizedResourceId)
             return
+          case 'createWorkflowCanvasChild':
+            createChildWorkflowCanvas(normalizedResourceId)
+            return
           case 'uploadChild':
             openChildUpload(normalizedResourceId)
             return
@@ -1718,6 +2027,9 @@ function requestResourceActionMenu(resourceId: string, optionsOverrides: {
             return
           case 'share':
             requestShareResource(normalizedResourceId)
+            return
+          case 'rename':
+            startRenamingResource(normalizedResourceId)
             return
           case 'copyName':
             copyResourceName(normalizedResourceId)
@@ -2028,12 +2340,60 @@ function requestViewResourceDetails(resourceId: string) {
   resourceActionOpenId.value = ''
   resourceDetailTargetId.value = targetResourceId
   resourceDetailModalVisible.value = true
+  void loadResourceKnowledgeStatus()
 }
 
 function closeResourceDetailPanel() {
   resourceDetailModalVisible.value = false
   resourceDetailTargetId.value = ''
+  resourceKnowledgeStatus.value = null
+  resourceKnowledgeError.value = ''
 }
+
+function stopResourceKnowledgePolling() {
+  if (!resourceKnowledgePollingTimer)
+    return
+  clearInterval(resourceKnowledgePollingTimer)
+  resourceKnowledgePollingTimer = null
+}
+
+function startResourceKnowledgePolling() {
+  if (!import.meta.client || resourceKnowledgePollingTimer)
+    return
+  resourceKnowledgePollingTimer = setInterval(() => {
+    if (!resourceDetailModalVisible.value || resourceKnowledgeLoading.value)
+      return
+    void loadResourceKnowledgeStatus()
+  }, 5000)
+}
+
+const shouldPollResourceKnowledge = computed(() => {
+  if (!resourceDetailModalVisible.value)
+    return false
+  const status = String(resourceKnowledgeStatus.value?.status || '').trim()
+  return status === 'pending'
+    || status === 'queued'
+    || status === 'extracting'
+    || status === 'chunking'
+    || status === 'embedding'
+})
+
+watch(
+  () => [resourceDetailModalVisible.value, resourceDetailTargetId.value, props.activeProjectId],
+  ([visible]) => {
+    if (!visible)
+      return
+    void loadResourceKnowledgeStatus()
+  },
+)
+
+watch(shouldPollResourceKnowledge, (next) => {
+  if (next) {
+    startResourceKnowledgePolling()
+    return
+  }
+  stopResourceKnowledgePolling()
+}, { immediate: true })
 
 function closeRemoveResourceModal() {
   if (props.resourceMutating)
@@ -2053,7 +2413,9 @@ function confirmRemoveResource() {
   removeResourceModalVisible.value = false
   removeTargetResourceIds.value = []
   if (targetResourceIds.length === 1) {
-    emit('removeProjectResource', targetResourceIds[0])
+    const targetResourceId = String(targetResourceIds[0] || '').trim()
+    if (targetResourceId)
+      emit('removeProjectResource', targetResourceId)
     return
   }
   emit('removeProjectResources', targetResourceIds)
@@ -2138,12 +2500,32 @@ function closeResourceActionMenuByOutside(event: PointerEvent) {
 function closeResourceActionMenuByEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape')
     return
+  if (renamingResourceId.value) {
+    cancelRenamingResource()
+    return
+  }
   resourceActionOpenId.value = ''
   projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
 }
 
-watch(() => props.selectedResources, (nextResources) => {
+watch(() => props.selectedResources, (nextResources, previousResources) => {
+  if (!projectResourcesHighlightInitialized.value) {
+    projectResourcesHighlightInitialized.value = true
+  }
+  else if (props.projectResourcesRefreshing) {
+    const previousResourceIdSet = new Set(
+      (previousResources || [])
+        .map(item => String(item.id || '').trim())
+        .filter(Boolean),
+    )
+    queueProjectResourceHighlightedIds(
+      nextResources
+        .map(item => String(item.id || '').trim())
+        .filter(id => id && !previousResourceIdSet.has(id)),
+    )
+  }
+
   const nextResourceIds = new Set(
     nextResources
       .map(item => String(item.id || '').trim())
@@ -2151,6 +2533,8 @@ watch(() => props.selectedResources, (nextResources) => {
   )
   if (resourceActionOpenId.value && !nextResources.some(item => item.id === resourceActionOpenId.value))
     resourceActionOpenId.value = ''
+  if (renamingResourceId.value && !nextResources.some(item => item.id === renamingResourceId.value))
+    cancelRenamingResource()
   if (projectResourceBatchSelectedIds.value.length > 0) {
     projectResourceBatchSelectedIds.value = projectResourceBatchSelectedIds.value.filter(item => nextResourceIds.has(item))
   }
@@ -2287,7 +2671,17 @@ watch(() => props.commandSignal, (next, previous) => {
   sectionExpanded.outline = true
 }, { immediate: true })
 
-watch(linkedContestResourceGroups, (groups) => {
+watch(linkedContestResourceGroups, (groups, previousGroups) => {
+  if (!resourceLibraryHighlightInitialized.value) {
+    resourceLibraryHighlightInitialized.value = true
+  }
+  else if (props.resourceLibraryRefreshing) {
+    const previousResourceIdSet = new Set(flattenLinkedContestResourceIds(previousGroups || []))
+    queueResourceLibraryHighlightedIds(
+      flattenLinkedContestResourceIds(groups).filter(id => !previousResourceIdSet.has(id)),
+    )
+  }
+
   const activeKeys = new Set<string>()
   for (const group of groups) {
     for (const category of group.categories) {
@@ -2376,6 +2770,7 @@ watch(activeModule, (value) => {
 onBeforeUnmount(() => {
   if (!import.meta.client)
     return
+  stopResourceKnowledgePolling()
   document.removeEventListener('pointerdown', closeResourceActionMenuByOutside)
   document.removeEventListener('keydown', closeResourceActionMenuByEscape)
 })
@@ -2384,769 +2779,842 @@ onBeforeUnmount(() => {
 <template>
   <div class="workspace-left-panel__feature workspace-resource-manager-panel">
     <div class="workspace-left-panel__body workspace-resource-manager-panel__body no-scrollbar">
-              <template v-if="recyclePanelOpen">
-                <section class="workspace-tree-block workspace-tree-block--recycle-panel">
-                  <header class="workspace-recycle-panel__header">
-                    <span class="material-symbols-outlined">delete</span>
-                    <h3>项目回收站</h3>
-                  </header>
-                  <p class="workspace-recycle-panel__hint">
-                    删除后文件默认保留 30 天，你可在此恢复文件或彻底删除。
-                  </p>
+      <template v-if="recyclePanelOpen">
+        <section class="workspace-tree-block workspace-tree-block--recycle-panel">
+          <header class="workspace-recycle-panel__header">
+            <span class="material-symbols-outlined">delete</span>
+            <h3>项目回收站</h3>
+          </header>
+          <p class="workspace-recycle-panel__hint">
+            删除后文件默认保留 30 天，你可在此恢复文件或彻底删除。
+          </p>
 
-                  <div
-                    v-for="resource in visibleRecycleResources"
-                    :key="`recycle-${resource.id}`"
-                    class="workspace-recycle-item"
-                  >
-                    <div class="workspace-recycle-item__content">
-                      <div class="workspace-recycle-item__title" :title="resourceDisplayTitle(resource)">
-                        {{ resourceDisplayTitle(resource) }}
-                      </div>
-                      <div class="workspace-recycle-item__meta">
-                        {{ recycleHint(resource) }}
-                      </div>
-                    </div>
+          <div
+            v-for="resource in visibleRecycleResources"
+            :key="`recycle-${resource.id}`"
+            class="workspace-recycle-item"
+          >
+            <div class="workspace-recycle-item__content">
+              <div class="workspace-recycle-item__title" :title="resourceDisplayTitle(resource)">
+                {{ resourceDisplayTitle(resource) }}
+              </div>
+              <div class="workspace-recycle-item__meta">
+                {{ recycleHint(resource) }}
+              </div>
+            </div>
 
-                    <div class="workspace-recycle-item__actions">
-                      <button
-                        class="workspace-recycle-item__action workspace-recycle-item__action--ghost"
-                        type="button"
-                        :disabled="resourceMutating || !hasActiveProject"
-                        @click="restoreRecycleResource(resource.id)"
-                      >
-                        恢复
-                      </button>
-                      <button
-                        class="workspace-recycle-item__action workspace-recycle-item__action--danger"
-                        type="button"
-                        :disabled="resourceMutating || !hasActiveProject"
-                        @click="requestPurgeRecycleResource(resource.id)"
-                      >
-                        彻底删除
-                      </button>
-                    </div>
+            <div class="workspace-recycle-item__actions">
+              <button
+                class="workspace-recycle-item__action workspace-recycle-item__action--ghost"
+                type="button"
+                :disabled="resourceMutating || !hasActiveProject"
+                @click="restoreRecycleResource(resource.id)"
+              >
+                恢复
+              </button>
+              <button
+                class="workspace-recycle-item__action workspace-recycle-item__action--danger"
+                type="button"
+                :disabled="resourceMutating || !hasActiveProject"
+                @click="requestPurgeRecycleResource(resource.id)"
+              >
+                彻底删除
+              </button>
+            </div>
+          </div>
+
+          <p v-if="visibleRecycleResources.length === 0" class="workspace-empty-text">
+            暂无已删除文件
+          </p>
+        </section>
+      </template>
+
+      <template v-else>
+        <section class="workspace-tree-block">
+          <div class="workspace-tree-block__title-row workspace-tree-block__title-row--sticky">
+            <button
+              class="workspace-tree-block__title"
+              type="button"
+              :aria-expanded="sectionExpanded.projectResources"
+              @click="toggleSection('projectResources')"
+            >
+              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.projectResources }">
+                keyboard_arrow_down
+              </span>
+              <span>项目资料</span>
+            </button>
+            <div class="workspace-project-add-actions">
+              <input
+                ref="projectResourceUploadInputRef"
+                class="workspace-project-add-actions__input"
+                type="file"
+                multiple
+                :accept="PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR"
+                @change="handleProjectResourceUploadInputChange"
+              >
+              <button
+                class="workspace-tree-block__title-action"
+                :class="{ 'workspace-tree-block__title-action--active': projectResourceBatchEditMode }"
+                type="button"
+                title="批量管理"
+                aria-label="批量管理"
+                aria-haspopup="menu"
+                :aria-expanded="projectResourceBatchMenuOpen"
+                data-context-menu-scope="resource-batch"
+                :disabled="resourceMutating || !hasActiveProject"
+                @click.stop="requestProjectResourceBatchMenu($event.currentTarget as HTMLElement | null)"
+                @keydown="requestProjectResourceBatchMenuByKeyboard"
+              >
+                <span class="material-symbols-outlined">checklist</span>
+              </button>
+              <button
+                class="workspace-tree-block__title-action"
+                type="button"
+                title="添加资源"
+                aria-label="添加资源"
+                aria-haspopup="menu"
+                :aria-expanded="projectResourceAddMenuOpen"
+                data-context-menu-scope="resource-add"
+                :disabled="resourceMutating || !hasActiveProject"
+                @click.stop="requestProjectResourceAddMenu($event.currentTarget as HTMLElement | null)"
+                @keydown="requestProjectResourceAddMenuByKeyboard"
+              >
+                <span class="material-symbols-outlined">add</span>
+              </button>
+            </div>
+            <span v-if="projectResourcesRefreshing" class="workspace-tree-block__refresh-indicator">
+              <span class="workspace-tree-block__refresh-indicator-dot" aria-hidden="true" />
+              <span>刷新中</span>
+            </span>
+          </div>
+
+          <div v-if="projectResourceBatchEditMode && sectionExpanded.projectResources" class="workspace-resource-batch-toolbar">
+            <div class="workspace-resource-batch-toolbar__summary">
+              批量编辑中，已选 {{ projectResourceBatchSelectedCount }} 项
+            </div>
+            <div class="workspace-resource-batch-toolbar__actions">
+              <button
+                class="workspace-resource-batch-toolbar__action"
+                type="button"
+                :disabled="resourceMutating || selectedResources.length === 0"
+                @click="toggleProjectResourceBatchSelectAll"
+              >
+                {{ projectResourceBatchAllSelected ? '取消全选' : '全选全部' }}
+              </button>
+              <button
+                class="workspace-resource-batch-toolbar__action"
+                type="button"
+                :disabled="resourceMutating || projectResourceBatchSelectedCount === 0"
+                @click="clearProjectResourceBatchSelection"
+              >
+                清空选择
+              </button>
+              <button
+                class="workspace-resource-batch-toolbar__action workspace-resource-batch-toolbar__action--danger"
+                type="button"
+                :disabled="resourceMutating || projectResourceBatchSelectedCount === 0"
+                @click="requestBatchRemoveResources"
+              >
+                批量删除
+              </button>
+              <button
+                class="workspace-resource-batch-toolbar__action"
+                type="button"
+                :disabled="resourceMutating"
+                @click="exitProjectResourceBatchEditMode()"
+              >
+                完成
+              </button>
+            </div>
+          </div>
+
+          <div v-show="sectionExpanded.projectResources">
+            <div
+              v-for="task in visibleUploadTasks"
+              :key="task.sessionId"
+              class="workspace-tree-item-row workspace-tree-item-row--upload"
+            >
+              <div class="workspace-upload-task-item" :class="uploadTaskToneClass(task)">
+                <span class="material-symbols-outlined workspace-tree-item__icon" :class="uploadTaskIconClass(task)">
+                  {{ uploadTaskIcon(task) }}
+                </span>
+                <div class="workspace-upload-task-item__content">
+                  <div class="workspace-upload-task-item__header">
+                    <span class="workspace-tree-item__label">{{ task.fileName }}</span>
+                    <span class="workspace-upload-task-item__status">{{ uploadTaskStatusText(task) }}</span>
                   </div>
+                  <div class="workspace-upload-task-item__meta" :title="uploadTaskMetaText(task)">
+                    {{ uploadTaskMetaText(task) }}
+                  </div>
+                </div>
+                <span
+                  class="workspace-upload-ring"
+                  :class="[
+                    uploadTaskToneClass(task),
+                    task.status === 'finalizing' ? 'workspace-upload-ring--indeterminate' : '',
+                  ]"
+                  :style="uploadTaskProgressStyle(task)"
+                  aria-hidden="true"
+                >
+                  <span class="workspace-upload-ring__core" />
+                </span>
+                <div class="workspace-upload-task-item__actions">
+                  <button
+                    v-if="canPauseUploadTask(task)"
+                    class="workspace-upload-task-item__action"
+                    type="button"
+                    @click="pauseUploadTask(task.sessionId)"
+                  >
+                    暂停
+                  </button>
+                  <button
+                    v-if="canResumeUploadTask(task)"
+                    class="workspace-upload-task-item__action"
+                    type="button"
+                    @click="resumeUploadTask(task.sessionId)"
+                  >
+                    继续
+                  </button>
+                  <button
+                    v-if="canRetryUploadTask(task)"
+                    class="workspace-upload-task-item__action"
+                    type="button"
+                    @click="retryUploadTask(task.sessionId)"
+                  >
+                    重试
+                  </button>
+                  <button
+                    v-if="canRebindUploadTask(task)"
+                    class="workspace-upload-task-item__action"
+                    type="button"
+                    @click="rebindUploadTask(task.sessionId)"
+                  >
+                    绑定文件
+                  </button>
+                  <button
+                    v-if="canCancelUploadTask(task)"
+                    class="workspace-upload-task-item__action workspace-upload-task-item__action--danger"
+                    type="button"
+                    @click="cancelUploadTask(task.sessionId)"
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            </div>
 
-                  <p v-if="visibleRecycleResources.length === 0" class="workspace-empty-text">
-                    暂无已删除文件
-                  </p>
-                </section>
-              </template>
-
+            <template v-if="projectResourcesLoading">
+              <div
+                v-for="row in projectResourceSkeletonRows"
+                :key="`resource-skeleton-${row}`"
+                class="workspace-tree-item-row workspace-tree-item-row--skeleton"
+                aria-hidden="true"
+              >
+                <div class="workspace-tree-item workspace-tree-item--skeleton">
+                  <span class="workspace-tree-item__icon-skeleton workspace-skeleton" />
+                  <span class="workspace-tree-item__content-skeleton">
+                    <span class="workspace-tree-item__label-skeleton workspace-skeleton" />
+                    <span class="workspace-tree-item__meta-skeleton workspace-skeleton" />
+                  </span>
+                  <span class="workspace-tree-item__action-skeleton workspace-skeleton" />
+                </div>
+              </div>
+            </template>
             <template v-else>
-                <section class="workspace-tree-block">
-                  <div class="workspace-tree-block__title-row workspace-tree-block__title-row--sticky">
+              <div
+                v-for="row in visibleResources"
+                :key="row.resource.id"
+                class="workspace-resource-tree-entry"
+              >
+                <div
+                  v-if="!projectResourceBatchEditMode"
+                  class="workspace-tree-dropzone"
+                  :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'before' }"
+                  :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
+                  @dragover="handleResourceDragOver(row.resource.id, 'before', $event)"
+                  @dragleave="handleResourceDragLeave(row.resource.id, 'before')"
+                  @drop="handleResourceDrop(row.resource.id, 'before', $event)"
+                />
+
+                <div
+                  class="workspace-tree-item-row"
+                  :class="{
+                    'workspace-tree-item-row--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId,
+                    'workspace-tree-item-row--batch-selected': projectResourceBatchEditMode && isProjectResourceBatchSelected(row.resource.id),
+                    'workspace-tree-item-row--menu-open': resourceActionOpenId === row.resource.id,
+                    'workspace-tree-item-row--drop-inside': dragOverResourceId === row.resource.id && dragOverPosition === 'inside',
+                    'workspace-tree-item-row--fresh': isProjectResourceHighlighted(row.resource.id),
+                  }"
+                  @contextmenu="handleResourceItemContextMenu(row.resource.id, $event)"
+                  @dragover="handleResourceDragOver(row.resource.id, 'inside', $event)"
+                  @dragleave="handleResourceDragLeave(row.resource.id, 'inside')"
+                  @drop="handleResourceDrop(row.resource.id, 'inside', $event)"
+                >
+                  <div
+                    class="workspace-resource-tree-row__main"
+                    :class="{ 'workspace-resource-tree-row__main--with-actions': !projectResourceBatchEditMode }"
+                    :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }"
+                  >
+                    <label v-if="projectResourceBatchEditMode" class="workspace-tree-item__checkbox" :title="`选择 ${resourceDisplayTitle(row.resource)}`">
+                      <input
+                        class="workspace-tree-item__checkbox-input"
+                        type="checkbox"
+                        :checked="isProjectResourceBatchSelected(row.resource.id)"
+                        @click.stop
+                        @change="setProjectResourceBatchSelection(row.resource.id, ($event.target as HTMLInputElement).checked)"
+                      >
+                    </label>
                     <button
-                      class="workspace-tree-block__title"
+                      class="workspace-tree-item__expander"
+                      :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
                       type="button"
-                      :aria-expanded="sectionExpanded.projectResources"
-                      @click="toggleSection('projectResources')"
+                      :disabled="!row.hasChildren"
+                      @click.stop="toggleProjectResourceExpansion(row.resource.id)"
                     >
-                      <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.projectResources }">
+                      <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
                         keyboard_arrow_down
                       </span>
-                      <span>项目资料</span>
                     </button>
-                    <div class="workspace-project-add-actions">
-                      <input
-                        ref="projectResourceUploadInputRef"
-                        class="workspace-project-add-actions__input"
-                        type="file"
-                        multiple
-                        :accept="PROJECT_RESOURCE_UPLOAD_ACCEPT_ATTR"
-                        @change="handleProjectResourceUploadInputChange"
-                      >
-                      <button
-                        class="workspace-tree-block__title-action"
-                        :class="{ 'workspace-tree-block__title-action--active': projectResourceBatchEditMode }"
-                        type="button"
-                        title="批量管理"
-                        aria-label="批量管理"
-                        aria-haspopup="menu"
-                        :aria-expanded="projectResourceBatchMenuOpen"
-                        data-context-menu-scope="resource-batch"
-                        :disabled="resourceMutating || !hasActiveProject"
-                        @click.stop="requestProjectResourceBatchMenu($event.currentTarget as HTMLElement | null)"
-                        @keydown="requestProjectResourceBatchMenuByKeyboard"
-                      >
-                        <span class="material-symbols-outlined">checklist</span>
-                      </button>
-                      <button
-                        class="workspace-tree-block__title-action"
-                        type="button"
-                        title="添加资源"
-                        aria-label="添加资源"
-                        aria-haspopup="menu"
-                        :aria-expanded="projectResourceAddMenuOpen"
-                        data-context-menu-scope="resource-add"
-                        :disabled="resourceMutating || !hasActiveProject"
-                        @click.stop="requestProjectResourceAddMenu($event.currentTarget as HTMLElement | null)"
-                        @keydown="requestProjectResourceAddMenuByKeyboard"
-                      >
-                        <span class="material-symbols-outlined">add</span>
-                      </button>
-                    </div>
-                  </div>
 
-                  <div v-if="projectResourceBatchEditMode && sectionExpanded.projectResources" class="workspace-resource-batch-toolbar">
-                    <div class="workspace-resource-batch-toolbar__summary">
-                      批量编辑中，已选 {{ projectResourceBatchSelectedCount }} 项
-                    </div>
-                    <div class="workspace-resource-batch-toolbar__actions">
-                      <button
-                        class="workspace-resource-batch-toolbar__action"
-                        type="button"
-                        :disabled="resourceMutating || selectedResources.length === 0"
-                        @click="toggleProjectResourceBatchSelectAll"
-                      >
-                        {{ projectResourceBatchAllSelected ? '取消全选' : '全选全部' }}
-                      </button>
-                      <button
-                        class="workspace-resource-batch-toolbar__action"
-                        type="button"
-                        :disabled="resourceMutating || projectResourceBatchSelectedCount === 0"
-                        @click="clearProjectResourceBatchSelection"
-                      >
-                        清空选择
-                      </button>
-                      <button
-                        class="workspace-resource-batch-toolbar__action workspace-resource-batch-toolbar__action--danger"
-                        type="button"
-                        :disabled="resourceMutating || projectResourceBatchSelectedCount === 0"
-                        @click="requestBatchRemoveResources"
-                      >
-                        批量删除
-                      </button>
-                      <button
-                        class="workspace-resource-batch-toolbar__action"
-                        type="button"
-                        :disabled="resourceMutating"
-                        @click="exitProjectResourceBatchEditMode()"
-                      >
-                        完成
-                      </button>
-                    </div>
-                  </div>
-
-                  <div v-show="sectionExpanded.projectResources">
                     <div
-                      v-for="task in visibleUploadTasks"
-                      :key="task.sessionId"
-                      class="workspace-tree-item-row workspace-tree-item-row--upload"
+                      v-if="renamingResourceId === row.resource.id"
+                      class="workspace-tree-item workspace-tree-item--active"
                     >
-                      <div class="workspace-upload-task-item" :class="uploadTaskToneClass(task)">
-                        <span class="material-symbols-outlined workspace-tree-item__icon" :class="uploadTaskIconClass(task)">
-                          {{ uploadTaskIcon(task) }}
-                        </span>
-                        <div class="workspace-upload-task-item__content">
-                          <div class="workspace-upload-task-item__header">
-                            <span class="workspace-tree-item__label">{{ task.fileName }}</span>
-                            <span class="workspace-upload-task-item__status">{{ uploadTaskStatusText(task) }}</span>
-                          </div>
-                          <div class="workspace-upload-task-item__meta" :title="uploadTaskMetaText(task)">
-                            {{ uploadTaskMetaText(task) }}
-                          </div>
-                        </div>
-                        <span
-                          class="workspace-upload-ring"
-                          :class="[
-                            uploadTaskToneClass(task),
-                            task.status === 'finalizing' ? 'workspace-upload-ring--indeterminate' : '',
-                          ]"
-                          :style="uploadTaskProgressStyle(task)"
-                          aria-hidden="true"
-                        >
-                          <span class="workspace-upload-ring__core" />
-                        </span>
-                        <div class="workspace-upload-task-item__actions">
-                          <button
-                            v-if="canPauseUploadTask(task)"
-                            class="workspace-upload-task-item__action"
-                            type="button"
-                            @click="pauseUploadTask(task.sessionId)"
-                          >
-                            暂停
-                          </button>
-                          <button
-                            v-if="canResumeUploadTask(task)"
-                            class="workspace-upload-task-item__action"
-                            type="button"
-                            @click="resumeUploadTask(task.sessionId)"
-                          >
-                            继续
-                          </button>
-                          <button
-                            v-if="canRetryUploadTask(task)"
-                            class="workspace-upload-task-item__action"
-                            type="button"
-                            @click="retryUploadTask(task.sessionId)"
-                          >
-                            重试
-                          </button>
-                          <button
-                            v-if="canRebindUploadTask(task)"
-                            class="workspace-upload-task-item__action"
-                            type="button"
-                            @click="rebindUploadTask(task.sessionId)"
-                          >
-                            绑定文件
-                          </button>
-                          <button
-                            v-if="canCancelUploadTask(task)"
-                            class="workspace-upload-task-item__action workspace-upload-task-item__action--danger"
-                            type="button"
-                            @click="cancelUploadTask(task.sessionId)"
-                          >
-                            取消
-                          </button>
-                        </div>
-                      </div>
+                      <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
+                        {{ resourceIcon(row.resource) }}
+                      </span>
+                      <input
+                        v-model="renamingResourceDraft"
+                        :data-resource-rename-id="row.resource.id"
+                        class="text-[12px] text-slate-700 font-medium px-2 py-1 outline-none border border-blue-200 rounded-lg bg-white flex-1 min-w-0 ring-0 focus:border-blue-400"
+                        type="text"
+                        @blur="submitRenamingResource"
+                        @click.stop
+                        @keydown.enter.prevent="submitRenamingResource"
+                        @keydown.esc.prevent="cancelRenamingResource"
+                      >
                     </div>
-
-                    <template v-if="projectResourcesLoading">
-                      <div
-                        v-for="row in projectResourceSkeletonRows"
-                        :key="`resource-skeleton-${row}`"
-                        class="workspace-tree-item-row workspace-tree-item-row--skeleton"
-                        aria-hidden="true"
-                      >
-                        <div class="workspace-tree-item workspace-tree-item--skeleton">
-                          <span class="workspace-tree-item__icon-skeleton workspace-skeleton" />
-                          <span class="workspace-tree-item__content-skeleton">
-                            <span class="workspace-tree-item__label-skeleton workspace-skeleton" />
-                            <span class="workspace-tree-item__meta-skeleton workspace-skeleton" />
-                          </span>
-                          <span class="workspace-tree-item__action-skeleton workspace-skeleton" />
-                        </div>
-                      </div>
-                    </template>
-                    <template v-else>
-                      <div
-                        v-for="row in visibleResources"
-                        :key="row.resource.id"
-                        class="workspace-resource-tree-entry"
-                      >
-                        <div
-                          v-if="!projectResourceBatchEditMode"
-                          class="workspace-tree-dropzone"
-                          :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'before' }"
-                          :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
-                          @dragover="handleResourceDragOver(row.resource.id, 'before', $event)"
-                          @dragleave="handleResourceDragLeave(row.resource.id, 'before')"
-                          @drop="handleResourceDrop(row.resource.id, 'before', $event)"
-                        />
-
-                        <div
-                          class="workspace-tree-item-row"
-                          :class="{
-                            'workspace-tree-item-row--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId,
-                            'workspace-tree-item-row--batch-selected': projectResourceBatchEditMode && isProjectResourceBatchSelected(row.resource.id),
-                            'workspace-tree-item-row--menu-open': resourceActionOpenId === row.resource.id,
-                            'workspace-tree-item-row--drop-inside': dragOverResourceId === row.resource.id && dragOverPosition === 'inside',
-                          }"
-                          @contextmenu="handleResourceItemContextMenu(row.resource.id, $event)"
-                          @dragover="handleResourceDragOver(row.resource.id, 'inside', $event)"
-                          @dragleave="handleResourceDragLeave(row.resource.id, 'inside')"
-                          @drop="handleResourceDrop(row.resource.id, 'inside', $event)"
-                        >
-                          <div
-                            class="workspace-resource-tree-row__main"
-                            :class="{ 'workspace-resource-tree-row__main--with-actions': !projectResourceBatchEditMode }"
-                            :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }"
-                          >
-                            <label v-if="projectResourceBatchEditMode" class="workspace-tree-item__checkbox" :title="`选择 ${resourceDisplayTitle(row.resource)}`">
-                              <input
-                                class="workspace-tree-item__checkbox-input"
-                                type="checkbox"
-                                :checked="isProjectResourceBatchSelected(row.resource.id)"
-                                @click.stop
-                                @change="setProjectResourceBatchSelection(row.resource.id, ($event.target as HTMLInputElement).checked)"
-                              >
-                            </label>
-                            <button
-                              class="workspace-tree-item__expander"
-                              :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
-                              type="button"
-                              :disabled="!row.hasChildren"
-                              @click.stop="toggleProjectResourceExpansion(row.resource.id)"
-                            >
-                              <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
-                                keyboard_arrow_down
-                              </span>
-                            </button>
-
-                            <button
-                              class="workspace-tree-item"
-                              :class="{ 'workspace-tree-item--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId }"
-                              :title="resourceDisplayTitle(row.resource)"
-                              type="button"
-                              aria-haspopup="menu"
-                              :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
-                              data-context-menu-scope="resource"
-                              :data-context-resource-id="row.resource.id"
-                              :draggable="!projectResourceBatchEditMode"
-                              @dragstart="handleResourceDragStart(row.resource.id, $event)"
-                              @dragend="handleResourceDragEnd"
-                              @click="handleProjectResourcePrimaryAction(row.resource)"
-                              @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
-                            >
-                              <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
-                                {{ resourceIcon(row.resource) }}
-                              </span>
-                              <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
-                            </button>
-                          </div>
-
-                          <div v-if="!projectResourceBatchEditMode" class="workspace-resource-actions">
-                            <button
-                              class="workspace-resource-actions__trigger"
-                              type="button"
-                              title="资源操作"
-                              aria-label="资源操作"
-                              aria-haspopup="menu"
-                              :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
-                              :disabled="resourceMutating || !hasActiveProject"
-                              @click.stop="toggleResourceActionMenu(row.resource.id, $event.currentTarget as HTMLElement | null)"
-                              @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
-                            >
-                              <span class="material-symbols-outlined">more_horiz</span>
-                            </button>
-                          </div>
-                        </div>
-
-                        <div
-                          v-if="!projectResourceBatchEditMode"
-                          class="workspace-tree-dropzone"
-                          :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'after' }"
-                          :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
-                          @dragover="handleResourceDragOver(row.resource.id, 'after', $event)"
-                          @dragleave="handleResourceDragLeave(row.resource.id, 'after')"
-                          @drop="handleResourceDrop(row.resource.id, 'after', $event)"
-                        />
-                      </div>
-
-                      <p v-if="visibleUploadTasks.length === 0 && visibleResources.length === 0" class="workspace-empty-text">
-                        暂无资源
-                      </p>
-                    </template>
+                    <button
+                      v-else
+                      class="workspace-tree-item"
+                      :class="{ 'workspace-tree-item--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId }"
+                      :title="resourceDisplayTitle(row.resource)"
+                      type="button"
+                      aria-haspopup="menu"
+                      :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
+                      data-context-menu-scope="resource"
+                      :data-context-resource-id="row.resource.id"
+                      :draggable="!projectResourceBatchEditMode"
+                      @dragstart="handleResourceDragStart(row.resource.id, $event)"
+                      @dragend="handleResourceDragEnd"
+                      @click="handleProjectResourcePrimaryAction(row.resource)"
+                      @dblclick.stop.prevent="startRenamingResource(row.resource.id)"
+                      @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
+                    >
+                      <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
+                        {{ resourceIcon(row.resource) }}
+                      </span>
+                      <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
+                    </button>
                   </div>
-                </section>
 
-                <section class="workspace-tree-block">
+                  <div v-if="!projectResourceBatchEditMode" class="workspace-resource-actions">
+                    <button
+                      class="workspace-resource-actions__trigger"
+                      type="button"
+                      title="资源操作"
+                      aria-label="资源操作"
+                      aria-haspopup="menu"
+                      :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
+                      :disabled="resourceMutating || !hasActiveProject"
+                      @click.stop="toggleResourceActionMenu(row.resource.id, $event.currentTarget as HTMLElement | null)"
+                      @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
+                    >
+                      <span class="material-symbols-outlined">more_horiz</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  v-if="!projectResourceBatchEditMode"
+                  class="workspace-tree-dropzone"
+                  :class="{ 'workspace-tree-dropzone--active': dragOverResourceId === row.resource.id && dragOverPosition === 'after' }"
+                  :style="{ marginLeft: resolveTreeDepthOffset(row.depth) }"
+                  @dragover="handleResourceDragOver(row.resource.id, 'after', $event)"
+                  @dragleave="handleResourceDragLeave(row.resource.id, 'after')"
+                  @drop="handleResourceDrop(row.resource.id, 'after', $event)"
+                />
+              </div>
+
+              <p v-if="visibleUploadTasks.length === 0 && visibleResources.length === 0" class="workspace-empty-text">
+                暂无资源
+              </p>
+            </template>
+          </div>
+        </section>
+
+        <section class="workspace-tree-block">
+          <div class="workspace-tree-block__title-row workspace-tree-block__title-row--sticky">
+            <button
+              class="workspace-tree-block__title"
+              type="button"
+              :aria-expanded="sectionExpanded.linkedContestResources"
+              @click="toggleSection('linkedContestResources')"
+            >
+              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.linkedContestResources }">
+                keyboard_arrow_down
+              </span>
+              <span>关联比赛资料</span>
+            </button>
+            <span v-if="resourceLibraryRefreshing" class="workspace-tree-block__refresh-indicator">
+              <span class="workspace-tree-block__refresh-indicator-dot" aria-hidden="true" />
+              <span>刷新中</span>
+            </span>
+          </div>
+
+          <div v-show="sectionExpanded.linkedContestResources" class="workspace-tree-block__content">
+            <template v-if="resourceLibraryLoading">
+              <div
+                v-for="row in resourceLibrarySkeletonRows"
+                :key="`linked-library-skeleton-${row}`"
+                class="workspace-library-skeleton-item"
+                aria-hidden="true"
+              >
+                <div class="workspace-library-skeleton-item__left">
+                  <span class="workspace-library-skeleton-item__icon workspace-skeleton" />
+                  <div class="workspace-library-skeleton-item__content">
+                    <div class="workspace-library-skeleton-item__title workspace-skeleton" />
+                    <div class="workspace-library-skeleton-item__meta workspace-skeleton" />
+                  </div>
+                </div>
+                <span class="workspace-library-skeleton-item__action workspace-skeleton" />
+              </div>
+            </template>
+            <template v-else-if="linkedContestResourceGroups.length > 0">
+              <div
+                v-for="group in linkedContestResourceGroups"
+                :key="group.contestId"
+                class="workspace-linked-library-group"
+              >
+                <div class="workspace-linked-library-group__header">
+                  <div class="workspace-linked-library-group__title">
+                    {{ group.contestName }}
+                  </div>
+                  <div class="workspace-linked-library-group__meta">
+                    {{ group.trackName || '未匹配赛道' }} · {{ group.resources.length }} 份待导入资料
+                  </div>
+                </div>
+
+                <div
+                  v-for="category in group.categories"
+                  :key="`${group.contestId}-${category.id}`"
+                  class="workspace-linked-library-category"
+                >
                   <button
-                    class="workspace-tree-block__title workspace-tree-block__title--sticky"
+                    class="workspace-linked-library-category__toggle"
                     type="button"
-                    :aria-expanded="sectionExpanded.linkedContestResources"
-                    @click="toggleSection('linkedContestResources')"
+                    :aria-expanded="isLinkedCategoryExpanded(group.contestId, category.id)"
+                    @click="toggleLinkedCategory(group.contestId, category.id)"
                   >
-                    <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.linkedContestResources }">
+                    <span
+                      class="material-symbols-outlined"
+                      :class="{ 'workspace-tree-block__arrow--collapsed': !isLinkedCategoryExpanded(group.contestId, category.id) }"
+                    >
                       keyboard_arrow_down
                     </span>
-                    <span>关联比赛资料</span>
+                    <span class="workspace-linked-library-category__title">{{ category.label }}</span>
+                    <span class="workspace-linked-library-category__count">{{ category.resources.length }}</span>
                   </button>
 
-                  <div v-show="sectionExpanded.linkedContestResources" class="workspace-tree-block__content">
-                    <template v-if="resourceLibraryLoading">
-                      <div
-                        v-for="row in resourceLibrarySkeletonRows"
-                        :key="`linked-library-skeleton-${row}`"
-                        class="workspace-library-skeleton-item"
-                        aria-hidden="true"
-                      >
-                        <div class="workspace-library-skeleton-item__left">
-                          <span class="workspace-library-skeleton-item__icon workspace-skeleton" />
-                          <div class="workspace-library-skeleton-item__content">
-                            <div class="workspace-library-skeleton-item__title workspace-skeleton" />
-                            <div class="workspace-library-skeleton-item__meta workspace-skeleton" />
-                          </div>
-                        </div>
-                        <span class="workspace-library-skeleton-item__action workspace-skeleton" />
-                      </div>
-                    </template>
-                    <template v-else-if="linkedContestResourceGroups.length > 0">
-                      <div
-                        v-for="group in linkedContestResourceGroups"
-                        :key="group.contestId"
-                        class="workspace-linked-library-group"
-                      >
-                        <div class="workspace-linked-library-group__header">
-                          <div class="workspace-linked-library-group__title">
-                            {{ group.contestName }}
-                          </div>
-                          <div class="workspace-linked-library-group__meta">
-                            {{ group.trackName || '未匹配赛道' }} · {{ group.resources.length }} 份待导入资料
-                          </div>
-                        </div>
-
-                        <div
-                          v-for="category in group.categories"
-                          :key="`${group.contestId}-${category.id}`"
-                          class="workspace-linked-library-category"
-                        >
-                          <button
-                            class="workspace-linked-library-category__toggle"
-                            type="button"
-                            :aria-expanded="isLinkedCategoryExpanded(group.contestId, category.id)"
-                            @click="toggleLinkedCategory(group.contestId, category.id)"
-                          >
-                            <span
-                              class="material-symbols-outlined"
-                              :class="{ 'workspace-tree-block__arrow--collapsed': !isLinkedCategoryExpanded(group.contestId, category.id) }"
-                            >
-                              keyboard_arrow_down
-                            </span>
-                            <span class="workspace-linked-library-category__title">{{ category.label }}</span>
-                            <span class="workspace-linked-library-category__count">{{ category.resources.length }}</span>
-                          </button>
-
-                          <div v-show="isLinkedCategoryExpanded(group.contestId, category.id)">
-                            <div
-                              v-for="item in category.resources"
-                              :key="item.id"
-                              class="workspace-library-item"
-                            >
-                              <div class="workspace-library-item__content">
-                                <div class="workspace-library-item__title">
-                                  {{ resourceDisplayTitle(item) }}
-                                </div>
-                                <div class="workspace-library-item__meta">
-                                  {{ item.type }} · {{ item.year }}
-                                </div>
-                              </div>
-                              <button
-                                class="workspace-library-item__add"
-                                type="button"
-                                :disabled="resourceMutating || !hasActiveProject"
-                                @click="addLibraryResource(item.id)"
-                              >
-                                添加
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        <p v-if="group.resources.length === 0" class="workspace-empty-text">
-                          当前比赛暂无待导入资料
-                        </p>
-                      </div>
-                    </template>
-                    <p v-else class="workspace-empty-text">
-                      {{ linkedContestBindingCount > 0 ? '当前关联比赛暂无可导入资料' : '请先在项目设置中关联比赛' }}
-                    </p>
-                  </div>
-                </section>
-
-                <section class="workspace-tree-block">
-                  <button
-                    class="workspace-tree-block__title"
-                    type="button"
-                    :aria-expanded="sectionExpanded.outline"
-                    @click="toggleSection('outline')"
-                  >
-                    <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.outline }">
-                      keyboard_arrow_down
-                    </span>
-                    <span>结构大纲</span>
-                  </button>
-
-                  <div v-show="sectionExpanded.outline">
-                    <template v-if="projectOutlineLoading && outlineItems.length === 0">
-                      <div
-                        v-for="row in projectOutlineSkeletonRows"
-                        :key="`outline-skeleton-${row}`"
-                        class="workspace-outline-skeleton-row"
-                        :class="{ 'workspace-outline-skeleton-row--child': row % 2 === 0 }"
-                        aria-hidden="true"
-                      >
-                        <span class="workspace-outline-skeleton__dot workspace-skeleton" />
-                        <div class="workspace-outline-skeleton workspace-skeleton" />
-                      </div>
-                    </template>
-                    <template v-else>
-                      <template
-                        v-for="item in outlineItems"
-                        :key="item.id"
-                      >
-                        <div
-                          v-if="item.uploadTask"
-                          class="workspace-outline-item workspace-outline-item--upload"
-                          :class="[
-                            item.level > 0 ? 'workspace-outline-item--child' : '',
-                            uploadTaskToneClass(item.uploadTask),
-                          ]"
-                          :title="item.label"
-                        >
-                          <div class="workspace-outline-item__content">
-                            <span class="workspace-outline-item__label">{{ item.label }}</span>
-                            <span class="workspace-outline-item__meta">{{ item.statusText }}</span>
-                          </div>
-                          <span
-                            class="workspace-upload-ring workspace-upload-ring--outline"
-                            :class="[
-                              uploadTaskToneClass(item.uploadTask),
-                              item.uploadTask.status === 'finalizing' ? 'workspace-upload-ring--indeterminate' : '',
-                            ]"
-                            :style="uploadTaskProgressStyle(item.uploadTask)"
-                            aria-hidden="true"
-                          >
-                            <span class="workspace-upload-ring__core" />
-                          </span>
-                        </div>
-                        <button
-                          v-else
-                          class="workspace-outline-item"
-                          :class="[
-                            item.level > 0 ? 'workspace-outline-item--child' : '',
-                            activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
-                          ]"
-                          type="button"
-                          :title="item.label"
-                          @click="selectOutline(item.id)"
-                        >
-                          {{ item.label }}
-                        </button>
-                      </template>
-
-                      <p v-if="outlineItems.length === 0" class="workspace-empty-text">
-                        上传文件后自动生成大纲
-                      </p>
-                    </template>
-                  </div>
-                </section>
-
-                <a-modal
-                  v-model:visible="libraryModalVisible"
-                  title="添加项目资源"
-                  width="560px"
-                  :footer="false"
-                  :esc-to-close="!resourceMutating"
-                  :mask-closable="!resourceMutating"
-                >
-                  <div class="workspace-library-modal">
-                    <input
-                      v-model="libraryModalKeyword"
-                      class="workspace-library-search"
-                      placeholder="搜索系统库资源"
-                      type="text"
+                  <div v-show="isLinkedCategoryExpanded(group.contestId, category.id)">
+                    <div
+                      v-for="item in category.resources"
+                      :key="item.id"
+                      class="workspace-library-item"
+                      :class="{ 'workspace-library-item--fresh': isResourceLibraryHighlighted(item.id) }"
                     >
-
-                    <div ref="libraryListRef" class="workspace-library-list no-scrollbar">
-                      <div
-                        v-for="item in visibleLibraryResources"
-                        :key="item.id"
-                        class="workspace-library-item"
-                      >
-                        <div class="workspace-library-item__content">
-                          <div class="workspace-library-item__title">
-                            {{ resourceDisplayTitle(item) }}
-                          </div>
-                          <div class="workspace-library-item__meta">
-                            {{ item.type }} · {{ item.year }}
-                          </div>
+                      <div class="workspace-library-item__content">
+                        <div class="workspace-library-item__title">
+                          {{ resourceDisplayTitle(item) }}
                         </div>
-                        <button
-                          class="workspace-library-item__add"
-                          type="button"
-                          :disabled="resourceMutating || !hasActiveProject"
-                          @click="addLibraryResource(item.id)"
-                        >
-                          添加
-                        </button>
+                        <div class="workspace-library-item__meta">
+                          {{ item.type }} · {{ item.year }}
+                        </div>
                       </div>
+                      <button
+                        class="workspace-library-item__add"
+                        type="button"
+                        :disabled="resourceMutating || !hasActiveProject"
+                        @click="addLibraryResource(item.id)"
+                      >
+                        添加
+                      </button>
                     </div>
-
-                    <p v-if="visibleLibraryResources.length === 0" class="workspace-empty-text workspace-empty-text--modal">
-                      暂无资源
-                    </p>
                   </div>
-                </a-modal>
+                </div>
 
-                <a-modal
-                  v-model:visible="shareResourceModalVisible"
-                  title="分享链接"
-                  width="480px"
-                  :footer="false"
-                  :esc-to-close="!resourceMutating"
-                  :mask-closable="!resourceMutating"
+                <p v-if="group.resources.length === 0" class="workspace-empty-text">
+                  当前比赛暂无待导入资料
+                </p>
+              </div>
+            </template>
+            <p v-else class="workspace-empty-text">
+              {{ linkedContestBindingCount > 0 ? '当前关联比赛暂无可导入资料' : '请先在项目设置中关联比赛' }}
+            </p>
+          </div>
+        </section>
+
+        <section class="workspace-tree-block">
+          <button
+            class="workspace-tree-block__title"
+            type="button"
+            :aria-expanded="sectionExpanded.outline"
+            @click="toggleSection('outline')"
+          >
+            <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.outline }">
+              keyboard_arrow_down
+            </span>
+            <span>结构大纲</span>
+          </button>
+
+          <div v-show="sectionExpanded.outline">
+            <template v-if="projectOutlineLoading && outlineItems.length === 0">
+              <div
+                v-for="row in projectOutlineSkeletonRows"
+                :key="`outline-skeleton-${row}`"
+                class="workspace-outline-skeleton-row"
+                :class="{ 'workspace-outline-skeleton-row--child': row % 2 === 0 }"
+                aria-hidden="true"
+              >
+                <span class="workspace-outline-skeleton__dot workspace-skeleton" />
+                <div class="workspace-outline-skeleton workspace-skeleton" />
+              </div>
+            </template>
+            <template v-else>
+              <template
+                v-for="item in outlineItems"
+                :key="item.id"
+              >
+                <div
+                  v-if="item.uploadTask"
+                  class="workspace-outline-item workspace-outline-item--upload"
+                  :class="[
+                    item.level > 0 ? 'workspace-outline-item--child' : '',
+                    uploadTaskToneClass(item.uploadTask),
+                  ]"
+                  :title="item.label"
                 >
-                  <div class="workspace-share-modal">
-                    <p class="workspace-share-modal__target">
-                      文件：{{ shareTargetResourceLabel }}
-                    </p>
-
-                    <label class="workspace-share-modal__field">
-                      <span>可见范围</span>
-                      <select
-                        v-model="shareVisibility"
-                        class="workspace-share-modal__select"
-                        :disabled="resourceMutating"
-                      >
-                        <option value="public">
-                          公开可见
-                        </option>
-                        <option value="workspace">
-                          组织内成员可见
-                        </option>
-                      </select>
-                    </label>
-
-                    <label class="workspace-share-modal__field">
-                      <span>有效期</span>
-                      <select
-                        v-model="shareDuration"
-                        class="workspace-share-modal__select"
-                        :disabled="resourceMutating"
-                      >
-                        <option value="1h">
-                          1h
-                        </option>
-                        <option value="1d">
-                          1d
-                        </option>
-                        <option value="3d">
-                          3d
-                        </option>
-                        <option value="7d">
-                          7d
-                        </option>
-                        <option value="1mon">
-                          1mon
-                        </option>
-                      </select>
-                    </label>
-
-                    <div class="workspace-share-modal__actions">
-                      <button
-                        class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
-                        type="button"
-                        :disabled="resourceMutating"
-                        @click="closeShareResourceModal()"
-                      >
-                        取消
-                      </button>
-                      <button
-                        class="workspace-delete-modal__btn workspace-share-modal__btn--primary"
-                        type="button"
-                        :disabled="resourceMutating"
-                        @click="confirmShareResource"
-                      >
-                        {{ resourceMutating ? '生成中...' : '生成分享链接' }}
-                      </button>
-                    </div>
+                  <div class="workspace-outline-item__content">
+                    <span class="workspace-outline-item__label">{{ item.label }}</span>
+                    <span class="workspace-outline-item__meta">{{ item.statusText }}</span>
                   </div>
-                </a-modal>
-
-                <a-modal
-                  v-model:visible="removeResourceModalVisible"
-                  title="删除项目资源"
-                  width="460px"
-                  :footer="false"
-                  :esc-to-close="!resourceMutating"
-                  :mask-closable="!resourceMutating"
+                  <span
+                    class="workspace-upload-ring workspace-upload-ring--outline"
+                    :class="[
+                      uploadTaskToneClass(item.uploadTask),
+                      item.uploadTask.status === 'finalizing' ? 'workspace-upload-ring--indeterminate' : '',
+                    ]"
+                    :style="uploadTaskProgressStyle(item.uploadTask)"
+                    aria-hidden="true"
+                  >
+                    <span class="workspace-upload-ring__core" />
+                  </span>
+                </div>
+                <button
+                  v-else
+                  class="workspace-outline-item"
+                  :class="[
+                    item.level > 0 ? 'workspace-outline-item--child' : '',
+                    activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
+                  ]"
+                  type="button"
+                  :title="item.label"
+                  @click="selectOutline(item.id)"
                 >
-                  <div class="workspace-delete-modal">
-                    <p>
-                      {{ removeResourceModalMessage }}
-                    </p>
-                    <p class="workspace-delete-modal__hint">
-                      删除后文件将移入项目回收站，30 天后自动清理；你也可在回收站手动彻底删除。
-                    </p>
-
-                    <div class="workspace-delete-modal__actions">
-                      <button
-                        class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
-                        type="button"
-                        :disabled="resourceMutating"
-                        @click="closeRemoveResourceModal"
-                      >
-                        取消
-                      </button>
-                      <button
-                        class="workspace-delete-modal__btn workspace-delete-modal__btn--danger"
-                        type="button"
-                        :disabled="resourceMutating"
-                        @click="confirmRemoveResource"
-                      >
-                        {{ resourceMutating ? '删除中...' : removeTargetResourceCount > 1 ? '确认批量删除' : '确认删除' }}
-                      </button>
-                    </div>
-                  </div>
-                </a-modal>
-
-                <a-modal
-                  v-model:visible="purgeResourceModalVisible"
-                  title="彻底删除资源"
-                  width="460px"
-                  :footer="false"
-                  :esc-to-close="!resourceMutating"
-                  :mask-closable="!resourceMutating"
-                >
-                  <div class="workspace-delete-modal">
-                    <p>
-                      确认彻底删除「{{ purgeTargetResourceLabel }}」吗？
-                    </p>
-                    <p class="workspace-delete-modal__hint">
-                      彻底删除后将立即释放存储空间，且无法恢复。
-                    </p>
-
-                    <div class="workspace-delete-modal__actions">
-                      <button
-                        class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
-                        type="button"
-                        :disabled="resourceMutating"
-                        @click="closePurgeResourceModal"
-                      >
-                        取消
-                      </button>
-                      <button
-                        class="workspace-delete-modal__btn workspace-delete-modal__btn--danger"
-                        type="button"
-                        :disabled="resourceMutating"
-                        @click="confirmPurgeResource"
-                      >
-                        {{ resourceMutating ? '删除中...' : '确认彻底删除' }}
-                      </button>
-                    </div>
-                  </div>
-                </a-modal>
-
-                <a-modal
-                  v-model:visible="resourceDetailModalVisible"
-                  title="文档属性"
-                  width="520px"
-                  :footer="false"
-                  :esc-to-close="true"
-                  :mask-closable="true"
-                  @cancel="closeResourceDetailPanel"
-                >
-                  <div class="workspace-resource-detail">
-                    <div class="workspace-resource-detail__title" :title="resourceDetailTitle">
-                      {{ resourceDetailTitle }}
-                    </div>
-
-                    <a-descriptions :column="1" bordered size="small">
-                      <a-descriptions-item v-for="item in resourceDetailRows" :key="item.label" :label="item.label">
-                        <span class="workspace-resource-detail__value" :title="item.value">{{ item.value }}</span>
-                      </a-descriptions-item>
-                    </a-descriptions>
-
-                    <div class="workspace-resource-detail__actions">
-                      <a-button size="small" @click="closeResourceDetailPanel">
-                        关闭
-                      </a-button>
-                    </div>
-                  </div>
-                </a-modal>
+                  {{ item.label }}
+                </button>
               </template>
+
+              <p v-if="outlineItems.length === 0" class="workspace-empty-text">
+                上传文件后自动生成大纲
+              </p>
+            </template>
+          </div>
+        </section>
+
+        <a-modal
+          v-model:visible="libraryModalVisible"
+          title="添加项目资源"
+          width="560px"
+          :footer="false"
+          :esc-to-close="!resourceMutating"
+          :mask-closable="!resourceMutating"
+        >
+          <div class="workspace-library-modal">
+            <input
+              v-model="libraryModalKeyword"
+              class="workspace-library-search"
+              placeholder="搜索系统库资源"
+              type="text"
+            >
+
+            <div ref="libraryListRef" class="workspace-library-list no-scrollbar">
+              <div
+                v-for="item in visibleLibraryResources"
+                :key="item.id"
+                class="workspace-library-item"
+              >
+                <div class="workspace-library-item__content">
+                  <div class="workspace-library-item__title">
+                    {{ resourceDisplayTitle(item) }}
+                  </div>
+                  <div class="workspace-library-item__meta">
+                    {{ item.type }} · {{ item.year }}
+                  </div>
+                </div>
+                <button
+                  class="workspace-library-item__add"
+                  type="button"
+                  :disabled="resourceMutating || !hasActiveProject"
+                  @click="addLibraryResource(item.id)"
+                >
+                  添加
+                </button>
+              </div>
+            </div>
+
+            <p v-if="visibleLibraryResources.length === 0" class="workspace-empty-text workspace-empty-text--modal">
+              暂无资源
+            </p>
+          </div>
+        </a-modal>
+
+        <a-modal
+          v-model:visible="shareResourceModalVisible"
+          title="分享链接"
+          width="480px"
+          :footer="false"
+          :esc-to-close="!resourceMutating"
+          :mask-closable="!resourceMutating"
+        >
+          <div class="workspace-share-modal">
+            <p class="workspace-share-modal__target">
+              文件：{{ shareTargetResourceLabel }}
+            </p>
+
+            <label class="workspace-share-modal__field">
+              <span>可见范围</span>
+              <select
+                v-model="shareVisibility"
+                class="workspace-share-modal__select"
+                :disabled="resourceMutating"
+              >
+                <option value="public">
+                  公开可见
+                </option>
+                <option value="workspace">
+                  组织内成员可见
+                </option>
+              </select>
+            </label>
+
+            <label class="workspace-share-modal__field">
+              <span>有效期</span>
+              <select
+                v-model="shareDuration"
+                class="workspace-share-modal__select"
+                :disabled="resourceMutating"
+              >
+                <option value="1h">
+                  1h
+                </option>
+                <option value="1d">
+                  1d
+                </option>
+                <option value="3d">
+                  3d
+                </option>
+                <option value="7d">
+                  7d
+                </option>
+                <option value="1mon">
+                  1mon
+                </option>
+              </select>
+            </label>
+
+            <div class="workspace-share-modal__actions">
+              <button
+                class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
+                type="button"
+                :disabled="resourceMutating"
+                @click="closeShareResourceModal()"
+              >
+                取消
+              </button>
+              <button
+                class="workspace-delete-modal__btn workspace-share-modal__btn--primary"
+                type="button"
+                :disabled="resourceMutating"
+                @click="confirmShareResource"
+              >
+                {{ resourceMutating ? '生成中...' : '生成分享链接' }}
+              </button>
+            </div>
+          </div>
+        </a-modal>
+
+        <a-modal
+          v-model:visible="removeResourceModalVisible"
+          title="删除项目资源"
+          width="460px"
+          :footer="false"
+          :esc-to-close="!resourceMutating"
+          :mask-closable="!resourceMutating"
+        >
+          <div class="workspace-delete-modal">
+            <p>
+              {{ removeResourceModalMessage }}
+            </p>
+            <p class="workspace-delete-modal__hint">
+              删除后文件将移入项目回收站，30 天后自动清理；你也可在回收站手动彻底删除。
+            </p>
+
+            <div class="workspace-delete-modal__actions">
+              <button
+                class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
+                type="button"
+                :disabled="resourceMutating"
+                @click="closeRemoveResourceModal"
+              >
+                取消
+              </button>
+              <button
+                class="workspace-delete-modal__btn workspace-delete-modal__btn--danger"
+                type="button"
+                :disabled="resourceMutating"
+                @click="confirmRemoveResource"
+              >
+                {{ resourceMutating ? '删除中...' : removeTargetResourceCount > 1 ? '确认批量删除' : '确认删除' }}
+              </button>
+            </div>
+          </div>
+        </a-modal>
+
+        <a-modal
+          v-model:visible="purgeResourceModalVisible"
+          title="彻底删除资源"
+          width="460px"
+          :footer="false"
+          :esc-to-close="!resourceMutating"
+          :mask-closable="!resourceMutating"
+        >
+          <div class="workspace-delete-modal">
+            <p>
+              确认彻底删除「{{ purgeTargetResourceLabel }}」吗？
+            </p>
+            <p class="workspace-delete-modal__hint">
+              彻底删除后将立即释放存储空间，且无法恢复。
+            </p>
+
+            <div class="workspace-delete-modal__actions">
+              <button
+                class="workspace-delete-modal__btn workspace-delete-modal__btn--ghost"
+                type="button"
+                :disabled="resourceMutating"
+                @click="closePurgeResourceModal"
+              >
+                取消
+              </button>
+              <button
+                class="workspace-delete-modal__btn workspace-delete-modal__btn--danger"
+                type="button"
+                :disabled="resourceMutating"
+                @click="confirmPurgeResource"
+              >
+                {{ resourceMutating ? '删除中...' : '确认彻底删除' }}
+              </button>
+            </div>
+          </div>
+        </a-modal>
+
+        <a-modal
+          v-model:visible="resourceDetailModalVisible"
+          title="资源属性"
+          width="620px"
+          :footer="false"
+          :esc-to-close="true"
+          :mask-closable="true"
+          @cancel="closeResourceDetailPanel"
+        >
+          <div class="workspace-resource-detail">
+            <div class="workspace-resource-detail__title" :title="resourceDetailTitle">
+              {{ resourceDetailTitle }}
+            </div>
+
+            <a-descriptions :column="1" bordered size="small">
+              <a-descriptions-item v-for="item in resourceDetailRows" :key="item.label" :label="item.label">
+                <span class="workspace-resource-detail__value" :title="item.value">{{ item.value }}</span>
+              </a-descriptions-item>
+            </a-descriptions>
+
+            <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-semibold text-slate-800">
+                    知识索引
+                  </div>
+                  <div class="mt-1 text-xs text-slate-500">
+                    {{ resourceKnowledgeHeadline }}
+                  </div>
+                </div>
+
+                <a-button
+                  size="mini"
+                  type="outline"
+                  :loading="resourceKnowledgeRetrying"
+                  :disabled="!props.activeProjectId || resourceKnowledgeLoading"
+                  @click="reindexResourceKnowledge"
+                >
+                  {{ resourceKnowledgeRetrying ? '重新索引中...' : '重新索引' }}
+                </a-button>
+              </div>
+
+              <div v-if="resourceKnowledgeLoading" class="text-xs text-slate-500">
+                正在加载索引状态...
+              </div>
+
+              <div v-else-if="resourceKnowledgeError" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+                {{ resourceKnowledgeError }}
+              </div>
+
+              <a-descriptions v-else-if="resourceKnowledgeStatus" :column="1" bordered size="small">
+                <a-descriptions-item v-for="item in resourceKnowledgeRows" :key="item.label" :label="item.label">
+                  <span class="workspace-resource-detail__value" :title="item.value">{{ item.value }}</span>
+                </a-descriptions-item>
+              </a-descriptions>
+
+              <div v-else class="text-xs text-slate-500">
+                当前资源暂未返回索引快照。
+              </div>
+            </div>
+
+            <div class="workspace-resource-detail__actions">
+              <a-button size="small" @click="closeResourceDetailPanel">
+                关闭
+              </a-button>
+            </div>
+          </div>
+        </a-modal>
+      </template>
     </div>
 
-          <WorkspaceResourceUploadHint
-            v-if="!recyclePanelOpen"
-            class="workspace-left-panel__footer"
-            :busy="resourceMutating"
-            :disabled="!hasActiveProject || resourceMutating"
-            @select-files="handleResourceUpload"
-          />
+    <WorkspaceResourceUploadHint
+      v-if="!recyclePanelOpen"
+      class="workspace-left-panel__footer"
+      :busy="resourceMutating"
+      :disabled="!hasActiveProject || resourceMutating"
+      @select-files="handleResourceUpload"
+    />
   </div>
 </template>

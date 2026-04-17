@@ -1,14 +1,22 @@
+import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import type {
+  AiCanvasAssistTemplate,
   AiWorkspaceDocumentAction,
   AiWorkspaceRequest,
   AiWorkspaceResult,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
+  ChatMessage,
+  CollabPurpose,
+  WorkflowArchitectureView,
+  WorkflowDraftAction,
+  WorkflowLayoutPreset,
+  WorkflowStylePreset,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
-import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import { createEventStream, setResponseStatus } from 'h3'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
+import { buildProjectKnowledgeLocalContext } from '~~/server/services/ai/project-knowledge-context'
+import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { executeWorkspaceAi } from '~~/server/services/ai/workspace-orchestrator'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail } from '~~/server/utils/api'
@@ -32,6 +40,7 @@ import {
 import { getProjectOutlineSnapshot } from '~~/server/utils/project-outline-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
+import { createWorkspaceStreamSystemChatMessage } from '~~/shared/utils/workspace-ai-stream'
 
 const ALLOWED_MODES: WorkspaceAiMode[] = [
   'dialog_ask',
@@ -86,7 +95,13 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       assistantLabel: toText(context.assistantLabel),
       activeTabId: toText(context.activeTabId),
       previewMode: toText(context.previewMode),
-      resourcePurpose: toText(context.resourcePurpose),
+      resourcePurpose: toText(context.resourcePurpose) as CollabPurpose | '',
+      workflowSnapshot: context.workflowSnapshot || null,
+      workflowAction: toText(context.workflowAction) as WorkflowDraftAction | undefined,
+      workflowTemplate: toText(context.workflowTemplate) as AiCanvasAssistTemplate | undefined,
+      workflowArchitectureView: toText(context.workflowArchitectureView) as WorkflowArchitectureView | undefined,
+      workflowStylePreset: toText(context.workflowStylePreset) as WorkflowStylePreset | undefined,
+      workflowLayoutPreset: toText(context.workflowLayoutPreset) as WorkflowLayoutPreset | undefined,
     },
     aiOptions: body?.aiOptions || {},
   }
@@ -181,46 +196,21 @@ function toErrorMessage(error: unknown): string {
   return 'UNKNOWN_ERROR'
 }
 
-interface WorkspaceSystemStreamMessage {
-  eventType: 'progress' | 'tool'
-  seq: number
-  content: string
+function createAbortError(): Error {
+  const error = new Error('AbortError')
+  error.name = 'AbortError'
+  return error
 }
 
-function summarizeToolPayload(payload: unknown, maxLength = 180): string {
-  if (payload === null || payload === undefined)
-    return ''
-
-  const normalized = typeof payload === 'string'
-    ? payload.trim()
-    : (() => {
-        try {
-          return JSON.stringify(payload)
-        }
-        catch {
-          return ''
-        }
-      })()
-
-  if (!normalized || normalized === '{}' || normalized === '[]')
-    return ''
-
-  if (normalized.length <= maxLength)
-    return normalized
-  return `${normalized.slice(0, maxLength)}...`
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError'
 }
 
-function buildWorkspaceSystemEventContent(eventType: 'progress' | 'tool', data: Record<string, unknown>): string {
-  if (eventType === 'progress') {
-    const message = String(data.message || 'AI 处理中...').trim() || 'AI 处理中...'
-    return `进度：${message}`
-  }
-
-  const toolName = String(data.name || '').trim() || 'unknown_tool'
-  const payloadSummary = summarizeToolPayload(data.payload)
-  if (!payloadSummary)
-    return `工具：${toolName}`
-  return `工具：${toolName} · ${payloadSummary}`
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted)
+    throw createAbortError()
 }
 
 function resolveDocumentAssistChannelKey(action: unknown): 'workspace_document_summarize' | 'workspace_document_rewrite' | 'workspace_document_continue' | 'workspace_document_expand' | 'workspace_document_complete_context' | 'workspace_document_restructure' {
@@ -453,17 +443,32 @@ export default defineEventHandler(async (event) => {
   }
 
   const stream = createEventStream(event)
-  const streamSystemMessages: WorkspaceSystemStreamMessage[] = []
+  const abortController = new AbortController()
+  const streamSystemMessages: ChatMessage[] = []
   let streamSystemSeq = 0
+  let streamClosed = false
+  let hasVisibleExecutionOutput = false
+
+  stream.onClosed(() => {
+    streamClosed = true
+    if (!abortController.signal.aborted)
+      abortController.abort()
+  })
+
+  const markVisibleExecutionOutput = () => {
+    hasVisibleExecutionOutput = true
+  }
+
   const pushEvent = async (eventType: AiWorkspaceStreamEventType, data: Record<string, unknown>) => {
+    if (streamClosed)
+      return
+
     if (eventType === 'progress' || eventType === 'tool') {
       streamSystemSeq += 1
-      streamSystemMessages.push({
-        eventType,
-        seq: streamSystemSeq,
-        content: buildWorkspaceSystemEventContent(eventType, data),
-      })
+      streamSystemMessages.push(createWorkspaceStreamSystemChatMessage(eventType, data, streamSystemSeq))
     }
+    if (eventType === 'tool' || eventType === 'proposal' || eventType === 'issue' || eventType === 'delta')
+      markVisibleExecutionOutput()
 
     const payload: AiWorkspaceStreamEvent = {
       event: eventType,
@@ -481,6 +486,7 @@ export default defineEventHandler(async (event) => {
         message: '已建立工作台 AI 会话，正在加载上下文...',
         sessionId: prepared.sessionId,
       })
+      throwIfAborted(abortController.signal)
 
       const contextBundle = await withClient(event, async (db) => {
         const projectSettings = request.projectId
@@ -495,25 +501,36 @@ export default defineEventHandler(async (event) => {
               projectId: request.projectId,
             })
           : []
-        const resourceSummary = buildProjectResourceLocalContext(resources, {
+        const knowledgeContext = await buildProjectKnowledgeLocalContext(db, {
+          projectId: request.projectId || '',
+          query: latestUserMessage,
+          resources,
           contestName,
           trackName,
           major: request.context?.major,
-          limit: 10,
+          limit: 6,
+          event,
         })
         return {
           projectSettingsSummary: summarizeProjectSettings(projectSettings),
           projectOutlineSummary: summarizeOutline(projectOutline),
-          resourceSummary,
+          resourceSummary: knowledgeContext.summaryText,
+          knowledge: {
+            citations: knowledgeContext.citations,
+            warning: knowledgeContext.warning,
+            usedFallback: knowledgeContext.usedFallback,
+          },
         }
       })
+      throwIfAborted(abortController.signal)
 
       const execution = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, prompt }) => {
-        const nextAiConfig = {
+        const nextAiConfig: typeof runtime.ai = {
+          ...runtime.ai,
           ...ai,
           temperature: Number.isFinite(Number(request.aiOptions?.temperature))
             ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
-            : ai.temperature,
+            : Number(ai.temperature ?? runtime.ai.temperature ?? 0.2),
         }
 
         return executeWorkspaceAi({
@@ -545,6 +562,12 @@ export default defineEventHandler(async (event) => {
             activeTabId: toText(request.context?.activeTabId),
             previewMode: toText(request.context?.previewMode),
             resourcePurpose: toText(request.context?.resourcePurpose),
+            workflowSnapshot: request.context?.workflowSnapshot || null,
+            workflowAction: toText(request.context?.workflowAction),
+            workflowTemplate: toText(request.context?.workflowTemplate),
+            workflowArchitectureView: toText(request.context?.workflowArchitectureView),
+            workflowStylePreset: toText(request.context?.workflowStylePreset),
+            workflowLayoutPreset: toText(request.context?.workflowLayoutPreset),
             projectSettingsSummary: contextBundle.projectSettingsSummary,
             projectOutlineSummary: contextBundle.projectOutlineSummary,
             resourceSummary: contextBundle.resourceSummary,
@@ -557,13 +580,18 @@ export default defineEventHandler(async (event) => {
             onProgress: message => pushEvent('progress', { message }),
             onTool: (name, payload) => pushEvent('tool', { name, payload }),
             onDelta: text => pushEvent('delta', { text }),
-            onProposal: proposal => pushEvent('proposal', { proposal }),
-            onIssue: issue => pushEvent('issue', { issue }),
+            onProposal: () => markVisibleExecutionOutput(),
+            onIssue: () => markVisibleExecutionOutput(),
           },
+          signal: abortController.signal,
         })
+      }, {
+        shouldContinueOnError: () => !hasVisibleExecutionOutput && !abortController.signal.aborted,
       })
+      throwIfAborted(abortController.signal)
 
       const persisted = await withTransaction(event, async (db) => {
+        throwIfAborted(abortController.signal)
         const baseMetadata = {
           mode: scopeMode,
           projectId: scopeProjectId,
@@ -573,6 +601,7 @@ export default defineEventHandler(async (event) => {
         }
 
         if (latestUserMessage) {
+          throwIfAborted(abortController.signal)
           await appendAiChatMessage(db, {
             workspaceId: request.workspaceId || '',
             sessionId: prepared.sessionId,
@@ -587,6 +616,7 @@ export default defineEventHandler(async (event) => {
         }
 
         for (const systemMessage of streamSystemMessages) {
+          throwIfAborted(abortController.signal)
           await appendAiChatMessage(db, {
             workspaceId: request.workspaceId || '',
             sessionId: prepared.sessionId,
@@ -597,13 +627,13 @@ export default defineEventHandler(async (event) => {
             fallbackUsed: false,
             metadata: {
               ...baseMetadata,
-              eventType: systemMessage.eventType,
-              seq: systemMessage.seq,
+              ...(systemMessage.metadata || {}),
             },
             createdByUserId: user.id,
           })
         }
 
+        throwIfAborted(abortController.signal)
         await appendAiChatMessage(db, {
           workspaceId: request.workspaceId || '',
           sessionId: prepared.sessionId,
@@ -612,12 +642,21 @@ export default defineEventHandler(async (event) => {
           provider: execution.ai.provider,
           model: execution.ai.model,
           fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
-          metadata: execution.data.data.documentDraft
-            ? {
-                ...baseMetadata,
-                agentDocDraft: execution.data.data.documentDraft,
-              }
-            : baseMetadata,
+          metadata: {
+            ...baseMetadata,
+            latencyMs: execution.latencyMs,
+            ...(execution.data.data.documentDraft
+              ? {
+                  agentDocDraft: execution.data.data.documentDraft,
+                }
+              : {}),
+            ...(execution.data.data.workflowDraft
+              ? {
+                  workflowDraft: execution.data.data.workflowDraft,
+                }
+              : {}),
+            knowledge: execution.data.data.knowledge || contextBundle.knowledge,
+          },
           createdByUserId: user.id,
         })
 
@@ -650,6 +689,7 @@ export default defineEventHandler(async (event) => {
               changes: execution.data.data.changeDrafts,
             })
           : []
+        throwIfAborted(abortController.signal)
 
         const issuePayload = request.projectId && request.mode === 'issue_discovery'
           ? await createProjectIssueReportWithIssues(db, {
@@ -664,6 +704,7 @@ export default defineEventHandler(async (event) => {
               issues: execution.data.data.issueDrafts,
             })
           : null
+        throwIfAborted(abortController.signal)
 
         await recordContestAuditLog(db, {
           actorUserId: user.id,
@@ -682,7 +723,7 @@ export default defineEventHandler(async (event) => {
             fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
             attempts: execution.attemptChain.length,
             attemptChain: execution.attemptChain,
-            latencyMs: Date.now() - startedAt,
+            latencyMs: execution.latencyMs,
             remainingQuota: prepared.remainingQuota,
           },
         })
@@ -692,6 +733,7 @@ export default defineEventHandler(async (event) => {
           report: issuePayload?.report || null,
           issues: issuePayload?.issues || [],
           documentDraft: execution.data.data.documentDraft || null,
+          workflowDraft: execution.data.data.workflowDraft || null,
         }
       })
 
@@ -703,24 +745,31 @@ export default defineEventHandler(async (event) => {
         report: persisted.report,
         issues: persisted.issues,
         documentDraft: persisted.documentDraft,
+        workflowDraft: persisted.workflowDraft,
+        knowledge: execution.data.data.knowledge || contextBundle.knowledge,
       }
 
+      throwIfAborted(abortController.signal)
       await pushEvent('done', {
         result,
         meta: {
           attempts: execution.attemptChain.length,
           fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
-          latencyMs: Date.now() - startedAt,
+          latencyMs: execution.latencyMs,
         },
       })
     }
     catch (error) {
+      if (isAbortError(error))
+        return
+
       await pushEvent('error', {
         message: toErrorMessage(error),
       })
     }
     finally {
-      await stream.close()
+      if (!streamClosed)
+        await stream.close().catch(() => {})
     }
   }
 

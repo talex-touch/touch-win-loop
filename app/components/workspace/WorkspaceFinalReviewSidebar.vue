@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   close: []
   sendChat: []
+  openResource: [resourceId: string]
   'update:chatInput': [value: string]
 }>()
 
@@ -126,7 +127,15 @@ const visibleIssues = computed(() => props.openIssues.slice(0, 3))
               <span v-else class="workspace-final-review-sidebar__assistant-badge">AI</span>
             </div>
             <div class="workspace-final-review-sidebar__message-bubble">
-              {{ message.content }}
+              <template v-if="message.role === 'assistant'">
+                <WorkspaceAssistantMessageContent
+                  :message="message"
+                  @open-resource="emit('openResource', $event)"
+                />
+              </template>
+              <template v-else>
+                {{ message.content }}
+              </template>
             </div>
           </article>
         </div>

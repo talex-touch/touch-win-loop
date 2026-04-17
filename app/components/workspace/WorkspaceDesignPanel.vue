@@ -15,6 +15,7 @@ import type {
   CanvasLibraryPageTemplatePayload,
   CompositionModel,
   DesignAssetModel,
+  SceneEditorEngine,
   DesignElementModel,
   DesignFrameKind,
   DesignFrameModel,
@@ -61,6 +62,12 @@ import {
   useDesignToolController,
 } from "~~/app/composables/useDesignToolController";
 import {
+  designDocumentToSceneDocument,
+  parseDesignDocumentString,
+  sceneDocumentToDesignDocument,
+  serializeDesignDocument,
+} from "~~/shared/utils/design-document";
+import {
   appendDesignFrameToSceneDocument,
   appendDesignAssetToSceneDocument,
   appendDesignElementToSceneDocument,
@@ -77,6 +84,7 @@ import {
   importFromDDL,
   importFromMarkdownOutline,
   importFromMermaid,
+  groupDesignElementsInSceneDocument,
   parseSceneDocumentString,
   relayoutSceneDocument,
   removeDesignElementFromSceneDocument,
@@ -95,6 +103,7 @@ import {
   serializeSceneDocument,
   setCurrentDesignPageInSceneDocument,
   SYSTEM_SCENE_TEMPLATES,
+  ungroupDesignElementInSceneDocument,
   updateDesignElementInSceneDocument,
   updateDesignFrameInSceneDocument,
   updateDesignPageInSceneDocument,
@@ -103,14 +112,17 @@ import WLDesignContainer from "../wl-design/WLDesignContainer.vue";
 import WLDesignLayer from "../wl-design/WLDesignLayer.vue";
 import WLDesignLayout from "../wl-design/WLDesignLayout.vue";
 import UiContextMenu from "../ui/UiContextMenu.vue";
+import WorkspaceDesignCanvasKitBridge from "./design/WorkspaceDesignCanvasKitBridge.client.vue";
 import WorkspaceDesignInspector from "./design/WorkspaceDesignInspector.vue";
 import WorkspaceDesignSidebarTabs from "./design/WorkspaceDesignSidebarTabs.vue";
 import WorkspaceDesignStage from "./design/WorkspaceDesignStage.vue";
 import WorkspaceDesignToolbar from "./design/WorkspaceDesignToolbar.vue";
 
 // WorkspaceDesignCanvas 作为 Vue Flow stage 适配层继续保留在 WorkspaceDesignStage 内部。
+// buildDeviceMockupSceneDocument 仍由 scene-document 提供，兼容旧模板与新格式迁移。
 
 type DesignSidebarTab = "pages" | "frames" | "assets";
+type DesignStorageFormat = "scene_document" | "design_document_v1";
 type StageViewportState = { x: number; y: number; zoom: number };
 type SidebarLayerTreeRow = {
   node: DesignLayerTreeNode;
@@ -127,6 +139,14 @@ type StageDeepSelectionRequest = {
   ownerPageId: string;
   displayFrameId: string;
   ownerElementId?: string;
+};
+type PendingImagePlacement = {
+  src: string;
+  name: string;
+  intrinsicWidth: number;
+  intrinsicHeight: number;
+  assetId?: string;
+  mimeType?: string;
 };
 
 const props = withDefaults(
@@ -145,6 +165,7 @@ const props = withDefaults(
     collabConnectionText?: string;
     collabDrawError?: string;
     collabPresenceCursors?: WorkspaceCollabCursorUser[];
+    designEditorEngine?: SceneEditorEngine | "";
     fontSizePreset?: WorkspaceFontSizePreset | "";
     tabSpacingPreset?: WorkspaceTabSpacingPreset | "";
   }>(),
@@ -163,6 +184,7 @@ const props = withDefaults(
     collabConnectionText: "",
     collabDrawError: "",
     collabPresenceCursors: () => [],
+    designEditorEngine: "",
     fontSizePreset: "",
     tabSpacingPreset: "",
   },
@@ -172,6 +194,7 @@ const emit = defineEmits<{
   "update:modelValue": [value: string];
   updateCollabCursor: [value: { cursorX?: number, cursorY?: number }];
   activateResource: [resourceId: string];
+  openResource: [resourceId: string];
 }>();
 
 const templateOptions = SYSTEM_SCENE_TEMPLATES.filter(
@@ -184,14 +207,29 @@ const DEFAULT_DEVICE_FRAME_KEY =
 const runtime = useRuntimeConfig();
 const { endpoint } = useApiEndpoint(runtime);
 
+function resolvePersistedDesignEditorEngine(
+  value: unknown,
+  fallback: SceneEditorEngine = "vueflow",
+): SceneEditorEngine {
+  const normalized = normalizeString(value).toLowerCase();
+  if (
+    normalized === "vueflow" ||
+    normalized === "tldraw_legacy" ||
+    normalized === "canvaskit_wasm"
+  )
+    return normalized;
+  return fallback;
+}
+
 const draftDocument = ref<SceneDocument>(
-  createEmptySceneDocument({
-    drawMode: "composition",
-    sourceType: "manual",
-    templateKey: DEFAULT_TEMPLATE_KEY,
-    editorEngine: "vueflow",
-  }),
+  createDefaultDesignSceneDocument(
+    resolvePersistedDesignEditorEngine(props.designEditorEngine, "vueflow"),
+  ),
 );
+const persistedDesignEditorEngine = ref<SceneEditorEngine>(
+  resolvePersistedDesignEditorEngine(props.designEditorEngine, "vueflow"),
+);
+const persistedDesignStorageFormat = ref<DesignStorageFormat>("scene_document");
 const panelRootRef = ref<HTMLElement | null>(null);
 const layerTreeRootRef = ref<HTMLElement | null>(null);
 const activeTool = ref<DesignEditorTool>("select");
@@ -253,6 +291,7 @@ const localPageViewportById = ref<Record<string, StageViewportState>>({});
 const temporaryHandToolActive = ref(false);
 const deepSelectModifierPressed = ref(false);
 const mockupScreenEditingFrameId = ref("");
+const pendingImagePlacement = ref<PendingImagePlacement | null>(null);
 const toolSwitchHint = ref("");
 let toolSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -262,6 +301,84 @@ const CANVAS_AI_ACTION_FEATURE_KEYS = {
   complete: "canvasComplete",
   refine: "canvasRefine",
 } as const;
+
+const canvasAiStorageScopeKey = computed(() => {
+  const workspaceId = normalizeString(props.workspaceId);
+  const projectId = normalizeString(props.projectId);
+  const resourceId = normalizeString(props.boundResourceId || props.designResourceId);
+  if (!workspaceId || !projectId || !resourceId) return "";
+  return `workspace-design-canvas-ai:${workspaceId}:${projectId}:${resourceId}`;
+});
+
+function toCanvasAiMessageMetadata(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return { ...(value as Record<string, unknown>) };
+}
+
+function restoreCanvasAiMessagesFromStorage(): void {
+  if (!import.meta.client) return;
+
+  const storageKey = canvasAiStorageScopeKey.value;
+  if (!storageKey) {
+    canvasAiMessages.value = [];
+    return;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      canvasAiMessages.value = [];
+      return;
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      canvasAiMessages.value = [];
+      return;
+    }
+    canvasAiMessages.value = parsed
+      .map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+        const record = item as Record<string, unknown>;
+        const role = normalizeString(record.role);
+        if (role !== "assistant" && role !== "user" && role !== "system") return null;
+        const content = normalizeString(record.content);
+        if (!content) return null;
+        return {
+          role,
+          content,
+          metadata: toCanvasAiMessageMetadata(record.metadata),
+        } satisfies ChatMessage;
+      })
+      .filter((item): item is ChatMessage => Boolean(item))
+      .slice(-6);
+  }
+  catch {
+    canvasAiMessages.value = [];
+  }
+}
+
+function persistCanvasAiMessagesToStorage(): void {
+  if (!import.meta.client) return;
+
+  const storageKey = canvasAiStorageScopeKey.value;
+  if (!storageKey) return;
+
+  if (canvasAiMessages.value.length === 0) {
+    window.localStorage.removeItem(storageKey);
+    return;
+  }
+
+  window.localStorage.setItem(
+    storageKey,
+    JSON.stringify(
+      canvasAiMessages.value.slice(-6).map((message) => ({
+        role: message.role,
+        content: normalizeString(message.content),
+        metadata: toCanvasAiMessageMetadata(message.metadata),
+      })),
+    ),
+  );
+}
 
 const resolvedDesignPanelFontSizePreset = computed<WorkspaceFontSizePreset>(
   () => props.fontSizePreset || "md",
@@ -1042,24 +1159,52 @@ function parseFrameMetric(value: unknown, fallback: number, min = 0): number {
   return Math.max(min, parsed);
 }
 
-function createDefaultDesignSceneDocument(): SceneDocument {
+function createDefaultDesignSceneDocument(
+  editorEngine: SceneEditorEngine = "vueflow",
+): SceneDocument {
   return createEmptySceneDocument({
     drawMode: "composition",
     sourceType: "manual",
     templateKey: DEFAULT_TEMPLATE_KEY,
-    editorEngine: "vueflow",
+    editorEngine,
   });
 }
 
 function resolveIncomingDesignDocument(rawValue: string): {
   document: SceneDocument;
   shouldPersistNormalized: boolean;
+  persistedEditorEngine: SceneEditorEngine;
+  persistedStorageFormat: DesignStorageFormat;
 } {
+  const fallbackEditorEngine = resolvePersistedDesignEditorEngine(
+    props.designEditorEngine,
+    "vueflow",
+  );
   const normalizedRawValue = normalizeString(rawValue);
   if (!normalizedRawValue) {
     return {
-      document: createDefaultDesignSceneDocument(),
+      document: createDefaultDesignSceneDocument(fallbackEditorEngine),
       shouldPersistNormalized: true,
+      persistedEditorEngine: fallbackEditorEngine,
+      persistedStorageFormat:
+        fallbackEditorEngine === "canvaskit_wasm"
+          ? "design_document_v1"
+          : "scene_document",
+    };
+  }
+
+  const parsedDesignDocument = parseDesignDocumentString(normalizedRawValue);
+  if (parsedDesignDocument) {
+    return {
+      document: relayoutSceneDocument(
+        designDocumentToSceneDocument(parsedDesignDocument),
+      ),
+      shouldPersistNormalized: false,
+      persistedEditorEngine: resolvePersistedDesignEditorEngine(
+        parsedDesignDocument.editorEngine,
+        fallbackEditorEngine,
+      ),
+      persistedStorageFormat: "design_document_v1",
     };
   }
 
@@ -1077,19 +1222,47 @@ function resolveIncomingDesignDocument(rawValue: string): {
     parsed.sourceModel.kind !== "composition"
   ) {
     return {
-      document: createDefaultDesignSceneDocument(),
+      document: createDefaultDesignSceneDocument(fallbackEditorEngine),
       shouldPersistNormalized: true,
+      persistedEditorEngine: fallbackEditorEngine,
+      persistedStorageFormat:
+        fallbackEditorEngine === "canvaskit_wasm"
+          ? "design_document_v1"
+          : "scene_document",
     };
   }
 
+  const persistedEditorEngine = resolvePersistedDesignEditorEngine(
+    parsed.editorEngine,
+    fallbackEditorEngine,
+  );
   return {
     document: relayoutSceneDocument({
       ...parsed,
       drawMode: "composition",
-      editorEngine: "vueflow",
+      editorEngine: persistedEditorEngine,
     }),
     shouldPersistNormalized: false,
+    persistedEditorEngine,
+    persistedStorageFormat: "scene_document",
   };
+}
+
+function serializeOutgoingDesignDocument(document: SceneDocument): string {
+  const normalizedDocument = {
+    ...document,
+    drawMode: "composition" as const,
+    editorEngine: persistedDesignEditorEngine.value,
+  };
+  if (
+    persistedDesignStorageFormat.value === "design_document_v1" ||
+    persistedDesignEditorEngine.value === "canvaskit_wasm"
+  ) {
+    return serializeDesignDocument(
+      sceneDocumentToDesignDocument(normalizedDocument),
+    );
+  }
+  return serializeSceneDocument(normalizedDocument);
 }
 
 const isBoundToDesignResource = computed(() => {
@@ -1282,8 +1455,13 @@ const selectedFrameId = designSelection.selectedFrameId;
 const selectedElementIds = designSelection.selectedElementIds;
 const selectedElementId = designSelection.selectedElementId;
 const designHistory = useDesignHistory(
-  serializeSceneDocument(draftDocument.value),
+  serializeOutgoingDesignDocument(draftDocument.value),
 );
+const resolvedDesignStageComponent = computed(() => {
+  return persistedDesignEditorEngine.value === "tldraw_legacy"
+    ? WorkspaceDesignStage
+    : WorkspaceDesignCanvasKitBridge;
+});
 const interactionContext = computed<DesignCanvasInteractionContext>(() => {
   return {
     effectiveTool: temporaryHandToolActive.value ? "hand" : activeTool.value,
@@ -1868,6 +2046,7 @@ function createDesignElementFromStage(
     editingFrameId,
     displayFrameId: resolveDisplayFrameIdForOwnerSelection(editingFrameId),
   });
+  if (designToolController.isDrawingTool.value) setActiveDesignTool("select");
 }
 
 function updateDesignElementFromStage(payload: {
@@ -1980,6 +2159,7 @@ watch(
 onMounted(() => {
   void loadCanvasAiRuntimeStatus();
   if (!import.meta.client) return;
+  restoreCanvasAiMessagesFromStorage();
   window.addEventListener("pointerdown", handleActionMenuPointerDown);
   window.addEventListener("blur", clearTransientInteractionState);
 });
@@ -1990,6 +2170,18 @@ watch(
     void loadCanvasAiRuntimeStatus();
   },
 );
+
+watch(canvasAiStorageScopeKey, () => {
+  restoreCanvasAiMessagesFromStorage();
+}, {
+  immediate: true,
+});
+
+watch(canvasAiMessages, () => {
+  persistCanvasAiMessagesToStorage();
+}, {
+  deep: true,
+});
 
 onBeforeUnmount(() => {
   if (!import.meta.client) return;
@@ -2016,21 +2208,27 @@ function resolveFrameFromDocument(
 function normalizeHistoryDocument(
   document: SceneDocument | string,
 ): SceneDocument {
-  return typeof document === "string"
-    ? sceneDocumentFromUnknown(
-        parseSceneDocumentString(document, {
-          fallbackDrawMode: "composition",
-          fallbackSourceType: "image_mockup",
-        }),
-        {
-          fallbackDrawMode: "composition",
-          fallbackSourceType: "image_mockup",
-        },
-      )
-    : sceneDocumentFromUnknown(document, {
+  if (typeof document === "string") {
+    const parsedDesignDocument = parseDesignDocumentString(document);
+    if (parsedDesignDocument)
+      return designDocumentToSceneDocument(parsedDesignDocument);
+
+    return sceneDocumentFromUnknown(
+      parseSceneDocumentString(document, {
         fallbackDrawMode: "composition",
         fallbackSourceType: "image_mockup",
-      });
+      }),
+      {
+        fallbackDrawMode: "composition",
+        fallbackSourceType: "image_mockup",
+      },
+    );
+  }
+
+  return sceneDocumentFromUnknown(document, {
+    fallbackDrawMode: "composition",
+    fallbackSourceType: "image_mockup",
+  });
 }
 
 function preservePageViewportState(
@@ -2084,10 +2282,10 @@ function applyHistorySnapshot(serialized: string | null): void {
   const normalizedDocument = relayoutSceneDocument({
     ...nextDocument,
     drawMode: "composition",
-    editorEngine: "vueflow",
+    editorEngine: persistedDesignEditorEngine.value,
   });
   setDraftDocument(normalizedDocument);
-  syncModelValue(serializeSceneDocument(normalizedDocument));
+  syncModelValue(serializeOutgoingDesignDocument(normalizedDocument));
 }
 
 function commitDocument(
@@ -2097,11 +2295,11 @@ function commitDocument(
   const normalizedDocument = relayoutSceneDocument({
     ...document,
     drawMode: "composition",
-    editorEngine: "vueflow",
+    editorEngine: persistedDesignEditorEngine.value,
   });
   setDraftDocument(normalizedDocument);
 
-  const serialized = serializeSceneDocument(normalizedDocument);
+  const serialized = serializeOutgoingDesignDocument(normalizedDocument);
   designHistory.record(serialized, {
     mergeKey: options.historyMergeKey,
   });
@@ -2122,27 +2320,33 @@ function mutateCompositionDocument(
   commitDocument({
     ...normalized,
     drawMode: "composition",
-    editorEngine: "vueflow",
+    editorEngine: persistedDesignEditorEngine.value,
     sourceModel: nextComposition,
   });
 }
 
 watch(
-  [() => props.modelValue, isBoundToDesignResource],
+  [() => props.modelValue, isBoundToDesignResource, () => props.designEditorEngine],
   ([nextModelValue, nextIsBound]) => {
     const resolved = resolveIncomingDesignDocument(
       nextIsBound ? nextModelValue : "",
     );
     const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
     syncingFromModel.value = true;
+    persistedDesignEditorEngine.value = resolved.persistedEditorEngine;
+    persistedDesignStorageFormat.value = resolved.persistedStorageFormat;
     setDraftDocument(resolved.document);
     replaceSelectionState(selectionSnapshot);
-    lastAppliedSceneJson.value = serializeSceneDocument(resolved.document);
+    lastAppliedSceneJson.value = serializeOutgoingDesignDocument(
+      resolved.document,
+    );
     designHistory.reset(lastAppliedSceneJson.value);
     syncingFromModel.value = false;
 
     if (nextIsBound && resolved.shouldPersistNormalized) {
-      lastAppliedSceneJson.value = serializeSceneDocument(resolved.document);
+      lastAppliedSceneJson.value = serializeOutgoingDesignDocument(
+        resolved.document,
+      );
       emit("update:modelValue", lastAppliedSceneJson.value);
     }
   },
@@ -2522,7 +2726,7 @@ function updateSelectedFramePositions(payload: {
     {
       ...normalized,
       drawMode: "composition",
-      editorEngine: "vueflow",
+      editorEngine: persistedDesignEditorEngine.value,
       sourceModel: {
         ...nextComposition,
         frames: (nextComposition.frames || []).map((frame) => {
@@ -2880,8 +3084,205 @@ function buildSelectionGeometryPatches<
   return patches;
 }
 
+function resolveElementContainerElements(
+  element: DesignElementModel,
+): DesignElementModel[] {
+  const normalizedFrameId = normalizeString(element.frameId);
+  const normalizedParentId = normalizeString(element.parentId);
+  const siblings = normalizedFrameId
+    ? resolveCompositionElementsForFrame(compositionModel.value, normalizedFrameId)
+    : resolveCompositionElementsForPage(
+        compositionModel.value,
+        normalizeString(element.pageId),
+      );
+  return siblings.filter((candidate) => {
+    return normalizeString(candidate.parentId) === normalizedParentId;
+  });
+}
+
+function canGroupSelectedElements(elements: DesignElementModel[]): boolean {
+  if (elements.length < 2) return false;
+  if (elements.some((element) => element.type === "group")) return false;
+  const reference = elements[0] || null;
+  if (!reference) return false;
+  const sameContainer = elements.every((element) => {
+    return (
+      normalizeString(element.pageId) === normalizeString(reference.pageId) &&
+      normalizeString(element.frameId) === normalizeString(reference.frameId) &&
+      normalizeString(element.parentId) === normalizeString(reference.parentId)
+    );
+  });
+  if (!sameContainer) return false;
+  const frameId = normalizeString(reference.frameId);
+  const frame = frameId
+    ? currentPageFrameMap.value.get(frameId) || null
+    : null;
+  return !(
+    frame &&
+    normalizeString(frame.metadata?.layout?.mode) === "auto"
+  );
+}
+
+function reorderSelectionLayerElements(
+  containerElements: DesignElementModel[],
+  selectedIdSet: Set<string>,
+  command: string,
+): DesignElementModel[] | null {
+  const ordered = [...containerElements];
+  if (!ordered.length || !selectedIdSet.size) return null;
+
+  if (command === "bring-to-front") {
+    return [
+      ...ordered.filter((element) => !selectedIdSet.has(element.id)),
+      ...ordered.filter((element) => selectedIdSet.has(element.id)),
+    ];
+  }
+
+  if (command === "send-to-back") {
+    return [
+      ...ordered.filter((element) => selectedIdSet.has(element.id)),
+      ...ordered.filter((element) => !selectedIdSet.has(element.id)),
+    ];
+  }
+
+  if (command === "bring-forward") {
+    for (let index = ordered.length - 2; index >= 0; index -= 1) {
+      const current = ordered[index];
+      const next = ordered[index + 1];
+      if (selectedIdSet.has(current.id) && !selectedIdSet.has(next.id))
+        [ordered[index], ordered[index + 1]] = [next, current];
+    }
+    return ordered;
+  }
+
+  if (command === "send-backward") {
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1];
+      const current = ordered[index];
+      if (selectedIdSet.has(current.id) && !selectedIdSet.has(previous.id))
+        [ordered[index - 1], ordered[index]] = [current, previous];
+    }
+    return ordered;
+  }
+
+  return null;
+}
+
+function runElementStructuralCommand(command: string): boolean {
+  const elements = resolveRawSelectedElements();
+  if (!elements.length) return false;
+
+  if (command === "group") {
+    if (!canGroupSelectedElements(elements)) return true;
+    const groupId = `group-${Date.now()}`;
+    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+    commitDocument(
+      groupDesignElementsInSceneDocument(draftDocument.value, elements.map((element) => element.id), {
+        groupId,
+        groupName: "Group",
+      }),
+      {
+        historyMergeKey: "selection-group",
+      },
+    );
+    setSelectedElements([groupId], {
+      primaryElementId: groupId,
+      editingFrameId:
+        selectionSnapshot.editingFrameId ||
+        normalizeString(elements[0]?.frameId),
+      displayFrameId: resolveDisplayFrameIdForOwnerSelection(
+        selectionSnapshot.editingFrameId ||
+          normalizeString(elements[0]?.frameId),
+      ),
+    });
+    return true;
+  }
+
+  if (command === "ungroup") {
+    if (elements.length !== 1 || elements[0]?.type !== "group") return true;
+    const group = elements[0];
+    const groupChildIds = (
+      normalizeString(group.frameId)
+        ? resolveCompositionElementsForFrame(
+            compositionModel.value,
+            normalizeString(group.frameId),
+          )
+        : resolveCompositionElementsForPage(
+            compositionModel.value,
+            normalizeString(group.pageId),
+          )
+    )
+      .filter((element) => normalizeString(element.parentId) === group.id)
+      .map((element) => element.id);
+    const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+    commitDocument(
+      ungroupDesignElementInSceneDocument(draftDocument.value, group.id),
+      {
+        historyMergeKey: "selection-ungroup",
+      },
+    );
+    setSelectedElements(groupChildIds, {
+      primaryElementId: groupChildIds[groupChildIds.length - 1] || "",
+      editingFrameId:
+        selectionSnapshot.editingFrameId || normalizeString(group.frameId),
+      displayFrameId: resolveDisplayFrameIdForOwnerSelection(
+        selectionSnapshot.editingFrameId || normalizeString(group.frameId),
+      ),
+    });
+    return true;
+  }
+
+  if (
+    ![
+      "bring-forward",
+      "send-backward",
+      "bring-to-front",
+      "send-to-back",
+    ].includes(command)
+  ) {
+    return false;
+  }
+
+  const reference = elements[0] || null;
+  if (!reference) return true;
+  if (
+    !elements.every((element) => {
+      return (
+        normalizeString(element.pageId) === normalizeString(reference.pageId) &&
+        normalizeString(element.frameId) === normalizeString(reference.frameId) &&
+        normalizeString(element.parentId) === normalizeString(reference.parentId)
+      );
+    })
+  ) {
+    return true;
+  }
+
+  const containerElements = resolveElementContainerElements(reference);
+  const reordered = reorderSelectionLayerElements(
+    containerElements,
+    new Set(elements.map((element) => element.id)),
+    command,
+  );
+  if (!reordered) return true;
+
+  const reorderedIds = reordered.map((element) => element.id);
+  const selectionSnapshot = cloneSelectionStateSnapshot(selectionState.value);
+  let nextDocument = draftDocument.value;
+  reorderedIds.forEach((elementId, index) => {
+    nextDocument = updateDesignElementInSceneDocument(nextDocument, elementId, {
+      zIndex: index,
+    });
+  });
+  commitDocument(nextDocument, {
+    historyMergeKey: "selection-layer-order",
+  });
+  replaceSelectionState(selectionSnapshot);
+  return true;
+}
+
 function runSelectionCommand(command: string): void {
   if (selectedElementIds.value.length > 0) {
+    if (runElementStructuralCommand(command)) return;
     const elements = resolveRawSelectedElements().filter(
       (element) => element.type !== "path",
     );
@@ -3434,6 +3835,53 @@ function createAssetId(): string {
   return `asset-${Date.now()}`;
 }
 
+function clearPendingImagePlacement(): void {
+  pendingImagePlacement.value = null;
+}
+
+function queuePendingImagePlacement(payload: PendingImagePlacement | null): void {
+  pendingImagePlacement.value = payload && payload.src
+    ? {
+        src: payload.src,
+        name: payload.name || "图片",
+        intrinsicWidth: Math.max(1, Math.round(payload.intrinsicWidth || 1)),
+        intrinsicHeight: Math.max(1, Math.round(payload.intrinsicHeight || 1)),
+        assetId: payload.assetId || undefined,
+        mimeType: payload.mimeType || undefined,
+      }
+    : null;
+}
+
+async function queueImagePlacementFromFile(file: File): Promise<void> {
+  const src = await readImageAsDataUrl(file);
+  if (!src) return;
+  const dimensions = await readImageDimensions(src);
+  queuePendingImagePlacement({
+    src,
+    name: file.name,
+    intrinsicWidth: dimensions.width || 1,
+    intrinsicHeight: dimensions.height || 1,
+    mimeType: file.type || undefined,
+  });
+}
+
+async function placeAssetOnCanvas(asset: DesignAssetModel): Promise<void> {
+  const intrinsicWidth = Number(asset.width || 0);
+  const intrinsicHeight = Number(asset.height || 0);
+  const dimensions =
+    intrinsicWidth > 0 && intrinsicHeight > 0
+      ? { width: intrinsicWidth, height: intrinsicHeight }
+      : await readImageDimensions(asset.src);
+  queuePendingImagePlacement({
+    src: asset.src,
+    name: asset.name,
+    intrinsicWidth: dimensions.width || 1,
+    intrinsicHeight: dimensions.height || 1,
+    assetId: asset.id,
+    mimeType: asset.mimeType || undefined,
+  });
+}
+
 async function requestCanvasLibraryApi<T>(
   path: string,
   init: RequestInit = {},
@@ -3774,6 +4222,7 @@ async function handleAssetUpload(event: Event): Promise<void> {
 
   const src = await readImageAsDataUrl(file);
   if (!src) return;
+  const dimensions = await readImageDimensions(src);
 
   const asset: DesignAssetModel = {
     id: createAssetId(),
@@ -3781,6 +4230,8 @@ async function handleAssetUpload(event: Event): Promise<void> {
     name: file.name,
     src,
     mimeType: file.type || undefined,
+    width: dimensions.width || undefined,
+    height: dimensions.height || undefined,
     metadata: {
       size: file.size,
     },
@@ -3792,12 +4243,15 @@ async function handleAssetUpload(event: Event): Promise<void> {
       assets: [...(composition.assets || []), asset],
     };
   });
-  applyImageToSelectedFrame(src);
   if (input) input.value = "";
 }
 
 function useAsset(asset: DesignAssetModel): void {
   applyImageToSelectedFrame(asset.src);
+}
+
+async function handleToolbarInsertImage(file: File): Promise<void> {
+  await queueImagePlacementFromFile(file);
 }
 
 function buildShellViewportDefaults() {
@@ -4195,6 +4649,11 @@ async function runCanvasAssist(action: AiCanvasAssistAction): Promise<void> {
             {
               role: "assistant",
               content: normalizeString(result.assistantReply || "画布结构源预览已生成。"),
+              metadata: result.knowledge
+                ? {
+                    knowledge: result.knowledge,
+                  }
+                : undefined,
             } satisfies ChatMessage,
           ].slice(-6);
           continue;
@@ -6101,32 +6560,43 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                   </label>
 
                   <div v-if="imageAssets.length" class="space-y-2">
-                    <button
+                    <div
                       v-for="asset in imageAssets"
                       :key="asset.id"
-                      class="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white/72 px-3 py-2 text-left transition-colors hover:border-slate-300 hover:bg-white/88"
-                      type="button"
-                      @click="useAsset(asset)"
+                      class="rounded-2xl border border-slate-200 bg-white/72 px-3 py-2 transition-colors hover:border-slate-300 hover:bg-white/88"
                     >
-                      <img
-                        :src="asset.src"
-                        alt=""
-                        class="h-12 w-12 rounded-xl object-cover"
-                      />
-                      <div class="min-w-0 flex-1">
-                        <p class="truncate text-sm font-semibold text-slate-800">
-                          {{ asset.name }}
-                        </p>
-                        <p class="truncate text-[11px] text-slate-500">
-                          {{ asset.mimeType || "image/*" }}
-                        </p>
+                      <div class="flex items-center gap-3">
+                        <img
+                          :src="asset.src"
+                          alt=""
+                          class="h-12 w-12 rounded-xl object-cover"
+                        />
+                        <div class="min-w-0 flex-1">
+                          <p class="truncate text-sm font-semibold text-slate-800">
+                            {{ asset.name }}
+                          </p>
+                          <p class="truncate text-[11px] text-slate-500">
+                            {{ asset.mimeType || "image/*" }}
+                          </p>
+                        </div>
                       </div>
-                      <span
-                        class="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500"
-                      >
-                        应用
-                      </span>
-                    </button>
+                      <div class="mt-2 flex items-center justify-end gap-2">
+                        <button
+                          class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                          type="button"
+                          @click="useAsset(asset)"
+                        >
+                          应用到当前 Frame
+                        </button>
+                        <button
+                          class="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700 transition-colors hover:border-sky-300 hover:bg-sky-100"
+                          type="button"
+                          @click="void placeAssetOnCanvas(asset)"
+                        >
+                          放置到画布
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </section>
 
@@ -6311,7 +6781,8 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
 
       <template #canvas>
         <WLDesignLayer variant="stage" :padded="false">
-          <WorkspaceDesignStage
+          <component
+            :is="resolvedDesignStageComponent"
             :page="designEditorState.currentPage.value"
             :frames="designEditorState.currentPageFrames.value"
             :assets="compositionModel.assets || []"
@@ -6327,11 +6798,14 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             :viewport-y="stageViewportY"
             :viewport-zoom="stageViewportZoom"
             :mockup-screen-editing-frame-id="mockupScreenEditingFrameId"
+            :pending-image-placement="pendingImagePlacement"
             :disabled="!isBoundToDesignResource"
             @update-selection="replaceSelectionState($event)"
             @open-frame="openFrameEditor"
             @duplicate-frame="duplicateSelectedFrame"
             @delete-frame="removeSelectedFrame"
+            @duplicate-element="duplicateSelectedElement"
+            @delete-element="removeSelectedElement"
             @update-frame-position="updateSelectedFramePosition"
             @update-frame-positions="updateSelectedFramePositions"
             @update-frame-size="updateFrameGeometry"
@@ -6342,6 +6816,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             @update-elements="updateDesignElementsFromStage"
             @request-deep-selection="requestDeepSelection"
             @edit-mockup-screen="mockupScreenEditingFrameId = $event.frameId"
+            @clear-pending-image-placement="clearPendingImagePlacement"
             @update-mockup-screen-transform="
               updateMockupScreenTransform(
                 $event.frameId,
@@ -6370,6 +6845,7 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
             <WorkspaceDesignToolbar
               :active-tool="activeTool"
               @update:active-tool="setActiveDesignTool($event)"
+              @insert-image-file="void handleToolbarInsertImage($event)"
             />
           </WLDesignLayer>
         </div>
@@ -6704,6 +7180,47 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
               >
                 {{ canvasAiRuntimeError }}
               </p>
+
+              <div
+                v-if="canvasAiMessages.length > 0"
+                class="mt-4 rounded-[20px] border border-slate-800 bg-slate-950/80 px-3 py-3"
+                data-testid="workspace-canvas-ai-messages"
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <h5 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    最近消息
+                  </h5>
+                  <span class="text-[10px] text-slate-500">
+                    最近 {{ canvasAiMessages.length }} 条
+                  </span>
+                </div>
+
+                <div class="mt-3 space-y-3">
+                  <article
+                    v-for="(message, index) in canvasAiMessages"
+                    :key="`canvas-ai-message-${index}`"
+                    class="rounded-2xl border px-3 py-3"
+                    :class="message.role === 'assistant'
+                      ? 'border-slate-200 bg-white/95 text-slate-800'
+                      : 'border-sky-500/30 bg-sky-500/10 text-sky-100'"
+                  >
+                    <div class="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] opacity-70">
+                      {{ message.role === 'assistant' ? 'AI' : '你' }}
+                    </div>
+                    <WorkspaceAssistantMessageContent
+                      v-if="message.role === 'assistant'"
+                      :message="message"
+                      @open-resource="emit('openResource', $event)"
+                    />
+                    <p
+                      v-else
+                      class="whitespace-pre-wrap break-words text-xs leading-6"
+                    >
+                      {{ message.content }}
+                    </p>
+                  </article>
+                </div>
+              </div>
             </div>
 
             <label class="mt-4 block space-y-1">

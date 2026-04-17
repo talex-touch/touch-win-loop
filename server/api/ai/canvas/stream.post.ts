@@ -1,34 +1,32 @@
 import type {
   AiCanvasAssistAction,
   AiCanvasAssistRequest,
-  AiCanvasAssistResult,
   AiCanvasAssistSourceFormat,
   AiCanvasAssistStreamEvent,
   AiCanvasAssistStreamEventType,
-  ChatMessage,
 } from '~~/shared/types/domain'
-import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { createEventStream, setResponseStatus } from 'h3'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
-import { createChatModel } from '~~/server/services/ai/llm-client'
+import {
+  normalizeCanvasAction,
+  normalizeCanvasTemplate,
+  resolveCanvasSourceFormat,
+  runCanvasAssistGeneration,
+  toCanvasAssistText,
+} from '~~/server/services/ai/canvas-assist'
+import { buildProjectKnowledgeLocalContext } from '~~/server/services/ai/project-knowledge-context'
+import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withClient, withTransaction } from '~~/server/utils/db'
-import { resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
+import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
 import { teamConsumeAiQuota } from '~~/server/utils/team-quota-store'
 
-const MAX_CANVAS_ASSIST_MESSAGES = 8
-
-function toText(value: unknown): string {
-  return String(value || '').trim()
-}
-
 function chunkText(text: string, chunkSize = 48): string[] {
-  const normalized = toText(text)
+  const normalized = toCanvasAssistText(text)
   if (!normalized)
     return []
 
@@ -38,157 +36,30 @@ function chunkText(text: string, chunkSize = 48): string[] {
   return chunks
 }
 
-function normalizeCanvasAction(value: unknown): AiCanvasAssistAction {
-  const normalized = toText(value)
-  if (normalized === 'complete' || normalized === 'refine')
-    return normalized
-  return 'generate'
-}
-
 function normalizeRequest(body: Partial<AiCanvasAssistRequest> | null | undefined): AiCanvasAssistRequest {
   const context = body?.context || {}
-  const workspaceId = toText(body?.teamId || body?.workspaceId || context.teamId || context.workspaceId)
+  const workspaceId = toCanvasAssistText(body?.teamId || body?.workspaceId || context.teamId || context.workspaceId)
   return {
     teamId: workspaceId,
     workspaceId,
-    projectId: toText(body?.projectId || context.projectId),
+    projectId: toCanvasAssistText(body?.projectId || context.projectId),
     action: normalizeCanvasAction(body?.action),
-    template: (toText(body?.template) || 'flowchart') as AiCanvasAssistRequest['template'],
+    template: (toCanvasAssistText(body?.template) || 'flowchart') as AiCanvasAssistRequest['template'],
     messages: Array.isArray(body?.messages) ? body.messages : [],
     context: {
       teamId: workspaceId,
       workspaceId,
-      projectId: toText(body?.projectId || context.projectId),
-      contestId: toText(context.contestId),
-      trackId: toText(context.trackId),
-      major: toText(context.major),
-      resourceId: toText(context.resourceId),
-      resourceTitle: toText(context.resourceTitle),
-      sourceText: toText(context.sourceText),
-      sourceFormat: (toText(context.sourceFormat) || 'mermaid') as AiCanvasAssistSourceFormat,
+      projectId: toCanvasAssistText(body?.projectId || context.projectId),
+      contestId: toCanvasAssistText(context.contestId),
+      trackId: toCanvasAssistText(context.trackId),
+      major: toCanvasAssistText(context.major),
+      resourceId: toCanvasAssistText(context.resourceId),
+      resourceTitle: toCanvasAssistText(context.resourceTitle),
+      sourceText: toCanvasAssistText(context.sourceText),
+      sourceFormat: (toCanvasAssistText(context.sourceFormat) || 'mermaid') as AiCanvasAssistSourceFormat,
     },
     aiOptions: body?.aiOptions || {},
   }
-}
-
-function normalizeCanvasTemplate(value: unknown): AiCanvasAssistRequest['template'] {
-  const normalized = toText(value)
-  if (normalized === 'mindmap' || normalized === 'er' || normalized === 'architecture')
-    return normalized
-  return 'flowchart'
-}
-
-function resolveCanvasChannelKey(action: AiCanvasAssistAction): 'workspace_canvas_generate' | 'workspace_canvas_complete' | 'workspace_canvas_refine' {
-  if (action === 'complete')
-    return 'workspace_canvas_complete'
-  if (action === 'refine')
-    return 'workspace_canvas_refine'
-  return 'workspace_canvas_generate'
-}
-
-function resolveCanvasSourceFormat(template: AiCanvasAssistRequest['template']): AiCanvasAssistSourceFormat {
-  if (template === 'mindmap')
-    return 'markdown_outline'
-  if (template === 'er')
-    return 'ddl'
-  if (template === 'architecture')
-    return 'architecture'
-  return 'mermaid'
-}
-
-function resolveCanvasFormatInstruction(sourceFormat: AiCanvasAssistSourceFormat): string {
-  if (sourceFormat === 'markdown_outline')
-    return '输出纯 Markdown Outline 文本，不要输出 Mermaid、解释或代码块围栏。'
-  if (sourceFormat === 'ddl')
-    return '输出纯 DDL 文本，不要输出说明、SQL 注释以外的额外描述或代码块围栏。'
-  if (sourceFormat === 'architecture')
-    return '输出纯 Architecture Metadata 文本，不要输出解释、标题或代码块围栏。'
-  return '输出纯 Mermaid 文本，不要输出解释、标题或代码块围栏。'
-}
-
-function normalizeConversationMessages(messages: ChatMessage[]): Array<{ role: 'user' | 'assistant', content: string }> {
-  return messages
-    .filter(message => message.role === 'user' || message.role === 'assistant')
-    .map(message => ({
-      role: message.role as 'user' | 'assistant',
-      content: toText(message.content),
-    }))
-    .filter(message => Boolean(message.content))
-    .slice(-MAX_CANVAS_ASSIST_MESSAGES)
-}
-
-function buildConversationTranscript(messages: ChatMessage[]): string {
-  const normalized = normalizeConversationMessages(messages)
-  if (normalized.length === 0)
-    return '（无历史消息）'
-
-  return normalized
-    .map(message => `${message.role === 'assistant' ? '助手' : '用户'}：${message.content}`)
-    .join('\n')
-}
-
-function stripCodeFence(text: string): string {
-  const normalized = toText(text)
-  const match = normalized.match(/^```[a-zA-Z0-9_-]*\n?([\s\S]*?)```$/)
-  return match?.[1]?.trim() || normalized
-}
-
-function extractMessageText(content: unknown): string {
-  if (typeof content === 'string')
-    return stripCodeFence(content)
-
-  if (Array.isArray(content)) {
-    return stripCodeFence(content
-      .map((item) => {
-        if (typeof item === 'string')
-          return item
-        if (item && typeof item === 'object' && 'text' in item)
-          return String((item as { text?: unknown }).text || '')
-        return ''
-      })
-      .join('\n'))
-  }
-
-  return ''
-}
-
-function buildCanvasPrompt(input: {
-  action: AiCanvasAssistAction
-  template: AiCanvasAssistRequest['template']
-  sourceFormat: AiCanvasAssistSourceFormat
-  resourceTitle: string
-  resourceSummary: string
-  sourceText: string
-  conversation: string
-  latestUserMessage: string
-}): string {
-  const actionInstruction = input.action === 'complete'
-    ? '当前任务：补全现有结构源，优先补齐缺失节点、连线和层级。'
-    : input.action === 'refine'
-      ? '当前任务：续改现有结构源，重构表达、命名和结构，但保持可导入。'
-      : '当前任务：从上下文生成新的结构源首稿。'
-
-  return [
-    `画布类型：${input.template}`,
-    `目标结构源格式：${input.sourceFormat}`,
-    actionInstruction,
-    resolveCanvasFormatInstruction(input.sourceFormat),
-    '如果上下文不足，仍要输出一个最小但结构完整、可导入的版本，不要返回“无法生成”。',
-    '',
-    `当前资源：${input.resourceTitle || '未命名画布'}`,
-    '',
-    '项目上下文：',
-    input.resourceSummary || '（暂无额外项目资料）',
-    '',
-    '当前结构源：',
-    input.sourceText || '（当前为空）',
-    '',
-    '最近多轮交互：',
-    input.conversation,
-    '',
-    '本轮用户要求：',
-    input.latestUserMessage || '请生成一版可直接导入的结构源。',
-  ].join('\n')
 }
 
 export default defineEventHandler(async (event) => {
@@ -197,7 +68,11 @@ export default defineEventHandler(async (event) => {
   const { user } = await requireAuth(event)
   const request = normalizeRequest(await readBody<Partial<AiCanvasAssistRequest>>(event).catch(() => ({})))
   request.template = normalizeCanvasTemplate(request.template)
-  const channelKey = resolveCanvasChannelKey(request.action)
+  const channelKey = request.action === 'complete'
+    ? 'workspace_canvas_complete'
+    : request.action === 'refine'
+      ? 'workspace_canvas_refine'
+      : 'workspace_canvas_generate'
   const channelRuntime = resolveAiRuntimeForChannel(runtime, channelKey)
   const aiConfig = {
     ...channelRuntime.ai,
@@ -205,6 +80,11 @@ export default defineEventHandler(async (event) => {
       ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
       : channelRuntime.ai.temperature,
   }
+  const latestUserMessage = [...request.messages]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
 
   if (!request.workspaceId) {
     setResponseStatus(event, 400)
@@ -228,7 +108,7 @@ export default defineEventHandler(async (event) => {
     }, 40097)
   }
 
-  if (request.action !== 'generate' && !toText(request.context?.sourceText)) {
+  if (request.action !== 'generate' && !toCanvasAssistText(request.context?.sourceText)) {
     setResponseStatus(event, 400)
     return fail('当前图结构为空，暂时无法执行补全或续改。', {
       startedAt,
@@ -323,64 +203,41 @@ export default defineEventHandler(async (event) => {
           projectId: request.projectId || '',
         })
 
+        const knowledgeContext = await buildProjectKnowledgeLocalContext(db, {
+          projectId: request.projectId || '',
+          query: [
+            latestUserMessage,
+            request.context?.resourceTitle,
+            request.context?.sourceText,
+          ].filter(Boolean).join('\n'),
+          resources,
+          contestName: '',
+          trackName: '',
+          major: request.context?.major,
+          limit: 6,
+          event,
+        })
+
         return {
-          resourceSummary: buildProjectResourceLocalContext(resources, {
-            contestName: '',
-            trackName: '',
-            major: request.context?.major,
-            limit: 8,
-          }),
+          resourceSummary: knowledgeContext.summaryText,
+          knowledge: {
+            citations: knowledgeContext.citations,
+            warning: knowledgeContext.warning,
+            usedFallback: knowledgeContext.usedFallback,
+          },
         }
       })
 
       const sourceFormat = resolveCanvasSourceFormat(request.template)
-      const latestUserMessage = toText(request.messages.at(-1)?.content)
-      const conversation = buildConversationTranscript(request.messages)
-
-      const execution = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, prompt }) => {
-        const model = createChatModel({
-          ...ai,
-          temperature: Number.isFinite(Number(request.aiOptions?.temperature))
-            ? Math.max(0, Math.min(1, Number(request.aiOptions?.temperature)))
-            : ai.temperature,
-          maxRetries: 0,
-        })
-
-        const promptTemplate = ChatPromptTemplate.fromMessages([
-          ['system', [
-            '你是工作台设计画布 AI 助手。',
-            '你只输出可直接导入的结构源正文。',
-            prompt ? `[场景提示词]\n${prompt}` : '',
-          ].filter(Boolean).join('\n\n')],
-          ['human', '{message}'],
-        ])
-
-        const promptValue = await promptTemplate.invoke({
-          message: buildCanvasPrompt({
-            action: request.action,
-            template: request.template,
-            sourceFormat,
-            resourceTitle: request.context?.resourceTitle || '',
-            resourceSummary: contextBundle.resourceSummary,
-            sourceText: request.context?.sourceText || '',
-            conversation,
-            latestUserMessage,
-          }),
-        })
-        const output = await model.invoke(promptValue)
-        const sourceText = extractMessageText(output.content)
-        if (!sourceText)
-          throw new Error('画布 AI 未返回可用结构源。')
-
-        const result: AiCanvasAssistResult = {
-          assistantReply: '画布结构源预览已生成。',
-          action: request.action,
-          template: request.template,
-          sourceFormat,
-          sourceText,
-        }
-
-        return result
+      const execution = await runCanvasAssistGeneration({
+        runtime,
+        action: request.action,
+        template: request.template,
+        messages: request.messages,
+        resourceTitle: request.context?.resourceTitle || '',
+        resourceSummary: contextBundle.resourceSummary,
+        sourceText: request.context?.sourceText || '',
+        aiOptions: request.aiOptions,
       })
 
       await pushEvent('progress', {
@@ -400,17 +257,21 @@ export default defineEventHandler(async (event) => {
             projectId: request.projectId,
             action: request.action,
             template: request.template,
-            channelKey,
+            channelKey: execution.channelKey,
             providerId: execution.provider?.id || null,
             fallbackUsed: execution.usedFallback,
             attempts: execution.attemptChain.length,
+            latencyMs: execution.latencyMs,
             remainingQuota: prepared.remainingQuota,
           },
         })
       })
 
       await pushEvent('done', {
-        result: execution.data,
+        result: {
+          ...execution.data,
+          knowledge: execution.data.knowledge || contextBundle.knowledge,
+        },
       })
     }
     catch (error) {
