@@ -5,6 +5,40 @@
 - 会议不再依赖默认 `mock`。
 - RTC / ASR 业务参数改为后台动态配置。
 - 未配置完成时，项目会议创建页直接提示并禁用创建。
+- 研发状态总览见：
+  - [project-meeting-rd-status.md](/Users/talexdreamsoul/Workspace/Projects/touch-win-loop/docs/project-meeting-rd-status.md)
+
+## 当前落地方案摘要
+
+- 第一阶段采用“托管/自建 RTC + 自有会议业务、转写、总结、资源沉淀”。
+- 站内 Web 客户端正式以 `livekit` 为唯一真媒体实现；未配置完成时不再回退 `mock`。
+- 会议中的“谁在说话”优先绑定登录成员与会议席位，不做声纹识别。
+- 会后产物固定沉淀两类资源：
+  - 录制文件落为项目 `binary/upload`
+  - 会议纪要落为项目 `markdown/collab`
+- 纪要链路固定由 `transcript_finalize -> meeting_summary -> recording_finalize` 这一组后台任务承接。
+- 后台管理页是会议运行时配置的唯一来源；环境变量不再承担 RTC / ASR 业务配置职责。
+
+## 当前已验证闭环
+
+截至 2026-04-17，本地 sandbox 已完成一轮真实闭环验证：
+
+- 管理页保存后台 RTC / ASR 配置成功。
+- 管理页“测试连通性”已能探测真实 LiveKit API 与真实 ASR 探针。
+- 项目页可创建 active 会议并进入站内 Web 客户端。
+- 浏览器授权麦克风后，成员端已能稳定保持 `已连接`，不再出现“刚 join 就主动离房”。
+- 结束会议后，已验证以下后台任务能自动跑通：
+  - `transcript_finalize`
+  - `meeting_summary`
+  - `recording_finalize`
+- 已验证会议能自动生成：
+  - 会议纪要资源
+  - 会议录制资源
+
+当前尚需按实际部署环境决定的是“真实字幕来源”：
+
+- 若 ASR 使用 `http` bridge 的纯协议模式，只能验证音频帧上行，不一定有真实字幕。
+- 若 ASR 使用 `openai-compatible`，或 bridge 背后接了真实转写服务，才会有真实字幕输出。
 
 ## 当前实现边界
 
@@ -175,6 +209,26 @@ pnpm meeting:asr:dev
 - 没有后台配置时，项目页不会回退到 env 或 `mock`。
 - `WINLOOP_CONFIG_MASTER_KEY` 只负责 secret 加密，不参与 provider 参数决策。
 - 管理页“测试连通性”对 `openai-compatible` 不再只测端口，而是会发一段最小 `wav` 到 `audio/transcriptions` 做真实转写探针。
+
+## 管理员落地顺序
+
+建议后台管理员按下面顺序操作：
+
+1. 先准备 RTC 基础设施。
+   - 本地/测试环境可直接使用 `deploy/meeting` 里的 `docker compose`
+   - 线上可使用自建或托管 LiveKit
+2. 选择 ASR 路线。
+   - `http`：对接独立 ASR bridge / worker
+   - `openai-compatible`：应用内直接调用 `audio/transcriptions`
+3. 进入后台管理页 `/admin/meeting-providers` 保存 RTC / ASR / worker 配置。
+4. 点击“测试连通性”。
+   - RTC 通过只代表房间/录制控制链路可达
+   - ASR 通过只代表转写入口可达，不代表业务字幕一定已接真实识别结果
+5. 回到项目页验证。
+   - 创建页不再显示运行时缺失
+   - 能创建并加入站内会议客户端
+   - 结束会议后能看到纪要/录制资源补齐
+6. 若要验证真实字幕，再补充真实 ASR 后端并复测语音输入。
 
 ## Webhook 与回调
 

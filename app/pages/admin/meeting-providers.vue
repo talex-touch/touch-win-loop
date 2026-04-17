@@ -321,6 +321,38 @@ onMounted(async () => {
       </div>
     </section>
 
+    <section class="p-3 border border-slate-200 bg-slate-50 space-y-3">
+      <div class="gap-3 grid md:grid-cols-2">
+        <article class="p-3 border border-slate-200 rounded-lg bg-white">
+          <p class="text-[12px] text-slate-900 font-bold m-0">
+            当前方案摘要
+          </p>
+          <ul class="text-[11px] text-slate-700 mb-0 mt-2 pl-4 list-disc space-y-1">
+            <li>会议运行时配置以后台为唯一来源，不再默认回退 `mock`。</li>
+            <li>站内 Web 客户端 v1 正式只支持 `livekit` 真媒体链路。</li>
+            <li>ASR 当前支持 `http` 与 `openai-compatible` 两条接法。</li>
+            <li>会后固定通过 `transcript_finalize / meeting_summary / recording_finalize` 生成纪要与录制资源。</li>
+          </ul>
+        </article>
+
+        <article class="p-3 border border-slate-200 rounded-lg bg-white">
+          <p class="text-[12px] text-slate-900 font-bold m-0">
+            管理员操作顺序
+          </p>
+          <ol class="text-[11px] text-slate-700 mb-0 mt-2 pl-4 list-decimal space-y-1">
+            <li>先准备 LiveKit 基础设施，再选择 ASR 路线。</li>
+            <li>在本页保存 RTC / ASR / worker 配置。</li>
+            <li>点击“测试连通性”，确保 RTC 与 ASR 探针都通过。</li>
+            <li>回到项目页验证创建、加入、结束会议。</li>
+            <li>结束后确认录制资源与纪要资源自动补齐。</li>
+          </ol>
+        </article>
+      </div>
+      <p class="text-[11px] text-slate-500 m-0">
+        当前已在本地 sandbox 验证：会议可稳定加入站内 Web 客户端，结束后能自动完成纪要与录制资源沉淀。若你使用的是纯 `http` bridge 协议模式，仍可能只有音频帧上行而没有真实字幕，这时需要再接真实转写后端，或切换到 `openai-compatible`。
+      </p>
+    </section>
+
     <section v-if="loading" class="p-3 border border-slate-200 bg-white">
       <a-skeleton :animation="true">
         <a-skeleton-line :rows="10" />

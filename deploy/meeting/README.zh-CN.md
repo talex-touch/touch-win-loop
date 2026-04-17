@@ -46,6 +46,31 @@
 - 生产级远端对象存储编排
 - 自定义录制布局
 
+## 和后台管理页的配合方式
+
+这个目录只负责把本地 `LiveKit + Egress (+ 可选 ASR bridge)` 拉起来。
+
+真正让项目页会议功能切到真链路，还需要管理员在后台完成保存：
+
+- 进入 `/admin/meeting-providers`
+- 填写 RTC
+  - `provider = livekit`
+  - `serverUrl = http://127.0.0.1:7880`
+  - `apiKey = devkey`
+  - `apiSecret = devsecret`
+- 再按你的 ASR 路线二选一：
+  - `provider = http`
+    - `serviceUrl = http://127.0.0.1:8790`
+  - `provider = openai-compatible`
+    - `serviceUrl = https://api.openai.com/v1`
+    - `apiKey = <你的转写服务密钥>`
+
+注意：
+
+- 这里只解决基础设施 bring-up，不再通过 env 给应用偷偷回退 `mock`。
+- 如果后台没保存完成，项目里的新建会议页会直接报“会议链路未就绪”。
+- 管理页“测试连通性”通过后，再去项目页做创建/加入/结束验证。
+
 ## 1. 启动 LiveKit
 
 在当前目录执行：
@@ -75,8 +100,8 @@ docker compose ps
 
 说明：
 
-- `livekit` webhook 默认指向 `http://host.docker.internal:3510/api/internal/meetings/provider-events`
-- 如果你的本地应用端口不是 `3510`，请在 `livekit.yaml` 里改掉该 URL
+- 请先在应用侧显式配置开发态地址契约：`WINLOOP_DEV_HOST`、`WINLOOP_DEV_PORT`
+- `livekit.yaml` 里的 webhook URL 应与当前开发态地址保持一致，推荐按 `http://host.docker.internal:${WINLOOP_DEV_PORT}/api/internal/meetings/provider-events` 填写
 - `egress` 会把录制文件写到 `/tmp/winloop-meeting-egress`，应用服务会在收到 `egress_ended` 后自动导入为项目录制资源
 
 如果你要让其它设备通过局域网访问：
@@ -216,6 +241,15 @@ pnpm meeting:asr:dev
 7. 创建会议并进入详情页
 8. 验证麦克风 / 摄像头 / 屏幕共享
 9. 结束会议后确认资源区出现“会议录制”
+
+如果你要验证“当前整条后台链已经通了”，最低验收建议是：
+
+1. 能稳定加入站内 Web 会议客户端，不出现刚入会就断开。
+2. 结束会议后 `transcript_finalize` 成功。
+3. 结束会议后 `meeting_summary` 成功，并生成纪要资源。
+4. 结束会议后 `recording_finalize` 成功，并生成录制资源。
+
+如果只有第 1、3、4 步成功而没有实时字幕，通常不是 RTC 问题，而是当前 ASR 仍停留在桥接模式，没有接真实识别后端。
 
 ## 6. 明确边界
 
