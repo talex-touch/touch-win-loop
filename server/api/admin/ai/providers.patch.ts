@@ -34,6 +34,7 @@ interface ProvidersPatchBody {
     maxRetries?: number
     defaultModel?: string
     embeddingModel?: string
+    visionModel?: string
     documentModel?: string
     apiKey?: string
     apiKeyMode?: SecretMode
@@ -171,6 +172,9 @@ export default defineEventHandler(async (event) => {
       const embeddingModel = hasOwn(upstreamBody || {}, 'embeddingModel')
         ? toText(upstreamBody?.embeddingModel)
         : currentDefaults.embeddingModel
+      const visionModel = hasOwn(upstreamBody || {}, 'visionModel')
+        ? toText(upstreamBody?.visionModel)
+        : currentRuntime.ai.visionModel
       const documentModel = hasOwn(upstreamBody || {}, 'documentModel')
         ? toText(upstreamBody?.documentModel)
         : currentDefaults.documentModel
@@ -244,6 +248,7 @@ export default defineEventHandler(async (event) => {
       ai.baseURL = finalProvider?.baseURL || baseURL
       ai.model = finalRegistry.defaults.defaultModel || currentRuntime.ai.model
       ai.embeddingModel = finalRegistry.defaults.embeddingModel || currentRuntime.ai.embeddingModel
+      ai.visionModel = visionModel || currentRuntime.ai.visionModel
       ai.timeoutMs = finalProvider?.timeoutMs || timeoutMs
       ai.maxRetries = finalProvider?.maxRetries || maxRetries
 
@@ -255,6 +260,7 @@ export default defineEventHandler(async (event) => {
           baseURL: ai.baseURL,
           model: ai.model,
           embeddingModel: ai.embeddingModel,
+          visionModel: ai.visionModel,
           timeoutMs: ai.timeoutMs,
           maxRetries: ai.maxRetries,
         },
@@ -346,6 +352,7 @@ export default defineEventHandler(async (event) => {
       apiKeyConfigured: Boolean(effectiveRuntime.ai.apiKey),
       defaultModel: registry.defaults.defaultModel || effectiveRuntime.ai.model,
       embeddingModel: registry.defaults.embeddingModel || effectiveRuntime.ai.embeddingModel,
+      visionModel: effectiveRuntime.ai.visionModel,
       documentModel: registry.defaults.documentModel || effectiveRuntime.docAi.model,
     },
     modelPool: {

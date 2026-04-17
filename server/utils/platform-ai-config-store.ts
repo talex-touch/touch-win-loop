@@ -14,6 +14,7 @@ export interface PlatformAiRuntimeOverrides {
     apiKey?: string
     model?: string
     embeddingModel?: string
+    visionModel?: string
     modelCatalogJson?: string
     modelPricingJson?: string
     providersJson?: string
@@ -91,6 +92,8 @@ function normalizeAiSection(raw: unknown): PlatformAiRuntimeOverrides['ai'] {
     output.model = toText(source.model)
   if (hasOwn(source, 'embeddingModel'))
     output.embeddingModel = toText(source.embeddingModel)
+  if (hasOwn(source, 'visionModel'))
+    output.visionModel = toText(source.visionModel)
   if (hasOwn(source, 'modelCatalogJson'))
     output.modelCatalogJson = String(source.modelCatalogJson || '')
   if (hasOwn(source, 'modelPricingJson'))
@@ -265,15 +268,17 @@ export function applyPlatformAiRuntimeOverrides(
   const ai = overrides.ai
   if (ai) {
     if (ai.provider !== undefined)
-      next.ai.provider = ai.provider || next.ai.provider
+      next.ai.provider = ai.provider
     if (ai.baseURL !== undefined)
       next.ai.baseURL = ai.baseURL
     if (ai.apiKey !== undefined)
       next.ai.apiKey = ai.apiKey
     if (ai.model !== undefined)
-      next.ai.model = ai.model || next.ai.model
+      next.ai.model = ai.model
     if (ai.embeddingModel !== undefined)
-      next.ai.embeddingModel = ai.embeddingModel || next.ai.embeddingModel
+      next.ai.embeddingModel = ai.embeddingModel
+    if (ai.visionModel !== undefined)
+      next.ai.visionModel = ai.visionModel
     if (ai.modelCatalogJson !== undefined)
       next.ai.modelCatalogJson = ai.modelCatalogJson
     if (ai.modelPricingJson !== undefined)
@@ -301,13 +306,13 @@ export function applyPlatformAiRuntimeOverrides(
   const docAi = overrides.docAi
   if (docAi) {
     if (docAi.provider !== undefined)
-      next.docAi.provider = docAi.provider || next.docAi.provider
+      next.docAi.provider = docAi.provider
     if (docAi.baseURL !== undefined)
       next.docAi.baseURL = docAi.baseURL
     if (docAi.apiKey !== undefined)
       next.docAi.apiKey = docAi.apiKey
     if (docAi.model !== undefined)
-      next.docAi.model = docAi.model || next.docAi.model
+      next.docAi.model = docAi.model
     if (docAi.modelPricingJson !== undefined)
       next.docAi.modelPricingJson = docAi.modelPricingJson
     if (docAi.timeoutMs !== undefined)

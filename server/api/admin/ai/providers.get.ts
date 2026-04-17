@@ -38,6 +38,7 @@ export default defineEventHandler(async (event) => {
       apiKeyConfigured: Boolean(runtime.ai.apiKey),
       defaultModel: registry.defaults.defaultModel || runtime.ai.model,
       embeddingModel: registry.defaults.embeddingModel || runtime.ai.embeddingModel,
+      visionModel: runtime.ai.visionModel,
       documentModel: registry.defaults.documentModel || runtime.docAi.model,
     },
     modelPool: {

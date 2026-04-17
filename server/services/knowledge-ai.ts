@@ -3,11 +3,10 @@ import { createHash } from 'node:crypto'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { isAiRuntimeConfigured, normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 import { runWithRetry } from '~~/server/utils/retry'
-
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small'
 
 interface EmbeddingApiResponse {
   data?: Array<{
@@ -65,8 +64,7 @@ export function buildDeterministicKnowledgeEmbedding(text: string, dimensions = 
 }
 
 function normalizeEmbeddingModel(model: string): string {
-  const candidate = toKnowledgeText(model)
-  return candidate || DEFAULT_EMBEDDING_MODEL
+  return toKnowledgeText(model)
 }
 
 function normalizeEmbeddingOutput(raw: unknown): number[] {
@@ -109,9 +107,10 @@ export async function createKnowledgeEmbedding(input: {
 }): Promise<KnowledgeEmbeddingResult> {
   const runtime = readRuntimeSettings(input.event)
   const sourceText = toKnowledgeText(input.text)
-  const provider = toKnowledgeText(runtime.ai.provider) || 'openai-compatible'
+  const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
   const model = normalizeEmbeddingModel(runtime.ai.embeddingModel || runtime.ai.model)
   const normalizedApiKey = normalizePlatformAiApiKey(runtime.ai.apiKey)
+  const endpoint = resolvePlatformAiRequestBaseURL(runtime.ai.baseURL, provider)
   if (!sourceText) {
     return {
       embedding: [],
@@ -132,7 +131,23 @@ export async function createKnowledgeEmbedding(input: {
     }
   }
 
-  const endpoint = resolvePlatformAiRequestBaseURL(runtime.ai.baseURL, provider) || 'https://api.openai.com/v1'
+  const embeddingRuntimeConfigured = isAiRuntimeConfigured({
+    provider: runtime.ai.provider,
+    baseURL: runtime.ai.baseURL,
+    apiKey: runtime.ai.apiKey,
+    model,
+  })
+
+  if (!model || !endpoint || !embeddingRuntimeConfigured) {
+    return {
+      embedding: buildDeterministicKnowledgeEmbedding(sourceText),
+      provider,
+      model,
+      fallbackUsed: true,
+      attempts: 1,
+    }
+  }
+
   const timeoutMs = Math.max(3_000, Math.min(120_000, Number(runtime.ai.timeoutMs || 15_000)))
   const maxRetries = Math.max(0, Math.min(6, Number(runtime.ai.maxRetries || 0)))
 
@@ -193,12 +208,12 @@ export async function analyzeKnowledgeEntity(input: {
   systemPrompt?: string
 }): Promise<KnowledgeEntityAnalysisResult> {
   const runtime = readRuntimeSettings(input.event)
-  const provider = toKnowledgeText(runtime.ai.provider) || 'openai-compatible'
-  const model = toKnowledgeText(runtime.ai.model) || 'gpt-4o-mini'
+  const provider = normalizeAiRuntimeProvider(runtime.ai.provider)
+  const model = toKnowledgeText(runtime.ai.model)
   const normalizedText = toKnowledgeText(input.text).slice(0, 12_000)
   const fallback = buildAnalysisFallback(normalizedText)
 
-  if (!toKnowledgeText(runtime.ai.apiKey) || !normalizedText) {
+  if (!normalizedText || !isAiRuntimeConfigured(runtime.ai)) {
     return {
       ...fallback,
       provider,

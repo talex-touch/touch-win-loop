@@ -96,11 +96,12 @@ export default defineNuxtConfig({
       commitSha: resolvedBuildCommitSha,
     },
     ai: {
-      provider: 'mock',
+      provider: '',
       baseURL: '',
       apiKey: '',
-      model: 'gpt-4o-mini',
-      embeddingModel: 'text-embedding-3-small',
+      model: '',
+      embeddingModel: '',
+      visionModel: '',
       modelCatalogJson: '',
       modelPricingJson: '',
       providersJson: '',
@@ -114,10 +115,10 @@ export default defineNuxtConfig({
       maxRetries: 2,
     },
     docAi: {
-      provider: 'mock',
+      provider: '',
       baseURL: '',
       apiKey: '',
-      model: 'gpt-4o-mini',
+      model: '',
       modelPricingJson: '',
       timeoutMs: 15000,
       maxRetries: 2,
@@ -200,6 +201,18 @@ export default defineNuxtConfig({
     public: {
       apiBaseUrl: resolveEnvValue('WINLOOP_API_BASE_URL', '/api'),
       appBaseUrl: resolveEnvValue('WINLOOP_PUBLIC_BASE_URL', ''),
+      drawio: {
+        embedBaseUrl: resolveEnvValue('WINLOOP_PUBLIC_DRAWIO_EMBED_BASE_URL', 'https://embed.diagrams.net'),
+      },
+      tldraw: {
+        licenseKey: resolveEnvValue(
+          'WINLOOP_TLDRAW_LICENSE_KEY',
+          resolveEnvValue(
+            'TLDRAW_LICENSE_KEY',
+            resolveEnvValue('VITE_TLDRAW_LICENSE_KEY', ''),
+          ),
+        ),
+      },
       sentry: {
         dsn: resolveSentryDsn(),
         environment: resolveSentryEnvironment(),
@@ -220,10 +233,6 @@ export default defineNuxtConfig({
 
   sourcemap: {
     client: 'hidden',
-  },
-
-  devServer: {
-    port: 3510,
   },
 
   future: {

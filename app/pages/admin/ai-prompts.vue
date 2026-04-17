@@ -69,6 +69,7 @@ interface ProvidersPayload {
     timeoutMs: number
     maxRetries: number
     apiKeyConfigured: boolean
+    visionModel?: string
   }
   modelPool: {
     fetchedAt: string
@@ -120,6 +121,12 @@ interface ProviderModelsPayload {
   items: ProviderPullItem[]
 }
 
+interface ModelPullSeriesGroup {
+  key: string
+  label: string
+  items: ProviderPullItem[]
+}
+
 interface AuditItem {
   id: string
   action: string
@@ -154,6 +161,9 @@ interface LogItem {
   contestName: string
   trackId: string
   major: string
+  channelKey: string
+  latencyMs: number | null
+  attemptChain: Array<{ provider: string, model: string, success: boolean, latencyMs: number, error?: string }>
   content: string
   contentPreview: string
   createdAt: string
@@ -224,6 +234,7 @@ const upstreamForm = reactive({
   baseURL: '',
   timeoutMs: 15000,
   maxRetries: 2,
+  visionModel: '',
   apiKeyMode: 'keep' as SecretMode,
   apiKey: '',
 })
@@ -242,6 +253,12 @@ const upstreamApiKeyConfigured = ref(false)
 
 const modelPoolItems = ref<ModelPoolItem[]>([])
 const modelPoolFetchedAt = ref('')
+const modelPullSelectorVisible = ref(false)
+const pulledProviderModels = ref<ProviderPullItem[]>([])
+const pulledProviderFetchedAt = ref('')
+const modelPullFilterKeyword = ref('')
+const selectedPulledModels = ref<string[]>([])
+const expandedModelPullSeriesKeys = ref<string[]>([])
 const sceneItems = ref<SceneItem[]>([])
 const sceneDefinitions = ref<SceneDefinition[]>([])
 
@@ -269,12 +286,12 @@ const sceneEditorForm = reactive({
   label: '',
   description: '',
   enabled: true,
-  modelsText: '',
+  models: [] as string[],
   prompt: '',
 })
 const sceneBatchEditorVisible = ref(false)
 const sceneBatchForm = reactive({
-  modelsText: '',
+  models: [] as string[],
 })
 
 function formatTime(value?: string | null): string {
@@ -284,6 +301,13 @@ function formatTime(value?: string | null): string {
   if (Number.isNaN(date.getTime()))
     return String(value)
   return date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
+}
+
+function formatLatency(value?: number | null): string {
+  const latencyMs = Number(value)
+  if (!Number.isFinite(latencyMs) || latencyMs < 0)
+    return '-'
+  return `${Math.round(latencyMs)} ms`
 }
 
 function toPrettyJson(value: unknown): string {
@@ -380,11 +404,60 @@ function dedupeModels(models: string[]): string[] {
   return result
 }
 
-function parseSceneModelsText(raw: string): string[] {
-  return dedupeModels(String(raw || '')
-    .split(/\r?\n/g)
-    .map(line => line.trim())
-    .filter(Boolean))
+function normalizeSceneModels(raw: unknown): string[] {
+  if (!Array.isArray(raw))
+    return []
+  return dedupeModels(raw.map(item => String(item || '').trim()))
+}
+
+const modelSeriesRules = [
+  { key: 'qwen', label: 'Qwen 系列', patterns: [/qwen/i, /qwq/i] },
+  { key: 'deepseek', label: 'DeepSeek 系列', patterns: [/deepseek/i] },
+  { key: 'claude', label: 'Claude 系列', patterns: [/claude/i] },
+  { key: 'gemini', label: 'Gemini 系列', patterns: [/gemini/i] },
+  { key: 'openai', label: 'OpenAI 系列', patterns: [/\bgpt\b/i, /\bo1\b/i, /\bo3\b/i, /\bo4\b/i, /text-embedding/i] },
+  { key: 'llama', label: 'Llama 系列', patterns: [/llama/i] },
+  { key: 'mistral', label: 'Mistral 系列', patterns: [/mistral/i] },
+  { key: 'glm', label: 'GLM 系列', patterns: [/glm/i, /chatglm/i, /cogview/i, /cogvideox/i, /cogito/i] },
+  { key: 'doubao', label: 'Doubao 系列', patterns: [/doubao/i] },
+  { key: 'moonshot', label: 'Moonshot 系列', patterns: [/moonshot/i, /kimi/i] },
+  { key: 'baichuan', label: '百川系列', patterns: [/baichuan/i] },
+] as const
+
+function formatSeriesLabel(token: string): string {
+  const normalized = String(token || '').trim()
+  if (!normalized)
+    return '其他模型'
+  if (/^[a-z0-9]+$/i.test(normalized) && normalized.length <= 4)
+    return `${normalized.toUpperCase()} 系列`
+  return `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)} 系列`
+}
+
+function resolveModelSeries(item: Pick<ProviderPullItem, 'model' | 'label'>): { key: string, label: string } {
+  const searchText = `${item.model} ${item.label}`.toLowerCase()
+  const matchedRule = modelSeriesRules.find(rule => rule.patterns.some(pattern => pattern.test(searchText)))
+  if (matchedRule)
+    return { key: matchedRule.key, label: matchedRule.label }
+
+  const firstToken = String(item.model || item.label || '')
+    .trim()
+    .split(/[:/_\s.-]+/g)
+    .find(Boolean)
+  if (!firstToken)
+    return { key: 'other', label: '其他模型' }
+
+  return {
+    key: `series:${firstToken.toLowerCase()}`,
+    label: formatSeriesLabel(firstToken),
+  }
+}
+
+function formatPullPricingSource(source: ProviderPullItem['pricingSource']): string {
+  if (source === 'provider')
+    return '接口返回'
+  if (source === 'pricing_table')
+    return '价格表'
+  return '未返回'
 }
 
 function resolveEffectivePricing(item: Pick<ModelPoolItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'manualInputPricePer1M' | 'manualOutputPricePer1M' | 'manualPriceOverride'>): {
@@ -466,16 +539,100 @@ function promptPreview(prompt: string): string {
   return text.length > 90 ? `${text.slice(0, 90)}...` : text
 }
 
-const enabledModelOptions = computed(() => {
+const enabledModelSelectItems = computed(() => {
   return modelPoolItems.value
     .filter(item => item.enabled)
-    .map(item => item.model)
+    .sort((a, b) => a.model.localeCompare(b.model, 'en'))
+    .map(item => ({
+      model: item.model,
+      label: item.label,
+      priceText: buildPriceText(item),
+    }))
 })
 
 const modelPoolRows = computed(() => {
   return modelPoolItems.value
     .map(item => cloneModelItem(item))
     .sort((a, b) => a.model.localeCompare(b.model, 'en'))
+})
+
+const currentModelPoolNameSet = computed(() => new Set(modelPoolItems.value.map(item => item.model)))
+
+const modelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
+  const orderMap = new Map<string, number>(modelSeriesRules.map((rule, index) => [rule.key, index]))
+  const groups = new Map<string, ModelPullSeriesGroup>()
+
+  for (const item of pulledProviderModels.value) {
+    const series = resolveModelSeries(item)
+    const currentGroup = groups.get(series.key) || {
+      key: series.key,
+      label: series.label,
+      items: [],
+    }
+    currentGroup.items.push(item)
+    groups.set(series.key, currentGroup)
+  }
+
+  return Array.from(groups.values())
+    .map(group => ({
+      ...group,
+      items: [...group.items].sort((a, b) => a.model.localeCompare(b.model, 'en')),
+    }))
+    .sort((a, b) => {
+      const orderDiff = Number(orderMap.get(a.key) ?? 999) - Number(orderMap.get(b.key) ?? 999)
+      if (orderDiff !== 0)
+        return orderDiff
+      if (a.key === 'other')
+        return 1
+      if (b.key === 'other')
+        return -1
+      return a.label.localeCompare(b.label, 'zh-CN')
+    })
+})
+
+const normalizedModelPullFilterKeyword = computed(() => String(modelPullFilterKeyword.value || '').trim().toLowerCase())
+
+function matchesModelPullFilter(item: Pick<ProviderPullItem, 'model' | 'label'>, keyword: string): boolean {
+  if (!keyword)
+    return true
+  const searchText = `${item.model} ${item.label}`.toLowerCase()
+  return searchText.includes(keyword)
+}
+
+const filteredModelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
+  const keyword = normalizedModelPullFilterKeyword.value
+  if (!keyword)
+    return modelPullSeriesGroups.value
+
+  return modelPullSeriesGroups.value
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => matchesModelPullFilter(item, keyword)),
+    }))
+    .filter(group => group.items.length > 0)
+})
+
+const filteredPulledModelCount = computed(() => filteredModelPullSeriesGroups.value.reduce((count, group) => count + group.items.length, 0))
+
+const selectedPulledModelSet = computed(() => new Set(selectedPulledModels.value))
+
+const selectedPulledModelCount = computed(() => selectedPulledModels.value.length)
+
+const selectedPulledNewModelCount = computed(() => {
+  const existingModels = currentModelPoolNameSet.value
+  return pulledProviderModels.value.filter(item => selectedPulledModelSet.value.has(item.model) && !existingModels.has(item.model)).length
+})
+
+const selectedPulledExistingModelCount = computed(() => {
+  return Math.max(0, selectedPulledModelCount.value - selectedPulledNewModelCount.value)
+})
+
+const allPulledModelsChecked = computed(() => {
+  return pulledProviderModels.value.length > 0 && selectedPulledModelCount.value === pulledProviderModels.value.length
+})
+
+const allPulledModelsIndeterminate = computed(() => {
+  return selectedPulledModelCount.value > 0 && selectedPulledModelCount.value < pulledProviderModels.value.length
 })
 
 const sceneRows = computed(() => {
@@ -497,6 +654,7 @@ function applyConsolePayload(payload: ProvidersPayload) {
   upstreamForm.baseURL = normalizeUpstreamBaseURL(payload.upstream.baseURL || '')
   upstreamForm.timeoutMs = Number(payload.upstream.timeoutMs || 15000)
   upstreamForm.maxRetries = Number(payload.upstream.maxRetries || 2)
+  upstreamForm.visionModel = String(payload.upstream.visionModel || '').trim()
   configMasterKeyReady.value = payload.config?.masterKeyReady !== false
   upstreamApiKeyConfigured.value = Boolean(payload.upstream.apiKeyConfigured)
 
@@ -545,6 +703,7 @@ async function saveConsole() {
           baseURL: normalizedBaseURL,
           timeoutMs: Number(upstreamForm.timeoutMs || 15000),
           maxRetries: Number(upstreamForm.maxRetries || 2),
+          visionModel: upstreamForm.visionModel,
           apiKeyMode: upstreamForm.apiKeyMode,
           apiKey: upstreamForm.apiKey,
         },
@@ -627,6 +786,104 @@ function mergePulledModels(pulled: ProviderPullItem[]): ModelPoolItem[] {
   return result.sort((a, b) => a.model.localeCompare(b.model, 'en'))
 }
 
+function setSelectedPulledModels(models: string[]) {
+  selectedPulledModels.value = dedupeModels(models)
+}
+
+function openModelPullSelector(payload: ProviderModelsPayload) {
+  pulledProviderModels.value = [...(payload.items || [])].sort((a, b) => a.model.localeCompare(b.model, 'en'))
+  pulledProviderFetchedAt.value = payload.fetchedAt || ''
+  modelPullFilterKeyword.value = ''
+  setSelectedPulledModels(pulledProviderModels.value.map(item => item.model))
+  expandedModelPullSeriesKeys.value = []
+  modelPullSelectorVisible.value = true
+}
+
+function closeModelPullSelector() {
+  modelPullFilterKeyword.value = ''
+  modelPullSelectorVisible.value = false
+}
+
+function togglePulledModel(model: string, checked: boolean) {
+  const next = new Set(selectedPulledModels.value)
+  if (checked)
+    next.add(model)
+  else
+    next.delete(model)
+  setSelectedPulledModels(Array.from(next))
+}
+
+function hasSelectedAllModels(items: ProviderPullItem[]): boolean {
+  return items.length > 0 && items.every(item => selectedPulledModelSet.value.has(item.model))
+}
+
+function hasPartialSelectedModels(items: ProviderPullItem[]): boolean {
+  const selectedCount = items.filter(item => selectedPulledModelSet.value.has(item.model)).length
+  return selectedCount > 0 && selectedCount < items.length
+}
+
+function togglePulledGroup(items: ProviderPullItem[], checked: boolean) {
+  const next = new Set(selectedPulledModels.value)
+  for (const item of items) {
+    if (checked)
+      next.add(item.model)
+    else
+      next.delete(item.model)
+  }
+  setSelectedPulledModels(Array.from(next))
+}
+
+function toggleAllPulledModels(checked: boolean) {
+  setSelectedPulledModels(checked ? pulledProviderModels.value.map(item => item.model) : [])
+}
+
+function handleToggleAllPulledModels(checked: unknown) {
+  toggleAllPulledModels(Boolean(checked))
+}
+
+function handleTogglePulledGroup(items: ProviderPullItem[], checked: unknown) {
+  togglePulledGroup(items, Boolean(checked))
+}
+
+function handleTogglePulledModel(model: string, checked: unknown) {
+  togglePulledModel(model, Boolean(checked))
+}
+
+function isModelPullSeriesExpanded(key: string): boolean {
+  if (normalizedModelPullFilterKeyword.value)
+    return true
+  return expandedModelPullSeriesKeys.value.includes(key)
+}
+
+function toggleModelPullSeriesExpanded(key: string) {
+  const next = new Set(expandedModelPullSeriesKeys.value)
+  if (next.has(key))
+    next.delete(key)
+  else
+    next.add(key)
+  expandedModelPullSeriesKeys.value = Array.from(next)
+}
+
+function applyPulledModelSelection() {
+  if (selectedPulledModelCount.value === 0) {
+    Message.error('请至少选择一个模型后再导入。')
+    return
+  }
+
+  const selectedSet = new Set(selectedPulledModels.value)
+  const selectedItems = pulledProviderModels.value.filter(item => selectedSet.has(item.model))
+  const existingModels = new Set(modelPoolItems.value.map(item => item.model))
+  const newCount = selectedItems.filter(item => !existingModels.has(item.model)).length
+  const skippedCount = Math.max(0, pulledProviderModels.value.length - selectedItems.length)
+
+  modelPoolItems.value = mergePulledModels(selectedItems)
+  modelPoolFetchedAt.value = pulledProviderFetchedAt.value || modelPoolFetchedAt.value
+  modelPullTriggered.value = true
+  modelPullSelectorVisible.value = false
+  modelPullMessage.value = `已导入 ${selectedItems.length} 个模型${newCount > 0 ? `（新增 ${newCount} 个）` : ''}${skippedCount > 0 ? `，跳过 ${skippedCount} 个` : ''}，请确认后保存。`
+  Message.success(modelPullMessage.value)
+}
+
 async function pullModels() {
   pullLoading.value = true
   modelPullMessage.value = ''
@@ -645,11 +902,13 @@ async function pullModels() {
       },
       '模型拉取失败。',
     )
-    modelPoolItems.value = mergePulledModels(data.items || [])
-    modelPoolFetchedAt.value = data.fetchedAt || ''
-    modelPullTriggered.value = true
-    modelPullMessage.value = `已拉取 ${data.items?.length || 0} 个模型，请确认后保存。`
-    Message.success(modelPullMessage.value)
+    if ((data.items || []).length === 0) {
+      modelPullMessage.value = '未拉取到可导入模型。'
+      Message.warning(modelPullMessage.value)
+      return
+    }
+    openModelPullSelector(data)
+    modelPullMessage.value = `已拉取 ${data.items?.length || 0} 个候选模型，请在弹框中选择需要导入的系列或模型。`
   }
   catch (error: any) {
     const message = normalizeError(error, '模型拉取失败。')
@@ -756,12 +1015,23 @@ function removeModel(model: string) {
   }))
 }
 
+function clearModelPoolDraft() {
+  modelPoolItems.value = []
+  sceneItems.value = sceneItems.value.map(item => ({
+    ...item,
+    models: [],
+  }))
+  modelPullTriggered.value = true
+  modelPullMessage.value = '已清空当前模型池，并同步清空场景模型回退链，请确认后保存。'
+  Message.success(modelPullMessage.value)
+}
+
 function openSceneDrawer(record: SceneItem) {
   sceneEditorForm.key = record.key
   sceneEditorForm.label = record.label
   sceneEditorForm.description = record.description
   sceneEditorForm.enabled = Boolean(record.enabled)
-  sceneEditorForm.modelsText = dedupeModels(record.models || []).join('\n')
+  sceneEditorForm.models = dedupeModels(record.models || [])
   sceneEditorForm.prompt = String(record.prompt || '')
   sceneEditorVisible.value = true
 }
@@ -770,17 +1040,9 @@ function closeSceneDrawer() {
   sceneEditorVisible.value = false
 }
 
-function appendSceneModel(model: string) {
-  const items = dedupeModels([
-    ...parseSceneModelsText(sceneEditorForm.modelsText),
-    model,
-  ])
-  sceneEditorForm.modelsText = items.join('\n')
-}
-
 function openSceneBatchDrawer() {
   const mostUsedModels = dedupeModels(sceneItems.value.flatMap(item => item.models || []))
-  sceneBatchForm.modelsText = mostUsedModels.join('\n')
+  sceneBatchForm.models = mostUsedModels
   sceneBatchEditorVisible.value = true
 }
 
@@ -788,16 +1050,8 @@ function closeSceneBatchDrawer() {
   sceneBatchEditorVisible.value = false
 }
 
-function appendSceneBatchModel(model: string) {
-  const items = dedupeModels([
-    ...parseSceneModelsText(sceneBatchForm.modelsText),
-    model,
-  ])
-  sceneBatchForm.modelsText = items.join('\n')
-}
-
 function applySceneBatchModels() {
-  const models = parseSceneModelsText(sceneBatchForm.modelsText)
+  const models = dedupeModels(sceneBatchForm.models || [])
   sceneItems.value = sceneItems.value.map(item => ({
     ...item,
     models,
@@ -817,7 +1071,7 @@ function saveSceneDrawer() {
     label: sceneEditorForm.label,
     description: sceneEditorForm.description,
     enabled: Boolean(sceneEditorForm.enabled),
-    models: parseSceneModelsText(sceneEditorForm.modelsText),
+    models: dedupeModels(sceneEditorForm.models || []),
     prompt: String(sceneEditorForm.prompt || ''),
   })
   sceneItems.value = next
@@ -825,7 +1079,7 @@ function saveSceneDrawer() {
 }
 
 function applyCurrentSceneModelsToAll() {
-  const models = parseSceneModelsText(sceneEditorForm.modelsText)
+  const models = dedupeModels(sceneEditorForm.models || [])
   sceneItems.value = sceneItems.value.map(item => ({
     ...item,
     models,
@@ -1052,6 +1306,13 @@ onMounted(async () => {
                   allow-clear
                 />
               </a-form-item>
+              <a-form-item label="视觉模型">
+                <a-input
+                  v-model="upstreamForm.visionModel"
+                  placeholder="可选，例如 gpt-4.1-mini / qwen-vl"
+                  allow-clear
+                />
+              </a-form-item>
               <a-form-item label="超时(ms)">
                 <a-input-number v-model="upstreamForm.timeoutMs" :min="1000" :step="1000" class="w-full" />
               </a-form-item>
@@ -1065,6 +1326,7 @@ onMounted(async () => {
               <span>当前模型数：{{ modelPoolItems.length }}</span>
               <span>API Key：{{ upstreamApiKeyConfigured ? '已配置' : '未配置' }}</span>
               <span>默认密钥状态：{{ upstreamForm.apiKeyMode === 'keep' ? '沿用现有密钥' : upstreamForm.apiKeyMode === 'clear' ? '将清空密钥' : '将替换密钥' }}</span>
+              <span>视觉模型：{{ upstreamForm.visionModel || '未配置（将回退到文件名/OCR/元信息摘要）' }}</span>
               <span>Base URL 将自动规范为根地址，调用时自动补 /v1</span>
               <span>当前输入框里的 API Key 会优先用于测试上游和拉取模型</span>
             </div>
@@ -1142,6 +1404,15 @@ onMounted(async () => {
                 <a-button :loading="pullLoading" @click="pullModels">
                   拉取模型
                 </a-button>
+                <a-popconfirm
+                  content="确认清空当前模型池吗？这会移除全部模型，并同步清空场景里的模型回退链；只有保存后才会持久化。"
+                  type="warning"
+                  @ok="clearModelPoolDraft"
+                >
+                  <a-button status="danger" :disabled="modelPoolItems.length === 0">
+                    清空模型池
+                  </a-button>
+                </a-popconfirm>
                 <a-button type="primary" :loading="saving" @click="saveConsole">
                   保存模型池
                 </a-button>
@@ -1429,6 +1700,11 @@ onMounted(async () => {
                 </div>
               </template>
             </a-table-column>
+            <a-table-column title="耗时" data-index="latencyMs" :width="110">
+              <template #cell="scope">
+                {{ formatLatency(scope.record.latencyMs) }}
+              </template>
+            </a-table-column>
             <a-table-column title="消息" data-index="contentPreview">
               <template #cell="scope">
                 <div class="text-sm text-slate-600 truncate">
@@ -1456,6 +1732,140 @@ onMounted(async () => {
         </div>
       </a-card>
     </div>
+
+    <a-modal
+      v-model:visible="modelPullSelectorVisible"
+      title="选择导入模型"
+      width="960px"
+      unmount-on-close
+      @cancel="closeModelPullSelector"
+    >
+      <div class="pr-2 max-h-[70vh] overflow-y-auto">
+        <div class="space-y-4">
+          <a-alert type="info" :show-icon="true">
+            拉取结果会先按系列分组展示。你可以全选、按系列勾选，或继续精确到单个模型后再导入。
+          </a-alert>
+
+          <a-input
+            v-model="modelPullFilterKeyword"
+            allow-clear
+            placeholder="按模型名或展示名筛选"
+          />
+
+          <div class="px-4 py-3 rounded-2xl bg-slate-50 flex flex-wrap gap-3 items-center justify-between">
+            <div class="text-sm text-slate-600 flex flex-wrap gap-3 items-center">
+              <span>拉取时间：{{ formatTime(pulledProviderFetchedAt) }}</span>
+              <span>候选模型：{{ pulledProviderModels.length }}</span>
+              <span v-if="modelPullFilterKeyword">筛选结果：{{ filteredPulledModelCount }}</span>
+              <span>已选：{{ selectedPulledModelCount }}</span>
+              <span>新增：{{ selectedPulledNewModelCount }}</span>
+              <span>已存在：{{ selectedPulledExistingModelCount }}</span>
+            </div>
+            <div class="flex flex-wrap gap-3 items-center">
+              <a-checkbox
+                :model-value="allPulledModelsChecked"
+                :indeterminate="allPulledModelsIndeterminate"
+                @change="handleToggleAllPulledModels"
+              >
+                全选
+              </a-checkbox>
+              <a-button size="mini" @click="toggleAllPulledModels(false)">
+                清空
+              </a-button>
+            </div>
+          </div>
+
+          <div
+            v-for="group in filteredModelPullSeriesGroups"
+            :key="group.key"
+            class="px-4 py-4 border border-slate-200 rounded-2xl bg-white"
+          >
+            <div class="flex flex-wrap gap-3 items-center justify-between">
+              <div class="flex flex-wrap gap-3 items-center">
+                <a-checkbox
+                  :model-value="hasSelectedAllModels(group.items)"
+                  :indeterminate="hasPartialSelectedModels(group.items)"
+                  @change="handleTogglePulledGroup(group.items, $event)"
+                >
+                  {{ group.label }}
+                </a-checkbox>
+                <a-tag color="arcoblue">
+                  {{ group.items.length }} 个
+                </a-tag>
+              </div>
+              <div class="flex flex-wrap gap-3 items-center">
+                <div class="text-xs text-slate-500">
+                  {{ group.items.filter(item => selectedPulledModelSet.has(item.model)).length }} / {{ group.items.length }} 已选
+                </div>
+                <a-button
+                  v-if="!normalizedModelPullFilterKeyword"
+                  size="mini"
+                  type="text"
+                  @click="toggleModelPullSeriesExpanded(group.key)"
+                >
+                  {{ isModelPullSeriesExpanded(group.key) ? '收起' : '展开' }}
+                </a-button>
+              </div>
+            </div>
+
+            <div v-if="!isModelPullSeriesExpanded(group.key)" class="text-xs text-slate-500 mt-3">
+              点击展开查看该系列下的 {{ group.items.length }} 个模型。
+            </div>
+
+            <div v-else class="mt-3 gap-3 grid md:grid-cols-2">
+              <div
+                v-for="item in group.items"
+                :key="item.model"
+                class="px-3 py-3 border border-slate-200 rounded-xl flex gap-3 items-start"
+              >
+                <a-checkbox
+                  :model-value="selectedPulledModelSet.has(item.model)"
+                  @change="handleTogglePulledModel(item.model, $event)"
+                />
+                <div class="flex-1 min-w-0">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <div class="text-sm text-slate-900 font-medium break-all">
+                      {{ item.model }}
+                    </div>
+                    <a-tag :color="currentModelPoolNameSet.has(item.model) ? 'gold' : 'green'">
+                      {{ currentModelPoolNameSet.has(item.model) ? '已在模型池' : '新模型' }}
+                    </a-tag>
+                  </div>
+                  <div class="text-xs text-slate-500 mt-1 break-all">
+                    {{ item.label || item.model }}
+                  </div>
+                  <div class="text-xs text-slate-500 mt-2 flex flex-wrap gap-3 items-center">
+                    <span>{{ item.pricingText }}</span>
+                    <span>来源：{{ formatPullPricingSource(item.pricingSource) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <a-empty
+            v-if="filteredModelPullSeriesGroups.length === 0"
+            description="没有匹配的模型"
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex flex-wrap gap-3 items-center justify-between">
+          <div class="text-xs text-slate-500">
+            已选择 {{ selectedPulledModelCount }} / {{ pulledProviderModels.length }} 个模型，确认后仅导入勾选项。
+          </div>
+          <div class="flex gap-2">
+            <a-button @click="closeModelPullSelector">
+              取消
+            </a-button>
+            <a-button type="primary" :disabled="selectedPulledModelCount === 0" @click="applyPulledModelSelection">
+              导入选中模型
+            </a-button>
+          </div>
+        </div>
+      </template>
+    </a-modal>
 
     <a-drawer
       v-model:visible="modelEditorVisible"
@@ -1545,23 +1955,41 @@ onMounted(async () => {
             <a-switch v-model="sceneEditorForm.enabled" />
           </a-form-item>
           <a-form-item label="模型回退链">
-            <a-textarea
-              v-model="sceneEditorForm.modelsText"
-              :auto-size="{ minRows: 4, maxRows: 10 }"
-              placeholder="每行一个模型，按顺序回退。留空则忽略并回退默认模型。"
-            />
+            <a-select
+              v-model="sceneEditorForm.models"
+              multiple
+              allow-search
+              allow-clear
+              allow-create
+              placeholder="搜索或添加模型，按添加顺序回退。留空则忽略并回退默认模型。"
+              @change="sceneEditorForm.models = normalizeSceneModels($event)"
+            >
+              <a-option
+                v-for="item in enabledModelSelectItems"
+                :key="item.model"
+                :value="item.model"
+              >
+                <div class="space-y-0.5">
+                  <div class="flex gap-3 items-center justify-between">
+                    <span>{{ item.model }}</span>
+                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
+                      {{ item.label }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ item.priceText }}
+                  </div>
+                </div>
+              </a-option>
+            </a-select>
           </a-form-item>
 
-          <div class="flex flex-wrap gap-2">
-            <a-tag
-              v-for="model in enabledModelOptions"
-              :key="model"
-              color="arcoblue"
-              class="cursor-pointer"
-              @click="appendSceneModel(model)"
-            >
-              {{ model }}
-            </a-tag>
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前回退顺序：{{ sceneEditorForm.models.length > 0 ? sceneEditorForm.models.join(' -> ') : '未配置，运行时将忽略并回退默认模型' }}
+          </div>
+
+          <div class="text-xs text-slate-500">
+            顺序按添加先后决定；如需调整顺序，请删除后按新的顺序重新添加。
           </div>
 
           <a-form-item label="场景提示词">
@@ -1601,23 +2029,37 @@ onMounted(async () => {
             这里填写的模型回退链会覆盖全部场景的模型配置，不会改动提示词和启停状态。
           </a-alert>
           <a-form-item label="统一模型回退链">
-            <a-textarea
-              v-model="sceneBatchForm.modelsText"
-              :auto-size="{ minRows: 5, maxRows: 12 }"
-              placeholder="每行一个模型，按顺序回退。"
-            />
+            <a-select
+              v-model="sceneBatchForm.models"
+              multiple
+              allow-search
+              allow-clear
+              allow-create
+              placeholder="搜索或添加模型，按添加顺序回退。"
+              @change="sceneBatchForm.models = normalizeSceneModels($event)"
+            >
+              <a-option
+                v-for="item in enabledModelSelectItems"
+                :key="`batch-${item.model}`"
+                :value="item.model"
+              >
+                <div class="space-y-0.5">
+                  <div class="flex gap-3 items-center justify-between">
+                    <span>{{ item.model }}</span>
+                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
+                      {{ item.label }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ item.priceText }}
+                  </div>
+                </div>
+              </a-option>
+            </a-select>
           </a-form-item>
 
-          <div class="flex flex-wrap gap-2">
-            <a-tag
-              v-for="model in enabledModelOptions"
-              :key="`batch-${model}`"
-              color="arcoblue"
-              class="cursor-pointer"
-              @click="appendSceneBatchModel(model)"
-            >
-              {{ model }}
-            </a-tag>
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前统一回退顺序：{{ sceneBatchForm.models.length > 0 ? sceneBatchForm.models.join(' -> ') : '未配置，运行时将忽略并回退默认模型' }}
           </div>
         </div>
       </div>
@@ -1668,8 +2110,22 @@ onMounted(async () => {
             <div><span class="font-medium">Workspace：</span>{{ logDetailRow.workspaceName || logDetailRow.workspaceId || '-' }}</div>
             <div><span class="font-medium">Session：</span>{{ logDetailRow.sessionTitle || logDetailRow.sessionId || '-' }}</div>
             <div><span class="font-medium">Provider / Model：</span>{{ logDetailRow.provider || '-' }} / {{ logDetailRow.model || '-' }}</div>
+            <div><span class="font-medium">Channel：</span>{{ logDetailRow.channelKey || '-' }}</div>
             <div><span class="font-medium">角色：</span>{{ logDetailRow.role }}</div>
             <div><span class="font-medium">Fallback：</span>{{ logDetailRow.fallbackUsed ? '是' : '否' }}</div>
+            <div><span class="font-medium">耗时：</span>{{ formatLatency(logDetailRow.latencyMs) }}</div>
+            <div v-if="logDetailRow.attemptChain.length > 0">
+              <span class="font-medium">尝试链：</span>
+              <div class="mt-2 space-y-2">
+                <div
+                  v-for="(attempt, index) in logDetailRow.attemptChain"
+                  :key="`${logDetailRow.id}-${index}`"
+                  class="text-xs text-slate-700 px-3 py-2 border border-slate-200 rounded-xl bg-slate-50"
+                >
+                  {{ index + 1 }}. {{ attempt.provider || '-' }} / {{ attempt.model || '-' }} · {{ attempt.success ? 'success' : 'failed' }} · {{ formatLatency(attempt.latencyMs) }}<span v-if="attempt.error"> · {{ attempt.error }}</span>
+                </div>
+              </div>
+            </div>
             <a-typography-paragraph>
               <pre class="text-xs text-slate-100 p-4 rounded-2xl bg-slate-950 whitespace-pre-wrap overflow-x-auto">{{ logDetailRow.content || logDetailRow.contentPreview }}</pre>
             </a-typography-paragraph>

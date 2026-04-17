@@ -364,6 +364,19 @@ onMounted(loadPermissions)
         </NuxtLink>
 
         <NuxtLink
+          v-if="canManageContest"
+          to="/admin/resource-knowledge-worker"
+          class="p-3 border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          <p class="text-[12px] text-slate-900 font-bold">
+            知识索引监控
+          </p>
+          <p class="text-[11px] text-slate-500 mt-1">
+            查看 embeddings / 索引任务运行状态、积压项目、失败项和 worker 健康度
+          </p>
+        </NuxtLink>
+
+        <NuxtLink
           v-if="canManagePricing"
           to="/admin/billing"
           class="p-3 border border-slate-200 bg-white hover:bg-slate-50"

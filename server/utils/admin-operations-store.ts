@@ -30,6 +30,7 @@ import type {
 } from '~~/shared/types/admin-operations'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import { getProjectDocumentPreviewWorkerState } from '~~/server/utils/project-document-preview-worker-state'
+import { getProjectKnowledgeWorkerState } from '~~/server/utils/project-knowledge-worker-state'
 import { getProjectResourceRecycleWorkerState } from '~~/server/utils/project-resource-recycle-worker-state'
 
 const PREVIEW_SUCCESS_RATE_RISK_THRESHOLD = 95
@@ -177,6 +178,21 @@ interface PreviewMetricsRow {
 interface PreviewFailureRow {
   task_id: string
   created_at: string
+  error_message: string
+}
+
+interface ProjectKnowledgeMetricsRow {
+  succeeded_24h: number
+  failed_24h: number
+  queued_count: number
+  processing_count: number
+  stale_count: number
+  latest_activity_at: string | null
+}
+
+interface ProjectKnowledgeFailureRow {
+  task_id: string
+  updated_at: string
   error_message: string
 }
 
@@ -1054,6 +1070,55 @@ async function loadPreviewFailures(db: Queryable): Promise<PreviewFailureRow[]> 
   return result.rows
 }
 
+async function loadProjectKnowledgeMetrics(db: Queryable): Promise<ProjectKnowledgeMetricsRow> {
+  const result = await db.query<ProjectKnowledgeMetricsRow>(
+    `WITH task_window AS (
+       SELECT status
+       FROM project_knowledge_index_tasks
+       WHERE created_at >= NOW() - INTERVAL '24 hours'
+     ),
+     queue AS (
+       SELECT
+         COUNT(*) FILTER (WHERE status = 'queued')::INTEGER AS queued_count,
+         COUNT(*) FILTER (WHERE status IN ('extracting', 'chunking', 'embedding'))::INTEGER AS processing_count,
+         COUNT(*) FILTER (WHERE status = 'stale')::INTEGER AS stale_count,
+         MAX(updated_at)::TEXT AS latest_activity_at
+       FROM project_knowledge_sources
+     )
+     SELECT
+       COUNT(*) FILTER (WHERE status = 'succeeded')::INTEGER AS succeeded_24h,
+       COUNT(*) FILTER (WHERE status IN ('failed', 'dead_letter'))::INTEGER AS failed_24h,
+       COALESCE(MAX(queue.queued_count), 0)::INTEGER AS queued_count,
+       COALESCE(MAX(queue.processing_count), 0)::INTEGER AS processing_count,
+       COALESCE(MAX(queue.stale_count), 0)::INTEGER AS stale_count,
+       MAX(queue.latest_activity_at) AS latest_activity_at
+     FROM task_window, queue`,
+  )
+
+  return result.rows[0] || {
+    succeeded_24h: 0,
+    failed_24h: 0,
+    queued_count: 0,
+    processing_count: 0,
+    stale_count: 0,
+    latest_activity_at: null,
+  }
+}
+
+async function loadProjectKnowledgeFailures(db: Queryable): Promise<ProjectKnowledgeFailureRow[]> {
+  const result = await db.query<ProjectKnowledgeFailureRow>(
+    `SELECT
+      id AS task_id,
+      updated_at::TEXT AS updated_at,
+      error_message
+     FROM project_knowledge_index_tasks
+     WHERE status IN ('failed', 'dead_letter')
+     ORDER BY updated_at DESC
+     LIMIT 6`,
+  )
+  return result.rows
+}
+
 async function loadArchivedResourceCount(db: Queryable): Promise<number> {
   const result = await db.query<CountRow>(
     `SELECT COUNT(*)::INTEGER AS count
@@ -1592,6 +1657,8 @@ export async function getAdminOperationsEfficiency(db: Queryable): Promise<Admin
   const [
     previewMetrics,
     previewFailures,
+    projectKnowledgeMetrics,
+    projectKnowledgeFailures,
     archivedCount,
     feishuMetrics,
     feishuFailures,
@@ -1601,6 +1668,8 @@ export async function getAdminOperationsEfficiency(db: Queryable): Promise<Admin
   ] = await Promise.all([
     loadPreviewMetrics(db),
     loadPreviewFailures(db),
+    loadProjectKnowledgeMetrics(db),
+    loadProjectKnowledgeFailures(db),
     loadArchivedResourceCount(db),
     loadFeishuMetrics(db),
     loadFeishuFailures(db),
@@ -1610,9 +1679,12 @@ export async function getAdminOperationsEfficiency(db: Queryable): Promise<Admin
   ])
 
   const previewWorker = getProjectDocumentPreviewWorkerState()
+  const knowledgeWorker = getProjectKnowledgeWorkerState()
   const recycleWorker = getProjectResourceRecycleWorkerState()
   const previewSuccessRate24h = toPercent(previewMetrics.succeeded_calls_24h, previewMetrics.failed_calls_24h)
   const previewBacklog = previewMetrics.queued_count + previewMetrics.processing_count
+  const knowledgeSuccessRate24h = toPercent(projectKnowledgeMetrics.succeeded_24h, projectKnowledgeMetrics.failed_24h)
+  const knowledgeBacklog = projectKnowledgeMetrics.queued_count + projectKnowledgeMetrics.processing_count + projectKnowledgeMetrics.stale_count
   const feishuSuccessRate7d = toPercent(feishuMetrics.success_count_7d, feishuMetrics.failed_count_7d)
   const governanceSuccessRate24h = toPercent(governanceMetrics.succeeded_24h, governanceMetrics.failed_24h)
   const recycleSuccessRate = recycleWorker.runCount > 0
@@ -1634,6 +1706,21 @@ export async function getAdminOperationsEfficiency(db: Queryable): Promise<Admin
       lastResult: previewWorker.runCount > 0 ? `累计运行 ${previewWorker.runCount} 次` : '尚无运行记录',
       lastError: normalizeString(previewWorker.lastError),
       detailPath: '/admin/resource-preview-worker',
+    },
+    {
+      key: 'knowledge-worker',
+      label: '知识索引 Worker',
+      health: projectKnowledgeMetrics.failed_24h > 0
+        ? 'critical'
+        : knowledgeBacklog > 0 ? 'warning' : knowledgeWorker.runCount > 0 ? 'healthy' : 'idle',
+      throughput: projectKnowledgeMetrics.succeeded_24h + projectKnowledgeMetrics.failed_24h,
+      throughputLabel: '24h 完成数',
+      successRate: knowledgeSuccessRate24h,
+      backlog: knowledgeBacklog,
+      lastRunAt: normalizeString(knowledgeWorker.lastFinishedAt || knowledgeWorker.lastStartedAt || projectKnowledgeMetrics.latest_activity_at) || null,
+      lastResult: knowledgeWorker.runCount > 0 ? `累计运行 ${knowledgeWorker.runCount} 次` : '尚无运行记录',
+      lastError: normalizeString(knowledgeWorker.lastError),
+      detailPath: '/admin/resource-knowledge-worker',
     },
     {
       key: 'resource-recycle-worker',
@@ -1697,6 +1784,14 @@ export async function getAdminOperationsEfficiency(db: Queryable): Promise<Admin
       occurredAt: item.created_at,
       reason: normalizeString(item.error_message) || 'unknown error',
       detailPath: '/admin/resource-preview-worker',
+    })),
+    ...projectKnowledgeFailures.map<AdminEfficiencyFailureItem>(item => ({
+      id: `knowledge-${item.task_id}`,
+      source: '知识索引',
+      title: '知识索引任务失败',
+      occurredAt: item.updated_at,
+      reason: normalizeString(item.error_message) || 'unknown error',
+      detailPath: '/admin/resource-knowledge-worker',
     })),
     ...feishuFailures.map<AdminEfficiencyFailureItem>(item => ({
       id: `feishu-${item.run_id}`,
