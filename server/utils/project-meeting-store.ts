@@ -1280,11 +1280,9 @@ export async function getProjectMeetingDetail(
   if (!meeting)
     return null
 
-  const [invitees, participants, recentJobs] = await Promise.all([
-    listProjectMeetingInvitees(db, { meetingId: input.meetingId }),
-    listProjectMeetingParticipants(db, { meetingId: input.meetingId }),
-    listProjectMeetingRecentJobs(db, { meetingId: input.meetingId }),
-  ])
+  const invitees = await listProjectMeetingInvitees(db, { meetingId: input.meetingId })
+  const participants = await listProjectMeetingParticipants(db, { meetingId: input.meetingId })
+  const recentJobs = await listProjectMeetingRecentJobs(db, { meetingId: input.meetingId })
 
   return {
     ...meeting,

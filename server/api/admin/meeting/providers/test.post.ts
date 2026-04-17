@@ -12,7 +12,7 @@ import { readRuntimeSettings } from '~~/server/utils/env'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import {
   applyPlatformMeetingRuntimeOverrides,
-  readPlatformMeetingRuntimeOverrides,
+  readEffectiveMeetingRuntimeSettings,
 } from '~~/server/utils/platform-meeting-config-store'
 import { readEffectivePlatformRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 
@@ -65,9 +65,7 @@ export default defineEventHandler(async (event) => {
 
   try {
     const { runtime: baseRuntime } = await readEffectivePlatformRuntimeSettings(event)
-    const overrides = await withTransaction(event, async (db) => {
-      return readPlatformMeetingRuntimeOverrides(db, event)
-    })
+    const { overrides } = await readEffectiveMeetingRuntimeSettings(event)
     const nextOverrides = applyMeetingProvidersMutation(overrides, body)
     const runtime = applyPlatformMeetingRuntimeOverrides(baseRuntime, nextOverrides)
     const rtcIssues = listMeetingRtcConfigIssues(runtime)

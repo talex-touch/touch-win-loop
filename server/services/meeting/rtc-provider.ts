@@ -161,9 +161,29 @@ function normalizePathSegment(value: unknown, fallback: string): string {
   return normalized || fallback
 }
 
+function rewriteMeetingProviderSourceBaseUrl(rawUrl: string): string {
+  const normalized = normalizeString(rawUrl)
+  if (!normalized)
+    return normalized
+
+  try {
+    const parsed = new URL(normalized)
+    const host = normalizeString(parsed.hostname).toLowerCase()
+    if (host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '0.0.0.0')
+      parsed.hostname = 'host.docker.internal'
+    return parsed.toString().replace(/\/+$/g, '')
+  }
+  catch {
+    return normalized
+  }
+}
+
 function buildMeetingProviderWebhookUrl(runtime: RuntimeSettings): string {
   const callbackPath = buildApiEndpoint(runtime.apiBaseUrl, '/internal/meetings/provider-events')
-  return buildApiEndpoint(runtime.onlyOffice.sourceBaseURL, callbackPath)
+  const sourceBaseUrl = rewriteMeetingProviderSourceBaseUrl(runtime.onlyOffice.sourceBaseURL)
+  if (!isHttpUrl(sourceBaseUrl))
+    throw new Error('MEETING_PUBLIC_BASE_URL_NOT_CONFIGURED')
+  return buildApiEndpoint(sourceBaseUrl, callbackPath)
 }
 
 function buildLiveKitRecordingOutputPath(input: {

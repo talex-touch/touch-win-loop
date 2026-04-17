@@ -17,6 +17,7 @@ it('livekit RTC provider 已接入 egress 录制与原生 webhook 校验', async
 
   assert.match(rtcProviderSource, /StartRoomCompositeEgress/, 'RTC provider 未调用 LiveKit Egress API')
   assert.match(rtcProviderSource, /buildMeetingProviderWebhookUrl\(/, 'RTC provider 未生成 provider webhook 回调地址')
+  assert.match(rtcProviderSource, /host\.docker\.internal/, 'RTC provider 未将本地 loopback webhook 地址改写为 Docker 可回调地址')
   assert.match(rtcProviderSource, /verifyLiveKitWebhookToken\(/, 'RTC provider 未校验原生 LiveKit webhook JWT')
   assert.match(rtcProviderSource, /payload\.sha256/, 'RTC provider 未校验 webhook body sha256')
   assert.match(rtcProviderSource, /localFilePath\?: string/, 'RTC recording artifact 未支持本地文件路径')

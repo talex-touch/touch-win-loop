@@ -78,7 +78,10 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
   const activeMeetingUtterances = ref<ProjectMeetingUtterance[]>([])
   const meetingLiveCaptions = ref<WorkspaceMeetingCaptionItem[]>([])
   const projectMeetingsLoading = ref(false)
+  const projectMeetingsLoadedProjectId = ref('')
   const meetingDetailLoading = ref(false)
+  const meetingDetailLoadedId = ref('')
+  const meetingUtterancesLoadedId = ref('')
   const meetingGuestShareLoading = ref(false)
   const meetingMutating = ref(false)
   const meetingJoinUrl = ref('')
@@ -106,9 +109,12 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
   function resetProjectMeetingState(): void {
     clearMeetingRealtimeRefreshTimer()
     projectMeetings.value = []
+    projectMeetingsLoadedProjectId.value = ''
     meetingRuntimeHealth.value = null
     activeMeetingId.value = ''
     activeMeetingDetail.value = null
+    meetingDetailLoadedId.value = ''
+    meetingUtterancesLoadedId.value = ''
     activeMeetingUtterances.value = []
     meetingLiveCaptions.value = []
     activeMeetingGuestShare.value = null
@@ -206,6 +212,8 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
     if (!meeting) {
       activeMeetingId.value = ''
       activeMeetingDetail.value = null
+      meetingDetailLoadedId.value = ''
+      meetingUtterancesLoadedId.value = ''
       activeMeetingUtterances.value = []
       if (payload.resetCaptions !== false)
         meetingLiveCaptions.value = []
@@ -217,7 +225,13 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
     activeMeetingId.value = meeting.id
     activeMeetingDetail.value = meeting
     upsertProjectMeetingInList(meeting)
-    if (!payload.preserveJoinSession) {
+    const hasExplicitJoinSessionPayload = [
+      payload.joinUrl,
+      payload.joinToken,
+      payload.joinExpiresAt,
+      payload.rtcServerUrl,
+    ].some(value => value !== undefined)
+    if (!payload.preserveJoinSession && hasExplicitJoinSessionPayload) {
       meetingJoinUrl.value = normalizeString(payload.joinUrl)
       meetingJoinToken.value = normalizeString(payload.joinToken)
       meetingJoinExpiresAt.value = normalizeString(payload.joinExpiresAt)
@@ -271,8 +285,10 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
   async function loadProjectMeetingUtterances(meetingId: string): Promise<void> {
     const projectId = readString(options.activeProjectId)
     const targetMeetingId = normalizeString(meetingId)
+    const sameMeetingRefresh = meetingUtterancesLoadedId.value === targetMeetingId
     if (!projectId || !targetMeetingId) {
       activeMeetingUtterances.value = []
+      meetingUtterancesLoadedId.value = ''
       return
     }
 
@@ -283,10 +299,13 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
       if (readString(options.activeProjectId) !== projectId || activeMeetingId.value !== targetMeetingId)
         return
       activeMeetingUtterances.value = Array.isArray(response.data) ? response.data : []
+      meetingUtterancesLoadedId.value = targetMeetingId
     }
     catch {
-      if (readString(options.activeProjectId) === projectId && activeMeetingId.value === targetMeetingId)
+      if (readString(options.activeProjectId) === projectId && activeMeetingId.value === targetMeetingId && !sameMeetingRefresh) {
         activeMeetingUtterances.value = []
+        meetingUtterancesLoadedId.value = ''
+      }
     }
   }
 
@@ -299,6 +318,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
   ): Promise<ProjectMeetingDetail | null> {
     const projectId = readString(options.activeProjectId)
     const targetMeetingId = normalizeString(meetingId)
+    const sameMeetingRefresh = meetingDetailLoadedId.value === targetMeetingId
     if (!projectId || !targetMeetingId) {
       applyProjectMeetingSession(null)
       return null
@@ -316,14 +336,18 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
         resetCaptions: payload.resetCaptions,
         preserveJoinSession: payload.preserveJoinSession !== false,
       })
+      meetingDetailLoadedId.value = targetMeetingId
       return response.data
     }
     catch (error) {
       if (readString(options.activeProjectId) === projectId && activeMeetingId.value === targetMeetingId) {
-        activeMeetingDetail.value = null
-        activeMeetingUtterances.value = []
-        activeMeetingGuestShare.value = null
-        clearMeetingJoinSession()
+        if (!sameMeetingRefresh) {
+          activeMeetingDetail.value = null
+          meetingDetailLoadedId.value = ''
+          activeMeetingUtterances.value = []
+          activeMeetingGuestShare.value = null
+          clearMeetingJoinSession()
+        }
       }
       options.onStatusLine(resolveApiErrorMessage(error, '加载会议详情失败，请稍后重试。'))
       return null
@@ -345,6 +369,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
     activeMeetingId.value = targetMeetingId
     if (isSwitchingMeeting) {
       activeMeetingDetail.value = null
+      meetingUtterancesLoadedId.value = ''
       activeMeetingUtterances.value = []
       meetingLiveCaptions.value = []
       clearMeetingJoinSession()
@@ -364,6 +389,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
     } = {},
   ): Promise<void> {
     const projectId = readString(options.activeProjectId)
+    const sameProjectRefresh = projectMeetingsLoadedProjectId.value === projectId
     if (!projectId) {
       resetProjectMeetingState()
       return
@@ -379,6 +405,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
 
       const items = Array.isArray(response.data?.items) ? response.data.items : []
       projectMeetings.value = items
+      projectMeetingsLoadedProjectId.value = projectId
       meetingRuntimeHealth.value = response.data?.runtimeHealth || null
 
       const preferredMeetingId = normalizeString(payload.preferredMeetingId || activeMeetingId.value)
@@ -391,6 +418,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
         activeMeetingId.value = preferredMeeting.id
         if (isSwitchingMeeting) {
           activeMeetingDetail.value = null
+          meetingUtterancesLoadedId.value = ''
           activeMeetingUtterances.value = []
           meetingLiveCaptions.value = []
           clearMeetingJoinSession()
@@ -421,8 +449,11 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
     }
     catch {
       if (readString(options.activeProjectId) === projectId) {
-        projectMeetings.value = []
-        meetingRuntimeHealth.value = null
+        if (!sameProjectRefresh) {
+          projectMeetings.value = []
+          projectMeetingsLoadedProjectId.value = ''
+          meetingRuntimeHealth.value = null
+        }
       }
     }
     finally {
@@ -469,6 +500,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
       )
 
       const targetMeeting = response.data.meeting
+      meetingUtterancesLoadedId.value = ''
       activeMeetingUtterances.value = []
       applyProjectMeetingSession(targetMeeting, {
         joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
@@ -735,6 +767,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
 
   return {
     projectMeetings,
+    projectMeetingsLoadedProjectId,
     meetingRuntimeHealth,
     activeMeetingId,
     activeMeetingDetail,
@@ -742,6 +775,7 @@ export function useWorkspaceProjectMeetings(options: UseWorkspaceProjectMeetings
     meetingLiveCaptions,
     projectMeetingsLoading,
     meetingDetailLoading,
+    meetingDetailLoadedId,
     meetingGuestShareLoading,
     meetingMutating,
     meetingJoinUrl,

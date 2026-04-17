@@ -97,5 +97,12 @@ export function resolveMeetingRuntimeError(error: unknown): { status: number, me
     }
   }
 
+  if (message === 'MEETING_PUBLIC_BASE_URL_NOT_CONFIGURED') {
+    return {
+      status: 503,
+      message: '会议回调基地址未配置，请设置 WINLOOP_PUBLIC_BASE_URL 后再试。',
+    }
+  }
+
   return null
 }

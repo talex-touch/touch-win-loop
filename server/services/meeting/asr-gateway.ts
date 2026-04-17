@@ -2,7 +2,7 @@ import type { RuntimeSettings } from '~~/server/utils/env'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { readRuntimeSettings } from '~~/server/utils/env'
-import { buildApiEndpoint } from '~~/shared/utils/api-url'
+import { buildApiEndpoint, isHttpUrl } from '~~/shared/utils/api-url'
 
 export interface MeetingAsrSession {
   sessionId: string
@@ -190,7 +190,7 @@ function buildAsrProviderEndpoint(serviceUrl: string, suffix: '/healthz' | '/mod
 function rewriteLoopbackSourceBaseUrl(rawUrl: string): string {
   const normalized = normalizeString(rawUrl)
   if (!normalized)
-    return 'http://localhost:3510'
+    return ''
 
   try {
     const parsed = new URL(normalized)
@@ -206,10 +206,10 @@ function rewriteLoopbackSourceBaseUrl(rawUrl: string): string {
 
 function buildMeetingAsrCallbackUrl(runtime: RuntimeSettings): string {
   const callbackPath = buildApiEndpoint(runtime.apiBaseUrl, '/internal/meetings/asr-events')
-  return buildApiEndpoint(
-    rewriteLoopbackSourceBaseUrl(runtime.onlyOffice.sourceBaseURL),
-    callbackPath,
-  )
+  const sourceBaseUrl = rewriteLoopbackSourceBaseUrl(runtime.onlyOffice.sourceBaseURL)
+  if (!isHttpUrl(sourceBaseUrl))
+    throw new Error('MEETING_PUBLIC_BASE_URL_NOT_CONFIGURED')
+  return buildApiEndpoint(sourceBaseUrl, callbackPath)
 }
 
 function createEmbeddedParticipantState(participantIdentity: string, mimeType: unknown): EmbeddedAsrParticipantState {
