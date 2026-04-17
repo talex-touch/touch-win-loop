@@ -373,6 +373,143 @@ export interface Resource {
   aiProfile?: ResourceKnowledgeProfileSummary
 }
 
+export type ProjectKnowledgeScopeType = 'project_resource' | 'contest_resource'
+export type ProjectKnowledgeSourceStatus = 'pending' | 'queued' | 'extracting' | 'chunking' | 'embedding' | 'ready' | 'failed' | 'stale' | 'skipped'
+export type ProjectKnowledgeTaskType = 'upsert' | 'reindex' | 'delete'
+export type ProjectKnowledgeTaskStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'dead_letter' | 'cancelled'
+export type ProjectKnowledgeTaskStage = 'queued' | 'extracting' | 'chunking' | 'embedding' | 'finalizing'
+export type ProjectKnowledgeChunkKind
+  = 'document_page'
+    | 'document_section'
+    | 'markdown_section'
+    | 'draw_summary'
+    | 'resource_summary'
+    | 'image_summary'
+    | 'image_ocr'
+    | 'meeting_notes'
+    | 'meeting_transcript'
+
+export type ProjectKnowledgeModality = 'text' | 'image' | 'audio' | 'video' | 'draw'
+
+export type ProjectKnowledgeProjectionType
+  = 'document_text'
+    | 'markdown_text'
+    | 'draw_projection'
+    | 'resource_summary'
+    | 'image_summary'
+    | 'image_ocr'
+    | 'document_visual_fallback'
+    | 'meeting_notes'
+    | 'meeting_transcript'
+
+export interface ProjectKnowledgeChunkMetadata {
+  modality?: ProjectKnowledgeModality
+  projectionType?: ProjectKnowledgeProjectionType
+  projectionSource?: string
+  confidence?: number
+  pageNumber?: number
+  sectionLabel?: string
+  meetingId?: string
+  utteranceRange?: string
+  fallbackUsed?: boolean
+}
+
+export interface ProjectKnowledgeCitation {
+  sourceId: string
+  sourceResourceId?: string | null
+  chunkId: string
+  resourceTitle: string
+  label: string
+  sourceStatus?: ProjectKnowledgeSourceStatus
+  modality?: ProjectKnowledgeModality
+  projectionType?: ProjectKnowledgeProjectionType
+  page?: number
+  section?: string
+  quote?: string
+}
+
+export interface ProjectKnowledgeMessagePayload {
+  citations: ProjectKnowledgeCitation[]
+  warning: string
+  usedFallback: boolean
+}
+
+export interface ProjectKnowledgeIndexTaskSnapshot {
+  id: string
+  projectId: string
+  scopeType: ProjectKnowledgeScopeType
+  sourceResourceId?: string | null
+  linkedContestResourceId?: string | null
+  taskType: ProjectKnowledgeTaskType
+  status: ProjectKnowledgeTaskStatus
+  stage: ProjectKnowledgeTaskStage
+  attempt: number
+  maxAttempt: number
+  progressPercent: number
+  etaSeconds: number
+  payloadJson: Record<string, unknown>
+  resultJson: Record<string, unknown>
+  errorMessage: string
+  resourceTitle?: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectKnowledgeIndexSourceStatus {
+  id: string
+  scopeType: ProjectKnowledgeScopeType
+  projectId: string
+  sourceResourceId?: string | null
+  linkedContestResourceId?: string | null
+  resourceTitle: string
+  resourceKind?: ResourceKind | ''
+  resourceSource?: Resource['source'] | ''
+  status: ProjectKnowledgeSourceStatus
+  currentStage?: ProjectKnowledgeTaskStage | ''
+  currentTaskStatus?: ProjectKnowledgeTaskStatus | ''
+  progressPercent: number
+  etaSeconds: number
+  estimatedFinishedAt?: string | null
+  chunkTotal: number
+  chunkIndexed: number
+  sourceHash: string
+  indexVersion: string
+  lastIndexedAt?: string | null
+  lastError: string
+  lastErrorStage?: ProjectKnowledgeTaskStage | ProjectKnowledgeSourceStatus | ''
+  lastTaskId?: string | null
+  updatedAt: string
+  lastTask?: ProjectKnowledgeIndexTaskSnapshot | null
+}
+
+export interface ProjectKnowledgeIndexSummary {
+  projectId: string
+  totalResources: number
+  indexableResources: number
+  pendingCount: number
+  readyCount: number
+  processingCount: number
+  queuedCount: number
+  failedCount: number
+  staleCount: number
+  skippedCount: number
+  overallProgressPercent: number
+  etaSeconds: number
+  estimatedFinishedAt?: string | null
+  lastRefreshedAt: string
+}
+
+export interface ProjectKnowledgeIndexDashboard {
+  summary: ProjectKnowledgeIndexSummary
+  processing: ProjectKnowledgeIndexSourceStatus[]
+  recentCompleted: ProjectKnowledgeIndexSourceStatus[]
+  failed: ProjectKnowledgeIndexSourceStatus[]
+  sources: ProjectKnowledgeIndexSourceStatus[]
+  tasks: ProjectKnowledgeIndexTaskSnapshot[]
+}
+
 export type DrawMode = 'freeform' | 'diagram' | 'schema' | 'architecture' | 'composition'
 export type SceneSourceType = 'manual' | 'mermaid' | 'markdown_outline' | 'ddl' | 'db_introspection' | 'repo_arch' | 'image_mockup'
 export type SceneLayoutDirection = 'TB' | 'BT' | 'LR' | 'RL' | 'none'
@@ -381,7 +518,7 @@ export type SceneNodeShape = 'rect' | 'rounded' | 'pill' | 'diamond' | 'note' | 
 export type SceneTemplateCategory = 'diagram' | 'schema' | 'architecture' | 'composition'
 export type SceneExportFormat = 'svg' | 'png' | 'pdf'
 export type SceneExportStatus = 'queued' | 'processing' | 'succeeded' | 'failed'
-export type SceneEditorEngine = 'vueflow' | 'tldraw_legacy'
+export type SceneEditorEngine = 'vueflow' | 'tldraw_legacy' | 'canvaskit_wasm'
 
 export interface SceneNode {
   id: string
@@ -770,6 +907,32 @@ export interface CompositionModel {
   deviceFramePresetKey?: string
   blocks?: CompositionBlock[]
   metadata?: Record<string, unknown>
+}
+
+export type DesignDocumentSchema = 'design_document_v1'
+
+export interface DesignDocumentV1 {
+  version: 1
+  schema: DesignDocumentSchema
+  drawMode: 'composition'
+  editorEngine?: Extract<SceneEditorEngine, 'canvaskit_wasm'>
+  templateKey: string
+  pages: DesignPageModel[]
+  currentPageId?: string
+  frames: DesignFrameModel[]
+  elements: DesignElementModel[]
+  assets: DesignAssetModel[]
+  slots?: Record<string, unknown>
+  themeTokens?: Record<string, string>
+  layoutRules?: Record<string, unknown>
+  allowedBlocks?: string[]
+  exportPresets?: string[]
+  aspectRatio?: string
+  deviceFramePresetKey?: string
+  blocks?: CompositionBlock[]
+  metadata?: Record<string, unknown>
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type SceneSourceModel = GraphSourceModel | SchemaModel | ArchitectureModel | CompositionModel
@@ -2237,6 +2400,15 @@ export interface ChatMessage {
   metadata?: Record<string, unknown>
 }
 
+export type WorkspaceStreamSystemMessageEventType = 'progress' | 'tool'
+
+export interface WorkspaceStreamSystemMessageMetadata extends Record<string, unknown> {
+  eventType: WorkspaceStreamSystemMessageEventType
+  seq: number
+  toolName?: string
+  payloadSummary?: string
+}
+
 export interface AiModelOption {
   id: string
   label: string
@@ -2353,6 +2525,7 @@ export interface AiProjectChatResult {
   assistantReply: string
   projectDraft: ProjectPayload
   missingFields: string[]
+  knowledge?: ProjectKnowledgeMessagePayload | null
   sessionId?: string
 }
 
@@ -2367,6 +2540,81 @@ export type AiWorkspaceDocumentDraftApplyMode = 'replace_selection' | 'replace_d
 export type AiCanvasAssistAction = 'generate' | 'complete' | 'refine'
 export type AiCanvasAssistTemplate = 'flowchart' | 'mindmap' | 'er' | 'architecture'
 export type AiCanvasAssistSourceFormat = 'mermaid' | 'markdown_outline' | 'ddl' | 'architecture'
+export type WorkflowDraftAction = AiCanvasAssistAction | 'restyle'
+export type WorkflowArchitectureView = 'system_context' | 'container' | 'dependency_map'
+export type WorkflowStylePreset = 'default' | 'minimal' | 'architecture' | 'workflow'
+export type WorkflowLayoutPreset = 'left_to_right' | 'top_to_bottom' | 'swimlane'
+
+export interface WorkflowSnapshotNode {
+  id: string
+  label: string
+  parentId?: string | null
+  shape?: string | null
+  x: number
+  y: number
+  width: number
+  height: number
+  styleSummary: string[]
+}
+
+export interface WorkflowSnapshotEdge {
+  id: string
+  label: string
+  source: string
+  target: string
+  styleSummary: string[]
+}
+
+export interface WorkflowSnapshotGroup {
+  id: string
+  label: string
+  x: number
+  y: number
+  width: number
+  height: number
+  layoutKind: 'container' | 'swimlane'
+  styleSummary: string[]
+  childNodeIds: string[]
+}
+
+export interface WorkflowSnapshotPage {
+  id: string
+  name: string
+  direction: WorkflowLayoutPreset | 'unknown'
+  nodeCount: number
+  edgeCount: number
+  groupCount: number
+  sampleLabels: string[]
+  nodes: WorkflowSnapshotNode[]
+  edges: WorkflowSnapshotEdge[]
+  groups: WorkflowSnapshotGroup[]
+  styleSummary: {
+    shapes: string[]
+    fillColors: string[]
+    strokeColors: string[]
+    edgeStyles: string[]
+  }
+}
+
+export interface WorkflowSnapshot {
+  format: 'drawio'
+  hash: string
+  pageCount: number
+  isSinglePage: boolean
+  currentPageId: string
+  currentPageName: string
+  nodeCount: number
+  edgeCount: number
+  groupCount: number
+  sampleLabels: string[]
+  styleSummary: {
+    shapes: string[]
+    fillColors: string[]
+    strokeColors: string[]
+    edgeStyles: string[]
+  }
+  pages: WorkflowSnapshotPage[]
+}
 
 export interface AiWorkspaceDocumentSelectionRange {
   anchorLine: number
@@ -2389,6 +2637,21 @@ export interface AiWorkspaceDocumentDraft {
   baseDocumentHash: string
   originalText: string
   proposedText: string
+}
+
+export interface AiWorkspaceWorkflowDraft {
+  action: WorkflowDraftAction
+  title: string
+  summary: string
+  resourceId: string
+  resourceTitle: string
+  template: AiCanvasAssistTemplate
+  sourceFormat: AiCanvasAssistSourceFormat
+  sourceText: string
+  architectureView?: WorkflowArchitectureView | null
+  stylePreset: WorkflowStylePreset
+  layoutPreset: WorkflowLayoutPreset
+  baseWorkflowHash: string
 }
 
 export interface ProjectResourceCommentTextSelectionAnchor {
@@ -2574,6 +2837,112 @@ export type AiDefenseStage = 'opening' | 'qa' | 'rebuttal' | 'closing'
 export type AiDefenseInputMode = 'text' | 'audio' | 'image' | 'video_frames' | 'mixed'
 export type AiDefenseSummaryType = 'turn' | 'session'
 export type AiDefenseSummaryStatus = 'idle' | 'queued' | 'processing' | 'completed' | 'failed'
+export type DefenseRealtimeProvider = 'qwen' | 'coze'
+export type DefenseRealtimeMediaMode = 'audio' | 'audio_video'
+export type DefenseRealtimeConnectionState = 'idle' | 'bootstrapping' | 'connecting' | 'connected' | 'interrupted' | 'error' | 'closed'
+
+export interface DefenseRealtimePersonaPack {
+  sessionId: string
+  projectId: string
+  contestName: string
+  trackName: string
+  stage: AiDefenseStage
+  turnCount: number
+  selectedPersonaIds: string[]
+  judges: Array<{
+    id: string
+    name: string
+    judgeType: AiDefensePersonaJudgeType
+    enabled: boolean
+    summary?: string
+    focusAreas?: string[]
+  }>
+}
+
+export interface DefenseRealtimeSessionMeta {
+  provider: DefenseRealtimeProvider
+  mediaMode: DefenseRealtimeMediaMode
+  transport: 'websocket' | 'rtc_sidecar'
+  connectionState: DefenseRealtimeConnectionState
+  bootstrapState?: 'idle' | 'bootstrapping' | 'ready' | 'error'
+  providerSessionId?: string | null
+  conversationId?: string | null
+  linkedMeetingId?: string | null
+  lastProviderEventAt?: string | null
+  latestSpeakerId?: string | null
+  latestSpeakerLabel?: string | null
+  latestLatencyMs?: number | null
+  audioEnabled?: boolean
+  videoEnabled?: boolean
+  lastError?: string | null
+  metadata?: Record<string, unknown>
+}
+
+export interface DefenseRealtimeBootstrapPayload {
+  sessionId: string
+  meetingId: string
+  provider: DefenseRealtimeProvider
+  mediaMode: DefenseRealtimeMediaMode
+  transport: 'websocket' | 'rtc_sidecar'
+  issuedAt: string
+  expiresAt?: string | null
+  personaPack: DefenseRealtimePersonaPack
+  qwen?: {
+    baseWsUrl: string
+    workspaceId?: string
+    appId?: string
+    voice?: string
+    frameIntervalMs: number
+    accessToken?: string
+    connectionUrl?: string
+  } | null
+  coze?: {
+    baseUrl: string
+    accessToken?: string
+    botId: string
+    connectorId?: string
+    voiceId?: string
+    conversationId?: string
+    roomInfo?: Record<string, unknown> | null
+  } | null
+}
+
+export type DefenseRealtimeNormalizedEventType
+  = 'session.state'
+    | 'user.transcript.partial'
+    | 'user.transcript.final'
+    | 'assistant.transcript.delta'
+    | 'assistant.transcript.final'
+    | 'assistant.audio.started'
+    | 'assistant.audio.ended'
+    | 'latency'
+    | 'error'
+
+export interface DefenseRealtimeNormalizedEvent {
+  type: DefenseRealtimeNormalizedEventType
+  provider: DefenseRealtimeProvider
+  sessionId: string
+  meetingId?: string
+  transport?: DefenseRealtimeSessionMeta['transport']
+  createdAt: string
+  connectionState?: DefenseRealtimeConnectionState
+  providerSessionId?: string
+  conversationId?: string
+  eventId?: string
+  text?: string
+  speakerId?: string
+  speakerName?: string
+  speakerLabel?: string
+  judgeType?: AiDefensePersonaJudgeType
+  turnIndex?: number
+  stage?: AiDefenseStage
+  latencyMs?: number
+  isFinal?: boolean
+  videoEnabled?: boolean
+  audioEnabled?: boolean
+  errorMessage?: string
+  metadata?: Record<string, unknown>
+}
 
 export interface AiDefenseAttachment {
   id?: string
@@ -2641,11 +3010,14 @@ export interface AiDefenseJudgeRound {
   judge: string
   judgeType: AiDefensePersonaJudgeType
   personaId?: string | null
+  stage?: AiDefenseStage
+  turnIndex?: number
   question: string
   score: number
   comment: string
   followUp: string
   evidenceRefs: AiDefenseEvidenceRef[]
+  createdAt?: string
 }
 
 export interface AiDefenseScorecard {
@@ -2671,6 +3043,7 @@ export interface AiDefenseSessionState {
   lastInputMode: AiDefenseInputMode
   lastContextPack?: Record<string, unknown>
   lastScorecard?: AiDefenseScorecard | null
+  realtime?: DefenseRealtimeSessionMeta | null
   createdAt: string
   updatedAt: string
 }
@@ -2718,6 +3091,7 @@ export interface AiDefenseSessionDetail {
   state: AiDefenseSessionState | null
   personas: AiDefensePersona[]
   turns: AiDefenseTurn[]
+  latestRounds: AiDefenseJudgeRound[]
   latestSummary: AiDefenseSummary | null
 }
 
@@ -2917,6 +3291,12 @@ export interface AiWorkspaceRequest {
     activeTabId?: string
     previewMode?: string
     resourcePurpose?: CollabPurpose | ''
+    workflowSnapshot?: WorkflowSnapshot | null
+    workflowAction?: WorkflowDraftAction
+    workflowTemplate?: AiCanvasAssistTemplate
+    workflowArchitectureView?: WorkflowArchitectureView
+    workflowStylePreset?: WorkflowStylePreset
+    workflowLayoutPreset?: WorkflowLayoutPreset
   }
   aiOptions?: Partial<AiAssistantOptions>
 }
@@ -2988,6 +3368,7 @@ export interface AiCanvasAssistResult {
   template: AiCanvasAssistTemplate
   sourceFormat: AiCanvasAssistSourceFormat
   sourceText: string
+  knowledge?: ProjectKnowledgeMessagePayload | null
 }
 
 export type AiCanvasAssistStreamEventType = 'progress' | 'delta' | 'done' | 'error'
@@ -3005,6 +3386,8 @@ export interface AiWorkspaceResult {
   issues?: ProjectIssue[]
   report?: ProjectIssueReport | null
   documentDraft?: AiWorkspaceDocumentDraft | null
+  workflowDraft?: AiWorkspaceWorkflowDraft | null
+  knowledge?: ProjectKnowledgeMessagePayload | null
 }
 
 export type AdminAgentTaskType

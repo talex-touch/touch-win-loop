@@ -8,6 +8,7 @@ import type {
   AiWorkspaceInlineCompletionResult,
   CollabPurpose,
   Contest,
+  DefenseRealtimeSessionMeta,
   Project,
   ProjectInvitationSummary,
   ProjectMeeting,
@@ -173,6 +174,7 @@ const props = withDefaults(defineProps<{
   commentMutating?: boolean
   mappingRows?: WorkspaceMappingRow[]
   mappingLoading?: boolean
+  mappingRefreshing?: boolean
   keywordCloud?: WorkspaceKeyword[]
   trendBars?: number[]
   formState?: WorkspaceFormState
@@ -221,6 +223,8 @@ const props = withDefaults(defineProps<{
   meetingLiveCaptions?: WorkspaceMeetingCaptionItem[]
   meetingLoading?: boolean
   meetingDetailLoading?: boolean
+  meetingRefreshing?: boolean
+  meetingDetailRefreshing?: boolean
   meetingMutating?: boolean
   meetingJoinUrl?: string
   meetingJoinToken?: string
@@ -230,6 +234,13 @@ const props = withDefaults(defineProps<{
   meetingGuestShareLoading?: boolean
   meetingPlanTier?: 'personal_team' | 'business_team' | null
   meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
+  defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeLogs?: Array<{
+    id: string
+    level: 'info' | 'warning' | 'error'
+    message: string
+    createdAt: string
+  }>
   toneMeta: Record<MappingTone, WorkspaceStatusToneMeta>
 }>(), {
   activeTabId: '',
@@ -288,6 +299,7 @@ const props = withDefaults(defineProps<{
   commentMutating: false,
   mappingRows: () => [],
   mappingLoading: false,
+  mappingRefreshing: false,
   keywordCloud: () => [],
   trendBars: () => [],
   formState: () => ({
@@ -367,6 +379,8 @@ const props = withDefaults(defineProps<{
   meetingLiveCaptions: () => [],
   meetingLoading: false,
   meetingDetailLoading: false,
+  meetingRefreshing: false,
+  meetingDetailRefreshing: false,
   meetingMutating: false,
   meetingJoinUrl: '',
   meetingJoinToken: '',
@@ -376,6 +390,8 @@ const props = withDefaults(defineProps<{
   meetingGuestShareLoading: false,
   meetingPlanTier: null,
   meetingRuntimeHealth: null,
+  defenseRealtimeState: null,
+  defenseRealtimeLogs: () => [],
 })
 
 const emit = defineEmits<{
@@ -419,6 +435,7 @@ const emit = defineEmits<{
   'revokeMeetingGuestShare': [meetingId: string]
   'selectMeeting': [meetingId: string]
   'openMeetingResource': [resourceId: string]
+  'openResource': [resourceId: string]
   'loadContests': []
   'reconvertPreview': []
   'downloadPreviewSource': []
@@ -2280,6 +2297,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :selected-contest-id="selectedContestId"
         :mapping-rows="mappingRows"
         :mapping-loading="mappingLoading"
+        :mapping-refreshing="mappingRefreshing"
         :keyword-cloud="keywordCloud"
         :trend-bars="trendBars"
         :linked-contest-entries="linkedContestEntries"
@@ -2300,6 +2318,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         v-else-if="activeTabId === 'meeting'"
         :meetings="props.meetings"
         :loading="props.meetingLoading"
+        :refreshing="props.meetingRefreshing"
         @refresh-meetings="emit('refreshMeetings')"
         @open-meeting="emit('selectMeeting', $event)"
         @open-resource="emit('openMeetingResource', $event)"
@@ -2325,6 +2344,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :utterances="props.meetingUtterances"
         :live-captions="props.meetingLiveCaptions"
         :detail-loading="props.meetingDetailLoading"
+        :refreshing="props.meetingDetailRefreshing"
         :mutating="props.meetingMutating"
         :join-url="props.meetingJoinUrl"
         :join-token="props.meetingJoinToken"
@@ -2335,6 +2355,8 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :current-user-id="props.currentUserId"
         :workspace-type="props.workspaceType"
         :meeting-plan-tier="props.meetingPlanTier"
+        :defense-realtime-state="props.defenseRealtimeState"
+        :defense-realtime-logs="props.defenseRealtimeLogs"
         @join-meeting="emit('joinMeeting', $event)"
         @start-meeting="emit('startMeeting', $event)"
         @end-meeting="emit('endMeeting', $event)"
@@ -2704,6 +2726,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         <WorkspaceProjectSettingsTab
           v-else
           :active-project="activeProject"
+          :active-project-id="props.activeProjectId"
           :contests="projectSettingsContestOptions"
           :project-settings-loading="projectSettingsLoading"
           :project-settings-save-state="projectSettingsSaveState"
@@ -2754,11 +2777,13 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         :collab-presence-cursors="collabPresenceCursors"
         :model-value="props.collabDrawValue"
         :collab-draw-error="collabDrawError"
+        :design-editor-engine="activeResource?.editorEngine || ''"
         :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
         :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
         @update:model-value="onCollabDrawModelUpdate"
         @update-collab-cursor="onCollabCursorUpdate"
         @activate-resource="emitActivatePreviewResource($event)"
+        @open-resource="emit('openResource', $event)"
       />
 
       <WorkspaceResourcePreviewTab

@@ -13,6 +13,9 @@
     "start:generate": "npx serve .output/public",
     "db:migrate": "node ./scripts/db-migrate.mjs",
     "db:migrate:project-resource-tree": "node ./scripts/db-migrate.mjs ./scripts/migrations/2026-04-11-project-resource-tree-schema-backfill.sql",
+    "worktrees:list": "node ./scripts/worktrees.mjs list",
+    "worktrees:status": "node ./scripts/worktrees.mjs status",
+    "worktrees:run": "node ./scripts/worktrees.mjs run --",
     "lint": "eslint .",
     "test": "pnpm run test:unit",
     "test:unit": "vitest run --coverage --exclude scripts/tests/team-project-e2e.smoke.spec.mjs",
@@ -31,6 +34,7 @@
   "dependencies": {
     "@arco-design/web-vue": "catalog:frontend",
     "@aws-sdk/client-s3": "catalog:",
+    "@coze/realtime-api": "^1.3.2",
     "@floating-ui/dom": "catalog:frontend",
     "@langchain/core": "catalog:",
     "@langchain/openai": "catalog:",

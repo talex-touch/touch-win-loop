@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue'
-import type { ProjectMeetingMode, ProjectMeetingTrackState } from '~~/shared/types/domain'
+import type { DefenseRealtimeSessionMeta, ProjectMeetingMode, ProjectMeetingTrackState } from '~~/shared/types/domain'
 import { Message } from '@arco-design/web-vue'
 
 interface MeetingCaptionItem {
@@ -49,6 +49,13 @@ const props = withDefaults(defineProps<{
   captions?: MeetingCaptionItem[]
   meetingGuestToken?: string
   guest?: boolean
+  defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeLogs?: Array<{
+    id: string
+    level: 'info' | 'warning' | 'error'
+    message: string
+    createdAt: string
+  }>
 }>(), {
   provider: '',
   mode: 'video',
@@ -62,6 +69,8 @@ const props = withDefaults(defineProps<{
   captions: () => [],
   meetingGuestToken: '',
   guest: false,
+  defenseRealtimeState: null,
+  defenseRealtimeLogs: () => [],
 })
 
 const runtime = useRuntimeConfig()
@@ -87,7 +96,7 @@ let captionAudioContext: AudioContext | null = null
 let captionSourceNode: MediaStreamAudioSourceNode | null = null
 let captionProcessorNode: ScriptProcessorNode | null = null
 let captionSilentGainNode: GainNode | null = null
-let captionFlushTimer: ReturnType<typeof window.setTimeout> | null = null
+let captionFlushTimer: number | null = null
 let captionPcmChunks: Uint8Array[] = []
 let captionPendingBytes = 0
 let captionUploading = false
@@ -160,7 +169,7 @@ function resolveCaptionUploadLabel(): string {
 function clearCaptionFlushTimer(): void {
   if (!captionFlushTimer)
     return
-  clearTimeout(captionFlushTimer)
+  window.clearTimeout(captionFlushTimer)
   captionFlushTimer = null
 }
 
@@ -370,7 +379,7 @@ function syncRoomTracks(): void {
 }
 
 function resolveLocalMicrophoneTrack(room: any): MediaStreamTrack | null {
-  const publications = Array.from(room?.localParticipant?.trackPublications?.values?.() || [])
+  const publications: any[] = Array.from(room?.localParticipant?.trackPublications?.values?.() || [])
   for (const publication of publications) {
     if (resolveTrackSource(publication?.source || publication?.track?.source) !== 'microphone')
       continue
@@ -901,6 +910,12 @@ const audioStageStats = computed(() => [
   { label: '远端音轨', value: String(remoteMicrophoneTracks.value.length) },
   { label: '共享音频', value: String(remoteScreenShareAudioTracks.value.length) },
 ])
+const showDefenseRealtimeSidecar = computed(() => {
+  return Boolean(
+    normalizeString(props.defenseRealtimeState?.linkedMeetingId)
+    && normalizeString(props.defenseRealtimeState?.linkedMeetingId) === normalizeString(props.meetingId),
+  )
+})
 
 watch(
   () => [props.provider, props.meetingId, props.rtcJoinToken, props.rtcServerUrl].join('::'),
@@ -1137,6 +1152,47 @@ onBeforeUnmount(() => {
             <div class="meeting-web-client__status-item">
               <span>字幕上行</span>
               <strong>{{ resolveCaptionUploadLabel() }}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="showDefenseRealtimeSidecar" class="meeting-web-client__panel">
+          <div class="meeting-web-client__panel-head">
+            <h4>Defense Sidecar</h4>
+            <span>{{ defenseRealtimeState?.provider === 'coze' ? 'Coze' : '千问' }}</span>
+          </div>
+          <div class="meeting-web-client__status-list">
+            <div class="meeting-web-client__status-item">
+              <span>连接态</span>
+              <strong>{{ defenseRealtimeState?.connectionState || 'idle' }}</strong>
+            </div>
+            <div class="meeting-web-client__status-item">
+              <span>媒体</span>
+              <strong>{{ defenseRealtimeState?.mediaMode === 'audio' ? '仅音频' : '音视频理解' }}</strong>
+            </div>
+            <div class="meeting-web-client__status-item">
+              <span>当前评委</span>
+              <strong>{{ defenseRealtimeState?.latestSpeakerLabel || '等待首句' }}</strong>
+            </div>
+            <div class="meeting-web-client__status-item">
+              <span>延迟</span>
+              <strong>{{ defenseRealtimeState?.latestLatencyMs ? `${Math.round(defenseRealtimeState.latestLatencyMs)} ms` : '暂无' }}</strong>
+            </div>
+          </div>
+          <div v-if="defenseRealtimeState?.lastError" class="meeting-web-client__notice mt-3">
+            sidecar 异常：{{ defenseRealtimeState.lastError }}
+          </div>
+          <div v-if="defenseRealtimeLogs.length > 0" class="meeting-web-client__caption-list mt-3">
+            <div
+              v-for="item in defenseRealtimeLogs.slice(-3)"
+              :key="item.id"
+              class="meeting-web-client__caption-item"
+            >
+              <div class="meeting-web-client__caption-top">
+                <span>Provider 日志</span>
+                <span>{{ formatDateTime(item.createdAt) }}</span>
+              </div>
+              <p>{{ item.message }}</p>
             </div>
           </div>
         </section>

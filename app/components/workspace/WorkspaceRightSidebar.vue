@@ -5,25 +5,37 @@ import type {
   AiDefensePersona,
   AiDefensePersonaJudgeType,
   AiDefenseScorecard,
+  AiDefenseSessionState,
   AiDefenseStage,
   AiDefenseSummary,
   AiProjectChangeRequest,
   AiWorkspaceDocumentAction,
   AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentSelectionRange,
+  AiWorkspaceWorkflowDraft,
   ChatMessage,
   Contest,
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeProvider,
+  DefenseRealtimeSessionMeta,
   ProjectIssue,
   ProjectIssueReport,
   ProjectResourceCommentAnchor,
   ProjectResourceCommentThread,
   Resource,
   Track,
+  WorkflowArchitectureView,
+  WorkflowDraftAction,
+  WorkflowLayoutPreset,
+  WorkflowStylePreset,
   WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
 import { buildAgentDocDraftKey } from '~~/shared/utils/agent-doc'
+import { resolveWorkspaceStreamSystemMessageView } from '~~/shared/utils/workspace-ai-stream'
 import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
+import { buildWorkflowDraftKey } from '~/utils/workspace-drawio'
+import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 
 type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
@@ -31,6 +43,7 @@ type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
 type WorkspaceRightSidebarView = 'ai' | 'comments'
 type WorkspaceSessionVisualType = WorkspaceAiMode | 'final_review' | 'topic_proposal'
 type AgentDocDraftStatus = 'pending' | 'superseded' | 'expired' | 'applied'
+type WorkflowDraftStatus = 'pending' | 'superseded' | 'expired' | 'applied' | 'discarded'
 type AgentDocDiffRowKind = 'same' | 'change' | 'delete' | 'insert'
 
 interface AgentDocDiffRow {
@@ -47,8 +60,10 @@ const props = withDefaults(defineProps<{
   openChatSessionIds?: string[]
   activeChatSessionId?: string
   chatSessionsLoading?: boolean
+  chatSessionsRefreshing?: boolean
   chatSessionDeletingId?: string
   chatMessages?: ChatMessage[]
+  chatMessagesLoading?: boolean
   chatInput?: string
   chatLoading?: boolean
   chatInterrupting?: boolean
@@ -70,6 +85,15 @@ const props = withDefaults(defineProps<{
   defenseRounds?: AiDefenseJudgeRound[]
   defenseScorecard?: AiDefenseScorecard | null
   defensePersonas?: AiDefensePersona[]
+  defenseSessionMeta?: AiChatSession | null
+  defenseSessionState?: AiDefenseSessionState | null
+  defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeLogs?: Array<{
+    id: string
+    level: 'info' | 'warning' | 'error'
+    message: string
+    createdAt: string
+  }>
   defenseStage?: AiDefenseStage
   defenseTurnCount?: number
   defenseSummary?: AiDefenseSummary | null
@@ -91,6 +115,20 @@ const props = withDefaults(defineProps<{
   documentSelectionText?: string
   documentSelectionRange?: AiWorkspaceDocumentSelectionRange | null
   appliedAgentDocDraftKeys?: string[]
+  workflowResourceId?: string
+  workflowResourceTitle?: string
+  workflowHash?: string
+  workflowPageCount?: number
+  appliedWorkflowDraftKeys?: string[]
+  discardedWorkflowDraftKeys?: string[]
+  workflowGenerateAvailable?: boolean
+  workflowGenerateDisabledReason?: string
+  workflowCompleteAvailable?: boolean
+  workflowCompleteDisabledReason?: string
+  workflowRefineAvailable?: boolean
+  workflowRefineDisabledReason?: string
+  workflowRestyleAvailable?: boolean
+  workflowRestyleDisabledReason?: string
   issueReportSubmitting?: boolean
   issueReportExporting?: boolean
   aiEnabled?: boolean
@@ -101,8 +139,10 @@ const props = withDefaults(defineProps<{
   openChatSessionIds: () => [],
   activeChatSessionId: '',
   chatSessionsLoading: false,
+  chatSessionsRefreshing: false,
   chatSessionDeletingId: '',
   chatMessages: () => [],
+  chatMessagesLoading: false,
   chatInput: '',
   chatLoading: false,
   chatInterrupting: false,
@@ -124,6 +164,10 @@ const props = withDefaults(defineProps<{
   defenseRounds: () => [],
   defenseScorecard: null,
   defensePersonas: () => [],
+  defenseSessionMeta: null,
+  defenseSessionState: null,
+  defenseRealtimeState: null,
+  defenseRealtimeLogs: () => [],
   defenseStage: undefined,
   defenseTurnCount: 0,
   defenseSummary: null,
@@ -145,6 +189,20 @@ const props = withDefaults(defineProps<{
   documentSelectionText: '',
   documentSelectionRange: null,
   appliedAgentDocDraftKeys: () => [],
+  workflowResourceId: '',
+  workflowResourceTitle: '',
+  workflowHash: '',
+  workflowPageCount: 0,
+  appliedWorkflowDraftKeys: () => [],
+  discardedWorkflowDraftKeys: () => [],
+  workflowGenerateAvailable: true,
+  workflowGenerateDisabledReason: '',
+  workflowCompleteAvailable: true,
+  workflowCompleteDisabledReason: '',
+  workflowRefineAvailable: true,
+  workflowRefineDisabledReason: '',
+  workflowRestyleAvailable: true,
+  workflowRestyleDisabledReason: '',
   issueReportSubmitting: false,
   issueReportExporting: false,
   aiEnabled: true,
@@ -178,6 +236,12 @@ const emit = defineEmits<{
   'deleteDefensePersona': [personaId: string]
   'generateDefenseSummary': []
   'startDefenseRealtime': []
+  'updateDefenseRealtimeProvider': [provider: DefenseRealtimeProvider]
+  'updateDefenseRealtimeMediaMode': [mode: DefenseRealtimeMediaMode]
+  'toggleDefenseRealtimeAudio': [enabled: boolean]
+  'toggleDefenseRealtimeVideo': [enabled: boolean]
+  'interruptDefenseRealtime': []
+  'reconnectDefenseRealtime': []
   'submitIssueReport': [reportId: string]
   'exportIssueReport': [reportId: string]
   'selectCommentThread': [threadId: string]
@@ -187,13 +251,23 @@ const emit = defineEmits<{
   'reopenCommentThread': [threadId: string]
   'cancelCommentDraft': []
   'applyDocumentDraft': [draft: AiWorkspaceDocumentDraft]
+  'requestWorkflowDraft': [payload: {
+    action: WorkflowDraftAction
+    template: 'flowchart' | 'mindmap' | 'er' | 'architecture'
+    architectureView?: WorkflowArchitectureView
+    stylePreset: WorkflowStylePreset
+    layoutPreset: WorkflowLayoutPreset
+  }]
+  'applyWorkflowDraft': [draft: AiWorkspaceWorkflowDraft]
+  'discardWorkflowDraft': [draft: AiWorkspaceWorkflowDraft]
+  'openResource': [resourceId: string]
 }>()
 
 const DEFENSE_MODES: Array<{ value: WorkspaceDefenseSidebarAiMode, label: string }> = [
-  { value: 'defense', label: '答辩模拟' },
-  { value: 'dialog_ask', label: '对话询问' },
-  { value: 'auto_optimize', label: '自动优化' },
-  { value: 'issue_discovery', label: '寻疑发现' },
+  { value: 'defense', label: 'AgentDef 对答' },
+  { value: 'dialog_ask', label: 'AgentDef 询问' },
+  { value: 'auto_optimize', label: 'AgentDef 优化' },
+  { value: 'issue_discovery', label: 'AgentDef 寻疑' },
 ]
 
 const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label: string, prefixes: string[] }> = {
@@ -219,8 +293,8 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
   },
   defense: {
     icon: 'record_voice_over',
-    label: '答辩模拟',
-    prefixes: ['Loopy 答辩模拟', 'Loopy 答辩会话', '答辩模拟'],
+    label: 'AgentDef',
+    prefixes: ['AgentDef', 'Loopy 答辩模拟', 'Loopy 答辩会话', '答辩模拟'],
   },
   document_assist: {
     icon: 'edit_document',
@@ -239,9 +313,13 @@ const inputPlaceholder = computed(() => {
     return String(props.aiDisabledReason || '').trim() || '当前 AI 未配置，已禁用当前模式。请先在后台完成模型与密钥配置。'
   if (props.aiMode === 'document_assist')
     return '描述你希望如何修改当前文档，AgentDoc 会自动判断意图并先生成待确认草案。'
+  if (props.workbenchMode === 'defense' && props.aiMode === 'dialog_ask')
+    return '向 AgentDef 追问当前答辩策略，例如：这轮应该先补哪条证据？'
   if (props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual') {
     if (props.projectContextualAssistantPreset === 'design')
       return '描述当前页面结构或交互目标，例如：把评审首页拆成更清晰的页面层级，并说明关键交互。'
+    if (props.projectContextualAssistantPreset === 'prototype' && props.projectContextualAssistantLabel === 'AgentProto')
+      return '描述你要梳理的业务流程，例如：把结构源导入、模板生成、导出资产与终审复核的关键节点、责任角色和分支条件整理清楚。'
     if (props.projectContextualAssistantPreset === 'prototype')
       return '描述原型页面或交互路径，例如：梳理从首页到提交成功页的关键状态和跳转。'
   }
@@ -250,8 +328,46 @@ const inputPlaceholder = computed(() => {
   if (props.aiMode === 'issue_discovery')
     return '描述你希望重点扫描的维度，例如：评分映射、证据链、量化指标、资料完整度。'
   if (props.aiMode === 'defense')
-    return '输入答辩要点或追问，例如：请继续追问技术可行性。'
+    return '输入给 AgentDef 的答辩指令，例如：请继续追问技术可行性。'
+  if (props.workbenchMode === 'defense')
+    return '继续输入问题，AgentDef 会基于当前答辩上下文给出建议。'
   return '请输入问题，AI 只做只读分析，不会写入项目。'
+})
+
+const WORKFLOW_TEMPLATE_OPTIONS: Array<{ value: 'flowchart' | 'mindmap' | 'er' | 'architecture', label: string }> = [
+  { value: 'flowchart', label: '流程图' },
+  { value: 'mindmap', label: '脑图' },
+  { value: 'er', label: 'ER 图' },
+  { value: 'architecture', label: '架构图' },
+]
+
+const WORKFLOW_ARCHITECTURE_VIEW_OPTIONS: Array<{ value: WorkflowArchitectureView, label: string }> = [
+  { value: 'system_context', label: 'system_context' },
+  { value: 'container', label: 'container' },
+  { value: 'dependency_map', label: 'dependency_map' },
+]
+
+const WORKFLOW_STYLE_PRESET_OPTIONS: Array<{ value: WorkflowStylePreset, label: string }> = [
+  { value: 'default', label: 'default' },
+  { value: 'minimal', label: 'minimal' },
+  { value: 'architecture', label: 'architecture' },
+  { value: 'workflow', label: 'workflow' },
+]
+
+const WORKFLOW_LAYOUT_PRESET_OPTIONS: Array<{ value: WorkflowLayoutPreset, label: string }> = [
+  { value: 'left_to_right', label: 'left_to_right' },
+  { value: 'top_to_bottom', label: 'top_to_bottom' },
+  { value: 'swimlane', label: 'swimlane' },
+]
+
+const workflowTemplate = ref<'flowchart' | 'mindmap' | 'er' | 'architecture'>('flowchart')
+const workflowArchitectureView = ref<WorkflowArchitectureView>('system_context')
+const workflowStylePreset = ref<WorkflowStylePreset>('default')
+const workflowLayoutPreset = ref<WorkflowLayoutPreset>('left_to_right')
+const showWorkflowAgentControls = computed(() => {
+  return props.workbenchMode === 'project'
+    && props.projectAssistantMode === 'contextual'
+    && props.projectContextualAssistantLabel === 'AgentProto'
 })
 
 const pendingChangeRequests = computed(() => {
@@ -259,24 +375,84 @@ const pendingChangeRequests = computed(() => {
 })
 
 const visibleChatMessages = computed(() => {
-  return props.chatMessages.filter(message => message.role !== 'system')
+  return props.chatMessages
 })
 
 const visibleChatMessageEntries = computed(() => {
-  return visibleChatMessages.value.map((message, index) => ({
-    id: `${message.role}-${index}`,
-    message,
-    agentDocDraft: resolveAgentDocDraft(message),
-  }))
+  const lastMessageIndex = Math.max(visibleChatMessages.value.length - 1, 0)
+  return visibleChatMessages.value.map((message, index) => {
+    const systemMessage = resolveWorkspaceStreamSystemMessageView(message)
+    return {
+      id: `${message.role}-${systemMessage?.seq || 'na'}-${index}`,
+      message,
+      agentDocDraft: resolveAgentDocDraft(message),
+      workflowDraft: resolveWorkflowDraft(message),
+      systemMessage,
+      isLive: Boolean(systemMessage && props.chatLoading && index === lastMessageIndex),
+    }
+  })
 })
 
 const showChatSkeleton = computed(() => {
-  return props.workspacePreparing || (props.chatSessionsLoading && visibleChatMessages.value.length === 0)
+  return props.workspacePreparing || ((props.chatSessionsLoading || props.chatMessagesLoading) && visibleChatMessages.value.length === 0)
 })
 
 const showDialogAskEmpty = computed(() => {
   return !showChatSkeleton.value && props.aiMode === 'dialog_ask' && visibleChatMessages.value.length === 0
 })
+const isDefenseWorkbench = computed(() => props.workbenchMode === 'defense')
+const sessionEmptyText = computed(() => isDefenseWorkbench.value ? '暂无打开的 AgentDef 会话' : '暂无打开的会话')
+const createSessionLabel = computed(() => isDefenseWorkbench.value ? '新建 AgentDef 会话' : '新建对话')
+const defenseSessionTimingText = computed(() => {
+  const startedAt = formatSessionDetailTime(props.defenseSessionMeta?.createdAt)
+  const updatedAt = formatSessionDetailTime(
+    props.defenseSessionState?.updatedAt
+    || props.defenseSessionMeta?.updatedAt
+    || props.defenseSessionMeta?.lastMessageAt,
+  )
+  if (!props.defenseSessionMeta && !props.defenseSessionState)
+    return '尚未生成答辩会话时间轴。'
+  return `开始：${startedAt} · 更新：${updatedAt}`
+})
+const defenseRealtimeRows = computed<Array<{ label: string, value: string }>>(() => {
+  return [
+    {
+      label: 'Provider',
+      value: props.defenseRealtimeState?.provider === 'coze' ? 'Coze' : '千问',
+    },
+    {
+      label: '媒体',
+      value: props.defenseRealtimeState?.mediaMode === 'audio' ? '仅音频' : '音视频理解',
+    },
+    {
+      label: '连接态',
+      value: defenseRealtimeConnectionLabel(props.defenseRealtimeState?.connectionState),
+    },
+    {
+      label: '当前评委',
+      value: String(props.defenseRealtimeState?.latestSpeakerLabel || '等待首句'),
+    },
+    {
+      label: '延迟',
+      value: props.defenseRealtimeState?.latestLatencyMs ? `${Math.round(props.defenseRealtimeState.latestLatencyMs)} ms` : '暂无',
+    },
+  ]
+})
+
+const defenseRealtimeSessionLocked = computed(() => {
+  const connectionState = props.defenseRealtimeState?.connectionState
+  return props.defenseRealtimeState?.bootstrapState === 'bootstrapping'
+    || connectionState === 'bootstrapping'
+    || connectionState === 'connecting'
+    || connectionState === 'connected'
+})
+
+const defenseRealtimeCanInterrupt = computed(() => {
+  const connectionState = props.defenseRealtimeState?.connectionState
+  return connectionState === 'connecting' || connectionState === 'connected'
+})
+
+const defenseRealtimeVideoToggleDisabled = computed(() => props.defenseRealtimeState?.mediaMode === 'audio')
 
 const issueReportStatusLabel = computed(() => {
   if (props.issueReport?.reviewSubmissionStatus === 'submitted')
@@ -317,6 +493,29 @@ const openChatSessions = computed(() => {
   }
 
   return openedSessions
+})
+const sessionTabHighlightInitialized = ref(false)
+const {
+  isHighlighted: isChatSessionHighlighted,
+  queueHighlightedIds: queueChatSessionHighlightedIds,
+} = useTransientHighlightSet()
+
+watch(openChatSessions, (nextSessions, previousSessions) => {
+  if (!sessionTabHighlightInitialized.value) {
+    sessionTabHighlightInitialized.value = true
+    return
+  }
+
+  const previousSessionIdSet = new Set(
+    (previousSessions || [])
+      .map(session => String(session.id || '').trim())
+      .filter(Boolean),
+  )
+  queueChatSessionHighlightedIds(
+    nextSessions
+      .map(session => String(session.id || '').trim())
+      .filter(id => id && !previousSessionIdSet.has(id)),
+  )
 })
 const activeCommentThread = computed(() => {
   const threadId = String(props.activeCommentThreadId || '').trim()
@@ -368,6 +567,52 @@ function requestShowCommentsView(): void {
   emit('update:sidebarView', 'comments')
 }
 
+function isWorkflowActionAvailable(action: WorkflowDraftAction): boolean {
+  if (action === 'complete')
+    return props.workflowCompleteAvailable
+  if (action === 'refine')
+    return props.workflowRefineAvailable
+  if (action === 'restyle')
+    return props.workflowRestyleAvailable
+  return props.workflowGenerateAvailable
+}
+
+function resolveWorkflowActionUnavailableReason(action: WorkflowDraftAction): string {
+  if (!props.aiEnabled)
+    return aiDisabledNoticeText.value
+  if (action === 'complete')
+    return String(props.workflowCompleteDisabledReason || '').trim()
+  if (action === 'refine')
+    return String(props.workflowRefineDisabledReason || '').trim()
+  if (action === 'restyle')
+    return String(props.workflowRestyleDisabledReason || '').trim()
+  return String(props.workflowGenerateDisabledReason || '').trim()
+}
+
+function isWorkflowActionDisabled(action: WorkflowDraftAction): boolean {
+  return props.chatLoading || !props.aiEnabled || !isWorkflowActionAvailable(action)
+}
+
+function resolveWorkflowActionButtonTitle(action: WorkflowDraftAction): string {
+  if (!isWorkflowActionDisabled(action))
+    return ''
+  if (props.chatLoading)
+    return 'AI 运行中，请稍候。'
+  return resolveWorkflowActionUnavailableReason(action)
+}
+
+function requestWorkflowDraft(action: WorkflowDraftAction): void {
+  if (isWorkflowActionDisabled(action))
+    return
+  emit('requestWorkflowDraft', {
+    action,
+    template: workflowTemplate.value,
+    architectureView: workflowTemplate.value === 'architecture' ? workflowArchitectureView.value : undefined,
+    stylePreset: workflowStylePreset.value,
+    layoutPreset: workflowLayoutPreset.value,
+  })
+}
+
 function selectCommentThread(threadId: string): void {
   emit('selectCommentThread', threadId)
 }
@@ -402,6 +647,32 @@ function resolveAgentDocActionLabel(action: AiWorkspaceDocumentAction): string {
   if (action === 'restructure')
     return '整理结构'
   return 'AgentDoc'
+}
+
+function resolveWorkflowActionLabel(action: WorkflowDraftAction): string {
+  if (action === 'complete')
+    return 'AI 补全'
+  if (action === 'refine')
+    return 'AI 续改'
+  if (action === 'restyle')
+    return '调样式'
+  return 'AI 生成'
+}
+
+function resolveWorkflowTemplateLabel(template: 'flowchart' | 'mindmap' | 'er' | 'architecture'): string {
+  return WORKFLOW_TEMPLATE_OPTIONS.find(item => item.value === template)?.label || template
+}
+
+function resolveSystemMessageLabel(eventType: 'progress' | 'tool'): string {
+  if (eventType === 'tool')
+    return '工具调用'
+  return '执行步骤'
+}
+
+function resolveSystemMessageIcon(eventType: 'progress' | 'tool'): string {
+  if (eventType === 'tool')
+    return 'terminal'
+  return 'progress_activity'
 }
 
 function isChangeActing(changeId: string): boolean {
@@ -505,6 +776,12 @@ function resolveSessionTitle(session: AiChatSession): string {
   const title = String(session.title || '').trim()
   if (!title)
     return '未命名会话'
+  if (title.startsWith('Loopy 答辩模拟'))
+    return title.replace('Loopy 答辩模拟', 'AgentDef')
+  if (title.startsWith('Loopy 答辩会话'))
+    return title.replace('Loopy 答辩会话', 'AgentDef')
+  if (title.startsWith('答辩模拟'))
+    return title.replace('答辩模拟', 'AgentDef')
   if (title.startsWith('Loopy 文稿助手'))
     return title.replace('Loopy 文稿助手', 'Loopy AgentDoc')
   if (title.startsWith('Loopy 文档增强'))
@@ -523,6 +800,8 @@ function resolveSessionVisualType(session: AiChatSession): WorkspaceSessionVisua
     return 'topic_proposal'
   if (title.includes('终审助手'))
     return 'final_review'
+  if (title.includes('AgentDef'))
+    return 'defense'
   if (title.includes('答辩'))
     return 'defense'
   if (title.includes('自动优化'))
@@ -602,6 +881,33 @@ function resolveAgentDocDraft(message: ChatMessage): AiWorkspaceDocumentDraft | 
   return isAgentDocDraft(draft) ? draft : null
 }
 
+function isWorkflowDraft(value: unknown): value is AiWorkspaceWorkflowDraft {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return false
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.action === 'string'
+    && typeof candidate.title === 'string'
+    && typeof candidate.summary === 'string'
+    && typeof candidate.resourceId === 'string'
+    && typeof candidate.template === 'string'
+    && typeof candidate.sourceFormat === 'string'
+    && typeof candidate.sourceText === 'string'
+    && typeof candidate.stylePreset === 'string'
+    && typeof candidate.layoutPreset === 'string'
+    && typeof candidate.baseWorkflowHash === 'string'
+  )
+}
+
+function resolveWorkflowDraft(message: ChatMessage): AiWorkspaceWorkflowDraft | null {
+  const metadata = message.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return null
+  const draft = (metadata as Record<string, unknown>).workflowDraft
+  return isWorkflowDraft(draft) ? draft : null
+}
+
 const latestAgentDocDraftKeyByResource = computed(() => {
   const result = new Map<string, string>()
   for (const entry of visibleChatMessageEntries.value) {
@@ -614,6 +920,24 @@ const latestAgentDocDraftKeyByResource = computed(() => {
 
 const appliedAgentDocDraftKeySet = computed(() => {
   return new Set((props.appliedAgentDocDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
+})
+
+const latestWorkflowDraftKeyByResource = computed(() => {
+  const result = new Map<string, string>()
+  for (const entry of visibleChatMessageEntries.value) {
+    if (!entry.workflowDraft)
+      continue
+    result.set(entry.workflowDraft.resourceId, buildWorkflowDraftKey(entry.workflowDraft))
+  }
+  return result
+})
+
+const appliedWorkflowDraftKeySet = computed(() => {
+  return new Set((props.appliedWorkflowDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
+})
+
+const discardedWorkflowDraftKeySet = computed(() => {
+  return new Set((props.discardedWorkflowDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
 })
 
 function resolveAgentDocDraftStatus(draft: AiWorkspaceDocumentDraft): AgentDocDraftStatus {
@@ -635,6 +959,27 @@ function resolveAgentDocDraftStatus(draft: AiWorkspaceDocumentDraft): AgentDocDr
   return 'pending'
 }
 
+function resolveWorkflowDraftStatus(draft: AiWorkspaceWorkflowDraft): WorkflowDraftStatus {
+  const draftKey = buildWorkflowDraftKey(draft)
+  if (discardedWorkflowDraftKeySet.value.has(draftKey))
+    return 'discarded'
+  if (appliedWorkflowDraftKeySet.value.has(draftKey))
+    return 'applied'
+
+  const latestDraftKey = latestWorkflowDraftKeyByResource.value.get(draft.resourceId)
+  if (latestDraftKey && latestDraftKey !== draftKey)
+    return 'superseded'
+
+  if (
+    draft.resourceId !== String(props.workflowResourceId || '').trim()
+    || draft.baseWorkflowHash !== String(props.workflowHash || '').trim()
+  ) {
+    return 'expired'
+  }
+
+  return 'pending'
+}
+
 function resolveAgentDocDraftStatusLabel(status: AgentDocDraftStatus): string {
   if (status === 'applied')
     return '已应用'
@@ -643,6 +988,26 @@ function resolveAgentDocDraftStatusLabel(status: AgentDocDraftStatus): string {
   if (status === 'expired')
     return '已过期，请重新生成'
   return '待确认，确认后才会替换当前文档内容'
+}
+
+function resolveWorkflowDraftStatusLabel(status: WorkflowDraftStatus): string {
+  if (status === 'applied')
+    return '已应用'
+  if (status === 'discarded')
+    return '已丢弃'
+  if (status === 'superseded')
+    return '已被更新草案替代'
+  if (status === 'expired')
+    return '已过期，请重新生成'
+  return '待确认，确认后才会替换当前流程画布'
+}
+
+function resolveWorkflowDraftBlockedReason(draft: AiWorkspaceWorkflowDraft): string {
+  if (resolveWorkflowDraftStatus(draft) !== 'pending')
+    return ''
+  if (Math.max(0, Number(props.workflowPageCount || 0)) > 1)
+    return '多页流程资源当前仅支持预览，不支持直接应用。'
+  return ''
 }
 
 function buildFallbackAgentDocDiffRows(leftLines: string[], rightLines: string[]): AgentDocDiffRow[] {
@@ -780,6 +1145,20 @@ function requestApplyAgentDocDraft(draft: AiWorkspaceDocumentDraft): void {
   emit('applyDocumentDraft', draft)
 }
 
+function requestApplyWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
+  if (resolveWorkflowDraftStatus(draft) !== 'pending')
+    return
+  if (resolveWorkflowDraftBlockedReason(draft))
+    return
+  emit('applyWorkflowDraft', draft)
+}
+
+function requestDiscardWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
+  if (resolveWorkflowDraftStatus(draft) === 'applied')
+    return
+  emit('discardWorkflowDraft', draft)
+}
+
 function formatSessionDetailTime(value: string | null | undefined): string {
   const normalized = String(value || '').trim()
   if (!normalized)
@@ -830,6 +1209,32 @@ function defenseStageLabel(stage: AiDefenseStage | undefined): string {
   if (stage === 'closing')
     return '收束'
   return '未开始'
+}
+
+function defenseRealtimeConnectionLabel(state?: DefenseRealtimeSessionMeta['connectionState']): string {
+  if (state === 'bootstrapping')
+    return '握手中'
+  if (state === 'connecting')
+    return '连接中'
+  if (state === 'connected')
+    return '已连接'
+  if (state === 'interrupted')
+    return '已中断'
+  if (state === 'error')
+    return '异常'
+  if (state === 'closed')
+    return '已关闭'
+  return '待机'
+}
+
+function handleDefenseRealtimeProviderChange(event: Event): void {
+  const value = String((event.target as HTMLSelectElement | null)?.value || 'qwen').trim()
+  emit('updateDefenseRealtimeProvider', value === 'coze' ? 'coze' : 'qwen')
+}
+
+function handleDefenseRealtimeMediaModeChange(event: Event): void {
+  const value = String((event.target as HTMLSelectElement | null)?.value || 'audio_video').trim()
+  emit('updateDefenseRealtimeMediaMode', value === 'audio' ? 'audio' : 'audio_video')
 }
 
 const defensePersonaFormVisible = ref(false)
@@ -1019,7 +1424,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               v-if="openChatSessions.length === 0"
               class="workspace-right-sidebar__session-empty"
             >
-              暂无打开的会话
+              {{ sessionEmptyText }}
             </div>
             <a-trigger
               v-for="session in openChatSessions"
@@ -1030,7 +1435,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             >
               <button
                 class="workspace-right-sidebar__session-tab"
-                :class="{ 'workspace-right-sidebar__session-tab--active': session.id === activeChatSessionId }"
+                :class="{
+                  'workspace-right-sidebar__session-tab--active': session.id === activeChatSessionId,
+                  'workspace-right-sidebar__session-tab--fresh': isChatSessionHighlighted(session.id),
+                }"
                 :title="resolveSessionTitle(session)"
                 type="button"
                 @click="handleChatSessionSwitch(session.id)"
@@ -1065,6 +1473,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
           </div>
 
           <div class="workspace-right-sidebar__session-actions">
+            <div v-if="props.chatSessionsRefreshing" class="workspace-right-sidebar__session-refreshing">
+              <span class="workspace-right-sidebar__session-refreshing-dot" aria-hidden="true" />
+              <span>刷新中</span>
+            </div>
             <a-trigger
               class="workspace-right-sidebar__session-history-trigger"
               trigger="click"
@@ -1137,13 +1549,112 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             <button
               class="workspace-right-sidebar__session-action workspace-right-sidebar__session-create"
               type="button"
-              title="新建对话"
-              aria-label="新建对话"
+              :title="createSessionLabel"
+              :aria-label="createSessionLabel"
               :disabled="!props.aiEnabled"
               @click="handleCreateChatSession"
             >
               <span class="material-symbols-outlined workspace-right-sidebar__session-create-icon">add</span>
             </button>
+          </div>
+        </div>
+
+        <div
+          v-if="showWorkflowAgentControls"
+          class="workspace-workflow-toolbar"
+          data-testid="workspace-workflow-toolbar"
+        >
+          <div class="workspace-workflow-toolbar__actions">
+            <button
+              class="workspace-workflow-toolbar__action"
+              type="button"
+              :disabled="isWorkflowActionDisabled('generate')"
+              :title="resolveWorkflowActionButtonTitle('generate') || undefined"
+              @click="requestWorkflowDraft('generate')"
+            >
+              AI 生成
+            </button>
+            <button
+              class="workspace-workflow-toolbar__action"
+              type="button"
+              :disabled="isWorkflowActionDisabled('complete')"
+              :title="resolveWorkflowActionButtonTitle('complete') || undefined"
+              @click="requestWorkflowDraft('complete')"
+            >
+              AI 补全
+            </button>
+            <button
+              class="workspace-workflow-toolbar__action"
+              type="button"
+              :disabled="isWorkflowActionDisabled('refine')"
+              :title="resolveWorkflowActionButtonTitle('refine') || undefined"
+              @click="requestWorkflowDraft('refine')"
+            >
+              AI 续改
+            </button>
+            <button
+              class="workspace-workflow-toolbar__action"
+              type="button"
+              :disabled="isWorkflowActionDisabled('restyle')"
+              :title="resolveWorkflowActionButtonTitle('restyle') || undefined"
+              @click="requestWorkflowDraft('restyle')"
+            >
+              调样式
+            </button>
+          </div>
+
+          <div class="workspace-workflow-toolbar__filters">
+            <label class="workspace-workflow-toolbar__field">
+              <span>图类型</span>
+              <select v-model="workflowTemplate" class="workspace-workflow-toolbar__select">
+                <option
+                  v-for="option in WORKFLOW_TEMPLATE_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+
+            <label v-if="workflowTemplate === 'architecture'" class="workspace-workflow-toolbar__field">
+              <span>架构视图</span>
+              <select v-model="workflowArchitectureView" class="workspace-workflow-toolbar__select">
+                <option
+                  v-for="option in WORKFLOW_ARCHITECTURE_VIEW_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+
+            <label class="workspace-workflow-toolbar__field">
+              <span>样式</span>
+              <select v-model="workflowStylePreset" class="workspace-workflow-toolbar__select">
+                <option
+                  v-for="option in WORKFLOW_STYLE_PRESET_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+
+            <label class="workspace-workflow-toolbar__field">
+              <span>布局</span>
+              <select v-model="workflowLayoutPreset" class="workspace-workflow-toolbar__select">
+                <option
+                  v-for="option in WORKFLOW_LAYOUT_PRESET_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
           </div>
         </div>
       </template>
@@ -1270,111 +1781,217 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 :class="entry.message.role === 'user' ? 'justify-end' : ''"
               >
                 <div
-                  v-if="entry.message.role === 'assistant'"
-                  class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
+                  v-if="entry.systemMessage"
+                  class="workspace-chat-system-card"
+                  :class="{ 'workspace-chat-system-card--live': entry.isLive }"
+                  data-testid="workspace-chat-system-card"
                 >
-                  <span class="material-symbols-outlined text-sm">smart_toy</span>
+                  <div class="workspace-chat-system-card__icon">
+                    <span class="material-symbols-outlined text-sm">{{ resolveSystemMessageIcon(entry.systemMessage.eventType) }}</span>
+                  </div>
+                  <div class="workspace-chat-system-card__copy">
+                    <div class="workspace-chat-system-card__eyebrow">
+                      {{ resolveSystemMessageLabel(entry.systemMessage.eventType) }}
+                    </div>
+                    <div class="workspace-chat-system-card__title">
+                      {{ entry.systemMessage.title }}
+                    </div>
+                    <div v-if="entry.systemMessage.payloadSummary" class="workspace-chat-system-card__summary">
+                      {{ entry.systemMessage.payloadSummary }}
+                    </div>
+                  </div>
+                  <span
+                    v-if="entry.isLive"
+                    class="workspace-chat-system-card__status"
+                  >
+                    进行中
+                  </span>
                 </div>
 
-                <div
-                  class="flex flex-col gap-2 max-w-[86%]"
-                  :class="entry.message.role === 'user' ? 'items-end' : 'items-start'"
-                >
+                <template v-else>
                   <div
-                    class="text-[11px] leading-relaxed p-3 rounded-lg w-full whitespace-pre-wrap"
-                    :class="entry.message.role === 'user'
-                      ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none'
-                      : 'bg-slate-100 text-slate-700 rounded-tl-none'"
+                    v-if="entry.message.role === 'assistant'"
+                    class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
                   >
-                    {{ entry.message.content }}
+                    <span class="material-symbols-outlined text-sm">smart_toy</span>
                   </div>
 
                   <div
-                    v-if="entry.message.role === 'assistant' && entry.agentDocDraft"
-                    class="workspace-agent-doc-card"
+                    class="flex flex-col gap-2 max-w-[86%]"
+                    :class="entry.message.role === 'user' ? 'items-end' : 'items-start'"
                   >
-                    <div class="workspace-agent-doc-card__header">
-                      <div class="workspace-agent-doc-card__header-copy">
-                        <div class="workspace-agent-doc-card__eyebrow">
-                          AgentDoc 草案
+                    <div
+                      class="text-[11px] leading-relaxed p-3 rounded-lg w-full"
+                      :class="entry.message.role === 'user'
+                        ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none whitespace-pre-wrap'
+                        : 'bg-slate-100 text-slate-700 rounded-tl-none'"
+                    >
+                      <template v-if="entry.message.role === 'user'">
+                        {{ entry.message.content }}
+                      </template>
+                      <WorkspaceAssistantMessageContent
+                        v-else
+                        :message="entry.message"
+                        @open-resource="emit('openResource', $event)"
+                      />
+                    </div>
+
+                    <div
+                      v-if="entry.message.role === 'assistant' && entry.agentDocDraft"
+                      class="workspace-agent-doc-card"
+                    >
+                      <div class="workspace-agent-doc-card__header">
+                        <div class="workspace-agent-doc-card__header-copy">
+                          <div class="workspace-agent-doc-card__eyebrow">
+                            AgentDoc 草案
+                          </div>
+                          <div class="workspace-agent-doc-card__title">
+                            {{ entry.agentDocDraft.title || '待确认修改' }}
+                          </div>
+                          <div v-if="entry.agentDocDraft.summary" class="workspace-agent-doc-card__summary">
+                            {{ entry.agentDocDraft.summary }}
+                          </div>
                         </div>
-                        <div class="workspace-agent-doc-card__title">
-                          {{ entry.agentDocDraft.title || '待确认修改' }}
-                        </div>
-                        <div v-if="entry.agentDocDraft.summary" class="workspace-agent-doc-card__summary">
-                          {{ entry.agentDocDraft.summary }}
+                        <div class="workspace-agent-doc-card__meta">
+                          <span class="workspace-agent-doc-card__action">
+                            {{ resolveAgentDocActionLabel(entry.agentDocDraft.action) }}
+                          </span>
+                          <span
+                            class="workspace-agent-doc-card__status"
+                            :class="`workspace-agent-doc-card__status--${resolveAgentDocDraftStatus(entry.agentDocDraft)}`"
+                          >
+                            {{ resolveAgentDocDraftStatusLabel(resolveAgentDocDraftStatus(entry.agentDocDraft)) }}
+                          </span>
                         </div>
                       </div>
-                      <div class="workspace-agent-doc-card__meta">
-                        <span class="workspace-agent-doc-card__action">
-                          {{ resolveAgentDocActionLabel(entry.agentDocDraft.action) }}
-                        </span>
-                        <span
-                          class="workspace-agent-doc-card__status"
-                          :class="`workspace-agent-doc-card__status--${resolveAgentDocDraftStatus(entry.agentDocDraft)}`"
+
+                      <div class="workspace-agent-doc-card__diff">
+                        <div class="workspace-agent-doc-card__diff-header">
+                          <span>改前</span>
+                          <span>改后</span>
+                        </div>
+                        <div class="workspace-agent-doc-card__diff-body">
+                          <div
+                            v-for="row in buildAgentDocDiffRows(entry.agentDocDraft)"
+                            :key="row.key"
+                            class="workspace-agent-doc-card__diff-row"
+                            :class="resolveAgentDocDiffClass(row.kind)"
+                          >
+                            <div class="workspace-agent-doc-card__diff-side">
+                              <span class="workspace-agent-doc-card__diff-line-number">{{ row.leftLineNumber || ' ' }}</span>
+                              <pre class="workspace-agent-doc-card__diff-text">{{ row.leftText || ' ' }}</pre>
+                            </div>
+                            <div class="workspace-agent-doc-card__diff-side">
+                              <span class="workspace-agent-doc-card__diff-line-number">{{ row.rightLineNumber || ' ' }}</span>
+                              <pre class="workspace-agent-doc-card__diff-text">{{ row.rightText || ' ' }}</pre>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="workspace-agent-doc-card__footer">
+                        <button
+                          class="workspace-agent-doc-card__apply"
+                          type="button"
+                          :disabled="resolveAgentDocDraftStatus(entry.agentDocDraft) !== 'pending'"
+                          @click="requestApplyAgentDocDraft(entry.agentDocDraft)"
                         >
-                          {{ resolveAgentDocDraftStatusLabel(resolveAgentDocDraftStatus(entry.agentDocDraft)) }}
-                        </span>
+                          确认替换
+                        </button>
                       </div>
                     </div>
 
-                    <div class="workspace-agent-doc-card__diff">
-                      <div class="workspace-agent-doc-card__diff-header">
-                        <span>改前</span>
-                        <span>改后</span>
-                      </div>
-                      <div class="workspace-agent-doc-card__diff-body">
-                        <div
-                          v-for="row in buildAgentDocDiffRows(entry.agentDocDraft)"
-                          :key="row.key"
-                          class="workspace-agent-doc-card__diff-row"
-                          :class="resolveAgentDocDiffClass(row.kind)"
-                        >
-                          <div class="workspace-agent-doc-card__diff-side">
-                            <span class="workspace-agent-doc-card__diff-line-number">{{ row.leftLineNumber || ' ' }}</span>
-                            <pre class="workspace-agent-doc-card__diff-text">{{ row.leftText || ' ' }}</pre>
+                    <div
+                      v-if="entry.message.role === 'assistant' && entry.workflowDraft"
+                      class="workspace-agent-doc-card workspace-agent-doc-card--workflow"
+                    >
+                      <div class="workspace-agent-doc-card__header">
+                        <div class="workspace-agent-doc-card__header-copy">
+                          <div class="workspace-agent-doc-card__eyebrow">
+                            AgentProto 草案
                           </div>
-                          <div class="workspace-agent-doc-card__diff-side">
-                            <span class="workspace-agent-doc-card__diff-line-number">{{ row.rightLineNumber || ' ' }}</span>
-                            <pre class="workspace-agent-doc-card__diff-text">{{ row.rightText || ' ' }}</pre>
+                          <div class="workspace-agent-doc-card__title">
+                            {{ entry.workflowDraft.title || '待确认流程草案' }}
+                          </div>
+                          <div v-if="entry.workflowDraft.summary" class="workspace-agent-doc-card__summary">
+                            {{ entry.workflowDraft.summary }}
                           </div>
                         </div>
+                        <div class="workspace-agent-doc-card__meta">
+                          <span class="workspace-agent-doc-card__action">
+                            {{ resolveWorkflowActionLabel(entry.workflowDraft.action) }}
+                          </span>
+                          <span
+                            class="workspace-agent-doc-card__status"
+                            :class="`workspace-agent-doc-card__status--${resolveWorkflowDraftStatus(entry.workflowDraft)}`"
+                          >
+                            {{ resolveWorkflowDraftStatusLabel(resolveWorkflowDraftStatus(entry.workflowDraft)) }}
+                          </span>
+                        </div>
                       </div>
-                    </div>
 
-                    <div class="workspace-agent-doc-card__footer">
-                      <button
-                        class="workspace-agent-doc-card__apply"
-                        type="button"
-                        :disabled="resolveAgentDocDraftStatus(entry.agentDocDraft) !== 'pending'"
-                        @click="requestApplyAgentDocDraft(entry.agentDocDraft)"
-                      >
-                        确认替换
-                      </button>
+                      <div class="workspace-workflow-draft-card__body">
+                        <div class="workspace-workflow-draft-card__meta-grid">
+                          <span>图类型：{{ resolveWorkflowTemplateLabel(entry.workflowDraft.template) }}</span>
+                          <span>样式：{{ entry.workflowDraft.stylePreset }}</span>
+                          <span>布局：{{ entry.workflowDraft.layoutPreset }}</span>
+                          <span v-if="entry.workflowDraft.template === 'architecture' && entry.workflowDraft.architectureView">
+                            视图：{{ entry.workflowDraft.architectureView }}
+                          </span>
+                        </div>
+                        <div v-if="resolveWorkflowDraftBlockedReason(entry.workflowDraft)" class="workspace-workflow-draft-card__hint">
+                          {{ resolveWorkflowDraftBlockedReason(entry.workflowDraft) }}
+                        </div>
+                      </div>
+
+                      <div class="workspace-agent-doc-card__footer">
+                        <button
+                          class="workspace-agent-doc-card__apply"
+                          type="button"
+                          :disabled="resolveWorkflowDraftStatus(entry.workflowDraft) !== 'pending' || Boolean(resolveWorkflowDraftBlockedReason(entry.workflowDraft))"
+                          @click="requestApplyWorkflowDraft(entry.workflowDraft)"
+                        >
+                          应用到当前流程画布
+                        </button>
+                        <button
+                          class="workspace-agent-doc-card__ghost"
+                          type="button"
+                          :disabled="resolveWorkflowDraftStatus(entry.workflowDraft) === 'applied'"
+                          @click="requestDiscardWorkflowDraft(entry.workflowDraft)"
+                        >
+                          丢弃
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div
-                  v-if="entry.message.role === 'user'"
-                  class="flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
-                >
-                  <UnifiedAvatar
-                    :name="currentUserName"
-                    :src="currentUserAvatarUrl"
-                    :size="24"
-                  />
-                </div>
+                  <div
+                    v-if="entry.message.role === 'user'"
+                    class="flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
+                  >
+                    <UnifiedAvatar
+                      :name="currentUserName"
+                      :src="currentUserAvatarUrl"
+                      :size="24"
+                    />
+                  </div>
+                </template>
               </div>
             </div>
 
             <div v-if="showDialogAskEmpty" class="text-[11px] text-slate-500 leading-5 p-3 border border-slate-200 rounded border-dashed">
-              当前会话还没有消息，直接发送问题开始对话。
+              {{ props.workbenchMode === 'defense' ? '当前 AgentDef 还没有消息，直接发送问题开始当前答辩会话。' : '当前会话还没有消息，直接发送问题开始对话。' }}
             </div>
 
             <div v-if="aiMode === 'dialog_ask'" class="text-[11px] text-emerald-700 leading-5 p-3 border border-emerald-200 rounded bg-emerald-50">
-              <template v-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'design'">
+              <template v-if="props.workbenchMode === 'defense'">
+                当前为 AgentDef 只读对话模式，会围绕比赛状态、评委追问和证据缺口给出下一步建议，不会直接改写项目数据。
+              </template>
+              <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'design'">
                 当前为设计助手，只做只读分析，优先帮助你梳理页面层级、布局结构、视觉一致性和交互说明。
+              </template>
+              <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantLabel === 'AgentProto'">
+                当前为 AgentProto，只做只读分析，优先帮助你梳理流程阶段、责任角色、输入输出、分支条件和跨节点衔接。
               </template>
               <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'prototype'">
                 当前为原型助手，只做只读分析，优先帮助你梳理页面流转、模块拆分、关键状态和交互路径。
@@ -1522,26 +2139,147 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 <div class="flex gap-2 items-center justify-between">
                   <div>
                     <div class="text-xs text-slate-700 font-semibold">
-                      答辩状态
+                      AgentDef 状态
                     </div>
                     <p class="text-[11px] text-slate-500 mt-1">
                       阶段：{{ defenseStageLabel(defenseStage) }} · 已完成 {{ defenseTurnCount }} 轮
                     </p>
+                    <p class="text-[11px] text-slate-500 mt-1">
+                      {{ defenseSessionTimingText }}
+                    </p>
                   </div>
+                  <div class="flex gap-2 items-center">
+                    <button
+                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                      :disabled="defenseSummaryLoading || !props.aiEnabled"
+                      @click="emit('generateDefenseSummary')"
+                    >
+                      {{ defenseSummaryLoading ? '生成中...' : '生成总结' }}
+                    </button>
+                    <button
+                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                      :disabled="!props.aiEnabled"
+                      @click="emit('startDefenseRealtime')"
+                    >
+                      实时答辩
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="p-3 border border-slate-200 rounded bg-white space-y-3">
+                <div class="flex gap-2 items-center justify-between">
+                  <div class="text-xs text-slate-700 font-semibold">
+                    Provider 诊断
+                  </div>
+                  <div class="flex gap-2 items-center">
+                    <button
+                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                      type="button"
+                      :disabled="!defenseRealtimeCanInterrupt"
+                      @click="emit('interruptDefenseRealtime')"
+                    >
+                      中断
+                    </button>
+                    <button
+                      class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
+                      type="button"
+                      :disabled="props.defenseRealtimeState?.bootstrapState === 'bootstrapping'"
+                      @click="emit('reconnectDefenseRealtime')"
+                    >
+                      重连
+                    </button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="space-y-1">
+                    <span class="text-[11px] text-slate-500">Provider</span>
+                    <select
+                      class="w-full h-8 rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-700"
+                      :value="props.defenseRealtimeState?.provider || 'qwen'"
+                      :disabled="defenseRealtimeSessionLocked"
+                      @change="handleDefenseRealtimeProviderChange"
+                    >
+                      <option value="qwen">
+                        千问
+                      </option>
+                      <option value="coze">
+                        Coze
+                      </option>
+                    </select>
+                  </label>
+                  <label class="space-y-1">
+                    <span class="text-[11px] text-slate-500">媒体模式</span>
+                    <select
+                      class="w-full h-8 rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-700"
+                      :value="props.defenseRealtimeState?.mediaMode || 'audio_video'"
+                      :disabled="defenseRealtimeSessionLocked"
+                      @change="handleDefenseRealtimeMediaModeChange"
+                    >
+                      <option value="audio_video">
+                        音视频理解
+                      </option>
+                      <option value="audio">
+                        仅音频
+                      </option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="flex gap-2">
                   <button
                     class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                    :disabled="defenseSummaryLoading || !props.aiEnabled"
-                    @click="emit('generateDefenseSummary')"
+                    type="button"
+                    @click="emit('toggleDefenseRealtimeAudio', !(props.defenseRealtimeState?.audioEnabled !== false))"
                   >
-                    {{ defenseSummaryLoading ? '生成中...' : '生成总结' }}
+                    麦克风 {{ props.defenseRealtimeState?.audioEnabled !== false ? '开' : '关' }}
                   </button>
                   <button
                     class="text-[11px] font-semibold px-2 border border-slate-300 rounded bg-white h-7 hover:bg-slate-100 disabled:opacity-60"
-                    :disabled="!props.aiEnabled"
-                    @click="emit('startDefenseRealtime')"
+                    type="button"
+                    :disabled="defenseRealtimeVideoToggleDisabled"
+                    @click="emit('toggleDefenseRealtimeVideo', !(props.defenseRealtimeState?.videoEnabled === true))"
                   >
-                    语音答辩
+                    摄像头 {{ props.defenseRealtimeState?.videoEnabled === true ? '开' : '关' }}
                   </button>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                  <div
+                    v-for="item in defenseRealtimeRows"
+                    :key="item.label"
+                    class="rounded border border-slate-200 bg-slate-50 p-2"
+                  >
+                    <div class="text-[10px] uppercase tracking-[0.12em] text-slate-400">
+                      {{ item.label }}
+                    </div>
+                    <div class="text-[11px] text-slate-700 mt-1">
+                      {{ item.value }}
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="props.defenseRealtimeState?.lastError" class="text-[11px] text-amber-700 p-2 border border-amber-200 rounded bg-amber-50">
+                  token / room / 设备链路异常：{{ props.defenseRealtimeState.lastError }}
+                </div>
+
+                <div class="space-y-1">
+                  <div class="text-[11px] text-slate-500">
+                    Provider 日志
+                  </div>
+                  <div v-if="props.defenseRealtimeLogs.length === 0" class="text-[11px] text-slate-500 p-2 border border-slate-200 rounded border-dashed">
+                    还没有 provider 日志，等待 bootstrap、连接或首句发言。
+                  </div>
+                  <div v-else class="space-y-1">
+                    <div
+                      v-for="item in props.defenseRealtimeLogs.slice(-4)"
+                      :key="item.id"
+                      class="text-[11px] text-slate-600 p-2 border border-slate-200 rounded bg-slate-50"
+                    >
+                      {{ item.message }}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1826,8 +2564,8 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 class="workspace-chat-composer__send"
                 :class="{ 'workspace-chat-composer__send--running': chatLoading }"
                 :disabled="props.chatInterrupting || (!props.aiEnabled && !chatLoading)"
-                :aria-label="chatLoading ? '打断生成' : '发送消息'"
-                :title="chatLoading ? '打断生成' : '发送消息'"
+                :aria-label="chatLoading ? (props.workbenchMode === 'defense' ? '打断 AgentDef' : '打断生成') : (props.workbenchMode === 'defense' ? '发送给 AgentDef' : '发送消息')"
+                :title="chatLoading ? (props.workbenchMode === 'defense' ? '打断 AgentDef' : '打断生成') : (props.workbenchMode === 'defense' ? '发送给 AgentDef' : '发送消息')"
                 @click="chatLoading ? emit('interruptChat') : emit('sendChat')"
               >
                 <span class="workspace-chat-composer__send-spark" aria-hidden="true" />
@@ -1985,6 +2723,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   color: #1d4ed8;
 }
 
+.workspace-right-sidebar__session-tab--fresh {
+  animation: workspace-right-sidebar-session-fresh 1.35s ease-out;
+}
+
 .workspace-right-sidebar__session-tab::after {
   content: '';
   position: absolute;
@@ -2056,6 +2798,28 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex: 0 0 auto;
   align-items: stretch;
   height: 100%;
+}
+
+.workspace-right-sidebar__session-refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 12px;
+  border-left: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workspace-right-sidebar__session-refreshing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #3b82f6;
+  animation: workspace-right-sidebar-refresh-pulse 1s ease-in-out infinite;
 }
 
 .workspace-right-sidebar__session-history-trigger {
@@ -2133,6 +2897,29 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   color: #94a3b8;
   font-size: 11px;
   line-height: 1.5;
+}
+
+@keyframes workspace-right-sidebar-refresh-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes workspace-right-sidebar-session-fresh {
+  0% {
+    background: rgba(59, 130, 246, 0.16);
+  }
+
+  100% {
+    background: #fff;
+  }
 }
 
 .workspace-right-sidebar__session-history-list {
@@ -2243,6 +3030,82 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.workspace-chat-system-card {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(100%, 86%);
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.98));
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.workspace-chat-system-card--live {
+  border-color: #bfdbfe;
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.1),
+    0 0 18px rgba(96, 165, 250, 0.1);
+}
+
+.workspace-chat-system-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.workspace-chat-system-card__copy {
+  min-width: 0;
+}
+
+.workspace-chat-system-card__eyebrow {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-chat-system-card__title {
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.workspace-chat-system-card__summary {
+  margin-top: 6px;
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workspace-chat-system-card__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .workspace-chat-composer {
@@ -2691,6 +3554,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   color: #92400e;
 }
 
+.workspace-agent-doc-card__status--discarded {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
 .workspace-agent-doc-card__diff {
   background: #f8fafc;
 }
@@ -2794,6 +3663,107 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-agent-doc-card__apply:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.workspace-agent-doc-card__ghost {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workspace-agent-doc-card__ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.workspace-agent-doc-card--workflow .workspace-agent-doc-card__footer {
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.workspace-workflow-draft-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid #e5edf7;
+  background: #f8fafc;
+}
+
+.workspace-workflow-draft-card__meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  color: #334155;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.workspace-workflow-draft-card__hint {
+  padding: 8px 10px;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  background: #fefce8;
+  color: #92400e;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.workspace-workflow-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e5edf7;
+}
+
+.workspace-workflow-toolbar__actions,
+.workspace-workflow-toolbar__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace-workflow-toolbar__action {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workspace-workflow-toolbar__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.workspace-workflow-toolbar__field {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 132px;
+  flex-direction: column;
+  gap: 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.workspace-workflow-toolbar__select {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 11px;
 }
 
 .workspace-issue-pill {

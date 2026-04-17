@@ -13,7 +13,6 @@ function toNumber(raw: unknown, fallback: number): number {
   return fallback
 }
 
-const DEFAULT_ONLYOFFICE_SOURCE_BASE_URL = 'http://127.0.0.1:3510'
 const DEFAULT_ONLYOFFICE_TIMEOUT_MS = 120000
 const DEFAULT_ONLYOFFICE_RETRY_LIMIT = 3
 const DEFAULT_ONLYOFFICE_WORKER_INTERVAL_MS = 2500
@@ -77,24 +76,6 @@ function resolveRequestOrigin(event?: H3Event): string {
   }
 }
 
-function isLoopbackHttpUrl(rawUrl: string): boolean {
-  const normalized = trimTrailingSlash(rawUrl)
-  if (!/^https?:\/\//i.test(normalized))
-    return false
-
-  try {
-    const parsed = new URL(normalized)
-    const host = String(parsed.hostname || '').toLowerCase()
-    return host === '127.0.0.1'
-      || host === 'localhost'
-      || host === '::1'
-      || host === '0.0.0.0'
-  }
-  catch {
-    return false
-  }
-}
-
 function resolveOnlyOfficeSourceBaseURL(runtime: ReturnType<typeof useRuntimeConfig>, event?: H3Event): string {
   const hintState = getOnlyOfficeSourceBaseHintState()
   const explicitSourceBase = trimTrailingSlash(String(runtime.onlyOffice?.sourceBaseURL ?? ''))
@@ -111,7 +92,7 @@ function resolveOnlyOfficeSourceBaseURL(runtime: ReturnType<typeof useRuntimeCon
       return origin
     }
     catch {
-      return DEFAULT_ONLYOFFICE_SOURCE_BASE_URL
+      return ''
     }
   }
 
@@ -124,13 +105,12 @@ function resolveOnlyOfficeSourceBaseURL(runtime: ReturnType<typeof useRuntimeCon
   if (hintState.value)
     return hintState.value
 
-  const endpoint = trimTrailingSlash(String(runtime.onlyOffice?.endpoint ?? ''))
-  if (endpoint && !isLoopbackHttpUrl(endpoint) && !hintState.warnedFallback) {
+  if (trimTrailingSlash(String(runtime.onlyOffice?.endpoint ?? '')) && !hintState.warnedFallback) {
     hintState.warnedFallback = true
-    console.warn('[runtime-settings] ONLYOFFICE sourceBaseURL 未配置且无法从请求推断，当前回退到本地地址。请设置 WINLOOP_PUBLIC_BASE_URL。')
+    console.warn('[runtime-settings] ONLYOFFICE sourceBaseURL 未配置且无法从运行时推断。请显式设置 WINLOOP_PUBLIC_BASE_URL。')
   }
 
-  return DEFAULT_ONLYOFFICE_SOURCE_BASE_URL
+  return ''
 }
 
 export interface RuntimeSettings {
@@ -146,6 +126,7 @@ export interface RuntimeSettings {
     apiKey: string
     model: string
     embeddingModel: string
+    visionModel: string
     modelCatalogJson: string
     modelPricingJson: string
     providersJson: string
@@ -244,6 +225,24 @@ export interface RuntimeSettings {
       maxAttempts: number
     }
   }
+  defenseRealtime: {
+    qwen: {
+      baseWsUrl: string
+      apiKey: string
+      workspaceId: string
+      appId: string
+      voice: string
+      frameIntervalMs: number
+    }
+    coze: {
+      baseUrl: string
+      botId: string
+      connectorId: string
+      voiceId: string
+      authMode: string
+      patOrOauthSecret: string
+    }
+  }
 }
 
 function toBoolean(raw: unknown, fallback: boolean): boolean {
@@ -261,6 +260,15 @@ function toBoolean(raw: unknown, fallback: boolean): boolean {
 
 export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
   const runtime = useRuntimeConfig(event)
+  const runtimeDefenseRealtime = runtime.defenseRealtime && typeof runtime.defenseRealtime === 'object' && !Array.isArray(runtime.defenseRealtime)
+    ? runtime.defenseRealtime as Record<string, unknown>
+    : {}
+  const runtimeDefenseRealtimeQwen = runtimeDefenseRealtime.qwen && typeof runtimeDefenseRealtime.qwen === 'object' && !Array.isArray(runtimeDefenseRealtime.qwen)
+    ? runtimeDefenseRealtime.qwen as Record<string, unknown>
+    : {}
+  const runtimeDefenseRealtimeCoze = runtimeDefenseRealtime.coze && typeof runtimeDefenseRealtime.coze === 'object' && !Array.isArray(runtimeDefenseRealtime.coze)
+    ? runtimeDefenseRealtime.coze as Record<string, unknown>
+    : {}
 
   return {
     envPriority: String(runtime.envPriority ?? '.env.local > .env.prod > .env.dev > .env'),
@@ -270,11 +278,12 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       commitSha: String(runtime.build?.commitSha ?? ''),
     },
     ai: {
-      provider: String(runtime.ai?.provider ?? 'openai-compatible'),
+      provider: String(runtime.ai?.provider ?? ''),
       baseURL: String(runtime.ai?.baseURL ?? ''),
       apiKey: String(runtime.ai?.apiKey ?? ''),
-      model: String(runtime.ai?.model ?? 'gpt-4o-mini'),
-      embeddingModel: String(runtime.ai?.embeddingModel ?? 'text-embedding-3-small'),
+      model: String(runtime.ai?.model ?? ''),
+      embeddingModel: String(runtime.ai?.embeddingModel ?? ''),
+      visionModel: String(runtime.ai?.visionModel ?? ''),
       modelCatalogJson: String(runtime.ai?.modelCatalogJson ?? ''),
       modelPricingJson: String(runtime.ai?.modelPricingJson ?? ''),
       providersJson: String(runtime.ai?.providersJson ?? ''),
@@ -288,10 +297,10 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
       maxRetries: toNumber(runtime.ai?.maxRetries, 2),
     },
     docAi: {
-      provider: String(runtime.docAi?.provider ?? 'openai-compatible'),
+      provider: String(runtime.docAi?.provider ?? ''),
       baseURL: String(runtime.docAi?.baseURL ?? ''),
       apiKey: String(runtime.docAi?.apiKey ?? ''),
-      model: String(runtime.docAi?.model ?? 'gpt-4o-mini'),
+      model: String(runtime.docAi?.model ?? ''),
       modelPricingJson: String(runtime.docAi?.modelPricingJson ?? ''),
       timeoutMs: toNumber(runtime.docAi?.timeoutMs, 15000),
       maxRetries: toNumber(runtime.docAi?.maxRetries, 2),
@@ -371,6 +380,24 @@ export function readRuntimeSettings(event?: H3Event): RuntimeSettings {
         intervalMs: Math.max(1000, Math.min(60_000, Math.trunc(toNumber(runtime.meeting?.worker?.intervalMs, 5000)))),
         batchSize: Math.max(1, Math.min(50, Math.trunc(toNumber(runtime.meeting?.worker?.batchSize, 6)))),
         maxAttempts: Math.max(1, Math.min(20, Math.trunc(toNumber(runtime.meeting?.worker?.maxAttempts, 5)))),
+      },
+    },
+    defenseRealtime: {
+      qwen: {
+        baseWsUrl: trimTrailingSlash(String(runtimeDefenseRealtimeQwen.baseWsUrl ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/inference')),
+        apiKey: String(runtimeDefenseRealtimeQwen.apiKey ?? ''),
+        workspaceId: String(runtimeDefenseRealtimeQwen.workspaceId ?? ''),
+        appId: String(runtimeDefenseRealtimeQwen.appId ?? ''),
+        voice: String(runtimeDefenseRealtimeQwen.voice ?? ''),
+        frameIntervalMs: Math.max(250, Math.min(5000, Math.trunc(toNumber(runtimeDefenseRealtimeQwen.frameIntervalMs, 1000)))),
+      },
+      coze: {
+        baseUrl: trimTrailingSlash(String(runtimeDefenseRealtimeCoze.baseUrl ?? 'https://api.coze.cn')),
+        botId: String(runtimeDefenseRealtimeCoze.botId ?? ''),
+        connectorId: String(runtimeDefenseRealtimeCoze.connectorId ?? ''),
+        voiceId: String(runtimeDefenseRealtimeCoze.voiceId ?? ''),
+        authMode: String(runtimeDefenseRealtimeCoze.authMode ?? 'pat'),
+        patOrOauthSecret: String(runtimeDefenseRealtimeCoze.patOrOauthSecret ?? ''),
       },
     },
   }

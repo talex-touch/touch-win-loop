@@ -1,6 +1,7 @@
 import type { Queryable } from '~~/server/utils/db'
 import type {
   AiDefenseAttachment,
+  AiDefenseJudgeRound,
   AiDefensePersona,
   AiDefensePersonaJudgeType,
   AiDefenseScorecard,
@@ -10,6 +11,10 @@ import type {
   AiDefenseSummaryStatus,
   AiDefenseSummaryType,
   AiDefenseTurn,
+  DefenseRealtimeConnectionState,
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeProvider,
+  DefenseRealtimeSessionMeta,
   RubricDimension,
 } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
@@ -48,6 +53,7 @@ interface ProjectDefenseSessionStateRow {
   last_input_mode: AiDefenseSessionState['lastInputMode']
   last_context_pack_json: unknown
   last_scorecard_json: unknown
+  realtime_meta_json: unknown
   created_at: string
   updated_at: string
 }
@@ -158,6 +164,64 @@ function normalizeScorecard(value: unknown): AiDefenseScorecard | null {
   }
 }
 
+function normalizeDefenseRealtimeProvider(value: unknown): DefenseRealtimeProvider {
+  return String(value || '').trim().toLowerCase() === 'coze' ? 'coze' : 'qwen'
+}
+
+function normalizeDefenseRealtimeMediaMode(value: unknown): DefenseRealtimeMediaMode {
+  return String(value || '').trim().toLowerCase() === 'audio' ? 'audio' : 'audio_video'
+}
+
+function normalizeDefenseRealtimeConnectionState(value: unknown): DefenseRealtimeConnectionState {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'bootstrapping')
+    return 'bootstrapping'
+  if (normalized === 'connecting')
+    return 'connecting'
+  if (normalized === 'connected')
+    return 'connected'
+  if (normalized === 'interrupted')
+    return 'interrupted'
+  if (normalized === 'error')
+    return 'error'
+  if (normalized === 'closed')
+    return 'closed'
+  return 'idle'
+}
+
+function normalizeRealtimeSessionMeta(value: unknown): DefenseRealtimeSessionMeta | null {
+  const record = normalizeRecord(value)
+  if (Object.keys(record).length === 0)
+    return null
+
+  const bootstrapState = normalizeString(record.bootstrapState)
+  const normalizedBootstrapState = bootstrapState === 'idle'
+    || bootstrapState === 'bootstrapping'
+    || bootstrapState === 'ready'
+    || bootstrapState === 'error'
+    ? bootstrapState
+    : undefined
+
+  return {
+    provider: normalizeDefenseRealtimeProvider(record.provider),
+    mediaMode: normalizeDefenseRealtimeMediaMode(record.mediaMode),
+    transport: String(record.transport || '').trim().toLowerCase() === 'rtc_sidecar' ? 'rtc_sidecar' : 'websocket',
+    connectionState: normalizeDefenseRealtimeConnectionState(record.connectionState),
+    bootstrapState: normalizedBootstrapState,
+    providerSessionId: normalizeString(record.providerSessionId) || null,
+    conversationId: normalizeString(record.conversationId) || null,
+    linkedMeetingId: normalizeString(record.linkedMeetingId) || null,
+    lastProviderEventAt: normalizeString(record.lastProviderEventAt) || null,
+    latestSpeakerId: normalizeString(record.latestSpeakerId) || null,
+    latestSpeakerLabel: normalizeString(record.latestSpeakerLabel) || null,
+    latestLatencyMs: Number.isFinite(Number(record.latestLatencyMs)) ? Math.max(0, Number(record.latestLatencyMs)) : null,
+    audioEnabled: record.audioEnabled === undefined ? undefined : Boolean(record.audioEnabled),
+    videoEnabled: record.videoEnabled === undefined ? undefined : Boolean(record.videoEnabled),
+    lastError: normalizeString(record.lastError) || null,
+    metadata: normalizeRecord(record.metadata),
+  }
+}
+
 function normalizeAttachmentArray(value: unknown): AiDefenseAttachment[] {
   if (!Array.isArray(value))
     return []
@@ -220,6 +284,7 @@ function mapSessionState(row: ProjectDefenseSessionStateRow): AiDefenseSessionSt
     lastInputMode: row.last_input_mode,
     lastContextPack: normalizeRecord(row.last_context_pack_json),
     lastScorecard: normalizeScorecard(row.last_scorecard_json),
+    realtime: normalizeRealtimeSessionMeta(row.realtime_meta_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -244,6 +309,45 @@ function mapTurn(row: ProjectDefenseTurnRow): AiDefenseTurn {
     metadata: normalizeRecord(row.metadata_json),
     createdAt: row.created_at,
   }
+}
+
+export function buildDefenseJudgeRoundsFromTurns(
+  turns: AiDefenseTurn[],
+  options: {
+    turnIndex?: number | null
+  } = {},
+): AiDefenseJudgeRound[] {
+  const scopedTurns = [...turns].sort((left, right) => {
+    if (left.turnIndex !== right.turnIndex)
+      return left.turnIndex - right.turnIndex
+    return new Date(String(left.createdAt || '')).getTime() - new Date(String(right.createdAt || '')).getTime()
+  })
+
+  if (scopedTurns.length === 0)
+    return []
+
+  const preferredTurnIndex = Number.isFinite(Number(options.turnIndex))
+    ? Math.max(1, Math.trunc(Number(options.turnIndex)))
+    : null
+  const targetTurnIndex = preferredTurnIndex
+    || scopedTurns[scopedTurns.length - 1]?.turnIndex
+    || 1
+
+  return scopedTurns
+    .filter(item => item.turnIndex === targetTurnIndex)
+    .map(item => ({
+      judge: item.judgeName,
+      judgeType: item.judgeType,
+      personaId: item.personaId || undefined,
+      stage: item.stage,
+      turnIndex: item.turnIndex,
+      question: item.question,
+      score: item.score,
+      comment: item.comment,
+      followUp: item.followUp,
+      evidenceRefs: item.evidenceRefs,
+      createdAt: item.createdAt,
+    }))
 }
 
 function mapSummary(row: ProjectDefenseSummaryRow): AiDefenseSummary {
@@ -546,6 +650,7 @@ export async function getProjectDefenseSessionState(
       last_input_mode,
       last_context_pack_json,
       last_scorecard_json,
+      realtime_meta_json,
       created_at::TEXT,
       updated_at::TEXT
      FROM project_defense_session_state
@@ -572,6 +677,7 @@ export async function upsertProjectDefenseSessionState(
     lastInputMode?: AiDefenseSessionState['lastInputMode']
     lastContextPack?: Record<string, unknown>
     lastScorecard?: AiDefenseScorecard | null
+    realtime?: DefenseRealtimeSessionMeta | null
   },
 ): Promise<AiDefenseSessionState> {
   const result = await db.query<ProjectDefenseSessionStateRow>(
@@ -588,10 +694,11 @@ export async function upsertProjectDefenseSessionState(
       last_input_mode,
       last_context_pack_json,
       last_scorecard_json,
+      realtime_meta_json,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6::JSONB, $7, $8, $9, $10, $11::JSONB, $12::JSONB, NOW(), NOW()
+      $1, $2, $3, $4, $5, $6::JSONB, $7, $8, $9, $10, $11::JSONB, $12::JSONB, COALESCE($13::JSONB, '{}'::JSONB), NOW(), NOW()
     )
     ON CONFLICT (session_id) DO UPDATE
     SET project_id = EXCLUDED.project_id,
@@ -605,6 +712,10 @@ export async function upsertProjectDefenseSessionState(
         last_input_mode = EXCLUDED.last_input_mode,
         last_context_pack_json = EXCLUDED.last_context_pack_json,
         last_scorecard_json = EXCLUDED.last_scorecard_json,
+        realtime_meta_json = CASE
+          WHEN $13::JSONB IS NULL THEN project_defense_session_state.realtime_meta_json
+          ELSE $13::JSONB
+        END,
         updated_at = NOW()
     RETURNING
       session_id,
@@ -619,6 +730,7 @@ export async function upsertProjectDefenseSessionState(
       last_input_mode,
       last_context_pack_json,
       last_scorecard_json,
+      realtime_meta_json,
       created_at::TEXT,
       updated_at::TEXT`,
     [
@@ -634,6 +746,7 @@ export async function upsertProjectDefenseSessionState(
       input.lastInputMode || 'text',
       JSON.stringify(input.lastContextPack || {}),
       JSON.stringify(input.lastScorecard || {}),
+      input.realtime ? JSON.stringify(input.realtime) : null,
     ],
   )
 

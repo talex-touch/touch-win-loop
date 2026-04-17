@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{
   myProjects?: WorkspaceQuickSwitchProject[]
   recentProjects?: WorkspaceQuickSwitchProject[]
   workbenchMode?: WorkspaceWorkbenchMode
+  workbenchSwitching?: boolean
   metaKShortcutLabel?: string
   aiCollapsed?: boolean
 }>(), {
@@ -23,6 +24,7 @@ const props = withDefaults(defineProps<{
   myProjects: () => [],
   recentProjects: () => [],
   workbenchMode: 'project',
+  workbenchSwitching: false,
   metaKShortcutLabel: '⌘K',
   aiCollapsed: false,
 })
@@ -83,6 +85,8 @@ function openMetaK() {
 }
 
 function selectWorkbench(mode: WorkspaceWorkbenchMode) {
+  if (props.workbenchSwitching)
+    return
   if (props.workbenchMode === mode)
     return
   emit('update:workbenchMode', mode)
@@ -219,7 +223,7 @@ onBeforeUnmount(() => {
           <span class="text-blue-600 rounded-md bg-blue-50 inline-flex shrink-0 h-[22px] w-[22px] items-center justify-center">
             <span class="material-symbols-outlined text-[14px]">search</span>
           </span>
-          <span class="text-[11px] text-slate-500 flex-1 min-w-0 block truncate leading-none">
+          <span class="text-[11px] text-slate-500 leading-none flex-1 min-w-0 block truncate">
             搜索命令、资源、会议或项目
           </span>
           <span class="text-[9px] text-slate-400 leading-none font-semibold px-1.5 py-0.5 border border-slate-200 rounded-md bg-slate-50 shrink-0">
@@ -235,30 +239,33 @@ onBeforeUnmount(() => {
         class="p-0.5 border border-slate-200 rounded-xl bg-slate-100/80 inline-flex gap-0.5 items-center"
       >
         <button
-          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           :class="workbenchMode === 'project'
             ? 'bg-white text-slate-900 shadow-sm'
             : 'text-slate-500 hover:text-slate-700'"
+          :disabled="props.workbenchSwitching"
           type="button"
           @click="selectWorkbench('project')"
         >
           研发工作台
         </button>
         <button
-          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           :class="workbenchMode === 'defense'
             ? 'bg-[#d4a017] text-white shadow-sm'
             : 'text-slate-500 hover:text-amber-700'"
+          :disabled="props.workbenchSwitching"
           type="button"
           @click="selectWorkbench('defense')"
         >
           答辩工作台
         </button>
         <button
-          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors"
+          class="text-xs px-3 py-1.5 rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           :class="workbenchMode === 'final_review'
             ? 'bg-[#2563eb] text-white shadow-sm'
             : 'text-slate-500 hover:text-blue-700'"
+          :disabled="props.workbenchSwitching"
           type="button"
           @click="selectWorkbench('final_review')"
         >

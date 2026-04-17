@@ -1,10 +1,18 @@
-import type { ProjectMeetingMode } from '~~/shared/types/domain'
+import type {
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeProvider,
+  ProjectMeetingMode,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { resolveMeetingRuntimeError } from '~~/server/services/meeting/meeting-runtime'
 import { createProjectMeetingSession } from '~~/server/services/meeting/project-meeting'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { createAiChatSession } from '~~/server/utils/chat-store'
+import {
+  normalizeDefenseRealtimeMediaMode,
+  normalizeDefenseRealtimeProvider,
+} from '~~/server/utils/defense-realtime'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { readEffectiveMeetingRuntimeSettings } from '~~/server/utils/platform-meeting-config-store'
@@ -16,6 +24,8 @@ interface CreateDefenseRealtimeBody {
   title?: string
   mode?: ProjectMeetingMode
   personaIds?: string[]
+  provider?: DefenseRealtimeProvider
+  mediaMode?: DefenseRealtimeMediaMode
 }
 
 function normalizeString(value: unknown): string {
@@ -51,19 +61,24 @@ export default defineEventHandler(async (event) => {
       if (!access)
         throw new Error('FORBIDDEN')
 
+      const provider = normalizeDefenseRealtimeProvider(body?.provider)
+      const mediaMode = normalizeDefenseRealtimeMediaMode(body?.mediaMode)
+      const meetingMode = normalizeMode(body?.mode ?? (mediaMode === 'audio' ? 'audio' : 'video'))
+      const selectedPersonaIds = Array.isArray(body?.personaIds) ? body.personaIds.map(item => normalizeString(item)).filter(Boolean) : []
+
       const chatSession = await createAiChatSession(db, {
         workspaceId: access.workspaceId,
         projectId,
         mode: 'defense',
         createdByUserId: user.id,
-        title: normalizeString(body?.title) || '答辩模拟 · 语音会话',
+        title: normalizeString(body?.title) || `答辩模拟 · ${meetingMode === 'audio' ? '语音' : '音视频'}会话`,
       })
       const meetingSession = await createProjectMeetingSession(db, {
         projectId,
         workspaceId: access.workspaceId,
         user,
-        title: normalizeString(body?.title) || '答辩模拟 · 语音会话',
-        mode: normalizeMode(body?.mode),
+        title: normalizeString(body?.title) || `答辩模拟 · ${meetingMode === 'audio' ? '语音' : '音视频'}会话`,
+        mode: meetingMode,
         runtime,
       })
 
@@ -73,12 +88,23 @@ export default defineEventHandler(async (event) => {
         workspaceId: access.workspaceId,
         currentStage: 'opening',
         turnCount: 0,
-        selectedPersonaIds: Array.isArray(body?.personaIds) ? body.personaIds.map(item => normalizeString(item)).filter(Boolean) : [],
+        selectedPersonaIds,
         summaryStatus: 'idle',
         linkedMeetingId: meetingSession.meeting.id,
-        lastInputMode: 'audio',
+        lastInputMode: mediaMode === 'audio' ? 'audio' : 'mixed',
         lastContextPack: {},
         lastScorecard: null,
+        realtime: {
+          provider,
+          mediaMode,
+          transport: provider === 'coze' ? 'rtc_sidecar' : 'websocket',
+          connectionState: 'bootstrapping',
+          bootstrapState: 'idle',
+          linkedMeetingId: meetingSession.meeting.id,
+          audioEnabled: true,
+          videoEnabled: mediaMode === 'audio_video',
+          metadata: {},
+        },
       })
 
       return {
@@ -92,7 +118,9 @@ export default defineEventHandler(async (event) => {
         joinToken: meetingSession.joinToken,
         joinExpiresAt: meetingSession.joinExpiresAt,
         joinUrl: meetingSession.joinUrl,
-        selectedPersonaIds: Array.isArray(body?.personaIds) ? body.personaIds.map(item => normalizeString(item)).filter(Boolean) : [],
+        selectedPersonaIds,
+        provider,
+        mediaMode,
         workspaceId: access.workspaceId,
       }
     })

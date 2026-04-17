@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  DefenseRealtimeSessionMeta,
   ProjectMeetingDetail,
   ProjectMeetingGuestShare,
   ProjectMeetingInvitee,
@@ -36,6 +37,7 @@ const props = withDefaults(defineProps<{
   utterances?: ProjectMeetingUtterance[]
   liveCaptions?: MeetingCaptionItem[]
   detailLoading?: boolean
+  refreshing?: boolean
   mutating?: boolean
   joinUrl?: string
   joinToken?: string
@@ -46,11 +48,19 @@ const props = withDefaults(defineProps<{
   currentUserId?: string
   workspaceType?: WorkspaceType | ''
   meetingPlanTier?: 'personal_team' | 'business_team' | null
+  defenseRealtimeState?: DefenseRealtimeSessionMeta | null
+  defenseRealtimeLogs?: Array<{
+    id: string
+    level: 'info' | 'warning' | 'error'
+    message: string
+    createdAt: string
+  }>
 }>(), {
   activeMeeting: null,
   utterances: () => [],
   liveCaptions: () => [],
   detailLoading: false,
+  refreshing: false,
   mutating: false,
   joinUrl: '',
   joinToken: '',
@@ -61,6 +71,8 @@ const props = withDefaults(defineProps<{
   currentUserId: '',
   workspaceType: '',
   meetingPlanTier: null,
+  defenseRealtimeState: null,
+  defenseRealtimeLogs: () => [],
 })
 
 const emit = defineEmits<{
@@ -353,6 +365,10 @@ onBeforeUnmount(() => {
             {{ meetingSummaryHint || '点击左侧最近会议或创建会议后，可在这里查看单场会议的完整详情。' }}
           </p>
         </div>
+        <div v-if="props.refreshing" class="meeting-panel__refreshing">
+          <span class="meeting-panel__refreshing-dot" aria-hidden="true" />
+          <span>刷新中</span>
+        </div>
       </div>
 
       <div class="meeting-panel__actions">
@@ -567,6 +583,8 @@ onBeforeUnmount(() => {
           :rtc-join-url="joinUrl"
           :participants="participantItems"
           :captions="mergedCaptions"
+          :defense-realtime-state="defenseRealtimeState"
+          :defense-realtime-logs="defenseRealtimeLogs"
         />
       </template>
 
@@ -647,6 +665,23 @@ onBeforeUnmount(() => {
   gap: 1rem;
   align-items: flex-start;
   justify-content: space-between;
+}
+
+.meeting-panel__refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.meeting-panel__refreshing-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: #3b82f6;
+  animation: meeting-panel-refresh-pulse 1s ease-in-out infinite;
 }
 
 .meeting-panel__badge {
@@ -894,6 +929,19 @@ onBeforeUnmount(() => {
   font-size: 1rem;
   font-weight: 600;
   color: #0f172a;
+}
+
+@keyframes meeting-panel-refresh-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
 }
 
 @media (max-width: 1024px) {

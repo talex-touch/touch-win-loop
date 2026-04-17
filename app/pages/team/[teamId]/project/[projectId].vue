@@ -7,14 +7,17 @@ import type {
   AiDefensePersona,
   AiDefenseScorecard,
   AiDefenseSessionDetail,
+  AiDefenseSessionState,
   AiDefenseStage,
   AiDefenseStreamEvent,
   AiDefenseStreamEventType,
   AiDefenseSummary,
+  AiDefenseTurn,
   AiProjectChangeRequest,
   AiWorkspaceDocumentAction,
   AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentSelectionRange,
+  AiWorkspaceWorkflowDraft,
   AiWorkspaceInlineCompletionAcceptResult,
   AiWorkspaceInlineCompletionResult,
   AiWorkspaceRequest,
@@ -26,8 +29,15 @@ import type {
   AuthMeResult,
   AuthUser,
   ChatMessage,
+  CollabPurpose,
   Contest,
   ContestDetailPayload,
+  DefenseRealtimeBootstrapPayload,
+  DefenseRealtimeConnectionState,
+  DefenseRealtimeMediaMode,
+  DefenseRealtimeNormalizedEvent,
+  DefenseRealtimeProvider,
+  DefenseRealtimeSessionMeta,
   Project,
   ProjectInvitationSummary,
   ProjectIssue,
@@ -59,6 +69,11 @@ import type {
   ResourcePreviewStatus,
   TopicProposalDecisionStatus,
   TopicProposalItem,
+  WorkflowArchitectureView,
+  WorkflowDraftAction,
+  WorkflowLayoutPreset,
+  WorkflowSnapshot,
+  WorkflowStylePreset,
   WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
   WorkspaceAiUsageHistory,
@@ -72,6 +87,7 @@ import type {
 import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
+import type { WorkspacePreviewMode } from '~/composables/useWorkspaceProjectResources'
 import type {
   MappingTone,
   WorkspaceKeyword,
@@ -100,8 +116,16 @@ import { syncMarkdownMirrorFromRichText } from '~~/shared/utils/collab-markdown-
 import {
   COLLAB_FREEFORM_RESOURCE_LABEL,
   COLLAB_NOTES_RESOURCE_LABEL,
+  COLLAB_WORKFLOW_RESOURCE_LABEL,
   resolveCollabResourceDisplayLabel,
 } from '~~/shared/utils/collab-resource'
+import { createWorkspaceStreamSystemChatMessage } from '~~/shared/utils/workspace-ai-stream'
+import {
+  createWorkspaceLocalChatMessage,
+  finalizeWorkspaceLocalChatMessages,
+  markWorkspaceLocalChatMessagesAborted,
+  toWorkspaceModelMessages,
+} from '~~/shared/utils/workspace-chat-local-state'
 import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
@@ -164,6 +188,21 @@ import {
   validateUploadFiles,
 } from '~/utils/workspace-project-helpers'
 import { formatWorkspaceShortcutLabel } from '~/utils/workspace-shortcuts'
+import {
+  buildDrawioXmlFromWorkflowDraft,
+  buildWorkflowDraftKey,
+  extractDrawioXmlFromCollabValue,
+  parseDrawioXmlToWorkflowSnapshot,
+  serializeDrawioCollabValue,
+} from '~/utils/workspace-drawio'
+import {
+  createDefenseRealtimeProviderBridge,
+  type DefenseRealtimeProviderBridge,
+} from '~/utils/defense-realtime-bridge'
+import {
+  createDefenseRealtimeMediaController,
+  type DefenseRealtimeMediaController,
+} from '~/utils/defense-realtime-media-controller'
 
 definePageMeta({
   layout: 'dashboard',
@@ -249,6 +288,14 @@ interface MarkdownDocumentAssistRequestState {
   markdown: string
   selectionText: string
   selectionRange: AiWorkspaceDocumentSelectionRange | null
+}
+
+interface WorkflowDraftRequestOptions {
+  action: WorkflowDraftAction
+  template: 'flowchart' | 'mindmap' | 'er' | 'architecture'
+  architectureView?: WorkflowArchitectureView
+  stylePreset: WorkflowStylePreset
+  layoutPreset: WorkflowLayoutPreset
 }
 
 interface AiRuntimeFeatureStatus {
@@ -488,6 +535,15 @@ interface DefenseRealtimeSessionPayload {
   joinExpiresAt: string
   joinUrl?: string
   selectedPersonaIds: string[]
+  provider: DefenseRealtimeProvider
+  mediaMode: DefenseRealtimeMediaMode
+  realtime?: DefenseRealtimeSessionMeta | null
+}
+
+interface DefenseRealtimeBootstrapResponse {
+  bootstrap: DefenseRealtimeBootstrapPayload
+  state: AiDefenseSessionState | null
+  session: AiChatSession | null
 }
 
 type WorkspaceProjectSettingsDraftCache = ProjectSettingsDraftPayload
@@ -496,6 +552,8 @@ type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
 type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
+type WorkbenchSwitchPhase = 'idle' | 'loading' | 'animating'
+type WorkbenchSceneTransitionName = 'workspace-workbench-scene-forward' | 'workspace-workbench-scene-backward'
 interface WorkspaceProjectContextualAssistant {
   preset: WorkspaceAiAssistantPreset
   label: string
@@ -513,6 +571,7 @@ interface FinalReviewChecklistItem {
 }
 
 const WORKSPACE_MEMBER_MANAGE_ROLES: WorkspaceMemberRole[] = ['owner', 'admin', 'manager']
+const WORKBENCH_MODE_ORDER: WorkspaceWorkbenchMode[] = ['project', 'defense', 'final_review']
 const METAK_SECTION_DEFINITIONS: WorkspaceMetaKSectionDefinition[] = [
   { id: 'actions', title: '快捷命令', maxItems: 8 },
   { id: 'resources', title: '项目资源', maxItems: 8 },
@@ -578,9 +637,12 @@ const {
   issueReportExporting,
   metaKRemoteLoading,
   defenseRounds,
+  defenseTurns,
   defenseScorecard,
   defensePersonas,
   defensePersonasLoading,
+  defenseSessionMeta,
+  defenseSessionState,
   defenseSummary,
   defenseSummaryLoading,
   defenseStage,
@@ -596,6 +658,7 @@ let chatSessionsRequestId = 0
 let defenseSessionDetailRequestId = 0
 const activeChatStreamAbortController = ref<AbortController | null>(null)
 const deletingChatSessionId = ref('')
+const chatMessagesLoading = ref(false)
 const {
   resources,
   recycleResources,
@@ -687,7 +750,69 @@ const documentAssistRequestState = reactive<MarkdownDocumentAssistRequestState>(
   selectionRange: null,
 })
 const appliedAgentDocDraftKeys = ref<string[]>([])
+
+function clearLoadedScopeSnapshots(): void {
+  resourcesLoadedProjectId.value = ''
+  resourceLibraryLoadedProjectId.value = ''
+  projectResourceSharesLoadedProjectId.value = ''
+  selectedContestDetailContestId.value = ''
+  mappingLoadedScopeKey.value = ''
+  chatSessionsLoadedScopeKey.value = ''
+  chatMessagesLoadedSessionId.value = ''
+}
+
+function resetChatDraftArtifactState(): void {
+  appliedAgentDocDraftKeys.value = []
+  appliedWorkflowDraftKeys.value = []
+  discardedWorkflowDraftKeys.value = []
+}
+
+function clearActiveChatArtifacts(options: {
+  preserveMessages?: boolean
+} = {}): void {
+  if (options.preserveMessages) {
+    chatDraft.value = null
+    chatMissingFields.value = []
+    defenseRounds.value = []
+    defenseTurns.value = []
+    defenseScorecard.value = null
+    defenseSessionMeta.value = null
+    defenseSessionState.value = null
+    defenseSummary.value = null
+    defenseStage.value = undefined
+    defenseTurnCount.value = 0
+    resetDefenseRealtimeLocalState()
+  }
+  else {
+    resetChatState()
+    resetDefenseRealtimeLocalState()
+  }
+  resetChatDraftArtifactState()
+}
+
+function resetChatScopeState(): void {
+  chatSessions.value = []
+  openChatSessionIds.value = []
+  activeChatSessionId.value = ''
+  chatSessionsLoading.value = false
+  chatMessagesLoading.value = false
+  chatSessionsLoadedScopeKey.value = ''
+  chatMessagesLoadedSessionId.value = ''
+  clearActiveChatArtifacts()
+}
+
+const workflowSnapshotState = ref<WorkflowSnapshot | null>(null)
+const workflowSnapshotSyncTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const appliedWorkflowDraftKeys = ref<string[]>([])
+const discardedWorkflowDraftKeys = ref<string[]>([])
 const selectedContestDetailLoading = ref(false)
+const resourcesLoadedProjectId = ref('')
+const resourceLibraryLoadedProjectId = ref('')
+const projectResourceSharesLoadedProjectId = ref('')
+const selectedContestDetailContestId = ref('')
+const mappingLoadedScopeKey = ref('')
+const chatSessionsLoadedScopeKey = ref('')
+const chatMessagesLoadedSessionId = ref('')
 const {
   projectSettingsLoading,
   projectSettingsSaveState,
@@ -721,6 +846,7 @@ const {
 })
 const {
   projectMeetings,
+  projectMeetingsLoadedProjectId,
   meetingRuntimeHealth,
   activeMeetingId,
   activeMeetingDetail,
@@ -728,6 +854,7 @@ const {
   meetingLiveCaptions,
   projectMeetingsLoading,
   meetingDetailLoading,
+  meetingDetailLoadedId,
   meetingGuestShareLoading,
   meetingMutating,
   meetingJoinUrl,
@@ -834,6 +961,24 @@ const headerAiCollapsed = computed(() => {
     ? !finalReviewAssistantOpen.value
     : rightSidebarCollapsed.value
 })
+const displayedWorkbenchMode = ref<WorkspaceWorkbenchMode>(workbenchMode.value)
+const workbenchSwitchPhase = ref<WorkbenchSwitchPhase>('idle')
+const workbenchSwitchTargetMode = ref<WorkspaceWorkbenchMode | ''>('')
+const workbenchSwitchProgress = ref(0)
+const workbenchSceneTransitionName = ref<WorkbenchSceneTransitionName>('workspace-workbench-scene-forward')
+const prefersReducedMotion = ref(false)
+const workbenchSwitchLoading = computed(() => workbenchSwitchPhase.value === 'loading')
+const workbenchSwitching = computed(() => workbenchSwitchPhase.value !== 'idle')
+const workspaceSceneLayoutTestId = computed(() => {
+  if (displayedWorkbenchMode.value === 'defense')
+    return 'workspace-defense-layout'
+  if (displayedWorkbenchMode.value === 'final_review')
+    return 'workspace-final-review-layout'
+  return 'workspace-project-layout'
+})
+let reducedMotionMediaQuery: MediaQueryList | null = null
+let workbenchSceneTransitionResolver: (() => void) | null = null
+const activeWorkbenchSwitchDelayIds = new Set<ReturnType<typeof setTimeout>>()
 const workspaceBootstrapLoading = ref(false)
 const workspaceCriticalLoading = workspaceBootstrapLoading
 const workspaceBackgroundLoading = ref(false)
@@ -843,6 +988,31 @@ const aiRuntimeStatusLoaded = ref(false)
 const aiRuntimeStatusLoading = ref(false)
 const aiRuntimeStatusError = ref('')
 const defenseRealtimeStarting = ref(false)
+const defenseRealtimeProviderDraft = ref<DefenseRealtimeProvider>('qwen')
+const defenseRealtimeMediaModeDraft = ref<DefenseRealtimeMediaMode>('audio_video')
+const defenseRealtimeAudioEnabled = ref(true)
+const defenseRealtimeVideoEnabled = ref(true)
+const defenseRealtimeBootstrapState = ref<'idle' | 'bootstrapping' | 'ready' | 'error'>('idle')
+const defenseRealtimeBootstrapPayload = ref<DefenseRealtimeBootstrapPayload | null>(null)
+const defenseRealtimeLatestError = ref('')
+const defenseRealtimeLatestSpeakerLabel = ref('')
+const defenseRealtimeLatestLatencyMs = ref<number | null>(null)
+const defenseRealtimeLogs = ref<Array<{
+  id: string
+  level: 'info' | 'warning' | 'error'
+  message: string
+  createdAt: string
+}>>([])
+let defenseRealtimeBridge: DefenseRealtimeProviderBridge | null = null
+let defenseRealtimeBridgeCleanup: (() => void) | null = null
+let defenseRealtimeMediaController: DefenseRealtimeMediaController | null = null
+let defenseRealtimeEventFlushTimer: ReturnType<typeof setTimeout> | null = null
+let defenseRealtimePendingEvents: DefenseRealtimeNormalizedEvent[] = []
+const DEFENSE_REALTIME_DEFERRED_EVENT_TYPES = new Set<DefenseRealtimeNormalizedEvent['type']>([
+  'user.transcript.partial',
+  'assistant.transcript.delta',
+  'latency',
+])
 
 let workspaceBootstrapRequestId = 0
 const workspaceBootstrapStartedAt = ref(0)
@@ -1417,6 +1587,15 @@ function handleWorkspaceShellContextMenu(event: MouseEvent): void {
   if (event.defaultPrevented)
     return
 
+  if (workbenchSwitchPhase.value !== 'idle') {
+    event.preventDefault()
+    event.stopPropagation()
+    closeWorkspaceContextMenu({
+      restoreFocus: false,
+    })
+    return
+  }
+
   if (resolveWorkspaceShellLoadingState()) {
     event.preventDefault()
     event.stopPropagation()
@@ -1470,6 +1649,10 @@ const contestSource = computed(() => {
 const selectedContest = computed(() => contestSource.value.find(contest => contest.id === selectedContestId.value) || null)
 const selectedTrack = computed(() => selectedContest.value?.tracks.find(track => track.id === selectedTrackId.value) || null)
 const selectedTrackRubric = computed(() => {
+  const contestId = normalizeString(selectedContestId.value)
+  if (!contestId || selectedContestDetailContestId.value !== contestId)
+    return null
+
   const detail = selectedContestDetail.value
   const trackId = String(selectedTrackId.value || '').trim()
   const rubricId = String(selectedTrack.value?.rubricId || '').trim()
@@ -1486,6 +1669,9 @@ const selectedTrackRubric = computed(() => {
     return null
 
   return detail.rubrics.find(item => item.trackId === trackId) || null
+})
+const defenseContestTimelines = computed(() => {
+  return selectedContestDetail.value?.timelines || selectedContest.value?.timelines || []
 })
 const contestMap = computed(() => {
   const map = new Map<string, Contest>()
@@ -1663,6 +1849,70 @@ const activeProject = computed(() => {
 })
 
 const activeProjectId = computed(() => activeProject.value?.id || '')
+const activeProjectScopeId = computed(() => normalizeString(activeProjectId.value))
+const projectResourcesFirstLoadLoading = computed(() => {
+  return resourcesLoading.value && resourcesLoadedProjectId.value !== activeProjectScopeId.value
+})
+const projectResourcesRefreshing = computed(() => {
+  return resourcesLoading.value && Boolean(activeProjectScopeId.value) && resourcesLoadedProjectId.value === activeProjectScopeId.value
+})
+const resourceLibraryFirstLoadLoading = computed(() => {
+  return resourceLibraryLoading.value && resourceLibraryLoadedProjectId.value !== activeProjectScopeId.value
+})
+const resourceLibraryRefreshing = computed(() => {
+  return resourceLibraryLoading.value && Boolean(activeProjectScopeId.value) && resourceLibraryLoadedProjectId.value === activeProjectScopeId.value
+})
+const projectResourceSharesFirstLoadLoading = computed(() => {
+  return projectResourceSharesLoading.value && projectResourceSharesLoadedProjectId.value !== activeProjectScopeId.value
+})
+const projectResourceSharesRefreshing = computed(() => {
+  return projectResourceSharesLoading.value && Boolean(activeProjectScopeId.value) && projectResourceSharesLoadedProjectId.value === activeProjectScopeId.value
+})
+const chatSessionsScopeKey = computed(() => {
+  const workspaceId = normalizeString(activeWorkspaceId.value)
+  const projectId = activeProjectScopeId.value
+  const mode = normalizeString(aiMode.value)
+  if (!workspaceId || !projectId || !mode)
+    return ''
+  return `${workspaceId}:${projectId}:${mode}`
+})
+const chatSessionsFirstLoadLoading = computed(() => {
+  return chatSessionsLoading.value && chatSessionsLoadedScopeKey.value !== chatSessionsScopeKey.value
+})
+const chatSessionsRefreshing = computed(() => {
+  return chatSessionsLoading.value && Boolean(chatSessionsScopeKey.value) && chatSessionsLoadedScopeKey.value === chatSessionsScopeKey.value
+})
+const chatMessagesFirstLoadLoading = computed(() => {
+  const sessionId = normalizeString(activeChatSessionId.value)
+  return chatMessagesLoading.value && chatMessagesLoadedSessionId.value !== sessionId
+})
+const mappingScopeKey = computed(() => {
+  const contestId = normalizeString(selectedContestId.value)
+  const trackId = normalizeString(selectedTrackId.value)
+  if (!contestId || !trackId)
+    return ''
+  return `${contestId}:${trackId}`
+})
+const mappingFirstLoadLoading = computed(() => {
+  return selectedContestDetailLoading.value && mappingLoadedScopeKey.value !== mappingScopeKey.value
+})
+const mappingRefreshing = computed(() => {
+  return selectedContestDetailLoading.value && Boolean(mappingScopeKey.value) && mappingLoadedScopeKey.value === mappingScopeKey.value
+})
+const projectMeetingsFirstLoadLoading = computed(() => {
+  return projectMeetingsLoading.value && projectMeetingsLoadedProjectId.value !== activeProjectScopeId.value
+})
+const projectMeetingsRefreshing = computed(() => {
+  return projectMeetingsLoading.value && Boolean(activeProjectScopeId.value) && projectMeetingsLoadedProjectId.value === activeProjectScopeId.value
+})
+const meetingDetailDisplayLoading = computed(() => {
+  const meetingId = normalizeString(activeMeetingId.value)
+  return meetingDetailLoading.value && meetingDetailLoadedId.value !== meetingId
+})
+const meetingDetailRefreshing = computed(() => {
+  const meetingId = normalizeString(activeMeetingId.value)
+  return meetingDetailLoading.value && Boolean(meetingId) && meetingDetailLoadedId.value === meetingId && Boolean(activeMeetingDetail.value)
+})
 
 function beginWorkspaceBootstrapTrace(projectId: string, requestId: number): void {
   workspaceBootstrapStartedAt.value = Date.now()
@@ -1785,7 +2035,36 @@ const activePreviewResourcePurpose = computed(() => {
     return ''
   return resolveCollabPurpose(activePreviewResource.value)
 })
+const currentAssistantResource = computed(() => {
+  if (normalizeString(activeMainTabId.value) === 'flow') {
+    const targetFlowResourceId = normalizeString(flowResourceId.value)
+    return targetFlowResourceId
+      ? resources.value.find(item => item.id === targetFlowResourceId) || null
+      : null
+  }
+  if (activeResourceWorkspaceTabId.value)
+    return activePreviewResource.value
+  return null
+})
+const currentAssistantPreviewMode = computed<WorkspacePreviewMode | ''>(() => {
+  if (normalizeString(activeMainTabId.value) === 'flow')
+    return 'draw'
+  return activeResourceWorkspaceTabId.value ? previewMode.value : ''
+})
+const currentAssistantResourcePurpose = computed<CollabPurpose | ''>(() => {
+  if (normalizeString(activeMainTabId.value) === 'flow')
+    return 'workflow'
+  return activeResourceWorkspaceTabId.value ? activePreviewResourcePurpose.value : ''
+})
 const projectContextualAssistant = computed<WorkspaceProjectContextualAssistant | null>(() => {
+  if (normalizeString(activeMainTabId.value) === 'flow') {
+    return {
+      preset: 'prototype',
+      label: 'AgentProto',
+      aiMode: 'dialog_ask',
+    }
+  }
+
   if (!activeResourceWorkspaceTabId.value)
     return null
 
@@ -1804,6 +2083,14 @@ const projectContextualAssistant = computed<WorkspaceProjectContextualAssistant 
     return {
       preset: 'design',
       label: '设计助手',
+      aiMode: 'dialog_ask',
+    }
+  }
+
+  if (activePreviewResourcePurpose.value === 'workflow') {
+    return {
+      preset: 'prototype',
+      label: 'AgentProto',
       aiMode: 'dialog_ask',
     }
   }
@@ -1851,9 +2138,32 @@ const currentWorkspaceAssistantContext = computed(() => {
     assistantPreset: currentWorkspaceAssistantPreset.value,
     assistantLabel: currentWorkspaceAssistantLabel.value,
     activeTabId: normalizeString(activeMainTabId.value),
-    previewMode: activeResourceWorkspaceTabId.value ? previewMode.value : '',
-    resourcePurpose: activeResourceWorkspaceTabId.value ? activePreviewResourcePurpose.value : '',
+    previewMode: currentAssistantPreviewMode.value,
+    resourcePurpose: currentAssistantResourcePurpose.value,
   }
+})
+const activeWorkflowResourceId = computed(() => {
+  if (currentAssistantResourcePurpose.value !== 'workflow')
+    return ''
+  return normalizeString(currentAssistantResource.value?.id)
+})
+const activeWorkflowResourceTitle = computed(() => {
+  if (!activeWorkflowResourceId.value)
+    return ''
+  return normalizeString(currentAssistantResource.value?.title) || COLLAB_WORKFLOW_RESOURCE_LABEL
+})
+const activeWorkflowSnapshot = computed(() => {
+  if (!activeWorkflowResourceId.value)
+    return null
+  if (normalizeString(collabBindingResourceId.value) !== activeWorkflowResourceId.value)
+    return null
+  return workflowSnapshotState.value
+})
+const activeWorkflowHash = computed(() => {
+  return activeWorkflowSnapshot.value?.hash || ''
+})
+const activeWorkflowPageCount = computed(() => {
+  return Math.max(0, Number(activeWorkflowSnapshot.value?.pageCount || 0))
 })
 const activeAgentDocDocumentHash = computed(() => {
   if (!documentAssistRequestState.resourceId)
@@ -1909,6 +2219,597 @@ const projectOutlineFirstLoadLoading = computed(() => {
   return projectOutlineLoading.value && !projectOutlineFirstLoaded.value
 })
 const latestIssueReport = computed(() => projectIssueReports.value[0] || null)
+const defenseSessionMetaSnapshot = computed(() => {
+  const activeSessionId = normalizeString(activeChatSessionId.value)
+  if (defenseSessionMeta.value && normalizeString(defenseSessionMeta.value.id) === activeSessionId)
+    return defenseSessionMeta.value
+  if (!activeSessionId)
+    return defenseSessionMeta.value
+  return chatSessions.value.find(item => normalizeString(item.id) === activeSessionId) || defenseSessionMeta.value || null
+})
+const defenseSessionStateSnapshot = computed<AiDefenseSessionState | null>(() => {
+  const activeSessionId = normalizeString(activeChatSessionId.value || defenseSessionState.value?.sessionId)
+  if (!activeSessionId)
+    return null
+
+  const base = defenseSessionState.value
+  const fallbackTimestamp = defenseSessionMetaSnapshot.value?.updatedAt
+    || defenseSessionMetaSnapshot.value?.lastMessageAt
+    || defenseSessionMetaSnapshot.value?.createdAt
+    || new Date().toISOString()
+  const realtimeBase = base?.realtime || null
+  const realtimeProvider = realtimeBase?.provider || defenseRealtimeProviderDraft.value
+  const realtimeMediaMode = realtimeBase?.mediaMode || defenseRealtimeMediaModeDraft.value
+  const realtimeTransport = realtimeBase?.transport || (realtimeProvider === 'coze' ? 'rtc_sidecar' : 'websocket')
+
+  return {
+    sessionId: activeSessionId,
+    projectId: normalizeString(activeProjectId.value || base?.projectId),
+    workspaceId: normalizeString(activeWorkspaceId.value || base?.workspaceId),
+    currentStage: base?.currentStage || defenseStage.value || 'opening',
+    turnCount: Math.max(base?.turnCount || 0, defenseTurnCount.value || 0),
+    selectedPersonaIds: base?.selectedPersonaIds?.length
+      ? base.selectedPersonaIds
+      : defensePersonas.value.filter(item => item.enabled).map(item => item.id),
+    summaryStatus: base?.summaryStatus || (defenseSummaryLoading.value
+      ? 'processing'
+      : (defenseSummary.value ? 'completed' : 'idle')),
+    summaryResourceId: base?.summaryResourceId || defenseSummary.value?.resourceId || null,
+    linkedMeetingId: base?.linkedMeetingId || normalizeString(activeMeetingDetail.value?.id) || null,
+    lastInputMode: base?.lastInputMode || (normalizeString(activeMeetingDetail.value?.id) ? 'audio' : 'text'),
+    lastContextPack: base?.lastContextPack,
+    lastScorecard: defenseScorecard.value || base?.lastScorecard || null,
+    realtime: {
+      provider: realtimeProvider,
+      mediaMode: realtimeMediaMode,
+      transport: realtimeTransport,
+      connectionState: realtimeBase?.connectionState || 'idle',
+      bootstrapState: realtimeBase?.bootstrapState || defenseRealtimeBootstrapState.value,
+      providerSessionId: realtimeBase?.providerSessionId || null,
+      conversationId: realtimeBase?.conversationId || null,
+      linkedMeetingId: base?.linkedMeetingId || normalizeString(activeMeetingDetail.value?.id) || null,
+      lastProviderEventAt: realtimeBase?.lastProviderEventAt || null,
+      latestSpeakerId: realtimeBase?.latestSpeakerId || null,
+      latestSpeakerLabel: realtimeBase?.latestSpeakerLabel || defenseRealtimeLatestSpeakerLabel.value || null,
+      latestLatencyMs: realtimeBase?.latestLatencyMs ?? defenseRealtimeLatestLatencyMs.value ?? null,
+      audioEnabled: realtimeBase?.audioEnabled ?? defenseRealtimeAudioEnabled.value,
+      videoEnabled: realtimeBase?.videoEnabled ?? (realtimeMediaMode === 'audio_video' ? defenseRealtimeVideoEnabled.value : false),
+      lastError: realtimeBase?.lastError || defenseRealtimeLatestError.value || null,
+      metadata: realtimeBase?.metadata || {},
+    },
+    createdAt: base?.createdAt || defenseSessionMetaSnapshot.value?.createdAt || fallbackTimestamp,
+    updatedAt: base?.updatedAt
+      || defenseSessionMetaSnapshot.value?.updatedAt
+      || defenseSessionMetaSnapshot.value?.lastMessageAt
+      || fallbackTimestamp,
+  }
+})
+const defenseRealtimeSessionMetaSnapshot = computed<DefenseRealtimeSessionMeta | null>(() => {
+  return defenseSessionStateSnapshot.value?.realtime || null
+})
+const defenseLinkedMeeting = computed(() => {
+  const linkedMeetingId = normalizeString(defenseSessionStateSnapshot.value?.linkedMeetingId)
+  if (!linkedMeetingId)
+    return null
+  if (normalizeString(activeMeetingDetail.value?.id) === linkedMeetingId)
+    return activeMeetingDetail.value
+  return projectMeetings.value.find(item => normalizeString(item.id) === linkedMeetingId) || null
+})
+
+function appendDefenseRealtimeLog(
+  message: string,
+  level: 'info' | 'warning' | 'error' = 'info',
+): void {
+  const text = normalizeString(message)
+  if (!text)
+    return
+  defenseRealtimeLogs.value = [
+    ...defenseRealtimeLogs.value.slice(-23),
+    {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      level,
+      message: text,
+      createdAt: new Date().toISOString(),
+    },
+  ]
+}
+
+function syncDefenseRealtimeDraftState(state: AiDefenseSessionState | null | undefined): void {
+  const realtime = state?.realtime
+  if (!realtime)
+    return
+
+  defenseRealtimeProviderDraft.value = realtime.provider
+  defenseRealtimeMediaModeDraft.value = realtime.mediaMode
+  defenseRealtimeAudioEnabled.value = realtime.audioEnabled ?? true
+  defenseRealtimeVideoEnabled.value = realtime.videoEnabled ?? realtime.mediaMode === 'audio_video'
+  defenseRealtimeBootstrapState.value = realtime.bootstrapState || 'idle'
+  defenseRealtimeLatestError.value = normalizeString(realtime.lastError)
+  defenseRealtimeLatestSpeakerLabel.value = normalizeString(realtime.latestSpeakerLabel)
+  defenseRealtimeLatestLatencyMs.value = realtime.latestLatencyMs ?? null
+}
+
+function patchDefenseRealtimeState(
+  patch: Partial<DefenseRealtimeSessionMeta>,
+  options: { syncDrafts?: boolean } = {},
+): void {
+  const base = defenseSessionStateSnapshot.value
+  if (!base)
+    return
+
+  const nextRealtime: DefenseRealtimeSessionMeta = {
+    ...(base.realtime || {
+      provider: defenseRealtimeProviderDraft.value,
+      mediaMode: defenseRealtimeMediaModeDraft.value,
+      transport: defenseRealtimeProviderDraft.value === 'coze' ? 'rtc_sidecar' : 'websocket',
+      connectionState: 'idle' as DefenseRealtimeConnectionState,
+      bootstrapState: defenseRealtimeBootstrapState.value,
+      linkedMeetingId: base.linkedMeetingId || null,
+      latestLatencyMs: null,
+      audioEnabled: defenseRealtimeAudioEnabled.value,
+      videoEnabled: defenseRealtimeVideoEnabled.value,
+      metadata: {},
+    }),
+    ...patch,
+    metadata: {
+      ...(base.realtime?.metadata || {}),
+      ...((patch.metadata && typeof patch.metadata === 'object' && !Array.isArray(patch.metadata)) ? patch.metadata : {}),
+    },
+  }
+
+  defenseSessionState.value = {
+    ...base,
+    realtime: nextRealtime,
+    updatedAt: new Date().toISOString(),
+  }
+
+  if (options.syncDrafts !== false)
+    syncDefenseRealtimeDraftState(defenseSessionState.value)
+}
+
+function normalizeDefenseLatestRound(round: AiDefenseJudgeRound): AiDefenseJudgeRound {
+  const fallbackTurnIndex = Math.max(1, defenseTurnCount.value + 1)
+  return {
+    ...round,
+    stage: round.stage || defenseStage.value || defenseSessionStateSnapshot.value?.currentStage || 'opening',
+    turnIndex: Number.isFinite(Number(round.turnIndex))
+      ? Math.max(1, Math.trunc(Number(round.turnIndex)))
+      : fallbackTurnIndex,
+    createdAt: normalizeString(round.createdAt) || new Date().toISOString(),
+  }
+}
+
+function setDefenseLatestRounds(rounds: AiDefenseJudgeRound[]): void {
+  defenseRounds.value = rounds.map(normalizeDefenseLatestRound)
+}
+
+function upsertDefenseLatestRound(round: AiDefenseJudgeRound): void {
+  const normalizedRound = normalizeDefenseLatestRound(round)
+  const targetTurnIndex = normalizedRound.turnIndex || 1
+  const nextRounds = defenseRounds.value
+    .filter((item) => {
+      const itemTurnIndex = Number.isFinite(Number(item.turnIndex))
+        ? Math.max(1, Math.trunc(Number(item.turnIndex)))
+        : targetTurnIndex
+      if (itemTurnIndex !== targetTurnIndex)
+        return false
+      return !(
+        normalizeString(item.judge) === normalizeString(normalizedRound.judge)
+        && normalizeString(item.question) === normalizeString(normalizedRound.question)
+      )
+    })
+
+  defenseRounds.value = [...nextRounds, normalizedRound]
+}
+
+function appendDefenseTimelineTurn(input: {
+  turnIndex?: number | null
+  stage?: AiDefenseStage
+  personaId?: string | null
+  judgeType?: AiDefenseJudgeRound['judgeType']
+  judgeName?: string | null
+  question?: string | null
+  comment?: string | null
+  followUp?: string | null
+  score?: number | null
+  evidenceRefs?: AiDefenseTurn['evidenceRefs']
+  createdAt?: string | null
+  metadata?: Record<string, unknown>
+}): void {
+  const sessionId = normalizeString(activeChatSessionId.value || defenseSessionMetaSnapshot.value?.id)
+  const projectId = normalizeString(activeProjectId.value || defenseSessionStateSnapshot.value?.projectId)
+  const judgeName = normalizeString(input.judgeName)
+  const question = normalizeString(input.question)
+  if (!sessionId || !projectId || !judgeName || !question)
+    return
+
+  const turnIndex = Number.isFinite(Number(input.turnIndex))
+    ? Math.max(1, Math.trunc(Number(input.turnIndex)))
+    : Math.max(1, defenseTurnCount.value + 1)
+  const createdAt = normalizeString(input.createdAt) || new Date().toISOString()
+  const duplicate = defenseTurns.value.some(item =>
+    item.turnIndex === turnIndex
+    && normalizeString(item.judgeName) === judgeName
+    && normalizeString(item.question) === question,
+  )
+  if (duplicate)
+    return
+
+  defenseTurns.value = [
+    ...defenseTurns.value,
+    {
+      id: `live-${turnIndex}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      sessionId,
+      projectId,
+      stage: input.stage || defenseStage.value || defenseSessionStateSnapshot.value?.currentStage || 'opening',
+      turnIndex,
+      personaId: normalizeString(input.personaId) || null,
+      judgeType: input.judgeType || 'custom',
+      judgeName,
+      question,
+      comment: normalizeString(input.comment),
+      followUp: normalizeString(input.followUp),
+      score: Number.isFinite(Number(input.score)) ? Math.max(0, Math.min(100, Number(input.score))) : 0,
+      evidenceRefs: input.evidenceRefs || [],
+      attachments: [],
+      metadata: input.metadata || {},
+      createdAt,
+    },
+  ].sort((left, right) => {
+    if (left.turnIndex !== right.turnIndex)
+      return left.turnIndex - right.turnIndex
+    return new Date(String(left.createdAt || '')).getTime() - new Date(String(right.createdAt || '')).getTime()
+  })
+}
+
+function isDefenseRealtimeSessionLocked(): boolean {
+  if (defenseRealtimeBootstrapState.value === 'bootstrapping')
+    return true
+  const connectionState = defenseRealtimeSessionMetaSnapshot.value?.connectionState
+  return connectionState === 'bootstrapping' || connectionState === 'connecting' || connectionState === 'connected'
+}
+
+function clearDefenseRealtimeEventFlushTimer(): void {
+  if (defenseRealtimeEventFlushTimer) {
+    clearTimeout(defenseRealtimeEventFlushTimer)
+    defenseRealtimeEventFlushTimer = null
+  }
+}
+
+async function postDefenseRealtimeEvents(payloads: DefenseRealtimeNormalizedEvent[]): Promise<void> {
+  const projectId = normalizeString(activeProjectId.value)
+  const sessionId = normalizeString(payloads[0]?.sessionId || activeChatSessionId.value)
+  if (!projectId || !sessionId || payloads.length === 0)
+    return
+
+  await unsafeFetch(
+    endpoint(`/projects/${projectId}/defense/realtime-sessions/${sessionId}/events`),
+    {
+      method: 'POST',
+      body: {
+        events: payloads,
+      },
+    },
+  )
+}
+
+function scheduleDefenseRealtimeEventFlush(): void {
+  if (defenseRealtimeEventFlushTimer)
+    return
+  defenseRealtimeEventFlushTimer = setTimeout(() => {
+    defenseRealtimeEventFlushTimer = null
+    void flushDefenseRealtimeEventQueue()
+  }, 500)
+}
+
+async function flushDefenseRealtimeEventQueue(): Promise<void> {
+  clearDefenseRealtimeEventFlushTimer()
+  if (defenseRealtimePendingEvents.length === 0)
+    return
+
+  const payloads = defenseRealtimePendingEvents
+  defenseRealtimePendingEvents = []
+  try {
+    await postDefenseRealtimeEvents(payloads)
+  }
+  catch {
+    appendDefenseRealtimeLog('实时事件批量回写失败，当前仅保留本地状态。', 'warning')
+  }
+}
+
+async function enqueueDefenseRealtimeEvent(payload: DefenseRealtimeNormalizedEvent): Promise<void> {
+  if (DEFENSE_REALTIME_DEFERRED_EVENT_TYPES.has(payload.type)) {
+    defenseRealtimePendingEvents.push(payload)
+    scheduleDefenseRealtimeEventFlush()
+    return
+  }
+
+  await flushDefenseRealtimeEventQueue()
+  try {
+    await postDefenseRealtimeEvents([payload])
+  }
+  catch {
+    appendDefenseRealtimeLog('实时事件回写失败，当前仅保留本地状态。', 'warning')
+  }
+}
+
+async function teardownDefenseRealtimeBridge(options: { resetBootstrap?: boolean } = {}): Promise<void> {
+  clearDefenseRealtimeEventFlushTimer()
+  const bridge = defenseRealtimeBridge
+  const cleanup = defenseRealtimeBridgeCleanup
+  const mediaController = defenseRealtimeMediaController
+  defenseRealtimeBridge = null
+  defenseRealtimeBridgeCleanup = null
+  defenseRealtimeMediaController = null
+
+  if (bridge) {
+    try {
+      await bridge.disconnect()
+    }
+    catch {
+      appendDefenseRealtimeLog('provider sidecar 断开时发生异常，已忽略。', 'warning')
+    }
+  }
+  await Promise.resolve()
+  await flushDefenseRealtimeEventQueue()
+  if (cleanup)
+    cleanup()
+  if (mediaController) {
+    try {
+      await mediaController.stop()
+    }
+    catch {
+      appendDefenseRealtimeLog('本地媒体设备释放失败，已忽略。', 'warning')
+    }
+  }
+  if (options.resetBootstrap !== false)
+    defenseRealtimeBootstrapState.value = 'idle'
+}
+
+async function handleDefenseRealtimeBridgeEvent(payload: DefenseRealtimeNormalizedEvent): Promise<void> {
+  if (payload.speakerLabel)
+    defenseRealtimeLatestSpeakerLabel.value = payload.speakerLabel
+  if (Number.isFinite(Number(payload.latencyMs)))
+    defenseRealtimeLatestLatencyMs.value = Math.max(0, Number(payload.latencyMs))
+  if (payload.type === 'error') {
+    defenseRealtimeLatestError.value = normalizeString(payload.errorMessage) || 'provider sidecar 异常'
+    appendDefenseRealtimeLog(defenseRealtimeLatestError.value, 'error')
+  }
+  else if (payload.type === 'assistant.transcript.final') {
+    if (payload.stage)
+      defenseStage.value = payload.stage
+    if (Number.isFinite(Number(payload.turnIndex)))
+      defenseTurnCount.value = Math.max(defenseTurnCount.value, Math.trunc(Number(payload.turnIndex)))
+    const latestRound: AiDefenseJudgeRound = {
+      judge: normalizeString(payload.speakerLabel) || normalizeString(payload.speakerName) || 'AgentDef',
+      judgeType: payload.judgeType || 'custom',
+      personaId: normalizeString(payload.speakerId) || null,
+      stage: payload.stage,
+      turnIndex: payload.turnIndex,
+      question: normalizeString(payload.text),
+      score: Number.isFinite(Number(payload.metadata?.score)) ? Number(payload.metadata?.score) : 0,
+      comment: normalizeString(payload.metadata?.comment),
+      followUp: normalizeString(payload.metadata?.followUp),
+      evidenceRefs: [],
+      createdAt: payload.createdAt,
+    }
+    upsertDefenseLatestRound(latestRound)
+    appendDefenseTimelineTurn({
+      turnIndex: payload.turnIndex,
+      stage: payload.stage,
+      personaId: payload.speakerId || null,
+      judgeType: payload.judgeType || 'custom',
+      judgeName: payload.speakerLabel || payload.speakerName || 'AgentDef',
+      question: payload.text,
+      comment: normalizeString(payload.metadata?.comment),
+      followUp: normalizeString(payload.metadata?.followUp),
+      score: Number.isFinite(Number(payload.metadata?.score)) ? Number(payload.metadata?.score) : 0,
+      createdAt: payload.createdAt,
+      metadata: payload.metadata,
+    })
+    appendDefenseRealtimeLog(`评委发言：${normalizeString(payload.speakerLabel) || 'AgentDef'} 已完成一段输出。`)
+  }
+  else if (payload.type === 'session.state') {
+    if (payload.connectionState === 'connected')
+      defenseRealtimeLatestError.value = ''
+    appendDefenseRealtimeLog(`实时链路状态：${normalizeString(payload.connectionState) || 'idle'}`)
+  }
+
+  patchDefenseRealtimeState({
+    provider: payload.provider,
+    transport: payload.transport || defenseRealtimeSessionMetaSnapshot.value?.transport || (payload.provider === 'coze' ? 'rtc_sidecar' : 'websocket'),
+    connectionState: payload.connectionState || defenseRealtimeSessionMetaSnapshot.value?.connectionState || 'idle',
+    providerSessionId: normalizeString(payload.providerSessionId) || defenseRealtimeSessionMetaSnapshot.value?.providerSessionId || null,
+    conversationId: normalizeString(payload.conversationId) || defenseRealtimeSessionMetaSnapshot.value?.conversationId || null,
+    lastProviderEventAt: payload.createdAt,
+    latestSpeakerId: normalizeString(payload.speakerId) || defenseRealtimeSessionMetaSnapshot.value?.latestSpeakerId || null,
+    latestSpeakerLabel: normalizeString(payload.speakerLabel) || defenseRealtimeLatestSpeakerLabel.value || null,
+    latestLatencyMs: Number.isFinite(Number(payload.latencyMs))
+      ? Math.max(0, Number(payload.latencyMs))
+      : defenseRealtimeLatestLatencyMs.value,
+    audioEnabled: payload.audioEnabled ?? defenseRealtimeAudioEnabled.value,
+    videoEnabled: payload.videoEnabled ?? defenseRealtimeVideoEnabled.value,
+    lastError: payload.type === 'error'
+      ? (normalizeString(payload.errorMessage) || defenseRealtimeLatestError.value || null)
+      : (payload.type === 'session.state' && payload.connectionState === 'connected'
+          ? null
+          : defenseRealtimeSessionMetaSnapshot.value?.lastError || null),
+    bootstrapState: defenseRealtimeBootstrapState.value,
+  })
+
+  await enqueueDefenseRealtimeEvent(payload)
+}
+
+async function bootstrapDefenseRealtimeSidecar(sessionId: string): Promise<void> {
+  const projectId = normalizeString(activeProjectId.value)
+  const targetSessionId = normalizeString(sessionId || activeChatSessionId.value)
+  if (!projectId || !targetSessionId)
+    return
+
+  defenseRealtimeBootstrapState.value = 'bootstrapping'
+  defenseRealtimeLatestError.value = ''
+  appendDefenseRealtimeLog('正在向服务端申请 provider sidecar 握手信息。')
+
+  const response = await unsafeFetch<ApiResponse<DefenseRealtimeBootstrapResponse>>(
+    endpoint(`/projects/${projectId}/defense/realtime-sessions/${targetSessionId}/bootstrap`),
+    {
+      method: 'POST',
+    },
+  )
+  const bootstrap = response.data.bootstrap
+  defenseRealtimeBootstrapPayload.value = bootstrap
+  if (response.data.state)
+    defenseSessionState.value = response.data.state
+  syncDefenseRealtimeDraftState(response.data.state)
+  patchDefenseRealtimeState({
+    provider: bootstrap.provider,
+    mediaMode: bootstrap.mediaMode,
+    transport: bootstrap.transport,
+    bootstrapState: 'ready',
+    connectionState: 'bootstrapping',
+    linkedMeetingId: bootstrap.meetingId,
+    audioEnabled: defenseRealtimeAudioEnabled.value,
+    videoEnabled: bootstrap.mediaMode === 'audio_video' ? defenseRealtimeVideoEnabled.value : false,
+  })
+
+  try {
+    await teardownDefenseRealtimeBridge({ resetBootstrap: false })
+    const mediaController = createDefenseRealtimeMediaController({
+      previewElementId: 'workspace-defense-realtime-preview',
+      targetSampleRate: 16000,
+      frameIntervalMs: bootstrap.qwen?.frameIntervalMs || 1000,
+    })
+    defenseRealtimeMediaController = mediaController
+    await mediaController.start({
+      mode: bootstrap.mediaMode,
+    })
+    await mediaController.setAudioEnabled(defenseRealtimeAudioEnabled.value)
+    if (bootstrap.mediaMode === 'audio_video')
+      await mediaController.setVideoEnabled(defenseRealtimeVideoEnabled.value)
+    else
+      defenseRealtimeVideoEnabled.value = false
+
+    defenseRealtimeBridge = createDefenseRealtimeProviderBridge(bootstrap.provider, bootstrap)
+    defenseRealtimeBridgeCleanup = defenseRealtimeBridge.onEvent((event) => {
+      void handleDefenseRealtimeBridgeEvent(event)
+    })
+    defenseRealtimeBootstrapState.value = 'ready'
+    await defenseRealtimeBridge.bootstrap()
+    await defenseRealtimeBridge.connect(mediaController)
+  }
+  catch (error) {
+    await teardownDefenseRealtimeBridge({ resetBootstrap: false })
+    defenseRealtimeBootstrapState.value = 'error'
+    defenseRealtimeLatestError.value = resolveApiErrorMessage(error, '实时答辩 sidecar 启动失败，请检查设备权限、Token 或 Provider 配置。')
+    appendDefenseRealtimeLog(defenseRealtimeLatestError.value, 'error')
+    patchDefenseRealtimeState({
+      connectionState: 'error',
+      bootstrapState: 'error',
+      lastError: defenseRealtimeLatestError.value,
+    })
+    throw error
+  }
+}
+
+function updateDefenseRealtimeProvider(provider: DefenseRealtimeProvider): void {
+  if (isDefenseRealtimeSessionLocked()) {
+    const message = '当前实时答辩已激活，需先结束当前答辩后再切换 Provider。'
+    appendDefenseRealtimeLog(message, 'warning')
+    statusLine.value = message
+    return
+  }
+  defenseRealtimeProviderDraft.value = provider
+  patchDefenseRealtimeState({
+    provider,
+    transport: provider === 'coze' ? 'rtc_sidecar' : 'websocket',
+  })
+}
+
+function updateDefenseRealtimeMediaMode(mode: DefenseRealtimeMediaMode): void {
+  if (isDefenseRealtimeSessionLocked()) {
+    const message = '当前实时答辩已激活，媒体模式会在下一次启动时生效。'
+    appendDefenseRealtimeLog(message, 'warning')
+    statusLine.value = message
+    return
+  }
+  defenseRealtimeMediaModeDraft.value = mode
+  if (mode === 'audio')
+    defenseRealtimeVideoEnabled.value = false
+  patchDefenseRealtimeState({
+    mediaMode: mode,
+    videoEnabled: mode === 'audio' ? false : defenseRealtimeVideoEnabled.value,
+  })
+}
+
+async function setDefenseRealtimeAudioEnabled(enabled: boolean): Promise<void> {
+  defenseRealtimeAudioEnabled.value = enabled
+  patchDefenseRealtimeState({
+    audioEnabled: enabled,
+  })
+  if (defenseRealtimeMediaController)
+    await defenseRealtimeMediaController.setAudioEnabled(enabled).catch(() => {})
+  if (defenseRealtimeBridge)
+    await defenseRealtimeBridge.setAudioEnabled(enabled)
+}
+
+async function setDefenseRealtimeVideoEnabled(enabled: boolean): Promise<void> {
+  if (enabled && defenseRealtimeMediaModeDraft.value === 'audio') {
+    const message = '当前媒体模式为仅音频，请切到音视频理解后再开启摄像头。'
+    defenseRealtimeLatestError.value = message
+    appendDefenseRealtimeLog(message, 'warning')
+    statusLine.value = message
+    return
+  }
+  defenseRealtimeVideoEnabled.value = enabled
+  patchDefenseRealtimeState({
+    videoEnabled: enabled,
+  })
+  if (defenseRealtimeMediaController)
+    await defenseRealtimeMediaController.setVideoEnabled(enabled).catch((error) => {
+      const message = error instanceof Error ? error.message : '摄像头状态更新失败。'
+      defenseRealtimeLatestError.value = message
+      appendDefenseRealtimeLog(message, 'warning')
+    })
+  if (defenseRealtimeBridge)
+    await defenseRealtimeBridge.setVideoEnabled(enabled)
+}
+
+async function interruptDefenseRealtime(): Promise<void> {
+  if (!defenseRealtimeBridge)
+    return
+  await defenseRealtimeBridge.interrupt()
+}
+
+async function reconnectDefenseRealtime(): Promise<void> {
+  const sessionId = normalizeString(activeChatSessionId.value || defenseSessionStateSnapshot.value?.sessionId)
+  if (!sessionId)
+    return
+  await bootstrapDefenseRealtimeSidecar(sessionId)
+}
+
+function resetDefenseRealtimeLocalState(): void {
+  clearDefenseRealtimeEventFlushTimer()
+  defenseRealtimePendingEvents = []
+  defenseRealtimeProviderDraft.value = 'qwen'
+  defenseRealtimeMediaModeDraft.value = 'audio_video'
+  defenseRealtimeAudioEnabled.value = true
+  defenseRealtimeVideoEnabled.value = true
+  defenseRealtimeBootstrapState.value = 'idle'
+  defenseRealtimeBootstrapPayload.value = null
+  defenseRealtimeLatestError.value = ''
+  defenseRealtimeLatestSpeakerLabel.value = ''
+  defenseRealtimeLatestLatencyMs.value = null
+  defenseRealtimeLogs.value = []
+}
+
+async function handleEndProjectMeeting(meetingId: string): Promise<void> {
+  const targetMeetingId = normalizeString(meetingId)
+  const linkedMeetingId = normalizeString(defenseSessionStateSnapshot.value?.linkedMeetingId)
+  if (targetMeetingId && linkedMeetingId && targetMeetingId === linkedMeetingId)
+    await teardownDefenseRealtimeBridge()
+  await endProjectMeeting(meetingId)
+}
+
 const finalReviewActiveShares = computed(() => {
   return projectResourceShares.value.filter(item => !String(item.revokedAt || '').trim())
 })
@@ -2294,6 +3195,19 @@ const metaKCommandItems = computed<WorkspaceMetaKItem[]>(() => {
       defaultVisible: true,
       actionId: 'create_collab_draw',
       keywords: buildWorkspaceMetaKKeywords(COLLAB_FREEFORM_RESOURCE_LABEL, '自由画布', 'draw', 'canvas'),
+    },
+    {
+      id: 'metak-command-create-collab-workflow',
+      sectionId: 'actions',
+      type: 'command',
+      title: `新建${COLLAB_WORKFLOW_RESOURCE_LABEL}`,
+      subtitle: `创建${COLLAB_WORKFLOW_RESOURCE_LABEL}并直接打开 AgentProto 梳理。`,
+      icon: 'flowsheet',
+      source: 'local',
+      priority: 282,
+      defaultVisible: true,
+      actionId: 'create_collab_workflow',
+      keywords: buildWorkspaceMetaKKeywords(COLLAB_WORKFLOW_RESOURCE_LABEL, 'workflow', '流程', 'agentproto'),
     },
     {
       id: 'metak-command-create-meeting-audio',
@@ -2781,6 +3695,14 @@ const mappingRows = computed<WorkspaceMappingRow[]>(() => {
     .filter(row => row.metric.trim())
 })
 
+watch([mappingScopeKey, selectedContestDetail, selectedContestDetailContestId], ([scopeKey, detail, detailContestId]) => {
+  if (!scopeKey || !detail)
+    return
+  if (detailContestId !== normalizeString(selectedContestId.value))
+    return
+  mappingLoadedScopeKey.value = scopeKey
+}, { immediate: true })
+
 const activeTopicBoardCandidate = computed(() => {
   const board = topicBoardSnapshot.value
   if (!board || board.candidates.length === 0)
@@ -2983,6 +3905,16 @@ function resolveAiFeatureKeyForMode(mode: WorkspaceAiMode): ProjectWorkspaceAiFe
   return 'workspaceDialogAsk'
 }
 
+function resolveWorkflowDraftFeatureKey(action: WorkflowDraftAction): ProjectWorkspaceAiFeatureKey {
+  if (action === 'complete')
+    return 'canvasComplete'
+  if (action === 'refine')
+    return 'canvasRefine'
+  if (action === 'restyle')
+    return 'workspaceDialogAsk'
+  return 'canvasGenerate'
+}
+
 function buildAiUnavailableMessage(key: ProjectWorkspaceAiFeatureKey): string {
   return String(getAiFeatureStatus(key)?.reason || '').trim() || `${AI_RUNTIME_FEATURE_LABELS[key]} 未配置，请先在后台完成模型与密钥配置后再试。`
 }
@@ -3039,6 +3971,30 @@ const currentAiDisabledReason = computed(() => {
       || `${projectContextualAssistant.value.label} 未配置，请先在后台完成模型与密钥配置后再试。`
   }
   return buildAiUnavailableMessage(currentAiFeatureKey.value)
+})
+const workflowGenerateAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('generate')))
+const workflowGenerateDisabledReason = computed(() => {
+  if (workflowGenerateAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('generate'))
+})
+const workflowCompleteAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('complete')))
+const workflowCompleteDisabledReason = computed(() => {
+  if (workflowCompleteAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('complete'))
+})
+const workflowRefineAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('refine')))
+const workflowRefineDisabledReason = computed(() => {
+  if (workflowRefineAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('refine'))
+})
+const workflowRestyleAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('restyle')))
+const workflowRestyleDisabledReason = computed(() => {
+  if (workflowRestyleAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('restyle'))
 })
 const currentAiModelLabel = computed(() => {
   if (aiRuntimeStatusLoading.value)
@@ -3134,6 +4090,91 @@ const workspaceShellLoadingProgress = computed(() => {
     return 28
   return 16
 })
+
+function resolveWorkbenchModeOrderIndex(mode: WorkspaceWorkbenchMode): number {
+  const index = WORKBENCH_MODE_ORDER.indexOf(mode)
+  return index >= 0 ? index : 0
+}
+
+function resolveWorkbenchSceneTransitionDirection(
+  currentMode: WorkspaceWorkbenchMode,
+  nextMode: WorkspaceWorkbenchMode,
+): WorkbenchSceneTransitionName {
+  return resolveWorkbenchModeOrderIndex(nextMode) >= resolveWorkbenchModeOrderIndex(currentMode)
+    ? 'workspace-workbench-scene-forward'
+    : 'workspace-workbench-scene-backward'
+}
+
+function resolveWorkbenchSceneTransitionDuration(): number {
+  return prefersReducedMotion.value ? 160 : 320
+}
+
+function clearWorkbenchSwitchDelays(): void {
+  activeWorkbenchSwitchDelayIds.forEach(timeoutId => clearTimeout(timeoutId))
+  activeWorkbenchSwitchDelayIds.clear()
+}
+
+function resolveWorkbenchSceneTransition(): void {
+  const resolver = workbenchSceneTransitionResolver
+  workbenchSceneTransitionResolver = null
+  resolver?.()
+}
+
+function waitForWorkbenchDelay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      activeWorkbenchSwitchDelayIds.delete(timeoutId)
+      resolve()
+    }, durationMs)
+    activeWorkbenchSwitchDelayIds.add(timeoutId)
+  })
+}
+
+function waitForWorkbenchSceneTransitionEnd(): Promise<void> {
+  let settled = false
+  const finish = () => {
+    if (settled)
+      return
+    settled = true
+    resolveWorkbenchSceneTransition()
+  }
+
+  return new Promise((resolve) => {
+    workbenchSceneTransitionResolver = () => {
+      if (settled)
+        return
+      settled = true
+      workbenchSceneTransitionResolver = null
+      resolve()
+    }
+    void waitForWorkbenchDelay(resolveWorkbenchSceneTransitionDuration() + 80).then(() => {
+      finish()
+      resolve()
+    })
+  })
+}
+
+async function runWorkbenchSwitchLoadingSequence(): Promise<void> {
+  workbenchSwitchPhase.value = 'loading'
+  workbenchSwitchProgress.value = 12
+  await waitForWorkbenchDelay(90)
+  workbenchSwitchProgress.value = 38
+  await waitForWorkbenchDelay(140)
+  workbenchSwitchProgress.value = 72
+  await waitForWorkbenchDelay(130)
+  workbenchSwitchProgress.value = 100
+  await waitForWorkbenchDelay(60)
+}
+
+function handleWorkbenchSceneTransitionAfterEnter(): void {
+  if (workbenchSwitchPhase.value !== 'animating')
+    return
+  resolveWorkbenchSceneTransition()
+}
+
+function handleReducedMotionPreferenceChange(event: MediaQueryListEvent): void {
+  prefersReducedMotion.value = event.matches
+}
 
 const collabSelectionStatus = ref({
   line: 1,
@@ -4581,11 +5622,18 @@ let selectedContestDetailRequestId = 0
 async function loadSelectedContestDetail(contestId = selectedContestId.value) {
   const normalizedContestId = String(contestId || '').trim()
   const requestId = ++selectedContestDetailRequestId
+  const sameContestRefresh = selectedContestDetailContestId.value === normalizedContestId
 
   if (!normalizedContestId) {
     selectedContestDetail.value = null
+    selectedContestDetailContestId.value = ''
     selectedContestDetailLoading.value = false
     return
+  }
+
+  if (!sameContestRefresh) {
+    selectedContestDetail.value = null
+    selectedContestDetailContestId.value = ''
   }
 
   selectedContestDetailLoading.value = true
@@ -4598,11 +5646,15 @@ async function loadSelectedContestDetail(contestId = selectedContestId.value) {
     if (requestId !== selectedContestDetailRequestId || normalizedContestId !== String(selectedContestId.value || '').trim())
       return
     selectedContestDetail.value = data
+    selectedContestDetailContestId.value = normalizedContestId
   }
   catch {
     if (requestId !== selectedContestDetailRequestId || normalizedContestId !== String(selectedContestId.value || '').trim())
       return
-    selectedContestDetail.value = null
+    if (!sameContestRefresh) {
+      selectedContestDetail.value = null
+      selectedContestDetailContestId.value = ''
+    }
   }
   finally {
     if (requestId === selectedContestDetailRequestId && normalizedContestId === String(selectedContestId.value || '').trim())
@@ -4655,21 +5707,27 @@ async function loadContests() {
 
 async function loadProjectResources() {
   const projectId = String(activeProjectId.value || '').trim()
+  const sameProjectRefresh = resourcesLoadedProjectId.value === projectId
   resourcesLoading.value = true
   if (!projectId) {
     resources.value = []
+    resourcesLoadedProjectId.value = ''
     resourcesLoading.value = false
     return
   }
 
   try {
     const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${projectId}/resources`))
-    if (activeProjectId.value === projectId)
+    if (activeProjectId.value === projectId) {
       resources.value = response.data
+      resourcesLoadedProjectId.value = projectId
+    }
   }
   catch {
-    if (activeProjectId.value === projectId)
+    if (activeProjectId.value === projectId && !sameProjectRefresh) {
       resources.value = []
+      resourcesLoadedProjectId.value = ''
+    }
   }
   finally {
     if (activeProjectId.value === projectId || !activeProjectId.value)
@@ -4679,21 +5737,27 @@ async function loadProjectResources() {
 
 async function loadProjectResourceLibrary() {
   const projectId = String(activeProjectId.value || '').trim()
+  const sameProjectRefresh = resourceLibraryLoadedProjectId.value === projectId
   resourceLibraryLoading.value = true
   if (!projectId) {
     resourceLibrary.value = []
+    resourceLibraryLoadedProjectId.value = ''
     resourceLibraryLoading.value = false
     return
   }
 
   try {
     const response = await unsafeFetch<ApiResponse<Resource[]>>(endpoint(`/projects/${projectId}/resources/library`))
-    if (activeProjectId.value === projectId)
+    if (activeProjectId.value === projectId) {
       resourceLibrary.value = response.data
+      resourceLibraryLoadedProjectId.value = projectId
+    }
   }
   catch {
-    if (activeProjectId.value === projectId)
+    if (activeProjectId.value === projectId && !sameProjectRefresh) {
       resourceLibrary.value = []
+      resourceLibraryLoadedProjectId.value = ''
+    }
   }
   finally {
     if (activeProjectId.value === projectId || !activeProjectId.value)
@@ -4721,9 +5785,11 @@ async function loadProjectRecycleResources() {
 
 async function loadProjectResourceShares() {
   const projectId = String(activeProjectId.value || '').trim()
+  const sameProjectRefresh = projectResourceSharesLoadedProjectId.value === projectId
   projectResourceSharesLoading.value = true
   if (!projectId) {
     projectResourceShares.value = []
+    projectResourceSharesLoadedProjectId.value = ''
     projectResourceSharesLoading.value = false
     return
   }
@@ -4735,11 +5801,14 @@ async function loadProjectResourceShares() {
         ...item,
         shareUrl: resolveProjectResourceShareUrl(String(item.shareUrl || '').trim()),
       }))
+      projectResourceSharesLoadedProjectId.value = projectId
     }
   }
   catch {
-    if (activeProjectId.value === projectId)
+    if (activeProjectId.value === projectId && !sameProjectRefresh) {
       projectResourceShares.value = []
+      projectResourceSharesLoadedProjectId.value = ''
+    }
   }
   finally {
     if (activeProjectId.value === projectId || !activeProjectId.value)
@@ -5407,7 +6476,7 @@ async function createCollabResource(
   resourceInput:
     | 'markdown'
     | 'draw'
-    | { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design', parentResourceId?: string | null },
+    | { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design' | 'workflow', parentResourceId?: string | null },
 ) {
   const projectId = String(activeProjectId.value || '').trim()
   const kind = typeof resourceInput === 'string' ? resourceInput : resourceInput.kind
@@ -5434,7 +6503,7 @@ async function createCollabResource(
               drawMode: 'composition',
               sceneSourceType: 'image_mockup',
               templateKey: 'device-showcase',
-              editorEngine: 'vueflow',
+              editorEngine: 'canvaskit_wasm',
             }
           : {}),
         parentResourceId: parentResourceId || undefined,
@@ -5447,7 +6516,11 @@ async function createCollabResource(
     const snapshot = response.data?.snapshot
     if (createdResource?.id) {
       await openProjectCollabResource(createdResource.id, snapshot || null, {
-        surface: purpose === 'design' ? 'design' : 'preview',
+        surface: purpose === 'design'
+          ? 'design'
+          : purpose === 'workflow'
+            ? 'flow'
+            : 'preview',
       })
       statusLine.value = `已创建${resourceLabel}，协作模式已打开。`
       return
@@ -5457,6 +6530,32 @@ async function createCollabResource(
   }
   catch (error) {
     statusLine.value = resolveApiErrorMessage(error, `创建${resourceLabel}失败，请稍后重试。`)
+  }
+  finally {
+    resourceMutating.value = false
+  }
+}
+
+async function renameProjectResource(payload: { resourceId: string, title: string }) {
+  const projectId = String(activeProjectId.value || '').trim()
+  const resourceId = String(payload.resourceId || '').trim()
+  const title = String(payload.title || '').trim()
+  if (!projectId || !resourceId || !title)
+    return
+
+  resourceMutating.value = true
+  try {
+    await unsafeFetch<ApiResponse<Resource>>(endpoint(`/projects/${projectId}/resources/${resourceId}`), {
+      method: 'PATCH',
+      body: {
+        title,
+      },
+    })
+    await refreshProjectResourceContext()
+    statusLine.value = `已更新资源名称：${title}`
+  }
+  catch (error) {
+    statusLine.value = resolveApiErrorMessage(error, '更新资源名称失败，请稍后重试。')
   }
   finally {
     resourceMutating.value = false
@@ -5926,6 +7025,8 @@ async function openProjectCollabResource(
     previewStatusPayload.value = null
     previewStatusLoading.value = false
     flowResourceId.value = targetResourceId
+    if (workbenchMode.value === 'project')
+      updateProjectAssistantMode('contextual')
     if (options.openTab !== false)
       openFlowSignal.value += 1
     return
@@ -6005,6 +7106,7 @@ async function ensureWorkflowCanvas(options: OpenPreviewOptions = {}): Promise<b
       body: {
         kind: 'draw',
         purpose: 'workflow',
+        ensurePrimary: true,
       },
     })
 
@@ -6570,8 +7672,9 @@ async function requestInlineCompletion(payload: {
       signal: payload.signal,
     })
 
-    const data = await response.json().catch(() => null) as ApiResponse<AiWorkspaceInlineCompletionResult> | null
-    if (!response.ok || !data || data.code !== 0) {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase()
+    if (!response.ok) {
+      const data = await response.json().catch(() => null) as ApiResponse<AiWorkspaceInlineCompletionResult> | null
       logInlineCompletionDebug('request-response-error', {
         requestKey: payload.requestKey,
         status: response.status,
@@ -6580,11 +7683,115 @@ async function requestInlineCompletion(payload: {
       return null
     }
 
+    if (!contentType.includes('text/event-stream')) {
+      const data = await response.json().catch(() => null) as ApiResponse<AiWorkspaceInlineCompletionResult> | null
+      if (!data || data.code !== 0) {
+        logInlineCompletionDebug('request-response-error', {
+          requestKey: payload.requestKey,
+          status: response.status,
+          message: String(data?.message || 'UNKNOWN_ERROR'),
+        })
+        return null
+      }
+
+      logInlineCompletionDebug('request-response-success', {
+        requestKey: payload.requestKey,
+        suggestionLength: String(data.data?.suggestion || '').length,
+        transport: 'json',
+      })
+      return data.data
+    }
+
+    if (!response.body) {
+      logInlineCompletionDebug('request-response-error', {
+        requestKey: payload.requestKey,
+        status: response.status,
+        message: 'MISSING_STREAM_BODY',
+      })
+      return null
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalResult: AiWorkspaceInlineCompletionResult | null = null
+    let streamErrorMessage = ''
+    const applyInlineCompletionSseBlock = (rawBlock: string): void => {
+      const parsed = parseSseBlock(rawBlock)
+      if (!parsed)
+        return
+
+      let payloadData: Record<string, unknown> = {}
+      try {
+        payloadData = JSON.parse(parsed.dataText || '{}') as Record<string, unknown>
+      }
+      catch {
+        payloadData = {}
+      }
+
+      const eventType = String(payloadData.event || parsed.eventType || 'message')
+      const data = toJsonPayload(payloadData.data)
+
+      if (eventType === 'heartbeat')
+        return
+
+      if (eventType === 'done') {
+        const result = toJsonPayload(data.result)
+        finalResult = {
+          suggestion: String(result.suggestion || ''),
+        }
+        return
+      }
+
+      if (eventType === 'error')
+        streamErrorMessage = String(data.message || 'UNKNOWN_ERROR')
+    }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done)
+        break
+
+      buffer += decoder.decode(value, { stream: true })
+      while (true) {
+        const separatorIndex = buffer.indexOf('\n\n')
+        if (separatorIndex < 0)
+          break
+
+        const block = buffer.slice(0, separatorIndex)
+        buffer = buffer.slice(separatorIndex + 2)
+        applyInlineCompletionSseBlock(block)
+      }
+    }
+
+    buffer += decoder.decode()
+    while (true) {
+      const separatorIndex = buffer.indexOf('\n\n')
+      if (separatorIndex < 0)
+        break
+
+      const block = buffer.slice(0, separatorIndex)
+      buffer = buffer.slice(separatorIndex + 2)
+      applyInlineCompletionSseBlock(block)
+    }
+    applyInlineCompletionSseBlock(buffer)
+
+    if (streamErrorMessage) {
+      logInlineCompletionDebug('request-response-error', {
+        requestKey: payload.requestKey,
+        status: response.status,
+        message: streamErrorMessage,
+        transport: 'sse',
+      })
+      return null
+    }
+
     logInlineCompletionDebug('request-response-success', {
       requestKey: payload.requestKey,
-      suggestionLength: String(data.data?.suggestion || '').length,
+      suggestionLength: String(finalResult?.suggestion || '').length,
+      transport: 'sse',
     })
-    return data.data
+    return finalResult
   }
   catch (error) {
     if (isAbortError(error)) {
@@ -6672,6 +7879,57 @@ function syncDocumentAssistRequestState(payload: {
   documentAssistRequestState.selectionRange = payload.selectionRange || null
 }
 
+function clearWorkflowSnapshotSyncTimer(): void {
+  if (!workflowSnapshotSyncTimer.value)
+    return
+  clearTimeout(workflowSnapshotSyncTimer.value)
+  workflowSnapshotSyncTimer.value = null
+}
+
+function syncWorkflowSnapshotNow(): void {
+  if (!activeWorkflowResourceId.value || normalizeString(collabBindingResourceId.value) !== activeWorkflowResourceId.value) {
+    workflowSnapshotState.value = null
+    return
+  }
+
+  try {
+    workflowSnapshotState.value = parseDrawioXmlToWorkflowSnapshot(
+      extractDrawioXmlFromCollabValue(
+        collabDrawValue.value || '',
+        activeWorkflowResourceTitle.value || COLLAB_WORKFLOW_RESOURCE_LABEL,
+      ),
+    )
+  }
+  catch (error) {
+    console.warn('[workspace-project] parse workflow snapshot failed', error)
+    workflowSnapshotState.value = null
+  }
+}
+
+function scheduleWorkflowSnapshotSync(): void {
+  clearWorkflowSnapshotSyncTimer()
+  workflowSnapshotSyncTimer.value = setTimeout(() => {
+    syncWorkflowSnapshotNow()
+  }, 360)
+}
+
+watch(
+  [
+    () => collabDrawValue.value,
+    () => activeWorkflowResourceId.value,
+    () => collabBindingResourceId.value,
+  ],
+  () => {
+    if (!activeWorkflowResourceId.value) {
+      clearWorkflowSnapshotSyncTimer()
+      workflowSnapshotState.value = null
+      return
+    }
+    scheduleWorkflowSnapshotSync()
+  },
+  { immediate: true },
+)
+
 function applyAgentDocDraft(draft: AiWorkspaceDocumentDraft): void {
   const applied = workspaceMainPanelRef.value?.applyMarkdownDocumentDraft(draft) || false
   if (!applied) {
@@ -6684,6 +7942,80 @@ function applyAgentDocDraft(draft: AiWorkspaceDocumentDraft): void {
     appliedAgentDocDraftKeys.value = [...appliedAgentDocDraftKeys.value, draftKey]
   documentAssistRequestState.markdown = getActiveMarkdownMirror()
   statusLine.value = 'AgentDoc 草案已应用到文档。'
+}
+
+function buildDefaultWorkflowPrompt(options: WorkflowDraftRequestOptions): string {
+  if (options.action === 'complete')
+    return `请基于当前流程画布补全一版完整的${options.template}草案。`
+  if (options.action === 'refine')
+    return `请基于当前流程画布续改并重构一版完整的${options.template}草案。`
+  if (options.action === 'restyle')
+    return `请只调整当前流程画布的全局样式与布局，使用 ${options.stylePreset} + ${options.layoutPreset} 预设。`
+  if (options.template === 'architecture' && options.architectureView)
+    return `请生成一版 ${options.architectureView} 视图的架构图草案。`
+  return `请生成一版完整的${options.template}草案。`
+}
+
+function applyWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
+  if (!activeWorkflowResourceId.value || activeWorkflowResourceId.value !== normalizeString(draft.resourceId)) {
+    statusLine.value = '当前未定位到对应的流程画布，无法应用该 AgentProto 草案。'
+    return
+  }
+
+  if (!activeWorkflowSnapshot.value) {
+    statusLine.value = '当前流程画布快照不可用，请等待画布同步后再试。'
+    return
+  }
+
+  if (!activeWorkflowSnapshot.value.isSinglePage) {
+    statusLine.value = '多页流程资源当前只支持预览草案，不支持直接应用。'
+    return
+  }
+
+  if (draft.baseWorkflowHash !== activeWorkflowHash.value) {
+    statusLine.value = '当前流程画布已变化，无法应用该 AgentProto 草案，请重新生成。'
+    return
+  }
+
+  const xml = buildDrawioXmlFromWorkflowDraft(draft, {
+    baseSnapshot: activeWorkflowSnapshot.value,
+    pageName: activeWorkflowResourceTitle.value || draft.resourceTitle || draft.title,
+  })
+  updateCollabDrawContent(serializeDrawioCollabValue(xml))
+
+  const draftKey = buildWorkflowDraftKey(draft)
+  if (!appliedWorkflowDraftKeys.value.includes(draftKey))
+    appliedWorkflowDraftKeys.value = [...appliedWorkflowDraftKeys.value, draftKey]
+  discardedWorkflowDraftKeys.value = discardedWorkflowDraftKeys.value.filter(item => item !== draftKey)
+  statusLine.value = 'AgentProto 草案已应用到当前流程画布。'
+}
+
+function discardWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
+  const draftKey = buildWorkflowDraftKey(draft)
+  if (!discardedWorkflowDraftKeys.value.includes(draftKey))
+    discardedWorkflowDraftKeys.value = [...discardedWorkflowDraftKeys.value, draftKey]
+  statusLine.value = '已丢弃当前 AgentProto 草案。'
+}
+
+async function requestWorkflowDraftFromSidebar(options: WorkflowDraftRequestOptions): Promise<void> {
+  if (!ensureAiFeatureAvailable(resolveWorkflowDraftFeatureKey(options.action)))
+    return
+
+  if (!activeWorkflowResourceId.value) {
+    statusLine.value = '当前没有可用的流程画布，暂时无法生成 AgentProto 草案。'
+    return
+  }
+
+  if (!activeWorkflowSnapshot.value) {
+    statusLine.value = '流程画布快照尚未同步完成，请稍后再试。'
+    return
+  }
+
+  const content = chatInput.value.trim() || buildDefaultWorkflowPrompt(options)
+  await sendChatMessage({
+    content,
+    workflowRequest: options,
+  })
 }
 
 async function handleMarkdownImageAction(payload: {
@@ -6734,15 +8066,25 @@ async function loadChatMessages(sessionId: string) {
   const projectId = String(activeProjectId.value || '').trim()
   const workspaceId = String(activeWorkspaceId.value || '').trim()
   const mode = aiMode.value
+  const normalizedSessionId = normalizeString(sessionId)
   const requestId = ++chatMessagesRequestId
-  if (!workspaceId || !projectId || !sessionId) {
-    resetChatState()
+  const sameSessionRefresh = chatMessagesLoadedSessionId.value === normalizedSessionId
+  if (!workspaceId || !projectId || !normalizedSessionId) {
+    chatMessagesLoading.value = false
+    chatMessagesLoadedSessionId.value = ''
+    clearActiveChatArtifacts()
     return
+  }
+
+  chatMessagesLoading.value = true
+  if (!sameSessionRefresh) {
+    chatMessagesLoadedSessionId.value = ''
+    clearActiveChatArtifacts()
   }
 
   try {
     const data = await requestProjectApi<{ session: AiChatSession, messages: AiChatMessage[] }>(
-      endpoint(`/teams/${workspaceId}/chat/sessions/${sessionId}/messages`),
+      endpoint(`/teams/${workspaceId}/chat/sessions/${normalizedSessionId}/messages`),
       {
         projectId,
         mode,
@@ -6755,7 +8097,7 @@ async function loadChatMessages(sessionId: string) {
       || activeProjectId.value !== projectId
       || String(activeWorkspaceId.value || '').trim() !== workspaceId
       || aiMode.value !== mode
-      || activeChatSessionId.value !== sessionId
+      || activeChatSessionId.value !== normalizedSessionId
     ) {
       return
     }
@@ -6765,21 +8107,31 @@ async function loadChatMessages(sessionId: string) {
         role: item.role,
         content: item.content,
         metadata: item.metadata,
-      }))
-      .filter(message => message.role !== 'system') as ChatMessage[]
+      })) as ChatMessage[]
 
+    chatMessages.value = restoredMessages
     chatDraft.value = null
     chatMissingFields.value = []
+    resetChatDraftArtifactState()
+    chatMessagesLoadedSessionId.value = normalizedSessionId
+
+    if (mode === 'defense') {
+      defenseSessionMeta.value = data.session
+      await loadDefenseSessionDetail(normalizedSessionId, {
+        preserveExisting: sameSessionRefresh,
+      })
+      return
+    }
+
+    defenseSessionMeta.value = null
+    defenseSessionState.value = null
     defenseRounds.value = []
+    defenseTurns.value = []
     defenseScorecard.value = null
     defenseSummary.value = null
     defenseStage.value = undefined
     defenseTurnCount.value = 0
-    appliedAgentDocDraftKeys.value = []
-    chatMessages.value = restoredMessages
-
-    if (mode === 'defense')
-      await loadDefenseSessionDetail(sessionId)
+    resetDefenseRealtimeLocalState()
   }
   catch {
     if (
@@ -6787,9 +8139,23 @@ async function loadChatMessages(sessionId: string) {
       && activeProjectId.value === projectId
       && String(activeWorkspaceId.value || '').trim() === workspaceId
       && aiMode.value === mode
-      && activeChatSessionId.value === sessionId
+      && activeChatSessionId.value === normalizedSessionId
     ) {
-      resetChatState()
+      if (!sameSessionRefresh) {
+        chatMessagesLoadedSessionId.value = ''
+        clearActiveChatArtifacts()
+      }
+    }
+  }
+  finally {
+    if (
+      requestId === chatMessagesRequestId
+      && activeProjectId.value === projectId
+      && String(activeWorkspaceId.value || '').trim() === workspaceId
+      && aiMode.value === mode
+      && activeChatSessionId.value === normalizedSessionId
+    ) {
+      chatMessagesLoading.value = false
     }
   }
 }
@@ -6819,14 +8185,22 @@ async function loadDefensePersonas() {
   }
 }
 
-async function loadDefenseSessionDetail(sessionId: string) {
+async function loadDefenseSessionDetail(sessionId: string, options: {
+  preserveExisting?: boolean
+} = {}) {
   const projectId = String(activeProjectId.value || '').trim()
   const requestId = ++defenseSessionDetailRequestId
+  const preserveExisting = options.preserveExisting !== false
   if (!projectId || !sessionId) {
+    defenseSessionMeta.value = null
+    defenseSessionState.value = null
     defenseRounds.value = []
+    defenseTurns.value = []
+    defenseScorecard.value = null
     defenseSummary.value = null
     defenseStage.value = undefined
     defenseTurnCount.value = 0
+    resetDefenseRealtimeLocalState()
     return
   }
 
@@ -6842,41 +8216,33 @@ async function loadDefenseSessionDetail(sessionId: string) {
       return
     }
     const detail = response.data
+    defenseSessionMeta.value = detail.session || null
+    defenseSessionState.value = detail.state || null
     defensePersonas.value = detail.personas || []
+    defenseTurns.value = detail.turns || []
     defenseSummary.value = detail.latestSummary || null
     defenseStage.value = detail.state?.currentStage
     defenseTurnCount.value = detail.state?.turnCount || 0
-    defenseScorecard.value = detail.state?.lastScorecard || defenseScorecard.value
-    if (detail.turns.length > 0) {
-      const latestTurnIndex = detail.state?.turnCount || detail.turns[detail.turns.length - 1]?.turnIndex || 0
-      defenseRounds.value = detail.turns
-        .filter(item => item.turnIndex === latestTurnIndex)
-        .map(item => ({
-          judge: item.judgeName,
-          judgeType: item.judgeType,
-          personaId: item.personaId || undefined,
-          question: item.question,
-          score: item.score,
-          comment: item.comment,
-          followUp: item.followUp,
-          evidenceRefs: item.evidenceRefs,
-        }))
-    }
-    else {
-      defenseRounds.value = []
-    }
+    defenseScorecard.value = detail.state?.lastScorecard || null
+    syncDefenseRealtimeDraftState(detail.state)
+    defenseRounds.value = detail.latestRounds || []
   }
   catch {
     if (
       requestId === defenseSessionDetailRequestId
       && activeProjectId.value === projectId
       && activeChatSessionId.value === sessionId
+      && !preserveExisting
     ) {
+      defenseSessionMeta.value = null
+      defenseSessionState.value = null
       defenseRounds.value = []
+      defenseTurns.value = []
       defenseScorecard.value = null
       defenseSummary.value = null
       defenseStage.value = undefined
       defenseTurnCount.value = 0
+      resetDefenseRealtimeLocalState()
     }
   }
 }
@@ -7006,13 +8372,17 @@ async function startDefenseRealtime() {
     const enabledPersonaIds = defensePersonas.value
       .filter(item => item.enabled)
       .map(item => item.id)
+    const provider = defenseRealtimeProviderDraft.value
+    const mediaMode = defenseRealtimeMediaModeDraft.value
     const response = await unsafeFetch<ApiResponse<DefenseRealtimeSessionPayload>>(
       endpoint(`/projects/${projectId}/defense/realtime-sessions`),
       {
         method: 'POST',
         body: {
-          mode: 'audio',
+          mode: mediaMode === 'audio' ? 'audio' : 'video',
           personaIds: enabledPersonaIds,
+          provider,
+          mediaMode,
         },
       },
     )
@@ -7021,6 +8391,8 @@ async function startDefenseRealtime() {
     defenseStage.value = 'opening'
     defenseTurnCount.value = 0
     activeMeetingUtterances.value = []
+    defenseRealtimeBootstrapPayload.value = null
+    defenseRealtimeLatestError.value = ''
     applyProjectMeetingSession(response.data.meeting, {
       joinUrl: response.data.rtcJoinUrl || response.data.joinUrl,
       joinToken: response.data.rtcJoinToken || response.data.joinToken,
@@ -7033,10 +8405,24 @@ async function startDefenseRealtime() {
     await loadChatSessions({
       preferredSessionId: response.data.sessionId,
     })
-    statusLine.value = '已发起语音答辩会话，正在进入会议面板。'
+    patchDefenseRealtimeState({
+      provider,
+      mediaMode,
+      transport: provider === 'coze' ? 'rtc_sidecar' : 'websocket',
+      connectionState: 'bootstrapping',
+      bootstrapState: 'bootstrapping',
+      linkedMeetingId: response.data.meeting.id,
+      audioEnabled: defenseRealtimeAudioEnabled.value,
+      videoEnabled: mediaMode === 'audio_video' ? defenseRealtimeVideoEnabled.value : false,
+    })
+    await bootstrapDefenseRealtimeSidecar(response.data.sessionId)
+    statusLine.value = `已发起${provider === 'coze' ? ' Coze ' : '千问 '}实时答辩会话，正在接入${mediaMode === 'audio' ? '音频' : '音视频'} sidecar。`
   }
   catch (error) {
-    statusLine.value = resolveApiErrorMessage(error, '发起语音答辩失败，请稍后重试。')
+    defenseRealtimeBootstrapState.value = 'error'
+    defenseRealtimeLatestError.value = resolveApiErrorMessage(error, '发起实时答辩失败，请稍后重试。')
+    appendDefenseRealtimeLog(defenseRealtimeLatestError.value, 'error')
+    statusLine.value = defenseRealtimeLatestError.value
   }
   finally {
     defenseRealtimeStarting.value = false
@@ -7162,12 +8548,11 @@ async function loadChatSessions(options: {
   const projectId = String(activeProjectId.value || '').trim()
   const workspaceId = String(activeWorkspaceId.value || '').trim()
   const mode = aiMode.value
+  const scopeKey = `${workspaceId}:${projectId}:${mode}`
   const requestId = ++chatSessionsRequestId
+  const sameScopeRefresh = chatSessionsLoadedScopeKey.value === scopeKey
   if (!workspaceId || !projectId) {
-    chatSessions.value = []
-    openChatSessionIds.value = []
-    activeChatSessionId.value = ''
-    resetChatState()
+    resetChatScopeState()
     return
   }
 
@@ -7191,6 +8576,7 @@ async function loadChatSessions(options: {
       return
     }
     chatSessions.value = data
+    chatSessionsLoadedScopeKey.value = scopeKey
     const openSessionIdsInScope = syncOpenChatSessionTabsInScope(chatSessions.value, {
       preferredSessionId: options.preferredSessionId,
     })
@@ -7210,7 +8596,8 @@ async function loadChatSessions(options: {
       if (options.autoCreate === false) {
         openChatSessionIds.value = []
         activeChatSessionId.value = ''
-        resetChatState()
+        chatMessagesLoadedSessionId.value = ''
+        clearActiveChatArtifacts()
         return
       }
 
@@ -7218,7 +8605,8 @@ async function loadChatSessions(options: {
       if (!createdId) {
         openChatSessionIds.value = []
         activeChatSessionId.value = ''
-        resetChatState()
+        chatMessagesLoadedSessionId.value = ''
+        clearActiveChatArtifacts()
         return
       }
       ensureOpenChatSessionTab(createdId)
@@ -7239,11 +8627,9 @@ async function loadChatSessions(options: {
       && activeProjectId.value === projectId
       && String(activeWorkspaceId.value || '').trim() === workspaceId
       && aiMode.value === mode
+      && !sameScopeRefresh
     ) {
-      chatSessions.value = []
-      openChatSessionIds.value = []
-      activeChatSessionId.value = ''
-      resetChatState()
+      resetChatScopeState()
     }
   }
   finally {
@@ -7813,16 +9199,16 @@ function toJsonPayload(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function toModelMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages
-    .filter(message => message.role === 'user' || message.role === 'assistant')
-    .map(message => ({
-      role: message.role,
-      content: message.content,
-    }))
+function createWorkspaceLocalChatRequestId(): string {
+  return `workspace-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: AbortSignal) {
+async function sendWorkspaceAiMessage(
+  pendingMessages: ChatMessage[],
+  localRequestId: string,
+  workflowRequest: WorkflowDraftRequestOptions | null,
+  signal?: AbortSignal,
+) {
   const runningMode = aiMode.value
   chatDraft.value = null
   chatMissingFields.value = []
@@ -7831,15 +9217,18 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
   const baseMessages = [...pendingMessages]
   let assistantBuffer = ''
   let assistantMetadata: ChatMessage['metadata'] | undefined
+  let streamSystemSeq = 0
 
   const renderStreamMessages = () => {
     const nextMessages: ChatMessage[] = [...baseMessages]
     if (assistantBuffer) {
-      nextMessages.push({
+      nextMessages.push(createWorkspaceLocalChatMessage({
         role: 'assistant',
         content: assistantBuffer,
+        localRequestId,
+        streamState: 'streaming',
         metadata: assistantMetadata,
-      })
+      }))
     }
     chatMessages.value = nextMessages
   }
@@ -7850,7 +9239,7 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
     projectId: activeProjectId.value,
     sessionId: activeChatSessionId.value,
     mode: runningMode,
-    messages: toModelMessages(pendingMessages),
+    messages: toWorkspaceModelMessages(pendingMessages),
     context: {
       teamId: activeWorkspaceId.value,
       workspaceId: activeWorkspaceId.value,
@@ -7858,8 +9247,8 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       contestId: selectedContestId.value,
       trackId: selectedTrackId.value,
       major: major.value,
-      resourceId: activeResourceWorkspaceTabId.value ? activePreviewResource.value?.id || '' : '',
-      resourceTitle: activeResourceWorkspaceTabId.value ? activePreviewResource.value?.title || '' : '',
+      resourceId: currentAssistantResource.value?.id || '',
+      resourceTitle: currentAssistantResource.value?.title || '',
       markdown: runningMode === 'document_assist' ? documentAssistRequestState.markdown : '',
       selectionText: runningMode === 'document_assist' ? documentAssistRequestState.selectionText : '',
       selectionRange: runningMode === 'document_assist' ? documentAssistRequestState.selectionRange : null,
@@ -7868,6 +9257,16 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       activeTabId: currentWorkspaceAssistantContext.value.activeTabId,
       previewMode: currentWorkspaceAssistantContext.value.previewMode,
       resourcePurpose: currentWorkspaceAssistantContext.value.resourcePurpose,
+      workflowSnapshot: currentWorkspaceAssistantContext.value.resourcePurpose === 'workflow'
+        ? activeWorkflowSnapshot.value
+        : null,
+      workflowAction: workflowRequest?.action || '',
+      workflowTemplate: workflowRequest?.template || '',
+      workflowArchitectureView: workflowRequest?.template === 'architecture'
+        ? (workflowRequest.architectureView || '')
+        : '',
+      workflowStylePreset: workflowRequest?.stylePreset || '',
+      workflowLayoutPreset: workflowRequest?.layoutPreset || '',
     },
   }
 
@@ -7918,6 +9317,9 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       const data = toJsonPayload(payload?.data)
 
       if (eventType === 'progress') {
+        streamSystemSeq += 1
+        baseMessages.push(createWorkspaceStreamSystemChatMessage(eventType, data, streamSystemSeq))
+        renderStreamMessages()
         statusLine.value = String(data.message || 'AI 处理中...')
         if (data.sessionId) {
           ensureOpenChatSessionTab(String(data.sessionId))
@@ -7927,6 +9329,9 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       }
 
       if (eventType === 'tool') {
+        streamSystemSeq += 1
+        baseMessages.push(createWorkspaceStreamSystemChatMessage(eventType, data, streamSystemSeq))
+        renderStreamMessages()
         const name = String(data.name || '').trim()
         if (name)
           statusLine.value = `AI 正在调用工具：${name}`
@@ -7944,10 +9349,21 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
       if (eventType === 'done') {
         const result = toJsonPayload(data.result) as Partial<AiWorkspaceResult>
         assistantBuffer = String(result.assistantReply || assistantBuffer)
-        assistantMetadata = result.documentDraft
-          ? { agentDocDraft: result.documentDraft }
-          : undefined
+        assistantMetadata = {
+          ...(result.documentDraft
+            ? { agentDocDraft: result.documentDraft }
+            : {}),
+          ...(result.workflowDraft
+            ? { workflowDraft: result.workflowDraft }
+            : {}),
+          ...(result.knowledge
+            ? { knowledge: result.knowledge }
+            : {}),
+        }
+        if (Object.keys(assistantMetadata).length === 0)
+          assistantMetadata = undefined
         renderStreamMessages()
+        chatMessages.value = finalizeWorkspaceLocalChatMessages(chatMessages.value, localRequestId)
 
         if (result.sessionId) {
           ensureOpenChatSessionTab(String(result.sessionId))
@@ -7984,6 +9400,9 @@ async function sendWorkspaceAiMessage(pendingMessages: ChatMessage[], signal?: A
           statusLine.value = result.documentDraft
             ? 'AgentDoc 已生成待确认的文档草案。'
             : 'AgentDoc 已完成，本次未生成可安全应用的文档草案。'
+        }
+        else if (result.workflowDraft) {
+          statusLine.value = 'AgentProto 已生成待确认的流程草案。'
         }
         else {
           statusLine.value = '只读对话完成，项目未发生写入。'
@@ -8034,7 +9453,7 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[], signal?: Abort
       sessionId: activeChatSessionId.value,
       personaIds: enabledPersonaIds,
       inputMode: 'text',
-      messages: toModelMessages(pendingMessages),
+      messages: toWorkspaceModelMessages(pendingMessages),
       context: {
         teamId: activeWorkspaceId.value,
         workspaceId: activeWorkspaceId.value,
@@ -8091,16 +9510,34 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[], signal?: Abort
         continue
       }
       if (eventType === 'stage') {
+        const nextTurnIndex = Number(data.turnIndex || 0)
         if (data.stage)
           defenseStage.value = String(data.stage) as AiDefenseStage
-        if (Number.isFinite(Number(data.turnIndex)))
-          defenseTurnCount.value = Math.max(defenseTurnCount.value, Number(data.turnIndex || 0) - 1)
+        if (Number.isFinite(nextTurnIndex))
+          defenseTurnCount.value = Math.max(defenseTurnCount.value, nextTurnIndex - 1)
         continue
       }
       if (eventType === 'judge') {
         const round = data.round as AiDefenseJudgeRound | undefined
-        if (round)
-          defenseRounds.value = [...defenseRounds.value, round]
+        if (round) {
+          upsertDefenseLatestRound(round)
+          appendDefenseTimelineTurn({
+            turnIndex: round.turnIndex,
+            stage: round.stage,
+            personaId: round.personaId || null,
+            judgeType: round.judgeType,
+            judgeName: round.judge,
+            question: round.question,
+            comment: round.comment,
+            followUp: round.followUp,
+            score: round.score,
+            evidenceRefs: round.evidenceRefs,
+            createdAt: round.createdAt,
+            metadata: {
+              source: 'defense_stream',
+            },
+          })
+        }
         continue
       }
       if (eventType === 'score') {
@@ -8123,7 +9560,7 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[], signal?: Abort
         assistantText = String(result.assistantReply || assistantText)
         chatMessages.value = [...pendingMessages, { role: 'assistant', content: assistantText }]
         if (Array.isArray(result.rounds))
-          defenseRounds.value = result.rounds as AiDefenseJudgeRound[]
+          setDefenseLatestRounds(result.rounds as AiDefenseJudgeRound[])
         const scorecard = result.scorecard as AiDefenseScorecard | undefined
         if (scorecard)
           defenseScorecard.value = scorecard
@@ -8160,7 +9597,10 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[], signal?: Abort
     await generateDefenseSummary()
 }
 
-async function sendChatMessage() {
+async function sendChatMessage(payload?: {
+  content?: string
+  workflowRequest?: WorkflowDraftRequestOptions | null
+}) {
   if (chatLoading.value) {
     interruptChatMessage()
     return
@@ -8192,7 +9632,7 @@ async function sendChatMessage() {
     }
   }
 
-  const content = chatInput.value.trim()
+  const content = String(payload?.content || chatInput.value).trim()
   if (!content)
     return
 
@@ -8220,7 +9660,18 @@ async function sendChatMessage() {
     })
   }
 
-  const pendingMessages = [...chatMessages.value, { role: 'user' as const, content }]
+  const workspaceLocalRequestId = aiMode.value === 'defense'
+    ? ''
+    : createWorkspaceLocalChatRequestId()
+  const pendingUserMessage = aiMode.value === 'defense'
+    ? { role: 'user' as const, content }
+    : createWorkspaceLocalChatMessage({
+        role: 'user',
+        content,
+        localRequestId: workspaceLocalRequestId,
+        streamState: 'streaming',
+      })
+  const pendingMessages = [...chatMessages.value, pendingUserMessage]
   chatMessages.value = pendingMessages
   chatInput.value = ''
   chatLoading.value = true
@@ -8234,11 +9685,18 @@ async function sendChatMessage() {
     if (aiMode.value === 'defense')
       await sendDefenseMessage(pendingMessages, abortController.signal)
     else
-      await sendWorkspaceAiMessage(pendingMessages, abortController.signal)
+      await sendWorkspaceAiMessage(
+        pendingMessages,
+        workspaceLocalRequestId,
+        payload?.workflowRequest || null,
+        abortController.signal,
+      )
   }
   catch (error) {
     if (isAbortError(error)) {
       streamInterrupted = true
+      if (workspaceLocalRequestId)
+        chatMessages.value = markWorkspaceLocalChatMessagesAborted(chatMessages.value, workspaceLocalRequestId)
       statusLine.value = '已打断当前 AI 运行。'
     }
     else {
@@ -8248,10 +9706,22 @@ async function sendChatMessage() {
       return
     const message = error instanceof Error ? error.message : 'AI 调用失败。'
     const errorText = message || '聊天服务暂不可用，请稍后重试。'
-    const existingMessages = [...chatMessages.value]
+    const existingMessages = workspaceLocalRequestId
+      ? markWorkspaceLocalChatMessagesAborted(chatMessages.value, workspaceLocalRequestId)
+      : [...chatMessages.value]
     const lastMessage = existingMessages[existingMessages.length - 1]
     if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.content !== errorText) {
-      chatMessages.value = [...existingMessages, { role: 'assistant', content: errorText }]
+      chatMessages.value = workspaceLocalRequestId
+        ? [...existingMessages, createWorkspaceLocalChatMessage({
+            role: 'assistant',
+            content: errorText,
+            localRequestId: workspaceLocalRequestId,
+            streamState: 'aborted',
+          })]
+        : [...existingMessages, { role: 'assistant', content: errorText }]
+    }
+    else {
+      chatMessages.value = existingMessages
     }
     statusLine.value = errorText
   }
@@ -8374,16 +9844,22 @@ function updateDefenseWorkbenchAiMode(nextMode: WorkspaceDefenseWorkbenchAiMode)
 }
 
 async function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
+  if (workbenchSwitchPhase.value !== 'idle')
+    return
+  if (nextMode === workbenchMode.value)
+    return
+
+  workbenchSwitchTargetMode.value = nextMode
+  workbenchSceneTransitionName.value = resolveWorkbenchSceneTransitionDirection(displayedWorkbenchMode.value, nextMode)
+
   if (nextMode === 'defense') {
     if (workbenchMode.value === 'final_review')
       restorePreFinalReviewWorkbenchState()
     closeFinalReviewDrawers()
     workbenchMode.value = 'defense'
     updateDefenseWorkbenchAiMode('defense')
-    return
   }
-
-  if (nextMode === 'final_review') {
+  else if (nextMode === 'final_review') {
     if (workbenchMode.value !== 'final_review') {
       rememberPreFinalReviewWorkbenchState()
     }
@@ -8393,14 +9869,28 @@ async function updateWorkbenchMode(nextMode: WorkspaceWorkbenchMode) {
     workbenchMode.value = 'final_review'
     aiMode.value = 'dialog_ask'
     statusLine.value = '已切到终审工作台，当前进入终审驾驶舱。'
-    return
+  }
+  else {
+    if (workbenchMode.value === 'final_review')
+      restorePreFinalReviewWorkbenchState()
+    closeFinalReviewDrawers()
+    workbenchMode.value = 'project'
+    syncProjectWorkbenchAiMode()
   }
 
-  if (workbenchMode.value === 'final_review')
-    restorePreFinalReviewWorkbenchState()
-  closeFinalReviewDrawers()
-  workbenchMode.value = 'project'
-  syncProjectWorkbenchAiMode()
+  try {
+    await runWorkbenchSwitchLoadingSequence()
+    workbenchSwitchPhase.value = 'animating'
+    const sceneTransitionPromise = waitForWorkbenchSceneTransitionEnd()
+    displayedWorkbenchMode.value = nextMode
+    await nextTick()
+    await sceneTransitionPromise
+  }
+  finally {
+    workbenchSwitchPhase.value = 'idle'
+    workbenchSwitchTargetMode.value = ''
+    workbenchSwitchProgress.value = 0
+  }
 }
 
 function updateWorkspaceAiMode(nextMode: WorkspaceAiMode) {
@@ -8753,6 +10243,9 @@ async function executeMetaKCommandAction(actionId: WorkspaceMetaKActionId): Prom
     case 'create_collab_draw':
       await createCollabResource('draw')
       return
+    case 'create_collab_workflow':
+      await createCollabResource({ kind: 'draw', purpose: 'workflow' })
+      return
     case 'create_meeting_audio':
       await createProjectMeeting({ mode: 'audio' })
       return
@@ -8846,6 +10339,12 @@ onMounted(async () => {
     workspacePlatform.value = window.navigator.platform
     metaKShortcutLabel.value = resolveWorkspaceMetaKShortcutLabel(window.navigator.platform)
     document.addEventListener('keydown', handleWorkspaceGlobalKeydown)
+    reducedMotionMediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    prefersReducedMotion.value = reducedMotionMediaQuery.matches
+    if (typeof reducedMotionMediaQuery.addEventListener === 'function')
+      reducedMotionMediaQuery.addEventListener('change', handleReducedMotionPreferenceChange)
+    else
+      reducedMotionMediaQuery.addListener(handleReducedMotionPreferenceChange)
   }
 
   const canonicalRedirected = await ensureCanonicalWorkspaceProjectRoute()
@@ -8883,6 +10382,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  void teardownDefenseRealtimeBridge()
+  clearWorkflowSnapshotSyncTimer()
   clearProjectSettingsAutoTimers()
   clearProjectWorkspaceViewPersistTimer()
   clearProjectOutlineGenerateTimer()
@@ -8903,7 +10404,37 @@ onBeforeUnmount(() => {
   })
   if (import.meta.client)
     document.removeEventListener('keydown', handleWorkspaceGlobalKeydown)
+  if (reducedMotionMediaQuery) {
+    if (typeof reducedMotionMediaQuery.removeEventListener === 'function')
+      reducedMotionMediaQuery.removeEventListener('change', handleReducedMotionPreferenceChange)
+    else
+      reducedMotionMediaQuery.removeListener(handleReducedMotionPreferenceChange)
+  }
+  reducedMotionMediaQuery = null
+  clearWorkbenchSwitchDelays()
+  resolveWorkbenchSceneTransition()
   clearMetaKRemoteSearchTimer()
+})
+
+watch(defenseSessionState, (nextValue) => {
+  syncDefenseRealtimeDraftState(nextValue)
+}, { deep: true })
+
+watch(activeChatSessionId, (nextValue, previousValue) => {
+  if (nextValue === previousValue)
+    return
+  defenseRealtimeBootstrapPayload.value = null
+  if (!nextValue)
+    resetDefenseRealtimeLocalState()
+  if (previousValue)
+    void teardownDefenseRealtimeBridge()
+})
+
+watch(workbenchMode, (nextValue, previousValue) => {
+  if (nextValue === previousValue)
+    return
+  if (previousValue === 'defense' && nextValue !== 'defense')
+    void teardownDefenseRealtimeBridge()
 })
 
 watch(activeWorkspaceId, async (value, previous) => {
@@ -8989,6 +10520,47 @@ watch(activeProjectId, async (next, previous) => {
   activeTabReady.value = false
   workspaceBootstrapLoading.value = Boolean(next)
   workspaceBackgroundLoading.value = Boolean(next)
+  selectedContestDetailRequestId += 1
+  chatSessionsRequestId += 1
+  chatMessagesRequestId += 1
+  defenseSessionDetailRequestId += 1
+  clearLoadedScopeSnapshots()
+  disposeCollabDocBinding(true)
+  resources.value = []
+  resourceLibrary.value = []
+  recycleResources.value = []
+  projectResourceShares.value = []
+  resourcesLoading.value = false
+  resourceLibraryLoading.value = false
+  projectResourceSharesLoading.value = false
+  flowResourceId.value = ''
+  projectOutlineSnapshot.value = null
+  selectedContestDetail.value = null
+  selectedContestDetailLoading.value = false
+  aiChangeRequests.value = []
+  projectIssueReports.value = []
+  projectIssues.value = []
+  projectMeetings.value = []
+  projectMeetingsLoading.value = false
+  projectMeetingsLoadedProjectId.value = ''
+  meetingRuntimeHealth.value = null
+  activeMeetingDetail.value = null
+  meetingDetailLoading.value = false
+  meetingDetailLoadedId.value = ''
+  activeMeetingUtterances.value = []
+  meetingLiveCaptions.value = []
+  activeMeetingGuestShare.value = null
+  clearMeetingJoinSession()
+  resetWorkspaceMemberManagementState()
+  workspaceInvitationLink.value = ''
+  chatSessions.value = []
+  chatMessages.value = []
+  chatSessionsLoading.value = false
+  chatMessagesLoading.value = false
+  chatSessionsLoadedScopeKey.value = ''
+  chatMessagesLoadedSessionId.value = ''
+  clearActiveChatArtifacts()
+  defensePersonas.value = []
   closeProjectResourcePreview()
   projectAssistantMode.value = 'contextual'
   defenseWorkbenchAiMode.value = 'defense'
@@ -8997,35 +10569,12 @@ watch(activeProjectId, async (next, previous) => {
     beginWorkspaceBootstrapTrace(next, requestId)
   }
   if (!next) {
-    disposeCollabDocBinding(true)
-    resources.value = []
-    resourceLibrary.value = []
-    recycleResources.value = []
-    projectResourceShares.value = []
-    resourcesLoading.value = false
-    resourceLibraryLoading.value = false
-    projectResourceSharesLoading.value = false
-    flowResourceId.value = ''
-    projectOutlineSnapshot.value = null
     resetProjectSettingsState(null)
     topicBoardSnapshot.value = null
     topicBoardHistory.value = []
     topicBoardCreateSeedHandled.value = false
-    aiChangeRequests.value = []
-    projectIssueReports.value = []
-    projectIssues.value = []
-    resetProjectMeetingState()
-    resetWorkspaceMemberManagementState()
-    workspaceInvitationLink.value = ''
-    chatSessions.value = []
-    openChatSessionIds.value = []
-    activeChatSessionId.value = ''
-    defensePersonas.value = []
-    selectedContestDetail.value = null
-    selectedContestDetailLoading.value = false
     openMainTabs.value = []
     activeMainTabId.value = ''
-    resetChatState()
     activeTabReady.value = false
     workspaceBackgroundLoading.value = false
     workspaceBootstrapLoading.value = false
@@ -9211,6 +10760,8 @@ async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value)
 
   if (nextTabId === 'flow') {
     const targetResourceId = String(flowResourceId.value || '').trim()
+    if (workbenchMode.value === 'project')
+      updateProjectAssistantMode('contextual')
     if (!targetResourceId || collabBindingResourceId.value === targetResourceId)
       return
     await openProjectCollabResource(targetResourceId, undefined, {
@@ -9325,7 +10876,7 @@ async function loadActiveWorkspaceCriticalTabData(
 
   if (tabId === 'flow') {
     const workflowResource = resources.value.find(item => isWorkflowCanvasResource(item)) || null
-    if (workflowResource && flowResourceId.value !== workflowResource.id)
+    if (workflowResource && (!flowResourceId.value || !resources.value.some(item => item.id === flowResourceId.value)))
       flowResourceId.value = workflowResource.id
     await syncActiveMainTabCollabBinding(tabId)
     return result
@@ -9539,16 +11090,17 @@ watch(aiMode, async (next, previous) => {
     lastPrimaryAiMode.value = next as WorkspacePrimaryAiMode
 
   if (!activeWorkspaceId.value || !activeProjectId.value) {
-    chatSessions.value = []
-    openChatSessionIds.value = []
-    activeChatSessionId.value = ''
-    resetChatState()
+    chatSessionsRequestId += 1
+    chatMessagesRequestId += 1
+    defenseSessionDetailRequestId += 1
+    resetChatScopeState()
     return
   }
 
-  openChatSessionIds.value = []
-  activeChatSessionId.value = ''
-  resetChatState()
+  chatSessionsRequestId += 1
+  chatMessagesRequestId += 1
+  defenseSessionDetailRequestId += 1
+  resetChatScopeState()
   if (next === 'defense')
     await loadDefensePersonas()
   if (!isAiFeatureAvailable(resolveAiFeatureKeyForMode(next))) {
@@ -9566,7 +11118,24 @@ watch(() => workspaceRealtime.connected.value, () => {
   syncFallbackResourceRefreshTimer()
 })
 
+watch(workbenchMode, (next, previous) => {
+  if (next === previous)
+    return
+  if (workbenchSwitchPhase.value !== 'idle' || workbenchSwitchTargetMode.value)
+    return
+  displayedWorkbenchMode.value = next
+}, { immediate: true })
+
 watch(() => workspaceShellLoading.value, (loading) => {
+  if (!loading || !workspaceContextMenu.visible)
+    return
+
+  closeWorkspaceContextMenu({
+    restoreFocus: false,
+  })
+})
+
+watch(() => workbenchSwitchLoading.value, (loading) => {
   if (!loading || !workspaceContextMenu.visible)
     return
 
@@ -9589,6 +11158,7 @@ watch(() => workspaceShellLoading.value, (loading) => {
       :my-projects="myQuickSwitchProjects"
       :recent-projects="recentQuickSwitchProjects"
       :workbench-mode="workbenchMode"
+      :workbench-switching="workbenchSwitching"
       :meta-k-shortcut-label="metaKShortcutLabel"
       :ai-collapsed="headerAiCollapsed"
       @update:workbench-mode="updateWorkbenchMode"
@@ -9597,456 +11167,575 @@ watch(() => workspaceShellLoading.value, (loading) => {
       @toggle-ai-sidebar="toggleRightSidebar"
     />
 
-    <main v-if="workbenchMode !== 'final_review'" class="workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row">
-      <div class="workspace-side-anchor workspace-side-anchor--left">
-        <WorkspaceLeftSidebar
-          v-model:natural-query="naturalQuery"
-          v-model:major="major"
-          v-model:discipline="discipline"
-          v-model:level="level"
-          v-model:track-type="trackType"
-          v-model:top-k="topK"
-          v-model:selected-contest-id="selectedContestId"
-          class="min-h-0 overflow-hidden"
-          :contests="contestSource"
-          :selected-resources="selectedResources"
-          :recycle-resources="recycleResources"
-          :resource-library="resourceLibrary"
-          :linked-contest-resource-groups="linkedContestResourceGroups"
-          :linked-contest-binding-count="projectSettingsBindings.length"
-          :upload-tasks="projectUploadTasks"
-          :upload-summary="projectUploadSummary"
-          :upload-drawer-open="uploadDrawerOpen"
-          :upload-activity-items="projectUploadActivityItems"
-          :upload-history-loaded="projectUploadHistoryLoaded"
-          :meetings="projectMeetings"
-          :active-meeting-id="activeMeetingId"
-          :meeting-loading="projectMeetingsLoading"
-          :meeting-mutating="meetingMutating"
-          :meeting-runtime-health="meetingRuntimeHealth"
-          :project-members="workspaceMembers"
-          :project-outline="projectOutlineItems"
-          :issue-reports="projectIssueReports"
-          :project-issues="projectIssues"
-          :issue-loading="issueCenterLoading"
-          :project-resources-loading="resourcesLoading"
-          :resource-library-loading="resourceLibraryLoading"
-          :project-outline-loading="projectOutlineFirstLoadLoading"
-          :resource-mutating="resourceMutating"
-          :has-active-project="Boolean(activeProjectId)"
-          :ai-reasoning="aiReasoning"
-          :normalized-info="normalizedInfo"
-          :status-line="statusLine"
-          :list-loading="listLoading"
-          :ai-filtering="aiFiltering"
-          :is-admin-view="isAdminView"
-          :active-main-tab-id="activeMainTabId"
-          :user-email="currentUserEmail"
-          :user-avatar-url="me?.user.avatarUrl || ''"
-          :workspace-options="workspaceOptions"
-          :workspace-can-manage-members="workspaceCanManageMembers"
-          :current-user-id="me?.user.id || ''"
-          :current-username="me?.user.username || ''"
-          :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
-          :topic-board-draft="topicBoardDraft"
-          :topic-board-loading="topicBoardLoading"
-          :topic-board-current-summary="topicBoardSnapshot?.boardSummary || ''"
-          :topic-board-history-count="topicBoardHistory.length"
-          :workspace-id="activeWorkspaceId"
-          :tab-spacing-preset="workspaceEffectiveTabSpacingPreset"
-          :collapsed="leftSidebarCollapsed"
-          :command-signal="leftSidebarMetaKSignal"
-          :command-module-id="leftSidebarMetaKModuleId"
-          :command-outline-id="leftSidebarMetaKOutlineId"
-          @load-contests="loadContests"
-          @run-ai-filter="runAiFilter"
-          @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
-          @generate-topic-board="generateTopicBoard('workspace_sidebar')"
-          @open-meeting-panel="openMeetingFromLeftSidebar"
-          @open-settings-panel="openSettingsFromLeftSidebar"
-          @open-member-management-panel="openMemberManagementFromLeftSidebar"
-          @open-flow-panel="openFlowFromLeftSidebar"
-          @switch-workspace="switchWorkspaceFromHeader"
-          @open-workspace-home="openWorkspaceHomeFromHeader"
-          @open-display-preferences="openDisplayPreferencesFromHeader"
-          @open-account-center="openAccountCenterFromHeader"
-          @toggle-upload-drawer="openUploadDrawer"
-          @create-meeting="createProjectMeeting"
-          @select-meeting="selectProjectMeeting"
-          @create-collab-resource="createCollabResource"
-          @reload-issues="loadProjectIssues"
-          @open-resource="openProjectResourcePreview"
-          @download-project-resource="downloadProjectResource"
-          @copy-project-resource-name="copyProjectResourceName"
-          @share-project-resource="shareProjectResource"
-          @duplicate-project-resource="duplicateProjectResource"
-          @add-resource-from-library="addResourceFromLibrary"
-          @patch-project-resource-tree="patchProjectResourceTree"
-          @remove-project-resource="removeProjectResource"
-          @remove-project-resources="removeProjectResources"
-          @restore-project-resource="restoreProjectResource"
-          @purge-project-resource="purgeProjectResource"
-          @upload-resources="uploadResourcesToProject"
-          @pause-upload-task="pauseUploadTask"
-          @resume-upload-task="resumeUploadTask"
-          @retry-upload-task="retryUploadTask"
-          @cancel-upload-task="cancelUploadTask"
-          @rebind-upload-task="requestRebindUploadTask"
-          @pause-all-upload-tasks="pauseAllUploadTasks"
-          @resume-all-upload-tasks="resumeAllUploadTasks"
-          @clear-completed-upload-tasks="clearCompletedUploadTasks"
-          @update:collapsed="leftSidebarCollapsed = $event"
-          @request-context-menu="openWorkspaceContextMenu($event)"
-        />
-      </div>
-
-      <WorkspaceMainPanel
-        ref="workspaceMainPanelRef"
-        v-model:active-tab-id="activeMainTabId"
-        v-model:open-tabs="openMainTabs"
-        v-model:selected-track-id="selectedTrackId"
-        v-model:major="major"
-        v-model:discipline="discipline"
-        v-model:level="level"
-        v-model:track-type="trackType"
-        v-model:top-k="topK"
-        v-model:selected-contest-id="selectedContestId"
-        class="min-h-0 overflow-hidden"
-        :selected-contest="selectedContest"
-        :selected-track="selectedTrack"
-        :contests="contestSource"
-        :active-project="activeProject"
-        :active-project-id="activeProjectId"
-        :workspace-name="currentWorkspace?.workspace.name || ''"
-        :workspace-type="currentWorkspace?.workspace.type || ''"
-        :workspace-members="workspaceMembers"
-        :workspace-invitations="workspaceInvitations"
-        :workspace-member-management-loading="workspaceMemberManagementLoading"
-        :workspace-can-manage-members="workspaceCanManageMembers"
-        :workspace-can-edit-members="workspaceCanEditMembers"
-        :workspace-member-role-updating-user-id="workspaceMemberRoleUpdatingUserId"
-        :workspace-member-removing-user-id="workspaceMemberRemovingUserId"
-        :workspace-invitation-revoking-id="workspaceInvitationRevokingId"
-        :workspace-can-manage-billing-seats="workspaceCanManageBillingSeats"
-        :workspace-seat-used="workspaceSeatUsed"
-        :workspace-seat-limit="workspaceSeatLimit"
-        :workspace-supports-seat-add="workspaceSupportsSeatAdd"
-        :workspace-invitation-submitting="workspaceInvitationSubmitting"
-        :workspace-invitation-link="workspaceInvitationLink"
-        :workspace-invitation-error="workspaceInvitationError"
-        :workspace-seat-limit-save-loading="workspaceSeatLimitSaveLoading"
-        :workspace-seat-limit-error="workspaceSeatLimitError"
-        :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
-        :open-settings-signal="openSettingsSignal"
-        :open-member-management-signal="openMemberManagementSignal"
-        :open-display-preferences-signal="openDisplayPreferencesSignal"
-        :open-flow-signal="openFlowSignal"
-        :open-preview-signal="openPreviewSignal"
-        :close-preview-signal="closePreviewSignal"
-        :flow-resource-id="flowResourceId"
-        :flow-resource-title="flowResourceTitle"
-        :preview-resource-id="previewResourceId"
-        :closing-preview-resource-id="closingPreviewResourceId"
-        :preview-resource-title="previewResourceTitle"
-        :markdown-image-upload-handler="uploadMarkdownImage"
-        :preview-status="previewStatusPayload"
-        :preview-status-loading="previewStatusLoading"
-        :preview-mode="previewMode"
-        :preview-pdf-url="previewPdfUrl"
-        :preview-source-download-url="previewSourceDownloadUrl"
-        :current-user-id="me?.user.id || ''"
-        :current-user-name="me?.user.username || ''"
-        :current-user-avatar-url="me?.user.avatarUrl || ''"
-        :is-platform-admin-user="Boolean(me?.user.isPlatformAdmin)"
-        :collab-resource-id="collabBindingResourceId"
-        :collab-markdown-doc="collabMarkdownDoc"
-        :collab-markdown-awareness="collabMarkdownAwareness"
-        :collab-draw-value="collabDrawValue"
-        :collab-draw-error="collabDrawError"
-        :collab-revision="collabRevision"
-        :collab-connected="collabConnected"
-        :collab-status-text="collabStatusText"
-        :collab-preview-loading="collabPreviewLoading"
-        :collab-preview-error="collabPreviewError"
-        :collab-presence-members="collabPresenceMembers"
-        :inline-completion-enabled="canUseInlineCompletion()"
-        :inline-completion-request-handler="requestInlineCompletion"
-        :inline-completion-accept-handler="acceptInlineCompletion"
-        :comment-threads="markdownCommentThreads"
-        :active-comment-thread-id="activeMarkdownCommentThreadId"
-        :comment-draft-anchor="markdownCommentDraftAnchor"
-        :comment-loading="markdownCommentLoading"
-        :comment-mutating="markdownCommentMutating"
-        :selected-resources="selectedResources"
-        :mapping-rows="mappingRows"
-        :mapping-loading="selectedContestDetailLoading"
-        :keyword-cloud="keywordCloud"
-        :trend-bars="trendBars"
-        :form-state="formState"
-        :form-submitting="formSubmitting"
-        :workspace-preparing="workspacePreparing"
-        :topic-board="topicBoardSnapshot"
-        :topic-board-fetching="topicBoardFetching"
-        :topic-board-loading="topicBoardLoading"
-        :topic-board-actioning-candidate-id="topicBoardActioningCandidateId"
-        :project-settings-loading="projectSettingsLoading"
-        :project-settings-save-state="projectSettingsSaveState"
-        :project-settings-common="projectSettingsCommon"
-        :project-settings-bindings="projectSettingsBindings"
-        :project-settings-current-contest-id="projectSettingsCurrentContestId"
-        :project-settings-adaptation="projectSettingsAdaptation"
-        :project-settings-has-current-contest="projectSettingsHasCurrentContest"
-        :workspace-display-preferences="workspaceDisplayPreferenceSnapshot"
-        :workspace-display-preferences-loading="workspaceDisplayPreferenceLoading"
-        :workspace-display-preferences-saving-scope="workspaceDisplayPreferenceSavingScope"
-        :workspace-display-preferences-error="workspaceDisplayPreferenceError"
-        :project-resource-shares="projectResourceShares"
-        :project-resource-shares-loading="projectResourceSharesLoading"
-        :meetings="projectMeetings"
-        :active-meeting-id="activeMeetingId"
-        :active-meeting="activeMeetingDetail"
-        :meeting-utterances="activeMeetingUtterances"
-        :meeting-live-captions="meetingLiveCaptions"
-        :meeting-loading="projectMeetingsLoading"
-        :meeting-detail-loading="meetingDetailLoading"
-        :meeting-mutating="meetingMutating"
-        :meeting-join-url="meetingJoinUrl"
-        :meeting-join-token="meetingJoinToken"
-        :meeting-join-expires-at="meetingJoinExpiresAt"
-        :meeting-rtc-server-url="meetingRtcServerUrl"
-        :active-meeting-guest-share="activeMeetingGuestShare"
-        :meeting-guest-share-loading="meetingGuestShareLoading"
-        :meeting-plan-tier="currentWorkspaceMeetingPlanTier"
-        :meeting-runtime-health="meetingRuntimeHealth"
-        :tone-meta="toneMeta"
-        @update:form-state="Object.assign(formState, $event)"
-        @submit-project-for-contest="submitProject"
-        @generate-topic-board="generateTopicBoard('workspace_dashboard')"
-        @update-topic-board-candidate-status="updateTopicBoardCandidateStatus($event.candidateId, $event.decisionStatus)"
-        @select-topic-board-candidate="selectTopicBoardCandidate"
-        @send-topic-board-candidate-to-chat="sendTopicBoardCandidateToChat"
-        @apply-topic-board-candidate-to-form="applyTopicBoardCandidateToForm"
-        @update:project-settings-common="onProjectSettingsCommonChange"
-        @update:project-settings-bindings="onProjectSettingsBindingsChange"
-        @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
-        @load-contests="loadContests"
-        @save-project-settings="saveProjectSettingsManually"
-        @save-workspace-display-user-override="saveWorkspaceDisplayUserOverride"
-        @save-workspace-display-team-default="saveWorkspaceDisplayTeamDefault"
-        @reload-workspace-member-management="loadWorkspaceMemberManagement"
-        @create-workspace-invitation="createWorkspaceInvitation"
-        @prepare-workspace-invitation="workspaceInvitationError = ''"
-        @patch-workspace-member-role="patchWorkspaceMemberRole"
-        @remove-workspace-member="removeWorkspaceMember"
-        @revoke-workspace-invitation="revokeWorkspaceInvitation"
-        @copy-workspace-invitation-link="copyWorkspaceInvitationLink"
-        @open-workspace-seat-modal="openWorkspaceSeatModal"
-        @save-workspace-seat-limit="saveWorkspaceSeatLimit"
-        @copy-project-resource-share="copyProjectResourceShare"
-        @revoke-project-resource-share="revokeProjectResourceShare"
-        @create-meeting="createProjectMeeting"
-        @quick-create-meeting="submitProjectMeetingCreate"
-        @submit-meeting-create="submitProjectMeetingCreate"
-        @refresh-meetings="loadProjectMeetings"
-        @join-meeting="joinProjectMeeting"
-        @start-meeting="startProjectMeeting"
-        @end-meeting="endProjectMeeting"
-        @create-meeting-guest-share="createProjectMeetingGuestShare"
-        @regenerate-meeting-guest-share="regenerateProjectMeetingGuestShare"
-        @revoke-meeting-guest-share="revokeProjectMeetingGuestShare"
-        @select-meeting="selectProjectMeeting"
-        @open-meeting-resource="openProjectResourcePreview"
-        @reconvert-preview="reconvertProjectResourcePreview"
-        @download-preview-source="downloadPreviewSource"
-        @activate-preview-resource="activateProjectResourceTab"
-        @close-preview-resource="closeProjectResourcePreview"
-        @update:collab-draw-value="updateCollabDrawContent"
-        @update-collab-cursor="updateCollabCursor"
-        @update-collab-selection-status="updateCollabSelectionStatus"
-        @markdown-primary-heading-change="handleMarkdownPrimaryHeadingChange"
-        @markdown-create-comment-from-selection="handleMarkdownCreateCommentFromSelection"
-        @markdown-create-comment-from-image="handleMarkdownCreateCommentFromImage"
-        @markdown-open-comment-thread="handleMarkdownOpenCommentThread"
-        @markdown-request-image-action="handleMarkdownImageAction"
-        @markdown-cancel-comment-draft="cancelMarkdownCommentDraft"
-        @markdown-reply-comment-thread="replyMarkdownCommentThread"
-        @markdown-resolve-comment-thread="resolveMarkdownCommentThread"
-        @markdown-reopen-comment-thread="reopenMarkdownCommentThread"
-        @markdown-create-comment-thread="createMarkdownCommentThread"
-        @request-context-menu="openWorkspaceContextMenu($event)"
-      />
-
-      <div
-        class="workspace-right-dock"
-        :class="{ 'workspace-right-dock--collapsed': rightSidebarCollapsed }"
+    <section
+      data-testid="workspace-scene-shell"
+      :data-active-scene="workspaceSceneLayoutTestId"
+      class="workspace-scene-shell flex flex-1 min-h-0 overflow-hidden"
+      :class="{ 'workspace-scene-shell--switching': workbenchSwitching }"
+    >
+      <Transition
+        :name="workbenchSceneTransitionName"
+        mode="out-in"
+        @after-enter="handleWorkbenchSceneTransitionAfterEnter"
       >
-        <div
-          class="workspace-right-dock__panel"
-          :class="{ 'workspace-right-dock__panel--hidden': rightSidebarCollapsed }"
-          :aria-hidden="rightSidebarCollapsed ? 'true' : 'false'"
+        <main
+          v-if="displayedWorkbenchMode !== 'final_review'"
+          :key="displayedWorkbenchMode"
+          :data-testid="displayedWorkbenchMode === 'defense' ? 'workspace-defense-layout' : 'workspace-project-layout'"
+          class="workspace-workbench-scene workspace-layout flex flex-1 min-h-0 items-stretch overflow-hidden xl:flex-row"
         >
-          <WorkspaceRightSidebar
-            v-model:chat-input="chatInput"
-            :workbench-mode="workbenchMode"
-            :project-assistant-mode="projectAssistantMode"
-            :project-contextual-assistant-label="projectContextualAssistant?.label || ''"
-            :project-contextual-assistant-preset="projectContextualAssistant?.preset || ''"
-            :ai-mode="aiMode"
-            :sidebar-view="rightSidebarView"
-            class="min-h-0 overflow-hidden"
-            :chat-sessions="chatSessions"
-            :open-chat-session-ids="openChatSessionIds"
-            :active-chat-session-id="activeChatSessionId"
-            :chat-sessions-loading="chatSessionsLoading"
-            :chat-session-deleting-id="deletingChatSessionId"
-            :chat-messages="chatMessages"
-            :chat-loading="chatLoading"
-            :chat-interrupting="chatInterrupting"
-            :workspace-preparing="workspacePreparing"
-            :current-user-name="me?.user.username || ''"
-            :current-user-avatar-url="me?.user.avatarUrl || ''"
-            :change-requests="aiChangeRequests"
-            :change-requests-loading="aiChangeRequestsLoading"
-            :change-acting-ids="aiChangeActingIds"
-            :change-second-confirm-ids="aiChangeSecondConfirmIds"
-            :issue-report="latestIssueReport"
-            :project-issues="projectIssues"
-            :issue-loading="issueCenterLoading"
-            :issue-report-submitting="issueReportSubmitting"
-            :issue-report-exporting="issueReportExporting"
-            :defense-rounds="defenseRounds"
-            :defense-scorecard="defenseScorecard"
-            :defense-personas="defensePersonas"
-            :defense-stage="defenseStage"
-            :defense-turn-count="defenseTurnCount"
-            :defense-summary="defenseSummary"
-            :defense-personas-loading="defensePersonasLoading"
-            :defense-summary-loading="defenseSummaryLoading"
-            :selected-contest="selectedContest"
-            :selected-track="selectedTrack"
-            :selected-resources="selectedResources"
-            :comment-threads="markdownCommentThreads"
-            :active-comment-thread-id="activeMarkdownCommentThreadId"
-            :comment-draft-anchor="markdownCommentDraftAnchor"
-            :comment-loading="markdownCommentLoading"
-            :comment-mutating="markdownCommentMutating"
-            :show-comment-tab="!isMarkdownWorkspaceTabActive"
-            :document-resource-title="activeMarkdownResourceTitle"
-            :document-selection-text="documentAssistRequestState.selectionText"
-            :document-selection-range="documentAssistRequestState.selectionRange"
-            :document-resource-id="documentAssistRequestState.resourceId"
-            :document-markdown-hash="activeAgentDocDocumentHash"
-            :applied-agent-doc-draft-keys="appliedAgentDocDraftKeys"
-            :ai-enabled="currentAiModeAvailable"
-            :ai-disabled-reason="currentAiDisabledReason"
-            :collapsed="rightSidebarCollapsed"
-            @update:project-assistant-mode="updateProjectAssistantMode"
-            @update:sidebar-view="rightSidebarView = $event"
-            @send-chat="sendChatMessage"
-            @interrupt-chat="interruptChatMessage"
-            @update:ai-mode="updateWorkspaceAiMode"
-            @collapse="collapseRightSidebar"
-            @switch-chat-session="switchChatSession"
-            @delete-chat-session="deleteChatSession"
-            @create-chat-session="startNewChatSession"
-            @approve-change="approveAiChange"
-            @reject-change="rejectAiChange"
-            @import-defense-personas="importDefensePersonas"
-            @save-defense-persona="saveDefensePersona"
-            @delete-defense-persona="deleteDefensePersona"
-            @generate-defense-summary="generateDefenseSummary"
-            @start-defense-realtime="startDefenseRealtime"
-            @submit-issue-report="submitIssueReport"
-            @export-issue-report="exportIssueReport"
-            @create-comment-thread="createMarkdownCommentThread"
-            @reply-comment-thread="replyMarkdownCommentThread"
-            @resolve-comment-thread="resolveMarkdownCommentThread"
+          <template v-if="displayedWorkbenchMode === 'project'">
+            <div class="workspace-side-anchor workspace-side-anchor--left">
+              <WorkspaceLeftSidebar
+                v-model:natural-query="naturalQuery"
+                v-model:major="major"
+                v-model:discipline="discipline"
+                v-model:level="level"
+                v-model:track-type="trackType"
+                v-model:top-k="topK"
+                v-model:selected-contest-id="selectedContestId"
+                class="min-h-0 overflow-hidden"
+                :contests="contestSource"
+                :selected-resources="selectedResources"
+                :recycle-resources="recycleResources"
+                :resource-library="resourceLibrary"
+                :linked-contest-resource-groups="linkedContestResourceGroups"
+                :linked-contest-binding-count="projectSettingsBindings.length"
+                :upload-tasks="projectUploadTasks"
+                :upload-summary="projectUploadSummary"
+                :upload-drawer-open="uploadDrawerOpen"
+                :upload-activity-items="projectUploadActivityItems"
+                :upload-history-loaded="projectUploadHistoryLoaded"
+                :meetings="projectMeetings"
+                :active-meeting-id="activeMeetingId"
+                :meeting-loading="projectMeetingsFirstLoadLoading"
+                :meeting-refreshing="projectMeetingsRefreshing"
+                :meeting-mutating="meetingMutating"
+                :meeting-runtime-health="meetingRuntimeHealth"
+                :project-members="workspaceMembers"
+                :project-outline="projectOutlineItems"
+                :issue-reports="projectIssueReports"
+                :project-issues="projectIssues"
+                :issue-loading="issueCenterLoading"
+                :project-resources-loading="projectResourcesFirstLoadLoading"
+                :project-resources-refreshing="projectResourcesRefreshing"
+                :resource-library-loading="resourceLibraryFirstLoadLoading"
+                :resource-library-refreshing="resourceLibraryRefreshing"
+                :project-outline-loading="projectOutlineFirstLoadLoading"
+                :resource-mutating="resourceMutating"
+                :has-active-project="Boolean(activeProjectId)"
+                :active-project-id="activeProjectId"
+                :ai-reasoning="aiReasoning"
+                :normalized-info="normalizedInfo"
+                :status-line="statusLine"
+                :list-loading="listLoading"
+                :ai-filtering="aiFiltering"
+                :is-admin-view="isAdminView"
+                :active-main-tab-id="activeMainTabId"
+                :user-email="currentUserEmail"
+                :user-avatar-url="me?.user.avatarUrl || ''"
+                :workspace-options="workspaceOptions"
+                :workspace-can-manage-members="workspaceCanManageMembers"
+                :current-user-id="me?.user.id || ''"
+                :current-username="me?.user.username || ''"
+                :project-storage-limit-bytes="PROJECT_RESOURCE_STORAGE_LIMIT_BYTES"
+                :topic-board-draft="topicBoardDraft"
+                :topic-board-loading="topicBoardLoading"
+                :topic-board-current-summary="topicBoardSnapshot?.boardSummary || ''"
+                :topic-board-history-count="topicBoardHistory.length"
+                :workspace-id="activeWorkspaceId"
+                :tab-spacing-preset="workspaceEffectiveTabSpacingPreset"
+                :collapsed="leftSidebarCollapsed"
+                :command-signal="leftSidebarMetaKSignal"
+                :command-module-id="leftSidebarMetaKModuleId"
+                :command-outline-id="leftSidebarMetaKOutlineId"
+                @load-contests="loadContests"
+                @run-ai-filter="runAiFilter"
+                @update:topic-board-draft="Object.assign(topicBoardDraft, $event)"
+                @generate-topic-board="generateTopicBoard('workspace_sidebar')"
+                @open-meeting-panel="openMeetingFromLeftSidebar"
+                @open-settings-panel="openSettingsFromLeftSidebar"
+                @open-member-management-panel="openMemberManagementFromLeftSidebar"
+                @open-flow-panel="openFlowFromLeftSidebar"
+                @switch-workspace="switchWorkspaceFromHeader"
+                @open-workspace-home="openWorkspaceHomeFromHeader"
+                @open-display-preferences="openDisplayPreferencesFromHeader"
+                @open-account-center="openAccountCenterFromHeader"
+                @toggle-upload-drawer="openUploadDrawer"
+                @create-meeting="createProjectMeeting"
+                @select-meeting="selectProjectMeeting"
+                @create-collab-resource="createCollabResource"
+                @reload-issues="loadProjectIssues"
+                @open-resource="openProjectResourcePreview"
+                @rename-project-resource="renameProjectResource"
+                @download-project-resource="downloadProjectResource"
+                @copy-project-resource-name="copyProjectResourceName"
+                @share-project-resource="shareProjectResource"
+                @duplicate-project-resource="duplicateProjectResource"
+                @add-resource-from-library="addResourceFromLibrary"
+                @patch-project-resource-tree="patchProjectResourceTree"
+                @remove-project-resource="removeProjectResource"
+                @remove-project-resources="removeProjectResources"
+                @restore-project-resource="restoreProjectResource"
+                @purge-project-resource="purgeProjectResource"
+                @upload-resources="uploadResourcesToProject"
+                @pause-upload-task="pauseUploadTask"
+                @resume-upload-task="resumeUploadTask"
+                @retry-upload-task="retryUploadTask"
+                @cancel-upload-task="cancelUploadTask"
+                @rebind-upload-task="requestRebindUploadTask"
+                @pause-all-upload-tasks="pauseAllUploadTasks"
+                @resume-all-upload-tasks="resumeAllUploadTasks"
+                @clear-completed-upload-tasks="clearCompletedUploadTasks"
+                @update:collapsed="leftSidebarCollapsed = $event"
+                @request-context-menu="openWorkspaceContextMenu($event)"
+              />
+            </div>
+
+            <WorkspaceMainPanel
+              ref="workspaceMainPanelRef"
+              v-model:active-tab-id="activeMainTabId"
+              v-model:open-tabs="openMainTabs"
+              v-model:selected-track-id="selectedTrackId"
+              v-model:major="major"
+              v-model:discipline="discipline"
+              v-model:level="level"
+              v-model:track-type="trackType"
+              v-model:top-k="topK"
+              v-model:selected-contest-id="selectedContestId"
+              class="min-h-0 overflow-hidden"
+              :selected-contest="selectedContest"
+              :selected-track="selectedTrack"
+              :contests="contestSource"
+              :active-project="activeProject"
+              :active-project-id="activeProjectId"
+              :workspace-name="currentWorkspace?.workspace.name || ''"
+              :workspace-type="currentWorkspace?.workspace.type || ''"
+              :workspace-members="workspaceMembers"
+              :workspace-invitations="workspaceInvitations"
+              :workspace-member-management-loading="workspaceMemberManagementLoading"
+              :workspace-can-manage-members="workspaceCanManageMembers"
+              :workspace-can-edit-members="workspaceCanEditMembers"
+              :workspace-member-role-updating-user-id="workspaceMemberRoleUpdatingUserId"
+              :workspace-member-removing-user-id="workspaceMemberRemovingUserId"
+              :workspace-invitation-revoking-id="workspaceInvitationRevokingId"
+              :workspace-can-manage-billing-seats="workspaceCanManageBillingSeats"
+              :workspace-seat-used="workspaceSeatUsed"
+              :workspace-seat-limit="workspaceSeatLimit"
+              :workspace-supports-seat-add="workspaceSupportsSeatAdd"
+              :workspace-invitation-submitting="workspaceInvitationSubmitting"
+              :workspace-invitation-link="workspaceInvitationLink"
+              :workspace-invitation-error="workspaceInvitationError"
+              :workspace-seat-limit-save-loading="workspaceSeatLimitSaveLoading"
+              :workspace-seat-limit-error="workspaceSeatLimitError"
+              :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
+              :open-settings-signal="openSettingsSignal"
+              :open-member-management-signal="openMemberManagementSignal"
+              :open-display-preferences-signal="openDisplayPreferencesSignal"
+              :open-flow-signal="openFlowSignal"
+              :open-preview-signal="openPreviewSignal"
+              :close-preview-signal="closePreviewSignal"
+              :flow-resource-id="flowResourceId"
+              :flow-resource-title="flowResourceTitle"
+              :preview-resource-id="previewResourceId"
+              :closing-preview-resource-id="closingPreviewResourceId"
+              :preview-resource-title="previewResourceTitle"
+              :markdown-image-upload-handler="uploadMarkdownImage"
+              :preview-status="previewStatusPayload"
+              :preview-status-loading="previewStatusLoading"
+              :preview-mode="previewMode"
+              :preview-pdf-url="previewPdfUrl"
+              :preview-source-download-url="previewSourceDownloadUrl"
+              :current-user-id="me?.user.id || ''"
+              :current-user-name="me?.user.username || ''"
+              :current-user-avatar-url="me?.user.avatarUrl || ''"
+              :is-platform-admin-user="Boolean(me?.user.isPlatformAdmin)"
+              :collab-resource-id="collabBindingResourceId"
+              :collab-markdown-doc="collabMarkdownDoc"
+              :collab-markdown-awareness="collabMarkdownAwareness"
+              :collab-draw-value="collabDrawValue"
+              :collab-draw-error="collabDrawError"
+              :collab-revision="collabRevision"
+              :collab-connected="collabConnected"
+              :collab-status-text="collabStatusText"
+              :collab-preview-loading="collabPreviewLoading"
+              :collab-preview-error="collabPreviewError"
+              :collab-presence-members="collabPresenceMembers"
+              :inline-completion-enabled="canUseInlineCompletion()"
+              :inline-completion-request-handler="requestInlineCompletion"
+              :inline-completion-accept-handler="acceptInlineCompletion"
+              :comment-threads="markdownCommentThreads"
+              :active-comment-thread-id="activeMarkdownCommentThreadId"
+              :comment-draft-anchor="markdownCommentDraftAnchor"
+              :comment-loading="markdownCommentLoading"
+              :comment-mutating="markdownCommentMutating"
+              :selected-resources="selectedResources"
+              :mapping-rows="mappingRows"
+              :mapping-loading="mappingFirstLoadLoading"
+              :mapping-refreshing="mappingRefreshing"
+              :keyword-cloud="keywordCloud"
+              :trend-bars="trendBars"
+              :form-state="formState"
+              :form-submitting="formSubmitting"
+              :workspace-preparing="workspacePreparing"
+              :topic-board="topicBoardSnapshot"
+              :topic-board-fetching="topicBoardFetching"
+              :topic-board-loading="topicBoardLoading"
+              :topic-board-actioning-candidate-id="topicBoardActioningCandidateId"
+              :project-settings-loading="projectSettingsLoading"
+              :project-settings-save-state="projectSettingsSaveState"
+              :project-settings-common="projectSettingsCommon"
+              :project-settings-bindings="projectSettingsBindings"
+              :project-settings-current-contest-id="projectSettingsCurrentContestId"
+              :project-settings-adaptation="projectSettingsAdaptation"
+              :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+              :workspace-display-preferences="workspaceDisplayPreferenceSnapshot"
+              :workspace-display-preferences-loading="workspaceDisplayPreferenceLoading"
+              :workspace-display-preferences-saving-scope="workspaceDisplayPreferenceSavingScope"
+              :workspace-display-preferences-error="workspaceDisplayPreferenceError"
+              :project-resource-shares="projectResourceShares"
+              :project-resource-shares-loading="projectResourceSharesFirstLoadLoading"
+              :meetings="projectMeetings"
+              :active-meeting-id="activeMeetingId"
+              :active-meeting="activeMeetingDetail"
+              :meeting-utterances="activeMeetingUtterances"
+              :meeting-live-captions="meetingLiveCaptions"
+              :meeting-loading="projectMeetingsFirstLoadLoading"
+              :meeting-refreshing="projectMeetingsRefreshing"
+              :meeting-detail-loading="meetingDetailDisplayLoading"
+              :meeting-detail-refreshing="meetingDetailRefreshing"
+              :meeting-mutating="meetingMutating"
+              :meeting-join-url="meetingJoinUrl"
+              :meeting-join-token="meetingJoinToken"
+              :meeting-join-expires-at="meetingJoinExpiresAt"
+              :meeting-rtc-server-url="meetingRtcServerUrl"
+              :active-meeting-guest-share="activeMeetingGuestShare"
+              :meeting-guest-share-loading="meetingGuestShareLoading"
+              :meeting-plan-tier="currentWorkspaceMeetingPlanTier"
+              :meeting-runtime-health="meetingRuntimeHealth"
+              :defense-realtime-state="defenseRealtimeSessionMetaSnapshot"
+              :defense-realtime-logs="defenseRealtimeLogs"
+              :tone-meta="toneMeta"
+              @update:form-state="Object.assign(formState, $event)"
+              @submit-project-for-contest="submitProject"
+              @generate-topic-board="generateTopicBoard('workspace_dashboard')"
+              @update-topic-board-candidate-status="updateTopicBoardCandidateStatus($event.candidateId, $event.decisionStatus)"
+              @select-topic-board-candidate="selectTopicBoardCandidate"
+              @send-topic-board-candidate-to-chat="sendTopicBoardCandidateToChat"
+              @apply-topic-board-candidate-to-form="applyTopicBoardCandidateToForm"
+              @update:project-settings-common="onProjectSettingsCommonChange"
+              @update:project-settings-bindings="onProjectSettingsBindingsChange"
+              @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
+              @load-contests="loadContests"
+              @save-project-settings="saveProjectSettingsManually"
+              @save-workspace-display-user-override="saveWorkspaceDisplayUserOverride"
+              @save-workspace-display-team-default="saveWorkspaceDisplayTeamDefault"
+              @reload-workspace-member-management="loadWorkspaceMemberManagement"
+              @create-workspace-invitation="createWorkspaceInvitation"
+              @prepare-workspace-invitation="workspaceInvitationError = ''"
+              @patch-workspace-member-role="patchWorkspaceMemberRole"
+              @remove-workspace-member="removeWorkspaceMember"
+              @revoke-workspace-invitation="revokeWorkspaceInvitation"
+              @copy-workspace-invitation-link="copyWorkspaceInvitationLink"
+              @open-workspace-seat-modal="openWorkspaceSeatModal"
+              @save-workspace-seat-limit="saveWorkspaceSeatLimit"
+              @copy-project-resource-share="copyProjectResourceShare"
+              @revoke-project-resource-share="revokeProjectResourceShare"
+              @create-meeting="createProjectMeeting"
+              @quick-create-meeting="submitProjectMeetingCreate"
+              @submit-meeting-create="submitProjectMeetingCreate"
+              @refresh-meetings="loadProjectMeetings"
+              @join-meeting="joinProjectMeeting"
+              @start-meeting="startProjectMeeting"
+              @end-meeting="handleEndProjectMeeting"
+              @create-meeting-guest-share="createProjectMeetingGuestShare"
+              @regenerate-meeting-guest-share="regenerateProjectMeetingGuestShare"
+              @revoke-meeting-guest-share="revokeProjectMeetingGuestShare"
+              @select-meeting="selectProjectMeeting"
+              @open-meeting-resource="openProjectResourcePreview"
+              @open-resource="openProjectResourcePreview"
+              @reconvert-preview="reconvertProjectResourcePreview"
+              @download-preview-source="downloadPreviewSource"
+              @activate-preview-resource="activateProjectResourceTab"
+              @close-preview-resource="closeProjectResourcePreview"
+              @update:collab-draw-value="updateCollabDrawContent"
+              @update-collab-cursor="updateCollabCursor"
+              @update-collab-selection-status="updateCollabSelectionStatus"
+              @markdown-primary-heading-change="handleMarkdownPrimaryHeadingChange"
+              @markdown-create-comment-from-selection="handleMarkdownCreateCommentFromSelection"
+              @markdown-create-comment-from-image="handleMarkdownCreateCommentFromImage"
+              @markdown-open-comment-thread="handleMarkdownOpenCommentThread"
+              @markdown-request-image-action="handleMarkdownImageAction"
+              @markdown-cancel-comment-draft="cancelMarkdownCommentDraft"
+              @markdown-reply-comment-thread="replyMarkdownCommentThread"
+              @markdown-resolve-comment-thread="resolveMarkdownCommentThread"
+              @markdown-reopen-comment-thread="reopenMarkdownCommentThread"
+              @markdown-create-comment-thread="createMarkdownCommentThread"
+              @request-context-menu="openWorkspaceContextMenu($event)"
+            />
+          </template>
+
+          <template v-else>
+            <section class="workspace-defense-shell flex flex-1 min-h-0 min-w-0 overflow-hidden">
+              <div class="workspace-defense-shell__sidebar">
+                <WorkspaceDefenseSidebar
+                  :contest-name="selectedContest?.name || ''"
+                  :track-name="selectedTrack?.name || ''"
+                  :session-meta="defenseSessionMetaSnapshot"
+                  :session-state="defenseSessionStateSnapshot"
+                  :personas="defensePersonas"
+                  :rounds="defenseRounds"
+                  :linked-meeting="defenseLinkedMeeting"
+                  :meeting-runtime-health="meetingRuntimeHealth"
+                />
+              </div>
+
+              <div class="workspace-defense-shell__stage">
+                <WorkspaceDefenseWorkbench
+                  :contest-name="selectedContest?.name || ''"
+                  :track-name="selectedTrack?.name || ''"
+                  :contest="selectedContest"
+                  :contest-timelines="defenseContestTimelines"
+                  :session-meta="defenseSessionMetaSnapshot"
+                  :session-state="defenseSessionStateSnapshot"
+                  :personas="defensePersonas"
+                  :realtime-state="defenseRealtimeSessionMetaSnapshot"
+                  :realtime-logs="defenseRealtimeLogs"
+                  :scorecard="defenseScorecard"
+                  :summary="defenseSummary"
+                  :rounds="defenseRounds"
+                  :turns="defenseTurns"
+                  :linked-meeting="defenseLinkedMeeting"
+                  :meeting-runtime-health="meetingRuntimeHealth"
+                  :selected-resource-count="selectedResources.length"
+                  @open-agent-def="expandRightSidebar"
+                  @start-realtime="startDefenseRealtime"
+                  @update-realtime-provider="updateDefenseRealtimeProvider"
+                  @update-realtime-media-mode="updateDefenseRealtimeMediaMode"
+                  @toggle-realtime-audio="setDefenseRealtimeAudioEnabled"
+                  @toggle-realtime-video="setDefenseRealtimeVideoEnabled"
+                  @interrupt-realtime="interruptDefenseRealtime"
+                  @reconnect-realtime="reconnectDefenseRealtime"
+                  @generate-summary="generateDefenseSummary"
+                />
+              </div>
+            </section>
+          </template>
+
+          <div
+            class="workspace-right-dock"
+            :class="{ 'workspace-right-dock--collapsed': rightSidebarCollapsed }"
+          >
+            <div
+              class="workspace-right-dock__panel"
+              :class="{ 'workspace-right-dock__panel--hidden': rightSidebarCollapsed }"
+              :aria-hidden="rightSidebarCollapsed ? 'true' : 'false'"
+            >
+              <WorkspaceRightSidebar
+                v-model:chat-input="chatInput"
+                :workbench-mode="displayedWorkbenchMode"
+                :project-assistant-mode="projectAssistantMode"
+                :project-contextual-assistant-label="projectContextualAssistant?.label || ''"
+                :project-contextual-assistant-preset="projectContextualAssistant?.preset || ''"
+                :ai-mode="aiMode"
+                :sidebar-view="rightSidebarView"
+                class="min-h-0 overflow-hidden"
+                :chat-sessions="chatSessions"
+                :open-chat-session-ids="openChatSessionIds"
+                :active-chat-session-id="activeChatSessionId"
+                :chat-sessions-loading="chatSessionsFirstLoadLoading"
+                :chat-sessions-refreshing="chatSessionsRefreshing"
+                :chat-session-deleting-id="deletingChatSessionId"
+                :chat-messages="chatMessages"
+                :chat-messages-loading="chatMessagesFirstLoadLoading"
+                :chat-loading="chatLoading"
+                :chat-interrupting="chatInterrupting"
+                :workspace-preparing="workspacePreparing"
+                :current-user-name="me?.user.username || ''"
+                :current-user-avatar-url="me?.user.avatarUrl || ''"
+                :change-requests="aiChangeRequests"
+                :change-requests-loading="aiChangeRequestsLoading"
+                :change-acting-ids="aiChangeActingIds"
+                :change-second-confirm-ids="aiChangeSecondConfirmIds"
+                :issue-report="latestIssueReport"
+                :project-issues="projectIssues"
+                :issue-loading="issueCenterLoading"
+                :issue-report-submitting="issueReportSubmitting"
+                :issue-report-exporting="issueReportExporting"
+                :defense-rounds="defenseRounds"
+                :defense-scorecard="defenseScorecard"
+                :defense-personas="defensePersonas"
+                :defense-session-meta="defenseSessionMetaSnapshot"
+                :defense-session-state="defenseSessionStateSnapshot"
+                :defense-realtime-state="defenseRealtimeSessionMetaSnapshot"
+                :defense-realtime-logs="defenseRealtimeLogs"
+                :defense-stage="defenseStage"
+                :defense-turn-count="defenseTurnCount"
+                :defense-summary="defenseSummary"
+                :defense-personas-loading="defensePersonasLoading"
+                :defense-summary-loading="defenseSummaryLoading"
+                :selected-contest="selectedContest"
+                :selected-track="selectedTrack"
+                :selected-resources="selectedResources"
+                :comment-threads="markdownCommentThreads"
+                :active-comment-thread-id="activeMarkdownCommentThreadId"
+                :comment-draft-anchor="markdownCommentDraftAnchor"
+                :comment-loading="markdownCommentLoading"
+                :comment-mutating="markdownCommentMutating"
+                :show-comment-tab="!isMarkdownWorkspaceTabActive"
+                :document-resource-title="activeMarkdownResourceTitle"
+                :document-selection-text="documentAssistRequestState.selectionText"
+                :document-selection-range="documentAssistRequestState.selectionRange"
+                :document-resource-id="documentAssistRequestState.resourceId"
+                :document-markdown-hash="activeAgentDocDocumentHash"
+                :applied-agent-doc-draft-keys="appliedAgentDocDraftKeys"
+                :workflow-resource-id="activeWorkflowResourceId"
+                :workflow-resource-title="activeWorkflowResourceTitle"
+                :workflow-hash="activeWorkflowHash"
+                :workflow-page-count="activeWorkflowPageCount"
+                :applied-workflow-draft-keys="appliedWorkflowDraftKeys"
+                :discarded-workflow-draft-keys="discardedWorkflowDraftKeys"
+                :workflow-generate-available="workflowGenerateAvailable"
+                :workflow-generate-disabled-reason="workflowGenerateDisabledReason"
+                :workflow-complete-available="workflowCompleteAvailable"
+                :workflow-complete-disabled-reason="workflowCompleteDisabledReason"
+                :workflow-refine-available="workflowRefineAvailable"
+                :workflow-refine-disabled-reason="workflowRefineDisabledReason"
+                :workflow-restyle-available="workflowRestyleAvailable"
+                :workflow-restyle-disabled-reason="workflowRestyleDisabledReason"
+                :ai-enabled="currentAiModeAvailable"
+                :ai-disabled-reason="currentAiDisabledReason"
+                :collapsed="rightSidebarCollapsed"
+                @update:project-assistant-mode="updateProjectAssistantMode"
+                @update:sidebar-view="rightSidebarView = $event"
+                @send-chat="sendChatMessage"
+                @interrupt-chat="interruptChatMessage"
+                @update:ai-mode="updateWorkspaceAiMode"
+                @collapse="collapseRightSidebar"
+                @switch-chat-session="switchChatSession"
+                @delete-chat-session="deleteChatSession"
+                @create-chat-session="startNewChatSession"
+                @approve-change="approveAiChange"
+                @reject-change="rejectAiChange"
+                @import-defense-personas="importDefensePersonas"
+                @save-defense-persona="saveDefensePersona"
+                @delete-defense-persona="deleteDefensePersona"
+                @generate-defense-summary="generateDefenseSummary"
+                @start-defense-realtime="startDefenseRealtime"
+                @update-defense-realtime-provider="updateDefenseRealtimeProvider"
+                @update-defense-realtime-media-mode="updateDefenseRealtimeMediaMode"
+                @toggle-defense-realtime-audio="setDefenseRealtimeAudioEnabled"
+                @toggle-defense-realtime-video="setDefenseRealtimeVideoEnabled"
+                @interrupt-defense-realtime="interruptDefenseRealtime"
+                @reconnect-defense-realtime="reconnectDefenseRealtime"
+                @submit-issue-report="submitIssueReport"
+                @export-issue-report="exportIssueReport"
+                @create-comment-thread="createMarkdownCommentThread"
+                @reply-comment-thread="replyMarkdownCommentThread"
+                @resolve-comment-thread="resolveMarkdownCommentThread"
             @reopen-comment-thread="reopenMarkdownCommentThread"
             @select-comment-thread="handleMarkdownOpenCommentThread"
             @cancel-comment-draft="cancelMarkdownCommentDraft"
             @apply-document-draft="applyAgentDocDraft"
+                @request-workflow-draft="requestWorkflowDraftFromSidebar"
+                @apply-workflow-draft="applyWorkflowDraft"
+                @discard-workflow-draft="discardWorkflowDraft"
+                @open-resource="openProjectResourcePreview"
           />
-        </div>
-      </div>
-    </main>
+            </div>
+          </div>
+        </main>
 
-    <main
-      v-else
-      data-testid="workspace-final-review-layout"
-      class="workspace-final-review-shell flex flex-1 min-h-0 overflow-hidden"
-    >
-      <button
-        data-testid="workspace-final-review-materials-trigger"
-        class="workspace-final-review-edge workspace-final-review-edge--left"
-        :class="{ 'workspace-final-review-edge--active': finalReviewMaterialsOpen }"
-        type="button"
-        title="打开终审资料抽屉"
-        @click="toggleFinalReviewMaterialsDrawer"
-      >
-        <span class="material-symbols-outlined workspace-final-review-edge__icon">folder_open</span>
-        <span class="workspace-final-review-edge__label">资料</span>
-      </button>
+        <main
+          v-else
+          :key="displayedWorkbenchMode"
+          data-testid="workspace-final-review-layout"
+          class="workspace-workbench-scene workspace-final-review-shell flex flex-1 min-h-0 overflow-hidden"
+        >
+          <button
+            data-testid="workspace-final-review-materials-trigger"
+            class="workspace-final-review-edge workspace-final-review-edge--left"
+            :class="{ 'workspace-final-review-edge--active': finalReviewMaterialsOpen }"
+            type="button"
+            title="打开终审资料抽屉"
+            @click="toggleFinalReviewMaterialsDrawer"
+          >
+            <span class="material-symbols-outlined workspace-final-review-edge__icon">folder_open</span>
+            <span class="workspace-final-review-edge__label">资料</span>
+          </button>
 
-      <section class="workspace-final-review-stage">
-        <WorkspaceFinalReviewWorkbench
-          :contest-name="selectedContest?.name || ''"
-          :track-name="selectedTrack?.name || ''"
-          :readiness-percent="finalReviewReadinessPercent"
-          :resource-count="selectedResources.length"
-          :active-share-count="finalReviewActiveShares.length"
-          :unresolved-issue-count="finalReviewUnresolvedIssueCount"
-          :checklist-items="finalReviewChecklistItems"
-          :risk-summary="latestIssueReport?.summary || ''"
-          :open-issues="finalReviewOpenIssues"
-          :evidence-gaps="finalReviewEvidenceGaps"
-          :resources="selectedResources"
-          :shares="finalReviewActiveShares"
-          :draft-title="formState.title"
-          :draft-problem-statement="formState.problemStatement"
-          :draft-summary="formState.summary"
-          @open-final-review-flow="openFinalReviewFlowFromWorkbench"
-          @open-project-settings="openProjectSettingsFromFinalReview"
-          @open-dashboard="openDashboardFromFinalReview"
-          @open-materials="openMaterialsDrawerFromFinalReview"
-          @switch-defense="switchToDefenseWorkbenchFromFinalReview"
+          <section class="workspace-final-review-stage">
+            <WorkspaceFinalReviewWorkbench
+              :contest-name="selectedContest?.name || ''"
+              :track-name="selectedTrack?.name || ''"
+              :readiness-percent="finalReviewReadinessPercent"
+              :resource-count="selectedResources.length"
+              :active-share-count="finalReviewActiveShares.length"
+              :unresolved-issue-count="finalReviewUnresolvedIssueCount"
+              :checklist-items="finalReviewChecklistItems"
+              :risk-summary="latestIssueReport?.summary || ''"
+              :open-issues="finalReviewOpenIssues"
+              :evidence-gaps="finalReviewEvidenceGaps"
+              :resources="selectedResources"
+              :shares="finalReviewActiveShares"
+              :draft-title="formState.title"
+              :draft-problem-statement="formState.problemStatement"
+              :draft-summary="formState.summary"
+              @open-final-review-flow="openFinalReviewFlowFromWorkbench"
+              @open-project-settings="openProjectSettingsFromFinalReview"
+              @open-dashboard="openDashboardFromFinalReview"
+              @open-materials="openMaterialsDrawerFromFinalReview"
+              @switch-defense="switchToDefenseWorkbenchFromFinalReview"
+            />
+          </section>
+
+          <button
+            data-testid="workspace-final-review-assistant-trigger"
+            class="workspace-final-review-edge workspace-final-review-edge--right"
+            :class="{ 'workspace-final-review-edge--active': finalReviewAssistantOpen }"
+            type="button"
+            title="打开终审助手抽屉"
+            @click="toggleRightSidebar"
+          >
+            <span class="material-symbols-outlined workspace-final-review-edge__icon">auto_awesome</span>
+            <span class="workspace-final-review-edge__label">助手</span>
+          </button>
+
+          <WorkspaceFinalReviewMaterialsDrawer
+            :open="finalReviewMaterialsOpen"
+            :resources="selectedResources"
+            :shares="finalReviewActiveShares"
+            :resources-loading="projectResourcesFirstLoadLoading"
+            :resources-refreshing="projectResourcesRefreshing"
+            :shares-loading="projectResourceSharesFirstLoadLoading"
+            :shares-refreshing="projectResourceSharesRefreshing"
+            @close="finalReviewMaterialsOpen = false"
+            @open-resource="openResourceFromFinalReview"
+          />
+
+          <WorkspaceFinalReviewSidebar
+            v-model:chat-input="chatInput"
+            :open="finalReviewAssistantOpen"
+            :chat-messages="chatMessages"
+            :chat-loading="chatLoading"
+            :current-user-name="me?.user.username || ''"
+            :current-user-avatar-url="me?.user.avatarUrl || ''"
+            :risk-summary="latestIssueReport?.summary || ''"
+            :open-issues="finalReviewOpenIssues"
+            @close="finalReviewAssistantOpen = false"
+            @open-resource="openResourceFromFinalReview"
+            @send-chat="sendChatMessage"
+          />
+        </main>
+      </Transition>
+
+      <Transition name="workspace-scene-loading-overlay">
+        <WorkspaceShellLoadingOverlay
+          v-if="workbenchSwitchLoading"
+          :progress="workbenchSwitchProgress"
         />
-      </section>
-
-      <button
-        data-testid="workspace-final-review-assistant-trigger"
-        class="workspace-final-review-edge workspace-final-review-edge--right"
-        :class="{ 'workspace-final-review-edge--active': finalReviewAssistantOpen }"
-        type="button"
-        title="打开终审助手抽屉"
-        @click="toggleRightSidebar"
-      >
-        <span class="material-symbols-outlined workspace-final-review-edge__icon">auto_awesome</span>
-        <span class="workspace-final-review-edge__label">助手</span>
-      </button>
-
-      <WorkspaceFinalReviewMaterialsDrawer
-        :open="finalReviewMaterialsOpen"
-        :resources="selectedResources"
-        :shares="finalReviewActiveShares"
-        :resources-loading="resourcesLoading"
-        :shares-loading="projectResourceSharesLoading"
-        @close="finalReviewMaterialsOpen = false"
-        @open-resource="openResourceFromFinalReview"
-      />
-
-      <WorkspaceFinalReviewSidebar
-        v-model:chat-input="chatInput"
-        :open="finalReviewAssistantOpen"
-        :chat-messages="chatMessages"
-        :chat-loading="chatLoading"
-        :current-user-name="me?.user.username || ''"
-        :current-user-avatar-url="me?.user.avatarUrl || ''"
-        :risk-summary="latestIssueReport?.summary || ''"
-        :open-issues="finalReviewOpenIssues"
-        @close="finalReviewAssistantOpen = false"
-        @send-chat="sendChatMessage"
-      />
-    </main>
+      </Transition>
+    </section>
 
     <WorkspaceStatusBar
       :status-line="statusLine"
@@ -10180,9 +11869,88 @@ watch(() => workspaceShellLoading.value, (loading) => {
   overflow: hidden;
 }
 
+.workspace-scene-shell {
+  position: relative;
+  min-width: 0;
+  isolation: isolate;
+}
+
+.workspace-scene-shell--switching {
+  pointer-events: none;
+}
+
+.workspace-workbench-scene {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.workspace-workbench-scene-forward-enter-active,
+.workspace-workbench-scene-forward-leave-active,
+.workspace-workbench-scene-backward-enter-active,
+.workspace-workbench-scene-backward-leave-active {
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.workspace-workbench-scene-forward-enter-from {
+  opacity: 1;
+  transform: translateX(100%);
+}
+
+.workspace-workbench-scene-forward-leave-to {
+  opacity: 1;
+  transform: translateX(-100%);
+}
+
+.workspace-workbench-scene-backward-enter-from {
+  opacity: 1;
+  transform: translateX(-100%);
+}
+
+.workspace-workbench-scene-backward-leave-to {
+  opacity: 1;
+  transform: translateX(100%);
+}
+
+.workspace-workbench-scene-forward-enter-to,
+.workspace-workbench-scene-forward-leave-from,
+.workspace-workbench-scene-backward-enter-to,
+.workspace-workbench-scene-backward-leave-from {
+  opacity: 1;
+  transform: translateX(0);
+}
+
 .workspace-layout {
   min-width: 0;
   position: relative;
+}
+
+.workspace-defense-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(circle at top left, rgba(239, 204, 84, 0.14), transparent 28%),
+    linear-gradient(180deg, #f6f8fc 0%, #eef3fb 100%);
+}
+
+.workspace-defense-shell__sidebar {
+  flex: 0 0 360px;
+  width: 360px;
+  min-width: 320px;
+  max-width: 380px;
+  border-right: 1px solid rgba(213, 223, 238, 0.94);
+  overflow: hidden;
+}
+
+.workspace-defense-shell__stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
 }
 
 .workspace-final-review-shell {
@@ -10271,6 +12039,25 @@ watch(() => workspaceShellLoading.value, (loading) => {
   overflow: visible;
 }
 
+@media (max-width: 1279px) {
+  .workspace-defense-shell {
+    flex-direction: column;
+  }
+
+  .workspace-defense-shell__sidebar {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    border-right: none;
+    border-bottom: 1px solid rgba(213, 223, 238, 0.94);
+  }
+
+  .workspace-defense-shell__stage {
+    padding: 16px;
+  }
+}
+
 .workspace-right-dock {
   position: relative;
   display: flex;
@@ -10338,9 +12125,50 @@ watch(() => workspaceShellLoading.value, (loading) => {
   -webkit-backdrop-filter: blur(10px);
 }
 
+:deep(.workspace-scene-loading-overlay-enter-active),
+:deep(.workspace-scene-loading-overlay-leave-active) {
+  transition:
+    opacity 0.18s ease,
+    backdrop-filter 0.18s ease,
+    -webkit-backdrop-filter 0.18s ease;
+}
+
+:deep(.workspace-scene-loading-overlay-enter-from),
+:deep(.workspace-scene-loading-overlay-leave-to) {
+  opacity: 0;
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+}
+
+:deep(.workspace-scene-loading-overlay-enter-to),
+:deep(.workspace-scene-loading-overlay-leave-from) {
+  opacity: 1;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
 @media (max-width: 960px) {
   .workspace-final-review-stage {
     padding: 18px 58px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-workbench-scene-forward-enter-active,
+  .workspace-workbench-scene-forward-leave-active,
+  .workspace-workbench-scene-backward-enter-active,
+  .workspace-workbench-scene-backward-leave-active {
+    transition:
+      opacity 0.16s ease,
+      transform 0.16s ease;
+  }
+
+  .workspace-workbench-scene-forward-enter-from,
+  .workspace-workbench-scene-forward-leave-to,
+  .workspace-workbench-scene-backward-enter-from,
+  .workspace-workbench-scene-backward-leave-to {
+    opacity: 0;
+    transform: translateX(0);
   }
 }
 </style>

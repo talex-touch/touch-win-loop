@@ -448,8 +448,15 @@ export default defineEventHandler(async (event) => {
         })
       })
 
+      const roundCreatedAt = new Date().toISOString()
       const result: AiDefenseResult = {
         ...execution.data.data,
+        rounds: execution.data.data.rounds.map(round => ({
+          ...round,
+          stage,
+          turnIndex,
+          createdAt: roundCreatedAt,
+        })),
         sessionId: prepared.sessionId,
         stage,
         turnIndex,
@@ -510,6 +517,7 @@ export default defineEventHandler(async (event) => {
             channelKey: execution.channel.key,
             providerId: execution.provider?.id || null,
             attemptChain: execution.attemptChain,
+            latencyMs: execution.latencyMs,
             scorecard: result.scorecard,
             evidenceRefs: result.evidenceRefs || [],
           },
@@ -576,7 +584,7 @@ export default defineEventHandler(async (event) => {
             fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
             attempts: execution.attemptChain.length,
             attemptChain: execution.attemptChain,
-            latencyMs: Date.now() - startedAt,
+            latencyMs: execution.latencyMs,
             remainingQuota: prepared.remainingQuota,
             stage,
             turnIndex,
@@ -605,7 +613,7 @@ export default defineEventHandler(async (event) => {
         meta: {
           attempts: execution.attemptChain.length,
           fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
-          latencyMs: Date.now() - startedAt,
+          latencyMs: execution.latencyMs,
         },
       })
     }

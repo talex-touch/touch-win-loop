@@ -3,8 +3,10 @@ import type {
   AiDefenseJudgeRound,
   AiDefensePersona,
   AiDefenseScorecard,
+  AiDefenseSessionState,
   AiDefenseStage,
   AiDefenseSummary,
+  AiDefenseTurn,
   AiProjectChangeRequest,
   ChatMessage,
   Contest,
@@ -105,9 +107,12 @@ export function useWorkspaceProjectAi() {
   const metaKRemoteLoading = ref(false)
 
   const defenseRounds = ref<AiDefenseJudgeRound[]>([])
+  const defenseTurns = ref<AiDefenseTurn[]>([])
   const defenseScorecard = ref<AiDefenseScorecard | null>(null)
   const defensePersonas = ref<AiDefensePersona[]>([])
   const defensePersonasLoading = ref(false)
+  const defenseSessionMeta = ref<AiChatSession | null>(null)
+  const defenseSessionState = ref<AiDefenseSessionState | null>(null)
   const defenseSummary = ref<AiDefenseSummary | null>(null)
   const defenseSummaryLoading = ref(false)
   const defenseStage = ref<AiDefenseStage | undefined>(undefined)
@@ -130,7 +135,10 @@ export function useWorkspaceProjectAi() {
     chatDraft.value = null
     chatMissingFields.value = []
     defenseRounds.value = []
+    defenseTurns.value = []
     defenseScorecard.value = null
+    defenseSessionMeta.value = null
+    defenseSessionState.value = null
     defenseSummary.value = null
     defenseStage.value = undefined
     defenseTurnCount.value = 0
@@ -189,9 +197,12 @@ export function useWorkspaceProjectAi() {
     issueReportExporting,
     metaKRemoteLoading,
     defenseRounds,
+    defenseTurns,
     defenseScorecard,
     defensePersonas,
     defensePersonasLoading,
+    defenseSessionMeta,
+    defenseSessionState,
     defenseSummary,
     defenseSummaryLoading,
     defenseStage,

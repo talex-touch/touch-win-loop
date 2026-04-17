@@ -6,6 +6,7 @@ import { getAiChatSessionById } from '~~/server/utils/chat-store'
 import { withClient } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import {
+  buildDefenseJudgeRoundsFromTurns,
   getLatestProjectDefenseSummary,
   getProjectDefenseSessionState,
   listProjectDefensePersonas,
@@ -50,11 +51,16 @@ export default defineEventHandler(async (event) => {
     if (!session)
       return 'NOT_FOUND' as const
 
+    const state = await getProjectDefenseSessionState(db, { sessionId })
+    const turns = await listProjectDefenseTurnsBySession(db, { sessionId })
     const payload: AiDefenseSessionDetail = {
       session,
-      state: await getProjectDefenseSessionState(db, { sessionId }),
+      state,
       personas: await listProjectDefensePersonas(db, { projectId }),
-      turns: await listProjectDefenseTurnsBySession(db, { sessionId }),
+      turns,
+      latestRounds: buildDefenseJudgeRoundsFromTurns(turns, {
+        turnIndex: state?.turnCount || null,
+      }),
       latestSummary: await getLatestProjectDefenseSummary(db, {
         sessionId,
         summaryType: 'session',

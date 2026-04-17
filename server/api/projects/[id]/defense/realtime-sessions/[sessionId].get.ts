@@ -69,6 +69,9 @@ export default defineEventHandler(async (event) => {
         joinExpiresAt: meeting.joinExpiresAt,
         joinUrl: meeting.joinUrl,
         selectedPersonaIds: state?.selectedPersonaIds || [],
+        provider: state?.realtime?.provider || 'qwen',
+        mediaMode: state?.realtime?.mediaMode || 'audio_video',
+        realtime: state?.realtime || null,
       }
     })
 
