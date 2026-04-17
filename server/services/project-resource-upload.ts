@@ -10,6 +10,7 @@ import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/do
 import { withTransaction } from '~~/server/utils/db'
 import { getVisibleProjectById } from '~~/server/utils/platform-store'
 import { teamCanManageProject } from '~~/server/utils/project-access-store'
+import { markProjectKnowledgeSourceStale } from '~~/server/utils/project-knowledge-store'
 import { createProjectPreviewDocumentWithTask, getProjectResourceDocumentByResourceId } from '~~/server/utils/project-resource-document-store'
 import {
   createProjectUploadedResource,
@@ -240,6 +241,12 @@ export async function finalizeProjectResourceUploadSession(input: {
         sourceMimeType: session.mimeType,
         sourceFileSize: session.fileSize,
         actorUserId: input.user.id,
+      })
+
+      await markProjectKnowledgeSourceStale(db, {
+        projectId,
+        resourceId: resource.id,
+        autoEnqueue: true,
       })
 
       await generateAndSaveProjectOutline(db, {

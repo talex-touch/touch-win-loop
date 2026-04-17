@@ -1,0 +1,1845 @@
+import type { Queryable } from '~~/server/utils/db'
+import type {
+  DocumentAnalysis,
+  ProjectKnowledgeChunkKind,
+  ProjectKnowledgeIndexDashboard,
+  ProjectKnowledgeIndexSourceStatus,
+  ProjectKnowledgeIndexSummary,
+  ProjectKnowledgeIndexTaskSnapshot,
+  ProjectKnowledgeScopeType,
+  ProjectKnowledgeSourceStatus,
+  ProjectKnowledgeTaskStage,
+  ProjectKnowledgeTaskStatus,
+  ProjectKnowledgeTaskType,
+  ResourceKind,
+} from '~~/shared/types/domain'
+import { createHash, randomUUID } from 'node:crypto'
+
+export const PROJECT_KNOWLEDGE_INDEX_VERSION = 'project-knowledge-v2-multimodal'
+
+const PROJECT_KNOWLEDGE_VECTOR_MODE_KEY = Symbol.for('winloop.project-knowledge.vector.mode.v1')
+const PROCESSING_SOURCE_STATUS_SET = new Set<ProjectKnowledgeSourceStatus>(['extracting', 'chunking', 'embedding'])
+
+type ProjectResourceSource = 'upload' | 'library' | 'collab'
+type ProjectKnowledgeVectorMode = 'vector' | 'json'
+
+interface ProjectKnowledgeCandidateRow {
+  project_id: string
+  source_resource_id: string
+  linked_contest_resource_id: string | null
+  title: string
+  summary: string
+  content: string
+  metadata: unknown
+  source: ProjectResourceSource
+  resource_kind: ResourceKind
+  mime_type: string
+  source_link: string
+  updated_at: string
+  created_at: string
+  collab_revision: number | null
+  analysis_json: unknown
+  document_updated_at: string | null
+  page_count: number | null
+}
+
+interface ProjectKnowledgeSourceRow {
+  id: string
+  scope_type: ProjectKnowledgeScopeType
+  project_id: string
+  source_resource_id: string | null
+  linked_contest_resource_id: string | null
+  status: ProjectKnowledgeSourceStatus
+  progress_percent: number
+  eta_seconds: number
+  chunk_total: number
+  chunk_indexed: number
+  source_hash: string
+  index_version: string
+  last_indexed_at: string | null
+  last_error: string
+  last_error_stage: string
+  last_task_id: string
+  created_at: string
+  updated_at: string
+}
+
+interface ProjectKnowledgeTaskRow {
+  id: string
+  project_id: string
+  scope_type: ProjectKnowledgeScopeType
+  source_resource_id: string | null
+  linked_contest_resource_id: string | null
+  task_type: ProjectKnowledgeTaskType
+  status: ProjectKnowledgeTaskStatus
+  stage: ProjectKnowledgeTaskStage
+  attempt: number
+  max_attempt: number
+  progress_percent: number
+  eta_seconds: number
+  payload_json: unknown
+  result_json: unknown
+  error_message: string
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface ProjectKnowledgeSourceSnapshotRow extends ProjectKnowledgeSourceRow {
+  resource_title: string
+  resource_kind: ResourceKind
+  resource_source: ProjectResourceSource
+  task_id: string | null
+  task_task_type: ProjectKnowledgeTaskType | null
+  task_status: ProjectKnowledgeTaskStatus | null
+  task_stage: ProjectKnowledgeTaskStage | null
+  task_attempt: number | null
+  task_max_attempt: number | null
+  task_progress_percent: number | null
+  task_eta_seconds: number | null
+  task_payload_json: unknown
+  task_result_json: unknown
+  task_error_message: string | null
+  task_started_at: string | null
+  task_finished_at: string | null
+  task_created_at: string | null
+  task_updated_at: string | null
+}
+
+interface ProjectKnowledgeSearchChunkRow {
+  id: string
+  source_id: string
+  project_id: string
+  scope_type: ProjectKnowledgeScopeType
+  source_resource_id: string | null
+  linked_contest_resource_id: string | null
+  chunk_index: number
+  chunk_kind: ProjectKnowledgeChunkKind
+  title: string
+  content: string
+  citation_label: string
+  page_number: number | null
+  section_label: string
+  source_hash: string
+  index_version: string
+  metadata: unknown
+  updated_at: string
+  source_status: ProjectKnowledgeSourceStatus
+  resource_title: string
+  resource_kind: ResourceKind
+  resource_source: ProjectResourceSource
+  embedding_text: string | null
+  embedding_json: unknown
+}
+
+export interface ProjectKnowledgeTaskContext {
+  task: ProjectKnowledgeIndexTaskSnapshot
+  source: ProjectKnowledgeIndexSourceStatus
+  resource: {
+    id: string
+    projectId: string
+    title: string
+    summary: string
+    content: string
+    metadata: Record<string, unknown>
+    resourceKind: ResourceKind
+    source: ProjectResourceSource
+    linkedContestResourceId?: string | null
+    mimeType: string
+    sourceLink: string
+    updatedAt: string
+    collabRevision?: number | null
+  }
+  documentAnalysis: DocumentAnalysis | null
+  processedSourceHash: string
+}
+
+export interface ProjectKnowledgeChunkWriteInput {
+  chunkIndex: number
+  chunkKind: ProjectKnowledgeChunkKind
+  title?: string
+  content: string
+  citationLabel?: string
+  pageNumber?: number | null
+  sectionLabel?: string
+  metadata?: Record<string, unknown>
+  embedding: number[]
+}
+
+export interface ProjectKnowledgeSearchChunk {
+  id: string
+  sourceId: string
+  projectId: string
+  scopeType: ProjectKnowledgeScopeType
+  sourceResourceId?: string | null
+  linkedContestResourceId?: string | null
+  resourceTitle: string
+  resourceKind: ResourceKind
+  resourceSource: ProjectResourceSource
+  sourceStatus: ProjectKnowledgeSourceStatus
+  chunkIndex: number
+  chunkKind: ProjectKnowledgeChunkKind
+  title: string
+  content: string
+  citationLabel: string
+  pageNumber?: number | null
+  sectionLabel?: string
+  sourceHash: string
+  indexVersion: string
+  metadata: Record<string, unknown>
+  embedding: number[]
+  updatedAt: string
+}
+
+function normalizeString(value: unknown): string {
+  return String(value || '').trim()
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return {}
+  return value as Record<string, unknown>
+}
+
+function normalizeNumber(value: unknown, fallback = 0): number {
+  const normalized = Number(value)
+  return Number.isFinite(normalized) ? normalized : fallback
+}
+
+function normalizeNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value))
+    return []
+  return value
+    .map(item => Number(item))
+    .filter(item => Number.isFinite(item))
+}
+
+function normalizeEmbeddingText(value: string | null): number[] {
+  const normalized = normalizeString(value)
+  if (!normalized)
+    return []
+  try {
+    return normalizeNumberArray(JSON.parse(normalized))
+  }
+  catch {
+    return []
+  }
+}
+
+function stableNormalizeValue(value: unknown): unknown {
+  if (Array.isArray(value))
+    return value.map(item => stableNormalizeValue(item))
+  if (!value || typeof value !== 'object')
+    return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, stableNormalizeValue(child)]),
+  )
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableNormalizeValue(value))
+}
+
+function buildSourceEntityKey(scopeType: ProjectKnowledgeScopeType, sourceResourceId?: string | null, linkedContestResourceId?: string | null): string {
+  return [scopeType, normalizeString(sourceResourceId), normalizeString(linkedContestResourceId)].join(':')
+}
+
+function buildEtaFinishedAt(etaSeconds: number): string | null {
+  const safeEta = Math.max(0, Math.round(normalizeNumber(etaSeconds, 0)))
+  if (safeEta <= 0)
+    return null
+  return new Date(Date.now() + safeEta * 1000).toISOString()
+}
+
+function normalizeTaskPayload(value: unknown): Record<string, unknown> {
+  return normalizeRecord(value)
+}
+
+function normalizeDocumentAnalysis(value: unknown): DocumentAnalysis | null {
+  const record = normalizeRecord(value)
+  if (Object.keys(record).length === 0)
+    return null
+  return record as unknown as DocumentAnalysis
+}
+
+function isProcessingSourceStatus(status: ProjectKnowledgeSourceStatus): boolean {
+  return PROCESSING_SOURCE_STATUS_SET.has(status)
+}
+
+function buildProjectKnowledgeSourceHash(row: ProjectKnowledgeCandidateRow): string {
+  const payload = {
+    projectId: normalizeString(row.project_id),
+    sourceResourceId: normalizeString(row.source_resource_id),
+    linkedContestResourceId: normalizeString(row.linked_contest_resource_id),
+    title: normalizeString(row.title),
+    summary: normalizeString(row.summary),
+    content: normalizeString(row.content),
+    metadata: normalizeRecord(row.metadata),
+    source: normalizeString(row.source),
+    resourceKind: normalizeString(row.resource_kind),
+    mimeType: normalizeString(row.mime_type),
+    sourceLink: normalizeString(row.source_link),
+    updatedAt: normalizeString(row.updated_at),
+    createdAt: normalizeString(row.created_at),
+    collabRevision: normalizeNumber(row.collab_revision, 0),
+    pageCount: normalizeNumber(row.page_count, 0),
+    documentUpdatedAt: normalizeString(row.document_updated_at),
+    analysis: normalizeRecord(row.analysis_json),
+  }
+  return createHash('sha256').update(stableStringify(payload)).digest('hex')
+}
+
+function inferScopeType(_row: ProjectKnowledgeCandidateRow): ProjectKnowledgeScopeType {
+  return 'project_resource'
+}
+
+function buildTaskSnapshot(row: ProjectKnowledgeTaskRow, resourceTitle = ''): ProjectKnowledgeIndexTaskSnapshot {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    scopeType: row.scope_type,
+    sourceResourceId: row.source_resource_id,
+    linkedContestResourceId: row.linked_contest_resource_id,
+    taskType: row.task_type,
+    status: row.status,
+    stage: row.stage,
+    attempt: Math.max(0, normalizeNumber(row.attempt, 0)),
+    maxAttempt: Math.max(1, normalizeNumber(row.max_attempt, 1)),
+    progressPercent: Math.max(0, Math.min(100, Math.round(normalizeNumber(row.progress_percent, 0)))),
+    etaSeconds: Math.max(0, Math.round(normalizeNumber(row.eta_seconds, 0))),
+    payloadJson: normalizeTaskPayload(row.payload_json),
+    resultJson: normalizeTaskPayload(row.result_json),
+    errorMessage: normalizeString(row.error_message),
+    resourceTitle: normalizeString(resourceTitle) || undefined,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function buildTaskSnapshotFromSourceRow(row: ProjectKnowledgeSourceSnapshotRow): ProjectKnowledgeIndexTaskSnapshot | null {
+  if (!normalizeString(row.task_id))
+    return null
+  return {
+    id: normalizeString(row.task_id),
+    projectId: row.project_id,
+    scopeType: row.scope_type,
+    sourceResourceId: row.source_resource_id,
+    linkedContestResourceId: row.linked_contest_resource_id,
+    taskType: (row.task_task_type || 'upsert') as ProjectKnowledgeTaskType,
+    status: (row.task_status || 'queued') as ProjectKnowledgeTaskStatus,
+    stage: (row.task_stage || 'queued') as ProjectKnowledgeTaskStage,
+    attempt: Math.max(0, normalizeNumber(row.task_attempt, 0)),
+    maxAttempt: Math.max(1, normalizeNumber(row.task_max_attempt, 1)),
+    progressPercent: Math.max(0, Math.min(100, Math.round(normalizeNumber(row.task_progress_percent, 0)))),
+    etaSeconds: Math.max(0, Math.round(normalizeNumber(row.task_eta_seconds, 0))),
+    payloadJson: normalizeTaskPayload(row.task_payload_json),
+    resultJson: normalizeTaskPayload(row.task_result_json),
+    errorMessage: normalizeString(row.task_error_message),
+    resourceTitle: normalizeString(row.resource_title) || undefined,
+    startedAt: row.task_started_at,
+    finishedAt: row.task_finished_at,
+    createdAt: normalizeString(row.task_created_at),
+    updatedAt: normalizeString(row.task_updated_at),
+  }
+}
+
+function buildSourceSnapshot(row: ProjectKnowledgeSourceSnapshotRow): ProjectKnowledgeIndexSourceStatus {
+  const lastTask = buildTaskSnapshotFromSourceRow(row)
+  const etaSeconds = Math.max(0, Math.round(normalizeNumber(row.eta_seconds, 0)))
+  return {
+    id: row.id,
+    scopeType: row.scope_type,
+    projectId: row.project_id,
+    sourceResourceId: row.source_resource_id,
+    linkedContestResourceId: row.linked_contest_resource_id,
+    resourceTitle: normalizeString(row.resource_title) || '未命名资源',
+    resourceKind: row.resource_kind || '',
+    resourceSource: row.resource_source || '',
+    status: row.status,
+    currentStage: lastTask?.stage || '',
+    currentTaskStatus: lastTask?.status || '',
+    progressPercent: Math.max(0, Math.min(100, Math.round(normalizeNumber(row.progress_percent, 0)))),
+    etaSeconds,
+    estimatedFinishedAt: buildEtaFinishedAt(etaSeconds),
+    chunkTotal: Math.max(0, Math.round(normalizeNumber(row.chunk_total, 0))),
+    chunkIndexed: Math.max(0, Math.round(normalizeNumber(row.chunk_indexed, 0))),
+    sourceHash: normalizeString(row.source_hash),
+    indexVersion: normalizeString(row.index_version),
+    lastIndexedAt: row.last_indexed_at,
+    lastError: normalizeString(row.last_error),
+    lastErrorStage: (normalizeString(row.last_error_stage) || '') as ProjectKnowledgeIndexSourceStatus['lastErrorStage'],
+    lastTaskId: normalizeString(row.last_task_id) || undefined,
+    updatedAt: row.updated_at,
+    lastTask,
+  }
+}
+
+function contributionForSummary(source: ProjectKnowledgeIndexSourceStatus): number {
+  if (source.status === 'ready' || source.status === 'skipped')
+    return 100
+  if (source.status === 'stale')
+    return 0
+  return Math.max(0, Math.min(100, Math.round(normalizeNumber(source.progressPercent, 0))))
+}
+
+function estimateRunningEtaSeconds(source: ProjectKnowledgeIndexSourceStatus): number {
+  if (source.etaSeconds > 0)
+    return source.etaSeconds
+  const startedAtMs = source.lastTask?.startedAt ? new Date(source.lastTask.startedAt).getTime() : 0
+  const progressPercent = Math.max(1, Math.min(99, Math.round(normalizeNumber(source.progressPercent, 0))))
+  if (!Number.isFinite(startedAtMs) || startedAtMs <= 0)
+    return Math.max(15, 120 - progressPercent)
+  const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAtMs) / 1000))
+  const totalSeconds = Math.round(elapsedSeconds * (100 / progressPercent))
+  return Math.max(1, totalSeconds - elapsedSeconds)
+}
+
+async function resolveProjectKnowledgeVectorMode(db: Queryable): Promise<ProjectKnowledgeVectorMode> {
+  const globalRef = globalThis as Record<symbol, unknown>
+  const cached = globalRef[PROJECT_KNOWLEDGE_VECTOR_MODE_KEY] as ProjectKnowledgeVectorMode | undefined
+  if (cached)
+    return cached
+
+  const result = await db.query<{ has_embedding: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'project_knowledge_chunks'
+        AND column_name = 'embedding'
+    ) AS has_embedding`,
+  )
+  const mode: ProjectKnowledgeVectorMode = result.rows[0]?.has_embedding ? 'vector' : 'json'
+  globalRef[PROJECT_KNOWLEDGE_VECTOR_MODE_KEY] = mode
+  return mode
+}
+
+async function listProjectKnowledgeCandidateRows(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceIds?: string[]
+  },
+): Promise<ProjectKnowledgeCandidateRow[]> {
+  const resourceIds = [...new Set((input.resourceIds || []).map(item => normalizeString(item)).filter(Boolean))]
+  const values: unknown[] = [input.projectId]
+  let resourceSql = ''
+  if (resourceIds.length > 0) {
+    values.push(resourceIds)
+    resourceSql = ` AND pr.id = ANY($${values.length}::TEXT[])`
+  }
+
+  const result = await db.query<ProjectKnowledgeCandidateRow>(
+    `SELECT
+      pr.project_id,
+      pr.id AS source_resource_id,
+      pr.linked_contest_resource_id,
+      pr.title,
+      pr.summary,
+      pr.content,
+      pr.metadata,
+      pr.source,
+      pr.resource_kind,
+      pr.mime_type,
+      pr.source_link,
+      pr.updated_at::TEXT,
+      pr.created_at::TEXT,
+      prc.revision AS collab_revision,
+      prd.analysis_json,
+      prd.updated_at::TEXT AS document_updated_at,
+      prd.page_count
+     FROM project_resources pr
+     LEFT JOIN project_resource_collab_docs prc
+       ON prc.resource_id = pr.id
+      AND prc.project_id = pr.project_id
+     LEFT JOIN project_resource_documents prd
+       ON prd.project_resource_id = pr.id
+     WHERE pr.project_id = $1
+       AND pr.status = 'active'${resourceSql}
+     ORDER BY pr.updated_at DESC, pr.created_at DESC, pr.id ASC`,
+    values,
+  )
+
+  return result.rows
+}
+
+async function listProjectKnowledgeSourceRows(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceIds?: string[]
+  },
+): Promise<ProjectKnowledgeSourceRow[]> {
+  const resourceIds = [...new Set((input.resourceIds || []).map(item => normalizeString(item)).filter(Boolean))]
+  const values: unknown[] = [input.projectId]
+  let resourceSql = ''
+  if (resourceIds.length > 0) {
+    values.push(resourceIds)
+    resourceSql = ` AND COALESCE(source_resource_id, '') = ANY($${values.length}::TEXT[])`
+  }
+
+  const result = await db.query<ProjectKnowledgeSourceRow>(
+    `SELECT
+      id,
+      scope_type,
+      project_id,
+      source_resource_id,
+      linked_contest_resource_id,
+      status,
+      progress_percent,
+      eta_seconds,
+      chunk_total,
+      chunk_indexed,
+      source_hash,
+      index_version,
+      last_indexed_at::TEXT,
+      last_error,
+      last_error_stage,
+      last_task_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_knowledge_sources
+     WHERE project_id = $1${resourceSql}
+     ORDER BY updated_at DESC, created_at DESC`,
+    values,
+  )
+
+  return result.rows
+}
+
+async function listProjectKnowledgeSourceSnapshots(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId?: string
+  },
+): Promise<ProjectKnowledgeIndexSourceStatus[]> {
+  const resourceId = normalizeString(input.resourceId)
+  const values: unknown[] = [input.projectId]
+  let resourceSql = ''
+  if (resourceId) {
+    values.push(resourceId)
+    resourceSql = ` AND pr.id = $${values.length}`
+  }
+
+  const result = await db.query<ProjectKnowledgeSourceSnapshotRow>(
+    `SELECT
+      s.id,
+      s.scope_type,
+      s.project_id,
+      s.source_resource_id,
+      s.linked_contest_resource_id,
+      s.status,
+      s.progress_percent,
+      s.eta_seconds,
+      s.chunk_total,
+      s.chunk_indexed,
+      s.source_hash,
+      s.index_version,
+      s.last_indexed_at::TEXT,
+      s.last_error,
+      s.last_error_stage,
+      s.last_task_id,
+      s.created_at::TEXT,
+      s.updated_at::TEXT,
+      pr.title AS resource_title,
+      pr.resource_kind,
+      pr.source AS resource_source,
+      t.id AS task_id,
+      t.task_type AS task_task_type,
+      t.status AS task_status,
+      t.stage AS task_stage,
+      t.attempt AS task_attempt,
+      t.max_attempt AS task_max_attempt,
+      t.progress_percent AS task_progress_percent,
+      t.eta_seconds AS task_eta_seconds,
+      t.payload_json AS task_payload_json,
+      t.result_json AS task_result_json,
+      t.error_message AS task_error_message,
+      t.started_at::TEXT AS task_started_at,
+      t.finished_at::TEXT AS task_finished_at,
+      t.created_at::TEXT AS task_created_at,
+      t.updated_at::TEXT AS task_updated_at
+     FROM project_knowledge_sources s
+     JOIN project_resources pr
+       ON pr.id = s.source_resource_id
+      AND pr.project_id = s.project_id
+      AND pr.status = 'active'
+     LEFT JOIN project_knowledge_index_tasks t
+       ON t.id = NULLIF(s.last_task_id, '')
+     WHERE s.project_id = $1${resourceSql}
+     ORDER BY pr.updated_at DESC, pr.created_at DESC, pr.id ASC`,
+    values,
+  )
+
+  return result.rows.map(buildSourceSnapshot)
+}
+
+async function getProjectKnowledgeSourceRowByEntity(
+  db: Queryable,
+  input: {
+    projectId: string
+    scopeType: ProjectKnowledgeScopeType
+    sourceResourceId?: string | null
+    linkedContestResourceId?: string | null
+  },
+): Promise<ProjectKnowledgeSourceRow | null> {
+  const result = await db.query<ProjectKnowledgeSourceRow>(
+    `SELECT
+      id,
+      scope_type,
+      project_id,
+      source_resource_id,
+      linked_contest_resource_id,
+      status,
+      progress_percent,
+      eta_seconds,
+      chunk_total,
+      chunk_indexed,
+      source_hash,
+      index_version,
+      last_indexed_at::TEXT,
+      last_error,
+      last_error_stage,
+      last_task_id,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_knowledge_sources
+     WHERE project_id = $1
+       AND scope_type = $2
+       AND COALESCE(source_resource_id, '') = COALESCE($3::TEXT, '')
+       AND COALESCE(linked_contest_resource_id, '') = COALESCE($4::TEXT, '')
+     LIMIT 1`,
+    [
+      input.projectId,
+      input.scopeType,
+      normalizeString(input.sourceResourceId) || null,
+      normalizeString(input.linkedContestResourceId) || null,
+    ],
+  )
+  return result.rows[0] || null
+}
+
+async function getProjectKnowledgeTaskRowById(
+  db: Queryable,
+  input: { taskId: string },
+): Promise<ProjectKnowledgeTaskRow | null> {
+  const result = await db.query<ProjectKnowledgeTaskRow>(
+    `SELECT
+      id,
+      project_id,
+      scope_type,
+      source_resource_id,
+      linked_contest_resource_id,
+      task_type,
+      status,
+      stage,
+      attempt,
+      max_attempt,
+      progress_percent,
+      eta_seconds,
+      payload_json,
+      result_json,
+      error_message,
+      started_at::TEXT,
+      finished_at::TEXT,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_knowledge_index_tasks
+     WHERE id = $1
+     LIMIT 1`,
+    [input.taskId],
+  )
+  return result.rows[0] || null
+}
+
+async function getActiveProjectKnowledgeTaskRow(
+  db: Queryable,
+  input: {
+    projectId: string
+    scopeType: ProjectKnowledgeScopeType
+    sourceResourceId?: string | null
+    linkedContestResourceId?: string | null
+  },
+): Promise<ProjectKnowledgeTaskRow | null> {
+  const result = await db.query<ProjectKnowledgeTaskRow>(
+    `SELECT
+      id,
+      project_id,
+      scope_type,
+      source_resource_id,
+      linked_contest_resource_id,
+      task_type,
+      status,
+      stage,
+      attempt,
+      max_attempt,
+      progress_percent,
+      eta_seconds,
+      payload_json,
+      result_json,
+      error_message,
+      started_at::TEXT,
+      finished_at::TEXT,
+      created_at::TEXT,
+      updated_at::TEXT
+     FROM project_knowledge_index_tasks
+     WHERE project_id = $1
+       AND scope_type = $2
+       AND COALESCE(source_resource_id, '') = COALESCE($3::TEXT, '')
+       AND COALESCE(linked_contest_resource_id, '') = COALESCE($4::TEXT, '')
+       AND status IN ('queued', 'processing')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [
+      input.projectId,
+      input.scopeType,
+      normalizeString(input.sourceResourceId) || null,
+      normalizeString(input.linkedContestResourceId) || null,
+    ],
+  )
+  return result.rows[0] || null
+}
+
+async function getRecentSucceededAverageDurationSeconds(db: Queryable, projectId: string): Promise<number> {
+  const result = await db.query<{ avg_seconds: string }>(
+    `SELECT COALESCE(AVG(duration_seconds), 0)::TEXT AS avg_seconds
+     FROM (
+       SELECT EXTRACT(EPOCH FROM (finished_at - started_at)) AS duration_seconds
+       FROM project_knowledge_index_tasks
+       WHERE project_id = $1
+         AND status = 'succeeded'
+         AND started_at IS NOT NULL
+         AND finished_at IS NOT NULL
+       ORDER BY finished_at DESC
+       LIMIT 20
+     ) t`,
+    [projectId],
+  )
+  const avgSeconds = normalizeNumber(result.rows[0]?.avg_seconds, 0)
+  if (avgSeconds > 0)
+    return Math.max(5, Math.round(avgSeconds))
+  return 45
+}
+
+async function internalEnqueueProjectKnowledgeIndexTask(
+  db: Queryable,
+  input: {
+    source: ProjectKnowledgeSourceRow
+    taskType: ProjectKnowledgeTaskType
+    maxAttempt?: number
+    payloadJson?: Record<string, unknown>
+    preserveStaleStatus?: boolean
+  },
+): Promise<ProjectKnowledgeTaskRow> {
+  const taskId = randomUUID()
+  let existingTask: ProjectKnowledgeTaskRow | null = null
+
+  await db.query(
+    `INSERT INTO project_knowledge_index_tasks (
+      id,
+      project_id,
+      scope_type,
+      source_resource_id,
+      linked_contest_resource_id,
+      task_type,
+      status,
+      stage,
+      attempt,
+      max_attempt,
+      progress_percent,
+      eta_seconds,
+      payload_json,
+      result_json,
+      error_message,
+      started_at,
+      finished_at,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, 'queued', 'queued', 0, $7, 0, 0, $8::JSONB, '{}'::JSONB, '', NULL, NULL, NOW(), NOW()
+    )
+    ON CONFLICT DO NOTHING`,
+    [
+      taskId,
+      input.source.project_id,
+      input.source.scope_type,
+      input.source.source_resource_id,
+      input.source.linked_contest_resource_id,
+      input.taskType,
+      Math.max(1, Math.round(normalizeNumber(input.maxAttempt, 3))),
+      JSON.stringify({
+        sourceHash: input.source.source_hash,
+        indexVersion: normalizeString(input.source.index_version) || PROJECT_KNOWLEDGE_INDEX_VERSION,
+        ...normalizeRecord(input.payloadJson),
+      }),
+    ],
+  )
+
+  existingTask = await getActiveProjectKnowledgeTaskRow(db, {
+    projectId: input.source.project_id,
+    scopeType: input.source.scope_type,
+    sourceResourceId: input.source.source_resource_id,
+    linkedContestResourceId: input.source.linked_contest_resource_id,
+  })
+
+  const task = existingTask || await getProjectKnowledgeTaskRowById(db, { taskId })
+  if (!task)
+    throw new Error('PROJECT_KNOWLEDGE_TASK_ENQUEUE_FAILED')
+
+  const preserveStaleStatus = Boolean(input.preserveStaleStatus && input.source.status === 'stale')
+  await db.query(
+    `UPDATE project_knowledge_sources
+     SET status = CASE WHEN $2 THEN status ELSE 'queued' END,
+         progress_percent = CASE WHEN $2 THEN progress_percent ELSE 0 END,
+         eta_seconds = CASE WHEN $2 THEN eta_seconds ELSE 0 END,
+         last_task_id = $3,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [input.source.id, preserveStaleStatus, task.id],
+  )
+
+  return task
+}
+
+export async function syncProjectKnowledgeSourcesForProject(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceIds?: string[]
+    autoEnqueue?: boolean
+  },
+): Promise<ProjectKnowledgeIndexSourceStatus[]> {
+  const candidates = await listProjectKnowledgeCandidateRows(db, {
+    projectId: input.projectId,
+    resourceIds: input.resourceIds,
+  })
+  const existingRows = await listProjectKnowledgeSourceRows(db, {
+    projectId: input.projectId,
+    resourceIds: input.resourceIds,
+  })
+  const existingMap = new Map(existingRows.map(row => [buildSourceEntityKey(row.scope_type, row.source_resource_id, row.linked_contest_resource_id), row]))
+  const autoEnqueue = input.autoEnqueue !== false
+
+  for (const candidate of candidates) {
+    const scopeType = inferScopeType(candidate)
+    const sourceKey = buildSourceEntityKey(scopeType, candidate.source_resource_id, candidate.linked_contest_resource_id)
+    const existing = existingMap.get(sourceKey) || null
+    const sourceHash = buildProjectKnowledgeSourceHash(candidate)
+    const now = new Date().toISOString()
+
+    if (!existing) {
+      const sourceId = randomUUID()
+      await db.query(
+        `INSERT INTO project_knowledge_sources (
+          id,
+          project_id,
+          scope_type,
+          source_resource_id,
+          linked_contest_resource_id,
+          status,
+          progress_percent,
+          eta_seconds,
+          chunk_total,
+          chunk_indexed,
+          source_hash,
+          index_version,
+          last_indexed_at,
+          last_error,
+          last_error_stage,
+          last_task_id,
+          created_at,
+          updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, 'pending', 0, 0, 0, 0, $6, $7, NULL, '', '', '', $8, $8
+        )
+        ON CONFLICT DO NOTHING`,
+        [
+          sourceId,
+          input.projectId,
+          scopeType,
+          candidate.source_resource_id,
+          candidate.linked_contest_resource_id,
+          sourceHash,
+          PROJECT_KNOWLEDGE_INDEX_VERSION,
+          now,
+        ],
+      )
+
+      const created = await getProjectKnowledgeSourceRowByEntity(db, {
+        projectId: input.projectId,
+        scopeType,
+        sourceResourceId: candidate.source_resource_id,
+        linkedContestResourceId: candidate.linked_contest_resource_id,
+      })
+      if (created && autoEnqueue)
+        await internalEnqueueProjectKnowledgeIndexTask(db, { source: created, taskType: 'upsert' })
+      continue
+    }
+
+    const hashChanged = normalizeString(existing.source_hash) !== sourceHash
+    const versionChanged = normalizeString(existing.index_version) !== PROJECT_KNOWLEDGE_INDEX_VERSION
+    let nextStatus = existing.status
+    let nextProgressPercent = Math.max(0, Math.min(100, Math.round(normalizeNumber(existing.progress_percent, 0))))
+    let nextEtaSeconds = Math.max(0, Math.round(normalizeNumber(existing.eta_seconds, 0)))
+    let nextChunkTotal = Math.max(0, Math.round(normalizeNumber(existing.chunk_total, 0)))
+    let nextChunkIndexed = Math.max(0, Math.round(normalizeNumber(existing.chunk_indexed, 0)))
+
+    if (hashChanged || versionChanged) {
+      if (!isProcessingSourceStatus(existing.status) && existing.status !== 'queued') {
+        if (existing.status === 'ready') {
+          nextStatus = 'stale'
+        }
+        else {
+          nextStatus = 'pending'
+          nextProgressPercent = 0
+          nextEtaSeconds = 0
+          nextChunkTotal = 0
+          nextChunkIndexed = 0
+        }
+      }
+    }
+
+    await db.query(
+      `UPDATE project_knowledge_sources
+       SET linked_contest_resource_id = $2,
+           status = $3,
+           progress_percent = $4,
+           eta_seconds = $5,
+           chunk_total = $6,
+           chunk_indexed = $7,
+           source_hash = $8,
+           index_version = $9,
+           updated_at = $10
+       WHERE id = $1`,
+      [
+        existing.id,
+        candidate.linked_contest_resource_id,
+        nextStatus,
+        nextProgressPercent,
+        nextEtaSeconds,
+        nextChunkTotal,
+        nextChunkIndexed,
+        sourceHash,
+        PROJECT_KNOWLEDGE_INDEX_VERSION,
+        now,
+      ],
+    )
+
+    if (!autoEnqueue)
+      continue
+
+    const refreshed = await getProjectKnowledgeSourceRowByEntity(db, {
+      projectId: input.projectId,
+      scopeType,
+      sourceResourceId: candidate.source_resource_id,
+      linkedContestResourceId: candidate.linked_contest_resource_id,
+    })
+    if (!refreshed)
+      continue
+
+    if (!hashChanged && !versionChanged && refreshed.status !== 'pending' && refreshed.status !== 'stale')
+      continue
+
+    await internalEnqueueProjectKnowledgeIndexTask(db, {
+      source: refreshed,
+      taskType: hashChanged || versionChanged ? 'reindex' : 'upsert',
+      preserveStaleStatus: refreshed.status === 'stale',
+    })
+  }
+
+  return listProjectKnowledgeSourceSnapshots(db, {
+    projectId: input.projectId,
+    resourceId: normalizeString(input.resourceIds?.[0]),
+  })
+}
+
+export async function scheduleProjectKnowledgeSourceUpsert(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<ProjectKnowledgeIndexSourceStatus | null> {
+  const snapshots = await syncProjectKnowledgeSourcesForProject(db, {
+    projectId: input.projectId,
+    resourceIds: [input.resourceId],
+    autoEnqueue: true,
+  })
+  return snapshots[0] || null
+}
+
+export async function markProjectKnowledgeSourceStale(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+    autoEnqueue?: boolean
+  },
+): Promise<ProjectKnowledgeIndexSourceStatus | null> {
+  const snapshots = await syncProjectKnowledgeSourcesForProject(db, {
+    projectId: input.projectId,
+    resourceIds: [input.resourceId],
+    autoEnqueue: input.autoEnqueue !== false,
+  })
+  return snapshots[0] || null
+}
+
+export async function enqueueProjectKnowledgeIndexTask(
+  db: Queryable,
+  input: {
+    projectId: string
+    sourceResourceId: string
+    taskType: ProjectKnowledgeTaskType
+    maxAttempt?: number
+    payloadJson?: Record<string, unknown>
+    preserveStaleStatus?: boolean
+  },
+): Promise<ProjectKnowledgeIndexTaskSnapshot> {
+  await syncProjectKnowledgeSourcesForProject(db, {
+    projectId: input.projectId,
+    resourceIds: [input.sourceResourceId],
+    autoEnqueue: false,
+  })
+  const source = await getProjectKnowledgeSourceRowByEntity(db, {
+    projectId: input.projectId,
+    scopeType: 'project_resource',
+    sourceResourceId: input.sourceResourceId,
+  })
+  if (!source)
+    throw new Error('PROJECT_KNOWLEDGE_SOURCE_NOT_FOUND')
+
+  const task = await internalEnqueueProjectKnowledgeIndexTask(db, {
+    source,
+    taskType: input.taskType,
+    maxAttempt: input.maxAttempt,
+    payloadJson: input.payloadJson,
+    preserveStaleStatus: input.preserveStaleStatus,
+  })
+  const snapshots = await listProjectKnowledgeSourceSnapshots(db, {
+    projectId: input.projectId,
+    resourceId: input.sourceResourceId,
+  })
+  return snapshots[0]?.lastTask || buildTaskSnapshot(task)
+}
+
+export async function getProjectKnowledgeSourceStatusByResourceId(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<ProjectKnowledgeIndexSourceStatus | null> {
+  await syncProjectKnowledgeSourcesForProject(db, {
+    projectId: input.projectId,
+    resourceIds: [input.resourceId],
+    autoEnqueue: true,
+  })
+  const snapshots = await listProjectKnowledgeSourceSnapshots(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+  })
+  return snapshots[0] || null
+}
+
+export async function buildProjectKnowledgeIndexDashboard(
+  db: Queryable,
+  input: {
+    projectId: string
+    syncSources?: boolean
+  },
+): Promise<ProjectKnowledgeIndexDashboard> {
+  if (input.syncSources !== false) {
+    await syncProjectKnowledgeSourcesForProject(db, {
+      projectId: input.projectId,
+      autoEnqueue: true,
+    })
+  }
+
+  const sources = await listProjectKnowledgeSourceSnapshots(db, {
+    projectId: input.projectId,
+  })
+  const avgSucceededSeconds = await getRecentSucceededAverageDurationSeconds(db, input.projectId)
+  const totalResources = sources.length
+  const indexableResources = sources.filter(item => item.status !== 'skipped').length
+  const pendingCount = sources.filter(item => item.status === 'pending').length
+  const readyCount = sources.filter(item => item.status === 'ready').length
+  const processingCount = sources.filter(item => PROCESSING_SOURCE_STATUS_SET.has(item.status)).length
+  const queuedCount = sources.filter(item => item.status === 'queued').length
+  const failedCount = sources.filter(item => item.status === 'failed').length
+  const staleCount = sources.filter(item => item.status === 'stale').length
+  const skippedCount = sources.filter(item => item.status === 'skipped').length
+
+  const totalContribution = indexableResources > 0
+    ? sources
+        .filter(item => item.status !== 'skipped')
+        .reduce((sum, item) => sum + contributionForSummary(item), 0)
+    : 100
+  const overallProgressPercent = indexableResources > 0
+    ? Math.max(0, Math.min(100, Math.round(totalContribution / indexableResources)))
+    : 100
+
+  const processingEtaSeconds = sources
+    .filter(item => item.status === 'extracting' || item.status === 'chunking' || item.status === 'embedding')
+    .reduce((sum, item) => sum + estimateRunningEtaSeconds(item), 0)
+  const queuedBacklogCount = pendingCount + queuedCount + staleCount
+  const etaSeconds = processingEtaSeconds + queuedBacklogCount * avgSucceededSeconds
+
+  const processing = sources
+    .filter(item => item.status === 'queued' || item.status === 'extracting' || item.status === 'chunking' || item.status === 'embedding')
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+  const recentCompleted = sources
+    .filter(item => item.status === 'ready')
+    .sort((left, right) => normalizeString(right.lastIndexedAt).localeCompare(normalizeString(left.lastIndexedAt)))
+    .slice(0, 12)
+  const failed = sources
+    .filter(item => item.status === 'failed')
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 12)
+  const tasks = sources
+    .map(item => item.lastTask)
+    .filter((item): item is ProjectKnowledgeIndexTaskSnapshot => Boolean(item))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 40)
+
+  const summary: ProjectKnowledgeIndexSummary = {
+    projectId: input.projectId,
+    totalResources,
+    indexableResources,
+    pendingCount,
+    readyCount,
+    processingCount,
+    queuedCount,
+    failedCount,
+    staleCount,
+    skippedCount,
+    overallProgressPercent,
+    etaSeconds,
+    estimatedFinishedAt: etaSeconds > 0 ? buildEtaFinishedAt(etaSeconds) : (indexableResources > 0 && readyCount + skippedCount === indexableResources ? new Date().toISOString() : null),
+    lastRefreshedAt: new Date().toISOString(),
+  }
+
+  return {
+    summary,
+    processing,
+    recentCompleted,
+    failed,
+    sources,
+    tasks,
+  }
+}
+
+export async function reindexProjectKnowledgeSources(
+  db: Queryable,
+  input: {
+    projectId: string
+    target: 'all' | 'stale' | 'failed'
+  },
+): Promise<{ queuedCount: number, dashboard: ProjectKnowledgeIndexDashboard }> {
+  await syncProjectKnowledgeSourcesForProject(db, {
+    projectId: input.projectId,
+    autoEnqueue: false,
+  })
+  const sources = await listProjectKnowledgeSourceSnapshots(db, {
+    projectId: input.projectId,
+  })
+  const targets = sources.filter((source) => {
+    if (source.status === 'skipped')
+      return false
+    if (input.target === 'all')
+      return true
+    if (input.target === 'stale')
+      return source.status === 'stale'
+    return source.status === 'failed'
+  })
+
+  let queuedCount = 0
+  for (const source of targets) {
+    if (!normalizeString(source.sourceResourceId))
+      continue
+    await enqueueProjectKnowledgeIndexTask(db, {
+      projectId: input.projectId,
+      sourceResourceId: source.sourceResourceId!,
+      taskType: 'reindex',
+      preserveStaleStatus: source.status === 'stale',
+      payloadJson: {
+        trigger: 'manual_project_reindex',
+        target: input.target,
+      },
+    })
+    queuedCount += 1
+  }
+
+  const dashboard = await buildProjectKnowledgeIndexDashboard(db, {
+    projectId: input.projectId,
+    syncSources: false,
+  })
+  return {
+    queuedCount,
+    dashboard,
+  }
+}
+
+export async function reindexProjectKnowledgeSourceByResourceId(
+  db: Queryable,
+  input: {
+    projectId: string
+    resourceId: string
+  },
+): Promise<ProjectKnowledgeIndexSourceStatus | null> {
+  await enqueueProjectKnowledgeIndexTask(db, {
+    projectId: input.projectId,
+    sourceResourceId: input.resourceId,
+    taskType: 'reindex',
+    payloadJson: {
+      trigger: 'manual_resource_reindex',
+    },
+  })
+  return getProjectKnowledgeSourceStatusByResourceId(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+  })
+}
+
+export async function claimNextQueuedProjectKnowledgeIndexTask(
+  db: Queryable,
+): Promise<ProjectKnowledgeIndexTaskSnapshot | null> {
+  const result = await db.query<ProjectKnowledgeTaskRow>(
+    `WITH picked AS (
+      SELECT id
+      FROM project_knowledge_index_tasks
+      WHERE status IN ('queued', 'failed')
+        AND attempt < max_attempt
+      ORDER BY CASE WHEN status = 'queued' THEN 0 ELSE 1 END ASC, updated_at ASC, created_at ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE project_knowledge_index_tasks t
+    SET status = 'processing',
+        stage = 'extracting',
+        attempt = t.attempt + 1,
+        progress_percent = GREATEST(t.progress_percent, 10),
+        eta_seconds = CASE WHEN t.eta_seconds > 0 THEN t.eta_seconds ELSE 120 END,
+        error_message = '',
+        started_at = NOW(),
+        finished_at = NULL,
+        updated_at = NOW()
+    FROM picked
+    WHERE t.id = picked.id
+    RETURNING
+      t.id,
+      t.project_id,
+      t.scope_type,
+      t.source_resource_id,
+      t.linked_contest_resource_id,
+      t.task_type,
+      t.status,
+      t.stage,
+      t.attempt,
+      t.max_attempt,
+      t.progress_percent,
+      t.eta_seconds,
+      t.payload_json,
+      t.result_json,
+      t.error_message,
+      t.started_at::TEXT,
+      t.finished_at::TEXT,
+      t.created_at::TEXT,
+      t.updated_at::TEXT`,
+  )
+  const row = result.rows[0]
+  if (!row)
+    return null
+
+  await db.query(
+    `UPDATE project_knowledge_sources
+     SET status = 'extracting',
+         progress_percent = GREATEST(progress_percent, 10),
+         eta_seconds = CASE WHEN eta_seconds > 0 THEN eta_seconds ELSE 120 END,
+         last_task_id = $2,
+         updated_at = NOW()
+     WHERE project_id = $1
+       AND scope_type = $3
+       AND COALESCE(source_resource_id, '') = COALESCE($4::TEXT, '')
+       AND COALESCE(linked_contest_resource_id, '') = COALESCE($5::TEXT, '')`,
+    [
+      row.project_id,
+      row.id,
+      row.scope_type,
+      row.source_resource_id,
+      row.linked_contest_resource_id,
+    ],
+  )
+
+  return buildTaskSnapshot(row)
+}
+
+export async function getProjectKnowledgeTaskContext(
+  db: Queryable,
+  input: { taskId: string },
+): Promise<ProjectKnowledgeTaskContext | null> {
+  const task = await getProjectKnowledgeTaskRowById(db, {
+    taskId: input.taskId,
+  })
+  if (!task)
+    return null
+
+  const snapshots = await listProjectKnowledgeSourceSnapshots(db, {
+    projectId: task.project_id,
+    resourceId: normalizeString(task.source_resource_id),
+  })
+  const source = snapshots[0] || null
+  if (!source || !normalizeString(source.sourceResourceId))
+    return null
+
+  const candidates = await listProjectKnowledgeCandidateRows(db, {
+    projectId: task.project_id,
+    resourceIds: [source.sourceResourceId!],
+  })
+  const candidate = candidates[0]
+  if (!candidate)
+    return null
+
+  return {
+    task: source.lastTask || buildTaskSnapshot(task, source.resourceTitle),
+    source,
+    resource: {
+      id: candidate.source_resource_id,
+      projectId: candidate.project_id,
+      title: normalizeString(candidate.title),
+      summary: normalizeString(candidate.summary),
+      content: normalizeString(candidate.content),
+      metadata: normalizeRecord(candidate.metadata),
+      resourceKind: candidate.resource_kind,
+      source: candidate.source,
+      linkedContestResourceId: candidate.linked_contest_resource_id,
+      mimeType: normalizeString(candidate.mime_type),
+      sourceLink: normalizeString(candidate.source_link),
+      updatedAt: normalizeString(candidate.updated_at),
+      collabRevision: candidate.collab_revision,
+    },
+    documentAnalysis: normalizeDocumentAnalysis(candidate.analysis_json),
+    processedSourceHash: buildProjectKnowledgeSourceHash(candidate),
+  }
+}
+
+export async function updateProjectKnowledgeTaskProgress(
+  db: Queryable,
+  input: {
+    taskId: string
+    status?: ProjectKnowledgeSourceStatus
+    stage: ProjectKnowledgeTaskStage
+    progressPercent: number
+    etaSeconds: number
+    chunkTotal?: number
+    chunkIndexed?: number
+    resultJson?: Record<string, unknown>
+  },
+): Promise<void> {
+  const task = await getProjectKnowledgeTaskRowById(db, {
+    taskId: input.taskId,
+  })
+  if (!task)
+    return
+
+  const progressPercent = Math.max(0, Math.min(100, Math.round(normalizeNumber(input.progressPercent, 0))))
+  const etaSeconds = Math.max(0, Math.round(normalizeNumber(input.etaSeconds, 0)))
+  const nextStatus = input.status || (input.stage === 'extracting' ? 'extracting' : input.stage === 'chunking' ? 'chunking' : 'embedding')
+
+  await db.query(
+    `UPDATE project_knowledge_index_tasks
+     SET stage = $2,
+         progress_percent = $3,
+         eta_seconds = $4,
+         result_json = CASE WHEN $5::JSONB IS NULL THEN result_json ELSE $5::JSONB END,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      input.taskId,
+      input.stage,
+      progressPercent,
+      etaSeconds,
+      input.resultJson ? JSON.stringify(input.resultJson) : null,
+    ],
+  )
+
+  await db.query(
+    `UPDATE project_knowledge_sources
+     SET status = $2,
+         progress_percent = $3,
+         eta_seconds = $4,
+         chunk_total = CASE WHEN $5::INT IS NULL THEN chunk_total ELSE $5::INT END,
+         chunk_indexed = CASE WHEN $6::INT IS NULL THEN chunk_indexed ELSE $6::INT END,
+         last_task_id = $7,
+         updated_at = NOW()
+     WHERE project_id = $1
+       AND scope_type = $8
+       AND COALESCE(source_resource_id, '') = COALESCE($9::TEXT, '')
+       AND COALESCE(linked_contest_resource_id, '') = COALESCE($10::TEXT, '')`,
+    [
+      task.project_id,
+      nextStatus,
+      progressPercent,
+      etaSeconds,
+      input.chunkTotal === undefined ? null : Math.max(0, Math.round(normalizeNumber(input.chunkTotal, 0))),
+      input.chunkIndexed === undefined ? null : Math.max(0, Math.round(normalizeNumber(input.chunkIndexed, 0))),
+      task.id,
+      task.scope_type,
+      task.source_resource_id,
+      task.linked_contest_resource_id,
+    ],
+  )
+}
+
+export async function replaceProjectKnowledgeChunks(
+  db: Queryable,
+  input: {
+    sourceId: string
+    projectId: string
+    scopeType: ProjectKnowledgeScopeType
+    sourceResourceId?: string | null
+    linkedContestResourceId?: string | null
+    sourceHash: string
+    indexVersion: string
+    chunks: ProjectKnowledgeChunkWriteInput[]
+  },
+): Promise<void> {
+  const mode = await resolveProjectKnowledgeVectorMode(db)
+  await db.query(
+    `DELETE FROM project_knowledge_chunks
+     WHERE source_id = $1`,
+    [input.sourceId],
+  )
+
+  for (const chunk of input.chunks) {
+    if (!normalizeString(chunk.content))
+      continue
+    const id = randomUUID()
+    if (mode === 'vector') {
+      await db.query(
+        `INSERT INTO project_knowledge_chunks (
+          id,
+          project_id,
+          source_id,
+          scope_type,
+          source_resource_id,
+          linked_contest_resource_id,
+          chunk_index,
+          chunk_kind,
+          title,
+          content,
+          citation_label,
+          page_number,
+          section_label,
+          source_hash,
+          index_version,
+          metadata,
+          embedding,
+          created_at,
+          updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::JSONB, $17::vector, NOW(), NOW()
+        )`,
+        [
+          id,
+          input.projectId,
+          input.sourceId,
+          input.scopeType,
+          normalizeString(input.sourceResourceId) || null,
+          normalizeString(input.linkedContestResourceId) || null,
+          Math.max(0, Math.round(normalizeNumber(chunk.chunkIndex, 0))),
+          chunk.chunkKind,
+          normalizeString(chunk.title),
+          normalizeString(chunk.content),
+          normalizeString(chunk.citationLabel),
+          chunk.pageNumber == null ? null : Math.max(1, Math.round(normalizeNumber(chunk.pageNumber, 1))),
+          normalizeString(chunk.sectionLabel),
+          normalizeString(input.sourceHash),
+          normalizeString(input.indexVersion) || PROJECT_KNOWLEDGE_INDEX_VERSION,
+          JSON.stringify(normalizeRecord(chunk.metadata)),
+          `[${normalizeNumberArray(chunk.embedding).join(',')}]`,
+        ],
+      )
+      continue
+    }
+
+    await db.query(
+      `INSERT INTO project_knowledge_chunks (
+        id,
+        project_id,
+        source_id,
+        scope_type,
+        source_resource_id,
+        linked_contest_resource_id,
+        chunk_index,
+        chunk_kind,
+        title,
+        content,
+        citation_label,
+        page_number,
+        section_label,
+        source_hash,
+        index_version,
+        metadata,
+        embedding_json,
+        created_at,
+        updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::JSONB, $17::JSONB, NOW(), NOW()
+      )`,
+      [
+        id,
+        input.projectId,
+        input.sourceId,
+        input.scopeType,
+        normalizeString(input.sourceResourceId) || null,
+        normalizeString(input.linkedContestResourceId) || null,
+        Math.max(0, Math.round(normalizeNumber(chunk.chunkIndex, 0))),
+        chunk.chunkKind,
+        normalizeString(chunk.title),
+        normalizeString(chunk.content),
+        normalizeString(chunk.citationLabel),
+        chunk.pageNumber == null ? null : Math.max(1, Math.round(normalizeNumber(chunk.pageNumber, 1))),
+        normalizeString(chunk.sectionLabel),
+        normalizeString(input.sourceHash),
+        normalizeString(input.indexVersion) || PROJECT_KNOWLEDGE_INDEX_VERSION,
+        JSON.stringify(normalizeRecord(chunk.metadata)),
+        JSON.stringify(normalizeNumberArray(chunk.embedding)),
+      ],
+    )
+  }
+}
+
+export async function completeProjectKnowledgeTaskSuccess(
+  db: Queryable,
+  input: {
+    taskId: string
+    processedSourceHash: string
+    chunkTotal: number
+    chunkIndexed: number
+    resultJson?: Record<string, unknown>
+  },
+): Promise<{ needsRequeue: boolean }> {
+  const task = await getProjectKnowledgeTaskRowById(db, {
+    taskId: input.taskId,
+  })
+  if (!task)
+    return { needsRequeue: false }
+
+  const source = await getProjectKnowledgeSourceRowByEntity(db, {
+    projectId: task.project_id,
+    scopeType: task.scope_type,
+    sourceResourceId: task.source_resource_id,
+    linkedContestResourceId: task.linked_contest_resource_id,
+  })
+  if (!source)
+    return { needsRequeue: false }
+
+  const currentSourceHash = normalizeString(source.source_hash)
+  const needsRequeue = Boolean(currentSourceHash && currentSourceHash !== normalizeString(input.processedSourceHash))
+
+  await db.query(
+    `UPDATE project_knowledge_index_tasks
+     SET status = 'succeeded',
+         stage = 'finalizing',
+         progress_percent = 100,
+         eta_seconds = 0,
+         error_message = '',
+         result_json = $2::JSONB,
+         finished_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      input.taskId,
+      JSON.stringify({
+        ...normalizeRecord(input.resultJson),
+        chunkTotal: Math.max(0, Math.round(normalizeNumber(input.chunkTotal, 0))),
+        chunkIndexed: Math.max(0, Math.round(normalizeNumber(input.chunkIndexed, 0))),
+        processedSourceHash: normalizeString(input.processedSourceHash),
+        needsRequeue,
+      }),
+    ],
+  )
+
+  await db.query(
+    `UPDATE project_knowledge_sources
+     SET status = $2,
+         progress_percent = CASE WHEN $2 = 'ready' THEN 100 ELSE progress_percent END,
+         eta_seconds = 0,
+         chunk_total = $3,
+         chunk_indexed = $4,
+         last_indexed_at = NOW(),
+         last_error = '',
+         last_error_stage = '',
+         last_task_id = $5,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      source.id,
+      needsRequeue ? 'stale' : 'ready',
+      Math.max(0, Math.round(normalizeNumber(input.chunkTotal, 0))),
+      Math.max(0, Math.round(normalizeNumber(input.chunkIndexed, 0))),
+      input.taskId,
+    ],
+  )
+
+  if (needsRequeue) {
+    const refreshed = await getProjectKnowledgeSourceRowByEntity(db, {
+      projectId: task.project_id,
+      scopeType: task.scope_type,
+      sourceResourceId: task.source_resource_id,
+      linkedContestResourceId: task.linked_contest_resource_id,
+    })
+    if (refreshed) {
+      await internalEnqueueProjectKnowledgeIndexTask(db, {
+        source: refreshed,
+        taskType: 'reindex',
+        preserveStaleStatus: true,
+        payloadJson: {
+          trigger: 'stale_after_processing',
+        },
+      })
+    }
+  }
+
+  return { needsRequeue }
+}
+
+export async function completeProjectKnowledgeTaskFailure(
+  db: Queryable,
+  input: {
+    taskId: string
+    errorMessage: string
+    resultJson?: Record<string, unknown>
+  },
+): Promise<{ status: ProjectKnowledgeTaskStatus | null }> {
+  const task = await getProjectKnowledgeTaskRowById(db, {
+    taskId: input.taskId,
+  })
+  if (!task)
+    return { status: null }
+
+  const nextStatus: ProjectKnowledgeTaskStatus = task.attempt >= task.max_attempt ? 'dead_letter' : 'failed'
+  const safeErrorMessage = normalizeString(input.errorMessage) || 'unknown error'
+
+  await db.query(
+    `UPDATE project_knowledge_index_tasks
+     SET status = $2,
+         eta_seconds = 0,
+         error_message = $3,
+         result_json = $4::JSONB,
+         finished_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      input.taskId,
+      nextStatus,
+      safeErrorMessage,
+      JSON.stringify({
+        ...normalizeRecord(input.resultJson),
+        errorMessage: safeErrorMessage,
+      }),
+    ],
+  )
+
+  await db.query(
+    `UPDATE project_knowledge_sources
+     SET status = 'failed',
+         eta_seconds = 0,
+         last_error = $2,
+         last_error_stage = $3,
+         last_task_id = $4,
+         updated_at = NOW()
+     WHERE project_id = $1
+       AND scope_type = $5
+       AND COALESCE(source_resource_id, '') = COALESCE($6::TEXT, '')
+       AND COALESCE(linked_contest_resource_id, '') = COALESCE($7::TEXT, '')`,
+    [
+      task.project_id,
+      safeErrorMessage,
+      task.stage,
+      task.id,
+      task.scope_type,
+      task.source_resource_id,
+      task.linked_contest_resource_id,
+    ],
+  )
+
+  return {
+    status: nextStatus,
+  }
+}
+
+export async function cancelProjectKnowledgeTask(
+  db: Queryable,
+  input: {
+    taskId: string
+    resultJson?: Record<string, unknown>
+  },
+): Promise<void> {
+  await db.query(
+    `UPDATE project_knowledge_index_tasks
+     SET status = 'cancelled',
+         eta_seconds = 0,
+         result_json = $2::JSONB,
+         finished_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1`,
+    [input.taskId, JSON.stringify(normalizeRecord(input.resultJson))],
+  )
+}
+
+export async function resetStaleProjectKnowledgeTasks(
+  db: Queryable,
+  input: {
+    staleMinutes: number
+  },
+): Promise<number> {
+  const staleMinutes = Math.max(1, Math.round(normalizeNumber(input.staleMinutes, 20)))
+  const result = await db.query<ProjectKnowledgeTaskRow>(
+    `UPDATE project_knowledge_index_tasks
+     SET status = 'queued',
+         stage = 'queued',
+         progress_percent = 0,
+         eta_seconds = 0,
+         error_message = '[worker] 检测到索引处理中断，已自动重排',
+         started_at = NULL,
+         finished_at = NULL,
+         updated_at = NOW()
+     WHERE status = 'processing'
+       AND (started_at IS NULL OR started_at < NOW() - ($1::TEXT || ' minutes')::INTERVAL)
+     RETURNING
+      id,
+      project_id,
+      scope_type,
+      source_resource_id,
+      linked_contest_resource_id,
+      task_type,
+      status,
+      stage,
+      attempt,
+      max_attempt,
+      progress_percent,
+      eta_seconds,
+      payload_json,
+      result_json,
+      error_message,
+      started_at::TEXT,
+      finished_at::TEXT,
+      created_at::TEXT,
+      updated_at::TEXT`,
+    [String(staleMinutes)],
+  )
+
+  for (const row of result.rows) {
+    await db.query(
+      `UPDATE project_knowledge_sources
+       SET status = CASE WHEN status = 'stale' THEN 'stale' ELSE 'queued' END,
+           progress_percent = CASE WHEN status = 'stale' THEN progress_percent ELSE 0 END,
+           eta_seconds = 0,
+           last_error = '[worker] 检测到索引处理中断，已自动重排',
+           last_error_stage = '',
+           last_task_id = $2,
+           updated_at = NOW()
+       WHERE project_id = $1
+         AND scope_type = $3
+         AND COALESCE(source_resource_id, '') = COALESCE($4::TEXT, '')
+         AND COALESCE(linked_contest_resource_id, '') = COALESCE($5::TEXT, '')`,
+      [
+        row.project_id,
+        row.id,
+        row.scope_type,
+        row.source_resource_id,
+        row.linked_contest_resource_id,
+      ],
+    )
+  }
+
+  return Math.max(0, result.rowCount || 0)
+}
+
+export async function listProjectKnowledgeSearchChunks(
+  db: Queryable,
+  input: {
+    projectId: string
+    includeStale?: boolean
+  },
+): Promise<ProjectKnowledgeSearchChunk[]> {
+  const mode = await resolveProjectKnowledgeVectorMode(db)
+  const statusList = input.includeStale ? ['ready', 'stale'] : ['ready']
+  const embeddingSql = mode === 'vector'
+    ? `pkc.embedding::TEXT AS embedding_text, NULL::JSONB AS embedding_json`
+    : `NULL::TEXT AS embedding_text, pkc.embedding_json AS embedding_json`
+
+  const result = await db.query<ProjectKnowledgeSearchChunkRow>(
+    `SELECT
+      pkc.id,
+      pkc.source_id,
+      pkc.project_id,
+      pkc.scope_type,
+      pkc.source_resource_id,
+      pkc.linked_contest_resource_id,
+      pkc.chunk_index,
+      pkc.chunk_kind,
+      pkc.title,
+      pkc.content,
+      pkc.citation_label,
+      pkc.page_number,
+      pkc.section_label,
+      pkc.source_hash,
+      pkc.index_version,
+      pkc.metadata,
+      pkc.updated_at::TEXT,
+      pks.status AS source_status,
+      pr.title AS resource_title,
+      pr.resource_kind,
+      pr.source AS resource_source,
+      ${embeddingSql}
+     FROM project_knowledge_chunks pkc
+     JOIN project_knowledge_sources pks
+       ON pks.id = pkc.source_id
+      AND pks.project_id = pkc.project_id
+     JOIN project_resources pr
+       ON pr.id = pkc.source_resource_id
+      AND pr.project_id = pkc.project_id
+      AND pr.status = 'active'
+     WHERE pkc.project_id = $1
+       AND pks.status = ANY($2::TEXT[])
+     ORDER BY pkc.updated_at DESC, pkc.chunk_index ASC`,
+    [input.projectId, statusList],
+  )
+
+  return result.rows.map((row) => {
+    const embedding = mode === 'vector'
+      ? normalizeEmbeddingText(row.embedding_text)
+      : normalizeNumberArray(row.embedding_json)
+    return {
+      id: row.id,
+      sourceId: row.source_id,
+      projectId: row.project_id,
+      scopeType: row.scope_type,
+      sourceResourceId: row.source_resource_id,
+      linkedContestResourceId: row.linked_contest_resource_id,
+      resourceTitle: normalizeString(row.resource_title) || '未命名资源',
+      resourceKind: row.resource_kind,
+      resourceSource: row.resource_source,
+      sourceStatus: row.source_status,
+      chunkIndex: Math.max(0, Math.round(normalizeNumber(row.chunk_index, 0))),
+      chunkKind: row.chunk_kind,
+      title: normalizeString(row.title),
+      content: normalizeString(row.content),
+      citationLabel: normalizeString(row.citation_label),
+      pageNumber: row.page_number == null ? null : Math.max(1, Math.round(normalizeNumber(row.page_number, 1))),
+      sectionLabel: normalizeString(row.section_label),
+      sourceHash: normalizeString(row.source_hash),
+      indexVersion: normalizeString(row.index_version),
+      metadata: normalizeRecord(row.metadata),
+      embedding,
+      updatedAt: row.updated_at,
+    }
+  })
+}

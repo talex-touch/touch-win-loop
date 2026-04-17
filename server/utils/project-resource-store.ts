@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import * as Y from 'yjs'
 import { buildServerApiEndpoint, resolveServerApiUrl } from '~~/server/utils/api-url'
+import { markProjectKnowledgeSourceStale, scheduleProjectKnowledgeSourceUpsert } from '~~/server/utils/project-knowledge-store'
 import { buildProjectResourceSignedUrls } from '~~/server/utils/project-resource-access-url'
 import {
   collectImageReferencesFromMarkdown,
@@ -568,6 +569,12 @@ async function syncMarkdownResourceProjection(
     values,
   )
 
+  await markProjectKnowledgeSourceStale(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+    autoEnqueue: true,
+  })
+
   return {
     markdown: mirrorResult.markdown,
     derivedTitle,
@@ -815,8 +822,6 @@ async function resolveCollabResourceTitle(
     return normalized
 
   const prefix = resolveCollabResourceTitlePrefix(kind, purpose)
-  if (purpose === 'workflow')
-    return prefix
 
   const result = await db.query<{ title: string }>(
     `SELECT title
@@ -1507,7 +1512,12 @@ export async function bindLibraryResourceToProject(
     ],
   )
 
-  return toResource(inserted.rows[0]!)
+  const resource = toResource(inserted.rows[0]!)
+  await scheduleProjectKnowledgeSourceUpsert(db, {
+    projectId: input.projectId,
+    resourceId: resource.id,
+  })
+  return resource
 }
 
 export async function createProjectUploadedResource(
@@ -1610,6 +1620,10 @@ export async function createProjectUploadedResource(
   })
   if (!resource)
     throw new Error('RESOURCE_CREATE_FAILED')
+  await scheduleProjectKnowledgeSourceUpsert(db, {
+    projectId: input.projectId,
+    resourceId: resource.id,
+  })
   return resource
 }
 
@@ -1805,6 +1819,11 @@ export async function createProjectCollabResource(
   if (!row)
     throw new Error('RESOURCE_CREATE_FAILED')
 
+  await scheduleProjectKnowledgeSourceUpsert(db, {
+    projectId: input.projectId,
+    resourceId,
+  })
+
   return {
     resource: toResource(row),
     snapshot: {
@@ -1907,7 +1926,7 @@ export async function ensureProjectDesignCanvas(
       drawMode: 'composition',
       sceneSourceType: 'image_mockup',
       templateKey: normalizeString(input.templateKey) || 'device-showcase',
-      editorEngine: 'vueflow',
+      editorEngine: 'canvaskit_wasm',
     },
   })
 }
@@ -2334,6 +2353,11 @@ export async function duplicateProjectResource(
   if (!duplicated)
     throw new Error('RESOURCE_DUPLICATE_FAILED')
 
+  await scheduleProjectKnowledgeSourceUpsert(db, {
+    projectId: input.projectId,
+    resourceId: duplicated.id,
+  })
+
   return duplicated
 }
 
@@ -2459,6 +2483,11 @@ export async function patchProjectResourceMetadata(
   })
   if (!resource)
     throw new Error('RESOURCE_NOT_FOUND')
+  await markProjectKnowledgeSourceStale(db, {
+    projectId: input.projectId,
+    resourceId: row.id,
+    autoEnqueue: true,
+  })
   return resource
 }
 
@@ -2508,6 +2537,11 @@ export async function mergeProjectResourceMetadata(
   })
   if (!resource)
     throw new Error('RESOURCE_NOT_FOUND')
+  await markProjectKnowledgeSourceStale(db, {
+    projectId: input.projectId,
+    resourceId: input.resourceId,
+    autoEnqueue: true,
+  })
   return resource
 }
 

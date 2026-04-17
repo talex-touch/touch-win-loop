@@ -6,3 +6,8 @@ export * from './meeting'
 export * from './ai'
 export * from './workspace'
 export * from './auth'
+export type {
+  ProjectKnowledgeChunkMetadata,
+  ProjectKnowledgeModality,
+  ProjectKnowledgeProjectionType,
+} from './domain-legacy'

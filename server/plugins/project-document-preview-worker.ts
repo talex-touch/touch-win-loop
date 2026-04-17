@@ -6,6 +6,7 @@ import {
   getProjectDocumentPreviewWorkerState,
   pushProjectDocumentPreviewWorkerRunRecord,
 } from '~~/server/utils/project-document-preview-worker-state'
+import { markProjectKnowledgeSourceStale } from '~~/server/utils/project-knowledge-store'
 import { buildOnlyOfficeProjectSourceUrl } from '~~/server/utils/project-resource-access-url'
 import {
   claimNextQueuedProjectDocumentTask,
@@ -81,6 +82,8 @@ function toUserFacingPreviewError(rawErrorMessage: string): string {
     return '当前文件类型暂不支持转换预览，请下载源文件查看。'
   if (normalized === 'ONLYOFFICE_ENDPOINT_NOT_CONFIGURED')
     return '预览服务未配置（ONLYOFFICE endpoint 缺失），请联系管理员。'
+  if (normalized === 'ONLYOFFICE_SOURCE_BASE_URL_NOT_CONFIGURED')
+    return '预览服务缺少对外 sourceBaseURL，当前无法生成 ONLYOFFICE 可访问的源文件地址，请联系管理员配置 WINLOOP_PUBLIC_BASE_URL。'
   if (normalized.startsWith('ONLYOFFICE_CONVERT_TIMEOUT:'))
     return '文件转换超时，请稍后重试。'
   if (normalized.startsWith('ONLYOFFICE_CONVERT_HTTP_FAILED:'))
@@ -96,31 +99,11 @@ function toUserFacingPreviewError(rawErrorMessage: string): string {
 
 let lastSourceBaseGuardWarnAtMs = 0
 
-function isLoopbackHttpUrl(rawUrl: string): boolean {
-  const normalized = normalizeString(rawUrl)
-  if (!/^https?:\/\//i.test(normalized))
-    return false
-
-  try {
-    const parsed = new URL(normalized)
-    const host = normalizeString(parsed.hostname).toLowerCase()
-    return host === '127.0.0.1'
-      || host === 'localhost'
-      || host === '::1'
-      || host === '0.0.0.0'
-  }
-  catch {
-    return false
-  }
-}
-
 function shouldPauseTaskConsumption(sourceBaseURL: string, onlyOfficeEndpoint: string): boolean {
   const normalizedEndpoint = normalizeString(onlyOfficeEndpoint)
   if (!normalizedEndpoint)
     return false
-  if (!isLoopbackHttpUrl(sourceBaseURL))
-    return false
-  return !isLoopbackHttpUrl(normalizedEndpoint)
+  return !normalizeString(sourceBaseURL)
 }
 
 async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
@@ -250,6 +233,11 @@ async function processSingleTask(): Promise<'none' | 'success' | 'failure'> {
           previewSize: converted.pdfBuffer.length,
         },
       })
+      await markProjectKnowledgeSourceStale(db, {
+        projectId: context.document.projectId,
+        resourceId: context.document.projectResourceId,
+        autoEnqueue: true,
+      })
     })
 
     console.warn('[project-document-preview-worker] task_succeeded', {
@@ -339,7 +327,7 @@ async function runTick(): Promise<void> {
     return
 
   if (shouldPauseTaskConsumption(runtime.onlyOffice.sourceBaseURL, runtime.onlyOffice.endpoint)) {
-    const warningMessage = 'ONLYOFFICE sourceBaseURL 仍为本地回退地址，已暂停任务消费。请设置 WINLOOP_PUBLIC_BASE_URL，或先通过外网域名访问一次服务。'
+    const warningMessage = 'ONLYOFFICE sourceBaseURL 未配置，已暂停任务消费。请设置 WINLOOP_PUBLIC_BASE_URL，确保 worker 能生成可被 ONLYOFFICE 访问的绝对地址。'
     state.lastError = warningMessage
     const now = Date.now()
     if (now - lastSourceBaseGuardWarnAtMs >= 60_000) {
