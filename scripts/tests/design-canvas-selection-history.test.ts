@@ -12,6 +12,10 @@ const DESIGN_PANEL_FILE = resolve(
   process.cwd(),
   'app/components/workspace/WorkspaceDesignPanel.vue',
 )
+const DESIGN_CANVASKIT_HOST_FILE = resolve(
+  process.cwd(),
+  'app/components/workspace/design/WorkspaceDesignCanvasKitHost.client.vue',
+)
 
 function makeFrame(id: string) {
   return {
@@ -172,11 +176,23 @@ describe('WorkspaceDesignPanel', () => {
   it('默认空设计文档不会再创建 device mockup 封面 frame', async () => {
     const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
 
-    expect(source).toMatch(/function createDefaultDesignSceneDocument\(\): SceneDocument/)
+    expect(source).toMatch(/function createDefaultDesignSceneDocument\(\s*editorEngine: SceneEditorEngine = "vueflow",\s*\): SceneDocument/)
     expect(source).toMatch(/return createEmptySceneDocument\(\{/)
     expect(source).toMatch(/drawMode: "composition"/)
     expect(source).toMatch(/sourceType: "manual"/)
+    expect(source).toMatch(/editorEngine,/)
     expect(source).not.toMatch(/return buildDeviceMockupSceneDocument\(\{/)
+  })
+
+  it('设计画布默认会切到独立 bridge 组件，仅 legacy tldraw 保留旧 stage', async () => {
+    const source = await readFile(DESIGN_PANEL_FILE, 'utf8')
+
+    expect(source).toMatch(/import WorkspaceDesignCanvasKitBridge from "\.\/design\/WorkspaceDesignCanvasKitBridge\.client\.vue";/)
+    expect(source).toMatch(/const resolvedDesignStageComponent = computed\(\(\) => \{/)
+    expect(source).toMatch(/persistedDesignEditorEngine\.value === "tldraw_legacy"/)
+    expect(source).toMatch(/\? WorkspaceDesignStage/)
+    expect(source).toMatch(/: WorkspaceDesignCanvasKitBridge;/)
+    expect(source).toMatch(/:is="resolvedDesignStageComponent"/)
   })
 
   it('新建元素后会立即选中新元素并保留当前 editingFrameId', async () => {
@@ -191,5 +207,100 @@ describe('WorkspaceDesignPanel', () => {
     expect(source).toMatch(/setSelectedElements\(\[createdElement\.id\], \{/)
     expect(source).toMatch(/primaryElementId:\s*createdElement\.id/)
     expect(source).toMatch(/editingFrameId,\s*displayFrameId:\s*resolveDisplayFrameIdForOwnerSelection\(editingFrameId\)/)
+    expect(source).toMatch(/if \(designToolController\.isDrawingTool\.value\) setActiveDesignTool\("select"\);/)
+  })
+
+  it('新 host 会补文本编辑、框选与旋转会话，并复用现有更新链路', async () => {
+    const source = await readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8')
+
+    expect(source).toMatch(/type TextEditSession = \{/)
+    expect(source).toMatch(/type CreateSessionFrameContext = \{/)
+    expect(source).toMatch(/type SelectionDraft = \{/)
+    expect(source).toMatch(/type ElementRotationSession = \{/)
+    expect(source).toMatch(/function openTextEditSession\(/)
+    expect(source).toMatch(/function closeTextEditSession\(/)
+    expect(source).toMatch(/historyMergeKey: 'element-text-edit'/)
+    expect(source).toMatch(/function resolveSelectionDraftMatches\(/)
+    expect(source).toMatch(/const nextIds = draft\.additive[\s\S]*new Set\(/)
+    expect(source).toMatch(/function handleElementRotatePointerDown\(/)
+    expect(source).toMatch(/element-rotate:/)
+  })
+
+  it('新 host 会补 mockup screen 拖拽与文本双击编辑入口', async () => {
+    const source = await readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8')
+
+    expect(source).toMatch(/type MockupScreenDragSession = \{/)
+    expect(source).toMatch(/resolveDesignFrameProjectionLayoutForFrames/)
+    expect(source).toMatch(/function resolveMockupScreenTransform\(/)
+    expect(source).toMatch(/historyMergeKey: 'mockup-screen-transform'/)
+    expect(source).toMatch(/function handleElementDoubleClick\(/)
+    expect(source).toMatch(/item\.element\.type !== 'text' && item\.element\.type !== 'caption' && item\.element\.type !== 'badge'/)
+  })
+
+  it('绘制工具首击 frame 会直接进入 editing frame 并启动创建会话', async () => {
+    const source = await readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8')
+
+    expect(source).toMatch(/function resolveCreateSessionFrameContextForFrame\(/)
+    expect(source).toMatch(/function emitFrameEditingSelection\(context: CreateSessionFrameContext\): void/)
+    expect(source).toMatch(/function beginCreateElementSession\(/)
+    expect(source).toMatch(/function handleFramePointerDown\(frame: DesignFrameModel, event: PointerEvent\): void/)
+    expect(source).toMatch(/emitFrameEditingSelection\(frameContext\)/)
+    expect(source).toMatch(/scope: 'none',\s*editingFrameId: context\.ownerFrameId,\s*displayFrameId: context\.displayFrameId/)
+    expect(source).toMatch(/@pointerdown\.stop="handleFramePointerDown\(frame, \$event\)"/)
+    expect(source).toMatch(/const cursor = activeCreateElementTool\.value \|\| pendingImagePlacementState\.value\s*\?\s*'crosshair'/)
+  })
+
+  it('新 host 会补 frame 拖拽、resize、吸附反馈与 grid guides 路径', async () => {
+    const source = await readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8')
+
+    expect(source).toMatch(/type FrameDragSession = \{/)
+    expect(source).toMatch(/type FrameResizeSession = \{/)
+    expect(source).toMatch(/type FrameDragFeedback = \{/)
+    expect(source).toMatch(/resolveDesignFrameGridMetadata/)
+    expect(source).toMatch(/const visibleFrameGrids = computed\(\(\) => \{/)
+    expect(source).toMatch(/function resolveFrameDragAssist\(/)
+    expect(source).toMatch(/function setFrameDragFeedback\(/)
+    expect(source).toMatch(/function clearFrameDragFeedback\(\): void/)
+    expect(source).toMatch(/function handleFrameResizePointerDown\(/)
+    expect(source).toMatch(/historyMergeKey: 'frame-resize'/)
+    expect(source).toMatch(/emit\('update-frame-position', \{/)
+    expect(source).toMatch(/emit\('update-frame-positions', \{/)
+    expect(source).toMatch(/emit\('update-frame-size', \{/)
+    expect(source).toMatch(/filter\(\(item\): item is DesignFrameModel => Boolean\(item\) && !item\.locked\)/)
+    expect(source).toMatch(/if \(frame\.locked\)\s*return/)
+    expect(source).toMatch(/data-testid="workspace-design-canvaskit-frame-resize"/)
+    expect(source).toMatch(/data-testid="workspace-design-canvaskit-frame-feedback"/)
+    expect(source).toMatch(/data-testid="workspace-design-canvaskit-frame-guides"/)
+    expect(source).toMatch(/X \{\{ frameDragFeedback\.x \}\} \/ Y \{\{ frameDragFeedback\.y \}\}/)
+  })
+
+  it('新 host 与面板会补图片放置、分组、多元素吸附和 auto layout 重排路径', async () => {
+    const hostSource = await readFile(DESIGN_CANVASKIT_HOST_FILE, 'utf8')
+    const panelSource = await readFile(DESIGN_PANEL_FILE, 'utf8')
+
+    expect(hostSource).toMatch(/type PendingImagePlacement = \{/)
+    expect(hostSource).toMatch(/type GroupEditSession = \{/)
+    expect(hostSource).toMatch(/type ElementGuideOverlay = \{/)
+    expect(hostSource).toMatch(/type AutoLayoutReorderSession = \{/)
+    expect(hostSource).toMatch(/const pendingImagePlacementState = computed/)
+    expect(hostSource).toMatch(/function beginGroupEditSession\(/)
+    expect(hostSource).toMatch(/function resolveElementGuideAdjustment\(/)
+    expect(hostSource).toMatch(/ELEMENT_SNAP_GRID_SIZE = 8/)
+    expect(hostSource).toMatch(/ELEMENT_SNAP_THRESHOLD = 8/)
+    expect(hostSource).toMatch(/historyMergeKey: 'element-reorder'/)
+    expect(hostSource).toMatch(/data-testid="workspace-design-canvaskit-element-guide-overlay"/)
+    expect(hostSource).toMatch(/data-testid="workspace-design-canvaskit-autolayout-indicator"/)
+    expect(hostSource).toMatch(/emit\('clear-pending-image-placement'\)/)
+
+    expect(panelSource).toMatch(/const pendingImagePlacement = ref<PendingImagePlacement \| null>\(null\)/)
+    expect(panelSource).toMatch(/function queuePendingImagePlacement\(/)
+    expect(panelSource).toMatch(/function placeAssetOnCanvas\(/)
+    expect(panelSource).toMatch(/function handleToolbarInsertImage\(/)
+    expect(panelSource).toMatch(/groupDesignElementsInSceneDocument/)
+    expect(panelSource).toMatch(/ungroupDesignElementInSceneDocument/)
+    expect(panelSource).toMatch(/"bring-forward"/)
+    expect(panelSource).toMatch(/"send-backward"/)
+    expect(panelSource).toMatch(/"bring-to-front"/)
+    expect(panelSource).toMatch(/"send-to-back"/)
   })
 })

@@ -347,6 +347,126 @@ it('repo architecture scanner 可从当前工作区读取 manifests 并生成 ar
   assert.ok(Array.isArray(result.workspacePatterns))
 })
 
+it('design group / ungroup 与 auto layout relayout 保持稳定', async () => {
+  const {
+    appendDesignElementToSceneDocument,
+    appendDesignFrameToSceneDocument,
+    createEmptySceneDocument,
+    groupDesignElementsInSceneDocument,
+    resolveDisplayCompositionElementsForFrame,
+    ungroupDesignElementInSceneDocument,
+    updateDesignElementInSceneDocument,
+    updateDesignFrameInSceneDocument,
+  } = await loadSceneUtils()
+
+  let document = createEmptySceneDocument({
+    drawMode: 'composition',
+    sourceType: 'manual',
+    templateKey: 'device-showcase',
+    editorEngine: 'vueflow',
+  })
+  const pageId = document.sourceModel.currentPageId
+  document = appendDesignFrameToSceneDocument(document, {
+    pageId,
+    kind: 'freeform',
+    name: 'Frame A',
+    width: 480,
+    height: 320,
+  })
+  const frameId = document.sourceModel.frames[0]?.id
+  assert.ok(frameId)
+
+  document = appendDesignElementToSceneDocument(document, {
+    id: 'shape-a',
+    type: 'shape',
+    shapeKind: 'rectangle',
+    pageId,
+    frameId,
+    x: 40,
+    y: 48,
+    width: 120,
+    height: 80,
+  })
+  document = appendDesignElementToSceneDocument(document, {
+    id: 'shape-b',
+    type: 'shape',
+    shapeKind: 'ellipse',
+    pageId,
+    frameId,
+    x: 220,
+    y: 72,
+    width: 96,
+    height: 64,
+  })
+
+  document = groupDesignElementsInSceneDocument(document, ['shape-a', 'shape-b'], {
+    groupId: 'group-alpha',
+    groupName: 'Alpha Group',
+  })
+  const groupedElements = document.sourceModel.elements || []
+  const groupElement = groupedElements.find(element => element.id === 'group-alpha')
+  assert.equal(groupElement?.type, 'group')
+  assert.equal(groupElement?.x, 40)
+  assert.equal(groupElement?.y, 48)
+  assert.equal(groupElement?.width, 276)
+  assert.equal(groupElement?.height, 88)
+  assert.ok(groupedElements.filter(element => element.parentId === 'group-alpha').length === 2)
+
+  document = updateDesignElementInSceneDocument(document, 'shape-b', {
+    x: 260,
+    y: 84,
+  })
+  const syncedGroup = (document.sourceModel.elements || []).find(element => element.id === 'group-alpha')
+  assert.equal(syncedGroup?.width, 316)
+  assert.equal(syncedGroup?.height, 100)
+
+  document = ungroupDesignElementInSceneDocument(document, 'group-alpha')
+  const ungroupedElements = document.sourceModel.elements || []
+  assert.ok(!ungroupedElements.some(element => element.id === 'group-alpha'))
+  assert.ok(ungroupedElements.some(element => element.id === 'shape-a' && !element.parentId))
+  assert.ok(ungroupedElements.some(element => element.id === 'shape-b' && !element.parentId))
+
+  document = updateDesignFrameInSceneDocument(document, frameId, {
+    metadata: {
+      layout: {
+        mode: 'auto',
+        direction: 'vertical',
+        gap: 16,
+        padding: {
+          top: 20,
+          right: 20,
+          bottom: 20,
+          left: 20,
+        },
+      },
+    },
+  })
+  document = updateDesignElementInSceneDocument(document, 'shape-a', {
+    metadata: {
+      layoutSizing: 'fill',
+    },
+  })
+  document = updateDesignElementInSceneDocument(document, 'shape-b', {
+    metadata: {
+      layoutSizing: 'fixed',
+    },
+  })
+
+  const frame = document.sourceModel.frames.find(item => item.id === frameId)
+  const displayElements = resolveDisplayCompositionElementsForFrame(document.sourceModel, frame)
+  assert.equal(displayElements[0]?.id, 'shape-a')
+  assert.equal(displayElements[0]?.x, 20)
+  assert.equal(displayElements[0]?.width, 440)
+  assert.equal(displayElements[1]?.y, displayElements[0]?.y + displayElements[0]?.height + 16)
+
+  document = updateDesignElementInSceneDocument(document, 'shape-a', {
+    zIndex: 1,
+  })
+  const reorderedElements = resolveDisplayCompositionElementsForFrame(document.sourceModel, frame)
+  assert.equal(reorderedElements[0]?.id, 'shape-b')
+  assert.equal(reorderedElements[1]?.id, 'shape-a')
+})
+
 it('设备预设目录、单图 mockup 语义和旧文档兼容都可用', async () => {
   const {
     DEVICE_FRAME_PRESETS,

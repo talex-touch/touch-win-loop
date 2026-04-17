@@ -1,6 +1,6 @@
 # 协作资源模型
 
-更新时间：2026-04-15
+更新时间：2026-04-17
 
 本文只描述当前已经落地的协作资源规则，不讨论未来 Office 在线编辑能力。
 
@@ -119,3 +119,43 @@
 当前协作模型的核心原则是：
 
 > `markdown` 和 `draw` 只是资源形态，真正决定用户心智与入口的是 `collabPurpose`。
+
+## 9. 新设计画布（New Host）当前落地进度
+
+当前 `draw + freeform` 设计画布已经以新 `CanvasKit Host` 作为主编辑入口推进，目标是先稳定替代旧 `WorkspaceDesignStage.vue` 的日常设计闭环。
+
+### 已完成
+
+- frame 编辑态内已支持基础图元创建：`rectangle`、`ellipse`、`arrow`、`path`、`text`
+- 文本闭环已打通：文本工具创建后立即编辑，双击现有文本可再次编辑，提交仍复用既有元素更新协议
+- 元素基础编辑已覆盖：单选拖动、框选多选、单元素 resize、单元素 rotate
+- frame 级交互已补齐：frame 选择、拖拽、resize、小地图与 grid guides
+- 图片插入已提供双入口：toolbar 本地上传放置、assets 面板“放置到画布”
+- 分组能力已落地：`group / ungroup`、group 命中、group 内双击进入编辑态、组拖动
+- 元素吸附与参考线已落地：同层 sibling、frame 边界/中心线、`8px` 栅格吸附
+- Auto Layout 基础闭环已可用：新元素 append、子元素重排、inspector 参数调整后即时 relayout
+- 图层顺序命令已补齐：上移、下移、置顶、置底
+- 导出仍沿用现有 Page / Frame 的 PNG / SVG 路径，本轮未改导出协议
+
+### 当前约束
+
+- 当前仍以 frame 内编辑为主，不覆盖跨 frame / page 的自由设计
+- auto layout frame 内关闭子元素自由拖动、absolute resize、rotate，改为重排语义
+- group 仅支持选择、拖动、层级调整和 ungroup；本轮不支持 group resize / rotate
+- `path` 仍未进入节点级编辑，本轮只保留绘制与基础选择
+
+### 暂未纳入本轮
+
+- 布尔运算
+- 路径节点编辑
+- 元素 resize snap
+- 组件 / variant
+- 富文本
+- 图片裁切
+- 跨 frame / 跨 page 吸附
+
+### 维护原则
+
+- 不修改 `SceneDocument`、`DesignElementModel`、`DesignFrameModel` 持久化结构
+- 新 Host 继续复用现有 inspector、导出与文档写回协议，不额外引入新的渲染引擎或存储模型
+- 后续优先级固定为：元素级更完整的吸附与排版体验，然后再进入海报效率型样式条和路径/布尔运算基础
