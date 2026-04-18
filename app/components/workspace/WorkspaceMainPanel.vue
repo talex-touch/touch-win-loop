@@ -11,6 +11,7 @@ import type {
   DefenseRealtimeSessionMeta,
   Project,
   ProjectInvitationSummary,
+  ProjectKnowledgeIndexDashboard,
   ProjectMeeting,
   ProjectMeetingDetail,
   ProjectMeetingGuestShare,
@@ -57,6 +58,8 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+import type { CollabMarkdownHeadingAnchorItem } from '~/utils/collab-markdown-navigation'
+import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
 import { resolveCollabResourceDisplayLabel } from '~~/shared/utils/collab-resource'
 import {
   normalizeWorkspaceCollabPresenceActivityState,
@@ -94,6 +97,7 @@ import {
   workspaceRoleLabel,
   workspaceTypeLabel,
 } from '~/utils/workspace-main-panel-formatters'
+import { resolveWorkspaceTabDensityTokens } from '~~/shared/utils/workspace-tab-layout'
 
 const props = withDefaults(defineProps<{
   activeTabId?: WorkspaceOpenTabState | ''
@@ -110,6 +114,7 @@ const props = withDefaults(defineProps<{
   trackType?: string
   topK?: number
   openSettingsSignal?: number
+  openLoopyDataSignal?: number
   openMemberManagementSignal?: number
   openDisplayPreferencesSignal?: number
   openFlowSignal?: number
@@ -210,6 +215,11 @@ const props = withDefaults(defineProps<{
   projectSettingsCurrentContestId?: string
   projectSettingsAdaptation?: WorkspaceProjectAdaptationForm
   projectSettingsHasCurrentContest?: boolean
+  projectKnowledgeDashboard?: ProjectKnowledgeIndexDashboard | null
+  projectKnowledgeLoading?: boolean
+  projectKnowledgeError?: string
+  projectKnowledgeReindexingTarget?: '' | 'all' | 'stale' | 'failed'
+  projectKnowledgeRetryingSourceId?: string
   workspaceDisplayPreferences?: WorkspaceDisplayPreferenceSnapshot
   workspaceDisplayPreferencesLoading?: boolean
   workspaceDisplayPreferencesSavingScope?: '' | 'user' | 'team'
@@ -257,6 +267,7 @@ const props = withDefaults(defineProps<{
   trackType: '',
   topK: 6,
   openSettingsSignal: 0,
+  openLoopyDataSignal: 0,
   openMemberManagementSignal: 0,
   openDisplayPreferencesSignal: 0,
   openFlowSignal: 0,
@@ -366,6 +377,11 @@ const props = withDefaults(defineProps<{
     summary: '',
   }),
   projectSettingsHasCurrentContest: false,
+  projectKnowledgeDashboard: null,
+  projectKnowledgeLoading: false,
+  projectKnowledgeError: '',
+  projectKnowledgeReindexingTarget: '',
+  projectKnowledgeRetryingSourceId: '',
   workspaceDisplayPreferences: () => defaultWorkspaceDisplayPreferenceSnapshot(),
   workspaceDisplayPreferencesLoading: false,
   workspaceDisplayPreferencesSavingScope: '',
@@ -410,6 +426,9 @@ const emit = defineEmits<{
   'update:projectSettingsBindings': [value: WorkspaceProjectContestBindingForm[]]
   'update:projectSettingsAdaptation': [value: WorkspaceProjectAdaptationForm]
   'saveProjectSettings': []
+  'reloadProjectKnowledge': []
+  'reindexProjectKnowledge': [target: 'all' | 'stale' | 'failed']
+  'reindexProjectKnowledgeSource': [resourceId: string]
   'saveWorkspaceDisplayUserOverride': [value: WorkspaceDisplayPreferencePatchPayload]
   'saveWorkspaceDisplayTeamDefault': [value: WorkspaceDisplayPreferencePatchPayload]
   'reloadWorkspaceMemberManagement': []
@@ -446,6 +465,7 @@ const emit = defineEmits<{
   'updateCollabCursor': [value: { cursorX?: number, cursorY?: number }]
   'updateCollabSelectionStatus': [value: { line: number, column: number, selectionLength: number, selection: WorkspaceCollabSelectionSummary | null }]
   'markdownPrimaryHeadingChange': [value: string]
+  'markdownOutlineChange': [value: CollabMarkdownHeadingAnchorItem[]]
   'markdownCreateCommentFromSelection': [value: ProjectResourceCommentTextSelectionAnchor]
   'markdownCreateCommentFromImage': [value: ProjectResourceCommentImageNodeAnchor]
   'markdownOpenCommentThread': [threadId: string]
@@ -540,28 +560,120 @@ const fixedTabs: WorkspaceMainTab[] = [
     icon: 'settings',
     closeable: true,
   },
+  {
+    id: 'loopy_data',
+    kind: 'fixed',
+    title: 'Loopy 数据',
+    icon: 'database',
+    closeable: true,
+  },
 ]
 
 type WorkspaceSettingsSecondaryTabId = 'project' | 'myDisplay' | 'teamDefault'
+type WorkspaceSettingsGroupId = 'workspace' | 'personal'
+type WorkspaceSettingsSectionId = 'projectOverview'
+  | 'contestBindings'
+  | 'contestAdaptation'
+  | 'resourceShares'
+  | 'teamDefault'
+  | 'displayPreferences'
+type WorkspaceProjectPanelSectionId = 'projectOverview'
+  | 'contestBindings'
+  | 'contestAdaptation'
+  | 'resourceShares'
 
-interface WorkspaceSettingsSecondaryTabItem {
-  id: WorkspaceSettingsSecondaryTabId
+interface WorkspaceSettingsGroupItem {
+  id: WorkspaceSettingsGroupId
   label: string
-  icon: string
   description: string
 }
 
-const settingsSecondaryTab = ref<WorkspaceSettingsSecondaryTabId>('project')
-const workspaceSettingsSecondaryTabs: WorkspaceSettingsSecondaryTabItem[] = [
-  { id: 'project', label: '项目设置', icon: 'settings', description: '维护项目基础信息、竞赛绑定与资源共享。' },
-  { id: 'myDisplay', label: '个人设置', icon: 'tune', description: '为当前工作区保存个人字号与标签边距偏好。' },
-  { id: 'teamDefault', label: '团队默认', icon: 'groups', description: '配置新成员进入当前工作区时的默认显示方案。' },
+interface WorkspaceSettingsSectionItem {
+  id: WorkspaceSettingsSectionId
+  groupId: WorkspaceSettingsGroupId
+  domId: string
+  label: string
+  icon: string
+  description: string
+  legacyTabId?: WorkspaceSettingsSecondaryTabId
+  testId: string
+}
+
+const workspaceSettingsGroups: WorkspaceSettingsGroupItem[] = [
+  { id: 'workspace', label: 'Workspace', description: '项目底座、共享配置与团队默认统一在这里维护。' },
+  { id: 'personal', label: 'Personal', description: '只影响当前工作区的个人显示偏好。' },
+]
+const workspaceSettingsSections: WorkspaceSettingsSectionItem[] = [
+  {
+    id: 'projectOverview',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-project-overview',
+    label: '项目基础信息',
+    icon: 'settings',
+    description: '维护项目标题、摘要、标识与基础陈述。',
+    legacyTabId: 'project',
+    testId: 'workspace-settings-nav-project-overview',
+  },
+  {
+    id: 'contestBindings',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-contest-bindings',
+    label: '竞赛与赛道绑定',
+    icon: 'trophy',
+    description: '整理项目参与的竞赛与赛道，并指定当前竞赛。',
+    testId: 'workspace-settings-nav-contest-bindings',
+  },
+  {
+    id: 'contestAdaptation',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-contest-adaptation',
+    label: '当前竞赛适配稿',
+    icon: 'task',
+    description: '围绕当前竞赛补齐终审与答辩底稿。',
+    testId: 'workspace-settings-nav-contest-adaptation',
+  },
+  {
+    id: 'resourceShares',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-resource-shares',
+    label: '资源共享',
+    icon: 'share',
+    description: '集中查看分享链接状态与资源分发情况。',
+    testId: 'workspace-settings-nav-resource-shares',
+  },
+  {
+    id: 'teamDefault',
+    groupId: 'workspace',
+    domId: 'workspace-settings-section-team-default',
+    label: '团队默认显示偏好',
+    icon: 'groups',
+    description: '配置新成员进入当前工作区时的默认显示方案。',
+    legacyTabId: 'teamDefault',
+    testId: 'workspace-settings-nav-team-default',
+  },
+  {
+    id: 'displayPreferences',
+    groupId: 'personal',
+    domId: 'workspace-settings-section-display-preferences',
+    label: '显示偏好',
+    icon: 'tune',
+    description: '为当前工作区保存个人字号与标签边距偏好。',
+    legacyTabId: 'myDisplay',
+    testId: 'workspace-settings-nav-display-preferences',
+  },
 ]
 const WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS: Record<WorkspaceSettingsSecondaryTabId, string> = {
   project: 'workspace-settings-tab-project',
   myDisplay: 'workspace-settings-tab-myDisplay',
   teamDefault: 'workspace-settings-tab-teamDefault',
 }
+const WORKSPACE_SETTINGS_GROUP_TEST_IDS: Record<WorkspaceSettingsGroupId, string> = {
+  workspace: 'workspace-settings-group-workspace',
+  personal: 'workspace-settings-group-personal',
+}
+const settingsPrimaryGroup = ref<WorkspaceSettingsGroupId>('workspace')
+const settingsActiveSectionId = ref<WorkspaceSettingsSectionId>('projectOverview')
+const workspaceMainBodyRef = ref<HTMLElement | null>(null)
 const WORKSPACE_FONT_SIZE_PRESET_ORDER: WorkspaceFontSizePreset[] = WORKSPACE_FONT_SIZE_PRESET_OPTIONS.map(item => item.value)
 const WORKSPACE_TAB_SPACING_PRESET_ORDER: WorkspaceTabSpacingPreset[] = WORKSPACE_TAB_SPACING_PRESET_OPTIONS.map(item => item.value)
 const userWorkspaceDisplayFontSizeDraft = ref<NullableWorkspaceFontSizePreset>('')
@@ -610,6 +722,12 @@ const resourcePreviewTabRef = ref<{
   scrollToCommentThread: (threadId: string) => void
   scrollToHeadingAnchor: (anchorId: string) => boolean
 } | null>(null)
+const designPanelRef = ref<{
+  locateOutlineItem: (node: WorkspaceOutlineNode) => boolean
+} | null>(null)
+const flowTabRef = ref<{
+  locateOutlineItem: (node: WorkspaceOutlineNode) => boolean
+} | null>(null)
 
 const {
   openTabs,
@@ -651,92 +769,52 @@ const {
 })
 
 const markdownImageUploadHandler = computed(() => props.markdownImageUploadHandler || props.imageUploadHandler)
-const visibleWorkspaceSettingsSecondaryTabs = computed(() => {
-  return workspaceSettingsSecondaryTabs.filter((item) => {
+const visibleWorkspaceSettingsSections = computed<WorkspaceSettingsSectionItem[]>(() => {
+  return workspaceSettingsSections.filter((item) => {
     if (item.id === 'teamDefault')
       return props.workspaceDisplayPreferences.canManageTeamDefault
     return true
   })
 })
+const workspaceSettingsSectionsByGroup = computed<Record<WorkspaceSettingsGroupId, WorkspaceSettingsSectionItem[]>>(() => {
+  return {
+    workspace: visibleWorkspaceSettingsSections.value.filter(item => item.groupId === 'workspace'),
+    personal: visibleWorkspaceSettingsSections.value.filter(item => item.groupId === 'personal'),
+  }
+})
+const activeWorkspaceSettingsGroup = computed<WorkspaceSettingsGroupItem | null>(() => {
+  return workspaceSettingsGroups.find(item => item.id === settingsPrimaryGroup.value) || null
+})
+const activeWorkspaceSettingsSection = computed<WorkspaceSettingsSectionItem | null>(() => {
+  return visibleWorkspaceSettingsSections.value.find(item => item.id === settingsActiveSectionId.value) || visibleWorkspaceSettingsSections.value[0] || null
+})
+const activeWorkspaceProjectSectionId = computed<WorkspaceProjectPanelSectionId | ''>(() => {
+  const activeSectionId = settingsActiveSectionId.value
+  if (activeSectionId === 'displayPreferences' || activeSectionId === 'teamDefault')
+    return ''
+  return activeSectionId
+})
+const isDisplayPreferencesSectionActive = computed(() => settingsActiveSectionId.value === 'displayPreferences')
+const isTeamDefaultSectionActive = computed(() => settingsActiveSectionId.value === 'teamDefault')
 const recommendedWorkspaceDisplayTagText = computed(() => {
   return '研发工作台推荐'
 })
-const workspaceMainTabLayoutStyle = computed<Record<string, string>>(() => {
-  const preset = props.workspaceDisplayPreferences.effective.tabSpacingPreset || 'relaxed'
-  if (preset === 'ultra_compact') {
-    return {
-      '--workspace-main-tab-min-width': '96px',
-      '--workspace-main-tab-padding-x': '3px',
-      '--workspace-main-tab-gap': '1px',
-      '--workspace-main-tab-trigger-gap': '3px',
-      '--workspace-main-tab-close-padding': '0px',
-      '--workspace-main-tab-close-button-size': '18px',
-      '--workspace-main-tab-active-indicator-inset': '8px',
-      '--workspace-main-tab-strip-height': '28px',
-      '--workspace-main-tab-label-size': '9px',
-      '--workspace-main-tab-icon-size': '13px',
-      '--workspace-main-tab-close-icon-size': '10px',
-      '--workspace-main-breadcrumb-padding-x': '11px',
-      '--workspace-main-breadcrumb-padding-y': '3.5px',
-    }
-  }
-  if (preset === 'compact') {
-    return {
-      '--workspace-main-tab-min-width': '124px',
-      '--workspace-main-tab-padding-x': '5px',
-      '--workspace-main-tab-gap': '2px',
-      '--workspace-main-tab-trigger-gap': '5px',
-      '--workspace-main-tab-close-padding': '1px',
-      '--workspace-main-tab-strip-height': '36px',
-      '--workspace-main-tab-label-size': '11px',
-      '--workspace-main-tab-icon-size': '16px',
-      '--workspace-main-tab-close-icon-size': '13px',
-      '--workspace-main-breadcrumb-padding-x': '12px',
-      '--workspace-main-breadcrumb-padding-y': '4px',
-    }
-  }
-  if (preset === 'relaxed') {
-    return {
-      '--workspace-main-tab-min-width': '174px',
-      '--workspace-main-tab-padding-x': '10px',
-      '--workspace-main-tab-gap': '4px',
-      '--workspace-main-tab-trigger-gap': '8px',
-      '--workspace-main-tab-close-padding': '4px',
-      '--workspace-main-tab-strip-height': '42px',
-      '--workspace-main-tab-label-size': '12px',
-      '--workspace-main-tab-icon-size': '18px',
-      '--workspace-main-tab-close-icon-size': '14px',
-      '--workspace-main-breadcrumb-padding-x': '12px',
-      '--workspace-main-breadcrumb-padding-y': '6px',
-    }
-  }
-  if (preset === 'spacious') {
-    return {
-      '--workspace-main-tab-min-width': '190px',
-      '--workspace-main-tab-padding-x': '11px',
-      '--workspace-main-tab-gap': '5px',
-      '--workspace-main-tab-trigger-gap': '9px',
-      '--workspace-main-tab-close-padding': '5px',
-      '--workspace-main-tab-strip-height': '44px',
-      '--workspace-main-tab-label-size': '12px',
-      '--workspace-main-tab-icon-size': '19px',
-      '--workspace-main-tab-close-icon-size': '15px',
-      '--workspace-main-breadcrumb-padding-x': '13px',
-      '--workspace-main-breadcrumb-padding-y': '7px',
-    }
-  }
+const workspaceMainTabLayoutStyle = computed<Record<string, string | undefined>>(() => {
+  const density = resolveWorkspaceTabDensityTokens(props.workspaceDisplayPreferences.effective.tabSpacingPreset || 'relaxed')
   return {
-    '--workspace-main-tab-min-width': '156px',
-    '--workspace-main-tab-padding-x': '7px',
-    '--workspace-main-tab-gap': '4px',
-    '--workspace-main-tab-trigger-gap': '7px',
-    '--workspace-main-tab-close-padding': '3px',
-    '--workspace-main-tab-strip-height': '40px',
-    '--workspace-main-tab-label-size': '12px',
-    '--workspace-main-tab-icon-size': '17px',
-    '--workspace-main-tab-close-icon-size': '14px',
-    '--workspace-main-breadcrumb-padding-x': '12px',
-    '--workspace-main-breadcrumb-padding-y': '6px',
+    '--workspace-main-tab-min-width': density.minWidth,
+    '--workspace-main-tab-padding-x': density.paddingX,
+    '--workspace-main-tab-gap': density.gap,
+    '--workspace-main-tab-trigger-gap': density.triggerGap,
+    '--workspace-main-tab-close-padding': density.closePadding,
+    '--workspace-main-tab-close-button-size': density.closeButtonSize,
+    '--workspace-main-tab-active-indicator-inset': density.activeIndicatorInset,
+    '--workspace-main-tab-strip-height': density.stripHeight,
+    '--workspace-main-tab-label-size': density.labelSize,
+    '--workspace-main-tab-icon-size': density.iconSize,
+    '--workspace-main-tab-close-icon-size': density.closeIconSize,
+    '--workspace-main-breadcrumb-padding-x': density.breadcrumbPaddingX,
+    '--workspace-main-breadcrumb-padding-y': density.breadcrumbPaddingY,
   }
 })
 
@@ -870,8 +948,54 @@ const workspaceInviteProjectLabel = computed(() => {
   return '接受邀请后会自动获得当前项目权限。'
 })
 
-function selectSettingsSecondaryTab(tabId: WorkspaceSettingsSecondaryTabId): void {
-  settingsSecondaryTab.value = tabId
+function findWorkspaceSettingsSection(sectionId: WorkspaceSettingsSectionId): WorkspaceSettingsSectionItem | null {
+  return visibleWorkspaceSettingsSections.value.find(item => item.id === sectionId) || null
+}
+
+function resolveWorkspaceSettingsDefaultSection(groupId: WorkspaceSettingsGroupId): WorkspaceSettingsSectionId {
+  return workspaceSettingsSectionsByGroup.value[groupId][0]?.id || visibleWorkspaceSettingsSections.value[0]?.id || 'projectOverview'
+}
+
+function syncWorkspaceSettingsSectionFromScroll(): void {
+  // Settings now uses explicit sidebar navigation instead of scroll spy syncing.
+}
+
+function scrollToWorkspaceSettingsSection(
+  _sectionId: WorkspaceSettingsSectionId,
+  behavior: ScrollBehavior = 'smooth',
+): void {
+  if (!import.meta.client || activeTabId.value !== 'settings')
+    return
+
+  const container = workspaceMainBodyRef.value
+  if (!container)
+    return
+
+  container.scrollTo({
+    top: 0,
+    behavior,
+  })
+}
+
+function activateWorkspaceSettingsSection(
+  sectionId: WorkspaceSettingsSectionId,
+  options: { behavior?: ScrollBehavior } = {},
+): void {
+  const nextSection = findWorkspaceSettingsSection(sectionId)
+  if (!nextSection)
+    return
+
+  settingsActiveSectionId.value = nextSection.id
+  settingsPrimaryGroup.value = nextSection.groupId
+
+  void nextTick(() => {
+    scrollToWorkspaceSettingsSection(nextSection.id, options.behavior || 'smooth')
+    syncWorkspaceSettingsSectionFromScroll()
+  })
+}
+
+function onWorkspaceMainBodyScroll(): void {
+  // Settings panels switch via navbar selection, so scroll no longer drives active state.
 }
 
 function normalizeWorkspaceTabSpacingSliderIndex(value: WorkspaceTabSpacingPreset | null | undefined): number {
@@ -2076,12 +2200,7 @@ function saveCurrentPanel(): WorkspacePanelCommandResult {
   if (activeTabId.value !== 'settings')
     return { handled: false, reason: '当前面板没有可保存内容。' }
 
-  if (settingsSecondaryTab.value === 'project') {
-    emit('saveProjectSettings')
-    return { handled: true }
-  }
-
-  if (settingsSecondaryTab.value === 'myDisplay') {
+  if (settingsActiveSectionId.value === 'displayPreferences') {
     if (props.workspaceDisplayPreferencesSavingScope === 'user')
       return { handled: false, reason: '当前面板正在保存中。' }
     if (!userWorkspaceDisplayChanged.value)
@@ -2090,14 +2209,19 @@ function saveCurrentPanel(): WorkspacePanelCommandResult {
     return { handled: true }
   }
 
-  if (!props.workspaceDisplayPreferences.canManageTeamDefault)
-    return { handled: false, reason: '当前账号无权保存团队默认显示偏好。' }
-  if (props.workspaceDisplayPreferencesSavingScope === 'team')
-    return { handled: false, reason: '当前面板正在保存中。' }
-  if (!teamWorkspaceDisplayChanged.value)
-    return { handled: false, reason: '当前面板没有待保存内容。' }
+  if (settingsActiveSectionId.value === 'teamDefault') {
+    if (!props.workspaceDisplayPreferences.canManageTeamDefault)
+      return { handled: false, reason: '当前账号无权保存团队默认显示偏好。' }
+    if (props.workspaceDisplayPreferencesSavingScope === 'team')
+      return { handled: false, reason: '当前面板正在保存中。' }
+    if (!teamWorkspaceDisplayChanged.value)
+      return { handled: false, reason: '当前面板没有待保存内容。' }
 
-  saveWorkspaceDisplayTeamDefault()
+    saveWorkspaceDisplayTeamDefault()
+    return { handled: true }
+  }
+
+  emit('saveProjectSettings')
   return { handled: true }
 }
 
@@ -2128,6 +2252,12 @@ defineExpose({
   },
   scrollToMarkdownHeadingAnchor(anchorId: string) {
     return resourcePreviewTabRef.value?.scrollToHeadingAnchor(anchorId) || false
+  },
+  locateDesignOutlineItem(node: WorkspaceOutlineNode) {
+    return designPanelRef.value?.locateOutlineItem(node) || false
+  },
+  locateWorkflowOutlineItem(node: WorkspaceOutlineNode) {
+    return flowTabRef.value?.locateOutlineItem(node) || false
   },
   saveCurrentPanel,
   canCloseCurrentTab,
@@ -2206,22 +2336,48 @@ watch(() => props.workspaceInvitationLink, (next, previous) => {
 
 watch(() => props.workspaceDisplayPreferences, (snapshot) => {
   applyWorkspaceDisplayPreferenceDrafts(snapshot)
-  if (settingsSecondaryTab.value === 'teamDefault' && !snapshot.canManageTeamDefault)
-    settingsSecondaryTab.value = 'project'
+  if (activeTabId.value === 'settings')
+    void nextTick(() => syncWorkspaceSettingsSectionFromScroll())
 }, { deep: true, immediate: true })
+
+watch(visibleWorkspaceSettingsSections, (sections) => {
+  if (!sections.length)
+    return
+
+  if (!sections.some(item => item.id === settingsActiveSectionId.value)) {
+    const fallbackSectionId = resolveWorkspaceSettingsDefaultSection(settingsPrimaryGroup.value)
+    settingsActiveSectionId.value = fallbackSectionId
+    settingsPrimaryGroup.value = findWorkspaceSettingsSection(fallbackSectionId)?.groupId || 'workspace'
+  }
+
+  if (activeTabId.value === 'settings')
+    void nextTick(() => syncWorkspaceSettingsSectionFromScroll())
+}, { immediate: true })
+
+watch(() => activeTabId.value, (next) => {
+  if (next !== 'settings')
+    return
+  void nextTick(() => syncWorkspaceSettingsSectionFromScroll())
+})
 
 watch(() => props.openSettingsSignal, (next, previous) => {
   if (next === previous)
     return
   ensureFixedTabOpen('settings', true)
-  selectSettingsSecondaryTab('project')
+  activateWorkspaceSettingsSection('projectOverview', { behavior: 'auto' })
+})
+
+watch(() => props.openLoopyDataSignal, (next, previous) => {
+  if (next === previous)
+    return
+  ensureFixedTabOpen('loopy_data', true)
 })
 
 watch(() => props.openDisplayPreferencesSignal, (next, previous) => {
   if (next === previous)
     return
   ensureFixedTabOpen('settings', true)
-  selectSettingsSecondaryTab('myDisplay')
+  activateWorkspaceSettingsSection('displayPreferences', { behavior: 'auto' })
 })
 
 watch(() => props.openMemberManagementSignal, (next, previous) => {
@@ -2325,8 +2481,10 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
     </div>
 
     <div
+      ref="workspaceMainBodyRef"
       class="flex-1 h-0 min-h-0"
       :class="activeResourceTab || activeTabId === 'flow' ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden p-4 md:p-6'"
+      @scroll="onWorkspaceMainBodyScroll"
     >
       <WorkspaceDashboardTab
         v-if="activeTabId === 'dashboard'"
@@ -2407,10 +2565,13 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
 
       <WorkspaceFlowTab
         v-else-if="activeTabId === 'flow'"
+        ref="flowTabRef"
         :project-id="props.activeProjectId"
         :has-flow-resource="hasFlowResource"
         :flow-panel-title="flowPanelTitle"
         :flow-resource-id="props.flowResourceId"
+        :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+        :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
         :collab-revision="collabRevision"
         :collab-connected="collabConnected"
         :collab-connection-text="collabConnectionText"
@@ -2459,349 +2620,449 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         @revoke-workspace-invitation="revokeWorkspaceInvitation"
       />
 
+      <WorkspaceLoopyDataTab
+        v-else-if="activeTabId === 'loopy_data'"
+        :active-project="activeProject"
+        :active-project-id="props.activeProjectId"
+        :dashboard="props.projectKnowledgeDashboard"
+        :loading="props.projectKnowledgeLoading"
+        :error="props.projectKnowledgeError"
+        :reindexing-target="props.projectKnowledgeReindexingTarget"
+        :retrying-source-id="props.projectKnowledgeRetryingSourceId"
+        @reload="emit('reloadProjectKnowledge')"
+        @reindex-project-knowledge="emit('reindexProjectKnowledge', $event)"
+        @reindex-project-knowledge-source="emit('reindexProjectKnowledgeSource', $event)"
+      />
+
       <section
         v-else-if="activeTabId === 'settings'"
-        class="w-full space-y-4"
+        class="w-full"
       >
-        <section class="border border-slate-200 rounded-2xl bg-white overflow-hidden">
-          <div class="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 class="text-sm text-slate-800 font-bold">
-                设置
-              </h2>
-              <p class="text-xs text-slate-500 mt-1">
-                项目配置与显示偏好统一在这里维护。
-              </p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="item in visibleWorkspaceSettingsSecondaryTabs"
-                :key="item.id"
-                :data-testid="WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS[item.id]"
-                class="text-xs font-semibold px-3 py-1.5 border rounded-full inline-flex gap-2 transition-colors items-center"
-                :class="settingsSecondaryTab === item.id
-                  ? 'border-blue-200 bg-blue-50 text-blue-700'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
-                type="button"
-                @click="selectSettingsSecondaryTab(item.id)"
+        <div class="workspace-settings-shell">
+          <aside class="workspace-settings-sidebar">
+            <div class="workspace-settings-sidebar__inner">
+              <div class="space-y-1">
+                <p class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
+                  Settings
+                </p>
+                <h2 class="text-lg text-slate-900 font-semibold">
+                  项目设置
+                </h2>
+                <p class="text-xs text-slate-500 leading-5">
+                  左侧导航切换设置项，右侧只展示当前选中的面板。
+                </p>
+              </div>
+
+              <section
+                v-for="group in workspaceSettingsGroups"
+                v-show="workspaceSettingsSectionsByGroup[group.id].length > 0"
+                :key="group.id"
+                :data-testid="WORKSPACE_SETTINGS_GROUP_TEST_IDS[group.id]"
+                class="space-y-2"
               >
-                <span class="material-symbols-outlined text-[15px]">{{ item.icon }}</span>
-                <span>{{ item.label }}</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="text-xs text-slate-500 p-4 border-b border-slate-100 bg-white">
-            {{ visibleWorkspaceSettingsSecondaryTabs.find(item => item.id === settingsSecondaryTab)?.description }}
-          </div>
-        </section>
-
-        <section
-          v-if="settingsSecondaryTab === 'myDisplay'"
-          data-testid="user-settings-display-preferences-tab"
-          class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
-        >
-          <div class="px-4 py-4 border-b border-slate-200 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h3 class="text-sm text-slate-800 font-semibold">
-                我的显示偏好
-              </h3>
-              <p class="text-xs text-slate-500 mt-1">
-                保存后仅影响当前工作区，不会覆盖团队默认。
-              </p>
-            </div>
-            <div class="text-xs text-slate-500">
-              当前生效：{{ workspaceDisplayEffectiveSummary }}
-            </div>
-          </div>
-
-          <div class="p-4 space-y-4" data-testid="user-settings-display-preferences-panel">
-            <div v-if="props.workspaceDisplayPreferencesError" class="text-xs text-rose-600 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50">
-              {{ props.workspaceDisplayPreferencesError }}
-            </div>
-
-            <div v-if="props.workspaceDisplayPreferencesLoading" class="text-xs text-slate-500 p-3 border border-slate-200 rounded bg-slate-50">
-              正在加载显示偏好...
-            </div>
-
-            <template v-else>
-              <section class="p-4 border border-slate-200 rounded-2xl bg-slate-50/70 space-y-4">
-                <div>
-                  <h4 class="text-sm text-slate-900 font-semibold">
-                    外观设置
-                  </h4>
-                  <p class="text-[11px] text-slate-500 mt-1">
-                    当前生效：{{ workspaceDisplayEffectiveSummary }}
-                  </p>
-                </div>
-
-                <div class="space-y-3">
-                  <div class="text-xs text-slate-600 flex items-center justify-between">
-                    <span>字体大小</span>
-                  </div>
-
-                  <div class="workspace-display-slider-shell">
-                    <div class="workspace-display-slider-track" aria-hidden="true">
-                      <div
-                        class="workspace-display-slider-track__fill"
-                        :style="{ width: userWorkspaceDisplaySliderProgress }"
-                      />
-                      <span
-                        v-for="(option, index) in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
-                        :key="`workspace-display-user-track-stop-${option.value}`"
-                        class="workspace-display-slider-track__stop"
-                        :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
-                          ? 'workspace-display-slider-track__stop--active'
-                          : ''"
-                        :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length) }"
-                      />
-                    </div>
-                    <input
-                      data-testid="workspace-display-user-font-size-select"
-                      class="workspace-display-slider"
-                      type="range"
-                      min="0"
-                      :max="Math.max(0, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length - 1)"
-                      step="1"
-                      :value="userWorkspaceDisplaySliderValue"
-                      @input="updateUserWorkspaceDisplayFontSizeDraft(($event.target as HTMLInputElement).value)"
-                    >
-                  </div>
-
-                  <div class="gap-2 grid" :style="resolveWorkspaceDisplaySliderGridStyle(WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length)">
-                    <span
-                      v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
-                      :key="`workspace-display-user-label-${option.value}`"
-                      class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
-                      :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
-                        ? 'text-blue-700'
-                        : 'text-slate-500'"
-                    >
-                      <span>{{ option.label }}</span>
-                      <span
-                        v-if="option.value === workspaceDisplayRecommendedFontSizePreset"
-                        class="workspace-display-slider-label__tag-wrap"
-                      >
-                        <span
-                          data-testid="workspace-display-recommended-tag"
-                          class="workspace-display-slider-label__tag"
-                          tabindex="0"
-                        >
-                          推荐
-                        </span>
-                        <span class="workspace-display-slider-label__tooltip">
-                          {{ recommendedWorkspaceDisplayTagText }}
-                        </span>
-                      </span>
-                    </span>
-                  </div>
-
-                  <span class="text-[11px] text-slate-500 block">
-                    当前来源：{{ userWorkspaceDisplaySourceSummary }}
-                  </span>
-                </div>
-
-                <div class="space-y-3">
-                  <div class="text-xs text-slate-600 flex items-center justify-between">
-                    <span>标签边距</span>
-                    <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
-                  </div>
-
-                  <div class="workspace-display-slider-shell">
-                    <div class="workspace-display-slider-track" aria-hidden="true">
-                      <div
-                        class="workspace-display-slider-track__fill"
-                        :style="{ width: userWorkspaceDisplayTabSpacingSliderProgress }"
-                      />
-                      <span
-                        v-for="(option, index) in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
-                        :key="`workspace-display-user-tab-spacing-track-stop-${option.value}`"
-                        class="workspace-display-slider-track__stop"
-                        :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
-                          ? 'workspace-display-slider-track__stop--active'
-                          : ''"
-                        :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length) }"
-                      />
-                    </div>
-                    <input
-                      data-testid="workspace-display-user-tab-spacing-select"
-                      class="workspace-display-slider"
-                      type="range"
-                      min="0"
-                      :max="Math.max(0, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length - 1)"
-                      step="1"
-                      :value="userWorkspaceDisplayTabSpacingSliderValue"
-                      @input="updateUserWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
-                    >
-                  </div>
-
-                  <div class="gap-2 grid" :style="resolveWorkspaceDisplaySliderGridStyle(WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length)">
-                    <span
-                      v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
-                      :key="`workspace-display-user-tab-spacing-label-${option.value}`"
-                      class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
-                      :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
-                        ? 'text-blue-700'
-                        : 'text-slate-500'"
-                    >
-                      <span>{{ option.label }}</span>
-                      <span
-                        v-if="option.value === workspaceDisplayRecommendedTabSpacingPreset"
-                        class="workspace-display-slider-label__tag-wrap"
-                      >
-                        <span class="workspace-display-slider-label__tag" tabindex="0">
-                          推荐
-                        </span>
-                        <span class="workspace-display-slider-label__tooltip">
-                          {{ recommendedWorkspaceDisplayTagText }}
-                        </span>
-                      </span>
-                    </span>
-                  </div>
-
-                  <span class="text-[11px] text-slate-500 block">
-                    较小档位会逐步压缩顶部标签页的横向边距和最小宽度，并同步压缩左侧资源列表密度；默认档对应当前标准密度。推荐：{{ workspaceDisplayRecommendedTabSpacingLabel }}。
-                  </span>
-                </div>
-
-                <div class="flex flex-wrap gap-2 justify-end">
+                <p class="text-[11px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
+                  {{ group.label }}
+                </p>
+                <div class="space-y-1">
                   <button
-                    class="text-[11px] font-semibold px-3 py-1.5 border border-slate-200 rounded bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    v-for="item in workspaceSettingsSectionsByGroup[group.id]"
+                    :key="item.id"
+                    :data-testid="item.legacyTabId ? WORKSPACE_SETTINGS_SECONDARY_TAB_TEST_IDS[item.legacyTabId] : item.testId"
+                    class="workspace-settings-sidebar__item"
+                    :class="settingsActiveSectionId === item.id ? 'workspace-settings-sidebar__item--active' : ''"
                     type="button"
-                    :disabled="props.workspaceDisplayPreferencesSavingScope === 'user'"
-                    @click="restoreRecommendedWorkspaceDisplay"
+                    @click="activateWorkspaceSettingsSection(item.id, { behavior: 'auto' })"
                   >
-                    还原为工作区推荐设置
-                  </button>
-                  <button
-                    class="text-[11px] text-white font-semibold px-3 py-1.5 rounded bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                    type="button"
-                    :disabled="props.workspaceDisplayPreferencesSavingScope === 'user' || !userWorkspaceDisplayChanged"
-                    @click="saveWorkspaceDisplayUserOverride"
-                  >
-                    {{ props.workspaceDisplayPreferencesSavingScope === 'user' ? '保存中...' : '保存个人设置' }}
+                    <span class="workspace-settings-sidebar__item-indicator" />
+                    <span class="min-w-0 truncate">{{ item.label }}</span>
                   </button>
                 </div>
               </section>
-            </template>
-          </div>
-        </section>
-
-        <section
-          v-else-if="settingsSecondaryTab === 'teamDefault'"
-          class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
-        >
-          <div class="px-4 py-4 border-b border-slate-200">
-            <h3 class="text-sm text-slate-800 font-semibold">
-              团队默认显示偏好
-            </h3>
-            <p class="text-xs text-slate-500 mt-1">
-              新成员首次进入当前工作区时，将优先继承这里的默认设置。
-            </p>
-          </div>
-
-          <div class="p-4 space-y-4">
-            <div class="gap-4 grid md:grid-cols-2">
-              <label class="text-xs text-slate-600 block space-y-1.5">
-                <span class="text-slate-700 font-semibold">默认字号</span>
-                <select
-                  :value="teamWorkspaceDisplayFontSizeDraft"
-                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-                  @change="teamWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">
-                    跟随系统默认
-                  </option>
-                  <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`team-font-size-${option.value}`" :value="option.value">
-                    {{ option.label }}
-                  </option>
-                </select>
-              </label>
-
-              <label class="text-xs text-slate-600 block space-y-1.5">
-                <span class="text-slate-700 font-semibold">默认标签边距</span>
-                <select
-                  :value="teamWorkspaceDisplayTabSpacingDraft"
-                  class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
-                  @change="teamWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">
-                    跟随系统默认
-                  </option>
-                  <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`team-tab-spacing-${option.value}`" :value="option.value">
-                    {{ option.label }}
-                  </option>
-                </select>
-              </label>
             </div>
+          </aside>
 
-            <div class="space-y-2">
-              <div class="rounded-full bg-slate-200 h-2 overflow-hidden">
-                <div class="rounded-full bg-blue-500 h-full transition-all" :style="{ width: teamWorkspaceDisplayTabSpacingSliderProgress }" />
+          <div class="min-w-0 space-y-4">
+            <section class="border border-slate-200 rounded-2xl bg-white overflow-hidden lg:hidden">
+              <div class="px-4 py-4 border-b border-slate-200 bg-slate-50/80">
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="group in workspaceSettingsGroups"
+                    :key="`workspace-settings-mobile-group-${group.id}`"
+                    class="text-xs font-semibold px-3 py-1.5 border rounded-full transition-colors"
+                    :class="settingsPrimaryGroup === group.id
+                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+                    type="button"
+                    @click="activateWorkspaceSettingsSection(resolveWorkspaceSettingsDefaultSection(group.id), { behavior: 'auto' })"
+                  >
+                    {{ group.label }}
+                  </button>
+                </div>
+                <div class="pt-3 flex flex-wrap gap-2">
+                  <button
+                    v-for="item in workspaceSettingsSectionsByGroup[settingsPrimaryGroup]"
+                    :key="`workspace-settings-mobile-item-${item.id}`"
+                    class="text-xs font-semibold px-3 py-1.5 border rounded-full transition-colors"
+                    :class="settingsActiveSectionId === item.id
+                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+                    type="button"
+                    @click="activateWorkspaceSettingsSection(item.id, { behavior: 'auto' })"
+                  >
+                    {{ item.label }}
+                  </button>
+                </div>
               </div>
-              <input
-                :value="teamWorkspaceDisplayTabSpacingSliderValue"
-                class="w-full"
-                :max="Math.max(0, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length - 1)"
-                min="0"
-                step="1"
-                type="range"
-                @input="updateTeamWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
-              >
+            </section>
+
+            <section class="border border-slate-200 rounded-2xl bg-white overflow-hidden">
+              <div class="px-5 py-4 border-b border-slate-200 bg-slate-50/80">
+                <p class="text-[10px] text-slate-400 tracking-[0.16em] font-semibold uppercase">
+                  {{ activeWorkspaceSettingsGroup?.label || 'Workspace' }}
+                </p>
+                <div class="mt-1 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h2 class="text-sm text-slate-900 font-semibold">
+                      {{ activeWorkspaceSettingsSection?.label || '设置' }}
+                    </h2>
+                    <p class="text-xs text-slate-500 leading-5 mt-1">
+                      {{ activeWorkspaceSettingsSection?.description || '管理项目配置与当前工作区显示偏好。' }}
+                    </p>
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    {{ activeWorkspaceSettingsGroup?.description || '设置中心' }}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section
+              v-show="isDisplayPreferencesSectionActive"
+              id="workspace-settings-section-display-preferences"
+              data-testid="user-settings-display-preferences-tab"
+              class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
+              @focusin.capture="settingsPrimaryGroup = 'personal'; settingsActiveSectionId = 'displayPreferences'"
+              @pointerdown.capture="settingsPrimaryGroup = 'personal'; settingsActiveSectionId = 'displayPreferences'"
+            >
+              <div class="px-5 py-4 border-b border-slate-200 bg-slate-50/80">
+                <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 class="text-sm text-slate-900 font-semibold">
+                      我的显示偏好
+                    </h3>
+                    <p class="text-xs text-slate-500 leading-5 mt-1">
+                      保存后仅影响当前工作区，不会覆盖团队默认。
+                    </p>
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    当前生效：{{ workspaceDisplayEffectiveSummary }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="px-5 py-5 space-y-4" data-testid="user-settings-display-preferences-panel">
+                <div v-if="props.workspaceDisplayPreferencesError" class="text-xs text-rose-600 px-4 py-3 border border-rose-200 rounded-2xl bg-rose-50">
+                  {{ props.workspaceDisplayPreferencesError }}
+                </div>
+
+                <div v-if="props.workspaceDisplayPreferencesLoading" class="text-xs text-slate-500 px-4 py-3 border border-slate-200 rounded-2xl bg-slate-50">
+                  正在加载显示偏好...
+                </div>
+
+                <template v-else>
+                  <section class="p-4 border border-slate-200 rounded-2xl bg-slate-50/70 space-y-4">
+                    <div>
+                      <h4 class="text-sm text-slate-900 font-semibold">
+                        外观设置
+                      </h4>
+                      <p class="text-[11px] text-slate-500 mt-1">
+                        当前生效：{{ workspaceDisplayEffectiveSummary }}
+                      </p>
+                    </div>
+
+                    <div class="space-y-3">
+                      <div class="text-xs text-slate-600 flex items-center justify-between">
+                        <span>字体大小</span>
+                      </div>
+
+                      <div class="workspace-display-slider-shell">
+                        <div class="workspace-display-slider-track" aria-hidden="true">
+                          <div
+                            class="workspace-display-slider-track__fill"
+                            :style="{ width: userWorkspaceDisplaySliderProgress }"
+                          />
+                          <span
+                            v-for="(option, index) in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                            :key="`workspace-display-user-track-stop-${option.value}`"
+                            class="workspace-display-slider-track__stop"
+                            :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                              ? 'workspace-display-slider-track__stop--active'
+                              : ''"
+                            :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length) }"
+                          />
+                        </div>
+                        <input
+                          data-testid="workspace-display-user-font-size-select"
+                          class="workspace-display-slider"
+                          type="range"
+                          min="0"
+                          :max="Math.max(0, WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length - 1)"
+                          step="1"
+                          :value="userWorkspaceDisplaySliderValue"
+                          @input="updateUserWorkspaceDisplayFontSizeDraft(($event.target as HTMLInputElement).value)"
+                        >
+                      </div>
+
+                      <div class="gap-2 grid" :style="resolveWorkspaceDisplaySliderGridStyle(WORKSPACE_FONT_SIZE_PRESET_OPTIONS.length)">
+                        <span
+                          v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS"
+                          :key="`workspace-display-user-label-${option.value}`"
+                          class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
+                          :class="userWorkspaceDisplayPreviewFontSizePreset === option.value
+                            ? 'text-blue-700'
+                            : 'text-slate-500'"
+                        >
+                          <span>{{ option.label }}</span>
+                          <span
+                            v-if="option.value === workspaceDisplayRecommendedFontSizePreset"
+                            class="workspace-display-slider-label__tag-wrap"
+                          >
+                            <span
+                              data-testid="workspace-display-recommended-tag"
+                              class="workspace-display-slider-label__tag"
+                              tabindex="0"
+                            >
+                              推荐
+                            </span>
+                            <span class="workspace-display-slider-label__tooltip">
+                              {{ recommendedWorkspaceDisplayTagText }}
+                            </span>
+                          </span>
+                        </span>
+                      </div>
+
+                      <span class="text-[11px] text-slate-500 block">
+                        当前来源：{{ userWorkspaceDisplaySourceSummary }}
+                      </span>
+                    </div>
+
+                    <div class="space-y-3">
+                      <div class="text-xs text-slate-600 flex items-center justify-between">
+                        <span>标签边距</span>
+                        <span class="text-[11px] text-slate-400">当前预览：{{ userWorkspaceDisplayPreviewTabSpacingLabel }}</span>
+                      </div>
+
+                      <div class="workspace-display-slider-shell">
+                        <div class="workspace-display-slider-track" aria-hidden="true">
+                          <div
+                            class="workspace-display-slider-track__fill"
+                            :style="{ width: userWorkspaceDisplayTabSpacingSliderProgress }"
+                          />
+                          <span
+                            v-for="(option, index) in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                            :key="`workspace-display-user-tab-spacing-track-stop-${option.value}`"
+                            class="workspace-display-slider-track__stop"
+                            :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                              ? 'workspace-display-slider-track__stop--active'
+                              : ''"
+                            :style="{ left: resolveWorkspaceDisplaySliderStopLeft(index, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length) }"
+                          />
+                        </div>
+                        <input
+                          data-testid="workspace-display-user-tab-spacing-select"
+                          class="workspace-display-slider"
+                          type="range"
+                          min="0"
+                          :max="Math.max(0, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length - 1)"
+                          step="1"
+                          :value="userWorkspaceDisplayTabSpacingSliderValue"
+                          @input="updateUserWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
+                        >
+                      </div>
+
+                      <div class="gap-2 grid" :style="resolveWorkspaceDisplaySliderGridStyle(WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length)">
+                        <span
+                          v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS"
+                          :key="`workspace-display-user-tab-spacing-label-${option.value}`"
+                          class="workspace-display-slider-label text-[11px] font-medium text-center transition-colors"
+                          :class="userWorkspaceDisplayPreviewTabSpacingPreset === option.value
+                            ? 'text-blue-700'
+                            : 'text-slate-500'"
+                        >
+                          <span>{{ option.label }}</span>
+                          <span
+                            v-if="option.value === workspaceDisplayRecommendedTabSpacingPreset"
+                            class="workspace-display-slider-label__tag-wrap"
+                          >
+                            <span class="workspace-display-slider-label__tag" tabindex="0">
+                              推荐
+                            </span>
+                            <span class="workspace-display-slider-label__tooltip">
+                              {{ recommendedWorkspaceDisplayTagText }}
+                            </span>
+                          </span>
+                        </span>
+                      </div>
+
+                      <span class="text-[11px] text-slate-500 block">
+                        较小档位会逐步压缩顶部标签页的横向边距和最小宽度，并同步压缩左侧资源列表密度；默认档对应当前标准密度。推荐：{{ workspaceDisplayRecommendedTabSpacingLabel }}。
+                      </span>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2 justify-end">
+                      <button
+                        class="text-[11px] font-semibold px-3 py-1.5 border border-slate-200 rounded-full bg-white transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="props.workspaceDisplayPreferencesSavingScope === 'user'"
+                        @click="restoreRecommendedWorkspaceDisplay"
+                      >
+                        还原为工作区推荐设置
+                      </button>
+                      <button
+                        class="text-[11px] text-white font-semibold px-3 py-1.5 rounded-full bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        type="button"
+                        :disabled="props.workspaceDisplayPreferencesSavingScope === 'user' || !userWorkspaceDisplayChanged"
+                        @click="saveWorkspaceDisplayUserOverride"
+                      >
+                        {{ props.workspaceDisplayPreferencesSavingScope === 'user' ? '保存中...' : '保存个人设置' }}
+                      </button>
+                    </div>
+                  </section>
+                </template>
+              </div>
+            </section>
+
+            <div v-show="Boolean(activeWorkspaceProjectSectionId)" class="space-y-4">
+              <WorkspaceProjectSettingsTab
+                :active-project="activeProject"
+                :active-project-id="props.activeProjectId"
+                :active-settings-section-id="activeWorkspaceProjectSectionId"
+                :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+                :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
+                :contests="projectSettingsContestOptions"
+                :project-settings-loading="projectSettingsLoading"
+                :project-settings-save-state="projectSettingsSaveState"
+                :project-settings-common="projectSettingsCommon"
+                :project-settings-bindings="projectSettingsBindings"
+                :project-settings-current-contest-id="projectSettingsCurrentContestId"
+                :project-settings-adaptation="projectSettingsAdaptation"
+                :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+                :project-resource-shares="projectResourceShares"
+                :project-resource-shares-loading="projectResourceSharesLoading"
+                :project-settings-save-label="projectSettingsSaveLabel"
+                :project-settings-save-badge-class="projectSettingsSaveBadgeClass"
+                :project-settings-contest-name="projectSettingsContestName"
+                :contest-tracks-by-contest-id="contestTracksByContestId"
+                :share-visibility-label="shareVisibilityLabel"
+                :share-status-label="shareStatusLabel"
+                :share-status-badge-class="shareStatusBadgeClass"
+                :get-share-status="getShareStatus"
+                :format-date-time="formatDateTime"
+                @emit-project-settings-common="emitProjectSettingsCommon"
+                @update-project-settings-common-field="updateProjectSettingsCommonField($event.field, $event.value)"
+                @save-project-settings="emit('saveProjectSettings')"
+                @add-project-settings-binding="onAddProjectSettingsBinding"
+                @update-project-settings-binding-contest="updateProjectSettingsBindingContest($event.index, $event.contestId)"
+                @update-project-settings-binding-track="updateProjectSettingsBindingTrack($event.index, $event.trackId)"
+                @use-binding-as-current-contest="useBindingAsCurrentContest($event.contestId, $event.trackId)"
+                @remove-project-settings-binding="removeProjectSettingsBinding"
+                @update-project-settings-adaptation-field="updateProjectSettingsAdaptationField($event.field, $event.value)"
+                @copy-project-resource-share="emit('copyProjectResourceShare', $event)"
+                @revoke-project-resource-share="emit('revokeProjectResourceShare', $event)"
+              />
             </div>
 
-            <div class="flex justify-end">
-              <button
-                class="text-xs text-white font-semibold px-3 py-2 rounded-xl bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                type="button"
-                :disabled="props.workspaceDisplayPreferencesLoading || props.workspaceDisplayPreferencesSavingScope === 'team' || !teamWorkspaceDisplayChanged"
-                @click="saveWorkspaceDisplayTeamDefault"
-              >
-                保存团队默认
-              </button>
-            </div>
+            <section
+              v-show="isTeamDefaultSectionActive && props.workspaceDisplayPreferences.canManageTeamDefault"
+              id="workspace-settings-section-team-default"
+              data-testid="workspace-settings-section-team-default"
+              class="border border-slate-200 rounded-2xl bg-white overflow-hidden"
+              @focusin.capture="settingsPrimaryGroup = 'workspace'; settingsActiveSectionId = 'teamDefault'"
+              @pointerdown.capture="settingsPrimaryGroup = 'workspace'; settingsActiveSectionId = 'teamDefault'"
+            >
+              <div class="px-5 py-4 border-b border-slate-200 bg-slate-50/80">
+                <div class="flex gap-3">
+                  <span class="material-symbols-outlined text-xl text-slate-700 mt-0.5">groups</span>
+                  <div>
+                    <h3 class="text-sm text-slate-900 font-semibold">
+                      团队默认显示偏好
+                    </h3>
+                    <p class="text-xs text-slate-500 leading-5 mt-1">
+                      新成员首次进入当前工作区时，将优先继承这里的默认设置。
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="px-5 py-5 space-y-4">
+                <div class="gap-4 grid md:grid-cols-2">
+                  <label class="text-xs text-slate-600 block space-y-1.5">
+                    <span class="text-slate-700 font-semibold">默认字号</span>
+                    <select
+                      :value="teamWorkspaceDisplayFontSizeDraft"
+                      class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+                      @change="teamWorkspaceDisplayFontSizeDraft = normalizeWorkspaceFontSizeDraft(($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="">
+                        跟随系统默认
+                      </option>
+                      <option v-for="option in WORKSPACE_FONT_SIZE_PRESET_OPTIONS" :key="`team-font-size-${option.value}`" :value="option.value">
+                        {{ option.label }}
+                      </option>
+                    </select>
+                  </label>
+
+                  <label class="text-xs text-slate-600 block space-y-1.5">
+                    <span class="text-slate-700 font-semibold">默认标签边距</span>
+                    <select
+                      :value="teamWorkspaceDisplayTabSpacingDraft"
+                      class="text-xs px-3 outline-none border border-slate-200 rounded-xl bg-white h-10 w-full focus:border-blue-500"
+                      @change="teamWorkspaceDisplayTabSpacingDraft = normalizeWorkspaceTabSpacingDraft(($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="">
+                        跟随系统默认
+                      </option>
+                      <option v-for="option in WORKSPACE_TAB_SPACING_PRESET_OPTIONS" :key="`team-tab-spacing-${option.value}`" :value="option.value">
+                        {{ option.label }}
+                      </option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="space-y-2">
+                  <div class="rounded-full bg-slate-200 h-2 overflow-hidden">
+                    <div class="rounded-full bg-blue-500 h-full transition-all" :style="{ width: teamWorkspaceDisplayTabSpacingSliderProgress }" />
+                  </div>
+                  <input
+                    :value="teamWorkspaceDisplayTabSpacingSliderValue"
+                    class="w-full"
+                    :max="Math.max(0, WORKSPACE_TAB_SPACING_PRESET_OPTIONS.length - 1)"
+                    min="0"
+                    step="1"
+                    type="range"
+                    @input="updateTeamWorkspaceDisplayTabSpacingDraft(($event.target as HTMLInputElement).value)"
+                  >
+                </div>
+
+                <div class="flex justify-end">
+                  <button
+                    class="text-xs text-white font-semibold px-3.5 py-2 rounded-full bg-slate-900 transition-colors hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                    type="button"
+                    :disabled="props.workspaceDisplayPreferencesLoading || props.workspaceDisplayPreferencesSavingScope === 'team' || !teamWorkspaceDisplayChanged"
+                    @click="saveWorkspaceDisplayTeamDefault"
+                  >
+                    保存团队默认
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
-        </section>
-
-        <WorkspaceProjectSettingsTab
-          v-else
-          :active-project="activeProject"
-          :active-project-id="props.activeProjectId"
-          :contests="projectSettingsContestOptions"
-          :project-settings-loading="projectSettingsLoading"
-          :project-settings-save-state="projectSettingsSaveState"
-          :project-settings-common="projectSettingsCommon"
-          :project-settings-bindings="projectSettingsBindings"
-          :project-settings-current-contest-id="projectSettingsCurrentContestId"
-          :project-settings-adaptation="projectSettingsAdaptation"
-          :project-settings-has-current-contest="projectSettingsHasCurrentContest"
-          :project-resource-shares="projectResourceShares"
-          :project-resource-shares-loading="projectResourceSharesLoading"
-          :project-settings-save-label="projectSettingsSaveLabel"
-          :project-settings-save-badge-class="projectSettingsSaveBadgeClass"
-          :project-settings-contest-name="projectSettingsContestName"
-          :contest-tracks-by-contest-id="contestTracksByContestId"
-          :share-visibility-label="shareVisibilityLabel"
-          :share-status-label="shareStatusLabel"
-          :share-status-badge-class="shareStatusBadgeClass"
-          :get-share-status="getShareStatus"
-          :format-date-time="formatDateTime"
-          @emit-project-settings-common="emitProjectSettingsCommon"
-          @update-project-settings-common-field="updateProjectSettingsCommonField($event.field, $event.value)"
-          @save-project-settings="emit('saveProjectSettings')"
-          @add-project-settings-binding="onAddProjectSettingsBinding"
-          @update-project-settings-binding-contest="updateProjectSettingsBindingContest($event.index, $event.contestId)"
-          @update-project-settings-binding-track="updateProjectSettingsBindingTrack($event.index, $event.trackId)"
-          @use-binding-as-current-contest="useBindingAsCurrentContest($event.contestId, $event.trackId)"
-          @remove-project-settings-binding="removeProjectSettingsBinding"
-          @update-project-settings-adaptation-field="updateProjectSettingsAdaptationField($event.field, $event.value)"
-          @copy-project-resource-share="emit('copyProjectResourceShare', $event)"
-          @revoke-project-resource-share="emit('revokeProjectResourceShare', $event)"
-        />
+        </div>
       </section>
 
       <WorkspaceDesignPanel
         v-else-if="isActiveDesignResource"
+        ref="designPanelRef"
         class="h-full min-h-0 w-full"
         :design-resource-id="activeDesignResourceId"
         :bound-resource-id="props.collabResourceId"
@@ -2831,6 +3092,8 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         ref="resourcePreviewTabRef"
         :active-resource-tab="activeResourceTab"
         :active-preview-mode="activePreviewMode"
+        :font-size-preset="props.workspaceDisplayPreferences.effective.fontSizePreset || ''"
+        :tab-spacing-preset="props.workspaceDisplayPreferences.effective.tabSpacingPreset || ''"
         :preview-resource-id="props.previewResourceId"
         :preview-status="previewStatus"
         :preview-status-loading="previewStatusLoading"
@@ -2868,6 +3131,7 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
         @markdown-selection-change="onMarkdownSelectionChange"
         @markdown-remote-presence-change="onMarkdownRemotePresenceChange"
         @markdown-primary-heading-change="emit('markdownPrimaryHeadingChange', $event)"
+        @markdown-outline-change="emit('markdownOutlineChange', $event)"
         @markdown-create-comment-from-selection="emit('markdownCreateCommentFromSelection', $event)"
         @markdown-create-comment-from-image="emit('markdownCreateCommentFromImage', $event)"
         @markdown-open-comment-thread="emit('markdownOpenCommentThread', $event)"
@@ -3096,5 +3360,78 @@ watch(() => props.workspaceSeatLimitUpdatedSignal, (next, previous) => {
 .workspace-display-slider-label__tag-wrap:focus-within .workspace-display-slider-label__tooltip {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+.workspace-settings-shell {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-settings-sidebar {
+  display: none;
+}
+
+.workspace-settings-sidebar__inner {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.workspace-settings-sidebar__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.625rem 0.875rem;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: rgb(71 85 105);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.workspace-settings-sidebar__item:hover {
+  background: rgb(248 250 252);
+  color: rgb(15 23 42);
+}
+
+.workspace-settings-sidebar__item-indicator {
+  display: inline-flex;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 0.16s ease;
+}
+
+.workspace-settings-sidebar__item--active {
+  background: rgb(239 246 255);
+  color: rgb(37 99 235);
+}
+
+.workspace-settings-sidebar__item--active .workspace-settings-sidebar__item-indicator {
+  background: rgb(37 99 235);
+}
+
+@media (min-width: 1024px) {
+  .workspace-settings-shell {
+    align-items: start;
+    grid-template-columns: 232px minmax(0, 1fr);
+  }
+
+  .workspace-settings-sidebar {
+    display: block;
+    position: sticky;
+    top: 0;
+    align-self: start;
+  }
 }
 </style>

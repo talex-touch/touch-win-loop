@@ -12,6 +12,8 @@ const WORKSPACE_MAIN_PANEL_CHROME_FILE = resolve(process.cwd(), 'app/components/
 const WORKSPACE_MAIN_PANEL_EMPTY_STATE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceMainPanelEmptyState.vue')
 const WORKSPACE_DASHBOARD_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceDashboardTab.vue')
 const WORKSPACE_FLOW_TAB_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceFlowTab.vue')
+const WORKSPACE_DESIGN_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceDesignPanel.vue')
+const WORKSPACE_DRAWIO_CANVAS_FILE = resolve(process.cwd(), 'app/components/workspace/collab/WorkspaceDrawioCanvas.client.vue')
 const WORKSPACE_MAIN_TABS_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composables/useWorkspaceMainTabs.ts')
 const UI_CONTEXT_MENU_FILE = resolve(process.cwd(), 'app/components/ui/UiContextMenu.vue')
 const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
@@ -81,6 +83,41 @@ it('workspaceMainPanel 已将标签条、成员、设置、预览视图拆成独
   assert.match(membersTabSource, /data-testid="project-member-list"/, 'WorkspaceMembersTab 缺少成员列表承载')
   assert.match(dashboardTabSource, /关联比赛提交区/, 'WorkspaceDashboardTab 缺少 dashboard 视图承载')
   assert.match(flowTabSource, /暂未初始化流程画布/, 'WorkspaceFlowTab 缺少流程画布空态')
-  assert.match(projectSettingsTabSource, /分享链接管理/, 'WorkspaceProjectSettingsTab 缺少分享链接管理视图')
+  assert.match(projectSettingsTabSource, /项目基础信息/, 'WorkspaceProjectSettingsTab 缺少项目设置主视图承载')
   assert.match(resourcePreviewTabSource, /<RichTextEditor\b/, 'WorkspaceResourcePreviewTab 缺少协作文档视图承载')
+})
+
+it('workspaceMainPanel 为统一结构大纲暴露文档快照与设计稿/流程图定位桥接', async () => {
+  const [
+    mainPanelSource,
+    resourcePreviewTabSource,
+    flowTabSource,
+    designPanelSource,
+    drawioCanvasSource,
+    workspaceSource,
+  ] = await Promise.all([
+    readFile(WORKSPACE_MAIN_PANEL_FILE, 'utf8'),
+    readFile(WORKSPACE_RESOURCE_PREVIEW_TAB_FILE, 'utf8'),
+    readFile(WORKSPACE_FLOW_TAB_FILE, 'utf8'),
+    readFile(WORKSPACE_DESIGN_PANEL_FILE, 'utf8'),
+    readFile(WORKSPACE_DRAWIO_CANVAS_FILE, 'utf8'),
+    readFile(PROJECT_WORKSPACE_FILE, 'utf8'),
+  ])
+
+  assert.match(mainPanelSource, /'markdownOutlineChange': \[value: CollabMarkdownHeadingAnchorItem\[\]\]/, 'WorkspaceMainPanel 缺少 markdown 大纲快照事件')
+  assert.match(mainPanelSource, /ref="designPanelRef"/, 'WorkspaceMainPanel 未持有设计稿定位桥接 ref')
+  assert.match(mainPanelSource, /ref="flowTabRef"/, 'WorkspaceMainPanel 未持有流程图定位桥接 ref')
+  assert.match(mainPanelSource, /locateDesignOutlineItem\(node: WorkspaceOutlineNode\)/, 'WorkspaceMainPanel 未暴露设计稿定位桥接方法')
+  assert.match(mainPanelSource, /locateWorkflowOutlineItem\(node: WorkspaceOutlineNode\)/, 'WorkspaceMainPanel 未暴露流程图定位桥接方法')
+  assert.match(resourcePreviewTabSource, /'markdownOutlineChange': \[value: CollabMarkdownHeadingAnchorItem\[\]\]|markdownOutlineChange: \[value: CollabMarkdownHeadingAnchorItem\[\]\]/, 'WorkspaceResourcePreviewTab 缺少文档大纲快照透传事件')
+  assert.match(resourcePreviewTabSource, /@outline-change="emit\('markdownOutlineChange', \$event\)"/, 'WorkspaceResourcePreviewTab 未透传 RichTextEditor 大纲快照')
+  assert.match(flowTabSource, /function locateOutlineItem\(node: WorkspaceOutlineNode\): boolean \{|defineExpose\(\{[\s\S]*locateOutlineItem,?[\s\S]*\}\)/, 'WorkspaceFlowTab 未暴露统一流程图定位接口')
+  assert.match(designPanelSource, /defineExpose\(\{[\s\S]*locateOutlineItem,?[\s\S]*\}\)/, 'WorkspaceDesignPanel 未暴露统一设计稿定位接口')
+  assert.match(drawioCanvasSource, /function locateOutlineItem\(node: WorkspaceOutlineNode\): boolean \{|defineExpose\(\{[\s\S]*locateOutlineItem,?[\s\S]*\}\)/, 'WorkspaceDrawioCanvas 未暴露统一流程图定位接口')
+  assert.match(drawioCanvasSource, /moveDrawioPageToFront\(/, 'WorkspaceDrawioCanvas 未接入流程页重排定位桥接')
+  assert.match(workspaceSource, /title: '当前内容结构'/, '项目页未生成当前内容结构分区')
+  assert.match(workspaceSource, /title: '项目结构'/, '项目页未生成项目结构分区')
+  assert.match(workspaceSource, /:outline-sections="workspaceOutlineSections"/, '项目页未向左栏注入统一结构大纲 sections')
+  assert.match(workspaceSource, /@locate-outline-item="locateWorkspaceOutlineItem"/, '项目页未接住统一结构定位事件')
+  assert.match(workspaceSource, /@markdown-outline-change="handleMarkdownOutlineChange"/, '项目页未接住文档大纲快照事件')
 })
