@@ -119,7 +119,8 @@ it('资源管理器删除独立系统资料库分组，只保留导入入口', a
   assert.match(source, /workspace-tree-block__title-row workspace-tree-block__title-row--sticky[\s\S]*<span>关联比赛资料<\/span>/, '资源管理器未将“关联比赛资料”标题行标记为 sticky')
   assert.match(source, /workspace-tree-block__refresh-indicator/, '资源管理器缺少区块级刷新提示')
   assert.match(source, /:fresh="isProjectResourceHighlighted\(row\.resource\.id\)"/, '资源树未把新增高亮状态透传给统一树行组件')
-  assert.match(source, /workspace-library-item--fresh/, '关联资料列表缺少新增项高亮 class')
+  assert.match(source, /class="workspace-linked-library-row"/, '关联资料列表未接入统一树行壳子 class')
+  assert.match(source, /:fresh="isResourceLibraryHighlighted\(item\.id\)"/, '关联资料列表未把新增高亮状态透传给统一树行组件')
   assert.match(source, /const libraryListRef = ref<HTMLElement \| null>\(null\)/, '资源管理器缺少项目资源弹窗列表 ref')
   assert.match(source, /function resetLibraryListScroll\(\) \{[\s\S]*libraryListRef\.value\?\.scrollTo\(\{ top: 0 \}\)/, '资源管理器未在项目资源弹窗中重置列表滚动位置')
   assert.match(source, /watch\(libraryModalVisible, \(next\) => \{[\s\S]*resetLibraryListScroll\(\)/, '资源管理器未在项目资源弹窗开关时回到列表顶部')
@@ -136,7 +137,7 @@ it('资源管理器删除独立系统资料库分组，只保留导入入口', a
   assert.match(styleSource, /\.workspace-tree-block__title-row--sticky,/, '资源管理器顶级栏标题缺少 sticky 选择器')
   assert.match(styleSource, /\.workspace-tree-block__refresh-indicator \{/, '资源管理器缺少刷新提示样式')
   assert.match(styleSource, /\.workspace-tree-item-row--fresh \{[\s\S]*workspace-left-item-fresh/, '资源管理器缺少资源树新增高亮动画')
-  assert.match(styleSource, /\.workspace-library-item--fresh \{[\s\S]*workspace-left-item-fresh/, '资源管理器缺少关联资料新增高亮动画')
+  assert.match(styleSource, /\.workspace-linked-library-row \+ \.workspace-linked-library-row \{[\s\S]*border-top:\s*1px solid #eef2f8;/, '关联资料列表缺少统一树行分割线')
   assert.doesNotMatch(styleSource, /\.workspace-tree-item-row--sticky-root/, '资源管理器仍在给资源节点本身挂 sticky 样式')
   assert.match(styleSource, /\.workspace-library-modal \.workspace-library-list \{[\s\S]*padding:\s*4px 0;/, '项目资源弹窗列表缺少滚动容器内边距')
   assert.match(styleSource, /\.workspace-library-item \{[\s\S]*align-items:\s*flex-start;[\s\S]*min-height:\s*52px;/, '项目资源弹窗列表项布局仍然过于拥挤')
@@ -162,6 +163,7 @@ it('项目资料区在 ResourceManagerPanel 内改为完整树，并支持拖拽
   assert.match(source, /function resolveTreeDepthOffset\(depth: number\): string \{[\s\S]*--workspace-left-tree-indent-step/, '资源管理器未将树缩进接入左栏密度变量')
   assert.doesNotMatch(source, /Math\.max\(0, row\.depth\) \* 14/, '资源管理器仍写死树缩进像素值')
   assert.match(rowComponentSource, /workspace-tree-item-row--fresh/, '统一树行组件未承接行级 fresh 状态 class')
+  assert.match(source, /workspace-tree-item--static/, '资源管理器未为只读树行提供统一静态态样式')
 })
 
 it('左栏结构大纲不再用本地推断结果充当真实大纲', async () => {
