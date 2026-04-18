@@ -18,7 +18,7 @@ room:
 webhook:
   api_key: devkey
   urls:
-    - http://host.docker.internal:3510/api/internal/meetings/provider-events
+    - http://host.docker.internal:${WINLOOP_DEV_PORT}/api/internal/meetings/provider-events
 
 logging:
   level: info

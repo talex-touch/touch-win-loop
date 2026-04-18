@@ -3,15 +3,14 @@ import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { stripSentryServerPreload } from './utils/dev-node-options.mjs'
+import { buildNuxtDevelopmentEnv } from './utils/dev-runtime-env.mjs'
 
 const currentFilePath = fileURLToPath(import.meta.url)
 const currentDir = dirname(currentFilePath)
 const nuxtCliPath = resolve(currentDir, '../node_modules/nuxt/bin/nuxt.mjs')
 
 const { nodeOptions, removed } = stripSentryServerPreload(process.env.NODE_OPTIONS)
-const env = {
-  ...process.env,
-}
+const env = buildNuxtDevelopmentEnv(process.env, process.cwd())
 
 if (nodeOptions)
   env.NODE_OPTIONS = nodeOptions
