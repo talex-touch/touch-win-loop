@@ -7,6 +7,7 @@ import type {
   AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentDraftApplyMode,
   AiWorkspaceIssueDraft,
+  AiWorkspaceSceneDraft,
   AiWorkspaceWorkflowDraft,
   ChatMessage,
   ProjectIssueSeverity,
@@ -16,6 +17,7 @@ import type {
   WorkflowStylePreset,
   WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
+  WorkspaceContextualAssistantKey,
 } from '~~/shared/types/domain'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { createDeepAgent } from 'deepagents'
@@ -32,7 +34,7 @@ import {
   extractAgentDocSelectionText,
 } from '~~/shared/utils/agent-doc'
 
-type WorkspaceSupportedMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'document_assist'
+type WorkspaceSupportedMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'document_assist' | 'contextual_agent'
 type WorkspaceConversationRole = 'user' | 'assistant'
 
 interface WorkspaceConversationMessage {
@@ -66,11 +68,13 @@ export interface WorkspaceAiExecutionResult {
   reportMarkdown: string
   documentDraft: AiWorkspaceDocumentDraft | null
   workflowDraft: AiWorkspaceWorkflowDraft | null
+  sceneDraft: AiWorkspaceSceneDraft | null
 }
 
 export interface WorkspaceAiExecutionContext {
   workspaceId: string
   projectId: string
+  projectTitle: string
   contestId: string
   trackId: string
   major: string
@@ -85,6 +89,7 @@ export interface WorkspaceAiExecutionContext {
   documentAction: string
   assistantPreset: WorkspaceAiAssistantPreset
   assistantLabel: string
+  contextualAssistantKey: WorkspaceContextualAssistantKey | ''
   activeTabId: string
   previewMode: string
   resourcePurpose: string
@@ -94,6 +99,14 @@ export interface WorkspaceAiExecutionContext {
   workflowArchitectureView: string
   workflowStylePreset: string
   workflowLayoutPreset: string
+  sceneHash: string
+  sceneSourceText: string
+  sceneSourceFormat: string
+  sceneAction: string
+  sceneTemplate: string
+  sceneArchitectureView: string
+  sceneStylePreset: string
+  sceneLayoutPreset: string
   projectSettingsSummary: string
   projectOutlineSummary: string
   resourceSummary: string
@@ -128,6 +141,7 @@ interface WorkspaceModeState {
   reportSummary: string
   documentDraft: AiWorkspaceDocumentDraft | null
   workflowDraft: AiWorkspaceWorkflowDraft | null
+  sceneDraft: AiWorkspaceSceneDraft | null
 }
 
 interface WorkspaceModeExecutionInput {
@@ -215,7 +229,7 @@ const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentPro
   dialog_ask: {
     mode: 'dialog_ask',
     allowWebAccess: true,
-    progressMessage: 'AI 正在读取工作台上下文并生成只读建议...',
+    progressMessage: '',
   },
   auto_optimize: {
     mode: 'auto_optimize',
@@ -233,6 +247,11 @@ const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentPro
     mode: 'document_assist',
     allowWebAccess: false,
     progressMessage: 'AI 正在生成文稿助手结果...',
+  },
+  contextual_agent: {
+    mode: 'contextual_agent',
+    allowWebAccess: false,
+    progressMessage: 'AI 正在生成待确认草案...',
   },
 }
 
@@ -406,6 +425,7 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
   return JSON.stringify({
     workspaceId: context.workspaceId,
     projectId: context.projectId,
+    projectTitle: context.projectTitle,
     contestId: context.contestId,
     trackId: context.trackId,
     major: context.major,
@@ -420,6 +440,7 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
     documentAction: context.documentAction,
     assistantPreset: context.assistantPreset,
     assistantLabel: context.assistantLabel,
+    contextualAssistantKey: context.contextualAssistantKey,
     activeTabId: context.activeTabId,
     previewMode: context.previewMode,
     resourcePurpose: context.resourcePurpose,
@@ -429,6 +450,14 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
     workflowArchitectureView: context.workflowArchitectureView,
     workflowStylePreset: context.workflowStylePreset,
     workflowLayoutPreset: context.workflowLayoutPreset,
+    sceneHash: context.sceneHash,
+    sceneSourceText: context.sceneSourceText,
+    sceneSourceFormat: context.sceneSourceFormat,
+    sceneAction: context.sceneAction,
+    sceneTemplate: context.sceneTemplate,
+    sceneArchitectureView: context.sceneArchitectureView,
+    sceneStylePreset: context.sceneStylePreset,
+    sceneLayoutPreset: context.sceneLayoutPreset,
     projectSettingsSummary: context.projectSettingsSummary,
     projectOutlineSummary: context.projectOutlineSummary,
     resourceSummary: context.resourceSummary,
@@ -462,6 +491,10 @@ function isWorkflowStylePreset(value: unknown): value is WorkflowStylePreset {
 
 function isWorkflowLayoutPreset(value: unknown): value is WorkflowLayoutPreset {
   return workflowLayoutPresetSchema.safeParse(value).success
+}
+
+function isSceneDraftAction(value: unknown): value is AiWorkspaceSceneDraft['action'] {
+  return workflowDraftActionSchema.safeParse(value).success
 }
 
 function normalizeDocumentSelectionRange(value: unknown): AiWorkspaceDocumentDraft['selectionRange'] {
@@ -628,6 +661,81 @@ function buildIssueMarkdown(input: {
   return lines.join('\n').trim()
 }
 
+function includesAnyKeyword(text: string, keywords: string[]): boolean {
+  return keywords.some(keyword => text.includes(keyword))
+}
+
+function isExplicitWorkflowDraftRequest(message: string): boolean {
+  const normalized = toText(message).toLowerCase()
+  if (!normalized)
+    return false
+
+  return includesAnyKeyword(normalized, [
+    '生成',
+    '画',
+    '绘制',
+    '做',
+    '做个',
+    '整理',
+    '梳理',
+    '补全',
+    '续改',
+    '调样式',
+    '输出',
+    '给我',
+    '帮我',
+    '来个',
+  ]) && includesAnyKeyword(normalized, [
+    '流程图',
+    '流程',
+    '脑图',
+    '架构图',
+    'er图',
+    'er 图',
+    'mindmap',
+    'mermaid',
+    '泳道图',
+    'workflow',
+    'flowchart',
+    'architecture',
+  ])
+}
+
+function isStandaloneWorkflowTopicRequest(message: string): boolean {
+  const normalized = toText(message).toLowerCase()
+  if (!isExplicitWorkflowDraftRequest(normalized))
+    return false
+
+  if (includesAnyKeyword(normalized, ['当前项目', '本项目', '这个项目', '当前流程', '这个流程', '该流程', '会议', '纪要', '赛道', '比赛', '工作台', '资源', '画布']))
+    return false
+
+  return includesAnyKeyword(normalized, [
+    '示例',
+    '模板',
+    '通用',
+    '比如',
+    '例如',
+    '演示',
+    'demo',
+    '健身',
+    '训练',
+    '减脂',
+    '增肌',
+    '饮食',
+    '跑步',
+    '课程',
+    '请假',
+    '旅行',
+    '注册',
+    '下单',
+    '订单',
+    '招聘',
+    '面试',
+    '报销',
+    '点餐',
+  ])
+}
+
 function buildModePrompt(profile: WorkspaceAgentProfile): string {
   if (profile.mode === 'dialog_ask') {
     return [
@@ -638,6 +746,20 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
       '如果上下文提供了方括号资料引用标签，引用依据时必须保留对应标签，不要编造新的 citation。',
       '如果上下文提示索引未完成，必须明确说明“索引未完成，结果可能不完整”。',
       '当且仅当当前上下文是 AgentProto + workflow，且用户明确要求生成图、补全图、续改图或调样式时，才允许调用 propose_workflow_draft 生成待确认草案。',
+      '在 AgentProto + workflow 场景下，如果用户明确要求生成流程图/脑图/架构图等草案，应优先生成 workflow 草案，不要退回成项目摘要或上下文复述。',
+      '如果这是一个独立示例或模板主题的制图请求，应以用户给出的主题为主，当前项目资料只作为默认样式和布局参考。',
+    ].join('\n')
+  }
+
+  if (profile.mode === 'contextual_agent') {
+    return [
+      '模式：Contextual Agent（草案先行，确认后应用）。',
+      '你必须先调用 get_workspace_context 读取上下文，再决定是否生成草案。',
+      '禁止暗示已自动写入资源、已替换画布、已导入设计稿或已直接修改内容。',
+      '只有在当前上下文匹配对应助手能力时，才允许调用草案工具。',
+      'AgentProto 的流程图场景使用 propose_workflow_draft。',
+      'AgentProto 的自由画布/原型画布场景使用 propose_scene_draft。',
+      '设计助手只输出结构源草案与导入建议，不做静默覆盖。',
     ].join('\n')
   }
 
@@ -671,9 +793,13 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
 }
 
 function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: WorkspaceAiExecutionContext): string {
+  const explicitWorkflowDraftRequest = isExplicitWorkflowDraftRequest(context.latestUserMessage)
+  const standaloneWorkflowTopicRequest = isStandaloneWorkflowTopicRequest(context.latestUserMessage)
+
   if (profile.mode === 'auto_optimize') {
     return [
       `当前模式：${profile.mode}`,
+      `当前项目：${context.projectTitle || '未命名项目'}`,
       `竞赛：${context.contestName || '未选择'}`,
       `赛道：${context.trackName || '未选择'}`,
       `专业：${context.major || '未提供'}`,
@@ -689,6 +815,7 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
   if (profile.mode === 'issue_discovery') {
     return [
       `当前模式：${profile.mode}`,
+      `当前项目：${context.projectTitle || '未命名项目'}`,
       `竞赛：${context.contestName || '未选择'}`,
       `赛道：${context.trackName || '未选择'}`,
       `专业：${context.major || '未提供'}`,
@@ -703,41 +830,84 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
   }
 
   const assistantGuide = context.assistantPreset === 'design'
-    ? [
-        `当前助手：${context.assistantLabel || '设计助手'}`,
-        `当前标签：${context.activeTabId || '未指定'}`,
-        `当前画布：${context.resourceTitle || '未命名设计画布'}`,
-        '优先围绕页面层级、布局结构、视觉一致性和关键交互说明给出只读建议。',
-      ]
-    : context.assistantPreset === 'prototype' && context.resourcePurpose === 'workflow'
-      ? [
-          `当前助手：${context.assistantLabel || 'AgentProto'}`,
-          `当前标签：${context.activeTabId || '未指定'}`,
-          `当前画布：${context.resourceTitle || '未命名流程画布'}`,
-          '优先围绕流程阶段、责任角色、输入输出、分支条件、异常回路和跨节点衔接给出只读梳理建议。',
-          context.workflowSnapshot
-            ? `当前流程摘要：单页=${context.workflowSnapshot.isSinglePage ? '是' : '否'}，节点 ${context.workflowSnapshot.nodeCount}，连线 ${context.workflowSnapshot.edgeCount}，分组 ${context.workflowSnapshot.groupCount}。`
-            : '当前流程摘要：暂无可用 workflowSnapshot。',
-          context.workflowAction ? `当前指定动作：${context.workflowAction}` : '',
-          context.workflowTemplate ? `当前图类型：${context.workflowTemplate}` : '',
-          context.workflowArchitectureView ? `当前架构视图：${context.workflowArchitectureView}` : '',
-          context.workflowStylePreset ? `当前样式预设：${context.workflowStylePreset}` : '',
-          context.workflowLayoutPreset ? `当前布局预设：${context.workflowLayoutPreset}` : '',
-          '如果用户明确要生成、补全、续改或调样式，请先读取上下文，再调用 propose_workflow_draft 生成完整草案；禁止暗示已经直接改图。',
-        ]
-      : context.assistantPreset === 'prototype'
+    ? (profile.mode === 'contextual_agent'
         ? [
-            `当前助手：${context.assistantLabel || '原型助手'}`,
+            `当前助手：${context.assistantLabel || '设计助手'}`,
             `当前标签：${context.activeTabId || '未指定'}`,
-            `当前画布：${context.resourceTitle || '未命名原型画布'}`,
-            '优先围绕页面流转、模块拆分、核心状态与交互路径给出只读建议。',
+            `当前画布：${context.resourceTitle || '未命名设计画布'}`,
+            '你可以生成结构源草案，但必须等待用户确认导入后才会真正应用到当前设计内容。',
+            '优先围绕页面结构、组件层次、交互状态与视觉一致性生成清晰草案。',
           ]
+        : [
+            `当前助手：${context.assistantLabel || '设计助手'}`,
+            `当前标签：${context.activeTabId || '未指定'}`,
+            `当前画布：${context.resourceTitle || '未命名设计画布'}`,
+            '优先围绕页面层级、布局结构、视觉一致性和关键交互说明给出只读建议。',
+          ])
+    : context.assistantPreset === 'prototype' && context.resourcePurpose === 'workflow'
+      ? (profile.mode === 'contextual_agent'
+          ? [
+              `当前助手：${context.assistantLabel || 'AgentProto'}`,
+              `当前标签：${context.activeTabId || '未指定'}`,
+              `当前画布：${context.resourceTitle || '未命名流程画布'}`,
+              '优先围绕流程阶段、责任角色、输入输出、分支条件、异常回路和跨节点衔接生成可确认的草案。',
+              context.workflowSnapshot
+                ? `当前流程摘要：单页=${context.workflowSnapshot.isSinglePage ? '是' : '否'}，节点 ${context.workflowSnapshot.nodeCount}，连线 ${context.workflowSnapshot.edgeCount}，分组 ${context.workflowSnapshot.groupCount}。`
+                : '当前流程摘要：暂无可用 workflowSnapshot。',
+              context.workflowAction ? `当前指定动作：${context.workflowAction}` : '',
+              context.workflowTemplate ? `当前图类型：${context.workflowTemplate}` : '',
+              context.workflowArchitectureView ? `当前架构视图：${context.workflowArchitectureView}` : '',
+              context.workflowStylePreset ? `当前样式预设：${context.workflowStylePreset}` : '',
+              context.workflowLayoutPreset ? `当前布局预设：${context.workflowLayoutPreset}` : '',
+              '如果用户明确要生成、补全、续改或调样式，请先读取上下文，再调用 propose_workflow_draft 生成完整草案；禁止暗示已经直接改图。',
+              explicitWorkflowDraftRequest ? '当前这轮命中明确制图意图：优先生成 workflow 草案，不要停留在项目上下文复述。' : '',
+              standaloneWorkflowTopicRequest ? '当前这轮更像独立示例/模板流程图请求：内容主题以用户输入为准，当前项目资料只用于默认布局和样式，不要把项目内容硬套进图里。' : '',
+            ]
+          : [
+              `当前助手：${context.assistantLabel || 'AgentProto'}`,
+              `当前标签：${context.activeTabId || '未指定'}`,
+              `当前画布：${context.resourceTitle || '未命名流程画布'}`,
+              '优先围绕流程阶段、责任角色、输入输出、分支条件、异常回路和跨节点衔接给出只读梳理建议。',
+              context.workflowSnapshot
+                ? `当前流程摘要：单页=${context.workflowSnapshot.isSinglePage ? '是' : '否'}，节点 ${context.workflowSnapshot.nodeCount}，连线 ${context.workflowSnapshot.edgeCount}，分组 ${context.workflowSnapshot.groupCount}。`
+                : '当前流程摘要：暂无可用 workflowSnapshot。',
+              context.workflowAction ? `当前指定动作：${context.workflowAction}` : '',
+              context.workflowTemplate ? `当前图类型：${context.workflowTemplate}` : '',
+              context.workflowArchitectureView ? `当前架构视图：${context.workflowArchitectureView}` : '',
+              context.workflowStylePreset ? `当前样式预设：${context.workflowStylePreset}` : '',
+              context.workflowLayoutPreset ? `当前布局预设：${context.workflowLayoutPreset}` : '',
+              '如果用户明确要生成、补全、续改或调样式，请先读取上下文，再调用 propose_workflow_draft 生成完整草案；禁止暗示已经直接改图。',
+              explicitWorkflowDraftRequest ? '当前这轮命中明确制图意图：优先生成 workflow 草案，不要停留在项目上下文复述。' : '',
+              standaloneWorkflowTopicRequest ? '当前这轮更像独立示例/模板流程图请求：内容主题以用户输入为准，当前项目资料只用于默认布局和样式，不要把项目内容硬套进图里。' : '',
+            ])
+      : context.assistantPreset === 'prototype'
+        ? (profile.mode === 'contextual_agent'
+            ? [
+                `当前助手：${context.assistantLabel || 'AgentProto'}`,
+                `当前标签：${context.activeTabId || '未指定'}`,
+                `当前画布：${context.resourceTitle || '未命名原型画布'}`,
+                '你可以生成、补全、续改或调样式，结果必须先产出待确认草案。',
+                context.sceneAction ? `当前指定动作：${context.sceneAction}` : '',
+                context.sceneTemplate ? `当前图类型：${context.sceneTemplate}` : '',
+                context.sceneArchitectureView ? `当前架构视图：${context.sceneArchitectureView}` : '',
+                context.sceneStylePreset ? `当前样式预设：${context.sceneStylePreset}` : '',
+                context.sceneLayoutPreset ? `当前布局预设：${context.sceneLayoutPreset}` : '',
+                context.sceneHash ? `当前画布哈希：${context.sceneHash}` : '',
+                '如果用户明确要生成、补全、续改或调样式，请调用 propose_scene_draft 返回结构源草案；禁止暗示已经直接改图。',
+              ]
+            : [
+                `当前助手：${context.assistantLabel || '原型助手'}`,
+                `当前标签：${context.activeTabId || '未指定'}`,
+                `当前画布：${context.resourceTitle || '未命名原型画布'}`,
+                '优先围绕页面流转、模块拆分、核心状态与交互路径给出只读建议。',
+              ])
         : [
             `当前助手：${context.assistantLabel || '对话询问'}`,
           ]
 
   return [
     `当前模式：${profile.mode}`,
+    `当前项目：${context.projectTitle || '未命名项目'}`,
     `竞赛：${context.contestName || '未选择'}`,
     `赛道：${context.trackName || '未选择'}`,
     `专业：${context.major || '未提供'}`,
@@ -745,7 +915,9 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
     ...assistantGuide,
     '',
     '请先调用 get_workspace_context 读取当前项目上下文，再决定是否联网检索。',
-    '只做只读问答，输出必须简洁、具体、可执行。',
+    profile.mode === 'contextual_agent'
+      ? '输出必须围绕“草案先行、确认后应用”，不要把草案描述成已落盘结果。'
+      : '只做只读问答，输出必须简洁、具体、可执行。',
     '如果上下文带有方括号资料引用标签，回答引用依据时必须保留对应标签。',
     '',
     '用户最新输入：',
@@ -756,6 +928,7 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
 function buildDocumentAssistPrompt(context: WorkspaceAiExecutionContext): string {
   return [
     '当前模式：document_assist',
+    `当前项目：${context.projectTitle || '未命名项目'}`,
     `文档标题：${context.resourceTitle || '未命名文档'}`,
     `触发来源：${context.trigger || 'right_sidebar'}`,
     '',
@@ -831,6 +1004,7 @@ function createWorkspaceModeState(): WorkspaceModeState {
     reportSummary: '',
     documentDraft: null,
     workflowDraft: null,
+    sceneDraft: null,
   }
 }
 
@@ -1269,7 +1443,168 @@ function createWorkspaceDocumentDraftTool(
 function isAgentProtoWorkflowContext(context: WorkspaceAiExecutionContext): boolean {
   return context.resourcePurpose === 'workflow'
     && context.assistantPreset === 'prototype'
-    && context.assistantLabel === 'AgentProto'
+    && context.contextualAssistantKey === 'agent_proto'
+}
+
+function isAgentProtoSceneContext(context: WorkspaceAiExecutionContext): boolean {
+  return context.assistantPreset === 'prototype'
+    && context.contextualAssistantKey === 'agent_proto'
+    && context.resourcePurpose !== 'workflow'
+}
+
+function resolveSceneSourceSummary(context: WorkspaceAiExecutionContext): string {
+  return [
+    context.projectSettingsSummary,
+    context.projectOutlineSummary,
+    context.resourceSummary,
+    context.sceneHash ? `当前画布哈希：${context.sceneHash}` : '',
+    context.sceneSourceText ? `当前结构源：\n${context.sceneSourceText}` : '',
+  ].filter(Boolean).join('\n\n')
+}
+
+function createWorkspaceSceneDraftTool(
+  input: WorkspaceModeExecutionInput,
+  state: WorkspaceModeState,
+): any {
+  return tool(
+    async (payload: {
+      action: AiWorkspaceSceneDraft['action']
+      title: string
+      summary: string
+      template?: AiCanvasAssistTemplate
+      architectureView?: WorkflowArchitectureView
+      stylePreset?: WorkflowStylePreset
+      layoutPreset?: WorkflowLayoutPreset
+    }) => {
+      if (state.sceneDraft) {
+        await input.hooks.onTool?.('propose_scene_draft_rejected', {
+          reason: 'SCENE_DRAFT_ALREADY_EXISTS',
+        })
+        return JSON.stringify({ ok: false, reason: 'SCENE_DRAFT_ALREADY_EXISTS' })
+      }
+
+      if (!isAgentProtoSceneContext(input.context)) {
+        await input.hooks.onTool?.('propose_scene_draft_rejected', {
+          reason: 'SCENE_CONTEXT_REQUIRED',
+        })
+        return JSON.stringify({ ok: false, reason: 'SCENE_CONTEXT_REQUIRED' })
+      }
+
+      if (!isSceneDraftAction(payload.action)) {
+        await input.hooks.onTool?.('propose_scene_draft_rejected', {
+          reason: 'INVALID_SCENE_ACTION',
+        })
+        return JSON.stringify({ ok: false, reason: 'INVALID_SCENE_ACTION' })
+      }
+
+      const title = toText(payload.title) || 'AgentProto 原型草案'
+      const summary = toText(payload.summary)
+      if (title.length < 2 || summary.length < 4) {
+        await input.hooks.onTool?.('propose_scene_draft_rejected', {
+          reason: 'TITLE_OR_SUMMARY_REQUIRED',
+        })
+        return JSON.stringify({ ok: false, reason: 'TITLE_OR_SUMMARY_REQUIRED' })
+      }
+
+      const action = payload.action
+      const template = isWorkflowTemplate(payload.template)
+        ? payload.template
+        : (isWorkflowTemplate(input.context.sceneTemplate) ? input.context.sceneTemplate : 'flowchart')
+      const architectureView = isWorkflowArchitectureView(payload.architectureView)
+        ? payload.architectureView
+        : (isWorkflowArchitectureView(input.context.sceneArchitectureView) ? input.context.sceneArchitectureView : undefined)
+      const stylePreset = isWorkflowStylePreset(payload.stylePreset)
+        ? payload.stylePreset
+        : (isWorkflowStylePreset(input.context.sceneStylePreset) ? input.context.sceneStylePreset : 'default')
+      const layoutPreset = isWorkflowLayoutPreset(payload.layoutPreset)
+        ? payload.layoutPreset
+        : (isWorkflowLayoutPreset(input.context.sceneLayoutPreset) ? input.context.sceneLayoutPreset : 'left_to_right')
+
+      if ((action === 'complete' || action === 'refine' || action === 'restyle') && !toText(input.context.sceneHash)) {
+        await input.hooks.onTool?.('propose_scene_draft_rejected', {
+          reason: 'SCENE_HASH_REQUIRED',
+          action,
+        })
+        return JSON.stringify({ ok: false, reason: 'SCENE_HASH_REQUIRED' })
+      }
+
+      if ((action === 'complete' || action === 'refine') && !toText(input.context.sceneSourceText)) {
+        await input.hooks.onTool?.('propose_scene_draft_rejected', {
+          reason: 'SCENE_SOURCE_REQUIRED',
+          action,
+        })
+        return JSON.stringify({ ok: false, reason: 'SCENE_SOURCE_REQUIRED' })
+      }
+
+      let sourceText = toText(input.context.sceneSourceText)
+      let sourceFormat: AiCanvasAssistSourceFormat = resolveCanvasSourceFormat(template)
+      let channelKey: PlatformAiChannelKey | null = null
+
+      if (action !== 'restyle') {
+        const generated = await runCanvasAssistGeneration({
+          runtime: input.runtime,
+          action,
+          template,
+          messages: input.messages,
+          resourceTitle: input.context.resourceTitle || title,
+          resourceSummary: resolveSceneSourceSummary(input.context),
+          sourceText: toText(input.context.sceneSourceText),
+          aiOptions: {
+            temperature: input.ai.temperature,
+          },
+        })
+        sourceText = generated.data.sourceText
+        sourceFormat = generated.data.sourceFormat
+        channelKey = generated.channelKey
+      }
+      else if (toText(input.context.sceneSourceFormat)) {
+        sourceFormat = toText(input.context.sceneSourceFormat) as AiCanvasAssistSourceFormat
+      }
+
+      state.sceneDraft = {
+        action,
+        title,
+        summary,
+        resourceId: toText(input.context.resourceId),
+        resourceTitle: toText(input.context.resourceTitle),
+        template,
+        sourceFormat,
+        sourceText,
+        architectureView: template === 'architecture' ? (architectureView || null) : null,
+        stylePreset,
+        layoutPreset,
+        baseSceneHash: toText(input.context.sceneHash),
+      }
+
+      await input.hooks.onTool?.('propose_scene_draft', {
+        action,
+        template,
+        architectureView: architectureView || null,
+        stylePreset,
+        layoutPreset,
+        channelKey,
+      })
+      return JSON.stringify({
+        ok: true,
+        action,
+        template,
+        sourceFormat,
+      })
+    },
+    {
+      name: 'propose_scene_draft',
+      description: '为 AgentProto 生成自由画布/原型画布草案。只返回待确认草案，绝不直接写回画布。',
+      schema: z.object({
+        action: workflowDraftActionSchema,
+        title: z.string().min(2),
+        summary: z.string().min(4),
+        template: workflowTemplateSchema.optional(),
+        architectureView: workflowArchitectureViewSchema.optional(),
+        stylePreset: workflowStylePresetSchema.optional(),
+        layoutPreset: workflowLayoutPresetSchema.optional(),
+      }),
+    },
+  )
 }
 
 function createWorkspaceWorkflowDraftTool(
@@ -1330,6 +1665,7 @@ function createWorkspaceWorkflowDraftTool(
         ? payload.layoutPreset
         : (isWorkflowLayoutPreset(input.context.workflowLayoutPreset) ? input.context.workflowLayoutPreset : 'left_to_right')
       const workflowSnapshot = input.context.workflowSnapshot
+      const standaloneWorkflowTopicRequest = action === 'generate' && isStandaloneWorkflowTopicRequest(input.context.latestUserMessage)
 
       if ((action === 'complete' || action === 'refine' || action === 'restyle') && !workflowSnapshot) {
         await input.hooks.onTool?.('propose_workflow_draft_rejected', {
@@ -1349,21 +1685,23 @@ function createWorkspaceWorkflowDraftTool(
           action,
           template,
           messages: input.messages,
-          resourceTitle: input.context.resourceTitle || '',
-          resourceSummary: [
-            input.context.projectSettingsSummary,
-            input.context.projectOutlineSummary,
-            input.context.resourceSummary,
-            workflowSnapshot
-              ? [
-                  `当前流程哈希：${workflowSnapshot.hash}`,
-                  `当前单页：${workflowSnapshot.isSinglePage ? '是' : '否'}`,
-                  `当前节点数：${workflowSnapshot.nodeCount}`,
-                  `当前连线数：${workflowSnapshot.edgeCount}`,
-                  workflowSnapshot.sampleLabels.length > 0 ? `节点示例：${workflowSnapshot.sampleLabels.join('、')}` : '',
-                ].filter(Boolean).join('\n')
-              : '',
-          ].filter(Boolean).join('\n\n'),
+          resourceTitle: standaloneWorkflowTopicRequest ? title : (input.context.resourceTitle || ''),
+          resourceSummary: standaloneWorkflowTopicRequest
+            ? '当前请求是独立主题流程图，请以本轮用户主题为准生成结构源，不要把当前项目资料写入图中。'
+            : [
+                input.context.projectSettingsSummary,
+                input.context.projectOutlineSummary,
+                input.context.resourceSummary,
+                workflowSnapshot
+                  ? [
+                      `当前流程哈希：${workflowSnapshot.hash}`,
+                      `当前单页：${workflowSnapshot.isSinglePage ? '是' : '否'}`,
+                      `当前节点数：${workflowSnapshot.nodeCount}`,
+                      `当前连线数：${workflowSnapshot.edgeCount}`,
+                      workflowSnapshot.sampleLabels.length > 0 ? `节点示例：${workflowSnapshot.sampleLabels.join('、')}` : '',
+                    ].filter(Boolean).join('\n')
+                  : '',
+              ].filter(Boolean).join('\n\n'),
           sourceText: workflowSnapshot ? JSON.stringify(workflowSnapshot, null, 2) : '',
           aiOptions: {
             temperature: input.ai.temperature,
@@ -1449,6 +1787,13 @@ function createWorkspaceToolset(
   if (profile.mode === 'dialog_ask' && isAgentProtoWorkflowContext(input.context))
     tools.push(createWorkspaceWorkflowDraftTool(input, state))
 
+  if (profile.mode === 'contextual_agent') {
+    if (isAgentProtoWorkflowContext(input.context))
+      tools.push(createWorkspaceWorkflowDraftTool(input, state))
+    if (isAgentProtoSceneContext(input.context))
+      tools.push(createWorkspaceSceneDraftTool(input, state))
+  }
+
   return { tools }
 }
 
@@ -1480,6 +1825,7 @@ function finalizeWorkspaceExecutionResult(
       reportMarkdown: '',
       documentDraft: null,
       workflowDraft: null,
+      sceneDraft: null,
     }
   }
 
@@ -1505,18 +1851,23 @@ function finalizeWorkspaceExecutionResult(
       }),
       documentDraft: null,
       workflowDraft: null,
+      sceneDraft: null,
     }
   }
 
   return {
     mode: profile.mode,
-    assistantReply: assistantText || (profile.mode === 'document_assist'
-      ? (state.documentDraft
-          ? '已生成一条待确认的文档草案，请先查看差异并确认后再应用。'
-          : '当前无法安全生成文档草案，请补充更明确的文档修改意图。')
-      : state.workflowDraft
-          ? '已生成一条待确认的流程草案，请先预览后再决定是否应用。'
-          : 'AI 未返回有效结果，请稍后重试。'),
+    assistantReply: assistantText || (
+      profile.mode === 'document_assist'
+        ? (state.documentDraft
+            ? '已生成一条待确认的文档草案，请先查看差异并确认后再应用。'
+            : '当前无法安全生成文档草案，请补充更明确的文档修改意图。')
+        : (state.workflowDraft
+            ? '已生成一条待确认的流程草案，请先预览后再决定是否应用。'
+            : (state.sceneDraft
+                ? '已生成一条待确认的自由画布草案，请先预览后再决定是否应用。'
+                : 'AI 未返回有效结果，请稍后重试。'))
+    ),
     changeDrafts: [],
     issueDrafts: [],
     reportTitle: '',
@@ -1524,6 +1875,7 @@ function finalizeWorkspaceExecutionResult(
     reportMarkdown: '',
     documentDraft: state.documentDraft,
     workflowDraft: state.workflowDraft,
+    sceneDraft: state.sceneDraft,
   }
 }
 
@@ -1606,7 +1958,8 @@ async function executeWorkspaceAgentMode(
     maxRetries: input.ai.maxRetries,
     run: async () => {
       throwIfAborted(input.signal)
-      await input.hooks.onProgress?.(profile.progressMessage)
+      if (profile.progressMessage)
+        await input.hooks.onProgress?.(profile.progressMessage)
 
       const state = createWorkspaceModeState()
       const toolset = createWorkspaceToolset({
@@ -1659,6 +2012,10 @@ async function executeDocumentAssistWorkspaceAi(input: WorkspaceModeExecutionInp
   return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.document_assist)
 }
 
+async function executeContextualAgentWorkspaceAi(input: WorkspaceModeExecutionInput): Promise<WorkspaceExecutionOutcome> {
+  return executeWorkspaceAgentMode(input, WORKSPACE_AGENT_PROFILES.contextual_agent)
+}
+
 export async function executeWorkspaceAi(input: {
   runtime: RuntimeSettings
   ai: RuntimeSettings['ai']
@@ -1685,5 +2042,7 @@ export async function executeWorkspaceAi(input: {
     return executeIssueDiscoveryWorkspaceAi(executionInput)
   if (input.mode === 'document_assist')
     return executeDocumentAssistWorkspaceAi(executionInput)
+  if (input.mode === 'contextual_agent')
+    return executeContextualAgentWorkspaceAi(executionInput)
   return executeDialogAskWorkspaceAi(executionInput)
 }

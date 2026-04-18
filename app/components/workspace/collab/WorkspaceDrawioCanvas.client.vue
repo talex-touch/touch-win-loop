@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
 import {
   buildDrawioEmbedUrl,
+  moveDrawioPageToFront,
   resolveDrawioCollabValue,
   resolveDrawioOrigin,
   serializeDrawioCollabValue,
@@ -34,9 +36,11 @@ const editorReady = ref(false)
 const currentXml = ref(resolvedDrawioDocument.value.status === 'ready' ? resolvedDrawioDocument.value.xml : '')
 const isMounted = ref(false)
 const messageListenerAttached = ref(false)
+const locateFeedbackMessage = ref('')
 
 let bootTimeout: ReturnType<typeof setTimeout> | null = null
 let pendingEmitTimer: ReturnType<typeof setTimeout> | null = null
+let locateFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 function clearBootTimeout(): void {
   if (!bootTimeout)
@@ -50,6 +54,13 @@ function clearPendingEmitTimer(): void {
     return
   clearTimeout(pendingEmitTimer)
   pendingEmitTimer = null
+}
+
+function clearLocateFeedbackTimer(): void {
+  if (!locateFeedbackTimer)
+    return
+  clearTimeout(locateFeedbackTimer)
+  locateFeedbackTimer = null
 }
 
 function attachMessageListener(): void {
@@ -107,6 +118,39 @@ function requestLegacyRebuild(): void {
   if (props.readonly)
     return
   emit('requestRebuild')
+}
+
+function pushLocateFeedback(message: string): void {
+  const normalized = String(message || '').trim()
+  locateFeedbackMessage.value = normalized
+  clearLocateFeedbackTimer()
+  if (!normalized)
+    return
+  locateFeedbackTimer = setTimeout(() => {
+    locateFeedbackMessage.value = ''
+    locateFeedbackTimer = null
+  }, 2200)
+}
+
+function locateOutlineItem(node: WorkspaceOutlineNode): boolean {
+  const locator = node.locator
+  if (locator.surface !== 'workflow')
+    return false
+
+  const targetPageId = String(locator.workflowPageId || locator.pageId || '').trim()
+  if (targetPageId && currentXml.value) {
+    const relocatedXml = moveDrawioPageToFront(currentXml.value, targetPageId)
+    if (relocatedXml && relocatedXml !== currentXml.value) {
+      currentXml.value = relocatedXml
+      if (editorReady.value)
+        loadEditorXml(relocatedXml)
+    }
+  }
+
+  const targetTitle = String(node.label || '').trim() || '目标节点'
+  const pageHint = String(node.locator.workflowPageId || node.locator.pageId || '').trim()
+  pushLocateFeedback(pageHint ? `已定位：${targetTitle} · ${pageHint}` : `已定位：${targetTitle}`)
+  return true
 }
 
 function startBootWatchdog(): void {
@@ -229,6 +273,11 @@ onBeforeUnmount(() => {
   detachMessageListener()
   clearBootTimeout()
   clearPendingEmitTimer()
+  clearLocateFeedbackTimer()
+})
+
+defineExpose({
+  locateOutlineItem,
 })
 </script>
 
@@ -250,6 +299,13 @@ onBeforeUnmount(() => {
 
       <div v-if="iframeError" class="text-[12px] text-amber-700 leading-6 px-4 py-3 border border-amber-200 rounded-2xl bg-amber-50 max-w-md pointer-events-none shadow-sm left-4 top-4 absolute">
         {{ iframeError }}
+      </div>
+
+      <div
+        v-if="locateFeedbackMessage"
+        class="pointer-events-none absolute left-4 top-4 z-10 rounded-2xl border border-sky-200 bg-sky-50/96 px-4 py-2 text-[12px] font-semibold leading-5 text-sky-700 shadow-sm"
+      >
+        {{ locateFeedbackMessage }}
       </div>
     </template>
 

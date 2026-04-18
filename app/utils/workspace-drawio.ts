@@ -65,6 +65,10 @@ interface GraphFallbackEdge {
   style?: SceneEdge['style']
 }
 
+type WorkflowSnapshotPageInput = Omit<WorkflowSnapshotPage, 'nodeCount' | 'edgeCount' | 'groupCount' | 'sampleLabels' | 'styleSummary' | 'direction'> & {
+  direction?: WorkflowSnapshotPage['direction']
+}
+
 interface WorkflowThemePreset {
   nodeFill: string
   nodeStroke: string
@@ -187,7 +191,9 @@ function parseXmlAttributes(fragment: string): Record<string, string> {
   const matcher = /([:\w-]+)="([^"]*)"/g
   let matched = matcher.exec(fragment)
   while (matched) {
-    attributes[matched[1]] = decodeXml(matched[2] || '')
+    const attributeName = matched[1]
+    if (attributeName)
+      attributes[attributeName] = decodeXml(matched[2] || '')
     matched = matcher.exec(fragment)
   }
   return attributes
@@ -338,13 +344,17 @@ function resolveGroupStyle(group: WorkflowSnapshotGroup, preset: WorkflowStylePr
 
 function resolveEdgeStyle(edge: Pick<SceneEdge, 'style'> | GraphFallbackEdge | WorkflowSnapshotEdge, preset: WorkflowStylePreset): string {
   const theme = WORKFLOW_THEME_PRESETS[preset]
+  const edgeStyle = 'style' in edge ? String(edge.style || '').trim() : ''
+  const edgeStyleSummary = 'styleSummary' in edge && Array.isArray(edge.styleSummary)
+    ? edge.styleSummary
+    : []
   return [
     'edgeStyle=orthogonalEdgeStyle',
     'rounded=0',
     'orthogonalLoop=1',
     'jettySize=auto',
     'html=1',
-    String((edge as GraphFallbackEdge).style || '').trim() === 'dashed' || edge.styleSummary?.includes('dashed')
+    edgeStyle === 'dashed' || edgeStyleSummary.includes('dashed')
       ? 'dashed=1'
       : 'dashed=0',
     `strokeColor=${theme.edgeStroke}`,
@@ -433,7 +443,7 @@ function buildFallbackGraphScene(document: SceneDocument): {
     source: normalizeMxCellId(edge.source, `graph-source-${index + 1}`),
     target: normalizeMxCellId(edge.target, `graph-target-${index + 1}`),
     label: normalizeString(edge.label) || '',
-    style: edge.style,
+    style: normalizeString((edge.metadata as Record<string, unknown>)?.style) as SceneEdge['style'] || undefined,
   }))
 
   return { nodes, edges }
@@ -508,9 +518,7 @@ function inferPageDirection(nodes: WorkflowSnapshotNode[], edges: WorkflowSnapsh
   return horizontal >= vertical ? 'left_to_right' : 'top_to_bottom'
 }
 
-function buildWorkflowSnapshotPage(page: Omit<WorkflowSnapshotPage, 'nodeCount' | 'edgeCount' | 'groupCount' | 'sampleLabels' | 'styleSummary' | 'direction'> & {
-  direction?: WorkflowSnapshotPage['direction']
-}): WorkflowSnapshotPage {
+function buildWorkflowSnapshotPage(page: WorkflowSnapshotPageInput): WorkflowSnapshotPage {
   const groups = page.groups.map((group) => {
     const childIds = group.childNodeIds.length > 0
       ? group.childNodeIds
@@ -550,7 +558,7 @@ function buildWorkflowSnapshotPage(page: Omit<WorkflowSnapshotPage, 'nodeCount' 
 }
 
 function buildWorkflowSnapshot(input: {
-  pages: WorkflowSnapshotPage[]
+  pages: WorkflowSnapshotPageInput[]
 }): WorkflowSnapshot {
   const pages = input.pages.map(page => buildWorkflowSnapshotPage(page))
   const currentPage = pages[0] || null
@@ -1223,6 +1231,48 @@ export function parseDrawioXmlToWorkflowSnapshot(xml: string): WorkflowSnapshot 
   }
 
   return buildWorkflowSnapshot({ pages })
+}
+
+export function moveDrawioPageToFront(xml: string, pageId: string): string {
+  const normalizedXml = normalizeString(xml)
+  const normalizedPageId = normalizeString(pageId)
+  if (!normalizedXml || !normalizedPageId)
+    return normalizedXml
+
+  const diagramMatcher = /<diagram\b([^>]*)>([\s\S]*?)<\/diagram>/gi
+  const segments: Array<{
+    full: string
+    index: number
+    length: number
+    id: string
+  }> = []
+
+  let matched = diagramMatcher.exec(normalizedXml)
+  while (matched) {
+    segments.push({
+      full: matched[0] || '',
+      index: matched.index,
+      length: (matched[0] || '').length,
+      id: normalizeString(parseXmlAttributes(matched[1] || '').id),
+    })
+    matched = diagramMatcher.exec(normalizedXml)
+  }
+
+  if (segments.length <= 1)
+    return normalizedXml
+
+  const targetIndex = segments.findIndex(segment => segment.id === normalizedPageId)
+  if (targetIndex <= 0)
+    return normalizedXml
+
+  const ordered = [
+    segments[targetIndex]!,
+    ...segments.filter((_, index) => index !== targetIndex),
+  ]
+  const prefix = normalizedXml.slice(0, segments[0]!.index)
+  const suffix = normalizedXml.slice(segments[segments.length - 1]!.index + segments[segments.length - 1]!.length)
+
+  return `${prefix}${ordered.map(segment => segment.full).join('\n')}${suffix}`
 }
 
 export function computeWorkflowSnapshotHash(snapshot: WorkflowSnapshot | null | undefined): string {

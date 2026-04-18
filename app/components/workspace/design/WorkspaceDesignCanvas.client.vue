@@ -1735,6 +1735,8 @@ onBeforeUnmount(() => {
   --workspace-design-control-gap: 12px;
   --workspace-design-minimap-height: 136px;
   --workspace-design-minimap-radius: 10px;
+  --workspace-design-canvas-font-2xs: var(--wl-ws-font-2xs, 10px);
+  --workspace-design-canvas-font-xs: var(--wl-ws-font-xs, 11px);
 }
 
 .workspace-design-canvas__feedback {
@@ -1767,7 +1769,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border-radius: 999px;
   color: #ffffff;
-  font-size: 10px;
+  font-size: var(--workspace-design-canvas-font-2xs);
   line-height: 1.4;
   font-weight: 700;
   text-overflow: ellipsis;

@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import type { WorkspaceFontSizePreset, WorkspaceTabSpacingPreset } from '~~/shared/types/domain'
 import type { WorkspaceCollabCursorUser, WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
+import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
 import WorkspaceDrawioCanvas from '~/components/workspace/collab/WorkspaceDrawioCanvas.client.vue'
 
 const props = withDefaults(defineProps<{
@@ -7,6 +9,8 @@ const props = withDefaults(defineProps<{
   hasFlowResource?: boolean
   flowPanelTitle?: string
   flowResourceId?: string
+  fontSizePreset?: WorkspaceFontSizePreset | ''
+  tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
   collabRevision?: number
   collabConnected?: boolean
   collabConnectionText?: string
@@ -19,6 +23,8 @@ const props = withDefaults(defineProps<{
   hasFlowResource: false,
   flowPanelTitle: '流程画布',
   flowResourceId: '',
+  fontSizePreset: '',
+  tabSpacingPreset: '',
   collabRevision: 0,
   collabConnected: false,
   collabConnectionText: '',
@@ -33,12 +39,25 @@ const emit = defineEmits<{
   updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
   requestWorkflowCanvasRebuild: []
 }>()
+
+const drawioCanvasRef = ref<{
+  locateOutlineItem: (node: WorkspaceOutlineNode) => boolean
+} | null>(null)
+
+function locateOutlineItem(node: WorkspaceOutlineNode): boolean {
+  return drawioCanvasRef.value?.locateOutlineItem(node) || false
+}
+
+defineExpose({
+  locateOutlineItem,
+})
 </script>
 
 <template>
   <div class="bg-white h-full min-h-0 w-full relative overflow-hidden">
     <template v-if="props.hasFlowResource">
       <WorkspaceDrawioCanvas
+        ref="drawioCanvasRef"
         :key="props.flowResourceId || 'flow-canvas'"
         class="h-full min-h-0 w-full"
         :model-value="props.collabDrawValue"

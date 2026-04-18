@@ -3130,6 +3130,16 @@ function updateElementConstraints(
 
 <style scoped>
 .workspace-design-inspector {
+  --workspace-design-inspector-font-xs: var(--wl-ws-font-xs, 11px);
+  --workspace-design-inspector-font-sm: var(--wl-ws-font-sm, 12px);
+  --workspace-design-inspector-font-md: var(--wl-ws-font-md, 13px);
+  --workspace-design-inspector-font-lg: var(--wl-ws-font-lg, 14px);
+  --workspace-design-inspector-space-1: var(--wl-ws-space-1, 4px);
+  --workspace-design-inspector-space-1_5: var(--wl-ws-space-1_5, 6px);
+  --workspace-design-inspector-space-2: var(--wl-ws-space-2, 8px);
+  --workspace-design-inspector-space-2_5: var(--wl-ws-space-2_5, 10px);
+  --workspace-design-inspector-space-3: var(--wl-ws-space-3, 12px);
+  --workspace-design-inspector-space-3_5: var(--wl-ws-space-3_5, 14px);
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -3139,19 +3149,19 @@ function updateElementConstraints(
 .workspace-design-inspector__alert {
   border: 1px solid rgba(253, 164, 175, 0.85);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: var(--workspace-design-inspector-space-2_5) var(--workspace-design-inspector-space-3);
   background: rgba(255, 241, 242, 0.78);
 }
 
 .workspace-design-inspector__alert-title {
-  font-size: 12px;
+  font-size: var(--workspace-design-inspector-font-sm);
   font-weight: 700;
   color: #881337;
 }
 
 .workspace-design-inspector__alert-body {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: var(--workspace-design-inspector-space-1);
+  font-size: var(--workspace-design-inspector-font-xs);
   line-height: 1.6;
   color: #be123c;
 }
@@ -3160,33 +3170,33 @@ function updateElementConstraints(
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--workspace-design-inspector-space-1_5);
   flex-wrap: wrap;
 }
 
 .workspace-design-inspector__command-strip {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--workspace-design-inspector-space-2);
 }
 
 .workspace-design-inspector__command-bar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--workspace-design-inspector-space-2);
 }
 
 .workspace-design-inspector__command-grid {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--workspace-design-inspector-space-1_5);
   width: 100%;
 }
 
 .workspace-design-inspector__command-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--workspace-design-inspector-space-1_5);
   flex-wrap: nowrap;
 }
 
@@ -3209,11 +3219,11 @@ function updateElementConstraints(
 
 .workspace-design-inspector__command-button {
   min-height: 34px;
-  padding: 0 10px;
+  padding: 0 var(--workspace-design-inspector-space-2_5);
   border: 1px solid rgba(203, 213, 225, 0.94);
   border-radius: 10px;
   background: rgba(248, 250, 252, 0.82);
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   font-weight: 600;
   color: #334155;
   transition:
@@ -3275,11 +3285,11 @@ function updateElementConstraints(
   z-index: 4;
   white-space: nowrap;
   opacity: 0;
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   line-height: 1.1;
   font-weight: 700;
   color: #f8fafc;
-  padding: 5px 8px;
+  padding: calc(var(--workspace-design-inspector-space-1) + 1px) var(--workspace-design-inspector-space-2);
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.92);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
@@ -3310,22 +3320,22 @@ function updateElementConstraints(
 }
 
 .workspace-design-inspector__compact-section {
-  margin-top: 14px;
-  padding-top: 14px;
+  margin-top: var(--workspace-design-inspector-space-3_5);
+  padding-top: var(--workspace-design-inspector-space-3_5);
   border-top: 1px solid rgba(226, 232, 240, 0.96);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--workspace-design-inspector-space-2_5);
 }
 
 .workspace-design-inspector__compact-header {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--workspace-design-inspector-space-1);
 }
 
 .workspace-design-inspector__compact-title {
-  font-size: 12px;
+  font-size: var(--workspace-design-inspector-font-sm);
   font-weight: 700;
   color: #1e293b;
 }
@@ -3338,7 +3348,7 @@ function updateElementConstraints(
 .workspace-design-inspector__compact-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--workspace-design-inspector-space-2_5);
 }
 
 .workspace-design-inspector__compact-field {
@@ -3346,8 +3356,8 @@ function updateElementConstraints(
   min-height: 52px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
+  gap: var(--workspace-design-inspector-space-2_5);
+  padding: 0 var(--workspace-design-inspector-space-3);
   border: 1px solid rgba(226, 232, 240, 0.9);
   border-radius: 14px;
   background: rgba(248, 250, 252, 0.86);
@@ -3364,7 +3374,7 @@ function updateElementConstraints(
 .workspace-design-inspector__compact-label {
   flex-shrink: 0;
   min-width: 22px;
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   font-weight: 600;
   color: #94a3b8;
   text-transform: uppercase;
@@ -3378,7 +3388,7 @@ function updateElementConstraints(
   border: 0;
   background: transparent;
   color: #0f172a;
-  font-size: 15px;
+  font-size: calc(var(--workspace-design-inspector-font-lg) + 1px);
   font-weight: 600;
   line-height: 1;
   outline: none;
@@ -3388,8 +3398,8 @@ function updateElementConstraints(
 .workspace-design-inspector__compact-check {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: var(--workspace-design-inspector-space-2_5);
+  font-size: var(--workspace-design-inspector-font-sm);
   font-weight: 600;
   color: #334155;
 }
@@ -3404,41 +3414,41 @@ function updateElementConstraints(
 .workspace-design-inspector__compact-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--workspace-design-inspector-space-2);
 }
 
 .workspace-design-inspector__status-pill {
   display: inline-flex;
   align-items: center;
   min-height: 32px;
-  padding: 0 12px;
+  padding: 0 var(--workspace-design-inspector-space-3);
   border-radius: 999px;
   background: rgba(241, 245, 249, 0.9);
   color: #334155;
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   font-weight: 700;
 }
 
 .workspace-design-inspector__group {
-  margin-top: 14px;
-  padding-top: 14px;
+  margin-top: var(--workspace-design-inspector-space-3_5);
+  padding-top: var(--workspace-design-inspector-space-3_5);
   border-top: 1px solid rgba(226, 232, 240, 0.96);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--workspace-design-inspector-space-2_5);
 }
 
 .workspace-design-inspector__group-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--workspace-design-inspector-space-2_5);
 }
 
 .workspace-design-inspector__group-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--workspace-design-inspector-space-3);
 }
 
 .workspace-design-inspector__section-toggle,
@@ -3499,32 +3509,32 @@ function updateElementConstraints(
 
 .workspace-design-inspector__group-title,
 .workspace-design-inspector__subsection-title {
-  font-size: 12px;
+  font-size: var(--workspace-design-inspector-font-sm);
   font-weight: 700;
   line-height: 1.3;
   color: #1e293b;
 }
 
 .workspace-design-inspector__group-description {
-  margin-top: 3px;
-  font-size: 11px;
+  margin-top: calc(var(--workspace-design-inspector-space-1) - 1px);
+  font-size: var(--workspace-design-inspector-font-xs);
   line-height: 1.6;
   color: #64748b;
 }
 
 .workspace-design-inspector__subsection {
-  padding-top: 10px;
+  padding-top: var(--workspace-design-inspector-space-2_5);
   border-top: 1px solid rgba(226, 232, 240, 0.72);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--workspace-design-inspector-space-2_5);
 }
 
 .workspace-design-inspector__segmented {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px;
+  gap: var(--workspace-design-inspector-space-1_5);
+  padding: var(--workspace-design-inspector-space-1);
   border: 1px solid rgba(226, 232, 240, 0.96);
   border-radius: 999px;
   background: rgba(248, 250, 252, 0.82);
@@ -3532,12 +3542,12 @@ function updateElementConstraints(
 
 .workspace-design-inspector__segmented-button {
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 var(--workspace-design-inspector-space-3);
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: #64748b;
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   font-weight: 700;
   transition:
     background-color 160ms ease,
@@ -3565,7 +3575,7 @@ function updateElementConstraints(
 
 .workspace-design-inspector__field-grid {
   display: grid;
-  gap: 10px;
+  gap: var(--workspace-design-inspector-space-2_5);
 }
 
 .workspace-design-inspector__field-grid--two {
@@ -3574,7 +3584,7 @@ function updateElementConstraints(
 
 .workspace-design-inspector__geometry-grid {
   display: grid;
-  gap: 8px;
+  gap: var(--workspace-design-inspector-space-2);
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
@@ -3582,7 +3592,7 @@ function updateElementConstraints(
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--workspace-design-inspector-space-1_5);
 }
 
 .workspace-design-inspector__field--span-two {
@@ -3590,7 +3600,7 @@ function updateElementConstraints(
 }
 
 .workspace-design-inspector__label {
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   font-weight: 600;
   line-height: 1.25;
   color: #334155;
@@ -3611,8 +3621,8 @@ function updateElementConstraints(
 
 .workspace-design-inspector__input {
   height: 36px;
-  padding: 0 10px;
-  font-size: 12px;
+  padding: 0 var(--workspace-design-inspector-space-2_5);
+  font-size: var(--workspace-design-inspector-font-sm);
   line-height: 36px;
 }
 
@@ -3622,8 +3632,8 @@ function updateElementConstraints(
 
 .workspace-design-inspector__textarea {
   min-height: 92px;
-  padding: 9px 10px;
-  font-size: 12px;
+  padding: calc(var(--workspace-design-inspector-space-2) + 1px) var(--workspace-design-inspector-space-2_5);
+  font-size: var(--workspace-design-inspector-font-sm);
   line-height: 1.6;
   resize: vertical;
 }
@@ -3657,7 +3667,7 @@ function updateElementConstraints(
 .workspace-design-inspector__button-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--workspace-design-inspector-space-2);
 }
 
 .workspace-design-inspector__button-row--compact {
@@ -3669,11 +3679,11 @@ function updateElementConstraints(
   align-items: center;
   justify-content: center;
   min-height: 34px;
-  padding: 0 12px;
+  padding: 0 var(--workspace-design-inspector-space-3);
   border: 1px solid rgba(203, 213, 225, 0.94);
   border-radius: 10px;
   background: rgba(248, 250, 252, 0.78);
-  font-size: 12px;
+  font-size: var(--workspace-design-inspector-font-sm);
   font-weight: 600;
   color: #334155;
   transition:
@@ -3724,9 +3734,9 @@ function updateElementConstraints(
 .workspace-design-inspector__note {
   border: 1px solid rgba(186, 230, 253, 0.92);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: var(--workspace-design-inspector-space-2_5) var(--workspace-design-inspector-space-3);
   background: rgba(240, 249, 255, 0.78);
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   line-height: 1.6;
   color: #0c4a6e;
 }
@@ -3734,9 +3744,9 @@ function updateElementConstraints(
 .workspace-design-inspector__subsection-note {
   border: 1px solid rgba(226, 232, 240, 0.92);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: var(--workspace-design-inspector-space-2_5) var(--workspace-design-inspector-space-3);
   background: rgba(248, 250, 252, 0.86);
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   line-height: 1.6;
   color: #475569;
 }
@@ -3744,8 +3754,8 @@ function updateElementConstraints(
 .workspace-design-inspector__check {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: var(--workspace-design-inspector-space-2_5);
+  font-size: var(--workspace-design-inspector-font-sm);
   font-weight: 600;
   color: #334155;
 }
@@ -3760,18 +3770,18 @@ function updateElementConstraints(
 .workspace-design-inspector__meta-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--workspace-design-inspector-space-2);
 }
 
 .workspace-design-inspector__meta-row {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--workspace-design-inspector-space-2);
   align-items: start;
 }
 
 .workspace-design-inspector__meta-key {
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   font-weight: 600;
   line-height: 1.5;
   color: #64748b;
@@ -3779,19 +3789,19 @@ function updateElementConstraints(
 
 .workspace-design-inspector__meta-value {
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--workspace-design-inspector-font-xs);
   line-height: 1.5;
   color: #0f172a;
   overflow-wrap: anywhere;
 }
 
 .workspace-design-inspector__empty {
-  margin-top: 14px;
+  margin-top: var(--workspace-design-inspector-space-3_5);
   border: 1px dashed rgba(203, 213, 225, 0.94);
   border-radius: 10px;
-  padding: 18px 12px;
+  padding: calc(var(--workspace-design-inspector-space-4) + 2px) var(--workspace-design-inspector-space-3);
   text-align: center;
-  font-size: 13px;
+  font-size: var(--workspace-design-inspector-font-md);
   color: #64748b;
   background: rgba(248, 250, 252, 0.78);
 }

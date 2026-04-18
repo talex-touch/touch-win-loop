@@ -509,6 +509,5 @@ function shouldShowSection(sectionId: WorkspaceProjectSettingsSectionId): boolea
         </div>
       </div>
     </section>
-
   </div>
 </template>

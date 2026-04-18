@@ -25,8 +25,19 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 
 <style scoped>
 .workspace-chat-markdown {
+  --workspace-chat-markdown-font-xs: var(--wl-ws-font-xs, 11px);
+  --workspace-chat-markdown-font-sm: var(--wl-ws-font-sm, 12px);
+  --workspace-chat-markdown-font-md: var(--wl-ws-font-md, 13px);
+  --workspace-chat-markdown-font-lg: var(--wl-ws-font-lg, 14px);
+  --workspace-chat-markdown-font-xl: var(--wl-ws-font-xl, 16px);
+  --workspace-chat-markdown-font-2xl: var(--wl-ws-font-2xl, 18px);
+  --workspace-chat-markdown-space-1: var(--wl-ws-space-1, 4px);
+  --workspace-chat-markdown-space-1_5: var(--wl-ws-space-1_5, 6px);
+  --workspace-chat-markdown-space-2: var(--wl-ws-space-2, 8px);
+  --workspace-chat-markdown-space-2_5: var(--wl-ws-space-2_5, 10px);
+  --workspace-chat-markdown-space-3: var(--wl-ws-space-3, 12px);
   color: inherit;
-  font-size: 12px;
+  font-size: var(--workspace-chat-markdown-font-sm);
   line-height: 1.7;
   word-break: break-word;
 }
@@ -39,21 +50,21 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading--1) {
-  font-size: 18px;
+  font-size: var(--workspace-chat-markdown-font-2xl);
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading--2) {
-  font-size: 16px;
+  font-size: var(--workspace-chat-markdown-font-xl);
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading--3) {
-  font-size: 15px;
+  font-size: calc(var(--workspace-chat-markdown-font-lg) + 1px);
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading--4),
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading--5),
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading--6) {
-  font-size: 13px;
+  font-size: var(--workspace-chat-markdown-font-md);
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__paragraph),
@@ -73,7 +84,7 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__blockquote),
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__code-block),
 .workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__table-wrap) {
-  margin-top: 10px;
+  margin-top: var(--workspace-chat-markdown-space-2_5);
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph) {
@@ -82,15 +93,16 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__blockquote) {
-  margin: 10px 0 0;
-  padding: 8px 0 8px 12px;
+  margin: var(--workspace-chat-markdown-space-2_5) 0 0;
+  padding: var(--workspace-chat-markdown-space-2) 0 var(--workspace-chat-markdown-space-2)
+    var(--workspace-chat-markdown-space-3);
   border-left: 3px solid #cbd5e1;
   color: #475569;
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__list) {
-  margin: 10px 0 0;
-  padding-left: 18px;
+  margin: var(--workspace-chat-markdown-space-2_5) 0 0;
+  padding-left: calc(var(--workspace-chat-markdown-space-3) + var(--workspace-chat-markdown-space-1_5));
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__list--ordered) {
@@ -102,7 +114,7 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__list-item) {
-  margin: 4px 0;
+  margin: var(--workspace-chat-markdown-space-1) 0;
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__list-item > .workspace-chat-markdown__paragraph:first-child) {
@@ -112,7 +124,7 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 .workspace-chat-markdown :deep(.workspace-chat-markdown__task-row) {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--workspace-chat-markdown-space-2);
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__task-checkbox) {
@@ -126,23 +138,23 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__inline-code) {
-  padding: 1px 5px;
+  padding: 1px calc(var(--workspace-chat-markdown-space-1) + 1px);
   border-radius: 6px;
   background: rgba(15, 23, 42, 0.08);
   color: #0f172a;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 11px;
+  font-size: var(--workspace-chat-markdown-font-xs);
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__code-block) {
-  margin: 10px 0 0;
-  padding: 10px 12px;
+  margin: var(--workspace-chat-markdown-space-2_5) 0 0;
+  padding: var(--workspace-chat-markdown-space-2_5) var(--workspace-chat-markdown-space-3);
   overflow-x: auto;
   border-radius: 12px;
   background: #0f172a;
   color: #e2e8f0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 11px;
+  font-size: var(--workspace-chat-markdown-font-xs);
   line-height: 1.65;
   white-space: pre-wrap;
 }
@@ -163,7 +175,7 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__table-wrap) {
-  margin-top: 10px;
+  margin-top: var(--workspace-chat-markdown-space-2_5);
   overflow-x: auto;
 }
 
@@ -174,7 +186,7 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__table-cell) {
-  padding: 8px 10px;
+  padding: var(--workspace-chat-markdown-space-2) var(--workspace-chat-markdown-space-2_5);
   border: 1px solid #dbe4f0;
   vertical-align: top;
   white-space: normal;
@@ -183,7 +195,7 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 .workspace-chat-markdown :deep(th.workspace-chat-markdown__table-cell) {
   background: #eff6ff;
   color: #1e3a8a;
-  font-size: 11px;
+  font-size: var(--workspace-chat-markdown-font-xs);
   font-weight: 700;
 }
 
@@ -204,7 +216,7 @@ const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
 }
 
 .workspace-chat-markdown :deep(.workspace-chat-markdown__thematic-break) {
-  margin: 10px 0 0;
+  margin: var(--workspace-chat-markdown-space-2_5) 0 0;
   border: none;
   border-top: 1px solid #dbe4f0;
 }

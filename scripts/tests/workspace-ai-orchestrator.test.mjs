@@ -6,32 +6,47 @@ import { it } from 'vitest'
 const ORCHESTRATOR_FILE = resolve(process.cwd(), 'server/services/ai/workspace-orchestrator.ts')
 const WORKSPACE_STREAM_FILE = resolve(process.cwd(), 'server/api/ai/workspace/stream.post.ts')
 
-it('工作台 AI 为三种主模式声明独立 profile，并按 profile 收敛工具白名单', async () => {
+it('工作台 AI 为四种主模式声明独立 profile，并按 profile 收敛工具白名单', async () => {
   const source = await readFile(ORCHESTRATOR_FILE, 'utf8')
 
   assert.match(source, /const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentProfile> = \{/, '工作台 orchestrator 缺少模式 profile 定义')
   assert.match(source, /dialog_ask:\s*\{[\s\S]*allowWebAccess:\s*true/, '对话询问 profile 未保留按需联网能力')
   assert.match(source, /auto_optimize:\s*\{[\s\S]*allowWebAccess:\s*false[\s\S]*maxProposals:\s*MAX_AUTO_OPTIMIZE_PROPOSALS/, '自动优化 profile 未关闭联网或未声明提案上限')
   assert.match(source, /issue_discovery:\s*\{[\s\S]*allowWebAccess:\s*false[\s\S]*scanDimensions:\s*ISSUE_SCAN_DIMENSIONS/, '寻疑发现 profile 未关闭联网或未绑定固定扫描维度')
+  assert.match(source, /contextual_agent:\s*\{[\s\S]*allowWebAccess:\s*false[\s\S]*progressMessage:\s*'AI 正在生成待确认草案\.\.\.'/, 'contextual_agent profile 未声明独立草案模式')
   assert.match(source, /if \(profile\.allowWebAccess\) \{[\s\S]*tools\.push\(webSearch, fetchWebPage\)/, '工作台工具集未按 profile 控制联网工具')
   assert.match(source, /if \(profile\.mode === 'auto_optimize'\)\s+tools\.push\(createWorkspaceProposalTool\(input, state, profile\)\)/, '自动优化模式未切到专用提案工具集')
   assert.match(source, /if \(profile\.mode === 'issue_discovery'\) \{[\s\S]*createWorkspaceIssueTools\(input, state\)/, '寻疑发现模式未切到专用 issue 工具集')
 })
 
-it('AgentProto 在 workflow 场景下注入 workflowSnapshot 上下文，并开放 propose_workflow_draft 草案工具', async () => {
+it('agentproto 在 contextual_agent 下同时支持 workflow 与 freeform 场景草案工具', async () => {
   const [orchestratorSource, streamSource] = await Promise.all([
     readFile(ORCHESTRATOR_FILE, 'utf8'),
     readFile(WORKSPACE_STREAM_FILE, 'utf8'),
   ])
 
+  assert.match(streamSource, /contextualAssistantKey:\s*toText\(context\.contextualAssistantKey\)\s+as\s+WorkspaceContextualAssistantKey \| '',/, 'workspace 流接口未透传 contextualAssistantKey')
   assert.match(streamSource, /workflowSnapshot: context\.workflowSnapshot \|\| null,/, 'workspace 流接口未透传 workflowSnapshot')
+  assert.match(streamSource, /sceneHash:\s*toText\(context\.sceneHash\),/, 'workspace 流接口未透传 sceneHash')
+  assert.match(streamSource, /sceneSourceText:\s*toText\(context\.sceneSourceText\),/, 'workspace 流接口未透传 sceneSourceText')
+  assert.match(streamSource, /sceneTemplate:\s*toText\(context\.sceneTemplate\)(?:\s+as\s+AiCanvasAssistTemplate\s*\|\s*undefined)?,/, 'workspace 流接口未透传 sceneTemplate')
   assert.match(streamSource, /workflowAction:\s*toText\(context\.workflowAction\)(?:\s+as\s+WorkflowDraftAction\s*\|\s*undefined)?,/, 'workspace 流接口未透传 workflowAction')
   assert.match(streamSource, /workflowTemplate:\s*toText\(context\.workflowTemplate\)(?:\s+as\s+AiCanvasAssistTemplate\s*\|\s*undefined)?,/, 'workspace 流接口未透传 workflowTemplate')
   assert.match(orchestratorSource, /workflowSnapshot: context\.workflowSnapshot,/, 'orchestrator 未将 workflowSnapshot 纳入上下文快照')
+  assert.match(orchestratorSource, /contextualAssistantKey: context\.contextualAssistantKey,/, 'orchestrator 未将 contextualAssistantKey 纳入上下文快照')
+  assert.match(orchestratorSource, /sceneHash: context\.sceneHash,/, 'orchestrator 未将 sceneHash 纳入上下文快照')
   assert.match(orchestratorSource, /function createWorkspaceWorkflowDraftTool\(/, 'orchestrator 缺少 workflow draft 工具')
+  assert.match(orchestratorSource, /function createWorkspaceSceneDraftTool\(/, 'orchestrator 缺少 scene draft 工具')
+  assert.match(orchestratorSource, /function isExplicitWorkflowDraftRequest\(message: string\): boolean \{/, 'orchestrator 缺少显式制图意图识别')
+  assert.match(orchestratorSource, /function isStandaloneWorkflowTopicRequest\(message: string\): boolean \{/, 'orchestrator 缺少独立流程图主题识别')
   assert.match(orchestratorSource, /name: 'propose_workflow_draft'/, 'workflow draft 工具未以 propose_workflow_draft 暴露')
-  assert.match(orchestratorSource, /if \(profile\.mode === 'dialog_ask' && isAgentProtoWorkflowContext\(input\.context\)\)\s+tools\.push\(createWorkspaceWorkflowDraftTool\(input, state\)\)/, 'workflow draft 工具未限制在 AgentProto workflow 上下文')
+  assert.match(orchestratorSource, /name: 'propose_scene_draft'/, 'scene draft 工具未以 propose_scene_draft 暴露')
+  assert.match(orchestratorSource, /if \(profile\.mode === 'contextual_agent'\) \{[\s\S]*if \(isAgentProtoWorkflowContext\(input\.context\)\)\s+tools\.push\(createWorkspaceWorkflowDraftTool\(input, state\)\)[\s\S]*if \(isAgentProtoSceneContext\(input\.context\)\)\s+tools\.push\(createWorkspaceSceneDraftTool\(input, state\)\)/, 'AgentProto 草案工具未限制在 contextual_agent + 对应上下文')
+  assert.match(orchestratorSource, /当前这轮命中明确制图意图：优先生成 workflow 草案，不要停留在项目上下文复述。/, 'orchestrator 未提升显式制图意图优先级')
+  assert.match(orchestratorSource, /当前这轮更像独立示例\/模板流程图请求：内容主题以用户输入为准，当前项目资料只用于默认布局和样式，不要把项目内容硬套进图里。/, 'orchestrator 未为独立流程图主题降权项目上下文')
+  assert.match(orchestratorSource, /const standaloneWorkflowTopicRequest = action === 'generate' && isStandaloneWorkflowTopicRequest\(input\.context\.latestUserMessage\)/, 'workflow draft 工具未识别独立主题生成请求')
   assert.match(orchestratorSource, /workflowDraft: state\.workflowDraft,/, 'orchestrator 未把 workflowDraft 写入执行结果')
+  assert.match(orchestratorSource, /sceneDraft: state\.sceneDraft,/, 'orchestrator 未把 sceneDraft 写入执行结果')
 })
 
 it('工作台 AI 将最近多轮用户/助手消息透传给 agent，并把模式说明注入最后一条用户消息', async () => {

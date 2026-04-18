@@ -61,6 +61,7 @@ import type {
 import type { CollabMarkdownHeadingAnchorItem } from '~/utils/collab-markdown-navigation'
 import type { WorkspaceOutlineNode } from '~/utils/workspace-outline'
 import { resolveCollabResourceDisplayLabel } from '~~/shared/utils/collab-resource'
+import { resolveWorkspaceTabDensityTokens } from '~~/shared/utils/workspace-tab-layout'
 import {
   normalizeWorkspaceCollabPresenceActivityState,
   resolveWorkspaceCollabPresenceColor,
@@ -97,7 +98,6 @@ import {
   workspaceRoleLabel,
   workspaceTypeLabel,
 } from '~/utils/workspace-main-panel-formatters'
-import { resolveWorkspaceTabDensityTokens } from '~~/shared/utils/workspace-tab-layout'
 
 const props = withDefaults(defineProps<{
   activeTabId?: WorkspaceOpenTabState | ''

@@ -13,6 +13,7 @@ import type {
   WorkflowLayoutPreset,
   WorkflowStylePreset,
   WorkspaceAiMode,
+  WorkspaceContextualAssistantKey,
 } from '~~/shared/types/domain'
 import { createEventStream, setResponseStatus } from 'h3'
 import { buildProjectKnowledgeLocalContext } from '~~/server/services/ai/project-knowledge-context'
@@ -47,6 +48,7 @@ const ALLOWED_MODES: WorkspaceAiMode[] = [
   'auto_optimize',
   'issue_discovery',
   'document_assist',
+  'contextual_agent',
 ]
 const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
   'workspace_document_summarize',
@@ -81,6 +83,7 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       teamId: workspaceId,
       workspaceId,
       projectId,
+      projectTitle: toText(context.projectTitle),
       contestId: toText(context.contestId),
       trackId: toText(context.trackId),
       major: toText(context.major),
@@ -93,6 +96,7 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       documentAction: context.documentAction,
       assistantPreset: context.assistantPreset,
       assistantLabel: toText(context.assistantLabel),
+      contextualAssistantKey: toText(context.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
       activeTabId: toText(context.activeTabId),
       previewMode: toText(context.previewMode),
       resourcePurpose: toText(context.resourcePurpose) as CollabPurpose | '',
@@ -102,12 +106,25 @@ function normalizeRequest(body: Partial<AiWorkspaceRequest> | null | undefined):
       workflowArchitectureView: toText(context.workflowArchitectureView) as WorkflowArchitectureView | undefined,
       workflowStylePreset: toText(context.workflowStylePreset) as WorkflowStylePreset | undefined,
       workflowLayoutPreset: toText(context.workflowLayoutPreset) as WorkflowLayoutPreset | undefined,
+      sceneHash: toText(context.sceneHash),
+      sceneSourceText: toText(context.sceneSourceText),
+      sceneSourceFormat: toText(context.sceneSourceFormat),
+      sceneAction: toText(context.sceneAction) as WorkflowDraftAction | undefined,
+      sceneTemplate: toText(context.sceneTemplate) as AiCanvasAssistTemplate | undefined,
+      sceneArchitectureView: toText(context.sceneArchitectureView) as WorkflowArchitectureView | undefined,
+      sceneStylePreset: toText(context.sceneStylePreset) as WorkflowStylePreset | undefined,
+      sceneLayoutPreset: toText(context.sceneLayoutPreset) as WorkflowLayoutPreset | undefined,
     },
     aiOptions: body?.aiOptions || {},
   }
 }
 
-function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName: string): string {
+function buildSessionTitle(
+  mode: WorkspaceAiMode,
+  contestName: string,
+  trackName: string,
+  assistantLabel?: string,
+): string {
   const left = contestName.trim()
   const right = trackName.trim()
 
@@ -117,7 +134,9 @@ function buildSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName
       ? 'Loopy 寻疑发现'
       : mode === 'document_assist'
         ? 'Loopy 文稿助手'
-        : 'Loopy 对话'
+        : mode === 'contextual_agent'
+          ? `Loopy ${toText(assistantLabel) || '上下文助手'}`
+          : 'Loopy 对话'
 
   if (left && right)
     return `${modeLabel} · ${left} · ${right}`
@@ -135,10 +154,15 @@ function buildDialogSessionTitleFromMessage(message: string): string {
   return `${compact.slice(0, 16)}…`
 }
 
-function resolveInitialSessionTitle(mode: WorkspaceAiMode, contestName: string, trackName: string): string {
+function resolveInitialSessionTitle(
+  mode: WorkspaceAiMode,
+  contestName: string,
+  trackName: string,
+  assistantLabel?: string,
+): string {
   if (mode === 'dialog_ask')
     return '新对话'
-  return buildSessionTitle(mode, contestName, trackName)
+  return buildSessionTitle(mode, contestName, trackName, assistantLabel)
 }
 
 function resolvePersistedSessionTitle(input: {
@@ -147,6 +171,7 @@ function resolvePersistedSessionTitle(input: {
   initialMessageCount: number
   contestName: string
   trackName: string
+  assistantLabel?: string
 }): string | undefined {
   if (input.mode === 'dialog_ask') {
     if (input.initialMessageCount > 0)
@@ -154,7 +179,7 @@ function resolvePersistedSessionTitle(input: {
     return buildDialogSessionTitleFromMessage(input.latestUserMessage)
   }
 
-  return buildSessionTitle(input.mode, input.contestName, input.trackName)
+  return buildSessionTitle(input.mode, input.contestName, input.trackName, input.assistantLabel)
 }
 
 function summarizeProjectSettings(snapshot: Awaited<ReturnType<typeof getProjectSettingsSnapshot>>): string {
@@ -178,6 +203,24 @@ function summarizeProjectSettings(snapshot: Awaited<ReturnType<typeof getProject
   }
 
   return lines.join('\n')
+}
+
+function buildWorkspaceBootstrapProgressMessage(request: AiWorkspaceRequest): string {
+  const projectTitle = toText(request.context?.projectTitle)
+  const resourceTitle = toText(request.context?.resourceTitle)
+
+  if (request.mode === 'document_assist')
+    return `正在读取当前文档「${resourceTitle || '未命名文档'}」的上下文...`
+
+  if (request.mode === 'contextual_agent') {
+    const assistantLabel = toText(request.context?.assistantLabel)
+    if (assistantLabel && resourceTitle)
+      return `正在为「${assistantLabel}」读取当前资源「${resourceTitle}」的上下文...`
+    if (assistantLabel)
+      return `正在为「${assistantLabel}」读取当前项目「${projectTitle || '未命名项目'}」的上下文...`
+  }
+
+  return `正在读取当前项目「${projectTitle || '未命名项目'}」的上下文...`
 }
 
 function summarizeOutline(snapshot: Awaited<ReturnType<typeof getProjectOutlineSnapshot>>): string {
@@ -302,7 +345,7 @@ export default defineEventHandler(async (event) => {
 
   if (!request.projectId && request.mode !== 'dialog_ask') {
     setResponseStatus(event, 400)
-    return fail('自动优化与寻疑发现模式必须传 projectId。', {
+    return fail('除对话询问外，工作台 AI 调用必须传 projectId。', {
       startedAt,
       provider: workspaceAiConfig.provider,
       model: workspaceAiConfig.model,
@@ -355,7 +398,7 @@ export default defineEventHandler(async (event) => {
         projectId: scopeProjectId,
         mode: scopeMode,
         createdByUserId: user.id,
-        title: resolveInitialSessionTitle(scopeMode, contestName, trackName),
+        title: resolveInitialSessionTitle(scopeMode, contestName, trackName, request.context?.assistantLabel),
         contestId: request.context?.contestId,
         trackId: request.context?.trackId,
         major: request.context?.major,
@@ -379,6 +422,7 @@ export default defineEventHandler(async (event) => {
         initialMessageCount: session.messageCount,
         contestName,
         trackName,
+        assistantLabel: request.context?.assistantLabel,
       }),
     })
 
@@ -483,7 +527,7 @@ export default defineEventHandler(async (event) => {
   const run = async () => {
     try {
       await pushEvent('progress', {
-        message: '已建立工作台 AI 会话，正在加载上下文...',
+        message: buildWorkspaceBootstrapProgressMessage(request),
         sessionId: prepared.sessionId,
       })
       throwIfAborted(abortController.signal)
@@ -541,6 +585,7 @@ export default defineEventHandler(async (event) => {
           context: {
             workspaceId: request.workspaceId || '',
             projectId: request.projectId || '',
+            projectTitle: request.context?.projectTitle || '',
             contestId: request.context?.contestId || '',
             trackId: request.context?.trackId || '',
             major: request.context?.major || '',
@@ -559,6 +604,7 @@ export default defineEventHandler(async (event) => {
             documentAction: toText(request.context?.documentAction),
             assistantPreset: request.context?.assistantPreset || 'default',
             assistantLabel: toText(request.context?.assistantLabel),
+            contextualAssistantKey: toText(request.context?.contextualAssistantKey) as WorkspaceContextualAssistantKey | '',
             activeTabId: toText(request.context?.activeTabId),
             previewMode: toText(request.context?.previewMode),
             resourcePurpose: toText(request.context?.resourcePurpose),
@@ -568,6 +614,14 @@ export default defineEventHandler(async (event) => {
             workflowArchitectureView: toText(request.context?.workflowArchitectureView),
             workflowStylePreset: toText(request.context?.workflowStylePreset),
             workflowLayoutPreset: toText(request.context?.workflowLayoutPreset),
+            sceneHash: toText(request.context?.sceneHash),
+            sceneSourceText: toText(request.context?.sceneSourceText),
+            sceneSourceFormat: toText(request.context?.sceneSourceFormat),
+            sceneAction: toText(request.context?.sceneAction),
+            sceneTemplate: toText(request.context?.sceneTemplate),
+            sceneArchitectureView: toText(request.context?.sceneArchitectureView),
+            sceneStylePreset: toText(request.context?.sceneStylePreset),
+            sceneLayoutPreset: toText(request.context?.sceneLayoutPreset),
             projectSettingsSummary: contextBundle.projectSettingsSummary,
             projectOutlineSummary: contextBundle.projectOutlineSummary,
             resourceSummary: contextBundle.resourceSummary,
@@ -655,6 +709,11 @@ export default defineEventHandler(async (event) => {
                   workflowDraft: execution.data.data.workflowDraft,
                 }
               : {}),
+            ...(execution.data.data.sceneDraft
+              ? {
+                  sceneDraft: execution.data.data.sceneDraft,
+                }
+              : {}),
             knowledge: execution.data.data.knowledge || contextBundle.knowledge,
           },
           createdByUserId: user.id,
@@ -674,6 +733,7 @@ export default defineEventHandler(async (event) => {
             initialMessageCount: prepared.initialMessageCount,
             contestName,
             trackName,
+            assistantLabel: request.context?.assistantLabel,
           }),
         })
 
@@ -734,6 +794,7 @@ export default defineEventHandler(async (event) => {
           issues: issuePayload?.issues || [],
           documentDraft: execution.data.data.documentDraft || null,
           workflowDraft: execution.data.data.workflowDraft || null,
+          sceneDraft: execution.data.data.sceneDraft || null,
         }
       })
 
@@ -746,6 +807,7 @@ export default defineEventHandler(async (event) => {
         issues: persisted.issues,
         documentDraft: persisted.documentDraft,
         workflowDraft: persisted.workflowDraft,
+        sceneDraft: persisted.sceneDraft,
         knowledge: execution.data.data.knowledge || contextBundle.knowledge,
       }
 

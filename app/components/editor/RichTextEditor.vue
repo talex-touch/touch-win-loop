@@ -18,7 +18,7 @@ import type {
   WorkspaceCollabAwarenessSelectionState,
   WorkspaceCollabSelectionSummary,
 } from '~/components/workspace/collab/presence'
-import type { CollabMarkdownHeadingItem } from '~/utils/collab-markdown-navigation'
+import type { CollabMarkdownHeadingAnchorItem, CollabMarkdownHeadingItem } from '~/utils/collab-markdown-navigation'
 import { Extension } from '@tiptap/core'
 import Collaboration from '@tiptap/extension-collaboration'
 import Dropcursor from '@tiptap/extension-dropcursor'
@@ -164,6 +164,7 @@ const emit = defineEmits<{
   selectionChange: [value: RichTextEditorSelectionChangePayload]
   remotePresenceChange: [value: WorkspaceCollabAwarenessSelectionState[]]
   primaryHeadingChange: [value: string]
+  outlineChange: [value: CollabMarkdownHeadingAnchorItem[]]
   createCommentFromSelection: [value: ProjectResourceCommentTextSelectionAnchor]
   createCommentFromImage: [value: ProjectResourceCommentImageNodeAnchor]
   openCommentThread: [threadId: string]
@@ -187,6 +188,7 @@ const activeOutlineSearchMatchIndex = ref(0)
 const copiedHeadingAnchorId = ref('')
 const collapsedHeadingPositions = ref<number[]>([])
 const outlineCollapsed = ref(false)
+const lastOutlineSignature = ref('')
 const activeCodeBlockState = shallowRef<RichTextEditorCodeBlockState | null>(null)
 const codeBlockCopyFeedback = ref(false)
 const slashMenuState = reactive({
@@ -311,9 +313,33 @@ const normalizedContentMaxWidth = computed(() => {
   return normalized || '1040px'
 })
 
+const editorTypographyScale = computed(() => {
+  if (props.uiFontSizePreset === 'xs')
+    return 0.9
+  if (props.uiFontSizePreset === 'sm')
+    return 0.96
+  if (props.uiFontSizePreset === 'lg')
+    return 1.08
+  if (props.uiFontSizePreset === 'xl')
+    return 1.16
+  return 1
+})
+
 const editorInlineStyle = computed(() => {
   return {
     '--rich-text-editor-content-max-width': normalizedContentMaxWidth.value,
+    '--rich-text-editor-font-2xs': `calc(10px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-font-xs': `calc(11px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-font-sm': `calc(12px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-font-md': `calc(13px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-font-lg': `calc(14px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-body-size': `calc(16px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-heading-1-size': `calc(32px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-heading-2-size': `calc(28px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-heading-3-size': `calc(22px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-heading-4-size': `calc(18px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-heading-5-size': `calc(16px * ${editorTypographyScale.value})`,
+    '--rich-text-editor-heading-6-size': `calc(15px * ${editorTypographyScale.value})`,
   }
 })
 
@@ -1600,6 +1626,16 @@ function resolveActiveOutlineHeading(): number | null {
 
 function syncOutlineState(): void {
   outlineItems.value = collectOutlineItems()
+  const outlineSignature = JSON.stringify(outlineItems.value.map(item => ({
+    id: item.anchorId,
+    pos: item.pos,
+    level: item.level,
+    text: item.text,
+  })))
+  if (outlineSignature !== lastOutlineSignature.value) {
+    lastOutlineSignature.value = outlineSignature
+    emit('outlineChange', outlineItems.value.map(item => ({ ...item })))
+  }
   nextTick(() => {
     syncOutlineHeadingMarkers()
     syncOutlineActiveHeading()
@@ -3029,6 +3065,8 @@ watch(slashMenuItems, (items) => {
 watch([() => props.doc, () => props.awareness], ([nextDoc, nextAwareness]) => {
   if (!nextDoc) {
     destroyEditor()
+    lastOutlineSignature.value = ''
+    emit('outlineChange', [])
     emit('remotePresenceChange', [])
     emit('selectionChange', defaultSelectionChangePayload())
     return
@@ -3841,7 +3879,7 @@ onBeforeUnmount(() => {
 
 .rich-text-editor__outline-search-count {
   color: #94a3b8;
-  font-size: 11px;
+  font-size: var(--rich-text-editor-font-xs);
   line-height: 1;
 }
 
@@ -3946,7 +3984,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   color: #94a3b8;
-  font-size: 13px;
+  font-size: var(--rich-text-editor-font-md);
 }
 
 .rich-text-editor__canvas :deep(.tiptap) {
@@ -3955,10 +3993,10 @@ onBeforeUnmount(() => {
   max-width: var(--rich-text-editor-content-max-width);
   min-height: 520px;
   margin: 0 auto;
-  padding: 22px 24px 64px;
+  padding: calc(var(--wl-ws-space-6, 24px) - 2px) var(--wl-ws-space-6, 24px) calc(var(--wl-ws-space-6, 24px) * 2.66);
   outline: none;
   color: #0f172a;
-  font-size: 16px;
+  font-size: var(--rich-text-editor-body-size);
   line-height: 1.85;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3990,39 +4028,39 @@ onBeforeUnmount(() => {
 }
 
 .rich-text-editor__canvas :deep(.tiptap h1) {
-  font-size: 32px;
+  font-size: var(--rich-text-editor-heading-1-size);
   line-height: 1.28;
 }
 
 .rich-text-editor__canvas :deep(.tiptap h2) {
-  font-size: 28px;
+  font-size: var(--rich-text-editor-heading-2-size);
   line-height: 1.34;
 }
 
 .rich-text-editor__canvas :deep(.tiptap h3) {
-  font-size: 22px;
+  font-size: var(--rich-text-editor-heading-3-size);
   line-height: 1.4;
 }
 
 .rich-text-editor__canvas :deep(.tiptap h4) {
-  font-size: 18px;
+  font-size: var(--rich-text-editor-heading-4-size);
   line-height: 1.48;
 }
 
 .rich-text-editor__canvas :deep(.tiptap h5) {
-  font-size: 16px;
+  font-size: var(--rich-text-editor-heading-5-size);
   line-height: 1.55;
 }
 
 .rich-text-editor__canvas :deep(.tiptap h6) {
-  font-size: 15px;
+  font-size: var(--rich-text-editor-heading-6-size);
   line-height: 1.55;
   color: #334155;
 }
 
 .rich-text-editor__canvas :deep(.tiptap blockquote) {
   margin: 0;
-  padding-left: 16px;
+  padding-left: var(--wl-ws-space-4, 16px);
   border-left: 3px solid #cbd5e1;
   color: #475569;
 }
@@ -4150,7 +4188,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: rgba(248, 250, 252, 0.48);
   color: rgba(71, 85, 105, 0.7);
-  font-size: 10px;
+  font-size: var(--rich-text-editor-font-2xs);
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0.02em;
@@ -4158,7 +4196,7 @@ onBeforeUnmount(() => {
 
 .rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-hint-label) {
   color: rgba(100, 116, 139, 0.58);
-  font-size: 11px;
+  font-size: var(--rich-text-editor-font-xs);
   font-weight: 400;
   line-height: 1;
 }
@@ -4458,7 +4496,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: #fffbeb;
   color: #b45309;
-  font-size: 11px;
+  font-size: var(--rich-text-editor-font-xs);
   font-weight: 700;
   vertical-align: middle;
 }
@@ -4493,7 +4531,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   padding: 2px 8px;
   color: #fff;
-  font-size: 11px;
+  font-size: var(--rich-text-editor-font-xs);
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
@@ -4694,7 +4732,7 @@ onBeforeUnmount(() => {
 
 .rich-text-editor__slash-menu-meta {
   color: #94a3b8;
-  font-size: 11px;
+  font-size: var(--rich-text-editor-font-xs);
 }
 
 .rich-text-editor__slash-menu-empty {

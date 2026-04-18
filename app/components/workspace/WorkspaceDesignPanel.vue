@@ -35,6 +35,7 @@ import type {
 } from "~~/shared/types/domain";
 import type { WorkspaceCollabCursorUser } from "~/components/workspace/collab/presence";
 import type { ContextMenuItem } from "~/components/ui/context-menu";
+import type { WorkspaceOutlineNode } from "~/utils/workspace-outline";
 import {
   computed,
   nextTick,
@@ -242,6 +243,7 @@ const sidebarCollapsed = ref(false);
 const inspectorCollapsed = ref(false);
 const actionMenuOpen = ref(false);
 const actionMenuRef = ref<HTMLElement | null>(null);
+const outlineHighlightedAssetId = ref("");
 const canvasLibrarySearch = ref("");
 const canvasLibraryItems = ref<CanvasLibraryItem[]>([]);
 const canvasLibraryLoading = ref(false);
@@ -295,6 +297,7 @@ const mockupScreenEditingFrameId = ref("");
 const pendingImagePlacement = ref<PendingImagePlacement | null>(null);
 const toolSwitchHint = ref("");
 let toolSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
+let outlineHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
 const TOOL_SWITCH_HINT_DURATION = 1600;
 const CANVAS_AI_ACTION_FEATURE_KEYS = {
@@ -832,6 +835,12 @@ function clearToolSwitchHintTimer(): void {
   if (!toolSwitchHintTimer) return;
   clearTimeout(toolSwitchHintTimer);
   toolSwitchHintTimer = null;
+}
+
+function clearOutlineHighlightTimer(): void {
+  if (!outlineHighlightTimer) return;
+  clearTimeout(outlineHighlightTimer);
+  outlineHighlightTimer = null;
 }
 
 function showToolSwitchHint(tool: DesignEditorTool): void {
@@ -1806,6 +1815,102 @@ function scrollActiveLayerTreeNodeIntoView(): void {
   });
 }
 
+function escapeAttributeSelectorValue(value: string): string {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+}
+
+function scrollOutlineTargetIntoView(selector: string): void {
+  void nextTick(() => {
+    void nextTick(() => {
+      panelRootRef.value
+        ?.querySelector<HTMLElement>(selector)
+        ?.scrollIntoView({
+          block: "nearest",
+          inline: "nearest",
+        });
+    });
+  });
+}
+
+function highlightAssetOutlineItem(assetId: string): void {
+  const normalizedAssetId = normalizeString(assetId);
+  if (!normalizedAssetId) return;
+  outlineHighlightedAssetId.value = normalizedAssetId;
+  clearOutlineHighlightTimer();
+  outlineHighlightTimer = setTimeout(() => {
+    outlineHighlightedAssetId.value = "";
+    outlineHighlightTimer = null;
+  }, 1800);
+  scrollOutlineTargetIntoView(
+    `[data-design-outline-asset-id="${escapeAttributeSelectorValue(normalizedAssetId)}"]`,
+  );
+}
+
+function locateOutlineItem(node: WorkspaceOutlineNode): boolean {
+  const locator = node.locator;
+  if (locator.surface !== "design") return false;
+
+  const pageId = normalizeString(locator.pageId);
+  if (pageId && currentPage.value?.id !== pageId) selectPage(pageId);
+
+  if (locator.kind === "page") {
+    activeSidebarTab.value = "pages";
+    scrollOutlineTargetIntoView(
+      `[data-design-outline-page-id="${escapeAttributeSelectorValue(pageId)}"]`,
+    );
+    return true;
+  }
+
+  if (locator.kind === "frame") {
+    const frameId = normalizeString(locator.frameId);
+    if (!frameId) return false;
+    activeSidebarTab.value = "frames";
+    void nextTick(() => {
+      selectSingleFrame(frameId);
+      scrollOutlineTargetIntoView(
+        `[data-design-outline-frame-id="${escapeAttributeSelectorValue(frameId)}"]`,
+      );
+    });
+    return true;
+  }
+
+  if (locator.kind === "element") {
+    const frameId = normalizeString(locator.frameId);
+    const elementId = normalizeString(locator.elementId);
+    if (!frameId || !elementId) return false;
+    activeSidebarTab.value = "frames";
+    void nextTick(() => {
+      setSelectedElements([elementId], {
+        primaryElementId: elementId,
+        editingFrameId: frameId,
+        displayFrameId: frameId,
+      });
+      scrollOutlineTargetIntoView(
+        `[data-design-outline-element-id="${escapeAttributeSelectorValue(elementId)}"]`,
+      );
+    });
+    return true;
+  }
+
+  if (locator.kind === "asset_group") {
+    activeSidebarTab.value = "assets";
+    scrollOutlineTargetIntoView('[data-design-outline-assets-root="true"]');
+    return true;
+  }
+
+  if (locator.kind === "asset") {
+    const assetId = normalizeString(locator.assetId);
+    if (!assetId) return false;
+    activeSidebarTab.value = "assets";
+    highlightAssetOutlineItem(assetId);
+    return true;
+  }
+
+  return false;
+}
+
 const activeLayerTreeGuideState = computed(() => {
   const rows = frameSidebarTreeRows.value;
   const rowIndexByNodeId = new Map(
@@ -2243,6 +2348,11 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointerdown", handleActionMenuPointerDown);
   window.removeEventListener("blur", clearTransientInteractionState);
   clearToolSwitchHintTimer();
+  clearOutlineHighlightTimer();
+});
+
+defineExpose({
+  locateOutlineItem,
 });
 
 function setDraftDocument(document: SceneDocument): void {
@@ -6211,6 +6321,7 @@ async function downloadDefaultPng(): Promise<void> {
                 v-for="page in pages"
                 :key="page.id"
                 class="w-full rounded-2xl border px-3 py-3 text-left transition-colors"
+                :data-design-outline-page-id="page.id"
                 :class="
                   page.id === currentPage?.id
                     ? 'border-slate-300 bg-white/88 text-slate-950'
@@ -6281,6 +6392,8 @@ async function downloadDefaultPng(): Promise<void> {
                   :class="resolveLayerTreeNodeClass(row.node)"
                   :style="{ paddingLeft: resolveLayerTreeRowPaddingLeft(row.depth) }"
                   :data-layer-tree-node-id="row.node.id"
+                  :data-design-outline-frame-id="row.node.frameId || ''"
+                  :data-design-outline-element-id="row.node.elementId || ''"
                 >
                   <template
                     v-for="guideDepth in resolveActiveLayerTreeGuideDepths(row.node.id)"
@@ -6399,7 +6512,11 @@ async function downloadDefaultPng(): Promise<void> {
               </template>
             </div>
 
-            <div v-else data-testid="workspace-design-sidebar-assets">
+            <div
+              v-else
+              data-testid="workspace-design-sidebar-assets"
+              data-design-outline-assets-root="true"
+            >
               <div class="space-y-4">
                 <section class="space-y-3 rounded-3xl border border-slate-200/80 bg-slate-50/70 p-3">
                   <div
@@ -6643,6 +6760,8 @@ async function downloadDefaultPng(): Promise<void> {
                       v-for="asset in imageAssets"
                       :key="asset.id"
                       class="rounded-2xl border border-slate-200 bg-white/72 px-3 py-2 transition-colors hover:border-slate-300 hover:bg-white/88"
+                      :class="outlineHighlightedAssetId === asset.id ? 'workspace-design-outline-highlight' : ''"
+                      :data-design-outline-asset-id="asset.id"
                     >
                       <div class="flex items-center gap-3">
                         <img
@@ -6712,6 +6831,8 @@ async function downloadDefaultPng(): Promise<void> {
                       v-for="asset in deviceShellAssets"
                       :key="asset.id"
                       class="rounded-2xl border border-slate-200 bg-white/72 p-3"
+                      :class="outlineHighlightedAssetId === asset.id ? 'workspace-design-outline-highlight' : ''"
+                      :data-design-outline-asset-id="asset.id"
                     >
                       <div class="flex items-start gap-3">
                         <img
@@ -8826,6 +8947,12 @@ async function downloadDefaultPng(): Promise<void> {
   white-space: nowrap;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
   backdrop-filter: blur(12px);
+}
+
+.workspace-design-outline-highlight {
+  border-color: rgba(14, 165, 233, 0.46) !important;
+  background: rgba(240, 249, 255, 0.96) !important;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.18);
 }
 
 @media (max-width: 1023px) {

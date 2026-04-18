@@ -5,6 +5,9 @@ import type {
   ProjectMeetingMode,
   ProjectMeetingUtterance,
   ProjectWorkbenchMode,
+  ProjectWorkspaceAssistantMode,
+  ProjectWorkspaceAiTabsPreference,
+  ProjectWorkspaceRightSidebarView,
   ProjectWorkspaceViewDeviceStatePayload,
   ProjectWorkspaceViewPreference,
   ProjectWorkspaceViewState,
@@ -15,6 +18,10 @@ import type {
   WorkspaceOpenTabState,
 } from '~~/shared/types/domain'
 import { onBeforeUnmount, reactive, ref } from 'vue'
+import {
+  normalizeWorkspaceLeftSidebarWidth,
+  normalizeWorkspaceRightSidebarWidth,
+} from '~~/shared/utils/workspace-layout'
 import { normalizeQueryValue as normalizeQueryParam } from '~/composables/team-ui'
 import { useApiEndpoint } from '~/composables/useApiEndpoint'
 import { workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
@@ -91,7 +98,13 @@ interface UseWorkspaceProjectViewStateOptions {
   activeMeetingUtterances: Ref<ProjectMeetingUtterance[]>
   meetingLiveCaptions: Ref<unknown[]>
   leftSidebarCollapsed: Ref<boolean>
+  leftSidebarWidth: Ref<number>
+  defaultLeftSidebarWidth: Ref<number> | ComputedRef<number>
   rightSidebarUserCollapsed: Ref<boolean>
+  rightSidebarWidth: Ref<number>
+  defaultRightSidebarWidth: Ref<number> | ComputedRef<number>
+  projectAssistantMode: Ref<ProjectWorkspaceAssistantMode>
+  rightSidebarView: Ref<ProjectWorkspaceRightSidebarView>
   setRightSidebarUserCollapsed: (nextCollapsed: boolean, options?: { suppressPersist?: boolean }) => void
   workbenchMode: Ref<WorkspaceWorkbenchMode>
   aiMode: Ref<WorkspaceAiMode>
@@ -153,7 +166,7 @@ function resolveLegacyDesignResourceId(
       return preferredId
   }
 
-  return [...resources]
+  const legacyDesignResource = [...resources]
     .filter(resource => isDesignCanvasResource(resource))
     .sort((left, right) => {
       const leftCreatedAt = parseTimestamp(left.createdAt)
@@ -161,7 +174,10 @@ function resolveLegacyDesignResourceId(
       if (leftCreatedAt !== rightCreatedAt)
         return leftCreatedAt - rightCreatedAt
       return normalizeString(left.id).localeCompare(normalizeString(right.id))
-    })[0]?.id || ''
+    })
+    .at(0) || null
+
+  return legacyDesignResource?.id || ''
 }
 
 function migrateLegacyDesignWorkspaceState(
@@ -248,7 +264,7 @@ export function resolveMeetingIdFromTabId(tabId: string): string {
 }
 
 export function isWorkspaceMainTabId(value: string): value is WorkspaceMainTabId {
-  return ['dashboard', 'meeting', 'members', 'flow', 'settings'].includes(value)
+  return ['dashboard', 'meeting', 'members', 'flow', 'settings', 'loopy_data'].includes(value)
     || (value.startsWith('meeting:') && value.length > 'meeting:'.length)
     || value === 'meeting-create:audio'
     || value === 'meeting-create:video'
@@ -295,6 +311,14 @@ export function normalizeProjectWorkbenchMode(value: unknown): WorkspaceWorkbenc
   return 'project'
 }
 
+function normalizeProjectWorkspaceAssistantMode(value: unknown): ProjectWorkspaceAssistantMode {
+  return normalizeString(value) === 'dialog_ask' ? 'dialog_ask' : 'contextual'
+}
+
+function normalizeProjectWorkspaceRightSidebarView(value: unknown): ProjectWorkspaceRightSidebarView {
+  return normalizeString(value) === 'comments' ? 'comments' : 'ai'
+}
+
 export function createDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewState {
   return {
     workbenchMode: 'project',
@@ -306,9 +330,29 @@ export function createDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewSt
     openChatSessionIds: [],
     activeChatSessionId: '',
     activeMeetingId: '',
+    projectAssistantMode: 'contextual',
+    rightSidebarView: 'ai',
+    leftSidebarWidth: normalizeWorkspaceLeftSidebarWidth(null),
+    rightSidebarWidth: normalizeWorkspaceRightSidebarWidth(null),
     leftSidebarCollapsed: true,
     rightSidebarCollapsed: true,
   }
+}
+
+function applyPersonalAiTabsFallback(
+  state: ProjectWorkspaceViewState,
+  personalAiTabs: ProjectWorkspaceAiTabsPreference | null | undefined,
+): ProjectWorkspaceViewState {
+  if (!personalAiTabs)
+    return state
+  if (state.openChatSessionIds.length > 0 || state.activeChatSessionId)
+    return state
+
+  return normalizeProjectWorkspaceViewState({
+    ...state,
+    openChatSessionIds: personalAiTabs.payload.openChatSessionIds,
+    activeChatSessionId: personalAiTabs.payload.activeChatSessionId,
+  })
 }
 
 export function normalizeProjectWorkspaceViewState(
@@ -351,6 +395,10 @@ export function normalizeProjectWorkspaceViewState(
     openChatSessionIds: normalizeOpenChatSessionIds(openChatSessionIds),
     activeChatSessionId,
     activeMeetingId,
+    projectAssistantMode: normalizeProjectWorkspaceAssistantMode(source.projectAssistantMode),
+    rightSidebarView: normalizeProjectWorkspaceRightSidebarView(source.rightSidebarView),
+    leftSidebarWidth: normalizeWorkspaceLeftSidebarWidth(source.leftSidebarWidth),
+    rightSidebarWidth: normalizeWorkspaceRightSidebarWidth(source.rightSidebarWidth),
     leftSidebarCollapsed: Boolean(source.leftSidebarCollapsed),
     rightSidebarCollapsed: Boolean(source.rightSidebarCollapsed),
   }
@@ -401,6 +449,10 @@ export function isProjectWorkspaceViewStateEqual(
     && left.openChatSessionIds.every((item, index) => item === right.openChatSessionIds[index])
     && left.activeChatSessionId === right.activeChatSessionId
     && left.activeMeetingId === right.activeMeetingId
+    && left.projectAssistantMode === right.projectAssistantMode
+    && left.rightSidebarView === right.rightSidebarView
+    && left.leftSidebarWidth === right.leftSidebarWidth
+    && left.rightSidebarWidth === right.rightSidebarWidth
     && left.leftSidebarCollapsed === right.leftSidebarCollapsed
     && left.rightSidebarCollapsed === right.rightSidebarCollapsed
     && left.mainTabs.length === right.mainTabs.length
@@ -536,6 +588,14 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
 
   let projectWorkspaceViewPersistTimer: ReturnType<typeof setTimeout> | null = null
 
+  function buildDefaultProjectWorkspaceViewState(): ProjectWorkspaceViewState {
+    return normalizeProjectWorkspaceViewState({
+      ...createDefaultProjectWorkspaceViewState(),
+      leftSidebarWidth: options.defaultLeftSidebarWidth.value,
+      rightSidebarWidth: options.defaultRightSidebarWidth.value,
+    })
+  }
+
   function buildProjectWorkspaceViewStateFromRefs(): ProjectWorkspaceViewState {
     return normalizeProjectWorkspaceViewState({
       workbenchMode: options.workbenchMode.value,
@@ -547,6 +607,10 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
       openChatSessionIds: options.openChatSessionIds.value,
       activeChatSessionId: options.activeChatSessionId.value,
       activeMeetingId: options.activeMeetingId.value,
+      projectAssistantMode: options.projectAssistantMode.value,
+      rightSidebarView: options.rightSidebarView.value,
+      leftSidebarWidth: options.leftSidebarWidth.value,
+      rightSidebarWidth: options.rightSidebarWidth.value,
       leftSidebarCollapsed: options.leftSidebarCollapsed.value,
       rightSidebarCollapsed: options.rightSidebarUserCollapsed.value,
     })
@@ -809,6 +873,10 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
       options.openChatSessionIds.value = [...normalized.openChatSessionIds]
       options.activeChatSessionId.value = normalized.activeChatSessionId
       options.activeMeetingId.value = nextMeetingId
+      options.projectAssistantMode.value = normalized.projectAssistantMode
+      options.rightSidebarView.value = normalized.rightSidebarView
+      options.leftSidebarWidth.value = normalized.leftSidebarWidth
+      options.rightSidebarWidth.value = normalized.rightSidebarWidth
       options.leftSidebarCollapsed.value = normalized.leftSidebarCollapsed
       options.setRightSidebarUserCollapsed(normalized.rightSidebarCollapsed, { suppressPersist: true })
 
@@ -839,7 +907,7 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
     const normalizedProjectId = normalizeString(projectId)
     if (!normalizedProjectId) {
       return {
-        state: createDefaultProjectWorkspaceViewState(),
+        state: buildDefaultProjectWorkspaceViewState(),
         bundle: null,
         hasManagedQuery: false,
         legacyDesignUnavailable: false,
@@ -847,7 +915,7 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
     }
 
     const queryResult = parseProjectWorkspaceViewStateFromQuery()
-    let nextState = createDefaultProjectWorkspaceViewState()
+    let nextState = buildDefaultProjectWorkspaceViewState()
     let bundle: ProjectWorkspaceViewDeviceStatePayload | null = null
     let currentState: ProjectWorkspaceViewState | null = null
     let latestOtherState: ProjectWorkspaceViewState | null = null
@@ -859,12 +927,18 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
       if (bundle?.current?.payload) {
         const migratedCurrentState = migrateLegacyDesignWorkspaceState(bundle.current.payload, options.resources.value)
         currentStateLegacyDesignUnavailable = migratedCurrentState.legacyDesignUnavailable
-        currentState = normalizeProjectWorkspaceViewState(migratedCurrentState.state)
+        currentState = applyPersonalAiTabsFallback(
+          normalizeProjectWorkspaceViewState(migratedCurrentState.state),
+          bundle.personalAiTabs,
+        )
       }
       if (bundle?.latestOther?.payload) {
         const migratedLatestOtherState = migrateLegacyDesignWorkspaceState(bundle.latestOther.payload, options.resources.value)
         latestOtherStateLegacyDesignUnavailable = migratedLatestOtherState.legacyDesignUnavailable
-        latestOtherState = normalizeProjectWorkspaceViewState(migratedLatestOtherState.state)
+        latestOtherState = applyPersonalAiTabsFallback(
+          normalizeProjectWorkspaceViewState(migratedLatestOtherState.state),
+          bundle.personalAiTabs,
+        )
       }
     }
     catch {
@@ -872,8 +946,12 @@ export function useWorkspaceProjectViewState(options: UseWorkspaceProjectViewSta
     }
 
     let legacyDesignUnavailable = queryResult.legacyDesignUnavailable
+    nextState = applyPersonalAiTabsFallback(nextState, bundle?.personalAiTabs)
     if (queryResult.hasManagedQuery) {
-      nextState = normalizeProjectWorkspaceViewState(queryResult.state)
+      nextState = applyPersonalAiTabsFallback(
+        normalizeProjectWorkspaceViewState(queryResult.state),
+        bundle?.personalAiTabs,
+      )
     }
     else if (currentState) {
       nextState = currentState
@@ -971,6 +1049,7 @@ export function useWorkspaceProjectShell() {
   })
 
   const openSettingsSignal = ref(0)
+  const openLoopyDataSignal = ref(0)
   const openMemberManagementSignal = ref(0)
   const openDisplayPreferencesSignal = ref(0)
   const openFlowSignal = ref(0)
@@ -1050,6 +1129,7 @@ export function useWorkspaceProjectShell() {
     topicBoardConfirmState,
     deviceRestoreConfirmState,
     openSettingsSignal,
+    openLoopyDataSignal,
     openMemberManagementSignal,
     openDisplayPreferencesSignal,
     openFlowSignal,

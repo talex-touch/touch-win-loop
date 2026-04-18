@@ -11,8 +11,11 @@ import type {
   ProjectResourceCommentTextSelectionAnchor,
   ProjectResourceCommentThread,
   ResourcePreviewStatus,
+  WorkspaceFontSizePreset,
+  WorkspaceTabSpacingPreset,
 } from '~~/shared/types/domain'
 import type { WorkspaceCollabCursorUser, WorkspaceCollabPresenceUser } from '~/components/workspace/collab/presence'
+import type { CollabMarkdownHeadingAnchorItem } from '~/utils/collab-markdown-navigation'
 import { COLLAB_NOTES_RESOURCE_LABEL } from '~~/shared/utils/collab-resource'
 import RichTextEditor from '~/components/editor/RichTextEditor.vue'
 import WorkspaceTldrawCanvas from '~/components/workspace/collab/WorkspaceTldrawCanvas.client.vue'
@@ -36,6 +39,8 @@ interface WorkspacePreviewStatusPayload {
 const props = withDefaults(defineProps<{
   activeResourceTab?: WorkspacePreviewTabItem | null
   activePreviewMode?: WorkspacePreviewMode
+  fontSizePreset?: WorkspaceFontSizePreset | ''
+  tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
   previewResourceId?: string
   previewStatus?: WorkspacePreviewStatusPayload | null
   previewStatusLoading?: boolean
@@ -92,6 +97,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   activeResourceTab: null,
   activePreviewMode: 'binary',
+  fontSizePreset: '',
+  tabSpacingPreset: '',
   previewResourceId: '',
   previewStatus: null,
   previewStatusLoading: false,
@@ -140,6 +147,7 @@ const emit = defineEmits<{
   }]
   markdownRemotePresenceChange: [value: any[]]
   markdownPrimaryHeadingChange: [value: string]
+  markdownOutlineChange: [value: CollabMarkdownHeadingAnchorItem[]]
   markdownCreateCommentFromSelection: [value: ProjectResourceCommentTextSelectionAnchor]
   markdownCreateCommentFromImage: [value: ProjectResourceCommentImageNodeAnchor]
   markdownOpenCommentThread: [threadId: string]
@@ -209,6 +217,11 @@ watch(() => props.commentDraftAnchor, (draftAnchor) => {
   expandMarkdownCommentsPanel()
 })
 
+watch(() => [props.activePreviewMode, props.previewResourceId], ([previewMode]) => {
+  if (previewMode !== 'markdown')
+    emit('markdownOutlineChange', [])
+}, { immediate: true })
+
 function handleMarkdownSelectionChange(value: {
   line: number
   column: number
@@ -270,6 +283,7 @@ defineExpose({
                 :placeholder="markdownPlaceholder"
                 :resource-id="props.previewResourceId"
                 :heading-levels="[1, 2, 3, 4, 5, 6]"
+                :ui-font-size-preset="props.fontSizePreset || 'md'"
                 :show-toolbar="false"
                 :enable-slash-menu="true"
                 :enable-comments="true"
@@ -282,6 +296,7 @@ defineExpose({
                 @selection-change="handleMarkdownSelectionChange"
                 @remote-presence-change="emit('markdownRemotePresenceChange', $event)"
                 @primary-heading-change="emit('markdownPrimaryHeadingChange', $event)"
+                @outline-change="emit('markdownOutlineChange', $event)"
                 @create-comment-from-selection="emit('markdownCreateCommentFromSelection', $event)"
                 @create-comment-from-image="emit('markdownCreateCommentFromImage', $event)"
                 @open-comment-thread="emit('markdownOpenCommentThread', $event)"

@@ -11777,6 +11777,8 @@ watch(
     openChatSessionIds,
     activeChatSessionId,
     activeMeetingId,
+    projectAssistantMode,
+    rightSidebarView,
     leftSidebarWidth,
     rightSidebarWidth,
     leftSidebarCollapsed,
@@ -12314,6 +12316,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :project-contextual-assistant-key="projectContextualAssistant?.key || ''"
                 :ai-mode="aiMode"
                 :sidebar-view="rightSidebarView"
+                :tab-spacing-preset="workspaceEffectiveTabSpacingPreset"
                 class="min-h-0 overflow-hidden"
                 :chat-sessions="chatSessions"
                 :open-chat-session-ids="openChatSessionIds"

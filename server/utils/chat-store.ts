@@ -8,6 +8,7 @@ const CHAT_SESSION_MODE_SET = new Set<WorkspaceAiMode>([
   'issue_discovery',
   'defense',
   'document_assist',
+  'contextual_agent',
 ])
 
 interface AiChatSessionRow {

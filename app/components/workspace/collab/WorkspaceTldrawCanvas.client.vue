@@ -587,7 +587,7 @@ onBeforeUnmount(() => {
             />
           </svg>
           <div
-            class="text-[10px] text-white font-semibold px-2 py-0.5 rounded-full max-w-40 truncate shadow-sm left-4 top-1 absolute"
+            class="text-xs text-white font-semibold px-2 py-0.5 rounded-full max-w-40 truncate shadow-sm left-4 top-1 absolute"
             :style="{ backgroundColor: cursor.colorToken }"
             :title="cursor.username"
           >
@@ -599,15 +599,15 @@ onBeforeUnmount(() => {
 
     <div class="pointer-events-none inset-0 absolute z-30">
       <div v-if="warningText" class="left-3 top-3 absolute">
-        <div class="text-[11px] text-amber-700 px-3 py-1.5 border border-amber-200 rounded-full bg-amber-50 shadow-sm">
+        <div class="text-xs text-amber-700 px-3 py-1.5 border border-amber-200 rounded-full bg-amber-50 shadow-sm">
           {{ warningText }}
         </div>
       </div>
       <div v-if="errorText || mountError" class="left-3 top-14 absolute space-y-2">
-        <div v-if="errorText" class="text-[11px] text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 max-w-sm shadow-sm">
+        <div v-if="errorText" class="text-xs text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 max-w-sm shadow-sm">
           {{ errorText }}
         </div>
-        <div v-if="mountError" class="text-[11px] text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 max-w-sm shadow-sm">
+        <div v-if="mountError" class="text-xs text-rose-700 px-3 py-2 border border-rose-200 rounded-xl bg-rose-50 max-w-sm shadow-sm">
           {{ mountError }}
         </div>
       </div>
