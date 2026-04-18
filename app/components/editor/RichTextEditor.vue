@@ -182,12 +182,11 @@ const pendingImageInsertPosition = ref<number | null>(null)
 const outlineItems = ref<RichTextEditorOutlineItem[]>([])
 const activeOutlineHeadingPos = ref<number | null>(null)
 const lastPrimaryHeadingTitle = ref('')
+const inlineSearchVisible = ref(false)
 const outlineSearchQuery = ref('')
 const outlineSearchMatches = ref<RichTextEditorSearchMatch[]>([])
 const activeOutlineSearchMatchIndex = ref(0)
-const copiedHeadingAnchorId = ref('')
 const collapsedHeadingPositions = ref<number[]>([])
-const outlineCollapsed = ref(false)
 const lastOutlineSignature = ref('')
 const activeCodeBlockState = shallowRef<RichTextEditorCodeBlockState | null>(null)
 const codeBlockCopyFeedback = ref(false)
@@ -225,7 +224,6 @@ const inlineCompletionState = reactive({
 const editorChromePluginKey = new PluginKey('rich-text-editor-navigation')
 const searchDecorationPluginKey = new PluginKey('rich-text-editor-search')
 const inlineCompletionPluginKey = new PluginKey('rich-text-editor-inline-completion')
-let copiedHeadingAnchorTimer: ReturnType<typeof setTimeout> | null = null
 let codeBlockCopyTimer: ReturnType<typeof setTimeout> | null = null
 let inlineCompletionDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let inlineCompletionAbortController: AbortController | null = null
@@ -1683,6 +1681,18 @@ function focusOutlineSearchInput(): void {
   })
 }
 
+function openInlineSearch(): boolean {
+  inlineSearchVisible.value = true
+  focusOutlineSearchInput()
+  return true
+}
+
+function closeInlineSearch(options: { keepQuery?: boolean } = {}): void {
+  inlineSearchVisible.value = false
+  if (!options.keepQuery)
+    clearOutlineSearch()
+}
+
 function clearOutlineSearch(): void {
   outlineSearchQuery.value = ''
   outlineSearchMatches.value = []
@@ -1756,7 +1766,7 @@ function onOutlineSearchKeydown(event: KeyboardEvent): void {
 
   if (event.key === 'Escape') {
     event.preventDefault()
-    clearOutlineSearch()
+    closeInlineSearch()
     editor.value?.commands.focus()
   }
 }
@@ -1766,25 +1776,6 @@ function findOutlineItemByAnchorId(anchorId: string): RichTextEditorOutlineItem 
   if (!normalizedAnchorId)
     return null
   return outlineItems.value.find(item => item.anchorId === normalizedAnchorId) || null
-}
-
-async function copyHeadingAnchor(item: RichTextEditorOutlineItem): Promise<void> {
-  if (!import.meta.client || !item.anchorId)
-    return
-
-  const targetUrl = new URL(window.location.href)
-  targetUrl.hash = item.anchorId
-  const copied = await writeTextToClipboard(targetUrl.toString())
-  if (!copied)
-    return
-
-  copiedHeadingAnchorId.value = item.anchorId
-  if (copiedHeadingAnchorTimer)
-    clearTimeout(copiedHeadingAnchorTimer)
-  copiedHeadingAnchorTimer = setTimeout(() => {
-    copiedHeadingAnchorId.value = ''
-    copiedHeadingAnchorTimer = null
-  }, 1600)
 }
 
 function scrollToHeadingAnchor(anchorId: string): boolean {
@@ -2216,10 +2207,6 @@ function destroyEditor(): void {
   inlineCompletionState.acceptPending = false
   removeAwarenessListener?.()
   removeAwarenessListener = null
-  if (copiedHeadingAnchorTimer) {
-    clearTimeout(copiedHeadingAnchorTimer)
-    copiedHeadingAnchorTimer = null
-  }
   if (codeBlockCopyTimer) {
     clearTimeout(codeBlockCopyTimer)
     codeBlockCopyTimer = null
@@ -2231,9 +2218,9 @@ function destroyEditor(): void {
   outlineItems.value = []
   activeOutlineHeadingPos.value = null
   lastPrimaryHeadingTitle.value = ''
+  inlineSearchVisible.value = false
   outlineSearchMatches.value = []
   activeOutlineSearchMatchIndex.value = 0
-  copiedHeadingAnchorId.value = ''
   activeCodeBlockState.value = null
   codeBlockCopyFeedback.value = false
 }
@@ -2807,7 +2794,7 @@ function handleEditorKeyDown(_view: unknown, event: KeyboardEvent): boolean {
 
   if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
     event.preventDefault()
-    focusOutlineSearchInput()
+    openInlineSearch()
     return true
   }
 
@@ -3048,6 +3035,7 @@ function handleViewportResize(): void {
 defineExpose({
   applyDocumentDraft,
   applyDocumentAssistResult,
+  openInlineSearch,
   scrollToCommentThread,
   scrollToHeadingAnchor,
 })
@@ -3267,142 +3255,72 @@ onBeforeUnmount(() => {
     </form>
 
     <div class="rich-text-editor__surface">
-      <aside
-        class="rich-text-editor__outline"
-        :class="{ 'rich-text-editor__outline--collapsed': outlineCollapsed }"
-        data-testid="rich-text-editor-outline"
+      <div
+        v-if="inlineSearchVisible"
+        class="rich-text-editor__inline-search"
+        data-testid="rich-text-editor-inline-search"
       >
-        <template v-if="!outlineCollapsed">
-          <div class="rich-text-editor__outline-header">
-            <button
-              type="button"
-              class="rich-text-editor__outline-collapse"
-              aria-label="收起大纲"
-              title="收起大纲"
-              data-testid="rich-text-editor-outline-collapse"
-              @click="outlineCollapsed = true"
+        <label class="sr-only" for="rich-text-editor-inline-search-input">文内搜索</label>
+        <div class="rich-text-editor__inline-search-main">
+          <div class="rich-text-editor__inline-search-input-wrap">
+            <span class="rich-text-editor__inline-search-icon material-symbols-outlined" aria-hidden="true">
+              search
+            </span>
+            <input
+              id="rich-text-editor-inline-search-input"
+              ref="outlineSearchInputRef"
+              v-model="outlineSearchQuery"
+              class="rich-text-editor__inline-search-input"
+              type="search"
+              inputmode="search"
+              placeholder="搜索正文"
+              data-testid="rich-text-editor-search-input"
+              @keydown="onOutlineSearchKeydown"
             >
-              <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
-            </button>
             <button
+              v-if="outlineSearchQuery"
               type="button"
-              class="rich-text-editor__outline-title"
-              aria-label="收起大纲"
-              title="收起大纲"
-              @click="outlineCollapsed = true"
+              class="rich-text-editor__inline-search-clear"
+              aria-label="清空搜索"
+              @click="clearOutlineSearch()"
             >
-              <span class="rich-text-editor__outline-header-icon material-symbols-outlined" aria-hidden="true">
-                toc
-              </span>
-              <span>大纲</span>
+              <span class="material-symbols-outlined" aria-hidden="true">close</span>
             </button>
           </div>
 
-          <div class="rich-text-editor__outline-body">
-            <div class="rich-text-editor__outline-search">
-              <label class="sr-only" for="rich-text-editor-outline-search-input">文内搜索</label>
-              <div class="rich-text-editor__outline-search-input-wrap">
-                <span class="rich-text-editor__outline-search-icon material-symbols-outlined" aria-hidden="true">
-                  search
-                </span>
-                <input
-                  id="rich-text-editor-outline-search-input"
-                  ref="outlineSearchInputRef"
-                  v-model="outlineSearchQuery"
-                  class="rich-text-editor__outline-search-input"
-                  type="search"
-                  inputmode="search"
-                  placeholder="搜索正文"
-                  data-testid="rich-text-editor-search-input"
-                  @keydown="onOutlineSearchKeydown"
-                >
-                <button
-                  v-if="outlineSearchQuery"
-                  type="button"
-                  class="rich-text-editor__outline-search-clear"
-                  aria-label="清空搜索"
-                  @click="clearOutlineSearch()"
-                >
-                  <span class="material-symbols-outlined" aria-hidden="true">close</span>
-                </button>
-              </div>
-
-              <div class="rich-text-editor__outline-search-meta">
-                <span class="rich-text-editor__outline-search-count">{{ outlineSearchResultLabel }}</span>
-                <div class="rich-text-editor__outline-search-actions">
-                  <button
-                    type="button"
-                    class="rich-text-editor__outline-search-action"
-                    aria-label="上一条结果"
-                    :disabled="outlineSearchMatches.length === 0"
-                    @click="jumpToPreviousOutlineSearchMatch()"
-                  >
-                    <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="rich-text-editor__outline-search-action"
-                    aria-label="下一条结果"
-                    :disabled="outlineSearchMatches.length === 0"
-                    @click="jumpToNextOutlineSearchMatch()"
-                  >
-                    <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <nav v-if="outlineItems.length > 0" class="rich-text-editor__outline-list" aria-label="文档大纲">
-              <div
-                v-for="item in outlineItems"
-                :key="`${item.pos}-${item.level}`"
-                class="rich-text-editor__outline-row"
-                :class="{ 'rich-text-editor__outline-row--active': activeOutlineHeadingPos === item.pos }"
+          <div class="rich-text-editor__inline-search-meta">
+            <span class="rich-text-editor__inline-search-count">{{ outlineSearchResultLabel }}</span>
+            <div class="rich-text-editor__inline-search-actions">
+              <button
+                type="button"
+                class="rich-text-editor__inline-search-action"
+                aria-label="上一条结果"
+                :disabled="outlineSearchMatches.length === 0"
+                @click="jumpToPreviousOutlineSearchMatch()"
               >
-                <button
-                  class="rich-text-editor__outline-item"
-                  type="button"
-                  :style="{ paddingLeft: `${(item.level - 1) * 14}px` }"
-                  @click="scrollToOutlineHeading(item)"
-                >
-                  <span class="rich-text-editor__outline-item-label">
-                    {{ item.text }}
-                  </span>
-                </button>
-                <button
-                  v-if="item.anchorId"
-                  type="button"
-                  class="rich-text-editor__outline-anchor-button"
-                  :class="{ 'rich-text-editor__outline-anchor-button--copied': copiedHeadingAnchorId === item.anchorId }"
-                  :aria-label="`复制 ${item.text} 的标题链接`"
-                  :title="copiedHeadingAnchorId === item.anchorId ? '已复制标题链接' : '复制标题链接'"
-                  @click.stop="copyHeadingAnchor(item)"
-                >
-                  <span class="material-symbols-outlined" aria-hidden="true">
-                    {{ copiedHeadingAnchorId === item.anchorId ? 'check' : 'link' }}
-                  </span>
-                </button>
-              </div>
-            </nav>
-
-            <div v-else class="rich-text-editor__outline-empty">
-              添加标题后，这里会自动生成目录。
+                <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span>
+              </button>
+              <button
+                type="button"
+                class="rich-text-editor__inline-search-action"
+                aria-label="下一条结果"
+                :disabled="outlineSearchMatches.length === 0"
+                @click="jumpToNextOutlineSearchMatch()"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
+              </button>
+              <button
+                type="button"
+                class="rich-text-editor__inline-search-action"
+                aria-label="关闭搜索"
+                @click="closeInlineSearch()"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">close</span>
+              </button>
             </div>
           </div>
-        </template>
-      </aside>
-
-      <button
-        v-if="outlineCollapsed"
-        type="button"
-        class="rich-text-editor__outline-floating-toggle"
-        aria-label="展开大纲"
-        title="展开大纲"
-        data-testid="rich-text-editor-outline-collapse"
-        @click="outlineCollapsed = false"
-      >
-        <span class="material-symbols-outlined" aria-hidden="true">toc</span>
-      </button>
+        </div>
+      </div>
 
       <div
         ref="editorScrollRef"
@@ -3704,153 +3622,63 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-.rich-text-editor__outline {
-  display: flex;
-  width: 220px;
-  min-width: 220px;
-  flex-direction: column;
-  align-self: stretch;
-  height: 100%;
-  min-height: 0;
-  padding: 20px 12px 24px 16px;
-  border-right: 1px solid #e6ebf2;
-  background: #fff;
-  overflow: hidden;
-  transition:
-    width 0.18s ease,
-    min-width 0.18s ease,
-    padding 0.18s ease;
-}
-
-.rich-text-editor__outline--collapsed {
-  width: 0;
-  min-width: 0;
-  padding: 0;
-  border-right: none;
-}
-
-.rich-text-editor__outline-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  color: #475569;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.rich-text-editor__outline-collapse {
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: #64748b;
-}
-
-.rich-text-editor__outline-collapse:hover {
-  background: #f8fafc;
-  color: #0f172a;
-}
-
-.rich-text-editor__outline-header-icon {
-  font-size: 16px;
-  line-height: 1;
-}
-
-.rich-text-editor__outline-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-}
-
-.rich-text-editor__outline-title:hover {
-  color: #0f172a;
-}
-
-.rich-text-editor__outline-body {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.rich-text-editor__outline-floating-toggle {
+.rich-text-editor__inline-search {
   position: absolute;
-  top: 20px;
-  left: 16px;
-  z-index: 8;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid #dbe3ef;
-  border-radius: 999px;
+  top: 18px;
+  right: 18px;
+  z-index: 16;
+  width: min(360px, calc(100% - 36px));
+  border: 1px solid rgba(219, 227, 239, 0.92);
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.88);
-  color: #475569;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
 
-.rich-text-editor__outline-floating-toggle:hover {
-  background: rgba(248, 250, 252, 0.96);
-  color: #0f172a;
-}
-
-.rich-text-editor__outline-search {
+.rich-text-editor__inline-search-main {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 14px;
+  padding: 10px;
 }
 
-.rich-text-editor__outline-search-input-wrap {
+.rich-text-editor__inline-search-input-wrap {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
+  min-height: 38px;
   padding: 0 8px;
   border: 1px solid #dbe3ef;
-  border-radius: 10px;
-  background: #fff;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.96);
 }
 
-.rich-text-editor__outline-search-icon {
+.rich-text-editor__inline-search-icon {
   color: #94a3b8;
   font-size: 16px;
   line-height: 1;
 }
 
-.rich-text-editor__outline-search-input {
+.rich-text-editor__inline-search-input {
   flex: 1;
   min-width: 0;
   border: none;
   background: transparent;
   color: #0f172a;
-  font-size: 12px;
+  font-size: 13px;
   outline: none;
 }
 
-.rich-text-editor__outline-search-input::-webkit-search-cancel-button {
+.rich-text-editor__inline-search-input::-webkit-search-cancel-button {
   display: none;
 }
 
-.rich-text-editor__outline-search-clear,
-.rich-text-editor__outline-search-action {
+.rich-text-editor__inline-search-clear,
+.rich-text-editor__inline-search-action {
   display: inline-flex;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   align-items: center;
   justify-content: center;
   border: none;
@@ -3859,106 +3687,34 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
-.rich-text-editor__outline-search-clear:hover,
-.rich-text-editor__outline-search-action:hover:enabled {
+.rich-text-editor__inline-search-clear:hover,
+.rich-text-editor__inline-search-action:hover:enabled {
   background: #f8fafc;
   color: #0f172a;
 }
 
-.rich-text-editor__outline-search-action:disabled {
+.rich-text-editor__inline-search-action:disabled {
   cursor: not-allowed;
   opacity: 0.38;
 }
 
-.rich-text-editor__outline-search-meta {
+.rich-text-editor__inline-search-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.rich-text-editor__outline-search-count {
+.rich-text-editor__inline-search-count {
   color: #94a3b8;
   font-size: var(--rich-text-editor-font-xs);
   line-height: 1;
 }
 
-.rich-text-editor__outline-search-actions {
+.rich-text-editor__inline-search-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-
-.rich-text-editor__outline-list {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  overflow-y: auto;
-}
-
-.rich-text-editor__outline-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: 8px;
-}
-
-.rich-text-editor__outline-row--active {
-  background: #f8fafc;
-}
-
-.rich-text-editor__outline-item {
-  flex: 1;
-  min-height: 28px;
-  padding-top: 5px;
-  padding-right: 10px;
-  padding-bottom: 5px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.45;
-  text-align: left;
-}
-
-.rich-text-editor__outline-item:hover,
-.rich-text-editor__outline-row--active .rich-text-editor__outline-item {
-  color: #0f172a;
-}
-
-.rich-text-editor__outline-item-label {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.rich-text-editor__outline-anchor-button {
-  display: inline-flex;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: #94a3b8;
-}
-
-.rich-text-editor__outline-anchor-button:hover,
-.rich-text-editor__outline-anchor-button--copied {
-  background: #eef4ff;
-  color: #1d4ed8;
-}
-
-.rich-text-editor__outline-empty {
-  color: #94a3b8;
-  font-size: 12px;
-  line-height: 1.6;
 }
 
 .rich-text-editor__scroller {
@@ -4755,17 +4511,13 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 1280px) {
-  .rich-text-editor__outline {
-    display: none;
-  }
-
-  .rich-text-editor__outline-floating-toggle {
-    display: none;
-  }
-}
-
 @media (max-width: 960px) {
+  .rich-text-editor__inline-search {
+    top: 14px;
+    right: 14px;
+    width: calc(100% - 28px);
+  }
+
   .rich-text-editor__canvas :deep(.tiptap) {
     min-height: 360px;
     padding: 18px 16px 48px;

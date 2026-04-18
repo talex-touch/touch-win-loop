@@ -21,7 +21,6 @@ import type {
   AiWorkspaceInlineCompletionResult,
   AiWorkspaceRequest,
   AiWorkspaceResult,
-  AiWorkspaceSceneDraft,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
   AiWorkspaceWorkflowDraft,
@@ -80,13 +79,13 @@ import type {
   WorkspaceAiMode,
   WorkspaceAiUsageHistory,
   WorkspaceBillingEstimate,
-  WorkspaceContextualAssistantKey,
   WorkspaceFontSizePreset,
   WorkspaceMemberRole,
   WorkspaceOpenTabState,
   WorkspaceTabSpacingPreset,
   WorkspaceWithQuota,
 } from '~~/shared/types/domain'
+import type { AiWorkspaceSceneDraft, WorkspaceContextualAssistantKey } from '~~/shared/types/domain-legacy'
 import type { ContextMenuItem, ContextMenuRequest } from '~/components/ui/context-menu'
 import type { CollabSnapshotPayload, WorkspaceRealtimeEnvelope } from '~/composables/useCollabSession'
 import type { WorkspaceDisplayPreferencePatchPayload } from '~/composables/useWorkspaceDisplayPreferences'
@@ -214,6 +213,7 @@ import {
   buildMarkdownWorkspaceOutlineNodes,
   buildProjectWorkspaceOutlineNodes,
   buildWorkflowWorkspaceOutlineNodes,
+  parseWorkspaceOutlineNavigationHash,
   parseWorkspaceOutlineDesignDocument,
 } from '~/utils/workspace-outline'
 import {
@@ -423,6 +423,13 @@ function cloneProjectContestBindings(value: WorkspaceProjectContestBindingForm[]
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function normalizeWorkspaceContextualAssistantKey(value: unknown): WorkspaceContextualAssistantKey | '' {
+  const normalized = normalizeString(value)
+  if (normalized === 'agent_doc' || normalized === 'agent_proto' || normalized === 'design_assistant')
+    return normalized
+  return ''
 }
 
 function buildWorkspaceMetaKItemId(prefix: string, value: unknown): string {
@@ -783,6 +790,7 @@ const {
 const workspaceMainPanelRef = ref<{
   applyMarkdownDocumentDraft: (payload: AiWorkspaceDocumentDraft) => boolean
   applyMarkdownDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
+  openActiveSearch: () => boolean
   scrollToMarkdownCommentThread: (threadId: string) => void
   scrollToMarkdownHeadingAnchor: (anchorId: string) => boolean
   locateDesignOutlineItem: (node: WorkspaceOutlineNode) => boolean
@@ -1770,6 +1778,17 @@ function handleWorkspaceGlobalKeydown(event: KeyboardEvent): void {
     return
   }
 
+  if (normalizedKey === 'f' && !event.shiftKey) {
+    event.preventDefault()
+    if (hasBlockingWorkspaceDialogOpen())
+      return
+
+    const handled = workspaceMainPanelRef.value?.openActiveSearch() || false
+    if (!handled)
+      statusLine.value = '当前内容暂未提供搜索能力。'
+    return
+  }
+
   if (normalizedKey === 'w' && !event.shiftKey) {
     event.preventDefault()
     if (hasBlockingWorkspaceDialogOpen())
@@ -2360,7 +2379,7 @@ const currentWorkspaceAssistantContext = computed(() => {
     assistantPreset: currentWorkspaceAssistantPreset.value,
     assistantLabel: currentWorkspaceAssistantLabel.value,
     contextualAssistantKey: workbenchMode.value === 'project' && projectAssistantMode.value === 'contextual'
-      ? (projectContextualAssistant.value?.key || '')
+      ? normalizeWorkspaceContextualAssistantKey(projectContextualAssistant.value?.key)
       : '',
     activeTabId: normalizeString(activeMainTabId.value),
     previewMode: currentAssistantPreviewMode.value,
@@ -7818,6 +7837,20 @@ async function resolveMarkdownAnchorNavigation(hash = route.hash): Promise<void>
   }
 }
 
+async function resolveWorkspaceOutlineHashNavigation(hash = route.hash): Promise<void> {
+  const normalizedHash = String(hash || '').trim()
+  if (!normalizedHash)
+    return
+
+  const outlineNode = parseWorkspaceOutlineNavigationHash(normalizedHash)
+  if (outlineNode) {
+    await locateWorkspaceOutlineItem(outlineNode)
+    return
+  }
+
+  await resolveMarkdownAnchorNavigation(normalizedHash)
+}
+
 function handleMarkdownOutlineChange(items: CollabMarkdownHeadingAnchorItem[]): void {
   if (!activeMarkdownResourceId.value) {
     activeMarkdownOutlineItems.value = []
@@ -9962,7 +9995,7 @@ async function sendWorkspaceAiMessage(
       workflowLayoutPreset: workflowRequest?.layoutPreset,
       sceneHash: sceneRequest ? activeAgentProtoSceneHash.value : '',
       sceneSourceText: sceneRequest ? (sceneDraftSource?.sourceText || '') : '',
-      sceneSourceFormat: sceneRequest ? (sceneDraftSource?.sourceFormat || '') : '',
+      sceneSourceFormat: sceneRequest ? (sceneDraftSource?.sourceFormat || undefined) : undefined,
       sceneAction: sceneRequest?.action,
       sceneTemplate: sceneRequest?.template,
       sceneArchitectureView: sceneRequest?.template === 'architecture'
@@ -11466,7 +11499,7 @@ watch(activeMarkdownResourceId, async (nextResourceId, previousResourceId) => {
 watch(resources, () => {
   if (!route.hash)
     return
-  void resolveMarkdownAnchorNavigation(route.hash)
+  void resolveWorkspaceOutlineHashNavigation(route.hash)
 }, { deep: true })
 
 watch(activeMarkdownResourceTitle, (nextTitle) => {
@@ -11484,7 +11517,7 @@ watch(collabMarkdownDoc, () => {
 watch(() => route.hash, (nextHash, previousHash) => {
   if (!nextHash || nextHash === previousHash)
     return
-  void resolveMarkdownAnchorNavigation(nextHash)
+  void resolveWorkspaceOutlineHashNavigation(nextHash)
 }, { immediate: true })
 
 async function syncActiveMainTabCollabBinding(nextTabId = activeMainTabId.value): Promise<void> {

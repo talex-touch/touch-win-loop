@@ -719,6 +719,7 @@ const migratedPropActiveTabId = computed<WorkspaceMainTabId | ''>(() => {
 const resourcePreviewTabRef = ref<{
   applyDocumentDraft: (payload: AiWorkspaceDocumentDraft) => boolean
   applyDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
+  openSearch: () => boolean
   scrollToCommentThread: (threadId: string) => void
   scrollToHeadingAnchor: (anchorId: string) => boolean
 } | null>(null)
@@ -2246,6 +2247,9 @@ defineExpose({
   },
   applyMarkdownDocumentAssistResult(payload: { action: AiWorkspaceDocumentAction, text: string }) {
     return resourcePreviewTabRef.value?.applyDocumentAssistResult(payload) || false
+  },
+  openActiveSearch() {
+    return resourcePreviewTabRef.value?.openSearch() || false
   },
   scrollToMarkdownCommentThread(threadId: string) {
     resourcePreviewTabRef.value?.scrollToCommentThread(threadId)
