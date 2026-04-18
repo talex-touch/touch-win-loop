@@ -68,6 +68,13 @@
 - 可从固定 `flow` tab 打开
 - 也可作为资源出现在资源列表中
 - 两个入口最终指向同一条底层资源记录
+- 当前主编辑器为 `draw.io embed`
+- draw.io 的读图上下文来自 `autosave/save` 回传 XML，经前端解析为 `workflowSnapshot`
+- 右侧 `AgentProto` 已支持 `AI 生成 / AI 补全 / AI 续改 / 调样式` 四类草案动作
+- 首期所有 AI 改图都必须先生成草案卡，再由用户手动应用
+- 当前只支持单页 workflow 直接 apply；多页资源仍允许分析和预览，但禁止自动写回
+- apply 前会校验 `baseWorkflowHash`，如果用户在草案生成后又改过画布，旧草案会失效
+- draw.io embed 宿主可通过 `WINLOOP_PUBLIC_DRAWIO_EMBED_BASE_URL` 显式覆盖，默认走 `https://embed.diagrams.net`
 
 ## 5. 接口约定
 
