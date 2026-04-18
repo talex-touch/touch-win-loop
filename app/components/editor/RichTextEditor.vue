@@ -800,6 +800,22 @@ function buildInlineCompletionGhostElement(text: string): HTMLElement {
     container.appendChild(textNode)
   })
 
+  const hint = document.createElement('span')
+  hint.className = 'rich-text-editor__inline-completion-hint'
+  hint.setAttribute('aria-hidden', 'true')
+
+  const hintKey = document.createElement('span')
+  hintKey.className = 'rich-text-editor__inline-completion-hint-key'
+  hintKey.textContent = 'Tab'
+  hint.appendChild(hintKey)
+
+  const hintLabel = document.createElement('span')
+  hintLabel.className = 'rich-text-editor__inline-completion-hint-label'
+  hintLabel.textContent = '接受'
+  hint.appendChild(hintLabel)
+
+  container.appendChild(hint)
+
   return container
 }
 
@@ -1051,15 +1067,6 @@ async function acceptInlineCompletionSuggestion(): Promise<boolean> {
   inlineCompletionState.acceptPending = true
 
   try {
-    const accepted = await acceptHandler({
-      requestKey: suggestionKey,
-      suggestion,
-      selectionRange,
-    })
-
-    if (!accepted)
-      return false
-
     if (buildInlineCompletionRequestKeyFromState(instance.state) !== suggestionKey) {
       clearInlineCompletionState({
         cancelPendingRequest: true,
@@ -1072,6 +1079,11 @@ async function acceptInlineCompletionSuggestion(): Promise<boolean> {
       cancelPendingRequest: true,
     })
     instance.chain().focus().insertContent(suggestion).run()
+    void acceptHandler({
+      requestKey: suggestionKey,
+      suggestion,
+      selectionRange,
+    }).catch(() => undefined)
     return true
   }
   catch {
@@ -4116,6 +4128,39 @@ onBeforeUnmount(() => {
   pointer-events: none;
   user-select: none;
   white-space: pre-wrap;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-hint) {
+  display: inline-flex;
+  margin-left: 8px;
+  align-items: center;
+  gap: 4px;
+  vertical-align: text-bottom;
+  opacity: 0.68;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-hint-key) {
+  display: inline-flex;
+  min-width: 28px;
+  height: 20px;
+  padding: 0 7px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.48);
+  color: rgba(71, 85, 105, 0.7);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-hint-label) {
+  color: rgba(100, 116, 139, 0.58);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
 }
 
 .rich-text-editor__canvas :deep(.tiptap .rich-text-editor__inline-completion-loading) {

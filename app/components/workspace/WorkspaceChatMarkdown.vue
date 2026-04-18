@@ -1,0 +1,218 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { parseWorkspaceChatMarkdown } from '~~/shared/utils/workspace-chat-markdown'
+
+const props = defineProps<{
+  content: string
+}>()
+
+const parsed = computed(() => parseWorkspaceChatMarkdown(props.content || ''))
+</script>
+
+<template>
+  <div class="workspace-chat-markdown">
+    <pre v-if="!parsed.ok" class="workspace-chat-markdown__fallback">{{ parsed.fallbackText }}</pre>
+    <template v-else-if="parsed.nodes.length > 0">
+      <WorkspaceChatMarkdownNode
+        v-for="(node, index) in parsed.nodes"
+        :key="`markdown-node-${index}`"
+        :node="node"
+      />
+    </template>
+    <pre v-else class="workspace-chat-markdown__fallback">{{ parsed.fallbackText }}</pre>
+  </div>
+</template>
+
+<style scoped>
+.workspace-chat-markdown {
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading) {
+  margin: 0;
+  color: #0f172a;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading--1) {
+  font-size: 18px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading--2) {
+  font-size: 16px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading--3) {
+  font-size: 15px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading--4),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading--5),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading--6) {
+  font-size: 13px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__paragraph),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph + .workspace-chat-markdown__paragraph),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph + .workspace-chat-markdown__heading),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph + .workspace-chat-markdown__list),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph + .workspace-chat-markdown__blockquote),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph + .workspace-chat-markdown__code-block),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph + .workspace-chat-markdown__table-wrap),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph + .workspace-chat-markdown__thematic-break),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__list + .workspace-chat-markdown__paragraph),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__blockquote + .workspace-chat-markdown__paragraph),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__code-block + .workspace-chat-markdown__paragraph),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__table-wrap + .workspace-chat-markdown__paragraph),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__thematic-break + .workspace-chat-markdown__paragraph),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__list),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__blockquote),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__code-block),
+.workspace-chat-markdown :deep(.workspace-chat-markdown__heading + .workspace-chat-markdown__table-wrap) {
+  margin-top: 10px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__paragraph) {
+  margin: 0;
+  white-space: normal;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__blockquote) {
+  margin: 10px 0 0;
+  padding: 8px 0 8px 12px;
+  border-left: 3px solid #cbd5e1;
+  color: #475569;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__list) {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__list--ordered) {
+  list-style: decimal;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__list--unordered) {
+  list-style: disc;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__list-item) {
+  margin: 4px 0;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__list-item > .workspace-chat-markdown__paragraph:first-child) {
+  margin-top: 0;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__task-row) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__task-checkbox) {
+  margin-top: 3px;
+  width: 13px;
+  height: 13px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__task-copy) {
+  min-width: 0;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__inline-code) {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 11px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__code-block) {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__code-block code) {
+  font: inherit;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__link) {
+  color: #2563eb;
+  text-decoration: underline;
+  text-decoration-color: rgba(37, 99, 235, 0.32);
+  text-underline-offset: 2px;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__link:hover) {
+  color: #1d4ed8;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__table-wrap) {
+  margin-top: 10px;
+  overflow-x: auto;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__table) {
+  width: 100%;
+  min-width: 320px;
+  border-collapse: collapse;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__table-cell) {
+  padding: 8px 10px;
+  border: 1px solid #dbe4f0;
+  vertical-align: top;
+  white-space: normal;
+}
+
+.workspace-chat-markdown :deep(th.workspace-chat-markdown__table-cell) {
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workspace-chat-markdown :deep(td.workspace-chat-markdown__table-cell) {
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__table-cell--left) {
+  text-align: left;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__table-cell--center) {
+  text-align: center;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__table-cell--right) {
+  text-align: right;
+}
+
+.workspace-chat-markdown :deep(.workspace-chat-markdown__thematic-break) {
+  margin: 10px 0 0;
+  border: none;
+  border-top: 1px solid #dbe4f0;
+}
+
+.workspace-chat-markdown__fallback {
+  margin: 0;
+  white-space: pre-wrap;
+  font: inherit;
+  color: inherit;
+}
+</style>

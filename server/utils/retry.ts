@@ -9,6 +9,10 @@ interface RetryOptions<T> {
   maxRetries: number
   run: () => Promise<T>
   fallback?: () => Promise<T> | T
+  shouldRetryOnError?: (input: {
+    attempt: number
+    error: unknown
+  }) => boolean
 }
 
 export async function runWithRetry<T>(options: RetryOptions<T>): Promise<RetryResult<T>> {
@@ -27,6 +31,11 @@ export async function runWithRetry<T>(options: RetryOptions<T>): Promise<RetryRe
     }
     catch (error) {
       lastError = error
+      if (options.shouldRetryOnError && !options.shouldRetryOnError({
+        attempt: attempts,
+        error,
+      }))
+        break
       if (attempts > options.maxRetries)
         break
     }

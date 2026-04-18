@@ -3,7 +3,8 @@ import type { Queryable } from '~~/server/utils/db'
 import type { AiTopicProposalRequest, AiTopicProposalResult, AuthUser, ChatMessage, Resource } from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { searchWithTavily } from '~~/server/services/admin-ai/web'
-import { buildProjectResourceLocalContext, loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
+import { buildProjectKnowledgeLocalContext } from '~~/server/services/ai/project-knowledge-context'
+import { loadVisibleProjectResourcesForAi } from '~~/server/services/ai/project-resource-context'
 import { buildTopicBoardPromptMessage, enrichTopicProposalResult, normalizeTopicBoardInput } from '~~/server/services/ai/topic-board-logic'
 import { runTopicProposalChain } from '~~/server/services/ai/topic-proposal-chain'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
@@ -240,6 +241,13 @@ export async function executeTopicProposal(
     candidateCount: input.request.topK || 3,
     source: 'workspace_dashboard',
   })
+  const latestUserMessage = [...input.request.messages]
+    .reverse()
+    .find(message => message.role === 'user')
+    ?.content
+    ?.trim() || ''
+  const syntheticBoardMessage = buildTopicBoardPromptMessage(boardInput)
+  const effectiveUserMessage = latestUserMessage || syntheticBoardMessage
 
   const scopeProjectId = toText(input.request.context.projectId)
   const scopeMode = 'dialog_ask' as const
@@ -356,11 +364,15 @@ export async function executeTopicProposal(
 
     const contestName = detail?.contest?.name || ''
     const track = detail?.contest?.tracks.find(item => item.id === input.request.context.trackId) || null
-    const localProjectContext = buildProjectResourceLocalContext(projectResources, {
+    const knowledgeContext = await buildProjectKnowledgeLocalContext(db, {
+      projectId: input.request.context.projectId || '',
+      query: effectiveUserMessage,
+      resources: projectResources,
       contestName,
       trackName: track?.name || '',
       major: input.request.context.major,
-      limit: 10,
+      limit: 6,
+      event,
     })
     const localContestContext = buildContestResourceContext(
       contestResources,
@@ -377,7 +389,7 @@ export async function executeTopicProposal(
       contestResources,
       contestTrends,
       localContext: [
-        localProjectContext,
+        knowledgeContext.summaryText,
         localContestContext,
       ].join('\n\n'),
     }
@@ -385,14 +397,6 @@ export async function executeTopicProposal(
 
   const contest = contextBundle.detail?.contest
   const track = contextBundle.track || contest?.tracks.find(item => item.id === input.request.context.trackId) || null
-  const latestUserMessage = [...input.request.messages]
-    .reverse()
-    .find(message => message.role === 'user')
-    ?.content
-    ?.trim() || ''
-  const syntheticBoardMessage = buildTopicBoardPromptMessage(boardInput)
-  const effectiveUserMessage = latestUserMessage || syntheticBoardMessage
-
   let webSearchEnabled = Boolean(runtime.adminAi.tavilyApiKey) && input.request.aiOptions?.networkEnabled !== false
   const webReferences: AiTopicProposalResult['references'] = []
   let webContext = '外网检索未启用。'
@@ -487,7 +491,7 @@ export async function executeTopicProposal(
       projectId: scopeProjectId,
       webSearchEnabled,
       channelKey: channelRuntime.key,
-      providerId: channelRuntime.provider?.id || null,
+      providerId: execution.provider?.id || null,
       boardInput,
     }
 
@@ -513,7 +517,11 @@ export async function executeTopicProposal(
       provider: execution.ai.provider,
       model: execution.ai.model,
       fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
-      metadata: modeMetadata,
+      metadata: {
+        ...modeMetadata,
+        attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
+      },
       createdByUserId: input.user.id,
     })
 
@@ -541,6 +549,7 @@ export async function executeTopicProposal(
         fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
         attempts: execution.attemptChain.length,
         attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
         webSearchEnabled,
         boardInput,
       },

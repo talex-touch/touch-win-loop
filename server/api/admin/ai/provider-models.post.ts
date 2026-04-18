@@ -80,6 +80,28 @@ export default defineEventHandler(async (event) => {
     }, 40097)
   }
 
+  if (!provider) {
+    setResponseStatus(event, 400)
+    return fail('共享上游 provider 未配置，无法自动拉取模型。', {
+      startedAt,
+      provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40098)
+  }
+
+  if (!baseURL) {
+    setResponseStatus(event, 400)
+    return fail('共享上游 baseURL 未配置，无法自动拉取模型。', {
+      startedAt,
+      provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40099)
+  }
+
   try {
     const items = await discoverProviderModels({
       scope: 'provider',

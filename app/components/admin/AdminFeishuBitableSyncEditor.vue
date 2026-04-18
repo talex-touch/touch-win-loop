@@ -545,6 +545,8 @@ const newItemSuggestedEntityType = computed(() => suggestSyncItemEntityType({
   viewName: newItemViewName.value,
   name: newItemForm.name,
 }))
+const itemEntityTypeOptions = computed(() => buildEntityTypeChoiceOptions(itemForm.entityType))
+const newItemEntityTypeOptions = computed(() => buildEntityTypeChoiceOptions(newItemForm.entityType))
 const canRefreshFieldInspection = computed(() => Boolean(toText(itemForm.tableId)) && !loadingItem.value && !loadingViews.value)
 const configuredMappingCount = computed(() => mappingWizardBindings.value.filter(binding => Boolean(toText(binding.sourceField))).length)
 const mappingFocusFieldLabels = computed(() => previewFocusFields(itemForm.entityType).map(item => mappingOptionLabel(item)))
@@ -783,6 +785,11 @@ function parseJsonTextLoose(raw: string): Record<string, unknown> {
 
 function entityTypeLabel(entityType: FeishuBitableSyncItemEntityType): string {
   return ENTITY_TYPE_OPTIONS.find(item => item.value === entityType)?.label || entityType
+}
+
+function buildEntityTypeChoiceOptions(currentValue?: string | null) {
+  const current = toText(currentValue)
+  return ENTITY_TYPE_OPTIONS.filter(option => option.value !== 'track_timeline' || option.value === current)
 }
 
 function mappingOptionLabelByEntityType(entityType: FeishuBitableSyncItemEntityType, targetKey: string): string {
@@ -2872,11 +2879,19 @@ watch(() => props.selectedItemId, (value) => {
                 </label>
                 <label class="text-[11px] text-slate-600 font-medium block">
                   同步到
-                  <a-select v-model="itemForm.entityType" class="mt-1" size="small" :popup-container="selectPopupContainer">
-                    <a-option v-for="option in ENTITY_TYPE_OPTIONS" :key="option.value" :value="option.value">
+                  <div class="mt-1 flex flex-wrap gap-2">
+                    <button
+                      v-for="option in itemEntityTypeOptions"
+                      :key="`item-entity-${option.value}`"
+                      type="button"
+                      class="px-3 py-1.5 border text-[11px] transition-colors"
+                      :class="itemForm.entityType === option.value ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'"
+                      :aria-pressed="itemForm.entityType === option.value"
+                      @click="itemForm.entityType = option.value"
+                    >
                       {{ option.label }}
-                    </a-option>
-                  </a-select>
+                    </button>
+                  </div>
                 </label>
                 <div class="text-[11px] text-slate-600 font-medium block">
                   <div>启用状态</div>
@@ -4224,12 +4239,18 @@ watch(() => props.selectedItemId, (value) => {
         </div>
         <div class="text-[11px] text-slate-600 font-medium block">
           <div>同步到</div>
-          <div class="mt-1 flex gap-2">
-            <a-select v-model="newItemForm.entityType" class="flex-1" size="small" :popup-container="selectPopupContainer">
-              <a-option v-for="option in ENTITY_TYPE_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </a-option>
-            </a-select>
+          <div class="mt-1 flex flex-wrap gap-2">
+            <button
+              v-for="option in newItemEntityTypeOptions"
+              :key="`new-item-entity-${option.value}`"
+              type="button"
+              class="px-3 py-1.5 border text-[11px] transition-colors"
+              :class="newItemForm.entityType === option.value ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'"
+              :aria-pressed="newItemForm.entityType === option.value"
+              @click="newItemForm.entityType = option.value"
+            >
+              {{ option.label }}
+            </button>
             <a-button size="mini" @click="useAutoDetectedNewItemEntityType">
               按子表识别
             </a-button>

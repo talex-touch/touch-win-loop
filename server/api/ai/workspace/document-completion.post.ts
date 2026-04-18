@@ -1,14 +1,23 @@
 import type { AiWorkspaceInlineCompletionRequest, AiWorkspaceInlineCompletionResult } from '~~/shared/types/domain'
-import { setResponseStatus } from 'h3'
+import { createEventStream, setResponseStatus } from 'h3'
 import { generateWorkspaceInlineCompletion, getWorkspaceInlineCompletionResource } from '~~/server/services/ai/workspace-inline-completion'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
-import { fail, ok } from '~~/server/utils/api'
+import { fail } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { withClient } from '~~/server/utils/db'
 import { resolveAiRuntimeForChannel } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
 
-const INLINE_COMPLETION_TIMEOUT_MS = 30_000
+const INLINE_COMPLETION_TIMEOUT_MS = 120_000
+const INLINE_COMPLETION_CACHE_TTL_MS = 10 * 60_000
+const INLINE_COMPLETION_HEARTBEAT_MS = 10_000
+
+const inlineCompletionResultCache = new Map<string, {
+  suggestion: string
+  expiresAt: number
+}>()
+
+const inlineCompletionInflightCache = new Map<string, Promise<string>>()
 
 function toText(value: unknown): string {
   return String(value || '').trim()
@@ -38,7 +47,159 @@ function normalizeRequest(body: Partial<AiWorkspaceInlineCompletionRequest> | nu
 function isInlineCompletionTimeoutError(error: unknown): boolean {
   if (!(error instanceof Error))
     return false
-  return error.name === 'TimeoutError' || /timed out/i.test(String(error.message || ''))
+  return error.name === 'TimeoutError'
+    || error.message === 'INLINE_COMPLETION_TIMEOUT'
+    || /timed out/i.test(String(error.message || ''))
+}
+
+function isInlineCompletionModelMissingError(error: unknown): boolean {
+  if (!(error instanceof Error))
+    return false
+
+  const message = String(error.message || '')
+  return /model not exist|model_not_supported|invalid_request_error/i.test(message)
+    && /model/i.test(message)
+}
+
+function resolveInlineCompletionFailure(input: {
+  error: unknown
+  channelLabel: string
+}): {
+  message: string
+  code: number
+} {
+  if (isInlineCompletionTimeoutError(input.error)) {
+    return {
+      message: '文档自动补齐请求超时，请检查当前续写模型是否可用。',
+      code: 50497,
+    }
+  }
+
+  if (isInlineCompletionModelMissingError(input.error)) {
+    return {
+      message: `文档自动补齐当前配置的模型不存在或不支持当前补全模式，请在后台 AI 场景检查「${input.channelLabel || '文档续写'}」模型配置。`,
+      code: 50299,
+    }
+  }
+
+  return {
+    message: '文档自动补齐请求失败，请稍后重试。',
+    code: 50298,
+  }
+}
+
+function cleanupInlineCompletionResultCache(now = Date.now()): void {
+  for (const [cacheKey, entry] of inlineCompletionResultCache.entries()) {
+    if (entry.expiresAt > now)
+      continue
+    inlineCompletionResultCache.delete(cacheKey)
+  }
+}
+
+function buildInlineCompletionCacheKey(input: {
+  request: AiWorkspaceInlineCompletionRequest
+  aiConfig: Record<string, unknown>
+  channelPrompt: string
+}): string {
+  return JSON.stringify({
+    workspaceId: input.request.workspaceId,
+    projectId: input.request.projectId,
+    resourceId: input.request.context?.resourceId || '',
+    resourceTitle: input.request.context?.resourceTitle || '',
+    markdown: input.request.context?.markdown || '',
+    selectionRange: input.request.context?.selectionRange || null,
+    ai: {
+      provider: input.aiConfig.provider,
+      baseURL: input.aiConfig.baseURL,
+      model: input.aiConfig.model,
+      format: input.aiConfig.format,
+      temperature: input.aiConfig.temperature,
+      topP: input.aiConfig.topP,
+      maxTokens: input.aiConfig.maxTokens,
+      presencePenalty: input.aiConfig.presencePenalty,
+      frequencyPenalty: input.aiConfig.frequencyPenalty,
+    },
+    channelPrompt: input.channelPrompt || '',
+  })
+}
+
+function getCachedInlineCompletionSuggestion(cacheKey: string): string | null {
+  cleanupInlineCompletionResultCache()
+  const cached = inlineCompletionResultCache.get(cacheKey)
+  if (!cached)
+    return null
+  if (cached.expiresAt <= Date.now()) {
+    inlineCompletionResultCache.delete(cacheKey)
+    return null
+  }
+  return cached.suggestion
+}
+
+function setCachedInlineCompletionSuggestion(cacheKey: string, suggestion: string): void {
+  cleanupInlineCompletionResultCache()
+  inlineCompletionResultCache.set(cacheKey, {
+    suggestion,
+    expiresAt: Date.now() + INLINE_COMPLETION_CACHE_TTL_MS,
+  })
+}
+
+async function runInlineCompletionWithTimeout<T>(
+  timeoutMs: number,
+  task: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort('INLINE_COMPLETION_TIMEOUT')
+  }, timeoutMs)
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    controller.signal.addEventListener('abort', () => {
+      reject(new Error('INLINE_COMPLETION_TIMEOUT'))
+    }, { once: true })
+  })
+
+  try {
+    return await Promise.race([
+      task(controller.signal),
+      timeoutPromise,
+    ])
+  }
+  finally {
+    clearTimeout(timer)
+  }
+}
+
+function getSharedInlineCompletionPromise(input: {
+  cacheKey: string
+  timeoutMs: number
+  task: (signal: AbortSignal) => Promise<string>
+}): {
+  promise: Promise<string>
+  shared: boolean
+} {
+  const existingPromise = inlineCompletionInflightCache.get(input.cacheKey)
+  if (existingPromise) {
+    return {
+      promise: existingPromise,
+      shared: true,
+    }
+  }
+
+  const promise = runInlineCompletionWithTimeout(input.timeoutMs, input.task)
+    .then((suggestion) => {
+      setCachedInlineCompletionSuggestion(input.cacheKey, suggestion)
+      return suggestion
+    })
+    .finally(() => {
+      if (inlineCompletionInflightCache.get(input.cacheKey) === promise)
+        inlineCompletionInflightCache.delete(input.cacheKey)
+    })
+
+  inlineCompletionInflightCache.set(input.cacheKey, promise)
+  return {
+    promise,
+    shared: false,
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -149,50 +310,90 @@ export default defineEventHandler(async (event) => {
     }, 400910)
   }
 
-  try {
-    const suggestion = await generateWorkspaceInlineCompletion({
-      ai: aiConfig,
-      channelPrompt: channelRuntime.prompt,
-      resourceTitle: request.context?.resourceTitle || resourceCheck.title,
-      markdown: request.context?.markdown || '',
-      selectionRange: request.context?.selectionRange,
-    })
-
-    return ok<AiWorkspaceInlineCompletionResult>({
-      suggestion,
-    }, {
-      startedAt,
-      provider: aiConfig.provider,
-      model: aiConfig.model,
-      fallbackUsed: channelRuntime.usedFallback,
-      attempts: 1,
+  const stream = createEventStream(event)
+  const pushEvent = async (eventType: 'heartbeat' | 'done' | 'error', data: Record<string, unknown>) => {
+    await stream.push({
+      event: eventType,
+      data: JSON.stringify({
+        event: eventType,
+        data,
+      }),
     })
   }
-  catch (error) {
-    const timedOut = isInlineCompletionTimeoutError(error)
-    console.error('[inline-completion] request failed', {
-      provider: aiConfig.provider,
-      model: aiConfig.model,
-      baseURL: aiConfig.baseURL,
-      timeoutMs: aiConfig.timeoutMs,
-      resourceId: request.context?.resourceId || '',
-      selectionRange: request.context?.selectionRange || null,
-      error: error instanceof Error ? (error.message || error.name || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
-    })
+  const cacheKey = buildInlineCompletionCacheKey({
+    request,
+    aiConfig,
+    channelPrompt: channelRuntime.prompt || '',
+  })
+  const cachedSuggestion = getCachedInlineCompletionSuggestion(cacheKey)
+  const run = async () => {
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
-    setResponseStatus(event, timedOut ? 504 : 502)
-    return fail(
-      timedOut
-        ? '文档自动补齐请求超时，请检查当前续写模型是否可用。'
-        : '文档自动补齐请求失败，请稍后重试。',
-      {
-        startedAt,
+    try {
+      await pushEvent('heartbeat', {
+        at: Date.now(),
+      })
+      heartbeatTimer = setInterval(() => {
+        void pushEvent('heartbeat', {
+          at: Date.now(),
+        }).catch(() => undefined)
+      }, INLINE_COMPLETION_HEARTBEAT_MS)
+
+      let suggestion = cachedSuggestion
+      if (suggestion === null) {
+        const sharedRequest = getSharedInlineCompletionPromise({
+          cacheKey,
+          timeoutMs: aiConfig.timeoutMs,
+          task: signal => generateWorkspaceInlineCompletion({
+            ai: aiConfig,
+            channelPrompt: channelRuntime.prompt,
+            resourceTitle: request.context?.resourceTitle || resourceCheck.title,
+            markdown: request.context?.markdown || '',
+            selectionRange: request.context?.selectionRange,
+            signal,
+          }),
+        })
+        suggestion = await sharedRequest.promise
+      }
+
+      await pushEvent('done', {
+        result: {
+          suggestion,
+        } satisfies AiWorkspaceInlineCompletionResult,
+        meta: {
+          provider: aiConfig.provider,
+          model: aiConfig.model,
+          latencyMs: Date.now() - startedAt,
+        },
+      })
+    }
+    catch (error) {
+      const failure = resolveInlineCompletionFailure({
+        error,
+        channelLabel: channelRuntime.channel.label || '文档续写',
+      })
+      console.error('[inline-completion] request failed', {
         provider: aiConfig.provider,
         model: aiConfig.model,
-        fallbackUsed: channelRuntime.usedFallback,
-        attempts: 1,
-      },
-      timedOut ? 50497 : 50298,
-    )
+        baseURL: aiConfig.baseURL,
+        timeoutMs: aiConfig.timeoutMs,
+        resourceId: request.context?.resourceId || '',
+        selectionRange: request.context?.selectionRange || null,
+        error: error instanceof Error ? (error.message || error.name || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
+      })
+
+      await pushEvent('error', {
+        message: failure.message,
+        code: failure.code,
+      })
+    }
+    finally {
+      if (heartbeatTimer)
+        clearInterval(heartbeatTimer)
+      await stream.close()
+    }
   }
+
+  void run()
+  return stream.send()
 })

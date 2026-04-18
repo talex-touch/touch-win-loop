@@ -103,6 +103,8 @@ export async function runTopicProposalChain(input: TopicProposalChainInput): Pro
     '优先利用站内资料，再结合外网资料，避免泛泛而谈。',
     '每个候选题都要补充：创新点、技术路线、评分映射、风险、预估工作量、推荐赛道、竞赛适配理由、所需技能。',
     '避免与往届获奖题高度重复，优先给出可验证、可交付、可答辩的方向。',
+    '如果站内上下文里提供了方括号资料标签，assistantReply 和 proposals.references 必须优先保留这些标签，不要编造新的引用。',
+    '如果站内上下文明确提示“索引未完成，结果可能不完整”，assistantReply 开头先保留这句提醒。',
     injectedPrompt ? `[附加提示词]\n${injectedPrompt}` : '',
   ].filter(Boolean)
 

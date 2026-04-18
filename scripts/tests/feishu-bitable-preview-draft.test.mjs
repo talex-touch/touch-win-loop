@@ -137,4 +137,16 @@ describe('飞书多维表格版本草稿链路', () => {
     assert.match(serviceSource, /contestId: toText\(result\.rows\[0\]\?\.live_entity_id\) \|\| null/, '赛事关联解析仍未改用本地 toText')
     assert.doesNotMatch(serviceSource, /normalizeText\(/, 'bitable-sync 不应再残留未定义的 normalizeText 调用')
   })
+
+  it('同步到实体类型已改成固定按钮组，不再依赖问题下拉', async () => {
+    const componentSource = await readSource('app/components/admin/AdminFeishuBitableSyncEditor.vue')
+
+    assert.match(componentSource, /const itemEntityTypeOptions = computed\(\(\) => buildEntityTypeChoiceOptions\(itemForm\.entityType\)\)/, '当前同步项未使用实体类型按钮组选项')
+    assert.match(componentSource, /const newItemEntityTypeOptions = computed\(\(\) => buildEntityTypeChoiceOptions\(newItemForm\.entityType\)\)/, '新增同步项未使用实体类型按钮组选项')
+    assert.match(componentSource, /function buildEntityTypeChoiceOptions\(currentValue\?: string \| null\)/, '实体类型按钮组选项构建函数缺失')
+    assert.match(componentSource, /v-for="option in itemEntityTypeOptions"/, '当前同步项“同步到”未渲染按钮组')
+    assert.match(componentSource, /v-for="option in newItemEntityTypeOptions"/, '新增同步项“同步到”未渲染按钮组')
+    assert.doesNotMatch(componentSource, /<a-select v-model="itemForm\.entityType"/, '当前同步项“同步到”不应继续使用下拉')
+    assert.doesNotMatch(componentSource, /<a-select v-model="newItemForm\.entityType"/, '新增同步项“同步到”不应继续使用下拉')
+  })
 })

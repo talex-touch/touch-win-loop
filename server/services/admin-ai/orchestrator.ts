@@ -13,6 +13,7 @@ import { tool } from 'langchain'
 import { z } from 'zod'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { getContestDetail, getContestPublishCheck, getPublishedRubricByTrack } from '~~/server/utils/contest-store'
 import { withClient } from '~~/server/utils/db'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
@@ -313,7 +314,7 @@ async function buildAssistantReplyWithDeepAgent(input: {
 }): Promise<{ text: string, fallbackUsed: boolean, attempts: number }> {
   const fallback = summarizeArtifacts(input.resolvedTaskType, input.artifacts, Boolean(input.runtime.adminAi.tavilyApiKey))
 
-  const onlyFallback = input.runtime.ai.provider === 'mock' || !input.runtime.ai.apiKey
+  const onlyFallback = !isAiRuntimeConfigured(input.runtime.ai)
   if (onlyFallback)
     return { text: fallback, fallbackUsed: true, attempts: 1 }
 

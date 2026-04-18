@@ -164,6 +164,7 @@ export default defineEventHandler(async (event) => {
         fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
         attempts: execution.attemptChain.length,
         attemptChain: execution.attemptChain,
+        latencyMs: execution.latencyMs,
       },
     })
   })

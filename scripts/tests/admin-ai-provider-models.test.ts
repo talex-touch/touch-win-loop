@@ -53,6 +53,7 @@ describe('admin-ai provider models', () => {
     expect(normalizePlatformAiBaseURL('https://newapi.example/v1', 'newapi')).toBe('https://newapi.example')
     expect(normalizePlatformAiBaseURL('https://newapi.example/v1/models', 'newapi')).toBe('https://newapi.example')
     expect(resolvePlatformAiRequestBaseURL('https://newapi.example', 'newapi')).toBe('https://newapi.example/v1')
+    expect(resolvePlatformAiRequestBaseURL('', 'newapi')).toBe('')
   })
 
   it('会优先使用当前输入的 api key，并自动去掉 bearer 前缀', () => {
@@ -169,5 +170,21 @@ describe('admin-ai provider models', () => {
     })
 
     expect(items.map(item => item.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
+  })
+
+  it('缺少 provider 或 baseURL 时会直接报配置错误', async () => {
+    await expect(discoverProviderModels({
+      scope: 'provider',
+      provider: '',
+      baseURL: 'https://proxy.example',
+      apiKey: 'test-key',
+    })).rejects.toThrow(/provider/)
+
+    await expect(discoverProviderModels({
+      scope: 'provider',
+      provider: 'openai-compatible',
+      baseURL: '',
+      apiKey: 'test-key',
+    })).rejects.toThrow(/baseURL/)
   })
 })

@@ -68,6 +68,8 @@ export async function runProjectChatChain(input: ProjectChatChainInput): Promise
   const localContext = input.localContext?.trim() || '项目资料池暂无可用资料。'
   const promptParts = [
     '你是大学生竞赛项目教练。你需要生成可执行的项目草案，并指出缺失字段。输出必须是结构化 JSON。',
+    '如果项目资料池上下文里提供了方括号引用标签，assistantReply 的关键判断后必须保留对应标签，不要编造新的引用。',
+    '如果项目资料池上下文明确提示“索引未完成，结果可能不完整”，assistantReply 开头先保留这句提醒。',
     modePrompt,
     injectedPrompt ? `[附加提示词]\n${injectedPrompt}` : '',
   ].filter(Boolean)

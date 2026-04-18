@@ -271,6 +271,13 @@ export default defineEventHandler(async (event) => {
           provider: execution.ai.provider,
           model: execution.ai.model,
           fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
+          metadata: {
+            taskType: request.taskType,
+            channelKey: execution.channel.key,
+            providerId: execution.provider?.id || null,
+            attemptChain: execution.attemptChain,
+            latencyMs: execution.latencyMs,
+          },
           createdByUserId: user.id,
         })
 
@@ -297,7 +304,7 @@ export default defineEventHandler(async (event) => {
             fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
             attempts: execution.attemptChain.length,
             attemptChain: execution.attemptChain,
-            latencyMs: Date.now() - startedAt,
+            latencyMs: execution.latencyMs,
             remainingQuota: prepared.remainingQuota,
           },
         })
@@ -311,7 +318,7 @@ export default defineEventHandler(async (event) => {
         meta: {
           attempts: execution.attemptChain.length,
           fallbackUsed: execution.usedFallback || execution.data.fallbackUsed,
-          latencyMs: Date.now() - startedAt,
+          latencyMs: execution.latencyMs,
         },
       })
     }

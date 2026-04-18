@@ -5,7 +5,6 @@ import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { convertMessagesToCompletionsMessageParams } from '@langchain/openai'
 import { createChatModel } from '~~/server/services/ai/llm-client'
-import { resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 import { buildMergedPrompt } from '~~/server/utils/platform-ai-channels'
 import { getProjectResourceById } from '~~/server/utils/project-resource-store'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
@@ -30,6 +29,15 @@ interface PartialModeChatModel {
     request: Record<string, unknown>,
     requestOptions?: { signal?: AbortSignal },
   ) => Promise<OpenAiCompatibleChatCompletionResponse>
+}
+
+function isPartialModeChatModel(value: unknown): value is PartialModeChatModel {
+  if (!value || typeof value !== 'object')
+    return false
+
+  const candidate = value as PartialModeChatModel
+  return typeof candidate.invocationParams === 'function'
+    && typeof candidate.completionWithRetry === 'function'
 }
 
 function normalizeString(value: unknown): string {
@@ -57,7 +65,7 @@ function resolveInlineCompletionMaxTokens(ai: AiRuntimeConfig): number {
 function resolveNormalizedTemperature(ai: AiRuntimeConfig): number {
   const parsed = Number(ai.temperature)
   if (!Number.isFinite(parsed))
-    return 0.2
+    return 0.35
   return Math.max(0, Math.min(1, parsed))
 }
 
@@ -147,11 +155,14 @@ function buildInlineCompletionSystemPrompt(channelPrompt = ''): string {
   return buildMergedPrompt(
     channelPrompt,
     [
-      '你是 WinLoop 协作文档的自动补齐引擎。',
+      '你是 WinLoop 协作文档的内联续写引擎。',
       '你只负责生成“应当插入到当前位置”的新增正文，不要解释，不要标题，不要代码块围栏。',
+      '必须优先沿用光标前最近内容的主语言、语气、时态、标点和格式。',
+      '如果前文主要是英文，就只用英文续写；如果前文主要是中文，就只用中文续写；除非上下文明确要求，不要切换语言。',
+      '续写要自然承接前文，并与后文顺滑衔接；可以补一个简短但准确的过渡，不要重复后文。',
+      '表达可以比普通补齐更灵动一点，但必须贴合当前主题，避免空话、套话和无意义扩写。',
       `输出最多 ${INLINE_COMPLETION_MAX_CHARS} 个字符，最多 ${INLINE_COMPLETION_MAX_LINES} 行。`,
       '如果给定的后文片段已经包含你准备输出的开头，请避免重复后文。',
-      '保持当前文档语气、结构和主题一致。',
     ].join('\n'),
   )
 }
@@ -163,8 +174,9 @@ function buildInlineCompletionUserPrompt(input: {
   return [
     `文档标题：${input.resourceTitle || '未命名文档'}`,
     '',
-    '请基于后续 assistant 前缀继续补全文档。',
-    '只输出新增内容，不要重复前缀。',
+    '请在光标处补一小段自然正文，使其既承接前文，也能顺滑过渡到后文。',
+    '只输出新增内容，不要重复前缀，不要复述后文。',
+    '优先遵循光标前最近内容的语言；如果前文是英文，就不要续写成中文。',
     '',
     '当前后文片段：',
     input.suffix || '（无后文）',
@@ -191,7 +203,10 @@ async function invokePartialModeInlineCompletion(input: {
     temperature: resolveNormalizedTemperature(input.ai),
     maxTokens: resolveInlineCompletionMaxTokens(input.ai),
   })
-  const partialModeModel = model as PartialModeChatModel
+  if (!isPartialModeChatModel(model))
+    throw new Error('INLINE_COMPLETION_PARTIAL_MODE_UNAVAILABLE')
+
+  const partialModeModel = model
   const requestMessages = convertMessagesToCompletionsMessageParams({
     messages: [
       new SystemMessage(input.systemPrompt),
@@ -215,14 +230,6 @@ async function invokePartialModeInlineCompletion(input: {
   }
 
   try {
-    console.info('[inline-completion] partial mode request', {
-      provider: input.ai.provider,
-      model: input.ai.model,
-      baseURL: resolvePlatformAiRequestBaseURL(input.ai.baseURL, input.ai.provider),
-      timeoutMs: input.ai.timeoutMs,
-      request: requestPayload,
-    })
-
     const response = await partialModeModel.completionWithRetry(requestPayload, {
       signal: input.signal,
     })
@@ -349,12 +356,14 @@ export async function generateWorkspaceInlineCompletion(input: {
       if (input.signal?.aborted)
         throw error
 
-      console.warn('[inline-completion] partial mode failed, fallback to prompt mode', {
-        provider: input.ai.provider,
-        model: input.ai.model,
-        baseURL: resolvePlatformAiRequestBaseURL(input.ai.baseURL, input.ai.provider),
-        error: error instanceof Error ? (error.message || error.name || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
-      })
+      const errorMessage = error instanceof Error ? (error.message || error.name || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR'
+      if (errorMessage !== 'INLINE_COMPLETION_PARTIAL_MODE_UNAVAILABLE') {
+        console.warn('[inline-completion] partial mode fallback', {
+          provider: input.ai.provider,
+          model: input.ai.model,
+          error: errorMessage,
+        })
+      }
 
       rawSuggestion = await invokePromptModeInlineCompletion({
         ai: input.ai,

@@ -2,6 +2,7 @@ import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
@@ -85,8 +86,8 @@ export default defineEventHandler(async (event) => {
 
   try {
     const result = await runWithPlatformAiChannelFallback(runtime, channelKey, async ({ ai, channel, prompt }) => {
-      if (!ai.apiKey || ai.provider === 'mock')
-        throw new Error('该场景未配置可用模型（API Key 缺失或 provider=mock）。')
+      if (!isAiRuntimeConfigured(ai))
+        throw new Error('该场景未配置可用模型（provider/baseURL/apiKey/model 缺失）。')
 
       const model = createChatModel({
         ...ai,

@@ -2,13 +2,6 @@ function toText(value: unknown): string {
   return String(value || '').trim()
 }
 
-export function resolvePlatformAiDefaultBaseURL(provider: string): string {
-  const normalized = toText(provider).toLowerCase()
-  if (normalized.includes('openrouter'))
-    return 'https://openrouter.ai/api'
-  return 'https://api.openai.com'
-}
-
 export function normalizePlatformAiBaseURL(baseURL: unknown, _provider = ''): string {
   const raw = toText(baseURL)
   if (!raw)
@@ -31,7 +24,7 @@ export function normalizePlatformAiBaseURL(baseURL: unknown, _provider = ''): st
 }
 
 export function resolvePlatformAiRequestBaseURL(baseURL: unknown, provider = ''): string {
-  const normalized = normalizePlatformAiBaseURL(baseURL, provider) || resolvePlatformAiDefaultBaseURL(provider)
+  const normalized = normalizePlatformAiBaseURL(baseURL, provider)
   if (!normalized)
     return ''
   return `${normalized}/v1`

@@ -1,6 +1,7 @@
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { setResponseStatus } from 'h3'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { fail, ok } from '~~/server/utils/api'
 import { requireAuth } from '~~/server/utils/auth'
 import { recordContestAuditLog } from '~~/server/utils/contest-store'
@@ -132,6 +133,17 @@ export default defineEventHandler(async (event) => {
       fallbackUsed: false,
       attempts: 1,
     }, 40099)
+  }
+
+  if (!isAiRuntimeConfigured(resolved.ai)) {
+    setResponseStatus(event, 400)
+    return fail('共享上游未完整配置，缺少 provider/baseURL/apiKey/model，无法执行连通性测试。', {
+      startedAt,
+      provider: resolved.ai.provider,
+      model: resolved.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40098)
   }
 
   try {

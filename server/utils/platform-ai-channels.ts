@@ -123,6 +123,7 @@ export interface PlatformAiChannelAttemptSummary {
   provider: string
   model: string
   success: boolean
+  latencyMs: number
   error?: string
 }
 
@@ -134,6 +135,7 @@ export interface PlatformAiChannelRunResult<T> {
   prompt: string
   usedFallback: boolean
   attemptChain: PlatformAiChannelAttemptSummary[]
+  latencyMs: number
 }
 
 const PLATFORM_AI_REGISTRY_VERSION = 2
@@ -436,7 +438,7 @@ function normalizeLegacyProvider(
     return null
 
   const source = raw as Record<string, unknown>
-  const provider = toText(source.provider) || runtime.ai.provider || 'openai-compatible'
+  const provider = toText(source.provider) || runtime.ai.provider
   const id = toText(source.id) || `provider_${index + 1}`
   const adapter = resolveAdapter(source.adapter, provider)
   const modelFormatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
@@ -481,11 +483,11 @@ function buildDefaultModels(runtime: RuntimeSettings, format: PlatformAiModelFor
   if (items.length > 0)
     return items
 
-  return [createModelFromName('gpt-4o-mini', format)]
+  return []
 }
 
 function buildDefaultProvider(runtime: RuntimeSettings): PlatformAiProviderConfig {
-  const provider = toText(runtime.ai.provider) || 'openai-compatible'
+  const provider = toText(runtime.ai.provider)
   const adapter = resolveAdapter(provider, provider)
   const format: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
 
@@ -567,7 +569,7 @@ function parseStructuredProviderState(raw: Record<string, unknown>, runtime: Run
   const modelPoolSource = raw.modelPool && typeof raw.modelPool === 'object' && !Array.isArray(raw.modelPool)
     ? raw.modelPool as Record<string, unknown>
     : null
-  const provider = toText(providerSource?.provider || raw.providerName || runtime.ai.provider) || 'openai-compatible'
+  const provider = toText(providerSource?.provider || raw.providerName || runtime.ai.provider)
   const adapter = resolveAdapter(providerSource?.adapter || raw.adapter, provider)
   const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
   const modelItemsSource = Array.isArray(modelPoolSource?.items)
@@ -1045,12 +1047,21 @@ export async function runWithPlatformAiChannelFallback<T>(
     provider: PlatformAiProviderConfig | null
     candidate: PlatformAiResolvedChannelCandidate
   }) => Promise<T>,
+  options?: {
+    shouldContinueOnError?: (input: {
+      candidate: PlatformAiResolvedChannelCandidate
+      error: unknown
+      attemptChain: PlatformAiChannelAttemptSummary[]
+    }) => boolean
+  },
 ): Promise<PlatformAiChannelRunResult<T>> {
   const resolved = resolveAiRuntimeForChannel(runtime, key)
   const attemptChain: PlatformAiChannelAttemptSummary[] = []
   let lastError: unknown
+  const requestStartedAt = Date.now()
 
   for (const candidate of resolved.candidates) {
+    const attemptStartedAt = Date.now()
     try {
       const data = await run({
         ai: candidate.ai,
@@ -1059,10 +1070,23 @@ export async function runWithPlatformAiChannelFallback<T>(
         provider: candidate.provider,
         candidate,
       })
+      const attemptLatencyMs = Date.now() - attemptStartedAt
       attemptChain.push({
         provider: candidate.ai.provider,
         model: candidate.ai.model,
         success: true,
+        latencyMs: attemptLatencyMs,
+      })
+      const latencyMs = Date.now() - requestStartedAt
+      console.warn('[platform-ai] request succeeded', {
+        channelKey: key,
+        provider: candidate.ai.provider,
+        model: candidate.ai.model,
+        providerId: candidate.provider?.id || null,
+        fallbackUsed: resolved.usedFallback || candidate.index > 0,
+        attempts: attemptChain.length,
+        latencyMs,
+        attemptChain,
       })
       return {
         data,
@@ -1072,18 +1096,36 @@ export async function runWithPlatformAiChannelFallback<T>(
         prompt: resolved.prompt,
         usedFallback: resolved.usedFallback || candidate.index > 0,
         attemptChain,
+        latencyMs,
       }
     }
     catch (error) {
+      const attemptLatencyMs = Date.now() - attemptStartedAt
       lastError = error
       attemptChain.push({
         provider: candidate.ai.provider,
         model: candidate.ai.model,
         success: false,
+        latencyMs: attemptLatencyMs,
         error: error instanceof Error ? (error.message || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
       })
+      const shouldStopAfterError = options?.shouldContinueOnError
+        && !options.shouldContinueOnError({ candidate, error, attemptChain })
+      if (shouldStopAfterError) {
+        break
+      }
     }
   }
+
+  const latencyMs = Date.now() - requestStartedAt
+  console.error('[platform-ai] request failed', {
+    channelKey: key,
+    fallbackUsed: resolved.usedFallback || attemptChain.length > 1,
+    attempts: attemptChain.length,
+    latencyMs,
+    attemptChain,
+    error: lastError instanceof Error ? (lastError.message || 'UNKNOWN_ERROR') : 'UNKNOWN_ERROR',
+  })
 
   if (lastError instanceof Error)
     throw lastError

@@ -40,7 +40,7 @@ interface AiChatMessageRow {
   created_at: string
 }
 
-function toMetadataRecord(value: unknown): Record<string, unknown> {
+export function normalizeAiChatMetadata(value: unknown): Record<string, unknown> {
   if (!value)
     return {}
   if (typeof value === 'string') {
@@ -113,7 +113,7 @@ function mapChatMessage(row: AiChatMessageRow): AiChatMessage {
     provider: row.provider,
     model: row.model,
     fallbackUsed: Boolean(row.fallback_used),
-    metadata: toMetadataRecord(row.metadata),
+    metadata: normalizeAiChatMetadata(row.metadata),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
   }

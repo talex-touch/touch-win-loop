@@ -703,7 +703,7 @@ watch(currentWorkspaceId, (workspaceId, previousWorkspaceId) => {
               个人全局显示偏好
             </div>
             <p class="text-xs text-slate-500 mt-1">
-              系统默认固定为 md / 默认边距
+              系统默认固定为 默认字号 / 默认间距
             </p>
           </div>
           <button

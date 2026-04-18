@@ -1,5 +1,5 @@
 import type { PlatformAiProviderAdapter } from '~~/server/utils/platform-ai-channels'
-import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformAiDefaultBaseURL, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import { normalizePlatformAiApiKey, normalizePlatformAiBaseURL, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
 
 export type ProviderModelScope = 'llm' | 'docAi' | 'provider'
 
@@ -198,10 +198,16 @@ function resolveModelsEndpoints(
   baseURL: string,
   provider: string,
 ): string[] {
-  const normalizedBase = normalizePlatformAiBaseURL(baseURL, provider) || resolvePlatformAiDefaultBaseURL(provider)
-  const requestBase = resolvePlatformAiRequestBaseURL(normalizedBase, provider)
-  const candidates: string[] = []
   const normalizedProvider = toNonEmptyString(provider).toLowerCase()
+  if (!normalizedProvider)
+    throw new Error('共享上游 provider 未配置，无法拉取模型列表。')
+
+  const normalizedBase = normalizePlatformAiBaseURL(baseURL, normalizedProvider)
+  if (!normalizedBase)
+    throw new Error('共享上游 baseURL 未配置，无法拉取模型列表。')
+
+  const requestBase = resolvePlatformAiRequestBaseURL(normalizedBase, normalizedProvider)
+  const candidates: string[] = []
 
   candidates.push(appendPath(requestBase, 'models'))
   if (!(normalizedProvider === 'newapi' || normalizedProvider.includes('newapi')))
@@ -554,7 +560,10 @@ export async function discoverProviderModels(input: DiscoverProviderModelsInput)
   if (!apiKey)
     throw new Error('API Key 未配置，无法拉取模型列表。')
 
-  const provider = toNonEmptyString(input.provider) || 'openai-compatible'
+  const provider = toNonEmptyString(input.provider)
+  if (!provider)
+    throw new Error('共享上游 provider 未配置，无法拉取模型列表。')
+
   const pricingTable = parsePricingTable(String(input.modelPricingJson || ''), provider)
   const timeoutMs = Math.max(3000, Math.min(60000, Number(input.timeoutMs || 12000)))
   const endpoints = resolveModelsEndpoints(input.baseURL, provider)

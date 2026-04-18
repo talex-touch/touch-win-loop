@@ -1,10 +1,11 @@
 import type { RuntimeSettings } from '~~/server/utils/env'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildPlatformAiChannelsJson,
   buildPlatformAiRegistryJson,
   resolveAiRuntimeForChannel,
   resolvePlatformAiRegistry,
+  runWithPlatformAiChannelFallback,
 } from '~~/server/utils/platform-ai-channels'
 
 function createRuntime(): RuntimeSettings {
@@ -97,6 +98,11 @@ function createRuntime(): RuntimeSettings {
 }
 
 describe('platform-ai-channels', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
   it('仅有旧 ai.model 时会自动映射出模型池记录', () => {
     const runtime = createRuntime()
     const registry = resolvePlatformAiRegistry(runtime)
@@ -194,5 +200,77 @@ describe('platform-ai-channels', () => {
     expect(rewrite?.prompt).toBe('legacy-doc-prompt')
     expect(restructure?.enabled).toBe(false)
     expect(restructure?.prompt).toBe('legacy-doc-prompt')
+  })
+
+  it('统一 AI 入口会记录总耗时和每次尝试耗时', async () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      provider: {
+        provider: 'newapi',
+        baseURL: 'https://newapi.example/v1',
+      },
+      modelPool: {
+        items: [
+          { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
+          { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+        ],
+      },
+      defaults: {
+        defaultModel: 'gpt-4.1-mini',
+        embeddingModel: 'text-embedding-3-small',
+        documentModel: 'gpt-4.1',
+      },
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          models: ['gpt-4.1', 'gpt-4.1-mini'],
+          enabled: true,
+        },
+      ],
+    })
+
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    let attempt = 0
+    const task = runWithPlatformAiChannelFallback(runtime, 'project_chat', async ({ ai }) => {
+      attempt += 1
+      await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 10 : 20))
+      if (attempt === 1)
+        throw new Error('FIRST_FAILED')
+      return ai.model
+    })
+
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(20)
+
+    const result = await task
+
+    expect(result.data).toBe('gpt-4.1-mini')
+    expect(result.latencyMs).toBe(30)
+    expect(result.attemptChain).toEqual([
+      expect.objectContaining({
+        provider: 'newapi',
+        model: 'gpt-4.1',
+        success: false,
+        latencyMs: 10,
+        error: 'FIRST_FAILED',
+      }),
+      expect.objectContaining({
+        provider: 'newapi',
+        model: 'gpt-4.1-mini',
+        success: true,
+        latencyMs: 20,
+      }),
+    ])
+    expect(warnSpy).toHaveBeenCalledWith('[platform-ai] request succeeded', expect.objectContaining({
+      channelKey: 'project_chat',
+      attempts: 2,
+      latencyMs: 30,
+    }))
+    expect(errorSpy).not.toHaveBeenCalled()
   })
 })
