@@ -27,7 +27,7 @@ export type ResourcePreviewStatus = 'queued' | 'converting' | 'finalizing' | 'su
 export type ProjectResourceShareVisibility = 'public' | 'workspace'
 export type ProjectResourceShareDurationPreset = '1h' | '1d' | '3d' | '7d' | '1mon'
 export type WorkspaceFontSizePreset = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
-export type WorkspaceTabSpacingPreset = 'compact' | 'default' | 'relaxed'
+export type WorkspaceTabSpacingPreset = 'ultra_compact' | 'compact' | 'default' | 'relaxed' | 'spacious'
 export type WorkspaceDisplayPreferenceSource = 'workspace_override' | 'user_default' | 'team_default' | 'system_default'
 
 export interface WorkspaceDisplayPreferences {
@@ -801,6 +801,7 @@ export interface DesignAssetModel {
 
 export interface DesignPageMetadata extends Record<string, unknown> {
   clipToPage?: boolean
+  workspaceBackground?: string
   libraryOrigin?: CanvasLibraryOriginMetadata
 }
 
