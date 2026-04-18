@@ -34,8 +34,8 @@ import type {
 import { buildAgentDocDraftKey } from '~~/shared/utils/agent-doc'
 import { resolveWorkspaceStreamSystemMessageView } from '~~/shared/utils/workspace-ai-stream'
 import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
-import { buildWorkflowDraftKey } from '~/utils/workspace-drawio'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
+import { buildWorkflowDraftKey } from '~/utils/workspace-drawio'
 
 type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
@@ -389,8 +389,34 @@ const visibleChatMessageEntries = computed(() => {
       workflowDraft: resolveWorkflowDraft(message),
       systemMessage,
       isLive: Boolean(systemMessage && props.chatLoading && index === lastMessageIndex),
+      isCompletedSystem: Boolean(systemMessage && index < lastMessageIndex),
     }
   })
+})
+const expandedSystemMessageIds = ref<string[]>([])
+const currentUserDisplayName = computed(() => {
+  const value = String(props.currentUserName || '').trim()
+  return value || '你'
+})
+const assistantMessageHeaderLabel = computed(() => {
+  if (props.workbenchMode === 'project') {
+    if (props.projectAssistantMode === 'contextual') {
+      const label = String(props.projectContextualAssistantLabel || '').trim()
+      return label || 'Loopy'
+    }
+    return 'Loopy'
+  }
+  if (props.workbenchMode === 'final_review')
+    return '终审助手'
+  if (props.aiMode === 'document_assist')
+    return 'AgentDoc'
+  if (props.aiMode === 'auto_optimize')
+    return '自动优化'
+  if (props.aiMode === 'issue_discovery')
+    return '寻疑发现'
+  if (props.aiMode === 'defense' || props.workbenchMode === 'defense')
+    return 'AgentDef'
+  return 'Loopy'
 })
 
 const showChatSkeleton = computed(() => {
@@ -399,6 +425,24 @@ const showChatSkeleton = computed(() => {
 
 const showDialogAskEmpty = computed(() => {
   return !showChatSkeleton.value && props.aiMode === 'dialog_ask' && visibleChatMessages.value.length === 0
+})
+const chatScrollViewport = ref<HTMLElement | null>(null)
+const chatShouldStickToBottom = ref(true)
+const CHAT_AUTO_SCROLL_THRESHOLD_PX = 32
+const latestVisibleChatEntrySignature = computed(() => {
+  const lastEntry = visibleChatMessageEntries.value[visibleChatMessageEntries.value.length - 1]
+  if (!lastEntry)
+    return `${props.activeChatSessionId}:empty:${Number(props.chatMessagesLoading)}`
+
+  return [
+    props.activeChatSessionId,
+    visibleChatMessageEntries.value.length,
+    lastEntry.id,
+    lastEntry.message.content,
+    lastEntry.systemMessage?.title || '',
+    lastEntry.systemMessage?.payloadSummary || '',
+    lastEntry.isLive ? 'live' : 'idle',
+  ].join('::')
 })
 const isDefenseWorkbench = computed(() => props.workbenchMode === 'defense')
 const sessionEmptyText = computed(() => isDefenseWorkbench.value ? '暂无打开的 AgentDef 会话' : '暂无打开的会话')
@@ -549,6 +593,73 @@ watch(() => props.showCommentTab, (nextValue) => {
     emit('update:sidebarView', 'ai')
 })
 
+function isChatViewportNearBottom(viewport: HTMLElement): boolean {
+  const distanceToBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+  return distanceToBottom <= CHAT_AUTO_SCROLL_THRESHOLD_PX
+}
+
+async function scrollChatViewportToBottom(force = false): Promise<void> {
+  await nextTick()
+  const viewport = chatScrollViewport.value
+  if (!viewport)
+    return
+  if (!force && !chatShouldStickToBottom.value)
+    return
+
+  viewport.scrollTop = viewport.scrollHeight
+  chatShouldStickToBottom.value = true
+}
+
+function handleChatViewportScroll(): void {
+  const viewport = chatScrollViewport.value
+  if (!viewport)
+    return
+  chatShouldStickToBottom.value = isChatViewportNearBottom(viewport)
+}
+
+watch(() => props.activeChatSessionId, async (nextId, previousId) => {
+  if (nextId === previousId)
+    return
+  expandedSystemMessageIds.value = []
+  chatShouldStickToBottom.value = true
+  await scrollChatViewportToBottom(true)
+})
+
+watch(() => props.chatMessagesLoading, async (loading, previousLoading) => {
+  if (loading || !previousLoading)
+    return
+  chatShouldStickToBottom.value = true
+  await scrollChatViewportToBottom(true)
+})
+
+watch(latestVisibleChatEntrySignature, async () => {
+  if (visibleChatMessageEntries.value.length === 0)
+    return
+  await scrollChatViewportToBottom()
+})
+
+onMounted(async () => {
+  await scrollChatViewportToBottom(true)
+})
+
+function isSystemMessageExpanded(entryId: string): boolean {
+  return expandedSystemMessageIds.value.includes(entryId)
+}
+
+function toggleSystemMessageExpanded(entryId: string): void {
+  expandedSystemMessageIds.value = isSystemMessageExpanded(entryId)
+    ? expandedSystemMessageIds.value.filter(id => id !== entryId)
+    : [...expandedSystemMessageIds.value, entryId]
+}
+
+function resolveSystemMessageDetailTitle(input: { title: string, payloadSummary: string }): string {
+  return input.title
+}
+
+function resolveSystemMessageDetailPayload(input: { title: string, payloadSummary: string }): string {
+  return input.payloadSummary
+}
+
 function summarizeCommentAnchor(anchor: ProjectResourceCommentAnchor | null | undefined): string {
   if (!anchor)
     return '未指定锚点'
@@ -663,16 +774,18 @@ function resolveWorkflowTemplateLabel(template: 'flowchart' | 'mindmap' | 'er' |
   return WORKFLOW_TEMPLATE_OPTIONS.find(item => item.value === template)?.label || template
 }
 
-function resolveSystemMessageLabel(eventType: 'progress' | 'tool'): string {
-  if (eventType === 'tool')
-    return '工具调用'
-  return '执行步骤'
-}
-
-function resolveSystemMessageIcon(eventType: 'progress' | 'tool'): string {
+function resolveSystemMessageIcon(eventType: 'progress' | 'tool', completed = false): string {
+  if (completed)
+    return 'check'
   if (eventType === 'tool')
     return 'terminal'
   return 'progress_activity'
+}
+
+function resolveSystemMessageText(input: { title: string, payloadSummary: string }): string {
+  if (!input.payloadSummary)
+    return input.title
+  return `${input.title} · ${input.payloadSummary}`
 }
 
 function isChangeActing(changeId: string): boolean {
@@ -1356,7 +1469,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
 <template>
   <aside
-    class="border-l border-slate-200 bg-white flex flex-col h-full min-h-0 w-full overflow-hidden xl:w-88"
+    class="workspace-right-sidebar border-l border-slate-200 bg-white flex flex-col h-full min-h-0 w-full overflow-hidden"
     :tabindex="props.collapsed ? -1 : 0"
   >
     <div
@@ -1661,7 +1774,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
     </div>
 
     <div class="flex flex-1 flex-col h-0 min-h-0 overflow-hidden">
-      <div class="no-scrollbar px-3.5 py-3 flex-1 h-0 min-h-0 overflow-y-auto">
+      <div
+        ref="chatScrollViewport"
+        class="no-scrollbar px-3.5 py-3 flex-1 h-0 min-h-0 overflow-y-auto"
+        @scroll.passive="handleChatViewportScroll"
+      >
         <template v-if="showCommentsView">
           <div class="space-y-3">
             <div v-if="props.commentLoading && props.commentThreads.length === 0" class="space-y-2" aria-hidden="true">
@@ -1777,54 +1894,92 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               <div
                 v-for="entry in visibleChatMessageEntries"
                 :key="entry.id"
-                class="flex gap-2 items-start"
-                :class="entry.message.role === 'user' ? 'justify-end' : ''"
+                class="workspace-chat-entry"
+                :class="{
+                  'workspace-chat-entry--user': entry.message.role === 'user',
+                  'workspace-chat-entry--assistant': entry.message.role === 'assistant',
+                  'workspace-chat-entry--system': Boolean(entry.systemMessage),
+                }"
               >
                 <div
                   v-if="entry.systemMessage"
-                  class="workspace-chat-system-card"
-                  :class="{ 'workspace-chat-system-card--live': entry.isLive }"
-                  data-testid="workspace-chat-system-card"
+                  class="workspace-chat-system-message"
+                  :class="{
+                    'workspace-chat-system-message--live': entry.isLive,
+                    'workspace-chat-system-message--expanded': isSystemMessageExpanded(entry.id),
+                  }"
+                  data-testid="workspace-chat-system-message"
+                  :title="resolveSystemMessageText(entry.systemMessage)"
                 >
-                  <div class="workspace-chat-system-card__icon">
-                    <span class="material-symbols-outlined text-sm">{{ resolveSystemMessageIcon(entry.systemMessage.eventType) }}</span>
-                  </div>
-                  <div class="workspace-chat-system-card__copy">
-                    <div class="workspace-chat-system-card__eyebrow">
-                      {{ resolveSystemMessageLabel(entry.systemMessage.eventType) }}
-                    </div>
-                    <div class="workspace-chat-system-card__title">
-                      {{ entry.systemMessage.title }}
-                    </div>
-                    <div v-if="entry.systemMessage.payloadSummary" class="workspace-chat-system-card__summary">
-                      {{ entry.systemMessage.payloadSummary }}
-                    </div>
-                  </div>
-                  <span
-                    v-if="entry.isLive"
-                    class="workspace-chat-system-card__status"
+                  <button
+                    class="workspace-chat-system-message__summary"
+                    type="button"
+                    :aria-expanded="isSystemMessageExpanded(entry.id) ? 'true' : 'false'"
+                    @click="toggleSystemMessageExpanded(entry.id)"
                   >
-                    进行中
-                  </span>
+                    <span class="material-symbols-outlined workspace-chat-system-message__icon">
+                      {{ resolveSystemMessageIcon(entry.systemMessage.eventType, entry.isCompletedSystem) }}
+                    </span>
+                    <div class="workspace-chat-system-message__text">
+                      {{ resolveSystemMessageText(entry.systemMessage) }}
+                    </div>
+                    <span class="material-symbols-outlined workspace-chat-system-message__chevron">
+                      chevron_right
+                    </span>
+                  </button>
+                  <div
+                    v-if="isSystemMessageExpanded(entry.id)"
+                    class="workspace-chat-system-message__detail"
+                  >
+                    <div class="workspace-chat-system-message__detail-title">
+                      {{ resolveSystemMessageDetailTitle(entry.systemMessage) }}
+                    </div>
+                    <pre
+                      v-if="resolveSystemMessageDetailPayload(entry.systemMessage)"
+                      class="workspace-chat-system-message__detail-payload"
+                    >{{ resolveSystemMessageDetailPayload(entry.systemMessage) }}</pre>
+                  </div>
                 </div>
 
                 <template v-else>
                   <div
-                    v-if="entry.message.role === 'assistant'"
-                    class="text-white rounded bg-blue-600 flex shrink-0 h-6 w-6 items-center justify-center"
-                  >
-                    <span class="material-symbols-outlined text-sm">smart_toy</span>
-                  </div>
-
-                  <div
-                    class="flex flex-col gap-2 max-w-[86%]"
-                    :class="entry.message.role === 'user' ? 'items-end' : 'items-start'"
+                    class="workspace-chat-message"
+                    :class="entry.message.role === 'user' ? 'workspace-chat-message--user' : 'workspace-chat-message--assistant'"
                   >
                     <div
-                      class="text-[11px] leading-relaxed p-3 rounded-lg w-full"
+                      v-if="entry.message.role === 'assistant'"
+                      class="workspace-chat-message__assistant-head"
+                    >
+                      <div class="workspace-chat-message__assistant-icon">
+                        <span class="material-symbols-outlined text-sm">smart_toy</span>
+                      </div>
+                      <div class="workspace-chat-message__meta">
+                        <div class="workspace-chat-message__title">
+                          {{ assistantMessageHeaderLabel }}
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      v-else
+                      class="workspace-chat-message__user-head"
+                    >
+                      <div class="workspace-chat-message__meta workspace-chat-message__meta--user">
+                        <div class="workspace-chat-message__title">
+                          {{ currentUserDisplayName }}
+                        </div>
+                      </div>
+                      <UnifiedAvatar
+                        :name="currentUserName"
+                        :src="currentUserAvatarUrl"
+                        :size="24"
+                      />
+                    </div>
+
+                    <div
+                      class="workspace-chat-message__content"
                       :class="entry.message.role === 'user'
-                        ? 'bg-blue-50 border border-blue-100 text-blue-900 rounded-tr-none whitespace-pre-wrap'
-                        : 'bg-slate-100 text-slate-700 rounded-tl-none'"
+                        ? 'workspace-chat-message__content--user'
+                        : 'workspace-chat-message__content--assistant'"
                     >
                       <template v-if="entry.message.role === 'user'">
                         {{ entry.message.content }}
@@ -1963,17 +2118,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                         </button>
                       </div>
                     </div>
-                  </div>
-
-                  <div
-                    v-if="entry.message.role === 'user'"
-                    class="flex shrink-0 h-6 w-6 items-center justify-center overflow-hidden"
-                  >
-                    <UnifiedAvatar
-                      :name="currentUserName"
-                      :src="currentUserAvatarUrl"
-                      :size="24"
-                    />
                   </div>
                 </template>
               </div>
@@ -2192,11 +2336,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                   </div>
                 </div>
 
-                <div class="grid grid-cols-2 gap-2">
+                <div class="gap-2 grid grid-cols-2">
                   <label class="space-y-1">
                     <span class="text-[11px] text-slate-500">Provider</span>
                     <select
-                      class="w-full h-8 rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-700"
+                      class="text-[11px] text-slate-700 px-2 border border-slate-200 rounded bg-white h-8 w-full"
                       :value="props.defenseRealtimeState?.provider || 'qwen'"
                       :disabled="defenseRealtimeSessionLocked"
                       @change="handleDefenseRealtimeProviderChange"
@@ -2212,7 +2356,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                   <label class="space-y-1">
                     <span class="text-[11px] text-slate-500">媒体模式</span>
                     <select
-                      class="w-full h-8 rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-700"
+                      class="text-[11px] text-slate-700 px-2 border border-slate-200 rounded bg-white h-8 w-full"
                       :value="props.defenseRealtimeState?.mediaMode || 'audio_video'"
                       :disabled="defenseRealtimeSessionLocked"
                       @change="handleDefenseRealtimeMediaModeChange"
@@ -2245,13 +2389,13 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                   </button>
                 </div>
 
-                <div class="grid grid-cols-2 gap-2">
+                <div class="gap-2 grid grid-cols-2">
                   <div
                     v-for="item in defenseRealtimeRows"
                     :key="item.label"
-                    class="rounded border border-slate-200 bg-slate-50 p-2"
+                    class="p-2 border border-slate-200 rounded bg-slate-50"
                   >
-                    <div class="text-[10px] uppercase tracking-[0.12em] text-slate-400">
+                    <div class="text-[10px] text-slate-400 tracking-[0.12em] uppercase">
                       {{ item.label }}
                     </div>
                     <div class="text-[11px] text-slate-700 mt-1">
@@ -2582,6 +2726,20 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 </template>
 
 <style scoped>
+.workspace-right-sidebar {
+  --workspace-right-font-2xs: var(--wl-ws-font-2xs, 10px);
+  --workspace-right-font-xs: var(--wl-ws-font-xs, 11px);
+  --workspace-right-font-sm: var(--wl-ws-font-sm, 12px);
+  --workspace-right-font-md: var(--wl-ws-font-md, 13px);
+  --workspace-right-space-1: var(--wl-ws-space-1, 4px);
+  --workspace-right-space-1_5: var(--wl-ws-space-1_5, 6px);
+  --workspace-right-space-2: var(--wl-ws-space-2, 8px);
+  --workspace-right-space-2_5: var(--wl-ws-space-2_5, 10px);
+  --workspace-right-space-3: var(--wl-ws-space-3, 12px);
+  --workspace-right-space-3_5: var(--wl-ws-space-3_5, 14px);
+  --workspace-right-space-4: var(--wl-ws-space-4, 16px);
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -2594,7 +2752,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-chat-scroll-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--workspace-right-space-3);
   min-height: 100%;
 }
 
@@ -2604,12 +2762,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex: 1 1 0;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--workspace-right-space-1_5);
   height: 30px;
   border-radius: 8px;
   background: transparent;
   color: #64748b;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 600;
 }
 
@@ -2623,12 +2781,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   width: fit-content;
   align-items: center;
   min-height: 26px;
-  padding: 0 10px;
+  padding: 0 var(--workspace-right-space-2_5);
   border: 1px solid #dce5f1;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   color: #516277;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -2678,11 +2836,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   display: inline-flex;
   align-items: center;
   height: 100%;
-  padding: 0 12px;
+  padding: 0 var(--workspace-right-space-3);
   border-right: 1px solid #e2e8f0;
   background: #fff;
   color: #94a3b8;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -2700,10 +2858,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--workspace-right-space-1_5);
   min-width: 132px;
   height: 100%;
-  padding: 0 14px;
+  padding: 0 var(--workspace-right-space-3_5);
   border: none;
   border-radius: 0;
   background: #fff;
@@ -2730,9 +2888,9 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-right-sidebar__session-tab::after {
   content: '';
   position: absolute;
-  right: 12px;
+  right: var(--workspace-right-space-3);
   bottom: 0;
-  left: 12px;
+  left: var(--workspace-right-space-3);
   height: 2px;
   background: #3b82f6;
   opacity: 0;
@@ -2754,14 +2912,14 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-right-sidebar__session-tab-label {
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 600;
   line-height: 1;
 }
 
 .workspace-right-sidebar__session-popover {
   width: 220px;
-  padding: 10px 11px;
+  padding: var(--workspace-right-space-2_5) var(--workspace-right-space-3);
   border: 1px solid #e2e8f0;
   border-radius: 0;
   background: rgba(255, 255, 255, 0.98);
@@ -2770,7 +2928,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
 .workspace-right-sidebar__session-popover-title {
   color: #0f172a;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 700;
   line-height: 1.5;
   word-break: break-word;
@@ -2783,7 +2941,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   gap: 10px;
   margin-top: 7px;
   color: #64748b;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   line-height: 1.5;
 }
 
@@ -2809,7 +2967,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-left: 1px solid #e2e8f0;
   background: #fff;
   color: #64748b;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -2887,7 +3045,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   padding: 10px 12px;
   border-bottom: 1px solid #e2e8f0;
   color: #0f172a;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 700;
   line-height: 1.4;
 }
@@ -2895,7 +3053,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-right-sidebar__session-history-empty {
   padding: 14px 12px;
   color: #94a3b8;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   line-height: 1.5;
 }
 
@@ -2979,7 +3137,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-right-sidebar__session-history-title {
   overflow: hidden;
   color: #0f172a;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 600;
   line-height: 1.4;
   text-overflow: ellipsis;
@@ -2989,7 +3147,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-right-sidebar__session-history-meta {
   overflow: hidden;
   color: #64748b;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3029,91 +3187,254 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-chat-messages {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--workspace-right-space-2_5);
 }
 
-.workspace-chat-system-card {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
-  align-items: flex-start;
-  gap: 10px;
-  width: min(100%, 86%);
-  padding: 12px;
-  border: 1px solid #dbe4f0;
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.98));
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-.workspace-chat-system-card--live {
-  border-color: #bfdbfe;
-  box-shadow:
-    0 12px 28px rgba(37, 99, 235, 0.1),
-    0 0 18px rgba(96, 165, 250, 0.1);
-}
-
-.workspace-chat-system-card__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-.workspace-chat-system-card__copy {
+.workspace-chat-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--workspace-right-space-2);
   min-width: 0;
 }
 
-.workspace-chat-system-card__eyebrow {
+.workspace-chat-entry--user {
+  align-items: flex-end;
+}
+
+.workspace-chat-system-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--workspace-right-space-1_5);
+  min-width: 0;
   color: #64748b;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--workspace-right-font-xs);
 }
 
-.workspace-chat-system-card__title {
-  margin-top: 4px;
-  color: #0f172a;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.55;
-  word-break: break-word;
+.workspace-chat-system-message__summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--workspace-right-space-2);
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
 }
 
-.workspace-chat-system-card__summary {
-  margin-top: 6px;
+.workspace-chat-system-message__summary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(191, 219, 254, 0) 34%,
+    rgba(191, 219, 254, 0.36) 50%,
+    rgba(191, 219, 254, 0) 66%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-130%);
+}
+
+.workspace-chat-system-message__summary:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.22);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+.workspace-chat-system-message--live .workspace-chat-system-message__summary::before {
+  opacity: 1;
+  animation: workspace-chat-system-message-shimmer 1.9s ease-in-out infinite;
+}
+
+.workspace-chat-system-message--live .workspace-chat-system-message__text {
+  color: #334155;
+}
+
+.workspace-chat-system-message__icon {
+  flex: 0 0 auto;
+  color: #10b981;
+  font-size: 15px;
+}
+
+.workspace-chat-system-message--live .workspace-chat-system-message__icon {
+  color: #2563eb;
+  animation: workspace-chat-system-message-spin 1s linear infinite;
+}
+
+.workspace-chat-system-message__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: #475569;
-  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workspace-chat-system-message__chevron {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 16px;
+  transition: transform 0.18s ease;
+}
+
+.workspace-chat-system-message--expanded .workspace-chat-system-message__chevron {
+  transform: rotate(90deg);
+}
+
+@keyframes workspace-chat-system-message-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes workspace-chat-system-message-shimmer {
+  0% {
+    opacity: 0;
+    transform: translateX(-130%);
+  }
+
+  18% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(130%);
+  }
+}
+
+.workspace-chat-system-message__detail {
+  margin-left: calc(15px + var(--workspace-right-space-2));
+  padding-left: var(--workspace-right-space-2_5);
+  border-left: 2px solid #dbeafe;
+  display: flex;
+  flex-direction: column;
+  gap: var(--workspace-right-space-1_5);
+}
+
+.workspace-chat-system-message__detail-title {
+  color: #334155;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.workspace-chat-system-card__status {
+.workspace-chat-system-message__detail-payload {
+  margin: 0;
+  padding: var(--workspace-right-space-2) var(--workspace-right-space-2_5);
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: var(--workspace-right-font-2xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.workspace-chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--workspace-right-space-2);
+  min-width: 0;
+  width: 100%;
+}
+
+.workspace-chat-message--assistant {
+  align-items: flex-start;
+}
+
+.workspace-chat-message--user {
+  align-items: flex-end;
+}
+
+.workspace-chat-message__assistant-head {
+  display: flex;
+  align-items: center;
+  gap: var(--workspace-right-space-2);
+  width: 100%;
+}
+
+.workspace-chat-message__user-head {
+  display: flex;
+  align-items: center;
+  gap: var(--workspace-right-space-2);
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.workspace-chat-message__assistant-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
-  padding: 0 9px;
-  border: 1px solid #bfdbfe;
-  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+}
+
+.workspace-chat-message__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.workspace-chat-message__meta--user {
+  justify-content: flex-end;
+}
+
+.workspace-chat-message__title {
+  min-width: 0;
+  color: #64748b;
+  font-size: var(--workspace-right-font-xs);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.workspace-chat-message__content {
+  min-width: 0;
+  font-size: var(--workspace-right-font-xs);
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.workspace-chat-message__content--assistant {
+  width: 100%;
+  padding: 0;
+  color: #334155;
+}
+
+.workspace-chat-message__content--user {
+  max-width: 86%;
+  padding: var(--workspace-right-space-2) var(--workspace-right-space-2_5);
+  border: 1px solid #dbeafe;
+  border-radius: 12px 12px 0 12px;
   background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 10px;
-  font-weight: 700;
-  white-space: nowrap;
+  color: #1e3a8a;
+  white-space: pre-wrap;
 }
 
 .workspace-chat-composer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--workspace-right-space-2_5);
   flex-shrink: 0;
-  padding: 0 12px 14px;
+  padding: 0 var(--workspace-right-space-3) var(--workspace-right-space-3_5);
   border-top: none;
   background: transparent;
 }
@@ -3232,9 +3553,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border: none;
   background: transparent;
   color: #0f172a;
-  font-size: 12px;
+  font-size: var(--workspace-right-font-sm);
   line-height: 1.55;
-  padding: 15px 15px 6px;
+  padding: calc(var(--workspace-right-space-4) - 1px) calc(var(--workspace-right-space-4) - 1px)
+    var(--workspace-right-space-1_5);
   outline: none;
   overflow-y: auto;
   position: relative;
@@ -3258,8 +3580,8 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px 12px;
+  gap: var(--workspace-right-space-3);
+  padding: 0 var(--workspace-right-space-3) var(--workspace-right-space-3);
   position: relative;
   z-index: 1;
 }
@@ -3270,7 +3592,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--workspace-right-space-2);
 }
 
 .workspace-chat-composer__mode-pill {
@@ -3329,7 +3651,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-radius: 6px;
   background: #f8fafc;
   color: #395077;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   padding: 0 24px 0 8px;
   outline: none;
 }
@@ -3342,7 +3664,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-radius: 999px;
   background: transparent;
   color: #23314f;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 700;
   padding: 0 28px 0 34px;
   appearance: none;
@@ -3467,8 +3789,8 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 12px 10px;
+  gap: var(--workspace-right-space-3);
+  padding: var(--workspace-right-space-3) var(--workspace-right-space-3) var(--workspace-right-space-2_5);
   border-bottom: 1px solid #e5edf7;
 }
 
@@ -3479,24 +3801,24 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
 .workspace-agent-doc-card__eyebrow {
   color: #64748b;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .workspace-agent-doc-card__title {
-  margin-top: 4px;
+  margin-top: var(--workspace-right-space-1);
   color: #0f172a;
-  font-size: 12px;
+  font-size: var(--workspace-right-font-sm);
   font-weight: 700;
   line-height: 1.5;
 }
 
 .workspace-agent-doc-card__summary {
-  margin-top: 6px;
+  margin-top: var(--workspace-right-space-1_5);
   color: #475569;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   line-height: 1.6;
   white-space: pre-wrap;
 }
@@ -3506,7 +3828,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex: 0 0 auto;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: var(--workspace-right-space-1_5);
 }
 
 .workspace-agent-doc-card__action,
@@ -3517,7 +3839,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   min-height: 24px;
   padding: 0 9px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-weight: 700;
   line-height: 1.4;
   text-align: center;
@@ -3574,7 +3896,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-agent-doc-card__diff-header span {
   padding: 10px 12px;
   color: #64748b;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3613,7 +3935,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
 .workspace-agent-doc-card__diff-line-number {
   color: #94a3b8;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-variant-numeric: tabular-nums;
   line-height: 1.6;
   text-align: right;
@@ -3623,7 +3945,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   margin: 0;
   color: #334155;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3656,7 +3978,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-radius: 10px;
   background: #2563eb;
   color: #ffffff;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 700;
 }
 
@@ -3672,7 +3994,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-radius: 10px;
   background: #ffffff;
   color: #334155;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 700;
 }
 
@@ -3700,7 +4022,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   color: #334155;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   line-height: 1.6;
 }
 
@@ -3710,7 +4032,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-radius: 10px;
   background: #fefce8;
   color: #92400e;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   line-height: 1.6;
 }
 
@@ -3736,7 +4058,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-radius: 999px;
   background: #ffffff;
   color: #0f172a;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 700;
 }
 
@@ -3752,7 +4074,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex-direction: column;
   gap: 4px;
   color: #64748b;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   font-weight: 600;
 }
 
@@ -3763,7 +4085,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   border-radius: 10px;
   background: #ffffff;
   color: #0f172a;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
 }
 
 .workspace-issue-pill {
@@ -3772,7 +4094,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   justify-content: center;
   border-radius: 999px;
   border: 1px solid transparent;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
   line-height: 1;
   padding: 3px 7px;
 }
@@ -3807,7 +4129,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex-direction: column;
   gap: 4px;
   color: #8a631d;
-  font-size: 10px;
+  font-size: var(--workspace-right-font-2xs);
 }
 
 .workspace-issue-report-status {
@@ -3832,7 +4154,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   padding: 0 12px;
   border-radius: 8px;
   border: 1px solid transparent;
-  font-size: 11px;
+  font-size: var(--workspace-right-font-xs);
   font-weight: 600;
   cursor: pointer;
 }
