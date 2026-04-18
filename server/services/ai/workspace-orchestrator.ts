@@ -1,28 +1,36 @@
+import type { RuntimeSettings } from '~~/server/utils/env'
+import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
 import type {
+  AiCanvasAssistSourceFormat,
+  AiCanvasAssistTemplate,
+  AiProjectChangeType,
   AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentDraftApplyMode,
-  AiProjectChangeType,
   AiWorkspaceIssueDraft,
+  AiWorkspaceWorkflowDraft,
   ChatMessage,
   ProjectIssueSeverity,
+  WorkflowArchitectureView,
+  WorkflowLayoutPreset,
+  WorkflowSnapshot,
+  WorkflowStylePreset,
   WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
 } from '~~/shared/types/domain'
-import type { PlatformAiChannelKey } from '~~/server/utils/platform-ai-channels'
-import type { RuntimeSettings } from '~~/server/utils/env'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { createDeepAgent } from 'deepagents'
 import { tool } from 'langchain'
 import { z } from 'zod'
-import {
-  computeAgentDocContentHash,
-  extractAgentDocSelectionText,
-} from '~~/shared/utils/agent-doc'
 import { fetchWebPageText, searchWithTavily } from '~~/server/services/admin-ai/web'
+import { resolveCanvasSourceFormat, runCanvasAssistGeneration } from '~~/server/services/ai/canvas-assist'
 import { createChatModel } from '~~/server/services/ai/llm-client'
 import { buildAiNotConfiguredMessage, isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { buildMergedPrompt, resolveAiRuntimeForChannel, runWithPlatformAiChannelFallback } from '~~/server/utils/platform-ai-channels'
 import { runWithRetry } from '~~/server/utils/retry'
+import {
+  computeAgentDocContentHash,
+  extractAgentDocSelectionText,
+} from '~~/shared/utils/agent-doc'
 
 type WorkspaceSupportedMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'document_assist'
 type WorkspaceConversationRole = 'user' | 'assistant'
@@ -57,6 +65,7 @@ export interface WorkspaceAiExecutionResult {
   reportSummary: string
   reportMarkdown: string
   documentDraft: AiWorkspaceDocumentDraft | null
+  workflowDraft: AiWorkspaceWorkflowDraft | null
 }
 
 export interface WorkspaceAiExecutionContext {
@@ -79,6 +88,12 @@ export interface WorkspaceAiExecutionContext {
   activeTabId: string
   previewMode: string
   resourcePurpose: string
+  workflowSnapshot: WorkflowSnapshot | null
+  workflowAction: string
+  workflowTemplate: string
+  workflowArchitectureView: string
+  workflowStylePreset: string
+  workflowLayoutPreset: string
   projectSettingsSummary: string
   projectOutlineSummary: string
   resourceSummary: string
@@ -112,6 +127,7 @@ interface WorkspaceModeState {
   reportTitle: string
   reportSummary: string
   documentDraft: AiWorkspaceDocumentDraft | null
+  workflowDraft: AiWorkspaceWorkflowDraft | null
 }
 
 interface WorkspaceModeExecutionInput {
@@ -121,6 +137,7 @@ interface WorkspaceModeExecutionInput {
   channelPrompt?: string
   hooks: WorkspaceAiHooks
   messages: ChatMessage[]
+  signal?: AbortSignal
 }
 
 export interface WorkspaceExecutionOutcome {
@@ -160,6 +177,39 @@ const documentDraftActionSchema = z.enum([
 const documentDraftResultSchema = z.object({
   proposedText: z.string().min(1),
 })
+
+const workflowDraftActionSchema = z.enum([
+  'generate',
+  'complete',
+  'refine',
+  'restyle',
+])
+
+const workflowTemplateSchema = z.enum([
+  'flowchart',
+  'mindmap',
+  'er',
+  'architecture',
+])
+
+const workflowArchitectureViewSchema = z.enum([
+  'system_context',
+  'container',
+  'dependency_map',
+])
+
+const workflowStylePresetSchema = z.enum([
+  'default',
+  'minimal',
+  'architecture',
+  'workflow',
+])
+
+const workflowLayoutPresetSchema = z.enum([
+  'left_to_right',
+  'top_to_bottom',
+  'swimlane',
+])
 
 const WORKSPACE_AGENT_PROFILES: Record<WorkspaceSupportedMode, WorkspaceAgentProfile> = {
   dialog_ask: {
@@ -260,15 +310,21 @@ const CHANGE_PAYLOAD_RULES: Record<AiProjectChangeType, ChangePayloadRule> = {
   },
 }
 
-function chunkText(text: string, chunkSize = 24): string[] {
-  const normalized = String(text || '')
-  if (!normalized)
-    return []
+function createAbortError(): Error {
+  const error = new Error('AbortError')
+  error.name = 'AbortError'
+  return error
+}
 
-  const chunks: string[] = []
-  for (let i = 0; i < normalized.length; i += chunkSize)
-    chunks.push(normalized.slice(i, i + chunkSize))
-  return chunks
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError'
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted)
+    throw createAbortError()
 }
 
 function toText(value: unknown): string {
@@ -282,18 +338,7 @@ function parseSeverity(value: unknown): ProjectIssueSeverity | null {
   return null
 }
 
-function extractAssistantText(payload: unknown): string {
-  const source = payload as {
-    messages?: Array<{ type?: string, role?: string, content?: unknown }>
-  }
-
-  const messages = source.messages || []
-  const assistant = [...messages].reverse().find((item) => {
-    const role = String(item.role || item.type || '').toLowerCase()
-    return role.includes('assistant') || role.includes('ai')
-  })
-
-  const content = assistant?.content
+function extractTextFromMessageContent(content: unknown): string {
   if (typeof content === 'string')
     return content.trim()
 
@@ -311,6 +356,50 @@ function extractAssistantText(payload: unknown): string {
   }
 
   return ''
+}
+
+function extractAssistantTextFromMessages(messages: Array<Record<string, unknown>>): string {
+  const assistant = [...messages].reverse().find((item) => {
+    const role = String(item.role || item.type || '').toLowerCase()
+    return role.includes('assistant') || role.includes('ai')
+  })
+
+  return extractTextFromMessageContent(assistant?.content)
+}
+
+export function extractWorkspaceStreamTextChunk(chunk: unknown): string {
+  if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk))
+    return ''
+
+  const source = chunk as Record<string, unknown>
+  const content = extractTextFromMessageContent(source.content)
+  if (content)
+    return content
+
+  const toolCalls = source.tool_calls
+  if (Array.isArray(toolCalls) && toolCalls.length > 0)
+    return ''
+
+  return ''
+}
+
+export function extractWorkspaceLangGraphOutputMessages(output: unknown): Array<Record<string, unknown>> {
+  if (!output || typeof output !== 'object' || Array.isArray(output))
+    return []
+
+  const source = output as Record<string, unknown>
+  if (Array.isArray(source.messages))
+    return source.messages.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+
+  const nestedOutput = source.output
+  if (nestedOutput && typeof nestedOutput === 'object' && !Array.isArray(nestedOutput)) {
+    const nestedMessages = (nestedOutput as Record<string, unknown>).messages
+    if (Array.isArray(nestedMessages)) {
+      return nestedMessages.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    }
+  }
+
+  return []
 }
 
 function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
@@ -334,6 +423,12 @@ function buildContextSnapshot(context: WorkspaceAiExecutionContext): string {
     activeTabId: context.activeTabId,
     previewMode: context.previewMode,
     resourcePurpose: context.resourcePurpose,
+    workflowSnapshot: context.workflowSnapshot,
+    workflowAction: context.workflowAction,
+    workflowTemplate: context.workflowTemplate,
+    workflowArchitectureView: context.workflowArchitectureView,
+    workflowStylePreset: context.workflowStylePreset,
+    workflowLayoutPreset: context.workflowLayoutPreset,
     projectSettingsSummary: context.projectSettingsSummary,
     projectOutlineSummary: context.projectOutlineSummary,
     resourceSummary: context.resourceSummary,
@@ -347,6 +442,26 @@ function isDocumentAction(value: unknown): value is AiWorkspaceDocumentDraft['ac
 
 function isDocumentApplyMode(value: unknown): value is AiWorkspaceDocumentDraftApplyMode {
   return documentDraftApplyModeSchema.safeParse(value).success
+}
+
+function isWorkflowDraftAction(value: unknown): value is AiWorkspaceWorkflowDraft['action'] {
+  return workflowDraftActionSchema.safeParse(value).success
+}
+
+function isWorkflowTemplate(value: unknown): value is AiCanvasAssistTemplate {
+  return workflowTemplateSchema.safeParse(value).success
+}
+
+function isWorkflowArchitectureView(value: unknown): value is WorkflowArchitectureView {
+  return workflowArchitectureViewSchema.safeParse(value).success
+}
+
+function isWorkflowStylePreset(value: unknown): value is WorkflowStylePreset {
+  return workflowStylePresetSchema.safeParse(value).success
+}
+
+function isWorkflowLayoutPreset(value: unknown): value is WorkflowLayoutPreset {
+  return workflowLayoutPresetSchema.safeParse(value).success
 }
 
 function normalizeDocumentSelectionRange(value: unknown): AiWorkspaceDocumentDraft['selectionRange'] {
@@ -520,6 +635,9 @@ function buildModePrompt(profile: WorkspaceAgentProfile): string {
       '仅允许解释、澄清、对比、归纳和下一步建议。',
       '禁止输出任何写入、审批通过、自动执行或文档已修改之类的暗示。',
       '如果信息不足，要明确指出缺口，而不是编造结论。',
+      '如果上下文提供了方括号资料引用标签，引用依据时必须保留对应标签，不要编造新的 citation。',
+      '如果上下文提示索引未完成，必须明确说明“索引未完成，结果可能不完整”。',
+      '当且仅当当前上下文是 AgentProto + workflow，且用户明确要求生成图、补全图、续改图或调样式时，才允许调用 propose_workflow_draft 生成待确认草案。',
     ].join('\n')
   }
 
@@ -591,16 +709,32 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
         `当前画布：${context.resourceTitle || '未命名设计画布'}`,
         '优先围绕页面层级、布局结构、视觉一致性和关键交互说明给出只读建议。',
       ]
-    : context.assistantPreset === 'prototype'
+    : context.assistantPreset === 'prototype' && context.resourcePurpose === 'workflow'
       ? [
-          `当前助手：${context.assistantLabel || '原型助手'}`,
+          `当前助手：${context.assistantLabel || 'AgentProto'}`,
           `当前标签：${context.activeTabId || '未指定'}`,
-          `当前画布：${context.resourceTitle || '未命名原型画布'}`,
-          '优先围绕页面流转、模块拆分、核心状态与交互路径给出只读建议。',
+          `当前画布：${context.resourceTitle || '未命名流程画布'}`,
+          '优先围绕流程阶段、责任角色、输入输出、分支条件、异常回路和跨节点衔接给出只读梳理建议。',
+          context.workflowSnapshot
+            ? `当前流程摘要：单页=${context.workflowSnapshot.isSinglePage ? '是' : '否'}，节点 ${context.workflowSnapshot.nodeCount}，连线 ${context.workflowSnapshot.edgeCount}，分组 ${context.workflowSnapshot.groupCount}。`
+            : '当前流程摘要：暂无可用 workflowSnapshot。',
+          context.workflowAction ? `当前指定动作：${context.workflowAction}` : '',
+          context.workflowTemplate ? `当前图类型：${context.workflowTemplate}` : '',
+          context.workflowArchitectureView ? `当前架构视图：${context.workflowArchitectureView}` : '',
+          context.workflowStylePreset ? `当前样式预设：${context.workflowStylePreset}` : '',
+          context.workflowLayoutPreset ? `当前布局预设：${context.workflowLayoutPreset}` : '',
+          '如果用户明确要生成、补全、续改或调样式，请先读取上下文，再调用 propose_workflow_draft 生成完整草案；禁止暗示已经直接改图。',
         ]
-      : [
-          `当前助手：${context.assistantLabel || '对话询问'}`,
-        ]
+      : context.assistantPreset === 'prototype'
+        ? [
+            `当前助手：${context.assistantLabel || '原型助手'}`,
+            `当前标签：${context.activeTabId || '未指定'}`,
+            `当前画布：${context.resourceTitle || '未命名原型画布'}`,
+            '优先围绕页面流转、模块拆分、核心状态与交互路径给出只读建议。',
+          ]
+        : [
+            `当前助手：${context.assistantLabel || '对话询问'}`,
+          ]
 
   return [
     `当前模式：${profile.mode}`,
@@ -612,6 +746,7 @@ function buildPrimaryModePrompt(profile: WorkspaceAgentProfile, context: Workspa
     '',
     '请先调用 get_workspace_context 读取当前项目上下文，再决定是否联网检索。',
     '只做只读问答，输出必须简洁、具体、可执行。',
+    '如果上下文带有方括号资料引用标签，回答引用依据时必须保留对应标签。',
     '',
     '用户最新输入：',
     context.latestUserMessage || '（无）',
@@ -647,7 +782,7 @@ function isConversationRole(role: unknown): role is WorkspaceConversationRole {
 
 function normalizeConversationMessages(messages: ChatMessage[]): WorkspaceConversationMessage[] {
   return messages
-    .filter(message => isConversationRole(message.role))
+    .filter((message): message is ChatMessage & { role: WorkspaceConversationRole } => isConversationRole(message.role))
     .map(message => ({
       role: message.role,
       content: toText(message.content),
@@ -695,6 +830,7 @@ function createWorkspaceModeState(): WorkspaceModeState {
     reportTitle: 'AI 寻疑报告',
     reportSummary: '',
     documentDraft: null,
+    workflowDraft: null,
   }
 }
 
@@ -1130,6 +1266,160 @@ function createWorkspaceDocumentDraftTool(
   )
 }
 
+function isAgentProtoWorkflowContext(context: WorkspaceAiExecutionContext): boolean {
+  return context.resourcePurpose === 'workflow'
+    && context.assistantPreset === 'prototype'
+    && context.assistantLabel === 'AgentProto'
+}
+
+function createWorkspaceWorkflowDraftTool(
+  input: WorkspaceModeExecutionInput,
+  state: WorkspaceModeState,
+): any {
+  return tool(
+    async (payload: {
+      action: AiWorkspaceWorkflowDraft['action']
+      title: string
+      summary: string
+      template?: AiCanvasAssistTemplate
+      architectureView?: WorkflowArchitectureView
+      stylePreset?: WorkflowStylePreset
+      layoutPreset?: WorkflowLayoutPreset
+    }) => {
+      if (state.workflowDraft) {
+        await input.hooks.onTool?.('propose_workflow_draft_rejected', {
+          reason: 'WORKFLOW_DRAFT_ALREADY_EXISTS',
+        })
+        return JSON.stringify({ ok: false, reason: 'WORKFLOW_DRAFT_ALREADY_EXISTS' })
+      }
+
+      if (!isAgentProtoWorkflowContext(input.context)) {
+        await input.hooks.onTool?.('propose_workflow_draft_rejected', {
+          reason: 'WORKFLOW_CONTEXT_REQUIRED',
+        })
+        return JSON.stringify({ ok: false, reason: 'WORKFLOW_CONTEXT_REQUIRED' })
+      }
+
+      if (!isWorkflowDraftAction(payload.action)) {
+        await input.hooks.onTool?.('propose_workflow_draft_rejected', {
+          reason: 'INVALID_WORKFLOW_ACTION',
+        })
+        return JSON.stringify({ ok: false, reason: 'INVALID_WORKFLOW_ACTION' })
+      }
+
+      const title = toText(payload.title) || 'AgentProto 流程草案'
+      const summary = toText(payload.summary)
+      if (title.length < 2 || summary.length < 4) {
+        await input.hooks.onTool?.('propose_workflow_draft_rejected', {
+          reason: 'TITLE_OR_SUMMARY_REQUIRED',
+        })
+        return JSON.stringify({ ok: false, reason: 'TITLE_OR_SUMMARY_REQUIRED' })
+      }
+
+      const action = payload.action
+      const template = isWorkflowTemplate(payload.template)
+        ? payload.template
+        : (isWorkflowTemplate(input.context.workflowTemplate) ? input.context.workflowTemplate : 'flowchart')
+      const architectureView = isWorkflowArchitectureView(payload.architectureView)
+        ? payload.architectureView
+        : (isWorkflowArchitectureView(input.context.workflowArchitectureView) ? input.context.workflowArchitectureView : undefined)
+      const stylePreset = isWorkflowStylePreset(payload.stylePreset)
+        ? payload.stylePreset
+        : (isWorkflowStylePreset(input.context.workflowStylePreset) ? input.context.workflowStylePreset : 'default')
+      const layoutPreset = isWorkflowLayoutPreset(payload.layoutPreset)
+        ? payload.layoutPreset
+        : (isWorkflowLayoutPreset(input.context.workflowLayoutPreset) ? input.context.workflowLayoutPreset : 'left_to_right')
+      const workflowSnapshot = input.context.workflowSnapshot
+
+      if ((action === 'complete' || action === 'refine' || action === 'restyle') && !workflowSnapshot) {
+        await input.hooks.onTool?.('propose_workflow_draft_rejected', {
+          reason: 'WORKFLOW_SNAPSHOT_REQUIRED',
+          action,
+        })
+        return JSON.stringify({ ok: false, reason: 'WORKFLOW_SNAPSHOT_REQUIRED' })
+      }
+
+      let sourceText = ''
+      let sourceFormat: AiCanvasAssistSourceFormat = resolveCanvasSourceFormat(template)
+      let channelKey: PlatformAiChannelKey | null = null
+
+      if (action !== 'restyle') {
+        const generated = await runCanvasAssistGeneration({
+          runtime: input.runtime,
+          action,
+          template,
+          messages: input.messages,
+          resourceTitle: input.context.resourceTitle || '',
+          resourceSummary: [
+            input.context.projectSettingsSummary,
+            input.context.projectOutlineSummary,
+            input.context.resourceSummary,
+            workflowSnapshot
+              ? [
+                  `当前流程哈希：${workflowSnapshot.hash}`,
+                  `当前单页：${workflowSnapshot.isSinglePage ? '是' : '否'}`,
+                  `当前节点数：${workflowSnapshot.nodeCount}`,
+                  `当前连线数：${workflowSnapshot.edgeCount}`,
+                  workflowSnapshot.sampleLabels.length > 0 ? `节点示例：${workflowSnapshot.sampleLabels.join('、')}` : '',
+                ].filter(Boolean).join('\n')
+              : '',
+          ].filter(Boolean).join('\n\n'),
+          sourceText: workflowSnapshot ? JSON.stringify(workflowSnapshot, null, 2) : '',
+          aiOptions: {
+            temperature: input.ai.temperature,
+          },
+        })
+        sourceText = generated.data.sourceText
+        sourceFormat = generated.data.sourceFormat
+        channelKey = generated.channelKey
+      }
+
+      state.workflowDraft = {
+        action,
+        title,
+        summary,
+        resourceId: toText(input.context.resourceId),
+        resourceTitle: toText(input.context.resourceTitle),
+        template,
+        sourceFormat,
+        sourceText,
+        architectureView: template === 'architecture' ? (architectureView || null) : null,
+        stylePreset,
+        layoutPreset,
+        baseWorkflowHash: workflowSnapshot?.hash || '',
+      }
+
+      await input.hooks.onTool?.('propose_workflow_draft', {
+        action,
+        template,
+        architectureView: architectureView || null,
+        stylePreset,
+        layoutPreset,
+        channelKey,
+      })
+      return JSON.stringify({
+        ok: true,
+        action,
+        template,
+        sourceFormat,
+      })
+    },
+    {
+      name: 'propose_workflow_draft',
+      description: '为 AgentProto 生成 workflow 完整草案。只返回预览草案，绝不直接写回画布。',
+      schema: z.object({
+        action: workflowDraftActionSchema,
+        title: z.string().min(2),
+        summary: z.string().min(4),
+        template: workflowTemplateSchema.optional(),
+        architectureView: workflowArchitectureViewSchema.optional(),
+        stylePreset: workflowStylePresetSchema.optional(),
+        layoutPreset: workflowLayoutPresetSchema.optional(),
+      }),
+    },
+  )
+}
+
 function createWorkspaceToolset(
   input: WorkspaceModeExecutionInput,
   profile: WorkspaceAgentProfile,
@@ -1155,6 +1445,9 @@ function createWorkspaceToolset(
 
   if (profile.mode === 'document_assist')
     tools.push(createWorkspaceDocumentDraftTool(input, state))
+
+  if (profile.mode === 'dialog_ask' && isAgentProtoWorkflowContext(input.context))
+    tools.push(createWorkspaceWorkflowDraftTool(input, state))
 
   return { tools }
 }
@@ -1186,6 +1479,7 @@ function finalizeWorkspaceExecutionResult(
       reportSummary: '',
       reportMarkdown: '',
       documentDraft: null,
+      workflowDraft: null,
     }
   }
 
@@ -1210,6 +1504,7 @@ function finalizeWorkspaceExecutionResult(
         issues: state.issueDrafts,
       }),
       documentDraft: null,
+      workflowDraft: null,
     }
   }
 
@@ -1219,14 +1514,63 @@ function finalizeWorkspaceExecutionResult(
       ? (state.documentDraft
           ? '已生成一条待确认的文档草案，请先查看差异并确认后再应用。'
           : '当前无法安全生成文档草案，请补充更明确的文档修改意图。')
-      : 'AI 未返回有效结果，请稍后重试。'),
+      : state.workflowDraft
+          ? '已生成一条待确认的流程草案，请先预览后再决定是否应用。'
+          : 'AI 未返回有效结果，请稍后重试。'),
     changeDrafts: [],
     issueDrafts: [],
     reportTitle: '',
     reportSummary: '',
     reportMarkdown: '',
     documentDraft: state.documentDraft,
+    workflowDraft: state.workflowDraft,
   }
+}
+
+export async function consumeWorkspaceAgentStream(input: {
+  stream: AsyncIterable<unknown>
+  profile: WorkspaceAgentProfile
+  state: WorkspaceModeState
+  hooks: WorkspaceAiHooks
+  signal?: AbortSignal
+}): Promise<WorkspaceAiExecutionResult> {
+  let streamedAssistantText = ''
+  let finalMessages: Array<Record<string, unknown>> = []
+
+  for await (const rawEvent of input.stream) {
+    throwIfAborted(input.signal)
+    if (!rawEvent || typeof rawEvent !== 'object' || Array.isArray(rawEvent))
+      continue
+
+    const event = rawEvent as {
+      event?: unknown
+      name?: unknown
+      data?: Record<string, unknown>
+    }
+    const eventType = toText(event.event)
+
+    if (eventType === 'on_chat_model_stream') {
+      const textChunk = extractWorkspaceStreamTextChunk(event.data?.chunk)
+      if (!textChunk)
+        continue
+
+      streamedAssistantText += textChunk
+      await input.hooks.onDelta?.(textChunk)
+      continue
+    }
+
+    if (eventType === 'on_chain_end' && toText(event.name) === 'LangGraph') {
+      const messages = extractWorkspaceLangGraphOutputMessages(event.data?.output)
+      if (messages.length > 0)
+        finalMessages = messages
+    }
+  }
+
+  throwIfAborted(input.signal)
+  const assistantText = finalMessages.length > 0
+    ? extractAssistantTextFromMessages(finalMessages)
+    : streamedAssistantText
+  return finalizeWorkspaceExecutionResult(input.profile, input.state, assistantText)
 }
 
 async function executeWorkspaceAgentMode(
@@ -1235,29 +1579,61 @@ async function executeWorkspaceAgentMode(
 ): Promise<WorkspaceExecutionOutcome> {
   const contextSnapshot = buildContextSnapshot(input.context)
   const channelPrompt = toText(input.channelPrompt)
+  let hasVisibleExecutionOutput = false
+
+  const retryAwareHooks: WorkspaceAiHooks = {
+    onProgress: message => input.hooks.onProgress?.(message),
+    onTool: async (name, payload) => {
+      hasVisibleExecutionOutput = true
+      await input.hooks.onTool?.(name, payload)
+    },
+    onDelta: async (text) => {
+      if (text)
+        hasVisibleExecutionOutput = true
+      await input.hooks.onDelta?.(text)
+    },
+    onProposal: async (proposal) => {
+      hasVisibleExecutionOutput = true
+      await input.hooks.onProposal?.(proposal)
+    },
+    onIssue: async (issue) => {
+      hasVisibleExecutionOutput = true
+      await input.hooks.onIssue?.(issue)
+    },
+  }
 
   const executed = await runWithRetry<WorkspaceAiExecutionResult>({
     maxRetries: input.ai.maxRetries,
     run: async () => {
+      throwIfAborted(input.signal)
       await input.hooks.onProgress?.(profile.progressMessage)
 
       const state = createWorkspaceModeState()
-      const toolset = createWorkspaceToolset(input, profile, state, contextSnapshot)
+      const toolset = createWorkspaceToolset({
+        ...input,
+        hooks: retryAwareHooks,
+      }, profile, state, contextSnapshot)
       const agent = createDeepAgent({
         model: createChatModel(input.ai),
         tools: toolset.tools,
         systemPrompt: buildWorkspaceSystemPrompt(profile, channelPrompt),
       })
 
-      const response = await agent.invoke({
-        messages: buildWorkspaceConversationMessages(profile.mode, input.context, input.messages),
+      const stream = agent.streamEvents({
+        messages: buildWorkspaceConversationMessages(profile.mode, input.context, input.messages) as any,
+      }, {
+        version: 'v2',
+        signal: input.signal,
       })
-
-      const result = finalizeWorkspaceExecutionResult(profile, state, extractAssistantText(response))
-      for (const chunk of chunkText(result.assistantReply))
-        await input.hooks.onDelta?.(chunk)
-      return result
+      return consumeWorkspaceAgentStream({
+        stream,
+        profile,
+        state,
+        hooks: retryAwareHooks,
+        signal: input.signal,
+      })
     },
+    shouldRetryOnError: ({ error }) => !hasVisibleExecutionOutput && !isAbortError(error),
   })
 
   return {
@@ -1291,6 +1667,7 @@ export async function executeWorkspaceAi(input: {
   messages?: ChatMessage[]
   channelPrompt?: string
   hooks?: WorkspaceAiHooks
+  signal?: AbortSignal
 }): Promise<WorkspaceExecutionOutcome> {
   const executionInput: WorkspaceModeExecutionInput = {
     runtime: input.runtime,
@@ -1299,6 +1676,7 @@ export async function executeWorkspaceAi(input: {
     channelPrompt: input.channelPrompt,
     hooks: input.hooks || {},
     messages: Array.isArray(input.messages) ? input.messages : [],
+    signal: input.signal,
   }
 
   if (input.mode === 'auto_optimize')
