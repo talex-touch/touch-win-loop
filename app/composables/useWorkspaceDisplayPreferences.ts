@@ -2,9 +2,16 @@ import type {
   ApiResponse,
   WorkspaceDisplayPreferences,
   WorkspaceDisplayPreferenceSnapshot,
+  WorkspaceDisplayPreferenceSource,
   WorkspaceFontSizePreset,
   WorkspaceTabSpacingPreset,
 } from '~~/shared/types/domain'
+import {
+  DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  DEFAULT_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
+  normalizeWorkspaceLeftSidebarWidth,
+  normalizeWorkspaceRightSidebarWidth,
+} from '~~/shared/utils/workspace-layout'
 
 export const WORKSPACE_FONT_SIZE_PRESET_OPTIONS: Array<{ value: WorkspaceFontSizePreset, label: string }> = [
   { value: 'xs', label: '极效' },
@@ -28,6 +35,8 @@ export type NullableWorkspaceTabSpacingPreset = WorkspaceTabSpacingPreset | ''
 export interface WorkspaceDisplayPreferencePatchPayload {
   fontSizePreset?: WorkspaceFontSizePreset | null
   tabSpacingPreset?: WorkspaceTabSpacingPreset | null
+  leftSidebarWidth?: number | null
+  rightSidebarWidth?: number | null
 }
 
 function findWorkspaceFontSizePreset(value: unknown): WorkspaceFontSizePreset | null {
@@ -52,6 +61,18 @@ export function normalizeWorkspaceTabSpacingDraft(value: unknown): NullableWorks
   return findWorkspaceTabSpacingPreset(value) || ''
 }
 
+function normalizeWorkspaceSidebarWidth(
+  value: unknown,
+  normalizer: (value: unknown) => number,
+): number | null {
+  if (value === null || value === undefined || value === '')
+    return null
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized))
+    return null
+  return normalizer(normalized)
+}
+
 export function normalizeWorkspaceDisplayPreferences(
   input: WorkspaceDisplayPreferences | null | undefined,
 ): WorkspaceDisplayPreferences | null {
@@ -60,7 +81,9 @@ export function normalizeWorkspaceDisplayPreferences(
 
   const fontSizePreset = findWorkspaceFontSizePreset(input.fontSizePreset)
   const tabSpacingPreset = findWorkspaceTabSpacingPreset(input.tabSpacingPreset)
-  if (!fontSizePreset && !tabSpacingPreset)
+  const leftSidebarWidth = normalizeWorkspaceSidebarWidth(input.leftSidebarWidth, normalizeWorkspaceLeftSidebarWidth)
+  const rightSidebarWidth = normalizeWorkspaceSidebarWidth(input.rightSidebarWidth, normalizeWorkspaceRightSidebarWidth)
+  if (!fontSizePreset && !tabSpacingPreset && leftSidebarWidth === null && rightSidebarWidth === null)
     return null
 
   const normalized: WorkspaceDisplayPreferences = {}
@@ -68,6 +91,10 @@ export function normalizeWorkspaceDisplayPreferences(
     normalized.fontSizePreset = fontSizePreset
   if (tabSpacingPreset)
     normalized.tabSpacingPreset = tabSpacingPreset
+  if (leftSidebarWidth !== null)
+    normalized.leftSidebarWidth = leftSidebarWidth
+  if (rightSidebarWidth !== null)
+    normalized.rightSidebarWidth = rightSidebarWidth
 
   return {
     ...normalized,
@@ -86,7 +113,7 @@ export function resolveWorkspaceTabSpacingPresetLabel(value: WorkspaceTabSpacing
 }
 
 export function resolveWorkspaceDisplayPreferenceSourceLabel(
-  source: WorkspaceDisplayPreferenceSnapshot['sources']['fontSizePreset'] | WorkspaceDisplayPreferenceSnapshot['sources']['tabSpacingPreset'] | '' | null | undefined,
+  source: WorkspaceDisplayPreferenceSource | '' | null | undefined,
 ): string {
   if (source === 'workspace_override')
     return '当前工作区个人覆盖'
@@ -105,10 +132,14 @@ export function defaultWorkspaceDisplayPreferenceSnapshot(): WorkspaceDisplayPre
     effective: {
       fontSizePreset: 'lg',
       tabSpacingPreset: 'relaxed',
+      leftSidebarWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+      rightSidebarWidth: DEFAULT_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
     },
     sources: {
       fontSizePreset: 'system_default',
       tabSpacingPreset: 'system_default',
+      leftSidebarWidth: 'system_default',
+      rightSidebarWidth: 'system_default',
     },
     canManageTeamDefault: false,
   }
@@ -136,15 +167,34 @@ export function normalizeWorkspaceDisplayPreferenceSnapshot(
     || tabSpacingSource === 'system_default'
     ? tabSpacingSource
     : 'system_default'
+  const leftSidebarWidthSource = input.sources?.leftSidebarWidth
+  const validLeftSidebarWidthSource = leftSidebarWidthSource === 'workspace_override'
+    || leftSidebarWidthSource === 'user_default'
+    || leftSidebarWidthSource === 'team_default'
+    || leftSidebarWidthSource === 'system_default'
+    ? leftSidebarWidthSource
+    : 'system_default'
+  const rightSidebarWidthSource = input.sources?.rightSidebarWidth
+  const validRightSidebarWidthSource = rightSidebarWidthSource === 'workspace_override'
+    || rightSidebarWidthSource === 'user_default'
+    || rightSidebarWidthSource === 'team_default'
+    || rightSidebarWidthSource === 'system_default'
+    ? rightSidebarWidthSource
+    : 'system_default'
 
   return {
     userDefault: normalizeWorkspaceDisplayPreferences(input.userDefault),
     teamDefault: normalizeWorkspaceDisplayPreferences(input.teamDefault),
     workspaceOverride: normalizeWorkspaceDisplayPreferences(input.workspaceOverride),
-    effective: effective || fallback.effective,
+    effective: {
+      ...fallback.effective,
+      ...(effective || {}),
+    },
     sources: {
       fontSizePreset: validFontSizeSource,
       tabSpacingPreset: validTabSpacingSource,
+      leftSidebarWidth: validLeftSidebarWidthSource,
+      rightSidebarWidth: validRightSidebarWidthSource,
     },
     canManageTeamDefault: Boolean(input.canManageTeamDefault),
   }

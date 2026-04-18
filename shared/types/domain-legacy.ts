@@ -33,12 +33,16 @@ export type WorkspaceDisplayPreferenceSource = 'workspace_override' | 'user_defa
 export interface WorkspaceDisplayPreferences {
   fontSizePreset?: WorkspaceFontSizePreset | null
   tabSpacingPreset?: WorkspaceTabSpacingPreset | null
+  leftSidebarWidth?: number | null
+  rightSidebarWidth?: number | null
   updatedAt?: string
 }
 
 export interface WorkspaceDisplayPreferenceSources {
   fontSizePreset: WorkspaceDisplayPreferenceSource
   tabSpacingPreset: WorkspaceDisplayPreferenceSource
+  leftSidebarWidth: WorkspaceDisplayPreferenceSource
+  rightSidebarWidth: WorkspaceDisplayPreferenceSource
 }
 
 export interface WorkspaceDisplayPreferenceSnapshot {
@@ -412,6 +416,111 @@ export interface ProjectKnowledgeChunkMetadata {
   meetingId?: string
   utteranceRange?: string
   fallbackUsed?: boolean
+  embeddingProvider?: string
+  embeddingModel?: string
+  embeddingFallbackUsed?: boolean
+}
+
+export type ProjectKnowledgeIndexHealthState
+  = 'empty_project'
+    | 'missing_runtime'
+    | 'worker_inactive'
+    | 'queued_but_not_running'
+    | 'fallback_only'
+    | 'partial'
+    | 'healthy'
+
+export interface ProjectKnowledgeIndexRuntimeStatus {
+  embeddingConfigured: boolean
+  embeddingProvider: string
+  embeddingModel: string
+}
+
+export interface ProjectKnowledgeIndexWorkerStatus {
+  started: boolean
+  enabled: boolean
+  ticking: boolean
+  lastStartedAt?: string
+  lastFinishedAt?: string
+  lastSuccessAt?: string
+  lastError: string
+}
+
+export interface ProjectKnowledgeIndexDiagnosticIssue {
+  code: string
+  severity: 'info' | 'warning' | 'error'
+  message: string
+}
+
+export interface ProjectKnowledgeIndexDiagnostics {
+  candidateResourceCount: number
+  sourceCount: number
+  taskCount: number
+  chunkCount: number
+  realEmbeddedChunkCount: number
+  fallbackEmbeddedChunkCount: number
+  unknownEmbeddedChunkCount: number
+  healthState: ProjectKnowledgeIndexHealthState
+  healthMessage: string
+  issues: ProjectKnowledgeIndexDiagnosticIssue[]
+}
+
+export interface ProjectKnowledgeIndexVisualCountItem {
+  label: string
+  count: number
+}
+
+export interface ProjectKnowledgeIndexTaskTrendPoint {
+  day: string
+  tasks: number
+  succeeded: number
+  failed: number
+  successRate: number
+}
+
+export interface ProjectKnowledgeIndexStatusMatrixCell {
+  resourceKind: string
+  status: ProjectKnowledgeSourceStatus
+  count: number
+}
+
+export interface ProjectKnowledgeIndexTopologyNode {
+  id: string
+  label: string
+  nodeType: 'source' | 'binding'
+  status?: ProjectKnowledgeSourceStatus
+  resourceKind?: ResourceKind | ''
+  progressPercent: number
+  chunkCount: number
+  updatedAt?: string
+  size: number
+  depth: number
+  realEmbeddingReady?: boolean
+  fallbackOnly?: boolean
+}
+
+export interface ProjectKnowledgeIndexTopologyLink {
+  sourceId: string
+  targetId: string
+}
+
+export interface ProjectKnowledgeIndexVisuals {
+  stageFunnel: ProjectKnowledgeIndexVisualCountItem[]
+  failureReasons: ProjectKnowledgeIndexVisualCountItem[]
+  chunkKindDistribution: ProjectKnowledgeIndexVisualCountItem[]
+  resourceKindDistribution: ProjectKnowledgeIndexVisualCountItem[]
+  embeddingComposition: ProjectKnowledgeIndexVisualCountItem[]
+  taskTrend: ProjectKnowledgeIndexTaskTrendPoint[]
+  resourceStatusMatrix: {
+    resourceKinds: string[]
+    statuses: ProjectKnowledgeSourceStatus[]
+    cells: ProjectKnowledgeIndexStatusMatrixCell[]
+  }
+  topology: {
+    nodes: ProjectKnowledgeIndexTopologyNode[]
+    links: ProjectKnowledgeIndexTopologyLink[]
+  }
+  starfieldNodes: ProjectKnowledgeIndexTopologyNode[]
 }
 
 export interface ProjectKnowledgeCitation {
@@ -503,11 +612,15 @@ export interface ProjectKnowledgeIndexSummary {
 
 export interface ProjectKnowledgeIndexDashboard {
   summary: ProjectKnowledgeIndexSummary
+  runtime: ProjectKnowledgeIndexRuntimeStatus
+  worker: ProjectKnowledgeIndexWorkerStatus
+  diagnostics: ProjectKnowledgeIndexDiagnostics
   processing: ProjectKnowledgeIndexSourceStatus[]
   recentCompleted: ProjectKnowledgeIndexSourceStatus[]
   failed: ProjectKnowledgeIndexSourceStatus[]
   sources: ProjectKnowledgeIndexSourceStatus[]
   tasks: ProjectKnowledgeIndexTaskSnapshot[]
+  visuals: ProjectKnowledgeIndexVisuals
 }
 
 export type DrawMode = 'freeform' | 'diagram' | 'schema' | 'architecture' | 'composition'
@@ -2337,12 +2450,14 @@ export interface ProjectSettingsDraft {
   lastOpenedAt: string
 }
 
-export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings'
+export type WorkspaceFixedTabId = 'dashboard' | 'meeting' | 'members' | 'flow' | 'settings' | 'loopy_data'
 export type WorkspaceMeetingTabId = `meeting:${string}`
 export type WorkspaceMeetingCreateTabId = 'meeting-create:audio' | 'meeting-create:video'
 export type WorkspaceResourceTabId = `resource:${string}`
 export type WorkspaceOpenTabState = WorkspaceFixedTabId | WorkspaceMeetingTabId | WorkspaceMeetingCreateTabId | WorkspaceResourceTabId
 export type ProjectWorkbenchMode = 'project' | 'defense' | 'final_review'
+export type ProjectWorkspaceAssistantMode = 'contextual' | 'dialog_ask'
+export type ProjectWorkspaceRightSidebarView = 'ai' | 'comments'
 
 export interface ProjectWorkspaceViewState {
   workbenchMode: ProjectWorkbenchMode
@@ -2354,6 +2469,10 @@ export interface ProjectWorkspaceViewState {
   openChatSessionIds: string[]
   activeChatSessionId: string
   activeMeetingId: string
+  projectAssistantMode: ProjectWorkspaceAssistantMode
+  rightSidebarView: ProjectWorkspaceRightSidebarView
+  leftSidebarWidth: number
+  rightSidebarWidth: number
   leftSidebarCollapsed: boolean
   rightSidebarCollapsed: boolean
 }
@@ -2365,6 +2484,17 @@ export interface ProjectWorkspaceViewPreference {
   deviceId: string
   updatedAt: string
   lastOpenedAt: string
+}
+
+export interface ProjectWorkspaceAiTabsState {
+  openChatSessionIds: string[]
+  activeChatSessionId: string
+}
+
+export interface ProjectWorkspaceAiTabsPreference {
+  projectId: string
+  payload: ProjectWorkspaceAiTabsState
+  updatedAt: string
 }
 
 export interface DeviceScopedRestoreResolution {
@@ -2380,6 +2510,7 @@ export interface DeviceScopedRestoreResolution {
 export interface ProjectWorkspaceViewDeviceStatePayload {
   current: ProjectWorkspaceViewPreference | null
   latestOther: ProjectWorkspaceViewPreference | null
+  personalAiTabs: ProjectWorkspaceAiTabsPreference | null
   resolution: DeviceScopedRestoreResolution
 }
 
@@ -2530,8 +2661,9 @@ export interface AiProjectChatResult {
   sessionId?: string
 }
 
-export type WorkspaceAiMode = 'dialog_ask' | 'auto_optimize' | 'issue_discovery' | 'defense' | 'document_assist'
+export type WorkspaceAiMode = 'dialog_ask' | 'contextual_agent' | 'auto_optimize' | 'issue_discovery' | 'defense' | 'document_assist'
 export type WorkspaceAiAssistantPreset = 'default' | 'document' | 'prototype' | 'design'
+export type WorkspaceContextualAssistantKey = 'agent_doc' | 'agent_proto' | 'design_assistant'
 
 export type ProjectResourceCommentAnchorType = 'text_selection' | 'image_node'
 export type ProjectResourceCommentThreadStatus = 'open' | 'resolved'
@@ -2653,6 +2785,21 @@ export interface AiWorkspaceWorkflowDraft {
   stylePreset: WorkflowStylePreset
   layoutPreset: WorkflowLayoutPreset
   baseWorkflowHash: string
+}
+
+export interface AiWorkspaceSceneDraft {
+  action: WorkflowDraftAction
+  title: string
+  summary: string
+  resourceId: string
+  resourceTitle: string
+  template: AiCanvasAssistTemplate
+  sourceFormat: AiCanvasAssistSourceFormat
+  sourceText: string
+  architectureView?: WorkflowArchitectureView | null
+  stylePreset: WorkflowStylePreset
+  layoutPreset: WorkflowLayoutPreset
+  baseSceneHash: string
 }
 
 export interface ProjectResourceCommentTextSelectionAnchor {
@@ -3277,6 +3424,7 @@ export interface AiWorkspaceRequest {
     teamId?: string
     workspaceId?: string
     projectId?: string
+    projectTitle?: string
     contestId?: string
     trackId?: string
     major?: string
@@ -3288,6 +3436,7 @@ export interface AiWorkspaceRequest {
     trigger?: AiWorkspaceDocumentTrigger
     documentAction?: AiWorkspaceDocumentAction
     assistantPreset?: WorkspaceAiAssistantPreset
+    contextualAssistantKey?: WorkspaceContextualAssistantKey | ''
     assistantLabel?: string
     activeTabId?: string
     previewMode?: string
@@ -3298,6 +3447,14 @@ export interface AiWorkspaceRequest {
     workflowArchitectureView?: WorkflowArchitectureView
     workflowStylePreset?: WorkflowStylePreset
     workflowLayoutPreset?: WorkflowLayoutPreset
+    sceneHash?: string
+    sceneSourceText?: string
+    sceneSourceFormat?: AiCanvasAssistSourceFormat
+    sceneAction?: WorkflowDraftAction
+    sceneTemplate?: AiCanvasAssistTemplate
+    sceneArchitectureView?: WorkflowArchitectureView
+    sceneStylePreset?: WorkflowStylePreset
+    sceneLayoutPreset?: WorkflowLayoutPreset
   }
   aiOptions?: Partial<AiAssistantOptions>
 }
@@ -3388,6 +3545,7 @@ export interface AiWorkspaceResult {
   report?: ProjectIssueReport | null
   documentDraft?: AiWorkspaceDocumentDraft | null
   workflowDraft?: AiWorkspaceWorkflowDraft | null
+  sceneDraft?: AiWorkspaceSceneDraft | null
   knowledge?: ProjectKnowledgeMessagePayload | null
 }
 

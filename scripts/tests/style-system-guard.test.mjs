@@ -7,7 +7,7 @@ const SMALL_TEXT_RE = /text-\[(?:10|11)px\]/
 const SMALL_FONT_RE = /font-size:\s*(?:10|11)px/
 const INTER_FONT_RE = /fonts\.googleapis\.com\/css2\?[^"'`\n]*Inter/i
 const FONT_FAMILY_RE = /font-family\s*:/
-const HEX_COLOR_RE = /#[0-9a-fA-F]{3,8}\b/
+const HEX_COLOR_RE = /#[0-9a-f]{3,8}\b/i
 
 const SMALL_TEXT_GUARD_FILES = [
   'app/components/ui/PageShell.vue',
@@ -63,6 +63,12 @@ const SMALL_TEXT_GUARD_FILES = [
   'app/components/workspace/WorkspaceAnalysisPanel.vue',
   'app/components/workspace/WorkspaceProjectConfigPanel.vue',
   'app/components/workspace/WorkspaceIssuePanel.vue',
+  'app/components/workspace/WorkspaceAssistantMessageContent.vue',
+  'app/components/workspace/WorkspaceChatMarkdown.vue',
+  'app/components/workspace/design/WorkspaceDesignInspector.vue',
+  'app/components/workspace/collab/WorkspaceDrawioCanvas.client.vue',
+  'app/components/workspace/collab/WorkspaceTldrawCanvas.client.vue',
+  'app/components/editor/RichTextEditor.vue',
 ]
 
 const FONT_GUARD_FILES = [

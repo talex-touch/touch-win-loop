@@ -1263,10 +1263,28 @@
   width: 70%;
 }
 
+.workspace-outline-section + .workspace-outline-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #edf1f7;
+}
+
+.workspace-outline-section__title {
+  padding: 4px 14px 6px;
+  color: #8a97ab;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .workspace-outline-item {
   width: 100%;
   border: none;
   background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   font-size: 13px;
   line-height: 1.28;
   text-align: left;
@@ -1307,6 +1325,11 @@
   color: #8895aa;
 }
 
+.workspace-outline-item__meta--inline {
+  display: block;
+  width: 100%;
+}
+
 .workspace-outline-item:hover {
   background: #f3f6fb;
 }
@@ -1338,6 +1361,12 @@
   color: #9ba7bc;
   font-size: 11px;
   text-align: center;
+}
+
+.workspace-empty-text--outline {
+  margin: 0;
+  padding: 2px 14px 0;
+  text-align: left;
 }
 
 .workspace-library-search {

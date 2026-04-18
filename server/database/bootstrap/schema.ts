@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_sessions (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL DEFAULT '',
-  mode TEXT NOT NULL DEFAULT 'dialog_ask' CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist')),
+  mode TEXT NOT NULL DEFAULT 'dialog_ask' CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist', 'contextual_agent')),
   created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT '',
   contest_id TEXT NOT NULL DEFAULT '',
@@ -929,6 +929,15 @@ CREATE TABLE IF NOT EXISTS user_workspace_display_defaults (
   preferences JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_project_workspace_ai_tabs (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, project_id)
 );
 
 CREATE TABLE IF NOT EXISTS workspace_display_defaults (
@@ -1869,7 +1878,7 @@ CREATE TABLE IF NOT EXISTS ai_project_change_requests (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL REFERENCES ai_chat_sessions(id) ON DELETE CASCADE,
-  mode TEXT NOT NULL CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist')),
+  mode TEXT NOT NULL CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist', 'contextual_agent')),
   change_type TEXT NOT NULL CHECK (change_type IN (
     'settings_common_patch',
     'contest_bindings_replace',
@@ -1902,7 +1911,7 @@ CREATE TABLE IF NOT EXISTS project_issue_reports (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL REFERENCES ai_chat_sessions(id) ON DELETE CASCADE,
-  source_mode TEXT NOT NULL CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist')),
+  source_mode TEXT NOT NULL CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist', 'contextual_agent')),
   title TEXT NOT NULL DEFAULT '',
   summary TEXT NOT NULL DEFAULT '',
   markdown TEXT NOT NULL DEFAULT '',
@@ -2716,6 +2725,7 @@ CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_user_project ON pro
 CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_project ON project_workspace_view_states(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_user_project_opened ON project_workspace_view_states(user_id, project_id, last_opened_at DESC, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_workspace_view_states_user_project_device ON project_workspace_view_states(user_id, project_id, device_id);
+CREATE INDEX IF NOT EXISTS idx_user_project_workspace_ai_tabs_project_user ON user_project_workspace_ai_tabs(project_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_user_workspace_last_projects_workspace_updated ON user_workspace_last_projects(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_updated ON ai_chat_sessions(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session_created ON ai_chat_messages(session_id, created_at ASC);
@@ -3194,28 +3204,28 @@ ALTER TABLE ai_chat_sessions
 
 UPDATE ai_chat_sessions
 SET mode = 'dialog_ask'
-WHERE COALESCE(mode, '') NOT IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist');
+WHERE COALESCE(mode, '') NOT IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist', 'contextual_agent');
 
 ALTER TABLE ai_chat_sessions
   DROP CONSTRAINT IF EXISTS ai_chat_sessions_mode_check;
 
 ALTER TABLE ai_chat_sessions
   ADD CONSTRAINT ai_chat_sessions_mode_check
-  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist'));
+  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist', 'contextual_agent'));
 
 ALTER TABLE ai_project_change_requests
   DROP CONSTRAINT IF EXISTS ai_project_change_requests_mode_check;
 
 ALTER TABLE ai_project_change_requests
   ADD CONSTRAINT ai_project_change_requests_mode_check
-  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist'));
+  CHECK (mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist', 'contextual_agent'));
 
 ALTER TABLE project_issue_reports
   DROP CONSTRAINT IF EXISTS project_issue_reports_source_mode_check;
 
 ALTER TABLE project_issue_reports
   ADD CONSTRAINT project_issue_reports_source_mode_check
-  CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist'));
+  CHECK (source_mode IN ('dialog_ask', 'auto_optimize', 'issue_discovery', 'defense', 'document_assist', 'contextual_agent'));
 
 CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_workspace_project_mode_updated
   ON ai_chat_sessions(workspace_id, project_id, mode, updated_at DESC);

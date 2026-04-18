@@ -3,9 +3,19 @@ import type {
   DocumentAnalysis,
   ProjectKnowledgeChunkKind,
   ProjectKnowledgeIndexDashboard,
+  ProjectKnowledgeIndexDiagnosticIssue,
+  ProjectKnowledgeIndexDiagnostics,
+  ProjectKnowledgeIndexHealthState,
+  ProjectKnowledgeIndexRuntimeStatus,
   ProjectKnowledgeIndexSourceStatus,
   ProjectKnowledgeIndexSummary,
   ProjectKnowledgeIndexTaskSnapshot,
+  ProjectKnowledgeIndexTaskTrendPoint,
+  ProjectKnowledgeIndexTopologyLink,
+  ProjectKnowledgeIndexTopologyNode,
+  ProjectKnowledgeIndexVisualCountItem,
+  ProjectKnowledgeIndexVisuals,
+  ProjectKnowledgeIndexWorkerStatus,
   ProjectKnowledgeScopeType,
   ProjectKnowledgeSourceStatus,
   ProjectKnowledgeTaskStage,
@@ -14,6 +24,9 @@ import type {
   ResourceKind,
 } from '~~/shared/types/domain'
 import { createHash, randomUUID } from 'node:crypto'
+import { isAiRuntimeConfigured, normalizeAiRuntimeProvider } from '~~/server/utils/ai-runtime'
+import { readRuntimeSettings } from '~~/server/utils/env'
+import { getProjectKnowledgeWorkerState } from '~~/server/utils/project-knowledge-worker-state'
 
 export const PROJECT_KNOWLEDGE_INDEX_VERSION = 'project-knowledge-v2-multimodal'
 
@@ -132,6 +145,49 @@ interface ProjectKnowledgeSearchChunkRow {
   embedding_text: string | null
   embedding_json: unknown
 }
+
+interface ProjectKnowledgeChunkStatsRow {
+  source_id: string
+  chunk_count: string
+  real_chunk_count: string
+  fallback_chunk_count: string
+  unknown_chunk_count: string
+}
+
+interface ProjectKnowledgeTaskCountRow {
+  count: string
+}
+
+interface ProjectKnowledgeChunkKindCountRow {
+  chunk_kind: string
+  count: string
+}
+
+interface ProjectKnowledgeFailureReasonRow {
+  error_text: string
+  count: string
+}
+
+interface ProjectKnowledgeTaskTrendRow {
+  day: string
+  tasks: string
+  succeeded: string
+  failed: string
+}
+
+interface ContestResourceLabelRow {
+  id: string
+  title: string
+}
+
+interface ProjectKnowledgeAggregateChunkStats {
+  chunkCount: number
+  realEmbeddedChunkCount: number
+  fallbackEmbeddedChunkCount: number
+  unknownEmbeddedChunkCount: number
+}
+
+interface ProjectKnowledgeSourceChunkStats extends ProjectKnowledgeAggregateChunkStats {}
 
 export interface ProjectKnowledgeTaskContext {
   task: ProjectKnowledgeIndexTaskSnapshot
@@ -252,6 +308,32 @@ function buildEtaFinishedAt(etaSeconds: number): string | null {
   if (safeEta <= 0)
     return null
   return new Date(Date.now() + safeEta * 1000).toISOString()
+}
+
+function formatResourceKindLabel(resourceKind: ResourceKind | '' | null | undefined): string {
+  const normalized = normalizeString(resourceKind)
+  if (normalized === 'document')
+    return '文档'
+  if (normalized === 'markdown')
+    return 'Markdown'
+  if (normalized === 'image')
+    return '图片'
+  if (normalized === 'audio')
+    return '音频'
+  if (normalized === 'video')
+    return '视频'
+  if (normalized === 'draw')
+    return '画布'
+  if (normalized === 'link')
+    return '链接'
+  return normalized || '未分类'
+}
+
+function toCountItem(label: string, count: number): ProjectKnowledgeIndexVisualCountItem {
+  return {
+    label,
+    count: Math.max(0, Math.round(normalizeNumber(count, 0))),
+  }
 }
 
 function normalizeTaskPayload(value: unknown): Record<string, unknown> {
@@ -397,6 +479,399 @@ function estimateRunningEtaSeconds(source: ProjectKnowledgeIndexSourceStatus): n
   const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAtMs) / 1000))
   const totalSeconds = Math.round(elapsedSeconds * (100 / progressPercent))
   return Math.max(1, totalSeconds - elapsedSeconds)
+}
+
+const VISUAL_SOURCE_STATUS_ORDER: ProjectKnowledgeSourceStatus[] = [
+  'pending',
+  'queued',
+  'extracting',
+  'chunking',
+  'embedding',
+  'ready',
+  'failed',
+  'stale',
+  'skipped',
+]
+
+function formatChunkKindLabel(chunkKind: string): string {
+  const normalized = normalizeString(chunkKind)
+  if (normalized === 'document_page')
+    return '文档页'
+  if (normalized === 'document_section')
+    return '文档章节'
+  if (normalized === 'markdown_section')
+    return 'Markdown 分段'
+  if (normalized === 'draw_summary')
+    return '画布摘要'
+  if (normalized === 'resource_summary')
+    return '资源摘要'
+  if (normalized === 'image_summary')
+    return '图片摘要'
+  if (normalized === 'image_ocr')
+    return '图片 OCR'
+  if (normalized === 'meeting_notes')
+    return '会议纪要'
+  if (normalized === 'meeting_transcript')
+    return '会议转写'
+  return normalized || '未分类 Chunk'
+}
+
+function buildProjectKnowledgeRuntimeStatus(): ProjectKnowledgeIndexRuntimeStatus {
+  const runtime = readRuntimeSettings()
+  const embeddingModel = normalizeString(runtime.ai.embeddingModel || runtime.ai.model)
+  return {
+    embeddingConfigured: Boolean(embeddingModel)
+      && isAiRuntimeConfigured({
+        provider: runtime.ai.provider,
+        baseURL: runtime.ai.baseURL,
+        apiKey: runtime.ai.apiKey,
+        model: embeddingModel,
+      }),
+    embeddingProvider: normalizeAiRuntimeProvider(runtime.ai.provider),
+    embeddingModel,
+  }
+}
+
+function buildProjectKnowledgeWorkerStatus(): ProjectKnowledgeIndexWorkerStatus {
+  const state = getProjectKnowledgeWorkerState()
+  return {
+    started: Boolean(state.started),
+    enabled: Boolean(state.enabled),
+    ticking: Boolean(state.ticking),
+    lastStartedAt: normalizeString(state.lastStartedAt) || undefined,
+    lastFinishedAt: normalizeString(state.lastFinishedAt) || undefined,
+    lastSuccessAt: normalizeString(state.lastSuccessAt) || undefined,
+    lastError: normalizeString(state.lastError),
+  }
+}
+
+function resolveSourceChunkStats(
+  chunkStatsBySourceId: Map<string, ProjectKnowledgeSourceChunkStats>,
+  sourceId: string,
+): ProjectKnowledgeSourceChunkStats {
+  return chunkStatsBySourceId.get(sourceId) || {
+    chunkCount: 0,
+    realEmbeddedChunkCount: 0,
+    fallbackEmbeddedChunkCount: 0,
+    unknownEmbeddedChunkCount: 0,
+  }
+}
+
+function buildProjectKnowledgeHealth(
+  input: {
+    summary: ProjectKnowledgeIndexSummary
+    candidateResourceCount: number
+    runtime: ProjectKnowledgeIndexRuntimeStatus
+    worker: ProjectKnowledgeIndexWorkerStatus
+    chunkStats: ProjectKnowledgeAggregateChunkStats
+  },
+): {
+  healthState: ProjectKnowledgeIndexHealthState
+  healthMessage: string
+  issues: ProjectKnowledgeIndexDiagnosticIssue[]
+} {
+  const issues: ProjectKnowledgeIndexDiagnosticIssue[] = []
+  const backlogCount = input.summary.pendingCount + input.summary.queuedCount + input.summary.processingCount + input.summary.staleCount
+  const hasRealEmbeddings = input.chunkStats.realEmbeddedChunkCount > 0
+  const fallbackOnly = input.chunkStats.chunkCount > 0
+    && input.chunkStats.realEmbeddedChunkCount === 0
+    && input.chunkStats.fallbackEmbeddedChunkCount > 0
+
+  if (input.candidateResourceCount === 0) {
+    return {
+      healthState: 'empty_project',
+      healthMessage: '当前项目没有可索引的活跃资源。',
+      issues: [
+        {
+          code: 'no_active_resource',
+          severity: 'info',
+          message: '项目内暂时没有活跃资源，Loopy 数据工作台已就绪但没有索引对象。',
+        },
+      ],
+    }
+  }
+
+  if (!input.runtime.embeddingConfigured) {
+    issues.push({
+      code: 'embedding_runtime_missing',
+      severity: 'error',
+      message: 'Embedding 运行时未配置，当前无法产出真实向量。',
+    })
+  }
+
+  if (!input.worker.enabled || !input.worker.started) {
+    issues.push({
+      code: 'worker_inactive',
+      severity: 'error',
+      message: '知识索引 Worker 未启用或未启动，排队任务不会被实际消费。',
+    })
+  }
+
+  if (backlogCount > 0 && input.worker.enabled && input.worker.started && !input.worker.ticking && !input.worker.lastSuccessAt) {
+    issues.push({
+      code: 'worker_backlog_stalled',
+      severity: 'warning',
+      message: '存在排队任务，但 Worker 最近没有成功消费记录。',
+    })
+  }
+
+  if (fallbackOnly) {
+    issues.push({
+      code: 'fallback_only',
+      severity: 'warning',
+      message: '当前仅生成 deterministic fallback embedding，索引处于降级可用状态。',
+    })
+  }
+
+  if (input.summary.failedCount > 0) {
+    issues.push({
+      code: 'failed_sources',
+      severity: 'error',
+      message: `存在 ${input.summary.failedCount} 个失败资源，需要重试或修复原始内容。`,
+    })
+  }
+
+  if (input.summary.staleCount > 0) {
+    issues.push({
+      code: 'stale_sources',
+      severity: 'warning',
+      message: `存在 ${input.summary.staleCount} 个待刷新资源，当前索引与最新内容可能不一致。`,
+    })
+  }
+
+  if (input.chunkStats.unknownEmbeddedChunkCount > 0) {
+    issues.push({
+      code: 'unknown_embedding_provenance',
+      severity: 'info',
+      message: `存在 ${input.chunkStats.unknownEmbeddedChunkCount} 个历史 Chunk 尚未标注 embedding provenance。`,
+    })
+  }
+
+  if (input.chunkStats.chunkCount === 0) {
+    issues.push({
+      code: 'no_chunks',
+      severity: 'warning',
+      message: '当前还没有产出任何 Chunk，说明索引尚未真正完成。',
+    })
+  }
+
+  if (!input.runtime.embeddingConfigured && !hasRealEmbeddings) {
+    return {
+      healthState: 'missing_runtime',
+      healthMessage: '真实索引未建立：Embedding 配置缺失，当前无法产出真实向量。',
+      issues,
+    }
+  }
+
+  if ((!input.worker.enabled || !input.worker.started) && backlogCount > 0) {
+    return {
+      healthState: 'worker_inactive',
+      healthMessage: '真实索引未建立：知识索引 Worker 未启动，排队任务不会被消费。',
+      issues,
+    }
+  }
+
+  if (backlogCount > 0 && input.worker.enabled && input.worker.started && !input.worker.ticking && !input.worker.lastSuccessAt) {
+    return {
+      healthState: 'queued_but_not_running',
+      healthMessage: 'Worker 已启动，但最近没有消费 queued 任务。',
+      issues,
+    }
+  }
+
+  if (fallbackOnly) {
+    return {
+      healthState: 'fallback_only',
+      healthMessage: '当前只有 fallback embedding，索引为降级可用，不算真实索引健康。',
+      issues,
+    }
+  }
+
+  if (hasRealEmbeddings && backlogCount === 0 && input.summary.failedCount === 0) {
+    return {
+      healthState: 'healthy',
+      healthMessage: '真实 embedding 已产出，当前索引状态健康。',
+      issues,
+    }
+  }
+
+  return {
+    healthState: 'partial',
+    healthMessage: hasRealEmbeddings
+      ? '真实 embedding 已部分产出，但仍有排队、失败或待刷新资源。'
+      : '索引流程已启动，但尚未形成完整的真实 embedding 产出。',
+    issues,
+  }
+}
+
+function buildTaskTrendSeries(rows: ProjectKnowledgeTaskTrendRow[], windowDays = 10): ProjectKnowledgeIndexTaskTrendPoint[] {
+  const rowMap = new Map(rows.map(row => [normalizeString(row.day), row]))
+  const result: ProjectKnowledgeIndexTaskTrendPoint[] = []
+  for (let offset = windowDays - 1; offset >= 0; offset -= 1) {
+    const day = new Date()
+    day.setUTCHours(0, 0, 0, 0)
+    day.setUTCDate(day.getUTCDate() - offset)
+    const key = day.toISOString().slice(0, 10)
+    const row = rowMap.get(key)
+    const tasks = Math.max(0, Math.round(normalizeNumber(row?.tasks, 0)))
+    const succeeded = Math.max(0, Math.round(normalizeNumber(row?.succeeded, 0)))
+    const failed = Math.max(0, Math.round(normalizeNumber(row?.failed, 0)))
+    result.push({
+      day: key,
+      tasks,
+      succeeded,
+      failed,
+      successRate: tasks > 0 ? Math.max(0, Math.min(100, Math.round((succeeded / tasks) * 100))) : 0,
+    })
+  }
+  return result
+}
+
+function buildResourceKindDistribution(sources: ProjectKnowledgeIndexSourceStatus[]): ProjectKnowledgeIndexVisualCountItem[] {
+  const counts = new Map<string, number>()
+  for (const source of sources) {
+    const label = formatResourceKindLabel(source.resourceKind)
+    counts.set(label, (counts.get(label) || 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([label, count]) => toCountItem(label, count))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+}
+
+function buildResourceStatusMatrix(sources: ProjectKnowledgeIndexSourceStatus[]): ProjectKnowledgeIndexVisuals['resourceStatusMatrix'] {
+  const resourceKinds = [...new Set(sources.map(item => formatResourceKindLabel(item.resourceKind)))].sort((left, right) => left.localeCompare(right))
+  const statuses = VISUAL_SOURCE_STATUS_ORDER.filter(status => sources.some(item => item.status === status))
+  return {
+    resourceKinds,
+    statuses,
+    cells: resourceKinds.flatMap((resourceKind) => {
+      return statuses.map(status => ({
+        resourceKind,
+        status,
+        count: sources.filter(item => formatResourceKindLabel(item.resourceKind) === resourceKind && item.status === status).length,
+      }))
+    }),
+  }
+}
+
+function buildEmbeddingComposition(
+  sources: ProjectKnowledgeIndexSourceStatus[],
+  chunkStatsBySourceId: Map<string, ProjectKnowledgeSourceChunkStats>,
+): ProjectKnowledgeIndexVisualCountItem[] {
+  let realReadySourceCount = 0
+  let fallbackOnlySourceCount = 0
+  let noChunkSourceCount = 0
+  let unknownSourceCount = 0
+
+  for (const source of sources) {
+    const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
+    if (stats.chunkCount <= 0) {
+      noChunkSourceCount += 1
+      continue
+    }
+    if (stats.realEmbeddedChunkCount > 0) {
+      realReadySourceCount += 1
+      continue
+    }
+    if (stats.fallbackEmbeddedChunkCount > 0) {
+      fallbackOnlySourceCount += 1
+      continue
+    }
+    unknownSourceCount += 1
+  }
+
+  const result = [
+    toCountItem('真实 Embedding 资源', realReadySourceCount),
+    toCountItem('Fallback 资源', fallbackOnlySourceCount),
+    toCountItem('无 Chunk 资源', noChunkSourceCount),
+  ]
+  if (unknownSourceCount > 0)
+    result.push(toCountItem('历史 Chunk（待判定）', unknownSourceCount))
+  return result.filter(item => item.count > 0)
+}
+
+function buildSourceVisualNode(
+  source: ProjectKnowledgeIndexSourceStatus,
+  stats: ProjectKnowledgeSourceChunkStats,
+): ProjectKnowledgeIndexTopologyNode {
+  const chunkCount = Math.max(
+    stats.chunkCount,
+    Math.max(0, Math.round(normalizeNumber(source.chunkIndexed || source.chunkTotal, 0))),
+  )
+  const realEmbeddingReady = stats.realEmbeddedChunkCount > 0
+  const fallbackOnly = !realEmbeddingReady && stats.fallbackEmbeddedChunkCount > 0
+  const size = Number((1.1 + Math.min(4.8, Math.log2(chunkCount + 1) * 1.35)).toFixed(2))
+  let depth = 0.62
+  if (source.status === 'ready' && realEmbeddingReady)
+    depth = 0.18
+  else if (source.status === 'ready' && fallbackOnly)
+    depth = 0.36
+  else if (source.status === 'failed')
+    depth = 0.9
+  else if (source.status === 'stale')
+    depth = 0.72
+  else if (source.status === 'queued' || source.status === 'pending')
+    depth = 0.78
+
+  return {
+    id: `source:${source.id}`,
+    label: source.resourceTitle,
+    nodeType: 'source',
+    status: source.status,
+    resourceKind: source.resourceKind,
+    progressPercent: Math.max(0, Math.min(100, Math.round(normalizeNumber(source.progressPercent, 0)))),
+    chunkCount,
+    updatedAt: normalizeString(source.lastIndexedAt) || source.updatedAt,
+    size,
+    depth,
+    realEmbeddingReady,
+    fallbackOnly,
+  }
+}
+
+function buildTopologyVisuals(
+  sources: ProjectKnowledgeIndexSourceStatus[],
+  chunkStatsBySourceId: Map<string, ProjectKnowledgeSourceChunkStats>,
+  contestResourceTitles: Map<string, string>,
+): Pick<ProjectKnowledgeIndexVisuals, 'topology' | 'starfieldNodes'> {
+  const sourceNodes = sources.map((source) => {
+    const stats = resolveSourceChunkStats(chunkStatsBySourceId, source.id)
+    return buildSourceVisualNode(source, stats)
+  })
+
+  const bindingNodes = new Map<string, ProjectKnowledgeIndexTopologyNode>()
+  const links: ProjectKnowledgeIndexTopologyLink[] = []
+
+  for (const source of sources) {
+    const linkedContestResourceId = normalizeString(source.linkedContestResourceId)
+    if (!linkedContestResourceId)
+      continue
+    const bindingNodeId = `binding:${linkedContestResourceId}`
+    if (!bindingNodes.has(bindingNodeId)) {
+      bindingNodes.set(bindingNodeId, {
+        id: bindingNodeId,
+        label: contestResourceTitles.get(linkedContestResourceId) || '关联题库资源',
+        nodeType: 'binding',
+        progressPercent: 100,
+        chunkCount: 0,
+        updatedAt: source.updatedAt,
+        size: 1,
+        depth: 0.12,
+      })
+    }
+    links.push({
+      sourceId: `source:${source.id}`,
+      targetId: bindingNodeId,
+    })
+  }
+
+  return {
+    topology: {
+      nodes: [...sourceNodes, ...bindingNodes.values()],
+      links,
+    },
+    starfieldNodes: sourceNodes,
+  }
 }
 
 async function resolveProjectKnowledgeVectorMode(db: Queryable): Promise<ProjectKnowledgeVectorMode> {
@@ -577,6 +1052,163 @@ async function listProjectKnowledgeSourceSnapshots(
   )
 
   return result.rows.map(buildSourceSnapshot)
+}
+
+async function listContestResourceTitlesByIds(
+  db: Queryable,
+  contestResourceIds: string[],
+): Promise<Map<string, string>> {
+  const ids = [...new Set(contestResourceIds.map(item => normalizeString(item)).filter(Boolean))]
+  if (ids.length === 0)
+    return new Map()
+
+  const result = await db.query<ContestResourceLabelRow>(
+    `SELECT id, title
+     FROM contest_resources
+     WHERE id = ANY($1::TEXT[])`,
+    [ids],
+  )
+
+  return new Map(result.rows.map(row => [row.id, normalizeString(row.title) || '关联题库资源']))
+}
+
+async function getProjectKnowledgeTaskCount(
+  db: Queryable,
+  projectId: string,
+): Promise<number> {
+  const result = await db.query<ProjectKnowledgeTaskCountRow>(
+    `SELECT COUNT(*)::TEXT AS count
+     FROM project_knowledge_index_tasks
+     WHERE project_id = $1`,
+    [projectId],
+  )
+  return Math.max(0, Math.round(normalizeNumber(result.rows[0]?.count, 0)))
+}
+
+async function getProjectKnowledgeAggregateChunkStats(
+  db: Queryable,
+  projectId: string,
+): Promise<ProjectKnowledgeAggregateChunkStats> {
+  const result = await db.query<ProjectKnowledgeChunkStatsRow>(
+    `SELECT
+      '' AS source_id,
+      COUNT(*)::TEXT AS chunk_count,
+      COUNT(*) FILTER (
+        WHERE metadata ? 'embeddingFallbackUsed'
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
+      )::TEXT AS real_chunk_count,
+      COUNT(*) FILTER (
+        WHERE metadata ? 'embeddingFallbackUsed'
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = TRUE
+      )::TEXT AS fallback_chunk_count,
+      COUNT(*) FILTER (
+        WHERE NOT (metadata ? 'embeddingFallbackUsed')
+      )::TEXT AS unknown_chunk_count
+     FROM project_knowledge_chunks
+     WHERE project_id = $1`,
+    [projectId],
+  )
+
+  const row = result.rows[0]
+  return {
+    chunkCount: Math.max(0, Math.round(normalizeNumber(row?.chunk_count, 0))),
+    realEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.real_chunk_count, 0))),
+    fallbackEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.fallback_chunk_count, 0))),
+    unknownEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row?.unknown_chunk_count, 0))),
+  }
+}
+
+async function listProjectKnowledgeSourceChunkStats(
+  db: Queryable,
+  projectId: string,
+): Promise<Map<string, ProjectKnowledgeSourceChunkStats>> {
+  const result = await db.query<ProjectKnowledgeChunkStatsRow>(
+    `SELECT
+      source_id,
+      COUNT(*)::TEXT AS chunk_count,
+      COUNT(*) FILTER (
+        WHERE metadata ? 'embeddingFallbackUsed'
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = FALSE
+      )::TEXT AS real_chunk_count,
+      COUNT(*) FILTER (
+        WHERE metadata ? 'embeddingFallbackUsed'
+          AND COALESCE((metadata ->> 'embeddingFallbackUsed')::BOOLEAN, FALSE) = TRUE
+      )::TEXT AS fallback_chunk_count,
+      COUNT(*) FILTER (
+        WHERE NOT (metadata ? 'embeddingFallbackUsed')
+      )::TEXT AS unknown_chunk_count
+     FROM project_knowledge_chunks
+     WHERE project_id = $1
+     GROUP BY source_id`,
+    [projectId],
+  )
+
+  return new Map(result.rows.map((row) => {
+    return [row.source_id, {
+      chunkCount: Math.max(0, Math.round(normalizeNumber(row.chunk_count, 0))),
+      realEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.real_chunk_count, 0))),
+      fallbackEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.fallback_chunk_count, 0))),
+      unknownEmbeddedChunkCount: Math.max(0, Math.round(normalizeNumber(row.unknown_chunk_count, 0))),
+    }]
+  }))
+}
+
+async function listProjectKnowledgeChunkKindCounts(
+  db: Queryable,
+  projectId: string,
+): Promise<ProjectKnowledgeChunkKindCountRow[]> {
+  const result = await db.query<ProjectKnowledgeChunkKindCountRow>(
+    `SELECT
+      COALESCE(NULLIF(chunk_kind, ''), 'unknown') AS chunk_kind,
+      COUNT(*)::TEXT AS count
+     FROM project_knowledge_chunks
+     WHERE project_id = $1
+     GROUP BY COALESCE(NULLIF(chunk_kind, ''), 'unknown')
+     ORDER BY COUNT(*) DESC, chunk_kind ASC`,
+    [projectId],
+  )
+  return result.rows
+}
+
+async function listProjectKnowledgeFailureReasonCounts(
+  db: Queryable,
+  projectId: string,
+): Promise<ProjectKnowledgeFailureReasonRow[]> {
+  const result = await db.query<ProjectKnowledgeFailureReasonRow>(
+    `SELECT
+      COALESCE(NULLIF(error_message, ''), '未知错误') AS error_text,
+      COUNT(*)::TEXT AS count
+     FROM project_knowledge_index_tasks
+     WHERE project_id = $1
+       AND status = 'failed'
+     GROUP BY COALESCE(NULLIF(error_message, ''), '未知错误')
+     ORDER BY COUNT(*) DESC, error_text ASC
+     LIMIT 8`,
+    [projectId],
+  )
+  return result.rows
+}
+
+async function listProjectKnowledgeTaskTrendRows(
+  db: Queryable,
+  projectId: string,
+  windowDays = 10,
+): Promise<ProjectKnowledgeTaskTrendRow[]> {
+  const safeWindowDays = Math.max(3, Math.min(30, Math.round(normalizeNumber(windowDays, 10))))
+  const result = await db.query<ProjectKnowledgeTaskTrendRow>(
+    `SELECT
+      TO_CHAR(DATE_TRUNC('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+      COUNT(*)::TEXT AS tasks,
+      COUNT(*) FILTER (WHERE status = 'succeeded')::TEXT AS succeeded,
+     COUNT(*) FILTER (WHERE status = 'failed')::TEXT AS failed
+     FROM project_knowledge_index_tasks
+     WHERE project_id = $1
+       AND created_at >= NOW() - ($2::TEXT || ' days')::INTERVAL
+     GROUP BY TO_CHAR(DATE_TRUNC('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD')
+     ORDER BY day ASC`,
+    [projectId, safeWindowDays - 1],
+  )
+  return result.rows
 }
 
 async function getProjectKnowledgeSourceRowByEntity(
@@ -1060,10 +1692,32 @@ export async function buildProjectKnowledgeIndexDashboard(
     })
   }
 
-  const sources = await listProjectKnowledgeSourceSnapshots(db, {
-    projectId: input.projectId,
-  })
-  const avgSucceededSeconds = await getRecentSucceededAverageDurationSeconds(db, input.projectId)
+  const [
+    candidateRows,
+    sources,
+    avgSucceededSeconds,
+    taskCount,
+    chunkStats,
+    chunkStatsBySourceId,
+    chunkKindRows,
+    failureReasonRows,
+    taskTrendRows,
+  ] = await Promise.all([
+    listProjectKnowledgeCandidateRows(db, {
+      projectId: input.projectId,
+    }),
+    listProjectKnowledgeSourceSnapshots(db, {
+      projectId: input.projectId,
+    }),
+    getRecentSucceededAverageDurationSeconds(db, input.projectId),
+    getProjectKnowledgeTaskCount(db, input.projectId),
+    getProjectKnowledgeAggregateChunkStats(db, input.projectId),
+    listProjectKnowledgeSourceChunkStats(db, input.projectId),
+    listProjectKnowledgeChunkKindCounts(db, input.projectId),
+    listProjectKnowledgeFailureReasonCounts(db, input.projectId),
+    listProjectKnowledgeTaskTrendRows(db, input.projectId),
+  ])
+
   const totalResources = sources.length
   const indexableResources = sources.filter(item => item.status !== 'skipped').length
   const pendingCount = sources.filter(item => item.status === 'pending').length
@@ -1123,8 +1777,57 @@ export async function buildProjectKnowledgeIndexDashboard(
     lastRefreshedAt: new Date().toISOString(),
   }
 
+  const runtime = buildProjectKnowledgeRuntimeStatus()
+  const worker = buildProjectKnowledgeWorkerStatus()
+  const health = buildProjectKnowledgeHealth({
+    summary,
+    candidateResourceCount: candidateRows.length,
+    runtime,
+    worker,
+    chunkStats,
+  })
+  const contestResourceTitles = await listContestResourceTitlesByIds(
+    db,
+    sources.map(item => normalizeString(item.linkedContestResourceId)),
+  )
+  const topologyVisuals = buildTopologyVisuals(sources, chunkStatsBySourceId, contestResourceTitles)
+  const visuals: ProjectKnowledgeIndexVisuals = {
+    stageFunnel: [
+      toCountItem('待索引', pendingCount),
+      toCountItem('排队中', queuedCount),
+      toCountItem('处理中', processingCount),
+      toCountItem('索引完成', readyCount),
+      toCountItem('索引失败', failedCount),
+      toCountItem('待刷新', staleCount),
+    ],
+    failureReasons: failureReasonRows.map(row => toCountItem(normalizeString(row.error_text) || '未知错误', normalizeNumber(row.count, 0))),
+    chunkKindDistribution: chunkKindRows.map(row => toCountItem(formatChunkKindLabel(row.chunk_kind), normalizeNumber(row.count, 0))),
+    resourceKindDistribution: buildResourceKindDistribution(sources),
+    embeddingComposition: buildEmbeddingComposition(sources, chunkStatsBySourceId),
+    taskTrend: buildTaskTrendSeries(taskTrendRows),
+    resourceStatusMatrix: buildResourceStatusMatrix(sources),
+    topology: topologyVisuals.topology,
+    starfieldNodes: topologyVisuals.starfieldNodes,
+  }
+  const diagnostics: ProjectKnowledgeIndexDiagnostics = {
+    candidateResourceCount: candidateRows.length,
+    sourceCount: sources.length,
+    taskCount,
+    chunkCount: chunkStats.chunkCount,
+    realEmbeddedChunkCount: chunkStats.realEmbeddedChunkCount,
+    fallbackEmbeddedChunkCount: chunkStats.fallbackEmbeddedChunkCount,
+    unknownEmbeddedChunkCount: chunkStats.unknownEmbeddedChunkCount,
+    healthState: health.healthState,
+    healthMessage: health.healthMessage,
+    issues: health.issues,
+  }
+
   return {
     summary,
+    runtime,
+    worker,
+    diagnostics,
+    visuals,
     processing,
     recentCompleted,
     failed,

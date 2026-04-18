@@ -1,11 +1,17 @@
 import type { ProjectSettingsDraftUi } from '~~/shared/types/domain'
 import { computed, ref } from 'vue'
+import {
+  normalizeWorkspaceLeftSidebarWidth,
+  normalizeWorkspaceRightSidebarWidth,
+} from '~~/shared/utils/workspace-layout'
 
 const DEFAULT_RIGHT_SIDEBAR_BREAKPOINT_QUERY = '(min-width: 1280px)'
 
 export function useWorkspaceSidebarLayout(breakpointQuery = DEFAULT_RIGHT_SIDEBAR_BREAKPOINT_QUERY) {
   const leftSidebarCollapsed = ref(true)
+  const leftSidebarWidth = ref(normalizeWorkspaceLeftSidebarWidth(null))
   const rightSidebarUserCollapsed = ref(true)
+  const rightSidebarWidth = ref(normalizeWorkspaceRightSidebarWidth(null))
   const rightSidebarAutoCollapsed = ref(false)
   const rightSidebarAutoRestorePending = ref(false)
   const sidebarLayoutHydrating = ref(false)
@@ -104,6 +110,14 @@ export function useWorkspaceSidebarLayout(breakpointQuery = DEFAULT_RIGHT_SIDEBA
     apply()
   }
 
+  function setLeftSidebarWidth(nextWidth: number): void {
+    leftSidebarWidth.value = normalizeWorkspaceLeftSidebarWidth(nextWidth)
+  }
+
+  function setRightSidebarWidth(nextWidth: number): void {
+    rightSidebarWidth.value = normalizeWorkspaceRightSidebarWidth(nextWidth)
+  }
+
   function applySidebarLayoutState(value: ProjectSettingsDraftUi | null | undefined): void {
     const nextLeftCollapsed = Boolean(value?.leftSidebarCollapsed)
     const nextRightCollapsed = Boolean(value?.rightSidebarCollapsed)
@@ -130,7 +144,9 @@ export function useWorkspaceSidebarLayout(breakpointQuery = DEFAULT_RIGHT_SIDEBA
 
   return {
     leftSidebarCollapsed,
+    leftSidebarWidth,
     rightSidebarUserCollapsed,
+    rightSidebarWidth,
     rightSidebarAutoCollapsed,
     rightSidebarAutoRestorePending,
     sidebarLayoutHydrating,
@@ -139,6 +155,8 @@ export function useWorkspaceSidebarLayout(breakpointQuery = DEFAULT_RIGHT_SIDEBA
     initializeRightSidebarBreakpointTracking,
     disposeRightSidebarBreakpointTracking,
     setRightSidebarUserCollapsed,
+    setLeftSidebarWidth,
+    setRightSidebarWidth,
     applySidebarLayoutState,
     collapseRightSidebar,
     expandRightSidebar,

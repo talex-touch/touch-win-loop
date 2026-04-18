@@ -18,6 +18,7 @@ const KNOWLEDGE_WORKER_API_FILE = resolve(process.cwd(), 'server/api/admin/resou
 const KNOWLEDGE_WORKER_PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/resource-knowledge-worker.vue')
 const ADMIN_INDEX_FILE = resolve(process.cwd(), 'app/pages/admin/index.vue')
 const ADMIN_OPERATIONS_STORE_FILE = resolve(process.cwd(), 'server/utils/admin-operations-store.ts')
+const PROJECT_KNOWLEDGE_STORE_FILE = resolve(process.cwd(), 'server/utils/project-knowledge-store.ts')
 
 describe('project knowledge phase2', () => {
   it('AI 返回协议与 assistant metadata 已扩展 knowledge 结构', async () => {
@@ -87,5 +88,31 @@ describe('project knowledge phase2', () => {
     assert.match(adminIndexSource, /\/admin\/resource-knowledge-worker/, 'admin 首页未暴露知识索引监控入口')
     assert.match(operationsSource, /label: '知识索引 Worker'/, 'admin operations 总览未接入知识索引 worker')
     assert.match(operationsSource, /detailPath: '\/admin\/resource-knowledge-worker'/, 'admin operations 总览未指向知识索引监控页')
+  })
+
+  it('项目知识索引 dashboard 已补齐真实 embedding provenance 与诊断聚合', async () => {
+    const [typesSource, storeSource, pluginSource] = await Promise.all([
+      readFile(DOMAIN_TYPES_FILE, 'utf8'),
+      readFile(PROJECT_KNOWLEDGE_STORE_FILE, 'utf8'),
+      readFile(KNOWLEDGE_WORKER_PLUGIN_FILE, 'utf8'),
+    ])
+
+    assert.match(typesSource, /embeddingProvider\?: string/, '共享 Chunk metadata 缺少 embeddingProvider provenance')
+    assert.match(typesSource, /embeddingModel\?: string/, '共享 Chunk metadata 缺少 embeddingModel provenance')
+    assert.match(typesSource, /embeddingFallbackUsed\?: boolean/, '共享 Chunk metadata 缺少 embeddingFallbackUsed provenance')
+    assert.match(typesSource, /healthState: ProjectKnowledgeIndexHealthState/, '共享 dashboard diagnostics 缺少 healthState')
+    assert.match(typesSource, /visuals: ProjectKnowledgeIndexVisuals/, '共享 dashboard 缺少 visuals 聚合字段')
+    assert.match(storeSource, /buildProjectKnowledgeRuntimeStatus/, '项目知识索引 store 未聚合 runtime 诊断')
+    assert.match(storeSource, /buildProjectKnowledgeWorkerStatus/, '项目知识索引 store 未聚合 worker 诊断')
+    assert.match(storeSource, /healthState: 'missing_runtime'/, '项目知识索引 store 缺少 missing_runtime 判定')
+    assert.match(storeSource, /healthState: 'worker_inactive'/, '项目知识索引 store 缺少 worker_inactive 判定')
+    assert.match(storeSource, /healthState: 'queued_but_not_running'/, '项目知识索引 store 缺少 queued_but_not_running 判定')
+    assert.match(storeSource, /healthState: 'fallback_only'/, '项目知识索引 store 缺少 fallback_only 判定')
+    assert.match(storeSource, /healthState: 'healthy'/, '项目知识索引 store 缺少 healthy 判定')
+    assert.match(storeSource, /starfieldNodes:/, '项目知识索引 store 未生成状态星图输入')
+    assert.match(storeSource, /embeddingComposition:/, '项目知识索引 store 未生成 embedding 构成图输入')
+    assert.match(pluginSource, /embeddingProvider: embeddingResult\.provider/, '知识索引 worker 未持久化 embedding provider')
+    assert.match(pluginSource, /embeddingModel: embeddingResult\.model/, '知识索引 worker 未持久化 embedding model')
+    assert.match(pluginSource, /embeddingFallbackUsed: embeddingResult\.fallbackUsed/, '知识索引 worker 未持久化 fallback 标记')
   })
 })

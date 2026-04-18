@@ -21,6 +21,7 @@ import type {
   AiWorkspaceInlineCompletionResult,
   AiWorkspaceRequest,
   AiWorkspaceResult,
+  AiWorkspaceSceneDraft,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
   AiWorkspaceWorkflowDraft,
@@ -63,6 +64,7 @@ import type {
   ProjectTopicBoardListResult,
   ProjectTopicBoardPatchRequest,
   ProjectWorkbenchMode,
+  ProjectWorkspaceAiTabsPreference,
   ProjectWorkspaceViewPreference,
   ProjectWorkspaceViewState,
   Resource,
@@ -78,6 +80,7 @@ import type {
   WorkspaceAiMode,
   WorkspaceAiUsageHistory,
   WorkspaceBillingEstimate,
+  WorkspaceContextualAssistantKey,
   WorkspaceFontSizePreset,
   WorkspaceMemberRole,
   WorkspaceOpenTabState,
@@ -99,9 +102,14 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+import type { CollabMarkdownHeadingAnchorItem } from '~/utils/collab-markdown-navigation'
 import type { DefenseRealtimeProviderBridge } from '~/utils/defense-realtime-bridge'
 import type { DefenseRealtimeMediaController } from '~/utils/defense-realtime-media-controller'
 import type { WorkspaceMetaKActionId, WorkspaceMetaKItem, WorkspaceMetaKSection, WorkspaceMetaKSectionDefinition } from '~/utils/workspace-metak'
+import type {
+  WorkspaceOutlineNode,
+  WorkspaceOutlineSection,
+} from '~/utils/workspace-outline'
 import { Message } from '@arco-design/web-vue'
 import {
   formatFileSize,
@@ -129,6 +137,16 @@ import {
   toWorkspaceModelMessages,
 } from '~~/shared/utils/workspace-chat-local-state'
 import {
+  MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
+  MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  MIN_WORKSPACE_MAIN_PANEL_WIDTH,
+  MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
+  normalizeWorkspaceLeftSidebarWidth,
+  normalizeWorkspaceRightSidebarWidth,
+  WORKSPACE_LEFT_SIDEBAR_RAIL_WIDTH,
+} from '~~/shared/utils/workspace-layout'
+import {
   buildProjectSettingsCommonPatch,
   cloneProjectCommonForm,
   createEmptyProjectCommonForm,
@@ -146,6 +164,7 @@ import {
 } from '~/composables/useWorkspaceDisplayPreferences'
 import { useWorkspaceProjectAi } from '~/composables/useWorkspaceProjectAi'
 import { useWorkspaceProjectComments } from '~/composables/useWorkspaceProjectComments'
+import { useWorkspaceProjectKnowledge } from '~/composables/useWorkspaceProjectKnowledge'
 import { useWorkspaceProjectMeetings } from '~/composables/useWorkspaceProjectMeetings'
 import { useWorkspaceProjectResources } from '~/composables/useWorkspaceProjectResources'
 import { useWorkspaceProjectRoute, workspaceDetailPath } from '~/composables/useWorkspaceProjectRoute'
@@ -169,6 +188,9 @@ import {
 import { createDefenseRealtimeProviderBridge } from '~/utils/defense-realtime-bridge'
 import { createDefenseRealtimeMediaController } from '~/utils/defense-realtime-media-controller'
 import {
+  isProjectUploadTaskSidebarVisible,
+} from '~/utils/project-upload'
+import {
   buildDrawioXmlFromWorkflowDraft,
   buildWorkflowDraftKey,
   createDefaultDrawioXml,
@@ -188,6 +210,13 @@ import {
   resolveWorkspaceMetaKShortcutLabel,
 } from '~/utils/workspace-metak'
 import {
+  buildDesignWorkspaceOutlineNodes,
+  buildMarkdownWorkspaceOutlineNodes,
+  buildProjectWorkspaceOutlineNodes,
+  buildWorkflowWorkspaceOutlineNodes,
+  parseWorkspaceOutlineDesignDocument,
+} from '~/utils/workspace-outline'
+import {
   clamp,
   cloneProjectAdaptationForm,
   createEmptyProjectAdaptationForm,
@@ -199,6 +228,12 @@ import {
   sortByUpdatedAtDesc,
   validateUploadFiles,
 } from '~/utils/workspace-project-helpers'
+import {
+  buildFreeformCollabValueFromSceneDraft,
+  buildSceneDraftKey,
+  buildSceneDraftSource,
+  computeSceneDocumentHash,
+} from '~/utils/workspace-scene'
 import { formatWorkspaceShortcutLabel } from '~/utils/workspace-shortcuts'
 
 definePageMeta({
@@ -221,6 +256,7 @@ const route = useRoute()
 const workspaceRealtime = useWorkspaceRealtime()
 const {
   loadWorkspaceSnapshot: loadWorkspaceDisplayPreferenceSnapshotByApi,
+  patchUserDefaults: patchUserWorkspaceDisplayDefaultsByApi,
   patchWorkspaceUserOverride: patchWorkspaceDisplayUserOverrideByApi,
   patchWorkspaceTeamDefault: patchWorkspaceDisplayTeamDefaultByApi,
 } = useWorkspaceDisplayPreferenceApi()
@@ -228,6 +264,7 @@ const {
   topicBoardConfirmState,
   deviceRestoreConfirmState,
   openSettingsSignal,
+  openLoopyDataSignal,
   openMemberManagementSignal,
   openDisplayPreferencesSignal,
   openFlowSignal,
@@ -252,6 +289,7 @@ interface HydratedProjectWorkspaceViewStateResult {
   bundle: {
     current?: ProjectWorkspaceViewPreference | null
     latestOther?: ProjectWorkspaceViewPreference | null
+    personalAiTabs?: ProjectWorkspaceAiTabsPreference | null
     resolution: {
       isNewDevice: boolean
       isStaleDevice: boolean
@@ -288,6 +326,14 @@ interface MarkdownDocumentAssistRequestState {
 }
 
 interface WorkflowDraftRequestOptions {
+  action: WorkflowDraftAction
+  template: 'flowchart' | 'mindmap' | 'er' | 'architecture'
+  architectureView?: WorkflowArchitectureView
+  stylePreset: WorkflowStylePreset
+  layoutPreset: WorkflowLayoutPreset
+}
+
+interface SceneDraftRequestOptions {
   action: WorkflowDraftAction
   template: 'flowchart' | 'mindmap' | 'er' | 'architecture'
   architectureView?: WorkflowArchitectureView
@@ -548,13 +594,14 @@ type WorkspaceMainTabId = WorkspaceOpenTabState
 type WorkspaceWorkbenchMode = ProjectWorkbenchMode
 type WorkspacePrimaryAiMode = Exclude<WorkspaceAiMode, 'defense'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
-type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
+type WorkspaceDefenseWorkbenchAiMode = Exclude<WorkspaceAiMode, 'document_assist' | 'contextual_agent'>
 type WorkbenchSwitchPhase = 'idle' | 'loading' | 'animating'
 type WorkbenchSceneTransitionName = 'workspace-workbench-scene-forward' | 'workspace-workbench-scene-backward'
 interface WorkspaceProjectContextualAssistant {
+  key: WorkspaceContextualAssistantKey
   preset: WorkspaceAiAssistantPreset
   label: string
-  aiMode: Extract<WorkspaceAiMode, 'dialog_ask' | 'document_assist'>
+  aiMode: Extract<WorkspaceAiMode, 'contextual_agent' | 'document_assist'>
 }
 type WorkspaceLeftSidebarCommandModuleId = 'resource_manager' | 'analysis'
 type FinalReviewChecklistStatus = 'pass' | 'warning' | 'missing'
@@ -690,12 +737,16 @@ const selectedContestId = ref('')
 const selectedTrackId = ref('')
 const {
   leftSidebarCollapsed,
+  leftSidebarWidth,
   rightSidebarUserCollapsed,
+  rightSidebarWidth,
   sidebarLayoutHydrating,
   rightSidebarCollapsed,
   initializeRightSidebarBreakpointTracking,
   disposeRightSidebarBreakpointTracking,
   setRightSidebarUserCollapsed,
+  setLeftSidebarWidth,
+  setRightSidebarWidth,
   applySidebarLayoutState,
   collapseRightSidebar,
   expandRightSidebar,
@@ -734,6 +785,8 @@ const workspaceMainPanelRef = ref<{
   applyMarkdownDocumentAssistResult: (payload: { action: AiWorkspaceDocumentAction, text: string }) => boolean
   scrollToMarkdownCommentThread: (threadId: string) => void
   scrollToMarkdownHeadingAnchor: (anchorId: string) => boolean
+  locateDesignOutlineItem: (node: WorkspaceOutlineNode) => boolean
+  locateWorkflowOutlineItem: (node: WorkspaceOutlineNode) => boolean
   saveCurrentPanel: () => { handled: boolean, reason?: string }
   canCloseCurrentTab: () => boolean
   closeCurrentTab: () => { handled: boolean, reason?: string }
@@ -762,6 +815,8 @@ function resetChatDraftArtifactState(): void {
   appliedAgentDocDraftKeys.value = []
   appliedWorkflowDraftKeys.value = []
   discardedWorkflowDraftKeys.value = []
+  appliedSceneDraftKeys.value = []
+  discardedSceneDraftKeys.value = []
 }
 
 function clearActiveChatArtifacts(options: {
@@ -805,6 +860,8 @@ const workflowDrawioLegacyMessage = ref('')
 const workflowCanvasRebuildConfirmVisible = ref(false)
 const appliedWorkflowDraftKeys = ref<string[]>([])
 const discardedWorkflowDraftKeys = ref<string[]>([])
+const appliedSceneDraftKeys = ref<string[]>([])
+const discardedSceneDraftKeys = ref<string[]>([])
 const selectedContestDetailLoading = ref(false)
 const resourcesLoadedProjectId = ref('')
 const resourceLibraryLoadedProjectId = ref('')
@@ -832,6 +889,7 @@ const {
   projectSettingsDraftServerRevision,
   workspaceDeviceId,
 } = useWorkspaceProjectSettings()
+const workspaceDisplayPreferenceWorkspaceId = ref('')
 const {
   ensureWorkspaceDeviceId,
   resetProjectSettingsDraftServerState,
@@ -843,6 +901,12 @@ const {
   workspaceDeviceId,
   projectSettingsDraftServerRevision,
   normalizeDraftCachePayload: normalizeProjectSettingsDraftCachePayload,
+})
+const workspaceEffectiveDefaultLeftSidebarWidth = computed(() => {
+  return normalizeWorkspaceLeftSidebarWidth(workspaceDisplayPreferenceSnapshot.value.effective.leftSidebarWidth)
+})
+const workspaceEffectiveDefaultRightSidebarWidth = computed(() => {
+  return normalizeWorkspaceRightSidebarWidth(workspaceDisplayPreferenceSnapshot.value.effective.rightSidebarWidth)
 })
 const {
   projectMeetings,
@@ -864,7 +928,6 @@ const {
   activeMeetingGuestShare,
   clearMeetingRealtimeRefreshTimer,
   clearMeetingJoinSession,
-  resetProjectMeetingState,
   applyProjectMeetingSession,
   loadProjectMeetingUtterances,
   loadProjectMeetingDetail,
@@ -922,7 +985,13 @@ const {
   activeMeetingUtterances,
   meetingLiveCaptions,
   leftSidebarCollapsed,
+  leftSidebarWidth,
+  defaultLeftSidebarWidth: workspaceEffectiveDefaultLeftSidebarWidth,
   rightSidebarUserCollapsed,
+  rightSidebarWidth,
+  defaultRightSidebarWidth: workspaceEffectiveDefaultRightSidebarWidth,
+  projectAssistantMode,
+  rightSidebarView,
   setRightSidebarUserCollapsed,
   workbenchMode,
   aiMode,
@@ -942,6 +1011,13 @@ let fallbackResourceRefreshTimer: ReturnType<typeof setInterval> | null = null
 let metaKRemoteSearchTimer: ReturnType<typeof setTimeout> | null = null
 let metaKRemoteRequestSequence = 0
 let unsubscribeRealtimeMessages: (() => void) | null = null
+let workspaceDisplayWidthSyncTimer: ReturnType<typeof setTimeout> | null = null
+let workspaceDisplayWidthSyncRunning = false
+let pendingWorkspaceDisplayWidthSyncPayload: {
+  workspaceId: string
+  leftSidebarWidth: number
+  rightSidebarWidth: number
+} | null = null
 
 const listLoading = ref(false)
 const workspaceMemberManagementLoading = ref(false)
@@ -979,6 +1055,120 @@ const workspaceSceneLayoutTestId = computed(() => {
 let reducedMotionMediaQuery: MediaQueryList | null = null
 let workbenchSceneTransitionResolver: (() => void) | null = null
 const activeWorkbenchSwitchDelayIds = new Set<ReturnType<typeof setTimeout>>()
+let activeWorkspaceSidebarResizeCleanup: (() => void) | null = null
+const workspaceShellRef = ref<HTMLElement | null>(null)
+const workspaceSidebarResizeState = reactive<WorkspaceSidebarResizeState>({
+  active: false,
+  side: '',
+})
+
+function isWorkspaceSidebarResizeAvailable(): boolean {
+  if (!import.meta.client)
+    return false
+  if (displayedWorkbenchMode.value !== 'project')
+    return false
+  return window.matchMedia('(min-width: 1280px)').matches
+}
+
+function clampWorkspaceSidebarWidthForSide(side: WorkspaceSidebarResizeSide, nextWidth: number): number {
+  const shellWidth = Math.max(0, workspaceShellRef.value?.clientWidth || 0)
+  const otherWidth = side === 'left'
+    ? (rightSidebarCollapsed.value ? 0 : rightSidebarWidth.value)
+    : (leftSidebarCollapsed.value ? WORKSPACE_LEFT_SIDEBAR_RAIL_WIDTH : leftSidebarWidth.value)
+  const minWidth = side === 'left'
+    ? MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH
+    : MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH
+  const maxWidth = side === 'left'
+    ? MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH
+    : MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH
+  const normalized = side === 'left'
+    ? normalizeWorkspaceLeftSidebarWidth(nextWidth)
+    : normalizeWorkspaceRightSidebarWidth(nextWidth)
+
+  if (!shellWidth)
+    return normalized
+
+  const layoutMaxWidth = shellWidth - otherWidth - MIN_WORKSPACE_MAIN_PANEL_WIDTH
+  const safeMaxWidth = Math.max(minWidth, Math.min(maxWidth, layoutMaxWidth))
+  return Math.min(safeMaxWidth, Math.max(minWidth, normalized))
+}
+
+function finishWorkspaceSidebarResize(shouldPersist = true): void {
+  activeWorkspaceSidebarResizeCleanup?.()
+  activeWorkspaceSidebarResizeCleanup = null
+
+  const shouldSync = workspaceSidebarResizeState.active && shouldPersist
+  workspaceSidebarResizeState.active = false
+  workspaceSidebarResizeState.side = ''
+
+  if (shouldSync) {
+    void syncProjectWorkspaceViewState()
+    scheduleWorkspaceDisplayWidthUserSync()
+  }
+}
+
+function startWorkspaceSidebarResize(side: WorkspaceSidebarResizeSide, event: PointerEvent): void {
+  if (event.button !== 0)
+    return
+  if (!isWorkspaceSidebarResizeAvailable())
+    return
+  if (side === 'left' && leftSidebarCollapsed.value)
+    return
+  if (side === 'right' && rightSidebarCollapsed.value)
+    return
+
+  finishWorkspaceSidebarResize(false)
+  event.preventDefault()
+
+  const startClientX = event.clientX
+  const startWidth = side === 'left' ? leftSidebarWidth.value : rightSidebarWidth.value
+  const resizeHandle = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  const pointerId = event.pointerId
+  workspaceSidebarResizeState.active = true
+  workspaceSidebarResizeState.side = side
+
+  try {
+    resizeHandle?.setPointerCapture(pointerId)
+  }
+  catch {
+  }
+
+  const handlePointerMove = (moveEvent: PointerEvent) => {
+    const deltaX = moveEvent.clientX - startClientX
+    const requestedWidth = side === 'left'
+      ? startWidth + deltaX
+      : startWidth - deltaX
+    const nextWidth = clampWorkspaceSidebarWidthForSide(side, requestedWidth)
+    if (side === 'left')
+      setLeftSidebarWidth(nextWidth)
+    else
+      setRightSidebarWidth(nextWidth)
+  }
+
+  const handlePointerEnd = () => {
+    finishWorkspaceSidebarResize(true)
+  }
+
+  window.addEventListener('pointermove', handlePointerMove)
+  window.addEventListener('pointerup', handlePointerEnd, { once: true })
+  window.addEventListener('pointercancel', handlePointerEnd, { once: true })
+  window.addEventListener('blur', handlePointerEnd, { once: true })
+  resizeHandle?.addEventListener('lostpointercapture', handlePointerEnd, { once: true })
+  activeWorkspaceSidebarResizeCleanup = () => {
+    window.removeEventListener('pointermove', handlePointerMove)
+    window.removeEventListener('pointerup', handlePointerEnd)
+    window.removeEventListener('pointercancel', handlePointerEnd)
+    window.removeEventListener('blur', handlePointerEnd)
+    resizeHandle?.removeEventListener('lostpointercapture', handlePointerEnd)
+    try {
+      if (resizeHandle?.hasPointerCapture(pointerId))
+        resizeHandle.releasePointerCapture(pointerId)
+    }
+    catch {
+    }
+  }
+}
+
 const workspaceBootstrapLoading = ref(false)
 const workspaceCriticalLoading = workspaceBootstrapLoading
 const workspaceBackgroundLoading = ref(false)
@@ -1057,8 +1247,13 @@ interface WorkspaceRichTextContext {
 }
 
 type WorkspaceEditableContext = WorkspaceTextControlContext | WorkspaceRichTextContext
+type WorkspaceSidebarResizeSide = 'left' | 'right'
 
-const workspaceShellRef = ref<HTMLElement | null>(null)
+interface WorkspaceSidebarResizeState {
+  active: boolean
+  side: WorkspaceSidebarResizeSide | ''
+}
+
 const workspacePlatform = ref('')
 const workspaceContextMenu = reactive<{
   visible: boolean
@@ -1805,6 +2000,12 @@ const workspaceEffectiveFontSizePreset = computed<WorkspaceFontSizePreset>(() =>
 const workspaceEffectiveTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
   return workspaceDisplayPreferenceSnapshot.value.effective.tabSpacingPreset || 'relaxed'
 })
+const workspaceShellStyle = computed(() => {
+  return {
+    '--workspace-left-sidebar-width': `${leftSidebarWidth.value}px`,
+    '--workspace-right-sidebar-width': `${rightSidebarWidth.value}px`,
+  }
+})
 const quickSwitchSourceProjects = computed(() => {
   const source = allProjects.value.length > 0 ? allProjects.value : projects.value
   return source.filter((project) => {
@@ -1850,6 +2051,26 @@ const activeProject = computed(() => {
 
 const activeProjectId = computed(() => activeProject.value?.id || '')
 const activeProjectScopeId = computed(() => normalizeString(activeProjectId.value))
+const {
+  dashboard: projectKnowledgeDashboard,
+  summary: projectKnowledgeSummary,
+  runtime: projectKnowledgeRuntime,
+  worker: projectKnowledgeWorker,
+  diagnostics: projectKnowledgeDiagnostics,
+  loading: projectKnowledgeLoading,
+  error: projectKnowledgeError,
+  reindexingTarget: projectKnowledgeReindexingTarget,
+  retryingSourceId: projectKnowledgeRetryingSourceId,
+  hasActiveWork: projectKnowledgeHasActiveWork,
+  reload: reloadProjectKnowledge,
+  reindexProjectKnowledge,
+  reindexKnowledgeSource,
+} = useWorkspaceProjectKnowledge(activeProjectId)
+const loopyDataRuntimeLabel = computed(() => {
+  if (!projectKnowledgeRuntime.value.embeddingConfigured)
+    return 'Embedding 未配置'
+  return `${projectKnowledgeRuntime.value.embeddingProvider || 'provider'} / ${projectKnowledgeRuntime.value.embeddingModel || 'model'}`
+})
 const projectResourcesFirstLoadLoading = computed(() => {
   return resourcesLoading.value && resourcesLoadedProjectId.value !== activeProjectScopeId.value
 })
@@ -2059,9 +2280,10 @@ const currentAssistantResourcePurpose = computed<CollabPurpose | ''>(() => {
 const projectContextualAssistant = computed<WorkspaceProjectContextualAssistant | null>(() => {
   if (normalizeString(activeMainTabId.value) === 'flow') {
     return {
+      key: 'agent_proto',
       preset: 'prototype',
       label: 'AgentProto',
-      aiMode: 'dialog_ask',
+      aiMode: 'contextual_agent',
     }
   }
 
@@ -2070,6 +2292,7 @@ const projectContextualAssistant = computed<WorkspaceProjectContextualAssistant 
 
   if (previewMode.value === 'markdown') {
     return {
+      key: 'agent_doc',
       preset: 'document',
       label: 'AgentDoc',
       aiMode: 'document_assist',
@@ -2081,29 +2304,28 @@ const projectContextualAssistant = computed<WorkspaceProjectContextualAssistant 
 
   if (activePreviewResourcePurpose.value === 'design') {
     return {
+      key: 'design_assistant',
       preset: 'design',
       label: '设计助手',
-      aiMode: 'dialog_ask',
+      aiMode: 'contextual_agent',
     }
   }
 
   if (activePreviewResourcePurpose.value === 'workflow') {
     return {
+      key: 'agent_proto',
       preset: 'prototype',
       label: 'AgentProto',
-      aiMode: 'dialog_ask',
+      aiMode: 'contextual_agent',
     }
   }
 
-  if (activePreviewResourcePurpose.value !== 'workflow') {
-    return {
-      preset: 'prototype',
-      label: '原型助手',
-      aiMode: 'dialog_ask',
-    }
+  return {
+    key: 'agent_proto',
+    preset: 'prototype',
+    label: 'AgentProto',
+    aiMode: 'contextual_agent',
   }
-
-  return null
 })
 const projectResolvedAiMode = computed<WorkspacePrimaryAiMode>(() => {
   if (projectAssistantMode.value === 'dialog_ask')
@@ -2137,6 +2359,9 @@ const currentWorkspaceAssistantContext = computed(() => {
   return {
     assistantPreset: currentWorkspaceAssistantPreset.value,
     assistantLabel: currentWorkspaceAssistantLabel.value,
+    contextualAssistantKey: workbenchMode.value === 'project' && projectAssistantMode.value === 'contextual'
+      ? (projectContextualAssistant.value?.key || '')
+      : '',
     activeTabId: normalizeString(activeMainTabId.value),
     previewMode: currentAssistantPreviewMode.value,
     resourcePurpose: currentAssistantResourcePurpose.value,
@@ -2174,6 +2399,34 @@ const workflowCanvasUnavailableReason = computed(() => {
     return '流程画布快照尚未同步完成，请稍后再试。'
   return ''
 })
+const activeAgentProtoSceneResourceId = computed(() => {
+  if (currentWorkspaceAssistantPreset.value !== 'prototype')
+    return ''
+  if (currentAssistantPreviewMode.value !== 'draw')
+    return ''
+  if (currentAssistantResourcePurpose.value === 'workflow')
+    return ''
+  return normalizeString(currentAssistantResource.value?.id)
+})
+const activeAgentProtoSceneResourceTitle = computed(() => {
+  if (!activeAgentProtoSceneResourceId.value)
+    return ''
+  return normalizeString(currentAssistantResource.value?.title) || COLLAB_FREEFORM_RESOURCE_LABEL
+})
+const activeAgentProtoSceneHash = computed(() => {
+  if (!activeAgentProtoSceneResourceId.value)
+    return ''
+  if (normalizeString(collabBindingResourceId.value) !== activeAgentProtoSceneResourceId.value)
+    return ''
+  return computeSceneDocumentHash(collabDrawValue.value || '')
+})
+const sceneCanvasUnavailableReason = computed(() => {
+  if (!activeAgentProtoSceneResourceId.value)
+    return `当前没有可用的${COLLAB_FREEFORM_RESOURCE_LABEL}，暂时无法生成 AgentProto 草案。`
+  if (normalizeString(collabBindingResourceId.value) !== activeAgentProtoSceneResourceId.value)
+    return '当前自由画布尚未完成同步，请稍后再试。'
+  return ''
+})
 const activeAgentDocDocumentHash = computed(() => {
   if (!documentAssistRequestState.resourceId)
     return ''
@@ -2184,6 +2437,7 @@ const activeMarkdownResourceId = computed(() => {
     return ''
   return normalizeString(previewResourceId.value)
 })
+const activeMarkdownOutlineItems = ref<CollabMarkdownHeadingAnchorItem[]>([])
 const activeMarkdownResourceTitle = computed(() => {
   const resourceId = activeMarkdownResourceId.value
   if (!resourceId)
@@ -2193,6 +2447,23 @@ const activeMarkdownResourceTitle = computed(() => {
     return derivedTitle
   const currentPreviewResource = selectedResources.value.find(item => item.id === resourceId) || null
   return normalizeString(currentPreviewResource?.title) || COLLAB_NOTES_RESOURCE_LABEL
+})
+const activeDesignResourceId = computed(() => {
+  if (currentAssistantPreviewMode.value !== 'draw')
+    return ''
+  if (currentAssistantResourcePurpose.value !== 'design')
+    return ''
+  const resourceId = normalizeString(currentAssistantResource.value?.id)
+  if (!resourceId)
+    return ''
+  if (normalizeString(collabBindingResourceId.value) !== resourceId)
+    return ''
+  return resourceId
+})
+const activeDesignOutlineDocument = computed(() => {
+  if (!activeDesignResourceId.value)
+    return null
+  return parseWorkspaceOutlineDesignDocument(collabDrawValue.value || '')
 })
 const {
   markdownCommentThreads,
@@ -2226,6 +2497,86 @@ const projectOutlineItems = computed(() => projectOutlineSnapshot.value?.items |
 const projectOutlineFlatItems = computed(() => flattenProjectOutlineNodes(projectOutlineItems.value))
 const projectOutlineFirstLoadLoading = computed(() => {
   return projectOutlineLoading.value && !projectOutlineFirstLoaded.value
+})
+const visibleProjectOutlineUploadTasks = computed(() => {
+  return projectUploadTasks.value.filter(task => isProjectUploadTaskSidebarVisible(task))
+})
+const currentContentOutlineSection = computed<WorkspaceOutlineSection>(() => {
+  if (normalizeString(activeMainTabId.value) === 'flow' || activeWorkflowResourceId.value) {
+    const items = activeWorkflowResourceId.value && activeWorkflowSnapshot.value
+      ? buildWorkflowWorkspaceOutlineNodes({
+          resourceId: activeWorkflowResourceId.value,
+          snapshot: activeWorkflowSnapshot.value,
+        })
+      : []
+    return {
+      id: 'current_content',
+      title: '当前内容结构',
+      surface: 'workflow',
+      loading: Boolean(activeWorkflowResourceId.value) && !activeWorkflowSnapshot.value && collabPreviewLoading.value,
+      emptyText: workflowCanvasUnavailableReason.value || '当前流程画布暂无可展示的大纲',
+      items,
+    }
+  }
+
+  if (activeMarkdownResourceId.value) {
+    return {
+      id: 'current_content',
+      title: '当前内容结构',
+      surface: 'notes',
+      loading: collabPreviewLoading.value && activeMarkdownOutlineItems.value.length === 0,
+      emptyText: '当前文档暂无标题结构',
+      items: buildMarkdownWorkspaceOutlineNodes({
+        resourceId: activeMarkdownResourceId.value,
+        headings: activeMarkdownOutlineItems.value,
+      }),
+    }
+  }
+
+  if (currentAssistantResourcePurpose.value === 'design' || activeDesignResourceId.value) {
+    const items = activeDesignResourceId.value && activeDesignOutlineDocument.value
+      ? buildDesignWorkspaceOutlineNodes({
+          resourceId: activeDesignResourceId.value,
+          document: activeDesignOutlineDocument.value,
+        })
+      : []
+    return {
+      id: 'current_content',
+      title: '当前内容结构',
+      surface: 'design',
+      loading: Boolean(currentAssistantResource.value?.id) && !activeDesignOutlineDocument.value && collabPreviewLoading.value,
+      emptyText: '当前设计稿暂无可展示的大纲',
+      items,
+    }
+  }
+
+  return {
+    id: 'current_content',
+    title: '当前内容结构',
+    surface: 'none',
+    loading: false,
+    emptyText: '打开妙想文档、设计稿或流程画布后显示内容结构',
+    items: [],
+  }
+})
+const projectStructureOutlineSection = computed<WorkspaceOutlineSection>(() => {
+  return {
+    id: 'project_structure',
+    title: '项目结构',
+    surface: 'project',
+    loading: projectOutlineFirstLoadLoading.value,
+    emptyText: '上传文件或生成结构大纲后显示项目结构',
+    items: buildProjectWorkspaceOutlineNodes({
+      projectOutline: projectOutlineItems.value,
+      uploadTasks: visibleProjectOutlineUploadTasks.value,
+    }),
+  }
+})
+const workspaceOutlineSections = computed<WorkspaceOutlineSection[]>(() => {
+  return [
+    currentContentOutlineSection.value,
+    projectStructureOutlineSection.value,
+  ]
 })
 const latestIssueReport = computed(() => projectIssueReports.value[0] || null)
 const defenseSessionMetaSnapshot = computed(() => {
@@ -4013,6 +4364,38 @@ const workflowRestyleDisabledReason = computed(() => {
     return ''
   return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('restyle'))
 })
+const sceneGenerateAvailable = computed(() => !sceneCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('generate')))
+const sceneGenerateDisabledReason = computed(() => {
+  if (sceneCanvasUnavailableReason.value)
+    return sceneCanvasUnavailableReason.value
+  if (sceneGenerateAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('generate'))
+})
+const sceneCompleteAvailable = computed(() => !sceneCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('complete')))
+const sceneCompleteDisabledReason = computed(() => {
+  if (sceneCanvasUnavailableReason.value)
+    return sceneCanvasUnavailableReason.value
+  if (sceneCompleteAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('complete'))
+})
+const sceneRefineAvailable = computed(() => !sceneCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('refine')))
+const sceneRefineDisabledReason = computed(() => {
+  if (sceneCanvasUnavailableReason.value)
+    return sceneCanvasUnavailableReason.value
+  if (sceneRefineAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('refine'))
+})
+const sceneRestyleAvailable = computed(() => !sceneCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('restyle')))
+const sceneRestyleDisabledReason = computed(() => {
+  if (sceneCanvasUnavailableReason.value)
+    return sceneCanvasUnavailableReason.value
+  if (sceneRestyleAvailable.value)
+    return ''
+  return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('restyle'))
+})
 const currentAiModelLabel = computed(() => {
   if (aiRuntimeStatusLoading.value)
     return '状态检查中'
@@ -5534,36 +5917,95 @@ async function loadContestCatalog() {
   }
 }
 
+function clearWorkspaceDisplayWidthSyncTimer(): void {
+  if (!workspaceDisplayWidthSyncTimer)
+    return
+  clearTimeout(workspaceDisplayWidthSyncTimer)
+  workspaceDisplayWidthSyncTimer = null
+}
+
+async function flushWorkspaceDisplayWidthUserSync(): Promise<void> {
+  if (workspaceDisplayWidthSyncRunning || !pendingWorkspaceDisplayWidthSyncPayload)
+    return
+
+  const payload = pendingWorkspaceDisplayWidthSyncPayload
+  pendingWorkspaceDisplayWidthSyncPayload = null
+  workspaceDisplayWidthSyncRunning = true
+
+  try {
+    await patchUserWorkspaceDisplayDefaultsByApi({
+      leftSidebarWidth: payload.leftSidebarWidth,
+      rightSidebarWidth: payload.rightSidebarWidth,
+    })
+    if (activeWorkspaceId.value === payload.workspaceId)
+      await loadWorkspaceDisplayPreferenceSnapshot(payload.workspaceId, { silent: true })
+  }
+  catch {
+  }
+  finally {
+    workspaceDisplayWidthSyncRunning = false
+    if (pendingWorkspaceDisplayWidthSyncPayload)
+      void flushWorkspaceDisplayWidthUserSync()
+  }
+}
+
+function scheduleWorkspaceDisplayWidthUserSync(): void {
+  const workspaceId = String(activeWorkspaceId.value || '').trim()
+  if (!workspaceId)
+    return
+
+  pendingWorkspaceDisplayWidthSyncPayload = {
+    workspaceId,
+    leftSidebarWidth: leftSidebarWidth.value,
+    rightSidebarWidth: rightSidebarWidth.value,
+  }
+  clearWorkspaceDisplayWidthSyncTimer()
+  workspaceDisplayWidthSyncTimer = setTimeout(() => {
+    workspaceDisplayWidthSyncTimer = null
+    void flushWorkspaceDisplayWidthUserSync()
+  }, 180)
+}
+
 function resetWorkspaceDisplayPreferenceState(): void {
   workspaceDisplayPreferenceSnapshot.value = defaultWorkspaceDisplayPreferenceSnapshot()
   workspaceDisplayPreferenceLoading.value = false
   workspaceDisplayPreferenceSavingScope.value = ''
   workspaceDisplayPreferenceError.value = ''
+  workspaceDisplayPreferenceWorkspaceId.value = ''
 }
 
-async function loadWorkspaceDisplayPreferenceSnapshot(workspaceId = activeWorkspaceId.value): Promise<void> {
+async function loadWorkspaceDisplayPreferenceSnapshot(
+  workspaceId = activeWorkspaceId.value,
+  options: { silent?: boolean } = {},
+): Promise<void> {
   const normalizedWorkspaceId = String(workspaceId || '').trim()
   if (!normalizedWorkspaceId) {
     resetWorkspaceDisplayPreferenceState()
     return
   }
 
-  workspaceDisplayPreferenceLoading.value = true
-  workspaceDisplayPreferenceError.value = ''
+  if (!options.silent) {
+    workspaceDisplayPreferenceLoading.value = true
+    workspaceDisplayPreferenceError.value = ''
+  }
   try {
     const snapshot = await loadWorkspaceDisplayPreferenceSnapshotByApi(normalizedWorkspaceId)
     if (activeWorkspaceId.value !== normalizedWorkspaceId)
       return
     workspaceDisplayPreferenceSnapshot.value = snapshot
+    workspaceDisplayPreferenceWorkspaceId.value = normalizedWorkspaceId
   }
   catch (error) {
     if (activeWorkspaceId.value !== normalizedWorkspaceId)
       return
+    if (options.silent)
+      return
     workspaceDisplayPreferenceSnapshot.value = defaultWorkspaceDisplayPreferenceSnapshot()
+    workspaceDisplayPreferenceWorkspaceId.value = normalizedWorkspaceId
     workspaceDisplayPreferenceError.value = resolveApiErrorMessage(error, '加载工作区显示偏好失败，请稍后重试。')
   }
   finally {
-    if (activeWorkspaceId.value === normalizedWorkspaceId)
+    if (!options.silent && activeWorkspaceId.value === normalizedWorkspaceId)
       workspaceDisplayPreferenceLoading.value = false
   }
 }
@@ -5579,11 +6021,14 @@ async function saveWorkspaceDisplayUserOverride(payload: WorkspaceDisplayPrefere
     const nextPayload: WorkspaceDisplayPreferencePatchPayload = {
       fontSizePreset: payload.fontSizePreset,
       tabSpacingPreset: payload.tabSpacingPreset,
+      leftSidebarWidth: payload.leftSidebarWidth,
+      rightSidebarWidth: payload.rightSidebarWidth,
     }
     const snapshot = await patchWorkspaceDisplayUserOverrideByApi(workspaceId, nextPayload)
     if (activeWorkspaceId.value !== workspaceId)
       return
     workspaceDisplayPreferenceSnapshot.value = snapshot
+    workspaceDisplayPreferenceWorkspaceId.value = workspaceId
     statusLine.value = '当前工作区显示偏好已保存。'
     Message.success('当前工作区显示偏好已保存。')
   }
@@ -5612,11 +6057,14 @@ async function saveWorkspaceDisplayTeamDefault(payload: WorkspaceDisplayPreferen
     const nextPayload: WorkspaceDisplayPreferencePatchPayload = {
       fontSizePreset: payload.fontSizePreset,
       tabSpacingPreset: payload.tabSpacingPreset,
+      leftSidebarWidth: payload.leftSidebarWidth,
+      rightSidebarWidth: payload.rightSidebarWidth,
     }
     const snapshot = await patchWorkspaceDisplayTeamDefaultByApi(workspaceId, nextPayload)
     if (activeWorkspaceId.value !== workspaceId)
       return
     workspaceDisplayPreferenceSnapshot.value = snapshot
+    workspaceDisplayPreferenceWorkspaceId.value = workspaceId
     statusLine.value = '团队默认显示偏好已保存。'
     Message.success('团队默认显示偏好已保存。')
   }
@@ -7370,6 +7818,86 @@ async function resolveMarkdownAnchorNavigation(hash = route.hash): Promise<void>
   }
 }
 
+function handleMarkdownOutlineChange(items: CollabMarkdownHeadingAnchorItem[]): void {
+  if (!activeMarkdownResourceId.value) {
+    activeMarkdownOutlineItems.value = []
+    return
+  }
+  activeMarkdownOutlineItems.value = Array.isArray(items) ? items : []
+}
+
+async function locateWorkspaceOutlineItem(node: WorkspaceOutlineNode): Promise<void> {
+  const locator = node.locator
+  switch (locator.surface) {
+    case 'notes': {
+      const resourceId = normalizeString(locator.resourceId)
+      const anchorId = normalizeString(locator.anchorId)
+      if (!resourceId || !anchorId) {
+        statusLine.value = '当前文档大纲缺少可定位锚点。'
+        return
+      }
+
+      await openProjectResourcePreview(resourceId)
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await nextTick()
+        const handled = workspaceMainPanelRef.value?.scrollToMarkdownHeadingAnchor(anchorId)
+        if (handled) {
+          statusLine.value = `已定位文档标题：${node.label}`
+          return
+        }
+        await new Promise(resolve => setTimeout(resolve, 48))
+      }
+
+      statusLine.value = `已切到文档：${node.label}`
+      return
+    }
+    case 'design': {
+      const resourceId = normalizeString(locator.resourceId)
+      if (!resourceId) {
+        statusLine.value = '当前设计稿大纲缺少可定位资源。'
+        return
+      }
+
+      await openProjectResourcePreview(resourceId)
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await nextTick()
+        const handled = workspaceMainPanelRef.value?.locateDesignOutlineItem(node)
+        if (handled) {
+          statusLine.value = `已定位设计稿：${node.label}`
+          return
+        }
+        await new Promise(resolve => setTimeout(resolve, 48))
+      }
+
+      statusLine.value = `已切到设计稿：${node.label}`
+      return
+    }
+    case 'workflow': {
+      const resourceId = normalizeString(locator.resourceId || activeWorkflowResourceId.value || flowResourceId.value)
+      if (resourceId)
+        await activateProjectResourceTab(resourceId)
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await nextTick()
+        const handled = workspaceMainPanelRef.value?.locateWorkflowOutlineItem(node)
+        if (handled) {
+          statusLine.value = `已定位流程画布：${node.label}`
+          return
+        }
+        await new Promise(resolve => setTimeout(resolve, 64))
+      }
+
+      statusLine.value = `已切到流程画布：${node.label}`
+      return
+    }
+    case 'project':
+      statusLine.value = `已定位项目结构：${node.label}`
+      return
+    default:
+      statusLine.value = `已定位结构项：${node.label}`
+  }
+}
+
 async function activateProjectResourceTab(resourceId: string): Promise<void> {
   const targetResourceId = String(resourceId || '').trim()
   if (!targetResourceId)
@@ -7763,6 +8291,7 @@ async function requestInlineCompletion(payload: {
     const decoder = new TextDecoder()
     let buffer = ''
     let finalResult: AiWorkspaceInlineCompletionResult | null = null
+    let finalSuggestion = ''
     let streamErrorMessage = ''
     const applyInlineCompletionSseBlock = (rawBlock: string): void => {
       const parsed = parseSseBlock(rawBlock)
@@ -7785,8 +8314,9 @@ async function requestInlineCompletion(payload: {
 
       if (eventType === 'done') {
         const result = toJsonPayload(data.result)
+        finalSuggestion = String(result.suggestion || '')
         finalResult = {
-          suggestion: String(result.suggestion || ''),
+          suggestion: finalSuggestion,
         }
         return
       }
@@ -7836,7 +8366,7 @@ async function requestInlineCompletion(payload: {
 
     logInlineCompletionDebug('request-response-success', {
       requestKey: payload.requestKey,
-      suggestionLength: String(finalResult?.suggestion || '').length,
+      suggestionLength: finalSuggestion.length,
       transport: 'sse',
     })
     return finalResult
@@ -8013,6 +8543,18 @@ function buildDefaultWorkflowPrompt(options: WorkflowDraftRequestOptions): strin
   return `请生成一版完整的${options.template}草案。`
 }
 
+function buildDefaultScenePrompt(options: SceneDraftRequestOptions): string {
+  if (options.action === 'complete')
+    return `请基于当前自由画布补全一版完整的${options.template}草案。`
+  if (options.action === 'refine')
+    return `请基于当前自由画布续改并重构一版完整的${options.template}草案。`
+  if (options.action === 'restyle')
+    return `请只调整当前自由画布的全局样式与布局，使用 ${options.stylePreset} + ${options.layoutPreset} 预设。`
+  if (options.template === 'architecture' && options.architectureView)
+    return `请生成一版 ${options.architectureView} 视图的架构图草案。`
+  return `请生成一版完整的${options.template}草案。`
+}
+
 function applyWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
   if (!activeWorkflowResourceId.value || activeWorkflowResourceId.value !== normalizeString(draft.resourceId)) {
     statusLine.value = '当前未定位到对应的流程画布，无法应用该 AgentProto 草案。'
@@ -8056,6 +8598,49 @@ function discardWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
   statusLine.value = '已丢弃当前 AgentProto 草案。'
 }
 
+async function applySceneDraft(draft: AiWorkspaceSceneDraft): Promise<void> {
+  if (!activeAgentProtoSceneResourceId.value || activeAgentProtoSceneResourceId.value !== normalizeString(draft.resourceId)) {
+    statusLine.value = '当前未定位到对应的自由画布，无法应用该 AgentProto 草案。'
+    return
+  }
+
+  if (normalizeString(collabBindingResourceId.value) !== activeAgentProtoSceneResourceId.value) {
+    statusLine.value = '当前自由画布尚未完成同步，请稍后再试。'
+    return
+  }
+
+  if (draft.baseSceneHash !== activeAgentProtoSceneHash.value) {
+    statusLine.value = '当前自由画布已变化，无法应用该 AgentProto 草案，请重新生成。'
+    return
+  }
+
+  const runtimeConfig = useRuntimeConfig()
+  const nextValue = await buildFreeformCollabValueFromSceneDraft({
+    draft,
+    currentRawValue: collabDrawValue.value || '',
+    licenseKey: String(runtimeConfig.public?.tldraw?.licenseKey || ''),
+  })
+  if (!nextValue) {
+    statusLine.value = '当前 AgentProto 草案无法转换为可编辑画布，请重新生成。'
+    return
+  }
+
+  updateCollabDrawContent(nextValue)
+
+  const draftKey = buildSceneDraftKey(draft)
+  if (!appliedSceneDraftKeys.value.includes(draftKey))
+    appliedSceneDraftKeys.value = [...appliedSceneDraftKeys.value, draftKey]
+  discardedSceneDraftKeys.value = discardedSceneDraftKeys.value.filter(item => item !== draftKey)
+  statusLine.value = 'AgentProto 草案已应用到当前自由画布。'
+}
+
+function discardSceneDraft(draft: AiWorkspaceSceneDraft): void {
+  const draftKey = buildSceneDraftKey(draft)
+  if (!discardedSceneDraftKeys.value.includes(draftKey))
+    discardedSceneDraftKeys.value = [...discardedSceneDraftKeys.value, draftKey]
+  statusLine.value = '已丢弃当前 AgentProto 自由画布草案。'
+}
+
 async function requestWorkflowDraftFromSidebar(options: WorkflowDraftRequestOptions): Promise<void> {
   if (workflowCanvasUnavailableReason.value) {
     statusLine.value = workflowCanvasUnavailableReason.value
@@ -8081,6 +8666,32 @@ async function requestWorkflowDraftFromSidebar(options: WorkflowDraftRequestOpti
   await sendChatMessage({
     content,
     workflowRequest: options,
+  })
+}
+
+async function requestSceneDraftFromSidebar(options: SceneDraftRequestOptions): Promise<void> {
+  if (sceneCanvasUnavailableReason.value) {
+    statusLine.value = sceneCanvasUnavailableReason.value
+    return
+  }
+
+  if (!ensureAiFeatureAvailable(resolveWorkflowDraftFeatureKey(options.action)))
+    return
+
+  if (!activeAgentProtoSceneResourceId.value) {
+    statusLine.value = `当前没有可用的${COLLAB_FREEFORM_RESOURCE_LABEL}，暂时无法生成 AgentProto 草案。`
+    return
+  }
+
+  if (normalizeString(collabBindingResourceId.value) !== activeAgentProtoSceneResourceId.value) {
+    statusLine.value = '当前自由画布尚未完成同步，请稍后再试。'
+    return
+  }
+
+  const content = chatInput.value.trim() || buildDefaultScenePrompt(options)
+  await sendChatMessage({
+    content,
+    sceneRequest: options,
   })
 }
 
@@ -8575,6 +9186,8 @@ function buildSessionTitleByMode(): string {
     return `Loopy 答辩模拟 · ${contestName} · ${trackName}`
   if (aiMode.value === 'document_assist')
     return `AgentDoc · ${activeMarkdownResourceTitle.value || contestName} · ${trackName}`
+  if (aiMode.value === 'contextual_agent')
+    return `${currentWorkspaceAssistantLabel.value || '上下文助手'} · ${contestName} · ${trackName}`
   return `Loopy 对话 · ${contestName} · ${trackName}`
 }
 
@@ -8771,6 +9384,8 @@ async function startNewChatSession() {
     modeTitle = '新建 Loopy 寻疑发现会话'
   else if (aiMode.value === 'document_assist')
     modeTitle = '新建 AgentDoc 会话'
+  else if (aiMode.value === 'contextual_agent')
+    modeTitle = `新建 ${currentWorkspaceAssistantLabel.value || '上下文助手'} 会话`
   const createdId = await createChatSession(modeTitle)
   if (!createdId) {
     statusLine.value = '新建 Loopy 会话失败，请稍后重试。'
@@ -9273,6 +9888,7 @@ async function sendWorkspaceAiMessage(
   pendingMessages: ChatMessage[],
   localRequestId: string,
   workflowRequest: WorkflowDraftRequestOptions | null,
+  sceneRequest: SceneDraftRequestOptions | null,
   signal?: AbortSignal,
 ) {
   const runningMode = aiMode.value
@@ -9284,6 +9900,15 @@ async function sendWorkspaceAiMessage(
   let assistantBuffer = ''
   let assistantMetadata: ChatMessage['metadata'] | undefined
   let streamSystemSeq = 0
+  const sceneDraftSource = sceneRequest && activeAgentProtoSceneResourceId.value
+    ? buildSceneDraftSource({
+        rawValue: collabDrawValue.value || '',
+        template: sceneRequest.template,
+        architectureView: sceneRequest.template === 'architecture'
+          ? (sceneRequest.architectureView || 'system_context')
+          : undefined,
+      })
+    : null
 
   const renderStreamMessages = () => {
     const nextMessages: ChatMessage[] = [...baseMessages]
@@ -9310,6 +9935,7 @@ async function sendWorkspaceAiMessage(
       teamId: activeWorkspaceId.value,
       workspaceId: activeWorkspaceId.value,
       projectId: activeProjectId.value,
+      projectTitle: headerProjectName.value,
       contestId: selectedContestId.value,
       trackId: selectedTrackId.value,
       major: major.value,
@@ -9320,19 +9946,30 @@ async function sendWorkspaceAiMessage(
       selectionRange: runningMode === 'document_assist' ? documentAssistRequestState.selectionRange : null,
       assistantPreset: currentWorkspaceAssistantContext.value.assistantPreset,
       assistantLabel: currentWorkspaceAssistantContext.value.assistantLabel,
+      contextualAssistantKey: currentWorkspaceAssistantContext.value.contextualAssistantKey,
       activeTabId: currentWorkspaceAssistantContext.value.activeTabId,
       previewMode: currentWorkspaceAssistantContext.value.previewMode,
       resourcePurpose: currentWorkspaceAssistantContext.value.resourcePurpose,
       workflowSnapshot: currentWorkspaceAssistantContext.value.resourcePurpose === 'workflow'
         ? activeWorkflowSnapshot.value
         : null,
-      workflowAction: workflowRequest?.action || '',
-      workflowTemplate: workflowRequest?.template || '',
+      workflowAction: workflowRequest?.action,
+      workflowTemplate: workflowRequest?.template,
       workflowArchitectureView: workflowRequest?.template === 'architecture'
-        ? (workflowRequest.architectureView || '')
-        : '',
-      workflowStylePreset: workflowRequest?.stylePreset || '',
-      workflowLayoutPreset: workflowRequest?.layoutPreset || '',
+        ? workflowRequest.architectureView
+        : undefined,
+      workflowStylePreset: workflowRequest?.stylePreset,
+      workflowLayoutPreset: workflowRequest?.layoutPreset,
+      sceneHash: sceneRequest ? activeAgentProtoSceneHash.value : '',
+      sceneSourceText: sceneRequest ? (sceneDraftSource?.sourceText || '') : '',
+      sceneSourceFormat: sceneRequest ? (sceneDraftSource?.sourceFormat || '') : '',
+      sceneAction: sceneRequest?.action,
+      sceneTemplate: sceneRequest?.template,
+      sceneArchitectureView: sceneRequest?.template === 'architecture'
+        ? sceneRequest.architectureView
+        : undefined,
+      sceneStylePreset: sceneRequest?.stylePreset,
+      sceneLayoutPreset: sceneRequest?.layoutPreset,
     },
   }
 
@@ -9422,6 +10059,9 @@ async function sendWorkspaceAiMessage(
           ...(result.workflowDraft
             ? { workflowDraft: result.workflowDraft }
             : {}),
+          ...(result.sceneDraft
+            ? { sceneDraft: result.sceneDraft }
+            : {}),
           ...(result.knowledge
             ? { knowledge: result.knowledge }
             : {}),
@@ -9470,8 +10110,13 @@ async function sendWorkspaceAiMessage(
         else if (result.workflowDraft) {
           statusLine.value = 'AgentProto 已生成待确认的流程草案。'
         }
+        else if (result.sceneDraft) {
+          statusLine.value = 'AgentProto 已生成待确认的自由画布草案。'
+        }
         else {
-          statusLine.value = '只读对话完成，项目未发生写入。'
+          statusLine.value = runningMode === 'contextual_agent'
+            ? '上下文助手已完成，本次未生成可安全应用的草案。'
+            : '只读对话完成，项目未发生写入。'
         }
         continue
       }
@@ -9666,6 +10311,7 @@ async function sendDefenseMessage(pendingMessages: ChatMessage[], signal?: Abort
 async function sendChatMessage(payload?: {
   content?: string
   workflowRequest?: WorkflowDraftRequestOptions | null
+  sceneRequest?: SceneDraftRequestOptions | null
 }) {
   if (chatLoading.value) {
     interruptChatMessage()
@@ -9756,6 +10402,7 @@ async function sendChatMessage(payload?: {
         pendingMessages,
         workspaceLocalRequestId,
         payload?.workflowRequest || null,
+        payload?.sceneRequest || null,
         abortController.signal,
       )
     }
@@ -10080,6 +10727,11 @@ function onWorkspaceUpdatedFromAccountCenter(payload: { workspaceId: string, nam
 function openSettingsFromLeftSidebar() {
   openSettingsSignal.value += 1
   statusLine.value = '已打开设置页，可配置项目底座并管理项目协作邀请。'
+}
+
+function openLoopyDataPanel() {
+  openLoopyDataSignal.value += 1
+  statusLine.value = '已打开 Loopy 数据工作台，可查看真实索引诊断与重建入口。'
 }
 
 function openMemberManagementFromLeftSidebar() {
@@ -10460,7 +11112,11 @@ onBeforeUnmount(() => {
   clearRealtimeProjectRefreshTimer()
   clearMeetingRealtimeRefreshTimer()
   clearFallbackResourceRefreshTimer()
+  clearWorkspaceDisplayWidthSyncTimer()
+  if (pendingWorkspaceDisplayWidthSyncPayload)
+    void flushWorkspaceDisplayWidthUserSync()
   disposeRightSidebarBreakpointTracking()
+  finishWorkspaceSidebarResize(false)
   if (unsubscribeRealtimeMessages) {
     unsubscribeRealtimeMessages()
     unsubscribeRealtimeMessages = null
@@ -10656,6 +11312,14 @@ watch(activeProjectId, async (next, previous) => {
     await refreshProjectCriticalResourceContext()
     if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
       return
+    if (
+      activeWorkspaceId.value
+      && workspaceDisplayPreferenceWorkspaceId.value !== String(activeWorkspaceId.value || '').trim()
+    ) {
+      await loadWorkspaceDisplayPreferenceSnapshot(activeWorkspaceId.value)
+      if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
+        return
+    }
 
     const restoredViewState = await hydrateProjectWorkspaceViewState(next)
     if (!isCurrentWorkspaceBootstrapRequest(next, requestId))
@@ -10771,6 +11435,7 @@ watch(activeMarkdownResourceId, async (nextResourceId, previousResourceId) => {
   if (nextResourceId === previousResourceId)
     return
 
+  activeMarkdownOutlineItems.value = []
   clearMarkdownCommentPolling()
   markdownCommentThreads.value = []
   activeMarkdownCommentThreadId.value = ''
@@ -11112,11 +11777,15 @@ watch(
     openChatSessionIds,
     activeChatSessionId,
     activeMeetingId,
+    leftSidebarWidth,
+    rightSidebarWidth,
     leftSidebarCollapsed,
     rightSidebarUserCollapsed,
   ],
   () => {
     if (!activeProjectId.value || projectWorkspaceViewHydrating.value)
+      return
+    if (workspaceSidebarResizeState.active)
       return
     void syncProjectWorkspaceViewState()
   },
@@ -11217,8 +11886,11 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   <div
     ref="workspaceShellRef"
     class="workspace-shell wl-workspace-font-scope text-slate-800 bg-white h-full min-h-0 overflow-hidden"
+    :class="{ 'workspace-shell--resizing': workspaceSidebarResizeState.active }"
     :data-workspace-font-size="workspaceEffectiveFontSizePreset"
+    :data-workspace-spacing="workspaceEffectiveTabSpacingPreset"
     :aria-busy="workspaceShellLoading ? 'true' : 'false'"
+    :style="workspaceShellStyle"
     @contextmenu="handleWorkspaceShellContextMenu"
   >
     <WorkspaceHeader
@@ -11263,6 +11935,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 v-model:top-k="topK"
                 v-model:selected-contest-id="selectedContestId"
                 class="min-h-0 overflow-hidden"
+                :style="{ '--workspace-left-dock-width': `${leftSidebarWidth}px` }"
                 :contests="contestSource"
                 :selected-resources="selectedResources"
                 :recycle-resources="recycleResources"
@@ -11281,7 +11954,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :meeting-mutating="meetingMutating"
                 :meeting-runtime-health="meetingRuntimeHealth"
                 :project-members="workspaceMembers"
-                :project-outline="projectOutlineItems"
+                :outline-sections="workspaceOutlineSections"
                 :issue-reports="projectIssueReports"
                 :project-issues="projectIssues"
                 :issue-loading="issueCenterLoading"
@@ -11289,7 +11962,6 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :project-resources-refreshing="projectResourcesRefreshing"
                 :resource-library-loading="resourceLibraryFirstLoadLoading"
                 :resource-library-refreshing="resourceLibraryRefreshing"
-                :project-outline-loading="projectOutlineFirstLoadLoading"
                 :resource-mutating="resourceMutating"
                 :has-active-project="Boolean(activeProjectId)"
                 :active-project-id="activeProjectId"
@@ -11355,9 +12027,21 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @pause-all-upload-tasks="pauseAllUploadTasks"
                 @resume-all-upload-tasks="resumeAllUploadTasks"
                 @clear-completed-upload-tasks="clearCompletedUploadTasks"
+                @locate-outline-item="locateWorkspaceOutlineItem"
                 @update:collapsed="leftSidebarCollapsed = $event"
                 @request-context-menu="openWorkspaceContextMenu($event)"
               />
+
+              <button
+                v-if="!leftSidebarCollapsed"
+                class="workspace-sidebar-resize-handle workspace-sidebar-resize-handle--left"
+                type="button"
+                aria-label="调整左侧边栏宽度"
+                title="拖拽调整左侧边栏宽度"
+                @pointerdown="startWorkspaceSidebarResize('left', $event)"
+              >
+                <span class="workspace-sidebar-resize-handle__thumb" aria-hidden="true" />
+              </button>
             </div>
 
             <WorkspaceMainPanel
@@ -11398,6 +12082,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               :workspace-seat-limit-error="workspaceSeatLimitError"
               :workspace-seat-limit-updated-signal="workspaceSeatLimitUpdatedSignal"
               :open-settings-signal="openSettingsSignal"
+              :open-loopy-data-signal="openLoopyDataSignal"
               :open-member-management-signal="openMemberManagementSignal"
               :open-display-preferences-signal="openDisplayPreferencesSignal"
               :open-flow-signal="openFlowSignal"
@@ -11457,6 +12142,11 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               :project-settings-current-contest-id="projectSettingsCurrentContestId"
               :project-settings-adaptation="projectSettingsAdaptation"
               :project-settings-has-current-contest="projectSettingsHasCurrentContest"
+              :project-knowledge-dashboard="projectKnowledgeDashboard"
+              :project-knowledge-loading="projectKnowledgeLoading"
+              :project-knowledge-error="projectKnowledgeError"
+              :project-knowledge-reindexing-target="projectKnowledgeReindexingTarget"
+              :project-knowledge-retrying-source-id="projectKnowledgeRetryingSourceId"
               :workspace-display-preferences="workspaceDisplayPreferenceSnapshot"
               :workspace-display-preferences-loading="workspaceDisplayPreferenceLoading"
               :workspace-display-preferences-saving-scope="workspaceDisplayPreferenceSavingScope"
@@ -11496,6 +12186,9 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               @update:project-settings-adaptation="onProjectSettingsAdaptationChange"
               @load-contests="loadContests"
               @save-project-settings="saveProjectSettingsManually"
+              @reload-project-knowledge="reloadProjectKnowledge"
+              @reindex-project-knowledge="reindexProjectKnowledge"
+              @reindex-project-knowledge-source="reindexKnowledgeSource"
               @save-workspace-display-user-override="saveWorkspaceDisplayUserOverride"
               @save-workspace-display-team-default="saveWorkspaceDisplayTeamDefault"
               @reload-workspace-member-management="loadWorkspaceMemberManagement"
@@ -11531,6 +12224,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               @update-collab-cursor="updateCollabCursor"
               @update-collab-selection-status="updateCollabSelectionStatus"
               @markdown-primary-heading-change="handleMarkdownPrimaryHeadingChange"
+              @markdown-outline-change="handleMarkdownOutlineChange"
               @markdown-create-comment-from-selection="handleMarkdownCreateCommentFromSelection"
               @markdown-create-comment-from-image="handleMarkdownCreateCommentFromImage"
               @markdown-open-comment-thread="handleMarkdownOpenCommentThread"
@@ -11594,7 +12288,18 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
           <div
             class="workspace-right-dock"
             :class="{ 'workspace-right-dock--collapsed': rightSidebarCollapsed }"
+            :style="{ '--workspace-right-dock-width': `${rightSidebarWidth}px` }"
           >
+            <button
+              v-if="!rightSidebarCollapsed"
+              class="workspace-sidebar-resize-handle workspace-sidebar-resize-handle--right"
+              type="button"
+              aria-label="调整右侧 AI 栏宽度"
+              title="拖拽调整右侧 AI 栏宽度"
+              @pointerdown="startWorkspaceSidebarResize('right', $event)"
+            >
+              <span class="workspace-sidebar-resize-handle__thumb" aria-hidden="true" />
+            </button>
             <div
               class="workspace-right-dock__panel"
               :class="{ 'workspace-right-dock__panel--hidden': rightSidebarCollapsed }"
@@ -11606,6 +12311,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :project-assistant-mode="projectAssistantMode"
                 :project-contextual-assistant-label="projectContextualAssistant?.label || ''"
                 :project-contextual-assistant-preset="projectContextualAssistant?.preset || ''"
+                :project-contextual-assistant-key="projectContextualAssistant?.key || ''"
                 :ai-mode="aiMode"
                 :sidebar-view="rightSidebarView"
                 class="min-h-0 overflow-hidden"
@@ -11664,6 +12370,19 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 :workflow-page-count="activeWorkflowPageCount"
                 :applied-workflow-draft-keys="appliedWorkflowDraftKeys"
                 :discarded-workflow-draft-keys="discardedWorkflowDraftKeys"
+                :scene-resource-id="activeAgentProtoSceneResourceId"
+                :scene-resource-title="activeAgentProtoSceneResourceTitle"
+                :scene-hash="activeAgentProtoSceneHash"
+                :applied-scene-draft-keys="appliedSceneDraftKeys"
+                :discarded-scene-draft-keys="discardedSceneDraftKeys"
+                :scene-generate-available="sceneGenerateAvailable"
+                :scene-generate-disabled-reason="sceneGenerateDisabledReason"
+                :scene-complete-available="sceneCompleteAvailable"
+                :scene-complete-disabled-reason="sceneCompleteDisabledReason"
+                :scene-refine-available="sceneRefineAvailable"
+                :scene-refine-disabled-reason="sceneRefineDisabledReason"
+                :scene-restyle-available="sceneRestyleAvailable"
+                :scene-restyle-disabled-reason="sceneRestyleDisabledReason"
                 :workflow-generate-available="workflowGenerateAvailable"
                 :workflow-generate-disabled-reason="workflowGenerateDisabledReason"
                 :workflow-complete-available="workflowCompleteAvailable"
@@ -11709,6 +12428,9 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @request-workflow-draft="requestWorkflowDraftFromSidebar"
                 @apply-workflow-draft="applyWorkflowDraft"
                 @discard-workflow-draft="discardWorkflowDraft"
+                @request-scene-draft="requestSceneDraftFromSidebar"
+                @apply-scene-draft="applySceneDraft"
+                @discard-scene-draft="discardSceneDraft"
                 @open-resource="openProjectResourcePreview"
               />
             </div>
@@ -11824,6 +12546,18 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
       :column="statusCursor.column"
       :selection-length="statusCursor.selectionLength"
       :has-active-project="Boolean(activeProjectId)"
+      :loopy-data-progress-percent="projectKnowledgeSummary.overallProgressPercent"
+      :loopy-data-health-state="projectKnowledgeDiagnostics.healthState"
+      :loopy-data-health-message="projectKnowledgeDiagnostics.healthMessage"
+      :loopy-data-runtime-label="loopyDataRuntimeLabel"
+      :loopy-data-source-count="projectKnowledgeDiagnostics.sourceCount"
+      :loopy-data-task-count="projectKnowledgeDiagnostics.taskCount"
+      :loopy-data-chunk-count="projectKnowledgeDiagnostics.chunkCount"
+      :loopy-data-last-success-at="projectKnowledgeWorker.lastSuccessAt || ''"
+      :loopy-data-last-error="projectKnowledgeWorker.lastError || ''"
+      :loopy-data-has-active-work="projectKnowledgeHasActiveWork"
+      :loopy-data-disabled="!activeProjectId"
+      @open-loopy-data="openLoopyDataPanel"
     />
 
     <Transition name="workspace-shell-loading-overlay">
@@ -11960,6 +12694,18 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   min-height: 0;
   max-height: 100%;
   overflow: hidden;
+}
+
+.workspace-shell--resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
+.workspace-shell--resizing .workspace-right-dock,
+.workspace-shell--resizing .workspace-right-dock__panel,
+.workspace-shell--resizing :deep(.workspace-left-dock),
+.workspace-shell--resizing :deep(.workspace-left-panel) {
+  transition: none !important;
 }
 
 .workspace-scene-shell {
@@ -12132,6 +12878,48 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   overflow: visible;
 }
 
+.workspace-sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.workspace-sidebar-resize-handle--left {
+  right: -8px;
+}
+
+.workspace-sidebar-resize-handle--right {
+  left: -8px;
+}
+
+.workspace-sidebar-resize-handle__thumb {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 72px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.24);
+  transform: translate(-50%, -50%);
+  transition:
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.workspace-sidebar-resize-handle:hover .workspace-sidebar-resize-handle__thumb,
+.workspace-sidebar-resize-handle:focus-visible .workspace-sidebar-resize-handle__thumb,
+.workspace-shell--resizing .workspace-sidebar-resize-handle__thumb {
+  background: rgba(59, 130, 246, 0.48);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
 @media (max-width: 1279px) {
   .workspace-defense-shell {
     flex-direction: column;
@@ -12149,19 +12937,23 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   .workspace-defense-shell__stage {
     padding: 16px;
   }
+
+  .workspace-sidebar-resize-handle {
+    display: none;
+  }
 }
 
 .workspace-right-dock {
   position: relative;
   display: flex;
-  flex: 0 0 22rem;
-  width: 22rem;
-  min-width: 22rem;
-  max-width: 22rem;
+  flex: 0 0 var(--workspace-right-dock-width, 22rem);
+  width: var(--workspace-right-dock-width, 22rem);
+  min-width: var(--workspace-right-dock-width, 22rem);
+  max-width: var(--workspace-right-dock-width, 22rem);
   min-height: 0;
   align-items: stretch;
   justify-content: flex-end;
-  overflow: hidden;
+  overflow: visible;
   transition:
     width 0.22s ease,
     min-width 0.22s ease,
@@ -12180,6 +12972,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
   width: 100%;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   opacity: 1;
   transform: translateX(0) scale(1);
   transform-origin: right center;

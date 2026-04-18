@@ -10,6 +10,12 @@ import type {
   WorkspaceType,
 } from '~~/shared/types/domain'
 import { teamGetWorkspaceAccess, teamHasWorkspaceRole } from '~~/server/utils/team-membership-store'
+import {
+  DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  DEFAULT_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
+  normalizeWorkspaceLeftSidebarWidth,
+  normalizeWorkspaceRightSidebarWidth,
+} from '~~/shared/utils/workspace-layout'
 
 interface WorkspaceDisplayPreferenceRow {
   preferences: Record<string, unknown> | null
@@ -24,6 +30,8 @@ interface WorkspaceDisplayPreferenceWorkspaceRow {
 export interface WorkspaceDisplayPreferencesPatchInput {
   fontSizePreset?: WorkspaceFontSizePreset | null
   tabSpacingPreset?: WorkspaceTabSpacingPreset | null
+  leftSidebarWidth?: number | null
+  rightSidebarWidth?: number | null
 }
 
 const WORKSPACE_FONT_SIZE_PRESETS: WorkspaceFontSizePreset[] = ['xs', 'sm', 'md', 'lg', 'xl']
@@ -34,6 +42,8 @@ export function getSystemWorkspaceDisplayPreferences(): WorkspaceDisplayPreferen
   return {
     fontSizePreset: 'lg',
     tabSpacingPreset: 'relaxed',
+    leftSidebarWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+    rightSidebarWidth: DEFAULT_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
   }
 }
 
@@ -60,14 +70,28 @@ function normalizeWorkspaceTabSpacingPreset(value: unknown): WorkspaceTabSpacing
   return isWorkspaceTabSpacingPreset(normalized) ? normalized : null
 }
 
+function normalizeWorkspaceSidebarWidth(
+  value: unknown,
+  normalizer: (value: unknown) => number,
+): number | null {
+  if (value === null || value === undefined || value === '')
+    return null
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized))
+    return null
+  return normalizer(normalized)
+}
+
 function normalizeWorkspaceDisplayPreferences(value: unknown): WorkspaceDisplayPreferences | null {
   const source = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
   const fontSizePreset = normalizeWorkspaceFontSizePreset(source.fontSizePreset)
   const tabSpacingPreset = normalizeWorkspaceTabSpacingPreset(source.tabSpacingPreset)
+  const leftSidebarWidth = normalizeWorkspaceSidebarWidth(source.leftSidebarWidth, normalizeWorkspaceLeftSidebarWidth)
+  const rightSidebarWidth = normalizeWorkspaceSidebarWidth(source.rightSidebarWidth, normalizeWorkspaceRightSidebarWidth)
 
-  if (!fontSizePreset && !tabSpacingPreset)
+  if (!fontSizePreset && !tabSpacingPreset && leftSidebarWidth === null && rightSidebarWidth === null)
     return null
 
   const normalized: WorkspaceDisplayPreferences = {}
@@ -75,6 +99,10 @@ function normalizeWorkspaceDisplayPreferences(value: unknown): WorkspaceDisplayP
     normalized.fontSizePreset = fontSizePreset
   if (tabSpacingPreset)
     normalized.tabSpacingPreset = tabSpacingPreset
+  if (leftSidebarWidth !== null)
+    normalized.leftSidebarWidth = leftSidebarWidth
+  if (rightSidebarWidth !== null)
+    normalized.rightSidebarWidth = rightSidebarWidth
 
   return {
     ...normalized,
@@ -105,8 +133,14 @@ function mergeWorkspaceDisplayPreferences(
   const nextTabSpacingPreset = patch.tabSpacingPreset !== undefined
     ? patch.tabSpacingPreset
     : (current?.tabSpacingPreset ?? null)
+  const nextLeftSidebarWidth = patch.leftSidebarWidth !== undefined
+    ? patch.leftSidebarWidth
+    : (current?.leftSidebarWidth ?? null)
+  const nextRightSidebarWidth = patch.rightSidebarWidth !== undefined
+    ? patch.rightSidebarWidth
+    : (current?.rightSidebarWidth ?? null)
 
-  if (!nextFontSizePreset && !nextTabSpacingPreset)
+  if (!nextFontSizePreset && !nextTabSpacingPreset && !nextLeftSidebarWidth && !nextRightSidebarWidth)
     return null
 
   const next: WorkspaceDisplayPreferences = {}
@@ -114,13 +148,17 @@ function mergeWorkspaceDisplayPreferences(
     next.fontSizePreset = nextFontSizePreset
   if (nextTabSpacingPreset)
     next.tabSpacingPreset = nextTabSpacingPreset
+  if (typeof nextLeftSidebarWidth === 'number')
+    next.leftSidebarWidth = normalizeWorkspaceLeftSidebarWidth(nextLeftSidebarWidth)
+  if (typeof nextRightSidebarWidth === 'number')
+    next.rightSidebarWidth = normalizeWorkspaceRightSidebarWidth(nextRightSidebarWidth)
 
   return {
     ...next,
   }
 }
 
-function resolveWorkspaceDisplayPreferenceValue<T extends WorkspaceFontSizePreset | WorkspaceTabSpacingPreset>(
+function resolveWorkspaceDisplayPreferenceValue<T extends WorkspaceFontSizePreset | WorkspaceTabSpacingPreset | number>(
   input: {
     workspaceType: WorkspaceType
     userDefault: T | null | undefined
@@ -367,15 +405,33 @@ function resolveEffectiveWorkspaceDisplayPreferences(
     workspaceOverride: input.workspaceOverride?.tabSpacingPreset,
     systemValue: systemPreferences.tabSpacingPreset || 'relaxed',
   })
+  const leftSidebarWidth = resolveWorkspaceDisplayPreferenceValue({
+    workspaceType: input.workspaceType,
+    userDefault: input.userDefault?.leftSidebarWidth,
+    teamDefault: input.teamDefault?.leftSidebarWidth,
+    workspaceOverride: input.workspaceOverride?.leftSidebarWidth,
+    systemValue: systemPreferences.leftSidebarWidth || DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  })
+  const rightSidebarWidth = resolveWorkspaceDisplayPreferenceValue({
+    workspaceType: input.workspaceType,
+    userDefault: input.userDefault?.rightSidebarWidth,
+    teamDefault: input.teamDefault?.rightSidebarWidth,
+    workspaceOverride: input.workspaceOverride?.rightSidebarWidth,
+    systemValue: systemPreferences.rightSidebarWidth || DEFAULT_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
+  })
 
   return {
     effective: {
       fontSizePreset: fontSizePreset.value,
       tabSpacingPreset: tabSpacingPreset.value,
+      leftSidebarWidth: leftSidebarWidth.value,
+      rightSidebarWidth: rightSidebarWidth.value,
     },
     sources: {
       fontSizePreset: fontSizePreset.source,
       tabSpacingPreset: tabSpacingPreset.source,
+      leftSidebarWidth: leftSidebarWidth.source,
+      rightSidebarWidth: rightSidebarWidth.source,
     },
   }
 }

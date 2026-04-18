@@ -25,6 +25,17 @@ const props = withDefaults(defineProps<{
   uploadTasks?: ProjectUploadTask[]
   uploadActivityItems?: ProjectUploadActivityItem[]
   uploadHistoryLoaded?: boolean
+  loopyDataProgressPercent?: number
+  loopyDataHealthState?: '' | 'empty_project' | 'missing_runtime' | 'worker_inactive' | 'queued_but_not_running' | 'fallback_only' | 'partial' | 'healthy'
+  loopyDataHealthMessage?: string
+  loopyDataRuntimeLabel?: string
+  loopyDataSourceCount?: number
+  loopyDataTaskCount?: number
+  loopyDataChunkCount?: number
+  loopyDataLastSuccessAt?: string
+  loopyDataLastError?: string
+  loopyDataHasActiveWork?: boolean
+  loopyDataDisabled?: boolean
 }>(), {
   statusLine: '',
   loading: false,
@@ -48,7 +59,22 @@ const props = withDefaults(defineProps<{
   uploadTasks: () => [],
   uploadActivityItems: () => [],
   uploadHistoryLoaded: false,
+  loopyDataProgressPercent: 0,
+  loopyDataHealthState: '',
+  loopyDataHealthMessage: '',
+  loopyDataRuntimeLabel: '',
+  loopyDataSourceCount: 0,
+  loopyDataTaskCount: 0,
+  loopyDataChunkCount: 0,
+  loopyDataLastSuccessAt: '',
+  loopyDataLastError: '',
+  loopyDataHasActiveWork: false,
+  loopyDataDisabled: false,
 })
+
+const emit = defineEmits<{
+  openLoopyData: []
+}>()
 
 const IMPORTANT_STATUS_KEYWORDS = ['失败', '错误', '冲突', '请先', '缺失', '无权', '异常', '告警', '重试', '未清除']
 const GB_BYTES = 1024 * 1024 * 1024
@@ -189,6 +215,72 @@ const aiBillingTooltipText = computed(() => {
   const text = String(props.aiBillingLabel || '').trim()
   return text || '按 credits 配额计费'
 })
+
+const normalizedLoopyDataProgressPercent = computed(() => {
+  const value = Number(props.loopyDataProgressPercent || 0)
+  if (!Number.isFinite(value) || value <= 0)
+    return 0
+  return Math.max(0, Math.min(100, Math.round(value)))
+})
+
+const loopyDataTone = computed<'idle' | 'running' | 'warning' | 'error' | 'ready'>(() => {
+  if (props.loopyDataHasActiveWork)
+    return 'running'
+  if (props.loopyDataHealthState === 'healthy')
+    return 'ready'
+  if (props.loopyDataHealthState === 'partial' || props.loopyDataHealthState === 'fallback_only')
+    return 'warning'
+  if (props.loopyDataHealthState === 'missing_runtime' || props.loopyDataHealthState === 'worker_inactive' || props.loopyDataHealthState === 'queued_but_not_running')
+    return 'error'
+  return 'idle'
+})
+
+const loopyDataClass = computed(() => {
+  if (loopyDataTone.value === 'running')
+    return 'workspace-status-loopy workspace-status-loopy--running'
+  if (loopyDataTone.value === 'ready')
+    return 'workspace-status-loopy workspace-status-loopy--ready'
+  if (loopyDataTone.value === 'warning')
+    return 'workspace-status-loopy workspace-status-loopy--warning'
+  if (loopyDataTone.value === 'error')
+    return 'workspace-status-loopy workspace-status-loopy--error'
+  return 'workspace-status-loopy workspace-status-loopy--idle'
+})
+
+const loopyDataIcon = computed(() => {
+  if (props.loopyDataHasActiveWork)
+    return 'progress_activity'
+  if (props.loopyDataHealthState === 'healthy')
+    return 'cloud_done'
+  if (props.loopyDataHealthState === 'fallback_only')
+    return 'deployed_code_history'
+  if (props.loopyDataHealthState === 'missing_runtime' || props.loopyDataHealthState === 'worker_inactive' || props.loopyDataHealthState === 'queued_but_not_running')
+    return 'warning'
+  return 'database'
+})
+
+const loopyDataRuntimeText = computed(() => {
+  const text = String(props.loopyDataRuntimeLabel || '').trim()
+  return text || 'Embedding 未配置'
+})
+
+const loopyDataHealthText = computed(() => {
+  const text = String(props.loopyDataHealthMessage || '').trim()
+  return text || 'Loopy 数据工作台'
+})
+
+const loopyDataTooltipLastRunText = computed(() => {
+  const lastSuccessAt = String(props.loopyDataLastSuccessAt || '').trim()
+  if (lastSuccessAt)
+    return new Date(lastSuccessAt).toLocaleString('zh-CN', { hour12: false })
+  return '-'
+})
+
+function openLoopyData(): void {
+  if (props.loopyDataDisabled)
+    return
+  emit('openLoopyData')
+}
 </script>
 
 <template>
@@ -234,6 +326,51 @@ const aiBillingTooltipText = computed(() => {
           </template>
         </span>
         <span>Space: 4</span>
+        <button
+          class="workspace-status-loopy-anchor"
+          type="button"
+          :disabled="props.loopyDataDisabled"
+          :aria-label="`Loopy 数据：${loopyDataHealthText}`"
+          @click="openLoopyData"
+        >
+          <span :class="loopyDataClass">
+            <span
+              v-if="props.loopyDataHasActiveWork"
+              class="workspace-status-loopy__progress"
+              :style="{ width: `${normalizedLoopyDataProgressPercent}%` }"
+            />
+            <span class="workspace-status-loopy__content">
+              <span class="material-symbols-outlined workspace-status-loopy__icon">{{ loopyDataIcon }}</span>
+              <span>Loopy 数据</span>
+            </span>
+          </span>
+          <div class="workspace-status-loopy__tooltip">
+            <div class="workspace-status-loopy__tooltip-title">
+              {{ loopyDataHealthText }}
+            </div>
+            <div class="workspace-status-loopy__tooltip-row">
+              <span class="workspace-status-loopy__tooltip-label">Embedding</span>
+              <span class="workspace-status-loopy__tooltip-value">{{ loopyDataRuntimeText }}</span>
+            </div>
+            <div class="workspace-status-loopy__tooltip-row">
+              <span class="workspace-status-loopy__tooltip-label">Source / Task / Chunk</span>
+              <span class="workspace-status-loopy__tooltip-value">{{ props.loopyDataSourceCount }} / {{ props.loopyDataTaskCount }} / {{ props.loopyDataChunkCount }}</span>
+            </div>
+            <div class="workspace-status-loopy__tooltip-row">
+              <span class="workspace-status-loopy__tooltip-label">当前进度</span>
+              <span class="workspace-status-loopy__tooltip-value">{{ normalizedLoopyDataProgressPercent }}%</span>
+            </div>
+            <div class="workspace-status-loopy__tooltip-row">
+              <span class="workspace-status-loopy__tooltip-label">最近成功</span>
+              <span class="workspace-status-loopy__tooltip-value">{{ loopyDataTooltipLastRunText }}</span>
+            </div>
+            <div v-if="props.loopyDataLastError" class="workspace-status-loopy__tooltip-row">
+              <span class="workspace-status-loopy__tooltip-label">最近错误</span>
+              <span class="workspace-status-loopy__tooltip-value workspace-status-loopy__tooltip-value--error">{{ props.loopyDataLastError }}</span>
+            </div>
+          </div>
+        </button>
+
         <div
           class="workspace-status-ai-anchor"
           tabindex="0"
@@ -356,6 +493,146 @@ const aiBillingTooltipText = computed(() => {
   align-items: center;
   gap: 4px;
   font-weight: 700;
+}
+
+.workspace-status-loopy-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  outline: none;
+}
+
+.workspace-status-loopy-anchor:disabled {
+  cursor: default;
+}
+
+.workspace-status-loopy {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  min-height: 22px;
+}
+
+.workspace-status-loopy__progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  transition: width 0.22s ease;
+}
+
+.workspace-status-loopy__content {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  font-weight: 700;
+}
+
+.workspace-status-loopy__icon {
+  font-size: 12px;
+}
+
+.workspace-status-loopy--idle {
+  border-color: #d7e2f1;
+  background: #f8fbff;
+  color: #557097;
+}
+
+.workspace-status-loopy--running {
+  border-color: #cdddf7;
+  background: #f5f9ff;
+  color: #1e4fa0;
+}
+
+.workspace-status-loopy--running .workspace-status-loopy__progress {
+  background: linear-gradient(90deg, rgba(81, 146, 255, 0.36), rgba(102, 210, 255, 0.62));
+}
+
+.workspace-status-loopy--ready {
+  border-color: #cfe9df;
+  background: #f4fbf7;
+  color: #1c7a53;
+}
+
+.workspace-status-loopy--warning {
+  border-color: #f3d9a6;
+  background: #fff8eb;
+  color: #a16107;
+}
+
+.workspace-status-loopy--error {
+  border-color: #efc5c5;
+  background: #fff4f4;
+  color: #b45309;
+}
+
+.workspace-status-loopy__tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #d5deed;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 10px 12px;
+  color: #4b5f83;
+  font-size: var(--wl-text-caption);
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: 0 12px 28px rgba(32, 53, 89, 0.14);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-status-loopy__tooltip-title {
+  color: #22324d;
+  font-weight: 700;
+  white-space: normal;
+}
+
+.workspace-status-loopy__tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-status-loopy__tooltip-label {
+  color: #6c7f9f;
+}
+
+.workspace-status-loopy__tooltip-value {
+  color: #22324d;
+  font-weight: 600;
+  text-align: right;
+  white-space: normal;
+}
+
+.workspace-status-loopy__tooltip-value--error {
+  color: #b45309;
+}
+
+.workspace-status-loopy-anchor:hover .workspace-status-loopy__tooltip,
+.workspace-status-loopy-anchor:focus-visible .workspace-status-loopy__tooltip,
+.workspace-status-loopy-anchor:focus-within .workspace-status-loopy__tooltip {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .workspace-status-ai-anchor {

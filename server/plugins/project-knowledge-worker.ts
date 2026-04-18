@@ -1,3 +1,5 @@
+import type { Buffer } from 'node:buffer'
+import type { ProjectKnowledgeTaskContext } from '~~/server/utils/project-knowledge-store'
 import type { DocumentAnalysis, ProjectKnowledgeChunkKind, ProjectKnowledgeChunkMetadata, ProjectKnowledgeModality } from '~~/shared/types/domain'
 import { randomUUID } from 'node:crypto'
 import { analyzePdfBufferWithDocAi } from '~~/server/services/document/analysis'
@@ -14,17 +16,16 @@ import {
   replaceProjectKnowledgeChunks,
   resetStaleProjectKnowledgeTasks,
   updateProjectKnowledgeTaskProgress,
-  type ProjectKnowledgeTaskContext,
 } from '~~/server/utils/project-knowledge-store'
-import {
-  getProjectResourcePreviewFileRef,
-  getProjectResourceSourceFileRef,
-} from '~~/server/utils/project-resource-document-store'
-import { listProjectMeetingUtterances } from '~~/server/utils/project-meeting-store'
 import {
   getProjectKnowledgeWorkerState,
   pushProjectKnowledgeWorkerRunRecord,
 } from '~~/server/utils/project-knowledge-worker-state'
+import { listProjectMeetingUtterances } from '~~/server/utils/project-meeting-store'
+import {
+  getProjectResourcePreviewFileRef,
+  getProjectResourceSourceFileRef,
+} from '~~/server/utils/project-resource-document-store'
 import { captureServerException } from '~~/server/utils/sentry'
 
 const PROJECT_KNOWLEDGE_WORKER_TIMER_KEY = Symbol.for('winloop.project-knowledge-worker.timer.v1')
@@ -273,12 +274,12 @@ function buildMarkdownChunks(input: {
   }
 
   for (const line of lines) {
-    const heading = line.match(/^#{1,6}\s+(.+)$/)
-    if (heading) {
+    const headingPrefix = line.match(/^(#{1,6})[^\S\r\n]+/)
+    if (headingPrefix) {
       if (current.lines.length > 0)
         sections.push(current)
       current = {
-        title: compactText(heading[1] || '') || '正文',
+        title: compactText(line.slice(headingPrefix[0].length)) || '正文',
         lines: [],
       }
       continue
@@ -830,7 +831,12 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
       })
     })
 
-    const embeddedChunks: Array<WorkerChunk & { embedding: number[] }> = []
+    const embeddedChunks: Array<WorkerChunk & {
+      embedding: number[]
+      embeddingProvider: string
+      embeddingModel: string
+      embeddingFallbackUsed: boolean
+    }> = []
     const chunkTotal = chunks.length
 
     for (const chunk of chunks) {
@@ -840,6 +846,9 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
       embeddedChunks.push({
         ...chunk,
         embedding: embeddingResult.embedding,
+        embeddingProvider: embeddingResult.provider,
+        embeddingModel: embeddingResult.model,
+        embeddingFallbackUsed: embeddingResult.fallbackUsed,
       })
 
       const chunkIndexed = embeddedChunks.length
@@ -890,7 +899,14 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
           citationLabel: item.citationLabel,
           pageNumber: item.pageNumber,
           sectionLabel: item.sectionLabel,
-          metadata: item.metadata,
+          metadata: {
+            ...normalizeRecord(item.metadata),
+            ...buildChunkMetadata({
+              embeddingProvider: item.embeddingProvider,
+              embeddingModel: item.embeddingModel,
+              embeddingFallbackUsed: item.embeddingFallbackUsed,
+            }),
+          },
           embedding: item.embedding,
         })),
       })
@@ -904,6 +920,8 @@ async function processSingleTask(): Promise<'idle' | 'succeeded' | 'failed'> {
           chunkTotal,
           indexedChunkCount: chunkTotal,
           chunkKinds,
+          realEmbeddedChunkCount: embeddedChunks.filter(item => !item.embeddingFallbackUsed).length,
+          fallbackEmbeddedChunkCount: embeddedChunks.filter(item => item.embeddingFallbackUsed).length,
         },
       })
     })

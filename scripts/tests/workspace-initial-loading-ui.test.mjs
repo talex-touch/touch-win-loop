@@ -62,7 +62,9 @@ it('项目工作区默认将左右侧边栏设为收起', async () => {
   ])
 
   assert.match(layoutSource, /const leftSidebarCollapsed = ref\(true\)/, '左侧栏默认未设为收起')
+  assert.match(layoutSource, /const leftSidebarWidth = ref\(normalizeWorkspaceLeftSidebarWidth\(null\)\)/, '左侧栏默认宽度未初始化')
   assert.match(layoutSource, /const rightSidebarUserCollapsed = ref\(true\)/, '右侧栏默认未设为收起')
-  assert.match(shellSource, /leftSidebarCollapsed: true,\s+rightSidebarCollapsed: true,/, '默认工作区视图状态未将双侧边栏设为收起')
+  assert.match(layoutSource, /const rightSidebarWidth = ref\(normalizeWorkspaceRightSidebarWidth\(null\)\)/, '右侧栏默认宽度未初始化')
+  assert.match(shellSource, /leftSidebarWidth: normalizeWorkspaceLeftSidebarWidth\(null\),\s+rightSidebarWidth: normalizeWorkspaceRightSidebarWidth\(null\),\s+leftSidebarCollapsed: true,\s+rightSidebarCollapsed: true,/, '默认工作区视图状态未初始化左右栏宽度与双侧收起态')
   assert.match(workspaceSource, /applySidebarLayoutState\(\{\s+leftSidebarCollapsed: true,\s+rightSidebarCollapsed: true,\s+\}\)/, '项目设置态重置时未恢复双侧边栏默认收起')
 })

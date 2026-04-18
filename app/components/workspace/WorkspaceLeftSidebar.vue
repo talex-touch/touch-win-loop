@@ -7,7 +7,6 @@ import type {
   ProjectMeetingMode,
   ProjectMeetingRuntimeHealth,
   ProjectMemberSummary,
-  ProjectOutlineNode,
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
   Resource,
@@ -17,6 +16,8 @@ import type {
 import type { ContextMenuRequest } from '~/components/ui/context-menu'
 import type { ProjectUploadActivityItem, ProjectUploadSummary, ProjectUploadTask } from '~/types/project-upload'
 import type { WorkspaceLinkedContestResourceGroup } from '~/types/workspace'
+import type { WorkspaceOutlineNode, WorkspaceOutlineSection } from '~/utils/workspace-outline'
+import { WORKSPACE_LEFT_SIDEBAR_RAIL_WIDTH } from '~~/shared/utils/workspace-layout'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'meeting' | 'analysis' | 'project_config' | 'issue_center' | 'upload_center' | 'notification_center'
 type WorkspaceLeftPanelContentId = WorkspaceLeftModuleId
@@ -60,7 +61,7 @@ const props = withDefaults(defineProps<{
   meetingMutating?: boolean
   meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
   projectMembers?: ProjectMemberSummary[]
-  projectOutline?: ProjectOutlineNode[]
+  outlineSections?: WorkspaceOutlineSection[]
   issueReports?: ProjectIssueReport[]
   projectIssues?: ProjectIssue[]
   issueLoading?: boolean
@@ -68,7 +69,6 @@ const props = withDefaults(defineProps<{
   projectResourcesRefreshing?: boolean
   resourceLibraryLoading?: boolean
   resourceLibraryRefreshing?: boolean
-  projectOutlineLoading?: boolean
   resourceMutating?: boolean
   hasActiveProject?: boolean
   activeProjectId?: string
@@ -110,7 +110,7 @@ const props = withDefaults(defineProps<{
   meetingMutating: false,
   meetingRuntimeHealth: null,
   projectMembers: () => [],
-  projectOutline: () => [],
+  outlineSections: () => [],
   issueReports: () => [],
   projectIssues: () => [],
   issueLoading: false,
@@ -118,7 +118,6 @@ const props = withDefaults(defineProps<{
   projectResourcesRefreshing: false,
   resourceLibraryLoading: false,
   resourceLibraryRefreshing: false,
-  projectOutlineLoading: false,
   resourceMutating: false,
   hasActiveProject: false,
   activeProjectId: '',
@@ -160,6 +159,7 @@ const emit = defineEmits<{
   'pauseAllUploadTasks': []
   'resumeAllUploadTasks': []
   'clearCompletedUploadTasks': []
+  'locateOutlineItem': [node: WorkspaceOutlineNode]
   'openMeetingPanel': []
   'openSettingsPanel': []
   'openMemberManagementPanel': []
@@ -187,6 +187,8 @@ const emit = defineEmits<{
   'uploadResources': [payload: { files: File[], parentResourceId?: string | null }]
   'requestContextMenu': [payload: ContextMenuRequest]
 }>()
+
+const leftSidebarRailWidthPx = `${WORKSPACE_LEFT_SIDEBAR_RAIL_WIDTH}px`
 
 const notificationCenter = useNotificationCenter()
 
@@ -459,6 +461,7 @@ watch(activeModule, (value) => {
             @retry-upload-task="emit('retryUploadTask', $event)"
             @cancel-upload-task="emit('cancelUploadTask', $event)"
             @rebind-upload-task="emit('rebindUploadTask', $event)"
+            @locate-outline-item="emit('locateOutlineItem', $event)"
           />
 
           <WorkspaceMeetingSidebarPanel
@@ -551,7 +554,7 @@ watch(activeModule, (value) => {
 
 <style scoped>
 .workspace-left-dock {
-  --workspace-left-rail-width: 56px;
+  --workspace-left-rail-width: v-bind(leftSidebarRailWidthPx);
   --workspace-left-dock-width: 360px;
   --workspace-left-panel-width: calc(var(--workspace-left-dock-width) - var(--workspace-left-rail-width));
   display: flex;

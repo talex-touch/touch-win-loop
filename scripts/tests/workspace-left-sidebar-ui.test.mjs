@@ -164,10 +164,16 @@ it('左栏结构大纲不再用本地推断结果充当真实大纲', async () =
     readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8'),
   ])
 
+  assert.match(sidebarSource, /outlineSections\?: WorkspaceOutlineSection\[\]/, 'WorkspaceLeftSidebar 缺少统一结构大纲 section 入参')
+  assert.match(sidebarSource, /@locate-outline-item="emit\('locateOutlineItem', \$event\)"/, 'WorkspaceLeftSidebar 未透传统一结构定位事件')
   assert.doesNotMatch(sidebarSource, /workspace-left-sidebar__structural-contract|v-if="false"/, 'WorkspaceLeftSidebar 仍保留旧的占位结构契约')
   assert.doesNotMatch(resourceManagerSource, /const fallbackOutlineItems = computed<OutlineItem\[\]>\(\(\) => \{/, '资源管理器仍保留本地推断大纲 fallback')
   assert.doesNotMatch(resourceManagerSource, /extractResourceOutlineChildren/, '资源管理器仍在从资源正文推断假大纲')
-  assert.match(resourceManagerSource, /return uploadItems/, '资源管理器在无后端大纲时未回退到仅展示真实上传任务')
+  assert.match(resourceManagerSource, /outlineSections\?: WorkspaceOutlineSection\[\]/, '资源管理器缺少统一结构大纲 section 入参')
+  assert.match(resourceManagerSource, /flattenWorkspaceOutlineRows/, '资源管理器未通过统一 outline 行拍平渲染双区块结构')
+  assert.match(resourceManagerSource, /workspace-outline-section__title/, '资源管理器未渲染大纲分区标题')
+  assert.match(resourceManagerSource, /section\.emptyText/, '资源管理器未按分区渲染空状态')
+  assert.match(resourceManagerSource, /emit\('locateOutlineItem', row\.node\)/, '资源管理器未将点击行为收敛到统一定位事件')
 })
 
 it('left rail 图标收窄并改成轻量 popover 名称提示', async () => {

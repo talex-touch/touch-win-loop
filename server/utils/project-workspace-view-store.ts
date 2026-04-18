@@ -2,6 +2,8 @@ import type { Queryable } from '~~/server/utils/db'
 import type {
   AuthUser,
   DeviceScopedRestoreResolution,
+  ProjectWorkspaceAiTabsPreference,
+  ProjectWorkspaceAiTabsState,
   ProjectWorkspaceViewDeviceStatePayload,
   ProjectWorkspaceViewPreference,
   ProjectWorkspaceViewState,
@@ -12,6 +14,10 @@ import type {
 import { randomUUID } from 'node:crypto'
 import { resolveProjectRealtimeAccess } from '~~/server/utils/realtime-access'
 import { teamHasWorkspaceMembership } from '~~/server/utils/team-membership-store'
+import {
+  normalizeWorkspaceLeftSidebarWidth,
+  normalizeWorkspaceRightSidebarWidth,
+} from '~~/shared/utils/workspace-layout'
 
 interface ProjectWorkspaceViewStateRow {
   project_id: string
@@ -19,6 +25,12 @@ interface ProjectWorkspaceViewStateRow {
   revision: number
   device_id: string
   last_opened_at: string
+  updated_at: string
+}
+
+interface ProjectWorkspaceAiTabsRow {
+  project_id: string
+  payload: ProjectWorkspaceAiTabsState | Record<string, unknown> | null
   updated_at: string
 }
 
@@ -30,7 +42,7 @@ interface TeamLastProjectPreferenceRow {
 
 type WorkspaceOpenTabStateLike = WorkspaceOpenTabState | 'design'
 
-const WORKSPACE_FIXED_TAB_IDS: WorkspaceFixedTabId[] = ['dashboard', 'meeting', 'members', 'flow', 'settings']
+const WORKSPACE_FIXED_TAB_IDS: WorkspaceFixedTabId[] = ['dashboard', 'meeting', 'members', 'flow', 'settings', 'loopy_data']
 const WORKSPACE_FIXED_TAB_ID_SET = new Set<string>(WORKSPACE_FIXED_TAB_IDS)
 const DEVICE_STALE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -60,6 +72,14 @@ function normalizeBoolean(value: unknown): boolean {
     return value !== 0
   const normalized = normalizeString(value).toLowerCase()
   return normalized === '1' || normalized === 'true' || normalized === 'yes'
+}
+
+function normalizeProjectWorkspaceAssistantMode(value: unknown): 'contextual' | 'dialog_ask' {
+  return normalizeString(value) === 'dialog_ask' ? 'dialog_ask' : 'contextual'
+}
+
+function normalizeProjectWorkspaceRightSidebarView(value: unknown): 'ai' | 'comments' {
+  return normalizeString(value) === 'comments' ? 'comments' : 'ai'
 }
 
 function normalizeWorkspaceOpenTabs(
@@ -112,8 +132,28 @@ function serializeProjectWorkspaceViewState(value: unknown): string {
   return JSON.stringify(normalizeProjectWorkspaceViewStatePayload(value))
 }
 
+function serializeProjectWorkspaceAiTabsState(value: unknown): string {
+  return JSON.stringify(normalizeProjectWorkspaceAiTabsStatePayload(value))
+}
+
 export function normalizeProjectWorkspaceViewStatePayload(value: unknown): ProjectWorkspaceViewState {
   return normalizeProjectWorkspaceViewStatePayloadWithOptions(value)
+}
+
+export function normalizeProjectWorkspaceAiTabsStatePayload(value: unknown): ProjectWorkspaceAiTabsState {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+  const openChatSessionIds = normalizeOpenChatSessionIds(source.openChatSessionIds)
+  const activeChatSessionId = normalizeString(source.activeChatSessionId)
+
+  if (activeChatSessionId && !openChatSessionIds.includes(activeChatSessionId))
+    openChatSessionIds.push(activeChatSessionId)
+
+  return {
+    openChatSessionIds: normalizeOpenChatSessionIds(openChatSessionIds),
+    activeChatSessionId,
+  }
 }
 
 function normalizeProjectWorkspaceViewStatePayloadWithOptions(
@@ -163,6 +203,10 @@ function normalizeProjectWorkspaceViewStatePayloadWithOptions(
     openChatSessionIds: normalizeOpenChatSessionIds(openChatSessionIds),
     activeChatSessionId,
     activeMeetingId,
+    projectAssistantMode: normalizeProjectWorkspaceAssistantMode(source.projectAssistantMode),
+    rightSidebarView: normalizeProjectWorkspaceRightSidebarView(source.rightSidebarView),
+    leftSidebarWidth: normalizeWorkspaceLeftSidebarWidth(source.leftSidebarWidth),
+    rightSidebarWidth: normalizeWorkspaceRightSidebarWidth(source.rightSidebarWidth),
     leftSidebarCollapsed: normalizeBoolean(source.leftSidebarCollapsed),
     rightSidebarCollapsed: normalizeBoolean(source.rightSidebarCollapsed),
   }
@@ -178,6 +222,18 @@ function mapProjectWorkspaceViewState(row: ProjectWorkspaceViewStateRow): Projec
     deviceId: normalizeString(row.device_id),
     updatedAt: normalizeString(row.updated_at),
     lastOpenedAt: normalizeString(row.last_opened_at),
+  }
+}
+
+function mapProjectWorkspaceAiTabs(row: ProjectWorkspaceAiTabsRow): ProjectWorkspaceAiTabsPreference | null {
+  const payload = normalizeProjectWorkspaceAiTabsStatePayload(row.payload)
+  if (payload.openChatSessionIds.length === 0 && !payload.activeChatSessionId)
+    return null
+
+  return {
+    projectId: row.project_id,
+    payload,
+    updatedAt: normalizeString(row.updated_at),
   }
 }
 
@@ -383,6 +439,63 @@ async function getLatestOtherProjectWorkspaceViewStateRowByUserProjectDevice(
   return result.rows[0] || null
 }
 
+async function getUserProjectWorkspaceAiTabsRow(
+  db: Queryable,
+  userId: string,
+  projectId: string,
+): Promise<ProjectWorkspaceAiTabsRow | null> {
+  const result = await db.query<ProjectWorkspaceAiTabsRow>(
+    `SELECT
+      project_id,
+      payload,
+      updated_at::TEXT
+     FROM user_project_workspace_ai_tabs
+     WHERE user_id = $1
+       AND project_id = $2
+     LIMIT 1`,
+    [userId, projectId],
+  )
+
+  return result.rows[0] || null
+}
+
+async function upsertUserProjectWorkspaceAiTabs(
+  db: Queryable,
+  userId: string,
+  projectId: string,
+  payload: ProjectWorkspaceAiTabsState,
+): Promise<void> {
+  const normalizedPayload = normalizeProjectWorkspaceAiTabsStatePayload(payload)
+  if (normalizedPayload.openChatSessionIds.length === 0 && !normalizedPayload.activeChatSessionId) {
+    await db.query(
+      `DELETE FROM user_project_workspace_ai_tabs
+       WHERE user_id = $1
+         AND project_id = $2`,
+      [userId, projectId],
+    )
+    return
+  }
+
+  const existing = await getUserProjectWorkspaceAiTabsRow(db, userId, projectId)
+  if (existing && serializeProjectWorkspaceAiTabsState(existing.payload) === serializeProjectWorkspaceAiTabsState(normalizedPayload))
+    return
+
+  await db.query(
+    `INSERT INTO user_project_workspace_ai_tabs (
+      user_id,
+      project_id,
+      payload,
+      created_at,
+      updated_at
+    ) VALUES ($1, $2, $3::JSONB, NOW(), NOW())
+    ON CONFLICT (user_id, project_id)
+    DO UPDATE SET
+      payload = EXCLUDED.payload,
+      updated_at = NOW()`,
+    [userId, projectId, JSON.stringify(normalizedPayload)],
+  )
+}
+
 export async function getProjectWorkspaceViewState(
   db: Queryable,
   user: AuthUser,
@@ -399,12 +512,15 @@ export async function getProjectWorkspaceViewState(
   const claimed = await claimLegacyProjectWorkspaceViewStateRow(db, user.id, normalizedProjectId, normalizedDeviceId)
   const currentRow = claimed || await getProjectWorkspaceViewStateRowByUserProjectDevice(db, user.id, normalizedProjectId, normalizedDeviceId)
   const latestOtherRow = await getLatestOtherProjectWorkspaceViewStateRowByUserProjectDevice(db, user.id, normalizedProjectId, normalizedDeviceId)
+  const personalAiTabsRow = await getUserProjectWorkspaceAiTabsRow(db, user.id, normalizedProjectId)
   const current = currentRow ? mapProjectWorkspaceViewState(currentRow) : null
   const latestOther = latestOtherRow ? mapProjectWorkspaceViewState(latestOtherRow) : null
+  const personalAiTabs = personalAiTabsRow ? mapProjectWorkspaceAiTabs(personalAiTabsRow) : null
 
   return {
     current,
     latestOther,
+    personalAiTabs,
     resolution: buildRestoreResolution(normalizedDeviceId, current, latestOther),
   }
 }
@@ -424,6 +540,10 @@ export async function upsertProjectWorkspaceViewState(
     throw new Error('DEVICE_ID_REQUIRED')
 
   const normalizedPayload = normalizeProjectWorkspaceViewStatePayload(payload)
+  await upsertUserProjectWorkspaceAiTabs(db, user.id, normalizedProjectId, {
+    openChatSessionIds: normalizedPayload.openChatSessionIds,
+    activeChatSessionId: normalizedPayload.activeChatSessionId,
+  })
   const now = new Date().toISOString()
   const existing = await claimLegacyProjectWorkspaceViewStateRow(db, user.id, normalizedProjectId, normalizedDeviceId)
     || await getProjectWorkspaceViewStateRowByUserProjectDevice(db, user.id, normalizedProjectId, normalizedDeviceId, true)

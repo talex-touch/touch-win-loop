@@ -12,6 +12,7 @@ import type {
   AiWorkspaceDocumentAction,
   AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentSelectionRange,
+  AiWorkspaceSceneDraft,
   AiWorkspaceWorkflowDraft,
   ChatMessage,
   Contest,
@@ -30,20 +31,24 @@ import type {
   WorkflowStylePreset,
   WorkspaceAiAssistantPreset,
   WorkspaceAiMode,
+  WorkspaceContextualAssistantKey,
+  WorkspaceTabSpacingPreset,
 } from '~~/shared/types/domain'
 import { buildAgentDocDraftKey } from '~~/shared/utils/agent-doc'
 import { resolveWorkspaceStreamSystemMessageView } from '~~/shared/utils/workspace-ai-stream'
+import { resolveWorkspaceTabDensityTokens } from '~~/shared/utils/workspace-tab-layout'
 import UnifiedAvatar from '~/components/UnifiedAvatar.vue'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 import { buildWorkflowDraftKey } from '~/utils/workspace-drawio'
+import { buildSceneDraftKey } from '~/utils/workspace-scene'
 
-type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist'>
+type WorkspaceDefenseSidebarAiMode = Exclude<WorkspaceAiMode, 'document_assist' | 'contextual_agent'>
 type WorkspaceProjectAssistantMode = 'contextual' | 'dialog_ask'
 type WorkspaceWorkbenchMode = 'project' | 'defense' | 'final_review'
 type WorkspaceRightSidebarView = 'ai' | 'comments'
 type WorkspaceSessionVisualType = WorkspaceAiMode | 'final_review' | 'topic_proposal'
 type AgentDocDraftStatus = 'pending' | 'superseded' | 'expired' | 'applied'
-type WorkflowDraftStatus = 'pending' | 'superseded' | 'expired' | 'applied' | 'discarded'
+type DraftStatus = 'pending' | 'superseded' | 'expired' | 'applied' | 'discarded'
 type AgentDocDiffRowKind = 'same' | 'change' | 'delete' | 'insert'
 
 interface AgentDocDiffRow {
@@ -74,6 +79,7 @@ const props = withDefaults(defineProps<{
   projectAssistantMode?: WorkspaceProjectAssistantMode
   projectContextualAssistantLabel?: string
   projectContextualAssistantPreset?: WorkspaceAiAssistantPreset | ''
+  projectContextualAssistantKey?: WorkspaceContextualAssistantKey | ''
   aiMode?: WorkspaceAiMode
   changeRequests?: AiProjectChangeRequest[]
   changeRequestsLoading?: boolean
@@ -121,6 +127,19 @@ const props = withDefaults(defineProps<{
   workflowPageCount?: number
   appliedWorkflowDraftKeys?: string[]
   discardedWorkflowDraftKeys?: string[]
+  sceneResourceId?: string
+  sceneResourceTitle?: string
+  sceneHash?: string
+  appliedSceneDraftKeys?: string[]
+  discardedSceneDraftKeys?: string[]
+  sceneGenerateAvailable?: boolean
+  sceneGenerateDisabledReason?: string
+  sceneCompleteAvailable?: boolean
+  sceneCompleteDisabledReason?: string
+  sceneRefineAvailable?: boolean
+  sceneRefineDisabledReason?: string
+  sceneRestyleAvailable?: boolean
+  sceneRestyleDisabledReason?: string
   workflowGenerateAvailable?: boolean
   workflowGenerateDisabledReason?: string
   workflowCompleteAvailable?: boolean
@@ -133,6 +152,7 @@ const props = withDefaults(defineProps<{
   issueReportExporting?: boolean
   aiEnabled?: boolean
   aiDisabledReason?: string
+  tabSpacingPreset?: WorkspaceTabSpacingPreset | ''
   collapsed?: boolean
 }>(), {
   chatSessions: () => [],
@@ -153,6 +173,7 @@ const props = withDefaults(defineProps<{
   projectAssistantMode: 'contextual',
   projectContextualAssistantLabel: '',
   projectContextualAssistantPreset: '',
+  projectContextualAssistantKey: '',
   aiMode: 'dialog_ask',
   changeRequests: () => [],
   changeRequestsLoading: false,
@@ -195,6 +216,19 @@ const props = withDefaults(defineProps<{
   workflowPageCount: 0,
   appliedWorkflowDraftKeys: () => [],
   discardedWorkflowDraftKeys: () => [],
+  sceneResourceId: '',
+  sceneResourceTitle: '',
+  sceneHash: '',
+  appliedSceneDraftKeys: () => [],
+  discardedSceneDraftKeys: () => [],
+  sceneGenerateAvailable: true,
+  sceneGenerateDisabledReason: '',
+  sceneCompleteAvailable: true,
+  sceneCompleteDisabledReason: '',
+  sceneRefineAvailable: true,
+  sceneRefineDisabledReason: '',
+  sceneRestyleAvailable: true,
+  sceneRestyleDisabledReason: '',
   workflowGenerateAvailable: true,
   workflowGenerateDisabledReason: '',
   workflowCompleteAvailable: true,
@@ -207,6 +241,7 @@ const props = withDefaults(defineProps<{
   issueReportExporting: false,
   aiEnabled: true,
   aiDisabledReason: '',
+  tabSpacingPreset: '',
   collapsed: false,
 })
 
@@ -260,6 +295,15 @@ const emit = defineEmits<{
   }]
   'applyWorkflowDraft': [draft: AiWorkspaceWorkflowDraft]
   'discardWorkflowDraft': [draft: AiWorkspaceWorkflowDraft]
+  'requestSceneDraft': [payload: {
+    action: WorkflowDraftAction
+    template: 'flowchart' | 'mindmap' | 'er' | 'architecture'
+    architectureView?: WorkflowArchitectureView
+    stylePreset: WorkflowStylePreset
+    layoutPreset: WorkflowLayoutPreset
+  }]
+  'applySceneDraft': [draft: AiWorkspaceSceneDraft]
+  'discardSceneDraft': [draft: AiWorkspaceSceneDraft]
   'openResource': [resourceId: string]
 }>()
 
@@ -301,6 +345,11 @@ const SESSION_VISUALS: Record<WorkspaceSessionVisualType, { icon: string, label:
     label: 'AgentDoc',
     prefixes: ['Loopy AgentDoc', 'Loopy 文稿助手', 'Loopy 文档增强', 'AgentDoc', '文稿助手', '文档增强'],
   },
+  contextual_agent: {
+    icon: 'deployed_code',
+    label: '上下文助手',
+    prefixes: ['Loopy AgentProto', 'Loopy 设计助手', 'Loopy 上下文助手', 'AgentProto', '设计助手', '上下文助手'],
+  },
   final_review: {
     icon: 'task_alt',
     label: '终审助手',
@@ -319,7 +368,7 @@ const inputPlaceholder = computed(() => {
     if (props.projectContextualAssistantPreset === 'design')
       return '描述当前页面结构或交互目标，例如：把评审首页拆成更清晰的页面层级，并说明关键交互。'
     if (props.projectContextualAssistantPreset === 'prototype' && props.projectContextualAssistantLabel === 'AgentProto')
-      return '描述你要梳理的业务流程，例如：把结构源导入、模板生成、导出资产与终审复核的关键节点、责任角色和分支条件整理清楚。'
+      return '描述你要生成或续改的流程/结构，例如：给我生成一个健身流程图，或把当前流程补全成可确认草案。'
     if (props.projectContextualAssistantPreset === 'prototype')
       return '描述原型页面或交互路径，例如：梳理从首页到提交成功页的关键状态和跳转。'
   }
@@ -342,33 +391,35 @@ const WORKFLOW_TEMPLATE_OPTIONS: Array<{ value: 'flowchart' | 'mindmap' | 'er' |
 ]
 
 const WORKFLOW_ARCHITECTURE_VIEW_OPTIONS: Array<{ value: WorkflowArchitectureView, label: string }> = [
-  { value: 'system_context', label: 'system_context' },
-  { value: 'container', label: 'container' },
-  { value: 'dependency_map', label: 'dependency_map' },
+  { value: 'system_context', label: '系统上下文' },
+  { value: 'container', label: '容器图' },
+  { value: 'dependency_map', label: '依赖关系' },
 ]
 
 const WORKFLOW_STYLE_PRESET_OPTIONS: Array<{ value: WorkflowStylePreset, label: string }> = [
-  { value: 'default', label: 'default' },
-  { value: 'minimal', label: 'minimal' },
-  { value: 'architecture', label: 'architecture' },
-  { value: 'workflow', label: 'workflow' },
+  { value: 'default', label: '默认' },
+  { value: 'minimal', label: '极简' },
+  { value: 'architecture', label: '架构' },
+  { value: 'workflow', label: '流程' },
 ]
 
 const WORKFLOW_LAYOUT_PRESET_OPTIONS: Array<{ value: WorkflowLayoutPreset, label: string }> = [
-  { value: 'left_to_right', label: 'left_to_right' },
-  { value: 'top_to_bottom', label: 'top_to_bottom' },
-  { value: 'swimlane', label: 'swimlane' },
+  { value: 'left_to_right', label: '从左到右' },
+  { value: 'top_to_bottom', label: '从上到下' },
+  { value: 'swimlane', label: '泳道' },
 ]
 
 const workflowTemplate = ref<'flowchart' | 'mindmap' | 'er' | 'architecture'>('flowchart')
 const workflowArchitectureView = ref<WorkflowArchitectureView>('system_context')
 const workflowStylePreset = ref<WorkflowStylePreset>('default')
 const workflowLayoutPreset = ref<WorkflowLayoutPreset>('left_to_right')
-const showWorkflowAgentControls = computed(() => {
+const showAgentProtoControls = computed(() => {
   return props.workbenchMode === 'project'
     && props.projectAssistantMode === 'contextual'
-    && props.projectContextualAssistantLabel === 'AgentProto'
+    && props.projectContextualAssistantKey === 'agent_proto'
 })
+const isAgentProtoWorkflowContext = computed(() => showAgentProtoControls.value && Boolean(String(props.workflowResourceId || '').trim()))
+const isAgentProtoSceneContext = computed(() => showAgentProtoControls.value && !isAgentProtoWorkflowContext.value && Boolean(String(props.sceneResourceId || '').trim()))
 
 const pendingChangeRequests = computed(() => {
   return props.changeRequests.filter(item => item.status === 'pending')
@@ -390,6 +441,7 @@ const visibleChatMessageEntries = computed(() => {
       message,
       agentDocDraft: resolveAgentDocDraft(message),
       workflowDraft: resolveWorkflowDraft(message),
+      sceneDraft: resolveSceneDraft(message),
       systemMessage,
       isLive: Boolean(systemMessage && props.chatLoading && index === lastMessageIndex),
       isCompletedSystem: Boolean(systemMessage && index < lastMessageIndex),
@@ -590,6 +642,22 @@ const showSessionHeaderCompact = computed(() => {
   return !showCommentsView.value && !showDocumentAssistView.value && !markdownSidebarEnabled.value
 })
 const showSessionHeaderFlush = computed(() => showDocumentAssistView.value)
+const workspaceRightSessionTabLayoutStyle = computed<Record<string, string>>(() => {
+  const density = resolveWorkspaceTabDensityTokens(props.tabSpacingPreset || 'relaxed')
+  return {
+    '--workspace-right-session-strip-height': density.stripHeight,
+    '--workspace-right-session-tab-min-width': density.minWidth,
+    '--workspace-right-session-tab-padding-x': density.paddingX,
+    '--workspace-right-session-tab-gap': density.triggerGap,
+    '--workspace-right-session-tab-label-size': density.labelSize,
+    '--workspace-right-session-tab-icon-size': density.iconSize,
+    '--workspace-right-session-action-size': density.stripHeight,
+    '--workspace-right-session-action-icon-size': density.iconSize,
+    '--workspace-right-session-active-indicator-inset': density.activeIndicatorInset,
+    '--workspace-right-session-empty-padding-x': density.paddingX,
+    '--workspace-right-session-refresh-padding-x': density.paddingX,
+  }
+})
 const openChatSessions = computed(() => {
   const sessionMap = new Map(props.chatSessions.map(item => [item.id, item] as const))
   const openedSessions = props.openChatSessionIds
@@ -826,6 +894,77 @@ function requestWorkflowDraft(action: WorkflowDraftAction): void {
   })
 }
 
+function isSceneActionAvailable(action: WorkflowDraftAction): boolean {
+  if (action === 'complete')
+    return props.sceneCompleteAvailable
+  if (action === 'refine')
+    return props.sceneRefineAvailable
+  if (action === 'restyle')
+    return props.sceneRestyleAvailable
+  return props.sceneGenerateAvailable
+}
+
+function resolveSceneActionUnavailableReason(action: WorkflowDraftAction): string {
+  if (!props.aiEnabled)
+    return aiDisabledNoticeText.value
+  if (action === 'complete')
+    return String(props.sceneCompleteDisabledReason || '').trim()
+  if (action === 'refine')
+    return String(props.sceneRefineDisabledReason || '').trim()
+  if (action === 'restyle')
+    return String(props.sceneRestyleDisabledReason || '').trim()
+  return String(props.sceneGenerateDisabledReason || '').trim()
+}
+
+function isSceneActionDisabled(action: WorkflowDraftAction): boolean {
+  return props.chatLoading || !props.aiEnabled || !isSceneActionAvailable(action)
+}
+
+function resolveSceneActionButtonTitle(action: WorkflowDraftAction): string {
+  if (!isSceneActionDisabled(action))
+    return ''
+  if (props.chatLoading)
+    return 'AI 运行中，请稍候。'
+  return resolveSceneActionUnavailableReason(action)
+}
+
+function requestSceneDraft(action: WorkflowDraftAction): void {
+  if (isSceneActionDisabled(action))
+    return
+  emit('requestSceneDraft', {
+    action,
+    template: workflowTemplate.value,
+    architectureView: workflowTemplate.value === 'architecture' ? workflowArchitectureView.value : undefined,
+    stylePreset: workflowStylePreset.value,
+    layoutPreset: workflowLayoutPreset.value,
+  })
+}
+
+function isAgentProtoActionDisabled(action: WorkflowDraftAction): boolean {
+  if (isAgentProtoWorkflowContext.value)
+    return isWorkflowActionDisabled(action)
+  if (isAgentProtoSceneContext.value)
+    return isSceneActionDisabled(action)
+  return true
+}
+
+function resolveAgentProtoActionButtonTitle(action: WorkflowDraftAction): string {
+  if (isAgentProtoWorkflowContext.value)
+    return resolveWorkflowActionButtonTitle(action)
+  if (isAgentProtoSceneContext.value)
+    return resolveSceneActionButtonTitle(action)
+  return '当前没有可操作的 AgentProto 画布。'
+}
+
+function requestAgentProtoDraft(action: WorkflowDraftAction): void {
+  if (isAgentProtoWorkflowContext.value) {
+    requestWorkflowDraft(action)
+    return
+  }
+  if (isAgentProtoSceneContext.value)
+    requestSceneDraft(action)
+}
+
 function selectCommentThread(threadId: string): void {
   emit('selectCommentThread', threadId)
 }
@@ -874,6 +1013,18 @@ function resolveWorkflowActionLabel(action: WorkflowDraftAction): string {
 
 function resolveWorkflowTemplateLabel(template: 'flowchart' | 'mindmap' | 'er' | 'architecture'): string {
   return WORKFLOW_TEMPLATE_OPTIONS.find(item => item.value === template)?.label || template
+}
+
+function resolveWorkflowArchitectureViewLabel(view: WorkflowArchitectureView): string {
+  return WORKFLOW_ARCHITECTURE_VIEW_OPTIONS.find(item => item.value === view)?.label || view
+}
+
+function resolveWorkflowStylePresetLabel(preset: WorkflowStylePreset): string {
+  return WORKFLOW_STYLE_PRESET_OPTIONS.find(item => item.value === preset)?.label || preset
+}
+
+function resolveWorkflowLayoutPresetLabel(preset: WorkflowLayoutPreset): string {
+  return WORKFLOW_LAYOUT_PRESET_OPTIONS.find(item => item.value === preset)?.label || preset
 }
 
 function resolveSystemMessageIcon(eventType: 'progress' | 'tool', completed = false): string {
@@ -1025,7 +1176,9 @@ function resolveSessionVisualType(session: AiChatSession): WorkspaceSessionVisua
     return 'issue_discovery'
   if (title.includes('AgentDoc') || title.includes('文稿助手') || title.includes('文档增强'))
     return 'document_assist'
-  if (session.mode === 'auto_optimize' || session.mode === 'issue_discovery' || session.mode === 'defense' || session.mode === 'document_assist')
+  if (title.includes('AgentProto') || title.includes('设计助手') || title.includes('上下文助手'))
+    return 'contextual_agent'
+  if (session.mode === 'auto_optimize' || session.mode === 'issue_discovery' || session.mode === 'defense' || session.mode === 'document_assist' || session.mode === 'contextual_agent')
     return session.mode
   return 'dialog_ask'
 }
@@ -1123,6 +1276,33 @@ function resolveWorkflowDraft(message: ChatMessage): AiWorkspaceWorkflowDraft | 
   return isWorkflowDraft(draft) ? draft : null
 }
 
+function isSceneDraft(value: unknown): value is AiWorkspaceSceneDraft {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return false
+
+  const candidate = value as Record<string, unknown>
+  return (
+    typeof candidate.action === 'string'
+    && typeof candidate.title === 'string'
+    && typeof candidate.summary === 'string'
+    && typeof candidate.resourceId === 'string'
+    && typeof candidate.template === 'string'
+    && typeof candidate.sourceFormat === 'string'
+    && typeof candidate.sourceText === 'string'
+    && typeof candidate.stylePreset === 'string'
+    && typeof candidate.layoutPreset === 'string'
+    && typeof candidate.baseSceneHash === 'string'
+  )
+}
+
+function resolveSceneDraft(message: ChatMessage): AiWorkspaceSceneDraft | null {
+  const metadata = message.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return null
+  const draft = (metadata as Record<string, unknown>).sceneDraft
+  return isSceneDraft(draft) ? draft : null
+}
+
 const latestAgentDocDraftKeyByResource = computed(() => {
   const result = new Map<string, string>()
   for (const entry of visibleChatMessageEntries.value) {
@@ -1147,12 +1327,30 @@ const latestWorkflowDraftKeyByResource = computed(() => {
   return result
 })
 
+const latestSceneDraftKeyByResource = computed(() => {
+  const result = new Map<string, string>()
+  for (const entry of visibleChatMessageEntries.value) {
+    if (!entry.sceneDraft)
+      continue
+    result.set(entry.sceneDraft.resourceId, buildSceneDraftKey(entry.sceneDraft))
+  }
+  return result
+})
+
 const appliedWorkflowDraftKeySet = computed(() => {
   return new Set((props.appliedWorkflowDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
 })
 
 const discardedWorkflowDraftKeySet = computed(() => {
   return new Set((props.discardedWorkflowDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
+})
+
+const appliedSceneDraftKeySet = computed(() => {
+  return new Set((props.appliedSceneDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
+})
+
+const discardedSceneDraftKeySet = computed(() => {
+  return new Set((props.discardedSceneDraftKeys || []).map(item => String(item || '').trim()).filter(Boolean))
 })
 
 function resolveAgentDocDraftStatus(draft: AiWorkspaceDocumentDraft): AgentDocDraftStatus {
@@ -1174,7 +1372,7 @@ function resolveAgentDocDraftStatus(draft: AiWorkspaceDocumentDraft): AgentDocDr
   return 'pending'
 }
 
-function resolveWorkflowDraftStatus(draft: AiWorkspaceWorkflowDraft): WorkflowDraftStatus {
+function resolveWorkflowDraftStatus(draft: AiWorkspaceWorkflowDraft): DraftStatus {
   const draftKey = buildWorkflowDraftKey(draft)
   if (discardedWorkflowDraftKeySet.value.has(draftKey))
     return 'discarded'
@@ -1195,6 +1393,27 @@ function resolveWorkflowDraftStatus(draft: AiWorkspaceWorkflowDraft): WorkflowDr
   return 'pending'
 }
 
+function resolveSceneDraftStatus(draft: AiWorkspaceSceneDraft): DraftStatus {
+  const draftKey = buildSceneDraftKey(draft)
+  if (discardedSceneDraftKeySet.value.has(draftKey))
+    return 'discarded'
+  if (appliedSceneDraftKeySet.value.has(draftKey))
+    return 'applied'
+
+  const latestDraftKey = latestSceneDraftKeyByResource.value.get(draft.resourceId)
+  if (latestDraftKey && latestDraftKey !== draftKey)
+    return 'superseded'
+
+  if (
+    draft.resourceId !== String(props.sceneResourceId || '').trim()
+    || draft.baseSceneHash !== String(props.sceneHash || '').trim()
+  ) {
+    return 'expired'
+  }
+
+  return 'pending'
+}
+
 function resolveAgentDocDraftStatusLabel(status: AgentDocDraftStatus): string {
   if (status === 'applied')
     return '已应用'
@@ -1205,7 +1424,7 @@ function resolveAgentDocDraftStatusLabel(status: AgentDocDraftStatus): string {
   return '待确认，确认后才会替换当前文档内容'
 }
 
-function resolveWorkflowDraftStatusLabel(status: WorkflowDraftStatus): string {
+function resolveWorkflowDraftStatusLabel(status: DraftStatus): string {
   if (status === 'applied')
     return '已应用'
   if (status === 'discarded')
@@ -1217,11 +1436,29 @@ function resolveWorkflowDraftStatusLabel(status: WorkflowDraftStatus): string {
   return '待确认，确认后才会替换当前流程画布'
 }
 
+function resolveSceneDraftStatusLabel(status: DraftStatus): string {
+  if (status === 'applied')
+    return '已应用'
+  if (status === 'discarded')
+    return '已丢弃'
+  if (status === 'superseded')
+    return '已被更新草案替代'
+  if (status === 'expired')
+    return '已过期，请重新生成'
+  return '待确认，确认后才会替换当前自由画布'
+}
+
 function resolveWorkflowDraftBlockedReason(draft: AiWorkspaceWorkflowDraft): string {
   if (resolveWorkflowDraftStatus(draft) !== 'pending')
     return ''
   if (Math.max(0, Number(props.workflowPageCount || 0)) > 1)
     return '多页流程资源当前仅支持预览，不支持直接应用。'
+  return ''
+}
+
+function resolveSceneDraftBlockedReason(draft: AiWorkspaceSceneDraft): string {
+  if (resolveSceneDraftStatus(draft) !== 'pending')
+    return ''
   return ''
 }
 
@@ -1372,6 +1609,20 @@ function requestDiscardWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
   if (resolveWorkflowDraftStatus(draft) === 'applied')
     return
   emit('discardWorkflowDraft', draft)
+}
+
+function requestApplySceneDraft(draft: AiWorkspaceSceneDraft): void {
+  if (resolveSceneDraftStatus(draft) !== 'pending')
+    return
+  if (resolveSceneDraftBlockedReason(draft))
+    return
+  emit('applySceneDraft', draft)
+}
+
+function requestDiscardSceneDraft(draft: AiWorkspaceSceneDraft): void {
+  if (resolveSceneDraftStatus(draft) === 'applied')
+    return
+  emit('discardSceneDraft', draft)
 }
 
 function formatSessionDetailTime(value: string | null | undefined): string {
@@ -1572,6 +1823,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 <template>
   <aside
     class="workspace-right-sidebar border-l border-slate-200 bg-white flex flex-col h-full min-h-0 w-full overflow-hidden"
+    :style="workspaceRightSessionTabLayoutStyle"
     :tabindex="props.collapsed ? -1 : 0"
   >
     <div
@@ -1775,7 +2027,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
         </div>
 
         <div
-          v-if="showWorkflowAgentControls"
+          v-if="showAgentProtoControls"
           class="workspace-workflow-toolbar"
           data-testid="workspace-workflow-toolbar"
         >
@@ -1783,36 +2035,36 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             <button
               class="workspace-workflow-toolbar__action"
               type="button"
-              :disabled="isWorkflowActionDisabled('generate')"
-              :title="resolveWorkflowActionButtonTitle('generate') || undefined"
-              @click="requestWorkflowDraft('generate')"
+              :disabled="isAgentProtoActionDisabled('generate')"
+              :title="resolveAgentProtoActionButtonTitle('generate') || undefined"
+              @click="requestAgentProtoDraft('generate')"
             >
               AI 生成
             </button>
             <button
               class="workspace-workflow-toolbar__action"
               type="button"
-              :disabled="isWorkflowActionDisabled('complete')"
-              :title="resolveWorkflowActionButtonTitle('complete') || undefined"
-              @click="requestWorkflowDraft('complete')"
+              :disabled="isAgentProtoActionDisabled('complete')"
+              :title="resolveAgentProtoActionButtonTitle('complete') || undefined"
+              @click="requestAgentProtoDraft('complete')"
             >
               AI 补全
             </button>
             <button
               class="workspace-workflow-toolbar__action"
               type="button"
-              :disabled="isWorkflowActionDisabled('refine')"
-              :title="resolveWorkflowActionButtonTitle('refine') || undefined"
-              @click="requestWorkflowDraft('refine')"
+              :disabled="isAgentProtoActionDisabled('refine')"
+              :title="resolveAgentProtoActionButtonTitle('refine') || undefined"
+              @click="requestAgentProtoDraft('refine')"
             >
               AI 续改
             </button>
             <button
               class="workspace-workflow-toolbar__action"
               type="button"
-              :disabled="isWorkflowActionDisabled('restyle')"
-              :title="resolveWorkflowActionButtonTitle('restyle') || undefined"
-              @click="requestWorkflowDraft('restyle')"
+              :disabled="isAgentProtoActionDisabled('restyle')"
+              :title="resolveAgentProtoActionButtonTitle('restyle') || undefined"
+              @click="requestAgentProtoDraft('restyle')"
             >
               调样式
             </button>
@@ -2193,10 +2445,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                       <div class="workspace-workflow-draft-card__body">
                         <div class="workspace-workflow-draft-card__meta-grid">
                           <span>图类型：{{ resolveWorkflowTemplateLabel(entry.workflowDraft.template) }}</span>
-                          <span>样式：{{ entry.workflowDraft.stylePreset }}</span>
-                          <span>布局：{{ entry.workflowDraft.layoutPreset }}</span>
+                          <span>样式：{{ resolveWorkflowStylePresetLabel(entry.workflowDraft.stylePreset) }}</span>
+                          <span>布局：{{ resolveWorkflowLayoutPresetLabel(entry.workflowDraft.layoutPreset) }}</span>
                           <span v-if="entry.workflowDraft.template === 'architecture' && entry.workflowDraft.architectureView">
-                            视图：{{ entry.workflowDraft.architectureView }}
+                            视图：{{ resolveWorkflowArchitectureViewLabel(entry.workflowDraft.architectureView) }}
                           </span>
                         </div>
                         <div v-if="resolveWorkflowDraftBlockedReason(entry.workflowDraft)" class="workspace-workflow-draft-card__hint">
@@ -2223,6 +2475,69 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                         </button>
                       </div>
                     </div>
+
+                    <div
+                      v-if="entry.message.role === 'assistant' && entry.sceneDraft"
+                      class="workspace-agent-doc-card workspace-agent-doc-card--workflow"
+                    >
+                      <div class="workspace-agent-doc-card__header">
+                        <div class="workspace-agent-doc-card__header-copy">
+                          <div class="workspace-agent-doc-card__eyebrow">
+                            AgentProto 草案
+                          </div>
+                          <div class="workspace-agent-doc-card__title">
+                            {{ entry.sceneDraft.title || '待确认自由画布草案' }}
+                          </div>
+                          <div v-if="entry.sceneDraft.summary" class="workspace-agent-doc-card__summary">
+                            {{ entry.sceneDraft.summary }}
+                          </div>
+                        </div>
+                        <div class="workspace-agent-doc-card__meta">
+                          <span class="workspace-agent-doc-card__action">
+                            {{ resolveWorkflowActionLabel(entry.sceneDraft.action) }}
+                          </span>
+                          <span
+                            class="workspace-agent-doc-card__status"
+                            :class="`workspace-agent-doc-card__status--${resolveSceneDraftStatus(entry.sceneDraft)}`"
+                          >
+                            {{ resolveSceneDraftStatusLabel(resolveSceneDraftStatus(entry.sceneDraft)) }}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="workspace-workflow-draft-card__body">
+                        <div class="workspace-workflow-draft-card__meta-grid">
+                          <span>图类型：{{ resolveWorkflowTemplateLabel(entry.sceneDraft.template) }}</span>
+                          <span>样式：{{ resolveWorkflowStylePresetLabel(entry.sceneDraft.stylePreset) }}</span>
+                          <span>布局：{{ resolveWorkflowLayoutPresetLabel(entry.sceneDraft.layoutPreset) }}</span>
+                          <span v-if="entry.sceneDraft.template === 'architecture' && entry.sceneDraft.architectureView">
+                            视图：{{ resolveWorkflowArchitectureViewLabel(entry.sceneDraft.architectureView) }}
+                          </span>
+                        </div>
+                        <div v-if="resolveSceneDraftBlockedReason(entry.sceneDraft)" class="workspace-workflow-draft-card__hint">
+                          {{ resolveSceneDraftBlockedReason(entry.sceneDraft) }}
+                        </div>
+                      </div>
+
+                      <div class="workspace-agent-doc-card__footer">
+                        <button
+                          class="workspace-agent-doc-card__apply"
+                          type="button"
+                          :disabled="resolveSceneDraftStatus(entry.sceneDraft) !== 'pending' || Boolean(resolveSceneDraftBlockedReason(entry.sceneDraft))"
+                          @click="requestApplySceneDraft(entry.sceneDraft)"
+                        >
+                          应用到当前自由画布
+                        </button>
+                        <button
+                          class="workspace-agent-doc-card__ghost"
+                          type="button"
+                          :disabled="resolveSceneDraftStatus(entry.sceneDraft) === 'applied'"
+                          @click="requestDiscardSceneDraft(entry.sceneDraft)"
+                        >
+                          丢弃
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -2236,17 +2551,20 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
               <template v-if="props.workbenchMode === 'defense'">
                 当前为 AgentDef 只读对话模式，会围绕比赛状态、评委追问和证据缺口给出下一步建议，不会直接改写项目数据。
               </template>
-              <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'design'">
-                当前为设计助手，只做只读分析，优先帮助你梳理页面层级、布局结构、视觉一致性和交互说明。
-              </template>
-              <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantLabel === 'AgentProto'">
-                当前为 AgentProto，只做只读分析，优先帮助你梳理流程阶段、责任角色、输入输出、分支条件和跨节点衔接。
-              </template>
-              <template v-else-if="props.workbenchMode === 'project' && props.projectAssistantMode === 'contextual' && props.projectContextualAssistantPreset === 'prototype'">
-                当前为原型助手，只做只读分析，优先帮助你梳理页面流转、模块拆分、关键状态和交互路径。
-              </template>
               <template v-else>
                 当前为只读对话模式，只提供解释、澄清与下一步建议，不会写入项目。
+              </template>
+            </div>
+
+            <div v-if="aiMode === 'contextual_agent'" class="text-[11px] text-sky-700 leading-5 p-3 border border-sky-200 rounded bg-sky-50">
+              <template v-if="props.workbenchMode === 'project' && props.projectContextualAssistantKey === 'agent_proto'">
+                当前为 AgentProto，可生成、补全、续改或调样式；结果会先产出草案，确认后才会应用到当前画布。
+              </template>
+              <template v-else-if="props.workbenchMode === 'project' && props.projectContextualAssistantKey === 'design_assistant'">
+                当前为设计助手，可生成结构源草案；确认后再导入到当前设计内容，不会静默覆盖。
+              </template>
+              <template v-else>
+                当前为上下文助手模式，可基于当前资源先生成待确认草案，再决定是否应用。
               </template>
             </div>
 
@@ -2917,7 +3235,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: stretch;
   min-width: 0;
-  height: 40px;
+  height: var(--workspace-right-session-strip-height, 40px);
   background: #fff;
 }
 
@@ -2941,11 +3259,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   display: inline-flex;
   align-items: center;
   height: 100%;
-  padding: 0 var(--workspace-right-space-3);
+  padding: 0 var(--workspace-right-session-empty-padding-x, var(--workspace-right-space-3));
   border-right: 1px solid #e2e8f0;
   background: #fff;
   color: #94a3b8;
-  font-size: var(--workspace-right-font-2xs);
+  font-size: var(--workspace-right-session-tab-label-size, var(--workspace-right-font-xs));
   font-weight: 700;
   white-space: nowrap;
 }
@@ -2963,10 +3281,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: var(--workspace-right-space-1_5);
-  min-width: 132px;
+  gap: var(--workspace-right-session-tab-gap, var(--workspace-right-space-1_5));
+  min-width: var(--workspace-right-session-tab-min-width, 132px);
   height: 100%;
-  padding: 0 var(--workspace-right-space-3_5);
+  padding: 0 var(--workspace-right-session-tab-padding-x, var(--workspace-right-space-3_5));
   border: none;
   border-radius: 0;
   background: #fff;
@@ -2993,9 +3311,9 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 .workspace-right-sidebar__session-tab::after {
   content: '';
   position: absolute;
-  right: var(--workspace-right-space-3);
+  right: var(--workspace-right-session-active-indicator-inset, var(--workspace-right-space-3));
   bottom: 0;
-  left: var(--workspace-right-space-3);
+  left: var(--workspace-right-session-active-indicator-inset, var(--workspace-right-space-3));
   height: 2px;
   background: #3b82f6;
   opacity: 0;
@@ -3012,12 +3330,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-right-sidebar__session-tab-icon {
-  font-size: 16px;
+  font-size: var(--workspace-right-session-tab-icon-size, 16px);
   color: inherit;
 }
 
 .workspace-right-sidebar__session-tab-label {
-  font-size: var(--workspace-right-font-xs);
+  font-size: var(--workspace-right-session-tab-label-size, var(--workspace-right-font-xs));
   font-weight: 600;
   line-height: 1;
 }
@@ -3068,11 +3386,11 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   align-items: center;
   gap: 6px;
   height: 100%;
-  padding: 0 12px;
+  padding: 0 var(--workspace-right-session-refresh-padding-x, 12px);
   border-left: 1px solid #e2e8f0;
   background: #fff;
   color: #64748b;
-  font-size: var(--workspace-right-font-2xs);
+  font-size: var(--workspace-right-session-tab-label-size, var(--workspace-right-font-xs));
   font-weight: 700;
   white-space: nowrap;
 }
@@ -3095,7 +3413,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
+  width: var(--workspace-right-session-action-size, 40px);
   height: 100%;
   padding: 0;
   border: none;
@@ -3127,7 +3445,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 
 .workspace-right-sidebar__session-action-icon,
 .workspace-right-sidebar__session-create-icon {
-  font-size: 16px;
+  font-size: var(--workspace-right-session-action-icon-size, 16px);
 }
 
 .workspace-right-sidebar__session-create {
@@ -3557,7 +3875,12 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   left: calc(-1 * var(--workspace-right-space-2));
   width: 2px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(96, 165, 250, 0.95) 0%, rgba(56, 189, 248, 0.85) 52%, rgba(147, 197, 253, 0.55) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(96, 165, 250, 0.95) 0%,
+    rgba(56, 189, 248, 0.85) 52%,
+    rgba(147, 197, 253, 0.55) 100%
+  );
   opacity: 0;
   transform: scaleY(0.55);
   transform-origin: center;

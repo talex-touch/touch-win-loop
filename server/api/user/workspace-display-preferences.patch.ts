@@ -6,10 +6,27 @@ import { requireAuth } from '~~/server/utils/auth'
 import { withTransaction } from '~~/server/utils/db'
 import { readRuntimeSettings } from '~~/server/utils/env'
 import { isWorkspaceFontSizePreset, isWorkspaceTabSpacingPreset, patchUserWorkspaceDisplayDefaults } from '~~/server/utils/workspace-display-preference-store'
+import { normalizeWorkspaceLeftSidebarWidth, normalizeWorkspaceRightSidebarWidth } from '~~/shared/utils/workspace-layout'
 
 interface PatchWorkspaceDisplayPreferencesBody {
   fontSizePreset?: WorkspaceFontSizePreset | null
   tabSpacingPreset?: WorkspaceTabSpacingPreset | null
+  leftSidebarWidth?: number | null
+  rightSidebarWidth?: number | null
+}
+
+const INVALID_WIDTH = Symbol('invalid-width')
+
+function parseWorkspaceSidebarWidth(
+  value: unknown,
+  normalizer: (value: unknown) => number,
+): number | null | typeof INVALID_WIDTH {
+  if (value === null)
+    return null
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized))
+    return INVALID_WIDTH
+  return normalizer(normalized)
 }
 
 function parsePatchInput(body: PatchWorkspaceDisplayPreferencesBody | null | undefined): WorkspaceDisplayPreferencesPatchInput | null {
@@ -19,7 +36,9 @@ function parsePatchInput(body: PatchWorkspaceDisplayPreferencesBody | null | und
   const patch: WorkspaceDisplayPreferencesPatchInput = {}
   const hasFontSizePreset = Object.prototype.hasOwnProperty.call(body, 'fontSizePreset')
   const hasTabSpacingPreset = Object.prototype.hasOwnProperty.call(body, 'tabSpacingPreset')
-  if (!hasFontSizePreset && !hasTabSpacingPreset)
+  const hasLeftSidebarWidth = Object.prototype.hasOwnProperty.call(body, 'leftSidebarWidth')
+  const hasRightSidebarWidth = Object.prototype.hasOwnProperty.call(body, 'rightSidebarWidth')
+  if (!hasFontSizePreset && !hasTabSpacingPreset && !hasLeftSidebarWidth && !hasRightSidebarWidth)
     return null
 
   if (hasFontSizePreset) {
@@ -40,6 +59,20 @@ function parsePatchInput(body: PatchWorkspaceDisplayPreferencesBody | null | und
       return null
   }
 
+  if (hasLeftSidebarWidth) {
+    const width = parseWorkspaceSidebarWidth(body.leftSidebarWidth, normalizeWorkspaceLeftSidebarWidth)
+    if (width === INVALID_WIDTH)
+      return null
+    patch.leftSidebarWidth = width
+  }
+
+  if (hasRightSidebarWidth) {
+    const width = parseWorkspaceSidebarWidth(body.rightSidebarWidth, normalizeWorkspaceRightSidebarWidth)
+    if (width === INVALID_WIDTH)
+      return null
+    patch.rightSidebarWidth = width
+  }
+
   return patch
 }
 
@@ -52,7 +85,7 @@ export default defineEventHandler(async (event) => {
 
   if (!patch) {
     setResponseStatus(event, 400)
-    return fail('缺少显示偏好字段，或 fontSizePreset / tabSpacingPreset 不在允许范围内。', {
+    return fail('缺少显示偏好字段，或 fontSizePreset / tabSpacingPreset / leftSidebarWidth / rightSidebarWidth 不在允许范围内。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,

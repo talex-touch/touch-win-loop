@@ -6,7 +6,6 @@ import type {
   ProjectIssue,
   ProjectIssueReport,
   ProjectMemberSummary,
-  ProjectOutlineNode,
   ProjectResourceShareDurationPreset,
   ProjectResourceShareVisibility,
   Resource,
@@ -38,6 +37,8 @@ import {
   resourceIconClass,
   resourceSourceLabel,
 } from '~/utils/workspace-left-sidebar-helpers'
+import type { WorkspaceOutlineNode, WorkspaceOutlineRow, WorkspaceOutlineSection } from '~/utils/workspace-outline'
+import { flattenWorkspaceOutlineRows } from '~/utils/workspace-outline'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
@@ -55,15 +56,6 @@ interface FilterPreset {
   level: string
   trackType: string
   topK: number
-}
-
-interface OutlineItem {
-  id: string
-  label: string
-  level: number
-  uploadTask?: ProjectUploadTask
-  statusText?: string
-  progressPercent?: number
 }
 
 interface ResourceAttributeField {
@@ -127,7 +119,7 @@ const props = withDefaults(defineProps<{
   linkedContestBindingCount?: number
   uploadTasks?: ProjectUploadTask[]
   projectMembers?: ProjectMemberSummary[]
-  projectOutline?: ProjectOutlineNode[]
+  outlineSections?: WorkspaceOutlineSection[]
   issueReports?: ProjectIssueReport[]
   projectIssues?: ProjectIssue[]
   issueLoading?: boolean
@@ -135,7 +127,6 @@ const props = withDefaults(defineProps<{
   projectResourcesRefreshing?: boolean
   resourceLibraryLoading?: boolean
   resourceLibraryRefreshing?: boolean
-  projectOutlineLoading?: boolean
   resourceMutating?: boolean
   hasActiveProject?: boolean
   activeProjectId?: string
@@ -161,7 +152,7 @@ const props = withDefaults(defineProps<{
   linkedContestBindingCount: 0,
   uploadTasks: () => [],
   projectMembers: () => [],
-  projectOutline: () => [],
+  outlineSections: () => [],
   issueReports: () => [],
   projectIssues: () => [],
   issueLoading: false,
@@ -169,7 +160,6 @@ const props = withDefaults(defineProps<{
   projectResourcesRefreshing: false,
   resourceLibraryLoading: false,
   resourceLibraryRefreshing: false,
-  projectOutlineLoading: false,
   resourceMutating: false,
   hasActiveProject: false,
   activeProjectId: '',
@@ -219,6 +209,7 @@ const emit = defineEmits<{
   'retryUploadTask': [sessionId: string]
   'cancelUploadTask': [sessionId: string]
   'rebindUploadTask': [sessionId: string]
+  'locateOutlineItem': [node: WorkspaceOutlineNode]
   'requestContextMenu': [payload: ContextMenuRequest]
 }>()
 
@@ -378,6 +369,99 @@ const visibleLibraryResources = computed(() => {
       return context.includes(keyword)
     })
 })
+const outlineSections = computed(() => props.outlineSections)
+const outlineRows = computed<WorkspaceOutlineRow[]>(() => flattenWorkspaceOutlineRows(outlineSections.value))
+const outlineRowsBySectionId = computed(() => {
+  const groups = new Map<WorkspaceOutlineSection['id'], WorkspaceOutlineRow[]>()
+  for (const section of outlineSections.value)
+    groups.set(section.id, [])
+
+  for (const row of outlineRows.value) {
+    const bucket = groups.get(row.sectionId)
+    if (bucket)
+      bucket.push(row)
+    else
+      groups.set(row.sectionId, [row])
+  }
+
+  return groups
+})
+const uploadTaskMap = computed(() => {
+  const map = new Map<string, ProjectUploadTask>()
+  for (const task of visibleUploadTasks.value) {
+    const sessionId = String(task.sessionId || '').trim()
+    if (sessionId)
+      map.set(sessionId, task)
+  }
+  return map
+})
+
+function resolveOutlineSectionRows(sectionId: WorkspaceOutlineSection['id']): WorkspaceOutlineRow[] {
+  return outlineRowsBySectionId.value.get(sectionId) || []
+}
+
+function resolveOutlineRowId(node: WorkspaceOutlineNode, sectionId: WorkspaceOutlineSection['id']): string {
+  return `${sectionId}:${node.id}`
+}
+
+function resolveOutlineNodeIndent(depth: number): string {
+  return resolveTreeDepthOffset(depth)
+}
+
+function resolveOutlineCommandRowId(commandId: string): string {
+  const normalizedCommandId = String(commandId || '').trim()
+  if (!normalizedCommandId)
+    return ''
+
+  const matchedRow = outlineRows.value.find((row) => {
+    if (row.node.id === normalizedCommandId)
+      return true
+    if (row.node.locator.projectOutlineId === normalizedCommandId)
+      return true
+    if (row.node.locator.uploadSessionId === normalizedCommandId)
+      return true
+    return false
+  })
+
+  return matchedRow?.id || ''
+}
+
+function resolveOutlineUploadTask(node: WorkspaceOutlineNode): ProjectUploadTask | null {
+  const sessionId = String(node.locator.uploadSessionId || '').trim()
+  if (!sessionId)
+    return null
+  return uploadTaskMap.value.get(sessionId) || null
+}
+
+function outlineUploadTaskToneClass(node: WorkspaceOutlineNode): string {
+  const task = resolveOutlineUploadTask(node)
+  if (!task)
+    return 'workspace-upload-task-item--running'
+  return uploadTaskToneClass(task)
+}
+
+function outlineUploadTaskProgressStyle(node: WorkspaceOutlineNode): Record<string, string> {
+  const task = resolveOutlineUploadTask(node)
+  if (task)
+    return uploadTaskProgressStyle(task)
+
+  const safePercent = Math.max(0, Math.min(100, Math.round(Number(node.progressPercent || 0))))
+  return {
+    '--workspace-upload-progress-percent': `${safePercent}%`,
+  }
+}
+
+function outlineUploadTaskIndeterminate(node: WorkspaceOutlineNode): boolean {
+  return resolveOutlineUploadTask(node)?.status === 'finalizing'
+}
+
+function selectOutline(row: WorkspaceOutlineRow) {
+  activeOutlineId.value = row.id
+  if (row.node.kind === 'upload_task')
+    return
+  emit('locateOutlineItem', row.node)
+}
+
 function resolveResourceCategoryLabel(category: string): string {
   const normalized = String(category || '').trim() as ResourceCategory
   return resourceCategoryLabels[normalized] || normalized || '未分类'
@@ -654,7 +738,7 @@ function flattenLinkedContestResourceIds(groups: Array<WorkspaceLinkedContestRes
 
 const projectResourceSkeletonRows = [1, 2, 3, 4]
 const resourceLibrarySkeletonRows = [1, 2, 3]
-const projectOutlineSkeletonRows = [1, 2, 3, 4, 5]
+const outlineSkeletonRows = [1, 2, 3]
 
 const recycleRetentionDays = 30
 const projectResourcesHighlightInitialized = ref(false)
@@ -864,60 +948,6 @@ const resourceKnowledgeRows = computed<ResourceAttributeField[]>(() => {
       value: String(status.lastError || '-').trim() || '-',
     },
   ]
-})
-
-function normalizeOutlineLabel(value: string): string {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .replace(/[：:;；，。,、]+$/g, '')
-    .trim()
-}
-
-function flattenProjectOutlineNodes(
-  nodes: ProjectOutlineNode[],
-  parentOrders: number[] = [],
-): OutlineItem[] {
-  const result: OutlineItem[] = []
-  const sorted = [...nodes].sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
-
-  for (const node of sorted) {
-    const order = Math.max(1, Number(node.order || 1))
-    const numberChain = [...parentOrders, order]
-    const title = normalizeOutlineLabel(String(node.title || ''))
-    if (!title)
-      continue
-
-    result.push({
-      id: String(node.id || numberChain.join('.')),
-      label: `${numberChain.join('.')} ${title}`,
-      level: Math.max(0, numberChain.length - 1),
-    })
-
-    if (Array.isArray(node.children) && node.children.length > 0) {
-      result.push(...flattenProjectOutlineNodes(node.children, numberChain))
-    }
-  }
-
-  return result
-}
-
-function buildUploadOutlineItems(tasks: ProjectUploadTask[]): OutlineItem[] {
-  return tasks.map(task => ({
-    id: `upload-outline-${task.sessionId}`,
-    label: task.fileName,
-    level: 0,
-    uploadTask: task,
-    statusText: resolveProjectUploadTaskStatusText(task.status, task.needsFileRebind),
-    progressPercent: task.status === 'finalizing' ? 100 : Math.max(0, Math.min(100, Number(task.progressPercent || 0))),
-  }))
-}
-
-const outlineItems = computed<OutlineItem[]>(() => {
-  const uploadItems = buildUploadOutlineItems(visibleUploadTasks.value)
-  const backendItems = flattenProjectOutlineNodes(props.projectOutline)
-  if (backendItems.length > 0)
-    return [...uploadItems, ...backendItems]
-  return uploadItems
 })
 
 const hasReasoning = computed(() => Boolean(props.aiReasoning?.trim()))
@@ -1131,10 +1161,6 @@ function openResource(resource: Resource) {
   const kind = String(resource.resourceKind || '').trim()
   if (source === 'upload' || source === 'project_upload' || kind === 'binary')
     emit('openResource', resourceId)
-}
-
-function selectOutline(itemId: string) {
-  activeOutlineId.value = itemId
 }
 
 function linkedCategoryStateKey(contestId: string, categoryId: string): string {
@@ -2805,32 +2831,32 @@ watch(libraryModalKeyword, () => {
   resetLibraryListScroll()
 })
 
-watch(outlineItems, (nextItems) => {
-  if (!nextItems.length) {
+watch(outlineRows, (nextRows) => {
+  if (!nextRows.length) {
     if (!pendingOutlineCommandId.value)
       activeOutlineId.value = ''
     return
   }
 
   if (pendingOutlineCommandId.value) {
-    const pendingExists = nextItems.some(item => item.id === pendingOutlineCommandId.value)
-    if (pendingExists) {
-      activeOutlineId.value = pendingOutlineCommandId.value
+    const pendingRowId = resolveOutlineCommandRowId(pendingOutlineCommandId.value)
+    if (pendingRowId) {
+      activeOutlineId.value = pendingRowId
       pendingOutlineCommandId.value = ''
       return
     }
 
-    if (props.projectOutlineLoading)
+    if (outlineSections.value.some(section => section.loading))
       return
 
     pendingOutlineCommandId.value = ''
   }
 
-  const stillExists = nextItems.some(item => item.id === activeOutlineId.value)
+  const stillExists = nextRows.some(row => row.id === activeOutlineId.value)
   if (stillExists)
     return
 
-  activeOutlineId.value = nextItems[0]?.id || ''
+  activeOutlineId.value = nextRows[0]?.id || ''
 }, { immediate: true })
 
 watch(() => props.commandSignal, (next, previous) => {
@@ -2842,7 +2868,9 @@ watch(() => props.commandSignal, (next, previous) => {
     return
 
   pendingOutlineCommandId.value = outlineId
-  activeOutlineId.value = outlineId
+  const rowId = resolveOutlineCommandRowId(outlineId)
+  if (rowId)
+    activeOutlineId.value = rowId
   sectionExpanded.outline = true
 }, { immediate: true })
 
@@ -3536,67 +3564,75 @@ onBeforeUnmount(() => {
           </button>
 
           <div v-show="sectionExpanded.outline">
-            <template v-if="projectOutlineLoading && outlineItems.length === 0">
-              <div
-                v-for="row in projectOutlineSkeletonRows"
-                :key="`outline-skeleton-${row}`"
-                class="workspace-outline-skeleton-row"
-                :class="{ 'workspace-outline-skeleton-row--child': row % 2 === 0 }"
-                aria-hidden="true"
-              >
-                <span class="workspace-outline-skeleton__dot workspace-skeleton" />
-                <div class="workspace-outline-skeleton workspace-skeleton" />
+            <div
+              v-for="section in outlineSections"
+              :key="section.id"
+              class="workspace-outline-section"
+            >
+              <div class="workspace-outline-section__title">
+                {{ section.title }}
               </div>
-            </template>
-            <template v-else>
-              <template
-                v-for="item in outlineItems"
-                :key="item.id"
-              >
-                <div
-                  v-if="item.uploadTask"
-                  class="workspace-outline-item workspace-outline-item--upload"
-                  :class="[
-                    item.level > 0 ? 'workspace-outline-item--child' : '',
-                    uploadTaskToneClass(item.uploadTask),
-                  ]"
-                  :title="item.label"
-                >
-                  <div class="workspace-outline-item__content">
-                    <span class="workspace-outline-item__label">{{ item.label }}</span>
-                    <span class="workspace-outline-item__meta">{{ item.statusText }}</span>
-                  </div>
-                  <span
-                    class="workspace-upload-ring workspace-upload-ring--outline"
-                    :class="[
-                      uploadTaskToneClass(item.uploadTask),
-                      item.uploadTask.status === 'finalizing' ? 'workspace-upload-ring--indeterminate' : '',
-                    ]"
-                    :style="uploadTaskProgressStyle(item.uploadTask)"
-                    aria-hidden="true"
-                  >
-                    <span class="workspace-upload-ring__core" />
-                  </span>
-                </div>
-                <button
-                  v-else
-                  class="workspace-outline-item"
-                  :class="[
-                    item.level > 0 ? 'workspace-outline-item--child' : '',
-                    activeOutlineId === item.id ? 'workspace-outline-item--active' : '',
-                  ]"
-                  type="button"
-                  :title="item.label"
-                  @click="selectOutline(item.id)"
-                >
-                  {{ item.label }}
-                </button>
-              </template>
 
-              <p v-if="outlineItems.length === 0" class="workspace-empty-text">
-                上传文件后自动生成大纲
+              <template v-if="section.loading && resolveOutlineSectionRows(section.id).length === 0">
+                <div
+                  v-for="row in outlineSkeletonRows"
+                  :key="`${section.id}-outline-skeleton-${row}`"
+                  class="workspace-outline-skeleton-row"
+                  :class="{ 'workspace-outline-skeleton-row--child': row % 2 === 0 }"
+                  aria-hidden="true"
+                >
+                  <span class="workspace-outline-skeleton__dot workspace-skeleton" />
+                  <div class="workspace-outline-skeleton workspace-skeleton" />
+                </div>
+              </template>
+              <template v-else-if="resolveOutlineSectionRows(section.id).length > 0">
+                <template
+                  v-for="row in resolveOutlineSectionRows(section.id)"
+                  :key="row.id"
+                >
+                  <div
+                    v-if="row.node.kind === 'upload_task'"
+                    class="workspace-outline-item workspace-outline-item--upload"
+                    :class="outlineUploadTaskToneClass(row.node)"
+                    :style="{ paddingLeft: resolveOutlineNodeIndent(row.node.depth) }"
+                    :title="row.node.label"
+                  >
+                    <div class="workspace-outline-item__content">
+                      <span class="workspace-outline-item__label">{{ row.node.label }}</span>
+                      <span class="workspace-outline-item__meta">{{ row.node.statusText || '处理中' }}</span>
+                    </div>
+                    <span
+                      class="workspace-upload-ring workspace-upload-ring--outline"
+                      :class="[
+                        outlineUploadTaskToneClass(row.node),
+                        outlineUploadTaskIndeterminate(row.node) ? 'workspace-upload-ring--indeterminate' : '',
+                      ]"
+                      :style="outlineUploadTaskProgressStyle(row.node)"
+                      aria-hidden="true"
+                    >
+                      <span class="workspace-upload-ring__core" />
+                    </span>
+                  </div>
+                  <button
+                    v-else
+                    class="workspace-outline-item"
+                    :class="{ 'workspace-outline-item--active': activeOutlineId === row.id }"
+                    :style="{ paddingLeft: resolveOutlineNodeIndent(row.node.depth) }"
+                    type="button"
+                    :title="row.node.meta ? `${row.node.label} · ${row.node.meta}` : row.node.label"
+                    @click="selectOutline(row)"
+                  >
+                    <span class="workspace-outline-item__label">{{ row.node.label }}</span>
+                    <span v-if="row.node.meta" class="workspace-outline-item__meta workspace-outline-item__meta--inline">
+                      {{ row.node.meta }}
+                    </span>
+                  </button>
+                </template>
+              </template>
+              <p v-else class="workspace-empty-text workspace-empty-text--outline">
+                {{ section.emptyText }}
               </p>
-            </template>
+            </div>
           </div>
         </section>
 
