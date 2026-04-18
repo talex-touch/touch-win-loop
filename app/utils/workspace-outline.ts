@@ -23,18 +23,18 @@ import { resolveProjectUploadTaskStatusText } from '~/utils/project-upload'
 
 export type WorkspaceOutlineSurface = 'none' | 'notes' | 'design' | 'workflow' | 'project'
 
-export type WorkspaceOutlineNodeKind =
-  | 'heading'
-  | 'page'
-  | 'frame'
-  | 'element'
-  | 'asset_group'
-  | 'asset'
-  | 'workflow_page'
-  | 'workflow_group'
-  | 'workflow_node'
-  | 'project_outline'
-  | 'upload_task'
+export type WorkspaceOutlineNodeKind
+  = 'heading'
+    | 'page'
+    | 'frame'
+    | 'element'
+    | 'asset_group'
+    | 'asset'
+    | 'workflow_page'
+    | 'workflow_group'
+    | 'workflow_node'
+    | 'project_outline'
+    | 'upload_task'
 
 export interface WorkspaceOutlineLocator {
   surface: WorkspaceOutlineSurface
@@ -80,8 +80,53 @@ export interface WorkspaceOutlineRow {
   node: WorkspaceOutlineNode
 }
 
+const WORKSPACE_OUTLINE_HASH_PREFIX = '#wl-outline='
+const WORKSPACE_OUTLINE_SURFACES: WorkspaceOutlineSurface[] = ['none', 'notes', 'design', 'workflow', 'project']
+const WORKSPACE_OUTLINE_NODE_KINDS: WorkspaceOutlineNodeKind[] = [
+  'heading',
+  'page',
+  'frame',
+  'element',
+  'asset_group',
+  'asset',
+  'workflow_page',
+  'workflow_group',
+  'workflow_node',
+  'project_outline',
+  'upload_task',
+]
+
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function isWorkspaceOutlineSurface(value: unknown): value is WorkspaceOutlineSurface {
+  return WORKSPACE_OUTLINE_SURFACES.includes(value as WorkspaceOutlineSurface)
+}
+
+function isWorkspaceOutlineNodeKind(value: unknown): value is WorkspaceOutlineNodeKind {
+  return WORKSPACE_OUTLINE_NODE_KINDS.includes(value as WorkspaceOutlineNodeKind)
+}
+
+function normalizeWorkspaceOutlineLocator(locator: Partial<WorkspaceOutlineLocator>): WorkspaceOutlineLocator | null {
+  if (!isWorkspaceOutlineSurface(locator.surface) || !isWorkspaceOutlineNodeKind(locator.kind))
+    return null
+
+  return {
+    surface: locator.surface,
+    kind: locator.kind,
+    resourceId: normalizeString(locator.resourceId) || undefined,
+    anchorId: normalizeString(locator.anchorId) || undefined,
+    pageId: normalizeString(locator.pageId) || undefined,
+    frameId: normalizeString(locator.frameId) || undefined,
+    elementId: normalizeString(locator.elementId) || undefined,
+    assetId: normalizeString(locator.assetId) || undefined,
+    workflowPageId: normalizeString(locator.workflowPageId) || undefined,
+    workflowGroupId: normalizeString(locator.workflowGroupId) || undefined,
+    workflowNodeId: normalizeString(locator.workflowNodeId) || undefined,
+    projectOutlineId: normalizeString(locator.projectOutlineId) || undefined,
+    uploadSessionId: normalizeString(locator.uploadSessionId) || undefined,
+  }
 }
 
 function toCompositionModel(document: DesignDocumentV1): CompositionModel {
@@ -590,4 +635,55 @@ export function flattenWorkspaceOutlineRows(
     visit(section, section.items || [])
 
   return rows
+}
+
+export function buildWorkspaceOutlineNavigationHash(node: WorkspaceOutlineNode): string {
+  const anchorId = normalizeString(node.locator.anchorId)
+  if (node.locator.surface === 'notes' && anchorId)
+    return anchorId.startsWith('#') ? anchorId : `#${anchorId}`
+
+  const locator = normalizeWorkspaceOutlineLocator(node.locator)
+  if (!locator)
+    return ''
+
+  const payload = {
+    id: normalizeString(node.id) || `${locator.surface}:${locator.kind}`,
+    kind: node.kind,
+    label: normalizeOutlineText(node.label, '结构项'),
+    locator,
+  }
+
+  return `${WORKSPACE_OUTLINE_HASH_PREFIX}${encodeURIComponent(JSON.stringify(payload))}`
+}
+
+export function parseWorkspaceOutlineNavigationHash(hash: string): WorkspaceOutlineNode | null {
+  const normalizedHash = normalizeString(hash)
+  if (!normalizedHash.startsWith(WORKSPACE_OUTLINE_HASH_PREFIX))
+    return null
+
+  const payloadSource = normalizedHash.slice(WORKSPACE_OUTLINE_HASH_PREFIX.length)
+  if (!payloadSource)
+    return null
+
+  try {
+    const parsed = JSON.parse(decodeURIComponent(payloadSource)) as Partial<WorkspaceOutlineNode> & {
+      locator?: Partial<WorkspaceOutlineLocator>
+    }
+    const locator = normalizeWorkspaceOutlineLocator(parsed.locator || {})
+    if (!locator || !isWorkspaceOutlineNodeKind(parsed.kind))
+      return null
+
+    return {
+      id: normalizeString(parsed.id) || `${locator.surface}:${locator.kind}`,
+      kind: parsed.kind,
+      label: normalizeOutlineText(parsed.label, '结构项'),
+      depth: 0,
+      locator,
+      children: [],
+      meta: normalizeString(parsed.meta) || undefined,
+    }
+  }
+  catch {
+    return null
+  }
 }

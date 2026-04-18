@@ -5,6 +5,7 @@ import { it } from 'vitest'
 
 const WORKSPACE_LEFT_SIDEBAR_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftSidebar.vue')
 const WORKSPACE_RESOURCE_MANAGER_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceResourceManagerPanel.vue')
+const WORKSPACE_SIDEBAR_TREE_ROW_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceSidebarTreeRow.vue')
 const WORKSPACE_LEFT_RAIL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceLeftRail.vue')
 const WORKSPACE_UPLOAD_ASIDE_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceUploadAside.vue')
 const WORKSPACE_UPLOAD_PANEL_FILE = resolve(process.cwd(), 'app/components/workspace/WorkspaceUploadPanel.vue')
@@ -117,7 +118,7 @@ it('资源管理器删除独立系统资料库分组，只保留导入入口', a
   assert.match(source, /workspace-tree-block__title-row workspace-tree-block__title-row--sticky/, '资源管理器未将“项目资料”标题行标记为 sticky')
   assert.match(source, /workspace-tree-block__title-row workspace-tree-block__title-row--sticky[\s\S]*<span>关联比赛资料<\/span>/, '资源管理器未将“关联比赛资料”标题行标记为 sticky')
   assert.match(source, /workspace-tree-block__refresh-indicator/, '资源管理器缺少区块级刷新提示')
-  assert.match(source, /workspace-tree-item-row--fresh/, '资源树缺少新增资源高亮 class')
+  assert.match(source, /:fresh="isProjectResourceHighlighted\(row\.resource\.id\)"/, '资源树未把新增高亮状态透传给统一树行组件')
   assert.match(source, /workspace-library-item--fresh/, '关联资料列表缺少新增项高亮 class')
   assert.match(source, /const libraryListRef = ref<HTMLElement \| null>\(null\)/, '资源管理器缺少项目资源弹窗列表 ref')
   assert.match(source, /function resetLibraryListScroll\(\) \{[\s\S]*libraryListRef\.value\?\.scrollTo\(\{ top: 0 \}\)/, '资源管理器未在项目资源弹窗中重置列表滚动位置')
@@ -143,12 +144,16 @@ it('资源管理器删除独立系统资料库分组，只保留导入入口', a
 })
 
 it('项目资料区在 ResourceManagerPanel 内改为完整树，并支持拖拽排序', async () => {
-  const source = await readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8')
+  const [source, rowComponentSource] = await Promise.all([
+    readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8'),
+    readFile(WORKSPACE_SIDEBAR_TREE_ROW_FILE, 'utf8'),
+  ])
 
   assert.match(source, /interface ProjectResourceTreeNode \{/, '资源管理器未定义树节点结构')
   assert.match(source, /const projectResourceTree = computed<ProjectResourceTreeNode\[\]>\(\(\) => \{/, '资源管理器未构建真实项目资料树')
   assert.match(source, /const visibleResources = computed<ProjectResourceTreeRow\[\]>\(\(\) => \{/, '资源管理器未将树拍平成可视行')
   assert.doesNotMatch(source, /selectedResources\.slice\(0,\s*10\)/, '资源管理器仍然截断前 10 个资源')
+  assert.match(source, /<WorkspaceSidebarTreeRow\b/, '资源管理器未复用统一树行组件')
   assert.match(source, /createChildCollaborativeDoc/, '资源管理器未提供子协作文档创建动作')
   assert.match(source, /openChildUpload/, '资源管理器未提供上传到指定节点动作')
   assert.match(source, /buildProjectResourceTreePatchPayload/, '资源管理器未构建拖拽排序 payload')
@@ -156,12 +161,15 @@ it('项目资料区在 ResourceManagerPanel 内改为完整树，并支持拖拽
   assert.match(source, /workspace-tree-dropzone/, '资源管理器未渲染拖拽落点区域')
   assert.match(source, /function resolveTreeDepthOffset\(depth: number\): string \{[\s\S]*--workspace-left-tree-indent-step/, '资源管理器未将树缩进接入左栏密度变量')
   assert.doesNotMatch(source, /Math\.max\(0, row\.depth\) \* 14/, '资源管理器仍写死树缩进像素值')
+  assert.match(rowComponentSource, /workspace-tree-item-row--fresh/, '统一树行组件未承接行级 fresh 状态 class')
 })
 
 it('左栏结构大纲不再用本地推断结果充当真实大纲', async () => {
-  const [sidebarSource, resourceManagerSource] = await Promise.all([
+  const [sidebarSource, resourceManagerSource, styleSource, rowComponentSource] = await Promise.all([
     readFile(WORKSPACE_LEFT_SIDEBAR_FILE, 'utf8'),
     readFile(WORKSPACE_RESOURCE_MANAGER_PANEL_FILE, 'utf8'),
+    readFile(WORKSPACE_LEFT_SIDEBAR_STYLE_FILE, 'utf8'),
+    readFile(WORKSPACE_SIDEBAR_TREE_ROW_FILE, 'utf8'),
   ])
 
   assert.match(sidebarSource, /outlineSections\?: WorkspaceOutlineSection\[\]/, 'WorkspaceLeftSidebar 缺少统一结构大纲 section 入参')
@@ -174,6 +182,14 @@ it('左栏结构大纲不再用本地推断结果充当真实大纲', async () =
   assert.match(resourceManagerSource, /workspace-outline-section__title/, '资源管理器未渲染大纲分区标题')
   assert.match(resourceManagerSource, /section\.emptyText/, '资源管理器未按分区渲染空状态')
   assert.match(resourceManagerSource, /emit\('locateOutlineItem', row\.node\)/, '资源管理器未将点击行为收敛到统一定位事件')
+  assert.match(resourceManagerSource, /buildWorkspaceOutlineNavigationHash/, '资源管理器未复用统一 outline 深链构造器')
+  assert.match(resourceManagerSource, /function requestOutlineItemMenu\(row: WorkspaceOutlineRow, anchorEl: HTMLElement \| null\): void \{/, '资源管理器缺少结构项更多菜单入口')
+  assert.match(resourceManagerSource, /workspace-tree-item--stacked/, '资源管理器未将结构大纲切到统一树行按钮样式')
+  assert.match(resourceManagerSource, /data-testid="workspace-outline-item-link-trigger"/, '资源管理器缺少结构项定位链接快捷按钮')
+  assert.match(resourceManagerSource, /data-testid="workspace-outline-item-menu-trigger"/, '资源管理器缺少结构项更多操作快捷按钮')
+  assert.match(rowComponentSource, /workspace-resource-tree-row__main--with-actions/, '统一树行组件未承接可插槽动作区')
+  assert.match(styleSource, /\.workspace-tree-item--stacked \{/, '左栏样式缺少统一的纵向内容树行样式')
+  assert.match(styleSource, /\.workspace-resource-actions--cluster \{/, '左栏样式缺少统一的多动作按钮布局')
 })
 
 it('left rail 图标收窄并改成轻量 popover 名称提示', async () => {

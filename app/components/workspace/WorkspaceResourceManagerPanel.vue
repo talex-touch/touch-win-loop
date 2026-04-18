@@ -38,7 +38,10 @@ import {
   resourceSourceLabel,
 } from '~/utils/workspace-left-sidebar-helpers'
 import type { WorkspaceOutlineNode, WorkspaceOutlineRow, WorkspaceOutlineSection } from '~/utils/workspace-outline'
-import { flattenWorkspaceOutlineRows } from '~/utils/workspace-outline'
+import {
+  buildWorkspaceOutlineNavigationHash,
+  flattenWorkspaceOutlineRows,
+} from '~/utils/workspace-outline'
 import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 
 type WorkspaceLeftModuleId = 'resource_manager' | 'analysis' | 'project_config' | 'issue_center'
@@ -315,6 +318,7 @@ const renamingResourceDraft = ref('')
 const activeOutlineId = ref('')
 const pendingOutlineCommandId = ref('')
 const resourceActionOpenId = ref('')
+const outlineActionMenuOpenId = ref('')
 const projectResourceBatchEditMode = ref(false)
 const projectResourceBatchSelectedIds = ref<string[]>([])
 const projectResourceBatchMenuOpen = ref(false)
@@ -405,7 +409,7 @@ function resolveOutlineRowId(node: WorkspaceOutlineNode, sectionId: WorkspaceOut
 }
 
 function resolveOutlineNodeIndent(depth: number): string {
-  return resolveTreeDepthOffset(depth)
+  return `calc(var(--workspace-left-tree-row-padding-left, 10px) + ${resolveTreeDepthOffset(depth)})`
 }
 
 function resolveOutlineCommandRowId(commandId: string): string {
@@ -453,6 +457,140 @@ function outlineUploadTaskProgressStyle(node: WorkspaceOutlineNode): Record<stri
 
 function outlineUploadTaskIndeterminate(node: WorkspaceOutlineNode): boolean {
   return resolveOutlineUploadTask(node)?.status === 'finalizing'
+}
+
+function copyTextWithFallback(text: string): boolean {
+  if (!import.meta.client || !text)
+    return false
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  textarea.style.top = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  }
+  catch {
+    copied = false
+  }
+
+  document.body.removeChild(textarea)
+  return copied
+}
+
+async function writeTextToClipboard(text: string): Promise<boolean> {
+  if (!text)
+    return false
+
+  if (import.meta.client && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+    catch {
+      // ignore clipboard permission errors and fallback to execCommand
+    }
+  }
+
+  return copyTextWithFallback(text)
+}
+
+function buildOutlineItemShareUrl(node: WorkspaceOutlineNode): string {
+  if (!import.meta.client)
+    return ''
+
+  const targetHash = buildWorkspaceOutlineNavigationHash(node)
+  if (!targetHash)
+    return ''
+
+  const baseUrl = window.location.href.replace(/#.*$/, '')
+  return `${baseUrl}${targetHash}`
+}
+
+async function copyOutlineItemLink(node: WorkspaceOutlineNode): Promise<void> {
+  const shareUrl = buildOutlineItemShareUrl(node)
+  if (!shareUrl) {
+    Message.error('当前结构项暂不支持生成定位链接。')
+    return
+  }
+
+  const copied = await writeTextToClipboard(shareUrl)
+  if (copied)
+    Message.success('定位链接已复制。')
+  else
+    Message.error('复制定位链接失败，请检查浏览器权限。')
+}
+
+async function copyOutlineItemLabel(node: WorkspaceOutlineNode): Promise<void> {
+  const copied = await writeTextToClipboard(String(node.label || '').trim())
+  if (copied)
+    Message.success('结构标题已复制。')
+  else
+    Message.error('复制结构标题失败，请检查浏览器权限。')
+}
+
+function buildOutlineItemMenuItems(): ContextMenuItem[] {
+  return [
+    {
+      key: 'copyLink',
+      label: '复制定位链接',
+      icon: 'link',
+    },
+    {
+      key: 'copyLabel',
+      label: '复制标题',
+      icon: 'content_copy',
+    },
+    {
+      key: 'locate',
+      label: '定位到这里',
+      icon: 'my_location',
+      separatorBefore: true,
+    },
+  ]
+}
+
+function requestOutlineItemMenu(row: WorkspaceOutlineRow, anchorEl: HTMLElement | null): void {
+  if (row.node.kind === 'upload_task')
+    return
+
+  outlineActionMenuOpenId.value = row.id
+  emit('requestContextMenu', {
+    source: 'workspace-outline-item',
+    items: buildOutlineItemMenuItems(),
+    anchorEl,
+    restoreFocusEl: anchorEl,
+    onSelect: (key) => {
+      try {
+        switch (key) {
+          case 'copyLink':
+            void copyOutlineItemLink(row.node)
+            return
+          case 'copyLabel':
+            void copyOutlineItemLabel(row.node)
+            return
+          case 'locate':
+            selectOutline(row)
+        }
+      }
+      finally {
+        closeInlineMenuMarkers()
+      }
+    },
+    onClose: closeInlineMenuMarkers,
+  })
+}
+
+function handleOutlineItemMenuTrigger(row: WorkspaceOutlineRow, event: MouseEvent): void {
+  requestOutlineItemMenu(row, event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
 }
 
 function selectOutline(row: WorkspaceOutlineRow) {
@@ -1781,6 +1919,7 @@ function closeInlineMenuMarkers(): void {
   resourceActionOpenId.value = ''
   projectResourceBatchMenuOpen.value = false
   projectResourceAddMenuOpen.value = false
+  outlineActionMenuOpenId.value = ''
 }
 
 function isKeyboardContextMenuEvent(event: KeyboardEvent): boolean {
@@ -3256,89 +3395,81 @@ onBeforeUnmount(() => {
                   @drop="handleResourceDrop(row.resource.id, 'before', $event)"
                 />
 
-                <div
-                  class="workspace-tree-item-row"
-                  :class="{
-                    'workspace-tree-item-row--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId,
-                    'workspace-tree-item-row--batch-selected': projectResourceBatchEditMode && isProjectResourceBatchSelected(row.resource.id),
-                    'workspace-tree-item-row--menu-open': resourceActionOpenId === row.resource.id,
-                    'workspace-tree-item-row--drop-inside': dragOverResourceId === row.resource.id && dragOverPosition === 'inside',
-                    'workspace-tree-item-row--fresh': isProjectResourceHighlighted(row.resource.id),
-                  }"
+                <WorkspaceSidebarTreeRow
+                  :active="!projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId"
+                  :batch-selected="projectResourceBatchEditMode && isProjectResourceBatchSelected(row.resource.id)"
+                  :menu-open="resourceActionOpenId === row.resource.id"
+                  :drop-inside="dragOverResourceId === row.resource.id && dragOverPosition === 'inside'"
+                  :fresh="isProjectResourceHighlighted(row.resource.id)"
+                  :padding-left="resolveTreeDepthOffset(row.depth)"
                   @contextmenu="handleResourceItemContextMenu(row.resource.id, $event)"
                   @dragover="handleResourceDragOver(row.resource.id, 'inside', $event)"
                   @dragleave="handleResourceDragLeave(row.resource.id, 'inside')"
                   @drop="handleResourceDrop(row.resource.id, 'inside', $event)"
                 >
-                  <div
-                    class="workspace-resource-tree-row__main"
-                    :class="{ 'workspace-resource-tree-row__main--with-actions': !projectResourceBatchEditMode }"
-                    :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }"
+                  <label v-if="projectResourceBatchEditMode" class="workspace-tree-item__checkbox" :title="`选择 ${resourceDisplayTitle(row.resource)}`">
+                    <input
+                      class="workspace-tree-item__checkbox-input"
+                      type="checkbox"
+                      :checked="isProjectResourceBatchSelected(row.resource.id)"
+                      @click.stop
+                      @change="setProjectResourceBatchSelection(row.resource.id, ($event.target as HTMLInputElement).checked)"
+                    >
+                  </label>
+                  <button
+                    class="workspace-tree-item__expander"
+                    :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
+                    type="button"
+                    :disabled="!row.hasChildren"
+                    @click.stop="toggleProjectResourceExpansion(row.resource.id)"
                   >
-                    <label v-if="projectResourceBatchEditMode" class="workspace-tree-item__checkbox" :title="`选择 ${resourceDisplayTitle(row.resource)}`">
-                      <input
-                        class="workspace-tree-item__checkbox-input"
-                        type="checkbox"
-                        :checked="isProjectResourceBatchSelected(row.resource.id)"
-                        @click.stop
-                        @change="setProjectResourceBatchSelection(row.resource.id, ($event.target as HTMLInputElement).checked)"
-                      >
-                    </label>
-                    <button
-                      class="workspace-tree-item__expander"
-                      :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
-                      type="button"
-                      :disabled="!row.hasChildren"
-                      @click.stop="toggleProjectResourceExpansion(row.resource.id)"
-                    >
-                      <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
-                        keyboard_arrow_down
-                      </span>
-                    </button>
+                    <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
+                      keyboard_arrow_down
+                    </span>
+                  </button>
 
-                    <div
-                      v-if="renamingResourceId === row.resource.id"
-                      class="workspace-tree-item workspace-tree-item--active"
+                  <div
+                    v-if="renamingResourceId === row.resource.id"
+                    class="workspace-tree-item workspace-tree-item--active"
+                  >
+                    <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
+                      {{ resourceIcon(row.resource) }}
+                    </span>
+                    <input
+                      v-model="renamingResourceDraft"
+                      :data-resource-rename-id="row.resource.id"
+                      class="text-[12px] text-slate-700 font-medium px-2 py-1 outline-none border border-blue-200 rounded-lg bg-white flex-1 min-w-0 ring-0 focus:border-blue-400"
+                      type="text"
+                      @blur="submitRenamingResource"
+                      @click.stop
+                      @keydown.enter.prevent="submitRenamingResource"
+                      @keydown.esc.prevent="cancelRenamingResource"
                     >
-                      <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
-                        {{ resourceIcon(row.resource) }}
-                      </span>
-                      <input
-                        v-model="renamingResourceDraft"
-                        :data-resource-rename-id="row.resource.id"
-                        class="text-[12px] text-slate-700 font-medium px-2 py-1 outline-none border border-blue-200 rounded-lg bg-white flex-1 min-w-0 ring-0 focus:border-blue-400"
-                        type="text"
-                        @blur="submitRenamingResource"
-                        @click.stop
-                        @keydown.enter.prevent="submitRenamingResource"
-                        @keydown.esc.prevent="cancelRenamingResource"
-                      >
-                    </div>
-                    <button
-                      v-else
-                      class="workspace-tree-item"
-                      :class="{ 'workspace-tree-item--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId }"
-                      :title="resourceDisplayTitle(row.resource)"
-                      type="button"
-                      aria-haspopup="menu"
-                      :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
-                      data-context-menu-scope="resource"
-                      :data-context-resource-id="row.resource.id"
-                      :draggable="!projectResourceBatchEditMode"
-                      @dragstart="handleResourceDragStart(row.resource.id, $event)"
-                      @dragend="handleResourceDragEnd"
-                      @click="handleProjectResourcePrimaryAction(row.resource)"
-                      @dblclick.stop.prevent="startRenamingResource(row.resource.id)"
-                      @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
-                    >
-                      <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
-                        {{ resourceIcon(row.resource) }}
-                      </span>
-                      <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
-                    </button>
                   </div>
+                  <button
+                    v-else
+                    class="workspace-tree-item"
+                    :class="{ 'workspace-tree-item--active': !projectResourceBatchEditMode && !suppressResourceSelection && row.resource.id === activeResourceId }"
+                    :title="resourceDisplayTitle(row.resource)"
+                    type="button"
+                    aria-haspopup="menu"
+                    :aria-expanded="resourceActionOpenId === row.resource.id ? 'true' : 'false'"
+                    data-context-menu-scope="resource"
+                    :data-context-resource-id="row.resource.id"
+                    :draggable="!projectResourceBatchEditMode"
+                    @dragstart="handleResourceDragStart(row.resource.id, $event)"
+                    @dragend="handleResourceDragEnd"
+                    @click="handleProjectResourcePrimaryAction(row.resource)"
+                    @dblclick.stop.prevent="startRenamingResource(row.resource.id)"
+                    @keydown="requestResourceActionMenuByKeyboard(row.resource.id, $event)"
+                  >
+                    <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
+                      {{ resourceIcon(row.resource) }}
+                    </span>
+                    <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
+                  </button>
 
-                  <div v-if="!projectResourceBatchEditMode" class="workspace-resource-actions">
+                  <template v-if="!projectResourceBatchEditMode" #actions>
                     <button
                       class="workspace-resource-actions__trigger"
                       type="button"
@@ -3352,8 +3483,8 @@ onBeforeUnmount(() => {
                     >
                       <span class="material-symbols-outlined">more_horiz</span>
                     </button>
-                  </div>
-                </div>
+                  </template>
+                </WorkspaceSidebarTreeRow>
 
                 <div
                   v-if="!projectResourceBatchEditMode"
@@ -3394,43 +3525,36 @@ onBeforeUnmount(() => {
               :key="`meeting-${row.resource.id}`"
               class="workspace-resource-tree-entry"
             >
-              <div
-                class="workspace-tree-item-row"
-                :class="{
-                  'workspace-tree-item-row--active': !suppressResourceSelection && row.resource.id === activeResourceId,
-                  'workspace-tree-item-row--fresh': isProjectResourceHighlighted(row.resource.id),
-                }"
+              <WorkspaceSidebarTreeRow
+                :active="!suppressResourceSelection && row.resource.id === activeResourceId"
+                :fresh="isProjectResourceHighlighted(row.resource.id)"
+                :padding-left="resolveTreeDepthOffset(row.depth)"
               >
-                <div
-                  class="workspace-resource-tree-row__main"
-                  :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }"
+                <button
+                  class="workspace-tree-item__expander"
+                  :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
+                  type="button"
+                  :disabled="!row.hasChildren"
+                  @click.stop="toggleProjectResourceExpansion(row.resource.id)"
                 >
-                  <button
-                    class="workspace-tree-item__expander"
-                    :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
-                    type="button"
-                    :disabled="!row.hasChildren"
-                    @click.stop="toggleProjectResourceExpansion(row.resource.id)"
-                  >
-                    <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
-                      keyboard_arrow_down
-                    </span>
-                  </button>
+                  <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
+                    keyboard_arrow_down
+                  </span>
+                </button>
 
-                  <button
-                    class="workspace-tree-item"
-                    :class="{ 'workspace-tree-item--active': !suppressResourceSelection && row.resource.id === activeResourceId }"
-                    :title="resourceDisplayTitle(row.resource)"
-                    type="button"
-                    @click="openResource(row.resource)"
-                  >
-                    <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
-                      {{ resourceIcon(row.resource) }}
-                    </span>
-                    <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
-                  </button>
-                </div>
-              </div>
+                <button
+                  class="workspace-tree-item"
+                  :class="{ 'workspace-tree-item--active': !suppressResourceSelection && row.resource.id === activeResourceId }"
+                  :title="resourceDisplayTitle(row.resource)"
+                  type="button"
+                  @click="openResource(row.resource)"
+                >
+                  <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
+                    {{ resourceIcon(row.resource) }}
+                  </span>
+                  <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
+                </button>
+              </WorkspaceSidebarTreeRow>
             </div>
 
             <p v-if="visibleMeetingNoteResources.length === 0" class="workspace-empty-text">
@@ -3597,9 +3721,9 @@ onBeforeUnmount(() => {
                     :style="{ paddingLeft: resolveOutlineNodeIndent(row.node.depth) }"
                     :title="row.node.label"
                   >
-                    <div class="workspace-outline-item__content">
-                      <span class="workspace-outline-item__label">{{ row.node.label }}</span>
-                      <span class="workspace-outline-item__meta">{{ row.node.statusText || '处理中' }}</span>
+                    <div class="workspace-tree-item__content">
+                      <span class="workspace-tree-item__label">{{ row.node.label }}</span>
+                      <span class="workspace-tree-item__meta">{{ row.node.statusText || '处理中' }}</span>
                     </div>
                     <span
                       class="workspace-upload-ring workspace-upload-ring--outline"
@@ -3613,20 +3737,51 @@ onBeforeUnmount(() => {
                       <span class="workspace-upload-ring__core" />
                     </span>
                   </div>
-                  <button
+                  <WorkspaceSidebarTreeRow
                     v-else
-                    class="workspace-outline-item"
-                    :class="{ 'workspace-outline-item--active': activeOutlineId === row.id }"
-                    :style="{ paddingLeft: resolveOutlineNodeIndent(row.node.depth) }"
-                    type="button"
-                    :title="row.node.meta ? `${row.node.label} · ${row.node.meta}` : row.node.label"
-                    @click="selectOutline(row)"
+                    :active="activeOutlineId === row.id"
+                    :menu-open="outlineActionMenuOpenId === row.id"
+                    :padding-left="resolveOutlineNodeIndent(row.node.depth)"
                   >
-                    <span class="workspace-outline-item__label">{{ row.node.label }}</span>
-                    <span v-if="row.node.meta" class="workspace-outline-item__meta workspace-outline-item__meta--inline">
-                      {{ row.node.meta }}
-                    </span>
-                  </button>
+                    <button
+                      class="workspace-tree-item workspace-tree-item--stacked"
+                      :class="{ 'workspace-tree-item--active': activeOutlineId === row.id }"
+                      type="button"
+                      :title="row.node.meta ? `${row.node.label} · ${row.node.meta}` : row.node.label"
+                      @click="selectOutline(row)"
+                    >
+                      <span class="workspace-tree-item__lead-spacer" aria-hidden="true" />
+                      <span class="workspace-tree-item__content">
+                        <span class="workspace-tree-item__label">{{ row.node.label }}</span>
+                        <span v-if="row.node.meta" class="workspace-tree-item__meta">
+                          {{ row.node.meta }}
+                        </span>
+                      </span>
+                    </button>
+
+                    <template #actions>
+                      <button
+                        class="workspace-resource-actions__trigger"
+                        type="button"
+                        :aria-label="`复制 ${row.node.label} 的定位链接`"
+                        :title="`复制 ${row.node.label} 的定位链接`"
+                        data-testid="workspace-outline-item-link-trigger"
+                        @click.stop="void copyOutlineItemLink(row.node)"
+                      >
+                        <span class="material-symbols-outlined" aria-hidden="true">link</span>
+                      </button>
+                      <button
+                        class="workspace-resource-actions__trigger"
+                        type="button"
+                        :aria-label="`${row.node.label} 的更多操作`"
+                        title="更多操作"
+                        data-testid="workspace-outline-item-menu-trigger"
+                        @click.stop="handleOutlineItemMenuTrigger(row, $event)"
+                      >
+                        <span class="material-symbols-outlined" aria-hidden="true">more_horiz</span>
+                      </button>
+                    </template>
+                  </WorkspaceSidebarTreeRow>
                 </template>
               </template>
               <p v-else class="workspace-empty-text workspace-empty-text--outline">
