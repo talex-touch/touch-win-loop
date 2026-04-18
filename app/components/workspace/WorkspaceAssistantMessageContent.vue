@@ -7,7 +7,7 @@ import type {
   ProjectKnowledgeSourceStatus,
 } from '~~/shared/types/domain'
 import type { ProjectKnowledgeMessagePayload } from '~~/shared/types/domain-legacy'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   message: ChatMessage
@@ -62,6 +62,8 @@ const knowledge = computed(() => {
 
 const visibleCitations = computed(() => knowledge.value?.citations || [])
 const hasKnowledgePanel = computed(() => Boolean(knowledge.value?.warning) || visibleCitations.value.length > 0)
+const citationsExpanded = ref(false)
+const citationToggleLabel = computed(() => `资料引用(${visibleCitations.value.length})`)
 
 function buildCitationMeta(citation: ProjectKnowledgeCitation): string {
   const parts: string[] = []
@@ -115,66 +117,83 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
         v-if="visibleCitations.length > 0"
         class="workspace-assistant-message-content__citations"
       >
-        <div class="workspace-assistant-message-content__citations-header">
-          <span>资料引用</span>
+        <button
+          class="workspace-assistant-message-content__citation-toggle"
+          :class="{ 'workspace-assistant-message-content__citation-toggle--expanded': citationsExpanded }"
+          type="button"
+          data-testid="workspace-assistant-citation-toggle"
+          :aria-expanded="citationsExpanded ? 'true' : 'false'"
+          @click="citationsExpanded = !citationsExpanded"
+        >
+          <span class="workspace-assistant-message-content__citation-toggle-copy">
+            {{ citationToggleLabel }}
+          </span>
           <span
             v-if="knowledge?.usedFallback"
             class="workspace-assistant-message-content__fallback-badge"
           >
             回退摘要
           </span>
-        </div>
+          <span class="material-symbols-outlined workspace-assistant-message-content__citation-toggle-icon">
+            chevron_right
+          </span>
+        </button>
 
-        <div class="workspace-assistant-message-content__citation-list">
-          <component
-            :is="citation.sourceResourceId ? 'button' : 'div'"
-            v-for="citation in visibleCitations"
-            :key="`${citation.chunkId}-${citation.label}`"
-            class="workspace-assistant-message-content__citation-card"
-            :class="{
-              'workspace-assistant-message-content__citation-card--actionable': citation.sourceResourceId,
-            }"
-            :type="citation.sourceResourceId ? 'button' : undefined"
-            data-testid="workspace-assistant-citation-card"
-            @click="openCitationResource(citation)"
+        <Transition name="workspace-assistant-citation-expand">
+          <div
+            v-if="citationsExpanded"
+            class="workspace-assistant-message-content__citation-list"
           >
-            <div class="workspace-assistant-message-content__citation-title-row">
-              <div class="workspace-assistant-message-content__citation-title-stack">
-                <strong class="workspace-assistant-message-content__citation-title">
-                  {{ citation.label || citation.resourceTitle }}
-                </strong>
-                <div class="workspace-assistant-message-content__citation-badges">
-                  <span
-                    v-if="buildCitationProjectionLabel(citation)"
-                    class="workspace-assistant-message-content__citation-projection"
-                    data-testid="workspace-assistant-citation-projection"
-                  >
-                    {{ buildCitationProjectionLabel(citation) }}
-                  </span>
-                  <span
-                    v-if="citation.sourceStatus === 'stale'"
-                    class="workspace-assistant-message-content__citation-stale"
-                    data-testid="workspace-assistant-citation-stale"
-                  >
-                    stale
-                  </span>
+            <component
+              :is="citation.sourceResourceId ? 'button' : 'div'"
+              v-for="citation in visibleCitations"
+              :key="`${citation.chunkId}-${citation.label}`"
+              class="workspace-assistant-message-content__citation-card"
+              :class="{
+                'workspace-assistant-message-content__citation-card--actionable': citation.sourceResourceId,
+              }"
+              :type="citation.sourceResourceId ? 'button' : undefined"
+              data-testid="workspace-assistant-citation-card"
+              @click="openCitationResource(citation)"
+            >
+              <div class="workspace-assistant-message-content__citation-title-row">
+                <div class="workspace-assistant-message-content__citation-title-stack">
+                  <strong class="workspace-assistant-message-content__citation-title">
+                    {{ citation.label || citation.resourceTitle }}
+                  </strong>
+                  <div class="workspace-assistant-message-content__citation-badges">
+                    <span
+                      v-if="buildCitationProjectionLabel(citation)"
+                      class="workspace-assistant-message-content__citation-projection"
+                      data-testid="workspace-assistant-citation-projection"
+                    >
+                      {{ buildCitationProjectionLabel(citation) }}
+                    </span>
+                    <span
+                      v-if="citation.sourceStatus === 'stale'"
+                      class="workspace-assistant-message-content__citation-stale"
+                      data-testid="workspace-assistant-citation-stale"
+                    >
+                      stale
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div
-              v-if="buildCitationMeta(citation)"
-              class="workspace-assistant-message-content__citation-meta"
-            >
-              {{ buildCitationMeta(citation) }}
-            </div>
-            <div
-              v-if="citation.quote"
-              class="workspace-assistant-message-content__citation-quote"
-            >
-              {{ citation.quote }}
-            </div>
-          </component>
-        </div>
+              <div
+                v-if="buildCitationMeta(citation)"
+                class="workspace-assistant-message-content__citation-meta"
+              >
+                {{ buildCitationMeta(citation) }}
+              </div>
+              <div
+                v-if="citation.quote"
+                class="workspace-assistant-message-content__citation-quote"
+              >
+                {{ citation.quote }}
+              </div>
+            </component>
+          </div>
+        </Transition>
       </div>
     </section>
   </div>
@@ -182,42 +201,83 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
 
 <style scoped>
 .workspace-assistant-message-content {
+  --workspace-assistant-gap: var(--wl-ws-space-2_5, 10px);
+  --workspace-assistant-gap-tight: var(--wl-ws-space-2, 8px);
+  --workspace-assistant-padding-x: var(--wl-ws-space-2_5, 10px);
+  --workspace-assistant-padding-y: var(--wl-ws-space-2, 8px);
+  --workspace-assistant-card-padding-x: var(--wl-ws-space-3, 12px);
+  --workspace-assistant-card-padding-y: var(--wl-ws-space-2_5, 10px);
+  --workspace-assistant-font-2xs: var(--wl-ws-font-2xs, 10px);
+  --workspace-assistant-font-xs: var(--wl-ws-font-xs, 11px);
+  --workspace-assistant-font-sm: var(--wl-ws-font-sm, 12px);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--workspace-assistant-gap);
   min-width: 0;
 }
 
 .workspace-assistant-message-content__knowledge {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--workspace-assistant-gap-tight);
 }
 
 .workspace-assistant-message-content__warning {
-  padding: 8px 10px;
+  padding: var(--workspace-assistant-padding-y) var(--workspace-assistant-padding-x);
   border: 1px solid rgba(245, 158, 11, 0.3);
   border-radius: 12px;
   background: rgba(251, 191, 36, 0.12);
   color: #92400e;
-  font-size: 11px;
+  font-size: var(--workspace-assistant-font-xs);
   line-height: 1.6;
 }
 
 .workspace-assistant-message-content__citations {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--workspace-assistant-gap-tight);
 }
 
-.workspace-assistant-message-content__citations-header {
+.workspace-assistant-message-content__citation-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--workspace-assistant-gap-tight);
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
   color: #475569;
-  font-size: 11px;
+  font: inherit;
+  font-size: var(--workspace-assistant-font-xs);
   font-weight: 600;
+  text-align: left;
+  transition:
+    color 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.workspace-assistant-message-content__citation-toggle:hover {
+  color: #334155;
+}
+
+.workspace-assistant-message-content__citation-toggle-copy {
+  min-width: 0;
+}
+
+.workspace-assistant-message-content__citation-toggle-icon {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 15px;
+  transform: rotate(0deg);
+  transform-origin: center;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.workspace-assistant-message-content__citation-toggle--expanded .workspace-assistant-message-content__citation-toggle-icon {
+  transform: rotate(90deg);
 }
 
 .workspace-assistant-message-content__fallback-badge {
@@ -227,18 +287,41 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.14);
   color: #475569;
-  font-size: 10px;
+  font-size: var(--workspace-assistant-font-2xs);
   font-weight: 700;
 }
 
 .workspace-assistant-message-content__citation-list {
   display: grid;
-  gap: 8px;
+  gap: var(--workspace-assistant-gap-tight);
+}
+
+.workspace-assistant-citation-expand-enter-active,
+.workspace-assistant-citation-expand-leave-active {
+  overflow: hidden;
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    max-height 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.workspace-assistant-citation-expand-enter-from,
+.workspace-assistant-citation-expand-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+  max-height: 0;
+}
+
+.workspace-assistant-citation-expand-enter-to,
+.workspace-assistant-citation-expand-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+  max-height: 720px;
 }
 
 .workspace-assistant-message-content__citation-card {
   width: 100%;
-  padding: 10px 12px;
+  padding: var(--workspace-assistant-card-padding-y) var(--workspace-assistant-card-padding-x);
   border: 1px solid rgba(203, 213, 225, 0.9);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.9);
@@ -262,7 +345,7 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
 .workspace-assistant-message-content__citation-title-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--workspace-assistant-gap-tight);
 }
 
 .workspace-assistant-message-content__citation-title-stack {
@@ -270,19 +353,19 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
   flex: 1;
   min-width: 0;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--wl-ws-space-1_5, 6px);
 }
 
 .workspace-assistant-message-content__citation-title {
   color: #0f172a;
-  font-size: 12px;
+  font-size: var(--workspace-assistant-font-sm);
   line-height: 1.5;
 }
 
 .workspace-assistant-message-content__citation-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--wl-ws-space-1_5, 6px);
 }
 
 .workspace-assistant-message-content__citation-projection {
@@ -292,7 +375,7 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
   border-radius: 999px;
   background: rgba(59, 130, 246, 0.1);
   color: #1d4ed8;
-  font-size: 10px;
+  font-size: var(--workspace-assistant-font-2xs);
   font-weight: 700;
 }
 
@@ -303,22 +386,22 @@ function openCitationResource(citation: ProjectKnowledgeCitation): void {
   border-radius: 999px;
   background: rgba(244, 114, 182, 0.12);
   color: #be185d;
-  font-size: 10px;
+  font-size: var(--workspace-assistant-font-2xs);
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .workspace-assistant-message-content__citation-meta {
-  margin-top: 6px;
+  margin-top: var(--wl-ws-space-1_5, 6px);
   color: #64748b;
-  font-size: 11px;
+  font-size: var(--workspace-assistant-font-xs);
   line-height: 1.5;
 }
 
 .workspace-assistant-message-content__citation-quote {
-  margin-top: 6px;
+  margin-top: var(--wl-ws-space-1_5, 6px);
   color: #334155;
-  font-size: 11px;
+  font-size: var(--workspace-assistant-font-xs);
   line-height: 1.6;
   white-space: pre-wrap;
 }

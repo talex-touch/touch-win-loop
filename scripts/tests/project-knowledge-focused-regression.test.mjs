@@ -141,12 +141,16 @@ describe('project knowledge focused regression', () => {
 
     assert.match(assistantSource, /<WorkspaceChatMarkdown :content="props\.message\.content" \/>/, 'assistant 内容未保持既有 markdown 渲染')
     assert.match(assistantSource, /workspace-assistant-knowledge-warning/, 'assistant 消息缺少索引 warning 渲染')
-    assert.match(assistantSource, /资料引用/, 'assistant 消息缺少资料引用标题')
+    assert.match(assistantSource, /const citationsExpanded = ref\(false\)/, 'assistant 消息未默认折叠资料引用')
+    assert.match(assistantSource, /资料引用\(\$\{visibleCitations\.value\.length\}\)/, 'assistant 消息缺少资料引用计数入口')
+    assert.match(assistantSource, /workspace-assistant-citation-toggle/, 'assistant 消息缺少资料引用折叠按钮')
+    assert.match(assistantSource, /chevron_right/, 'assistant 消息资料引用折叠箭头未默认朝右')
+    assert.match(assistantSource, /workspace-assistant-citation-expand/, 'assistant 消息资料引用缺少展开收起动效')
     assert.match(assistantSource, /workspace-assistant-citation-card/, 'assistant 消息缺少 citation 卡片渲染')
     assert.match(assistantSource, /workspace-assistant-citation-projection/, 'assistant 消息缺少 citation 投影标签')
     assert.match(assistantSource, /workspace-assistant-citation-stale/, 'assistant 消息缺少 stale 标记')
     assert.match(assistantSource, /workspace-assistant-message-content__fallback-badge/, 'assistant 消息缺少 fallback 标识')
-    assert.match(sidebarSource, /workspace-chat-system-card/, '右栏未保留既有 progress\/tool 步骤卡渲染')
+    assert.match(sidebarSource, /workspace-chat-system-message/, '右栏未保留 progress\/tool 内联消息渲染')
     assert.match(
       sidebarSource,
       /<WorkspaceAssistantMessageContent[\s\S]*:message="entry\.message"[\s\S]*@open-resource="emit\('openResource', \$event\)"/,

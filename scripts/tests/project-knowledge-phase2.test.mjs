@@ -46,7 +46,11 @@ describe('project knowledge phase2', () => {
       readFile(PROJECT_PAGE_FILE, 'utf8'),
     ])
 
-    assert.match(assistantSource, /资料引用/, '统一 assistant 消息组件缺少资料引用标题')
+    assert.match(assistantSource, /资料引用\(\$\{visibleCitations\.value\.length\}\)/, '统一 assistant 消息组件缺少带数量的资料引用入口')
+    assert.match(assistantSource, /const citationsExpanded = ref\(false\)/, '统一 assistant 消息组件未默认折叠资料引用')
+    assert.match(assistantSource, /data-testid="workspace-assistant-citation-toggle"/, '统一 assistant 消息组件缺少资料引用折叠入口')
+    assert.match(assistantSource, /chevron_right/, '统一 assistant 消息组件未使用默认朝右的 Chevron')
+    assert.match(assistantSource, /workspace-assistant-citation-expand/, '统一 assistant 消息组件缺少资料引用动效')
     assert.match(assistantSource, /workspace-assistant-knowledge-warning/, '统一 assistant 消息组件缺少索引警告提示')
     assert.match(assistantSource, /workspace-assistant-citation-stale/, '统一 assistant 消息组件缺少 stale 标记')
     assert.match(sidebarSource, /<WorkspaceAssistantMessageContent/, '右栏未接入统一 assistant 消息组件')
