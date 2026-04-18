@@ -642,20 +642,27 @@ const showSessionHeaderCompact = computed(() => {
   return !showCommentsView.value && !showDocumentAssistView.value && !markdownSidebarEnabled.value
 })
 const showSessionHeaderFlush = computed(() => showDocumentAssistView.value)
+function resolveWorkspaceRightSessionTabMetric(value: string, minimum: number): string {
+  const parsed = Number.parseFloat(value)
+  if (!Number.isFinite(parsed))
+    return `${minimum}px`
+  return `${Math.max(minimum, parsed)}px`
+}
+
 const workspaceRightSessionTabLayoutStyle = computed<Record<string, string>>(() => {
   const density = resolveWorkspaceTabDensityTokens(props.tabSpacingPreset || 'relaxed')
   return {
-    '--workspace-right-session-strip-height': density.stripHeight,
-    '--workspace-right-session-tab-min-width': density.minWidth,
-    '--workspace-right-session-tab-padding-x': density.paddingX,
-    '--workspace-right-session-tab-gap': density.triggerGap,
-    '--workspace-right-session-tab-label-size': density.labelSize,
-    '--workspace-right-session-tab-icon-size': density.iconSize,
-    '--workspace-right-session-action-size': density.stripHeight,
-    '--workspace-right-session-action-icon-size': density.iconSize,
-    '--workspace-right-session-active-indicator-inset': density.activeIndicatorInset,
-    '--workspace-right-session-empty-padding-x': density.paddingX,
-    '--workspace-right-session-refresh-padding-x': density.paddingX,
+    '--workspace-right-session-strip-height': resolveWorkspaceRightSessionTabMetric(density.stripHeight, 40),
+    '--workspace-right-session-tab-min-width': resolveWorkspaceRightSessionTabMetric(density.minWidth, 144),
+    '--workspace-right-session-tab-padding-x': resolveWorkspaceRightSessionTabMetric(density.paddingX, 8),
+    '--workspace-right-session-tab-gap': resolveWorkspaceRightSessionTabMetric(density.triggerGap, 6),
+    '--workspace-right-session-tab-label-size': resolveWorkspaceRightSessionTabMetric(density.labelSize, 12),
+    '--workspace-right-session-tab-icon-size': resolveWorkspaceRightSessionTabMetric(density.iconSize, 16),
+    '--workspace-right-session-action-size': resolveWorkspaceRightSessionTabMetric(density.stripHeight, 40),
+    '--workspace-right-session-action-icon-size': resolveWorkspaceRightSessionTabMetric(density.iconSize, 16),
+    '--workspace-right-session-active-indicator-inset': resolveWorkspaceRightSessionTabMetric(density.activeIndicatorInset, 10),
+    '--workspace-right-session-empty-padding-x': resolveWorkspaceRightSessionTabMetric(density.paddingX, 8),
+    '--workspace-right-session-refresh-padding-x': resolveWorkspaceRightSessionTabMetric(density.paddingX, 8),
   }
 })
 const openChatSessions = computed(() => {
@@ -1893,12 +1900,10 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
             >
               {{ sessionEmptyText }}
             </div>
-            <a-trigger
+            <div
               v-for="session in openChatSessions"
               :key="session.id"
               class="workspace-right-sidebar__session-trigger"
-              trigger="hover"
-              position="bottom"
             >
               <button
                 class="workspace-right-sidebar__session-tab"
@@ -1913,30 +1918,7 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                 <span class="material-symbols-outlined workspace-right-sidebar__session-tab-icon">{{ resolveSessionTabIcon(session) }}</span>
                 <span class="workspace-right-sidebar__session-tab-label">{{ resolveSessionTabLabel(session) }}</span>
               </button>
-
-              <template #content>
-                <div
-                  class="workspace-right-sidebar__session-popover"
-                  data-testid="workspace-right-sidebar-session-popover"
-                >
-                  <div class="workspace-right-sidebar__session-popover-title">
-                    {{ resolveSessionTitle(session) }}
-                  </div>
-                  <div class="workspace-right-sidebar__session-popover-row">
-                    <span>类型</span>
-                    <span>{{ resolveSessionTypeLabel(session) }}</span>
-                  </div>
-                  <div class="workspace-right-sidebar__session-popover-row">
-                    <span>消息</span>
-                    <span>{{ session.messageCount }}</span>
-                  </div>
-                  <div class="workspace-right-sidebar__session-popover-row">
-                    <span>最近更新</span>
-                    <span>{{ formatSessionDetailTime(session.lastMessageAt || session.updatedAt) }}</span>
-                  </div>
-                </div>
-              </template>
-            </a-trigger>
+            </div>
           </div>
 
           <div class="workspace-right-sidebar__session-actions">
@@ -3338,40 +3320,6 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   font-size: var(--workspace-right-session-tab-label-size, var(--workspace-right-font-xs));
   font-weight: 600;
   line-height: 1;
-}
-
-.workspace-right-sidebar__session-popover {
-  width: 220px;
-  padding: var(--workspace-right-space-2_5) var(--workspace-right-space-3);
-  border: 1px solid #e2e8f0;
-  border-radius: 0;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
-}
-
-.workspace-right-sidebar__session-popover-title {
-  color: #0f172a;
-  font-size: var(--workspace-right-font-xs);
-  font-weight: 700;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.workspace-right-sidebar__session-popover-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 7px;
-  color: #64748b;
-  font-size: var(--workspace-right-font-2xs);
-  line-height: 1.5;
-}
-
-.workspace-right-sidebar__session-popover-row span:last-child {
-  color: #334155;
-  text-align: right;
-  word-break: break-word;
 }
 
 .workspace-right-sidebar__session-actions {
