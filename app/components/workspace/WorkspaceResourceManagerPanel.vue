@@ -404,6 +404,10 @@ function resolveOutlineSectionRows(sectionId: WorkspaceOutlineSection['id']): Wo
   return outlineRowsBySectionId.value.get(sectionId) || []
 }
 
+function shouldShowOutlineSectionTitle(section: WorkspaceOutlineSection): boolean {
+  return section.id !== 'current_content'
+}
+
 function resolveOutlineRowId(node: WorkspaceOutlineNode, sectionId: WorkspaceOutlineSection['id']): string {
   return `${sectionId}:${node.id}`
 }
@@ -3704,7 +3708,7 @@ onBeforeUnmount(() => {
               :key="section.id"
               class="workspace-outline-section"
             >
-              <div class="workspace-outline-section__title">
+              <div v-if="shouldShowOutlineSectionTitle(section)" class="workspace-outline-section__title">
                 {{ section.title }}
               </div>
 

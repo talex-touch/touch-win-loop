@@ -182,6 +182,8 @@ it('左栏结构大纲不再用本地推断结果充当真实大纲', async () =
   assert.match(resourceManagerSource, /outlineSections\?: WorkspaceOutlineSection\[\]/, '资源管理器缺少统一结构大纲 section 入参')
   assert.match(resourceManagerSource, /flattenWorkspaceOutlineRows/, '资源管理器未通过统一 outline 行拍平渲染双区块结构')
   assert.match(resourceManagerSource, /workspace-outline-section__title/, '资源管理器未渲染大纲分区标题')
+  assert.match(resourceManagerSource, /function shouldShowOutlineSectionTitle\(section: WorkspaceOutlineSection\): boolean \{[\s\S]*section\.id !== 'current_content'/, '资源管理器未隐藏“当前内容结构”冗余标题')
+  assert.match(resourceManagerSource, /<div v-if="shouldShowOutlineSectionTitle\(section\)" class="workspace-outline-section__title">/, '资源管理器未按分区条件渲染大纲标题')
   assert.match(resourceManagerSource, /section\.emptyText/, '资源管理器未按分区渲染空状态')
   assert.match(resourceManagerSource, /emit\('locateOutlineItem', row\.node\)/, '资源管理器未将点击行为收敛到统一定位事件')
   assert.match(resourceManagerSource, /buildWorkspaceOutlineNavigationHash/, '资源管理器未复用统一 outline 深链构造器')
@@ -190,7 +192,7 @@ it('左栏结构大纲不再用本地推断结果充当真实大纲', async () =
   assert.match(resourceManagerSource, /data-testid="workspace-outline-item-link-trigger"/, '资源管理器缺少结构项定位链接快捷按钮')
   assert.match(resourceManagerSource, /data-testid="workspace-outline-item-menu-trigger"/, '资源管理器缺少结构项更多操作快捷按钮')
   assert.match(rowComponentSource, /workspace-resource-tree-row__main--with-actions/, '统一树行组件未承接可插槽动作区')
-  assert.match(styleSource, /\.workspace-tree-item--stacked \{/, '左栏样式缺少统一的纵向内容树行样式')
+  assert.match(styleSource, /\.workspace-tree-item--stacked \{[\s\S]*align-items:\s*center;/, '左栏结构树行未恢复垂直居中对齐')
   assert.match(styleSource, /\.workspace-resource-actions--cluster \{/, '左栏样式缺少统一的多动作按钮布局')
 })
 
