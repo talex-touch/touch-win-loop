@@ -8,11 +8,172 @@ import type {
 import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
+import { buildServerApiEndpoint } from '~~/server/utils/api-url'
 import { buildDocumentObjectKey, getDocumentStorage } from '~~/server/storage/document-storage'
 import * as projectResourceStore from '~~/server/utils/project-resource-store'
 
+const MEETING_MEMORY_SECTION_DIVIDER = '\n\n---\n\n'
+const MEETING_MEMORY_AUTO_SECTION_TITLE = '## 自动汇总'
+const MEETING_MEMORY_MANUAL_SECTION_TITLE = '## 手动补充'
+
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
+}
+
+function normalizeLineBreaks(value: unknown): string {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function meetingModeLabel(meeting: ProjectMeeting): string {
+  return meeting.mode === 'audio' ? '语音会议' : '视频会议'
+}
+
+function buildMeetingRecordingMarkdownLine(meeting: ProjectMeeting, recordingResource: Resource | null): string {
+  if (!recordingResource)
+    return '- 录制：待生成'
+  return `- 录制：[${normalizeString(recordingResource.title) || '会议录制'}](${buildServerApiEndpoint(`/projects/${meeting.projectId}/resources/${recordingResource.id}/file`)})`
+}
+
+function buildMeetingMemoryEntryMarkdown(input: {
+  meeting: ProjectMeeting
+  summary: MeetingSummaryResult
+  recordingResource: Resource | null
+}): string {
+  const { meeting, summary } = input
+  return [
+    `### ${normalizeString(meeting.title) || '未命名会议'}`,
+    `- 会议标识：\`${meeting.id}\``,
+    `- 会议模式：${meetingModeLabel(meeting)}`,
+    `- 开始时间：${meeting.startedAt}`,
+    `- 结束时间：${meeting.endedAt || '进行中'}`,
+    buildMeetingRecordingMarkdownLine(meeting, input.recordingResource),
+    '',
+    '#### 本次摘要',
+    summary.summary,
+    '',
+    '#### 待办',
+    ...summary.todos.map(item => `- [ ] ${item}`),
+    '',
+    '#### 决策',
+    ...summary.decisions.map(item => `- ${item}`),
+    '',
+    '#### 风险',
+    ...summary.risks.map(item => `- ${item}`),
+    '',
+    '#### 时间线片段',
+    ...summary.timeline,
+  ].join('\n').trim()
+}
+
+function buildMeetingMemoryOverviewLines(input: {
+  meeting: ProjectMeeting
+  summary: MeetingSummaryResult
+  entryCount: number
+}): string[] {
+  const latestTodo = normalizeString(input.summary.todos[0]) || '待补充'
+  const latestDecision = normalizeString(input.summary.decisions[0]) || '待补充'
+  const latestRisk = normalizeString(input.summary.risks[0]) || '待补充'
+
+  return [
+    `- 已汇总会议数：${Math.max(1, input.entryCount)}`,
+    `- 最近会议：${normalizeString(input.meeting.title) || '未命名会议'}`,
+    `- 最近更新：${input.meeting.endedAt || input.meeting.startedAt}`,
+    `- 当前进展：${input.summary.summary}`,
+    `- 最新待办：${latestTodo}`,
+    `- 最新决策：${latestDecision}`,
+    `- 主要风险：${latestRisk}`,
+  ]
+}
+
+function extractMeetingMemoryManualSection(markdown: string): string {
+  const normalized = normalizeLineBreaks(markdown)
+  const heading = normalized.indexOf(MEETING_MEMORY_MANUAL_SECTION_TITLE)
+  if (heading < 0) {
+    return [
+      MEETING_MEMORY_MANUAL_SECTION_TITLE,
+      '- 可在这里补充跨会议结论、长期任务与阶段性复盘。',
+    ].join('\n')
+  }
+
+  return normalized.slice(heading).trim()
+}
+
+function extractMeetingMemoryEntries(markdown: string): string[] {
+  const normalized = normalizeLineBreaks(markdown)
+  const autoSectionStart = normalized.indexOf(MEETING_MEMORY_AUTO_SECTION_TITLE)
+  if (autoSectionStart < 0)
+    return []
+
+  const contentStart = autoSectionStart + MEETING_MEMORY_AUTO_SECTION_TITLE.length
+  const manualSectionStart = normalized.indexOf(MEETING_MEMORY_MANUAL_SECTION_TITLE, contentStart)
+  const autoSection = normalized
+    .slice(contentStart, manualSectionStart >= 0 ? manualSectionStart : normalized.length)
+    .trim()
+
+  if (!autoSection || autoSection === '- 暂无会议纪要。')
+    return []
+
+  return autoSection
+    .split(MEETING_MEMORY_SECTION_DIVIDER)
+    .map(entry => entry.trim())
+    .filter(Boolean)
+}
+
+function buildMeetingMemoryMarkdown(input: {
+  existingMarkdown: string
+  meeting: ProjectMeeting
+  summary: MeetingSummaryResult
+  recordingResource: Resource | null
+}): {
+  markdown: string
+  entryCount: number
+} {
+  const nextEntry = buildMeetingMemoryEntryMarkdown({
+    meeting: input.meeting,
+    summary: input.summary,
+    recordingResource: input.recordingResource,
+  })
+  const existingEntries = extractMeetingMemoryEntries(input.existingMarkdown)
+    .filter(entry => !new RegExp(`会议标识：\\\`${escapeRegExp(input.meeting.id)}\\\``).test(entry))
+
+  const entries = [nextEntry, ...existingEntries]
+  const overviewLines = buildMeetingMemoryOverviewLines({
+    meeting: input.meeting,
+    summary: input.summary,
+    entryCount: entries.length,
+  })
+  const manualSection = extractMeetingMemoryManualSection(input.existingMarkdown)
+
+  return {
+    entryCount: entries.length,
+    markdown: [
+      `# ${projectResourceStore.PROJECT_MEETING_MEMORY_RESOURCE_TITLE}`,
+      '',
+      '自动汇总项目内所有会议的纪要、录制链接与阶段进展，作为持续沉淀的会议 memory。',
+      '',
+      '## 总体概述',
+      ...overviewLines,
+      '',
+      MEETING_MEMORY_AUTO_SECTION_TITLE,
+      entries.join(MEETING_MEMORY_SECTION_DIVIDER),
+      '',
+      manualSection,
+    ].join('\n').trim(),
+  }
+}
+
+function buildMeetingMemorySummary(input: {
+  meeting: ProjectMeeting
+  summary: MeetingSummaryResult
+  entryCount: number
+}): string {
+  return `已汇总 ${Math.max(1, input.entryCount)} 场会议；最近会议「${normalizeString(input.meeting.title) || '未命名会议'}」的进展：${input.summary.summary}`
 }
 
 async function resolveArtifactBuffer(artifact: RtcRecordingArtifact): Promise<Buffer> {
@@ -54,6 +215,10 @@ export async function persistMeetingRecordingResource(
   const mimeType = normalizeString(input.artifact.mimeType) || 'application/octet-stream'
   const storage = getDocumentStorage()
   const objectKey = buildDocumentObjectKey(`project-${input.meeting.projectId}`, fileName)
+  const meetingMemory = await projectResourceStore.ensureProjectMeetingMemoryResource(db, {
+    projectId: input.meeting.projectId,
+    actorUserId: input.actorUserId,
+  })
   await storage.putObject({
     key: objectKey,
     body: Readable.from(buffer),
@@ -72,6 +237,7 @@ export async function persistMeetingRecordingResource(
     summary: '会议录制文件已自动沉淀到项目资料。',
     category: 'templates',
     accessLevel: 'login_required',
+    parentResourceId: meetingMemory.id,
     metadata: {
       artifactKind: 'meeting_recording',
       meetingId: input.meeting.id,
@@ -89,53 +255,52 @@ export async function persistMeetingNotesResource(
     summary: MeetingSummaryResult
   },
 ): Promise<Resource> {
-  if (input.meeting.notesResourceId) {
-    await projectResourceStore.overwriteProjectMarkdownCollabResource(db, {
-      projectId: input.meeting.projectId,
-      resourceId: input.meeting.notesResourceId,
-      actorUserId: input.actorUserId,
-      markdown: input.summary.markdown,
-    })
-    await projectResourceStore.patchProjectResourceMetadata(db, {
-      projectId: input.meeting.projectId,
-      resourceId: input.meeting.notesResourceId,
-      actorUserId: input.actorUserId,
-      title: `会议纪要 · ${input.meeting.title}`,
-      summary: input.summary.summary,
-      availability: 'login_required',
-    })
-    return projectResourceStore.mergeProjectResourceMetadata(db, {
-      projectId: input.meeting.projectId,
-      resourceId: input.meeting.notesResourceId,
-      actorUserId: input.actorUserId,
-      metadata: {
-        artifactKind: 'meeting_notes',
-        meetingId: input.meeting.id,
-        summaryGeneratedAt: new Date().toISOString(),
-      },
-    })
-  }
-
-  const created = await projectResourceStore.createProjectCollabResource(db, {
+  const meetingMemory = await projectResourceStore.ensureProjectMeetingMemoryResource(db, {
     projectId: input.meeting.projectId,
     actorUserId: input.actorUserId,
-    kind: 'markdown',
-    purpose: 'notes',
-    title: `会议纪要 · ${input.meeting.title}`,
-    summary: input.summary.summary,
+  })
+  const recordingResource = input.meeting.recordingResourceId
+    ? await projectResourceStore.getProjectResourceById(db, {
+        projectId: input.meeting.projectId,
+        resourceId: input.meeting.recordingResourceId,
+      })
+    : null
+  const nextMemory = buildMeetingMemoryMarkdown({
+    existingMarkdown: meetingMemory.content,
+    meeting: input.meeting,
+    summary: input.summary,
+    recordingResource,
+  })
+
+  await projectResourceStore.overwriteProjectMarkdownCollabResource(db, {
+    projectId: meetingMemory.projectId,
+    resourceId: meetingMemory.id,
+    actorUserId: input.actorUserId,
+    markdown: nextMemory.markdown,
+  })
+  await projectResourceStore.patchProjectResourceMetadata(db, {
+    projectId: meetingMemory.projectId,
+    resourceId: meetingMemory.id,
+    actorUserId: input.actorUserId,
+    title: projectResourceStore.PROJECT_MEETING_MEMORY_RESOURCE_TITLE,
+    summary: buildMeetingMemorySummary({
+      meeting: input.meeting,
+      summary: input.summary,
+      entryCount: nextMemory.entryCount,
+    }),
     availability: 'login_required',
-    category: 'templates',
+  })
+  return projectResourceStore.mergeProjectResourceMetadata(db, {
+    projectId: meetingMemory.projectId,
+    resourceId: meetingMemory.id,
+    actorUserId: input.actorUserId,
     metadata: {
       artifactKind: 'meeting_notes',
-      meetingId: input.meeting.id,
+      meetingMemory: true,
+      latestMeetingId: input.meeting.id,
+      latestMeetingTitle: input.meeting.title,
       summaryGeneratedAt: new Date().toISOString(),
+      meetingEntryCount: nextMemory.entryCount,
     },
   })
-  await projectResourceStore.overwriteProjectMarkdownCollabResource(db, {
-    projectId: input.meeting.projectId,
-    resourceId: created.resource.id,
-    actorUserId: input.actorUserId,
-    markdown: input.summary.markdown,
-  })
-  return created.resource
 }

@@ -158,6 +158,7 @@ export interface ProjectCollabSnapshot {
 }
 
 export const PROJECT_RESOURCE_RECYCLE_RETENTION_DAYS = 30
+export const PROJECT_MEETING_MEMORY_RESOURCE_TITLE = '会议纪要总览'
 
 function normalizeString(value: unknown): string {
   return String(value || '').trim()
@@ -1929,6 +1930,91 @@ export async function ensureProjectDesignCanvas(
       editorEngine: 'canvaskit_wasm',
     },
   })
+}
+
+function buildProjectMeetingMemoryInitialMarkdown(title: string): string {
+  return [
+    `# ${normalizeString(title) || PROJECT_MEETING_MEMORY_RESOURCE_TITLE}`,
+    '',
+    '自动汇总项目内所有会议的纪要、录制链接与阶段进展，作为持续沉淀的会议 memory。',
+    '',
+    '## 总体概述',
+    '- 已汇总会议数：0',
+    '- 最近会议：待生成',
+    '- 最近更新：待生成',
+    '- 当前进展：待生成',
+    '',
+    '## 自动汇总',
+    '- 暂无会议纪要。',
+    '',
+    '## 手动补充',
+    '- 可在这里补充跨会议结论、长期任务与阶段性复盘。',
+  ].join('\n')
+}
+
+export async function ensureProjectMeetingMemoryResource(
+  db: Queryable,
+  input: {
+    projectId: string
+    actorUserId: string
+    title?: string
+  },
+): Promise<Resource> {
+  const existingResult = await db.query<ProjectResourceDocumentIdRow>(
+    `SELECT id
+     FROM project_resources
+     WHERE project_id = $1
+       AND status = 'active'
+       AND source = 'collab'
+       AND resource_kind = 'markdown'
+       AND COALESCE(metadata->>'artifactKind', '') = 'meeting_notes'
+       AND COALESCE(metadata->>'meetingMemory', 'false') = 'true'
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [input.projectId],
+  )
+
+  const existingResourceId = normalizeString(existingResult.rows[0]?.id)
+  if (existingResourceId) {
+    const existing = await getProjectResourceById(db, {
+      projectId: input.projectId,
+      resourceId: existingResourceId,
+    })
+    if (existing)
+      return existing
+  }
+
+  const title = normalizeString(input.title) || PROJECT_MEETING_MEMORY_RESOURCE_TITLE
+  const created = await createProjectCollabResource(db, {
+    projectId: input.projectId,
+    actorUserId: input.actorUserId,
+    kind: 'markdown',
+    purpose: 'notes',
+    title,
+    summary: '自动汇总项目会议纪要、录制链接与阶段进展。',
+    availability: 'login_required',
+    category: 'templates',
+    metadata: {
+      artifactKind: 'meeting_notes',
+      meetingMemory: true,
+      meetingScope: 'project',
+    },
+  })
+
+  await overwriteProjectMarkdownCollabResource(db, {
+    projectId: input.projectId,
+    resourceId: created.resource.id,
+    actorUserId: input.actorUserId,
+    markdown: buildProjectMeetingMemoryInitialMarkdown(title),
+  })
+
+  const resource = await getProjectResourceById(db, {
+    projectId: input.projectId,
+    resourceId: created.resource.id,
+  })
+  if (!resource)
+    throw new Error('MEETING_MEMORY_RESOURCE_NOT_FOUND')
+  return resource
 }
 
 export async function getProjectCollabSnapshot(

@@ -8,7 +8,7 @@ import type {
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
-import { buildAiNotConfiguredMessage } from '~~/server/utils/ai-runtime'
+import { assertAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 
 export interface DefenseSummaryResult {
   summary: string
@@ -117,8 +117,7 @@ export async function summarizeDefenseSessionByAi(input: {
   messages: ChatMessage[]
   ai: AiRuntimeConfig
 }): Promise<DefenseSummaryResult> {
-  if (!input.ai.apiKey || input.ai.provider === 'mock')
-    throw new Error(buildAiNotConfiguredMessage('答辩总结 AI'))
+  assertAiRuntimeConfigured(input.ai, '答辩总结 AI')
 
   const model = createChatModel(input.ai)
   const structuredModel = model.withStructuredOutput(defenseSummarySchema, {

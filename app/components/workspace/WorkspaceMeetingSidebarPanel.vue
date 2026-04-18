@@ -4,17 +4,20 @@ import type {
   ProjectMeetingMode,
   ProjectMeetingRuntimeHealth,
 } from '~~/shared/types/domain'
+import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 
 const props = withDefaults(defineProps<{
   meetings?: ProjectMeeting[]
   activeMeetingId?: string
   loading?: boolean
+  refreshing?: boolean
   mutating?: boolean
   runtimeHealth?: ProjectMeetingRuntimeHealth | null
 }>(), {
   meetings: () => [],
   activeMeetingId: '',
   loading: false,
+  refreshing: false,
   mutating: false,
   runtimeHealth: null,
 })
@@ -24,6 +27,11 @@ const emit = defineEmits<{
   createMeeting: [payload: { mode: ProjectMeetingMode }]
   selectMeeting: [meetingId: string]
 }>()
+const meetingHighlightInitialized = ref(false)
+const {
+  isHighlighted: isMeetingHighlighted,
+  queueHighlightedIds: queueHighlightedMeetingIds,
+} = useTransientHighlightSet()
 
 function formatDateTime(value: string | null | undefined): string {
   const normalized = String(value || '').trim()
@@ -84,6 +92,26 @@ const createDisabled = computed(() => {
 function createMeeting(mode: ProjectMeetingMode): void {
   emit('createMeeting', { mode })
 }
+
+watch(() => props.meetings, (nextMeetings, previousMeetings) => {
+  if (!meetingHighlightInitialized.value) {
+    meetingHighlightInitialized.value = true
+    return
+  }
+  if (!props.refreshing)
+    return
+
+  const previousMeetingIdSet = new Set(
+    (previousMeetings || [])
+      .map(meeting => String(meeting.id || '').trim())
+      .filter(Boolean),
+  )
+  queueHighlightedMeetingIds(
+    nextMeetings
+      .map(meeting => String(meeting.id || '').trim())
+      .filter(id => id && !previousMeetingIdSet.has(id)),
+  )
+}, { deep: true })
 </script>
 
 <template>
@@ -130,9 +158,15 @@ function createMeeting(mode: ProjectMeetingMode): void {
 
     <div class="workspace-meeting-sidebar__section-head">
       <span>最近会议</span>
-      <button class="workspace-meeting-sidebar__link" type="button" @click="emit('openMeetingOverview')">
-        查看总览
-      </button>
+      <div class="workspace-meeting-sidebar__section-head-actions">
+        <div v-if="props.refreshing" class="workspace-meeting-sidebar__refreshing">
+          <span class="workspace-meeting-sidebar__refreshing-dot" aria-hidden="true" />
+          <span>刷新中</span>
+        </div>
+        <button class="workspace-meeting-sidebar__link" type="button" @click="emit('openMeetingOverview')">
+          查看总览
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="workspace-meeting-sidebar__empty">
@@ -146,7 +180,10 @@ function createMeeting(mode: ProjectMeetingMode): void {
         v-for="meeting in recentMeetings"
         :key="meeting.id"
         class="workspace-meeting-sidebar__item"
-        :class="{ 'workspace-meeting-sidebar__item--active': meeting.id === props.activeMeetingId }"
+        :class="{
+          'workspace-meeting-sidebar__item--active': meeting.id === props.activeMeetingId,
+          'workspace-meeting-sidebar__item--fresh': isMeetingHighlighted(meeting.id),
+        }"
         type="button"
         @click="emit('selectMeeting', meeting.id)"
       >
@@ -302,6 +339,30 @@ function createMeeting(mode: ProjectMeetingMode): void {
   font-weight: 700;
 }
 
+.workspace-meeting-sidebar__section-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace-meeting-sidebar__refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workspace-meeting-sidebar__refreshing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #3b82f6;
+  animation: workspace-meeting-sidebar-refresh-pulse 1s ease-in-out infinite;
+}
+
 .workspace-meeting-sidebar__link {
   background: transparent;
   color: #2563eb;
@@ -335,6 +396,10 @@ function createMeeting(mode: ProjectMeetingMode): void {
   text-align: left;
 }
 
+.workspace-meeting-sidebar__item--fresh {
+  animation: workspace-meeting-sidebar-item-fresh 1.35s ease-out;
+}
+
 .workspace-meeting-sidebar__item:hover {
   border-color: #bfdbfe;
   box-shadow: 0 10px 24px rgba(37, 99, 235, 0.08);
@@ -343,6 +408,31 @@ function createMeeting(mode: ProjectMeetingMode): void {
 .workspace-meeting-sidebar__item--active {
   border-color: #93c5fd;
   background: #eff6ff;
+}
+
+@keyframes workspace-meeting-sidebar-refresh-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes workspace-meeting-sidebar-item-fresh {
+  0% {
+    border-color: rgba(59, 130, 246, 0.28);
+    background: rgba(59, 130, 246, 0.12);
+  }
+
+  100% {
+    border-color: #dbe4f0;
+    background: #ffffff;
+  }
 }
 
 .workspace-meeting-sidebar__item-top,

@@ -243,7 +243,7 @@ defineExpose({
 <template>
   <div v-if="props.activeResourceTab" class="h-full min-h-0 w-full">
     <div class="bg-white flex flex-col h-full min-h-0 overflow-hidden">
-      <div class="bg-slate-50 flex-1 min-h-0">
+      <div class="bg-slate-50 flex flex-1 flex-col min-h-0">
         <template v-if="props.activePreviewMode === 'markdown'">
           <div v-if="props.collabPreviewLoading || !isMarkdownCollabReady" class="workspace-resource-preview-tab__loading">
             <p class="workspace-resource-preview-tab__loading-title">
@@ -336,25 +336,23 @@ defineExpose({
           </div>
 
           <template v-else>
-            <div class="text-xs px-4 py-2 border-b border-slate-200 bg-white" :class="props.collabConnected ? 'text-emerald-600' : 'text-amber-600'">
+            <div class="text-xs px-4 py-2 border-b border-slate-200 bg-white shrink-0" :class="props.collabConnected ? 'text-emerald-600' : 'text-amber-600'">
               {{ props.collabConnectionText }}
             </div>
-            <div class="h-full">
-              <div class="flex flex-col h-full">
-                <WorkspaceTldrawCanvas
-                  :key="props.previewResourceId || props.activeResourceTab.id"
-                  class="h-full min-h-0 w-full"
-                  :model-value="props.collabDrawValue"
-                  :remote-cursors="props.collabPresenceCursors"
-                  :persistence-key="`workspace-collab-${props.previewResourceId || props.activeResourceTab.id}`"
-                  :readonly="false"
-                  @update:model-value="emit('updateCollabDrawValue', $event)"
-                  @update-collab-cursor="emit('updateCollabCursor', $event)"
-                />
-                <p v-if="props.collabDrawError" class="text-xs text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50">
-                  {{ props.collabDrawError }}
-                </p>
-              </div>
+            <div class="flex flex-1 flex-col min-h-0">
+              <WorkspaceTldrawCanvas
+                :key="props.previewResourceId || props.activeResourceTab.id"
+                class="flex-1 h-full min-h-0 w-full"
+                :model-value="props.collabDrawValue"
+                :remote-cursors="props.collabPresenceCursors"
+                :persistence-key="`workspace-collab-${props.previewResourceId || props.activeResourceTab.id}`"
+                :readonly="false"
+                @update:model-value="emit('updateCollabDrawValue', $event)"
+                @update-collab-cursor="emit('updateCollabCursor', $event)"
+              />
+              <p v-if="props.collabDrawError" class="text-xs text-rose-600 px-4 py-2 border-t border-rose-100 bg-rose-50 shrink-0">
+                {{ props.collabDrawError }}
+              </p>
             </div>
           </template>
         </template>

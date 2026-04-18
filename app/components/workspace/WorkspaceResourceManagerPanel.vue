@@ -85,6 +85,13 @@ interface ProjectResourceTreeRow {
 }
 
 type ResourceTreeDropPosition = 'before' | 'inside' | 'after' | 'root_end'
+type ProjectResourceTypeFilterId = 'all' | 'meeting_notes' | 'meeting_recording' | 'notes' | 'design' | 'workflow' | 'upload' | 'library'
+
+interface ProjectResourceTypeFilterOption {
+  id: ProjectResourceTypeFilterId
+  label: string
+  icon: string
+}
 
 interface ShareProjectResourcePayload {
   resourceId: string
@@ -102,7 +109,7 @@ interface WorkspaceLinkedContestResourceDisplayGroup extends WorkspaceLinkedCont
   categories: WorkspaceLinkedContestResourceCategoryGroup[]
 }
 
-type ResourceSectionId = 'projectResources' | 'linkedContestResources' | 'outline'
+type ResourceSectionId = 'projectResources' | 'meetingNotes' | 'linkedContestResources' | 'outline'
 
 const props = withDefaults(defineProps<{
   naturalQuery: string
@@ -321,6 +328,7 @@ const projectResourceBatchEditMode = ref(false)
 const projectResourceBatchSelectedIds = ref<string[]>([])
 const projectResourceBatchMenuOpen = ref(false)
 const projectResourceAddMenuOpen = ref(false)
+const projectResourceTypeFilter = ref<ProjectResourceTypeFilterId>('all')
 const removeTargetResourceIds = ref<string[]>([])
 const removeResourceModalVisible = ref(false)
 const purgeTargetResourceId = ref('')
@@ -345,6 +353,7 @@ const dragOverPosition = ref<ResourceTreeDropPosition | ''>('')
 const linkedCategoryExpanded = reactive<Record<string, boolean>>({})
 const sectionExpanded = reactive<Record<ResourceSectionId, boolean>>({
   projectResources: true,
+  meetingNotes: true,
   linkedContestResources: true,
   outline: true,
 })
@@ -373,6 +382,92 @@ function resolveResourceCategoryLabel(category: string): string {
   const normalized = String(category || '').trim() as ResourceCategory
   return resourceCategoryLabels[normalized] || normalized || '未分类'
 }
+
+function normalizeProjectResourceMetadata(resource: Resource): Record<string, unknown> {
+  const metadata = resource.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return {}
+  return metadata as Record<string, unknown>
+}
+
+function isMeetingArtifactResource(resource: Resource): boolean {
+  const metadata = normalizeProjectResourceMetadata(resource)
+  if (metadata.meetingMemory === true)
+    return true
+
+  const artifactKind = String(metadata.artifactKind || '').trim().toLowerCase()
+  return artifactKind === 'meeting_notes' || artifactKind === 'meeting_recording'
+}
+
+const meetingNoteResources = computed<Resource[]>(() => {
+  return props.selectedResources.filter(isMeetingArtifactResource)
+})
+
+const projectPanelResources = computed<Resource[]>(() => {
+  return props.selectedResources.filter(resource => !isMeetingArtifactResource(resource))
+})
+
+function resolveProjectResourceTypeFilterId(resource: Resource): Exclude<ProjectResourceTypeFilterId, 'all'> {
+  const metadata = normalizeProjectResourceMetadata(resource)
+  const artifactKind = String(metadata.artifactKind || '').trim().toLowerCase()
+  if (artifactKind === 'meeting_recording')
+    return 'meeting_recording'
+  if (artifactKind === 'meeting_notes')
+    return 'meeting_notes'
+
+  const collabPurpose = String(resource.collabPurpose || '').trim().toLowerCase()
+  if (collabPurpose === 'design')
+    return 'design'
+  if (collabPurpose === 'workflow')
+    return 'workflow'
+  if (collabPurpose === 'notes' || resource.resourceKind === 'markdown')
+    return 'notes'
+
+  const source = String(resource.source || resource.sourceType || '').trim().toLowerCase()
+  if (source === 'library')
+    return 'library'
+  return 'upload'
+}
+
+const projectResourceTypeFilterDefinitions: ProjectResourceTypeFilterOption[] = [
+  { id: 'all', label: '全部类型', icon: 'apps' },
+  { id: 'notes', label: COLLAB_NOTES_RESOURCE_LABEL, icon: 'edit_note' },
+  { id: 'design', label: '设计稿', icon: 'palette' },
+  { id: 'workflow', label: '流程图', icon: 'flowsheet' },
+  { id: 'upload', label: '上传文件', icon: 'upload_file' },
+  { id: 'library', label: '导入资料', icon: 'library_add' },
+]
+
+const projectResourceTypeFilterOptions = computed<ProjectResourceTypeFilterOption[]>(() => {
+  const presentFilterIds = new Set<Exclude<ProjectResourceTypeFilterId, 'all'>>()
+  for (const resource of projectPanelResources.value)
+    presentFilterIds.add(resolveProjectResourceTypeFilterId(resource))
+
+  return projectResourceTypeFilterDefinitions.filter((item) => {
+    if (item.id === 'all')
+      return true
+    return presentFilterIds.has(item.id)
+  })
+})
+
+const projectResourceTypeFilterLabel = computed(() => {
+  return projectResourceTypeFilterOptions.value.find(item => item.id === projectResourceTypeFilter.value)?.label || '全部类型'
+})
+
+const projectResourceFilterActive = computed(() => projectResourceTypeFilter.value !== 'all')
+
+const projectResourceFilterButtonLabel = computed(() => {
+  if (!projectResourceFilterActive.value)
+    return '按类型筛选项目资料'
+  return `按类型筛选项目资料，当前：${projectResourceTypeFilterLabel.value}`
+})
+
+const filteredProjectResources = computed<Resource[]>(() => {
+  if (projectResourceTypeFilter.value === 'all')
+    return projectPanelResources.value
+
+  return projectPanelResources.value.filter(resource => resolveProjectResourceTypeFilterId(resource) === projectResourceTypeFilter.value)
+})
 
 function sortProjectResourcesByTreeOrder(left: Resource, right: Resource): number {
   const leftSort = Math.max(0, Number(left.sortOrder || 0))
@@ -455,16 +550,24 @@ function resolveTreeDepthOffset(depth: number): string {
 }
 
 const projectResourceTree = computed<ProjectResourceTreeNode[]>(() => {
-  return buildProjectResourceTree(props.selectedResources)
+  return buildProjectResourceTree(filteredProjectResources.value)
 })
 
 const visibleResources = computed<ProjectResourceTreeRow[]>(() => {
   return flattenProjectResourceTree(projectResourceTree.value)
 })
 
+const meetingNoteResourceTree = computed<ProjectResourceTreeNode[]>(() => {
+  return buildProjectResourceTree(meetingNoteResources.value)
+})
+
+const visibleMeetingNoteResources = computed<ProjectResourceTreeRow[]>(() => {
+  return flattenProjectResourceTree(meetingNoteResourceTree.value)
+})
+
 const projectResourceMap = computed(() => {
   const map = new Map<string, Resource>()
-  for (const resource of props.selectedResources) {
+  for (const resource of projectPanelResources.value) {
     const resourceId = String(resource.id || '').trim()
     if (resourceId)
       map.set(resourceId, resource)
@@ -474,7 +577,7 @@ const projectResourceMap = computed(() => {
 
 const projectResourceChildrenMap = computed(() => {
   const map = new Map<string, Resource[]>()
-  const sortedResources = [...props.selectedResources].sort(sortProjectResourcesByTreeOrder)
+  const sortedResources = [...projectPanelResources.value].sort(sortProjectResourcesByTreeOrder)
   for (const resource of sortedResources) {
     const parentResourceId = String(resource.parentResourceId || '').trim() || '__root__'
     const existing = map.get(parentResourceId)
@@ -566,7 +669,7 @@ const {
 } = useTransientHighlightSet()
 
 const projectResourceIds = computed(() => {
-  return props.selectedResources
+  return filteredProjectResources.value
     .map(resource => String(resource.id || '').trim())
     .filter(Boolean)
 })
@@ -969,6 +1072,37 @@ function toggleProjectResourceBatchSelectAll() {
 
 function clearProjectResourceBatchSelection() {
   projectResourceBatchSelectedIds.value = []
+}
+
+function syncProjectResourceBatchSelectionToCurrentFilter() {
+  if (projectResourceBatchSelectedIds.value.length === 0)
+    return
+
+  const visibleIdSet = new Set(projectResourceIds.value)
+  projectResourceBatchSelectedIds.value = projectResourceBatchSelectedIds.value.filter(item => visibleIdSet.has(item))
+}
+
+function syncActiveResourceToVisibleList(fallbackResources: Resource[] = props.selectedResources) {
+  const allVisibleRows = [...visibleResources.value, ...visibleMeetingNoteResources.value]
+  if (!fallbackResources.length || allVisibleRows.length === 0) {
+    activeResourceId.value = ''
+    return
+  }
+
+  if (suppressResourceSelection.value) {
+    activeResourceId.value = ''
+    return
+  }
+
+  const visibleResourceIds = new Set(
+    allVisibleRows
+      .map(row => String(row.resource.id || '').trim())
+      .filter(Boolean),
+  )
+  if (activeResourceId.value && visibleResourceIds.has(activeResourceId.value))
+    return
+
+  activeResourceId.value = allVisibleRows[0]?.resource.id || fallbackResources[0]?.id || ''
 }
 
 function resetLibraryListScroll() {
@@ -1672,7 +1806,7 @@ function buildProjectResourceAddMenuItems(): ContextMenuItem[] {
 
 function buildProjectResourceBatchMenuItems(): ContextMenuItem[] {
   const disabled = props.resourceMutating || !props.hasActiveProject
-  const empty = props.selectedResources.length === 0
+  const empty = filteredProjectResources.value.length === 0
   return [
     {
       key: projectResourceBatchEditMode.value ? 'exitBatchEdit' : 'enterBatchEdit',
@@ -1707,6 +1841,41 @@ function buildProjectResourceBatchMenuItems(): ContextMenuItem[] {
       disabled: empty,
     },
   ]
+}
+
+function buildProjectResourceFilterMenuItems(): ContextMenuItem[] {
+  return projectResourceTypeFilterOptions.value.map(option => ({
+    key: option.id,
+    label: option.label,
+    icon: option.icon,
+    checked: option.id === projectResourceTypeFilter.value,
+  }))
+}
+
+function requestProjectResourceFilterMenu(anchorEl: HTMLElement | null): void {
+  if (props.resourceMutating || !props.hasActiveProject)
+    return
+
+  projectResourceBatchMenuOpen.value = false
+  projectResourceAddMenuOpen.value = false
+  resourceActionOpenId.value = ''
+  emit('requestContextMenu', {
+    source: 'workspace-resource-filter',
+    items: buildProjectResourceFilterMenuItems(),
+    anchorEl,
+    restoreFocusEl: anchorEl,
+    onSelect: (key) => {
+      try {
+        const nextFilter = projectResourceTypeFilterOptions.value.find(item => item.id === key)
+        if (nextFilter)
+          projectResourceTypeFilter.value = nextFilter.id
+      }
+      finally {
+        closeInlineMenuMarkers()
+      }
+    },
+    onClose: closeInlineMenuMarkers,
+  })
 }
 
 function requestProjectResourceBatchMenu(anchorEl: HTMLElement | null): void {
@@ -1800,6 +1969,13 @@ function requestProjectResourceAddMenuByKeyboard(event: KeyboardEvent): void {
     return
   event.preventDefault()
   requestProjectResourceAddMenu(event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
+}
+
+function requestProjectResourceFilterMenuByKeyboard(event: KeyboardEvent): void {
+  if (!isKeyboardContextMenuEvent(event))
+    return
+  event.preventDefault()
+  requestProjectResourceFilterMenu(event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
 }
 
 function requestProjectResourceBatchMenuByKeyboard(event: KeyboardEvent): void {
@@ -2537,6 +2713,7 @@ watch(() => props.selectedResources, (nextResources, previousResources) => {
     cancelRenamingResource()
   if (projectResourceBatchSelectedIds.value.length > 0) {
     projectResourceBatchSelectedIds.value = projectResourceBatchSelectedIds.value.filter(item => nextResourceIds.has(item))
+    syncProjectResourceBatchSelectionToCurrentFilter()
   }
   if (removeTargetResourceIds.value.length > 0) {
     removeTargetResourceIds.value = removeTargetResourceIds.value.filter(item => nextResourceIds.has(item))
@@ -2554,16 +2731,7 @@ watch(() => props.selectedResources, (nextResources, previousResources) => {
     return
   }
 
-  if (suppressResourceSelection.value) {
-    activeResourceId.value = ''
-    return
-  }
-
-  const stillExists = nextResources.some(item => item.id === activeResourceId.value)
-  if (stillExists)
-    return
-
-  activeResourceId.value = visibleResources.value[0]?.resource.id || nextResources[0]?.id || ''
+  syncActiveResourceToVisibleList(nextResources)
 }, { immediate: true, deep: true })
 
 watch(suppressResourceSelection, (next) => {
@@ -2576,11 +2744,18 @@ watch(suppressResourceSelection, (next) => {
   if (!props.selectedResources.length)
     return
 
-  const stillExists = props.selectedResources.some(item => item.id === activeResourceId.value)
-  if (stillExists)
-    return
+  syncActiveResourceToVisibleList(props.selectedResources)
+}, { immediate: true })
 
-  activeResourceId.value = visibleResources.value[0]?.resource.id || props.selectedResources[0]?.id || ''
+watch(projectResourceTypeFilter, () => {
+  syncProjectResourceBatchSelectionToCurrentFilter()
+  syncActiveResourceToVisibleList(props.selectedResources)
+})
+
+watch(projectResourceTypeFilterOptions, (nextOptions) => {
+  if (nextOptions.some(item => item.id === projectResourceTypeFilter.value))
+    return
+  projectResourceTypeFilter.value = 'all'
 }, { immediate: true })
 
 watch(projectResourceTree, (nextTree) => {
@@ -2868,6 +3043,23 @@ onBeforeUnmount(() => {
                 <span class="material-symbols-outlined">checklist</span>
               </button>
               <button
+                class="workspace-resource-filter"
+                :class="{
+                  'workspace-resource-filter--active': projectResourceFilterActive,
+                  'workspace-resource-filter--with-label': projectResourceFilterActive,
+                }"
+                type="button"
+                :title="projectResourceFilterButtonLabel"
+                :aria-label="projectResourceFilterButtonLabel"
+                aria-haspopup="menu"
+                :disabled="resourceMutating || !hasActiveProject || projectResourceTypeFilterOptions.length <= 1"
+                @click.stop="requestProjectResourceFilterMenu($event.currentTarget as HTMLElement | null)"
+                @keydown="requestProjectResourceFilterMenuByKeyboard"
+              >
+                <span class="material-symbols-outlined">filter_alt</span>
+                <span v-if="projectResourceFilterActive" class="workspace-resource-filter__label">{{ projectResourceTypeFilterLabel }}</span>
+              </button>
+              <button
                 class="workspace-tree-block__title-action"
                 type="button"
                 title="添加资源"
@@ -2890,13 +3082,13 @@ onBeforeUnmount(() => {
 
           <div v-if="projectResourceBatchEditMode && sectionExpanded.projectResources" class="workspace-resource-batch-toolbar">
             <div class="workspace-resource-batch-toolbar__summary">
-              批量编辑中，已选 {{ projectResourceBatchSelectedCount }} 项
+              批量编辑中，已选 {{ projectResourceBatchSelectedCount }} 项<span v-if="projectResourceFilterActive"> · 当前筛选：{{ projectResourceTypeFilterLabel }}</span>
             </div>
             <div class="workspace-resource-batch-toolbar__actions">
               <button
                 class="workspace-resource-batch-toolbar__action"
                 type="button"
-                :disabled="resourceMutating || selectedResources.length === 0"
+                :disabled="resourceMutating || projectResourceIds.length === 0"
                 @click="toggleProjectResourceBatchSelectAll"
               >
                 {{ projectResourceBatchAllSelected ? '取消全选' : '全选全部' }}
@@ -3147,9 +3339,75 @@ onBeforeUnmount(() => {
               </div>
 
               <p v-if="visibleUploadTasks.length === 0 && visibleResources.length === 0" class="workspace-empty-text">
-                暂无资源
+                {{ projectResourceFilterActive ? `当前筛选（${projectResourceTypeFilterLabel}）暂无资源` : '暂无资源' }}
               </p>
             </template>
+          </div>
+        </section>
+
+        <section class="workspace-tree-block">
+          <div class="workspace-tree-block__title-row workspace-tree-block__title-row--sticky">
+            <button
+              class="workspace-tree-block__title"
+              type="button"
+              :aria-expanded="sectionExpanded.meetingNotes"
+              @click="toggleSection('meetingNotes')"
+            >
+              <span class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !sectionExpanded.meetingNotes }">
+                keyboard_arrow_down
+              </span>
+              <span>会议纪要</span>
+            </button>
+          </div>
+
+          <div v-show="sectionExpanded.meetingNotes">
+            <div
+              v-for="row in visibleMeetingNoteResources"
+              :key="`meeting-${row.resource.id}`"
+              class="workspace-resource-tree-entry"
+            >
+              <div
+                class="workspace-tree-item-row"
+                :class="{
+                  'workspace-tree-item-row--active': !suppressResourceSelection && row.resource.id === activeResourceId,
+                  'workspace-tree-item-row--fresh': isProjectResourceHighlighted(row.resource.id),
+                }"
+              >
+                <div
+                  class="workspace-resource-tree-row__main"
+                  :style="{ paddingLeft: resolveTreeDepthOffset(row.depth) }"
+                >
+                  <button
+                    class="workspace-tree-item__expander"
+                    :class="{ 'workspace-tree-item__expander--placeholder': !row.hasChildren }"
+                    type="button"
+                    :disabled="!row.hasChildren"
+                    @click.stop="toggleProjectResourceExpansion(row.resource.id)"
+                  >
+                    <span v-if="row.hasChildren" class="material-symbols-outlined" :class="{ 'workspace-tree-block__arrow--collapsed': !row.expanded }">
+                      keyboard_arrow_down
+                    </span>
+                  </button>
+
+                  <button
+                    class="workspace-tree-item"
+                    :class="{ 'workspace-tree-item--active': !suppressResourceSelection && row.resource.id === activeResourceId }"
+                    :title="resourceDisplayTitle(row.resource)"
+                    type="button"
+                    @click="openResource(row.resource)"
+                  >
+                    <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(row.resource)">
+                      {{ resourceIcon(row.resource) }}
+                    </span>
+                    <span class="workspace-tree-item__label">{{ resourceDisplayTitle(row.resource) }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <p v-if="visibleMeetingNoteResources.length === 0" class="workspace-empty-text">
+              暂无会议纪要
+            </p>
           </div>
         </section>
 

@@ -7,6 +7,7 @@ import type {
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { z } from 'zod'
 import { createChatModel } from '~~/server/services/ai/llm-client'
+import { isAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 
 export interface MeetingSummaryResult {
   summary: string
@@ -126,7 +127,7 @@ export async function summarizeMeetingByAi(input: {
   utterances: ProjectMeetingUtterance[]
   ai: AiRuntimeConfig
 }): Promise<MeetingSummaryResult> {
-  if (!input.ai.apiKey || input.ai.provider === 'mock')
+  if (!isAiRuntimeConfigured(input.ai))
     return buildFallbackMeetingSummary(input)
 
   const model = createChatModel(input.ai)

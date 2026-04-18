@@ -27,6 +27,19 @@ it('db bootstrap performs team-first schema compatibility preflight', async () =
   assert.match(compatibilitySource, /FROM information_schema\.columns c/, 'compatibility 预检的 team_id 查询缺少 columns 别名，运行时会触发 SQL 语法错误')
 })
 
+it('db bootstrap is memoized per process and resets pool on bootstrap failure', async () => {
+  const dbSource = await readFile(DB_FILE, 'utf8')
+
+  assert.match(dbSource, /let bootstrapReady = false/, 'db.ts 未声明 bootstrapReady 状态')
+  assert.match(dbSource, /let bootstrapPromise: Promise<void> \| null = null/, 'db.ts 未声明 bootstrapPromise 状态')
+  assert.match(dbSource, /async function ensureBootstrapReady\(poolRef: PgPoolType\)/, 'db.ts 缺少 bootstrap 单次化封装')
+  assert.match(dbSource, /if \(bootstrapReady\)\s+return/, 'db.ts 未在 bootstrap 完成后快速返回')
+  assert.match(dbSource, /if \(!bootstrapPromise\)/, 'db.ts 未复用并发 bootstrap promise')
+  assert.match(dbSource, /await bootstrapPromise/, 'db.ts 未等待共享 bootstrap promise')
+  assert.match(dbSource, /await resetPool\(poolRef\)/, 'db.ts 未在 bootstrap 失败时重置连接池')
+  assert.match(dbSource, /await poolRef\.end\(\)/, 'db.ts 未在 bootstrap 失败时关闭旧连接池')
+})
+
 it('repo contains a rollback migration for team-first hard cutover', async () => {
   const source = await readFile(RESTORE_MIGRATION_FILE, 'utf8')
 

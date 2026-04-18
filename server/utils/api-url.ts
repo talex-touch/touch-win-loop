@@ -80,7 +80,10 @@ export function buildServerAppUrl(path: string, event?: H3Event): string {
 
 export function buildOnlyOfficeSourceApiEndpoint(path: string): string {
   const runtime = readRuntimeSettings()
+  const sourceBaseURL = String(runtime.onlyOffice.sourceBaseURL || '').trim()
+  if (!isHttpUrl(sourceBaseURL))
+    throw new Error('ONLYOFFICE_SOURCE_BASE_URL_NOT_CONFIGURED')
   const apiPathPrefix = extractApiBasePathPrefix(runtime.apiBaseUrl) || '/'
   const relativeWithApiPrefix = buildApiEndpoint(apiPathPrefix, path)
-  return buildApiEndpoint(runtime.onlyOffice.sourceBaseURL, relativeWithApiPrefix)
+  return buildApiEndpoint(sourceBaseURL, relativeWithApiPrefix)
 }

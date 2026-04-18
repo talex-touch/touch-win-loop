@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import type { ProjectMeeting } from '~~/shared/types/domain'
+import { useTransientHighlightSet } from '~/composables/useTransientHighlightSet'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   meetings?: ProjectMeeting[]
   loading?: boolean
+  refreshing?: boolean
 }>(), {
   meetings: () => [],
   loading: false,
+  refreshing: false,
 })
 
 const emit = defineEmits<{
@@ -14,6 +17,11 @@ const emit = defineEmits<{
   openMeeting: [meetingId: string]
   openResource: [resourceId: string]
 }>()
+const meetingHighlightInitialized = ref(false)
+const {
+  isHighlighted: isMeetingHighlighted,
+  queueHighlightedIds: queueHighlightedMeetingIds,
+} = useTransientHighlightSet()
 
 function formatDateTime(value: string | null | undefined): string {
   const normalized = String(value || '').trim()
@@ -42,6 +50,26 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
     return '已结束'
   return '失败'
 }
+
+watch(() => props.meetings, (nextMeetings, previousMeetings) => {
+  if (!meetingHighlightInitialized.value) {
+    meetingHighlightInitialized.value = true
+    return
+  }
+  if (!props.refreshing)
+    return
+
+  const previousMeetingIdSet = new Set(
+    (previousMeetings || [])
+      .map(meeting => String(meeting.id || '').trim())
+      .filter(Boolean),
+  )
+  queueHighlightedMeetingIds(
+    nextMeetings
+      .map(meeting => String(meeting.id || '').trim())
+      .filter(id => id && !previousMeetingIdSet.has(id)),
+  )
+}, { deep: true })
 </script>
 
 <template>
@@ -59,16 +87,23 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
           这里仅负责查看最近会议、当前状态，以及录制和纪要资源入口。具体会议会在独立 tab 中展开。
         </p>
       </div>
-      <button class="meeting-overview__button meeting-overview__button--ghost" type="button" @click="emit('refreshMeetings')">
-        刷新列表
-      </button>
+      <div class="meeting-overview__hero-actions">
+        <div v-if="props.refreshing" class="meeting-overview__refreshing">
+          <span class="meeting-overview__refreshing-dot" aria-hidden="true" />
+          <span>刷新中</span>
+        </div>
+        <button class="meeting-overview__button meeting-overview__button--ghost" type="button" @click="emit('refreshMeetings')">
+          刷新列表
+        </button>
+      </div>
     </section>
 
     <section class="meeting-overview__grid">
       <article
-        v-for="meeting in meetings"
+        v-for="meeting in props.meetings"
         :key="meeting.id"
         class="meeting-overview__card"
+        :class="{ 'meeting-overview__card--fresh': isMeetingHighlighted(meeting.id) }"
       >
         <div class="meeting-overview__card-top">
           <div>
@@ -111,10 +146,10 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
         </div>
       </article>
 
-      <div v-if="loading" class="meeting-overview__empty">
+      <div v-if="props.loading" class="meeting-overview__empty">
         正在加载会议列表...
       </div>
-      <div v-else-if="meetings.length === 0" class="meeting-overview__empty">
+      <div v-else-if="props.meetings.length === 0" class="meeting-overview__empty">
         暂无会议记录。请从左侧发起视频会议或语音会议。
       </div>
     </section>
@@ -142,6 +177,29 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
   justify-content: space-between;
 }
 
+.meeting-overview__hero-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.meeting-overview__refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.meeting-overview__refreshing-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: #3b82f6;
+  animation: meeting-overview-refresh-pulse 1s ease-in-out infinite;
+}
+
 .meeting-overview__badge {
   display: inline-flex;
   align-items: center;
@@ -164,6 +222,10 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.meeting-overview__card--fresh {
+  animation: meeting-overview-card-fresh 1.35s ease-out;
 }
 
 .meeting-overview__card-top {
@@ -207,6 +269,29 @@ function resolveStatusLabel(status: ProjectMeeting['status']): string {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+}
+
+@keyframes meeting-overview-refresh-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes meeting-overview-card-fresh {
+  0% {
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.18), 0 12px 30px rgba(37, 99, 235, 0.12);
+  }
+
+  100% {
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04);
+  }
 }
 
 .meeting-overview__button {

@@ -6,13 +6,17 @@ const props = withDefaults(defineProps<{
   resources?: Resource[]
   shares?: ProjectResourceShare[]
   resourcesLoading?: boolean
+  resourcesRefreshing?: boolean
   sharesLoading?: boolean
+  sharesRefreshing?: boolean
 }>(), {
   open: false,
   resources: () => [],
   shares: () => [],
   resourcesLoading: false,
+  resourcesRefreshing: false,
   sharesLoading: false,
+  sharesRefreshing: false,
 })
 
 const emit = defineEmits<{
@@ -65,8 +69,14 @@ function formatShareExpiry(value: string): string {
 
       <section class="workspace-final-review-materials-drawer__section">
         <div class="workspace-final-review-materials-drawer__section-header">
-          <strong>项目资料</strong>
-          <span>{{ props.resources.length }} 份</span>
+          <div class="workspace-final-review-materials-drawer__section-title">
+            <strong>项目资料</strong>
+            <span>{{ props.resources.length }} 份</span>
+          </div>
+          <div v-if="props.resourcesRefreshing" class="workspace-final-review-materials-drawer__refreshing">
+            <span class="workspace-final-review-materials-drawer__refreshing-dot" aria-hidden="true" />
+            <span>刷新中</span>
+          </div>
         </div>
 
         <p v-if="props.resourcesLoading" class="workspace-final-review-materials-drawer__empty">
@@ -93,8 +103,14 @@ function formatShareExpiry(value: string): string {
 
       <section class="workspace-final-review-materials-drawer__section">
         <div class="workspace-final-review-materials-drawer__section-header">
-          <strong>共享链接</strong>
-          <span>{{ props.shares.length }} 条</span>
+          <div class="workspace-final-review-materials-drawer__section-title">
+            <strong>共享链接</strong>
+            <span>{{ props.shares.length }} 条</span>
+          </div>
+          <div v-if="props.sharesRefreshing" class="workspace-final-review-materials-drawer__refreshing">
+            <span class="workspace-final-review-materials-drawer__refreshing-dot" aria-hidden="true" />
+            <span>刷新中</span>
+          </div>
         </div>
 
         <p v-if="props.sharesLoading" class="workspace-final-review-materials-drawer__empty">
@@ -257,12 +273,37 @@ function formatShareExpiry(value: string): string {
   justify-content: space-between;
 }
 
+.workspace-final-review-materials-drawer__section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .workspace-final-review-materials-drawer__section-header strong,
 .workspace-final-review-materials-drawer__item-title {
   color: #14213a;
   font-size: 14px;
   line-height: 1.5;
   font-weight: 600;
+}
+
+.workspace-final-review-materials-drawer__refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workspace-final-review-materials-drawer__refreshing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #3b82f6;
+  animation: workspace-final-review-refresh-pulse 1s ease-in-out infinite;
 }
 
 .workspace-final-review-materials-drawer__list {
@@ -292,5 +333,18 @@ function formatShareExpiry(value: string): string {
 
 .workspace-final-review-materials-drawer__item-link {
   word-break: break-all;
+}
+
+@keyframes workspace-final-review-refresh-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
 }
 </style>

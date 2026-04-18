@@ -10,6 +10,47 @@ export interface Queryable {
 }
 
 let pool: PgPoolType | null = null
+let bootstrapReady = false
+let bootstrapPromise: Promise<void> | null = null
+
+async function resetPool(poolRef: PgPoolType): Promise<void> {
+  if (pool === poolRef)
+    pool = null
+
+  bootstrapReady = false
+
+  try {
+    await poolRef.end()
+  }
+  catch {
+    // ignore pool disposal errors during bootstrap recovery
+  }
+}
+
+async function ensureBootstrapReady(poolRef: PgPoolType): Promise<void> {
+  if (bootstrapReady)
+    return
+
+  if (!bootstrapPromise) {
+    bootstrapPromise = (async () => {
+      try {
+        await assertWorkspaceSchemaCompatible(poolRef)
+        await ensureSchemaReady(poolRef)
+        await ensureProjectResourceTreeSchemaReady(poolRef)
+        bootstrapReady = true
+      }
+      catch (error) {
+        await resetPool(poolRef)
+        throw error
+      }
+      finally {
+        bootstrapPromise = null
+      }
+    })()
+  }
+
+  await bootstrapPromise
+}
 
 export async function getPool(event?: H3Event): Promise<PgPoolType> {
   if (!pool) {
@@ -23,9 +64,7 @@ export async function getPool(event?: H3Event): Promise<PgPoolType> {
   }
 
   try {
-    await assertWorkspaceSchemaCompatible(pool)
-    await ensureSchemaReady(pool)
-    await ensureProjectResourceTreeSchemaReady(pool)
+    await ensureBootstrapReady(pool)
   }
   catch (error) {
     throw normalizeDbError(error)
