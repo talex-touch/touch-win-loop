@@ -7,17 +7,19 @@ import type {
 } from '~~/shared/types/domain'
 
 export const WORKSPACE_FONT_SIZE_PRESET_OPTIONS: Array<{ value: WorkspaceFontSizePreset, label: string }> = [
-  { value: 'xs', label: '更小' },
-  { value: 'sm', label: '偏小' },
-  { value: 'md', label: '默认' },
-  { value: 'lg', label: '偏大' },
-  { value: 'xl', label: '更大' },
+  { value: 'xs', label: '极效' },
+  { value: 'sm', label: '紧凑' },
+  { value: 'md', label: '优雅' },
+  { value: 'lg', label: '放开' },
+  { value: 'xl', label: '舒展' },
 ]
 
 export const WORKSPACE_TAB_SPACING_PRESET_OPTIONS: Array<{ value: WorkspaceTabSpacingPreset, label: string }> = [
+  { value: 'ultra_compact', label: '极效' },
   { value: 'compact', label: '紧凑' },
-  { value: 'default', label: '默认' },
-  { value: 'relaxed', label: '舒展' },
+  { value: 'default', label: '优雅' },
+  { value: 'relaxed', label: '放开' },
+  { value: 'spacious', label: '舒展' },
 ]
 
 export type NullableWorkspaceFontSizePreset = WorkspaceFontSizePreset | ''
@@ -30,6 +32,8 @@ export interface WorkspaceDisplayPreferencePatchPayload {
 
 function findWorkspaceFontSizePreset(value: unknown): WorkspaceFontSizePreset | null {
   const normalized = String(value || '').trim()
+  if (normalized === 'xxs')
+    return 'xs'
   const matched = WORKSPACE_FONT_SIZE_PRESET_OPTIONS.find(item => item.value === normalized)
   return matched?.value || null
 }
@@ -99,8 +103,8 @@ export function defaultWorkspaceDisplayPreferenceSnapshot(): WorkspaceDisplayPre
     teamDefault: null,
     workspaceOverride: null,
     effective: {
-      fontSizePreset: 'md',
-      tabSpacingPreset: 'default',
+      fontSizePreset: 'lg',
+      tabSpacingPreset: 'relaxed',
     },
     sources: {
       fontSizePreset: 'system_default',

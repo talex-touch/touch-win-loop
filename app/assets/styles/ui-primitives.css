@@ -343,9 +343,25 @@
 
 .wl-context-menu__item-main {
   min-width: 0;
+  flex: 1 1 auto;
   display: inline-flex;
   align-items: center;
   gap: var(--wl-context-menu-item-main-gap, 12px);
+}
+
+.wl-context-menu__check-slot,
+.wl-context-menu__icon-slot {
+  flex: 0 0 auto;
+  width: var(--wl-context-menu-icon-size, 20px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.wl-context-menu__check {
+  font-size: var(--wl-context-menu-icon-size, 20px);
+  line-height: 1;
 }
 
 .wl-context-menu__icon {

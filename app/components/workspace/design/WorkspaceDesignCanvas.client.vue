@@ -11,7 +11,10 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { PanOnScrollMode, SelectionMode, VueFlow } from "@vue-flow/core";
 import { createEmptyDesignCanvasSelectionState } from "~~/app/composables/useDesignCanvasSelection";
 import { DESIGN_TOOL_PRESETS } from "~~/app/composables/useDesignToolController";
-import { canDesignFrameCreateElements } from "~~/shared/utils/scene-document";
+import {
+  canDesignFrameCreateElements,
+  resolveDesignPageWorkspaceBackground,
+} from "~~/shared/utils/scene-document";
 import { Background } from "@vue-flow/background";
 import { MiniMap } from "@vue-flow/minimap";
 import "@vue-flow/core/dist/style.css";
@@ -324,6 +327,9 @@ const canvasChromeStyle = computed<Record<string, string>>(() => {
           : "10px",
   };
 });
+const workspaceBackground = computed(() =>
+  resolveDesignPageWorkspaceBackground(props.page),
+);
 const selectedFrames = computed(() => {
   const selectedIdSet = new Set(props.selectionState.frameIds || []);
   return (props.frames || []).filter((frame) => selectedIdSet.has(frame.id));
@@ -660,7 +666,7 @@ function resolveViewportSnapshot(
 ): Partial<{ x: number; y: number; zoom: number }> {
   if (!viewport) return {};
   if ("value" in viewport && viewport.value) return viewport.value;
-  return viewport;
+  return viewport as Partial<{ x: number; y: number; zoom: number }>;
 }
 
 function resolvePointerClientPosition(
@@ -1412,7 +1418,10 @@ onBeforeUnmount(() => {
     ref="rootRef"
     class="workspace-design-canvas__root relative h-full min-h-0 overflow-hidden outline-none"
     :data-zoom-state="zoomControlState"
-    :style="canvasChromeStyle"
+    :style="{
+      ...canvasChromeStyle,
+      backgroundColor: workspaceBackground,
+    }"
     tabindex="0"
     @keydown="handleKeydown"
     @mousedown="handleRootMouseDown"
@@ -1718,7 +1727,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .workspace-design-canvas__root {
-  background-color: #f7f8fb;
   --workspace-design-control-width: 200px;
   --workspace-design-control-collapsed-width: 92px;
   --workspace-design-control-height: 36px;

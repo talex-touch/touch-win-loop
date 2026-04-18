@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import NotificationListContent from '~/components/notifications/NotificationListContent.vue'
+
 const props = withDefaults(defineProps<{
   workspaceId?: string
   active?: boolean

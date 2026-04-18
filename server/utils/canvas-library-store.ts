@@ -843,7 +843,7 @@ export async function createProjectDesignResourceFromCanvasLibrarySceneTemplate(
       drawMode: 'composition',
       sceneSourceType: 'image_mockup',
       templateKey: normalizeString(sceneDocument.templateKey) || 'device-showcase',
-      editorEngine: 'vueflow',
+      editorEngine: 'canvaskit_wasm',
       libraryOrigin: origin,
     },
   })

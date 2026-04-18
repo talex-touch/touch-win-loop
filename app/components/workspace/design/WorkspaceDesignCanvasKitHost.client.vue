@@ -18,11 +18,17 @@ import {
   createEmptyDesignCanvasSelectionState,
 } from '~~/app/composables/useDesignCanvasSelection'
 import {
+  canDesignFrameContainElements,
   canDesignFrameCreateElements,
-  renderCompositionAssetToSvg,
+  isFlatDesignFrameKind,
+  isDesignFrameClipContentEnabled,
+  renderCompositionFramePreviewSvg,
   resolveDesignElementAbsoluteRect,
+  resolveDesignElementPresentation,
+  resolveDesignFrameSurfaceRadius,
   resolveDesignFrameGridMetadata,
   resolveDesignFrameProjectionLayoutForFrames,
+  resolveDesignPageWorkspaceBackground,
 } from '~~/shared/utils/scene-document'
 
 const MIN_CANVAS_ZOOM = 0.1
@@ -139,12 +145,22 @@ type ElementDragItem = {
   startX: number
   startY: number
   startPoints: Array<{ x: number, y: number }> | null
+  startWorldX: number
+  startWorldY: number
+  startWorldRect: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+  startWorldPoints: Array<{ x: number, y: number }> | null
+  preferredFrameId: string
 }
 
 type ElementHitItem = {
   element: DesignElementModel
-  displayFrame: DesignFrameModel
-  ownerFrame: DesignFrameModel
+  displayFrame: DesignFrameModel | null
+  ownerFrame: DesignFrameModel | null
   displayFrameId: string
   ownerFrameId: string
   rect: {
@@ -251,6 +267,7 @@ type CreateSessionFrameContext = {
   displayFrameY: number
   localX: number
   localY: number
+  scope: 'frame' | 'page_root'
 }
 
 type TextEditSession = {
@@ -349,6 +366,17 @@ type MinimapFrameItem = {
   label: string
   style: Record<string, string>
   state: 'default' | 'selected' | 'editing'
+}
+
+type PageRootElementPreviewItem = {
+  key: string
+  element: DesignElementModel
+  rect: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
 }
 
 type ZoomControlState = 'expanded' | 'resting' | 'dormant'
@@ -511,6 +539,7 @@ const compositionModel = computed<CompositionModel>(() => {
   const pageFrameIds = normalizedFrames.value
     .filter(frame => normalizeString(frame.pageId) === resolvedPageId.value)
     .map(frame => frame.id)
+  const workspaceBackground = resolveDesignPageWorkspaceBackground(props.page)
 
   return {
     kind: 'composition',
@@ -518,7 +547,7 @@ const compositionModel = computed<CompositionModel>(() => {
     pages: [{
       id: resolvedPageId.value,
       name: normalizeString(props.page?.name) || 'Canvas',
-      background: normalizeString(props.page?.background) || '#0b1220',
+      background: workspaceBackground,
       frameIds: pageFrameIds,
       viewport: {
         x: 0,
@@ -545,8 +574,146 @@ const compositionModel = computed<CompositionModel>(() => {
   }
 })
 
+const workspaceBackground = computed(() => resolveDesignPageWorkspaceBackground(props.page))
+
+const pageRootThemeTokens = computed<Record<string, string>>(() => {
+  return {
+    background: normalizeString(props.themeTokens?.background) || '#ffffff',
+    surface: normalizeString(props.themeTokens?.surface) || '#ffffff',
+    accent: normalizeString(props.themeTokens?.accent) || '#38bdf8',
+    text: normalizeString(props.themeTokens?.text) || '#0f172a',
+    muted: normalizeString(props.themeTokens?.muted) || '#94a3b8',
+  }
+})
+
+const pageRootElementPreviewItems = computed<PageRootElementPreviewItem[]>(() => {
+  return (props.pageRootElements || [])
+    .filter(element => !element.hidden)
+    .map((element, index) => {
+      const rect = resolveDesignElementAbsoluteRect(element)
+      return {
+        key: normalizeString(element.id) || `page-root-${index + 1}`,
+        element,
+        rect: {
+          x: rect.x,
+          y: rect.y,
+          width: Math.max(1, rect.width),
+          height: Math.max(1, rect.height),
+        },
+      }
+    })
+    .sort((left, right) => Number(left.element.zIndex || 0) - Number(right.element.zIndex || 0))
+})
+
+const pageRootElementHitItems = computed<ElementHitItem[]>(() => {
+  return pageRootElementPreviewItems.value.map((item) => {
+    return {
+      element: item.element,
+      displayFrame: null,
+      ownerFrame: null,
+      displayFrameId: '',
+      ownerFrameId: '',
+      rect: {
+        x: item.rect.x,
+        y: item.rect.y,
+        width: item.rect.width,
+        height: item.rect.height,
+      },
+    }
+  })
+})
+
+const globalFrameElementHitItems = computed<ElementHitItem[]>(() => {
+  if (normalizeString(props.selectionState.editingFrameId))
+    return []
+
+  return normalizedFrames.value.flatMap((displayFrame) => {
+    const ownerFrame = props.frameOwnerFrames[displayFrame.id] || displayFrame
+    if (!canDesignFrameContainElements(ownerFrame))
+      return []
+    return resolveFrameElementHitItems(displayFrame, ownerFrame)
+  })
+})
+
+function isRectFullyInsideFrame(
+  rect: { x: number, y: number, width: number, height: number },
+  frame: DesignFrameModel,
+): boolean {
+  return rect.x >= frame.x
+    && rect.y >= frame.y
+    && rect.x + rect.width <= frame.x + Math.max(1, frame.width)
+    && rect.y + rect.height <= frame.y + Math.max(1, frame.height)
+}
+
+function resolveAutoAttachFrameForWorldRect(
+  rect: { x: number, y: number, width: number, height: number },
+  preferredFrameId = '',
+): DesignFrameModel | null {
+  const normalizedPreferredFrameId = normalizeString(preferredFrameId)
+  if (normalizedPreferredFrameId) {
+    const preferredFrame = normalizedFrames.value.find(frame => frame.id === normalizedPreferredFrameId) || null
+    if (preferredFrame && canDesignFrameContainElements(preferredFrame) && isRectFullyInsideFrame(rect, preferredFrame))
+      return preferredFrame
+  }
+
+  for (let index = normalizedFrames.value.length - 1; index >= 0; index -= 1) {
+    const frame = normalizedFrames.value[index]
+    if (!frame || !canDesignFrameContainElements(frame))
+      continue
+    if (normalizedPreferredFrameId && frame.id === normalizedPreferredFrameId)
+      continue
+    if (isRectFullyInsideFrame(rect, frame))
+      return frame
+  }
+
+  return null
+}
+
+const overflowFrameElementHitItems = computed<ElementHitItem[]>(() => {
+  if (normalizeString(props.selectionState.editingFrameId))
+    return []
+
+  const items = normalizedFrames.value.flatMap((displayFrame) => {
+    const ownerFrame = props.frameOwnerFrames[displayFrame.id] || displayFrame
+    if (!canDesignFrameContainElements(ownerFrame) || isDesignFrameClipContentEnabled(displayFrame))
+      return []
+
+    return resolveFrameElementHitItems(displayFrame, ownerFrame)
+      .filter((item) => {
+        return !item.element.hidden
+          && !item.element.locked
+          && !isRectFullyInsideFrame(item.rect, displayFrame)
+      })
+  })
+
+  const interactiveElementIds = new Set(
+    items
+      .map(item => item.element)
+      .filter((element) => {
+        const parentId = normalizeString(element.parentId)
+        return !parentId || !items.some(candidate => candidate.element.id === parentId)
+      })
+      .map(element => element.id),
+  )
+
+  return items
+    .filter(item => interactiveElementIds.has(item.element.id))
+    .sort((left, right) => Number(left.element.zIndex || 0) - Number(right.element.zIndex || 0))
+})
+
 const pageRenderBounds = computed<WorldBounds>(() => {
-  if (normalizedFrames.value.length === 0) {
+  const frameBounds = normalizedFrames.value.map((frame) => {
+    return {
+      x: frame.x,
+      y: frame.y,
+      width: Math.max(1, frame.width),
+      height: Math.max(1, frame.height),
+    }
+  })
+  const pageElementBounds = pageRootElementPreviewItems.value.map(item => item.rect)
+  const contentBounds = [...frameBounds, ...pageElementBounds]
+
+  if (contentBounds.length === 0) {
     return {
       x: -Math.round(EMPTY_STAGE_WIDTH * 0.18),
       y: -Math.round(EMPTY_STAGE_HEIGHT * 0.18),
@@ -555,10 +722,10 @@ const pageRenderBounds = computed<WorldBounds>(() => {
     }
   }
 
-  const minX = Math.min(...normalizedFrames.value.map(frame => frame.x))
-  const minY = Math.min(...normalizedFrames.value.map(frame => frame.y))
-  const maxX = Math.max(...normalizedFrames.value.map(frame => frame.x + Math.max(1, frame.width)))
-  const maxY = Math.max(...normalizedFrames.value.map(frame => frame.y + Math.max(1, frame.height)))
+  const minX = Math.min(...contentBounds.map(item => item.x))
+  const minY = Math.min(...contentBounds.map(item => item.y))
+  const maxX = Math.max(...contentBounds.map(item => item.x + Math.max(1, item.width)))
+  const maxY = Math.max(...contentBounds.map(item => item.y + Math.max(1, item.height)))
   const exportWidth = Math.max(1, maxX - minX)
   const exportHeight = Math.max(1, maxY - minY)
 
@@ -570,7 +737,7 @@ const pageRenderBounds = computed<WorldBounds>(() => {
   }
 })
 
-const pageSvgStyle = computed<Record<string, string>>(() => {
+const stageContentBoundsStyle = computed<Record<string, string>>(() => {
   return {
     left: `${pageRenderBounds.value.x}px`,
     top: `${pageRenderBounds.value.y}px`,
@@ -579,13 +746,10 @@ const pageSvgStyle = computed<Record<string, string>>(() => {
   }
 })
 
-const pageSvgMarkup = computed(() => {
-  if (normalizedFrames.value.length === 0)
-    return ''
-  return renderCompositionAssetToSvg(compositionModel.value, {
-    pageId: resolvedPageId.value,
-    padding: EXPORT_PADDING,
-  })
+const framePreviewMarkupById = computed(() => {
+  return new Map(
+    normalizedFrames.value.map(frame => [frame.id, renderCompositionFramePreviewSvg(compositionModel.value, frame.id)] as const),
+  )
 })
 
 const viewportLayerStyle = computed<Record<string, string>>(() => {
@@ -814,8 +978,12 @@ const frameSelectionEnabled = computed(() => {
 const elementSelectionEnabled = computed(() => {
   return !props.disabled
     && props.interactionContext.effectiveTool === 'select'
-    && Boolean(normalizeString(props.selectionState.editingFrameId))
     && !normalizeString(props.mockupScreenEditingFrameId)
+    && (
+      Boolean(normalizeString(props.selectionState.editingFrameId))
+      || pageRootElementHitItems.value.length > 0
+      || globalFrameElementHitItems.value.length > 0
+    )
 })
 
 const currentEditingDisplayFrameId = computed(() => {
@@ -890,12 +1058,23 @@ const pendingImagePlacementState = computed<PendingImagePlacement | null>(() => 
 const allEditingElementHitItems = computed<ElementHitItem[]>(() => {
   const displayFrame = currentEditingDisplayFrame.value
   const ownerFrame = currentEditingOwnerFrame.value
-  if (!displayFrame || !ownerFrame)
-    return []
+  const elementItems = displayFrame && ownerFrame
+    ? resolveFrameElementHitItems(displayFrame, ownerFrame)
+    : [...pageRootElementHitItems.value, ...globalFrameElementHitItems.value]
 
-  return resolveFrameElementHitItems(displayFrame, ownerFrame)
+  return elementItems
     .filter(item => !item.element.hidden && !item.element.locked)
-    .sort((left, right) => Number(left.element.zIndex || 0) - Number(right.element.zIndex || 0))
+    .sort((left, right) => {
+      const leftFrameIndex = left.displayFrameId
+        ? normalizedFrames.value.findIndex(frame => frame.id === left.displayFrameId)
+        : Number.MAX_SAFE_INTEGER
+      const rightFrameIndex = right.displayFrameId
+        ? normalizedFrames.value.findIndex(frame => frame.id === right.displayFrameId)
+        : Number.MAX_SAFE_INTEGER
+      if (leftFrameIndex !== rightFrameIndex)
+        return leftFrameIndex - rightFrameIndex
+      return Number(left.element.zIndex || 0) - Number(right.element.zIndex || 0)
+    })
 })
 
 const editingElementHitItems = computed<ElementHitItem[]>(() => {
@@ -1308,7 +1487,7 @@ const stageCursorClass = computed(() => {
     return 'cursor-grabbing'
   if (elementDragSession.value)
     return 'cursor-grabbing'
-  if (createElementEnabled.value || pendingImagePlacementState.value)
+  if (activeCreateElementTool.value || pendingImagePlacementState.value)
     return 'cursor-crosshair'
   if (props.interactionContext.effectiveTool === 'hand')
     return panSession.value ? 'cursor-grabbing' : 'cursor-grab'
@@ -1594,14 +1773,14 @@ function revealZoomControl(options?: {
   if (!options?.collapseAfterIdle)
     return
 
-  zoomControlRestingTimer = window.setTimeout(() => {
+  zoomControlRestingTimer = setTimeout(() => {
     if (zoomControlHovering.value && !options.ignoreHover)
       return
     zoomControlState.value = 'resting'
     zoomControlRestingTimer = null
   }, options.delay ?? ZOOM_CONTROL_COLLAPSE_DELAY)
 
-  zoomControlDormantTimer = window.setTimeout(() => {
+  zoomControlDormantTimer = setTimeout(() => {
     if (zoomControlHovering.value && !options.ignoreHover)
       return
     zoomControlState.value = 'dormant'
@@ -1703,6 +1882,120 @@ function resolveMinimapRectStyle(bounds: WorldBounds): Record<string, string> {
     top: `${roundMetric(top)}px`,
     width: `${roundMetric(width)}px`,
     height: `${roundMetric(height)}px`,
+  }
+}
+
+function resolvePageRootElementPresentation(item: PageRootElementPreviewItem) {
+  return resolveDesignElementPresentation(item.element, pageRootThemeTokens.value)
+}
+
+function resolvePageRootElementStyle(item: PageRootElementPreviewItem): Record<string, string> {
+  const presentation = resolvePageRootElementPresentation(item)
+  const opacity = Math.max(0, Math.min(1, presentation.opacity * (item.element.locked ? 0.72 : 1)))
+  return {
+    left: `${item.rect.x}px`,
+    top: `${item.rect.y}px`,
+    width: `${Math.max(1, item.rect.width)}px`,
+    height: `${Math.max(1, item.rect.height)}px`,
+    opacity: String(opacity),
+    transform: presentation.rotation ? `rotate(${presentation.rotation}deg)` : 'none',
+    transformOrigin: 'center center',
+    overflow: 'visible',
+    zIndex: String(Math.max(1, 30 + Math.round(Number(item.element.zIndex) || 0))),
+  }
+}
+
+function resolvePageRootElementTextStyle(item: PageRootElementPreviewItem): Record<string, string> {
+  const presentation = resolvePageRootElementPresentation(item)
+  return {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    alignItems: item.element.type === 'badge' ? 'center' : 'flex-start',
+    justifyContent: presentation.textAlign === 'center'
+      ? 'center'
+      : presentation.textAlign === 'right'
+        ? 'flex-end'
+        : 'flex-start',
+    padding: item.element.type === 'badge' ? '6px 12px' : '0',
+    borderRadius: `${Math.max(0, Math.round(presentation.borderRadius))}px`,
+    background: item.element.type === 'badge' ? presentation.fill : 'transparent',
+    color: presentation.color,
+    fontSize: `${Math.max(11, Math.round(presentation.fontSize))}px`,
+    fontWeight: String(presentation.fontWeight),
+    lineHeight: `${Math.max(14, Math.round(presentation.lineHeight))}px`,
+    textAlign: presentation.textAlign,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    boxShadow: presentation.shadow || 'none',
+  }
+}
+
+function resolvePageRootElementSvgViewBox(item: PageRootElementPreviewItem): string {
+  return `0 0 ${Math.max(1, item.rect.width)} ${Math.max(1, item.rect.height)}`
+}
+
+function resolvePageRootElementSvgStyle(item: PageRootElementPreviewItem): Record<string, string> {
+  const presentation = resolvePageRootElementPresentation(item)
+  return {
+    overflow: 'visible',
+    filter: presentation.shadow ? `drop-shadow(${presentation.shadow})` : 'none',
+  }
+}
+
+function resolvePageRootPathStrokeLineCap(
+  item: PageRootElementPreviewItem,
+): 'round' | 'square' | 'inherit' | 'butt' | undefined {
+  const strokeLineCap = resolvePageRootElementPresentation(item).strokeLineCap
+  return strokeLineCap === 'round' || strokeLineCap === 'square' || strokeLineCap === 'inherit' || strokeLineCap === 'butt'
+    ? strokeLineCap
+    : undefined
+}
+
+function resolvePageRootPathStrokeLineJoin(
+  item: PageRootElementPreviewItem,
+): 'round' | 'inherit' | 'bevel' | 'miter' | undefined {
+  const strokeLineJoin = resolvePageRootElementPresentation(item).strokeLineJoin
+  return strokeLineJoin === 'round' || strokeLineJoin === 'inherit' || strokeLineJoin === 'bevel' || strokeLineJoin === 'miter'
+    ? strokeLineJoin
+    : undefined
+}
+
+function resolvePageRootPathSvgPoints(item: PageRootElementPreviewItem): string {
+  const points = item.element.points || []
+  if (!points.length)
+    return ''
+  return points
+    .map(point => `${roundMetric(point.x - item.rect.x)},${roundMetric(point.y - item.rect.y)}`)
+    .join(' ')
+}
+
+function resolveFrameSurfaceStyle(frame: DesignFrameModel): Record<string, string> {
+  const previewBox = resolveFramePreviewBox(frame)
+  const borderRadius = resolveDesignFrameSurfaceRadius(frame)
+  return {
+    left: `${roundMetric(previewBox.x)}px`,
+    top: `${roundMetric(previewBox.y)}px`,
+    width: `${roundMetric(Math.max(1, previewBox.width))}px`,
+    height: `${roundMetric(Math.max(1, previewBox.height))}px`,
+    zIndex: '24',
+    borderRadius: `${borderRadius}px`,
+    overflow: isDesignFrameClipContentEnabled(frame) ? 'hidden' : 'visible',
+    boxShadow: isFlatDesignFrameKind(frame.kind) ? 'none' : '0 24px 64px rgba(15, 23, 42, 0.12)',
+  }
+}
+
+function resolveFrameTitleStyle(frame: DesignFrameModel): Record<string, string> {
+  const previewBox = resolveFramePreviewBox(frame)
+  const isSelected = props.selectionState.frameIds.includes(frame.id)
+  const isEditingFrame = normalizeString(props.selectionState.editingFrameId) === frame.id
+  const isDisplayFrame = normalizeString(props.selectionState.displayFrameId) === frame.id
+  return {
+    left: `${roundMetric(previewBox.x + 4)}px`,
+    top: `${roundMetric(Math.max(8, previewBox.y - 18))}px`,
+    maxWidth: `${roundMetric(Math.max(120, previewBox.width - 8))}px`,
+    zIndex: isSelected || isEditingFrame || isDisplayFrame ? '117' : '40',
+    color: isSelected || isEditingFrame || isDisplayFrame ? '#0369a1' : '#475569',
   }
 }
 
@@ -1951,12 +2244,16 @@ function resolveFrameHitBoxStyle(frame: DesignFrameModel): Record<string, string
     top: `${roundMetric(previewBox.y)}px`,
     width: `${roundMetric(Math.max(1, previewBox.width))}px`,
     height: `${roundMetric(Math.max(1, previewBox.height))}px`,
+    zIndex: isSelected || isEditingFrame || isDisplayFrame ? '116' : '32',
+    borderWidth: isSelected || isEditingFrame || isDisplayFrame ? '2px' : '1px',
     borderColor: isSelected || isEditingFrame || isDisplayFrame ? '#38bdf8' : 'rgba(148, 163, 184, 0.32)',
+    backgroundColor: isSelected || isEditingFrame || isDisplayFrame ? 'rgba(56, 189, 248, 0.03)' : 'transparent',
+    borderRadius: `${resolveDesignFrameSurfaceRadius(frame)}px`,
     cursor,
     boxShadow: isSelected
-      ? '0 0 0 2px rgba(56, 189, 248, 0.35), 0 16px 40px rgba(15, 23, 42, 0.12)'
+      ? '0 0 0 1px rgba(56, 189, 248, 0.9), 0 0 0 4px rgba(56, 189, 248, 0.14), 0 16px 40px rgba(15, 23, 42, 0.12)'
       : isEditingFrame || isDisplayFrame
-        ? '0 0 0 1px rgba(56, 189, 248, 0.2), 0 10px 28px rgba(15, 23, 42, 0.1)'
+        ? '0 0 0 1px rgba(56, 189, 248, 0.35), 0 10px 28px rgba(15, 23, 42, 0.1)'
         : 'none',
   }
 }
@@ -1996,6 +2293,10 @@ function resolveFrameElementHitItems(
 function resolveElementHitBoxStyle(item: ElementHitItem): Record<string, string> {
   const isSelected = props.selectionState.elementIds.includes(item.element.id)
   const isPrimary = normalizeString(props.selectionState.primaryElementId) === item.element.id
+  const frameLayerOffset = item.displayFrameId
+    ? Math.max(0, normalizedFrames.value.findIndex(frame => frame.id === item.displayFrameId)) * 100
+    : 0
+  const layerBase = normalizeString(item.ownerFrameId) ? 118 + frameLayerOffset : 180
   const canMove = elementDragEnabled.value
     || (elementSelectionEnabled.value
       && resolveFrameUsesAutoLayout(item.ownerFrame)
@@ -2006,7 +2307,7 @@ function resolveElementHitBoxStyle(item: ElementHitItem): Record<string, string>
     top: `${item.rect.y}px`,
     width: `${item.rect.width}px`,
     height: `${item.rect.height}px`,
-    zIndex: String(40 + Math.max(0, Math.round(Number(item.element.zIndex) || 0))),
+    zIndex: String(layerBase + Math.max(0, Math.round(Number(item.element.zIndex) || 0))),
     borderColor: isSelected ? '#0ea5e9' : 'transparent',
     boxShadow: isPrimary
       ? '0 0 0 2px rgba(14, 165, 233, 0.35)'
@@ -2014,8 +2315,32 @@ function resolveElementHitBoxStyle(item: ElementHitItem): Record<string, string>
         ? '0 0 0 1px rgba(14, 165, 233, 0.24)'
         : 'none',
     backgroundColor: isSelected ? 'rgba(14, 165, 233, 0.08)' : 'transparent',
+    transform: Number(item.element.rotation || 0) ? `rotate(${Number(item.element.rotation || 0)}deg)` : 'none',
+    transformOrigin: 'center center',
     cursor: canMove ? 'move' : 'default',
   }
+}
+
+function resolveOverflowElementHitBoxStyle(item: ElementHitItem): Record<string, string> {
+  const frameLayerOffset = item.displayFrameId
+    ? Math.max(0, normalizedFrames.value.findIndex(frame => frame.id === item.displayFrameId)) * 100
+    : 0
+  return {
+    left: `${item.rect.x}px`,
+    top: `${item.rect.y}px`,
+    width: `${item.rect.width}px`,
+    height: `${item.rect.height}px`,
+    zIndex: String(117 + frameLayerOffset + Math.max(0, Math.round(Number(item.element.zIndex) || 0))),
+    transform: Number(item.element.rotation || 0) ? `rotate(${Number(item.element.rotation || 0)}deg)` : 'none',
+    transformOrigin: 'center center',
+    cursor: 'pointer',
+  }
+}
+
+function handleOverflowElementPointerDown(): void {
+  focusCanvas()
+  suppressBackgroundClick.value = true
+  suppressFrameClick = true
 }
 
 function resolveElementWorldGeometry(item: ElementHitItem): {
@@ -2026,8 +2351,8 @@ function resolveElementWorldGeometry(item: ElementHitItem): {
   rotation: number
 } {
   return {
-    x: roundMetric(item.displayFrame.x + Number(item.element.x || 0)),
-    y: roundMetric(item.displayFrame.y + Number(item.element.y || 0)),
+    x: roundMetric((item.displayFrame?.x || 0) + Number(item.element.x || 0)),
+    y: roundMetric((item.displayFrame?.y || 0) + Number(item.element.y || 0)),
     width: Math.max(12, Number(item.element.width || item.rect.width || 12)),
     height: Math.max(12, Number(item.element.height || item.rect.height || 12)),
     rotation: Number(item.element.rotation || 0),
@@ -2090,6 +2415,7 @@ function resolveCreateSessionFrameContextForFrame(
     displayFrameY: displayFrame.y,
     localX,
     localY,
+    scope: 'frame',
   }
 }
 
@@ -2100,14 +2426,29 @@ function resolveCreateSessionFrameContext(options: {
   allowAutoLayout?: boolean
 }): CreateSessionFrameContext | null {
   const allowAutoLayout = options.allowAutoLayout === true
-  if ((!createElementEnabled.value && !allowAutoLayout) || !currentEditingOwnerFrame.value || !currentEditingDisplayFrame.value)
+  if (currentEditingOwnerFrame.value && currentEditingDisplayFrame.value) {
+    if (!allowAutoLayout && !createElementEnabled.value)
+      return null
+
+    return resolveCreateSessionFrameContextForFrame(
+      currentEditingDisplayFrame.value,
+      currentEditingOwnerFrame.value,
+      options,
+    )
+  }
+
+  if (props.disabled || normalizeString(props.mockupScreenEditingFrameId))
     return null
 
-  return resolveCreateSessionFrameContextForFrame(
-    currentEditingDisplayFrame.value,
-    currentEditingOwnerFrame.value,
-    options,
-  )
+  return {
+    ownerFrameId: '',
+    displayFrameId: '',
+    displayFrameX: 0,
+    displayFrameY: 0,
+    localX: roundMetric(options.worldX),
+    localY: roundMetric(options.worldY),
+    scope: 'page_root',
+  }
 }
 
 function emitFrameEditingSelection(context: CreateSessionFrameContext): void {
@@ -2179,12 +2520,13 @@ function emitCreateElementFromSession(session: CreateElementSession): void {
   const height = Math.max(1, Math.abs(session.currentY - session.startY))
   const ownerFrame = normalizedFrames.value.find(frame => frame.id === session.ownerFrameId) || null
   const ownerFrameAutoLayout = resolveFrameUsesAutoLayout(ownerFrame)
+  const targetFrameId = normalizeString(session.ownerFrameId) || undefined
 
   if (session.tool === 'image' && session.imagePlacement?.src) {
     emit('create-element', {
       type: 'image',
       pageId: resolvedPageId.value,
-      frameId: session.ownerFrameId,
+      frameId: targetFrameId,
       x: ownerFrameAutoLayout ? 0 : minX,
       y: ownerFrameAutoLayout ? 0 : minY,
       width: Math.max(1, session.moved ? width : session.imagePlacement.intrinsicWidth),
@@ -2207,7 +2549,7 @@ function emitCreateElementFromSession(session: CreateElementSession): void {
     emit('create-element', {
       type: 'path',
       pageId: resolvedPageId.value,
-      frameId: session.ownerFrameId,
+      frameId: targetFrameId,
       x: minX,
       y: minY,
       width,
@@ -2232,7 +2574,7 @@ function emitCreateElementFromSession(session: CreateElementSession): void {
     emit('create-element', {
       type: 'text',
       pageId: resolvedPageId.value,
-      frameId: session.ownerFrameId,
+      frameId: targetFrameId,
       x: minX,
       y: minY,
       width: Math.max(160, width),
@@ -2251,7 +2593,7 @@ function emitCreateElementFromSession(session: CreateElementSession): void {
     type: 'shape',
     shapeKind: session.tool === 'ellipse' ? 'ellipse' : session.tool === 'arrow' ? 'arrow' : 'rectangle',
     pageId: resolvedPageId.value,
-    frameId: session.ownerFrameId,
+    frameId: targetFrameId,
     x: minX,
     y: minY,
     width: Math.max(session.tool === 'arrow' ? 24 : 12, width),
@@ -2364,18 +2706,30 @@ function resolveElementDragPatch(
 ): Partial<DesignElementModel> {
   const offsetX = Math.round(deltaX)
   const offsetY = Math.round(deltaY)
-  if (item.type === 'path' && item.startPoints) {
+  const nextWorldRect = {
+    x: Math.round(item.startWorldRect.x + offsetX),
+    y: Math.round(item.startWorldRect.y + offsetY),
+    width: Math.max(1, Math.round(item.startWorldRect.width)),
+    height: Math.max(1, Math.round(item.startWorldRect.height)),
+  }
+  const targetFrame = resolveAutoAttachFrameForWorldRect(nextWorldRect, item.preferredFrameId)
+  const frameOffsetX = targetFrame?.x || 0
+  const frameOffsetY = targetFrame?.y || 0
+
+  if (item.type === 'path' && item.startWorldPoints) {
     return {
-      points: item.startPoints.map(point => ({
-        x: Math.round(point.x + offsetX),
-        y: Math.round(point.y + offsetY),
+      frameId: targetFrame ? targetFrame.id : '',
+      points: item.startWorldPoints.map(point => ({
+        x: Math.round(point.x + offsetX - frameOffsetX),
+        y: Math.round(point.y + offsetY - frameOffsetY),
       })),
     }
   }
 
   return {
-    x: Math.round(item.startX + offsetX),
-    y: Math.round(item.startY + offsetY),
+    frameId: targetFrame ? targetFrame.id : '',
+    x: Math.round(item.startWorldX + offsetX - frameOffsetX),
+    y: Math.round(item.startWorldY + offsetY - frameOffsetY),
   }
 }
 
@@ -2415,6 +2769,7 @@ function resolveExpandedDragItems(items: ElementHitItem[]): ElementDragItem[] {
       if (seenElementIds.has(item.element.id))
         return
       seenElementIds.add(item.element.id)
+      const absoluteRect = resolveDesignElementAbsoluteRect(item.element, item.displayFrame)
       dragItems.push({
         elementId: item.element.id,
         type: item.element.type,
@@ -2426,6 +2781,21 @@ function resolveExpandedDragItems(items: ElementHitItem[]): ElementDragItem[] {
               y: Number(point.y) || 0,
             }))
           : null,
+        startWorldX: absoluteRect.x,
+        startWorldY: absoluteRect.y,
+        startWorldRect: {
+          x: absoluteRect.x,
+          y: absoluteRect.y,
+          width: Math.max(1, absoluteRect.width),
+          height: Math.max(1, absoluteRect.height),
+        },
+        startWorldPoints: Array.isArray(item.element.points)
+          ? item.element.points.map(point => ({
+              x: Math.round((Number(point.x) || 0) + (item.displayFrame?.x || 0)),
+              y: Math.round((Number(point.y) || 0) + (item.displayFrame?.y || 0)),
+            }))
+          : null,
+        preferredFrameId: normalizeString(item.ownerFrameId),
       })
     })
   })
@@ -2496,51 +2866,57 @@ function resolveElementGuideAdjustment(
     )
   }
 
-  const sourceXAnchors = [
+  type ElementGuideCandidate = { value: number, label: string }
+  type ElementGuideAnchor = { key: 'start' | 'center' | 'end', value: number, offset: number }
+  type ElementGuideMatch = { delta: number, candidate: ElementGuideCandidate, sourceAnchor: ElementGuideAnchor }
+
+  const sourceXAnchors: ElementGuideAnchor[] = [
     { key: 'start', value: nextX, offset: 0 },
     { key: 'center', value: nextX + source.width / 2, offset: source.width / 2 },
     { key: 'end', value: nextX + source.width, offset: source.width },
   ]
-  const sourceYAnchors = [
+  const sourceYAnchors: ElementGuideAnchor[] = [
     { key: 'start', value: nextY, offset: 0 },
     { key: 'center', value: nextY + source.height / 2, offset: source.height / 2 },
     { key: 'end', value: nextY + source.height, offset: source.height },
   ]
 
-  let bestXMatch: { delta: number, candidate: { value: number, label: string }, sourceAnchor: typeof sourceXAnchors[number] } | null = null
-  let bestYMatch: { delta: number, candidate: { value: number, label: string }, sourceAnchor: typeof sourceYAnchors[number] } | null = null
+  let bestXMatch: ElementGuideMatch | null = null
+  let bestYMatch: ElementGuideMatch | null = null
 
-  sourceXAnchors.forEach((anchor) => {
-    xCandidates.forEach((candidate) => {
+  for (const anchor of sourceXAnchors) {
+    for (const candidate of xCandidates) {
       const delta = Math.abs(anchor.value - candidate.value)
       if (delta > ELEMENT_SNAP_THRESHOLD)
-        return
+        continue
       if (!bestXMatch || delta < bestXMatch.delta)
         bestXMatch = { delta, candidate, sourceAnchor: anchor }
-    })
-  })
-  sourceYAnchors.forEach((anchor) => {
-    yCandidates.forEach((candidate) => {
+    }
+  }
+  for (const anchor of sourceYAnchors) {
+    for (const candidate of yCandidates) {
       const delta = Math.abs(anchor.value - candidate.value)
       if (delta > ELEMENT_SNAP_THRESHOLD)
-        return
+        continue
       if (!bestYMatch || delta < bestYMatch.delta)
         bestYMatch = { delta, candidate, sourceAnchor: anchor }
-    })
-  })
+    }
+  }
 
   let verticalGuideX: number | undefined
   let horizontalGuideY: number | undefined
 
-  if (bestXMatch) {
-    nextX = Math.round(bestXMatch.candidate.value - bestXMatch.sourceAnchor.offset)
-    hints.push(`X 对齐 · ${bestXMatch.candidate.label}`)
-    verticalGuideX = frame ? frame.x + bestXMatch.candidate.value : bestXMatch.candidate.value
+  const resolvedBestXMatch = bestXMatch
+  if (resolvedBestXMatch) {
+    nextX = Math.round(resolvedBestXMatch.candidate.value - resolvedBestXMatch.sourceAnchor.offset)
+    hints.push(`X 对齐 · ${resolvedBestXMatch.candidate.label}`)
+    verticalGuideX = frame ? frame.x + resolvedBestXMatch.candidate.value : resolvedBestXMatch.candidate.value
   }
-  if (bestYMatch) {
-    nextY = Math.round(bestYMatch.candidate.value - bestYMatch.sourceAnchor.offset)
-    hints.push(`Y 对齐 · ${bestYMatch.candidate.label}`)
-    horizontalGuideY = frame ? frame.y + bestYMatch.candidate.value : bestYMatch.candidate.value
+  const resolvedBestYMatch = bestYMatch
+  if (resolvedBestYMatch) {
+    nextY = Math.round(resolvedBestYMatch.candidate.value - resolvedBestYMatch.sourceAnchor.offset)
+    hints.push(`Y 对齐 · ${resolvedBestYMatch.candidate.label}`)
+    horizontalGuideY = frame ? frame.y + resolvedBestYMatch.candidate.value : resolvedBestYMatch.candidate.value
   }
 
   elementGuideOverlay.value = {
@@ -2591,7 +2967,7 @@ function resolveAutoLayoutSiblingItems(item: ElementHitItem): ElementHitItem[] {
 }
 
 function beginAutoLayoutReorderSession(item: ElementHitItem, event: PointerEvent): void {
-  const layoutDirection = normalizeString(item.ownerFrame.metadata?.layout?.direction) === 'horizontal'
+  const layoutDirection = normalizeString(item.ownerFrame?.metadata?.layout?.direction) === 'horizontal'
     ? 'horizontal'
     : 'vertical'
   const siblings = resolveAutoLayoutSiblingItems(item)
@@ -2623,12 +2999,15 @@ function stopAutoLayoutReorderSession(pointerId?: number): void {
 }
 
 function resolveElementResizeHandleStyle(item: ElementHitItem): Record<string, string> {
+  const layerBase = normalizeString(item.ownerFrameId) ? 80 : 130
   return {
     left: `${item.rect.x}px`,
     top: `${item.rect.y}px`,
     width: `${item.rect.width}px`,
     height: `${item.rect.height}px`,
-    zIndex: String(80 + Math.max(0, Math.round(Number(item.element.zIndex) || 0))),
+    zIndex: String(layerBase + Math.max(0, Math.round(Number(item.element.zIndex) || 0))),
+    transform: Number(item.element.rotation || 0) ? `rotate(${Number(item.element.rotation || 0)}deg)` : 'none',
+    transformOrigin: 'center center',
   }
 }
 
@@ -2781,11 +3160,13 @@ function handleElementPointerDown(item: ElementHitItem, event: PointerEvent): vo
     && !event.shiftKey
   if ((!elementDragEnabled.value && !canAutoLayoutReorder) || textEditSession.value || event.button !== 0 || event.shiftKey)
     return
-  if (Boolean(item.ownerFrame.locked))
+  if (Boolean(item.ownerFrame?.locked))
     return
 
   if (canAutoLayoutReorder) {
     focusCanvas()
+    suppressBackgroundClick.value = true
+    suppressFrameClick = true
     const selectedIds = props.selectionState.scope === 'element'
       ? props.selectionState.elementIds
       : []
@@ -2799,6 +3180,8 @@ function handleElementPointerDown(item: ElementHitItem, event: PointerEvent): vo
   }
 
   focusCanvas()
+  suppressBackgroundClick.value = true
+  suppressFrameClick = true
   const selectedIds = props.selectionState.scope === 'element'
     ? props.selectionState.elementIds
     : []
@@ -3126,6 +3509,8 @@ function handleStagePointerDown(event: PointerEvent): void {
     return
   if ((event.target as HTMLElement | null)?.closest('[data-canvas-role="frame-hit"]'))
     return
+  if ((event.target as HTMLElement | null)?.closest('[data-canvas-role="element-hit"]'))
+    return
 
   if (textEditSession.value) {
     focusCanvas()
@@ -3309,6 +3694,8 @@ function handlePointerMove(event: PointerEvent): void {
     let targetIndex = 0
     while (targetIndex < otherSiblings.length) {
       const sibling = otherSiblings[targetIndex]
+      if (!sibling)
+        break
       const threshold = reorderSession.direction === 'horizontal'
         ? sibling.element.x + sibling.element.width / 2
         : sibling.element.y + sibling.element.height / 2
@@ -3552,6 +3939,8 @@ function handlePointerUp(event: PointerEvent): void {
 
       if (nextPositions.length === 1) {
         const position = nextPositions[0]
+        if (!position)
+          return
         emit('update-frame-position', {
           frameId: position.frameId,
           x: position.x,
@@ -3571,6 +3960,11 @@ function handlePointerUp(event: PointerEvent): void {
         suppressFrameClick = false
       }, 0)
     }
+    else {
+      window.setTimeout(() => {
+        suppressBackgroundClick.value = false
+      }, 0)
+    }
     return
   }
 
@@ -3587,7 +3981,14 @@ function handlePointerUp(event: PointerEvent): void {
       })
       window.setTimeout(() => {
         suppressBackgroundClick.value = false
+        suppressFrameClick = false
         suppressElementClick = false
+      }, 0)
+    }
+    else {
+      window.setTimeout(() => {
+        suppressBackgroundClick.value = false
+        suppressFrameClick = false
       }, 0)
     }
     return
@@ -3650,7 +4051,14 @@ function handlePointerUp(event: PointerEvent): void {
     if (moved) {
       window.setTimeout(() => {
         suppressBackgroundClick.value = false
+        suppressFrameClick = false
         suppressElementClick = false
+      }, 0)
+    }
+    else {
+      window.setTimeout(() => {
+        suppressBackgroundClick.value = false
+        suppressFrameClick = false
       }, 0)
     }
     return
@@ -3822,6 +4230,7 @@ function handleFramePointerDown(frame: DesignFrameModel, event: PointerEvent): v
   if (!frameSelectionEnabled.value || event.button !== 0 || event.shiftKey)
     return
 
+  suppressBackgroundClick.value = true
   focusCanvas()
   revealZoomControl({
     collapseAfterIdle: true,
@@ -3835,17 +4244,25 @@ function handleFramePointerDown(frame: DesignFrameModel, event: PointerEvent): v
   const isSelected = currentFrameIds.includes(frame.id)
   if (!isSelected)
     emitFrameSelection([frame.id], frame.id)
-  if (frame.locked)
+  if (frame.locked) {
+    window.setTimeout(() => {
+      suppressBackgroundClick.value = false
+    }, 0)
     return
+  }
 
   const dragFrameIds = isSelected
     ? currentFrameIds
     : [frame.id]
   const dragFrames = dragFrameIds
     .map(frameId => normalizedFrames.value.find(item => item.id === frameId) || null)
-    .filter((item): item is DesignFrameModel => Boolean(item) && !item.locked)
-  if (!dragFrames.length)
+    .filter((item): item is DesignFrameModel => item !== null && !item.locked)
+  if (!dragFrames.length) {
+    window.setTimeout(() => {
+      suppressBackgroundClick.value = false
+    }, 0)
     return
+  }
 
   event.preventDefault()
   rootRef.value?.setPointerCapture?.(event.pointerId)
@@ -3910,11 +4327,17 @@ function handleFrameDoubleClick(frame: DesignFrameModel, event: MouseEvent): voi
         }) || null
     : null
 
+  if (hitItem) {
+    emitElementSelection(hitItem, [hitItem.element.id], {
+      primaryElementId: hitItem.element.id,
+    })
+    return
+  }
+
   emit('request-deep-selection', {
     ownerFrameId: ownerFrame.id,
     ownerPageId: normalizeString(ownerFrame.pageId),
     displayFrameId: frame.id,
-    ownerElementId: hitItem?.element.id,
   })
 }
 
@@ -3948,6 +4371,27 @@ function handleElementClick(item: ElementHitItem, event: MouseEvent): void {
     elementIds: nextIds,
     primaryElementId: nextIds.length > 0 ? item.element.id : '',
   })
+}
+
+function handleOverflowElementClick(item: ElementHitItem): void {
+  const ownerFrameId = normalizeString(item.ownerFrameId)
+  const displayFrameId = normalizeString(item.displayFrameId)
+  if (!ownerFrameId || !displayFrameId)
+    return
+
+  emit('update-selection', {
+    scope: 'element',
+    editingFrameId: ownerFrameId,
+    displayFrameId,
+    frameIds: [],
+    primaryFrameId: '',
+    elementIds: [item.element.id],
+    primaryElementId: item.element.id,
+  })
+  window.setTimeout(() => {
+    suppressBackgroundClick.value = false
+    suppressFrameClick = false
+  }, 0)
 }
 
 function handleTextEditorInput(event: Event): void {
@@ -4103,13 +4547,16 @@ function handleKeydown(event: KeyboardEvent): void {
 <template>
   <div
     ref="rootRef"
-    class="workspace-design-canvaskit-host relative h-full min-h-0 w-full overflow-hidden rounded-[28px] bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.14),_transparent_38%),linear-gradient(180deg,_#f8fafc_0%,_#e2e8f0_100%)] touch-none outline-none"
+    class="workspace-design-canvaskit-host relative h-full min-h-0 w-full overflow-hidden rounded-[28px] touch-none outline-none"
     :class="stageCursorClass"
     :data-zoom-state="zoomControlState"
-    :style="canvasChromeStyle"
+    :style="{
+      ...canvasChromeStyle,
+      backgroundColor: workspaceBackground,
+    }"
     data-testid="workspace-design-canvaskit-host"
     tabindex="0"
-    @click="handleBackgroundClick"
+    @click.self="handleBackgroundClick"
     @keydown="handleKeydown"
     @pointerdown="handleStagePointerDown"
     @pointerleave="handlePointerLeave"
@@ -4122,16 +4569,9 @@ function handleKeydown(event: KeyboardEvent): void {
 
     <div class="absolute inset-0 overflow-visible" :style="viewportLayerStyle">
       <div
-        v-if="pageSvgMarkup"
-        class="pointer-events-none absolute overflow-hidden rounded-[32px] border border-slate-200/70 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.14)]"
-        :style="pageSvgStyle"
-        v-html="pageSvgMarkup"
-      />
-
-      <div
-        v-else
-        class="pointer-events-none absolute overflow-hidden rounded-[32px] border border-dashed border-slate-300 bg-white/86 shadow-[0_24px_60px_rgba(15,23,42,0.08)]"
-        :style="pageSvgStyle"
+        v-if="!normalizedFrames.length && !pageRootElementPreviewItems.length"
+        class="pointer-events-none absolute overflow-hidden rounded-[32px] border border-dashed border-slate-300/70 bg-white/72 shadow-[0_24px_60px_rgba(15,23,42,0.08)]"
+        :style="stageContentBoundsStyle"
       >
         <div class="flex h-full w-full items-center justify-center">
           <div class="max-w-sm text-center">
@@ -4146,6 +4586,122 @@ function handleKeydown(event: KeyboardEvent): void {
             </p>
           </div>
         </div>
+      </div>
+
+      <div
+        v-for="item in pageRootElementPreviewItems"
+        :key="item.key"
+        class="pointer-events-none absolute select-none"
+        :style="resolvePageRootElementStyle(item)"
+      >
+        <div
+          v-if="item.element.type === 'text' || item.element.type === 'caption' || item.element.type === 'badge'"
+          class="h-full w-full"
+          :style="resolvePageRootElementTextStyle(item)"
+        >
+          {{ item.element.text }}
+        </div>
+
+        <svg
+          v-else
+          class="h-full w-full"
+          :viewBox="resolvePageRootElementSvgViewBox(item)"
+          preserveAspectRatio="none"
+          :style="resolvePageRootElementSvgStyle(item)"
+        >
+          <template v-if="item.element.type === 'shape'">
+            <ellipse
+              v-if="resolvePageRootElementPresentation(item).shapeKind === 'ellipse' || resolvePageRootElementPresentation(item).shapeKind === 'circle'"
+              :cx="resolvePageRootElementPresentation(item).width / 2"
+              :cy="resolvePageRootElementPresentation(item).height / 2"
+              :rx="resolvePageRootElementPresentation(item).width / 2"
+              :ry="resolvePageRootElementPresentation(item).height / 2"
+              :fill="resolvePageRootElementPresentation(item).fill"
+              :stroke="resolvePageRootElementPresentation(item).stroke"
+              :stroke-width="resolvePageRootElementPresentation(item).strokeWidth"
+            />
+            <g v-else-if="resolvePageRootElementPresentation(item).shapeKind === 'arrow'">
+              <line
+                x1="0"
+                :y1="resolvePageRootElementPresentation(item).height / 2"
+                :x2="resolvePageRootElementPresentation(item).width"
+                :y2="resolvePageRootElementPresentation(item).height / 2"
+                :stroke="resolvePageRootElementPresentation(item).stroke"
+                :stroke-width="resolvePageRootElementPresentation(item).strokeWidth"
+                stroke-linecap="round"
+              />
+              <path
+                :d="`M ${resolvePageRootElementPresentation(item).width - Math.max(12, Math.min(32, resolvePageRootElementPresentation(item).height * 0.35))} ${resolvePageRootElementPresentation(item).height / 2 - Math.max(12, Math.min(32, resolvePageRootElementPresentation(item).height * 0.35)) * 0.7} L ${resolvePageRootElementPresentation(item).width} ${resolvePageRootElementPresentation(item).height / 2} L ${resolvePageRootElementPresentation(item).width - Math.max(12, Math.min(32, resolvePageRootElementPresentation(item).height * 0.35))} ${resolvePageRootElementPresentation(item).height / 2 + Math.max(12, Math.min(32, resolvePageRootElementPresentation(item).height * 0.35)) * 0.7}`"
+                fill="none"
+                :stroke="resolvePageRootElementPresentation(item).stroke"
+                :stroke-width="resolvePageRootElementPresentation(item).strokeWidth"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </g>
+            <rect
+              v-else
+              x="0"
+              y="0"
+              :width="resolvePageRootElementPresentation(item).width"
+              :height="resolvePageRootElementPresentation(item).height"
+              :rx="resolvePageRootElementPresentation(item).borderRadius"
+              :ry="resolvePageRootElementPresentation(item).borderRadius"
+              :fill="resolvePageRootElementPresentation(item).fill"
+              :stroke="resolvePageRootElementPresentation(item).stroke"
+              :stroke-width="resolvePageRootElementPresentation(item).strokeWidth"
+            />
+          </template>
+
+          <template v-else-if="item.element.type === 'image'">
+            <image
+              v-if="item.element.imageSrc"
+              :href="item.element.imageSrc"
+              x="0"
+              y="0"
+              :width="item.rect.width"
+              :height="item.rect.height"
+              preserveAspectRatio="xMidYMid slice"
+            />
+            <rect
+              v-else
+              x="0"
+              y="0"
+              :width="item.rect.width"
+              :height="item.rect.height"
+              rx="18"
+              ry="18"
+              fill="#cbd5e1"
+            />
+          </template>
+
+          <polyline
+            v-else-if="item.element.type === 'path'"
+            :points="resolvePageRootPathSvgPoints(item)"
+            fill="none"
+            :stroke="resolvePageRootElementPresentation(item).stroke"
+            :stroke-width="resolvePageRootElementPresentation(item).strokeWidth"
+            :stroke-linecap="resolvePageRootPathStrokeLineCap(item)"
+            :stroke-linejoin="resolvePageRootPathStrokeLineJoin(item)"
+          />
+        </svg>
+      </div>
+
+      <div
+        v-for="frame in normalizedFrames"
+        :key="`frame-surface-${frame.id}`"
+        class="workspace-design-canvaskit-host__frame-surface pointer-events-none absolute overflow-hidden"
+        :style="resolveFrameSurfaceStyle(frame)"
+        v-html="framePreviewMarkupById.get(frame.id) || ''"
+      />
+
+      <div
+        v-for="frame in normalizedFrames"
+        :key="`frame-title-${frame.id}`"
+        class="pointer-events-none absolute truncate text-[12px] font-medium leading-none tracking-[0.01em]"
+        :style="resolveFrameTitleStyle(frame)"
+      >
+        {{ frame.name }}
       </div>
 
       <div
@@ -4266,7 +4822,7 @@ function handleKeydown(event: KeyboardEvent): void {
         }"
         data-testid="workspace-design-canvaskit-frame-guides"
       >
-        <div class="absolute inset-0 rounded-[18px] border border-sky-400/20" />
+        <div class="absolute inset-0 border border-sky-400/20" :style="{ borderRadius: `${resolveDesignFrameSurfaceRadius(grid.frame)}px` }" />
         <div
           v-for="guide in grid.columnGuides"
           :key="`column-${grid.frame.id}-${guide}`"
@@ -4282,9 +4838,23 @@ function handleKeydown(event: KeyboardEvent): void {
       </div>
 
       <button
+        v-for="item in overflowFrameElementHitItems"
+        :key="`overflow-element-${item.element.id}`"
+        class="absolute border border-transparent bg-transparent focus:outline-none"
+        :style="resolveOverflowElementHitBoxStyle(item)"
+        data-canvas-role="element-hit"
+        data-testid="workspace-design-canvaskit-overflow-element-hit"
+        type="button"
+        @pointerdown.stop.prevent="handleOverflowElementPointerDown()"
+        @click.stop="handleOverflowElementClick(item)"
+      >
+        <span class="sr-only">{{ item.element.id }}</span>
+      </button>
+
+      <button
         v-for="frame in normalizedFrames"
         :key="frame.id"
-        class="absolute rounded-[30px] border bg-transparent transition-[box-shadow,border-color] focus:outline-none"
+        class="absolute border bg-transparent transition-[box-shadow,border-color] focus:outline-none"
         :class="{ 'pointer-events-none': createElementEnabled || Boolean(props.mockupScreenEditingFrameId) || Boolean(props.selectionState.editingFrameId) }"
         :style="resolveFrameHitBoxStyle(frame)"
         data-canvas-role="frame-hit"
@@ -4300,8 +4870,9 @@ function handleKeydown(event: KeyboardEvent): void {
         v-for="item in editingElementHitItems"
         :key="item.element.id"
         class="absolute rounded-[18px] border border-transparent bg-transparent transition-[box-shadow,border-color,background-color] hover:border-sky-300/60 focus:outline-none"
-        :class="{ 'pointer-events-none': createElementEnabled || Boolean(props.mockupScreenEditingFrameId) || Boolean(pendingImagePlacementState) }"
+        :class="{ 'pointer-events-none': Boolean(activeCreateElementTool) || Boolean(props.mockupScreenEditingFrameId) || Boolean(pendingImagePlacementState) }"
         :style="resolveElementHitBoxStyle(item)"
+        data-canvas-role="element-hit"
         data-testid="workspace-design-canvaskit-element-hit"
         type="button"
         @pointerdown.stop="handleElementPointerDown(item, $event)"
@@ -4381,7 +4952,7 @@ function handleKeydown(event: KeyboardEvent): void {
         :style="frameResizeOutlineStyle"
         data-testid="workspace-design-canvaskit-frame-resize"
       >
-        <div class="absolute inset-0 rounded-[22px] border border-sky-500/80 shadow-[0_0_0_1px_rgba(14,165,233,0.18)]" />
+        <div class="absolute inset-0 border border-sky-500/80 shadow-[0_0_0_1px_rgba(14,165,233,0.18)]" :style="{ borderRadius: `${resolveDesignFrameSurfaceRadius(frameResizeTarget.frame)}px` }" />
         <button
           class="pointer-events-auto absolute -left-2 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-sky-500 shadow-sm cursor-w-resize"
           type="button"
@@ -4606,6 +5177,12 @@ function handleKeydown(event: KeyboardEvent): void {
 </template>
 
 <style scoped>
+.workspace-design-canvaskit-host__frame-surface :deep(svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .workspace-design-canvaskit-host__chrome {
   position: absolute;
   left: 16px;

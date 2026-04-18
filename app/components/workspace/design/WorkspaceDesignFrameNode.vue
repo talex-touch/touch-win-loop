@@ -8,8 +8,12 @@ import type {
 } from '~~/shared/types/domain'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import {
+  isFlatDesignFrameKind,
+  isDesignFrameClipContentEnabled,
   isDeviceDesignFrameKind,
   renderCompositionFramePreviewSvg,
+  resolveDesignFrameSurfaceBackground,
+  resolveDesignFrameSurfaceRadius,
 } from '~~/shared/utils/scene-document'
 
 const MIN_FRAME_WIDTH = 280
@@ -61,10 +65,10 @@ function findElement(type: DesignElementModel['type'], preferredId = ''): Design
 
 const themeTokens = computed(() => {
   return {
-    background: normalizeString(props.frame.themeTokens?.background) || '#0f172a',
+    background: resolveDesignFrameSurfaceBackground(props.frame),
     surface: normalizeString(props.frame.themeTokens?.surface) || '#ffffff',
     accent: normalizeString(props.frame.themeTokens?.accent) || '#38bdf8',
-    text: normalizeString(props.frame.themeTokens?.text) || '#e2e8f0',
+    text: normalizeString(props.frame.themeTokens?.text) || '#0f172a',
     muted: normalizeString(props.frame.themeTokens?.muted) || '#94a3b8',
   }
 })
@@ -77,7 +81,7 @@ const isDeviceFrame = computed(() => isDeviceDesignFrameKind(props.frame.kind))
 const devicePreviewPage = computed<DesignPageModel>(() => ({
   id: props.frame.pageId,
   name: 'Preview',
-  background: normalizeString(props.frame.themeTokens?.background) || normalizeString(themeTokens.value.background) || '#0f172a',
+  background: resolveDesignFrameSurfaceBackground(props.frame, normalizeString(themeTokens.value.background) || '#ffffff'),
   frameIds: (props.previewFrames?.length ? props.previewFrames : [props.frame]).map(frame => frame.id),
   viewport: {
     x: 0,
@@ -237,13 +241,19 @@ onBeforeUnmount(() => {
 
 <template>
   <article
-    class="relative h-full w-full overflow-hidden rounded-[28px] border bg-slate-950/90 shadow-[0_30px_80px_rgba(15,23,42,0.2)]"
-    :class="selected ? 'border-sky-400 ring-2 ring-sky-300/40' : 'border-slate-700/80'"
+    class="relative h-full w-full overflow-hidden border"
+    :class="selected ? 'border-sky-400 ring-2 ring-sky-300/40' : 'border-slate-300'"
+    :style="{
+      backgroundColor: themeTokens.background,
+      borderRadius: `${resolveDesignFrameSurfaceRadius(frame)}px`,
+      overflow: isDesignFrameClipContentEnabled(frame) ? 'hidden' : 'visible',
+      boxShadow: isFlatDesignFrameKind(frame.kind) ? 'none' : '0 30px 80px rgba(15, 23, 42, 0.2)',
+    }"
   >
     <div
       class="absolute inset-0"
       :style="{
-        background: `linear-gradient(135deg, ${themeTokens.background} 0%, ${themeTokens.accent}22 100%)`,
+        background: themeTokens.background,
       }"
     />
     <div class="absolute left-5 top-4 z-10 flex flex-wrap items-center gap-2">

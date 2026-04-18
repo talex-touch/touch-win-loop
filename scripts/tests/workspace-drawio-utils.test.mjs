@@ -54,21 +54,25 @@ it('draw.io XML 可在协作文档里序列化并原样回读', async () => {
   const {
     createDefaultDrawioXml,
     extractDrawioXmlFromCollabValue,
+    resolveDrawioCollabValue,
     serializeDrawioCollabValue,
   } = await loadWorkspaceDrawioUtils()
 
   const xml = createDefaultDrawioXml('订单流程')
   const serialized = serializeDrawioCollabValue(xml)
   const restored = extractDrawioXmlFromCollabValue(serialized, '订单流程')
+  const resolved = resolveDrawioCollabValue(serialized, '订单流程')
 
   assert.match(xml, /<mxfile/)
   assert.match(xml, /name="订单流程"/)
   assert.equal(restored, xml)
+  assert.equal(resolved.status, 'ready')
+  assert.equal(resolved.xml, xml)
 })
 
 it('旧版 scene document 会迁移为可编辑的 draw.io XML 节点和连线', async () => {
   const {
-    extractDrawioXmlFromCollabValue,
+    resolveDrawioCollabValue,
   } = await loadWorkspaceDrawioUtils()
   const {
     createEmptySceneDocument,
@@ -110,14 +114,68 @@ it('旧版 scene document 会迁移为可编辑的 draw.io XML 节点和连线',
     },
   ]
 
-  const xml = extractDrawioXmlFromCollabValue(serializeSceneDocument(scene), '迁移流程')
+  const resolved = resolveDrawioCollabValue(serializeSceneDocument(scene), '迁移流程')
+  const xml = resolved.xml
 
+  assert.equal(resolved.status, 'ready')
   assert.match(xml, /<mxfile/)
   assert.match(xml, /value="开始"/)
   assert.match(xml, /value="评审"/)
   assert.match(xml, /value="提交"/)
   assert.match(xml, /source="start"/)
   assert.match(xml, /target="review"/)
+})
+
+it('空的新 draw payload 会回落到默认 draw.io 画布，而不是被误判为 legacy', async () => {
+  const {
+    resolveDrawioCollabValue,
+  } = await loadWorkspaceDrawioUtils()
+  const {
+    createEmptySceneDocument,
+    serializeSceneDocument,
+  } = await loadSceneDocumentUtils()
+
+  const emptyScene = createEmptySceneDocument({
+    drawMode: 'diagram',
+    sourceType: 'manual',
+  })
+
+  const emptyObjectResolved = resolveDrawioCollabValue('{}', '空对象流程')
+  const emptyArrayResolved = resolveDrawioCollabValue('[]', '空数组流程')
+  const emptySceneResolved = resolveDrawioCollabValue(serializeSceneDocument(emptyScene), '空白流程')
+
+  assert.equal(emptyObjectResolved.status, 'ready')
+  assert.match(emptyObjectResolved.xml, /<mxfile/)
+  assert.equal(emptyArrayResolved.status, 'ready')
+  assert.match(emptyArrayResolved.xml, /<mxfile/)
+  assert.equal(emptySceneResolved.status, 'ready')
+  assert.match(emptySceneResolved.xml, /<mxfile/)
+})
+
+it('真正 legacy fallback 的 workflow 资源会被判定为阻断式不可加载状态', async () => {
+  const {
+    resolveDrawioCollabValue,
+  } = await loadWorkspaceDrawioUtils()
+
+  const resolved = resolveDrawioCollabValue(JSON.stringify({
+    version: 1,
+    drawMode: 'diagram',
+    sourceType: 'manual',
+    runtimeSnapshot: {
+      legacyRuntime: {
+        engine: 'tldraw',
+      },
+    },
+    sceneModel: {
+      nodes: [],
+      edges: [],
+    },
+  }), '旧版流程')
+
+  assert.equal(resolved.status, 'legacy_unavailable')
+  assert.equal(resolved.xml, '')
+  assert.equal(resolved.title, '检测到旧版流程画布')
+  assert.match(resolved.message, /draw\.io 无法无损自动迁移/)
 })
 
 it('draw.io XML 可解析为 workflowSnapshot，并稳定输出节点/连线摘要与 hash', async () => {

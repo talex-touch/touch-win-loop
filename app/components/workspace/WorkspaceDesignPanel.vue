@@ -99,6 +99,7 @@ import {
   renderCompositionAssetToSvg,
   registerRuntimeDeviceFramePresets,
   resolveCompositionElementsForFrame,
+  resolveDesignPageWorkspaceBackground,
   sceneDocumentFromUnknown,
   serializeSceneDocument,
   setCurrentDesignPageInSceneDocument,
@@ -335,22 +336,21 @@ function restoreCanvasAiMessagesFromStorage(): void {
       canvasAiMessages.value = [];
       return;
     }
-    canvasAiMessages.value = parsed
-      .map((item) => {
-        if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-        const record = item as Record<string, unknown>;
-        const role = normalizeString(record.role);
-        if (role !== "assistant" && role !== "user" && role !== "system") return null;
-        const content = normalizeString(record.content);
-        if (!content) return null;
-        return {
-          role,
-          content,
-          metadata: toCanvasAiMessageMetadata(record.metadata),
-        } satisfies ChatMessage;
-      })
-      .filter((item): item is ChatMessage => Boolean(item))
-      .slice(-6);
+    const nextMessages: ChatMessage[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const record = item as Record<string, unknown>;
+      const role = normalizeString(record.role);
+      if (role !== "assistant" && role !== "user" && role !== "system") continue;
+      const content = normalizeString(record.content);
+      if (!content) continue;
+      nextMessages.push({
+        role,
+        content,
+        metadata: toCanvasAiMessageMetadata(record.metadata),
+      });
+    }
+    canvasAiMessages.value = nextMessages.slice(-6);
   }
   catch {
     canvasAiMessages.value = [];
@@ -395,7 +395,20 @@ const layerTreeMenuSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
 const layerTreeMetricsStyle = computed<Record<string, string>>(() => {
   const style: Record<string, string> = {};
 
-  if (resolvedDesignPanelTabSpacingPreset.value === "compact") {
+  if (resolvedDesignPanelTabSpacingPreset.value === "ultra_compact") {
+    Object.assign(style, {
+      "--wl-design-layer-indent-base": "7px",
+      "--wl-design-layer-indent-step": "11px",
+      "--wl-design-layer-row-gap": "4px",
+      "--wl-design-layer-row-radius": "3px",
+      "--wl-design-layer-row-padding-y": "3px",
+      "--wl-design-layer-row-padding-right": "3.5px",
+      "--wl-design-layer-toggle-size": "19px",
+      "--wl-design-layer-action-size": "17px",
+      "--wl-design-layer-action-gap": "2px",
+    });
+  }
+  else if (resolvedDesignPanelTabSpacingPreset.value === "compact") {
     Object.assign(style, {
       "--wl-design-layer-indent-base": "8px",
       "--wl-design-layer-indent-step": "12px",
@@ -419,6 +432,19 @@ const layerTreeMetricsStyle = computed<Record<string, string>>(() => {
       "--wl-design-layer-toggle-size": "25px",
       "--wl-design-layer-action-size": "23px",
       "--wl-design-layer-action-gap": "3px",
+    });
+  }
+  else if (resolvedDesignPanelTabSpacingPreset.value === "spacious") {
+    Object.assign(style, {
+      "--wl-design-layer-indent-base": "12px",
+      "--wl-design-layer-indent-step": "17px",
+      "--wl-design-layer-row-gap": "8px",
+      "--wl-design-layer-row-radius": "6px",
+      "--wl-design-layer-row-padding-y": "6.25px",
+      "--wl-design-layer-row-padding-right": "6px",
+      "--wl-design-layer-toggle-size": "27px",
+      "--wl-design-layer-action-size": "24px",
+      "--wl-design-layer-action-gap": "4px",
     });
   }
   else {
@@ -499,6 +525,13 @@ function resolveLayerTreeGuideMetrics(): {
   indentStep: number;
   toggleSize: number;
 } {
+  if (resolvedDesignPanelTabSpacingPreset.value === "ultra_compact") {
+    return {
+      indentBase: 7,
+      indentStep: 11,
+      toggleSize: 19,
+    };
+  }
   if (resolvedDesignPanelTabSpacingPreset.value === "compact") {
     return {
       indentBase: 8,
@@ -511,6 +544,13 @@ function resolveLayerTreeGuideMetrics(): {
       indentBase: 11,
       indentStep: 15,
       toggleSize: 25,
+    };
+  }
+  if (resolvedDesignPanelTabSpacingPreset.value === "spacious") {
+    return {
+      indentBase: 12,
+      indentStep: 17,
+      toggleSize: 27,
     };
   }
   return {
@@ -1832,9 +1872,24 @@ function resolveActiveLayerTreeConnectorDepth(nodeId: string): number {
     normalizeString(nodeId),
   ) ?? -1;
 }
-const canExportSingleFrame = computed(
-  () => selectedFrames.value.length === 1 && Boolean(selectedFrame.value),
-);
+const editingFrameForExport = computed(() => {
+  const editingFrameId = normalizeString(selectionState.value.editingFrameId);
+  if (!editingFrameId) return null;
+  return currentPageFrames.value.find((frame) => frame.id === editingFrameId) || null;
+});
+const defaultExportFrames = computed(() => {
+  if (selectedFrames.value.length > 0) return selectedFrames.value;
+  return editingFrameForExport.value ? [editingFrameForExport.value] : [];
+});
+const canExportDefaultFrames = computed(() => defaultExportFrames.value.length > 0);
+const defaultExportSvgLabel = computed(() => {
+  if (defaultExportFrames.value.length > 1) return "批量导出 Frame SVG";
+  return "导出当前 Frame SVG";
+});
+const defaultExportPngLabel = computed(() => {
+  if (defaultExportFrames.value.length > 1) return "批量导出 Frame PNG";
+  return "导出当前 Frame PNG";
+});
 const canOpenDiagramEditor = computed(
   () =>
     selectedFrames.value.length === 1 &&
@@ -2413,7 +2468,7 @@ function createPage(): void {
   commitDocument(
     appendDesignPageToSceneDocument(draftDocument.value, {
       name: `Page ${pages.value.length + 1}`,
-      background: currentPage.value?.background || "#0b1220",
+      background: "#ffffff",
       makeCurrent: true,
     }),
   );
@@ -3149,6 +3204,7 @@ function reorderSelectionLayerElements(
     for (let index = ordered.length - 2; index >= 0; index -= 1) {
       const current = ordered[index];
       const next = ordered[index + 1];
+      if (!current || !next) continue;
       if (selectedIdSet.has(current.id) && !selectedIdSet.has(next.id))
         [ordered[index], ordered[index + 1]] = [next, current];
     }
@@ -3159,6 +3215,7 @@ function reorderSelectionLayerElements(
     for (let index = 1; index < ordered.length; index += 1) {
       const previous = ordered[index - 1];
       const current = ordered[index];
+      if (!previous || !current) continue;
       if (selectedIdSet.has(current.id) && !selectedIdSet.has(previous.id))
         [ordered[index - 1], ordered[index]] = [current, previous];
     }
@@ -5817,6 +5874,7 @@ function downloadSvg(frameId = ""): void {
   const svgMarkup = renderCompositionAssetToSvg(draftDocument.value, {
     pageId: currentPage.value.id,
     frameId: frameId || undefined,
+    backgroundMode: frameId ? "solid" : "transparent",
   });
   const fileName = frameId
     ? `${fileSlug(resolveFrameName(frameId))}.svg`
@@ -5832,6 +5890,7 @@ async function downloadPng(frameId = ""): Promise<void> {
   const svgMarkup = renderCompositionAssetToSvg(draftDocument.value, {
     pageId: currentPage.value.id,
     frameId: frameId || undefined,
+    backgroundMode: frameId ? "solid" : "transparent",
   });
   const svgBlob = new Blob([svgMarkup], {
     type: "image/svg+xml;charset=utf-8",
@@ -5862,8 +5921,14 @@ async function downloadPng(frameId = ""): Promise<void> {
   }, "image/png");
 }
 
-async function downloadAllCurrentPageFrames(): Promise<void> {
-  for (const frame of currentPageFrames.value) {
+function downloadDefaultSvg(): void {
+  for (const frame of defaultExportFrames.value) {
+    downloadSvg(frame.id);
+  }
+}
+
+async function downloadDefaultPng(): Promise<void> {
+  for (const frame of defaultExportFrames.value) {
     await downloadPng(frame.id);
   }
 }
@@ -6020,6 +6085,34 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                     <button
                       class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
                       type="button"
+                      :disabled="!canExportDefaultFrames"
+                      @click="
+                        downloadDefaultSvg();
+                        closeActionMenu();
+                      "
+                    >
+                      <span class="material-symbols-outlined text-base"
+                        >download</span
+                      >
+                      <span>{{ defaultExportSvgLabel }}</span>
+                    </button>
+                    <button
+                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                      type="button"
+                      :disabled="!canExportDefaultFrames"
+                      @click="
+                        void downloadDefaultPng();
+                        closeActionMenu();
+                      "
+                    >
+                      <span class="material-symbols-outlined text-base"
+                        >image</span
+                      >
+                      <span>{{ defaultExportPngLabel }}</span>
+                    </button>
+                    <button
+                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                      type="button"
                       :disabled="!currentPage"
                       @click="
                         downloadSvg();
@@ -6027,37 +6120,23 @@ async function downloadAllCurrentPageFrames(): Promise<void> {
                       "
                     >
                       <span class="material-symbols-outlined text-base"
-                        >download</span
+                        >article</span
                       >
-                      <span>导出 Page SVG</span>
+                      <span>辅助导出 Page SVG</span>
                     </button>
                     <button
                       class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
                       type="button"
                       :disabled="!currentPage"
                       @click="
-                        downloadPng();
-                        closeActionMenu();
-                      "
-                    >
-                      <span class="material-symbols-outlined text-base"
-                        >image</span
-                      >
-                      <span>导出 Page PNG</span>
-                    </button>
-                    <button
-                      class="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
-                      type="button"
-                      :disabled="!canExportSingleFrame"
-                      @click="
-                        downloadPng(selectedFrame?.id || '');
+                        void downloadPng();
                         closeActionMenu();
                       "
                     >
                       <span class="material-symbols-outlined text-base"
                         >crop_portrait</span
                       >
-                      <span>导出 Frame PNG</span>
+                      <span>辅助导出 Page PNG</span>
                     </button>
                     <button
                       v-if="canOpenDiagramEditor"

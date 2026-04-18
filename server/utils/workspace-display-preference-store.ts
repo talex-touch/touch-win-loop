@@ -27,13 +27,13 @@ export interface WorkspaceDisplayPreferencesPatchInput {
 }
 
 const WORKSPACE_FONT_SIZE_PRESETS: WorkspaceFontSizePreset[] = ['xs', 'sm', 'md', 'lg', 'xl']
-const WORKSPACE_TAB_SPACING_PRESETS: WorkspaceTabSpacingPreset[] = ['compact', 'default', 'relaxed']
+const WORKSPACE_TAB_SPACING_PRESETS: WorkspaceTabSpacingPreset[] = ['ultra_compact', 'compact', 'default', 'relaxed', 'spacious']
 const MANAGE_TEAM_DEFAULT_ROLES = ['owner', 'admin'] as const
 
 export function getSystemWorkspaceDisplayPreferences(): WorkspaceDisplayPreferences {
   return {
-    fontSizePreset: 'md',
-    tabSpacingPreset: 'default',
+    fontSizePreset: 'lg',
+    tabSpacingPreset: 'relaxed',
   }
 }
 
@@ -49,7 +49,8 @@ function normalizeWorkspaceFontSizePreset(value: unknown): WorkspaceFontSizePres
   const normalized = String(value || '').trim()
   if (!normalized)
     return null
-  return isWorkspaceFontSizePreset(normalized) ? normalized : null
+  const migrated = normalized === 'xxs' ? 'xs' : normalized
+  return isWorkspaceFontSizePreset(migrated) ? migrated : null
 }
 
 function normalizeWorkspaceTabSpacingPreset(value: unknown): WorkspaceTabSpacingPreset | null {
@@ -357,14 +358,14 @@ function resolveEffectiveWorkspaceDisplayPreferences(
     userDefault: input.userDefault?.fontSizePreset,
     teamDefault: input.teamDefault?.fontSizePreset,
     workspaceOverride: input.workspaceOverride?.fontSizePreset,
-    systemValue: systemPreferences.fontSizePreset || 'md',
+    systemValue: systemPreferences.fontSizePreset || 'lg',
   })
   const tabSpacingPreset = resolveWorkspaceDisplayPreferenceValue({
     workspaceType: input.workspaceType,
     userDefault: input.userDefault?.tabSpacingPreset,
     teamDefault: input.teamDefault?.tabSpacingPreset,
     workspaceOverride: input.workspaceOverride?.tabSpacingPreset,
-    systemValue: systemPreferences.tabSpacingPreset || 'default',
+    systemValue: systemPreferences.tabSpacingPreset || 'relaxed',
   })
 
   return {

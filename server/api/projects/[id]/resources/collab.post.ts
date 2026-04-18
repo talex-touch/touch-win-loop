@@ -15,6 +15,7 @@ import { emitRealtimeEvent } from '~~/server/utils/realtime-events'
 interface CreateCollabResourceBody {
   kind?: ResourceKind
   purpose?: CollabPurpose
+  ensurePrimary?: boolean
   title?: string
   parentResourceId?: string | null
   drawMode?: string
@@ -54,6 +55,7 @@ export default defineEventHandler(async (event) => {
   const body = (await readBody<CreateCollabResourceBody>(event).catch(() => ({} as CreateCollabResourceBody))) || {}
   const kind = normalizeCollabKind(body.kind)
   const purpose = normalizeCollabPurpose(body.purpose)
+  const ensurePrimary = body.ensurePrimary === true
   const title = normalizeString(body.title)
   const requestMetadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
     ? body.metadata
@@ -125,7 +127,7 @@ export default defineEventHandler(async (event) => {
       if (!access)
         throw new Error('FORBIDDEN')
 
-      const result = purpose === 'workflow'
+      const result = purpose === 'workflow' && ensurePrimary
         ? await ensureProjectWorkflowCanvas(db, {
             projectId,
             actorUserId: user.id,
@@ -149,7 +151,7 @@ export default defineEventHandler(async (event) => {
                     drawMode: normalizeString(body.drawMode || requestMetadata.drawMode) || 'composition',
                     sceneSourceType: normalizeString(body.sceneSourceType || requestMetadata.sceneSourceType) || 'image_mockup',
                     templateKey: normalizeString(body.templateKey || requestMetadata.templateKey) || 'device-showcase',
-                    editorEngine: normalizeString(body.editorEngine || requestMetadata.editorEngine) || 'vueflow',
+                    editorEngine: normalizeString(body.editorEngine || requestMetadata.editorEngine) || 'canvaskit_wasm',
                   }
                 : {}),
             },

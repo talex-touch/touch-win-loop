@@ -11,6 +11,7 @@ async function loadSceneUtils() {
 
 it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', async () => {
   const {
+    appendDesignElementToSceneDocument,
     appendDesignFrameToSceneDocument,
     appendDesignPageToSceneDocument,
     buildDeviceMockupSceneDocument,
@@ -23,7 +24,11 @@ it('Mermaid / Markdown / DDL / 设备边框 scene 工具返回结构化结果', 
     importFromMermaid,
     parseSceneDocumentString,
     renderCompositionAssetToSvg,
+    renderCompositionFramePreviewSvg,
     removeDesignFrameFromSceneDocument,
+    updateDesignElementInSceneDocument,
+    updateDesignPageInSceneDocument,
+    updateDesignFrameInSceneDocument,
     resolveDesignFrameEditingBinding,
     resolveDesignFrameProjectionLayout,
   } = await loadSceneUtils()
@@ -208,12 +213,103 @@ packages:
   assert.match(svg, /data-device-frame="browser-window"/)
   assert.match(svg, /上传截图/)
   assert.doesNotMatch(svg, /统一图形平台/)
+  assert.doesNotMatch(svg, /Page 1 · 1 Frame/)
 
   const expandedPageScene = appendDesignPageToSceneDocument(deviceScene, {
     name: 'Page 2',
   })
   assert.equal(expandedPageScene.sourceModel.kind, 'composition')
   assert.equal(expandedPageScene.sourceModel.pages?.length, 2)
+
+  const flatFrameScene = appendDesignFrameToSceneDocument(expandedPageScene, {
+    pageId: expandedPageScene.sourceModel.currentPageId,
+    kind: 'freeform',
+    name: '默认灰底 Frame',
+  })
+  const flatFrame = flatFrameScene.sourceModel.frames?.find(frame => frame.kind === 'freeform')
+  assert.equal(flatFrame?.themeTokens?.background, '#e5e7eb')
+  const flatFramePreviewSvg = renderCompositionFramePreviewSvg(flatFrameScene, flatFrame?.id || '')
+  assert.match(flatFramePreviewSvg, /fill="#e5e7eb"/)
+  assert.match(flatFramePreviewSvg, /stroke="#cbd5e1"/)
+  assert.match(flatFramePreviewSvg, /rx="0" ry="0"/)
+  assert.match(flatFramePreviewSvg, /style="overflow:hidden"/)
+
+  const unclippedFlatFrameScene = updateDesignFrameInSceneDocument(
+    flatFrameScene,
+    flatFrame?.id || '',
+    {
+      metadata: {
+        ...(flatFrame?.metadata || {}),
+        clipContent: false,
+      },
+    },
+  )
+  const unclippedFlatFramePreviewSvg = renderCompositionFramePreviewSvg(
+    unclippedFlatFrameScene,
+    flatFrame?.id || '',
+  )
+  assert.match(unclippedFlatFramePreviewSvg, /style="overflow:visible"/)
+
+  const pageRootElementScene = appendDesignElementToSceneDocument(unclippedFlatFrameScene, {
+    pageId: unclippedFlatFrameScene.sourceModel.currentPageId,
+    type: 'shape',
+    x: 24,
+    y: 32,
+    width: 120,
+    height: 72,
+  })
+  const pageRootElement = pageRootElementScene.sourceModel.elements?.find(element => element.pageId === unclippedFlatFrameScene.sourceModel.currentPageId && !element.frameId)
+  assert.ok(pageRootElement)
+  assert.equal(pageRootElement?.metadata?.containerRole, 'page_root')
+
+  const overflowDetachedSourceScene = appendDesignElementToSceneDocument(unclippedFlatFrameScene, {
+    id: 'detached-rectangle',
+    pageId: unclippedFlatFrameScene.sourceModel.currentPageId,
+    frameId: flatFrame?.id,
+    type: 'shape',
+    shapeKind: 'rectangle',
+    x: 120,
+    y: 80,
+    width: 200,
+    height: 120,
+  })
+  const overflowDetachedScene = updateDesignElementInSceneDocument(
+    overflowDetachedSourceScene,
+    'detached-rectangle',
+    {
+      x: Math.max(0, (flatFrame?.width || 0) - 96),
+      y: 80,
+      width: 200,
+      height: 120,
+    },
+  )
+  const overflowDetachedElement = overflowDetachedScene.sourceModel.elements?.find(element => element.id === 'detached-rectangle')
+  assert.equal(overflowDetachedElement?.frameId, undefined)
+  assert.equal(overflowDetachedElement?.metadata?.containerRole, 'page_root')
+  assert.equal(
+    overflowDetachedElement?.x,
+    Math.max(0, Math.round((flatFrame?.x || 0) + Math.max(0, (flatFrame?.width || 0) - 96))),
+  )
+  assert.equal(
+    overflowDetachedElement?.y,
+    Math.round((flatFrame?.y || 0) + 80),
+  )
+
+  const overflowReattachedScene = updateDesignElementInSceneDocument(
+    overflowDetachedScene,
+    'detached-rectangle',
+    {
+      x: Math.round((flatFrame?.x || 0) + 64),
+      y: Math.round((flatFrame?.y || 0) + 52),
+      width: 160,
+      height: 96,
+    },
+  )
+  const overflowReattachedElement = overflowReattachedScene.sourceModel.elements?.find(element => element.id === 'detached-rectangle')
+  assert.equal(overflowReattachedElement?.frameId, flatFrame?.id)
+  assert.equal(overflowReattachedElement?.metadata?.containerRole, 'frame_child')
+  assert.equal(overflowReattachedElement?.x, 64)
+  assert.equal(overflowReattachedElement?.y, 52)
 
   const expandedFrameScene = appendDesignFrameToSceneDocument(expandedPageScene, {
     pageId: expandedPageScene.sourceModel.currentPageId,
@@ -227,6 +323,8 @@ packages:
     frameId: diagramFrameId,
   })
   assert.match(frameSvg, /data-frame-id=/)
+  const framePreviewSvg = renderCompositionFramePreviewSvg(expandedFrameScene, diagramFrameId)
+  assert.doesNotMatch(framePreviewSvg, /依赖图 Frame/)
 
   const migratedComposition = parseSceneDocumentString(JSON.stringify({
     drawMode: 'composition',
@@ -253,6 +351,52 @@ packages:
   assert.equal(migratedComposition.sourceModel.pages?.length, 1)
   assert.equal(migratedComposition.sourceModel.frames?.length, 1)
   assert.equal(migratedComposition.sourceModel.frames?.[0]?.kind, 'device_mockup')
+
+  const legacyPageScene = parseSceneDocumentString(JSON.stringify({
+    drawMode: 'composition',
+    sourceType: 'manual',
+    sourceModel: {
+      kind: 'composition',
+      templateKey: 'device-showcase',
+      currentPageId: 'page-legacy',
+      pages: [{
+        id: 'page-legacy',
+        name: 'Legacy Page',
+        background: '#123456',
+        frameIds: [],
+      }],
+      frames: [],
+      elements: [],
+      assets: [],
+    },
+  }), {
+    fallbackDrawMode: 'composition',
+    fallbackSourceType: 'manual',
+  })
+  const migratedLegacyPage = legacyPageScene.sourceModel.pages?.[0]
+  assert.equal(migratedLegacyPage?.background, '#123456')
+  assert.equal(migratedLegacyPage?.metadata?.workspaceBackground, '#123456')
+  const legacyPageSolidSvg = renderCompositionAssetToSvg(legacyPageScene, {
+    backgroundMode: 'solid',
+  })
+  assert.match(legacyPageSolidSvg, /fill="#123456"/)
+
+  const updatedLegacyPageScene = updateDesignPageInSceneDocument(
+    legacyPageScene,
+    'page-legacy',
+    {
+      metadata: {
+        workspaceBackground: '#654321',
+      },
+    },
+  )
+  const updatedLegacyPage = updatedLegacyPageScene.sourceModel.pages?.[0]
+  assert.equal(updatedLegacyPage?.background, '#654321')
+  assert.equal(updatedLegacyPage?.metadata?.workspaceBackground, '#654321')
+  const updatedLegacyPageSolidSvg = renderCompositionAssetToSvg(updatedLegacyPageScene, {
+    backgroundMode: 'solid',
+  })
+  assert.match(updatedLegacyPageSolidSvg, /fill="#654321"/)
 
   const linkedSourceFrame = {
     id: 'frame-source',

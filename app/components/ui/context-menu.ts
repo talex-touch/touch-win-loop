@@ -7,6 +7,7 @@ export interface ContextMenuItem {
   key: string
   label: string
   icon?: string
+  checked?: boolean
   shortcutLabel?: string
   disabled?: boolean
   tone?: 'default' | 'danger'

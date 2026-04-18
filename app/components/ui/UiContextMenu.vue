@@ -41,7 +41,20 @@ const menuMetricsStyle = computed<Record<string, string>>(() => {
   const fontSizePreset = props.fontSizePreset || 'md'
   const style: Record<string, string> = {}
 
-  if (spacingPreset === 'compact') {
+  if (spacingPreset === 'ultra_compact') {
+    Object.assign(style, {
+      '--wl-context-menu-min-width': '176px',
+      '--wl-context-menu-padding': '4px',
+      '--wl-context-menu-item-min-height': '33px',
+      '--wl-context-menu-item-gap': '9px',
+      '--wl-context-menu-item-padding-x': '9px',
+      '--wl-context-menu-item-main-gap': '7px',
+      '--wl-context-menu-icon-size': '16px',
+      '--wl-context-menu-divider-margin-y': '4px',
+      '--wl-context-menu-divider-margin-x': '5px',
+    })
+  }
+  else if (spacingPreset === 'compact') {
     Object.assign(style, {
       '--wl-context-menu-min-width': '192px',
       '--wl-context-menu-padding': '4px',
@@ -65,6 +78,19 @@ const menuMetricsStyle = computed<Record<string, string>>(() => {
       '--wl-context-menu-icon-size': '19px',
       '--wl-context-menu-divider-margin-y': '6px',
       '--wl-context-menu-divider-margin-x': '9px',
+    })
+  }
+  else if (spacingPreset === 'spacious') {
+    Object.assign(style, {
+      '--wl-context-menu-min-width': '232px',
+      '--wl-context-menu-padding': '9px',
+      '--wl-context-menu-item-min-height': '45px',
+      '--wl-context-menu-item-gap': '15px',
+      '--wl-context-menu-item-padding-x': '14px',
+      '--wl-context-menu-item-main-gap': '12px',
+      '--wl-context-menu-icon-size': '20px',
+      '--wl-context-menu-divider-margin-y': '7px',
+      '--wl-context-menu-divider-margin-x': '10px',
     })
   }
   else {
@@ -128,6 +154,14 @@ const enabledItemIndexes = computed(() => {
     .map((item, index) => ({ item, index }))
     .filter(entry => !entry.item.disabled)
     .map(entry => entry.index)
+})
+
+const hasCheckedItems = computed(() => {
+  return props.items.some(item => typeof item.checked === 'boolean')
+})
+
+const hasIcons = computed(() => {
+  return props.items.some(item => Boolean(item.icon))
 })
 
 function resetItemRefs(): void {
@@ -344,12 +378,18 @@ onBeforeUnmount(() => {
             'wl-context-menu__item--danger': item.tone === 'danger',
           }"
           type="button"
-          role="menuitem"
+          :role="typeof item.checked === 'boolean' ? 'menuitemcheckbox' : 'menuitem'"
+          :aria-checked="typeof item.checked === 'boolean' ? String(Boolean(item.checked)) : undefined"
           :disabled="item.disabled"
           @click="emit('select', item.key)"
         >
           <span class="wl-context-menu__item-main">
-            <span v-if="item.icon" class="material-symbols-outlined wl-context-menu__icon">{{ item.icon }}</span>
+            <span v-if="hasCheckedItems" class="wl-context-menu__check-slot" aria-hidden="true">
+              <span v-if="item.checked" class="material-symbols-outlined wl-context-menu__check">check</span>
+            </span>
+            <span v-if="hasIcons" class="wl-context-menu__icon-slot" aria-hidden="true">
+              <span v-if="item.icon" class="material-symbols-outlined wl-context-menu__icon">{{ item.icon }}</span>
+            </span>
             <span class="wl-context-menu__label">{{ item.label }}</span>
           </span>
           <span v-if="item.shortcutLabel" class="wl-context-menu__shortcut">{{ item.shortcutLabel }}</span>

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import type { WorkspaceCollabCursorUser } from '~/components/workspace/collab/presence'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import WorkspaceScenePreview from '~/components/workspace/collab/WorkspaceScenePreview.vue'
-import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
 import {
   parseSceneDocumentString,
   sceneDocumentHasStructuredPreview,
   serializeSceneDocument,
   withRuntimeSnapshot,
 } from '~~/shared/utils/scene-document'
+import { resolveWorkspaceCollabPresenceInitial } from '~/components/workspace/collab/presence'
+import WorkspaceScenePreview from '~/components/workspace/collab/WorkspaceScenePreview.vue'
 
 interface DrawDocumentSnapshot {
   schema?: unknown
@@ -54,6 +54,8 @@ const remoteScreenCursorSeeds = ref<Omit<ScreenCursor, 'label'>[]>([])
 const localPointerScreen = ref<{ x: number, y: number } | null>(null)
 const scenePreviewDocument = ref<ReturnType<typeof parseSceneDocumentString> | null>(null)
 const currentSceneDocument = ref(parseSceneDocumentString(props.modelValue))
+const runtime = useRuntimeConfig()
+const tldrawLicenseKey = computed(() => String(runtime.public?.tldraw?.licenseKey || '').trim())
 
 const CURSOR_LABEL_COLLAPSE_DISTANCE = 72
 
@@ -71,6 +73,18 @@ let hasBootstrappedIncomingModel = false
 let lastAppliedIncomingRevision = -1
 let lastSerializedModel = ''
 let pendingPointerEvent: PointerEvent | null = null
+
+function isLocalTldrawHostname(hostname: string): boolean {
+  const normalized = String(hostname || '').trim().toLowerCase()
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '[::1]'
+}
+
+function requiresTldrawLicense(): boolean {
+  if (!import.meta.client || !import.meta.env.PROD)
+    return false
+
+  return window.location.protocol === 'https:' && !isLocalTldrawHostname(window.location.hostname)
+}
 
 function resolveScenePreview(rawValue: string): ReturnType<typeof parseSceneDocumentString> | null {
   const sceneDocument = parseSceneDocumentString(rawValue, {
@@ -424,6 +438,11 @@ async function mountTldrawCanvas(): Promise<void> {
   if (!containerRef.value || reactRoot || scenePreviewDocument.value)
     return
 
+  if (requiresTldrawLicense() && !tldrawLicenseKey.value) {
+    mountError.value = '当前部署缺少 tldraw licenseKey，请配置 WINLOOP_TLDRAW_LICENSE_KEY。'
+    return
+  }
+
   try {
     const react = await import('react')
     const reactDomClient = await import('react-dom/client')
@@ -439,6 +458,7 @@ async function mountTldrawCanvas(): Promise<void> {
     reactRoot = reactDomClient.createRoot(containerRef.value)
     const reactElement = react.createElement(tldrawModule.Tldraw as never, {
       persistenceKey: String(props.persistenceKey || '').trim() || undefined,
+      licenseKey: tldrawLicenseKey.value || undefined,
       inferDarkMode: false,
       onMount: (mountedEditor: any) => {
         editor = mountedEditor

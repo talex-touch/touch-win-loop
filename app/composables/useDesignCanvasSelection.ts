@@ -71,18 +71,25 @@ export function useDesignCanvasSelection(input: {
 
   function normalizeState(value: Partial<DesignCanvasSelectionState> | DesignCanvasSelectionState): DesignCanvasSelectionState {
     const nextFrameIds = normalizeIdentifierList(value.frameIds || [], frameIdSet.value)
-    const nextEditingFrameId = frameIdSet.value.has(normalizeString(value.editingFrameId))
+    let nextEditingFrameId = frameIdSet.value.has(normalizeString(value.editingFrameId))
       ? normalizeString(value.editingFrameId)
       : ''
-    const nextDisplayFrameId = frameIdSet.value.has(normalizeString(value.displayFrameId))
+    let nextDisplayFrameId = frameIdSet.value.has(normalizeString(value.displayFrameId))
       ? normalizeString(value.displayFrameId)
       : ''
     let nextElementIds = normalizeIdentifierList(value.elementIds || [], new Set(elementMap.value.keys()))
 
     if (nextEditingFrameId) {
-      nextElementIds = nextElementIds.filter((elementId) => {
+      const scopedElementIds = nextElementIds.filter((elementId) => {
         return normalizeString(elementMap.value.get(elementId)?.frameId) === nextEditingFrameId
       })
+      if (scopedElementIds.length > 0) {
+        nextElementIds = scopedElementIds
+      }
+      else if (nextElementIds.length > 0) {
+        nextEditingFrameId = ''
+        nextDisplayFrameId = ''
+      }
     }
 
     if (nextElementIds.length > 0) {

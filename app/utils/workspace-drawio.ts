@@ -29,11 +29,22 @@ const DEFAULT_NODE_HEIGHT = 72
 const DEFAULT_DIAGRAM_WIDTH = 1440
 const DEFAULT_DIAGRAM_HEIGHT = 900
 const WORKFLOW_SAMPLE_LABEL_LIMIT = 6
+const LEGACY_WORKFLOW_UNAVAILABLE_TITLE = '检测到旧版流程画布'
+const LEGACY_WORKFLOW_UNAVAILABLE_MESSAGE = '当前流程画布存在旧版运行时快照，draw.io 无法无损自动迁移该自由绘制数据。建议基于当前业务流程重新梳理关键节点、责任角色和分支条件。'
 
 interface DrawioRuntimeSnapshot {
   drawioXml?: string
   drawioUpdatedAt?: string
   migratedFromScene?: boolean
+}
+
+export type DrawioCollabResolveStatus = 'ready' | 'legacy_unavailable'
+
+export interface DrawioCollabResolveResult {
+  status: DrawioCollabResolveStatus
+  xml: string
+  title: string
+  message: string
 }
 
 interface GraphFallbackNode {
@@ -1050,28 +1061,67 @@ export function createDefaultDrawioXml(pageName = DEFAULT_PAGE_NAME): string {
   return wrapDrawioFile(buildMxGraphModelXml(cells), pageName)
 }
 
-function createLegacyMigrationDrawioXml(pageName = DEFAULT_PAGE_NAME): string {
-  const cells = [
-    [
-      '<mxCell id="migration-title" value="检测到旧版流程画布" style="rounded=1;whiteSpace=wrap;html=1;fontSize=16;fontStyle=1;fontColor=#0f172a;fillColor=#dbeafe;strokeColor=#93c5fd;strokeWidth=1.5;" vertex="1" parent="1">',
-      '<mxGeometry x="120" y="120" width="320" height="72" as="geometry" />',
-      '</mxCell>',
-    ].join(''),
-    [
-      '<mxCell id="migration-body" value="当前流程画布存在旧版运行时快照，draw.io 无法无损自动迁移该自由绘制数据。建议基于当前业务流程重新梳理关键节点、责任角色和分支条件。" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fontColor=#334155;fillColor=#ffffff;strokeColor=#cbd5e1;strokeWidth=1.5;" vertex="1" parent="1">',
-      '<mxGeometry x="120" y="232" width="520" height="132" as="geometry" />',
-      '</mxCell>',
-    ].join(''),
-  ]
-
-  return wrapDrawioFile(buildMxGraphModelXml(cells), pageName)
+function parseJsonValue(rawValue: string): unknown {
+  try {
+    return JSON.parse(rawValue)
+  }
+  catch {
+    return null
+  }
 }
 
-export function extractDrawioXmlFromCollabValue(rawValue: string, pageName = DEFAULT_PAGE_NAME): string {
-  const normalizedRawValue = normalizeString(rawValue)
-  if (!normalizedRawValue)
-    return createDefaultDrawioXml(pageName)
+function hasMeaningfulLegacyRuntimeSnapshot(value: unknown): boolean {
+  if (!isRecord(value))
+    return false
+  if (normalizeString(value.drawioXml))
+    return false
 
+  return Object.entries(value).some(([key, entry]) => {
+    if (key === 'drawioXml' || key === 'drawioUpdatedAt' || key === 'migratedFromScene')
+      return false
+    if (Array.isArray(entry))
+      return entry.length > 0
+    if (isRecord(entry))
+      return Object.keys(entry).length > 0
+    return entry !== null && entry !== undefined && normalizeString(entry) !== ''
+  })
+}
+
+function isBlankDrawioReadyCandidate(value: unknown): boolean {
+  if (Array.isArray(value))
+    return value.length === 0
+  if (!isRecord(value))
+    return false
+  if (Object.keys(value).length === 0)
+    return true
+  if (hasMeaningfulLegacyRuntimeSnapshot(value.runtimeSnapshot))
+    return false
+
+  return [
+    'version',
+    'drawMode',
+    'sceneModel',
+    'sourceModel',
+    'runtimeSnapshot',
+    'editorEngine',
+    'sourceType',
+    'sceneSourceType',
+    'templateKey',
+  ].some(key => key in value)
+}
+
+export function resolveDrawioCollabValue(rawValue: string, pageName = DEFAULT_PAGE_NAME): DrawioCollabResolveResult {
+  const normalizedRawValue = normalizeString(rawValue)
+  if (!normalizedRawValue) {
+    return {
+      status: 'ready',
+      xml: createDefaultDrawioXml(pageName),
+      title: '',
+      message: '',
+    }
+  }
+
+  const parsedRawValue = parseJsonValue(normalizedRawValue)
   const document = parseSceneDocumentString(normalizedRawValue, {
     fallbackDrawMode: 'diagram',
     fallbackSourceType: 'manual',
@@ -1080,22 +1130,67 @@ export function extractDrawioXmlFromCollabValue(rawValue: string, pageName = DEF
 
   if (isRecord(runtimeSnapshot)) {
     const drawioXml = normalizeString((runtimeSnapshot as DrawioRuntimeSnapshot).drawioXml)
-    if (drawioXml)
-      return drawioXml
+    if (drawioXml) {
+      return {
+        status: 'ready',
+        xml: drawioXml,
+        title: '',
+        message: '',
+      }
+    }
   }
 
   const sceneCells = buildCellsFromSceneNodes(document.sceneModel.nodes || [], document.sceneModel.edges || [])
-  if (sceneCells.length > 0)
-    return wrapDrawioFile(buildMxGraphModelXml(sceneCells), pageName)
+  if (sceneCells.length > 0) {
+    return {
+      status: 'ready',
+      xml: wrapDrawioFile(buildMxGraphModelXml(sceneCells), pageName),
+      title: '',
+      message: '',
+    }
+  }
 
   const fallbackGraph = buildFallbackGraphScene(document)
   const graphCells = buildCellsFromFallbackGraph(fallbackGraph.nodes, fallbackGraph.edges)
-  if (graphCells.length > 0)
-    return wrapDrawioFile(buildMxGraphModelXml(graphCells), pageName)
+  if (graphCells.length > 0) {
+    return {
+      status: 'ready',
+      xml: wrapDrawioFile(buildMxGraphModelXml(graphCells), pageName),
+      title: '',
+      message: '',
+    }
+  }
 
-  if (normalizedRawValue)
-    return createLegacyMigrationDrawioXml(pageName)
+  if (isBlankDrawioReadyCandidate(parsedRawValue)) {
+    return {
+      status: 'ready',
+      xml: createDefaultDrawioXml(pageName),
+      title: '',
+      message: '',
+    }
+  }
 
+  if (normalizedRawValue) {
+    return {
+      status: 'legacy_unavailable',
+      xml: '',
+      title: LEGACY_WORKFLOW_UNAVAILABLE_TITLE,
+      message: LEGACY_WORKFLOW_UNAVAILABLE_MESSAGE,
+    }
+  }
+
+  return {
+    status: 'ready',
+    xml: createDefaultDrawioXml(pageName),
+    title: '',
+    message: '',
+  }
+}
+
+export function extractDrawioXmlFromCollabValue(rawValue: string, pageName = DEFAULT_PAGE_NAME): string {
+  const resolved = resolveDrawioCollabValue(rawValue, pageName)
+  if (resolved.status === 'ready')
+    return resolved.xml
   return createDefaultDrawioXml(pageName)
 }
 

@@ -339,26 +339,70 @@ function defaultArchitectureModel(): ArchitectureModel {
 
 function defaultCompositionThemeTokens(): Record<string, string> {
   return {
-    background: '#0f172a',
+    background: '#ffffff',
     surface: '#ffffff',
     accent: '#38bdf8',
-    text: '#e2e8f0',
-    muted: '#94a3b8',
+    text: '#0f172a',
+    muted: '#64748b',
   }
 }
 
+const DEFAULT_FLAT_FRAME_BACKGROUND = '#e5e7eb'
+const DEFAULT_FLAT_FRAME_BORDER = '#cbd5e1'
+const DEFAULT_ROUNDED_FRAME_RADIUS = 32
+
+export function isFlatDesignFrameKind(kind: DesignFrameKind): boolean {
+  return kind === 'freeform' || kind === 'template'
+}
+
+export function resolveDesignFrameSurfaceRadius(frame: Pick<DesignFrameModel, 'kind'>): number {
+  return isFlatDesignFrameKind(frame.kind) ? 0 : DEFAULT_ROUNDED_FRAME_RADIUS
+}
+
+export function resolveDesignFrameSurfaceBackground(
+  frame: {
+    kind: DesignFrameKind
+    themeTokens?: Record<string, unknown> | null
+  },
+  fallback = '#ffffff',
+): string {
+  return normalizeString(frame.themeTokens?.background)
+    || (isFlatDesignFrameKind(frame.kind) ? DEFAULT_FLAT_FRAME_BACKGROUND : fallback)
+}
+
+export function resolveDesignFrameSurfaceBorderColor(frame: Pick<DesignFrameModel, 'kind'>): string {
+  return isFlatDesignFrameKind(frame.kind) ? DEFAULT_FLAT_FRAME_BORDER : '#334155'
+}
+
+function resolveDesignPageWorkspaceBackgroundValue(
+  background: unknown,
+  metadata: unknown,
+  fallback = '#ffffff',
+): string {
+  return normalizeString(normalizeRecord(metadata).workspaceBackground)
+    || normalizeString(background)
+    || fallback
+}
+
 function createDefaultDesignPage(input: Partial<DesignPageModel> = {}): DesignPageModel {
+  const workspaceBackground = resolveDesignPageWorkspaceBackgroundValue(
+    input.background,
+    input.metadata,
+  )
   return {
     id: sanitizeIdentifier(input.id, DEFAULT_COMPOSITION_PAGE_ID),
     name: normalizeString(input.name) || 'Page 1',
-    background: normalizeString(input.background) || '#0b1220',
+    background: workspaceBackground,
     frameIds: ensureArray(input.frameIds).map(item => normalizeString(item)).filter(Boolean),
     viewport: {
       x: toFiniteNumber(input.viewport?.x, 0),
       y: toFiniteNumber(input.viewport?.y, 0),
       zoom: toFiniteNumber(input.viewport?.zoom, 1) || 1,
     },
-    metadata: normalizeDesignPageMetadata(input.metadata),
+    metadata: normalizeDesignPageMetadata({
+      ...normalizeRecord(input.metadata),
+      workspaceBackground,
+    }),
   }
 }
 
@@ -387,12 +431,14 @@ function normalizeDesignPageMetadata(value: unknown): DesignPageModel['metadata'
   const source = normalizeRecord(value)
   const metadata: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(source)) {
-    if (key === 'clipToPage')
+    if (key === 'clipToPage' || key === 'workspaceBackground')
       continue
     metadata[key] = entry
   }
   if (typeof source.clipToPage === 'boolean')
     metadata.clipToPage = source.clipToPage
+  if (normalizeString(source.workspaceBackground))
+    metadata.workspaceBackground = normalizeString(source.workspaceBackground)
   return Object.keys(metadata).length > 0 ? metadata as DesignPageModel['metadata'] : undefined
 }
 
@@ -734,6 +780,13 @@ export function isDesignFrameClipContentEnabled(frame: DesignFrameModel | null |
 
 export function isDesignPageClipContentEnabled(page: DesignPageModel | null | undefined): boolean {
   return Boolean(page && normalizeDesignPageMetadata(page.metadata)?.clipToPage)
+}
+
+export function resolveDesignPageWorkspaceBackground(
+  page: Partial<DesignPageModel> | null | undefined,
+  fallback = '#ffffff',
+): string {
+  return resolveDesignPageWorkspaceBackgroundValue(page?.background, page?.metadata, fallback)
 }
 
 function resolveFrameExportsVisiblePageOverlays(frame: DesignFrameModel | null | undefined): boolean {
@@ -1178,7 +1231,7 @@ function normalizeDesignPageModel(value: unknown, index: number): DesignPageMode
   return createDefaultDesignPage({
     id: sanitizeIdentifier(source.id, `page-${index + 1}`),
     name: normalizeString(source.name) || `Page ${index + 1}`,
-    background: normalizeString(source.background) || '#0b1220',
+    background: normalizeString(source.background),
     frameIds: ensureArray(source.frameIds).map(item => normalizeString(item)).filter(Boolean),
     viewport: {
       x: toFiniteNumber(normalizeRecord(source.viewport).x, 0),
@@ -1311,7 +1364,7 @@ function normalizeCompositionModel(value: unknown, templateKey = ''): Compositio
     : [createDefaultDesignPage({
         id: DEFAULT_COMPOSITION_PAGE_ID,
         frameIds: migratedFrame ? [migratedFrame.id] : [],
-        background: normalizeString(source.themeTokens && normalizeRecord(source.themeTokens).background) || defaultModel.themeTokens?.background || '#0b1220',
+        background: normalizeString(source.themeTokens && normalizeRecord(source.themeTokens).background) || defaultModel.themeTokens?.background || '#ffffff',
       })]
   const normalizedFrames = frames.length > 0 ? frames : migratedFrame ? [migratedFrame] : defaultModel.frames || []
   const pageFrameIds = new Map<string, string[]>()
@@ -2902,6 +2955,132 @@ function resolveFrameExportRect(composition: CompositionModel, frame: DesignFram
   return resolveFrameRect(frame)
 }
 
+function isRectFullyInsideFrameBounds(rect: DesignRect, frame: DesignFrameModel): boolean {
+  return rect.x >= frame.x
+    && rect.y >= frame.y
+    && rect.x + rect.width <= frame.x + Math.max(1, frame.width)
+    && rect.y + rect.height <= frame.y + Math.max(1, frame.height)
+}
+
+function resolveOrderedCompositionFramesForPage(
+  composition: CompositionModel,
+  pageId: string,
+): DesignFrameModel[] {
+  const normalizedPageId = normalizeString(pageId)
+  const frames = ensureArray(composition.frames)
+  const framesOnPage = frames.filter(frame => normalizeString(frame.pageId) === normalizedPageId)
+  const page = ensureArray(composition.pages).find(candidate => normalizeString(candidate.id) === normalizedPageId) || null
+  if (!page)
+    return framesOnPage
+
+  const frameMap = new Map(framesOnPage.map(frame => [normalizeString(frame.id), frame] as const))
+  const orderedFrames: DesignFrameModel[] = []
+  const seenIds = new Set<string>()
+  ensureArray(page.frameIds).forEach((frameId) => {
+    const normalizedFrameId = normalizeString(frameId)
+    const frame = frameMap.get(normalizedFrameId)
+    if (!frame || seenIds.has(normalizedFrameId))
+      return
+    seenIds.add(normalizedFrameId)
+    orderedFrames.push(frame)
+  })
+  framesOnPage.forEach((frame) => {
+    const frameId = normalizeString(frame.id)
+    if (!frameId || seenIds.has(frameId))
+      return
+    seenIds.add(frameId)
+    orderedFrames.push(frame)
+  })
+  return orderedFrames
+}
+
+function resolveAutoAttachFrameForRect(
+  composition: CompositionModel,
+  pageId: string,
+  rect: DesignRect,
+): DesignFrameModel | null {
+  const orderedFrames = resolveOrderedCompositionFramesForPage(composition, pageId)
+  for (let index = orderedFrames.length - 1; index >= 0; index -= 1) {
+    const frame = orderedFrames[index]
+    if (!frame || !canDesignFrameContainElements(frame))
+      continue
+    if (isRectFullyInsideFrameBounds(rect, frame))
+      return frame
+  }
+  return null
+}
+
+function resolveCompatibleParentId(
+  elements: DesignElementModel[],
+  parentId: string | undefined,
+  pageId: string,
+  frameId: string | undefined,
+): string | undefined {
+  const normalizedParentId = normalizeString(parentId) || undefined
+  if (!normalizedParentId)
+    return undefined
+
+  const parentElement = elements.find(element => normalizeString(element.id) === normalizedParentId) || null
+  if (!parentElement)
+    return undefined
+  if (normalizeString(parentElement.pageId) !== normalizeString(pageId))
+    return undefined
+  if (normalizeString(parentElement.frameId) !== normalizeString(frameId))
+    return undefined
+  return normalizedParentId
+}
+
+function collectDesignElementSubtreeIds(elements: DesignElementModel[], rootId: string): Set<string> {
+  const normalizedRootId = normalizeString(rootId)
+  const subtreeIds = new Set<string>()
+  if (!normalizedRootId)
+    return subtreeIds
+
+  const queue = [normalizedRootId]
+  while (queue.length > 0) {
+    const currentId = queue.shift()
+    if (!currentId || subtreeIds.has(currentId))
+      continue
+
+    subtreeIds.add(currentId)
+    elements.forEach((element) => {
+      const childId = normalizeString(element.id)
+      if (!childId || normalizeString(element.parentId) !== currentId || subtreeIds.has(childId))
+        return
+      queue.push(childId)
+    })
+  }
+
+  return subtreeIds
+}
+
+function applyDesignElementContainerOffset(
+  element: DesignElementModel,
+  offsetX: number,
+  offsetY: number,
+): DesignElementModel {
+  if (!offsetX && !offsetY)
+    return createDesignElement(element, element.id)
+
+  if (element.type === 'path' && Array.isArray(element.points) && element.points.length > 0) {
+    return createDesignElement({
+      ...element,
+      points: element.points.map((point) => {
+        return {
+          x: Math.round(toFiniteNumber(point.x, 0) + offsetX),
+          y: Math.round(toFiniteNumber(point.y, 0) + offsetY),
+        }
+      }),
+    }, element.id)
+  }
+
+  return createDesignElement({
+    ...element,
+    x: Math.round(toFiniteNumber(element.x, 0) + offsetX),
+    y: Math.round(toFiniteNumber(element.y, 0) + offsetY),
+  }, element.id)
+}
+
 export function rewriteDesignElementZIndices(elements: DesignElementModel[]): DesignElementModel[] {
   return cloneSortedDesignElements(elements).map((element, index) => createDesignElement({
     ...element,
@@ -3029,6 +3208,8 @@ export function groupDesignElementsInSceneDocument(
     return finalizeCompositionSceneDocument(base, composition)
 
   const reference = selectedElements[0]
+  if (!reference)
+    return finalizeCompositionSceneDocument(base, composition)
   const pageId = normalizeString(reference.pageId)
   const frameId = normalizeString(reference.frameId) || undefined
   const parentId = normalizeString(reference.parentId) || undefined
@@ -4063,21 +4244,32 @@ function renderDeviceSurfaceMarkup(
   ${screenContentMarkup}`
 }
 
-function renderDesignFrameMarkup(frame: DesignFrameModel, composition: CompositionModel, offsetX: number, offsetY: number): string {
+function renderDesignFrameMarkup(
+  frame: DesignFrameModel,
+  composition: CompositionModel,
+  offsetX: number,
+  offsetY: number,
+  options: {
+    includeFrameLabel?: boolean
+  } = {},
+): string {
   const themeTokens = resolveFrameThemeTokens(composition, frame)
   const frameX = frame.x + offsetX
   const frameY = frame.y + offsetY
   const frameWidth = frame.width
   const frameHeight = frame.height
-  const frameLabel = `<text x="${frameX + 20}" y="${frameY + 28}" fill="#94a3b8" font-size="14" font-weight="600">${escapeXml(frame.name)}</text>`
-  const backgroundFill = escapeXml(themeTokens.background || '#0f172a')
+  const frameRadius = resolveDesignFrameSurfaceRadius(frame)
+  const frameLabel = options.includeFrameLabel === false
+    ? ''
+    : `<text x="${frameX + 20}" y="${frameY + 28}" fill="#94a3b8" font-size="14" font-weight="600">${escapeXml(frame.name)}</text>`
+  const backgroundFill = escapeXml(resolveDesignFrameSurfaceBackground(frame, themeTokens.background || '#ffffff'))
   const frameElements = resolveDisplayCompositionElementsForFrame(composition, frame)
   const preset = resolveDeviceFramePreset(frame.deviceFramePresetKey || composition.deviceFramePresetKey || 'iphone-16-pro')
   const frameDeviceConfig = resolveFrameDeviceConfig(frame)
 
   if (frame.kind === 'diagram') {
     return `<g>
-      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="#f8fafc" stroke="#cbd5e1" />
+      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="#f8fafc" stroke="#cbd5e1" />
       ${frameLabel}
       <g transform="translate(${frameX}, ${frameY + 32})">
         ${renderEmbeddedSceneMarkup(frame.embeddedScene, frameWidth, frameHeight - 40)}
@@ -4120,7 +4312,7 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
 
   if (frame.kind === 'device_mockup') {
     return `<g>
-      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" />
+      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="${backgroundFill}" />
       ${frameLabel}
       ${renderDeviceSurfaceMarkup(composition, frame, preset, {
         x: frameX,
@@ -4139,13 +4331,13 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
     const overlayGroup = isDesignFrameClipContentEnabled(frame)
       ? `<defs>
           <clipPath id="${clipId}">
-            <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" />
+            <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" />
           </clipPath>
         </defs>
         <g clip-path="url(#${clipId})">${overlayMarkup}</g>`
       : overlayMarkup
     return `<g>
-      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" stroke="${frame.kind === 'freeform' ? '#334155' : '#cbd5e1'}" />
+      <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="${backgroundFill}" stroke="${resolveDesignFrameSurfaceBorderColor(frame)}" />
       ${frameLabel}
       ${overlayGroup}
     </g>`
@@ -4155,7 +4347,7 @@ function renderDesignFrameMarkup(frame: DesignFrameModel, composition: Compositi
     .map(element => renderDesignElementMarkup(element, themeTokens, frameX, frameY))
     .join('')
   return `<g>
-    <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="32" ry="32" fill="${backgroundFill}" />
+    <rect x="${frameX}" y="${frameY}" width="${frameWidth}" height="${frameHeight}" rx="${frameRadius}" ry="${frameRadius}" fill="${backgroundFill}" />
     ${frameLabel}
     ${elementMarkup}
   </g>`
@@ -5155,7 +5347,7 @@ function syncCompositionFrameIds(composition: CompositionModel): CompositionMode
       ...page,
       id: sanitizeIdentifier(page.id, `page-${index + 1}`),
       name: normalizeString(page.name) || `Page ${index + 1}`,
-      background: normalizeString(page.background) || '#0b1220',
+      background: normalizeString(page.background),
       frameIds: [],
       viewport: {
         x: toFiniteNumber(page.viewport?.x, 0),
@@ -5300,14 +5492,19 @@ function createDesignFrameFromInput(
   const aspectRatio = normalizeString(input.aspectRatio) || composition.aspectRatio || '16:9'
   const deviceFramePresetKey = normalizeString(input.deviceFramePresetKey) || composition.deviceFramePresetKey || 'iphone-16-pro'
   const defaultSize = resolveDefaultFrameSize(kind, aspectRatio, deviceFramePresetKey)
+  const explicitThemeTokens = normalizeRecord(input.themeTokens)
+  const explicitBackground = normalizeString(explicitThemeTokens.background)
   const themeTokensBase = {
     ...normalizeThemeTokens(composition.themeTokens, defaultCompositionThemeTokens()),
     ...normalizeThemeTokens(input.themeTokens),
   }
-  const themeTokens = kind === 'device_artboard'
+  const themeTokens = kind === 'device_artboard' || kind === 'device_mockup' || kind === 'freeform'
     ? {
         ...themeTokensBase,
-        background: normalizeString(themeTokensBase.background) || '#ffffff',
+        background: explicitBackground || resolveDesignFrameSurfaceBackground({
+          kind,
+          themeTokens: explicitThemeTokens,
+        }),
         surface: normalizeString(themeTokensBase.surface) || '#ffffff',
         text: normalizeString(themeTokensBase.text) || '#0f172a',
         muted: normalizeString(themeTokensBase.muted) || '#64748b',
@@ -5941,7 +6138,7 @@ export function buildDeviceMockupSceneDocument(input: {
   const page = createDefaultDesignPage({
     id: DEFAULT_COMPOSITION_PAGE_ID,
     name: 'Page 1',
-    background: normalizeString(themeTokens.background) || '#0b1220',
+    background: normalizeString(themeTokens.background) || '#ffffff',
   })
   const frame = createDesignFrameFromInput({
     id: DEFAULT_COMPOSITION_FRAME_ID,
@@ -5994,16 +6191,24 @@ export function appendDesignPageToSceneDocument(
   const { base, composition } = resolveCompositionDocumentState(document)
   const pageIndex = ensureArray(composition.pages).length + 1
   const currentPage = resolveCompositionCurrentPage(composition)
+  const nextWorkspaceBackground = resolveDesignPageWorkspaceBackgroundValue(
+    input.background,
+    input.metadata,
+    '#ffffff',
+  )
   const page = createDefaultDesignPage({
     id: sanitizeIdentifier(input.id, `page-${pageIndex}`),
     name: normalizeString(input.name) || `Page ${pageIndex}`,
-    background: normalizeString(input.background) || normalizeString(currentPage.background) || '#0b1220',
+    background: nextWorkspaceBackground,
     viewport: {
       x: toFiniteNumber(input.viewport?.x, 0),
       y: toFiniteNumber(input.viewport?.y, 0),
       zoom: toFiniteNumber(input.viewport?.zoom, 1) || 1,
     },
-    metadata: normalizeRecord(input.metadata),
+    metadata: {
+      ...normalizeRecord(input.metadata),
+      workspaceBackground: nextWorkspaceBackground,
+    },
   })
 
   return finalizeCompositionSceneDocument(base, {
@@ -6027,18 +6232,27 @@ export function updateDesignPageInSceneDocument(
     pages: ensureArray(composition.pages).map((page) => {
       if (normalizeString(page.id) !== normalizeString(pageId))
         return page
+      const nextMetadata = {
+        ...normalizeRecord(page.metadata),
+        ...normalizeRecord(patch.metadata),
+      }
+      const nextWorkspaceBackground = resolveDesignPageWorkspaceBackgroundValue(
+        patch.background,
+        nextMetadata,
+        resolveDesignPageWorkspaceBackground(page),
+      )
       return createDefaultDesignPage({
         ...page,
         name: normalizeString(patch.name) || page.name,
-        background: normalizeString(patch.background) || page.background,
+        background: nextWorkspaceBackground,
         viewport: {
           x: toFiniteNumber(patch.viewport?.x, page.viewport?.x || 0),
           y: toFiniteNumber(patch.viewport?.y, page.viewport?.y || 0),
           zoom: toFiniteNumber(patch.viewport?.zoom, page.viewport?.zoom || 1) || 1,
         },
         metadata: {
-          ...normalizeRecord(page.metadata),
-          ...normalizeRecord(patch.metadata),
+          ...nextMetadata,
+          workspaceBackground: nextWorkspaceBackground,
         },
       })
     }),
@@ -6244,12 +6458,12 @@ export function updateDesignElementInSceneDocument(
   const targetFrame = requestedFrameId
     ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === requestedFrameId) || null
     : null
-  const frameId = canDesignFrameContainElements(targetFrame) ? requestedFrameId : undefined
-  const parentId = patch.parentId !== undefined ? normalizeString(patch.parentId) || undefined : target.parentId
-  const sameContainer = normalizeString(target.pageId) === pageId
-    && normalizeString(target.frameId) === normalizeString(frameId)
-    && normalizeString(target.parentId) === normalizeString(parentId)
-  const updatedElement = createDesignElement({
+  let frameId = canDesignFrameContainElements(targetFrame) ? requestedFrameId : undefined
+  let parentId = patch.parentId !== undefined ? normalizeString(patch.parentId) || undefined : target.parentId
+  const currentFrame = normalizeString(target.frameId)
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === normalizeString(target.frameId)) || null
+    : null
+  const provisionalUpdatedElement = createDesignElement({
     ...target,
     ...patch,
     id: target.id,
@@ -6262,10 +6476,123 @@ export function updateDesignElementInSceneDocument(
       containerRole: frameId ? 'frame_child' : 'page_root',
     },
   }, target.id)
+  if (frameId && targetFrame) {
+    const nextAbsoluteRect = resolveDesignElementAbsoluteRect(provisionalUpdatedElement, targetFrame)
+    if (!isRectFullyInsideFrameBounds(nextAbsoluteRect, targetFrame)) {
+      const autoAttachFrame = resolveAutoAttachFrameForRect(composition, pageId, nextAbsoluteRect)
+      frameId = autoAttachFrame ? autoAttachFrame.id : undefined
+    }
+  }
+  else {
+    const nextAbsoluteRect = resolveDesignElementAbsoluteRect(provisionalUpdatedElement)
+    const autoAttachFrame = resolveAutoAttachFrameForRect(composition, pageId, nextAbsoluteRect)
+    if (autoAttachFrame)
+      frameId = autoAttachFrame.id
+  }
+  parentId = resolveCompatibleParentId(elements, parentId, pageId, frameId)
+  const nextFrame = frameId
+    ? ensureArray(composition.frames).find(frame => normalizeString(frame.id) === normalizeString(frameId)) || null
+    : null
+  const rootContainerChanged = normalizeString(target.pageId) !== pageId
+    || normalizeString(target.frameId) !== normalizeString(frameId)
+  const sameContainer = normalizeString(target.pageId) === pageId
+    && normalizeString(target.frameId) === normalizeString(frameId)
+    && normalizeString(target.parentId) === normalizeString(parentId)
+  let updatedElement = createDesignElement({
+    ...target,
+    ...patch,
+    id: target.id,
+    pageId,
+    frameId,
+    parentId,
+    metadata: {
+      ...normalizeRecord(target.metadata),
+      ...normalizeRecord(patch.metadata),
+      containerRole: frameId ? 'frame_child' : 'page_root',
+    },
+  }, target.id)
+  if (rootContainerChanged) {
+    const offsetX = (currentFrame?.x || 0) - (nextFrame?.x || 0)
+    const offsetY = (currentFrame?.y || 0) - (nextFrame?.y || 0)
+    updatedElement = applyDesignElementContainerOffset(updatedElement, offsetX, offsetY)
+  }
   const desiredZIndex = Math.max(0, Math.trunc(toFiniteNumber(
     patch.zIndex,
     sameContainer ? target.zIndex : ensureArray(composition.elements).length,
   )))
+  if (rootContainerChanged) {
+    const subtreeIds = collectDesignElementSubtreeIds(elements, target.id)
+    const offsetX = (currentFrame?.x || 0) - (nextFrame?.x || 0)
+    const offsetY = (currentFrame?.y || 0) - (nextFrame?.y || 0)
+    const targetSiblings = elements.filter((element) => {
+      const normalizedElementId = normalizeString(element.id)
+      if (!normalizedElementId || subtreeIds.has(normalizedElementId))
+        return false
+      return normalizeString(element.pageId) === pageId
+        && normalizeString(element.frameId) === normalizeString(frameId)
+        && normalizeString(element.parentId) === normalizeString(parentId)
+    })
+    const normalizedTargetSiblings = rewriteDesignElementZIndices(targetSiblings)
+    const insertIndex = Math.min(desiredZIndex, normalizedTargetSiblings.length)
+    const nextTargetContainerElements = rewriteDesignElementZIndices([
+      ...normalizedTargetSiblings.slice(0, insertIndex),
+      {
+        ...updatedElement,
+        zIndex: insertIndex,
+      },
+      ...normalizedTargetSiblings.slice(insertIndex),
+    ])
+    const updatedDescendants = elements
+      .filter((element) => {
+        const normalizedElementId = normalizeString(element.id)
+        return normalizedElementId
+          && subtreeIds.has(normalizedElementId)
+          && normalizedElementId !== normalizeString(target.id)
+      })
+      .map((element) => {
+        const normalizedParentId = normalizeString(element.parentId)
+        return applyDesignElementContainerOffset(createDesignElement({
+          ...element,
+          pageId,
+          frameId,
+          parentId: subtreeIds.has(normalizedParentId) ? normalizedParentId || undefined : undefined,
+          metadata: {
+            ...normalizeRecord(element.metadata),
+            containerRole: frameId ? 'frame_child' : 'page_root',
+          },
+        }, element.id), offsetX, offsetY)
+      })
+    const sourceContainerElements = rewriteDesignElementZIndices(elements.filter((element) => {
+      const normalizedElementId = normalizeString(element.id)
+      if (!normalizedElementId || subtreeIds.has(normalizedElementId))
+        return false
+      return normalizeString(element.pageId) === normalizeString(target.pageId)
+        && normalizeString(element.frameId) === normalizeString(target.frameId)
+        && normalizeString(element.parentId) === normalizeString(target.parentId)
+    }))
+    const unaffectedElements = elements.filter((element) => {
+      const normalizedElementId = normalizeString(element.id)
+      if (!normalizedElementId || subtreeIds.has(normalizedElementId))
+        return false
+      const isSourceSibling = normalizeString(element.pageId) === normalizeString(target.pageId)
+        && normalizeString(element.frameId) === normalizeString(target.frameId)
+        && normalizeString(element.parentId) === normalizeString(target.parentId)
+      const isTargetSibling = normalizeString(element.pageId) === pageId
+        && normalizeString(element.frameId) === normalizeString(frameId)
+        && normalizeString(element.parentId) === normalizeString(parentId)
+      return !isSourceSibling && !isTargetSibling
+    })
+    return finalizeCompositionSceneDocument(base, {
+      ...composition,
+      currentPageId: pageId,
+      elements: [
+        ...unaffectedElements,
+        ...sourceContainerElements,
+        ...nextTargetContainerElements,
+        ...updatedDescendants,
+      ],
+    })
+  }
   const unaffectedElements = elements.filter((element) => {
     if (normalizeString(element.id) === normalizeString(elementId))
       return false
@@ -6782,7 +7109,18 @@ export function mergeCanvasLibraryFrameTemplate(
   })
 }
 
-function renderCompositionBackdrop(width: number, height: number, background: string, accent: string, gradientId: string): string {
+function renderCompositionBackdrop(
+  width: number,
+  height: number,
+  background: string,
+  accent: string,
+  gradientId: string,
+  mode: 'transparent' | 'solid' | 'gradient',
+): string {
+  if (mode === 'transparent')
+    return ''
+  if (mode === 'solid')
+    return `<rect width="${width}" height="${height}" fill="${escapeXml(background)}" />`
   return `
   <defs>
     <linearGradient id="${gradientId}" x1="0" y1="0" x2="${width}" y2="${height}" gradientUnits="userSpaceOnUse">
@@ -6802,6 +7140,8 @@ export function renderCompositionAssetToSvg(
     pageId?: string
     frameId?: string
     padding?: number
+    backgroundMode?: 'transparent' | 'solid' | 'gradient'
+    includeLabel?: boolean
   } = {},
 ): string {
   const state = resolveCompositionDocumentState(document)
@@ -6818,9 +7158,32 @@ export function renderCompositionAssetToSvg(
   const singleFrame = ensureArray(pageFrames).find(frame => normalizeString(frame.id) === normalizeString(options.frameId)) || null
   const exportFrames = singleFrame ? [singleFrame] : pageFrames
   const padding = singleFrame ? 0 : Math.max(48, Math.round(toFiniteNumber(options.padding, 80)))
-  const exportBounds = singleFrame
-    ? resolveSingleFrameExportBounds(composition, singleFrame)
-    : exportFrames.map(frame => resolveFrameExportRect(composition, frame)).reduce((bounds, frameRect) => resolveRectUnion(bounds, frameRect))
+  const pageElements = singleFrame
+    ? resolveFrameVisiblePageOverlayElements(composition, singleFrame)
+    : resolveDisplayCompositionElementsForPage(composition, page.id)
+  const exportBounds = (() => {
+    if (singleFrame)
+      return resolveSingleFrameExportBounds(composition, singleFrame)
+
+    const frameBounds = exportFrames.map(frame => resolveFrameExportRect(composition, frame))
+    const pageElementBounds = pageElements.map(element => resolveDesignElementAbsoluteRect(element))
+    const allBounds = [...frameBounds, ...pageElementBounds].filter((rect) => {
+      return Number.isFinite(rect.x)
+        && Number.isFinite(rect.y)
+        && Number.isFinite(rect.width)
+        && Number.isFinite(rect.height)
+        && rect.width > 0
+        && rect.height > 0
+    })
+    return allBounds.length > 0
+      ? allBounds.reduce((bounds, rect) => resolveRectUnion(bounds, rect))
+      : {
+          x: 0,
+          y: 0,
+          width: DEFAULT_ARTBOARD_WIDTH,
+          height: DEFAULT_ARTBOARD_HEIGHT,
+        }
+  })()
   const width = singleFrame
     ? Math.round(exportBounds.width)
     : Math.max(DEFAULT_ARTBOARD_WIDTH, Math.round(exportBounds.width + padding * 2))
@@ -6833,11 +7196,12 @@ export function renderCompositionAssetToSvg(
     ? resolveFrameThemeTokens(composition, singleFrame)
     : normalizeThemeTokens(composition.themeTokens, defaultCompositionModel(composition.templateKey).themeTokens)
   const background = resolveThemeColorToken(
-    singleFrame ? themeTokens.background : page.background,
+    singleFrame ? themeTokens.background : resolveDesignPageWorkspaceBackground(page),
     themeTokens,
-    themeTokens.background || '#0b1220',
+    themeTokens.background || '#ffffff',
   )
   const accent = resolveThemeColorToken(themeTokens.accent, themeTokens, '#38bdf8')
+  const backgroundMode = options.backgroundMode || (singleFrame ? 'solid' : 'transparent')
   const deviceFrameKey = normalizeString(
     singleFrame?.deviceFramePresetKey
     || exportFrames.find(frame => frame.kind === 'device_mockup')?.deviceFramePresetKey
@@ -6846,9 +7210,6 @@ export function renderCompositionAssetToSvg(
   const gradientId = sanitizeIdentifier(`${page.id}-${singleFrame?.id || 'page'}-bg`, 'composition-bg')
   const pageClipId = sanitizeIdentifier(`${page.id}-page-clip`, 'page-clip')
   const label = singleFrame ? singleFrame.name : `${page.name} · ${exportFrames.length} Frame`
-  const pageElements = singleFrame
-    ? resolveFrameVisiblePageOverlayElements(composition, singleFrame)
-    : resolveDisplayCompositionElementsForPage(composition, page.id)
   const pageElementMarkup = pageElements
     .map(element => renderDesignElementMarkup(element, themeTokens, offsetX, offsetY))
     .join('')
@@ -6860,9 +7221,9 @@ export function renderCompositionAssetToSvg(
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" data-template-key="${escapeXml(composition.templateKey)}" data-device-frame="${escapeXml(deviceFrameKey)}" data-page-id="${escapeXml(page.id)}"${singleFrame ? ` data-frame-id="${escapeXml(singleFrame.id)}"` : ''}>
-  ${renderCompositionBackdrop(width, height, background, accent, gradientId)}
+  ${renderCompositionBackdrop(width, height, background, accent, gradientId, backgroundMode)}
   ${clippedMarkup}
-  <text x="${singleFrame ? 24 : 40}" y="${height - 28}" fill="${escapeXml(themeTokens.muted || '#94a3b8')}" font-size="${singleFrame ? 14 : 18}" font-weight="500">${escapeXml(label)}</text>
+  ${options.includeLabel ? `<text x="${singleFrame ? 24 : 40}" y="${height - 28}" fill="${escapeXml(themeTokens.muted || '#94a3b8')}" font-size="${singleFrame ? 14 : 18}" font-weight="500">${escapeXml(label)}</text>` : ''}
 </svg>`.trim()
 }
 
@@ -6883,8 +7244,11 @@ export function renderCompositionFramePreviewSvg(
   const height = Math.max(1, Math.round(frame.height))
   const offsetX = -frame.x
   const offsetY = -frame.y
+  const overflowMode = isDesignFrameClipContentEnabled(frame) ? 'hidden' : 'visible'
   return `
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" data-frame-id="${escapeXml(frame.id)}">
-  ${renderDesignFrameMarkup(frame, composition, offsetX, offsetY)}
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" style="overflow:${overflowMode}" data-frame-id="${escapeXml(frame.id)}">
+  ${renderDesignFrameMarkup(frame, composition, offsetX, offsetY, {
+    includeFrameLabel: false,
+  })}
 </svg>`.trim()
 }

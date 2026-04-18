@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   buildDrawioEmbedUrl,
-  extractDrawioXmlFromCollabValue,
+  resolveDrawioCollabValue,
   resolveDrawioOrigin,
   serializeDrawioCollabValue,
 } from '~/utils/workspace-drawio'
@@ -18,6 +18,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  'requestRebuild': []
 }>()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
@@ -25,10 +26,14 @@ const runtimeConfig = useRuntimeConfig()
 const drawioEmbedBaseUrl = computed(() => String(runtimeConfig.public?.drawio?.embedBaseUrl || '').trim())
 const frameUrl = computed(() => buildDrawioEmbedUrl(drawioEmbedBaseUrl.value))
 const drawioOrigin = computed(() => resolveDrawioOrigin(drawioEmbedBaseUrl.value))
+const resolvedDrawioDocument = computed(() => resolveDrawioCollabValue(String(props.modelValue || ''), props.diagramTitle))
+const isLegacyUnavailable = computed(() => resolvedDrawioDocument.value.status === 'legacy_unavailable')
 const iframeBooting = ref(true)
 const iframeError = ref('')
 const editorReady = ref(false)
-const currentXml = ref(extractDrawioXmlFromCollabValue(props.modelValue, props.diagramTitle))
+const currentXml = ref(resolvedDrawioDocument.value.status === 'ready' ? resolvedDrawioDocument.value.xml : '')
+const isMounted = ref(false)
+const messageListenerAttached = ref(false)
 
 let bootTimeout: ReturnType<typeof setTimeout> | null = null
 let pendingEmitTimer: ReturnType<typeof setTimeout> | null = null
@@ -45,6 +50,20 @@ function clearPendingEmitTimer(): void {
     return
   clearTimeout(pendingEmitTimer)
   pendingEmitTimer = null
+}
+
+function attachMessageListener(): void {
+  if (messageListenerAttached.value)
+    return
+  window.addEventListener('message', handleMessage)
+  messageListenerAttached.value = true
+}
+
+function detachMessageListener(): void {
+  if (!messageListenerAttached.value)
+    return
+  window.removeEventListener('message', handleMessage)
+  messageListenerAttached.value = false
 }
 
 function postMessage(message: Record<string, unknown>): void {
@@ -84,16 +103,30 @@ function applyEditorXml(xml: unknown): void {
   emitSerializedDocument(nextXml)
 }
 
+function requestLegacyRebuild(): void {
+  if (props.readonly)
+    return
+  emit('requestRebuild')
+}
+
 function startBootWatchdog(): void {
   clearBootTimeout()
   iframeBooting.value = true
   iframeError.value = ''
+  editorReady.value = false
   bootTimeout = setTimeout(() => {
     if (editorReady.value)
       return
     iframeBooting.value = false
     iframeError.value = `draw.io 编辑器初始化超时，请检查当前环境是否可访问 ${drawioOrigin.value}。`
   }, 8000)
+}
+
+function stopEditorRuntime(): void {
+  clearBootTimeout()
+  editorReady.value = false
+  iframeBooting.value = false
+  iframeError.value = ''
 }
 
 function handleMessage(event: MessageEvent): void {
@@ -148,7 +181,13 @@ function handleMessage(event: MessageEvent): void {
 }
 
 watch(() => props.modelValue, (nextValue) => {
-  const nextXml = extractDrawioXmlFromCollabValue(String(nextValue || ''), props.diagramTitle)
+  const nextState = resolveDrawioCollabValue(String(nextValue || ''), props.diagramTitle)
+  if (nextState.status !== 'ready') {
+    currentXml.value = ''
+    return
+  }
+
+  const nextXml = nextState.xml
   if (!nextXml || nextXml === currentXml.value)
     return
 
@@ -158,18 +197,36 @@ watch(() => props.modelValue, (nextValue) => {
 }, { immediate: true })
 
 watch(() => props.diagramTitle, () => {
-  if (!editorReady.value)
+  if (!editorReady.value || isLegacyUnavailable.value)
     return
   loadEditorXml(currentXml.value)
 })
 
-onMounted(() => {
-  window.addEventListener('message', handleMessage)
+watch(isLegacyUnavailable, async (nextValue) => {
+  if (!isMounted.value)
+    return
+
+  if (nextValue) {
+    detachMessageListener()
+    stopEditorRuntime()
+    return
+  }
+
+  attachMessageListener()
+  await nextTick()
   startBootWatchdog()
 })
 
+onMounted(() => {
+  isMounted.value = true
+  if (!isLegacyUnavailable.value) {
+    attachMessageListener()
+    startBootWatchdog()
+  }
+})
+
 onBeforeUnmount(() => {
-  window.removeEventListener('message', handleMessage)
+  detachMessageListener()
   clearBootTimeout()
   clearPendingEmitTimer()
 })
@@ -177,21 +234,42 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="bg-slate-100 h-full min-h-0 w-full relative">
-    <iframe
-      ref="iframeRef"
-      class="border-0 bg-white h-full min-h-0 w-full"
-      :src="frameUrl"
-      title="draw.io 流程画布"
-    />
+    <template v-if="!isLegacyUnavailable">
+      <iframe
+        ref="iframeRef"
+        class="border-0 bg-white h-full min-h-0 w-full"
+        :src="frameUrl"
+        title="draw.io 流程画布"
+      />
 
-    <div v-if="iframeBooting" class="bg-slate-100/80 flex pointer-events-none items-center inset-0 justify-center absolute backdrop-blur-[1px]">
-      <div class="text-[12px] text-slate-600 px-4 py-3 border border-slate-200 rounded-2xl bg-white shadow-sm">
-        正在初始化 draw.io...
+      <div v-if="iframeBooting" class="bg-slate-100/80 flex pointer-events-none items-center inset-0 justify-center absolute backdrop-blur-[1px]">
+        <div class="text-[12px] text-slate-600 px-4 py-3 border border-slate-200 rounded-2xl bg-white shadow-sm">
+          正在初始化 draw.io...
+        </div>
       </div>
-    </div>
 
-    <div v-if="iframeError" class="text-[12px] text-amber-700 leading-6 px-4 py-3 border border-amber-200 rounded-2xl bg-amber-50 max-w-md pointer-events-none shadow-sm left-4 top-4 absolute">
-      {{ iframeError }}
+      <div v-if="iframeError" class="text-[12px] text-amber-700 leading-6 px-4 py-3 border border-amber-200 rounded-2xl bg-amber-50 max-w-md pointer-events-none shadow-sm left-4 top-4 absolute">
+        {{ iframeError }}
+      </div>
+    </template>
+
+    <div v-else class="px-6 py-12 flex h-full items-center justify-center">
+      <div class="text-center max-w-3xl">
+        <h3 class="text-lg text-slate-900 font-semibold">
+          {{ resolvedDrawioDocument.title }}
+        </h3>
+        <p class="text-[13px] text-slate-600 leading-7 mt-4">
+          {{ resolvedDrawioDocument.message }}
+        </p>
+        <p class="text-[13px] text-slate-600 leading-7 mt-3">
+          解决方式：点击下方“重建流程画布”会覆盖当前流程画布并载入新的默认 draw.io 模板；如果你还需要参考旧自由绘制内容，请先记录关键节点、责任角色和分支条件，再手动重建。
+        </p>
+        <div v-if="!props.readonly" class="mt-6">
+          <a-button type="primary" @click="requestLegacyRebuild">
+            重建流程画布
+          </a-button>
+        </div>
+      </div>
     </div>
   </div>
 </template>

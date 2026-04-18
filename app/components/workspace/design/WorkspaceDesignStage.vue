@@ -719,7 +719,7 @@ function resolveElementPreviewPatch(item: OverlayElementItem): Partial<DesignEle
 
 function resolveElementThemeTokens(item: OverlayElementItem): Record<string, string> {
   return {
-    background: props.page?.background || '#0b1220',
+    background: normalizeString(props.themeTokens?.background) || '#ffffff',
     accent: '#38bdf8',
     text: '#0f172a',
     muted: '#94a3b8',

@@ -14,6 +14,7 @@ import type {
 } from "~~/shared/types/domain";
 import { computed, reactive, ref, watch } from "vue";
 import {
+  resolveDesignPageWorkspaceBackground,
   resolveDesignFrameExportMetadata,
   resolveDesignFrameGridMetadata,
   resolveDesignFrameLayoutMetadata,
@@ -444,6 +445,10 @@ function updatePageMetadata(patch: Record<string, unknown>): void {
     },
   });
 }
+
+const pageWorkspaceBackground = computed(() =>
+  resolveDesignPageWorkspaceBackground(props.page),
+);
 
 function updateFrameThemeTokens(patch: Record<string, string>): void {
   emit("updateFrame", {
@@ -2962,7 +2967,7 @@ function updateElementConstraints(
           <div>
             <h4 class="workspace-design-inspector__group-title">画板</h4>
             <p class="workspace-design-inspector__group-description">
-              页面名称、背景与基础导出外观。
+              页面名称、工作区外观与基础导出语义。
             </p>
           </div>
           <button
@@ -3002,14 +3007,14 @@ function updateElementConstraints(
               />
             </label>
             <label class="workspace-design-inspector__field">
-              <span class="workspace-design-inspector__label">背景色</span>
+              <span class="workspace-design-inspector__label">工作区底色</span>
               <input
-                :value="props.page.background || '#0b1220'"
+                :value="pageWorkspaceBackground"
                 class="workspace-design-inspector__input workspace-design-inspector__input--color"
                 type="color"
                 @input="
-                  emit('updatePage', {
-                    background: ($event.target as HTMLInputElement).value,
+                  updatePageMetadata({
+                    workspaceBackground: ($event.target as HTMLInputElement).value,
                   })
                 "
               />

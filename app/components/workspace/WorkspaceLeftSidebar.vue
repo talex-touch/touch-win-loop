@@ -56,6 +56,7 @@ const props = withDefaults(defineProps<{
   meetings?: ProjectMeeting[]
   activeMeetingId?: string
   meetingLoading?: boolean
+  meetingRefreshing?: boolean
   meetingMutating?: boolean
   meetingRuntimeHealth?: ProjectMeetingRuntimeHealth | null
   projectMembers?: ProjectMemberSummary[]
@@ -64,10 +65,13 @@ const props = withDefaults(defineProps<{
   projectIssues?: ProjectIssue[]
   issueLoading?: boolean
   projectResourcesLoading?: boolean
+  projectResourcesRefreshing?: boolean
   resourceLibraryLoading?: boolean
+  resourceLibraryRefreshing?: boolean
   projectOutlineLoading?: boolean
   resourceMutating?: boolean
   hasActiveProject?: boolean
+  activeProjectId?: string
   aiReasoning: string
   normalizedInfo?: string
   statusLine: string
@@ -102,6 +106,7 @@ const props = withDefaults(defineProps<{
   meetings: () => [],
   activeMeetingId: '',
   meetingLoading: false,
+  meetingRefreshing: false,
   meetingMutating: false,
   meetingRuntimeHealth: null,
   projectMembers: () => [],
@@ -110,10 +115,13 @@ const props = withDefaults(defineProps<{
   projectIssues: () => [],
   issueLoading: false,
   projectResourcesLoading: false,
+  projectResourcesRefreshing: false,
   resourceLibraryLoading: false,
+  resourceLibraryRefreshing: false,
   projectOutlineLoading: false,
   resourceMutating: false,
   hasActiveProject: false,
+  activeProjectId: '',
   normalizedInfo: '',
   isAdminView: false,
   workspaceId: '',
@@ -162,11 +170,12 @@ const emit = defineEmits<{
   'openAccountCenter': []
   'createMeeting': [value: { mode: ProjectMeetingMode }]
   'selectMeeting': [meetingId: string]
-  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform', parentResourceId?: string | null }]
+  'createCollabResource': [payload: { kind: 'markdown' | 'draw', purpose?: 'notes' | 'freeform' | 'design' | 'workflow', parentResourceId?: string | null }]
   'reloadIssues': []
   'addResourceFromLibrary': [payload: { resourceId: string, parentResourceId?: string | null }]
   'patchProjectResourceTree': [payload: { items: Array<{ resourceId: string, parentResourceId: string | null, sortOrder: number }> }]
   'openResource': [resourceId: string]
+  'renameProjectResource': [payload: { resourceId: string, title: string }]
   'downloadProjectResource': [resourceId: string]
   'copyProjectResourceName': [resourceId: string]
   'shareProjectResource': [payload: ShareProjectResourcePayload]
@@ -376,9 +385,11 @@ watch(activeModule, (value) => {
     class="workspace-left-dock"
     :class="{
       'workspace-left-dock--collapsed': props.collapsed,
+      'workspace-left-dock--ultra-compact': props.tabSpacingPreset === 'ultra_compact',
       'workspace-left-dock--compact': props.tabSpacingPreset === 'compact',
       'workspace-left-dock--default': !props.tabSpacingPreset || props.tabSpacingPreset === 'default',
       'workspace-left-dock--relaxed': props.tabSpacingPreset === 'relaxed',
+      'workspace-left-dock--spacious': props.tabSpacingPreset === 'spacious',
     }"
   >
     <WorkspaceLeftRail
@@ -432,6 +443,7 @@ watch(activeModule, (value) => {
             @add-resource-from-library="emit('addResourceFromLibrary', $event)"
             @patch-project-resource-tree="emit('patchProjectResourceTree', $event)"
             @open-resource="emit('openResource', $event)"
+            @rename-project-resource="emit('renameProjectResource', $event)"
             @download-project-resource="emit('downloadProjectResource', $event)"
             @copy-project-resource-name="emit('copyProjectResourceName', $event)"
             @share-project-resource="emit('shareProjectResource', $event)"
@@ -454,6 +466,7 @@ watch(activeModule, (value) => {
             :meetings="props.meetings"
             :active-meeting-id="props.activeMeetingId"
             :loading="props.meetingLoading"
+            :refreshing="props.meetingRefreshing"
             :mutating="props.meetingMutating"
             :runtime-health="props.meetingRuntimeHealth"
             @open-meeting-overview="openMeetingPanel"

@@ -31,45 +31,23 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   updateCollabDrawValue: [value: string]
   updateCollabCursor: [value: { cursorX?: number, cursorY?: number }]
+  requestWorkflowCanvasRebuild: []
 }>()
-
-const connectionToneClass = computed(() => {
-  return props.collabConnected
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-    : 'border-amber-200 bg-amber-50 text-amber-700'
-})
-
-const connectionLabel = computed(() => {
-  if (!props.hasFlowResource)
-    return '待初始化'
-  return String(props.collabConnectionText || '').trim() || '实时连接中'
-})
 </script>
 
 <template>
-  <div class="bg-white h-full min-h-0 w-full overflow-hidden relative">
+  <div class="bg-white h-full min-h-0 w-full relative overflow-hidden">
     <template v-if="props.hasFlowResource">
-      <div class="flex gap-2 pointer-events-none absolute right-3 top-3 z-10 items-center">
-        <span class="text-[10px] font-semibold px-2 py-1 border rounded-full shadow-sm backdrop-blur bg-white/92" :class="connectionToneClass">
-          {{ connectionLabel }}
-        </span>
-        <span class="text-[10px] text-slate-600 font-semibold px-2 py-1 border border-slate-200 rounded-full shadow-sm backdrop-blur bg-white/92">
-          draw.io
-        </span>
-        <span class="text-[10px] text-blue-700 font-semibold px-2 py-1 border border-blue-200 rounded-full shadow-sm backdrop-blur bg-white/92">
-          AgentProto
-        </span>
-      </div>
-
       <WorkspaceDrawioCanvas
         :key="props.flowResourceId || 'flow-canvas'"
         class="h-full min-h-0 w-full"
         :model-value="props.collabDrawValue"
         :diagram-title="props.flowPanelTitle"
         @update:model-value="emit('updateCollabDrawValue', $event)"
+        @request-rebuild="emit('requestWorkflowCanvasRebuild')"
       />
 
-      <p v-if="props.collabDrawError" class="text-[11px] text-rose-600 leading-5 px-3 py-2 border border-rose-100 rounded-xl bg-white/96 shadow-sm left-3 bottom-3 z-10 absolute">
+      <p v-if="props.collabDrawError" class="text-[11px] text-rose-600 leading-5 px-3 py-2 border border-rose-100 rounded-xl bg-white/96 shadow-sm bottom-3 left-3 absolute z-10">
         {{ props.collabDrawError }}
       </p>
     </template>

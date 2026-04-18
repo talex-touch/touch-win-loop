@@ -16,7 +16,7 @@ const WORKSPACE_MAIN_TABS_COMPOSABLE_FILE = resolve(process.cwd(), 'app/composab
 const UI_CONTEXT_MENU_FILE = resolve(process.cwd(), 'app/components/ui/UiContextMenu.vue')
 const PROJECT_WORKSPACE_FILE = resolve(process.cwd(), 'app/pages/team/[teamId]/project/[projectId].vue')
 
-it('WorkspaceMainPanel 已将标签条、成员、设置、预览视图拆成独立组件', async () => {
+it('workspaceMainPanel 已将标签条、成员、设置、预览视图拆成独立组件', async () => {
   const [
     mainPanelSource,
     tabStripSource,
@@ -61,7 +61,7 @@ it('WorkspaceMainPanel 已将标签条、成员、设置、预览视图拆成独
   assert.doesNotMatch(mainPanelSource, /项目通用设置/, 'WorkspaceMainPanel 仍内联项目通用设置区')
   assert.doesNotMatch(mainPanelSource, /分享链接管理/, 'WorkspaceMainPanel 仍内联分享链接管理区')
   assert.doesNotMatch(mainPanelSource, /workspace-tab-context-menu__item/, 'WorkspaceMainPanel 仍保留 tab context menu 的内联样式实现')
-  assert.match(mainPanelSource, /requestContextMenu: \[payload: ContextMenuRequest\]/, 'WorkspaceMainPanel 缺少统一右键菜单请求事件')
+  assert.match(mainPanelSource, /'requestContextMenu': \[payload: ContextMenuRequest\]|requestContextMenu: \[payload: ContextMenuRequest\]/, 'WorkspaceMainPanel 缺少统一右键菜单请求事件')
   assert.match(mainPanelSource, /emit\('requestContextMenu', \{[\s\S]*source: 'workspace-tab'/, 'WorkspaceMainPanel 未将标签页右键菜单上抛到页面层')
 
   assert.doesNotMatch(tabStripSource, /<WorkspaceTabContextMenu\b/, 'WorkspaceTabStrip 仍在直接渲染旧标签页右键菜单')

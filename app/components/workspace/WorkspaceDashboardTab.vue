@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
   selectedContestId?: string
   mappingRows?: WorkspaceMappingRow[]
   mappingLoading?: boolean
+  mappingRefreshing?: boolean
   keywordCloud?: WorkspaceKeyword[]
   trendBars?: number[]
   linkedContestEntries?: WorkspaceDashboardContestEntry[]
@@ -37,6 +38,7 @@ const props = withDefaults(defineProps<{
   selectedContestId: '',
   mappingRows: () => [],
   mappingLoading: false,
+  mappingRefreshing: false,
   keywordCloud: () => [],
   trendBars: () => [],
   linkedContestEntries: () => [],
@@ -172,6 +174,10 @@ function resolveMappingScoreTextClass(score: number): string {
           </div>
         </div>
         <div class="flex gap-2 items-center">
+          <div v-if="props.mappingRefreshing" class="text-[10px] text-slate-500 font-semibold px-2.5 py-1 border border-slate-200 rounded-full bg-white inline-flex gap-1.5 items-center">
+            <span class="inline-block rounded-full bg-blue-500 h-1.5 w-1.5 animate-pulse" />
+            <span>刷新中</span>
+          </div>
           <select
             class="text-xs px-2 outline-none border border-slate-200 rounded bg-white h-8 min-w-46 focus:border-blue-500"
             :value="props.selectedTrackId"
@@ -206,7 +212,7 @@ function resolveMappingScoreTextClass(score: number): string {
             </tr>
           </thead>
           <tbody class="divide-slate-200 divide-y">
-            <tr v-if="props.workspacePreparing || props.mappingLoading || props.topicBoardFetching">
+            <tr v-if="props.workspacePreparing || props.mappingLoading">
               <td colspan="4" class="text-xs text-slate-500 px-4 py-6">
                 等待赛道评分规则返回。
               </td>

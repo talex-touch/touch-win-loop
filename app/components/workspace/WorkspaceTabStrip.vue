@@ -127,7 +127,7 @@ function requestTabContextMenuFromKeyboard(tabId: string, event: KeyboardEvent):
 
               <button
                 v-if="tab.closeable"
-                class="workspace-main-tab__close text-slate-400 rounded flex h-6 w-6 items-center justify-center hover:text-slate-600 hover:bg-slate-100"
+                class="workspace-main-tab__close text-slate-400 rounded flex items-center justify-center hover:text-slate-600 hover:bg-slate-100"
                 type="button"
                 @click.stop="emit('closeTab', tab.id)"
               >
@@ -176,9 +176,9 @@ function requestTabContextMenuFromKeyboard(tabId: string, event: KeyboardEvent):
 .workspace-main-tab::after {
   content: '';
   position: absolute;
-  right: 10px;
+  right: var(--workspace-main-tab-active-indicator-inset, 10px);
   bottom: 0;
-  left: 10px;
+  left: var(--workspace-main-tab-active-indicator-inset, 10px);
   height: 2px;
   border-radius: 999px 999px 0 0;
   background: var(--wl-primary-500);
@@ -212,6 +212,8 @@ function requestTabContextMenuFromKeyboard(tabId: string, event: KeyboardEvent):
 }
 
 .workspace-main-tab__close {
+  width: var(--workspace-main-tab-close-button-size, 24px);
+  height: var(--workspace-main-tab-close-button-size, 24px);
   padding: var(--workspace-main-tab-close-padding, 3px);
   transition:
     color 0.18s ease,

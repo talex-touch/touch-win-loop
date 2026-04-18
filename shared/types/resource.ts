@@ -28,6 +28,8 @@ export type {
   DesignAssetModel,
   DesignAssetMetadata,
   DesignAssetDeviceShellMetadata,
+  DesignDocumentSchema,
+  DesignDocumentV1,
   DesignElementModel,
   DesignElementType,
   DeviceFramePlatform,

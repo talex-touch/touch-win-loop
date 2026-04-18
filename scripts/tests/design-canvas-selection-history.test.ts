@@ -140,6 +140,35 @@ describe('useDesignCanvasSelection', () => {
       primaryElementId: '',
     })
   })
+
+  it('元素脱离 editing frame 后会保留选择并回退到 page-root 上下文', async () => {
+    const frames = ref([makeFrame('frame-1')])
+    const elements = ref([makeElement('element-1', 'frame-1')])
+    const selection = useDesignCanvasSelection({
+      frames: computed(() => frames.value as any[]),
+      elements: computed(() => elements.value as any[]),
+    })
+
+    selection.enterFrameEditing('frame-1')
+    selection.setElementSelection(['element-1'], {
+      editingFrameId: 'frame-1',
+      displayFrameId: 'frame-1',
+      primaryElementId: 'element-1',
+    })
+
+    elements.value = [makeElement('element-1')]
+    await nextTick()
+
+    expect(selection.state.value).toEqual({
+      scope: 'element',
+      editingFrameId: '',
+      displayFrameId: '',
+      frameIds: [],
+      primaryFrameId: '',
+      elementIds: ['element-1'],
+      primaryElementId: 'element-1',
+    })
+  })
 })
 
 describe('useDesignHistory', () => {

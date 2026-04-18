@@ -32,6 +32,7 @@ export type WorkspaceMetaKActionId
     | 'switch_ai_issue'
     | 'create_collab_markdown'
     | 'create_collab_draw'
+    | 'create_collab_workflow'
     | 'create_meeting_audio'
     | 'create_meeting_video'
 

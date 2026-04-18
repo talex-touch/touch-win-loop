@@ -17,13 +17,13 @@ import type {
   AiWorkspaceDocumentAction,
   AiWorkspaceDocumentDraft,
   AiWorkspaceDocumentSelectionRange,
-  AiWorkspaceWorkflowDraft,
   AiWorkspaceInlineCompletionAcceptResult,
   AiWorkspaceInlineCompletionResult,
   AiWorkspaceRequest,
   AiWorkspaceResult,
   AiWorkspaceStreamEvent,
   AiWorkspaceStreamEventType,
+  AiWorkspaceWorkflowDraft,
   ApiResponse,
   ApproveChangeRequestPayload,
   AuthMeResult,
@@ -99,6 +99,8 @@ import type {
   WorkspaceProjectSaveState,
   WorkspaceStatusToneMeta,
 } from '~/types/workspace'
+import type { DefenseRealtimeProviderBridge } from '~/utils/defense-realtime-bridge'
+import type { DefenseRealtimeMediaController } from '~/utils/defense-realtime-media-controller'
 import type { WorkspaceMetaKActionId, WorkspaceMetaKItem, WorkspaceMetaKSection, WorkspaceMetaKSectionDefinition } from '~/utils/workspace-metak'
 import { Message } from '@arco-design/web-vue'
 import {
@@ -164,6 +166,16 @@ import { resolveAuthDisplayMessage, resolveAuthRequestErrorInfo } from '~/utils/
 import {
   isCollabMarkdownHeadingAnchorHashForResource,
 } from '~/utils/collab-markdown-navigation'
+import { createDefenseRealtimeProviderBridge } from '~/utils/defense-realtime-bridge'
+import { createDefenseRealtimeMediaController } from '~/utils/defense-realtime-media-controller'
+import {
+  buildDrawioXmlFromWorkflowDraft,
+  buildWorkflowDraftKey,
+  createDefaultDrawioXml,
+  parseDrawioXmlToWorkflowSnapshot,
+  resolveDrawioCollabValue,
+  serializeDrawioCollabValue,
+} from '~/utils/workspace-drawio'
 import {
   isDesignCanvasResource,
   resolveCollabPurpose,
@@ -188,21 +200,6 @@ import {
   validateUploadFiles,
 } from '~/utils/workspace-project-helpers'
 import { formatWorkspaceShortcutLabel } from '~/utils/workspace-shortcuts'
-import {
-  buildDrawioXmlFromWorkflowDraft,
-  buildWorkflowDraftKey,
-  extractDrawioXmlFromCollabValue,
-  parseDrawioXmlToWorkflowSnapshot,
-  serializeDrawioCollabValue,
-} from '~/utils/workspace-drawio'
-import {
-  createDefenseRealtimeProviderBridge,
-  type DefenseRealtimeProviderBridge,
-} from '~/utils/defense-realtime-bridge'
-import {
-  createDefenseRealtimeMediaController,
-  type DefenseRealtimeMediaController,
-} from '~/utils/defense-realtime-media-controller'
 
 definePageMeta({
   layout: 'dashboard',
@@ -803,6 +800,9 @@ function resetChatScopeState(): void {
 
 const workflowSnapshotState = ref<WorkflowSnapshot | null>(null)
 const workflowSnapshotSyncTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const workflowDrawioLegacyUnavailable = ref(false)
+const workflowDrawioLegacyMessage = ref('')
+const workflowCanvasRebuildConfirmVisible = ref(false)
 const appliedWorkflowDraftKeys = ref<string[]>([])
 const discardedWorkflowDraftKeys = ref<string[]>([])
 const selectedContestDetailLoading = ref(false)
@@ -1800,10 +1800,10 @@ const workspaceSeatLimit = computed<number | null>(() => {
   return Math.max(1, Math.trunc(raw))
 })
 const workspaceEffectiveFontSizePreset = computed<WorkspaceFontSizePreset>(() => {
-  return workspaceDisplayPreferenceSnapshot.value.effective.fontSizePreset || 'md'
+  return workspaceDisplayPreferenceSnapshot.value.effective.fontSizePreset || 'lg'
 })
 const workspaceEffectiveTabSpacingPreset = computed<WorkspaceTabSpacingPreset>(() => {
-  return workspaceDisplayPreferenceSnapshot.value.effective.tabSpacingPreset || 'default'
+  return workspaceDisplayPreferenceSnapshot.value.effective.tabSpacingPreset || 'relaxed'
 })
 const quickSwitchSourceProjects = computed(() => {
   const source = allProjects.value.length > 0 ? allProjects.value : projects.value
@@ -2164,6 +2164,15 @@ const activeWorkflowHash = computed(() => {
 })
 const activeWorkflowPageCount = computed(() => {
   return Math.max(0, Number(activeWorkflowSnapshot.value?.pageCount || 0))
+})
+const workflowCanvasUnavailableReason = computed(() => {
+  if (!activeWorkflowResourceId.value)
+    return '当前没有可用的流程画布，暂时无法生成 AgentProto 草案。'
+  if (workflowDrawioLegacyUnavailable.value)
+    return '当前流程画布为旧版数据，暂不支持在 draw.io 中直接加载/生成，请重建流程画布。'
+  if (!activeWorkflowSnapshot.value)
+    return '流程画布快照尚未同步完成，请稍后再试。'
+  return ''
 })
 const activeAgentDocDocumentHash = computed(() => {
   if (!documentAssistRequestState.resourceId)
@@ -2764,12 +2773,13 @@ async function setDefenseRealtimeVideoEnabled(enabled: boolean): Promise<void> {
   patchDefenseRealtimeState({
     videoEnabled: enabled,
   })
-  if (defenseRealtimeMediaController)
+  if (defenseRealtimeMediaController) {
     await defenseRealtimeMediaController.setVideoEnabled(enabled).catch((error) => {
       const message = error instanceof Error ? error.message : '摄像头状态更新失败。'
       defenseRealtimeLatestError.value = message
       appendDefenseRealtimeLog(message, 'warning')
     })
+  }
   if (defenseRealtimeBridge)
     await defenseRealtimeBridge.setVideoEnabled(enabled)
 }
@@ -2833,7 +2843,6 @@ const finalReviewUnresolvedIssueCount = computed(() => {
   return projectIssues.value.filter(item => item.status !== 'resolved' && item.status !== 'ignored').length
 })
 
-/* eslint-disable ts/no-use-before-define */
 const finalReviewEvidenceGaps = computed(() => {
   const used = new Set<string>()
   return mappingRows.value.reduce<string[]>((list, row) => {
@@ -2925,7 +2934,7 @@ const finalReviewChecklistItems = computed<FinalReviewChecklistItem[]>(() => {
     },
   ]
 })
-/* eslint-enable ts/no-use-before-define */
+
 const finalReviewReadinessPercent = computed(() => {
   const weights: Record<FinalReviewChecklistStatus, number> = {
     pass: 1,
@@ -3972,26 +3981,34 @@ const currentAiDisabledReason = computed(() => {
   }
   return buildAiUnavailableMessage(currentAiFeatureKey.value)
 })
-const workflowGenerateAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('generate')))
+const workflowGenerateAvailable = computed(() => !workflowCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('generate')))
 const workflowGenerateDisabledReason = computed(() => {
+  if (workflowCanvasUnavailableReason.value)
+    return workflowCanvasUnavailableReason.value
   if (workflowGenerateAvailable.value)
     return ''
   return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('generate'))
 })
-const workflowCompleteAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('complete')))
+const workflowCompleteAvailable = computed(() => !workflowCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('complete')))
 const workflowCompleteDisabledReason = computed(() => {
+  if (workflowCanvasUnavailableReason.value)
+    return workflowCanvasUnavailableReason.value
   if (workflowCompleteAvailable.value)
     return ''
   return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('complete'))
 })
-const workflowRefineAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('refine')))
+const workflowRefineAvailable = computed(() => !workflowCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('refine')))
 const workflowRefineDisabledReason = computed(() => {
+  if (workflowCanvasUnavailableReason.value)
+    return workflowCanvasUnavailableReason.value
   if (workflowRefineAvailable.value)
     return ''
   return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('refine'))
 })
-const workflowRestyleAvailable = computed(() => isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('restyle')))
+const workflowRestyleAvailable = computed(() => !workflowCanvasUnavailableReason.value && isAiFeatureAvailable(resolveWorkflowDraftFeatureKey('restyle')))
 const workflowRestyleDisabledReason = computed(() => {
+  if (workflowCanvasUnavailableReason.value)
+    return workflowCanvasUnavailableReason.value
   if (workflowRestyleAvailable.value)
     return ''
   return buildAiUnavailableMessage(resolveWorkflowDraftFeatureKey('restyle'))
@@ -6906,6 +6923,37 @@ function updateCollabDrawContent(value: string): void {
   collabSession.updateDraw(String(value || ''))
 }
 
+function requestWorkflowCanvasRebuild(): void {
+  if (!activeWorkflowResourceId.value) {
+    statusLine.value = '当前没有可用的流程画布，无法执行重建。'
+    return
+  }
+  workflowCanvasRebuildConfirmVisible.value = true
+}
+
+function cancelWorkflowCanvasRebuild(): void {
+  workflowCanvasRebuildConfirmVisible.value = false
+}
+
+function confirmWorkflowCanvasRebuild(): void {
+  if (!activeWorkflowResourceId.value) {
+    workflowCanvasRebuildConfirmVisible.value = false
+    statusLine.value = '当前没有可用的流程画布，无法执行重建。'
+    return
+  }
+
+  const pageName = activeWorkflowResourceTitle.value || COLLAB_WORKFLOW_RESOURCE_LABEL
+  const xml = createDefaultDrawioXml(pageName)
+  workflowCanvasRebuildConfirmVisible.value = false
+  updateCollabDrawContent(serializeDrawioCollabValue(xml))
+  workflowDrawioLegacyUnavailable.value = false
+  workflowDrawioLegacyMessage.value = ''
+  workflowSnapshotState.value = parseDrawioXmlToWorkflowSnapshot(xml)
+  appliedWorkflowDraftKeys.value = []
+  discardedWorkflowDraftKeys.value = []
+  statusLine.value = '已重建流程画布，可继续在 draw.io 中编辑或生成 AgentProto 草案。'
+}
+
 function updateCollabCursor(value: { cursorX?: number, cursorY?: number }): void {
   collabSession.updatePresenceCursor(value.cursorX, value.cursorY)
 }
@@ -7888,20 +7936,27 @@ function clearWorkflowSnapshotSyncTimer(): void {
 
 function syncWorkflowSnapshotNow(): void {
   if (!activeWorkflowResourceId.value || normalizeString(collabBindingResourceId.value) !== activeWorkflowResourceId.value) {
+    workflowDrawioLegacyUnavailable.value = false
+    workflowDrawioLegacyMessage.value = ''
     workflowSnapshotState.value = null
     return
   }
 
   try {
-    workflowSnapshotState.value = parseDrawioXmlToWorkflowSnapshot(
-      extractDrawioXmlFromCollabValue(
-        collabDrawValue.value || '',
-        activeWorkflowResourceTitle.value || COLLAB_WORKFLOW_RESOURCE_LABEL,
-      ),
+    const resolvedDrawio = resolveDrawioCollabValue(
+      collabDrawValue.value || '',
+      activeWorkflowResourceTitle.value || COLLAB_WORKFLOW_RESOURCE_LABEL,
     )
+    workflowDrawioLegacyUnavailable.value = resolvedDrawio.status === 'legacy_unavailable'
+    workflowDrawioLegacyMessage.value = resolvedDrawio.message
+    workflowSnapshotState.value = resolvedDrawio.status === 'ready'
+      ? parseDrawioXmlToWorkflowSnapshot(resolvedDrawio.xml)
+      : null
   }
   catch (error) {
     console.warn('[workspace-project] parse workflow snapshot failed', error)
+    workflowDrawioLegacyUnavailable.value = false
+    workflowDrawioLegacyMessage.value = ''
     workflowSnapshotState.value = null
   }
 }
@@ -7922,6 +7977,8 @@ watch(
   () => {
     if (!activeWorkflowResourceId.value) {
       clearWorkflowSnapshotSyncTimer()
+      workflowDrawioLegacyUnavailable.value = false
+      workflowDrawioLegacyMessage.value = ''
       workflowSnapshotState.value = null
       return
     }
@@ -7963,7 +8020,9 @@ function applyWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
   }
 
   if (!activeWorkflowSnapshot.value) {
-    statusLine.value = '当前流程画布快照不可用，请等待画布同步后再试。'
+    statusLine.value = workflowDrawioLegacyUnavailable.value
+      ? workflowDrawioLegacyMessage.value || workflowCanvasUnavailableReason.value
+      : '当前流程画布快照不可用，请等待画布同步后再试。'
     return
   }
 
@@ -7998,6 +8057,11 @@ function discardWorkflowDraft(draft: AiWorkspaceWorkflowDraft): void {
 }
 
 async function requestWorkflowDraftFromSidebar(options: WorkflowDraftRequestOptions): Promise<void> {
+  if (workflowCanvasUnavailableReason.value) {
+    statusLine.value = workflowCanvasUnavailableReason.value
+    return
+  }
+
   if (!ensureAiFeatureAvailable(resolveWorkflowDraftFeatureKey(options.action)))
     return
 
@@ -8007,7 +8071,9 @@ async function requestWorkflowDraftFromSidebar(options: WorkflowDraftRequestOpti
   }
 
   if (!activeWorkflowSnapshot.value) {
-    statusLine.value = '流程画布快照尚未同步完成，请稍后再试。'
+    statusLine.value = workflowDrawioLegacyUnavailable.value
+      ? workflowDrawioLegacyMessage.value || workflowCanvasUnavailableReason.value
+      : '流程画布快照尚未同步完成，请稍后再试。'
     return
   }
 
@@ -9682,15 +9748,17 @@ async function sendChatMessage(payload?: {
   let streamInterrupted = false
 
   try {
-    if (aiMode.value === 'defense')
+    if (aiMode.value === 'defense') {
       await sendDefenseMessage(pendingMessages, abortController.signal)
-    else
+    }
+    else {
       await sendWorkspaceAiMessage(
         pendingMessages,
         workspaceLocalRequestId,
         payload?.workflowRequest || null,
         abortController.signal,
       )
+    }
   }
   catch (error) {
     if (isAbortError(error)) {
@@ -11459,6 +11527,7 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
               @activate-preview-resource="activateProjectResourceTab"
               @close-preview-resource="closeProjectResourcePreview"
               @update:collab-draw-value="updateCollabDrawContent"
+              @request-workflow-canvas-rebuild="requestWorkflowCanvasRebuild"
               @update-collab-cursor="updateCollabCursor"
               @update-collab-selection-status="updateCollabSelectionStatus"
               @markdown-primary-heading-change="handleMarkdownPrimaryHeadingChange"
@@ -11633,15 +11702,15 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
                 @create-comment-thread="createMarkdownCommentThread"
                 @reply-comment-thread="replyMarkdownCommentThread"
                 @resolve-comment-thread="resolveMarkdownCommentThread"
-            @reopen-comment-thread="reopenMarkdownCommentThread"
-            @select-comment-thread="handleMarkdownOpenCommentThread"
-            @cancel-comment-draft="cancelMarkdownCommentDraft"
-            @apply-document-draft="applyAgentDocDraft"
+                @reopen-comment-thread="reopenMarkdownCommentThread"
+                @select-comment-thread="handleMarkdownOpenCommentThread"
+                @cancel-comment-draft="cancelMarkdownCommentDraft"
+                @apply-document-draft="applyAgentDocDraft"
                 @request-workflow-draft="requestWorkflowDraftFromSidebar"
                 @apply-workflow-draft="applyWorkflowDraft"
                 @discard-workflow-draft="discardWorkflowDraft"
                 @open-resource="openProjectResourcePreview"
-          />
+              />
             </div>
           </div>
         </main>
@@ -11814,6 +11883,30 @@ watch(() => workbenchSwitchLoading.value, (loading) => {
           </a-button>
           <a-button type="primary" @click="resolveDeviceRestoreConfirm('sync')">
             同步最新设备
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
+
+    <a-modal
+      v-model:visible="workflowCanvasRebuildConfirmVisible"
+      title="确认重建流程画布？"
+      width="460px"
+      :footer="false"
+      :mask-closable="false"
+      @cancel="cancelWorkflowCanvasRebuild"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-slate-600 leading-6 m-0 whitespace-pre-line">
+          这会用新的默认 draw.io 流程画布覆盖当前 workflow 资源；旧版自由绘制数据不会自动迁移。
+        </p>
+
+        <div class="flex gap-2 justify-end">
+          <a-button @click="cancelWorkflowCanvasRebuild">
+            取消
+          </a-button>
+          <a-button type="primary" @click="confirmWorkflowCanvasRebuild">
+            重建流程画布
           </a-button>
         </div>
       </div>
