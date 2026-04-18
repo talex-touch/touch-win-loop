@@ -382,6 +382,9 @@ const visibleChatMessageEntries = computed(() => {
   const lastMessageIndex = Math.max(visibleChatMessages.value.length - 1, 0)
   return visibleChatMessages.value.map((message, index) => {
     const systemMessage = resolveWorkspaceStreamSystemMessageView(message)
+    const metadata = message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+      ? message.metadata as Record<string, unknown>
+      : null
     return {
       id: `${message.role}-${systemMessage?.seq || 'na'}-${index}`,
       message,
@@ -390,10 +393,21 @@ const visibleChatMessageEntries = computed(() => {
       systemMessage,
       isLive: Boolean(systemMessage && props.chatLoading && index === lastMessageIndex),
       isCompletedSystem: Boolean(systemMessage && index < lastMessageIndex),
+      isStreamingAssistant: Boolean(
+        message.role === 'assistant'
+        && metadata?.localOnly === true
+        && String(metadata.streamState || '') === 'streaming',
+      ),
     }
   })
 })
 const expandedSystemMessageIds = ref<string[]>([])
+const enteringChatEntryIds = ref<string[]>([])
+const highlightedUserChatEntryIds = ref<string[]>([])
+const seenChatEntryIds = ref<string[]>([])
+const shouldAnimateNewChatEntries = ref(false)
+const chatEntryEnterTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const chatEntryHighlightTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const currentUserDisplayName = computed(() => {
   const value = String(props.currentUserName || '').trim()
   return value || '你'
@@ -444,6 +458,62 @@ const latestVisibleChatEntrySignature = computed(() => {
     lastEntry.isLive ? 'live' : 'idle',
   ].join('::')
 })
+
+function clearChatEntryTimer(timerMap: Map<string, ReturnType<typeof setTimeout>>, entryId: string): void {
+  const timer = timerMap.get(entryId)
+  if (!timer)
+    return
+  clearTimeout(timer)
+  timerMap.delete(entryId)
+}
+
+function markVisibleChatEntriesAsSeen(): void {
+  seenChatEntryIds.value = visibleChatMessageEntries.value.map(entry => entry.id)
+}
+
+function clearChatEntryVisualState(options: { resetSeen?: boolean } = {}): void {
+  enteringChatEntryIds.value = []
+  highlightedUserChatEntryIds.value = []
+  shouldAnimateNewChatEntries.value = false
+  for (const timer of chatEntryEnterTimers.values())
+    clearTimeout(timer)
+  for (const timer of chatEntryHighlightTimers.values())
+    clearTimeout(timer)
+  chatEntryEnterTimers.clear()
+  chatEntryHighlightTimers.clear()
+  if (options.resetSeen !== false)
+    seenChatEntryIds.value = []
+}
+
+function scheduleChatEntryMotion(entryId: string, role: ChatMessage['role']): void {
+  if (role !== 'user' && role !== 'assistant')
+    return
+
+  enteringChatEntryIds.value = [...new Set([...enteringChatEntryIds.value, entryId])]
+  clearChatEntryTimer(chatEntryEnterTimers, entryId)
+  chatEntryEnterTimers.set(entryId, setTimeout(() => {
+    enteringChatEntryIds.value = enteringChatEntryIds.value.filter(id => id !== entryId)
+    chatEntryEnterTimers.delete(entryId)
+  }, role === 'assistant' ? 220 : 180))
+
+  if (role !== 'user')
+    return
+
+  highlightedUserChatEntryIds.value = [...new Set([...highlightedUserChatEntryIds.value, entryId])]
+  clearChatEntryTimer(chatEntryHighlightTimers, entryId)
+  chatEntryHighlightTimers.set(entryId, setTimeout(() => {
+    highlightedUserChatEntryIds.value = highlightedUserChatEntryIds.value.filter(id => id !== entryId)
+    chatEntryHighlightTimers.delete(entryId)
+  }, 680))
+}
+
+function isChatEntryEntering(entryId: string): boolean {
+  return enteringChatEntryIds.value.includes(entryId)
+}
+
+function isUserChatEntryHighlighted(entryId: string): boolean {
+  return highlightedUserChatEntryIds.value.includes(entryId)
+}
 const isDefenseWorkbench = computed(() => props.workbenchMode === 'defense')
 const sessionEmptyText = computed(() => isDefenseWorkbench.value ? '暂无打开的 AgentDef 会话' : '暂无打开的会话')
 const createSessionLabel = computed(() => isDefenseWorkbench.value ? '新建 AgentDef 会话' : '新建对话')
@@ -620,16 +690,42 @@ function handleChatViewportScroll(): void {
 watch(() => props.activeChatSessionId, async (nextId, previousId) => {
   if (nextId === previousId)
     return
+  clearChatEntryVisualState()
   expandedSystemMessageIds.value = []
   chatShouldStickToBottom.value = true
   await scrollChatViewportToBottom(true)
+  markVisibleChatEntriesAsSeen()
+  shouldAnimateNewChatEntries.value = !props.chatMessagesLoading
 })
 
 watch(() => props.chatMessagesLoading, async (loading, previousLoading) => {
+  if (loading) {
+    clearChatEntryVisualState()
+    return
+  }
   if (loading || !previousLoading)
     return
   chatShouldStickToBottom.value = true
   await scrollChatViewportToBottom(true)
+  markVisibleChatEntriesAsSeen()
+  shouldAnimateNewChatEntries.value = true
+})
+
+watch(() => visibleChatMessageEntries.value.map(entry => entry.id), (nextIds) => {
+  if (!shouldAnimateNewChatEntries.value || props.chatMessagesLoading)
+    return
+
+  const seenIds = new Set(seenChatEntryIds.value)
+  const nextSeenIds = [...seenChatEntryIds.value]
+  for (const entry of visibleChatMessageEntries.value) {
+    if (seenIds.has(entry.id))
+      continue
+    seenIds.add(entry.id)
+    nextSeenIds.push(entry.id)
+    if (!entry.systemMessage)
+      scheduleChatEntryMotion(entry.id, entry.message.role)
+  }
+  seenChatEntryIds.value = nextSeenIds.filter(id => nextIds.includes(id))
 })
 
 watch(latestVisibleChatEntrySignature, async () => {
@@ -639,7 +735,13 @@ watch(latestVisibleChatEntrySignature, async () => {
 })
 
 onMounted(async () => {
+  markVisibleChatEntriesAsSeen()
   await scrollChatViewportToBottom(true)
+  shouldAnimateNewChatEntries.value = !props.chatMessagesLoading
+})
+
+onBeforeUnmount(() => {
+  clearChatEntryVisualState()
 })
 
 function isSystemMessageExpanded(entryId: string): boolean {
@@ -1899,6 +2001,9 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
                   'workspace-chat-entry--user': entry.message.role === 'user',
                   'workspace-chat-entry--assistant': entry.message.role === 'assistant',
                   'workspace-chat-entry--system': Boolean(entry.systemMessage),
+                  'workspace-chat-entry--entering': isChatEntryEntering(entry.id),
+                  'workspace-chat-entry--recent-user': entry.message.role === 'user' && isUserChatEntryHighlighted(entry.id),
+                  'workspace-chat-entry--streaming-assistant': entry.isStreamingAssistant,
                 }"
               >
                 <div
@@ -3201,6 +3306,14 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
   align-items: flex-end;
 }
 
+.workspace-chat-entry--entering.workspace-chat-entry--assistant {
+  animation: workspace-chat-assistant-enter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.workspace-chat-entry--entering.workspace-chat-entry--user {
+  animation: workspace-chat-user-enter 0.18s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
 .workspace-chat-system-message {
   display: flex;
   flex-direction: column;
@@ -3414,19 +3527,122 @@ function handleChatComposerKeydown(event: KeyboardEvent): void {
 }
 
 .workspace-chat-message__content--assistant {
+  position: relative;
   width: 100%;
   padding: 0;
   color: #334155;
 }
 
 .workspace-chat-message__content--user {
+  position: relative;
   max-width: 86%;
   padding: var(--workspace-right-space-2) var(--workspace-right-space-2_5);
   border: 1px solid #dbeafe;
   border-radius: 12px 12px 0 12px;
   background: #eff6ff;
   color: #1e3a8a;
+  overflow: hidden;
   white-space: pre-wrap;
+}
+
+.workspace-chat-entry--recent-user .workspace-chat-message__content--user {
+  animation: workspace-chat-user-highlight 0.68s ease-out both;
+}
+
+.workspace-chat-message__content--assistant::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: calc(-1 * var(--workspace-right-space-2));
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.95) 0%, rgba(56, 189, 248, 0.85) 52%, rgba(147, 197, 253, 0.55) 100%);
+  opacity: 0;
+  transform: scaleY(0.55);
+  transform-origin: center;
+}
+
+.workspace-chat-entry--streaming-assistant .workspace-chat-message__content--assistant::before {
+  opacity: 1;
+  animation: workspace-chat-assistant-stream 1.5s ease-in-out infinite;
+}
+
+@keyframes workspace-chat-user-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes workspace-chat-assistant-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes workspace-chat-user-highlight {
+  0% {
+    background: #dbeafe;
+    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.24);
+  }
+
+  55% {
+    background: #eff6ff;
+    box-shadow: 0 0 0 10px rgba(96, 165, 250, 0);
+  }
+
+  100% {
+    background: #eff6ff;
+    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0);
+  }
+}
+
+@keyframes workspace-chat-assistant-stream {
+  0% {
+    opacity: 0.35;
+    transform: scaleY(0.55);
+    filter: saturate(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+    filter: saturate(1.08);
+  }
+
+  100% {
+    opacity: 0.42;
+    transform: scaleY(0.62);
+    filter: saturate(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-chat-entry--entering.workspace-chat-entry--assistant,
+  .workspace-chat-entry--entering.workspace-chat-entry--user,
+  .workspace-chat-entry--recent-user .workspace-chat-message__content--user,
+  .workspace-chat-entry--streaming-assistant .workspace-chat-message__content--assistant::before,
+  .workspace-chat-system-message--live .workspace-chat-system-message__icon,
+  .workspace-chat-system-message--live .workspace-chat-system-message__summary::before {
+    animation: none !important;
+  }
+
+  .workspace-chat-message__content--assistant::before,
+  .workspace-chat-system-message__summary::before {
+    opacity: 0 !important;
+  }
 }
 
 .workspace-chat-composer {
