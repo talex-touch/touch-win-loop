@@ -3637,29 +3637,40 @@ onBeforeUnmount(() => {
                   </button>
 
                   <div v-show="isLinkedCategoryExpanded(group.contestId, category.id)">
-                    <div
+                    <WorkspaceSidebarTreeRow
                       v-for="item in category.resources"
                       :key="item.id"
-                      class="workspace-library-item"
-                      :class="{ 'workspace-library-item--fresh': isResourceLibraryHighlighted(item.id) }"
+                      class="workspace-linked-library-row"
+                      :fresh="isResourceLibraryHighlighted(item.id)"
                     >
-                      <div class="workspace-library-item__content">
-                        <div class="workspace-library-item__title">
-                          {{ resourceDisplayTitle(item) }}
-                        </div>
-                        <div class="workspace-library-item__meta">
-                          {{ item.type }} · {{ item.year }}
-                        </div>
-                      </div>
-                      <button
-                        class="workspace-library-item__add"
-                        type="button"
-                        :disabled="resourceMutating || !hasActiveProject"
-                        @click="addLibraryResource(item.id)"
+                      <div
+                        class="workspace-tree-item workspace-tree-item--stacked workspace-tree-item--static"
+                        :title="resourceDisplayTitle(item)"
                       >
-                        添加
-                      </button>
-                    </div>
+                        <span class="material-symbols-outlined workspace-tree-item__icon" :class="resourceIconClass(item)">
+                          {{ resourceIcon(item) }}
+                        </span>
+                        <span class="workspace-tree-item__content workspace-library-item__content">
+                          <span class="workspace-library-item__title">
+                            {{ resourceDisplayTitle(item) }}
+                          </span>
+                          <span class="workspace-library-item__meta">
+                            {{ item.type }} · {{ item.year }}
+                          </span>
+                        </span>
+                      </div>
+
+                      <template #actions>
+                        <button
+                          class="workspace-library-item__add"
+                          type="button"
+                          :disabled="resourceMutating || !hasActiveProject"
+                          @click="addLibraryResource(item.id)"
+                        >
+                          添加
+                        </button>
+                      </template>
+                    </WorkspaceSidebarTreeRow>
                   </div>
                 </div>
 
