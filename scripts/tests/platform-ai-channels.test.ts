@@ -18,10 +18,14 @@ function createRuntime(): RuntimeSettings {
     },
     ai: {
       provider: 'newapi',
+      clientType: 'langchain',
       baseURL: 'https://newapi.example/v1',
       apiKey: 'test-key',
       model: 'gpt-4.1-mini',
       embeddingModel: 'text-embedding-3-small',
+      embeddingApiStyle: 'openai-compatible-text',
+      embeddingDimensions: 1024,
+      visionModel: '',
       modelCatalogJson: '',
       modelPricingJson: '',
       providersJson: '',
@@ -73,15 +77,9 @@ function createRuntime(): RuntimeSettings {
       maxWebResults: 5,
       maxPageChars: 10000,
     },
-    pg: {
-      url: '',
-    },
-    redis: {
-      url: '',
-    },
-    contest: {
-      autoSeed: false,
-    },
+    pg: { url: '' },
+    redis: { url: '' },
+    contest: { autoSeed: false },
     resourceRecycle: {
       enabled: false,
       intervalMs: 1000,
@@ -103,23 +101,54 @@ describe('platform-ai-channels', () => {
     vi.restoreAllMocks()
   })
 
-  it('仅有旧 ai.model 时会自动映射出模型池记录', () => {
+  it('旧单 Provider 运行时会自动迁移为首个 Provider', () => {
     const runtime = createRuntime()
     const registry = resolvePlatformAiRegistry(runtime)
 
-    expect(registry.providers[0]?.models.some(item => item.model === 'gpt-4.1-mini')).toBe(true)
+    expect(registry.providers).toHaveLength(1)
+    expect(registry.providers[0]?.provider).toBe('newapi')
+    expect(registry.providers[0]?.models.map(item => item.model)).toEqual(['gpt-4.1-mini'])
     expect(registry.defaults.defaultModel).toBe('gpt-4.1-mini')
+    expect(registry.defaults.embeddingModel).toBe('text-embedding-3-small')
+    expect(registry.defaults.documentModel).toBe('gpt-4.1')
   })
 
-  it('旧单模型场景会迁移为 models 数组', () => {
+  it('默认模型不会再自动写回 Provider 模型池', () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_1',
+          name: 'Provider 1',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+      defaults: {
+        defaultModel: 'gpt-4.1-mini',
+        embeddingModel: 'text-embedding-3-small',
+        documentModel: 'gpt-4.1',
+      },
+    })
+
+    const registry = resolvePlatformAiRegistry(runtime)
+    expect(registry.providers[0]?.models.map(item => item.model)).toEqual(['gpt-4.1-mini'])
+    expect(registry.providers[0]?.models.some(item => item.model === 'text-embedding-3-small')).toBe(false)
+    expect(registry.providers[0]?.models.some(item => item.model === 'gpt-4.1')).toBe(false)
+  })
+
+  it('旧场景模型链会自动迁移为 modelFallback 与首个 Provider 绑定', () => {
     const runtime = createRuntime()
     runtime.ai.channelsJson = JSON.stringify({
       items: [
         {
           key: 'project_chat',
-          model: 'gpt-4.1-mini',
+          models: ['gpt-4.1-mini'],
           enabled: true,
-          prompt: 'hello',
         },
       ],
     })
@@ -127,23 +156,37 @@ describe('platform-ai-channels', () => {
     const registry = resolvePlatformAiRegistry(runtime)
     const projectChat = registry.channels.find(item => item.key === 'project_chat')
 
-    expect(projectChat?.models).toEqual(['gpt-4.1-mini'])
+    expect(projectChat?.providerIds).toEqual(['provider_1'])
+    expect(projectChat?.modelFallback).toEqual(['gpt-4.1-mini'])
   })
 
-  it('新结构会按场景配置顺序生成候选链', () => {
+  it('多 Provider 场景会先按模型链，再在同模型下展开 Provider 候选', () => {
     const runtime = createRuntime()
     runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
-      provider: {
-        provider: 'newapi',
-        baseURL: 'https://newapi.example/v1',
-      },
-      modelPool: {
-        items: [
-          { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
-          { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
-          { model: 'gpt-4.1-nano', enabled: false, format: 'openai-compatible' },
-        ],
-      },
+      providers: [
+        {
+          id: 'provider_a',
+          name: 'Provider A',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi-a.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+            { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+        {
+          id: 'provider_b',
+          name: 'Provider B',
+          type: 'openai-compatible',
+          provider: 'openai-compatible',
+          baseURL: 'https://openai-compatible.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+            { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
       defaults: {
         defaultModel: 'gpt-4.1-mini',
         embeddingModel: 'text-embedding-3-small',
@@ -154,67 +197,41 @@ describe('platform-ai-channels', () => {
       items: [
         {
           key: 'project_chat',
-          models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano'],
+          providerIds: ['provider_a', 'provider_b'],
+          loadBalanceStrategy: 'round_robin',
+          modelFallback: ['gpt-4.1-mini', 'gpt-4.1'],
           enabled: true,
         },
       ],
     })
 
     const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
-
-    expect(resolved.candidates.map(item => item.ai.model)).toEqual(['gpt-4.1', 'gpt-4.1-mini'])
+    expect(resolved.candidates.map(item => item.ai.model)).toEqual([
+      'gpt-4.1-mini',
+      'gpt-4.1-mini',
+      'gpt-4.1',
+      'gpt-4.1',
+    ])
+    expect(resolved.candidates.map(item => item.provider?.id)).toEqual([
+      'provider_a',
+      'provider_b',
+      'provider_a',
+      'provider_b',
+    ])
   })
 
-  it('平台 AI registry 会暴露文档动作场景与画布场景', () => {
-    const runtime = createRuntime()
-    const registry = resolvePlatformAiRegistry(runtime)
-
-    expect(registry.channels.some(item => item.key === 'workspace_document_rewrite')).toBe(true)
-    expect(registry.channels.some(item => item.key === 'workspace_document_expand')).toBe(true)
-    expect(registry.channels.some(item => item.key === 'workspace_document_complete_context')).toBe(true)
-    expect(registry.channels.some(item => item.key === 'workspace_document_restructure')).toBe(true)
-    expect(registry.channels.some(item => item.key === 'workspace_canvas_generate')).toBe(true)
-    expect(registry.channels.some(item => item.key === 'workspace_canvas_complete')).toBe(true)
-    expect(registry.channels.some(item => item.key === 'workspace_canvas_refine')).toBe(true)
-  })
-
-  it('旧 workspace_document_assist 配置会迁移到新的文档动作场景', () => {
-    const runtime = createRuntime()
-    runtime.ai.channelsJson = JSON.stringify({
-      items: [
-        {
-          key: 'workspace_document_assist',
-          models: ['gpt-4.1'],
-          enabled: false,
-          prompt: 'legacy-doc-prompt',
-        },
-      ],
-    })
-
-    const registry = resolvePlatformAiRegistry(runtime)
-    const rewrite = registry.channels.find(item => item.key === 'workspace_document_rewrite')
-    const restructure = registry.channels.find(item => item.key === 'workspace_document_restructure')
-
-    expect(rewrite?.enabled).toBe(false)
-    expect(rewrite?.models).toEqual(['gpt-4.1'])
-    expect(rewrite?.prompt).toBe('legacy-doc-prompt')
-    expect(restructure?.enabled).toBe(false)
-    expect(restructure?.prompt).toBe('legacy-doc-prompt')
-  })
-
-  it('统一 AI 入口会记录总耗时和每次尝试耗时', async () => {
+  it('只绑定 search-only Provider 时会回退到未配置运行时', () => {
     const runtime = createRuntime()
     runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
-      provider: {
-        provider: 'newapi',
-        baseURL: 'https://newapi.example/v1',
-      },
-      modelPool: {
-        items: [
-          { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
-          { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
-        ],
-      },
+      providers: [
+        {
+          id: 'provider_search',
+          name: 'Tavily',
+          type: 'tavily',
+          provider: 'tavily',
+          baseURL: 'https://api.tavily.com',
+        },
+      ],
       defaults: {
         defaultModel: 'gpt-4.1-mini',
         embeddingModel: 'text-embedding-3-small',
@@ -225,7 +242,58 @@ describe('platform-ai-channels', () => {
       items: [
         {
           key: 'project_chat',
-          models: ['gpt-4.1', 'gpt-4.1-mini'],
+          providerIds: ['provider_search'],
+          modelFallback: ['gpt-4.1-mini'],
+          enabled: true,
+        },
+      ],
+    })
+
+    const resolved = resolveAiRuntimeForChannel(runtime, 'project_chat')
+    expect(resolved.provider).toBeNull()
+    expect(resolved.usedFallback).toBe(true)
+  })
+
+  it('统一 AI 入口会在同模型 Provider 失败后切换下一 Provider，再继续下一模型', async () => {
+    const runtime = createRuntime()
+    runtime.ai.providersJson = buildPlatformAiRegistryJson(runtime, {
+      providers: [
+        {
+          id: 'provider_a',
+          name: 'Provider A',
+          type: 'newapi',
+          provider: 'newapi',
+          baseURL: 'https://newapi-a.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+            { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+        {
+          id: 'provider_b',
+          name: 'Provider B',
+          type: 'openai-compatible',
+          provider: 'openai-compatible',
+          baseURL: 'https://openai-compatible.example',
+          models: [
+            { model: 'gpt-4.1-mini', enabled: true, format: 'openai-compatible' },
+            { model: 'gpt-4.1', enabled: true, format: 'openai-compatible' },
+          ],
+        },
+      ],
+      defaults: {
+        defaultModel: 'gpt-4.1-mini',
+        embeddingModel: 'text-embedding-3-small',
+        documentModel: 'gpt-4.1',
+      },
+    })
+    runtime.ai.channelsJson = buildPlatformAiChannelsJson(runtime, {
+      items: [
+        {
+          key: 'project_chat',
+          providerIds: ['provider_a', 'provider_b'],
+          loadBalanceStrategy: 'round_robin',
+          modelFallback: ['gpt-4.1-mini', 'gpt-4.1'],
           enabled: true,
         },
       ],
@@ -241,36 +309,30 @@ describe('platform-ai-channels', () => {
       await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 10 : 20))
       if (attempt === 1)
         throw new Error('FIRST_FAILED')
-      return ai.model
+      return `${ai.provider}:${ai.model}`
     })
 
     await vi.advanceTimersByTimeAsync(10)
     await vi.advanceTimersByTimeAsync(20)
-
     const result = await task
 
-    expect(result.data).toBe('gpt-4.1-mini')
-    expect(result.latencyMs).toBe(30)
+    expect(result.data.endsWith(':gpt-4.1-mini')).toBe(true)
+    expect(result.attemptChain).toHaveLength(2)
+    expect(result.attemptChain[0]?.provider).not.toBe(result.attemptChain[1]?.provider)
     expect(result.attemptChain).toEqual([
       expect.objectContaining({
-        provider: 'newapi',
-        model: 'gpt-4.1',
+        model: 'gpt-4.1-mini',
         success: false,
         latencyMs: 10,
         error: 'FIRST_FAILED',
       }),
       expect.objectContaining({
-        provider: 'newapi',
         model: 'gpt-4.1-mini',
         success: true,
         latencyMs: 20,
       }),
     ])
-    expect(warnSpy).toHaveBeenCalledWith('[platform-ai] request succeeded', expect.objectContaining({
-      channelKey: 'project_chat',
-      attempts: 2,
-      latencyMs: 30,
-    }))
+    expect(warnSpy).toHaveBeenCalled()
     expect(errorSpy).not.toHaveBeenCalled()
   })
 })

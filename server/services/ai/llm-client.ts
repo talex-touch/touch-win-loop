@@ -1,11 +1,14 @@
+import type { PlatformAiClientType } from '~~/shared/types/domain'
 import { ChatOpenAI, ChatOpenAIResponses } from '@langchain/openai'
 import { assertAiRuntimeConfigured } from '~~/server/utils/ai-runtime'
 import { normalizePlatformAiApiKey, resolvePlatformAiRequestBaseURL } from '~~/server/utils/platform-ai-base-url'
+import { normalizePlatformAiClientType } from '~~/server/utils/platform-ai-client'
 
 export type AiModelFormat = 'openai-compatible' | 'response'
 
 export interface AiRuntimeConfig {
   provider: string
+  clientType?: PlatformAiClientType
   baseURL: string
   apiKey: string
   model: string
@@ -20,6 +23,10 @@ export interface AiRuntimeConfig {
 }
 
 export function createChatModel(config: AiRuntimeConfig): ChatOpenAI | ChatOpenAIResponses {
+  const clientType = normalizePlatformAiClientType(config.clientType)
+  if (clientType !== 'langchain')
+    throw new Error(`AI_CHAT_CLIENT_TYPE_UNSUPPORTED:${clientType}`)
+
   assertAiRuntimeConfigured(config, 'AI 模型')
 
   const normalizedApiKey = normalizePlatformAiApiKey(config.apiKey)

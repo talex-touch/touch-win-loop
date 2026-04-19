@@ -1,10 +1,18 @@
 import type { AiRuntimeConfig } from '~~/server/services/ai/llm-client'
 import type { RuntimeSettings } from '~~/server/utils/env'
+import type {
+  PlatformAiClientType,
+  ProjectKnowledgeEmbeddingApiStyle,
+} from '~~/shared/types/domain'
 import { normalizePlatformAiBaseURL } from '~~/server/utils/platform-ai-base-url'
+import { normalizePlatformAiClientType, normalizeProjectKnowledgeEmbeddingApiStyle } from '~~/server/utils/platform-ai-client'
 
 export type PlatformAiProviderAdapter = 'openai-compatible' | 'response'
+export type PlatformAiProviderCapability = 'llm' | 'search'
+export type PlatformAiProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
 export type PlatformAiModelFormat = 'openai-compatible' | 'response'
 export type PlatformAiPricingSource = 'provider' | 'manual' | 'none'
+export type PlatformAiLoadBalanceStrategy = 'round_robin'
 export type PlatformAiChannelKey
   = 'contest_filter'
     | 'project_chat'
@@ -46,14 +54,20 @@ export interface PlatformAiProviderModelConfig {
 export interface PlatformAiProviderConfig {
   id: string
   name: string
+  type: PlatformAiProviderType
+  capability: PlatformAiProviderCapability
   adapter: PlatformAiProviderAdapter
   provider: string
+  clientType: PlatformAiClientType
   baseURL: string
   apiKey: string
   enabled: boolean
   timeoutMs: number
   maxRetries: number
   fetchedAt: string
+  embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+  embeddingDimensions?: number
+  visionModel?: string
   models: PlatformAiProviderModelConfig[]
 }
 
@@ -68,6 +82,9 @@ export interface PlatformAiChannelConfig {
   label: string
   description: string
   enabled: boolean
+  providerIds: string[]
+  loadBalanceStrategy: PlatformAiLoadBalanceStrategy
+  modelFallback: string[]
   models: string[]
   prompt: string
 }
@@ -138,9 +155,8 @@ export interface PlatformAiChannelRunResult<T> {
   latencyMs: number
 }
 
-const PLATFORM_AI_REGISTRY_VERSION = 2
-const SHARED_PROVIDER_ID = 'shared'
-const SHARED_PROVIDER_NAME = '共享上游'
+const PLATFORM_AI_REGISTRY_VERSION = 3
+const DEFAULT_PROVIDER_ID = 'provider_1'
 
 const CHANNEL_DEFINITIONS: PlatformAiChannelDefinition[] = [
   { key: 'contest_filter', label: '选赛过滤', description: '竞赛筛选与推荐排序' },
@@ -174,32 +190,11 @@ const DOCUMENT_ASSIST_CHANNEL_KEYS: PlatformAiChannelKey[] = [
   'workspace_document_restructure',
 ]
 
+const SEARCH_PROVIDER_TYPES = new Set<PlatformAiProviderType>(['searchxng', 'tavily'])
+const LEGACY_ROUND_ROBIN_POINTERS = new Map<string, number>()
+
 function isDocumentAssistChannelKey(key: PlatformAiChannelKey): boolean {
   return DOCUMENT_ASSIST_CHANNEL_KEYS.includes(key)
-}
-
-function expandLegacyChannelConfig(
-  raw: Record<string, unknown>,
-  defaults: PlatformAiSharedDefaults,
-  provider: PlatformAiProviderConfig | null,
-): PlatformAiChannelConfig[] {
-  const models = Array.isArray(raw.models)
-    ? dedupeStrings((raw.models as unknown[]).map(item => toText(item)))
-    : dedupeStrings([toText(raw.model)])
-  const enabled = toBoolean(raw.enabled, true)
-  const prompt = String(raw.prompt || '')
-
-  return DOCUMENT_ASSIST_CHANNEL_KEYS.map((key) => {
-    const definition = resolveChannelDefinition(key)
-    return {
-      key,
-      label: definition.label,
-      description: definition.description,
-      enabled,
-      models: models.length > 0 ? models : resolveDefaultModelsForChannel(key, defaults, provider),
-      prompt,
-    }
-  })
 }
 
 function toText(value: unknown): string {
@@ -232,37 +227,6 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return Math.max(min, Math.min(max, next))
 }
 
-function resolveAdapter(value: unknown, provider: string): PlatformAiProviderAdapter {
-  const normalized = toText(value).toLowerCase()
-  if (normalized === 'response')
-    return 'response'
-  if (normalized === 'newapi' || normalized === 'sub2api' || normalized === 'openai-compatible')
-    return 'openai-compatible'
-
-  const providerText = provider.toLowerCase()
-  if (providerText.includes('response'))
-    return 'response'
-  return 'openai-compatible'
-}
-
-function toModelFormat(value: unknown, fallback: PlatformAiModelFormat): PlatformAiModelFormat {
-  const normalized = toText(value).toLowerCase()
-  if (normalized === 'response')
-    return 'response'
-  if (normalized === 'openai-compatible' || normalized === 'newapi' || normalized === 'sub2api')
-    return 'openai-compatible'
-  return fallback
-}
-
-function resolvePricingSource(value: unknown): PlatformAiPricingSource {
-  const normalized = toText(value).toLowerCase()
-  if (normalized === 'provider')
-    return 'provider'
-  if (normalized === 'manual' || normalized === 'pricing_table')
-    return 'manual'
-  return 'none'
-}
-
 function parseJsonObject(raw: unknown): unknown {
   const text = toText(raw)
   if (!text)
@@ -286,6 +250,74 @@ function dedupeStrings(items: string[]): string[] {
     result.push(value)
   }
   return result
+}
+
+function resolvePlatformAiProviderType(value: unknown, providerValue?: unknown): PlatformAiProviderType {
+  const candidates = [toText(value), toText(providerValue)]
+    .filter(Boolean)
+    .map(item => item.toLowerCase())
+
+  for (const normalized of candidates) {
+    if (normalized === 'newapi')
+      return 'newapi'
+    if (normalized === 'openai-compatible' || normalized === 'openai_compatible')
+      return 'openai-compatible'
+    if (normalized === 'dashscope-bailian' || normalized === 'dashscope' || normalized === 'bailian' || normalized === 'qwen')
+      return 'dashscope-bailian'
+    if (normalized === 'searchxng' || normalized === 'searchxng-search' || normalized === 'searchxng_search')
+      return 'searchxng'
+    if (normalized === 'tavily')
+      return 'tavily'
+    if (normalized.includes('newapi'))
+      return 'newapi'
+    if (normalized.includes('dashscope') || normalized.includes('bailian') || normalized.includes('qwen'))
+      return 'dashscope-bailian'
+    if (normalized.includes('searchxng') || normalized.includes('searxng'))
+      return 'searchxng'
+    if (normalized.includes('tavily'))
+      return 'tavily'
+  }
+
+  return 'openai-compatible'
+}
+
+function resolveProviderCapability(type: PlatformAiProviderType): PlatformAiProviderCapability {
+  return SEARCH_PROVIDER_TYPES.has(type) ? 'search' : 'llm'
+}
+
+function resolveAdapter(
+  value: unknown,
+  provider: string,
+  type: PlatformAiProviderType,
+): PlatformAiProviderAdapter {
+  const normalized = toText(value).toLowerCase()
+  if (normalized === 'response')
+    return 'response'
+  if (normalized === 'openai-compatible' || normalized === 'newapi' || normalized === 'sub2api')
+    return 'openai-compatible'
+
+  if (type === 'openai-compatible' && provider.toLowerCase().includes('response'))
+    return 'response'
+
+  return 'openai-compatible'
+}
+
+function toModelFormat(value: unknown, fallback: PlatformAiModelFormat): PlatformAiModelFormat {
+  const normalized = toText(value).toLowerCase()
+  if (normalized === 'response')
+    return 'response'
+  if (normalized === 'openai-compatible' || normalized === 'newapi' || normalized === 'sub2api')
+    return 'openai-compatible'
+  return fallback
+}
+
+function resolvePricingSource(value: unknown): PlatformAiPricingSource {
+  const normalized = toText(value).toLowerCase()
+  if (normalized === 'provider')
+    return 'provider'
+  if (normalized === 'manual' || normalized === 'pricing_table')
+    return 'manual'
+  return 'none'
 }
 
 function resolveEffectivePricing(input: {
@@ -386,10 +418,6 @@ function dedupeProviderModels(items: PlatformAiProviderModelConfig[]): PlatformA
   for (const item of items) {
     if (!item.model)
       continue
-    if (!map.has(item.model)) {
-      map.set(item.model, item)
-      continue
-    }
     map.set(item.model, item)
   }
   return Array.from(map.values())
@@ -416,111 +444,145 @@ function createModelFromName(
   }
 }
 
-function ensurePoolIncludesModel(
-  items: PlatformAiProviderModelConfig[],
-  model: string,
-  fallbackFormat: PlatformAiModelFormat,
-): PlatformAiProviderModelConfig[] {
-  const normalizedModel = toText(model)
-  if (!normalizedModel)
-    return items
-  if (items.some(item => item.model === normalizedModel))
-    return items
-  return [...items, createModelFromName(normalizedModel, fallbackFormat)]
-}
-
-function normalizeLegacyProvider(
-  raw: unknown,
-  index: number,
-  runtime: RuntimeSettings,
-): PlatformAiProviderConfig | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
-    return null
-
-  const source = raw as Record<string, unknown>
-  const provider = toText(source.provider) || runtime.ai.provider
-  const id = toText(source.id) || `provider_${index + 1}`
-  const adapter = resolveAdapter(source.adapter, provider)
-  const modelFormatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
-  const modelArray = Array.isArray(source.models)
-    ? source.models
-        .map(item => normalizeProviderModel(item, modelFormatFallback))
-        .filter((item): item is PlatformAiProviderModelConfig => Boolean(item))
-    : []
-  const fallbackModel = toText(source.model) || runtime.ai.model
-  const withFallbackModel = modelArray.length > 0
-    ? modelArray
-    : fallbackModel
-      ? [createModelFromName(fallbackModel, modelFormatFallback)]
-      : []
-
+function serializeProviderModel(item: PlatformAiProviderModelConfig): PlatformAiProviderModelConfig {
   return {
-    id,
-    name: toText(source.name) || id,
-    adapter,
-    provider,
-    baseURL: normalizePlatformAiBaseURL(source.baseURL, provider),
-    apiKey: String(source.apiKey || ''),
-    enabled: toBoolean(source.enabled, true),
-    timeoutMs: clampInt(source.timeoutMs, runtime.ai.timeoutMs, 1000, 120000),
-    maxRetries: clampInt(source.maxRetries, runtime.ai.maxRetries, 0, 10),
-    fetchedAt: toText(source.fetchedAt || source.modelFetchedAt),
-    models: dedupeProviderModels(withFallbackModel),
+    ...item,
+    providerInputPricePer1M: item.providerInputPricePer1M === null ? null : Number(item.providerInputPricePer1M),
+    providerOutputPricePer1M: item.providerOutputPricePer1M === null ? null : Number(item.providerOutputPricePer1M),
+    manualInputPricePer1M: item.manualInputPricePer1M === null ? null : Number(item.manualInputPricePer1M),
+    manualOutputPricePer1M: item.manualOutputPricePer1M === null ? null : Number(item.manualOutputPricePer1M),
+    inputPricePer1M: item.inputPricePer1M === null ? null : Number(item.inputPricePer1M),
+    outputPricePer1M: item.outputPricePer1M === null ? null : Number(item.outputPricePer1M),
   }
 }
 
-function buildDefaultModels(runtime: RuntimeSettings, format: PlatformAiModelFormat): PlatformAiProviderModelConfig[] {
-  const items: PlatformAiProviderModelConfig[] = []
-  const seeds = dedupeStrings([
-    runtime.ai.model,
-    runtime.ai.embeddingModel,
-    runtime.docAi.model,
-  ])
+function sanitizeProviderId(value: unknown, index: number): string {
+  return toText(value) || `provider_${index + 1}`
+}
 
-  for (const model of seeds)
-    items.push(createModelFromName(model, format))
-
-  if (items.length > 0)
-    return items
-
-  return []
+function buildProviderName(
+  providerId: string,
+  type: PlatformAiProviderType,
+  capability: PlatformAiProviderCapability,
+  source: Record<string, unknown>,
+): string {
+  const explicit = toText(source.name || source.label)
+  if (explicit)
+    return explicit
+  if (capability === 'search')
+    return type === 'tavily' ? 'Tavily' : 'SearchXNG'
+  if (type === 'newapi')
+    return 'NewAPI'
+  if (type === 'dashscope-bailian')
+    return '百炼 DashScope'
+  return providerId
 }
 
 function buildDefaultProvider(runtime: RuntimeSettings): PlatformAiProviderConfig {
-  const provider = toText(runtime.ai.provider)
-  const adapter = resolveAdapter(provider, provider)
-  const format: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
+  const type = resolvePlatformAiProviderType(runtime.ai.provider, runtime.ai.provider)
+  const capability = resolveProviderCapability(type)
+  const provider = toText(runtime.ai.provider) || type
+  const adapter = resolveAdapter('', provider, type)
+  const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
+  const modelSeed = toText(runtime.ai.model)
+  const models = capability === 'llm' && modelSeed
+    ? [createModelFromName(modelSeed, formatFallback)]
+    : []
 
   return {
-    id: SHARED_PROVIDER_ID,
-    name: SHARED_PROVIDER_NAME,
+    id: DEFAULT_PROVIDER_ID,
+    name: buildProviderName(DEFAULT_PROVIDER_ID, type, capability, {}),
+    type,
+    capability,
     adapter,
     provider,
+    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
     baseURL: normalizePlatformAiBaseURL(runtime.ai.baseURL, provider),
     apiKey: String(runtime.ai.apiKey || ''),
     enabled: true,
     timeoutMs: clampInt(runtime.ai.timeoutMs, 15000, 1000, 120000),
     maxRetries: clampInt(runtime.ai.maxRetries, 2, 0, 10),
     fetchedAt: '',
-    models: buildDefaultModels(runtime, format),
+    embeddingApiStyle: runtime.ai.embeddingApiStyle,
+    embeddingDimensions: runtime.ai.embeddingDimensions,
+    visionModel: runtime.ai.visionModel,
+    models: dedupeProviderModels(models),
+  }
+}
+
+function normalizeProvider(
+  raw: unknown,
+  index: number,
+  runtime: RuntimeSettings,
+  options?: {
+    allowLegacyModelSeed?: boolean
+    fallbackApiKey?: string
+  },
+): PlatformAiProviderConfig | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return null
+
+  const source = raw as Record<string, unknown>
+  const providerRaw = toText(source.provider || source.providerName || source.name || source.type)
+  const type = resolvePlatformAiProviderType(source.type || source.providerType, providerRaw)
+  const capability = resolveProviderCapability(type)
+  const provider = providerRaw || type
+  const adapter = resolveAdapter(source.adapter, provider, type)
+  const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
+
+  let models = capability === 'llm' && Array.isArray(source.models)
+    ? source.models
+        .map(item => normalizeProviderModel(item, formatFallback))
+        .filter((item): item is PlatformAiProviderModelConfig => Boolean(item))
+    : []
+
+  if (models.length === 0 && capability === 'llm' && options?.allowLegacyModelSeed) {
+    const legacyModel = toText(source.model || runtime.ai.model)
+    if (legacyModel)
+      models = [createModelFromName(legacyModel, formatFallback)]
+  }
+
+  const providerId = sanitizeProviderId(source.id, index)
+  return {
+    id: providerId,
+    name: buildProviderName(providerId, type, capability, source),
+    type,
+    capability,
+    adapter,
+    provider,
+    clientType: normalizePlatformAiClientType(source.clientType, runtime.ai.clientType),
+    baseURL: normalizePlatformAiBaseURL(source.baseURL, provider),
+    apiKey: String(source.apiKey ?? options?.fallbackApiKey ?? ''),
+    enabled: toBoolean(source.enabled, true),
+    timeoutMs: clampInt(source.timeoutMs, runtime.ai.timeoutMs, 1000, 120000),
+    maxRetries: clampInt(source.maxRetries, runtime.ai.maxRetries, 0, 10),
+    fetchedAt: toText(source.fetchedAt || source.modelFetchedAt),
+    embeddingApiStyle: normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, runtime.ai.embeddingApiStyle),
+    embeddingDimensions: clampInt(source.embeddingDimensions, runtime.ai.embeddingDimensions, 0, 16384),
+    visionModel: toText(source.visionModel || runtime.ai.visionModel),
+    models: dedupeProviderModels(models),
   }
 }
 
 function buildSharedDefaults(
   runtime: RuntimeSettings,
-  provider: PlatformAiProviderConfig,
+  providers: PlatformAiProviderConfig[],
   raw?: Record<string, unknown> | null,
 ): PlatformAiSharedDefaults {
-  const availableModels = provider.models.map(item => item.model)
-  const preferredEnabledModel = provider.models.find(item => item.enabled)?.model || provider.models[0]?.model || runtime.ai.model
-  const defaultModel = toText(raw?.defaultModel || raw?.chatModel || raw?.primaryModel || runtime.ai.model) || preferredEnabledModel || ''
-  const embeddingModel = toText(raw?.embeddingModel || runtime.ai.embeddingModel) || defaultModel || preferredEnabledModel || ''
-  const documentModel = toText(raw?.documentModel || raw?.docModel || runtime.docAi.model) || defaultModel || preferredEnabledModel || ''
+  const llmProviders = providers.filter(provider => provider.capability === 'llm')
+  const firstEnabledModel = llmProviders
+    .flatMap(provider => provider.models)
+    .find(item => item.enabled)
+    ?.model || llmProviders.flatMap(provider => provider.models)[0]?.model || ''
+
+  const defaultModel = toText(raw?.defaultModel || raw?.chatModel || raw?.primaryModel || runtime.ai.model) || firstEnabledModel
+  const embeddingModel = toText(raw?.embeddingModel || runtime.ai.embeddingModel) || defaultModel || firstEnabledModel
+  const documentModel = toText(raw?.documentModel || raw?.docModel || runtime.docAi.model) || defaultModel || firstEnabledModel
 
   return {
-    defaultModel: availableModels.includes(defaultModel) ? defaultModel : (preferredEnabledModel || defaultModel),
+    defaultModel,
     embeddingModel,
-    documentModel: availableModels.includes(documentModel) ? documentModel : (defaultModel || documentModel),
+    documentModel,
   }
 }
 
@@ -532,84 +594,77 @@ function parseLegacyProvidersState(raw: unknown, runtime: RuntimeSettings): Plat
         ? (parsed as Record<string, unknown>).items as unknown[]
         : []
 
-  const normalized = source
-    .map((item, index) => normalizeLegacyProvider(item, index, runtime))
+  const providers = source
+    .map((item, index) => normalizeProvider(item, index, runtime, {
+      allowLegacyModelSeed: true,
+      fallbackApiKey: index === 0 ? runtime.ai.apiKey : '',
+    }))
     .filter((item): item is PlatformAiProviderConfig => Boolean(item))
 
-  const legacyProviders = normalized.length > 0 ? normalized : [buildDefaultProvider(runtime)]
-  const primaryProvider = legacyProviders[0] || buildDefaultProvider(runtime)
-  const mergedModels = dedupeProviderModels(
-    legacyProviders.flatMap(provider => provider.models),
-  )
-
-  const sharedProvider: PlatformAiProviderConfig = {
-    ...primaryProvider,
-    id: SHARED_PROVIDER_ID,
-    name: SHARED_PROVIDER_NAME,
-    apiKey: primaryProvider.apiKey || runtime.ai.apiKey,
-    models: mergedModels.length > 0 ? mergedModels : primaryProvider.models,
-  }
-  const defaults = buildSharedDefaults(runtime, sharedProvider)
+  const normalizedProviders = providers.length > 0 ? providers : [buildDefaultProvider(runtime)]
+  const defaults = buildSharedDefaults(runtime, normalizedProviders)
 
   return {
-    providers: [sharedProvider],
+    providers: normalizedProviders,
     channels: [],
     defaults,
   }
 }
 
-function parseStructuredProviderState(raw: Record<string, unknown>, runtime: RuntimeSettings): PlatformAiResolvedRegistry {
+function parseStructuredLegacyProviderState(raw: Record<string, unknown>, runtime: RuntimeSettings): PlatformAiResolvedRegistry {
   const providerSource = raw.provider && typeof raw.provider === 'object' && !Array.isArray(raw.provider)
     ? raw.provider as Record<string, unknown>
     : raw.sharedProvider && typeof raw.sharedProvider === 'object' && !Array.isArray(raw.sharedProvider)
       ? raw.sharedProvider as Record<string, unknown>
       : raw.upstream && typeof raw.upstream === 'object' && !Array.isArray(raw.upstream)
         ? raw.upstream as Record<string, unknown>
-        : null
+        : raw
   const modelPoolSource = raw.modelPool && typeof raw.modelPool === 'object' && !Array.isArray(raw.modelPool)
     ? raw.modelPool as Record<string, unknown>
     : null
-  const provider = toText(providerSource?.provider || raw.providerName || runtime.ai.provider)
-  const adapter = resolveAdapter(providerSource?.adapter || raw.adapter, provider)
-  const formatFallback: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
-  const modelItemsSource = Array.isArray(modelPoolSource?.items)
-    ? modelPoolSource?.items as unknown[]
-    : Array.isArray(providerSource?.models)
-      ? providerSource?.models as unknown[]
-      : Array.isArray(raw.models)
-        ? raw.models as unknown[]
-        : []
+  const provider = normalizeProvider({
+    ...providerSource,
+    models: Array.isArray(providerSource.models)
+      ? providerSource.models
+      : Array.isArray(modelPoolSource?.items)
+        ? modelPoolSource?.items
+        : [],
+    fetchedAt: providerSource.fetchedAt || modelPoolSource?.fetchedAt,
+  }, 0, runtime, {
+    allowLegacyModelSeed: true,
+    fallbackApiKey: runtime.ai.apiKey,
+  }) || buildDefaultProvider(runtime)
 
-  let models = modelItemsSource
-    .map(item => normalizeProviderModel(item, formatFallback))
-    .filter((item): item is PlatformAiProviderModelConfig => Boolean(item))
-  if (models.length === 0)
-    models = buildDefaultModels(runtime, formatFallback)
-
-  const sharedProvider: PlatformAiProviderConfig = {
-    id: SHARED_PROVIDER_ID,
-    name: SHARED_PROVIDER_NAME,
-    adapter,
-    provider,
-    baseURL: normalizePlatformAiBaseURL(providerSource?.baseURL || raw.baseURL || runtime.ai.baseURL, provider),
-    apiKey: String(providerSource?.apiKey || runtime.ai.apiKey || ''),
-    enabled: toBoolean(providerSource?.enabled ?? raw.enabled, true),
-    timeoutMs: clampInt(providerSource?.timeoutMs ?? raw.timeoutMs, runtime.ai.timeoutMs, 1000, 120000),
-    maxRetries: clampInt(providerSource?.maxRetries ?? raw.maxRetries, runtime.ai.maxRetries, 0, 10),
-    fetchedAt: toText(modelPoolSource?.fetchedAt || providerSource?.fetchedAt || raw.fetchedAt),
-    models: dedupeProviderModels(models),
-  }
   const defaultsSource = raw.defaults && typeof raw.defaults === 'object' && !Array.isArray(raw.defaults)
     ? raw.defaults as Record<string, unknown>
     : raw
-  const defaults = buildSharedDefaults(runtime, sharedProvider, defaultsSource)
-
-  sharedProvider.models = ensurePoolIncludesModel(sharedProvider.models, defaults.defaultModel, formatFallback)
-  sharedProvider.models = ensurePoolIncludesModel(sharedProvider.models, defaults.embeddingModel, formatFallback)
-  sharedProvider.models = ensurePoolIncludesModel(sharedProvider.models, defaults.documentModel, formatFallback)
+  const defaults = buildSharedDefaults(runtime, [provider], defaultsSource)
 
   return {
-    providers: [sharedProvider],
+    providers: [provider],
+    channels: [],
+    defaults,
+  }
+}
+
+function parseStructuredProviderState(raw: Record<string, unknown>, runtime: RuntimeSettings): PlatformAiResolvedRegistry {
+  const sourceProviders = Array.isArray(raw.providers)
+    ? raw.providers
+    : []
+  const providers = sourceProviders
+    .map((item, index) => normalizeProvider(item, index, runtime, {
+      fallbackApiKey: index === 0 ? runtime.ai.apiKey : '',
+    }))
+    .filter((item): item is PlatformAiProviderConfig => Boolean(item))
+
+  const normalizedProviders = providers.length > 0 ? providers : [buildDefaultProvider(runtime)]
+  const defaultsSource = raw.defaults && typeof raw.defaults === 'object' && !Array.isArray(raw.defaults)
+    ? raw.defaults as Record<string, unknown>
+    : raw
+  const defaults = buildSharedDefaults(runtime, normalizedProviders, defaultsSource)
+
+  return {
+    providers: normalizedProviders,
     channels: [],
     defaults,
   }
@@ -619,15 +674,18 @@ function parseProviderState(raw: unknown, runtime: RuntimeSettings): PlatformAiR
   const parsed = parseJsonObject(raw)
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const record = parsed as Record<string, unknown>
+    if (Array.isArray(record.providers) || Number(record.version || 0) >= PLATFORM_AI_REGISTRY_VERSION)
+      return parseStructuredProviderState(record, runtime)
+
     if (
-      Number(record.version || 0) >= PLATFORM_AI_REGISTRY_VERSION
+      Number(record.version || 0) >= 2
       || record.sharedProvider
       || record.upstream
       || record.modelPool
       || record.defaults
       || (record.provider && typeof record.provider === 'object' && !Array.isArray(record.provider))
     ) {
-      return parseStructuredProviderState(record, runtime)
+      return parseStructuredLegacyProviderState(record, runtime)
     }
   }
 
@@ -645,22 +703,87 @@ function resolveChannelDefinition(key: PlatformAiChannelKey): PlatformAiChannelD
   return CHANNEL_DEFINITIONS.find(item => item.key === key) || CHANNEL_DEFINITIONS[0]!
 }
 
+function resolvePrimaryLlmProvider(providers: PlatformAiProviderConfig[]): PlatformAiProviderConfig | null {
+  return providers.find(provider => provider.capability === 'llm' && provider.enabled)
+    || providers.find(provider => provider.capability === 'llm')
+    || null
+}
+
+function resolveDefaultProviderIds(providers: PlatformAiProviderConfig[]): string[] {
+  const primary = resolvePrimaryLlmProvider(providers)
+  return primary ? [primary.id] : []
+}
+
 function resolveDefaultModelsForChannel(
   key: PlatformAiChannelKey,
   defaults: PlatformAiSharedDefaults,
-  provider: PlatformAiProviderConfig | null,
+  providers: PlatformAiProviderConfig[],
 ): string[] {
   const preferred = key === 'document_analysis' || isDocumentAssistChannelKey(key)
     ? defaults.documentModel
     : defaults.defaultModel
-  const fallback = provider?.models.find(item => item.enabled)?.model || provider?.models[0]?.model || preferred
-  return dedupeStrings([preferred, fallback])
+  const firstAvailable = providers
+    .filter(provider => provider.capability === 'llm')
+    .flatMap(provider => provider.models)
+    .find(item => item.enabled)
+    ?.model || ''
+  return dedupeStrings([preferred, firstAvailable])
+}
+
+function extractProviderIds(raw: unknown): string[] {
+  if (!Array.isArray(raw))
+    return []
+
+  return dedupeStrings(raw.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+      return toText(item)
+    const record = item as Record<string, unknown>
+    return toText(record.providerId || record.id || record.value)
+  }))
+}
+
+function resolveLoadBalanceStrategy(value: unknown): PlatformAiLoadBalanceStrategy {
+  return toText(value).toLowerCase() === 'round_robin'
+    ? 'round_robin'
+    : 'round_robin'
+}
+
+function expandLegacyChannelConfig(
+  raw: Record<string, unknown>,
+  defaults: PlatformAiSharedDefaults,
+  providers: PlatformAiProviderConfig[],
+  defaultProviderIds: string[],
+): PlatformAiChannelConfig[] {
+  const modelFallback = Array.isArray(raw.models)
+    ? dedupeStrings((raw.models as unknown[]).map(item => toText(item)))
+    : dedupeStrings([toText(raw.model)])
+  const enabled = toBoolean(raw.enabled, true)
+  const prompt = String(raw.prompt || '')
+
+  return DOCUMENT_ASSIST_CHANNEL_KEYS.map((key) => {
+    const definition = resolveChannelDefinition(key)
+    const fallback = modelFallback.length > 0
+      ? modelFallback
+      : resolveDefaultModelsForChannel(key, defaults, providers)
+    return {
+      key,
+      label: definition.label,
+      description: definition.description,
+      enabled,
+      providerIds: [...defaultProviderIds],
+      loadBalanceStrategy: 'round_robin',
+      modelFallback: fallback,
+      models: fallback,
+      prompt,
+    }
+  })
 }
 
 function normalizeChannel(
   raw: unknown,
   defaults: PlatformAiSharedDefaults,
-  provider: PlatformAiProviderConfig | null,
+  providers: PlatformAiProviderConfig[],
+  defaultProviderIds: string[],
 ): PlatformAiChannelConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return null
@@ -674,23 +797,39 @@ function normalizeChannel(
     return null
 
   const definition = resolveChannelDefinition(key)
-  const models = Array.isArray(source.models)
-    ? dedupeStrings((source.models as unknown[]).map(item => toText(item)))
-    : dedupeStrings([toText(source.model)])
+  const explicitProviderIds = extractProviderIds(source.providerIds || source.providers)
+  const sanitizedProviderIds = explicitProviderIds.filter((providerId) => {
+    const provider = providers.find(item => item.id === providerId)
+    return provider?.capability === 'llm'
+  })
+  const modelFallback = Array.isArray(source.modelFallback)
+    ? dedupeStrings((source.modelFallback as unknown[]).map(item => toText(item)))
+    : Array.isArray(source.models)
+      ? dedupeStrings((source.models as unknown[]).map(item => toText(item)))
+      : dedupeStrings([toText(source.model)])
+  const fallbackModels = modelFallback.length > 0
+    ? modelFallback
+    : resolveDefaultModelsForChannel(key, defaults, providers)
+  const providerIds = explicitProviderIds.length > 0
+    ? sanitizedProviderIds
+    : [...defaultProviderIds]
 
   return {
     key,
     label: toText(source.label) || definition.label,
     description: toText(source.description) || definition.description,
     enabled: toBoolean(source.enabled, true),
-    models: models.length > 0 ? models : resolveDefaultModelsForChannel(key, defaults, provider),
+    providerIds,
+    loadBalanceStrategy: resolveLoadBalanceStrategy(source.loadBalanceStrategy),
+    modelFallback: fallbackModels,
+    models: fallbackModels,
     prompt: String(source.prompt || ''),
   }
 }
 
 function parseChannelsFromJson(
   raw: unknown,
-  provider: PlatformAiProviderConfig | null,
+  providers: PlatformAiProviderConfig[],
   defaults: PlatformAiSharedDefaults,
 ): PlatformAiChannelConfig[] {
   const parsed = parseJsonObject(raw)
@@ -700,18 +839,18 @@ function parseChannelsFromJson(
         ? (parsed as Record<string, unknown>).items as unknown[]
         : []
 
-  const normalized = source
-    .flatMap((item) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item))
-        return []
+  const defaultProviderIds = resolveDefaultProviderIds(providers)
+  const normalized = source.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+      return []
 
-      const record = item as Record<string, unknown>
-      if (toText(record.key || record.channel || record.scene) === LEGACY_DOCUMENT_ASSIST_KEY)
-        return expandLegacyChannelConfig(record, defaults, provider)
+    const record = item as Record<string, unknown>
+    if (toText(record.key || record.channel || record.scene) === LEGACY_DOCUMENT_ASSIST_KEY)
+      return expandLegacyChannelConfig(record, defaults, providers, defaultProviderIds)
 
-      const normalizedItem = normalizeChannel(item, defaults, provider)
-      return normalizedItem ? [normalizedItem] : []
-    })
+    const normalizedItem = normalizeChannel(item, defaults, providers, defaultProviderIds)
+    return normalizedItem ? [normalizedItem] : []
+  })
 
   const map = new Map<PlatformAiChannelKey, PlatformAiChannelConfig>()
   for (const item of normalized)
@@ -720,12 +859,16 @@ function parseChannelsFromJson(
   for (const definition of CHANNEL_DEFINITIONS) {
     if (map.has(definition.key))
       continue
+    const modelFallback = resolveDefaultModelsForChannel(definition.key, defaults, providers)
     map.set(definition.key, {
       key: definition.key,
       label: definition.label,
       description: definition.description,
       enabled: true,
-      models: resolveDefaultModelsForChannel(definition.key, defaults, provider),
+      providerIds: [...defaultProviderIds],
+      loadBalanceStrategy: 'round_robin',
+      modelFallback,
+      models: modelFallback,
       prompt: '',
     })
   }
@@ -736,11 +879,14 @@ function parseChannelsFromJson(
 }
 
 function buildFallbackAi(runtime: RuntimeSettings): AiRuntimeConfig {
-  const fallbackAdapter = resolveAdapter(runtime.ai.provider, runtime.ai.provider)
-  const fallbackFormat: PlatformAiModelFormat = fallbackAdapter === 'response' ? 'response' : 'openai-compatible'
+  const provider = toText(runtime.ai.provider)
+  const type = resolvePlatformAiProviderType(provider, provider)
+  const adapter = resolveAdapter('', provider, type)
+  const format: PlatformAiModelFormat = adapter === 'response' ? 'response' : 'openai-compatible'
   return {
     ...runtime.ai,
-    format: fallbackFormat,
+    clientType: normalizePlatformAiClientType(runtime.ai.clientType),
+    format,
   }
 }
 
@@ -748,7 +894,7 @@ function resolveProviderModel(
   provider: PlatformAiProviderConfig | null,
   model: string,
 ): PlatformAiProviderModelConfig | null {
-  if (!provider)
+  if (!provider || provider.capability !== 'llm')
     return null
   const normalizedModel = toText(model)
   if (!normalizedModel)
@@ -763,7 +909,8 @@ function buildAiRuntimeFromModel(
 ): AiRuntimeConfig {
   return {
     ...runtime.ai,
-    provider: provider.provider || provider.adapter,
+    provider: provider.provider || provider.type,
+    clientType: provider.clientType,
     baseURL: provider.baseURL,
     apiKey: provider.apiKey || runtime.ai.apiKey,
     model: model.model,
@@ -773,14 +920,41 @@ function buildAiRuntimeFromModel(
   }
 }
 
+function rotateProviders(
+  channelKey: PlatformAiChannelKey,
+  model: string,
+  providers: PlatformAiProviderConfig[],
+  strategy: PlatformAiLoadBalanceStrategy,
+): PlatformAiProviderConfig[] {
+  if (providers.length <= 1 || strategy !== 'round_robin')
+    return providers
+
+  const pointerKey = `${channelKey}:${model}:${providers.map(item => item.id).join(',')}`
+  const startIndex = Number(LEGACY_ROUND_ROBIN_POINTERS.get(pointerKey) || 0) % providers.length
+  LEGACY_ROUND_ROBIN_POINTERS.set(pointerKey, (startIndex + 1) % providers.length)
+
+  return providers.map((_, index) => providers[(startIndex + index) % providers.length]!)
+}
+
+function resolveEligibleChannelProviders(
+  channel: PlatformAiChannelConfig,
+  providers: PlatformAiProviderConfig[],
+): PlatformAiProviderConfig[] {
+  const providerMap = new Map(providers.map(provider => [provider.id, provider]))
+  return channel.providerIds
+    .map(providerId => providerMap.get(providerId) || null)
+    .filter((provider): provider is PlatformAiProviderConfig => Boolean(provider && provider.capability === 'llm' && provider.enabled))
+}
+
 function resolveChannelCandidates(
   runtime: RuntimeSettings,
   channel: PlatformAiChannelConfig,
-  provider: PlatformAiProviderConfig | null,
+  providers: PlatformAiProviderConfig[],
   defaults: PlatformAiSharedDefaults,
 ): { candidates: PlatformAiResolvedChannelCandidate[], usedFallback: boolean } {
   const fallbackAi = buildFallbackAi(runtime)
-  if (!channel.enabled || !provider || !provider.enabled) {
+  const eligibleProviders = resolveEligibleChannelProviders(channel, providers)
+  if (!channel.enabled || eligibleProviders.length === 0) {
     return {
       candidates: [{
         index: 0,
@@ -792,35 +966,38 @@ function resolveChannelCandidates(
     }
   }
 
-  const explicitCandidates = dedupeStrings(channel.models)
-    .map(model => resolveProviderModel(provider, model))
-    .filter((item): item is PlatformAiProviderModelConfig => Boolean(item))
-    .map((item, index) => ({
-      index,
-      provider,
-      modelConfig: item,
-      ai: buildAiRuntimeFromModel(runtime, provider, item),
-    }))
+  const requestedModels = dedupeStrings(channel.modelFallback)
+  let modelOrder = requestedModels.filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model)))
+  let usedFallback = modelOrder.length === 0
 
-  if (explicitCandidates.length > 0) {
-    return {
-      candidates: explicitCandidates,
-      usedFallback: false,
+  if (modelOrder.length === 0)
+    modelOrder = resolveDefaultModelsForChannel(channel.key, defaults, eligibleProviders)
+      .filter(model => eligibleProviders.some(provider => resolveProviderModel(provider, model)))
+
+  const candidates: PlatformAiResolvedChannelCandidate[] = []
+  let candidateIndex = 0
+
+  for (const model of modelOrder) {
+    const providersWithModel = eligibleProviders.filter(provider => resolveProviderModel(provider, model))
+    const orderedProviders = rotateProviders(channel.key, model, providersWithModel, channel.loadBalanceStrategy)
+    for (const provider of orderedProviders) {
+      const modelConfig = resolveProviderModel(provider, model)
+      if (!modelConfig)
+        continue
+      candidates.push({
+        index: candidateIndex,
+        provider,
+        modelConfig,
+        ai: buildAiRuntimeFromModel(runtime, provider, modelConfig),
+      })
+      candidateIndex += 1
     }
   }
 
-  const fallbackModelName = resolveDefaultModelsForChannel(channel.key, defaults, provider)
-    .map(model => resolveProviderModel(provider, model))
-    .find(Boolean)
-  if (fallbackModelName) {
+  if (candidates.length > 0) {
     return {
-      candidates: [{
-        index: 0,
-        provider,
-        modelConfig: fallbackModelName,
-        ai: buildAiRuntimeFromModel(runtime, provider, fallbackModelName),
-      }],
-      usedFallback: true,
+      candidates,
+      usedFallback,
     }
   }
 
@@ -835,18 +1012,6 @@ function resolveChannelCandidates(
   }
 }
 
-function serializeProviderModel(item: PlatformAiProviderModelConfig): PlatformAiProviderModelConfig {
-  return {
-    ...item,
-    providerInputPricePer1M: item.providerInputPricePer1M === null ? null : Number(item.providerInputPricePer1M),
-    providerOutputPricePer1M: item.providerOutputPricePer1M === null ? null : Number(item.providerOutputPricePer1M),
-    manualInputPricePer1M: item.manualInputPricePer1M === null ? null : Number(item.manualInputPricePer1M),
-    manualOutputPricePer1M: item.manualOutputPricePer1M === null ? null : Number(item.manualOutputPricePer1M),
-    inputPricePer1M: item.inputPricePer1M === null ? null : Number(item.inputPricePer1M),
-    outputPricePer1M: item.outputPricePer1M === null ? null : Number(item.outputPricePer1M),
-  }
-}
-
 function toSerializableProvider(item: PlatformAiProviderConfig): PlatformAiProviderConfig {
   return {
     ...item,
@@ -855,53 +1020,64 @@ function toSerializableProvider(item: PlatformAiProviderConfig): PlatformAiProvi
 }
 
 function toSerializableChannels(items: PlatformAiChannelConfig[]): PlatformAiChannelConfig[] {
-  return items.map(item => ({
-    ...item,
-    models: dedupeStrings(item.models),
-    prompt: String(item.prompt || ''),
-  }))
+  return items.map((item) => {
+    const modelFallback = dedupeStrings(item.modelFallback)
+    return {
+      ...item,
+      providerIds: dedupeStrings(item.providerIds),
+      modelFallback,
+      models: modelFallback,
+      prompt: String(item.prompt || ''),
+    }
+  })
 }
 
-function buildModelCatalogJson(provider: PlatformAiProviderConfig): string {
-  const options = provider.models
-    .filter(item => item.enabled)
-    .map((item) => {
-      const priceText = item.inputPricePer1M === null && item.outputPricePer1M === null
-        ? '价格未配置'
-        : `输入 ${item.inputPricePer1M === null ? '-' : `${item.currency} ${item.inputPricePer1M.toFixed(4)}/1M`} · 输出 ${item.outputPricePer1M === null ? '-' : `${item.currency} ${item.outputPricePer1M.toFixed(4)}/1M`}`
-      return {
-        id: `${provider.provider}:${item.model}`,
-        label: item.label || item.model,
+function buildModelCatalogJson(providers: PlatformAiProviderConfig[]): string {
+  const groups = providers
+    .filter(provider => provider.capability === 'llm')
+    .map((provider) => {
+      const options = provider.models
+        .filter(item => item.enabled)
+        .map((item) => {
+          const priceText = item.inputPricePer1M === null && item.outputPricePer1M === null
+            ? '价格未配置'
+            : `输入 ${item.inputPricePer1M === null ? '-' : `${item.currency} ${item.inputPricePer1M.toFixed(4)}/1M`} · 输出 ${item.outputPricePer1M === null ? '-' : `${item.currency} ${item.outputPricePer1M.toFixed(4)}/1M`}`
+          return {
+            id: `${provider.id}:${item.model}`,
+            label: item.label || item.model,
+            provider: provider.provider,
+            model: item.model,
+            description: `${provider.name} · ${item.format} · ${priceText}`,
+          }
+        })
+
+      return options.length > 0
+        ? {
+            key: provider.id,
+            label: provider.name,
+            options,
+          }
+        : null
+    })
+    .filter(Boolean)
+
+  return JSON.stringify({ groups }, null, 2)
+}
+
+function buildModelPricingJson(providers: PlatformAiProviderConfig[]): string {
+  const items = providers
+    .filter(provider => provider.capability === 'llm')
+    .flatMap(provider => provider.models
+      .filter(model => model.inputPricePer1M !== null || model.outputPricePer1M !== null)
+      .map(model => ({
+        providerId: provider.id,
         provider: provider.provider,
-        model: item.model,
-        description: `${item.format} · ${priceText}`,
-      }
-    })
-
-  return JSON.stringify({
-    groups: options.length > 0
-      ? [{
-          key: 'platform_ai_model_pool',
-          label: '平台统一模型池',
-          options,
-        }]
-      : [],
-  }, null, 2)
-}
-
-function buildModelPricingJson(provider: PlatformAiProviderConfig): string {
-  const items = provider.models
-    .filter((item) => {
-      return item.inputPricePer1M !== null || item.outputPricePer1M !== null
-    })
-    .map(item => ({
-      provider: provider.provider,
-      model: item.model,
-      inputPricePer1M: item.inputPricePer1M,
-      outputPricePer1M: item.outputPricePer1M,
-      currency: item.currency,
-      pricingSource: item.pricingSource,
-    }))
+        model: model.model,
+        inputPricePer1M: model.inputPricePer1M,
+        outputPricePer1M: model.outputPricePer1M,
+        currency: model.currency,
+        pricingSource: model.pricingSource,
+      })))
 
   return JSON.stringify({ items }, null, 2)
 }
@@ -912,11 +1088,10 @@ export function getPlatformAiChannelDefinitions(): PlatformAiChannelDefinition[]
 
 export function resolvePlatformAiRegistry(runtime: RuntimeSettings): PlatformAiResolvedRegistry {
   const providerState = parseProviderState(runtime.ai.providersJson, runtime)
-  const provider = providerState.providers[0] || buildDefaultProvider(runtime)
-  const channels = parseChannelsFromJson(runtime.ai.channelsJson, provider, providerState.defaults)
+  const channels = parseChannelsFromJson(runtime.ai.channelsJson, providerState.providers, providerState.defaults)
 
   return {
-    providers: [toSerializableProvider(provider)],
+    providers: providerState.providers.map(item => toSerializableProvider(item)),
     channels,
     defaults: providerState.defaults,
   }
@@ -926,35 +1101,43 @@ export function buildPlatformAiRegistryJson(runtime: RuntimeSettings, raw: unkno
   const parsed = raw && typeof raw === 'object' && !Array.isArray(raw)
     ? raw as Record<string, unknown>
     : {}
-  const structured = parseProviderState(
-    JSON.stringify({
-      version: PLATFORM_AI_REGISTRY_VERSION,
-      provider: parsed.provider || parsed.sharedProvider || parsed.upstream || parsed,
-      modelPool: parsed.modelPool || { items: parsed.models || [] },
-      defaults: parsed.defaults || parsed,
-    }),
-    runtime,
-  )
-  const provider = structured.providers[0] || buildDefaultProvider(runtime)
+
+  const providers = Array.isArray(parsed.providers)
+    ? parsed.providers
+    : (() => {
+        const providerSource = parsed.provider || parsed.sharedProvider || parsed.upstream
+        const modelPoolItems = parsed.modelPool && typeof parsed.modelPool === 'object' && !Array.isArray(parsed.modelPool) && Array.isArray((parsed.modelPool as Record<string, unknown>).items)
+          ? (parsed.modelPool as Record<string, unknown>).items as unknown[]
+          : Array.isArray(parsed.models)
+            ? parsed.models
+            : []
+        if (providerSource && typeof providerSource === 'object' && !Array.isArray(providerSource)) {
+          const providerRecord = providerSource as Record<string, unknown>
+          return [{
+            ...providerRecord,
+            models: Array.isArray(providerRecord.models) ? providerRecord.models : modelPoolItems,
+            fetchedAt: providerRecord.fetchedAt || ((parsed.modelPool as Record<string, unknown> | undefined)?.fetchedAt),
+          }]
+        }
+        return [{
+          provider: toText(parsed.providerName || runtime.ai.provider),
+          models: modelPoolItems,
+          baseURL: toText(parsed.baseURL || runtime.ai.baseURL),
+        }]
+      })()
+
+  const structured = parseProviderState(JSON.stringify({
+    version: PLATFORM_AI_REGISTRY_VERSION,
+    providers,
+    defaults: parsed.defaults || parsed,
+  }), runtime)
 
   return JSON.stringify({
     version: PLATFORM_AI_REGISTRY_VERSION,
-    provider: {
-      id: provider.id,
-      name: provider.name,
-      adapter: provider.adapter,
-      provider: provider.provider,
-      baseURL: provider.baseURL,
-      enabled: provider.enabled,
-      timeoutMs: provider.timeoutMs,
-      maxRetries: provider.maxRetries,
-      fetchedAt: provider.fetchedAt,
+    providers: structured.providers.map(provider => ({
+      ...provider,
       models: provider.models.map(item => serializeProviderModel(item)),
-    },
-    modelPool: {
-      fetchedAt: provider.fetchedAt,
-      items: provider.models.map(item => serializeProviderModel(item)),
-    },
+    })),
     defaults: structured.defaults,
   }, null, 2)
 }
@@ -965,17 +1148,25 @@ export function buildPlatformAiChannelsJson(
   providers?: PlatformAiProviderConfig[],
 ): string {
   const registry = resolvePlatformAiRegistry(runtime)
-  const provider = providers?.[0] || registry.providers[0] || null
+  const sourceProviders = providers && providers.length > 0 ? providers : registry.providers
   const source = Array.isArray(raw)
     ? raw
     : (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).items))
         ? (raw as Record<string, unknown>).items as unknown[]
         : []
 
+  const defaultProviderIds = resolveDefaultProviderIds(sourceProviders)
   const channels = source
-    .map(item => normalizeChannel(item, registry.defaults, provider))
-    .filter((item): item is PlatformAiChannelConfig => Boolean(item))
-  const merged = parseChannelsFromJson(JSON.stringify({ items: channels }), provider, registry.defaults)
+    .flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item))
+        return []
+      const record = item as Record<string, unknown>
+      if (toText(record.key || record.channel || record.scene) === LEGACY_DOCUMENT_ASSIST_KEY)
+        return expandLegacyChannelConfig(record, registry.defaults, sourceProviders, defaultProviderIds)
+      const normalizedItem = normalizeChannel(item, registry.defaults, sourceProviders, defaultProviderIds)
+      return normalizedItem ? [normalizedItem] : []
+    })
+  const merged = parseChannelsFromJson(JSON.stringify({ items: channels }), sourceProviders, registry.defaults)
 
   return JSON.stringify({
     version: PLATFORM_AI_REGISTRY_VERSION,
@@ -985,14 +1176,12 @@ export function buildPlatformAiChannelsJson(
 
 export function resolvePlatformAiModelCatalogJson(runtime: RuntimeSettings): string {
   const registry = resolvePlatformAiRegistry(runtime)
-  const provider = registry.providers[0]
-  return provider ? buildModelCatalogJson(provider) : ''
+  return buildModelCatalogJson(registry.providers)
 }
 
 export function resolvePlatformAiModelPricingJson(runtime: RuntimeSettings): string {
   const registry = resolvePlatformAiRegistry(runtime)
-  const provider = registry.providers[0]
-  return provider ? buildModelPricingJson(provider) : ''
+  return buildModelPricingJson(registry.providers)
 }
 
 export function resolvePlatformAiDocumentRuntime(runtime: RuntimeSettings): AiRuntimeConfig {
@@ -1005,17 +1194,20 @@ export function resolveAiRuntimeForChannel(
   key: PlatformAiChannelKey,
 ): PlatformAiResolvedChannelRuntime {
   const registry = resolvePlatformAiRegistry(runtime)
-  const provider = registry.providers[0] || null
   const fallbackAi = buildFallbackAi(runtime)
+  const defaultProviderIds = resolveDefaultProviderIds(registry.providers)
   const channel = registry.channels.find(item => item.key === key) || {
     key,
     label: key,
     description: '',
     enabled: true,
-    models: resolveDefaultModelsForChannel(key, registry.defaults, provider),
+    providerIds: defaultProviderIds,
+    loadBalanceStrategy: 'round_robin' as const,
+    modelFallback: resolveDefaultModelsForChannel(key, registry.defaults, registry.providers),
+    models: resolveDefaultModelsForChannel(key, registry.defaults, registry.providers),
     prompt: '',
   }
-  const resolved = resolveChannelCandidates(runtime, channel, provider, registry.defaults)
+  const resolved = resolveChannelCandidates(runtime, channel, registry.providers, registry.defaults)
   const selectedCandidate = resolved.candidates[0]
 
   return {
@@ -1111,9 +1303,8 @@ export async function runWithPlatformAiChannelFallback<T>(
       })
       const shouldStopAfterError = options?.shouldContinueOnError
         && !options.shouldContinueOnError({ candidate, error, attemptChain })
-      if (shouldStopAfterError) {
+      if (shouldStopAfterError)
         break
-      }
     }
   }
 

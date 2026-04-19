@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import type { ApiResponse } from '~~/shared/types/domain'
+import type {
+  ApiResponse,
+  ProjectKnowledgeEmbeddingApiStyle as EmbeddingApiStyle,
+  PlatformAiClientType,
+} from '~~/shared/types/domain'
 import { Message } from '@arco-design/web-vue'
 
 definePageMeta({
@@ -10,6 +14,9 @@ type AiConsoleTab = 'channel_models' | 'scenes' | 'audits' | 'logs'
 type SecretMode = 'keep' | 'replace' | 'clear'
 type ModelFormat = 'openai-compatible' | 'response'
 type PricingSource = 'provider' | 'manual' | 'none'
+type ProviderType = 'newapi' | 'openai-compatible' | 'dashscope-bailian' | 'searchxng' | 'tavily'
+type ProviderCapability = 'llm' | 'search'
+type LoadBalanceStrategy = 'round_robin'
 type PlatformAiChannelKey
   = 'contest_filter'
     | 'project_chat'
@@ -31,7 +38,7 @@ type PlatformAiChannelKey
     | 'admin_publish_assistant'
     | 'document_analysis'
 
-interface ModelPoolItem {
+interface ProviderModelItem {
   model: string
   label: string
   format: ModelFormat
@@ -47,6 +54,37 @@ interface ModelPoolItem {
   manualPriceOverride: boolean
 }
 
+interface ProviderItem {
+  id: string
+  name: string
+  type: ProviderType
+  capability: ProviderCapability
+  adapter: string
+  provider: string
+  clientType: PlatformAiClientType
+  baseURL: string
+  enabled: boolean
+  timeoutMs: number
+  maxRetries: number
+  fetchedAt: string
+  apiKeyConfigured: boolean
+  embeddingApiStyle: EmbeddingApiStyle
+  embeddingDimensions: number
+  visionModel: string
+  models: ProviderModelItem[]
+}
+
+interface ProviderDraftItem extends ProviderItem {
+  apiKeyMode: SecretMode
+  apiKey: string
+}
+
+interface DefaultsPayload {
+  defaultModel: string
+  embeddingModel: string
+  documentModel: string
+}
+
 interface SceneDefinition {
   key: PlatformAiChannelKey
   label: string
@@ -58,24 +96,16 @@ interface SceneItem {
   label: string
   description: string
   enabled: boolean
-  models: string[]
+  providerIds: string[]
+  loadBalanceStrategy: LoadBalanceStrategy
+  modelFallback: string[]
+  models?: string[]
   prompt: string
 }
 
 interface ProvidersPayload {
-  upstream: {
-    provider: string
-    baseURL: string
-    timeoutMs: number
-    maxRetries: number
-    apiKeyConfigured: boolean
-    visionModel?: string
-  }
-  modelPool: {
-    fetchedAt: string
-    total: number
-    items: ModelPoolItem[]
-  }
+  providers: ProviderItem[]
+  defaults: DefaultsPayload
   scenes: {
     items: SceneItem[]
     definitions: SceneDefinition[]
@@ -91,7 +121,7 @@ interface ProvidersPayload {
     masterKeyReady?: boolean
   }
   warnings?: {
-    ignoredSecretReplaceKeys?: string[]
+    ignoredProviderApiKeyIds?: string[]
   }
   overrideState?: {
     aiApiKeyOverridden?: boolean
@@ -115,6 +145,7 @@ interface ProviderPullItem {
 }
 
 interface ProviderModelsPayload {
+  providerId: string
   provider: string
   baseURL: string
   fetchedAt: string
@@ -180,6 +211,14 @@ interface LogsPayload {
 const runtime = useRuntimeConfig()
 const { endpoint } = useApiEndpoint(runtime)
 
+const providerTypeOptions: Array<{ value: ProviderType, label: string, capability: ProviderCapability }> = [
+  { value: 'newapi', label: 'NewAPI', capability: 'llm' },
+  { value: 'openai-compatible', label: 'OpenAI Compatible', capability: 'llm' },
+  { value: 'dashscope-bailian', label: '百炼 DashScope', capability: 'llm' },
+  { value: 'searchxng', label: 'SearchXNG', capability: 'search' },
+  { value: 'tavily', label: 'Tavily', capability: 'search' },
+]
+
 const tabOptions: Array<{ key: AiConsoleTab, label: string }> = [
   { key: 'channel_models', label: '渠道和模型' },
   { key: 'scenes', label: '场景' },
@@ -192,11 +231,6 @@ const consoleLoading = ref(false)
 const consoleLoaded = ref(false)
 const consoleError = ref('')
 const saving = ref(false)
-const pullLoading = ref(false)
-const testingUpstream = ref(false)
-const upstreamTestMessage = ref('')
-const modelPullTriggered = ref(false)
-const modelPullMessage = ref('')
 
 const auditLoading = ref(false)
 const auditError = ref('')
@@ -226,18 +260,15 @@ const logFilters = reactive({
   q: '',
 })
 
-const sceneTesting = reactive<Record<string, boolean>>({})
-const sceneTestMessage = reactive<Record<string, string>>({})
-
-const upstreamForm = reactive({
-  provider: '',
-  baseURL: '',
-  timeoutMs: 15000,
-  maxRetries: 2,
-  visionModel: '',
-  apiKeyMode: 'keep' as SecretMode,
-  apiKey: '',
+const configMasterKeyReady = ref(true)
+const providers = ref<ProviderDraftItem[]>([])
+const defaultsForm = reactive<DefaultsPayload>({
+  defaultModel: '',
+  embeddingModel: '',
+  documentModel: '',
 })
+const sceneItems = ref<SceneItem[]>([])
+const sceneDefinitions = ref<SceneDefinition[]>([])
 
 const adminAiForm = reactive({
   enabled: false,
@@ -248,23 +279,37 @@ const adminAiForm = reactive({
   tavilyApiKey: '',
 })
 
-const configMasterKeyReady = ref(true)
-const upstreamApiKeyConfigured = ref(false)
-
-const modelPoolItems = ref<ModelPoolItem[]>([])
-const modelPoolFetchedAt = ref('')
-const modelPullSelectorVisible = ref(false)
-const pulledProviderModels = ref<ProviderPullItem[]>([])
-const pulledProviderFetchedAt = ref('')
-const modelPullFilterKeyword = ref('')
-const selectedPulledModels = ref<string[]>([])
-const expandedModelPullSeriesKeys = ref<string[]>([])
-const sceneItems = ref<SceneItem[]>([])
-const sceneDefinitions = ref<SceneDefinition[]>([])
+const providerEditorVisible = ref(false)
+const providerEditorIsCreate = ref(false)
+const providerEditorTestLoading = ref(false)
+const providerEditorTestMessage = ref('')
+const providerPullLoading = ref(false)
+const providerPullMessage = ref('')
+const providerEditorForm = reactive<ProviderDraftItem>({
+  id: '',
+  name: '',
+  type: 'newapi',
+  capability: 'llm',
+  adapter: 'openai-compatible',
+  provider: 'newapi',
+  clientType: 'langchain',
+  baseURL: '',
+  enabled: true,
+  timeoutMs: 15000,
+  maxRetries: 2,
+  fetchedAt: '',
+  apiKeyConfigured: false,
+  embeddingApiStyle: 'openai-compatible-text',
+  embeddingDimensions: 1024,
+  visionModel: '',
+  models: [],
+  apiKeyMode: 'keep',
+  apiKey: '',
+})
 
 const modelEditorVisible = ref(false)
 const modelEditorIsCreate = ref(false)
-const modelEditorForm = reactive<ModelPoolItem>({
+const modelEditorForm = reactive<ProviderModelItem>({
   model: '',
   label: '',
   format: 'openai-compatible',
@@ -280,18 +325,31 @@ const modelEditorForm = reactive<ModelPoolItem>({
   manualPriceOverride: false,
 })
 
+const modelPullSelectorVisible = ref(false)
+const pulledProviderModels = ref<ProviderPullItem[]>([])
+const pulledProviderFetchedAt = ref('')
+const modelPullFilterKeyword = ref('')
+const selectedPulledModels = ref<string[]>([])
+const expandedModelPullSeriesKeys = ref<string[]>([])
+
+const sceneTesting = reactive<Record<string, boolean>>({})
+const sceneTestMessage = reactive<Record<string, string>>({})
 const sceneEditorVisible = ref(false)
 const sceneEditorForm = reactive({
   key: 'project_chat' as PlatformAiChannelKey,
   label: '',
   description: '',
   enabled: true,
-  models: [] as string[],
+  providerIds: [] as string[],
+  loadBalanceStrategy: 'round_robin' as LoadBalanceStrategy,
+  modelFallback: [] as string[],
   prompt: '',
 })
 const sceneBatchEditorVisible = ref(false)
 const sceneBatchForm = reactive({
-  models: [] as string[],
+  providerIds: [] as string[],
+  loadBalanceStrategy: 'round_robin' as LoadBalanceStrategy,
+  modelFallback: [] as string[],
 })
 
 function formatTime(value?: string | null): string {
@@ -325,23 +383,6 @@ function toPrettyJson(value: unknown): string {
 
 function normalizeError(error: any, fallback: string): string {
   return String(error?.data?.message || error?.message || fallback)
-}
-
-function normalizeUpstreamBaseURL(raw: string): string {
-  return String(raw || '')
-    .trim()
-    .replace(/\/+$/g, '')
-    .replace(/\/v1\/chat\/completions$/i, '')
-    .replace(/\/v1\/responses$/i, '')
-    .replace(/\/v1\/embeddings$/i, '')
-    .replace(/\/v1\/audio\/transcriptions$/i, '')
-    .replace(/\/v1\/models$/i, '')
-    .replace(/\/chat\/completions$/i, '')
-    .replace(/\/responses$/i, '')
-    .replace(/\/embeddings$/i, '')
-    .replace(/\/audio\/transcriptions$/i, '')
-    .replace(/\/models$/i, '')
-    .replace(/\/v1$/i, '')
 }
 
 type ApiRequestError = Error & {
@@ -391,10 +432,10 @@ async function requestApi<T>(
   return payload.data
 }
 
-function dedupeModels(models: string[]): string[] {
+function dedupeStrings(items: string[]): string[] {
   const seen = new Set<string>()
   const result: string[] = []
-  for (const item of models) {
+  for (const item of items) {
     const value = String(item || '').trim()
     if (!value || seen.has(value))
       continue
@@ -404,10 +445,130 @@ function dedupeModels(models: string[]): string[] {
   return result
 }
 
-function normalizeSceneModels(raw: unknown): string[] {
-  if (!Array.isArray(raw))
-    return []
-  return dedupeModels(raw.map(item => String(item || '').trim()))
+function resolveProviderCapability(type: ProviderType): ProviderCapability {
+  return type === 'searchxng' || type === 'tavily' ? 'search' : 'llm'
+}
+
+function isProviderLlm(provider: Pick<ProviderDraftItem, 'capability'> | null | undefined): boolean {
+  return provider?.capability === 'llm'
+}
+
+function cloneModelItem(item: ProviderModelItem): ProviderModelItem {
+  return {
+    ...item,
+  }
+}
+
+function cloneProviderItem(item: ProviderDraftItem): ProviderDraftItem {
+  return {
+    ...item,
+    models: item.models.map(model => cloneModelItem(model)),
+  }
+}
+
+function createEmptyProviderDraft(): ProviderDraftItem {
+  return {
+    id: '',
+    name: '',
+    type: 'newapi',
+    capability: 'llm',
+    adapter: 'openai-compatible',
+    provider: 'newapi',
+    clientType: 'langchain',
+    baseURL: '',
+    enabled: true,
+    timeoutMs: 15000,
+    maxRetries: 2,
+    fetchedAt: '',
+    apiKeyConfigured: false,
+    embeddingApiStyle: 'openai-compatible-text',
+    embeddingDimensions: 1024,
+    visionModel: '',
+    models: [],
+    apiKeyMode: 'keep',
+    apiKey: '',
+  }
+}
+
+function normalizeProviderTypeLabel(type: ProviderType): string {
+  return providerTypeOptions.find(item => item.value === type)?.label || type
+}
+
+function normalizePricing(item: Pick<ProviderModelItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'manualInputPricePer1M' | 'manualOutputPricePer1M' | 'manualPriceOverride'>): {
+  inputPricePer1M: number | null
+  outputPricePer1M: number | null
+  pricingSource: PricingSource
+} {
+  const inputPricePer1M = item.manualPriceOverride
+    ? (item.manualInputPricePer1M ?? item.providerInputPricePer1M)
+    : (item.providerInputPricePer1M ?? item.manualInputPricePer1M)
+  const outputPricePer1M = item.manualPriceOverride
+    ? (item.manualOutputPricePer1M ?? item.providerOutputPricePer1M)
+    : (item.providerOutputPricePer1M ?? item.manualOutputPricePer1M)
+  const hasManual = item.manualInputPricePer1M !== null || item.manualOutputPricePer1M !== null
+  const hasProvider = item.providerInputPricePer1M !== null || item.providerOutputPricePer1M !== null
+  const pricingSource: PricingSource = inputPricePer1M === null && outputPricePer1M === null
+    ? 'none'
+    : (item.manualPriceOverride && hasManual)
+        ? 'manual'
+        : hasProvider
+          ? 'provider'
+          : hasManual
+            ? 'manual'
+            : 'none'
+  return {
+    inputPricePer1M,
+    outputPricePer1M,
+    pricingSource,
+  }
+}
+
+function normalizeModelItem(item: ProviderModelItem): ProviderModelItem {
+  const pricing = normalizePricing(item)
+  return {
+    ...item,
+    model: String(item.model || '').trim(),
+    label: String(item.label || item.model || '').trim() || String(item.model || '').trim(),
+    currency: String(item.currency || 'USD').trim().toUpperCase() || 'USD',
+    inputPricePer1M: pricing.inputPricePer1M,
+    outputPricePer1M: pricing.outputPricePer1M,
+    pricingSource: pricing.pricingSource,
+  }
+}
+
+function buildPriceText(item: Pick<ProviderModelItem, 'inputPricePer1M' | 'outputPricePer1M' | 'currency'>): string {
+  if (item.inputPricePer1M === null && item.outputPricePer1M === null)
+    return 'none'
+  const input = item.inputPricePer1M === null ? '-' : `${item.currency} ${Number(item.inputPricePer1M).toFixed(4)}/1M`
+  const output = item.outputPricePer1M === null ? '-' : `${item.currency} ${Number(item.outputPricePer1M).toFixed(4)}/1M`
+  return `输入 ${input} · 输出 ${output}`
+}
+
+function buildImportedPriceText(item: Pick<ProviderModelItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'currency'>): string {
+  if (item.providerInputPricePer1M === null && item.providerOutputPricePer1M === null)
+    return '未导入'
+  const input = item.providerInputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerInputPricePer1M).toFixed(4)}/1M`
+  const output = item.providerOutputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerOutputPricePer1M).toFixed(4)}/1M`
+  return `输入 ${input} · 输出 ${output}`
+}
+
+function normalizeProviderDraft(provider: ProviderDraftItem): ProviderDraftItem {
+  const capability = resolveProviderCapability(provider.type)
+  const models = capability === 'llm'
+    ? provider.models.map(item => normalizeModelItem(item)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+    : []
+  const hasApiKey = provider.apiKeyMode === 'clear'
+    ? false
+    : (provider.apiKeyConfigured || Boolean(String(provider.apiKey || '').trim()))
+  return {
+    ...provider,
+    capability,
+    provider: String(provider.provider || provider.type).trim() || provider.type,
+    name: String(provider.name || normalizeProviderTypeLabel(provider.type)).trim() || normalizeProviderTypeLabel(provider.type),
+    baseURL: String(provider.baseURL || '').trim(),
+    apiKeyConfigured: hasApiKey,
+    models,
+  }
 }
 
 const modelSeriesRules = [
@@ -421,7 +582,6 @@ const modelSeriesRules = [
   { key: 'glm', label: 'GLM 系列', patterns: [/glm/i, /chatglm/i, /cogview/i, /cogvideox/i, /cogito/i] },
   { key: 'doubao', label: 'Doubao 系列', patterns: [/doubao/i] },
   { key: 'moonshot', label: 'Moonshot 系列', patterns: [/moonshot/i, /kimi/i] },
-  { key: 'baichuan', label: '百川系列', patterns: [/baichuan/i] },
 ] as const
 
 function formatSeriesLabel(token: string): string {
@@ -445,7 +605,6 @@ function resolveModelSeries(item: Pick<ProviderPullItem, 'model' | 'label'>): { 
     .find(Boolean)
   if (!firstToken)
     return { key: 'other', label: '其他模型' }
-
   return {
     key: `series:${firstToken.toLowerCase()}`,
     label: formatSeriesLabel(firstToken),
@@ -460,311 +619,16 @@ function formatPullPricingSource(source: ProviderPullItem['pricingSource']): str
   return '未返回'
 }
 
-function resolveEffectivePricing(item: Pick<ModelPoolItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'manualInputPricePer1M' | 'manualOutputPricePer1M' | 'manualPriceOverride'>): {
-  inputPricePer1M: number | null
-  outputPricePer1M: number | null
-  pricingSource: PricingSource
-} {
-  const inputPricePer1M = item.manualPriceOverride
-    ? (item.manualInputPricePer1M ?? item.providerInputPricePer1M)
-    : (item.providerInputPricePer1M ?? item.manualInputPricePer1M)
-  const outputPricePer1M = item.manualPriceOverride
-    ? (item.manualOutputPricePer1M ?? item.providerOutputPricePer1M)
-    : (item.providerOutputPricePer1M ?? item.manualOutputPricePer1M)
-  const hasManual = item.manualInputPricePer1M !== null || item.manualOutputPricePer1M !== null
-  const hasProvider = item.providerInputPricePer1M !== null || item.providerOutputPricePer1M !== null
-  const pricingSource: PricingSource = inputPricePer1M === null && outputPricePer1M === null
-    ? 'none'
-    : (item.manualPriceOverride && hasManual)
-        ? 'manual'
-        : hasProvider
-          ? 'provider'
-          : hasManual
-            ? 'manual'
-            : 'none'
-
-  return {
-    inputPricePer1M,
-    outputPricePer1M,
-    pricingSource,
-  }
-}
-
-function normalizeModelItem(item: ModelPoolItem): ModelPoolItem {
-  const pricing = resolveEffectivePricing(item)
-  return {
-    ...item,
-    model: String(item.model || '').trim(),
-    label: String(item.label || item.model || '').trim() || String(item.model || '').trim(),
-    currency: String(item.currency || 'USD').trim().toUpperCase() || 'USD',
-    inputPricePer1M: pricing.inputPricePer1M,
-    outputPricePer1M: pricing.outputPricePer1M,
-    pricingSource: pricing.pricingSource,
-  }
-}
-
-function cloneModelItem(item: ModelPoolItem): ModelPoolItem {
-  return normalizeModelItem({
-    ...item,
-  })
-}
-
-function buildPriceText(item: Pick<ModelPoolItem, 'inputPricePer1M' | 'outputPricePer1M' | 'currency'>): string {
-  if (item.inputPricePer1M === null && item.outputPricePer1M === null)
-    return 'none'
-  const input = item.inputPricePer1M === null ? '-' : `${item.currency} ${Number(item.inputPricePer1M).toFixed(4)}/1M`
-  const output = item.outputPricePer1M === null ? '-' : `${item.currency} ${Number(item.outputPricePer1M).toFixed(4)}/1M`
-  return `输入 ${input} · 输出 ${output}`
-}
-
-function buildImportedPriceText(item: Pick<ModelPoolItem, 'providerInputPricePer1M' | 'providerOutputPricePer1M' | 'currency'>): string {
-  if (item.providerInputPricePer1M === null && item.providerOutputPricePer1M === null)
-    return '未导入'
-  const input = item.providerInputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerInputPricePer1M).toFixed(4)}/1M`
-  const output = item.providerOutputPricePer1M === null ? '-' : `${item.currency} ${Number(item.providerOutputPricePer1M).toFixed(4)}/1M`
-  return `输入 ${input} · 输出 ${output}`
-}
-
-function sceneModelsPreview(scene: SceneItem): string {
-  const models = dedupeModels(scene.models || [])
-  if (models.length === 0)
-    return '未配置，运行时将忽略并回退默认模型'
-  return models.join(' -> ')
-}
-
-function promptPreview(prompt: string): string {
-  const text = String(prompt || '').replace(/\s+/g, ' ').trim()
-  if (!text)
-    return '-'
-  return text.length > 90 ? `${text.slice(0, 90)}...` : text
-}
-
-const enabledModelSelectItems = computed(() => {
-  return modelPoolItems.value
-    .filter(item => item.enabled)
-    .sort((a, b) => a.model.localeCompare(b.model, 'en'))
-    .map(item => ({
-      model: item.model,
-      label: item.label,
-      priceText: buildPriceText(item),
-    }))
-})
-
-const modelPoolRows = computed(() => {
-  return modelPoolItems.value
-    .map(item => cloneModelItem(item))
-    .sort((a, b) => a.model.localeCompare(b.model, 'en'))
-})
-
-const currentModelPoolNameSet = computed(() => new Set(modelPoolItems.value.map(item => item.model)))
-
-const modelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
-  const orderMap = new Map<string, number>(modelSeriesRules.map((rule, index) => [rule.key, index]))
-  const groups = new Map<string, ModelPullSeriesGroup>()
-
-  for (const item of pulledProviderModels.value) {
-    const series = resolveModelSeries(item)
-    const currentGroup = groups.get(series.key) || {
-      key: series.key,
-      label: series.label,
-      items: [],
-    }
-    currentGroup.items.push(item)
-    groups.set(series.key, currentGroup)
-  }
-
-  return Array.from(groups.values())
-    .map(group => ({
-      ...group,
-      items: [...group.items].sort((a, b) => a.model.localeCompare(b.model, 'en')),
-    }))
-    .sort((a, b) => {
-      const orderDiff = Number(orderMap.get(a.key) ?? 999) - Number(orderMap.get(b.key) ?? 999)
-      if (orderDiff !== 0)
-        return orderDiff
-      if (a.key === 'other')
-        return 1
-      if (b.key === 'other')
-        return -1
-      return a.label.localeCompare(b.label, 'zh-CN')
-    })
-})
-
-const normalizedModelPullFilterKeyword = computed(() => String(modelPullFilterKeyword.value || '').trim().toLowerCase())
-
-function matchesModelPullFilter(item: Pick<ProviderPullItem, 'model' | 'label'>, keyword: string): boolean {
-  if (!keyword)
-    return true
-  const searchText = `${item.model} ${item.label}`.toLowerCase()
-  return searchText.includes(keyword)
-}
-
-const filteredModelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
-  const keyword = normalizedModelPullFilterKeyword.value
-  if (!keyword)
-    return modelPullSeriesGroups.value
-
-  return modelPullSeriesGroups.value
-    .map(group => ({
-      ...group,
-      items: group.items.filter(item => matchesModelPullFilter(item, keyword)),
-    }))
-    .filter(group => group.items.length > 0)
-})
-
-const filteredPulledModelCount = computed(() => filteredModelPullSeriesGroups.value.reduce((count, group) => count + group.items.length, 0))
-
-const selectedPulledModelSet = computed(() => new Set(selectedPulledModels.value))
-
-const selectedPulledModelCount = computed(() => selectedPulledModels.value.length)
-
-const selectedPulledNewModelCount = computed(() => {
-  const existingModels = currentModelPoolNameSet.value
-  return pulledProviderModels.value.filter(item => selectedPulledModelSet.value.has(item.model) && !existingModels.has(item.model)).length
-})
-
-const selectedPulledExistingModelCount = computed(() => {
-  return Math.max(0, selectedPulledModelCount.value - selectedPulledNewModelCount.value)
-})
-
-const allPulledModelsChecked = computed(() => {
-  return pulledProviderModels.value.length > 0 && selectedPulledModelCount.value === pulledProviderModels.value.length
-})
-
-const allPulledModelsIndeterminate = computed(() => {
-  return selectedPulledModelCount.value > 0 && selectedPulledModelCount.value < pulledProviderModels.value.length
-})
-
-const sceneRows = computed(() => {
-  const definitionIndex = new Map(sceneDefinitions.value.map((item, index) => [item.key, index]))
-  return [...sceneItems.value].sort((a, b) => {
-    return Number(definitionIndex.get(a.key) ?? 999) - Number(definitionIndex.get(b.key) ?? 999)
-  })
-})
-
-function resetSecretModes() {
-  upstreamForm.apiKeyMode = 'keep'
-  upstreamForm.apiKey = ''
-  adminAiForm.tavilyApiKeyMode = 'keep'
-  adminAiForm.tavilyApiKey = ''
-}
-
-function applyConsolePayload(payload: ProvidersPayload) {
-  upstreamForm.provider = payload.upstream.provider || ''
-  upstreamForm.baseURL = normalizeUpstreamBaseURL(payload.upstream.baseURL || '')
-  upstreamForm.timeoutMs = Number(payload.upstream.timeoutMs || 15000)
-  upstreamForm.maxRetries = Number(payload.upstream.maxRetries || 2)
-  upstreamForm.visionModel = String(payload.upstream.visionModel || '').trim()
-  configMasterKeyReady.value = payload.config?.masterKeyReady !== false
-  upstreamApiKeyConfigured.value = Boolean(payload.upstream.apiKeyConfigured)
-
-  adminAiForm.enabled = Boolean(payload.adminAi.enabled)
-  adminAiForm.webTimeoutMs = Number(payload.adminAi.webTimeoutMs || 12000)
-  adminAiForm.maxWebResults = Number(payload.adminAi.maxWebResults || 5)
-  adminAiForm.maxPageChars = Number(payload.adminAi.maxPageChars || 10000)
-
-  modelPoolFetchedAt.value = payload.modelPool.fetchedAt || ''
-  modelPoolItems.value = (payload.modelPool.items || []).map(item => cloneModelItem(item))
-  sceneDefinitions.value = payload.scenes.definitions || []
-  sceneItems.value = (payload.scenes.items || []).map(item => ({
-    ...item,
-    models: dedupeModels(item.models || []),
-    prompt: String(item.prompt || ''),
-  }))
-  resetSecretModes()
-}
-
-async function loadConsole() {
-  consoleLoading.value = true
-  consoleError.value = ''
-  try {
-    const data = await requestApi<ProvidersPayload>(endpoint('/admin/ai/providers'), {}, 'AI 配置加载失败。')
-    applyConsolePayload(data)
-    consoleLoaded.value = true
-  }
-  catch (error: any) {
-    consoleError.value = normalizeError(error, 'AI 配置加载失败。')
-  }
-  finally {
-    consoleLoading.value = false
-  }
-}
-
-async function saveConsole() {
-  saving.value = true
-  consoleError.value = ''
-  try {
-    const normalizedBaseURL = normalizeUpstreamBaseURL(upstreamForm.baseURL)
-    const payload = await requestApi<ProvidersPayload>(endpoint('/admin/ai/providers'), {
-      method: 'PATCH',
-      body: {
-        upstream: {
-          provider: upstreamForm.provider,
-          baseURL: normalizedBaseURL,
-          timeoutMs: Number(upstreamForm.timeoutMs || 15000),
-          maxRetries: Number(upstreamForm.maxRetries || 2),
-          visionModel: upstreamForm.visionModel,
-          apiKeyMode: upstreamForm.apiKeyMode,
-          apiKey: upstreamForm.apiKey,
-        },
-        modelPool: {
-          fetchedAt: modelPoolFetchedAt.value,
-          pullTriggered: modelPullTriggered.value,
-          items: modelPoolItems.value.map(item => normalizeModelItem(item)),
-        },
-        scenes: {
-          items: sceneItems.value.map(item => ({
-            key: item.key,
-            label: item.label,
-            description: item.description,
-            enabled: item.enabled,
-            models: dedupeModels(item.models || []),
-            prompt: item.prompt,
-          })),
-        },
-        adminAi: {
-          enabled: adminAiForm.enabled,
-          webTimeoutMs: Number(adminAiForm.webTimeoutMs || 12000),
-          maxWebResults: Number(adminAiForm.maxWebResults || 5),
-          maxPageChars: Number(adminAiForm.maxPageChars || 10000),
-          tavilyApiKeyMode: adminAiForm.tavilyApiKeyMode,
-          tavilyApiKey: adminAiForm.tavilyApiKey,
-        },
-      },
-    }, 'AI 配置保存失败。')
-    applyConsolePayload(payload)
-    modelPullTriggered.value = false
-    modelPullMessage.value = ''
-    const ignoredKeys = payload.warnings?.ignoredSecretReplaceKeys || []
-    if (ignoredKeys.includes('upstream')) {
-      const warning = '当前未配置 master key，本次上游 API Key 替换未持久化，服务端仍会继续使用旧密钥。'
-      consoleError.value = warning
-      Message.warning(warning)
-      return
-    }
-    Message.success('AI 配置已保存。')
-  }
-  catch (error: any) {
-    const message = normalizeError(error, 'AI 配置保存失败。')
-    consoleError.value = message
-    Message.error(message)
-  }
-  finally {
-    saving.value = false
-  }
-}
-
-function mergePulledModels(pulled: ProviderPullItem[]): ModelPoolItem[] {
-  const currentMap = new Map(modelPoolItems.value.map(item => [item.model, cloneModelItem(item)]))
-  const result: ModelPoolItem[] = []
-  const defaultFormat: ModelFormat = upstreamForm.provider.toLowerCase().includes('response') ? 'response' : 'openai-compatible'
+function mergePulledModels(currentItems: ProviderModelItem[], pulled: ProviderPullItem[]): ProviderModelItem[] {
+  const currentMap = new Map(currentItems.map(item => [item.model, normalizeModelItem(item)]))
+  const result: ProviderModelItem[] = []
 
   for (const item of pulled) {
     const current = currentMap.get(item.model)
     const next = normalizeModelItem({
       model: item.model,
       label: current?.label || item.label || item.model,
-      format: current?.format || defaultFormat,
+      format: current?.format || 'openai-compatible',
       enabled: current?.enabled ?? true,
       providerInputPricePer1M: item.inputPricePer1M,
       providerOutputPricePer1M: item.outputPricePer1M,
@@ -786,8 +650,453 @@ function mergePulledModels(pulled: ProviderPullItem[]): ModelPoolItem[] {
   return result.sort((a, b) => a.model.localeCompare(b.model, 'en'))
 }
 
+const providerIdMap = computed(() => new Map(providers.value.map(item => [item.id, item])))
+
+const providerRows = computed(() => {
+  return [...providers.value].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+})
+
+const llmProviderOptions = computed(() => {
+  return providers.value
+    .filter(item => item.capability === 'llm')
+    .map(item => ({
+      id: item.id,
+      name: item.name,
+      provider: item.provider,
+      enabled: item.enabled,
+    }))
+})
+
+const enabledGlobalModelOptions = computed(() => {
+  const map = new Map<string, { model: string, label: string, priceText: string }>()
+  for (const provider of providers.value.filter(item => item.capability === 'llm')) {
+    for (const model of provider.models.filter(item => item.enabled)) {
+      if (!map.has(model.model)) {
+        map.set(model.model, {
+          model: model.model,
+          label: model.label,
+          priceText: buildPriceText(model),
+        })
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+})
+
+const providerEditorSupportsModels = computed(() => providerEditorForm.capability === 'llm')
+
+const providerEditorModelRows = computed(() => {
+  return [...providerEditorForm.models].map(item => normalizeModelItem(item)).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+})
+
+const currentModelPoolNameSet = computed(() => new Set(providerEditorForm.models.map(item => item.model)))
+
+const modelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
+  const groups = new Map<string, ModelPullSeriesGroup>()
+  for (const item of pulledProviderModels.value) {
+    const series = resolveModelSeries(item)
+    const currentGroup = groups.get(series.key) || { key: series.key, label: series.label, items: [] }
+    currentGroup.items.push(item)
+    groups.set(series.key, currentGroup)
+  }
+  return Array.from(groups.values()).map(group => ({
+    ...group,
+    items: [...group.items].sort((a, b) => a.model.localeCompare(b.model, 'en')),
+  }))
+})
+
+const normalizedModelPullFilterKeyword = computed(() => String(modelPullFilterKeyword.value || '').trim().toLowerCase())
+
+function matchesModelPullFilter(item: Pick<ProviderPullItem, 'model' | 'label'>, keyword: string): boolean {
+  if (!keyword)
+    return true
+  return `${item.model} ${item.label}`.toLowerCase().includes(keyword)
+}
+
+const filteredModelPullSeriesGroups = computed<ModelPullSeriesGroup[]>(() => {
+  const keyword = normalizedModelPullFilterKeyword.value
+  if (!keyword)
+    return modelPullSeriesGroups.value
+  return modelPullSeriesGroups.value
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => matchesModelPullFilter(item, keyword)),
+    }))
+    .filter(group => group.items.length > 0)
+})
+
+const filteredPulledModelCount = computed(() => filteredModelPullSeriesGroups.value.reduce((count, group) => count + group.items.length, 0))
+const selectedPulledModelSet = computed(() => new Set(selectedPulledModels.value))
+const selectedPulledModelCount = computed(() => selectedPulledModels.value.length)
+const allPulledModelsChecked = computed(() => pulledProviderModels.value.length > 0 && selectedPulledModelCount.value === pulledProviderModels.value.length)
+const allPulledModelsIndeterminate = computed(() => selectedPulledModelCount.value > 0 && selectedPulledModelCount.value < pulledProviderModels.value.length)
+
+function resolveSceneModelCatalog(providerIds: string[], currentModels: string[] = []): Array<{ model: string, label: string, priceText: string }> {
+  const providerSet = new Set(providerIds)
+  const map = new Map<string, { model: string, label: string, priceText: string }>()
+  for (const provider of providers.value.filter(item => item.capability === 'llm' && providerSet.has(item.id))) {
+    for (const model of provider.models.filter(item => item.enabled)) {
+      if (!map.has(model.model)) {
+        map.set(model.model, {
+          model: model.model,
+          label: model.label,
+          priceText: buildPriceText(model),
+        })
+      }
+    }
+  }
+  for (const model of currentModels) {
+    const normalized = String(model || '').trim()
+    if (normalized && !map.has(normalized)) {
+      map.set(normalized, {
+        model: normalized,
+        label: normalized,
+        priceText: '未在当前 Provider 模型池中',
+      })
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.model.localeCompare(b.model, 'en'))
+}
+
+const sceneEditorModelOptions = computed(() => resolveSceneModelCatalog(sceneEditorForm.providerIds, sceneEditorForm.modelFallback))
+const sceneBatchModelOptions = computed(() => resolveSceneModelCatalog(sceneBatchForm.providerIds, sceneBatchForm.modelFallback))
+
+function normalizeSceneProviderIds(providerIds: string[]): string[] {
+  const llmProviderIdSet = new Set(providers.value.filter(item => item.capability === 'llm').map(item => item.id))
+  return dedupeStrings(providerIds).filter(item => llmProviderIdSet.has(item))
+}
+
+function normalizeSceneModelFallback(modelFallback: string[], providerIds: string[]): string[] {
+  const catalog = new Set(resolveSceneModelCatalog(providerIds).map(item => item.model))
+  const normalized = dedupeStrings(modelFallback)
+  if (catalog.size === 0)
+    return normalized
+  return normalized.filter(item => catalog.has(item))
+}
+
+const sceneRows = computed(() => {
+  const definitionIndex = new Map(sceneDefinitions.value.map((item, index) => [item.key, index]))
+  return [...sceneItems.value].sort((a, b) => Number(definitionIndex.get(a.key) ?? 999) - Number(definitionIndex.get(b.key) ?? 999))
+})
+
+function providerSummary(provider: ProviderDraftItem): string {
+  if (provider.capability === 'search')
+    return '仅搜索能力，不参与当前 LLM 场景模型路由'
+  const enabledCount = provider.models.filter(item => item.enabled).length
+  return `模型 ${enabledCount}/${provider.models.length} · ${provider.clientType === 'langchain' ? 'LangChain' : provider.clientType}`
+}
+
+function sceneProvidersPreview(scene: SceneItem): string {
+  if (scene.providerIds.length === 0)
+    return '未绑定 Provider'
+  return scene.providerIds
+    .map(id => providerIdMap.value.get(id)?.name || id)
+    .join(' / ')
+}
+
+function sceneModelsPreview(scene: SceneItem): string {
+  if (scene.modelFallback.length === 0)
+    return '未配置，运行时将回退默认模型'
+  return scene.modelFallback.join(' -> ')
+}
+
+function sceneUsageHint(scene: SceneItem): string {
+  if (scene.key === 'project_chat')
+    return '默认对话入口'
+  if (scene.key === 'document_analysis')
+    return '默认文档分析入口'
+  return ''
+}
+
+function sceneUsageHintColor(scene: SceneItem): 'arcoblue' | 'green' | 'gray' {
+  if (scene.key === 'project_chat')
+    return 'arcoblue'
+  if (scene.key === 'document_analysis')
+    return 'green'
+  return 'gray'
+}
+
+function promptPreview(prompt: string): string {
+  const text = String(prompt || '').replace(/\s+/g, ' ').trim()
+  if (!text)
+    return '-'
+  return text.length > 90 ? `${text.slice(0, 90)}...` : text
+}
+
+function applyConsolePayload(payload: ProvidersPayload): void {
+  configMasterKeyReady.value = payload.config?.masterKeyReady !== false
+  providers.value = (payload.providers || []).map((item) => {
+    const draft = normalizeProviderDraft({
+      ...item,
+      models: (item.models || []).map(model => normalizeModelItem(model)),
+      apiKeyMode: 'keep',
+      apiKey: '',
+    })
+    return draft
+  })
+  defaultsForm.defaultModel = payload.defaults?.defaultModel || ''
+  defaultsForm.embeddingModel = payload.defaults?.embeddingModel || ''
+  defaultsForm.documentModel = payload.defaults?.documentModel || ''
+  sceneDefinitions.value = payload.scenes?.definitions || []
+  sceneItems.value = (payload.scenes?.items || []).map(item => ({
+    ...item,
+    providerIds: dedupeStrings(item.providerIds || []),
+    loadBalanceStrategy: item.loadBalanceStrategy || 'round_robin',
+    modelFallback: dedupeStrings(item.modelFallback || item.models || []),
+    prompt: String(item.prompt || ''),
+  }))
+
+  adminAiForm.enabled = Boolean(payload.adminAi.enabled)
+  adminAiForm.webTimeoutMs = Number(payload.adminAi.webTimeoutMs || 12000)
+  adminAiForm.maxWebResults = Number(payload.adminAi.maxWebResults || 5)
+  adminAiForm.maxPageChars = Number(payload.adminAi.maxPageChars || 10000)
+  adminAiForm.tavilyApiKeyMode = 'keep'
+  adminAiForm.tavilyApiKey = ''
+}
+
+async function loadConsole() {
+  consoleLoading.value = true
+  consoleError.value = ''
+  try {
+    const data = await requestApi<ProvidersPayload>(endpoint('/admin/ai/providers'), {}, 'AI 配置加载失败。')
+    applyConsolePayload(data)
+    consoleLoaded.value = true
+  }
+  catch (error: any) {
+    consoleError.value = normalizeError(error, 'AI 配置加载失败。')
+  }
+  finally {
+    consoleLoading.value = false
+  }
+}
+
+function buildProviderPayload(provider: ProviderDraftItem) {
+  const normalized = normalizeProviderDraft(provider)
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    type: normalized.type,
+    provider: normalized.provider,
+    clientType: normalized.clientType,
+    baseURL: normalized.baseURL,
+    enabled: normalized.enabled,
+    timeoutMs: Number(normalized.timeoutMs || 15000),
+    maxRetries: Number(normalized.maxRetries || 2),
+    apiKeyMode: normalized.apiKeyMode,
+    apiKey: normalized.apiKey,
+    embeddingApiStyle: normalized.embeddingApiStyle,
+    embeddingDimensions: Number(normalized.embeddingDimensions || 1024),
+    visionModel: normalized.visionModel,
+    models: normalized.models.map(item => normalizeModelItem(item)),
+  }
+}
+
+async function saveConsole() {
+  saving.value = true
+  consoleError.value = ''
+  try {
+    const payload = await requestApi<ProvidersPayload>(endpoint('/admin/ai/providers'), {
+      method: 'PATCH',
+      body: {
+        providers: providers.value.map(item => buildProviderPayload(item)),
+        defaults: {
+          defaultModel: defaultsForm.defaultModel,
+          embeddingModel: defaultsForm.embeddingModel,
+          documentModel: defaultsForm.documentModel,
+        },
+        scenes: {
+          items: sceneItems.value.map(item => ({
+            key: item.key,
+            label: item.label,
+            description: item.description,
+            enabled: item.enabled,
+            providerIds: normalizeSceneProviderIds(item.providerIds),
+            loadBalanceStrategy: item.loadBalanceStrategy,
+            modelFallback: normalizeSceneModelFallback(item.modelFallback, item.providerIds),
+            prompt: item.prompt,
+          })),
+        },
+        adminAi: {
+          enabled: adminAiForm.enabled,
+          webTimeoutMs: Number(adminAiForm.webTimeoutMs || 12000),
+          maxWebResults: Number(adminAiForm.maxWebResults || 5),
+          maxPageChars: Number(adminAiForm.maxPageChars || 10000),
+          tavilyApiKeyMode: adminAiForm.tavilyApiKeyMode,
+          tavilyApiKey: adminAiForm.tavilyApiKey,
+        },
+      },
+    }, 'AI 配置保存失败。')
+    applyConsolePayload(payload)
+    const ignoredIds = payload.warnings?.ignoredProviderApiKeyIds || []
+    if (ignoredIds.length > 0) {
+      const warning = `当前未配置 master key，这些 Provider 的 API Key 替换未持久化：${ignoredIds.join(', ')}`
+      consoleError.value = warning
+      Message.warning(warning)
+      return
+    }
+    Message.success('AI 配置已保存。')
+  }
+  catch (error: any) {
+    const message = normalizeError(error, 'AI 配置保存失败。')
+    consoleError.value = message
+    Message.error(message)
+  }
+  finally {
+    saving.value = false
+  }
+}
+
+function nextProviderId(): string {
+  let index = providers.value.length + 1
+  while (providers.value.some(item => item.id === `provider_${index}`))
+    index += 1
+  return `provider_${index}`
+}
+
+function openCreateProviderDrawer() {
+  providerEditorIsCreate.value = true
+  Object.assign(providerEditorForm, createEmptyProviderDraft(), {
+    id: nextProviderId(),
+  })
+  providerEditorTestMessage.value = ''
+  providerPullMessage.value = ''
+  providerEditorVisible.value = true
+}
+
+function openEditProviderDrawer(record: ProviderDraftItem) {
+  providerEditorIsCreate.value = false
+  Object.assign(providerEditorForm, cloneProviderItem(record))
+  providerEditorTestMessage.value = ''
+  providerPullMessage.value = ''
+  providerEditorVisible.value = true
+}
+
+function closeProviderDrawer() {
+  providerEditorVisible.value = false
+}
+
+function syncProviderType(type: ProviderType) {
+  providerEditorForm.type = type
+  providerEditorForm.capability = resolveProviderCapability(type)
+  if (!providerEditorForm.provider || providerEditorForm.provider === providerEditorForm.type)
+    providerEditorForm.provider = type
+  if (providerEditorForm.capability === 'search') {
+    providerEditorForm.models = []
+    providerEditorForm.visionModel = ''
+  }
+}
+
+function handleProviderTypeChange(value: string | number | boolean | Record<string, unknown> | undefined) {
+  syncProviderType(String(value || '').trim() as ProviderType)
+}
+
+function handleSceneProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  sceneEditorForm.providerIds = normalizeSceneProviderIds(values)
+}
+
+function handleSceneModelFallbackChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  sceneEditorForm.modelFallback = dedupeStrings(values)
+}
+
+function handleSceneBatchProviderIdsChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  sceneBatchForm.providerIds = normalizeSceneProviderIds(values)
+}
+
+function handleSceneBatchModelFallbackChange(value: string | number | boolean | Array<string | number> | undefined) {
+  const values = Array.isArray(value) ? value.map(item => String(item || '').trim()) : []
+  sceneBatchForm.modelFallback = dedupeStrings(values)
+}
+
+function saveProviderDrawer() {
+  const normalized = normalizeProviderDraft(providerEditorForm)
+  const next = [...providers.value]
+  const index = next.findIndex(item => item.id === normalized.id)
+  if (index >= 0)
+    next.splice(index, 1, normalized)
+  else
+    next.push(normalized)
+  providers.value = next.map(item => normalizeProviderDraft(item))
+  providerEditorVisible.value = false
+}
+
+function removeProvider(providerId: string) {
+  providers.value = providers.value.filter(item => item.id !== providerId)
+  sceneItems.value = sceneItems.value.map((scene) => {
+    const providerIds = scene.providerIds.filter(id => id !== providerId)
+    return {
+      ...scene,
+      providerIds,
+      modelFallback: normalizeSceneModelFallback(scene.modelFallback, providerIds),
+    }
+  })
+}
+
+function openCreateModelDrawer() {
+  modelEditorIsCreate.value = true
+  Object.assign(modelEditorForm, {
+    model: '',
+    label: '',
+    format: 'openai-compatible',
+    enabled: true,
+    providerInputPricePer1M: null,
+    providerOutputPricePer1M: null,
+    manualInputPricePer1M: null,
+    manualOutputPricePer1M: null,
+    inputPricePer1M: null,
+    outputPricePer1M: null,
+    currency: 'USD',
+    pricingSource: 'none',
+    manualPriceOverride: false,
+  } satisfies ProviderModelItem)
+  modelEditorVisible.value = true
+}
+
+function openEditModelDrawer(record: ProviderModelItem) {
+  modelEditorIsCreate.value = false
+  Object.assign(modelEditorForm, cloneModelItem(record))
+  modelEditorVisible.value = true
+}
+
+function closeModelDrawer() {
+  modelEditorVisible.value = false
+}
+
+function saveModelDrawer() {
+  const model = String(modelEditorForm.model || '').trim()
+  if (!model) {
+    Message.error('模型名不能为空。')
+    return
+  }
+  const nextItem = normalizeModelItem({
+    ...modelEditorForm,
+    model,
+    label: String(modelEditorForm.label || model).trim() || model,
+  })
+  const nextItems = [...providerEditorForm.models]
+  const existingIndex = nextItems.findIndex(item => item.model === model)
+  if (existingIndex >= 0)
+    nextItems.splice(existingIndex, 1, nextItem)
+  else
+    nextItems.push(nextItem)
+  providerEditorForm.models = nextItems.sort((a, b) => a.model.localeCompare(b.model, 'en'))
+  modelEditorVisible.value = false
+}
+
+function removeProviderModel(model: string) {
+  providerEditorForm.models = providerEditorForm.models.filter(item => item.model !== model)
+}
+
+function clearProviderModelPoolDraft() {
+  providerEditorForm.models = []
+  providerPullMessage.value = '已清空当前 Provider 的模型池草稿，请确认后保存。'
+  Message.success(providerPullMessage.value)
+}
+
 function setSelectedPulledModels(models: string[]) {
-  selectedPulledModels.value = dedupeModels(models)
+  selectedPulledModels.value = dedupeStrings(models)
 }
 
 function openModelPullSelector(payload: ProviderModelsPayload) {
@@ -837,18 +1146,6 @@ function toggleAllPulledModels(checked: boolean) {
   setSelectedPulledModels(checked ? pulledProviderModels.value.map(item => item.model) : [])
 }
 
-function handleToggleAllPulledModels(checked: unknown) {
-  toggleAllPulledModels(Boolean(checked))
-}
-
-function handleTogglePulledGroup(items: ProviderPullItem[], checked: unknown) {
-  togglePulledGroup(items, Boolean(checked))
-}
-
-function handleTogglePulledModel(model: string, checked: unknown) {
-  togglePulledModel(model, Boolean(checked))
-}
-
 function isModelPullSeriesExpanded(key: string): boolean {
   if (normalizedModelPullFilterKeyword.value)
     return true
@@ -869,64 +1166,65 @@ function applyPulledModelSelection() {
     Message.error('请至少选择一个模型后再导入。')
     return
   }
-
   const selectedSet = new Set(selectedPulledModels.value)
   const selectedItems = pulledProviderModels.value.filter(item => selectedSet.has(item.model))
-  const existingModels = new Set(modelPoolItems.value.map(item => item.model))
-  const newCount = selectedItems.filter(item => !existingModels.has(item.model)).length
-  const skippedCount = Math.max(0, pulledProviderModels.value.length - selectedItems.length)
-
-  modelPoolItems.value = mergePulledModels(selectedItems)
-  modelPoolFetchedAt.value = pulledProviderFetchedAt.value || modelPoolFetchedAt.value
-  modelPullTriggered.value = true
+  providerEditorForm.models = mergePulledModels(providerEditorForm.models, selectedItems)
+  providerEditorForm.fetchedAt = pulledProviderFetchedAt.value || providerEditorForm.fetchedAt
   modelPullSelectorVisible.value = false
-  modelPullMessage.value = `已导入 ${selectedItems.length} 个模型${newCount > 0 ? `（新增 ${newCount} 个）` : ''}${skippedCount > 0 ? `，跳过 ${skippedCount} 个` : ''}，请确认后保存。`
-  Message.success(modelPullMessage.value)
+  providerPullMessage.value = `已导入 ${selectedItems.length} 个模型，请确认后保存 Provider。`
+  Message.success(providerPullMessage.value)
 }
 
-async function pullModels() {
-  pullLoading.value = true
-  modelPullMessage.value = ''
+async function pullProviderModels() {
+  if (!providerEditorSupportsModels.value) {
+    Message.warning('当前 Provider 类型不支持模型池。')
+    return
+  }
+  providerPullLoading.value = true
+  providerPullMessage.value = ''
   try {
-    const normalizedBaseURL = normalizeUpstreamBaseURL(upstreamForm.baseURL)
     const data = await requestApi<ProviderModelsPayload>(
       endpoint('/admin/ai/provider-models'),
       {
         method: 'POST',
         body: {
-          provider: upstreamForm.provider,
-          baseURL: normalizedBaseURL,
-          apiKeyMode: upstreamForm.apiKeyMode,
-          apiKey: upstreamForm.apiKey,
+          providerId: providerEditorForm.id,
+          draftProvider: buildProviderPayload(providerEditorForm),
+          apiKeyMode: providerEditorForm.apiKeyMode,
+          apiKey: providerEditorForm.apiKey,
         },
       },
       '模型拉取失败。',
     )
     if ((data.items || []).length === 0) {
-      modelPullMessage.value = '未拉取到可导入模型。'
-      Message.warning(modelPullMessage.value)
+      providerPullMessage.value = '未拉取到可导入模型。'
+      Message.warning(providerPullMessage.value)
       return
     }
     openModelPullSelector(data)
-    modelPullMessage.value = `已拉取 ${data.items?.length || 0} 个候选模型，请在弹框中选择需要导入的系列或模型。`
+    providerPullMessage.value = `已拉取 ${data.items?.length || 0} 个候选模型，请在弹框中选择后导入。`
   }
   catch (error: any) {
     const message = normalizeError(error, '模型拉取失败。')
-    modelPullMessage.value = message
+    providerPullMessage.value = message
     Message.error(message)
   }
   finally {
-    pullLoading.value = false
+    providerPullLoading.value = false
   }
 }
 
-async function testUpstream() {
-  testingUpstream.value = true
-  upstreamTestMessage.value = ''
+async function testProvider() {
+  if (!providerEditorSupportsModels.value) {
+    Message.warning('当前 Provider 类型不支持连通性测试。')
+    return
+  }
+  providerEditorTestLoading.value = true
+  providerEditorTestMessage.value = ''
   try {
-    const testModel = modelPoolItems.value.find(item => item.enabled)?.model || ''
-    const normalizedBaseURL = normalizeUpstreamBaseURL(upstreamForm.baseURL)
+    const testModel = providerEditorForm.models.find(item => item.enabled)?.model || ''
     const data = await requestApi<{
+      providerId: string
       provider: string
       model: string
       responsePreview: string
@@ -934,96 +1232,24 @@ async function testUpstream() {
     }>(endpoint('/admin/ai/providers/test'), {
       method: 'POST',
       body: {
+        providerId: providerEditorForm.id,
+        draftProvider: buildProviderPayload(providerEditorForm),
+        apiKeyMode: providerEditorForm.apiKeyMode,
+        apiKey: providerEditorForm.apiKey,
         model: testModel,
-        provider: upstreamForm.provider,
-        baseURL: normalizedBaseURL,
-        apiKeyMode: upstreamForm.apiKeyMode,
-        apiKey: upstreamForm.apiKey,
       },
-    }, '共享上游测试失败。')
-    upstreamTestMessage.value = `${data.provider} / ${data.model} · ${data.responsePreview}`
-    Message.success('共享上游连通性测试成功。')
+    }, 'Provider 测试失败。')
+    providerEditorTestMessage.value = `${data.provider} / ${data.model} · ${data.responsePreview}`
+    Message.success('Provider 连通性测试成功。')
   }
   catch (error: any) {
-    const message = normalizeError(error, '共享上游测试失败。')
-    upstreamTestMessage.value = message
+    const message = normalizeError(error, 'Provider 测试失败。')
+    providerEditorTestMessage.value = message
     Message.error(message)
   }
   finally {
-    testingUpstream.value = false
+    providerEditorTestLoading.value = false
   }
-}
-
-function openCreateModelDrawer() {
-  modelEditorIsCreate.value = true
-  Object.assign(modelEditorForm, {
-    model: '',
-    label: '',
-    format: upstreamForm.provider.toLowerCase().includes('response') ? 'response' : 'openai-compatible',
-    enabled: true,
-    providerInputPricePer1M: null,
-    providerOutputPricePer1M: null,
-    manualInputPricePer1M: null,
-    manualOutputPricePer1M: null,
-    inputPricePer1M: null,
-    outputPricePer1M: null,
-    currency: 'USD',
-    pricingSource: 'none',
-    manualPriceOverride: false,
-  } satisfies ModelPoolItem)
-  modelEditorVisible.value = true
-}
-
-function openEditModelDrawer(record: ModelPoolItem) {
-  modelEditorIsCreate.value = false
-  Object.assign(modelEditorForm, cloneModelItem(record))
-  modelEditorVisible.value = true
-}
-
-function closeModelDrawer() {
-  modelEditorVisible.value = false
-}
-
-function saveModelDrawer() {
-  const model = String(modelEditorForm.model || '').trim()
-  if (!model) {
-    Message.error('模型名不能为空。')
-    return
-  }
-
-  const nextItem = normalizeModelItem({
-    ...modelEditorForm,
-    model,
-    label: String(modelEditorForm.label || model).trim() || model,
-  })
-  const nextItems = [...modelPoolItems.value]
-  const existingIndex = nextItems.findIndex(item => item.model === model)
-  if (existingIndex >= 0)
-    nextItems.splice(existingIndex, 1, nextItem)
-  else
-    nextItems.push(nextItem)
-  modelPoolItems.value = nextItems.sort((a, b) => a.model.localeCompare(b.model, 'en'))
-  modelEditorVisible.value = false
-}
-
-function removeModel(model: string) {
-  const target = String(model || '').trim()
-  modelPoolItems.value = modelPoolItems.value.filter(item => item.model !== target)
-  sceneItems.value = sceneItems.value.map(item => ({
-    ...item,
-    models: item.models.filter(candidate => candidate !== target),
-  }))
-}
-
-function clearModelPoolDraft() {
-  modelPoolItems.value = []
-  sceneItems.value = sceneItems.value.map(item => ({
-    ...item,
-    models: [],
-  }))
-  modelPullTriggered.value = true
-  modelPullMessage.value = '已清空当前模型池，并同步清空场景模型回退链，请确认后保存。'
-  Message.success(modelPullMessage.value)
 }
 
 function openSceneDrawer(record: SceneItem) {
@@ -1031,7 +1257,9 @@ function openSceneDrawer(record: SceneItem) {
   sceneEditorForm.label = record.label
   sceneEditorForm.description = record.description
   sceneEditorForm.enabled = Boolean(record.enabled)
-  sceneEditorForm.models = dedupeModels(record.models || [])
+  sceneEditorForm.providerIds = dedupeStrings(record.providerIds || [])
+  sceneEditorForm.loadBalanceStrategy = record.loadBalanceStrategy || 'round_robin'
+  sceneEditorForm.modelFallback = dedupeStrings(record.modelFallback || [])
   sceneEditorForm.prompt = String(record.prompt || '')
   sceneEditorVisible.value = true
 }
@@ -1040,9 +1268,32 @@ function closeSceneDrawer() {
   sceneEditorVisible.value = false
 }
 
+function saveSceneDrawer() {
+  const index = sceneItems.value.findIndex(item => item.key === sceneEditorForm.key)
+  if (index < 0)
+    return
+  const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds)
+  const next = [...sceneItems.value]
+  next.splice(index, 1, {
+    key: sceneEditorForm.key,
+    label: sceneEditorForm.label,
+    description: sceneEditorForm.description,
+    enabled: Boolean(sceneEditorForm.enabled),
+    providerIds,
+    loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
+    modelFallback: normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds),
+    prompt: String(sceneEditorForm.prompt || ''),
+  })
+  sceneItems.value = next
+  sceneEditorVisible.value = false
+}
+
 function openSceneBatchDrawer() {
-  const mostUsedModels = dedupeModels(sceneItems.value.flatMap(item => item.models || []))
-  sceneBatchForm.models = mostUsedModels
+  const mostUsedProviderIds = dedupeStrings(sceneItems.value.flatMap(item => item.providerIds || []))
+  const mostUsedModels = dedupeStrings(sceneItems.value.flatMap(item => item.modelFallback || []))
+  sceneBatchForm.providerIds = mostUsedProviderIds
+  sceneBatchForm.loadBalanceStrategy = 'round_robin'
+  sceneBatchForm.modelFallback = mostUsedModels
   sceneBatchEditorVisible.value = true
 }
 
@@ -1050,41 +1301,29 @@ function closeSceneBatchDrawer() {
   sceneBatchEditorVisible.value = false
 }
 
-function applySceneBatchModels() {
-  const models = dedupeModels(sceneBatchForm.models || [])
+function applySceneBatchConfig() {
+  const providerIds = normalizeSceneProviderIds(sceneBatchForm.providerIds)
+  const modelFallback = normalizeSceneModelFallback(sceneBatchForm.modelFallback, providerIds)
   sceneItems.value = sceneItems.value.map(item => ({
     ...item,
-    models,
+    providerIds,
+    loadBalanceStrategy: sceneBatchForm.loadBalanceStrategy,
+    modelFallback,
   }))
   sceneBatchEditorVisible.value = false
-  Message.success(`已为 ${sceneItems.value.length} 个场景应用统一模型回退链。`)
+  Message.success(`已为 ${sceneItems.value.length} 个场景应用统一 Provider 与回退策略。`)
 }
 
-function saveSceneDrawer() {
-  const index = sceneItems.value.findIndex(item => item.key === sceneEditorForm.key)
-  if (index < 0)
-    return
-
-  const next = [...sceneItems.value]
-  next.splice(index, 1, {
-    key: sceneEditorForm.key,
-    label: sceneEditorForm.label,
-    description: sceneEditorForm.description,
-    enabled: Boolean(sceneEditorForm.enabled),
-    models: dedupeModels(sceneEditorForm.models || []),
-    prompt: String(sceneEditorForm.prompt || ''),
-  })
-  sceneItems.value = next
-  sceneEditorVisible.value = false
-}
-
-function applyCurrentSceneModelsToAll() {
-  const models = dedupeModels(sceneEditorForm.models || [])
+function applyCurrentSceneConfigToAll() {
+  const providerIds = normalizeSceneProviderIds(sceneEditorForm.providerIds)
+  const modelFallback = normalizeSceneModelFallback(sceneEditorForm.modelFallback, providerIds)
   sceneItems.value = sceneItems.value.map(item => ({
     ...item,
-    models,
+    providerIds,
+    loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy,
+    modelFallback,
   }))
-  Message.success(`已将「${sceneEditorForm.label}」的模型回退链复制到全部场景。`)
+  Message.success(`已将「${sceneEditorForm.label}」的 Provider 绑定与回退策略复制到全部场景。`)
 }
 
 async function testScene(scene: SceneItem) {
@@ -1107,7 +1346,7 @@ async function testScene(scene: SceneItem) {
     }, '场景测试失败。')
 
     const chainText = (data.attemptChain || [])
-      .map(item => `${item.model}${item.success ? '' : '(failed)'}`)
+      .map(item => `${item.provider}/${item.model}${item.success ? '' : '(failed)'}`)
       .join(' -> ')
     sceneTestMessage[scene.key] = `${data.provider} / ${data.model}${data.fallbackUsed ? ' · 已回退' : ''} · ${chainText || data.responsePreview}`
     Message.success(`场景「${scene.label}」测试成功。`)
@@ -1219,23 +1458,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-4">
-    <div class="text-white px-6 py-5 rounded-3xl shadow-lg from-slate-900 to-slate-900 via-slate-800 bg-gradient-to-r">
-      <div class="flex flex-wrap gap-4 items-start justify-between">
-        <div class="space-y-2">
-          <div class="text-xs text-slate-300 tracking-[0.28em] uppercase">
-            AI Console
-          </div>
-          <div class="text-2xl font-semibold">
-            单上游 + 模型池 + 场景回退
-          </div>
-          <div class="text-sm text-slate-300 max-w-3xl">
-            管理台现在只维护 1 套共享上游、1 个统一模型池，以及按顺序回退的场景路由。
-          </div>
-        </div>
-      </div>
-    </div>
-
+  <div class="ai-prompts-page space-y-4 w-full min-w-0">
     <a-tabs v-model:active-key="activeTab" type="rounded">
       <a-tab-pane v-for="tab in tabOptions" :key="tab.key" :title="tab.label" />
     </a-tabs>
@@ -1245,235 +1468,79 @@ onMounted(async () => {
         {{ consoleError }}
       </a-alert>
 
-      <a-spin :loading="consoleLoading || saving">
-        <div class="gap-4 grid xl:grid-cols-[1.25fr_1fr]">
-          <a-card :bordered="false" class="rounded-3xl shadow-sm">
-            <template #title>
-              <div class="flex gap-4 items-center justify-between">
-                <div>
-                  <div class="text-base font-semibold">
-                    上游渠道配置
-                  </div>
-                  <div class="text-xs text-slate-500">
-                    这里只保留共享上游连接信息，不再拆 LLM / DocAI。
-                  </div>
-                </div>
-                <div class="flex flex-wrap gap-2">
-                  <a-button :loading="testingUpstream" @click="testUpstream">
-                    测试上游
-                  </a-button>
-                  <a-button type="primary" :loading="saving" @click="saveConsole">
-                    保存配置
-                  </a-button>
-                </div>
-              </div>
-            </template>
-
-            <a-alert v-if="!configMasterKeyReady" type="warning" :show-icon="true" class="mb-4">
-              当前未配置 master key。你可以先用当前表单里的 token 测试上游和拉取模型，但“保存配置”时不会持久化替换 API Key。
-            </a-alert>
-
-            <div class="gap-4 grid md:grid-cols-2 xl:grid-cols-3">
-              <a-form-item label="Provider">
-                <a-input v-model="upstreamForm.provider" placeholder="例如 newapi" />
-              </a-form-item>
-              <a-form-item label="Base URL">
-                <a-input
-                  v-model="upstreamForm.baseURL"
-                  placeholder="https://your-newapi.example"
-                  @blur="upstreamForm.baseURL = normalizeUpstreamBaseURL(upstreamForm.baseURL)"
-                />
-              </a-form-item>
-              <a-form-item label="API Key 模式">
-                <a-select v-model="upstreamForm.apiKeyMode">
-                  <a-option value="keep">
-                    保持不变
-                  </a-option>
-                  <a-option value="replace">
-                    替换密钥
-                  </a-option>
-                  <a-option value="clear">
-                    清空密钥
-                  </a-option>
-                </a-select>
-              </a-form-item>
-
-              <a-form-item label="API Key">
-                <a-input-password
-                  v-model="upstreamForm.apiKey"
-                  placeholder="测试/拉取会优先使用当前输入；保存持久化需选择替换"
-                  autocomplete="new-password"
-                  allow-clear
-                />
-              </a-form-item>
-              <a-form-item label="视觉模型">
-                <a-input
-                  v-model="upstreamForm.visionModel"
-                  placeholder="可选，例如 gpt-4.1-mini / qwen-vl"
-                  allow-clear
-                />
-              </a-form-item>
-              <a-form-item label="超时(ms)">
-                <a-input-number v-model="upstreamForm.timeoutMs" :min="1000" :step="1000" class="w-full" />
-              </a-form-item>
-              <a-form-item label="重试次数">
-                <a-input-number v-model="upstreamForm.maxRetries" :min="0" :max="10" class="w-full" />
-              </a-form-item>
-            </div>
-
-            <div class="text-sm text-slate-500 mt-4 flex flex-wrap gap-3 items-center">
-              <span>模型池拉取时间：{{ formatTime(modelPoolFetchedAt) }}</span>
-              <span>当前模型数：{{ modelPoolItems.length }}</span>
-              <span>API Key：{{ upstreamApiKeyConfigured ? '已配置' : '未配置' }}</span>
-              <span>默认密钥状态：{{ upstreamForm.apiKeyMode === 'keep' ? '沿用现有密钥' : upstreamForm.apiKeyMode === 'clear' ? '将清空密钥' : '将替换密钥' }}</span>
-              <span>视觉模型：{{ upstreamForm.visionModel || '未配置（将回退到文件名/OCR/元信息摘要）' }}</span>
-              <span>Base URL 将自动规范为根地址，调用时自动补 /v1</span>
-              <span>当前输入框里的 API Key 会优先用于测试上游和拉取模型</span>
-            </div>
-
-            <div v-if="upstreamTestMessage" class="text-sm text-slate-600 mt-4 px-4 py-3 rounded-2xl bg-slate-50">
-              {{ upstreamTestMessage }}
-            </div>
-          </a-card>
-
-          <a-card :bordered="false" class="rounded-3xl shadow-sm">
-            <template #title>
-              <div>
-                <div class="text-base font-semibold">
-                  联网能力
-                </div>
-                <div class="text-xs text-slate-500">
-                  管理助手的联网检索配置仍独立保留。
-                </div>
-              </div>
-            </template>
-
-            <div class="gap-4 grid">
-              <a-form-item label="启用管理助手联网">
-                <a-switch v-model="adminAiForm.enabled" />
-              </a-form-item>
-              <a-form-item label="Tavily Key 模式">
-                <a-select v-model="adminAiForm.tavilyApiKeyMode">
-                  <a-option value="keep">
-                    保持不变
-                  </a-option>
-                  <a-option value="replace">
-                    替换密钥
-                  </a-option>
-                  <a-option value="clear">
-                    清空密钥
-                  </a-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item label="Tavily Key">
-                <a-input-password
-                  v-model="adminAiForm.tavilyApiKey"
-                  placeholder="仅在选择替换时填写"
-                  autocomplete="new-password"
-                  allow-clear
-                />
-              </a-form-item>
-              <a-form-item label="网页超时(ms)">
-                <a-input-number v-model="adminAiForm.webTimeoutMs" :min="1000" :step="1000" class="w-full" />
-              </a-form-item>
-              <a-form-item label="最多结果数">
-                <a-input-number v-model="adminAiForm.maxWebResults" :min="1" :max="10" class="w-full" />
-              </a-form-item>
-              <a-form-item label="单页最大字符">
-                <a-input-number v-model="adminAiForm.maxPageChars" :min="1000" :step="1000" class="w-full" />
-              </a-form-item>
-            </div>
-          </a-card>
-        </div>
-
+      <a-spin :loading="consoleLoading || saving" class="block w-full">
         <a-card :bordered="false" class="rounded-3xl shadow-sm">
           <template #title>
             <div class="flex flex-wrap gap-4 items-center justify-between">
               <div>
                 <div class="text-base font-semibold">
-                  模型池
+                  Provider 列表
                 </div>
                 <div class="text-xs text-slate-500">
-                  价格优先级固定为 手工覆盖 > NewAPI 导入 > none。
+                  每个 Provider 独立维护类型、密钥、模型池，以及搜索或 LLM 能力配置。
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
-                <a-button @click="openCreateModelDrawer">
-                  新增模型
+                <a-button @click="openCreateProviderDrawer">
+                  新增 Provider
                 </a-button>
-                <a-button :loading="pullLoading" @click="pullModels">
-                  拉取模型
-                </a-button>
-                <a-popconfirm
-                  content="确认清空当前模型池吗？这会移除全部模型，并同步清空场景里的模型回退链；只有保存后才会持久化。"
-                  type="warning"
-                  @ok="clearModelPoolDraft"
-                >
-                  <a-button status="danger" :disabled="modelPoolItems.length === 0">
-                    清空模型池
-                  </a-button>
-                </a-popconfirm>
                 <a-button type="primary" :loading="saving" @click="saveConsole">
-                  保存模型池
+                  保存配置
                 </a-button>
               </div>
             </div>
           </template>
 
-          <a-alert v-if="modelPullMessage" type="info" :show-icon="true" class="mb-4">
-            {{ modelPullMessage }}
-          </a-alert>
-
-          <a-table :data="modelPoolRows" :pagination="false" row-key="model">
+          <a-table :data="providerRows" :pagination="false" row-key="id">
             <template #columns>
-              <a-table-column title="模型" data-index="model">
+              <a-table-column title="Provider" data-index="name" :width="260">
                 <template #cell="scope">
                   <div class="space-y-1">
                     <div class="text-slate-900 font-medium">
-                      {{ scope.record.model }}
+                      {{ scope.record.name }}
                     </div>
                     <div class="text-xs text-slate-500">
-                      {{ scope.record.label }}
+                      {{ scope.record.provider || scope.record.type }}
                     </div>
                   </div>
                 </template>
               </a-table-column>
-              <a-table-column title="格式" data-index="format" :width="150">
+              <a-table-column title="类型" data-index="type" :width="180">
                 <template #cell="scope">
-                  <a-tag>{{ scope.record.format }}</a-tag>
+                  <div class="space-y-1">
+                    <a-tag>{{ normalizeProviderTypeLabel(scope.record.type) }}</a-tag>
+                    <div class="text-xs text-slate-500">
+                      {{ scope.record.capability === 'llm' ? 'llm' : 'search-only' }}
+                    </div>
+                  </div>
                 </template>
               </a-table-column>
-              <a-table-column title="启用" data-index="enabled" :width="100">
+              <a-table-column title="连接" data-index="baseURL">
+                <template #cell="scope">
+                  <div class="space-y-1">
+                    <div class="text-sm text-slate-700 break-all">
+                      {{ scope.record.baseURL || '-' }}
+                    </div>
+                    <div class="text-xs text-slate-500">
+                      {{ providerSummary(scope.record) }}
+                    </div>
+                  </div>
+                </template>
+              </a-table-column>
+              <a-table-column title="状态" data-index="enabled" :width="120">
                 <template #cell="scope">
                   <a-tag :color="scope.record.enabled ? 'green' : 'gray'">
-                    {{ scope.record.enabled ? 'on' : 'off' }}
+                    {{ scope.record.enabled ? 'enabled' : 'disabled' }}
                   </a-tag>
                 </template>
               </a-table-column>
-              <a-table-column title="导入价格" data-index="providerInputPricePer1M" :width="260">
-                <template #cell="scope">
-                  {{ buildImportedPriceText(scope.record) }}
-                </template>
-              </a-table-column>
-              <a-table-column title="生效价格" data-index="inputPricePer1M" :width="260">
-                <template #cell="scope">
-                  {{ buildPriceText(scope.record) }}
-                </template>
-              </a-table-column>
-              <a-table-column title="来源" data-index="pricingSource" :width="120">
-                <template #cell="scope">
-                  <a-tag :color="scope.record.pricingSource === 'manual' ? 'orange' : scope.record.pricingSource === 'provider' ? 'arcoblue' : 'gray'">
-                    {{ scope.record.pricingSource }}
-                  </a-tag>
-                </template>
-              </a-table-column>
-              <a-table-column title="操作" data-index="modelActions" :width="180">
+              <a-table-column title="操作" data-index="providerActions" :width="180">
                 <template #cell="scope">
                   <div class="flex gap-2">
-                    <a-button size="mini" @click="openEditModelDrawer(scope.record)">
+                    <a-button size="mini" @click="openEditProviderDrawer(scope.record)">
                       编辑
                     </a-button>
-                    <a-button size="mini" status="danger" @click="removeModel(scope.record.model)">
+                    <a-button size="mini" status="danger" @click="removeProvider(scope.record.id)">
                       删除
                     </a-button>
                   </div>
@@ -1490,6 +1557,10 @@ onMounted(async () => {
         {{ consoleError }}
       </a-alert>
 
+      <a-alert type="info" :show-icon="true">
+        默认对话走「项目聊天」场景，默认文档分析走「文档分析」场景；Embedding 不再单独在这里配置，跟随 Provider 自身的 embedding 配置生效。
+      </a-alert>
+
       <a-card :bordered="false" class="rounded-3xl shadow-sm">
         <template #title>
           <div class="flex flex-wrap gap-4 items-center justify-between">
@@ -1498,12 +1569,12 @@ onMounted(async () => {
                 场景路由
               </div>
               <div class="text-xs text-slate-500">
-                每个场景可配置多个模型，运行时按顺序回退，不做随机、不做负载均衡。
+                每个场景绑定多个 Provider，先按模型回退链，再在可用 Provider 间轮询。
               </div>
             </div>
             <div class="flex flex-wrap gap-2">
               <a-button @click="openSceneBatchDrawer">
-                一键设置全部场景模型
+                一键设置全部场景
               </a-button>
               <a-button type="primary" :loading="saving" @click="saveConsole">
                 保存场景
@@ -1517,8 +1588,13 @@ onMounted(async () => {
             <a-table-column title="场景" data-index="label" :width="220">
               <template #cell="scope">
                 <div class="space-y-1">
-                  <div class="text-slate-900 font-medium">
-                    {{ scope.record.label }}
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <div class="text-slate-900 font-medium">
+                      {{ scope.record.label }}
+                    </div>
+                    <a-tag v-if="sceneUsageHint(scope.record)" :color="sceneUsageHintColor(scope.record)">
+                      {{ sceneUsageHint(scope.record) }}
+                    </a-tag>
                   </div>
                   <div class="text-xs text-slate-500">
                     {{ scope.record.description }}
@@ -1526,7 +1602,14 @@ onMounted(async () => {
                 </div>
               </template>
             </a-table-column>
-            <a-table-column title="模型回退链" data-index="models">
+            <a-table-column title="Provider 绑定" data-index="providerIds" :width="240">
+              <template #cell="scope">
+                <div class="text-sm text-slate-700">
+                  {{ sceneProvidersPreview(scope.record) }}
+                </div>
+              </template>
+            </a-table-column>
+            <a-table-column title="模型回退链" data-index="modelFallback">
               <template #cell="scope">
                 <div class="space-y-2">
                   <div class="text-sm text-slate-700">
@@ -1733,6 +1816,213 @@ onMounted(async () => {
       </a-card>
     </div>
 
+    <a-drawer
+      v-model:visible="providerEditorVisible"
+      :title="providerEditorIsCreate ? '新增 Provider' : `编辑 Provider · ${providerEditorForm.name || providerEditorForm.id}`"
+      :width="760"
+      unmount-on-close
+    >
+      <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
+        <div class="gap-4 grid">
+          <a-alert v-if="!configMasterKeyReady" type="warning" :show-icon="true">
+            当前未配置 master key。你可以先用当前输入的 API Key 测试与拉取模型，但保存时不会持久化替换密钥。
+          </a-alert>
+
+          <div class="gap-4 grid md:grid-cols-2">
+            <a-form-item label="Provider 名称">
+              <a-input v-model="providerEditorForm.name" placeholder="用于后台展示" />
+            </a-form-item>
+            <a-form-item label="Provider 类型">
+              <a-select v-model="providerEditorForm.type" @change="handleProviderTypeChange">
+                <a-option v-for="item in providerTypeOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="Provider 标识">
+              <a-input v-model="providerEditorForm.provider" placeholder="例如 newapi / tavily" />
+            </a-form-item>
+            <a-form-item label="启用">
+              <a-switch v-model="providerEditorForm.enabled" />
+            </a-form-item>
+            <a-form-item label="Base URL">
+              <a-input v-model="providerEditorForm.baseURL" placeholder="https://your-provider.example" />
+            </a-form-item>
+            <a-form-item label="API Key 模式">
+              <a-select v-model="providerEditorForm.apiKeyMode">
+                <a-option value="keep">
+                  保持不变
+                </a-option>
+                <a-option value="replace">
+                  替换密钥
+                </a-option>
+                <a-option value="clear">
+                  清空密钥
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="API Key">
+              <a-input-password
+                v-model="providerEditorForm.apiKey"
+                placeholder="测试/拉取优先使用当前输入；保存持久化需选择替换"
+                autocomplete="new-password"
+                allow-clear
+              />
+            </a-form-item>
+            <a-form-item label="超时(ms)">
+              <a-input-number v-model="providerEditorForm.timeoutMs" :min="1000" :step="1000" class="w-full" />
+            </a-form-item>
+            <a-form-item label="重试次数">
+              <a-input-number v-model="providerEditorForm.maxRetries" :min="0" :max="10" class="w-full" />
+            </a-form-item>
+            <a-form-item v-if="providerEditorSupportsModels" label="聊天接入类型">
+              <a-select v-model="providerEditorForm.clientType">
+                <a-option value="langchain">
+                  LangChain
+                </a-option>
+                <a-option value="bailian-native">
+                  百炼原生 SDK
+                </a-option>
+                <a-option value="coze-sdk">
+                  Coze SDK
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item v-if="providerEditorSupportsModels" label="Embedding 接入类型">
+              <a-select v-model="providerEditorForm.embeddingApiStyle">
+                <a-option value="openai-compatible-text">
+                  OpenAI 兼容文本
+                </a-option>
+                <a-option value="bailian-multimodal">
+                  百炼原生多模态
+                </a-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item v-if="providerEditorSupportsModels" label="Embedding 维度">
+              <a-input-number v-model="providerEditorForm.embeddingDimensions" :min="64" :step="64" class="w-full" />
+            </a-form-item>
+            <a-form-item v-if="providerEditorSupportsModels" label="视觉模型">
+              <a-input v-model="providerEditorForm.visionModel" placeholder="可选，例如 gpt-4.1-mini / qwen-vl" allow-clear />
+            </a-form-item>
+          </div>
+
+          <div class="text-sm text-slate-500 flex flex-wrap gap-3 items-center">
+            <span>能力：{{ providerEditorForm.capability === 'llm' ? 'llm' : 'search-only' }}</span>
+            <span>模型池拉取时间：{{ formatTime(providerEditorForm.fetchedAt) }}</span>
+            <span>当前模型数：{{ providerEditorForm.models.length }}</span>
+            <span>API Key：{{ providerEditorForm.apiKeyConfigured ? '已配置' : '未配置' }}</span>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <a-button :loading="providerEditorTestLoading" :disabled="!providerEditorSupportsModels" @click="testProvider">
+              测试 Provider
+            </a-button>
+            <a-button :loading="providerPullLoading" :disabled="!providerEditorSupportsModels" @click="pullProviderModels">
+              拉取模型
+            </a-button>
+          </div>
+
+          <div v-if="providerEditorTestMessage" class="text-sm text-slate-600 px-4 py-3 rounded-2xl bg-slate-50">
+            {{ providerEditorTestMessage }}
+          </div>
+          <div v-if="providerPullMessage" class="text-sm text-slate-600 px-4 py-3 rounded-2xl bg-slate-50">
+            {{ providerPullMessage }}
+          </div>
+
+          <template v-if="providerEditorSupportsModels">
+            <div class="px-4 py-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
+              <div class="flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <div class="text-sm font-medium text-slate-900">
+                    Provider 模型池
+                  </div>
+                  <div class="text-xs text-slate-500">
+                    每个 LLM Provider 维护自己的模型池与价格覆盖。
+                  </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <a-button size="small" @click="openCreateModelDrawer">
+                    新增模型
+                  </a-button>
+                  <a-popconfirm
+                    content="确认清空当前 Provider 的模型池草稿吗？只有保存 Provider 后才会持久化。"
+                    type="warning"
+                    @ok="clearProviderModelPoolDraft"
+                  >
+                    <a-button size="small" status="danger" :disabled="providerEditorForm.models.length === 0">
+                      清空模型池
+                    </a-button>
+                  </a-popconfirm>
+                </div>
+              </div>
+
+              <a-table :data="providerEditorModelRows" :pagination="false" row-key="model">
+                <template #columns>
+                  <a-table-column title="模型" data-index="model">
+                    <template #cell="scope">
+                      <div class="space-y-1">
+                        <div class="text-slate-900 font-medium">
+                          {{ scope.record.model }}
+                        </div>
+                        <div class="text-xs text-slate-500">
+                          {{ scope.record.label }}
+                        </div>
+                      </div>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="启用" data-index="enabled" :width="90">
+                    <template #cell="scope">
+                      <a-tag :color="scope.record.enabled ? 'green' : 'gray'">
+                        {{ scope.record.enabled ? 'on' : 'off' }}
+                      </a-tag>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="生效价格" data-index="inputPricePer1M" :width="260">
+                    <template #cell="scope">
+                      {{ buildPriceText(scope.record) }}
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="来源" data-index="pricingSource" :width="120">
+                    <template #cell="scope">
+                      <a-tag :color="scope.record.pricingSource === 'manual' ? 'orange' : scope.record.pricingSource === 'provider' ? 'arcoblue' : 'gray'">
+                        {{ scope.record.pricingSource }}
+                      </a-tag>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="操作" data-index="actions" :width="160">
+                    <template #cell="scope">
+                      <div class="flex gap-2">
+                        <a-button size="mini" @click="openEditModelDrawer(scope.record)">
+                          编辑
+                        </a-button>
+                        <a-button size="mini" status="danger" @click="removeProviderModel(scope.record.model)">
+                          删除
+                        </a-button>
+                      </div>
+                    </template>
+                  </a-table-column>
+                </template>
+              </a-table>
+            </div>
+          </template>
+          <a-alert v-else type="info" :show-icon="true">
+            SearchXNG / Tavily 属于 search-only Provider，当前不会进入 LLM 模型池，也不能绑定到这些 LLM 场景。
+          </a-alert>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeProviderDrawer">
+            取消
+          </a-button>
+          <a-button type="primary" @click="saveProviderDrawer">
+            保存 Provider
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+
     <a-modal
       v-model:visible="modelPullSelectorVisible"
       title="选择导入模型"
@@ -1758,14 +2048,12 @@ onMounted(async () => {
               <span>候选模型：{{ pulledProviderModels.length }}</span>
               <span v-if="modelPullFilterKeyword">筛选结果：{{ filteredPulledModelCount }}</span>
               <span>已选：{{ selectedPulledModelCount }}</span>
-              <span>新增：{{ selectedPulledNewModelCount }}</span>
-              <span>已存在：{{ selectedPulledExistingModelCount }}</span>
             </div>
             <div class="flex flex-wrap gap-3 items-center">
               <a-checkbox
                 :model-value="allPulledModelsChecked"
                 :indeterminate="allPulledModelsIndeterminate"
-                @change="handleToggleAllPulledModels"
+                @change="toggleAllPulledModels(Boolean($event))"
               >
                 全选
               </a-checkbox>
@@ -1785,7 +2073,7 @@ onMounted(async () => {
                 <a-checkbox
                   :model-value="hasSelectedAllModels(group.items)"
                   :indeterminate="hasPartialSelectedModels(group.items)"
-                  @change="handleTogglePulledGroup(group.items, $event)"
+                  @change="togglePulledGroup(group.items, Boolean($event))"
                 >
                   {{ group.label }}
                 </a-checkbox>
@@ -1793,19 +2081,14 @@ onMounted(async () => {
                   {{ group.items.length }} 个
                 </a-tag>
               </div>
-              <div class="flex flex-wrap gap-3 items-center">
-                <div class="text-xs text-slate-500">
-                  {{ group.items.filter(item => selectedPulledModelSet.has(item.model)).length }} / {{ group.items.length }} 已选
-                </div>
-                <a-button
-                  v-if="!normalizedModelPullFilterKeyword"
-                  size="mini"
-                  type="text"
-                  @click="toggleModelPullSeriesExpanded(group.key)"
-                >
-                  {{ isModelPullSeriesExpanded(group.key) ? '收起' : '展开' }}
-                </a-button>
-              </div>
+              <a-button
+                v-if="!normalizedModelPullFilterKeyword"
+                size="mini"
+                type="text"
+                @click="toggleModelPullSeriesExpanded(group.key)"
+              >
+                {{ isModelPullSeriesExpanded(group.key) ? '收起' : '展开' }}
+              </a-button>
             </div>
 
             <div v-if="!isModelPullSeriesExpanded(group.key)" class="text-xs text-slate-500 mt-3">
@@ -1820,7 +2103,7 @@ onMounted(async () => {
               >
                 <a-checkbox
                   :model-value="selectedPulledModelSet.has(item.model)"
-                  @change="handleTogglePulledModel(item.model, $event)"
+                  @change="togglePulledModel(item.model, Boolean($event))"
                 />
                 <div class="flex-1 min-w-0">
                   <div class="flex flex-wrap gap-2 items-center">
@@ -1843,26 +2126,18 @@ onMounted(async () => {
             </div>
           </div>
 
-          <a-empty
-            v-if="filteredModelPullSeriesGroups.length === 0"
-            description="没有匹配的模型"
-          />
+          <a-empty v-if="filteredModelPullSeriesGroups.length === 0" description="没有匹配的模型" />
         </div>
       </div>
 
       <template #footer>
-        <div class="flex flex-wrap gap-3 items-center justify-between">
-          <div class="text-xs text-slate-500">
-            已选择 {{ selectedPulledModelCount }} / {{ pulledProviderModels.length }} 个模型，确认后仅导入勾选项。
-          </div>
-          <div class="flex gap-2">
-            <a-button @click="closeModelPullSelector">
-              取消
-            </a-button>
-            <a-button type="primary" :disabled="selectedPulledModelCount === 0" @click="applyPulledModelSelection">
-              导入选中模型
-            </a-button>
-          </div>
+        <div class="flex gap-2 justify-end">
+          <a-button @click="closeModelPullSelector">
+            取消
+          </a-button>
+          <a-button type="primary" :disabled="selectedPulledModelCount === 0" @click="applyPulledModelSelection">
+            导入选中模型
+          </a-button>
         </div>
       </template>
     </a-modal>
@@ -1943,7 +2218,7 @@ onMounted(async () => {
     <a-drawer
       v-model:visible="sceneEditorVisible"
       :title="`编辑场景 · ${sceneEditorForm.label}`"
-      :width="620"
+      :width="680"
       unmount-on-close
     >
       <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
@@ -1954,18 +2229,43 @@ onMounted(async () => {
           <a-form-item label="启用场景">
             <a-switch v-model="sceneEditorForm.enabled" />
           </a-form-item>
-          <a-form-item label="模型回退链">
+          <a-form-item label="绑定 Provider">
             <a-select
-              v-model="sceneEditorForm.models"
+              v-model="sceneEditorForm.providerIds"
               multiple
               allow-search
               allow-clear
-              allow-create
-              placeholder="搜索或添加模型，按添加顺序回退。留空则忽略并回退默认模型。"
-              @change="sceneEditorForm.models = normalizeSceneModels($event)"
+              placeholder="只能选择 llm Provider"
+              @change="handleSceneProviderIdsChange"
             >
               <a-option
-                v-for="item in enabledModelSelectItems"
+                v-for="item in llmProviderOptions"
+                :key="item.id"
+                :value="item.id"
+                :disabled="!item.enabled"
+              >
+                {{ item.name }} <span class="text-xs text-slate-400">({{ item.provider }})</span>
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="负载均衡策略">
+            <a-select v-model="sceneEditorForm.loadBalanceStrategy">
+              <a-option value="round_robin">
+                轮询
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="模型回退链">
+            <a-select
+              v-model="sceneEditorForm.modelFallback"
+              multiple
+              allow-search
+              allow-clear
+              placeholder="按绑定 Provider 的模型池汇总选择"
+              @change="handleSceneModelFallbackChange"
+            >
+              <a-option
+                v-for="item in sceneEditorModelOptions"
                 :key="item.model"
                 :value="item.model"
               >
@@ -1985,11 +2285,10 @@ onMounted(async () => {
           </a-form-item>
 
           <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
-            当前回退顺序：{{ sceneEditorForm.models.length > 0 ? sceneEditorForm.models.join(' -> ') : '未配置，运行时将忽略并回退默认模型' }}
+            当前 Provider：{{ sceneEditorForm.providerIds.length > 0 ? sceneProvidersPreview({ ...sceneEditorForm, providerIds: sceneEditorForm.providerIds, modelFallback: [], enabled: true, key: sceneEditorForm.key, label: '', description: '', loadBalanceStrategy: sceneEditorForm.loadBalanceStrategy, prompt: '' }) : '未绑定 Provider' }}
           </div>
-
-          <div class="text-xs text-slate-500">
-            顺序按添加先后决定；如需调整顺序，请删除后按新的顺序重新添加。
+          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
+            当前模型回退顺序：{{ sceneEditorForm.modelFallback.length > 0 ? sceneEditorForm.modelFallback.join(' -> ') : '未配置，运行时将回退默认模型' }}
           </div>
 
           <a-form-item label="场景提示词">
@@ -2004,8 +2303,8 @@ onMounted(async () => {
 
       <template #footer>
         <div class="flex gap-2 justify-end">
-          <a-button @click="applyCurrentSceneModelsToAll">
-            复制模型链到全部场景
+          <a-button @click="applyCurrentSceneConfigToAll">
+            复制当前策略到全部场景
           </a-button>
           <a-button @click="closeSceneDrawer">
             取消
@@ -2019,48 +2318,57 @@ onMounted(async () => {
 
     <a-drawer
       v-model:visible="sceneBatchEditorVisible"
-      title="一键设置全部场景模型"
-      :width="620"
+      title="一键设置全部场景"
+      :width="680"
       unmount-on-close
     >
       <div class="pr-2 max-h-[calc(100vh-132px)] overflow-y-auto">
         <div class="gap-4 grid">
           <a-alert type="info" :show-icon="true">
-            这里填写的模型回退链会覆盖全部场景的模型配置，不会改动提示词和启停状态。
+            这里会覆盖全部场景的 Provider 绑定、负载均衡策略和模型回退链，不会改动提示词和启停状态。
           </a-alert>
-          <a-form-item label="统一模型回退链">
+          <a-form-item label="统一 Provider 绑定">
             <a-select
-              v-model="sceneBatchForm.models"
+              v-model="sceneBatchForm.providerIds"
               multiple
               allow-search
               allow-clear
-              allow-create
-              placeholder="搜索或添加模型，按添加顺序回退。"
-              @change="sceneBatchForm.models = normalizeSceneModels($event)"
+              @change="handleSceneBatchProviderIdsChange"
             >
               <a-option
-                v-for="item in enabledModelSelectItems"
-                :key="`batch-${item.model}`"
-                :value="item.model"
+                v-for="item in llmProviderOptions"
+                :key="`batch-provider-${item.id}`"
+                :value="item.id"
+                :disabled="!item.enabled"
               >
-                <div class="space-y-0.5">
-                  <div class="flex gap-3 items-center justify-between">
-                    <span>{{ item.model }}</span>
-                    <span v-if="item.label && item.label !== item.model" class="text-xs text-slate-400">
-                      {{ item.label }}
-                    </span>
-                  </div>
-                  <div class="text-xs text-slate-400">
-                    {{ item.priceText }}
-                  </div>
-                </div>
+                {{ item.name }}
               </a-option>
             </a-select>
           </a-form-item>
-
-          <div class="text-xs text-slate-500 px-4 py-3 rounded-2xl bg-slate-50">
-            当前统一回退顺序：{{ sceneBatchForm.models.length > 0 ? sceneBatchForm.models.join(' -> ') : '未配置，运行时将忽略并回退默认模型' }}
-          </div>
+          <a-form-item label="统一负载均衡策略">
+            <a-select v-model="sceneBatchForm.loadBalanceStrategy">
+              <a-option value="round_robin">
+                轮询
+              </a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="统一模型回退链">
+            <a-select
+              v-model="sceneBatchForm.modelFallback"
+              multiple
+              allow-search
+              allow-clear
+              @change="handleSceneBatchModelFallbackChange"
+            >
+              <a-option
+                v-for="item in sceneBatchModelOptions"
+                :key="`batch-model-${item.model}`"
+                :value="item.model"
+              >
+                {{ item.model }}
+              </a-option>
+            </a-select>
+          </a-form-item>
         </div>
       </div>
 
@@ -2069,7 +2377,7 @@ onMounted(async () => {
           <a-button @click="closeSceneBatchDrawer">
             取消
           </a-button>
-          <a-button type="primary" @click="applySceneBatchModels">
+          <a-button type="primary" @click="applySceneBatchConfig">
             应用到全部场景
           </a-button>
         </div>
@@ -2135,3 +2443,12 @@ onMounted(async () => {
     </a-drawer>
   </div>
 </template>
+
+<style scoped>
+.ai-prompts-page :deep(.arco-spin),
+.ai-prompts-page :deep(.arco-spin-container),
+.ai-prompts-page :deep(.arco-spin-children) {
+  display: block;
+  width: 100%;
+}
+</style>

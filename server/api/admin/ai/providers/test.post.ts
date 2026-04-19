@@ -8,14 +8,31 @@ import { recordContestAuditLog } from '~~/server/utils/contest-store'
 import { withTransaction } from '~~/server/utils/db'
 import { checkPlatformPermission } from '~~/server/utils/platform-access'
 import { normalizePlatformAiBaseURL, resolvePlatformAiTransientApiKey } from '~~/server/utils/platform-ai-base-url'
-import { resolveAiRuntimeForChannel, resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
+import { buildPlatformAiRegistryJson, resolvePlatformAiRegistry } from '~~/server/utils/platform-ai-channels'
 import { readEffectiveRuntimeSettings } from '~~/server/utils/platform-ai-config-store'
+
+interface ProviderDraftBody {
+  id?: string
+  name?: string
+  type?: string
+  provider?: string
+  clientType?: string
+  baseURL?: string
+  timeoutMs?: number
+  maxRetries?: number
+  enabled?: boolean
+  apiKey?: string
+  embeddingApiStyle?: string
+  embeddingDimensions?: number
+  visionModel?: string
+  models?: unknown[]
+}
 
 interface ProviderTestBody {
   message?: string
   model?: string
-  provider?: string
-  baseURL?: string
+  providerId?: string
+  draftProvider?: ProviderDraftBody
   apiKey?: string
   apiKeyMode?: 'keep' | 'replace' | 'clear'
 }
@@ -58,7 +75,7 @@ export default defineEventHandler(async (event) => {
   const canReadInternal = await checkPlatformPermission(event, user, 'contest.read_internal')
   if (!canReadInternal) {
     setResponseStatus(event, 403)
-    return fail('当前用户无权测试 AI 上游。', {
+    return fail('当前用户无权测试 AI Provider。', {
       startedAt,
       provider: runtime.ai.provider,
       model: runtime.ai.model,
@@ -69,53 +86,79 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody<ProviderTestBody>(event).catch(() => ({} as ProviderTestBody))
   const registry = resolvePlatformAiRegistry(runtime)
-  const provider = registry.providers[0]
-  const providerName = toText(body.provider) || provider?.provider || runtime.ai.provider
-  const baseURL = normalizePlatformAiBaseURL(body.baseURL, providerName) || provider?.baseURL || runtime.ai.baseURL
-  const apiKeyMode = toMode(body.apiKeyMode)
-  const apiKey = resolvePlatformAiTransientApiKey({
-    currentApiKey: provider?.apiKey || runtime.ai.apiKey,
-    providedApiKey: body.apiKey,
-    mode: apiKeyMode,
-  })
-  const usedProvidedApiKey = Boolean(toText(body.apiKey))
-  const preferredModel = String(body.model || '').trim()
-  const resolved = preferredModel
+  const currentProvider = registry.providers.find(item => item.id === toText(body.providerId))
+    || registry.providers.find(item => item.capability === 'llm')
+    || null
+  const draftProvider = body.draftProvider && typeof body.draftProvider === 'object'
+    ? body.draftProvider
+    : null
+  const resolvedProvider = draftProvider
     ? (() => {
-        const modelConfig = provider?.models.find(item => item.model === preferredModel && item.enabled)
-        if (!provider || !modelConfig)
-          return null
-        return {
-          provider,
+        const seed = {
+          ...currentProvider,
+          ...draftProvider,
+          id: toText(draftProvider.id) || currentProvider?.id || 'provider_1',
+          provider: toText(draftProvider.provider) || currentProvider?.provider || '',
+          baseURL: normalizePlatformAiBaseURL(draftProvider.baseURL, toText(draftProvider.provider) || currentProvider?.provider || ''),
+          models: Array.isArray(draftProvider.models) ? draftProvider.models : currentProvider?.models || [],
+        }
+        const draftRuntime = {
+          ...runtime,
           ai: {
             ...runtime.ai,
-            provider: providerName,
-            baseURL,
-            apiKey,
-            model: modelConfig.model,
-            format: modelConfig.format,
-            timeoutMs: provider.timeoutMs,
-            maxRetries: 0,
-            temperature: 0,
+            providersJson: buildPlatformAiRegistryJson(runtime, {
+              providers: [seed],
+              defaults: registry.defaults,
+            }),
           },
         }
+        return resolvePlatformAiRegistry(draftRuntime).providers[0] || null
       })()
-    : (() => {
-        const runtimeForChannel = resolveAiRuntimeForChannel(runtime, 'project_chat')
-        return {
-          ...runtimeForChannel,
-          ai: {
-            ...runtimeForChannel.ai,
-            provider: providerName,
-            baseURL,
-            apiKey,
-          },
-        }
-      })()
+    : currentProvider
 
-  if (!resolved || !String(resolved.ai.apiKey || '').trim()) {
+  if (!resolvedProvider || resolvedProvider.capability !== 'llm') {
     setResponseStatus(event, 400)
-    return fail('共享上游 API Key 未配置，无法执行连通性测试。', {
+    return fail('当前 Provider 不支持连通性测试。', {
+      startedAt,
+      provider: runtime.ai.provider,
+      model: runtime.ai.model,
+      fallbackUsed: false,
+      attempts: 1,
+    }, 40098)
+  }
+
+  const providerName = toText(resolvedProvider.provider)
+  const apiKey = resolvePlatformAiTransientApiKey({
+    currentApiKey: resolvedProvider.apiKey,
+    providedApiKey: body.apiKey ?? draftProvider?.apiKey,
+    mode: toMode(body.apiKeyMode),
+  })
+  const baseURL = normalizePlatformAiBaseURL(resolvedProvider.baseURL, providerName)
+  const usedProvidedApiKey = Boolean(toText(body.apiKey ?? draftProvider?.apiKey))
+  const preferredModel = toText(body.model)
+  const modelConfig = preferredModel
+    ? resolvedProvider.models.find(item => item.model === preferredModel && item.enabled) || null
+    : resolvedProvider.models.find(item => item.enabled) || resolvedProvider.models[0] || null
+
+  const resolved = {
+    provider: resolvedProvider,
+    ai: {
+      ...runtime.ai,
+      provider: providerName,
+      clientType: resolvedProvider.clientType || runtime.ai.clientType,
+      baseURL,
+      apiKey,
+      model: modelConfig?.model || '',
+      format: modelConfig?.format || 'openai-compatible',
+      timeoutMs: resolvedProvider.timeoutMs,
+      maxRetries: 0,
+      temperature: 0,
+    },
+  }
+
+  if (!resolved.ai.apiKey) {
+    setResponseStatus(event, 400)
+    return fail('Provider API Key 未配置，无法执行连通性测试。', {
       startedAt,
       provider: providerName,
       model: preferredModel || runtime.ai.model,
@@ -124,9 +167,9 @@ export default defineEventHandler(async (event) => {
     }, 40097)
   }
 
-  if (!String(resolved.ai.model || '').trim()) {
+  if (!resolved.ai.model) {
     setResponseStatus(event, 400)
-    return fail('未配置可用模型，无法执行连通性测试。', {
+    return fail('当前 Provider 未配置可用模型，无法执行连通性测试。', {
       startedAt,
       provider: resolved.ai.provider,
       model: runtime.ai.model,
@@ -137,7 +180,7 @@ export default defineEventHandler(async (event) => {
 
   if (!isAiRuntimeConfigured(resolved.ai)) {
     setResponseStatus(event, 400)
-    return fail('共享上游未完整配置，缺少 provider/baseURL/apiKey/model，无法执行连通性测试。', {
+    return fail('Provider 未完整配置，缺少 provider/baseURL/apiKey/model，无法执行连通性测试。', {
       startedAt,
       provider: resolved.ai.provider,
       model: resolved.ai.model,
@@ -154,7 +197,7 @@ export default defineEventHandler(async (event) => {
       timeoutMs: Math.min(15000, Math.max(3000, Number(resolved.ai.timeoutMs || 12000))),
     })
     const prompt = ChatPromptTemplate.fromMessages([
-      ['system', '你是共享上游连通性测试助手，只需返回一句简短文本。'],
+      ['system', '你是 AI Provider 连通性测试助手，只需返回一句简短文本。'],
       ['human', '{message}'],
     ])
     const promptValue = await prompt.invoke({
@@ -168,6 +211,7 @@ export default defineEventHandler(async (event) => {
         actorUserId: user.id,
         action: 'test.admin.ai.provider',
         payload: {
+          providerId: resolvedProvider.id,
           provider: resolved.ai.provider,
           model: resolved.ai.model,
           responsePreview: responsePreview.slice(0, 200),
@@ -177,6 +221,7 @@ export default defineEventHandler(async (event) => {
     })
 
     return ok({
+      providerId: resolvedProvider.id,
       provider: resolved.ai.provider,
       model: resolved.ai.model,
       responsePreview: responsePreview.slice(0, 300),
@@ -192,7 +237,7 @@ export default defineEventHandler(async (event) => {
   catch (error: any) {
     setResponseStatus(event, 502)
     const sourceLabel = usedProvidedApiKey ? '当前输入的 API Key' : '已保存的 API Key'
-    return fail(`[${sourceLabel}] ${String(error?.message || '共享上游测试失败。')}`, {
+    return fail(`[${sourceLabel}] ${String(error?.message || 'Provider 测试失败。')}`, {
       startedAt,
       provider: resolved.ai.provider,
       model: resolved.ai.model,

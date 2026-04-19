@@ -30,6 +30,35 @@ export function resolvePlatformAiRequestBaseURL(baseURL: unknown, provider = '')
   return `${normalized}/v1`
 }
 
+export function resolveDashScopeNativeBaseURL(baseURL: unknown, provider = ''): string {
+  const normalized = normalizePlatformAiBaseURL(baseURL, provider)
+  const providerText = toText(provider).toLowerCase()
+  const fallbackByProvider = providerText.includes('intl')
+    ? 'https://dashscope-intl.aliyuncs.com'
+    : providerText.includes('us')
+      ? 'https://dashscope-us.aliyuncs.com'
+      : providerText.includes('bailian') || providerText.includes('dashscope') || providerText.includes('qwen')
+        ? 'https://dashscope.aliyuncs.com'
+        : ''
+
+  if (!normalized)
+    return fallbackByProvider
+
+  try {
+    const url = new URL(normalized)
+    if (url.hostname === 'dashscope-intl.aliyuncs.com')
+      return 'https://dashscope-intl.aliyuncs.com'
+    if (url.hostname === 'dashscope-us.aliyuncs.com')
+      return 'https://dashscope-us.aliyuncs.com'
+    if (url.hostname === 'dashscope.aliyuncs.com')
+      return 'https://dashscope.aliyuncs.com'
+    return `${url.protocol}//${url.host}`.replace(/\/+$/, '')
+  }
+  catch {
+    return fallbackByProvider
+  }
+}
+
 export function normalizePlatformAiApiKey(apiKey: unknown): string {
   const normalized = toText(apiKey)
   if (!normalized)

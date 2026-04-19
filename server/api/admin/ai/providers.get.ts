@@ -27,25 +27,28 @@ export default defineEventHandler(async (event) => {
   }
 
   const registry = resolvePlatformAiRegistry(runtime)
-  const sharedProvider = registry.providers[0]
   const providerStats = await withClient(event, db => aggregatePlatformAiProviderUsage(db, registry.providers))
   const payload = {
-    upstream: {
-      provider: sharedProvider?.provider || runtime.ai.provider,
-      baseURL: sharedProvider?.baseURL || runtime.ai.baseURL,
-      timeoutMs: sharedProvider?.timeoutMs || runtime.ai.timeoutMs,
-      maxRetries: sharedProvider?.maxRetries || runtime.ai.maxRetries,
-      apiKeyConfigured: Boolean(runtime.ai.apiKey),
-      defaultModel: registry.defaults.defaultModel || runtime.ai.model,
-      embeddingModel: registry.defaults.embeddingModel || runtime.ai.embeddingModel,
-      visionModel: runtime.ai.visionModel,
-      documentModel: registry.defaults.documentModel || runtime.docAi.model,
-    },
-    modelPool: {
-      fetchedAt: sharedProvider?.fetchedAt || '',
-      total: sharedProvider?.models.length || 0,
-      items: sharedProvider?.models || [],
-    },
+    providers: registry.providers.map(provider => ({
+      id: provider.id,
+      name: provider.name,
+      type: provider.type,
+      capability: provider.capability,
+      adapter: provider.adapter,
+      provider: provider.provider,
+      clientType: provider.clientType,
+      baseURL: provider.baseURL,
+      enabled: provider.enabled,
+      timeoutMs: provider.timeoutMs,
+      maxRetries: provider.maxRetries,
+      fetchedAt: provider.fetchedAt,
+      apiKeyConfigured: Boolean(String(provider.apiKey || '').trim()),
+      embeddingApiStyle: provider.embeddingApiStyle || runtime.ai.embeddingApiStyle,
+      embeddingDimensions: provider.embeddingDimensions || runtime.ai.embeddingDimensions,
+      visionModel: provider.visionModel || '',
+      models: provider.models,
+    })),
+    defaults: registry.defaults,
     scenes: {
       items: registry.channels,
       definitions: getPlatformAiChannelDefinitions(),
@@ -71,8 +74,8 @@ export default defineEventHandler(async (event) => {
       actorUserId: user.id,
       action: 'read.admin.ai.providers',
       payload: {
-        upstreamProvider: payload.upstream.provider,
-        modelPoolSize: payload.modelPool.total,
+        providerCount: payload.providers.length,
+        sceneCount: payload.scenes.items.length,
       },
     })
   })

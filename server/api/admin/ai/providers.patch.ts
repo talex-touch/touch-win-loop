@@ -1,3 +1,7 @@
+import type {
+  PlatformAiClientType,
+  ProjectKnowledgeEmbeddingApiStyle,
+} from '~~/shared/types/domain'
 import { setResponseStatus } from 'h3'
 import { aggregatePlatformAiProviderUsage } from '~~/server/services/admin-ai/provider-usage'
 import { fail, ok } from '~~/server/utils/api'
@@ -13,7 +17,12 @@ import {
   resolvePlatformAiModelCatalogJson,
   resolvePlatformAiModelPricingJson,
   resolvePlatformAiRegistry,
+  type PlatformAiProviderType,
 } from '~~/server/utils/platform-ai-channels'
+import {
+  normalizePlatformAiClientType,
+  normalizeProjectKnowledgeEmbeddingApiStyle,
+} from '~~/server/utils/platform-ai-client'
 import {
   applyPlatformAiRuntimeOverrides,
   getPlatformAiOverrideState,
@@ -26,23 +35,30 @@ import { hasConfigMasterKey } from '~~/server/utils/secure-config'
 
 type SecretMode = 'keep' | 'replace' | 'clear'
 
+interface ProviderDraftBody {
+  id?: string
+  name?: string
+  type?: PlatformAiProviderType
+  provider?: string
+  clientType?: PlatformAiClientType
+  baseURL?: string
+  timeoutMs?: number
+  maxRetries?: number
+  enabled?: boolean
+  apiKey?: string
+  apiKeyMode?: SecretMode
+  embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+  embeddingDimensions?: number
+  visionModel?: string
+  models?: unknown[]
+}
+
 interface ProvidersPatchBody {
-  upstream?: {
-    provider?: string
-    baseURL?: string
-    timeoutMs?: number
-    maxRetries?: number
+  providers?: ProviderDraftBody[]
+  defaults?: {
     defaultModel?: string
     embeddingModel?: string
-    visionModel?: string
     documentModel?: string
-    apiKey?: string
-    apiKeyMode?: SecretMode
-  }
-  modelPool?: {
-    fetchedAt?: string
-    pullTriggered?: boolean
-    items?: unknown[]
   }
   scenes?: {
     items?: unknown[]
@@ -84,24 +100,6 @@ function normalizeSceneItems(raw: ProvidersPatchBody['scenes']): unknown[] {
   return []
 }
 
-function buildManualPriceSignature(items: unknown[]): string {
-  const normalized = items
-    .filter(item => item && typeof item === 'object' && !Array.isArray(item))
-    .map((item) => {
-      const source = item as Record<string, unknown>
-      return {
-        model: toText(source.model),
-        manualPriceOverride: Boolean(source.manualPriceOverride),
-        manualInputPricePer1M: source.manualInputPricePer1M ?? null,
-        manualOutputPricePer1M: source.manualOutputPricePer1M ?? null,
-      }
-    })
-    .filter(item => item.model)
-    .sort((a, b) => a.model.localeCompare(b.model, 'en'))
-
-  return JSON.stringify(normalized)
-}
-
 export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const { runtime } = await readEffectiveRuntimeSettings(event)
@@ -120,175 +118,167 @@ export default defineEventHandler(async (event) => {
     }, 40390)
   }
 
-  const upstreamBody = body?.upstream && typeof body.upstream === 'object' ? body.upstream as Record<string, unknown> : null
-  const modelPoolBody = body?.modelPool && typeof body.modelPool === 'object' ? body.modelPool as Record<string, unknown> : null
-  const adminAiBody = body?.adminAi && typeof body.adminAi === 'object' ? body.adminAi as Record<string, unknown> : null
-  const scenesItems = normalizeSceneItems(body?.scenes)
-  const hasScenesUpdate = scenesItems.length > 0 || Boolean(body?.scenes)
+  const hasProvidersUpdate = Array.isArray(body.providers)
+  const scenesItems = normalizeSceneItems(body.scenes)
+  const hasScenesUpdate = scenesItems.length > 0 || Boolean(body.scenes)
+  const defaultsBody = body.defaults && typeof body.defaults === 'object' ? body.defaults : undefined
+  const adminAiBody = body.adminAi && typeof body.adminAi === 'object' ? body.adminAi as Record<string, unknown> : null
   const masterKeyReady = hasConfigMasterKey(event)
-  const ignoredSecretReplace = {
-    upstream: toMode(upstreamBody?.apiKeyMode) === 'replace' && !masterKeyReady,
-    adminAi: toMode(adminAiBody?.tavilyApiKeyMode) === 'replace' && !masterKeyReady,
-  }
+  const ignoredProviderApiKeyIds: string[] = []
 
   const nextOverrides = await withTransaction(event, async (db) => {
     const existing = normalizePlatformAiRuntimeOverrides(await readPlatformAiRuntimeOverrides(db))
     const next = normalizePlatformAiRuntimeOverrides(existing)
     const currentRuntime = applyPlatformAiRuntimeOverrides(runtime, existing)
     const currentRegistry = resolvePlatformAiRegistry(currentRuntime)
-    const currentProvider = currentRegistry.providers[0]
-    const currentDefaults = currentRegistry.defaults
-    const currentModelItems = currentProvider?.models || []
-    const currentManualSignature = buildManualPriceSignature(currentModelItems)
-    const upstreamChanged = Boolean(upstreamBody)
-    const modelPoolChanged = Boolean(modelPoolBody && (hasOwn(modelPoolBody, 'items') || hasOwn(modelPoolBody, 'fetchedAt')))
-    const shouldSyncSharedRuntime = upstreamChanged || modelPoolChanged || hasScenesUpdate
+    const currentProvidersById = new Map(currentRegistry.providers.map(item => [item.id, item]))
 
-    if (shouldSyncSharedRuntime) {
-      const ai = ensureSection(next.ai)
-      const docAi = ensureSection(next.docAi)
-
-      const apiKeyMode = toMode(upstreamBody?.apiKeyMode)
-      if (apiKeyMode === 'replace' && masterKeyReady)
-        ai.apiKey = normalizePlatformAiApiKey(upstreamBody?.apiKey)
-      if (apiKeyMode === 'clear')
-        ai.apiKey = ''
-
-      const provider = hasOwn(upstreamBody || {}, 'provider')
-        ? toText(upstreamBody?.provider)
-        : (currentProvider?.provider || currentRuntime.ai.provider)
-      const baseURL = hasOwn(upstreamBody || {}, 'baseURL')
-        ? normalizePlatformAiBaseURL(upstreamBody?.baseURL, provider)
-        : (currentProvider?.baseURL || currentRuntime.ai.baseURL)
-      const timeoutMs = hasOwn(upstreamBody || {}, 'timeoutMs')
-        ? Number(upstreamBody?.timeoutMs)
-        : (currentProvider?.timeoutMs || currentRuntime.ai.timeoutMs)
-      const maxRetries = hasOwn(upstreamBody || {}, 'maxRetries')
-        ? Number(upstreamBody?.maxRetries)
-        : (currentProvider?.maxRetries || currentRuntime.ai.maxRetries)
-      const defaultModel = hasOwn(upstreamBody || {}, 'defaultModel')
-        ? toText(upstreamBody?.defaultModel)
-        : currentDefaults.defaultModel
-      const embeddingModel = hasOwn(upstreamBody || {}, 'embeddingModel')
-        ? toText(upstreamBody?.embeddingModel)
-        : currentDefaults.embeddingModel
-      const visionModel = hasOwn(upstreamBody || {}, 'visionModel')
-        ? toText(upstreamBody?.visionModel)
-        : currentRuntime.ai.visionModel
-      const documentModel = hasOwn(upstreamBody || {}, 'documentModel')
-        ? toText(upstreamBody?.documentModel)
-        : currentDefaults.documentModel
-      const modelItems = Array.isArray(modelPoolBody?.items)
-        ? modelPoolBody?.items as unknown[]
-        : currentModelItems
-
-      const sharedApiKey = Object.prototype.hasOwnProperty.call(ai, 'apiKey')
-        ? String(ai.apiKey || '')
-        : currentRuntime.ai.apiKey
-      const invalidateFetchedAt = (
-        provider !== (currentProvider?.provider || currentRuntime.ai.provider)
-        || baseURL !== (currentProvider?.baseURL || currentRuntime.ai.baseURL)
-        || apiKeyMode === 'replace'
-        || apiKeyMode === 'clear'
-      )
-      const fetchedAt = invalidateFetchedAt
-        ? ''
-        : (hasOwn(modelPoolBody || {}, 'fetchedAt')
-            ? String(modelPoolBody?.fetchedAt || '')
-            : (currentProvider?.fetchedAt || ''))
-
-      ai.providersJson = buildPlatformAiRegistryJson(currentRuntime, {
-        provider: {
-          provider,
-          baseURL,
-          timeoutMs,
-          maxRetries,
-        },
-        modelPool: {
-          fetchedAt,
-          items: modelItems,
-        },
-        defaults: {
-          defaultModel,
-          embeddingModel,
-          documentModel,
-        },
-      })
-
-      const providerPreviewRuntime = {
-        ...currentRuntime,
-        ai: {
-          ...currentRuntime.ai,
-          ...ai,
-          apiKey: sharedApiKey,
-          providersJson: ai.providersJson,
-        },
-      }
-      const providerPreviewRegistry = resolvePlatformAiRegistry(providerPreviewRuntime)
-
-      if (hasScenesUpdate) {
-        ai.channelsJson = buildPlatformAiChannelsJson(
-          providerPreviewRuntime,
-          scenesItems,
-          providerPreviewRegistry.providers,
-        )
-      }
-
-      const finalPreviewRuntime = {
-        ...providerPreviewRuntime,
-        ai: {
-          ...providerPreviewRuntime.ai,
-          channelsJson: ai.channelsJson || providerPreviewRuntime.ai.channelsJson,
-        },
-      }
-      const finalRegistry = resolvePlatformAiRegistry(finalPreviewRuntime)
-      const finalProvider = finalRegistry.providers[0]
-
-      ai.provider = finalProvider?.provider || provider || currentRuntime.ai.provider
-      ai.baseURL = finalProvider?.baseURL || baseURL
-      ai.model = finalRegistry.defaults.defaultModel || currentRuntime.ai.model
-      ai.embeddingModel = finalRegistry.defaults.embeddingModel || currentRuntime.ai.embeddingModel
-      ai.visionModel = visionModel || currentRuntime.ai.visionModel
-      ai.timeoutMs = finalProvider?.timeoutMs || timeoutMs
-      ai.maxRetries = finalProvider?.maxRetries || maxRetries
-
-      const runtimeForCatalog = {
-        ...finalPreviewRuntime,
-        ai: {
-          ...finalPreviewRuntime.ai,
-          provider: ai.provider,
-          baseURL: ai.baseURL,
-          model: ai.model,
-          embeddingModel: ai.embeddingModel,
-          visionModel: ai.visionModel,
-          timeoutMs: ai.timeoutMs,
-          maxRetries: ai.maxRetries,
-        },
-      }
-
-      ai.modelCatalogJson = resolvePlatformAiModelCatalogJson(runtimeForCatalog)
-      ai.modelPricingJson = resolvePlatformAiModelPricingJson(runtimeForCatalog)
-
-      docAi.provider = ai.provider
-      docAi.baseURL = ai.baseURL
-      docAi.apiKey = sharedApiKey
-      docAi.model = finalRegistry.defaults.documentModel || currentRuntime.docAi.model
-      docAi.timeoutMs = ai.timeoutMs
-      docAi.maxRetries = ai.maxRetries
-      docAi.modelPricingJson = ai.modelPricingJson
-
-      next.ai = ai
-      next.docAi = docAi
-
-      const nextManualSignature = buildManualPriceSignature(modelItems)
-      ;(next as any).__auditMeta = {
-        upstreamChanged,
-        modelPoolChanged,
-        scenesChanged: hasScenesUpdate,
-        pullTriggered: Boolean(modelPoolBody?.pullTriggered),
-        manualPriceOverrideChanged: currentManualSignature !== nextManualSignature,
-      }
+    const defaultsSeed = {
+      defaultModel: toText(defaultsBody?.defaultModel) || currentRegistry.defaults.defaultModel,
+      embeddingModel: toText(defaultsBody?.embeddingModel) || currentRegistry.defaults.embeddingModel,
+      documentModel: toText(defaultsBody?.documentModel) || currentRegistry.defaults.documentModel,
     }
+
+    const providerDrafts = hasProvidersUpdate ? body.providers || [] : currentRegistry.providers
+    const providerSeeds = providerDrafts.map((rawProvider, index) => {
+      const source = rawProvider && typeof rawProvider === 'object'
+        ? rawProvider as ProviderDraftBody
+        : {} as ProviderDraftBody
+      const currentProvider = currentProvidersById.get(toText(source.id)) || null
+      const providerId = toText(source.id) || currentProvider?.id || `provider_${index + 1}`
+      const apiKeyMode = toMode(source.apiKeyMode)
+      let apiKey = currentProvider?.apiKey || ''
+      if (apiKeyMode === 'replace') {
+        if (masterKeyReady)
+          apiKey = normalizePlatformAiApiKey(source.apiKey)
+        else
+          ignoredProviderApiKeyIds.push(providerId)
+      }
+      else if (apiKeyMode === 'clear') {
+        apiKey = ''
+      }
+
+      return {
+        id: providerId,
+        name: toText(source.name) || currentProvider?.name || '',
+        type: source.type || currentProvider?.type || 'openai-compatible',
+        provider: toText(source.provider) || currentProvider?.provider || '',
+        clientType: hasOwn(source as Record<string, unknown>, 'clientType')
+          ? normalizePlatformAiClientType(source.clientType, currentRuntime.ai.clientType)
+          : (currentProvider?.clientType || currentRuntime.ai.clientType),
+        baseURL: hasOwn(source as Record<string, unknown>, 'baseURL')
+          ? normalizePlatformAiBaseURL(source.baseURL, toText(source.provider) || currentProvider?.provider || '')
+          : (currentProvider?.baseURL || currentRuntime.ai.baseURL),
+        enabled: hasOwn(source as Record<string, unknown>, 'enabled')
+          ? Boolean(source.enabled)
+          : (currentProvider?.enabled ?? true),
+        timeoutMs: hasOwn(source as Record<string, unknown>, 'timeoutMs')
+          ? Number(source.timeoutMs || currentRuntime.ai.timeoutMs)
+          : (currentProvider?.timeoutMs || currentRuntime.ai.timeoutMs),
+        maxRetries: hasOwn(source as Record<string, unknown>, 'maxRetries')
+          ? Number(source.maxRetries || currentRuntime.ai.maxRetries)
+          : (currentProvider?.maxRetries || currentRuntime.ai.maxRetries),
+        apiKey,
+        fetchedAt: currentProvider?.fetchedAt || '',
+        embeddingApiStyle: hasOwn(source as Record<string, unknown>, 'embeddingApiStyle')
+          ? normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle, currentRuntime.ai.embeddingApiStyle)
+          : (currentProvider?.embeddingApiStyle || currentRuntime.ai.embeddingApiStyle),
+        embeddingDimensions: hasOwn(source as Record<string, unknown>, 'embeddingDimensions')
+          ? Number(source.embeddingDimensions || currentRuntime.ai.embeddingDimensions)
+          : (currentProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions),
+        visionModel: hasOwn(source as Record<string, unknown>, 'visionModel')
+          ? toText(source.visionModel)
+          : (currentProvider?.visionModel || currentRuntime.ai.visionModel),
+        models: Array.isArray(source.models)
+          ? source.models
+          : (currentProvider?.models || []),
+      }
+    })
+
+    const ai = ensureSection(next.ai)
+    const docAi = ensureSection(next.docAi)
+
+    ai.providersJson = buildPlatformAiRegistryJson(currentRuntime, {
+      providers: providerSeeds,
+      defaults: defaultsSeed,
+    })
+
+    const providerPreviewRuntime = {
+      ...currentRuntime,
+      ai: {
+        ...currentRuntime.ai,
+        providersJson: ai.providersJson,
+      },
+    }
+    const providerPreviewRegistry = resolvePlatformAiRegistry(providerPreviewRuntime)
+
+    const nextSceneItems = hasScenesUpdate ? scenesItems : currentRegistry.channels
+    ai.channelsJson = buildPlatformAiChannelsJson(
+      providerPreviewRuntime,
+      nextSceneItems,
+      providerPreviewRegistry.providers,
+    )
+
+    const finalPreviewRuntime = {
+      ...providerPreviewRuntime,
+      ai: {
+        ...providerPreviewRuntime.ai,
+        channelsJson: ai.channelsJson,
+      },
+    }
+    const finalRegistry = resolvePlatformAiRegistry(finalPreviewRuntime)
+    const primaryProvider = finalRegistry.providers.find(item => item.capability === 'llm' && item.enabled)
+      || finalRegistry.providers.find(item => item.capability === 'llm')
+      || null
+
+    ai.provider = primaryProvider?.provider || ''
+    ai.clientType = primaryProvider?.clientType || currentRuntime.ai.clientType
+    ai.baseURL = primaryProvider?.baseURL || ''
+    ai.apiKey = primaryProvider?.apiKey || ''
+    ai.model = finalRegistry.defaults.defaultModel || ''
+    ai.embeddingModel = finalRegistry.defaults.embeddingModel || ''
+    ai.embeddingApiStyle = primaryProvider?.embeddingApiStyle || currentRuntime.ai.embeddingApiStyle
+    ai.embeddingDimensions = Number(primaryProvider?.embeddingDimensions || currentRuntime.ai.embeddingDimensions || 0)
+    ai.visionModel = primaryProvider?.visionModel || ''
+    ai.timeoutMs = primaryProvider?.timeoutMs || currentRuntime.ai.timeoutMs
+    ai.maxRetries = primaryProvider?.maxRetries || currentRuntime.ai.maxRetries
+
+    const runtimeForCatalog = {
+      ...finalPreviewRuntime,
+      ai: {
+        ...finalPreviewRuntime.ai,
+        provider: ai.provider,
+        clientType: ai.clientType,
+        baseURL: ai.baseURL,
+        apiKey: ai.apiKey,
+        model: ai.model,
+        embeddingModel: ai.embeddingModel,
+        embeddingApiStyle: ai.embeddingApiStyle,
+        embeddingDimensions: ai.embeddingDimensions,
+        visionModel: ai.visionModel,
+        timeoutMs: ai.timeoutMs,
+        maxRetries: ai.maxRetries,
+        providersJson: ai.providersJson,
+        channelsJson: ai.channelsJson,
+      },
+      docAi: {
+        ...finalPreviewRuntime.docAi,
+      },
+    }
+
+    ai.modelCatalogJson = resolvePlatformAiModelCatalogJson(runtimeForCatalog)
+    ai.modelPricingJson = resolvePlatformAiModelPricingJson(runtimeForCatalog)
+
+    docAi.provider = ai.provider
+    docAi.baseURL = ai.baseURL
+    docAi.apiKey = ai.apiKey
+    docAi.model = finalRegistry.defaults.documentModel || ''
+    docAi.timeoutMs = ai.timeoutMs
+    docAi.maxRetries = ai.maxRetries
+    docAi.modelPricingJson = ai.modelPricingJson
+
+    next.ai = ai
+    next.docAi = docAi
 
     if (adminAiBody) {
       const adminAi = ensureSection(next.adminAi)
@@ -313,24 +303,16 @@ export default defineEventHandler(async (event) => {
     next.updatedAt = new Date().toISOString()
     next.updatedByUserId = user.id
 
-    const auditMeta = (next as any).__auditMeta || {}
-    delete (next as any).__auditMeta
-
     const normalized = normalizePlatformAiRuntimeOverrides(next)
     await writePlatformAiRuntimeOverrides(db, normalized)
     await recordContestAuditLog(db, {
       actorUserId: user.id,
       action: 'write.admin.ai.providers',
       payload: {
-        hasSharedUpstreamUpdate: Boolean(auditMeta.upstreamChanged),
-        hasModelPoolUpdate: Boolean(auditMeta.modelPoolChanged),
-        hasSceneRouteUpdate: Boolean(auditMeta.scenesChanged),
-        triggeredModelPull: Boolean(auditMeta.pullTriggered),
-        hasManualPriceOverrideUpdate: Boolean(auditMeta.manualPriceOverrideChanged),
+        providerCount: providerSeeds.length,
+        sceneCount: nextSceneItems.length,
+        ignoredProviderApiKeyIds,
         hasAdminAiUpdate: Boolean(adminAiBody),
-        ignoredSecretReplaceKeys: Object.entries(ignoredSecretReplace)
-          .filter(([, ignored]) => ignored)
-          .map(([key]) => key),
       },
     })
     return normalized
@@ -338,28 +320,28 @@ export default defineEventHandler(async (event) => {
 
   const effectiveRuntime = applyPlatformAiRuntimeOverrides(runtime, nextOverrides)
   const registry = resolvePlatformAiRegistry(effectiveRuntime)
-  const sharedProvider = registry.providers[0]
   const providerStats = await withClient(event, db => aggregatePlatformAiProviderUsage(db, registry.providers))
-  const ignoredSecretReplaceKeys = Object.entries(ignoredSecretReplace)
-    .filter(([, ignored]) => ignored)
-    .map(([key]) => key)
   const payload = {
-    upstream: {
-      provider: sharedProvider?.provider || effectiveRuntime.ai.provider,
-      baseURL: sharedProvider?.baseURL || effectiveRuntime.ai.baseURL,
-      timeoutMs: sharedProvider?.timeoutMs || effectiveRuntime.ai.timeoutMs,
-      maxRetries: sharedProvider?.maxRetries || effectiveRuntime.ai.maxRetries,
-      apiKeyConfigured: Boolean(effectiveRuntime.ai.apiKey),
-      defaultModel: registry.defaults.defaultModel || effectiveRuntime.ai.model,
-      embeddingModel: registry.defaults.embeddingModel || effectiveRuntime.ai.embeddingModel,
-      visionModel: effectiveRuntime.ai.visionModel,
-      documentModel: registry.defaults.documentModel || effectiveRuntime.docAi.model,
-    },
-    modelPool: {
-      fetchedAt: sharedProvider?.fetchedAt || '',
-      total: sharedProvider?.models.length || 0,
-      items: sharedProvider?.models || [],
-    },
+    providers: registry.providers.map(provider => ({
+      id: provider.id,
+      name: provider.name,
+      type: provider.type,
+      capability: provider.capability,
+      adapter: provider.adapter,
+      provider: provider.provider,
+      clientType: provider.clientType,
+      baseURL: provider.baseURL,
+      enabled: provider.enabled,
+      timeoutMs: provider.timeoutMs,
+      maxRetries: provider.maxRetries,
+      fetchedAt: provider.fetchedAt,
+      apiKeyConfigured: Boolean(String(provider.apiKey || '').trim()),
+      embeddingApiStyle: provider.embeddingApiStyle || effectiveRuntime.ai.embeddingApiStyle,
+      embeddingDimensions: provider.embeddingDimensions || effectiveRuntime.ai.embeddingDimensions,
+      visionModel: provider.visionModel || '',
+      models: provider.models,
+    })),
+    defaults: registry.defaults,
     scenes: {
       items: registry.channels,
       definitions: getPlatformAiChannelDefinitions(),
@@ -375,7 +357,7 @@ export default defineEventHandler(async (event) => {
       masterKeyReady,
     },
     warnings: {
-      ignoredSecretReplaceKeys,
+      ignoredProviderApiKeyIds,
     },
     stats: {
       providerUsage: providerStats,

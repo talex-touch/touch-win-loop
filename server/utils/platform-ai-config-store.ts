@@ -1,7 +1,15 @@
 import type { H3Event } from 'h3'
 import type { Queryable } from '~~/server/utils/db'
 import type { RuntimeSettings } from '~~/server/utils/env'
+import type {
+  PlatformAiClientType,
+  ProjectKnowledgeEmbeddingApiStyle,
+} from '~~/shared/types/domain'
 import { withClient } from '~~/server/utils/db'
+import {
+  normalizePlatformAiClientType,
+  normalizeProjectKnowledgeEmbeddingApiStyle,
+} from '~~/server/utils/platform-ai-client'
 import { readEffectivePlatformRuntimeSettings as readEffectiveBaseRuntimeSettings } from '~~/server/utils/platform-runtime-config-store'
 import { decryptConfigSecretSafe, encryptConfigSecret, hasConfigMasterKey, isEncryptedConfigValue } from '~~/server/utils/secure-config'
 
@@ -10,10 +18,13 @@ const PLATFORM_AI_RUNTIME_OVERRIDES_KEY = 'platform_ai_runtime_overrides.v1'
 export interface PlatformAiRuntimeOverrides {
   ai?: {
     provider?: string
+    clientType?: PlatformAiClientType
     baseURL?: string
     apiKey?: string
     model?: string
     embeddingModel?: string
+    embeddingApiStyle?: ProjectKnowledgeEmbeddingApiStyle
+    embeddingDimensions?: number
     visionModel?: string
     modelCatalogJson?: string
     modelPricingJson?: string
@@ -84,6 +95,8 @@ function normalizeAiSection(raw: unknown): PlatformAiRuntimeOverrides['ai'] {
 
   if (hasOwn(source, 'provider'))
     output.provider = toText(source.provider)
+  if (hasOwn(source, 'clientType'))
+    output.clientType = normalizePlatformAiClientType(source.clientType)
   if (hasOwn(source, 'baseURL'))
     output.baseURL = toText(source.baseURL)
   if (hasOwn(source, 'apiKey'))
@@ -92,6 +105,10 @@ function normalizeAiSection(raw: unknown): PlatformAiRuntimeOverrides['ai'] {
     output.model = toText(source.model)
   if (hasOwn(source, 'embeddingModel'))
     output.embeddingModel = toText(source.embeddingModel)
+  if (hasOwn(source, 'embeddingApiStyle'))
+    output.embeddingApiStyle = normalizeProjectKnowledgeEmbeddingApiStyle(source.embeddingApiStyle)
+  if (hasOwn(source, 'embeddingDimensions'))
+    output.embeddingDimensions = toNumber(source.embeddingDimensions)
   if (hasOwn(source, 'visionModel'))
     output.visionModel = toText(source.visionModel)
   if (hasOwn(source, 'modelCatalogJson'))
@@ -171,6 +188,56 @@ function clamp(input: number | undefined, fallback: number, min: number, max: nu
   return Math.max(min, Math.min(max, value))
 }
 
+function mapProvidersJsonSecrets(
+  raw: string,
+  mode: 'encrypt' | 'decrypt',
+): string {
+  const text = String(raw || '').trim()
+  if (!text)
+    return ''
+
+  try {
+    const parsed = JSON.parse(text)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      return text
+
+    const root = parsed as Record<string, unknown>
+
+    if (Array.isArray(root.providers)) {
+      root.providers = root.providers.map((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item))
+          return item
+        const provider = { ...(item as Record<string, unknown>) }
+        if (Object.prototype.hasOwnProperty.call(provider, 'apiKey')) {
+          const value = String(provider.apiKey || '')
+          provider.apiKey = mode === 'encrypt'
+            ? (value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value)
+            : decryptConfigSecretSafe(value)
+        }
+        return provider
+      })
+      return JSON.stringify(root, null, 2)
+    }
+
+    if (root.provider && typeof root.provider === 'object' && !Array.isArray(root.provider)) {
+      const provider = { ...(root.provider as Record<string, unknown>) }
+      if (Object.prototype.hasOwnProperty.call(provider, 'apiKey')) {
+        const value = String(provider.apiKey || '')
+        provider.apiKey = mode === 'encrypt'
+          ? (value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value)
+          : decryptConfigSecretSafe(value)
+      }
+      root.provider = provider
+      return JSON.stringify(root, null, 2)
+    }
+
+    return text
+  }
+  catch {
+    return text
+  }
+}
+
 export function normalizePlatformAiRuntimeOverrides(raw: unknown): PlatformAiRuntimeOverrides {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))
     return {}
@@ -213,6 +280,8 @@ export async function readPlatformAiRuntimeOverrides(db: Queryable): Promise<Pla
     const normalized = normalizePlatformAiRuntimeOverrides(JSON.parse(raw))
     if (normalized.ai && Object.prototype.hasOwnProperty.call(normalized.ai, 'apiKey'))
       normalized.ai.apiKey = decryptConfigSecretSafe(normalized.ai.apiKey)
+    if (normalized.ai && Object.prototype.hasOwnProperty.call(normalized.ai, 'providersJson'))
+      normalized.ai.providersJson = mapProvidersJsonSecrets(normalized.ai.providersJson || '', 'decrypt')
     if (normalized.docAi && Object.prototype.hasOwnProperty.call(normalized.docAi, 'apiKey'))
       normalized.docAi.apiKey = decryptConfigSecretSafe(normalized.docAi.apiKey)
     if (normalized.adminAi && Object.prototype.hasOwnProperty.call(normalized.adminAi, 'tavilyApiKey'))
@@ -235,6 +304,11 @@ export async function writePlatformAiRuntimeOverrides(
   if (persistable.ai && Object.prototype.hasOwnProperty.call(persistable.ai, 'apiKey')) {
     const value = String(persistable.ai.apiKey || '')
     persistable.ai.apiKey = hasMasterKey && value && !isEncryptedConfigValue(value) ? encryptConfigSecret(value) : value
+  }
+  if (persistable.ai && Object.prototype.hasOwnProperty.call(persistable.ai, 'providersJson')) {
+    persistable.ai.providersJson = hasMasterKey
+      ? mapProvidersJsonSecrets(String(persistable.ai.providersJson || ''), 'encrypt')
+      : String(persistable.ai.providersJson || '')
   }
   if (persistable.docAi && Object.prototype.hasOwnProperty.call(persistable.docAi, 'apiKey')) {
     const value = String(persistable.docAi.apiKey || '')
@@ -269,6 +343,8 @@ export function applyPlatformAiRuntimeOverrides(
   if (ai) {
     if (ai.provider !== undefined)
       next.ai.provider = ai.provider
+    if (ai.clientType !== undefined)
+      next.ai.clientType = ai.clientType
     if (ai.baseURL !== undefined)
       next.ai.baseURL = ai.baseURL
     if (ai.apiKey !== undefined)
@@ -277,6 +353,10 @@ export function applyPlatformAiRuntimeOverrides(
       next.ai.model = ai.model
     if (ai.embeddingModel !== undefined)
       next.ai.embeddingModel = ai.embeddingModel
+    if (ai.embeddingApiStyle !== undefined)
+      next.ai.embeddingApiStyle = ai.embeddingApiStyle
+    if (ai.embeddingDimensions !== undefined)
+      next.ai.embeddingDimensions = Math.max(0, Math.round(ai.embeddingDimensions))
     if (ai.visionModel !== undefined)
       next.ai.visionModel = ai.visionModel
     if (ai.modelCatalogJson !== undefined)
@@ -342,9 +422,6 @@ export async function readEffectiveRuntimeSettings(
   event?: H3Event,
 ): Promise<{ runtime: RuntimeSettings, overrides: PlatformAiRuntimeOverrides }> {
   const { runtime: baseRuntime } = await readEffectiveBaseRuntimeSettings(event)
-  if (!event)
-    return { runtime: baseRuntime, overrides: {} }
-
   try {
     const overrides = await withClient(event, async (db) => {
       return readPlatformAiRuntimeOverrides(db)

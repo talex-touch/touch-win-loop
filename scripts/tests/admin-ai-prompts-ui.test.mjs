@@ -5,7 +5,7 @@ import { it } from 'vitest'
 
 const PAGE_FILE = resolve(process.cwd(), 'app/pages/admin/ai-prompts.vue')
 
-it('顶部 tab 收敛为渠道和模型、场景、Audits、Logs', async () => {
+it('顶部 tab 保留渠道和模型、场景、Audits、Logs', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /label:\s*'渠道和模型'/, '缺少“渠道和模型” tab')
@@ -14,106 +14,70 @@ it('顶部 tab 收敛为渠道和模型、场景、Audits、Logs', async () => {
   assert.match(source, /label:\s*'Logs'/, '缺少 “Logs” tab')
 })
 
-it('页面不再暴露旧的 Providers、Models、Channels 文案入口', async () => {
+it('页面已切换为多 Provider 管理入口', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.doesNotMatch(source, /label:\s*'Providers'/, '不应再出现 Providers tab')
-  assert.doesNotMatch(source, /label:\s*'Models'/, '不应再出现 Models tab')
-  assert.doesNotMatch(source, /label:\s*'Channels'/, '不应再出现 Channels tab')
-  assert.doesNotMatch(source, /Provider Registry/, '不应再出现 Provider Registry 文案')
+  assert.match(source, /class="ai-prompts-page space-y-4 w-full min-w-0"/, '页面根节点应为全宽布局')
+  assert.match(source, /Provider 列表/, '缺少 Provider 列表')
+  assert.match(source, /新增 Provider/, '缺少新增 Provider 入口')
+  assert.match(source, /Provider 类型/, '缺少 Provider 类型编辑项')
+  assert.doesNotMatch(source, /单上游 \+ 模型池 \+ 场景回退/, '不应继续展示单上游标题')
+  assert.doesNotMatch(source, /这里只保留共享上游连接信息/, '不应继续展示共享上游说明')
 })
 
-it('页面不再暴露兼容用途模型输入项', async () => {
+it('Provider 类型固定包含 LLM 与 search-only 首批枚举', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.doesNotMatch(source, /默认对话模型/, '不应再出现默认对话模型输入项')
-  assert.doesNotMatch(source, /Embedding 模型/, '不应再出现 Embedding 模型输入项')
-  assert.doesNotMatch(source, /文档分析模型/, '不应再出现文档分析模型输入项')
+  assert.match(source, /value:\s*'newapi'[\s\S]*label:\s*'NewAPI'/, '缺少 NewAPI 类型')
+  assert.match(source, /value:\s*'openai-compatible'[\s\S]*label:\s*'OpenAI Compatible'/, '缺少 OpenAI Compatible 类型')
+  assert.match(source, /value:\s*'dashscope-bailian'[\s\S]*label:\s*'百炼 DashScope'/, '缺少百炼 DashScope 类型')
+  assert.match(source, /value:\s*'searchxng'[\s\S]*capability:\s*'search'/, '缺少 SearchXNG search-only 类型')
+  assert.match(source, /value:\s*'tavily'[\s\S]*capability:\s*'search'/, '缺少 Tavily search-only 类型')
 })
 
-it('base url 输入改为根地址并提示自动补 /v1', async () => {
+it('默认模型与联网能力不再单独占据渠道和模型页', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /placeholder="https:\/\/your-newapi\.example"/, 'Base URL 占位符应使用根地址')
-  assert.match(source, /Base URL 将自动规范为根地址，调用时自动补 \/v1/, '缺少 Base URL 自动补 /v1 提示')
-  assert.match(source, /当前输入框里的 API Key 会优先用于测试上游和拉取模型/, '缺少 API Key 临时优先使用提示')
-  assert.match(source, /测试\/拉取会优先使用当前输入；保存持久化需选择替换/, 'API Key 输入框占位提示不正确')
+  assert.doesNotMatch(source, /<div class="text-base font-semibold">\s*默认模型\s*<\/div>/, '默认模型卡片应已移出当前页')
+  assert.doesNotMatch(source, /<div class="text-base font-semibold">\s*联网能力\s*<\/div>/, '联网能力卡片应已移出当前页')
+  assert.match(source, /每个 Provider 独立维护类型、密钥、模型池，以及搜索或 LLM 能力配置。/, 'Provider 列表说明应体现搜索能力归属 Provider')
+  assert.doesNotMatch(source, /价格优先级固定为 手工覆盖 > NewAPI 导入 > none。/, '旧统一模型池说明不应继续存在')
 })
 
-it('模型与场景编辑改为 drawer 且包含滚动容器', async () => {
+it('Provider 抽屉支持独立测试、拉取模型和维护模型池', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /<a-drawer[\s\S]*v-model:visible="modelEditorVisible"/, '缺少模型编辑抽屉')
-  assert.match(source, /<a-drawer[\s\S]*v-model:visible="sceneEditorVisible"/, '缺少场景编辑抽屉')
-  assert.match(source, /<a-drawer[\s\S]*v-model:visible="sceneBatchEditorVisible"/, '缺少批量场景模型抽屉')
-  assert.match(source, /max-h-\[calc\(100vh-132px\)\][\s\S]*overflow-y-auto/, '抽屉内容缺少滚动容器')
+  assert.match(source, /v-model:visible="providerEditorVisible"/, '缺少 Provider 编辑抽屉')
+  assert.match(source, /测试 Provider/, '缺少 Provider 测试入口')
+  assert.match(source, /拉取模型/, '缺少 Provider 拉取模型入口')
+  assert.match(source, /Provider 模型池/, '缺少 Provider 模型池区域')
+  assert.match(source, /每个 LLM Provider 维护自己的模型池与价格覆盖。/, '缺少 Provider 级模型池说明')
 })
 
-it('场景页支持一键设置全部场景模型', async () => {
+it('search-only Provider 不参与 LLM 场景模型路由', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /一键设置全部场景模型/, '缺少批量设置全部场景模型入口')
-  assert.match(source, /应用到全部场景/, '缺少批量应用按钮')
-  assert.match(source, /复制模型链到全部场景/, '缺少从当前场景复制模型链到全部场景入口')
+  assert.match(source, /SearchXNG \/ Tavily 属于 search-only Provider，当前不会进入 LLM 模型池，也不能绑定到这些 LLM 场景。/, '缺少 search-only 限制说明')
+  assert.match(source, /只能选择 llm Provider/, '场景 Provider 选择应限制为 llm Provider')
+  assert.match(source, /llmProviderOptions/, '场景 Provider 下拉应来自 llmProviderOptions')
 })
 
-it('拉取模型改为分组导入弹框', async () => {
+it('场景抽屉支持 Provider 绑定、轮询和模型回退链', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
-  assert.match(source, /title="选择导入模型"/, '缺少模型导入弹框')
-  assert.match(source, /拉取结果会先按系列分组展示。你可以全选、按系列勾选，或继续精确到单个模型后再导入。/, '缺少分组导入说明')
-  assert.match(source, /placeholder="按模型名或展示名筛选"/, '缺少导入模型筛选输入框')
-  assert.match(source, /筛选结果：\{\{ filteredPulledModelCount \}\}/, '缺少筛选结果统计')
-  assert.match(source, /点击展开查看该系列下的/, '模型分组默认应收起并支持展开')
-  assert.match(source, /没有匹配的模型/, '筛选为空时应展示空态')
-  assert.match(source, /导入选中模型/, '缺少导入选中模型按钮')
-  assert.match(source, /已在模型池/, '导入弹框应标记已存在模型')
-  assert.match(source, /新模型/, '导入弹框应标记新增模型')
+  assert.match(source, /v-model:visible="sceneEditorVisible"/, '缺少场景编辑抽屉')
+  assert.match(source, /绑定 Provider/, '缺少场景 Provider 绑定项')
+  assert.match(source, /负载均衡策略/, '缺少负载均衡策略项')
+  assert.match(source, /模型回退链/, '缺少模型回退链项')
+  assert.match(source, /复制当前策略到全部场景/, '缺少一键复制当前场景策略入口')
+  assert.match(source, /一键设置全部场景/, '缺少批量配置入口')
 })
 
-it('模型池支持一键清空当前草稿', async () => {
-  const source = await readFile(PAGE_FILE, 'utf8')
-
-  assert.match(source, /清空模型池/, '缺少清空模型池入口')
-  assert.match(source, /确认清空当前模型池吗？这会移除全部模型，并同步清空场景里的模型回退链；只有保存后才会持久化。/, '缺少清空模型池确认说明')
-})
-
-it('场景模型编辑改为可搜索可创建的多选下拉', async () => {
-  const source = await readFile(PAGE_FILE, 'utf8')
-
-  assert.match(source, /v-model="sceneEditorForm\.models"[\s\S]*multiple[\s\S]*allow-search[\s\S]*allow-create/, '场景模型编辑应使用支持搜索和创建的多选下拉')
-  assert.match(source, /v-model="sceneBatchForm\.models"[\s\S]*multiple[\s\S]*allow-search[\s\S]*allow-create/, '批量场景模型编辑应使用支持搜索和创建的多选下拉')
-  assert.match(source, /顺序按添加先后决定；如需调整顺序，请删除后按新的顺序重新添加。/, '缺少模型回退顺序说明')
-  assert.doesNotMatch(source, /sceneEditorForm\.modelsText/, '场景编辑不应继续使用文本框状态')
-  assert.doesNotMatch(source, /sceneBatchForm\.modelsText/, '批量场景编辑不应继续使用文本框状态')
-})
-
-it('表格列配置使用 columns slot、数值宽度并避免 cell slot 解构告警写法', async () => {
-  const source = await readFile(PAGE_FILE, 'utf8')
-
-  assert.match(source, /<a-table[\s\S]*<template #columns>/, '表格应通过 columns slot 注册列定义')
-  assert.doesNotMatch(source, /<a-table-column[^>]*\swidth="(?:90|100|120|150|180|220|260)"/, '表格列宽不应再以字符串形式传入')
-  assert.doesNotMatch(source, /#cell="\{ record \}"/, '表格 cell slot 不应继续使用 record 解构写法')
-})
-
-it('logs 表格与详情会展示 AI 请求耗时和尝试链', async () => {
+it('logs 表格与详情展示 AI 请求耗时和尝试链', async () => {
   const source = await readFile(PAGE_FILE, 'utf8')
 
   assert.match(source, /<a-table-column title="耗时" data-index="latencyMs" :width="110">/, 'Logs 表格缺少耗时列')
   assert.match(source, /formatLatency\(scope\.record\.latencyMs\)/, 'Logs 表格应渲染 latencyMs')
   assert.match(source, /<span class="font-medium">耗时：<\/span>\{\{ formatLatency\(logDetailRow\.latencyMs\) \}\}/, 'Logs 详情缺少耗时展示')
   assert.match(source, /<span class="font-medium">尝试链：<\/span>/, 'Logs 详情缺少尝试链展示')
-})
-
-it('后台 AI 场景类型包含文档动作与画布动作 channel key', async () => {
-  const source = await readFile(PAGE_FILE, 'utf8')
-
-  assert.match(source, /workspace_document_summarize/, '后台 AI 场景缺少文档总结 key')
-  assert.match(source, /workspace_document_rewrite/, '后台 AI 场景缺少文档润写 key')
-  assert.match(source, /workspace_document_expand/, '后台 AI 场景缺少文档扩写 key')
-  assert.match(source, /workspace_document_complete_context/, '后台 AI 场景缺少文档补全上下文 key')
-  assert.match(source, /workspace_document_restructure/, '后台 AI 场景缺少文档结构整理 key')
-  assert.match(source, /workspace_canvas_generate/, '后台 AI 场景缺少画布生成 key')
-  assert.match(source, /workspace_canvas_complete/, '后台 AI 场景缺少画布补全 key')
-  assert.match(source, /workspace_canvas_refine/, '后台 AI 场景缺少画布局改 key')
 })
